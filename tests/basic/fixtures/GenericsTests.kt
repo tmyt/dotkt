@@ -258,6 +258,7 @@ private class UseSiteProjectedConstructor<T> private constructor(
     private constructor(box: UseSiteInvariant<T>, marker: Int) : this(box, "int:$marker")
     private constructor(box: UseSiteInvariant<T>, marker: Int?) : this(box, "nullable:$marker")
     private constructor(box: UseSiteInvariant<T>, tags: List<*>) : this(box, "star:${tags.size}")
+    private constructor(box: UseSiteInvariant<T>, tags: Array<String>) : this(box, "array:${tags.size}")
 
     companion object {
         fun from(box: UseSiteInvariant<*>): UseSiteProjectedConstructor<*> = UseSiteProjectedConstructor(box)
@@ -267,6 +268,8 @@ private class UseSiteProjectedConstructor<T> private constructor(
         }
         fun fromStar(box: UseSiteInvariant<*>): UseSiteProjectedConstructor<*> =
             UseSiteProjectedConstructor(box, listOf("tag"))
+        fun fromArray(box: UseSiteInvariant<*>): UseSiteProjectedConstructor<*> =
+            UseSiteProjectedConstructor(box, arrayOf("tag"))
     }
 }
 
@@ -417,6 +420,7 @@ class GenericsTests {
         assertEquals("single", constructed.selected)
         assertEquals("nullable:7", UseSiteProjectedConstructor.fromNullable(UseSiteStringBox("nullable")).selected)
         assertEquals("star:1", UseSiteProjectedConstructor.fromStar(UseSiteStringBox("star")).selected)
+        assertEquals("array:1", UseSiteProjectedConstructor.fromArray(UseSiteStringBox("array")).selected)
         val projectedBoundDestination = mutableListOf<Any>("tail")
         val projectedBoundWriter =
             UseSiteProjectedBoundOuter<String>().Writer<MutableList<Any>>(projectedBoundDestination)

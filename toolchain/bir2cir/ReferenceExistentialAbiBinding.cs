@@ -76,11 +76,16 @@ static class ReferenceExistentialAbiBinding
             || f.Args?.Any(argument => ContainsPhysicalExistential(argument, refs)) == true,
         TypeNode.Nullable nullable => ContainsPhysicalExistential(nullable.Of, refs),
         TypeNode.Oblivious oblivious => ContainsPhysicalExistential(oblivious.Of, refs),
+        TypeNode.Projection projection => ContainsPhysicalExistential(projection.Of, refs),
         TypeNode.Array array => ContainsPhysicalExistential(array.Elem, refs),
         TypeNode.ByRef byRef => ContainsPhysicalExistential(byRef.Of, refs),
+        TypeNode.Ptr pointer => ContainsPhysicalExistential(pointer.Of, refs),
+        TypeNode.Mod modifier => ContainsPhysicalExistential(modifier.M, refs)
+            || ContainsPhysicalExistential(modifier.Of, refs),
         TypeNode.Fn function => ContainsPhysicalExistential(function.Ret, refs)
             || function.Params.Any(parameter => ContainsPhysicalExistential(parameter, refs))
-            || function.Recv != null && ContainsPhysicalExistential(function.Recv, refs),
+            || function.Recv != null && ContainsPhysicalExistential(function.Recv, refs)
+            || function.Ctx?.Any(context => ContainsPhysicalExistential(context, refs)) == true,
         _ => false,
     };
 

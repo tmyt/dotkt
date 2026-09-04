@@ -482,7 +482,8 @@ static class FBoundStarProjectionErasure
         TypeNode.Array array => ContainsUseSiteProjection(array.Elem),
         TypeNode.ByRef byRef => ContainsUseSiteProjection(byRef.Of),
         TypeNode.Ptr pointer => ContainsUseSiteProjection(pointer.Of),
-        TypeNode.Mod modifier => ContainsUseSiteProjection(modifier.Of),
+        TypeNode.Mod modifier => ContainsUseSiteProjection(modifier.M)
+            || ContainsUseSiteProjection(modifier.Of),
         TypeNode.Fn function => ContainsUseSiteProjection(function.Ret)
             || function.Params.Any(ContainsUseSiteProjection)
             || function.Recv != null && ContainsUseSiteProjection(function.Recv)
@@ -2219,7 +2220,8 @@ static class FBoundStarProjectionErasure
     static bool ContainsManagedReference(TypeNode type) => type switch
     {
         TypeNode.ByRef or TypeNode.Ptr => true,
-        TypeNode.Mod modifier => ContainsManagedReference(modifier.Of),
+        TypeNode.Mod modifier => ContainsManagedReference(modifier.M)
+            || ContainsManagedReference(modifier.Of),
         TypeNode.Projection projection => ContainsManagedReference(projection.Of),
         TypeNode.Nullable nullable => ContainsManagedReference(nullable.Of),
         TypeNode.Oblivious oblivious => ContainsManagedReference(oblivious.Of),
@@ -2227,7 +2229,8 @@ static class FBoundStarProjectionErasure
         TypeNode.Fqn { Args: { } arguments } => arguments.Any(ContainsManagedReference),
         TypeNode.Fn function => ContainsManagedReference(function.Ret)
             || function.Params.Any(ContainsManagedReference)
-            || function.Recv != null && ContainsManagedReference(function.Recv),
+            || function.Recv != null && ContainsManagedReference(function.Recv)
+            || function.Ctx?.Any(ContainsManagedReference) == true,
         _ => false,
     };
 
@@ -2265,7 +2268,7 @@ static class FBoundStarProjectionErasure
         {
             TypeNode.Tv variable => (variable.Scope == "method" ? "m" : "t") + variable.I,
             TypeNode.ByRef byRef => "r[" + ProjectedConstructorTypeKey(byRef.Of, refs, localNames) + "]",
-            TypeNode.Array array => "a" + array.Rank + "["
+            TypeNode.Array array => "a" + (array.SzArray ? "s" : "m") + array.Rank + "["
                 + ProjectedConstructorTypeKey(array.Elem, refs, localNames) + "]",
             TypeNode.Fqn { Args: { } arguments } fqn => "g{" + NormalizeProjectedConstructorTypeName(fqn.Name)
                 + "}<" + string.Join(",", arguments.Select(argument =>

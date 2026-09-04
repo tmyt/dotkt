@@ -291,7 +291,9 @@ internal fun BirEmitter.birType(t0: IrType): TypeNode {
 
 /** birType of a type-argument at index [i], or null if absent/non-projection. */
 private fun BirEmitter.argType(t: IrType, i: Int): TypeNode? =
-	(t as? IrSimpleType)?.arguments?.getOrNull(i)?.let(::birTypeProjection)
+	(t as? IrSimpleType)?.arguments?.getOrNull(i)?.let { argument ->
+		(argument as? IrTypeProjection)?.let(::birTypeProjection)
+	}
 
 /** Render a generic argument under a spliced default's existential view. A captured owner slot is `star` here while
  * the same slot used as a value/parameter type remains its upper-bound erasure. */

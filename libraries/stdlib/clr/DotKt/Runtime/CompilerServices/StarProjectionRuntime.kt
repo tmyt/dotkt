@@ -112,6 +112,9 @@ internal interface StarProjectionType {
     @property:kotlin.clr.ClrProperty(kotlin.clr.READ, "IsArray")
     val isArray: Boolean
 
+    @property:kotlin.clr.ClrProperty(kotlin.clr.READ, "IsSZArray")
+    val isSzArray: Boolean
+
     @property:kotlin.clr.ClrProperty(kotlin.clr.READ, "IsByRef")
     val isByRef: Boolean
 
@@ -459,7 +462,7 @@ private fun starProjectionProjectedConstructorTypeKey(type: StarProjectionType):
         return (if (type.declaringMethod == null) "t" else "m") + type.genericParameterPosition
     if (type.isByRef) return "r[" + starProjectionProjectedConstructorTypeKey(type.getElementType()!!) + "]"
     if (type.isArray)
-        return "a" + type.getArrayRank() + "[" +
+        return "a" + (if (type.isSzArray) "s" else "m") + type.getArrayRank() + "[" +
             starProjectionProjectedConstructorTypeKey(type.getElementType()!!) + "]"
     if (type.isGenericType) {
         val definition = if (type.isGenericTypeDefinition) type else type.getGenericTypeDefinition()
@@ -600,7 +603,8 @@ private fun starProjectionTypeKey(type: StarProjectionType): String {
         return (if (type.declaringMethod == null) "t" else "m") + type.genericParameterPosition
     if (type.isByRef) return "r[" + starProjectionTypeKey(type.getElementType()!!) + "]"
     if (type.isArray)
-        return "a" + type.getArrayRank() + "[" + starProjectionTypeKey(type.getElementType()!!) + "]"
+        return "a" + (if (type.isSzArray) "s" else "m") + type.getArrayRank() + "[" +
+            starProjectionTypeKey(type.getElementType()!!) + "]"
     if (type.isGenericType) {
         val definition = if (type.isGenericTypeDefinition) type else type.getGenericTypeDefinition()
         var result = "g{" + definition.fullName + "}<"

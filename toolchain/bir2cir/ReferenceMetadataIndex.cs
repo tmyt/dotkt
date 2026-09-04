@@ -1421,7 +1421,8 @@ sealed partial class ReferenceMetadataIndex
             return (type.DeclaringMethod == null ? "t" : "m") + type.GenericParameterPosition;
         if (type.IsByRef) return "r[" + ForeignStarRuntimeTypeKey(type.GetElementType()) + "]";
         if (type.IsArray)
-            return "a" + type.GetArrayRank() + "[" + ForeignStarRuntimeTypeKey(type.GetElementType()) + "]";
+            return "a" + (type.IsSZArray ? "s" : "m") + type.GetArrayRank() + "["
+                + ForeignStarRuntimeTypeKey(type.GetElementType()) + "]";
         if (type.IsGenericType)
         {
             var definition = type.IsGenericTypeDefinition ? type : type.GetGenericTypeDefinition();
