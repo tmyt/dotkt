@@ -33,6 +33,27 @@ static class BirTypeLowering
     internal static bool GenericAliasHeadDependsOnLoweredArguments(string bcl) =>
         bcl == "System.IComparable";
 
+    // A pre-lowering projection pass must ask the same head-selection rule as the final type lowering. Remove only
+    // the existential shell that FBoundStarProjectionErasure itself will erase, lower the resulting arguments, and
+    // delegate the classifier decision to PhysicalHead. This keeps Comparable<*> on non-generic IComparable while
+    // Comparable<in Number> retains the reified IComparable<Number> head.
+    internal static bool ProjectedAliasHasReifiedGenericHead(
+        string kotlinFqn, string bcl, IReadOnlyList<TypeNode> arguments)
+    {
+        TypeNode Bound(TypeNode type) => type switch
+        {
+            TypeNode.Star => new TypeNode.Fqn("kotlin.Any"),
+            TypeNode.Projection projection => Bound(projection.Of),
+            TypeNode.Oblivious oblivious => new TypeNode.Oblivious(Bound(oblivious.Of)),
+            TypeNode.Nullable nullable => new TypeNode.Nullable(Bound(nullable.Of)),
+            _ => type,
+        };
+        var lowered = arguments.Select(argument =>
+            LowerType(Bound(argument), refBuild: false, force: true, typeArg: true)).ToArray();
+        return PhysicalHead(kotlinFqn, bcl, lowered, collapseInvariant: false)
+            is TypeNode.Fqn { Args: not null };
+    }
+
     // The `Span<T>` identity pair, in ONE place: kotc emits the faithful `kotlin.clr.Span` intrinsic name and this
     // pass owns the BCL substitution below. Passes that run BEFORE the lowering and must reason about the CLR type
     // (ReferenceMetadataIndex.IsByRefLikeFqn — `System.Span<T>` is a `ref struct`) canonicalize through these two

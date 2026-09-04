@@ -7,6 +7,11 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Projected CLR aliases now preserve their existential ABI (#669).** Generic aliases such as projected collection
+  and comparable types use an opaque CLR slot plus exact declaration metadata instead of inventing an invariant
+  `G<object>` construction. Member binding retains the runtime object's exact closed interface view, and projected map
+  copy constructors use their trusted collection-factory contract rather than an invalid invariant cast.
+
 - **Nullable-generic substitution now preserves complete CLR type shapes (#651).** bir2cir retains general-array
   rank/vector identity and function-type delegate/context facets while substituting owner and method generic frames,
   instead of silently rebuilding those types as SZ vectors or family-less functions.

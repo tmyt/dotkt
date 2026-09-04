@@ -105,6 +105,13 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   `DOTKTSTAR001`, because the
   referenced generic type/member metadata must be preserved; known BCL families with a faithful non-generic surface
   continue to use that surface directly.
+- **The same semantic-boundary rule applies to projected `@ClrTypeAlias` types.** A projection must not be lowered
+  mechanically as an invariant construction of its CLR alias. For example, `List<out T>` is carried as Kotlin
+  declaration metadata over an opaque CLR slot, and member access binds to the exact closed interface implemented by
+  the runtime object. A projection with a concrete CLR-representable head may retain that head when its variance is
+  faithful: `Comparable<in Number>` lowers to `IComparable<Number>`, while `Comparable<*>` uses non-generic
+  `IComparable`. When a projected map is passed to a stdlib copy constructor, the trusted collection-factory contract
+  performs an entry-wise copy instead of casting the source to an invariant `IDictionary<K,V>`.
 - **Corollary — a star-projected collection classifier must erase its element arguments.** On the JVM `x is Map<*,*>` and a subsequent
   `x as Map<*,*>` erase to a raw `Map`, so a `Dictionary<int,int>` passes trivially. On the CLR the star projection
   erases to `Map<Any?,Any?>` = the generic `IDictionary<object,object>`, which a `Dictionary<int,int>` does **not**

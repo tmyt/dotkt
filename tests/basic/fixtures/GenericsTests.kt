@@ -99,6 +99,12 @@ fun <T> projectedProducerViaMemberHelper(producers: Array<out Producer<T>>): Str
 
 fun <T, R> transformProjectedFirst(values: Array<out T>, transform: (T) -> R): R = transform(values[0])
 
+class NumberComparable(private val label: String) : Comparable<Number> {
+    override fun compareTo(other: Number): Int = 0
+    override fun toString(): String = label
+}
+fun projectedComparableText(value: Comparable<in Number>): String = value.toString()
+
 fun <T> projectedProducerViaCallback(producers: Array<out Producer<T>>): String =
     transformProjectedFirst(producers) { it.produce().toString() }
 
@@ -304,6 +310,30 @@ fun <T, C : MutableList<in T>?> useSiteNullableProjectedListInsert(destination: 
     destination?.add(0, value)
     return destination
 }
+fun useSiteDirectProjectedListInsert(
+    destination: MutableList<in String>,
+    value: String,
+): MutableList<in String> {
+    destination.add(0, value)
+    return destination
+}
+fun useSiteNestedProjectedListInsert(
+    destinations: List<MutableList<in String>>,
+    value: String,
+): List<MutableList<in String>> {
+    destinations[0].add(0, value)
+    return destinations
+}
+fun useSiteProjectedListCallable(
+    destination: MutableList<in String>,
+    transform: (MutableList<in String>) -> MutableList<in String>,
+): MutableList<in String> = transform(destination)
+fun <K, V> copyProjectedMap(source: Map<out K, V>): LinkedHashMap<K, V> = LinkedHashMap(source)
+private var projectedMapSourceReads = 0
+private fun projectedMapSource(): Map<String, Int> {
+    projectedMapSourceReads++
+    return mapOf("once" to 3)
+}
 class UseSiteProjectedListWriter<T, C : MutableList<in T>>(private val destination: C) {
     fun insert(value: T): C {
         destination.add(0, value)
@@ -409,11 +439,31 @@ class GenericsTests {
         val wideList = mutableListOf<Any>("tail")
         assertEquals(wideList, useSiteProjectedListInsert(wideList, "head"))
         assertEquals("head", wideList[0])
+        assertEquals(wideList, useSiteDirectProjectedListInsert(wideList, "direct-head"))
+        assertEquals("direct-head", wideList[0])
+        val nestedWideLists = listOf(wideList)
+        assertEquals(nestedWideLists, useSiteNestedProjectedListInsert(nestedWideLists, "nested-head"))
+        assertEquals("nested-head", wideList[0])
+        assertEquals(
+            wideList,
+            useSiteProjectedListCallable(wideList) { destination ->
+                destination.add(0, "callable-head")
+                destination
+            },
+        )
+        assertEquals("callable-head", wideList[0])
+        assertEquals(mapOf("key" to 1), copyProjectedMap(mapOf("key" to 1)))
+        val narrowMap: Map<String, Int> = mapOf("wide-key" to 2)
+        assertEquals(mapOf<Any, Int>("wide-key" to 2), copyProjectedMap<Any, Int>(narrowMap))
+        projectedMapSourceReads = 0
+        assertEquals(mapOf<Any, Int>("once" to 3), LinkedHashMap<Any, Int>(projectedMapSource()))
+        assertEquals(1, projectedMapSourceReads)
         val nullableWideList: MutableList<Any>? = mutableListOf("tail")
         assertEquals(nullableWideList, useSiteNullableProjectedListInsert(nullableWideList, "nullable-head"))
         assertEquals("nullable-head", nullableWideList!![0])
         assertEquals(wideList, UseSiteProjectedListWriter<String, MutableList<Any>>(wideList).insert("class-head"))
         assertEquals("class-head", wideList[0])
+        assertEquals("number", projectedComparableText(NumberComparable("number")))
         assertEquals("lambda", useSiteCallable(input) { UseSiteStringBox("lambda") })
         val constructed = constructFromUseSiteProjection(UseSiteStringBox("captured"))
         assertEquals("captured", constructed.box.read())

@@ -420,6 +420,17 @@ static class MemberCallSubstitution
         var typeNode = ownerFqn.Args != null ? new TypeNode.Fqn(bcl, ownerFqn.Args) : new TypeNode.Fqn(bcl);
 
         var args = node["args"] as JsonArray ?? new JsonArray();
+        var sourceSignature = (node["argTypes"] as JsonArray)?.Select(TypeJson.Read).ToArray();
+
+        // A Kotlin collection copy constructor can accept a projected source that the corresponding invariant CLR
+        // constructor cannot consume (Map<String,V> as Map<out Any,V>). The trusted constructor marker states that
+        // copy semantics explicitly. Allocate the selected alias through its parameterless CLR constructor and copy
+        // through the covariance-safe raw collection helper; never manufacture an invariant cast from the bound.
+        if (sourceSignature != null
+            && refs.CollectionCopyConstructorKind(
+                ownerFqn.Name, sourceSignature, ownerFqn.Args ?? Array.Empty<TypeNode>()) == "map"
+            && args.Count == 1 && ownerFqn.Args is { Length: 2 } mapTypeArguments)
+            return MapCopyConstruction(typeNode, mapTypeArguments, args[0]);
 
         // JVM (initialCapacity: Int, loadFactor: Float) collection ctor -> the capacity-only (int) BCL ctor. .NET's
         // HashSet/Dictionary have NO (int, float) constructor (loadFactor is a JVM hashtable concept), so a
@@ -459,6 +470,50 @@ static class MemberCallSubstitution
             ["args"] = newClrArgs,
         };
         return plan == null ? lowered : MaterialiseMappedArguments(plan, lowered, typeNode);
+    }
+
+    static JsonNode MapCopyConstruction(TypeNode targetType, TypeNode[] typeArguments, JsonNode source)
+    {
+        var sourceName = CallEvalLowering.FreshBindingId();
+        var resultName = CallEvalLowering.FreshBindingId();
+        JsonObject Local(string name) => new() { ["k"] = "local", ["name"] = name };
+        return new JsonObject
+        {
+            ["k"] = "valueBlock",
+            ["type"] = TypeJson.Write(targetType),
+            ["stmts"] = new JsonArray(
+                new JsonObject
+                {
+                    ["k"] = "var", ["name"] = sourceName,
+                    ["type"] = TypeJson.Write(new TypeNode.Fqn("kotlin.Any")),
+                    ["init"] = source.DeepClone(),
+                },
+                new JsonObject
+                {
+                    ["k"] = "var", ["name"] = resultName,
+                    ["type"] = TypeJson.Write(targetType),
+                    ["init"] = new JsonObject
+                    {
+                        ["k"] = "newClr", ["type"] = TypeJson.Write(targetType),
+                        ["argTypes"] = new JsonArray(), ["args"] = new JsonArray(),
+                    },
+                },
+                new JsonObject
+                {
+                    ["k"] = "exprStmt",
+                    ["expr"] = new JsonObject
+                    {
+                        ["k"] = "callStatic",
+                        ["owner"] = TypeJson.Write(new TypeNode.Fqn("kotlin.collections.ClrMapDefaultsKt")),
+                        ["method"] = "clrMapPutAll",
+                        ["sig"] = new JsonArray(TypeJson.Fqn("kotlin.Any"), TypeJson.Fqn("kotlin.Any")),
+                        ["typeArgs"] = new JsonArray(typeArguments.Select(TypeJson.Write).ToArray()),
+                        ["ret"] = TypeJson.Write(new TypeNode.Fqn("kotlin.Unit")),
+                        ["args"] = new JsonArray(Local(resultName), Local(sourceName)),
+                    },
+                }),
+            ["result"] = Local(resultName),
+        };
     }
 
     /// Re-express the arguments of a call whose CLR shape KEEPS only the leading `keep` of them as a call-evaluation

@@ -1917,7 +1917,10 @@ internal fun BirEmitter.ctor(klass: IrClass, ctor: IrConstructor, captures: List
 	val ctorBody = (preconditionChecks(ctor) + stmts).joinToString(",")
 	activeSemanticOwner = savedSemanticOwner
 	val bindingsJson = delegationBindings?.let { ""","delegationBindings":$it""" } ?: ""
-	return """{"params":[$params],"baseArgs":$baseJson,"thisArgs":$thisJson$delegationSig$bindingsJson,"vis":${str(visOf(ctor))},"body":[$ctorBody]}"""
+	// Constructor annotations are declaration metadata just like method annotations. In particular, trusted CLR
+	// binding annotations on an alias constructor must reach bir2cir before the alias TypeDef is hoisted away; omitting
+	// this slot makes a consumer unable to distinguish a Kotlin copy contract from the physical CLR constructor shape.
+	return """{"params":[$params],"baseArgs":$baseJson,"thisArgs":$thisJson$delegationSig$bindingsJson,"vis":${str(visOf(ctor))},"body":[$ctorBody],"attrs":[${attrsJson(ctor.annotations)}]}"""
 }
 
 internal fun BirEmitter.method(fn: IrSimpleFunction, static: Boolean, semanticOwnerOverride: String? = null): String {

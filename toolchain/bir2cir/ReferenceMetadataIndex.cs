@@ -437,6 +437,14 @@ sealed partial class ReferenceMetadataIndex
         return true;
     }
 
+    public string CollectionCopyConstructorKind(
+        string owner, TypeNode[] signature, TypeNode[] ownerArgs)
+    {
+        return TryAliasConstructorAdapter(owner, signature, ownerArgs, out var adapter)
+            ? adapter.CollectionFactoryKind
+            : null;
+    }
+
     static bool SameTypeSequence(IReadOnlyList<TypeNode> left, IReadOnlyList<TypeNode> right)
     {
         if (left.Count != right.Count) return false;
@@ -452,6 +460,7 @@ sealed partial class ReferenceMetadataIndex
         ["statements"] = adapter.Statements.DeepClone(),
         ["arguments"] = adapter.Arguments.DeepClone(),
         ["terminalSignature"] = new JsonArray(adapter.TerminalSignature.Select(TypeJson.Write).ToArray()),
+        ["collectionFactoryKind"] = adapter.CollectionFactoryKind,
     }.ToJsonString();
     // Reference-owner hierarchy in BIR's dotted Kotlin vocabulary.  Calls retain their Kotlin
     // receiver owner in BIR; inherited CLR MemberRefs are selected later by bir2cir, so that pass
@@ -1305,6 +1314,28 @@ sealed partial class ReferenceMetadataIndex
         return ProbeNetType(fqn, genericArity);
     }
 
+    // A projected generic whose Kotlin classifier is a trusted @ClrTypeAlias is physically just as external as a
+    // classifier authored directly in a CLR assembly: the already-emitted aliased TypeDef cannot implement a DotKt
+    // existential carrier. Resolve that physical definition here while keeping ordinary DotKt-authored generics on
+    // their metadata-backed nominal-carrier path. Callers must not bypass ResolveNetType's Kotlin-owner guard by
+    // guessing from namespace or from the lowered spelling.
+    public Type ResolveForeignProjectionType(string sourceOwner, IReadOnlyList<TypeNode> arguments)
+    {
+        var genericArity = arguments?.Count ?? 0;
+        if (TryResolveClrOwner(sourceOwner, out var aliasOwner, out _))
+        {
+            // Some Kotlin generic surfaces already have a non-generic CLR face selected by BirTypeLowering from
+            // their argument shape (Comparable<*> -> System.IComparable). That face is the exact representation;
+            // routing the same value through the opaque reflection ABI would discard a valid nominal conversion.
+            if (BirTypeLowering.GenericAliasHeadDependsOnLoweredArguments(aliasOwner)
+                && !BirTypeLowering.ProjectedAliasHasReifiedGenericHead(
+                    sourceOwner, aliasOwner, arguments)) return null;
+            return ResolveNetType(aliasOwner, genericArity);
+        }
+        if (HasDotKtOwner(sourceOwner)) return null;
+        return ResolveNetType(ReflectedOwnerFqn(sourceOwner), genericArity);
+    }
+
     // Resolve one exact public CLR member used through a Kotlin star-projected FOREIGN generic. There is no CLR
     // nominal type for G<*>, so ForeignStarProjectionBinding dispatches through the stdlib reflection runtime. The
     // compiler still owns overload resolution: it supplies the declaring generic definition and exact declaration
@@ -1325,9 +1356,9 @@ sealed partial class ReferenceMetadataIndex
         declarationReturn = null;
         returnsVoid = false;
         if (sourceOwner?.Args is not { Length: > 0 } ownerArgs || sourceName == null
-            || callSignature == null || HasDotKtOwner(sourceOwner.Name)) return false;
+            || callSignature == null) return false;
 
-        var sourceType = ResolveNetType(ReflectedOwnerFqn(sourceOwner.Name), ownerArgs.Length);
+        var sourceType = ResolveForeignProjectionType(sourceOwner.Name, ownerArgs);
         if (sourceType == null) return false;
         const BindingFlags flags = BindingFlags.Public | BindingFlags.Instance;
         var seenTypes = new HashSet<Type>();
@@ -1509,9 +1540,8 @@ sealed partial class ReferenceMetadataIndex
         declaringView = null;
         metadataToken = 0;
         declarationType = null;
-        if (sourceOwner?.Args is not { Length: > 0 } ownerArgs || sourceName == null
-            || HasDotKtOwner(sourceOwner.Name)) return false;
-        var sourceType = ResolveNetType(ReflectedOwnerFqn(sourceOwner.Name), ownerArgs.Length);
+        if (sourceOwner?.Args is not { Length: > 0 } ownerArgs || sourceName == null) return false;
+        var sourceType = ResolveForeignProjectionType(sourceOwner.Name, ownerArgs);
         if (sourceType == null) return false;
 
         const BindingFlags flags = BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly;
@@ -5389,11 +5419,14 @@ sealed partial class ReferenceMetadataIndex
             var arguments = payload["arguments"] as JsonArray
                 ?? throw new FormatException("constructor-adapter carrier has no arguments");
             var terminal = ReadCarrierTypes(payload, "terminalSignature");
+            var collectionFactoryKind = payload["collectionFactoryKind"] is JsonValue kindValue
+                ? kindValue.GetValue<string>()
+                : null;
             if (parameters.Length != signature.Length)
                 throw new FormatException("constructor-adapter parameter/signature lengths differ");
             return new AliasConstructorAdapter(
                 parameters, signature, (JsonArray)statements.DeepClone(),
-                (JsonArray)arguments.DeepClone(), terminal);
+                (JsonArray)arguments.DeepClone(), terminal, collectionFactoryKind);
         }
         catch (Exception ex) when (ex is not InvalidDataException)
         {

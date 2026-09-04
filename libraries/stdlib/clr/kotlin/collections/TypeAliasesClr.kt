@@ -166,6 +166,7 @@ public actual class HashMap<K, V> : MutableMap<K, V> {
     public actual constructor()
     public actual constructor(initialCapacity: Int)
     public actual constructor(initialCapacity: Int, loadFactor: Float)
+    @kotlin.clr.ClrCollectionFactory("map")
     public actual constructor(original: Map<out K, V>)
 
     // From Map
@@ -234,6 +235,7 @@ public actual class LinkedHashMap<K, V> : MutableMap<K, V> {
     public actual constructor()
     public actual constructor(initialCapacity: Int)
     public actual constructor(initialCapacity: Int, loadFactor: Float)
+    @kotlin.clr.ClrCollectionFactory("map")
     public actual constructor(original: Map<out K, V>)
 
     // From Map
