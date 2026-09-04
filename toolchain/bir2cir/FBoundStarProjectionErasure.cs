@@ -51,7 +51,10 @@ static class FBoundStarProjectionErasure
 
         foreach (var owner in owners.Values.Where(o => o.Needed)) Synthesize(owner, owners, defs, refs);
         foreach (var root in rootList) RecordDeclarationSurfaces(root);
-        ForeignStarProjectionBinding.ApplyAll(rootList, refs);
+        foreach (var root in rootList) EraseProjectedAliasConstraints(root, refs);
+        ForeignStarProjectionBinding.ApplyAll(rootList,
+            owners.Values.Where(owner => owner.Needed).ToDictionary(
+                owner => owner.Name, owner => owner.ErasedName, StringComparer.Ordinal), refs);
         foreach (var root in rootList) Rewrite(root, owners, defs, refs);
         var normalizedReturns = new NormalizedReturnBindings();
         // Method-local normalization runs after the first post-order binding walk. Revisit consumers once so a
@@ -377,8 +380,11 @@ static class FBoundStarProjectionErasure
         switch (node)
         {
             case JsonObject obj:
+                if (Str(obj["kind"]) != null)
+                    RecordProjectedTypeParameterBounds(obj);
                 if (obj["k"] == null && obj["name"] is JsonValue && obj["params"] is JsonArray parameters)
                 {
+                    RecordProjectedMethodTypeParameterBounds(obj);
                     foreach (var parameter in parameters.OfType<JsonObject>())
                         RecordProjectionSlot(parameter, "type", "kotlinType");
                     RecordProjectionSlot(obj, "ret", "retKotlinType");
@@ -393,6 +399,96 @@ static class FBoundStarProjectionErasure
                 break;
         }
     }
+
+    // A use-site projection in a bound is Kotlin declaration truth but is not a legal CLR
+    // GenericParamConstraint when the physical generic is invariant. Preserve the complete sibling list in the
+    // existing round-trip carriers before RewriteType chooses the CLR approximation below. The payload is opaque to
+    // every intervening physical pass, so dll2klib restores exactly the authored `in`/`out` nodes rather than
+    // reconstructing them from an erased constraint row.
+    static void RecordProjectedTypeParameterBounds(JsonObject declaration)
+    {
+        var bounds = ProjectedTypeParameterBounds(declaration["typeParams"] as JsonArray);
+        if (bounds.Count > 0)
+            KotlinSupertypesRecord.Merge(declaration, new JsonObject { ["bounds"] = bounds });
+    }
+
+    static void RecordProjectedMethodTypeParameterBounds(JsonObject declaration)
+    {
+        var bounds = ProjectedTypeParameterBounds(declaration["typeParams"] as JsonArray);
+        if (bounds.Count == 0) return;
+        var payload = Str(declaration[NullableGenericErasure.MethodTypeParameterBoundsPre]) is string encoded
+            ? JsonNode.Parse(encoded) as JsonObject ?? new JsonObject()
+            : new JsonObject();
+        var existing = payload["bounds"] as JsonObject;
+        if (existing == null)
+        {
+            existing = new JsonObject();
+            payload["bounds"] = existing;
+        }
+        foreach (var bound in bounds)
+            if (!existing.ContainsKey(bound.Key)) existing[bound.Key] = bound.Value?.DeepClone();
+        declaration[NullableGenericErasure.MethodTypeParameterBoundsPre] = payload.ToJsonString();
+    }
+
+    static JsonObject ProjectedTypeParameterBounds(JsonArray parameters)
+    {
+        var bounds = new JsonObject();
+        if (parameters == null) return bounds;
+        for (var index = 0; index < parameters.Count; index++)
+        {
+            if (parameters[index] is not JsonObject parameter
+                || parameter["constraints"] is not JsonArray constraints
+                || !constraints.Any(constraint => TypeJson.Read(constraint) is TypeNode type
+                    && ContainsUseSiteProjection(type))) continue;
+            bounds[index.ToString()] = constraints.DeepClone();
+        }
+        return bounds;
+    }
+
+    // A CLR GenericParamConstraint cannot encode a use-site projection on an invariant physical alias. The exact
+    // Kotlin bound was recorded above, so weaken only that constraint row to Object. Ordinary parameters, results,
+    // constructor signatures, and expression types must retain their constructed physical alias; treating all
+    // projected aliases as foreign existentials would, for example, turn Map<out K, V> into Object and destroy the
+    // exact OrderedDictionary(IDictionary<K, V>) constructor descriptor.
+    static void EraseProjectedAliasConstraints(JsonNode node, ReferenceMetadataIndex refs)
+    {
+        switch (node)
+        {
+            case JsonObject obj:
+                if (obj["typeParams"] is JsonArray parameters)
+                    foreach (var parameter in parameters.OfType<JsonObject>())
+                        if (parameter["constraints"] is JsonArray constraints)
+                            for (var index = 0; index < constraints.Count; index++)
+                                if (TypeJson.Read(constraints[index]) is TypeNode.Fqn bound
+                                    && ContainsUseSiteProjection(bound)
+                                    && refs.TryResolveClrOwner(bound.Name, out _, out _))
+                                    constraints[index] = TypeJson.Write(new TypeNode.Fqn("kotlin.Any"));
+                foreach (var child in obj.Select(kv => kv.Value).Where(value => value != null).ToList())
+                    EraseProjectedAliasConstraints(child, refs);
+                break;
+            case JsonArray array:
+                foreach (var child in array.Where(value => value != null).ToList())
+                    EraseProjectedAliasConstraints(child, refs);
+                break;
+        }
+    }
+
+    static bool ContainsUseSiteProjection(TypeNode type) => type switch
+    {
+        TypeNode.Projection => true,
+        TypeNode.Fqn { Args: { } args } => args.Any(ContainsUseSiteProjection),
+        TypeNode.Nullable nullable => ContainsUseSiteProjection(nullable.Of),
+        TypeNode.Oblivious oblivious => ContainsUseSiteProjection(oblivious.Of),
+        TypeNode.Array array => ContainsUseSiteProjection(array.Elem),
+        TypeNode.ByRef byRef => ContainsUseSiteProjection(byRef.Of),
+        TypeNode.Ptr pointer => ContainsUseSiteProjection(pointer.Of),
+        TypeNode.Mod modifier => ContainsUseSiteProjection(modifier.Of),
+        TypeNode.Fn function => ContainsUseSiteProjection(function.Ret)
+            || function.Params.Any(ContainsUseSiteProjection)
+            || function.Recv != null && ContainsUseSiteProjection(function.Recv)
+            || function.Ctx?.Any(ContainsUseSiteProjection) == true,
+        _ => false,
+    };
 
     static void RecordProjectionSlot(JsonObject declaration, string slot, string fact)
     {
@@ -1909,6 +2005,8 @@ static class FBoundStarProjectionErasure
         IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs,
         IReadOnlySet<int> existentialTypeParameters = null,
         IReadOnlySet<int> existentialMethodParameters = null,
+        JsonArray typeParameterDeclarations = null,
+        JsonArray methodParameterDeclarations = null,
         TypeNode.Fqn currentThisType = null)
     {
         switch (node)
@@ -1917,11 +2015,16 @@ static class FBoundStarProjectionErasure
                 var projectedArrayRead = Bool(obj[ProjectedArrayReadKey]);
                 var childTypeParameters = existentialTypeParameters;
                 var childMethodParameters = existentialMethodParameters;
+                var childTypeParameterDeclarations = typeParameterDeclarations;
+                var childMethodParameterDeclarations = methodParameterDeclarations;
                 var childThisType = currentThisType;
                 if (Str(obj["kind"]) != null)
                 {
-                    childTypeParameters = ExistentialTypeParameters(obj["typeParams"] as JsonArray, "type");
+                    childTypeParameterDeclarations = obj["typeParams"] is JsonArray declaredTypeParameters
+                        ? declaredTypeParameters.DeepClone().AsArray() : null;
+                    childTypeParameters = ExistentialTypeParameters(childTypeParameterDeclarations, "type");
                     childMethodParameters = null;
+                    childMethodParameterDeclarations = null;
                     if (Str(obj["name"]) is string typeName)
                     {
                         var arity = (obj["typeParams"] as JsonArray)?.Count ?? 0;
@@ -1931,12 +2034,16 @@ static class FBoundStarProjectionErasure
                 }
                 else if (obj["body"] is JsonArray && obj["params"] is JsonArray)
                 {
-                    childMethodParameters = ExistentialTypeParameters(obj["typeParams"] as JsonArray, "method");
+                    childMethodParameterDeclarations = obj["typeParams"] is JsonArray declaredMethodParameters
+                        ? declaredMethodParameters.DeepClone().AsArray() : null;
+                    childMethodParameters = ExistentialTypeParameters(childMethodParameterDeclarations, "method");
                 }
 
                 BindStarInnerConstruction(obj, owners, defs, refs,
                     existentialTypeParameters, existentialMethodParameters);
                 BindStarFieldThroughCanonicalGetter(obj, owners, defs, refs);
+                BindProjectedConstraintMember(obj, typeParameterDeclarations, methodParameterDeclarations,
+                    defs, refs);
                 BindInheritedStarMember(obj, owners, defs, refs);
                 if (!projectedArrayRead)
                     BindProjectedArrayRead(obj, owners, refs);
@@ -1964,7 +2071,8 @@ static class FBoundStarProjectionErasure
                 var rewroteRuntimeOperand = runtimeOperand != null;
                 if (runtimeOperand != null)
                     Rewrite(runtimeOperand, owners, defs, refs,
-                        childTypeParameters, childMethodParameters, childThisType);
+                        childTypeParameters, childMethodParameters,
+                        childTypeParameterDeclarations, childMethodParameterDeclarations, childThisType);
                 // Kotlin `is G<X>` is a raw-classifier check, and a true `as G<*>` also has no closed CLR target.
                 // An `as G<T>` from an otherwise-unrelated source likewise cannot test T on the CLR and uses the
                 // existential carrier. Do not confuse that erased runtime check with a statically proven constructed
@@ -1991,7 +2099,8 @@ static class FBoundStarProjectionErasure
                         obj[key] = TypeJson.Write(RewriteType(type, owners, refs));
                     else
                         Rewrite(value, owners, defs, refs,
-                            childTypeParameters, childMethodParameters, childThisType);
+                            childTypeParameters, childMethodParameters,
+                            childTypeParameterDeclarations, childMethodParameterDeclarations, childThisType);
                 }
                 // A star-projected inner construction is replaced while visiting the receiver below this call.  Its
                 // result is the inner existential carrier, so bind the immediately-following member only after that
@@ -2014,10 +2123,59 @@ static class FBoundStarProjectionErasure
                         arr[i] = TypeJson.Write(RewriteType(type, owners, refs));
                     else
                         Rewrite(value, owners, defs, refs,
-                            existentialTypeParameters, existentialMethodParameters, currentThisType);
+                            existentialTypeParameters, existentialMethodParameters,
+                            typeParameterDeclarations, methodParameterDeclarations, currentThisType);
                 }
                 break;
         }
+    }
+
+    // A call through `M` is emitted against the declaration selected from M's bound. kotc deliberately keeps the
+    // receiver as the type variable and the selected owner open; close that owner from the exact projected bound
+    // before existential member binding. This is declaration-graph evidence, not reconstruction from a name or CLR
+    // layout, and supports indirect bounds as well as a member inherited from a projected bound's ancestor.
+    static void BindProjectedConstraintMember(JsonObject call, JsonArray typeParameters, JsonArray methodParameters,
+        IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs)
+    {
+        if (Str(call["k"]) is not ("callInstance" or "newBoundDelegate")
+            || TypeJson.Read(call["ownerType"]) is not TypeNode.Fqn selectedOwner
+            || selectedOwner.Args is { Length: > 0 }
+            || ExpressionType(call["recv"]) is not TypeNode.Tv receiver) return;
+
+        var declarations = receiver.Scope == "type" ? typeParameters
+            : receiver.Scope == "method" ? methodParameters : null;
+        if (declarations == null || receiver.I < 0 || receiver.I >= declarations.Count) return;
+
+        var matches = new Dictionary<string, TypeNode.Fqn>(StringComparer.Ordinal);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        void Visit(TypeNode type)
+        {
+            if (type is TypeNode.Tv tv)
+            {
+                var parameters = tv.Scope == "type" ? typeParameters
+                    : tv.Scope == "method" ? methodParameters : null;
+                var key = tv.Scope + ":" + tv.I;
+                if (parameters == null || tv.I < 0 || tv.I >= parameters.Count || !seen.Add(key)
+                    || parameters[tv.I] is not JsonObject parameter
+                    || parameter["constraints"] is not JsonArray constraints) return;
+                foreach (var constraint in constraints)
+                    if (TypeJson.Read(constraint) is TypeNode constraintType) Visit(constraintType);
+                return;
+            }
+            if (type is not TypeNode.Fqn bound) return;
+            IReadOnlyList<TypeNode> arguments = SameDeclarationOwner(bound.Name, selectedOwner.Name)
+                ? bound.Args
+                : ProjectConstructedArguments(bound, selectedOwner.Name, defs, refs);
+            if (arguments == null || !arguments.Any(ContainsExistentialProjection)) return;
+            var view = new TypeNode.Fqn(selectedOwner.Name, arguments.ToArray());
+            matches.TryAdd(SupertypeGraph.TypeKey(view), view);
+        }
+
+        Visit(receiver);
+        if (matches.Count > 1)
+            throw new InvalidOperationException(
+                $"projected generic constraint gives ambiguous owner views for `{selectedOwner.Name}`");
+        if (matches.Count == 1) call["ownerType"] = TypeJson.Write(matches.Values.Single());
     }
 
     // `Array<out G<T>>` is physically an array of G's existential carrier. A read is nevertheless known by Kotlin's
@@ -2448,7 +2606,7 @@ static class FBoundStarProjectionErasure
     static bool ContainsExistential(TypeNode type,
         IReadOnlySet<int> typeParameters, IReadOnlySet<int> methodParameters) => type switch
     {
-        TypeNode.Star => true,
+        TypeNode.Star or TypeNode.Projection => true,
         TypeNode.Tv { Scope: "type" } tv => typeParameters?.Contains(tv.I) == true,
         TypeNode.Tv { Scope: "method" } tv => methodParameters?.Contains(tv.I) == true,
         TypeNode.Fqn { Args: { } args } => args.Any(argument =>
@@ -2716,7 +2874,7 @@ static class FBoundStarProjectionErasure
                 TypeJson.Read(operand?["dynRet"]) ?? TypeJson.Read(operand?["sty"]),
             _ => TypeJson.Read(operand?["sty"]) ?? TypeJson.Read(operand?["type"]),
         };
-        if (target.Args is not { } targetArguments || targetArguments.Any(ContainsExplicitStar)
+        if (target.Args is not { } targetArguments || targetArguments.Any(ContainsExplicitExistential)
             || StripSourceNullability(sourceType)
                 is not TypeNode.Fqn { Args: { } sourceArguments } source)
             return false;
@@ -2868,7 +3026,7 @@ static class FBoundStarProjectionErasure
             var projectedResult = declarationOwnerArguments == null
                 ? null
                 : SubstituteDeclarationTypeArguments(declarationResult, declarationOwnerArguments, methodArgs);
-            if (projectedResult != null && ContainsExplicitStar(projectedResult)
+            if (projectedResult != null && ContainsExplicitExistential(projectedResult)
                 && IsExistentialPhysicalCarrier(physicalResult, owners, refs))
             {
                 AlignExistentialResult(call, physicalResult, projectedResult);
@@ -2882,7 +3040,7 @@ static class FBoundStarProjectionErasure
         var sourceMember = propertyCall ? sourcePropertyName : authoredMethod;
         var declarationId = Str(call[DeclarationIdentityBinding.Key]);
 
-        var starOwner = args.Any(a => a is TypeNode.Star);
+        var starOwner = args.Any(IsExistentialArgument);
         var erasedSmartCast = call["recv"] is JsonObject recv && Str(recv["k"]) == "cast"
             && TypeJson.Read(recv["type"]) is TypeNode.Fqn { Args: { } castArgs } castF
             && castF.Name == f.Name
@@ -3354,7 +3512,7 @@ static class FBoundStarProjectionErasure
                 // A foreign CLR generic cannot be retrofitted to implement DotKt's nominal existential. Its value
                 // slot is object; classifier checks/casts/member dispatch were already authored explicitly by
                 // ForeignStarProjectionBinding above. Never manufacture the invariant fiction G<object>.
-                if (!refs.HasDotKtOwner(f.Name) && refs.ResolveNetType(f.Name, args.Length) != null)
+                if (!refs.HasDotKtOwner(f.Name) && ForeignStarProjectionBinding.IsForeignStarType(f, refs))
                 {
                     if (refs.IsByRefLikeFqn(f))
                         throw new NotSupportedException(
@@ -3413,11 +3571,10 @@ static class FBoundStarProjectionErasure
 
     static bool ContainsStarOrTypeVariable(TypeNode t) => t switch
     {
-        TypeNode.Star or TypeNode.Tv => true,
+        TypeNode.Star or TypeNode.Projection or TypeNode.Tv => true,
         TypeNode.Fqn { Args: { } args } => args.Any(ContainsStarOrTypeVariable),
         TypeNode.Nullable n => ContainsStarOrTypeVariable(n.Of),
         TypeNode.Oblivious o => ContainsStarOrTypeVariable(o.Of),
-        TypeNode.Projection p => ContainsStarOrTypeVariable(p.Of),
         TypeNode.Array a => ContainsStarOrTypeVariable(a.Elem),
         TypeNode.ByRef b => ContainsStarOrTypeVariable(b.Of),
         TypeNode.Fn fn => ContainsStarOrTypeVariable(fn.Ret) || fn.Params.Any(ContainsStarOrTypeVariable)
@@ -3467,17 +3624,16 @@ static class FBoundStarProjectionErasure
         _ => replacement,
     };
 
-    static bool ContainsExplicitStar(TypeNode t) => t switch
+    static bool ContainsExplicitExistential(TypeNode t) => t switch
     {
-        TypeNode.Star => true,
-        TypeNode.Fqn { Args: { } args } => args.Any(ContainsExplicitStar),
-        TypeNode.Nullable n => ContainsExplicitStar(n.Of),
-        TypeNode.Oblivious o => ContainsExplicitStar(o.Of),
-        TypeNode.Projection p => ContainsExplicitStar(p.Of),
-        TypeNode.Array a => ContainsExplicitStar(a.Elem),
-        TypeNode.ByRef b => ContainsExplicitStar(b.Of),
-        TypeNode.Fn fn => ContainsExplicitStar(fn.Ret) || fn.Params.Any(ContainsExplicitStar)
-            || (fn.Recv != null && ContainsExplicitStar(fn.Recv)),
+        TypeNode.Star or TypeNode.Projection => true,
+        TypeNode.Fqn { Args: { } args } => args.Any(ContainsExplicitExistential),
+        TypeNode.Nullable n => ContainsExplicitExistential(n.Of),
+        TypeNode.Oblivious o => ContainsExplicitExistential(o.Of),
+        TypeNode.Array a => ContainsExplicitExistential(a.Elem),
+        TypeNode.ByRef b => ContainsExplicitExistential(b.Of),
+        TypeNode.Fn fn => ContainsExplicitExistential(fn.Ret) || fn.Params.Any(ContainsExplicitExistential)
+            || (fn.Recv != null && ContainsExplicitExistential(fn.Recv)),
         _ => false,
     };
 

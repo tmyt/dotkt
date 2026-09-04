@@ -232,6 +232,38 @@ class TypeVariableOverloads<A, B> {
     fun choose(value: B): String = "second:$value"
 }
 
+// Non-array use-site projections must remain semantic BIR facts until bir2cir selects their physical existential
+// representation. Keep every declaration position in one compact family: invariant/variant owners, nested generic
+// arguments, bounds, parameters/results, and function-type parameters/results.
+interface UseSiteInvariant<T> {
+    fun read(): T
+    fun write(value: T)
+}
+
+private class UseSiteAnyBox(private var value: Any) : UseSiteInvariant<Any> {
+    override fun read(): Any = value
+    override fun write(value: Any) { this.value = value }
+}
+
+private class UseSiteStringBox(private var value: String) : UseSiteInvariant<String> {
+    override fun read(): String = value
+    override fun write(value: String) { this.value = value }
+}
+
+fun useSiteInParameter(box: UseSiteInvariant<in String>) { box.write("in") }
+fun useSiteOutResult(): UseSiteInvariant<out String> = UseSiteStringBox("out")
+fun useSiteVariantParameter(producer: Producer<out String>): String = producer.produce()
+fun useSiteVariantResult(): Consumer<in String> = AnyConsumer()
+fun useSiteNested(values: List<UseSiteInvariant<out String>>): String = values[0].read()
+fun <M : UseSiteInvariant<in String>> useSiteConstraint(box: M): M {
+    box.write("bound")
+    return box
+}
+fun useSiteCallable(
+    box: UseSiteInvariant<in String>,
+    transform: (UseSiteInvariant<in String>) -> UseSiteInvariant<out String>,
+): String = transform(box).read()
+
 class GenericsTests {
     @TestAttribute
     fun classAndFunction() {
@@ -313,6 +345,16 @@ class GenericsTests {
             )),
         )
         assertEquals("9", nullableProjectedProducer(arrayOf(PrivateIntProducer())))
+
+        val input = UseSiteAnyBox("initial")
+        useSiteInParameter(input)
+        assertEquals("in", input.read())
+        assertEquals("out", useSiteOutResult().read())
+        assertEquals("hello", useSiteVariantParameter(HelloProducer()))
+        assertEquals("consumed: variant", useSiteVariantResult().consume("variant"))
+        assertEquals("nested", useSiteNested(listOf(UseSiteStringBox("nested"))))
+        assertEquals("bound", useSiteConstraint(input).read())
+        assertEquals("lambda", useSiteCallable(input) { UseSiteStringBox("lambda") })
     }
 
     @TestAttribute

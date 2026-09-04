@@ -237,7 +237,7 @@ internal fun BirEmitter.birType(t0: IrType): TypeNode {
 		val simple = t as? IrSimpleType
 		val args = simple?.arguments?.map { arg ->
 			if (simple.hasRawType()) TypeNode.Star
-			else (arg as? IrTypeProjection)?.type?.let { birTypeArgument(it) } ?: TypeNode.Star
+			else birTypeProjection(arg)
 		}
 		return when {
 			!args.isNullOrEmpty() -> TypeNode.Fqn(netName, args)
@@ -266,18 +266,8 @@ internal fun BirEmitter.birType(t0: IrType): TypeNode {
 				// synthetic `kotlin.internal.ir.RawType` annotation. Its IR renderer deliberately prints that shape as
 				// `G<*>`, but reading only `IrTypeProjection.type` silently changes the Kotlin existential into `G<Any>`.
 				// Preserve the frontend fact in BIR; bir2cir owns the physical existential/runtime representation.
-				val semanticArgs = if (t.hasRawType()) sargs.map { TypeNode.Star } else sargs.map { a ->
-					val at = (a as? IrTypeProjection)?.type
-					when {
-						// A STAR projection is Kotlin vocabulary. Preserve it in BIR; bir2cir authors the CLR
-						// existential representation (a reified `G<Any>` is not equivalent on the CLR).
-						at == null -> TypeNode.Star
-						// A `Unit` TYPE-ARG stays the real Unit identity (a generic arg of System.Void is invalid).
-						at.isUnit() -> TypeNode.Fqn("kotlin.Unit")
-						// A NULLABLE type-parameter arg keeps its `nullable(tv)` marker (bir2cir erases it).
-						else -> birTypeArgument(at)
-					}
-				}
+				val semanticArgs = if (t.hasRawType()) sargs.map { TypeNode.Star }
+				else sargs.map(::birTypeProjection)
 				// Preserve Kotlin's inner-class argument order [own..., outer...] in BIR. Some self types expose only
 				// their own arguments; append the enclosing declaration variables as the missing semantic suffix.
 				// bir2cir owns the later projection to CLR's [outer..., own...] order.
@@ -301,7 +291,7 @@ internal fun BirEmitter.birType(t0: IrType): TypeNode {
 
 /** birType of a type-argument at index [i], or null if absent/non-projection. */
 private fun BirEmitter.argType(t: IrType, i: Int): TypeNode? =
-	(t as? IrSimpleType)?.arguments?.getOrNull(i)?.let { (it as? IrTypeProjection)?.type?.let(::birTypeArgument) }
+	(t as? IrSimpleType)?.arguments?.getOrNull(i)?.let(::birTypeProjection)
 
 /** Render a generic argument under a spliced default's existential view. A captured owner slot is `star` here while
  * the same slot used as a value/parameter type remains its upper-bound erasure. */
@@ -521,14 +511,14 @@ internal fun BirEmitter.ownerSpec(klass: IrClass?, recvType: IrType?): TypeNode 
 	fun projectedArgs(type: IrType?): List<TypeNode>? {
 		val simple = type as? IrSimpleType ?: return null
 		if (simple.hasRawType()) return simple.arguments.map { TypeNode.Star }
-		return simple.arguments.map { a ->
-			val at = (a as? IrTypeProjection)?.type
-			when {
-				at == null -> TypeNode.Star
-				at.isUnit() -> TypeNode.Fqn("kotlin.Unit")
-				else -> birTypeArgument(at)
-			}
+		// A boxed Array's use-site projection belongs to its value shape (`birType` emits `array(projection(...))`).
+		// `ownerSpec` names only the selected Array declaration for member binding; repeating the projection here
+		// would make the ordinary generic existential pass synthesize a nominal `Array$star` owner even though CLR
+		// arrays are already handled by the dedicated array lowering.
+		if (type.isBoxedArray) return simple.arguments.map { argument ->
+			(argument as? IrTypeProjection)?.type?.let(::birTypeArgument) ?: TypeNode.Star
 		}
+		return simple.arguments.map(::birTypeProjection)
 	}
 	// Kotlin's constructed type for an inner classifier carries [own..., outer...]. Preserve it verbatim in BIR;
 	// inventing enclosing `tv`s below is only the open/current-owner fallback. bir2cir owns physical reordering.

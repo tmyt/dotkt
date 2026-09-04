@@ -136,11 +136,13 @@ static class AliasHelperHoist
     {
         TypeNode.Tv tv => rewrite(tv),
         TypeNode.Fqn f => new TypeNode.Fqn(f.Name, f.Args?.Select(a => RewriteType(a, rewrite)).ToArray()),
+        TypeNode.Projection p => new TypeNode.Projection(p.Variance, RewriteType(p.Of, rewrite)),
         TypeNode.Nullable n => new TypeNode.Nullable(RewriteType(n.Of, rewrite)),
         TypeNode.Oblivious o => new TypeNode.Oblivious(RewriteType(o.Of, rewrite)),
         TypeNode.Array a => new TypeNode.Array(RewriteType(a.Elem, rewrite)),
         TypeNode.ByRef b => new TypeNode.ByRef(RewriteType(b.Of, rewrite)),
         TypeNode.Ptr p => new TypeNode.Ptr(RewriteType(p.Of, rewrite)),
+        TypeNode.Mod m => new TypeNode.Mod(m.Req, RewriteType(m.M, rewrite), RewriteType(m.Of, rewrite)),
         TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend, RewriteType(fn.Ret, rewrite),
             fn.Params.Select(p => RewriteType(p, rewrite)).ToArray(),
             fn.Recv == null ? null : RewriteType(fn.Recv, rewrite), fn.Clr,

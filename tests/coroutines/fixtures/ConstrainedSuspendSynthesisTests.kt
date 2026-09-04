@@ -84,6 +84,19 @@ suspend fun <T : Comparable<T>> constrainedSuspendCompareAcrossSuspension(a: T, 
     return a.compareTo(b)
 }
 
+// A use-site projection in a generic constraint must survive kotc -> BIR so bir2cir can choose an existential
+// physical representation. Erasing `in K`/`in T` to invariant arguments makes the moved state-machine constraint
+// `M : MutableMap<K, T>`, which rejects a valid wider destination because IDictionary<K, T> is invariant.
+suspend fun <T, K, M : MutableMap<in K, in T>> constrainedSuspendPutProjected(
+    key: K,
+    value: T,
+    destination: M,
+): M {
+    suspendCoroutine<Unit> { continuation -> continuation.resume(Unit) }
+    destination.put(key, value)
+    return destination
+}
+
 class ConstrainedSuspendSynthesisTests {
     @TestAttribute
     fun constrainedSamInsideGenericStateMachine() {
@@ -120,5 +133,12 @@ class ConstrainedSuspendSynthesisTests {
         assertEquals(0, blockOn { constrainedSuspendCompareAcrossSuspension(2, 2) })
         // The reference instantiation asserts the SIGN only — Comparable's contract fixes that, not the magnitude.
         assertEquals(true, blockOn { constrainedSuspendCompareAcrossSuspension("b", "a") } > 0)
+    }
+
+    @TestAttribute
+    fun useSiteProjectedConstraintSurvivesStateMachineSynthesis() {
+        val destination = mutableMapOf<Any?, Any?>()
+        val result = blockOn { constrainedSuspendPutProjected("projected", 23, destination) }
+        assertEquals(true, result === destination)
     }
 }

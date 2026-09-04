@@ -1438,6 +1438,13 @@ sealed partial class ReferenceMetadataIndex
     static bool ForeignStarDeclarationDescribesCall(TypeNode declaration, TypeNode call,
         IReadOnlyList<TypeNode> ownerArgs)
     {
+        // A use-site projection changes the set of operations Kotlin permits, not the identity of the selected CLR
+        // MethodDef. Compare the projected argument's bound while retaining the projection on sourceOwner for the
+        // reflection/existential representation decision.
+        if (declaration is TypeNode.Projection declarationProjection)
+            return ForeignStarDeclarationDescribesCall(declarationProjection.Of, call, ownerArgs);
+        if (call is TypeNode.Projection callProjection)
+            return ForeignStarDeclarationDescribesCall(declaration, callProjection.Of, ownerArgs);
         // kotc keeps an already-selected CLR overload's owner slot in `sig` (`Duo<*, String>.Pick(B)` carries
         // `tv(type,1)`, not the substituted String). Compare both declaration and call slots in the source owner's
         // constructed semantic view; otherwise T0 and T1 either both look wildcard-like or neither matches.
@@ -2494,13 +2501,15 @@ sealed partial class ReferenceMetadataIndex
             || !TryMembersByBirOwner(ownerToken, out var members)) return false;
         var candidates = members.Where(m => m.IsStatic == isStatic && m.Name == memberName
             && m.MethodArity == methodArity && m.ParamCount == paramCount
-            && m.ParamTypeNodes != null && m.ReturnType != null).ToList();
+            && m.ParamTypeNodes != null && m.ReturnTypeNode != null).ToList();
         if (candidates.Count != 1) return false;
         var match = candidates[0];
         if (!ContainsExistential(match.ReturnType)
             && !match.ParamTypeNodes.Any(ContainsExistential)) return false;
         parameters = match.ParamTypeNodes;
-        result = match.ReturnType;
+        // This is a declaration ABI, so retain its owner/method generic frame. ReturnType is the best-effort static
+        // projection and deliberately drops generic arguments; using it here turns e.g. List<T> into a raw List.
+        result = match.ReturnTypeNode;
         return true;
     }
 

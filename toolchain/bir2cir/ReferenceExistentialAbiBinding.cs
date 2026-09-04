@@ -33,9 +33,19 @@ static class ReferenceExistentialAbiBinding
                     if (paramCount >= 0 && refs.TryExistentialAbiMember(owner, method,
                         kind == "callStatic", methodArity, paramCount, out var physicalParams, out var physicalResult))
                     {
-                        call["sig"] = new JsonArray(physicalParams.Select(TypeJson.Write).ToArray());
+                        var currentSignature = call["sig"] as JsonArray;
+                        call["sig"] = new JsonArray(physicalParams.Select((parameter, index) =>
+                            ContainsPhysicalExistential(parameter, refs)
+                                ? TypeJson.Write(parameter)
+                                : currentSignature?[index]?.DeepClone() ?? TypeJson.Write(parameter)).ToArray());
                         var previousResult = TypeJson.Read(call["ret"]);
-                        call["ret"] = TypeJson.Write(physicalResult);
+                        // A member may enter this path solely because one parameter uses an existential carrier. Its
+                        // unrelated result remains the frontend-instantiated caller fact (`List<T>`, for example);
+                        // replacing that with the declaration reader's open frame would either lose arguments or put
+                        // the callee's method-TV indexes into the caller's frame. Only a physically existential result
+                        // needs this ABI projection.
+                        if (ContainsPhysicalExistential(physicalResult, refs))
+                            call["ret"] = TypeJson.Write(physicalResult);
                         // Spec §2.7: a pass that changes a node's RESULT TYPE rewrites or deletes its `sty`. Binding
                         // the referenced DLL's PHYSICAL result is such a change — the existential erasure can make it
                         // a type unrelated to the frontend's INSTANTIATED stamp, and that stamp is read FIRST by every
@@ -46,7 +56,8 @@ static class ReferenceExistentialAbiBinding
                         // Gated on THIS pass having actually changed the result: §2.7 is an obligation on the pass
                         // that retypes, and a pass that silently laundered another pass's stale stamp would remove the
                         // evidence the chokepoint exists to surface.
-                        if (!physicalResult.Equals(previousResult)) NodeType.DropStampIfStale(call);
+                        if (ContainsPhysicalExistential(physicalResult, refs)
+                            && !physicalResult.Equals(previousResult)) NodeType.DropStampIfStale(call);
                     }
                 }
                 foreach (var value in call.Select(kv => kv.Value).ToList())
@@ -58,6 +69,20 @@ static class ReferenceExistentialAbiBinding
                 break;
         }
     }
+
+    static bool ContainsPhysicalExistential(TypeNode type, ReferenceMetadataIndex refs) => type switch
+    {
+        TypeNode.Fqn f => refs.IsExistentialPhysicalOwner(f.Name)
+            || f.Args?.Any(argument => ContainsPhysicalExistential(argument, refs)) == true,
+        TypeNode.Nullable nullable => ContainsPhysicalExistential(nullable.Of, refs),
+        TypeNode.Oblivious oblivious => ContainsPhysicalExistential(oblivious.Of, refs),
+        TypeNode.Array array => ContainsPhysicalExistential(array.Elem, refs),
+        TypeNode.ByRef byRef => ContainsPhysicalExistential(byRef.Of, refs),
+        TypeNode.Fn function => ContainsPhysicalExistential(function.Ret, refs)
+            || function.Params.Any(parameter => ContainsPhysicalExistential(parameter, refs))
+            || function.Recv != null && ContainsPhysicalExistential(function.Recv, refs),
+        _ => false,
+    };
 
     static string Owner(JsonObject call, string kind)
     {

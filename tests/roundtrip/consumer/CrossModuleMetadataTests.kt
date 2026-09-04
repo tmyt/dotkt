@@ -108,6 +108,16 @@ import starprojection.referencedExistentialFusibleFlow
 import starprojection.ReferencedIntProjectedArrayValue
 import starprojection.ReferencedStringProjectedArrayValue
 import starprojection.renderProjectedArrayValues
+import starprojection.ReferencedUseSiteInvariant
+import starprojection.referencedUseSiteInput
+import starprojection.referencedUseSiteOutput
+import starprojection.referencedUseSiteNested
+import starprojection.referencedUseSiteConstraint
+import starprojection.referencedUseSiteCallable
+import starprojection.ReferencedUseSiteProducer
+import starprojection.ReferencedUseSiteConsumer
+import starprojection.referencedVariantUseSiteOutput
+import starprojection.referencedVariantUseSiteInput
 import starprojection.ReferencedStarCopy
 import starprojection.ReferencedStarNested
 import starprojection.ReferencedStarNestedCopy
@@ -486,6 +496,23 @@ class GenericMetadataRoundtripTests {
                     ReferencedStringProjectedArrayValue("cross-module"),
                 ),
             ),
+        )
+
+        val projectedInput: ReferencedUseSiteInvariant<in String> = referencedUseSiteInput()
+        val projectedOutput: ReferencedUseSiteInvariant<out String> = referencedUseSiteOutput()
+        ClassicAssert.AreEqual("output", projectedOutput.read())
+        val variantOutput: ReferencedUseSiteProducer<out String> = referencedVariantUseSiteOutput()
+        val variantInput: ReferencedUseSiteConsumer<in String> = referencedVariantUseSiteInput()
+        ClassicAssert.AreEqual("variant-output", variantOutput.produce())
+        ClassicAssert.AreEqual("variant:input", variantInput.consume("input"))
+        ClassicAssert.AreEqual(
+            "output",
+            referencedUseSiteNested(listOf(projectedOutput)).read(),
+        )
+        ClassicAssert.IsTrue(referencedUseSiteConstraint(projectedInput) === projectedInput)
+        ClassicAssert.AreEqual(
+            "output",
+            referencedUseSiteCallable(projectedInput) { projectedOutput },
         )
 
         val copySource: ReferencedStarCopy<*> = referencedStarCopy()

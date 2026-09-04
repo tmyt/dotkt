@@ -64,6 +64,48 @@ class ReferencedStringProjectedArrayValue(private val text: String) : ProjectedA
 fun <T> renderProjectedArrayValues(values: Array<out ProjectedArrayValue<T>>): String =
     values[0].value().toString() + ":" + values[1].value().toString()
 
+// Ordinary (non-array) projections must survive producer DLL -> dll2klib -> consumer KLIB exactly. The physical
+// carrier is intentionally invisible to the consumer; these signatures cover every exported declaration position.
+interface ReferencedUseSiteInvariant<T> {
+    fun read(): T
+    fun write(value: T)
+}
+
+interface ReferencedUseSiteProducer<out T> { fun produce(): T }
+interface ReferencedUseSiteConsumer<in T> { fun consume(value: T): String }
+private object ReferencedUseSiteStringProducer : ReferencedUseSiteProducer<String> {
+    override fun produce(): String = "variant-output"
+}
+private object ReferencedUseSiteAnyConsumer : ReferencedUseSiteConsumer<Any> {
+    override fun consume(value: Any): String = "variant:$value"
+}
+
+private class ReferencedUseSiteAnyBox(private var value: Any) : ReferencedUseSiteInvariant<Any> {
+    override fun read(): Any = value
+    override fun write(value: Any) { this.value = value }
+}
+
+private class ReferencedUseSiteStringBox(private var value: String) : ReferencedUseSiteInvariant<String> {
+    override fun read(): String = value
+    override fun write(value: String) { this.value = value }
+}
+
+fun referencedUseSiteInput(): ReferencedUseSiteInvariant<in String> = ReferencedUseSiteAnyBox("initial")
+fun referencedUseSiteOutput(): ReferencedUseSiteInvariant<out String> = ReferencedUseSiteStringBox("output")
+fun referencedVariantUseSiteOutput(): ReferencedUseSiteProducer<out String> = ReferencedUseSiteStringProducer
+fun referencedVariantUseSiteInput(): ReferencedUseSiteConsumer<in String> = ReferencedUseSiteAnyConsumer
+fun referencedUseSiteNested(
+    values: List<ReferencedUseSiteInvariant<out String>>,
+): ReferencedUseSiteInvariant<out String> = values[0]
+fun <M : ReferencedUseSiteInvariant<in String>> referencedUseSiteConstraint(value: M): M {
+    value.write("constraint")
+    return value
+}
+fun referencedUseSiteCallable(
+    value: ReferencedUseSiteInvariant<in String>,
+    transform: (ReferencedUseSiteInvariant<in String>) -> ReferencedUseSiteInvariant<out String>,
+): String = transform(value).read()
+
 // A downstream generated data-class `copy()` call reconstructs each omitted default from the referenced receiver.
 // On a star receiver those property values must use this assembly's published existential getter slots rather than
 // naming backing fields that the deliberately fieldless existential interface cannot own.

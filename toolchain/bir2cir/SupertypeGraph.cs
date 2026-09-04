@@ -166,10 +166,13 @@ static class SupertypeGraph
     {
         TypeNode.Tv { Scope: "type" } tv when tv.I >= 0 && tv.I < args.Length => args[tv.I],
         TypeNode.Fqn f when f.Args is not null => new TypeNode.Fqn(f.Name, f.Args.Select(a => SubstOwnerTvs(a, args)).ToArray()),
+        TypeNode.Projection p => new TypeNode.Projection(p.Variance, SubstOwnerTvs(p.Of, args)),
         TypeNode.Nullable n => new TypeNode.Nullable(SubstOwnerTvs(n.Of, args)),
         TypeNode.Oblivious o => new TypeNode.Oblivious(SubstOwnerTvs(o.Of, args)),
         TypeNode.Array a => new TypeNode.Array(SubstOwnerTvs(a.Elem, args), a.Rank, a.SzArray),
         TypeNode.ByRef r => new TypeNode.ByRef(SubstOwnerTvs(r.Of, args)),
+        TypeNode.Ptr p => new TypeNode.Ptr(SubstOwnerTvs(p.Of, args)),
+        TypeNode.Mod m => new TypeNode.Mod(m.Req, SubstOwnerTvs(m.M, args), SubstOwnerTvs(m.Of, args)),
         TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend, SubstOwnerTvs(fn.Ret, args),
             fn.Params.Select(p => SubstOwnerTvs(p, args)).ToArray(),
             fn.Recv == null ? null : SubstOwnerTvs(fn.Recv, args), fn.Clr,
