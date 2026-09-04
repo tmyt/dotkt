@@ -822,6 +822,7 @@ private fun BirEmitter.delegatedOperatorSig(accessor: IrSimpleFunction): String 
 
 internal fun TypeNode.containsStarProjection(): Boolean = when (this) {
 	TypeNode.Star -> true
+	is TypeNode.Projection -> true
 	is TypeNode.Fqn -> args?.any { it.containsStarProjection() } == true
 	is TypeNode.Fn -> ret.containsStarProjection() || params.any { it.containsStarProjection() } ||
 		recv?.containsStarProjection() == true || ctx.any { it.containsStarProjection() }
@@ -1218,7 +1219,7 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 		val localSig = (caps.map { str(captureFieldType(it)) } +
 			callee.parameters.filter { it.kind == IrParameterKind.DispatchReceiver }.map { birType(it.type).toJson() } +
 			listOfNotNull(extensionReceiverParam(callee)).map { birType(it.type).toJson() } +
-			callee.parameters.filter { isValueParameter(it) }.map { birType(it.type).toJson() })
+			callee.parameters.filter { isValueParameter(it) }.map { birValueParameterType(it).toJson() })
 			.joinToString(",")
 		val resolvedTypeArgs = callee.typeParameters.indices.map { call.typeArguments.getOrNull(it) }
 		val typeArgs = if (local.typeParams.isEmpty()) "" else ""","typeArgs":[${

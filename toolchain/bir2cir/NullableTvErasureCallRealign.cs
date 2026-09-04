@@ -1046,6 +1046,10 @@ static partial class NullableTvErasureCallRealign
                 return Subst(n.Of, typeArgs, methodArgs) is TypeNode i0 ? new TypeNode.Nullable(i0) : null;
             case TypeNode.Oblivious o:
                 return Subst(o.Of, typeArgs, methodArgs) is TypeNode i1 ? new TypeNode.Oblivious(i1) : null;
+            case TypeNode.Projection p:
+                // This helper authors concrete use-site CIR storage/casts. Projection controls assignability at the
+                // Kotlin boundary but is not itself a reifiable CLR type, so substitute through the wrapper.
+                return Subst(p.Of, typeArgs, methodArgs);
             case TypeNode.Array ar:
                 return Subst(ar.Elem, typeArgs, methodArgs) is TypeNode i2
                     ? new TypeNode.Array(i2, ar.Rank, ar.SzArray)
@@ -1165,6 +1169,8 @@ static partial class NullableTvErasureCallRealign
                 => IsObjectErasureOf(c.Elem, e.Elem),
             (TypeNode.Nullable c, TypeNode.Nullable e) => IsObjectErasureOf(c.Of, e.Of),
             (TypeNode.Oblivious c, TypeNode.Oblivious e) => IsObjectErasureOf(c.Of, e.Of),
+            (TypeNode.Projection c, TypeNode.Projection e) when c.Variance == e.Variance
+                => IsObjectErasureOf(c.Of, e.Of),
             (TypeNode.ByRef c, TypeNode.ByRef e) => IsObjectErasureOf(c.Of, e.Of),
             (TypeNode.Fn c, TypeNode.Fn e)
                 when c.Params.Length == e.Params.Length && c.Suspend == e.Suspend

@@ -247,6 +247,7 @@ static class NullableGenericErasure
         TypeNode.Nullable { Of: TypeNode.Tv } => true,
         TypeNode.Nullable n => HasNullableTv(n.Of),
         TypeNode.Oblivious o => HasNullableTv(o.Of),
+        TypeNode.Projection p => HasNullableTv(p.Of),
         TypeNode.Fqn { Args: { } args } => args.Any(HasNullableTv),
         TypeNode.Array a => HasNullableTv(a.Elem),
         TypeNode.ByRef b => HasNullableTv(b.Of),
@@ -312,6 +313,7 @@ static class NullableGenericErasure
         TypeNode.Array a => ErasedArgument(a.Elem, isValue),
         TypeNode.ByRef b => HasRestorableNullableTv(b.Of, isValue),
         TypeNode.Oblivious o => HasRestorableNullableTv(o.Of, isValue),
+        TypeNode.Projection p => HasRestorableNullableTv(p.Of, isValue),
         // A delegate's RETURN is an argument position; its PARAMETERS keep the declared form, so they need a carrier
         // only where a slot would — for the open `Nullable(Tv)` no CLR slot expresses.
         TypeNode.Fn { Suspend: false } fn =>
@@ -585,6 +587,7 @@ static class NullableGenericErasure
             // An NRT-OBLIVIOUS `T!` is a pure nullability ANNOTATION, not a container — BirTypeLowering lowers
             // straight through it and propagates the position with it — so its inner keeps THIS node's position.
             TypeNode.Oblivious o => new TypeNode.Oblivious(Erase(o.Of, pos, isValue)),
+            TypeNode.Projection p => new TypeNode.Projection(p.Variance, Erase(p.Of, pos, isValue)),
             TypeNode.Fqn { Args: null } f => f,
             TypeNode.Fqn f => new TypeNode.Fqn(f.Name, f.Args.Select(a => Erase(a, inner, isValue)).ToArray()),
             TypeNode.Array a => new TypeNode.Array(Erase(a.Elem, inner, isValue), a.Rank, a.SzArray),
@@ -645,6 +648,7 @@ static class NullableGenericErasure
         TypeNode.ByRef b => AtSlot(b.Of),
         TypeNode.Nullable n => AtSlot(n.Of),
         TypeNode.Oblivious o => AtSlot(o.Of),
+        TypeNode.Projection p => AtArgument(p.Of),
         TypeNode.Fn fn => AtArgument(fn.Ret) || fn.Params.Any(AtSlot)
                           || (fn.Recv != null && AtSlot(fn.Recv)),
         _ => false,

@@ -327,6 +327,7 @@ internal fun BirEmitter.tvOf(param: IrTypeParameter): TypeNode.Tv {
 internal fun BirEmitter.hasTv(t: TypeNode): Boolean = when (t) {
 	is TypeNode.Tv -> true
 	TypeNode.Star -> false   // metadata/frontend-only; a defensive value cannot contain a type variable
+	is TypeNode.Projection -> hasTv(t.of)
 	is TypeNode.Fqn -> t.args?.any { hasTv(it) } == true
 	is TypeNode.Fn -> hasTv(t.ret) || t.params.any { hasTv(it) } || (t.recv?.let { hasTv(it) } == true)
 	is TypeNode.Nullable -> hasTv(t.of)
@@ -341,6 +342,7 @@ internal fun BirEmitter.hasTv(t: TypeNode): Boolean = when (t) {
 internal fun BirEmitter.containsTv(t: TypeNode): Boolean = when (t) {
 	is TypeNode.Tv -> true
 	TypeNode.Star -> false   // metadata/frontend-only; a defensive value cannot contain a type variable
+	is TypeNode.Projection -> containsTv(t.of)
 	is TypeNode.Fqn -> t.args?.any { containsTv(it) } == true
 	is TypeNode.Fn -> containsTv(t.ret) || t.params.any { containsTv(it) } || (t.recv?.let { containsTv(it) } == true)
 	is TypeNode.Nullable -> containsTv(t.of)
@@ -395,9 +397,29 @@ internal fun IrType.isPrimitiveOrUnsigned(): Boolean = makeNotNull().let { it.is
 internal fun BirEmitter.arrayElemType(t: IrType): TypeNode {
 	val fq = t.classFqName?.asString()
 	if (fq == "kotlin.Array")
-		return (t as? IrSimpleType)?.arguments?.firstOrNull()?.let { (it as? IrTypeProjection)?.type?.let(::birType) } ?: OBJ
+		return (t as? IrSimpleType)?.arguments?.firstOrNull()?.let(::birTypeProjection) ?: OBJ
 	return OBJ
 }
+
+/** A source `vararg E` has the physical declaration shape `E[]`; fir2ir exposes its read-only body view as
+ * `Array<out E>`, but that compiler-added projection is not an authored array-projection ABI. The `vararg` modifier
+ * is the faithful source fact and lets dll2klib restore the Kotlin declaration. */
+internal fun BirEmitter.birValueParameterType(parameter: IrValueParameter): TypeNode =
+	parameter.varargElementType?.let { TypeNode.Array(birType(it)) } ?: birType(parameter.type)
+
+/** Preserve a use-site `in`/`out` projection in semantic BIR. Declaration-site variance stays on the classifier's
+ * type-parameter descriptor; bir2cir consumes this occurrence when selecting a reifiable CLR representation. */
+internal fun BirEmitter.birTypeProjection(argument: org.jetbrains.kotlin.ir.types.IrTypeArgument): TypeNode {
+	val projection = argument as? IrTypeProjection ?: return TypeNode.Star
+	return projectTypeArgument(projection.variance, birTypeArgument(projection.type))
+}
+
+private fun projectTypeArgument(variance: org.jetbrains.kotlin.types.Variance, type: TypeNode): TypeNode =
+	when (variance) {
+		org.jetbrains.kotlin.types.Variance.IN_VARIANCE -> TypeNode.Projection("in", type)
+		org.jetbrains.kotlin.types.Variance.OUT_VARIANCE -> TypeNode.Projection("out", type)
+		org.jetbrains.kotlin.types.Variance.INVARIANT -> type
+	}
 
 /** Kotlin nullable VALUE type (`Int?`/`Double?`… AND the unsigned inline-classes `UInt?`/`UByte?`/…) -> the value
  *  element identity (`kotlin.Int`, `kotlin.UInt`…), else null. Unsigned is a value type on the CLR (`Nullable<uint>`),

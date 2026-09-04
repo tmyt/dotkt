@@ -64,9 +64,19 @@ class Slot<T>(var a: T, var b: T) {
 interface Producer<out T> { fun produce(): T }
 interface Consumer<in T> { fun consume(t: T): String }
 class HelloProducer : Producer<String> { override fun produce(): String = "hello" }
+class IntProducer(private val value: Int) : Producer<Int> { override fun produce(): Int = value }
 class AnyConsumer : Consumer<Any> { override fun consume(t: Any): String = "consumed: $t" }
 fun useProducer(p: Producer<Any>): String = p.produce().toString()   // covariance: Producer<String> flows in
 fun useConsumer(c: Consumer<String>): String = c.consume("world")    // contravariance: Consumer<Any> flows in
+
+// Different closed constructions of a covariant E share one logical projected array, but cannot be stored in the
+// CLR fiction `Producer<object>[]` (in particular Producer<Int> is not that type). Exercise heterogeneous allocation,
+// a result-independent array helper, and projected reads through the exact Array<out E> declaration contract.
+fun <T> projectedProducerValues(producers: Array<out Producer<T>>): String {
+    if (producers.isEmpty()) return "empty"
+    val first = producers[0].produce().toString()
+    return first + ":" + producers[1].produce().toString()
+}
 
 // G-7: a member called on a receiver whose STATIC TYPE IS THE TYPE PARAMETER. The stack holds a `!!T`, not an
 // interface reference, so the only verifiable dispatch is `constrained. !!T ; callvirt` — for every spelling of
@@ -220,6 +230,7 @@ class GenericsTests {
     fun variance() {
         assertEquals("hello", useProducer(HelloProducer()))       // hello
         assertEquals("consumed: world", useConsumer(AnyConsumer())) // consumed: world
+        assertEquals("7:hello", projectedProducerValues(arrayOf(IntProducer(7), HelloProducer())))
     }
 
     @TestAttribute

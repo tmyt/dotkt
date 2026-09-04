@@ -84,6 +84,9 @@ static class BirTypeLowering
                 case TypeNode.Oblivious oblivious:
                     ValidateType(oblivious.Of, directGenericArgument);
                     return;
+                case TypeNode.Projection projection:
+                    ValidateType(projection.Of, directGenericArgument);
+                    return;
             }
         }
 

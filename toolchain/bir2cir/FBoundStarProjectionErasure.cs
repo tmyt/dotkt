@@ -21,6 +21,7 @@ static class FBoundStarProjectionErasure
     internal const int InnerFactoryBottomTypeArgument = -1;
     internal const string ErasedInnerConstraintKey = "erasedInnerConstraints";
     const string NormalizedInnerFactoryReturnKey = "_normalizedInnerFactoryReturn";
+    const string ProjectedArrayReadKey = "_projectedArrayRead";
     internal const string SourceMemberKey = "existentialSourceMember";
     internal const string InnerConstructorFactoryKey = "existentialInnerConstructorFactory";
     const string ExistentialResultProjectionKey = "_existentialResultProjection";
@@ -42,7 +43,7 @@ static class FBoundStarProjectionErasure
         var defs = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
         foreach (var root in rootList) Collect(root, root, owners, defs);
         AllocateCarrierNames(owners, defs.Keys);
-        foreach (var root in rootList) MarkNeeded(root, owners);
+        foreach (var root in rootList) MarkNeeded(root, owners, defs, refs);
         MarkNeededClosure(owners);
 
         foreach (var owner in owners.Values.Where(o => o.Needed)) Synthesize(owner, owners, defs, refs);
@@ -381,11 +382,15 @@ static class FBoundStarProjectionErasure
         declaration[fact] = TypeNode.ToJson(type);
     }
 
-    static void MarkNeeded(JsonNode node, IReadOnlyDictionary<string, Owner> owners)
+    static void MarkNeeded(JsonNode node, IReadOnlyDictionary<string, Owner> owners,
+        IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs)
     {
         switch (node)
         {
             case JsonObject obj:
+                if (TryVarianceProjectedArrayOwner(obj, defs, refs, out var arrayOwner)
+                    && owners.TryGetValue(arrayOwner.Name, out var projectedOwner))
+                    projectedOwner.Needed = true;
                 var runtimeClassifier = Str(obj["k"]) is "isInst" or "cast";
                 foreach (var kv in obj)
                 {
@@ -394,7 +399,7 @@ static class FBoundStarProjectionErasure
                     {
                         MarkNeededType(type, owners, runtimeClassifier && kv.Key == "type");
                     }
-                    else MarkNeeded(kv.Value, owners);
+                    else MarkNeeded(kv.Value, owners, defs, refs);
                 }
                 break;
             case JsonArray arr:
@@ -402,10 +407,54 @@ static class FBoundStarProjectionErasure
                     if (value != null)
                     {
                         if (TypeJson.Read(value) is TypeNode type) MarkNeededType(type, owners, false);
-                        else MarkNeeded(value, owners);
+                        else MarkNeeded(value, owners, defs, refs);
                     }
                 break;
         }
+    }
+
+    // Kotlin can infer `Array<G<Join>>` from values `G<A>`, `G<B>`, ... when G's source variance makes each
+    // conversion legal. CLR arrays are covariant only in their immediate reference element; that does not turn the
+    // invariant physical constructions G<A>/G<B> into G<Join>. The already type-checked BIR is the authority for the
+    // semantic join. Preserve it physically by allocating the nominal existential view implemented by every G<X>.
+    //
+    // This is deliberately structural: neither arrayOf nor a library/function name is recognized. Every non-null
+    // element must project through the declaration graph to the array element's generic owner, and at least one such
+    // construction must differ from the inferred join. An ordinary homogeneous generic array remains reified.
+    static bool TryVarianceProjectedArrayOwner(JsonObject obj,
+        IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs,
+        out TypeNode.Fqn targetOwner)
+    {
+        targetOwner = null;
+        if (Str(obj["k"]) != "newArray"
+            || StripSourceNullability(TypeJson.Read(obj["elem"]))
+                is not TypeNode.Fqn { Args: { Length: > 0 } } target
+            || obj["elems"] is not JsonArray elements || elements.Count == 0)
+            return false;
+
+        var targetKey = string.Join("\0", target.Args.Select(SupertypeGraph.TypeKey));
+        var sawTypedElement = false;
+        var sawDifferentConstruction = false;
+        foreach (var element in elements)
+        {
+            if (element is JsonObject { } expression && Str(expression["k"]) == "const"
+                && expression["value"] == null)
+                continue;
+            if (StripSourceNullability(ExpressionType(element))
+                is not TypeNode.Fqn source)
+                return false;
+            var projected = source.Name == target.Name
+                ? source.Args ?? Array.Empty<TypeNode>()
+                : ProjectConstructedArguments(source, target.Name, defs, refs)?.ToArray();
+            if (projected == null || projected.Length != target.Args.Length)
+                return false;
+            sawTypedElement = true;
+            var projectedKey = string.Join("\0", projected.Select(SupertypeGraph.TypeKey));
+            sawDifferentConstruction |= projectedKey != targetKey;
+        }
+        if (!sawTypedElement || !sawDifferentConstruction) return false;
+        targetOwner = target;
+        return true;
     }
 
     static void MarkNeededType(TypeNode type, IReadOnlyDictionary<string, Owner> owners, bool runtimeClassifier)
@@ -414,9 +463,14 @@ static class FBoundStarProjectionErasure
         {
             case TypeNode.Fqn { Args: { } args } f:
                 if (owners.TryGetValue(f.Name, out var owner)
-                    && (runtimeClassifier || args.Any(a => a is TypeNode.Star)))
+                    && (runtimeClassifier || args.Any(IsExistentialArgument)))
                     owner.Needed = true;
                 foreach (var a in args) MarkNeededType(a, owners, false);
+                break;
+            case TypeNode.Projection p:
+                if (p.Of is TypeNode.Fqn projected && owners.TryGetValue(projected.Name, out var projectedOwner))
+                    projectedOwner.Needed = true;
+                MarkNeededType(p.Of, owners, false);
                 break;
             case TypeNode.Nullable n: MarkNeededType(n.Of, owners, false); break;
             case TypeNode.Oblivious o: MarkNeededType(o.Of, owners, false); break;
@@ -1357,6 +1411,8 @@ static class FBoundStarProjectionErasure
         switch (node)
         {
             case JsonObject obj:
+                var projectedArrayRead = Bool(obj[ProjectedArrayReadKey]);
+                obj.Remove(ProjectedArrayReadKey);
                 var childTypeParameters = existentialTypeParameters;
                 var childMethodParameters = existentialMethodParameters;
                 var childThisType = currentThisType;
@@ -1378,6 +1434,12 @@ static class FBoundStarProjectionErasure
                     existentialTypeParameters, existentialMethodParameters);
                 BindStarFieldThroughCanonicalGetter(obj, owners, defs, refs);
                 BindInheritedStarMember(obj, owners, defs, refs);
+                if (!projectedArrayRead)
+                    BindProjectedArrayRead(obj, owners, refs);
+                BindProjectedArrayGenericCall(obj, owners, refs);
+                if (TryVarianceProjectedArrayOwner(obj, defs, refs, out var projectedArrayOwner)
+                    && TryExistentialCarrier(projectedArrayOwner.Name, owners, refs, out var arrayCarrier))
+                    obj["elem"] = TypeJson.Write(new TypeNode.Fqn(arrayCarrier));
                 // A cast operand can itself lower onto an existential carrier. Decide whether the parent has an
                 // exact constructed source only after that physical representation is known; its stale frontend
                 // `sty` is not proof that `(x as Derived<T>) as Base<T>` still carries Derived<T> at this point.
@@ -1439,6 +1501,85 @@ static class FBoundStarProjectionErasure
                 }
                 break;
         }
+    }
+
+    // `Array<out G<T>>` is physically an array of G's existential carrier. A read is nevertheless known by Kotlin's
+    // projection contract to have semantic upper bound G<T>. Keep the value in its carrier representation and attach
+    // that semantic projection for the immediately-following member binder; casting the carrier to G<T> would be
+    // false for a value that entered through covariance (Producer<Int> is not Producer<Comparable<*>> on the CLR).
+    static void BindProjectedArrayRead(JsonObject read,
+        IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs)
+    {
+        if (Str(read["k"]) != "arrayGet"
+            || ExpressionType(read["array"]) is not TypeNode.Array { Elem: TypeNode.Projection projection })
+            return;
+        var exact = RewriteType(projection.Of, owners, refs);
+        var physical = RewriteType(projection, owners, refs);
+        if (exact.Equals(physical) || !IsExistentialPhysicalCarrier(physical, owners, refs)) return;
+
+        var inner = read.DeepClone().AsObject();
+        inner[ProjectedArrayReadKey] = true;
+        foreach (var key in read.Select(pair => pair.Key).ToList()) read.Remove(key);
+        read["k"] = "cast";
+        read["type"] = TypeJson.Write(physical);
+        read["e"] = inner;
+        read[ExistentialResultProjectionKey] = TypeJson.Write(exact);
+        read["_exactBridgeCast"] = true;
+    }
+
+    // A generic array helper must be instantiated with the array's physical element, not the semantic G<T> hidden
+    // behind `out`. Result-independent helpers (size/isEmpty-style contracts) can simply be re-closed over the
+    // carrier. Result-dependent shapes are left untouched: converting a carrier sequence back to G<T> would require
+    // the same invalid CLR covariance this pass exists to avoid.
+    static void BindProjectedArrayGenericCall(JsonObject call,
+        IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs)
+    {
+        if (Str(call["k"]) != "callStatic" || call["sig"] is not JsonArray signature
+            || call["args"] is not JsonArray arguments || call["typeArgs"] is not JsonArray typeArguments
+            || signature.Count != arguments.Count)
+            return;
+
+        for (var parameterIndex = 0; parameterIndex < signature.Count; parameterIndex++)
+        {
+            if (TypeJson.Read(signature[parameterIndex]) is not TypeNode.Array
+                { Elem: TypeNode.Projection { Of: TypeNode.Tv { Scope: "method" } variable } }
+                || variable.I < 0 || variable.I >= typeArguments.Count
+                || ExpressionType(arguments[parameterIndex]) is not TypeNode.Array
+                    { Elem: TypeNode.Projection argumentProjection })
+                continue;
+
+            var exact = TypeJson.Read(typeArguments[variable.I]);
+            var projectedExact = StripSourceNullability(argumentProjection.Of);
+            if (exact == null || projectedExact == null
+                || SupertypeGraph.TypeKey(exact) != SupertypeGraph.TypeKey(projectedExact))
+                continue;
+            var physical = RewriteType(argumentProjection, owners, refs);
+            if (!IsExistentialPhysicalCarrier(physical, owners, refs)) continue;
+
+            if (!ContainsEquivalentType(TypeJson.Read(call["ret"]), exact))
+                typeArguments[variable.I] = TypeJson.Write(physical);
+        }
+    }
+
+    static bool ContainsEquivalentType(TypeNode type, TypeNode expected)
+    {
+        if (type == null) return false;
+        if (SupertypeGraph.TypeKey(type) == SupertypeGraph.TypeKey(expected)) return true;
+        return type switch
+        {
+            TypeNode.Fqn { Args: { } args } => args.Any(argument => ContainsEquivalentType(argument, expected)),
+            TypeNode.Nullable nullable => ContainsEquivalentType(nullable.Of, expected),
+            TypeNode.Oblivious oblivious => ContainsEquivalentType(oblivious.Of, expected),
+            TypeNode.Projection projection => ContainsEquivalentType(projection.Of, expected),
+            TypeNode.Array array => ContainsEquivalentType(array.Elem, expected),
+            TypeNode.ByRef byRef => ContainsEquivalentType(byRef.Of, expected),
+            TypeNode.Ptr pointer => ContainsEquivalentType(pointer.Of, expected),
+            TypeNode.Fn function => ContainsEquivalentType(function.Ret, expected)
+                || function.Params.Any(parameter => ContainsEquivalentType(parameter, expected))
+                || function.Recv != null && ContainsEquivalentType(function.Recv, expected)
+                || function.Ctx?.Any(context => ContainsEquivalentType(context, expected)) == true,
+            _ => false,
+        };
     }
 
     // A default-expression carrier or compiler-generated equality body authored inside a generic class may contain a
@@ -2480,7 +2621,7 @@ static class FBoundStarProjectionErasure
         switch (type)
         {
             case TypeNode.Fqn { Args: { } nestedArgs } nestedForeign
-                when nestedArgs.Any(ContainsStar)
+                when nestedArgs.Any(ContainsExistentialProjection)
                     && ForeignStarProjectionBinding.IsForeignStarType(nestedForeign, refs):
                 // A star anywhere below a foreign invariant construction makes the whole construction
                 // non-reifiable on the CLR.  In particular Outer<Inner<*>> is not Outer<object> (nor
@@ -2490,7 +2631,7 @@ static class FBoundStarProjectionErasure
                     throw new NotSupportedException(
                         $"bir2cir: foreign byref-like generic star projection `{nestedForeign.Name}<*>` has no boxable CLR existential representation");
                 return new TypeNode.Fqn("kotlin.Any");
-            case TypeNode.Fqn { Args: { } args } f when args.Any(a => a is TypeNode.Star):
+            case TypeNode.Fqn { Args: { } args } f when args.Any(IsExistentialArgument):
             {
                 var erased = owners.TryGetValue(f.Name, out var local) ? local.ErasedName : null;
                 if (local != null && local.Needed) return new TypeNode.Fqn(erased);
@@ -2513,6 +2654,22 @@ static class FBoundStarProjectionErasure
                 // Keep CIR well-formed with the explicit erasure; supported local/reference one-parameter owners
                 // have already become their existential view above.
                 return new TypeNode.Fqn("kotlin.Any");
+            case TypeNode.Projection p:
+            {
+                // A use-site projection is existential at the CLR boundary. A compiler-authored local/referenced
+                // generic has a nominal non-generic carrier implemented by every closed construction, so retain the
+                // classifier without inventing G<object>. Foreign generics have no such nominal view and use the
+                // same opaque object representation as a star projection.
+                var projected = StripProjectionShell(p.Of);
+                if (projected is TypeNode.Fqn f)
+                {
+                    if (owners.TryGetValue(f.Name, out var local) && local.Needed)
+                        return new TypeNode.Fqn(local.ErasedName);
+                    if (refs.TryExistentialPhysicalOwner(f.Name, out var referenced))
+                        return new TypeNode.Fqn(referenced);
+                }
+                return RewriteType(p.Of, owners, refs);
+            }
             case TypeNode.Fqn { Args: { } args } f:
                 return new TypeNode.Fqn(f.Name, args.Select(a => RewriteType(a, owners, refs)).ToArray());
             case TypeNode.Nullable n: return new TypeNode.Nullable(RewriteType(n.Of, owners, refs));
@@ -2532,6 +2689,7 @@ static class FBoundStarProjectionErasure
         TypeNode.Fqn { Args: { } args } => args.Any(ContainsOwnerTv),
         TypeNode.Nullable n => ContainsOwnerTv(n.Of),
         TypeNode.Oblivious o => ContainsOwnerTv(o.Of),
+        TypeNode.Projection p => ContainsOwnerTv(p.Of),
         TypeNode.Array a => ContainsOwnerTv(a.Elem),
         TypeNode.ByRef b => ContainsOwnerTv(b.Of),
         TypeNode.Fn fn => ContainsOwnerTv(fn.Ret) || fn.Params.Any(ContainsOwnerTv)
@@ -2545,6 +2703,7 @@ static class FBoundStarProjectionErasure
         TypeNode.Fqn { Args: { } args } => args.Any(ContainsStarOrTypeVariable),
         TypeNode.Nullable n => ContainsStarOrTypeVariable(n.Of),
         TypeNode.Oblivious o => ContainsStarOrTypeVariable(o.Of),
+        TypeNode.Projection p => true,
         TypeNode.Array a => ContainsStarOrTypeVariable(a.Elem),
         TypeNode.ByRef b => ContainsStarOrTypeVariable(b.Of),
         TypeNode.Fn fn => ContainsStarOrTypeVariable(fn.Ret) || fn.Params.Any(ContainsStarOrTypeVariable)
@@ -2565,12 +2724,35 @@ static class FBoundStarProjectionErasure
         _ => false,
     };
 
+    static bool ContainsExistentialProjection(TypeNode t) => t switch
+    {
+        TypeNode.Star or TypeNode.Projection => true,
+        TypeNode.Fqn { Args: { } args } => args.Any(ContainsExistentialProjection),
+        TypeNode.Nullable n => ContainsExistentialProjection(n.Of),
+        TypeNode.Oblivious o => ContainsExistentialProjection(o.Of),
+        TypeNode.Array a => ContainsExistentialProjection(a.Elem),
+        TypeNode.ByRef b => ContainsExistentialProjection(b.Of),
+        TypeNode.Fn fn => ContainsExistentialProjection(fn.Ret) || fn.Params.Any(ContainsExistentialProjection)
+            || (fn.Recv != null && ContainsExistentialProjection(fn.Recv)),
+        _ => false,
+    };
+
+    static bool IsExistentialArgument(TypeNode type) => type is TypeNode.Star or TypeNode.Projection;
+
+    static TypeNode StripProjectionShell(TypeNode type) => type switch
+    {
+        TypeNode.Nullable n => StripProjectionShell(n.Of),
+        TypeNode.Oblivious o => StripProjectionShell(o.Of),
+        _ => type,
+    };
+
     static bool ContainsExplicitStar(TypeNode t) => t switch
     {
         TypeNode.Star => true,
         TypeNode.Fqn { Args: { } args } => args.Any(ContainsExplicitStar),
         TypeNode.Nullable n => ContainsExplicitStar(n.Of),
         TypeNode.Oblivious o => ContainsExplicitStar(o.Of),
+        TypeNode.Projection p => ContainsExplicitStar(p.Of),
         TypeNode.Array a => ContainsExplicitStar(a.Elem),
         TypeNode.ByRef b => ContainsExplicitStar(b.Of),
         TypeNode.Fn fn => ContainsExplicitStar(fn.Ret) || fn.Params.Any(ContainsExplicitStar)

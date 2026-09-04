@@ -25,6 +25,11 @@ sealed class TypeNode {
     /** `star`: a Kotlin `*` projection. BIR preserves it; bir2cir chooses an existential CLR representation. */
     data object Star : TypeNode()
 
+    /** `projection`: a Kotlin use-site `in T` / `out T` projection. bir2cir chooses its CLR representation. */
+    data class Projection(val variance: String, val of: TypeNode) : TypeNode() {
+        init { require(variance == "in" || variance == "out") }
+    }
+
     /** `fn`: a function type; [suspend] is a flag, [recv] is the extension receiver (subsumes func:/sfunc:). */
     /**
      * `fn`: a Kotlin function type. `recv` + `params` is the physical `FunctionN` argument order.
@@ -77,6 +82,11 @@ sealed class TypeNode {
             }
             is Tv -> sb.append("{\"t\":\"tv\",\"scope\":").append(esc(scope)).append(",\"i\":").append(i).append('}')
             Star -> sb.append("{\"t\":\"star\"}")
+            is Projection -> {
+                sb.append("{\"t\":\"projection\",\"variance\":").append(esc(variance)).append(",\"of\":")
+                of.write(sb)
+                sb.append('}')
+            }
             is Fn -> {
                 sb.append("{\"t\":\"fn\",\"suspend\":").append(if (suspend) "true" else "false")
                 sb.append(",\"ret\":"); ret.write(sb)

@@ -2488,7 +2488,7 @@ internal fun BirEmitter.paramsJsonList(params: List<org.jetbrains.kotlin.ir.decl
 			val allAttrs = listOfNotNull(srcAttrs.takeIf { s -> s.isNotEmpty() }, kotlinDefault).joinToString(",")
 			val pattrs = if (allAttrs.isNotEmpty()) ""","attrs":[$allAttrs]""" else ""
 			val ctxFn = ctxFnTypeField(ctxFnCountFor(it))
-			"""{"name":${str(it.name.asString())},"type":${birType(it.type).toJson()}$vararg$default$ctxFn$pattrs}"""
+			"""{"name":${str(it.name.asString())},"type":${birValueParameterType(it).toJson()}$vararg$default$ctxFn$pattrs}"""
 		}
 	} finally {
 		savedCarrierSubst.forEach { (d, prev) ->
@@ -2509,7 +2509,7 @@ internal fun BirEmitter.paramsJsonList(params: List<org.jetbrains.kotlin.ir.decl
  *  (invalid IL); the resolved-CIR contract now rejects such an incomplete identity. */
 internal fun BirEmitter.overloadSigField(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): String {
 	val ext = extensionReceiverParam(fn)?.let { birType(it.type) }
-	val vals = fn.parameters.filter { isValueParameter(it) }.map { birType(it.type) }
+	val vals = fn.parameters.filter { isValueParameter(it) }.map { birValueParameterType(it) }
 	return ""","sig":[${(listOfNotNull(ext) + vals).joinToString(",") { it.toJson() }}]"""
 }
 

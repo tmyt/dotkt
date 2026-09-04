@@ -342,8 +342,7 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 		// newArrayInit/newArraySized construction off the faithful `kotlin.IntArray` identity + its element.
 		val arrElem: TypeNode? =
 			if (klass?.fqNameWhenAvailable?.asString() == "kotlin.Array") {
-				val elemType = (((node.type as? IrSimpleType)?.arguments?.firstOrNull()) as? IrTypeProjection)?.type
-				elemType?.let(::birType)
+				(node.type as? IrSimpleType)?.arguments?.firstOrNull()?.let(::birTypeProjection)
 			} else null
 		// The ctor's regular args, omitted defaults filled — the SAME single pass every call shape uses. Emitted ONCE
 		// (re-running it would duplicate any lift/lambda emission side effect), and BEFORE the enclosing-instance

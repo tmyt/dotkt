@@ -47,6 +47,7 @@ A `Type` is ALWAYS a JSON object with a `t` discriminator. **There is no bare-st
 | `fqn` | `name:string`, `args?:[T…]` | a named type `kotlin.collections.List<…>` — a PURE Kotlin/CLR FQN identity, generic args optional | plain FQN, `clr:`, `clrg:Name[..]`, `@Name`/`@Name[..]`, primitive shorthand (`int`/`string`/`void`/`object`/…) |
 | `tv` | `scope:"type"\|"method"`, `i:int` | a type variable — `scope` is the CLR generic-param SPACE, `i` the owner-local positional index | `gp:X` (name-keyed, space-blind) |
 | `star` | — | a Kotlin `*` projection; preserved in BIR so bir2cir can choose a provenance-backed CLR existential representation | no CIR form |
+| `projection` | `variance:"in"\|"out"`, `of:T` | a Kotlin use-site `in T` / `out T` projection; preserved in BIR so bir2cir can choose a CLR-safe representation | no CIR form |
 | `fn` | `suspend:bool`, `ret:T`, `params:[T…]`, `recv?:T` | a function type; `suspend` is a flag, `recv` = extension receiver | `func:ret:args`, `sfunc:ret:args` |
 | `nullable` | `of:T` | `T?` (NRT-annotated nullable, `NullableAttribute`=2) | `nullable:X` |
 | `oblivious` | `of:T` | `T!` — an NRT-*oblivious* flexible type `(T..T?)` (`NullableAttribute`=0); the CLR term, not the Kotlin-consumer "platform" name | the META `!` platform suffix |
@@ -466,7 +467,7 @@ member would be two members to it. The rules, all validator-enforced:
   the arity the name itself states;
 - `declaringType.args` is **flattened** over the enclosing-type chain, matching `tv{scope:"type"}` (§1) —
   `Outer\`1+Inner\`1` carries the outer argument first;
-- a signature carries no `oblivious` and no `star`: those are Kotlin type-system facts, and a physical CLR
+- a signature carries no `oblivious`, `star`, or `projection`: those are Kotlin type-system facts, and a physical CLR
   signature has neither. `nullable` appears only as the `System.Nullable\`1` value-type collapse;
 - `.ctor` names a constructor and nothing else;
 - `mod` and `array.rank` appear **only** inside a `memberRef`, because they exist solely to distinguish an exact
@@ -814,7 +815,7 @@ freshly-emitted BIR + CIR and reddens the gate on any drift.
   string type token anywhere reddens without the validator having to enumerate every type slot.
 - **Canonical node kinds + type tags (§2.5/§2.6).** Every `{k}` must be in the frozen `KINDS` set (the union of
   every kind the current toolchain emits across a full fresh build — regenerate with `--dump-kinds`); every emitted
-  BIR/CIR `{t}` is in `{fqn,tv,star,fn,nullable,oblivious,array,byRef}`. `star` is valid only in BIR and must be
+  BIR/CIR `{t}` is in `{fqn,tv,star,projection,fn,nullable,oblivious,array,byRef}`. `star` and `projection` are valid only in BIR and must be
   eliminated by bir2cir before CIR. A typo, a retired spelling (`bin`/`un`/
   `isinst`/`isinstRef`/
   `setFieldExpr`/`staticFieldSet`), or an ad-hoc new kind reds. Casing is enforced by set membership.
