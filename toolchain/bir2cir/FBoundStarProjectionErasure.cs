@@ -349,7 +349,7 @@ static class FBoundStarProjectionErasure
     static bool IsAbiVisible(JsonObject def) => Str(def["vis"]) is null or "public" or "protected" or "internal";
 
     // The physical existential is one non-generic interface for every projection mask. Preserve each declaration's
-    // exact Kotlin type (`Pair<*, String>`, not merely Pair<*, *>) before the slot becomes that interface/object.
+    // exact Kotlin type (`Pair<*, String>` or `Array<out G<T>>`) before the slot becomes that interface/object.
     // RoundtripMetadata emits these facts as [KotlinType], and dll2klib restores them without inspecting the physical
     // carrier name. Calls and locals are intentionally excluded: this is exported declaration ABI only.
     static void RecordDeclarationSurfaces(JsonNode node)
@@ -377,7 +377,7 @@ static class FBoundStarProjectionErasure
     static void RecordProjectionSlot(JsonObject declaration, string slot, string fact)
     {
         if (declaration[fact] != null || TypeJson.Read(declaration[slot]) is not TypeNode type
-            || !ContainsExplicitStar(type))
+            || !ContainsExistentialProjection(type))
             return;
         declaration[fact] = TypeNode.ToJson(type);
     }
@@ -443,7 +443,7 @@ static class FBoundStarProjectionErasure
             if (StripSourceNullability(ExpressionType(element))
                 is not TypeNode.Fqn source)
                 return false;
-            var projected = source.Name == target.Name
+            var projected = SameDeclarationOwner(source.Name, target.Name)
                 ? source.Args ?? Array.Empty<TypeNode>()
                 : ProjectConstructedArguments(source, target.Name, defs, refs)?.ToArray();
             if (projected == null || projected.Length != target.Args.Length)
@@ -2070,7 +2070,7 @@ static class FBoundStarProjectionErasure
                 is not TypeNode.Fqn { Args: { } sourceArguments } source)
             return false;
 
-        if (source.Name == target.Name)
+        if (SameDeclarationOwner(source.Name, target.Name))
             return sourceArguments.Length == targetArguments.Length
                 && sourceArguments.Select(SupertypeGraph.TypeKey)
                     .SequenceEqual(targetArguments.Select(SupertypeGraph.TypeKey));
@@ -2101,7 +2101,7 @@ static class FBoundStarProjectionErasure
             var key = current.Name + "|" + new JsonArray(
                 currentArguments.Select(TypeJson.Write).ToArray()).ToJsonString();
             if (!seen.Add(key)) continue;
-            if (current.Name == targetName)
+            if (SameDeclarationOwner(current.Name, targetName))
             {
                 matchDepth = depth;
                 matches.TryAdd(key, currentArguments);
@@ -2133,6 +2133,21 @@ static class FBoundStarProjectionErasure
         }
 
         return matches.Count == 1 ? matches.Values.Single() : null;
+    }
+
+    // Current-format referenced BIR can carry the exact CLR TypeDef spelling while reflection-derived inheritance
+    // edges use the semantic Kotlin spelling. They identify the same declaration after arity/nesting normalization.
+    // Keep two distinct exact CLR spellings distinct: flattened semantic names cannot disambiguate their ownership.
+    static bool SameDeclarationOwner(string left, string right)
+    {
+        if (string.Equals(left, right, StringComparison.Ordinal)) return true;
+        var leftExact = left.Contains('`') || left.Contains('+');
+        var rightExact = right.Contains('`') || right.Contains('+');
+        if (leftExact && rightExact) return false;
+        return string.Equals(
+            ReferenceMetadataIndex.BareOwnerFqn(left).Replace('+', '.'),
+            ReferenceMetadataIndex.BareOwnerFqn(right).Replace('+', '.'),
+            StringComparison.Ordinal);
     }
 
     // A star smart-cast keeps the receiver's most-derived Kotlin type (`ComparableRange<*>.isEmpty`) even when the

@@ -7733,10 +7733,12 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
         TypeNode.Fqn f => FromFqn(f),
         TypeNode.Tv v => new KType { TypeParameter = v.Scope == "method" ? 10000 + v.I : v.I },
         TypeNode.Star => StarType(),
+        TypeNode.Projection => throw new InvalidDataException(
+            "Kotlin type projection appeared outside a type-argument position"),
         TypeNode.Fn f => FromFunction(f),
         TypeNode.Nullable n => AsNullable(FromTypeNode(n.Of)),
         TypeNode.Oblivious o => AsPlatform(FromTypeNode(o.Of)),
-        TypeNode.Array a => Array(FromTypeNode(a.Elem)),
+        TypeNode.Array a => FromArrayNode(a.Elem),
         TypeNode.ByRef b => ByRef(FromTypeNode(b.Of)),
         _ => Any(nullable: true),
     };
@@ -7844,14 +7846,40 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
         var name = NormalizeKotlinName(f.Name);
         var type = NamedCarrierClassifier(name);
         if (f.Args is not null)
-            type.Argument.Add(f.Args.Select(a => a is TypeNode.Star
-                ? new KType.Types.Argument { Projection = KType.Types.Argument.Types.Projection.Star }
-                : new KType.Types.Argument
-                {
-                    Projection = KType.Types.Argument.Types.Projection.Inv,
-                    Type = FromTypeNode(a),
-                }));
+            type.Argument.Add(f.Args.Select(FromTypeArgument));
         return type;
+    }
+
+    private KType.Types.Argument FromTypeArgument(TypeNode argument) => argument switch
+    {
+        TypeNode.Star => new KType.Types.Argument
+            { Projection = KType.Types.Argument.Types.Projection.Star },
+        TypeNode.Projection { Variance: "in" } projection => new KType.Types.Argument
+        {
+            Projection = KType.Types.Argument.Types.Projection.In,
+            Type = FromTypeNode(projection.Of),
+        },
+        TypeNode.Projection { Variance: "out" } projection => new KType.Types.Argument
+        {
+            Projection = KType.Types.Argument.Types.Projection.Out,
+            Type = FromTypeNode(projection.Of),
+        },
+        TypeNode.Projection projection => throw new InvalidDataException(
+            $"Unknown Kotlin type projection variance '{projection.Variance}'"),
+        _ => new KType.Types.Argument
+        {
+            Projection = KType.Types.Argument.Types.Projection.Inv,
+            Type = FromTypeNode(argument),
+        },
+    };
+
+    private KType FromArrayNode(TypeNode element)
+    {
+        if (element is not TypeNode.Projection && element is not TypeNode.Star)
+            return Array(FromTypeNode(element));
+        var array = Named("kotlin.Array");
+        array.Argument.Add(FromTypeArgument(element));
+        return array;
     }
 
     // Carrier TypeNodes can name an exact nested metadata path with '+'. Keep the package/class boundary and each

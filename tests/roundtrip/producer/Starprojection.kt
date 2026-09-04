@@ -49,6 +49,21 @@ fun <T> referencedExistentialFlow(): ReferencedExistentialFlow<T> = ReferencedEx
 fun <T> referencedExistentialFusibleFlow(): ReferencedExistentialFusibleFlow<T> =
     ReferencedExistentialFlowImpl()
 
+interface ProjectedArrayValue<out T> {
+    fun value(): T
+}
+
+class ReferencedIntProjectedArrayValue(private val number: Int) : ProjectedArrayValue<Int> {
+    override fun value(): Int = number
+}
+
+class ReferencedStringProjectedArrayValue(private val text: String) : ProjectedArrayValue<String> {
+    override fun value(): String = text
+}
+
+fun <T> renderProjectedArrayValues(values: Array<out ProjectedArrayValue<T>>): String =
+    values[0].value().toString() + ":" + values[1].value().toString()
+
 // A downstream generated data-class `copy()` call reconstructs each omitted default from the referenced receiver.
 // On a star receiver those property values must use this assembly's published existential getter slots rather than
 // naming backing fields that the deliberately fieldless existential interface cannot own.
