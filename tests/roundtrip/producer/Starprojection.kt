@@ -46,6 +46,8 @@ private class ReferencedExistentialFlowImpl<T> : ReferencedExistentialFusibleFlo
 }
 
 fun <T> referencedExistentialFlow(): ReferencedExistentialFlow<T> = ReferencedExistentialFlowImpl()
+fun <T> referencedExistentialFusibleFlow(): ReferencedExistentialFusibleFlow<T> =
+    ReferencedExistentialFlowImpl()
 
 // A downstream generated data-class `copy()` call reconstructs each omitted default from the referenced receiver.
 // On a star receiver those property values must use this assembly's published existential getter slots rather than

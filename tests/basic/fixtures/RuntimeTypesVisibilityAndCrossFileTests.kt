@@ -157,6 +157,11 @@ private interface RuntimeTypesExistentialFusibleFlow<T> : RuntimeTypesExistentia
 private class RuntimeTypesExistentialFlowImpl<T> : RuntimeTypesExistentialFusibleFlow<T> {
     override fun fuse(): RuntimeTypesExistentialFlow<T> = this
 }
+private class RuntimeTypesExactThis<T> : RuntimeTypesExistentialFusibleFlow<T> {
+    override fun fuse(): RuntimeTypesExistentialFlow<T> = this
+    @Suppress("USELESS_CAST")
+    fun asFlow(): RuntimeTypesExistentialFlow<T> = this as RuntimeTypesExistentialFlow<T>
+}
 @JvmInline
 private value class RuntimeTypesExistentialValue<T>(val value: Any?)
 private fun <T> runtimeTypesFuse(flow: RuntimeTypesExistentialFlow<T>): RuntimeTypesExistentialFlow<T> =
@@ -171,6 +176,24 @@ private fun <T> runtimeTypesFuseViaRealignedLocal(
     val fusible = flow as RuntimeTypesExistentialFusibleFlow<T>
     return fusible.fuse()
 }
+@Suppress("USELESS_CAST")
+private fun <T> runtimeTypesExactGenericUpcast(
+    flow: RuntimeTypesExistentialFusibleFlow<T>
+): RuntimeTypesExistentialFlow<T> = flow as RuntimeTypesExistentialFlow<T>
+@Suppress("USELESS_CAST")
+private fun <T> runtimeTypesNullableExactGenericUpcast(
+    flow: RuntimeTypesExistentialFusibleFlow<T>?
+): RuntimeTypesExistentialFlow<T> = flow as RuntimeTypesExistentialFlow<T>
+@Suppress("USELESS_CAST")
+private fun <T> runtimeTypesGeneratedExactGenericUpcast(value: T): RuntimeTypesExistentialFlow<T> {
+    val flow = object : RuntimeTypesExistentialFusibleFlow<T> {
+        override fun fuse(): RuntimeTypesExistentialFlow<T> = this
+    }
+    return flow as RuntimeTypesExistentialFlow<T>
+}
+@Suppress("UNCHECKED_CAST", "USELESS_CAST")
+private fun <T> runtimeTypesComposedUncheckedUpcast(value: Any): Any =
+    (value as RuntimeTypesExistentialFusibleFlow<T>) as RuntimeTypesExistentialFlow<T>
 private fun <T> runtimeTypesFuseReference(
     flow: RuntimeTypesExistentialFlow<T>
 ): () -> RuntimeTypesExistentialFlow<T> =
@@ -334,6 +357,16 @@ class StarProjectionAndVisibilityTests {
         assertTrue(runtimeTypesFuse(intFlow) === intFlow)
         assertTrue(runtimeTypesFuseViaRealignedLocal(stringFlow) === stringFlow)
         assertTrue(runtimeTypesFuseViaRealignedLocal(intFlow) === intFlow)
+        assertTrue(runtimeTypesExactGenericUpcast(stringFlow as RuntimeTypesExistentialFusibleFlow<String>) === stringFlow)
+        assertTrue(runtimeTypesExactGenericUpcast(intFlow as RuntimeTypesExistentialFusibleFlow<Int>) === intFlow)
+        assertTrue(runtimeTypesNullableExactGenericUpcast(stringFlow as RuntimeTypesExistentialFusibleFlow<String>?) === stringFlow)
+        val generatedFlow = runtimeTypesGeneratedExactGenericUpcast("generated")
+        assertTrue(runtimeTypesExactGenericUpcast(
+            generatedFlow as RuntimeTypesExistentialFusibleFlow<String>
+        ) === generatedFlow)
+        val thisSource = RuntimeTypesExactThis<String>()
+        assertTrue(thisSource.asFlow() === thisSource)
+        assertTrue(runtimeTypesComposedUncheckedUpcast<Int>(stringFlow) === stringFlow)
         assertTrue(runtimeTypesFuseReference(stringFlow)() === stringFlow)
         assertTrue(runtimeTypesFuseReference(intFlow)() === intFlow)
         assertTrue(runtimeTypesFuseSam(stringFlow).fuse() === stringFlow)
