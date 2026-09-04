@@ -63,9 +63,16 @@ class Slot<T>(var a: T, var b: T) {
 //  them distinct, matching C#. So variance is exercised for reference types.)
 interface Producer<out T> { fun produce(): T }
 interface Consumer<in T> { fun consume(t: T): String }
+interface UnsafeProducer<out T> {
+    fun roundTrip(value: @UnsafeVariance T): T
+}
 class HelloProducer : Producer<String> { override fun produce(): String = "hello" }
 class IntProducer(private val value: Int) : Producer<Int> { override fun produce(): Int = value }
 class AnyConsumer : Consumer<Any> { override fun consume(t: Any): String = "consumed: $t" }
+class UnsafeStringProducer : UnsafeProducer<String> { override fun roundTrip(value: String): String = value }
+class CovariantValue<out T>(val value: T)
+class InvariantValue<T>(val value: T)
+class ProjectedArrayHelper { fun <T> first(values: Array<out T>): T = values[0] }
 fun useProducer(p: Producer<Any>): String = p.produce().toString()   // covariance: Producer<String> flows in
 fun useConsumer(c: Consumer<String>): String = c.consume("world")    // contravariance: Consumer<Any> flows in
 
@@ -87,6 +94,9 @@ fun <T> firstProjectedValue(values: Array<out T>): T = values[0]
 fun <T> projectedProducerViaHelper(producers: Array<out Producer<T>>): String =
     firstProjectedValue(producers).produce().toString()
 
+fun <T> projectedProducerViaMemberHelper(producers: Array<out Producer<T>>): String =
+    ProjectedArrayHelper().first(producers).produce().toString()
+
 fun <T, R> transformProjectedFirst(values: Array<out T>, transform: (T) -> R): R = transform(values[0])
 
 fun <T> projectedProducerViaCallback(producers: Array<out Producer<T>>): String =
@@ -97,15 +107,21 @@ fun localProjectedProducers(): String {
     return projectedProducerValues(producers)
 }
 
-fun initializedProjectedProducerArray(): Array<Producer<Any>> =
-    Array(2) { index -> if (index == 0) IntProducer(8) else HelloProducer() }
-
-fun sizedProjectedProducerValues(): String {
-    val producers = arrayOfNulls<Producer<Any>>(2)
-    producers[0] = IntProducer(6)
-    producers[1] = HelloProducer()
-    return producers[0]!!.produce().toString() + ":" + producers[1]!!.produce().toString()
+fun initializedProjectedProducerArray(): Array<Producer<Any>> {
+    val captured = 8
+    return Array(2) { index -> if (index == 0) IntProducer(captured) else HelloProducer() }
 }
+
+fun covariantClassArray(): Array<CovariantValue<Any>> =
+    arrayOf<CovariantValue<Any>>(CovariantValue("class"))
+
+fun charSequenceProducerArray(): Array<Producer<CharSequence>> =
+    arrayOf<Producer<CharSequence>>(HelloProducer())
+
+fun unsafeVarianceProducerArray(): Array<UnsafeProducer<Any>> =
+    arrayOf<UnsafeProducer<Any>>(UnsafeStringProducer())
+
+fun invariantProjectedValue(values: Array<out InvariantValue<String>>): String = values[0].value
 
 fun spreadProjectedProducerArray(): Array<Producer<Any>> =
     arrayOf(*arrayOf(IntProducer(10)), *arrayOf(HelloProducer()))
@@ -276,10 +292,17 @@ class GenericsTests {
         assertEquals("hello", exactCovariantProducerArray()[0].produce().toString())
         assertEquals("7", projectedProducerFirst(arrayOf(IntProducer(7))).produce().toString())
         assertEquals("7", projectedProducerViaHelper(arrayOf(IntProducer(7))))
+        assertEquals("7", projectedProducerViaMemberHelper(arrayOf(IntProducer(7))))
         assertEquals("7", projectedProducerViaCallback(arrayOf(IntProducer(7))))
         assertEquals("5:hello", localProjectedProducers())
         assertEquals("8", initializedProjectedProducerArray()[0].produce().toString())
-        assertEquals("6:hello", sizedProjectedProducerValues())
+        assertEquals("class", covariantClassArray()[0].value.toString())
+        // String -> the synthetic CharSequence representation needs a separate runtime adapter when the value is
+        // consumed. This case fixes the array boundary here: allocating the array itself must not assume CLR
+        // covariance that System.String/dotkt$CharSequence do not have.
+        assertEquals(1, charSequenceProducerArray().size)
+        assertEquals(1, unsafeVarianceProducerArray().size)
+        assertEquals("invariant", invariantProjectedValue(arrayOf(InvariantValue("invariant"))))
         assertEquals("10", spreadProjectedProducerArray()[0].produce().toString())
         assertEquals("hello", spreadProjectedProducerArray()[1].produce().toString())
         assertEquals(

@@ -539,7 +539,7 @@ class V:
         # no place in one. `oblivious` is a nullability annotation the CLR signature does not carry, and `star`
         # is a Kotlin projection; either inside a signature would be a second spelling of a physical shape, and
         # two spellings of one member are two members to a consumer that compares them exactly.
-        if in_member_ref(path) and t in ("oblivious", "star"):
+        if in_member_ref(path) and t in ("oblivious", "star", "projection"):
             self.err(f, path, f"type {t!r} is a Kotlin type-system fact and has no place in a physical member signature")
 
     def member_ref_carrier(self, f, path, key, val):

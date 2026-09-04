@@ -302,8 +302,8 @@ private fun BirEmitter.inheritedDefaultAccessorFact(property: IrProperty, access
 	val targetKind = if (target === targetProperty.getter) "getter" else "setter"
 	val targetOwnerName = inheritedImplementationOwner(accessor, target, targetOwner) ?: return null
 	val extRecv = extensionReceiverParam(accessor)
-	val parameterTypes = (listOfNotNull(extRecv?.type) + accessor.parameters.filter { isValueParameter(it) }.map { it.type })
-		.joinToString(",") { birType(it).toJson() }
+	val parameterTypes = (listOfNotNull(extRecv) + accessor.parameters.filter { isValueParameter(it) })
+		.joinToString(",") { birValueParameterType(it).toJson() }
 	val ret = if (kind == "get") birType(accessor.returnType) else TypeNode.Fqn("kotlin.Unit")
 	return """{"propertyName":${str(property.name.asString())},"propertyAccessor":${str(kind)},"params":[$parameterTypes],"ret":${ret.toJson()},"implementation":{"owner":${fqnJson(targetOwnerName)},"member":${str(targetProperty.name.asString())},"kind":${str(targetKind)},"arity":${target.typeParameters.size},"typeParams":${typeParamDeclarationsJson(target.typeParameters)}}}"""
 }
@@ -316,8 +316,8 @@ private fun BirEmitter.inheritedDefaultMethodFact(fn: IrSimpleFunction): String?
 	if (targetOwner.kind != ClassKind.INTERFACE) return null
 	val targetOwnerName = inheritedImplementationOwner(fn, target, targetOwner) ?: return null
 	val extRecv = extensionReceiverParam(fn)
-	val parameterTypes = (listOfNotNull(extRecv?.type) + fn.parameters.filter { isValueParameter(it) }.map { it.type })
-		.joinToString(",") { birType(it).toJson() }
+	val parameterTypes = (listOfNotNull(extRecv) + fn.parameters.filter { isValueParameter(it) })
+		.joinToString(",") { birValueParameterType(it).toJson() }
 	return """{"member":${str(fn.name.asString())},"params":[$parameterTypes],"ret":${birType(fn.returnType).toJson()},"implementation":{"owner":${fqnJson(targetOwnerName)},"member":${str(target.name.asString())},"kind":"method","arity":${target.typeParameters.size},"typeParams":${typeParamDeclarationsJson(target.typeParameters)}}}"""
 }
 
