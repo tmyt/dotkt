@@ -20,7 +20,7 @@ package kotlin.clr
 // argument (kotc emits it as a `newArray` node), the lone non-vararg element, or none (`emptyList()`). `mapOf`
 // additionally splits each `a to b` Pair-LITERAL argument (a `new kotlin.Pair(k,v)` node) into a key/value entry — but a
 // NON-literal Pair argument (`mapOf(pairVariable)`) is left as a plain call to the real `mapOf` body (never force-split).
-@Target(AnnotationTarget.FUNCTION)
+@Target(AnnotationTarget.FUNCTION, AnnotationTarget.CONSTRUCTOR)
 public annotation class ClrCollectionFactory(val kind: String)
 
 // Marks an array FACTORY top-level function (`arrayOf`/`intArrayOf`/.../`arrayOfNulls`): a call to it CONSTRUCTS a native

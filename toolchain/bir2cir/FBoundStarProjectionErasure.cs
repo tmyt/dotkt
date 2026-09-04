@@ -55,7 +55,7 @@ static class FBoundStarProjectionErasure
         foreach (var root in rootList) EraseProjectedAliasConstraints(root, refs);
         ForeignStarProjectionBinding.ApplyAll(rootList,
             owners.Values.Where(owner => owner.Needed).ToDictionary(
-                owner => owner.Name, owner => owner.ErasedName, StringComparer.Ordinal), refs);
+                owner => owner.Name, owner => owner.ErasedName, StringComparer.Ordinal), refs, localClrAliases);
         foreach (var root in rootList) Rewrite(root, owners, defs, refs, localClrAliases: localClrAliases);
         var normalizedReturns = new NormalizedReturnBindings();
         // Method-local normalization runs after the first post-order binding walk. Revisit consumers once so a
@@ -195,7 +195,8 @@ static class FBoundStarProjectionErasure
     // synthesize carriers. The carrier allocation returned by ApplyAll is the sole local authority, while referenced
     // carriers remain metadata-driven through ReferenceMetadataIndex.
     public static void RewriteLateTypes(IEnumerable<JsonNode> roots,
-        IReadOnlyDictionary<string, string> localExistentialOwners, ReferenceMetadataIndex refs)
+        IReadOnlyDictionary<string, string> localExistentialOwners, ReferenceMetadataIndex refs,
+        IReadOnlyDictionary<string, string> knownClrAliases = null)
     {
         var rootList = roots.ToList();
         var owners = localExistentialOwners.ToDictionary(
@@ -205,7 +206,9 @@ static class FBoundStarProjectionErasure
         var defs = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
         foreach (var root in rootList.OfType<JsonObject>())
             CollectDefinitions(root, defs);
-        var localClrAliases = CollectLocalClrAliases(defs);
+        var localClrAliases = new Dictionary<string, string>(
+            knownClrAliases ?? new Dictionary<string, string>(StringComparer.Ordinal), StringComparer.Ordinal);
+        foreach (var alias in CollectLocalClrAliases(defs)) localClrAliases.TryAdd(alias.Key, alias.Value);
         foreach (var root in rootList) RewriteTypesOnly(root, owners, refs, localClrAliases);
     }
 
@@ -2219,8 +2222,7 @@ static class FBoundStarProjectionErasure
             || (kind == "new" && !(refs.TryResolveClrOwner(owner.Name, out _, out _)
                 || localClrAliases?.ContainsKey(owner.Name) == true))
             || construction["argTypes"] is not JsonArray arguments
-            || (construction["memberSignature"] as JsonArray ?? construction["argTypes"] as JsonArray)
-                is not JsonArray declaration
+            || construction["argTypes"] is not JsonArray declaration
             || arguments.Count != declaration.Count)
             return null;
 
@@ -3867,7 +3869,8 @@ static class FBoundStarProjectionErasure
         IReadOnlyDictionary<string, string> localClrAliases)
     {
         if (localClrAliases != null && localClrAliases.TryGetValue(type.Name, out var physical))
-            return !BirTypeLowering.GenericAliasHeadDependsOnLoweredArguments(physical);
+            return !BirTypeLowering.GenericAliasHeadDependsOnLoweredArguments(physical)
+                || BirTypeLowering.ProjectedAliasHasReifiedGenericHead(type.Name, physical, type.Args);
         return ForeignStarProjectionBinding.IsForeignStarType(type, refs);
     }
 

@@ -1,5 +1,23 @@
 namespace ForeignStar
 {
+    public sealed class DualAliasList : System.Collections.Generic.IReadOnlyList<string>, System.Collections.Generic.IReadOnlyList<int>
+    {
+        string System.Collections.Generic.IReadOnlyList<string>.this[int index] => "alias-string-view";
+        int System.Collections.Generic.IReadOnlyList<int>.this[int index] => 73;
+        int System.Collections.Generic.IReadOnlyCollection<string>.Count => 1;
+        int System.Collections.Generic.IReadOnlyCollection<int>.Count => 1;
+        System.Collections.Generic.IEnumerator<string> System.Collections.Generic.IEnumerable<string>.GetEnumerator()
+        {
+            yield return "alias-string-view";
+        }
+        System.Collections.Generic.IEnumerator<int> System.Collections.Generic.IEnumerable<int>.GetEnumerator()
+        {
+            yield return 73;
+        }
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() =>
+            ((System.Collections.Generic.IEnumerable<string>)this).GetEnumerator();
+    }
+
     public interface IRead<T>
     {
         T ReadView();
@@ -138,6 +156,7 @@ namespace ForeignStar
 
     public static class Factory
     {
+        public static object DualAliasListAsObject() => new DualAliasList();
         public static object StringBoxAsObject() => new Box<string>("foreign");
         public static IBox<string> StringBox() => new Box<string>("foreign");
         public static Pair<int, string> Pair() => new Pair<int, string>(7, "seven");

@@ -105,6 +105,12 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   `DOTKTSTAR001`, because the
   referenced generic type/member metadata must be preserved; known BCL families with a faithful non-generic surface
   continue to use that surface directly.
+- **The same rule applies to projected `@ClrTypeAlias` types.** A use-site projection such as `List<out T>` or
+  `Comparable<in Number>` cannot be represented by rewriting its CLR alias to an invariant construction such as
+  `IReadOnlyList<T>` or `IComparable<Number>`. DotKt carries the Kotlin type as declaration metadata over an opaque CLR
+  slot, then binds member access to the exact closed interface implemented by the runtime object. When a projected map
+  is passed to a stdlib copy constructor, the trusted collection-factory contract performs an entry-wise copy instead
+  of casting the source to an invariant `IDictionary<K,V>`.
 - **Corollary — a star-projected collection classifier must erase its element arguments.** On the JVM `x is Map<*,*>` and a subsequent
   `x as Map<*,*>` erase to a raw `Map`, so a `Dictionary<int,int>` passes trivially. On the CLR the star projection
   erases to `Map<Any?,Any?>` = the generic `IDictionary<object,object>`, which a `Dictionary<int,int>` does **not**

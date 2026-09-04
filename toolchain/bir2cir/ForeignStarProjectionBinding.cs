@@ -28,6 +28,8 @@ static class ForeignStarProjectionBinding
     static List<JsonNode> _materializedDelegateAdapters = new();
     static IReadOnlyDictionary<string, string> _localExistentialOwners =
         new Dictionary<string, string>(StringComparer.Ordinal);
+    static IReadOnlyDictionary<string, string> _localClrAliases =
+        new Dictionary<string, string>(StringComparer.Ordinal);
     static int _nextTemp;
     static int _nextDelegateAdapter;
     public static bool UsedRuntimeFallback { get; private set; }
@@ -35,8 +37,10 @@ static class ForeignStarProjectionBinding
     internal static void RequireRuntimeFallback() => UsedRuntimeFallback = true;
 
     public static void ApplyAll(IEnumerable<JsonNode> roots,
-        IReadOnlyDictionary<string, string> localExistentialOwners, ReferenceMetadataIndex refs)
+        IReadOnlyDictionary<string, string> localExistentialOwners, ReferenceMetadataIndex refs,
+        IReadOnlyDictionary<string, string> localClrAliases)
     {
+        _localClrAliases = localClrAliases ?? new Dictionary<string, string>(StringComparer.Ordinal);
         ApplyAll(roots, localExistentialOwners, refs, resetUsage: true);
     }
 
@@ -72,7 +76,8 @@ static class ForeignStarProjectionBinding
             var materializedTypes = ClosureSynthesis.ApplyMaterialized(root, _materializedDelegateAdapters, refs);
             // Only these declarations were born after the main existential/type-projection pass. Rewriting the whole
             // file here would revisit deliberately opaque results such as Holder<*> and manufacture Holder<object>.
-            FBoundStarProjectionErasure.RewriteLateTypes(materializedTypes, _localExistentialOwners, refs);
+            FBoundStarProjectionErasure.RewriteLateTypes(
+                materializedTypes, _localExistentialOwners, refs, _localClrAliases);
             foreach (var materializedType in materializedTypes)
                 SharedSyntheticSynthesis.DropSyntheticTypeArgs(materializedType);
         }
@@ -225,7 +230,7 @@ static class ForeignStarProjectionBinding
             && refs.TryForeignStarField(owner, sourceName, out openType, out declaringView, out token,
                 out var fieldDeclarationType))
         {
-            var fieldClosedViewHint = ClosedViewHint(receiver, owner, declaringView);
+            var fieldClosedViewHint = ClosedViewHint(receiver, owner, declaringView, refs);
             var fieldCall = kind == "clrPropGet"
                 ? Call("starProjectionGetField", new TypeNode[] { Any, Type, TypeN, Int, String }, AnyN,
                     receiver.DeepClone(), ClassRef(openType), fieldClosedViewHint,
@@ -263,7 +268,7 @@ static class ForeignStarProjectionBinding
             throw new NotSupportedException(
                 $"bir2cir: cannot bind exact foreign star member `{owner.Name}.{sourceName}`/"
                 + $"{signature.Length}<{methodArity}>");
-        var closedViewHint = ClosedViewHint(receiver, owner, declaringView);
+        var closedViewHint = ClosedViewHint(receiver, owner, declaringView, refs);
         if (signature.Any(t => t is TypeNode.ByRef))
             throw new NotSupportedException(
                 $"bir2cir: foreign star member `{owner.Name}.{sourceName}` has ref/out parameters; "
@@ -652,7 +657,7 @@ static class ForeignStarProjectionBinding
         owner = type as TypeNode.Fqn;
         return owner?.Args is { Length: > 0 } args && args.Any(ContainsExistential)
             && !refs.TryExistentialPhysicalOwner(owner.Name, out _)
-            && refs.ResolveForeignProjectionType(owner.Name, args.Length) != null;
+            && refs.ResolveForeignProjectionType(owner.Name, args) != null;
     }
 
     public static bool IsForeignStarType(TypeNode type, ReferenceMetadataIndex refs) =>
@@ -675,7 +680,7 @@ static class ForeignStarProjectionBinding
 
     static string OpenType(TypeNode.Fqn owner, ReferenceMetadataIndex refs)
     {
-        var type = refs.ResolveForeignProjectionType(owner.Name, owner.Args.Length);
+        var type = refs.ResolveForeignProjectionType(owner.Name, owner.Args);
         if (type == null) return null;
         if (type.IsConstructedGenericType) type = type.GetGenericTypeDefinition();
         return type.IsGenericTypeDefinition ? type.FullName : null;
@@ -691,24 +696,39 @@ static class ForeignStarProjectionBinding
         ["k"] = "classRef", ["type"] = TypeJson.Write(type),
     };
 
-    static JsonNode ClosedViewHint(JsonNode receiver, TypeNode.Fqn owner, TypeNode declaringView)
+    static JsonNode ClosedViewHint(JsonNode receiver, TypeNode.Fqn owner, TypeNode declaringView,
+        ReferenceMetadataIndex refs)
     {
         if (receiver is JsonObject { } obj && Str(obj["k"]) == "local"
             && Str(obj["name"]) is string name && _closedViewHints.TryGetValue(name, out var hint)
-            && hint.Name == owner.Name
+            && SameForeignProjectionOwner(hint, owner, refs)
             && hint.Args?.Length == owner.Args?.Length)
         {
             // MetadataLoadContext reports a method declared directly on an open generic as the bare definition.
             // In that case the authored exact closure already is the declaring view; emitting the bare generic as a
             // classRef would be an invalid/absent CLR type token.
             if (declaringView is TypeNode.Fqn { Args: null } direct
-                && direct.Name == owner.Name)
+                && SameForeignProjectionOwner(hint, new TypeNode.Fqn(direct.Name, hint.Args), refs))
                 return ClassRef(hint);
             var translated = SubstituteOwnerSlots(declaringView, hint.Args);
             if (translated is TypeNode.Fqn translatedFqn && !ContainsExistential(translatedFqn))
                 return ClassRef(translatedFqn);
         }
         return new JsonObject { ["k"] = "const", ["type"] = TypeJson.Write(TypeN), ["value"] = null };
+    }
+
+    static bool SameForeignProjectionOwner(TypeNode.Fqn left, TypeNode.Fqn right,
+        ReferenceMetadataIndex refs)
+    {
+        var leftArity = left.Args?.Length ?? 0;
+        var rightArity = right.Args?.Length ?? 0;
+        if (leftArity != rightArity) return false;
+        var leftType = refs.ResolveForeignProjectionType(left.Name, left.Args);
+        var rightType = refs.ResolveForeignProjectionType(right.Name, right.Args);
+        if (leftType == null || rightType == null) return left.Name == right.Name;
+        if (leftType.IsConstructedGenericType) leftType = leftType.GetGenericTypeDefinition();
+        if (rightType.IsConstructedGenericType) rightType = rightType.GetGenericTypeDefinition();
+        return leftType == rightType;
     }
 
     static TypeNode SubstituteOwnerSlots(TypeNode type, IReadOnlyList<TypeNode> arguments) => type switch
@@ -817,7 +837,7 @@ static class ForeignStarProjectionBinding
                     exact = inherited;
                 if (exact?.Args is not { Length: > 0 } args || exact.Name != starOwner.Name
                     || args.Length != starOwner.Args.Length || args.Any(ContainsExistential)
-                    || refs.ResolveNetType(exact.Name, args.Length) == null) continue;
+                    || refs.ResolveForeignProjectionType(exact.Name, args) == null) continue;
                 result[name] = exact;
                 changed = true;
             }

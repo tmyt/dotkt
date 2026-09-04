@@ -14,7 +14,7 @@ using DotKt.Bir;
 // expression reads them, preserving Kotlin's left-to-right, exactly-once evaluation semantics.
 sealed record AliasConstructorAdapter(
     string[] Parameters, TypeNode[] Signature, JsonArray Statements, JsonArray Arguments,
-    TypeNode[] TerminalSignature);
+    TypeNode[] TerminalSignature, string CollectionFactoryKind = null);
 
 sealed class AliasConstructorDelegationExpansion
 {
@@ -253,13 +253,15 @@ sealed class AliasConstructorDelegationExpansion
         var ctor = ((JsonArray)alias["ctors"]!)[index] as JsonObject
                    ?? throw new InvalidOperationException($"bir2cir: alias '{owner}' constructor {index} is not an object");
         var parameters = ReadParameters(ctor);
+        var collectionFactoryKind = CollectionFactoryKind(ctor);
         AliasConstructorAdapter result;
 
         if (ctor["thisArgs"] is JsonArray thisArgs)
         {
             var target = SelectConstructor(owner, alias, ReadSignature(ctor, "delegationSig"), OwnArgs(alias));
             var tail = Expand(owner, alias, target.Index, active);
-            result = Compose(parameters, ctor["preStmts"] as JsonArray, thisArgs, tail, owner);
+            result = Compose(parameters, ctor["preStmts"] as JsonArray, thisArgs, tail, owner,
+                collectionFactoryKind);
         }
         else if (ctor["baseArgs"] is JsonArray baseArgs
                  && TypeJson.Read(alias["base"]) is TypeNode.Fqn baseType
@@ -271,7 +273,8 @@ sealed class AliasConstructorDelegationExpansion
                 baseOwner, baseAlias, ReadSignature(ctor, "delegationSig"), baseArgsForOwner);
             var tail = Specialize(
                 Expand(baseOwner, baseAlias, target.Index, active), baseArgsForOwner);
-            result = Compose(parameters, ctor["preStmts"] as JsonArray, baseArgs, tail, owner);
+            result = Compose(parameters, ctor["preStmts"] as JsonArray, baseArgs, tail, owner,
+                collectionFactoryKind);
         }
         else
         {
@@ -282,7 +285,8 @@ sealed class AliasConstructorDelegationExpansion
                 ["name"] = name,
             }).ToArray());
             result = new AliasConstructorAdapter(
-                parameters.Names, parameters.Types, new JsonArray(), formalReads, parameters.Types);
+                parameters.Names, parameters.Types, new JsonArray(), formalReads, parameters.Types,
+                collectionFactoryKind);
         }
 
         active.Remove(key);
@@ -292,7 +296,7 @@ sealed class AliasConstructorDelegationExpansion
 
     static AliasConstructorAdapter Compose(
         (string[] Names, TypeNode[] Types) parameters, JsonArray prefix, JsonArray delegationArguments,
-        AliasConstructorAdapter tail, string owner)
+        AliasConstructorAdapter tail, string owner, string collectionFactoryKind)
     {
         if (delegationArguments.Count != tail.Parameters.Length)
             throw new InvalidOperationException(
@@ -331,7 +335,8 @@ sealed class AliasConstructorDelegationExpansion
             parameters.Types,
             statements,
             (JsonArray)Substitute(tail.Arguments, map),
-            tail.TerminalSignature);
+            tail.TerminalSignature,
+            collectionFactoryKind);
     }
 
     static (int Index, JsonObject Constructor) SelectConstructor(
@@ -400,7 +405,8 @@ sealed class AliasConstructorDelegationExpansion
             adapter.Signature.Select(type => SupertypeGraph.SubstOwnerTvs(type, ownerArgs)).ToArray(),
             (JsonArray)SubstituteTypes(adapter.Statements, ownerArgs),
             (JsonArray)SubstituteTypes(adapter.Arguments, ownerArgs),
-            adapter.TerminalSignature.Select(type => SupertypeGraph.SubstOwnerTvs(type, ownerArgs)).ToArray());
+            adapter.TerminalSignature.Select(type => SupertypeGraph.SubstOwnerTvs(type, ownerArgs)).ToArray(),
+            adapter.CollectionFactoryKind);
     }
 
     static JsonNode SubstituteTypes(JsonNode node, TypeNode[] ownerArgs)
@@ -427,6 +433,20 @@ sealed class AliasConstructorDelegationExpansion
     {
         var count = (alias["typeParams"] as JsonArray)?.Count ?? 0;
         return Enumerable.Range(0, count).Select(index => (TypeNode)new TypeNode.Tv("type", index)).ToArray();
+    }
+
+    static string CollectionFactoryKind(JsonObject ctor)
+    {
+        if (ctor["attrs"] is not JsonArray attributes) return null;
+        foreach (var attribute in attributes.OfType<JsonObject>())
+        {
+            if (TypeJson.OwnerName(attribute["attr"]) != "kotlin.clr.ClrCollectionFactory"
+                || attribute["args"] is not JsonArray { Count: > 0 } arguments
+                || arguments[0] is not JsonObject first)
+                continue;
+            return Str(first["value"]);
+        }
+        return null;
     }
 
     static void FreshenLocals(JsonNode template, params JsonNode[] consumers)
@@ -585,7 +605,11 @@ sealed class AliasConstructorDelegationExpansion
                         {
                             var adapter = Expand(owner, alias, index, new HashSet<(string Owner, int Index)>());
                             var source = ReadParameters(ctor).Types;
-                            if (SameSignature(source, adapter.TerminalSignature) && IsIdentity(adapter)) continue;
+                            // Identity alias constructors normally need no adapter carrier. A trusted collection
+                            // factory marker is itself cross-module lowering metadata, so retain a carrier for it even
+                            // when its physical argument vector is unchanged.
+                            if (SameSignature(source, adapter.TerminalSignature) && IsIdentity(adapter)
+                                && adapter.CollectionFactoryKind == null) continue;
                             var payload = new JsonObject
                             {
                                 ["parameters"] = new JsonArray(adapter.Parameters
@@ -594,6 +618,7 @@ sealed class AliasConstructorDelegationExpansion
                                 ["statements"] = adapter.Statements.DeepClone(),
                                 ["arguments"] = adapter.Arguments.DeepClone(),
                                 ["terminalSignature"] = TypeArray(adapter.TerminalSignature),
+                                ["collectionFactoryKind"] = adapter.CollectionFactoryKind,
                             };
                             ctor["aliasCtorAdapter"] = Convert.ToBase64String(
                                 BirCarrier.EncodeBody(BirCarrier.JsonV1, payload));

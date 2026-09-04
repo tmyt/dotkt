@@ -437,6 +437,14 @@ sealed partial class ReferenceMetadataIndex
         return true;
     }
 
+    public string CollectionCopyConstructorKind(
+        string owner, TypeNode[] signature, TypeNode[] ownerArgs)
+    {
+        return TryAliasConstructorAdapter(owner, signature, ownerArgs, out var adapter)
+            ? adapter.CollectionFactoryKind
+            : null;
+    }
+
     static bool SameTypeSequence(IReadOnlyList<TypeNode> left, IReadOnlyList<TypeNode> right)
     {
         if (left.Count != right.Count) return false;
@@ -452,6 +460,7 @@ sealed partial class ReferenceMetadataIndex
         ["statements"] = adapter.Statements.DeepClone(),
         ["arguments"] = adapter.Arguments.DeepClone(),
         ["terminalSignature"] = new JsonArray(adapter.TerminalSignature.Select(TypeJson.Write).ToArray()),
+        ["collectionFactoryKind"] = adapter.CollectionFactoryKind,
     }.ToJsonString();
     // Reference-owner hierarchy in BIR's dotted Kotlin vocabulary.  Calls retain their Kotlin
     // receiver owner in BIR; inherited CLR MemberRefs are selected later by bir2cir, so that pass
@@ -1310,14 +1319,17 @@ sealed partial class ReferenceMetadataIndex
     // existential carrier. Resolve that physical definition here while keeping ordinary DotKt-authored generics on
     // their metadata-backed nominal-carrier path. Callers must not bypass ResolveNetType's Kotlin-owner guard by
     // guessing from namespace or from the lowered spelling.
-    public Type ResolveForeignProjectionType(string sourceOwner, int genericArity)
+    public Type ResolveForeignProjectionType(string sourceOwner, IReadOnlyList<TypeNode> arguments)
     {
+        var genericArity = arguments?.Count ?? 0;
         if (TryResolveClrOwner(sourceOwner, out var aliasOwner, out _))
         {
             // Some Kotlin generic surfaces already have a non-generic CLR face selected by BirTypeLowering from
             // their argument shape (Comparable<*> -> System.IComparable). That face is the exact representation;
             // routing the same value through the opaque reflection ABI would discard a valid nominal conversion.
-            if (BirTypeLowering.GenericAliasHeadDependsOnLoweredArguments(aliasOwner)) return null;
+            if (BirTypeLowering.GenericAliasHeadDependsOnLoweredArguments(aliasOwner)
+                && !BirTypeLowering.ProjectedAliasHasReifiedGenericHead(
+                    sourceOwner, aliasOwner, arguments)) return null;
             return ResolveNetType(aliasOwner, genericArity);
         }
         if (HasDotKtOwner(sourceOwner)) return null;
@@ -1346,7 +1358,7 @@ sealed partial class ReferenceMetadataIndex
         if (sourceOwner?.Args is not { Length: > 0 } ownerArgs || sourceName == null
             || callSignature == null) return false;
 
-        var sourceType = ResolveForeignProjectionType(sourceOwner.Name, ownerArgs.Length);
+        var sourceType = ResolveForeignProjectionType(sourceOwner.Name, ownerArgs);
         if (sourceType == null) return false;
         const BindingFlags flags = BindingFlags.Public | BindingFlags.Instance;
         var seenTypes = new HashSet<Type>();
@@ -1529,7 +1541,7 @@ sealed partial class ReferenceMetadataIndex
         metadataToken = 0;
         declarationType = null;
         if (sourceOwner?.Args is not { Length: > 0 } ownerArgs || sourceName == null) return false;
-        var sourceType = ResolveForeignProjectionType(sourceOwner.Name, ownerArgs.Length);
+        var sourceType = ResolveForeignProjectionType(sourceOwner.Name, ownerArgs);
         if (sourceType == null) return false;
 
         const BindingFlags flags = BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly;
@@ -5407,11 +5419,14 @@ sealed partial class ReferenceMetadataIndex
             var arguments = payload["arguments"] as JsonArray
                 ?? throw new FormatException("constructor-adapter carrier has no arguments");
             var terminal = ReadCarrierTypes(payload, "terminalSignature");
+            var collectionFactoryKind = payload["collectionFactoryKind"] is JsonValue kindValue
+                ? kindValue.GetValue<string>()
+                : null;
             if (parameters.Length != signature.Length)
                 throw new FormatException("constructor-adapter parameter/signature lengths differ");
             return new AliasConstructorAdapter(
                 parameters, signature, (JsonArray)statements.DeepClone(),
-                (JsonArray)arguments.DeepClone(), terminal);
+                (JsonArray)arguments.DeepClone(), terminal, collectionFactoryKind);
         }
         catch (Exception ex) when (ex is not InvalidDataException)
         {

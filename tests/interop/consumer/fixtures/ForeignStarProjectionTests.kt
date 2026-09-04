@@ -56,6 +56,9 @@ class ForeignStarProjectionTests {
 
     @TestAttribute
     fun interfaceAndMixedProjectionPreserveIdentityAndReadableSlots() {
+        val projectedAlias: List<*> = Factory.DualAliasListAsObject() as List<String>
+        assertEquals("alias-string-view", projectedAlias[0])
+
         val exact = Factory.StringBox()
         val projected: IBox<*> = exact
         assertTrue(projected === exact)
