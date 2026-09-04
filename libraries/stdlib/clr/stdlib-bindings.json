@@ -3,49 +3,49 @@
   "version": 1,
   "declarations": [
     {
-      "declarationId": "dotkt-declaration-v1:d24ba2e2f1934fb8d2414c69166e95f4adfb8d0feb6e9dfa8d22e621c3481215",
+      "declarationId": "dotkt-declaration-v1:0ddab84a0478c5a4ac2ea19bf2a3e045c24f76a5bc12f5a7ffbeee6576f080d7",
       "sourceName": "max",
       "expectedPhysicalName": "maxOrThrow",
       "physicalName": "maxOrThrowBoxed"
     },
     {
-      "declarationId": "dotkt-declaration-v1:53c38f6b3825252b20c3eb3f24146e6bf9478d62b01303a5b40f4a85232e9aec",
+      "declarationId": "dotkt-declaration-v1:b897e4335f6f304b659c63e83236346824ebac751bbae858b306638cf6104f49",
       "sourceName": "max",
       "expectedPhysicalName": "maxOrThrow",
       "physicalName": "maxOrThrowBoxed"
     },
     {
-      "declarationId": "dotkt-declaration-v1:c13bc1e173f196f803bdd53755b4906e64362a5578fd725ae301245905afea98",
+      "declarationId": "dotkt-declaration-v1:e0a95cac596d253d535ba45fad986f536590430b186fc44ce9ecc014569317c0",
       "sourceName": "maxOrNull",
       "expectedPhysicalName": null,
       "physicalName": "maxOrNullBoxed"
     },
     {
-      "declarationId": "dotkt-declaration-v1:54704e06091d425375c30ac46dbf5cd6d19aeda8c6a988dcbdb3aa07f206f44f",
+      "declarationId": "dotkt-declaration-v1:9bb735dce297b8702d749b8f1a9a4d01c5a364999a0ecfd5df54e12ec50284f4",
       "sourceName": "maxOrNull",
       "expectedPhysicalName": null,
       "physicalName": "maxOrNullBoxed"
     },
     {
-      "declarationId": "dotkt-declaration-v1:c354893fe38fc253432cd1e2a7db0ec6646717ccc7f1ee790560e62f9e573b57",
+      "declarationId": "dotkt-declaration-v1:10ea96b9a1c782367f966b00778b9fe20c69f6b0ee278c3df4181f72badb3b22",
       "sourceName": "min",
       "expectedPhysicalName": "minOrThrow",
       "physicalName": "minOrThrowBoxed"
     },
     {
-      "declarationId": "dotkt-declaration-v1:63be8fd7e2daf796d6ae7db1cf8424b75428933cf6c0b7ad1b3ed97ac0e390a6",
+      "declarationId": "dotkt-declaration-v1:dc58427edabee685a00be8ddabc33f46dd9b8e23fdab3a7460669041a2f9a093",
       "sourceName": "min",
       "expectedPhysicalName": "minOrThrow",
       "physicalName": "minOrThrowBoxed"
     },
     {
-      "declarationId": "dotkt-declaration-v1:d59e78ddc8a2ad575bcce89b46bf316655c39b06ff1dc720a5120339c0e69941",
+      "declarationId": "dotkt-declaration-v1:2a2150cc69d0ac71095afb75d9a4051cecc1287551d9c826d63fe943c139015e",
       "sourceName": "minOrNull",
       "expectedPhysicalName": null,
       "physicalName": "minOrNullBoxed"
     },
     {
-      "declarationId": "dotkt-declaration-v1:4d1d8d5bb074e098d24ff16197cba159c70ccadec7829b31a5793fe3d428a185",
+      "declarationId": "dotkt-declaration-v1:12d228587fcf6e54c6f49686894eea77563653a2871e85bde95e10aa75b7d56d",
       "sourceName": "minOrNull",
       "expectedPhysicalName": null,
       "physicalName": "minOrNullBoxed"

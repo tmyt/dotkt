@@ -449,7 +449,7 @@ internal fun BirEmitter.paramSigOf(callee: IrSimpleFunction, includeExtensionRec
 	val saved = HashMap(typeArgSubst)
 	typeArgSubst.clear()
 	return try {
-		sigParams.joinToString(",") { birType(it.type).toJson() }
+		sigParams.joinToString(",") { birValueParameterType(it).toJson() }
 	} finally {
 		typeArgSubst.clear(); typeArgSubst.putAll(saved)
 	}

@@ -302,8 +302,8 @@ private fun BirEmitter.inheritedDefaultAccessorFact(property: IrProperty, access
 	val targetKind = if (target === targetProperty.getter) "getter" else "setter"
 	val targetOwnerName = inheritedImplementationOwner(accessor, target, targetOwner) ?: return null
 	val extRecv = extensionReceiverParam(accessor)
-	val parameterTypes = (listOfNotNull(extRecv?.type) + accessor.parameters.filter { isValueParameter(it) }.map { it.type })
-		.joinToString(",") { birType(it).toJson() }
+	val parameterTypes = (listOfNotNull(extRecv) + accessor.parameters.filter { isValueParameter(it) })
+		.joinToString(",") { birValueParameterType(it).toJson() }
 	val ret = if (kind == "get") birType(accessor.returnType) else TypeNode.Fqn("kotlin.Unit")
 	return """{"propertyName":${str(property.name.asString())},"propertyAccessor":${str(kind)},"params":[$parameterTypes],"ret":${ret.toJson()},"implementation":{"owner":${fqnJson(targetOwnerName)},"member":${str(targetProperty.name.asString())},"kind":${str(targetKind)},"arity":${target.typeParameters.size},"typeParams":${typeParamDeclarationsJson(target.typeParameters)}}}"""
 }
@@ -316,8 +316,8 @@ private fun BirEmitter.inheritedDefaultMethodFact(fn: IrSimpleFunction): String?
 	if (targetOwner.kind != ClassKind.INTERFACE) return null
 	val targetOwnerName = inheritedImplementationOwner(fn, target, targetOwner) ?: return null
 	val extRecv = extensionReceiverParam(fn)
-	val parameterTypes = (listOfNotNull(extRecv?.type) + fn.parameters.filter { isValueParameter(it) }.map { it.type })
-		.joinToString(",") { birType(it).toJson() }
+	val parameterTypes = (listOfNotNull(extRecv) + fn.parameters.filter { isValueParameter(it) })
+		.joinToString(",") { birValueParameterType(it).toJson() }
 	return """{"member":${str(fn.name.asString())},"params":[$parameterTypes],"ret":${birType(fn.returnType).toJson()},"implementation":{"owner":${fqnJson(targetOwnerName)},"member":${str(target.name.asString())},"kind":"method","arity":${target.typeParameters.size},"typeParams":${typeParamDeclarationsJson(target.typeParameters)}}}"""
 }
 
@@ -2488,7 +2488,7 @@ internal fun BirEmitter.paramsJsonList(params: List<org.jetbrains.kotlin.ir.decl
 			val allAttrs = listOfNotNull(srcAttrs.takeIf { s -> s.isNotEmpty() }, kotlinDefault).joinToString(",")
 			val pattrs = if (allAttrs.isNotEmpty()) ""","attrs":[$allAttrs]""" else ""
 			val ctxFn = ctxFnTypeField(ctxFnCountFor(it))
-			"""{"name":${str(it.name.asString())},"type":${birType(it.type).toJson()}$vararg$default$ctxFn$pattrs}"""
+			"""{"name":${str(it.name.asString())},"type":${birValueParameterType(it).toJson()}$vararg$default$ctxFn$pattrs}"""
 		}
 	} finally {
 		savedCarrierSubst.forEach { (d, prev) ->
@@ -2509,7 +2509,7 @@ internal fun BirEmitter.paramsJsonList(params: List<org.jetbrains.kotlin.ir.decl
  *  (invalid IL); the resolved-CIR contract now rejects such an incomplete identity. */
 internal fun BirEmitter.overloadSigField(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): String {
 	val ext = extensionReceiverParam(fn)?.let { birType(it.type) }
-	val vals = fn.parameters.filter { isValueParameter(it) }.map { birType(it.type) }
+	val vals = fn.parameters.filter { isValueParameter(it) }.map { birValueParameterType(it) }
 	return ""","sig":[${(listOfNotNull(ext) + vals).joinToString(",") { it.toJson() }}]"""
 }
 

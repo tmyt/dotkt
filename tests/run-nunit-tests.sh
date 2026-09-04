@@ -50,7 +50,7 @@ PROJECTS=(
 # Reviewed on the v0.9.8 main baseline at the start of #227. Updating a suite requires updating this number in
 # the same change, making otherwise-silent test proliferation or accidental deletion an explicit review event.
 declare -A EXPECTED_DISCOVERED=(
-	["tests/basic"]=486
+	["tests/basic"]=487
 	["tests/coroutines"]=198
 	["tests/roundtrip/consumer"]=94
 	["tests/roundtrip/bidirectional/consumer"]=10
@@ -122,6 +122,22 @@ for proj in "${PROJECTS[@]}"; do
 		echo "  BUILD FAIL — see build/nunit-$name.build.log"; tail -25 "$ROOT/build/nunit-$name.build.log"; rc=1; continue
 	fi
 	if [[ "$proj" == "tests/basic" ]]; then
+		default_vararg_bir="$dir/obj/$CONFIGURATION/net10.0/bir/VarargOmissionTests.bir.json"
+		if python3 "$ROOT/tests/basic/assert-inherited-default-vararg-bir.py" "$default_vararg_bir" \
+			>"$ROOT/build/nunit-$name.inherited-default-vararg.log" 2>&1; then
+			echo "  inherited default varargs retain their array slot"
+		else
+			echo "  INHERITED DEFAULT VARARG FAIL — see build/nunit-$name.inherited-default-vararg.log"
+			tail -25 "$ROOT/build/nunit-$name.inherited-default-vararg.log"; rc=1
+		fi
+		projected_array_cir="$dir/obj/$CONFIGURATION/net10.0/cir/GenericsTests.cir.json"
+		if python3 "$ROOT/tests/basic/assert-projected-covariant-array-cir.py" "$projected_array_cir" \
+			>"$ROOT/build/nunit-$name.projected-covariant-array.log" 2>&1; then
+			echo "  projected covariant arrays use exact CLR carriers"
+		else
+			echo "  PROJECTED COVARIANT ARRAY FAIL — see build/nunit-$name.projected-covariant-array.log"
+			tail -25 "$ROOT/build/nunit-$name.projected-covariant-array.log"; rc=1
+		fi
 		star_copy_cir="$dir/obj/$CONFIGURATION/net10.0/cir/DefaultArgumentTests.cir.json"
 		if python3 "$ROOT/tests/basic/assert-star-copy-default-fields-cir.py" "$star_copy_cir" \
 			>"$ROOT/build/nunit-$name.star-copy-default-fields.log" 2>&1; then

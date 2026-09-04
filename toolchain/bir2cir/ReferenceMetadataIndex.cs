@@ -3206,6 +3206,10 @@ sealed partial class ReferenceMetadataIndex
         // reference twin shows as `object` is one such answer, not a different type. Without this a
         // Comparable<*> selector could not meet compareBy's Comparable<object> parameter.
         if (call is TypeNode.Star) return true;
+        if (declaration is TypeNode.Projection dp)
+            return DeclarationDescribesCall(dp.Of, call);
+        if (call is TypeNode.Projection cp)
+            return DeclarationDescribesCall(declaration, cp.Of);
         if (declaration is TypeNode.Oblivious dOb)
             return DeclarationDescribesCall(dOb.Of, call);
         if (call is TypeNode.Oblivious cOb)
@@ -3291,6 +3295,12 @@ sealed partial class ReferenceMetadataIndex
         // dotkt$CharSequence CLR view). Identity has already selected the MethodDef, so this is an ABI-equivalence
         // validation rather than candidate matching; accept the established equivalence in either direction.
         if (DeclarationDescribesCall(declaration, call) || DeclarationDescribesCall(call, declaration)) return true;
+        if (declaration is TypeNode.Projection declarationProjection)
+            return SemanticDeclarationDescribesCall(
+                declarationProjection.Of,
+                call is TypeNode.Projection callProjection ? callProjection.Of : call);
+        if (call is TypeNode.Projection callProjectionOnly)
+            return SemanticDeclarationDescribesCall(declaration, callProjectionOnly.Of);
         if (declaration is TypeNode.Fqn df && call is TypeNode.Fqn cf)
             return df.Name == cf.Name && df.Args != null && cf.Args != null
                 && df.Args.Length == cf.Args.Length

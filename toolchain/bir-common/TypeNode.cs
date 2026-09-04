@@ -50,6 +50,12 @@ public abstract record TypeNode
     public sealed record Star : TypeNode;
 
     /// <summary>
+    /// `projection`: a Kotlin use-site <c>in T</c>/<c>out T</c> projection. BIR and compiler-owned Kotlin
+    /// metadata preserve it; bir2cir must consume it when choosing a reifiable CLR representation.
+    /// </summary>
+    public sealed record Projection(string Variance, TypeNode Of) : TypeNode;
+
+    /// <summary>
     /// `fn`: a function type; <c>Suspend</c> is a flag, <c>Recv</c> is the extension receiver
     /// (subsumes func:/sfunc:). <c>Clr</c> is a CIR-only physical delegate-family decision authored by bir2cir;
     /// kotc's BIR projection always omits it.
@@ -164,6 +170,13 @@ public abstract record TypeNode
                     e.GetProperty("i").GetInt32());
             case "star":
                 return new Star();
+            case "projection":
+            {
+                var variance = e.GetProperty("variance").GetString();
+                if (variance is not ("in" or "out"))
+                    throw new FormatException($"projection.variance must be `in` or `out`, got `{variance}`");
+                return new Projection(variance, Read(e.GetProperty("of")));
+            }
             case "fn":
                 return new Fn(
                     e.GetProperty("suspend").GetBoolean(),
@@ -223,6 +236,10 @@ public abstract record TypeNode
                 return new JsonObject { ["t"] = "tv", ["scope"] = v.Scope, ["i"] = v.I };
             case Star:
                 return new JsonObject { ["t"] = "star" };
+            case Projection p:
+                if (p.Variance is not ("in" or "out"))
+                    throw new ArgumentException($"projection variance must be `in` or `out`, got `{p.Variance}`");
+                return new JsonObject { ["t"] = "projection", ["variance"] = p.Variance, ["of"] = Write(p.Of) };
             case Fn fn:
             {
                 var o = new JsonObject
@@ -330,6 +347,9 @@ public static class TypeNodeSelfTest
                 "{\"t\":\"fqn\",\"name\":\"kotlin.collections.List\",\"args\":[{\"t\":\"fqn\",\"name\":\"kotlin.Int\"}]}"),
             (new TypeNode.Fqn("Bounded", new TypeNode[] { new TypeNode.Star() }),
                 "{\"t\":\"fqn\",\"name\":\"Bounded\",\"args\":[{\"t\":\"star\"}]}"),
+            (new TypeNode.Fqn("Producer", new TypeNode[] {
+                    new TypeNode.Projection("out", new TypeNode.Fqn("kotlin.String")) }),
+                "{\"t\":\"fqn\",\"name\":\"Producer\",\"args\":[{\"t\":\"projection\",\"variance\":\"out\",\"of\":{\"t\":\"fqn\",\"name\":\"kotlin.String\"}}]}"),
             (new TypeNode.Fn(false, new TypeNode.Fqn("kotlin.String"), new TypeNode[] { new TypeNode.Fqn("kotlin.Int") }),
                 "{\"t\":\"fn\",\"suspend\":false,\"ret\":{\"t\":\"fqn\",\"name\":\"kotlin.String\"},\"params\":[{\"t\":\"fqn\",\"name\":\"kotlin.Int\"}]}"),
             // suspend Foo<T>.()->T?

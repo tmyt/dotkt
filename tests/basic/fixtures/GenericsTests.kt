@@ -63,10 +63,78 @@ class Slot<T>(var a: T, var b: T) {
 //  them distinct, matching C#. So variance is exercised for reference types.)
 interface Producer<out T> { fun produce(): T }
 interface Consumer<in T> { fun consume(t: T): String }
+interface UnsafeProducer<out T> {
+    fun roundTrip(value: @UnsafeVariance T): T
+}
 class HelloProducer : Producer<String> { override fun produce(): String = "hello" }
+class IntProducer(private val value: Int) : Producer<Int> { override fun produce(): Int = value }
 class AnyConsumer : Consumer<Any> { override fun consume(t: Any): String = "consumed: $t" }
+class UnsafeStringProducer : UnsafeProducer<String> { override fun roundTrip(value: String): String = value }
+class CovariantValue<out T>(val value: T)
+class InvariantValue<T>(val value: T)
+class ProjectedArrayHelper { fun <T> first(values: Array<out T>): T = values[0] }
 fun useProducer(p: Producer<Any>): String = p.produce().toString()   // covariance: Producer<String> flows in
 fun useConsumer(c: Consumer<String>): String = c.consume("world")    // contravariance: Consumer<Any> flows in
+
+// Different closed constructions of a covariant E share one logical projected array, but cannot be stored in the
+// CLR fiction `Producer<object>[]` (in particular Producer<Int> is not that type). Exercise heterogeneous allocation,
+// a result-independent array helper, and projected reads through the exact Array<out E> declaration contract.
+fun <T> projectedProducerValues(producers: Array<out Producer<T>>): String {
+    if (producers.isEmpty()) return "empty"
+    val first = producers[0].produce().toString()
+    return first + ":" + producers[1].produce().toString()
+}
+
+fun exactCovariantProducerArray(): Array<Producer<Any>> = arrayOf(HelloProducer())
+
+fun <T> projectedProducerFirst(producers: Array<out Producer<T>>): Producer<T> = producers[0]
+
+fun <T> firstProjectedValue(values: Array<out T>): T = values[0]
+
+fun <T> projectedProducerViaHelper(producers: Array<out Producer<T>>): String =
+    firstProjectedValue(producers).produce().toString()
+
+fun <T> projectedProducerViaMemberHelper(producers: Array<out Producer<T>>): String =
+    ProjectedArrayHelper().first(producers).produce().toString()
+
+fun <T, R> transformProjectedFirst(values: Array<out T>, transform: (T) -> R): R = transform(values[0])
+
+fun <T> projectedProducerViaCallback(producers: Array<out Producer<T>>): String =
+    transformProjectedFirst(producers) { it.produce().toString() }
+
+fun localProjectedProducers(): String {
+    val producers = arrayOf(IntProducer(5), HelloProducer())
+    return projectedProducerValues(producers)
+}
+
+fun initializedProjectedProducerArray(): Array<Producer<Any>> {
+    val captured = 8
+    return Array(2) { index -> if (index == 0) IntProducer(captured) else HelloProducer() }
+}
+
+fun covariantClassArray(): Array<CovariantValue<Any>> =
+    arrayOf<CovariantValue<Any>>(CovariantValue("class"))
+
+fun charSequenceProducerArray(): Array<Producer<CharSequence>> =
+    arrayOf<Producer<CharSequence>>(HelloProducer())
+
+fun unsafeVarianceProducerArray(): Array<UnsafeProducer<Any>> =
+    arrayOf<UnsafeProducer<Any>>(UnsafeStringProducer())
+
+fun invariantProjectedValue(values: Array<out InvariantValue<String>>): String = values[0].value
+
+fun spreadProjectedProducerArray(): Array<Producer<Any>> =
+    arrayOf(*arrayOf(IntProducer(10)), *arrayOf(HelloProducer()))
+
+fun spreadProjectedProducerInputs(
+    ints: Array<IntProducer>,
+    strings: Array<HelloProducer>,
+): Array<Producer<Any>> = arrayOf(*ints, *strings)
+
+private interface PrivateProducer<out T> { fun producePrivate(): T }
+private class PrivateIntProducer : PrivateProducer<Int> { override fun producePrivate(): Int = 9 }
+private fun <T> nullableProjectedProducer(values: Array<out PrivateProducer<T>?>): String =
+    values[0]?.producePrivate().toString()
 
 // G-7: a member called on a receiver whose STATIC TYPE IS THE TYPE PARAMETER. The stack holds a `!!T`, not an
 // interface reference, so the only verifiable dispatch is `constrained. !!T ; callvirt` — for every spelling of
@@ -220,6 +288,31 @@ class GenericsTests {
     fun variance() {
         assertEquals("hello", useProducer(HelloProducer()))       // hello
         assertEquals("consumed: world", useConsumer(AnyConsumer())) // consumed: world
+        assertEquals("7:hello", projectedProducerValues(arrayOf(IntProducer(7), HelloProducer())))
+        assertEquals("hello", exactCovariantProducerArray()[0].produce().toString())
+        assertEquals("7", projectedProducerFirst(arrayOf(IntProducer(7))).produce().toString())
+        assertEquals("7", projectedProducerViaHelper(arrayOf(IntProducer(7))))
+        assertEquals("7", projectedProducerViaMemberHelper(arrayOf(IntProducer(7))))
+        assertEquals("7", projectedProducerViaCallback(arrayOf(IntProducer(7))))
+        assertEquals("5:hello", localProjectedProducers())
+        assertEquals("8", initializedProjectedProducerArray()[0].produce().toString())
+        assertEquals("class", covariantClassArray()[0].value.toString())
+        // String -> the synthetic CharSequence representation needs a separate runtime adapter when the value is
+        // consumed. This case fixes the array boundary here: allocating the array itself must not assume CLR
+        // covariance that System.String/dotkt$CharSequence do not have.
+        assertEquals(1, charSequenceProducerArray().size)
+        assertEquals(1, unsafeVarianceProducerArray().size)
+        assertEquals("invariant", invariantProjectedValue(arrayOf(InvariantValue("invariant"))))
+        assertEquals("10", spreadProjectedProducerArray()[0].produce().toString())
+        assertEquals("hello", spreadProjectedProducerArray()[1].produce().toString())
+        assertEquals(
+            "11:hello",
+            projectedProducerValues(spreadProjectedProducerInputs(
+                arrayOf(IntProducer(11)),
+                arrayOf(HelloProducer()),
+            )),
+        )
+        assertEquals("9", nullableProjectedProducer(arrayOf(PrivateIntProducer())))
     }
 
     @TestAttribute

@@ -233,6 +233,8 @@ static partial class NullableTvErasureCallRealign
                 case (TypeNode.Array da, TypeNode.Array fa): Walk(da.Elem, fa.Elem, nested: true, underArray: true); break;
                 case (TypeNode.Nullable dn, TypeNode.Nullable fn): Walk(dn.Of, fn.Of, nested, underArray); break;
                 case (TypeNode.Oblivious dobl, TypeNode.Oblivious fo): Walk(dobl.Of, fo.Of, nested, underArray); break;
+                case (TypeNode.Projection dp, TypeNode.Projection fp): Walk(dp.Of, fp.Of, nested, underArray); break;
+                case (TypeNode.Projection dp, _): Walk(dp.Of, f, nested, underArray); break;
                 case (TypeNode.ByRef db, TypeNode.ByRef fb): Walk(db.Of, fb.Of, nested, underArray); break;
                 // SAME HEAD, or nothing. Two constructed types pair position-by-position only when they are the same
                 // definition; across different heads the declared type's arguments are not the flowed type's, they are

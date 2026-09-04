@@ -213,7 +213,7 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 				companionReceiver?.let { append("|companionReceiver:").append(it) }
 				append('|').append(typeParamsJson(fn.typeParameters))
 				for (parameter in fn.parameters)
-					append('|').append(parameter.kind.name).append(':').append(birType(parameter.type).toJson())
+					append('|').append(parameter.kind.name).append(':').append(birValueParameterType(parameter).toJson())
 				append("|ret:").append(birType(fn.returnType).toJson())
 			}
 			val digest = MessageDigest.getInstance("SHA-256").digest(declaration.toByteArray(Charsets.UTF_8))

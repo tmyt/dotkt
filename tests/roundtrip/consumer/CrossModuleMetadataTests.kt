@@ -105,6 +105,9 @@ import starprojection.ReferencedExistentialFlow
 import starprojection.ReferencedExistentialFusibleFlow
 import starprojection.referencedExistentialFlow
 import starprojection.referencedExistentialFusibleFlow
+import starprojection.ReferencedIntProjectedArrayValue
+import starprojection.ReferencedStringProjectedArrayValue
+import starprojection.renderProjectedArrayValues
 import starprojection.ReferencedStarCopy
 import starprojection.ReferencedStarNested
 import starprojection.ReferencedStarNestedCopy
@@ -471,6 +474,19 @@ class GenericMetadataRoundtripTests {
         val referencedFusible = referencedExistentialFusibleFlow<String>()
         ClassicAssert.IsTrue(exactReferencedExistentialUpcast(referencedFusible) === referencedFusible)
         ClassicAssert.IsTrue(composedReferencedExistentialUpcast<Int>(referencedFusible) === referencedFusible)
+
+        // The producer's authored Array<out ProjectedArrayValue<T>> must survive DLL metadata -> KLIB import.
+        // The downstream array joins Int and String through declaration-site covariance and is physically emitted as
+        // the referenced declaration's existential carrier array rather than ProjectedArrayValue<object>[].
+        ClassicAssert.AreEqual(
+            "7:cross-module",
+            renderProjectedArrayValues<Any>(
+                arrayOf(
+                    ReferencedIntProjectedArrayValue(7),
+                    ReferencedStringProjectedArrayValue("cross-module"),
+                ),
+            ),
+        )
 
         val copySource: ReferencedStarCopy<*> = referencedStarCopy()
         val copied = copySource.copy()

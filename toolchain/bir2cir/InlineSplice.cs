@@ -922,6 +922,7 @@ static class InlineSplice
             nested.Select(a => SubstDispatchTvs(a, args)).ToArray()),
         TypeNode.Nullable n => new TypeNode.Nullable(SubstDispatchTvs(n.Of, args)),
         TypeNode.Oblivious o => new TypeNode.Oblivious(SubstDispatchTvs(o.Of, args)),
+        TypeNode.Projection p => new TypeNode.Projection(p.Variance, SubstDispatchTvs(p.Of, args)),
         TypeNode.Array a => new TypeNode.Array(SubstDispatchTvs(a.Elem, args)),
         TypeNode.ByRef b => new TypeNode.ByRef(SubstDispatchTvs(b.Of, args)),
         TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend, SubstDispatchTvs(fn.Ret, args),

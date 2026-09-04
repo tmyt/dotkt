@@ -34,6 +34,12 @@ fun varargOmissionAliased(vararg xs: Int, a: IntArray = xs, b: IntArray = xs): B
 // has to be closed against the call site too. Left open, the binding declares a local in a frame that has no `T`.
 fun <T> varargOmissionAliasedGeneric(vararg xs: T, a: Array<out T> = xs): Boolean = a === xs
 
+interface VarargOmissionDefaultContract {
+    fun join(vararg values: String): String = values.joinToString(":")
+}
+
+class VarargOmissionDefaultImpl : VarargOmissionDefaultContract
+
 class VarargOmissionTests {
     // The plain fill, in both physical array forms: a primitive element gives the specialized `IntArray`, a reference
     // element gives `Array<String>`, and the emitter picks between them.
@@ -85,5 +91,11 @@ class VarargOmissionTests {
     fun genericOmittedVarargIsEvaluatedOnce() {
         assertEquals(true, varargOmissionAliasedGeneric<String>())
         assertEquals(true, varargOmissionAliasedGeneric("a", "b"))
+    }
+
+    // The inherited-default fact must carry the declaration's Array<String> slot, not the vararg element String.
+    @TestAttribute
+    fun inheritedDefaultKeepsTheVarargArraySignature() {
+        assertEquals("a:b", VarargOmissionDefaultImpl().join("a", "b"))
     }
 }

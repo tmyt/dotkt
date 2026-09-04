@@ -22,7 +22,7 @@
 # method's body (validated here). See spec §7.
 import json, re, sys, glob, os
 
-TYPE_TAGS = {"fqn", "tv", "star", "fn", "nullable", "oblivious", "array", "byRef", "ptr", "mod"}
+TYPE_TAGS = {"fqn", "tv", "star", "projection", "fn", "nullable", "oblivious", "array", "byRef", "ptr", "mod"}
 
 # #370: the document keys that carry a scalar `memberRef` — ONE complete, already-resolved reference to a
 # member of another assembly. Frozen like KINDS/TYPE_TAGS, so a new carrier key is a deliberate vocabulary
@@ -479,7 +479,7 @@ class V:
             return
         req = {
             "fqn": ["name"], "tv": ["scope", "i"], "fn": ["suspend", "ret", "params"],
-            "star": [],
+            "star": [], "projection": ["variance", "of"],
             "nullable": ["of"], "oblivious": ["of"], "array": ["elem"], "byRef": ["of"],
             "ptr": ["of"], "mod": ["req", "m", "of"],
         }[t]
@@ -491,6 +491,11 @@ class V:
                 self.err(f, path, f"tv.scope={o.get('scope')!r} not in ['type','method']")
             if not isinstance(o.get("i"), int):
                 self.err(f, path, f"tv.i must be int, got {o.get('i')!r}")
+        if t == "projection":
+            if o.get("variance") not in ("in", "out"):
+                self.err(f, path, f"projection.variance={o.get('variance')!r} not in ['in','out']")
+            if f.endswith(".cir.json"):
+                self.err(f, path, "projection is a Kotlin type-system fact and must be consumed before CIR")
         if t == "fn":
             if not isinstance(o.get("suspend"), bool):
                 self.err(f, path, f"fn.suspend must be bool, got {o.get('suspend')!r}")
@@ -534,7 +539,7 @@ class V:
         # no place in one. `oblivious` is a nullability annotation the CLR signature does not carry, and `star`
         # is a Kotlin projection; either inside a signature would be a second spelling of a physical shape, and
         # two spellings of one member are two members to a consumer that compares them exactly.
-        if in_member_ref(path) and t in ("oblivious", "star"):
+        if in_member_ref(path) and t in ("oblivious", "star", "projection"):
             self.err(f, path, f"type {t!r} is a Kotlin type-system fact and has no place in a physical member signature")
 
     def member_ref_carrier(self, f, path, key, val):
