@@ -2517,7 +2517,7 @@ sealed partial class ReferenceMetadataIndex
             && m.ParamTypeNodes != null && m.ReturnTypeNode != null).ToList();
         if (candidates.Count != 1) return false;
         var match = candidates[0];
-        if (!ContainsExistential(match.ReturnType)
+        if (!ContainsExistential(match.ReturnTypeNode)
             && !match.ParamTypeNodes.Any(ContainsExistential)) return false;
         parameters = match.ParamTypeNodes;
         // This is a declaration ABI, so retain its owner/method generic frame. ReturnType is the best-effort static
