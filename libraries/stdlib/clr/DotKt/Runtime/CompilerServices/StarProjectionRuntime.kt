@@ -439,7 +439,8 @@ private fun starProjectionBindConstructionSlots(
         return
     }
     if (declaration.isArray) {
-        if (actual.isArray && declaration.getArrayRank() == actual.getArrayRank())
+        if (actual.isArray && declaration.isSzArray == actual.isSzArray
+            && declaration.getArrayRank() == actual.getArrayRank())
             starProjectionBindConstructionSlots(declaration.getElementType()!!, actual.getElementType()!!, bindings)
         return
     }
