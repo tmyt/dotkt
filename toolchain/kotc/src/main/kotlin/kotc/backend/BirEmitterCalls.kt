@@ -704,7 +704,7 @@ internal fun BirEmitter.omittedVararg(
 	val element = p.varargElementType ?: return null
 	return withDefaultTypeScope(call, callee) {
 		val rendered = """{"k":"newArray","elem":${birType(element).toJson()},"elems":[]}"""
-		plan?.bind("arg", "value", false, birType(p.type).toJson(),
+		plan?.bind("arg", "value", false, birValueParameterType(p).toJson(),
 			"omitted vararg '${p.name.asString()}' of '${calleeLabel(callee)}'", rendered) ?: rendered
 	}
 }

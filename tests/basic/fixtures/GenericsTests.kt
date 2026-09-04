@@ -78,6 +78,48 @@ fun <T> projectedProducerValues(producers: Array<out Producer<T>>): String {
     return first + ":" + producers[1].produce().toString()
 }
 
+fun exactCovariantProducerArray(): Array<Producer<Any>> = arrayOf(HelloProducer())
+
+fun <T> projectedProducerFirst(producers: Array<out Producer<T>>): Producer<T> = producers[0]
+
+fun <T> firstProjectedValue(values: Array<out T>): T = values[0]
+
+fun <T> projectedProducerViaHelper(producers: Array<out Producer<T>>): String =
+    firstProjectedValue(producers).produce().toString()
+
+fun <T, R> transformProjectedFirst(values: Array<out T>, transform: (T) -> R): R = transform(values[0])
+
+fun <T> projectedProducerViaCallback(producers: Array<out Producer<T>>): String =
+    transformProjectedFirst(producers) { it.produce().toString() }
+
+fun localProjectedProducers(): String {
+    val producers = arrayOf(IntProducer(5), HelloProducer())
+    return projectedProducerValues(producers)
+}
+
+fun initializedProjectedProducerArray(): Array<Producer<Any>> =
+    Array(2) { index -> if (index == 0) IntProducer(8) else HelloProducer() }
+
+fun sizedProjectedProducerValues(): String {
+    val producers = arrayOfNulls<Producer<Any>>(2)
+    producers[0] = IntProducer(6)
+    producers[1] = HelloProducer()
+    return producers[0]!!.produce().toString() + ":" + producers[1]!!.produce().toString()
+}
+
+fun spreadProjectedProducerArray(): Array<Producer<Any>> =
+    arrayOf(*arrayOf(IntProducer(10)), *arrayOf(HelloProducer()))
+
+fun spreadProjectedProducerInputs(
+    ints: Array<IntProducer>,
+    strings: Array<HelloProducer>,
+): Array<Producer<Any>> = arrayOf(*ints, *strings)
+
+private interface PrivateProducer<out T> { fun producePrivate(): T }
+private class PrivateIntProducer : PrivateProducer<Int> { override fun producePrivate(): Int = 9 }
+private fun <T> nullableProjectedProducer(values: Array<out PrivateProducer<T>?>): String =
+    values[0]?.producePrivate().toString()
+
 // G-7: a member called on a receiver whose STATIC TYPE IS THE TYPE PARAMETER. The stack holds a `!!T`, not an
 // interface reference, so the only verifiable dispatch is `constrained. !!T ; callvirt` — for every spelling of
 // the receiver (a parameter, a local copy, a field, a T-returning call result) and for a NON-generic constraint
@@ -231,6 +273,23 @@ class GenericsTests {
         assertEquals("hello", useProducer(HelloProducer()))       // hello
         assertEquals("consumed: world", useConsumer(AnyConsumer())) // consumed: world
         assertEquals("7:hello", projectedProducerValues(arrayOf(IntProducer(7), HelloProducer())))
+        assertEquals("hello", exactCovariantProducerArray()[0].produce().toString())
+        assertEquals("7", projectedProducerFirst(arrayOf(IntProducer(7))).produce().toString())
+        assertEquals("7", projectedProducerViaHelper(arrayOf(IntProducer(7))))
+        assertEquals("7", projectedProducerViaCallback(arrayOf(IntProducer(7))))
+        assertEquals("5:hello", localProjectedProducers())
+        assertEquals("8", initializedProjectedProducerArray()[0].produce().toString())
+        assertEquals("6:hello", sizedProjectedProducerValues())
+        assertEquals("10", spreadProjectedProducerArray()[0].produce().toString())
+        assertEquals("hello", spreadProjectedProducerArray()[1].produce().toString())
+        assertEquals(
+            "11:hello",
+            projectedProducerValues(spreadProjectedProducerInputs(
+                arrayOf(IntProducer(11)),
+                arrayOf(HelloProducer()),
+            )),
+        )
+        assertEquals("9", nullableProjectedProducer(arrayOf(PrivateIntProducer())))
     }
 
     @TestAttribute

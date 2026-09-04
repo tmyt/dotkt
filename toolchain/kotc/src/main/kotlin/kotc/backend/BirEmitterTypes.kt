@@ -405,7 +405,8 @@ internal fun BirEmitter.arrayElemType(t: IrType): TypeNode {
  * `Array<out E>`, but that compiler-added projection is not an authored array-projection ABI. The `vararg` modifier
  * is the faithful source fact and lets dll2klib restore the Kotlin declaration. */
 internal fun BirEmitter.birValueParameterType(parameter: IrValueParameter): TypeNode =
-	parameter.varargElementType?.let { TypeNode.Array(birType(it)) } ?: birType(parameter.type)
+	parameter.varargElementType?.takeIf { parameter.type.isBoxedArray }
+		?.let { TypeNode.Array(birType(it)) } ?: birType(parameter.type)
 
 /** Preserve a use-site `in`/`out` projection in semantic BIR. Declaration-site variance stays on the classifier's
  * type-parameter descriptor; bir2cir consumes this occurrence when selecting a reifiable CLR representation. */
