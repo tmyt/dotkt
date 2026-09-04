@@ -2208,10 +2208,13 @@ static class FBoundStarProjectionErasure
         }
     }
 
-    // An opaque projected-alias value can still be passed to a constructor whose exact selected declaration names a
-    // reifiable closed face.  The value slot is object, but `newobj` consumes that declaration face; state the
-    // runtime-checked conversion explicitly from the frontend's memberSignature rather than asking ilemit or the CLR
-    // verifier to accept object implicitly.  Capture the targets before the ordinary sweep erases argTypes.
+    // An opaque projected-alias value can still be passed to a constructor whose selected declaration consumes a
+    // reifiable closed face. The value slot is object, but `newobj` consumes that face; state the runtime-checked
+    // conversion explicitly rather than asking ilemit or the CLR verifier to accept object implicitly. The same
+    // CLOSED semantic argType is intentionally interpreted twice: as an ordinary value it erases to object, while at
+    // the selected declaration boundary its projection is resolved to the closed physical target. `memberSignature`
+    // is an OPEN declaration-frame identity and cannot author the cast TypeSpec at this use site. Capture these closed
+    // targets before the ordinary sweep erases argTypes.
     static TypeNode[] ProjectedConstructorArgumentTargets(JsonObject construction,
         IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs,
         IReadOnlyDictionary<string, string> localClrAliases)
@@ -2221,21 +2224,18 @@ static class FBoundStarProjectionErasure
             || TypeJson.Read(construction["type"]) is not TypeNode.Fqn owner
             || (kind == "new" && !(refs.TryResolveClrOwner(owner.Name, out _, out _)
                 || localClrAliases?.ContainsKey(owner.Name) == true))
-            || construction["argTypes"] is not JsonArray arguments
-            || construction["argTypes"] is not JsonArray declaration
-            || arguments.Count != declaration.Count)
+            || construction["argTypes"] is not JsonArray arguments)
             return null;
 
         var targets = new TypeNode[arguments.Count];
         for (var index = 0; index < arguments.Count; index++)
         {
             var source = TypeJson.Read(arguments[index]);
-            var selected = TypeJson.Read(declaration[index]);
-            if (source == null || selected == null || !ContainsExistentialProjection(source)) continue;
+            if (source == null || !ContainsExistentialProjection(source)) continue;
             var physicalSource = RewriteType(source, owners, refs, localClrAliases: localClrAliases);
             if (physicalSource is not TypeNode.Fqn { Name: "kotlin.Any", Args: null }) continue;
             var physicalTarget = RewriteType(
-                selected, owners, refs, boundDeclaration: true, localClrAliases: localClrAliases);
+                source, owners, refs, boundDeclaration: true, localClrAliases: localClrAliases);
             if (physicalTarget is TypeNode.Fqn { Name: "kotlin.Any", Args: null }) continue;
             targets[index] = physicalTarget;
         }
