@@ -2789,6 +2789,8 @@ static class FBoundStarProjectionErasure
         TypeNode.Array array => ContainsExistential(array.Elem, typeParameters, methodParameters),
         TypeNode.ByRef byRef => ContainsExistential(byRef.Of, typeParameters, methodParameters),
         TypeNode.Ptr pointer => ContainsExistential(pointer.Of, typeParameters, methodParameters),
+        TypeNode.Mod modifier => ContainsExistential(modifier.M, typeParameters, methodParameters)
+            || ContainsExistential(modifier.Of, typeParameters, methodParameters),
         TypeNode.Fn function => ContainsExistential(function.Ret, typeParameters, methodParameters)
             || function.Params.Any(parameter => ContainsExistential(parameter, typeParameters, methodParameters))
             || function.Recv != null && ContainsExistential(function.Recv, typeParameters, methodParameters)
@@ -3750,8 +3752,11 @@ static class FBoundStarProjectionErasure
         TypeNode.Oblivious o => ContainsStarOrTypeVariable(o.Of),
         TypeNode.Array a => ContainsStarOrTypeVariable(a.Elem),
         TypeNode.ByRef b => ContainsStarOrTypeVariable(b.Of),
+        TypeNode.Ptr p => ContainsStarOrTypeVariable(p.Of),
+        TypeNode.Mod m => ContainsStarOrTypeVariable(m.M) || ContainsStarOrTypeVariable(m.Of),
         TypeNode.Fn fn => ContainsStarOrTypeVariable(fn.Ret) || fn.Params.Any(ContainsStarOrTypeVariable)
-            || (fn.Recv != null && ContainsStarOrTypeVariable(fn.Recv)),
+            || (fn.Recv != null && ContainsStarOrTypeVariable(fn.Recv))
+            || (fn.Ctx?.Any(ContainsStarOrTypeVariable) ?? false),
         _ => false,
     };
 
@@ -3776,8 +3781,11 @@ static class FBoundStarProjectionErasure
         TypeNode.Oblivious o => ContainsExistentialProjection(o.Of),
         TypeNode.Array a => ContainsExistentialProjection(a.Elem),
         TypeNode.ByRef b => ContainsExistentialProjection(b.Of),
+        TypeNode.Ptr p => ContainsExistentialProjection(p.Of),
+        TypeNode.Mod m => ContainsExistentialProjection(m.M) || ContainsExistentialProjection(m.Of),
         TypeNode.Fn fn => ContainsExistentialProjection(fn.Ret) || fn.Params.Any(ContainsExistentialProjection)
-            || (fn.Recv != null && ContainsExistentialProjection(fn.Recv)),
+            || (fn.Recv != null && ContainsExistentialProjection(fn.Recv))
+            || (fn.Ctx?.Any(ContainsExistentialProjection) ?? false),
         _ => false,
     };
 
@@ -3805,8 +3813,11 @@ static class FBoundStarProjectionErasure
         TypeNode.Oblivious o => ContainsExplicitExistential(o.Of),
         TypeNode.Array a => ContainsExplicitExistential(a.Elem),
         TypeNode.ByRef b => ContainsExplicitExistential(b.Of),
+        TypeNode.Ptr p => ContainsExplicitExistential(p.Of),
+        TypeNode.Mod m => ContainsExplicitExistential(m.M) || ContainsExplicitExistential(m.Of),
         TypeNode.Fn fn => ContainsExplicitExistential(fn.Ret) || fn.Params.Any(ContainsExplicitExistential)
-            || (fn.Recv != null && ContainsExplicitExistential(fn.Recv)),
+            || (fn.Recv != null && ContainsExplicitExistential(fn.Recv))
+            || (fn.Ctx?.Any(ContainsExplicitExistential) ?? false),
         _ => false,
     };
 

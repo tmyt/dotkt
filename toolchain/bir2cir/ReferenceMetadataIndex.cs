@@ -2528,14 +2528,18 @@ sealed partial class ReferenceMetadataIndex
 
     bool ContainsExistential(TypeNode type) => type switch
     {
+        TypeNode.Star or TypeNode.Projection => true,
         TypeNode.Fqn f => IsExistentialPhysicalOwner(f.Name)
             || (f.Args?.Any(ContainsExistential) ?? false),
         TypeNode.Nullable n => ContainsExistential(n.Of),
         TypeNode.Oblivious o => ContainsExistential(o.Of),
         TypeNode.Array a => ContainsExistential(a.Elem),
         TypeNode.ByRef b => ContainsExistential(b.Of),
+        TypeNode.Ptr p => ContainsExistential(p.Of),
+        TypeNode.Mod m => ContainsExistential(m.M) || ContainsExistential(m.Of),
         TypeNode.Fn fn => ContainsExistential(fn.Ret) || fn.Params.Any(ContainsExistential)
-            || (fn.Recv != null && ContainsExistential(fn.Recv)),
+            || (fn.Recv != null && ContainsExistential(fn.Recv))
+            || (fn.Ctx?.Any(ContainsExistential) ?? false),
         _ => false,
     };
 

@@ -907,6 +907,9 @@ static class ForeignStarProjectionBinding
         TypeNode.Oblivious o => DependsOnProjectedOwnerSlot(o.Of, ownerArgs),
         TypeNode.Array a => DependsOnProjectedOwnerSlot(a.Elem, ownerArgs),
         TypeNode.ByRef b => DependsOnProjectedOwnerSlot(b.Of, ownerArgs),
+        TypeNode.Ptr p => DependsOnProjectedOwnerSlot(p.Of, ownerArgs),
+        TypeNode.Mod m => DependsOnProjectedOwnerSlot(m.M, ownerArgs)
+            || DependsOnProjectedOwnerSlot(m.Of, ownerArgs),
         TypeNode.Fn fn => DependsOnProjectedOwnerSlot(fn.Ret, ownerArgs)
             || fn.Params.Any(p => DependsOnProjectedOwnerSlot(p, ownerArgs))
             || (fn.Recv != null && DependsOnProjectedOwnerSlot(fn.Recv, ownerArgs))
@@ -922,8 +925,11 @@ static class ForeignStarProjectionBinding
         TypeNode.Oblivious o => ContainsExistential(o.Of),
         TypeNode.Array a => ContainsExistential(a.Elem),
         TypeNode.ByRef b => ContainsExistential(b.Of),
+        TypeNode.Ptr p => ContainsExistential(p.Of),
+        TypeNode.Mod m => ContainsExistential(m.M) || ContainsExistential(m.Of),
         TypeNode.Fn fn => ContainsExistential(fn.Ret) || fn.Params.Any(ContainsExistential)
-            || (fn.Recv != null && ContainsExistential(fn.Recv)),
+            || (fn.Recv != null && ContainsExistential(fn.Recv))
+            || (fn.Ctx?.Any(ContainsExistential) ?? false),
         _ => false,
     };
 
