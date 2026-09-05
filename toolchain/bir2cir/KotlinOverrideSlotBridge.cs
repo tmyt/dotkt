@@ -1040,12 +1040,24 @@ static class KotlinOverrideSlotBridge
                 // wires both slots to whichever body the first marker named. "Not declared here" establishes only
                 // externality; reachability from the spec is what makes this marker THIS spec's business.
                 if (TypeJson.Read(o["owner"]) is not TypeNode.Fqn owner || defs.ContainsKey(owner.Name)) continue;
-                if (!SupertypeGraph.ReachesDeclaration(spec, owner, defs, refs)) continue;
                 if (Str(o["member"]) is not string member) continue;
                 // A PROPERTY marker names the Kotlin property and getter/setter role. Reference metadata supplies the
                 // exact physical CLR slot independently of the implementation MethodDef name.
                 var overrideKind = Str(o["kind"]);
                 var accessorKind = overrideKind switch { "getter" => "get", "setter" => "set", _ => null };
+                // dll2klib preserves every flattened property override owner even when the emitted CLR interface
+                // hierarchy cannot preserve the semantic @ClrTypeAlias edge (Collection -> IReadOnlyCollection).
+                // That exact frontend-selected owner is sufficient for a property slot. Ordinary methods retain the
+                // independent reachability proof that prevents an unrelated same-shaped interface from capturing a
+                // marker while walking another referenced spec.
+                if (accessorKind == null && !SupertypeGraph.ReachesDeclaration(spec, owner, defs, refs)) continue;
+                // A referenced interface can redeclare a Kotlin property while its flattened override facts also name
+                // an inherited semantic declaration whose CLR slot has a different identity. Resolve each property
+                // marker against the declaration OWNER it names, not only against the directly-listed interface spec:
+                // one implementing accessor may owe MethodImpls to both the redeclared Kotlin accessor and (for
+                // example) Collection.size's IReadOnlyCollection<T>.get_Count slot.
+                var selectedSpec = accessorKind != null ? owner : spec;
+                var selectedArgs = selectedSpec.Args ?? Array.Empty<TypeNode>();
                 var implementationSignature = ps.OfType<JsonObject>()
                     .Select(parameter => TypeJson.Read(parameter["type"]))
                     .ToArray();
@@ -1054,8 +1066,8 @@ static class KotlinOverrideSlotBridge
                 string selectedPhysicalMember = null;
                 JsonArray selectedSlotTypeParams = null;
                 var foundSlot = accessorKind != null
-                    ? refs.TryNullableGenericPropertySlot(spec.Name, member, accessorKind, isStatic: false,
-                        ps.Count, methodArity, implementationSignature, spec.Args ?? Array.Empty<TypeNode>(),
+                    ? refs.TryNullableGenericPropertySlot(selectedSpec.Name, member, accessorKind, isStatic: false,
+                        ps.Count, methodArity, implementationSignature, selectedArgs,
                         out var slotRet0, out var slotParams0, out var refused, includeUnchanged: true)
                     : refs.TrySelectedNullableGenericSlot(spec.Name, member, isStatic: false, ps.Count, methodArity,
                         implementationSignature, TypeJson.Read(impl["ret"]),
@@ -1070,7 +1082,8 @@ static class KotlinOverrideSlotBridge
                 // signature is the derivation its silence exists to prevent — so the member is left alone.
                 if (slotParams0.Any(t => t == null)) continue;
                 var slotParams = slotParams0
-                    .Select(t => SupertypeGraph.SubstOwnerTvs(NullableGenericErasure.EraseNullableTv(t, isValue), supArgs))
+                    .Select(t => SupertypeGraph.SubstOwnerTvs(NullableGenericErasure.EraseNullableTv(t, isValue),
+                        accessorKind != null ? selectedArgs : supArgs))
                     .ToArray();
                 // A null RETURN fact is the opposite: the reader states a return only while it still says something a
                 // call site completes (a carrier, or a physical type still holding a type variable), so `null` means
@@ -1078,22 +1091,24 @@ static class KotlinOverrideSlotBridge
                 // `compareTo(T): Int` is exactly that — the parameter is the whole divergence.
                 var slotRet = slotRet0 == null
                     ? SupertypeGraph.SubstOwnerTvs(TypeJson.Read(impl["ret"]), ownArgs)
-                    : SupertypeGraph.SubstOwnerTvs(NullableGenericErasure.EraseNullableTv(slotRet0, isValue), supArgs);
+                    : SupertypeGraph.SubstOwnerTvs(NullableGenericErasure.EraseNullableTv(slotRet0, isValue),
+                        accessorKind != null ? selectedArgs : supArgs);
                 if (slotRet == null) continue;
                 // The CLR slot's own NAME. A referenced Kotlin interface that is `@ClrTypeAlias`'d onto a BCL one
                 // fills a differently-named member (`compareTo` -> `CompareTo`), and the MethodImpl has to name the
                 // member the interface actually declares.
-                var descriptorOwner = spec;
+                var descriptorOwner = accessorKind != null ? selectedSpec : spec;
                 var descriptorMember = selectedPhysicalMember ?? ownName;
                 if (accessorKind != null)
                 {
-                    if (refs.TryExternalPropertyAccessor(spec.Name, member, accessorKind,
-                            ps.Count, methodArity, implementationSignature, spec.Args ?? Array.Empty<TypeNode>(),
+                    if (refs.TryExternalPropertyAccessor(selectedSpec.Name, member, accessorKind,
+                            ps.Count, methodArity, implementationSignature, selectedArgs,
                             out var physicalOwner, out _, out var externalAccessor))
                     {
-                        var currentPhysicalOwner = refs.ExactReflectedOwner(spec.Name, spec.Args?.Length ?? 0);
+                        var currentPhysicalOwner = refs.ExactReflectedOwner(
+                            selectedSpec.Name, selectedSpec.Args?.Length ?? 0);
                         if (physicalOwner != currentPhysicalOwner) continue;
-                        descriptorOwner = new TypeNode.Fqn(physicalOwner, spec.Args);
+                        descriptorOwner = new TypeNode.Fqn(physicalOwner, selectedSpec.Args);
                         descriptorMember = externalAccessor;
                     }
                 }
@@ -1156,7 +1171,11 @@ static class KotlinOverrideSlotBridge
                 fill(descriptorOwner, supIsInterface, true, accessorKind != null ? member : sourceIdentity,
                     descriptorMember, accessorKind, slotParams, slotRet, impl, selectedSlotTypeParams,
                     slotHasDefault);
-                break;
+                // Flattened property override facts can name several distinct CLR obligations (a redeclared Kotlin
+                // accessor and its aliased BCL ancestor). Let each exact owner contribute its descriptor; the common
+                // Fill/AddImplDescriptor path deduplicates genuinely identical rows. Ordinary methods retain their
+                // selected-slot behavior.
+                if (accessorKind == null) break;
             }
         }
     }

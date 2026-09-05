@@ -58,6 +58,20 @@ private class ClrProjectedIterator<T>(private val iterator: Iterator<Any?>) : It
 public fun <T> clrProjectedIterator(iterable: Any): Iterator<T> =
     ClrProjectedIterator(iteratorOverRawEnumerable(iterable))
 
+private class ClrProjectedIterableView<T>(private val source: Any) : Iterable<T> {
+    override fun iterator(): Iterator<T> = clrProjectedIterator(source)
+}
+
+public fun <T> clrProjectedIterableView(source: Any): Iterable<T> =
+    (source as? Iterable<T>) ?: ClrProjectedIterableView(source)
+
+private class ClrProjectedMutableIterableView<T>(private val source: Any) : MutableIterable<T> {
+    override fun iterator(): MutableIterator<T> = clrMutableIterator(source)
+}
+
+public fun <T> clrProjectedMutableIterableView(source: Any): MutableIterable<T> =
+    (source as? MutableIterable<T>) ?: ClrProjectedMutableIterableView(source)
+
 // A projected collection can legally cross into a covariant Collection<T> slot even when its actual element is a
 // value type. CLR variance cannot express that edge (`IReadOnlyCollection<Int32>` is not an
 // `IReadOnlyCollection<Object>`), so preserve the original receiver whenever it already inhabits the requested
@@ -141,8 +155,9 @@ public fun <T> clrProjectedCollRetainAll(c: Any, elements: Collection<T>): Boole
     val slots = c as? KotlinMutableCollectionSlots
     if (slots != null) return slots.dotktRetainAll(elements)
     val current = clrProjectedCollSnapshot<Any?>(c)
+    val keep = clrCollSnapshot(elements)
     var changed = false
-    for (element in current) if (!clrProjectedCollContains(elements, element)) {
+    for (element in current) if (!clrProjectedCollContains(keep, element)) {
         while (mutableCollectionRemoveErased(c, element)) changed = true
     }
     return changed
@@ -151,6 +166,8 @@ public fun <T> clrProjectedCollRetainAll(c: Any, elements: Collection<T>): Boole
 public fun <T> clrProjectedListAddAllAt(list: Any, index: Int, elements: Collection<T>): Boolean {
     val slots = list as? KotlinMutableListSlots
     if (slots != null) return slots.dotktAddAllAt(index, elements)
+    val size = mutableCollectionCountErased(list)
+    if (index < 0 || index > size) throw IndexOutOfBoundsException()
     var at = index
     var changed = false
     for (element in clrCollSnapshot(elements)) {
@@ -338,6 +355,9 @@ public fun <T> clrListLastIndexOf(list: List<T>, element: T): Int {
 // this class is emitted normally — no reverse-direction (C3b) GetEnumerator obligation.
 private class ClrListIterator<T>(private val list: List<T>, index: Int) : ListIterator<T> {
     private var cursor = index
+    init {
+        if (index < 0 || index > list.size) throw IndexOutOfBoundsException()
+    }
     override fun hasNext(): Boolean = cursor < list.size
     override fun next(): T { val v = list[cursor]; cursor++; return v }
     override fun hasPrevious(): Boolean = cursor > 0
@@ -590,7 +610,8 @@ private class ClrSubList<T>(private val backing: List<T>, private val fromIndex:
 public fun <T> clrListSubList(list: List<T>, fromIndex: Int, toIndex: Int): List<T> = ClrSubList(list, fromIndex, toIndex)
 
 private fun clrCheckSubListBounds(size: Int, fromIndex: Int, toIndex: Int) {
-    if (fromIndex < 0 || toIndex > size || fromIndex > toIndex) throw IndexOutOfBoundsException()
+    if (fromIndex < 0 || toIndex > size) throw IndexOutOfBoundsException()
+    if (fromIndex > toIndex) throw IllegalArgumentException()
 }
 
 private class ClrProjectedListView<T>(
@@ -618,6 +639,9 @@ private class ClrProjectedListView<T>(
         return ClrProjectedListView(backing, this.fromIndex + fromIndex, this.fromIndex + toIndex)
     }
 }
+
+public fun <T> clrProjectedListView(source: Any): List<T> =
+    (source as? List<T>) ?: ClrProjectedListView(source, 0, projectedCollectionCountErased(source))
 
 public fun <T> clrProjectedListSubList(list: Any, fromIndex: Int, toIndex: Int): List<T> {
     val slots = list as? KotlinListDefaultSlots

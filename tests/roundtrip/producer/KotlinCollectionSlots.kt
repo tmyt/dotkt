@@ -22,6 +22,12 @@ interface ExternalDefaultIterator {
     operator fun iterator(): Iterator<Int> = listOf(4, 5, 6).iterator()
 }
 
+/** A collection default inherited by a class compiled in another assembly. The compiler-owned projected-call slot
+ *  must live on this interface; a consumer cannot recover this Kotlin body from a physical BCL face. */
+interface ExternalDefaultCollection : Collection<Int> {
+    override fun isEmpty(): Boolean = true
+}
+
 class TrackedBag<E> : MutableCollection<E> {
     private val backing = ArrayList<E>()
     var removeAllCalls: Int = 0

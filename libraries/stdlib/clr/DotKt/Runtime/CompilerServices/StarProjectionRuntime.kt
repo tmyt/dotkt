@@ -94,6 +94,9 @@ internal interface StarProjectionField {
 @kotlin.clr.ClrTypeAlias("System.Type")
 @PublishedApi
 internal interface StarProjectionType {
+    @property:kotlin.clr.ClrProperty(kotlin.clr.READ, "IsValueType")
+    val isValueType: Boolean
+
     @property:kotlin.clr.ClrProperty(kotlin.clr.READ, "IsGenericType")
     val isGenericType: Boolean
 
@@ -154,6 +157,10 @@ internal interface StarProjectionType {
     @kotlin.clr.ClrIntrinsic("GetInterfaces")
     fun getInterfaces(): Array<StarProjectionType>
 }
+
+@PublishedApi
+internal fun starProjectionTypeAcceptsNull(type: StarProjectionType): Boolean =
+    !type.isValueType || (type.isGenericType && type.getGenericTypeDefinition().fullName == "System.Nullable`1")
 
 @kotlin.clr.ClrTypeAlias("System.Reflection.TargetInvocationException")
 @PublishedApi

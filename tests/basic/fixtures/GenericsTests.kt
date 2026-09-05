@@ -376,7 +376,20 @@ fun directStarSubListFirst(values: List<*>): Any? = values.subList(0, 1)[0]
 fun directStarMutableRemoveAt(values: MutableList<*>): Any? = values.removeAt(0)
 fun projectedCollectionArgumentSize(values: Collection<Any?>): Int = values.size
 fun projectedCollectionArgumentCrossing(values: Collection<*>): Int = projectedCollectionArgumentSize(values)
+fun projectedNullableCollectionArgumentSize(values: Collection<Any?>?): Int = values?.size ?: -1
+fun projectedNullableCollectionArgumentCrossing(values: Collection<*>): Int =
+    projectedNullableCollectionArgumentSize(values)
+fun projectedListArgumentSize(values: List<Any?>): Int = values.size
+fun projectedListArgumentCrossing(values: List<*>): Int = projectedListArgumentSize(values)
+fun projectedSetArgumentSize(values: Set<Any?>): Int = values.size
+fun projectedSetArgumentCrossing(values: Set<*>): Int = projectedSetArgumentSize(values)
+fun projectedIterableArgumentCount(values: Iterable<Any?>): Int = values.count()
+fun projectedIterableArgumentCrossing(values: Iterable<*>): Int = projectedIterableArgumentCount(values)
 fun projectedCollectionPlus(values: Collection<*>): List<Any?> = values + "tail"
+fun projectedCollectionSafeContains(values: Collection<*>, element: Any?): Boolean = values.contains(element)
+fun projectedListSafeIndexOf(values: List<*>, element: Any?): Int = values.indexOf(element)
+fun projectedListSafeLastIndexOf(values: List<*>, element: Any?): Int = values.lastIndexOf(element)
+fun projectedSmartCastIsEmpty(value: Any): Boolean = if (value is Collection<*>) value.isEmpty() else false
 fun <T, C : MutableList<in T>?> useSiteNullableProjectedListInsert(destination: C, value: T): C {
     destination?.add(0, value)
     return destination
@@ -624,11 +637,24 @@ class GenericsTests {
         assertEquals(8, directStarMutableRemoveAt(starMutable))
         val projectedInts: Collection<*> = listOf(1, 2)
         assertEquals(2, projectedCollectionArgumentCrossing(projectedInts))
+        assertEquals(2, projectedNullableCollectionArgumentCrossing(projectedInts))
+        assertEquals(2, projectedListArgumentCrossing(listOf(1, 2)))
+        assertEquals(2, projectedSetArgumentCrossing(setOf(1, 2)))
+        assertEquals(2, projectedIterableArgumentCrossing(listOf(1, 2)))
         val projectedPlus = projectedCollectionPlus(projectedInts)
         assertEquals(3, projectedPlus.size)
         assertEquals(1, projectedPlus[0])
         assertEquals(2, projectedPlus[1])
         assertEquals("tail", projectedPlus[2])
+        assertEquals(false, projectedCollectionSafeContains(projectedOverrides, "not-an-int"))
+        assertEquals(-1, projectedListSafeIndexOf(projectedOverrides, "not-an-int"))
+        assertEquals(-1, projectedListSafeLastIndexOf(projectedOverrides, null))
+        assertEquals(1, projectedOverrides.containsCalls)
+        assertEquals(1, projectedOverrides.indexOfCalls)
+        assertEquals(1, projectedOverrides.lastIndexOfCalls)
+        assertEquals(false, projectedCollectionSafeContains(CollectionKotlinSlotCounting<Int>(), "not-an-int"))
+        assertEquals(false, projectedSmartCastIsEmpty(projectedOverrides))
+        assertEquals(2, projectedOverrides.isEmptyCalls)
         assertEquals(true, useSiteDirectProjectedCollectionAdd(wideSet, "direct"))
         assertEquals(true, useSiteNullableProjectedCollectionAdd(wideSet, "nullable"))
         assertEquals(false, useSiteNullableProjectedCollectionAdd(null, "missing"))

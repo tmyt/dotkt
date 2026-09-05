@@ -19,11 +19,6 @@ static class MemberCallSubstitution
     // rerouted to the ClrIteratorBridge (which returns the base `Iterator`, not the declared `MutableIterator`). The
     // reroute is ONLY for the AbstractMutable* bases whose abstract iterator() slot vanished onto the BCL IEnumerable face.
     static HashSet<string> _typesWithConcreteIterator = new(StringComparer.Ordinal);
-    // Local `inner` classes flatten captured outer type parameters into their CLR generic frame. When such a type is
-    // also materialized through an existential view, FBoundStarProjectionErasure later replaces its constructed use
-    // with a non-generic `$star` carrier. Collection helpers are selected before that pass, so remember these owners
-    // here and avoid baking an invariant ICollection<Inner<T>> assertion into their receiver signature.
-    static HashSet<string> _localCapturedInnerTypes = new(StringComparer.Ordinal);
     internal readonly record struct LocalPropertyAccessorKey(
         string Owner, string Property, string Kind, int MethodArity, int ParameterCount);
 
@@ -121,7 +116,6 @@ static class MemberCallSubstitution
         _localPropertyOwners = _localPropertyAccessors.Keys.Select(key => key.Owner)
             .ToHashSet(StringComparer.Ordinal);
         _typesWithConcreteIterator = CollectConcreteIteratorTypes(root);
-        _localCapturedInnerTypes = CollectCapturedInnerTypes(root);
         return Rewrite(root, refs, new SubstCtx());
     }
 
@@ -200,26 +194,6 @@ static class MemberCallSubstitution
                         && (m["abstract"] as JsonValue)?.GetValue<bool>() != true
                         && (m["params"] as JsonArray) is { Count: 0 }))
                     set.Add(name);
-        return set;
-    }
-
-    static HashSet<string> CollectCapturedInnerTypes(JsonNode root)
-    {
-        var set = new HashSet<string>(StringComparer.Ordinal);
-        void Walk(JsonNode node)
-        {
-            if (node is JsonObject obj)
-            {
-                if (Str(obj["name"]) is string name
-                    && (obj["outerTypeParamCount"] as JsonValue)?.GetValue<int>() > 0)
-                    set.Add(name);
-                foreach (var child in obj.Select(pair => pair.Value).ToArray())
-                    if (child != null) Walk(child);
-            }
-            else if (node is JsonArray array)
-                foreach (var child in array.ToArray()) if (child != null) Walk(child);
-        }
-        Walk(root);
         return set;
     }
 
@@ -317,7 +291,7 @@ static class MemberCallSubstitution
                         && TypeJson.Read(o["type"]) is TypeNode vt)
                     {
                         vars[vn] = UnwrapNullability(vt);
-                        if (ContainsMarker(o["init"])) projectedCollections.Add(vn);
+                        if (ProducesProjectedCollection(o["init"])) projectedCollections.Add(vn);
                     }
                     if (o["params"] is JsonArray ip && ip.Count > 0) return;   // nested decl: its locals are its own
                     foreach (var kv in o) if (kv.Value != null) RecordLocalVars(kv.Value, vars, projectedCollections);
@@ -328,15 +302,20 @@ static class MemberCallSubstitution
             }
         }
 
-        static bool ContainsMarker(JsonNode node)
+        // Provenance follows only the value-producing spine. A marked star cast nested in an argument of an ordinary
+        // call does not make that call's result projected (for example listOf((raw as List<*>).size)).
+        static bool ProducesProjectedCollection(JsonNode node)
         {
-            if (node is JsonObject obj)
+            if (node is not JsonObject obj) return false;
+            if ((obj[StarProjectionLowering.ProjectedCollectionMarker] as JsonValue)
+                ?.TryGetValue<bool>(out var marked) == true && marked) return true;
+            return Str(obj["k"]) switch
             {
-                if ((obj[StarProjectionLowering.ProjectedCollectionMarker] as JsonValue)
-                    ?.TryGetValue<bool>(out var marked) == true && marked) return true;
-                return obj.Any(pair => pair.Value != null && ContainsMarker(pair.Value));
-            }
-            return node is JsonArray array && array.Any(child => child != null && ContainsMarker(child));
+                "valueBlock" => ProducesProjectedCollection(obj["result"]),
+                "cond" => ProducesProjectedCollection(obj["then"]) || ProducesProjectedCollection(obj["else"]),
+                "nullableWrap" => ProducesProjectedCollection(obj["e"]),
+                _ => false,
+            };
         }
     }
 
@@ -1984,8 +1963,7 @@ static class MemberCallSubstitution
         static bool ContainsProjection(TypeNode type) => type switch
         {
             TypeNode.Star or TypeNode.Projection => true,
-            TypeNode.Fqn f => _localCapturedInnerTypes.Contains(f.Name)
-                || f.Args?.Any(ContainsProjection) == true,
+            TypeNode.Fqn f => f.Args?.Any(ContainsProjection) == true,
             TypeNode.Nullable nullable => ContainsProjection(nullable.Of),
             TypeNode.Oblivious oblivious => ContainsProjection(oblivious.Of),
             TypeNode.Array array => ContainsProjection(array.Elem),
@@ -2010,8 +1988,7 @@ static class MemberCallSubstitution
         // member substitution (`List<*>` -> IList, `Iterable<*>` -> IEnumerable, and so on). The source projection
         // is no longer present in that token, but the non-generic facade itself is an exact representation fact:
         // it cannot name any closed element type and therefore must enter an erased collection helper.
-        if (receiverType is TypeNode.Fqn { Args: null, Name:
-            "System.Collections.IEnumerable" or "System.Collections.ICollection" or "System.Collections.IList" })
+        if (StarProjectionLowering.IsNonGenericCollectionFacade(receiverType))
             return true;
         if (receiverType is TypeNode.Fqn receiverOwner && receiverOwner.Args is { }
             && receiverOwner.Name == owner.Name && ContainsProjection(receiverOwner)) return true;

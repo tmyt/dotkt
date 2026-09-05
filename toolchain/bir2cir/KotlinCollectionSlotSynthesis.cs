@@ -129,7 +129,7 @@ static class KotlinCollectionSlotSynthesis
     {
         var defs = new Dictionary<string, Def>(StringComparer.Ordinal);
         foreach (var root in roots) Collect(root, defs);
-        foreach (var def in defs.Values.Where(d => d.Kind == "class").ToList()) ApplyClass(def, defs);
+        foreach (var def in defs.Values.Where(d => d.Kind is "class" or "interface").ToList()) ApplyType(def, defs);
     }
 
     static void Collect(JsonNode node, Dictionary<string, Def> defs)
@@ -153,19 +153,19 @@ static class KotlinCollectionSlotSynthesis
         }
     }
 
-    static void ApplyClass(Def cls, IReadOnlyDictionary<string, Def> defs)
+    static void ApplyType(Def cls, IReadOnlyDictionary<string, Def> defs)
     {
         if (cls.Methods == null) return;
         // A class whose BASE CHAIN already carries a slot interface needs nothing of its own: that base's bridge
         // forwards VIRTUALLY and therefore already reaches this class's override. Re-implementing the interface here
         // would rebuild the interface map and silently drop the slots this class does not itself declare.
-        var inherited = InheritedSlotInterfaces(cls, defs);
+        var inherited = InheritedSlots(cls, defs);
 
         var newBridges = new List<JsonObject>();
         var wanted = new HashSet<string>(StringComparer.Ordinal);
         foreach (var slot in Slots)
         {
-            if (inherited.Contains(slot.SlotInterface)) continue;
+            if (inherited.Members.Contains(SlotKey(slot))) continue;
             // Does this class PARTICIPATE in the slot? Exactly when a declaration reachable from it overrides the
             // Kotlin member: its own first, else a concrete declaration in its local supertype closure (a base-class
             // body, or an interface DEFAULT method for which the frontend emits nothing on the implementing class).
@@ -182,31 +182,49 @@ static class KotlinCollectionSlotSynthesis
             cls.Node["interfaces"] = ifaces;
         }
         foreach (var iface in wanted)
+        {
+            if (inherited.Interfaces.Contains(iface)) continue;
             if (!ifaces.Any(i => TypeJson.Read(i) is TypeNode.Fqn f && f.Name == iface))
                 ifaces.Add(TypeJson.Fqn(iface));
+        }
         foreach (var bridge in newBridges) cls.Methods.Add(bridge);
     }
 
-    /// <summary>The slot interfaces a LOCAL base class already provides, directly or by declaration.</summary>
+    /// <summary>The exact slot members a LOCAL base class already provides, plus inherited carrier interfaces.</summary>
     ///
-    /// An EXTERNAL base needs no query: if it carried the implementation it was compiled by this same pass and
-    /// already has the slot interface, and its bridge forwards virtually — while this class, declaring nothing
-    /// itself, resolves no local target below and is skipped anyway. Both roads lead to "do nothing here".
-    static HashSet<string> InheritedSlotInterfaces(Def cls, IReadOnlyDictionary<string, Def> defs)
+    /// A carrier groups several independent Kotlin members, so inheriting one bridge cannot suppress synthesis of
+    /// its siblings. An EXTERNAL base needs no query: current-toolchain external interfaces carry their own DIM bridge,
+    /// while a class declaring a new override receives its own exact bridge below.
+    sealed class InheritedSlotState
     {
-        var found = new HashSet<string>(StringComparer.Ordinal);
+        public readonly HashSet<string> Interfaces = new(StringComparer.Ordinal);
+        public readonly HashSet<string> Members = new(StringComparer.Ordinal);
+    }
+
+    static string SlotKey(Slot slot) => slot.SlotInterface + "\0" + slot.SlotMember;
+
+    static InheritedSlotState InheritedSlots(Def cls, IReadOnlyDictionary<string, Def> defs)
+    {
+        var found = new InheritedSlotState();
         var seen = new HashSet<string>(StringComparer.Ordinal) { cls.Name };
         for (var baseSpec = cls.Base; baseSpec != null && seen.Add(baseSpec.Name);)
         {
             if (!defs.TryGetValue(baseSpec.Name, out var local)) break;
             foreach (var i in local.Interfaces)
                 if (i.Name == IteratorSlots || i.Name == CollectionDefaultSlots || i.Name == ListDefaultSlots
-                    || i.Name == CollectionSlots || i.Name == ListSlots) found.Add(i.Name);
+                    || i.Name == CollectionSlots || i.Name == ListSlots) found.Interfaces.Add(i.Name);
             // A local base not yet visited still ANSWERS for its own declarations: the decision below is
             // declaration-driven, so a base that WILL receive the interface is detected by the same predicate
             // rather than by visit order.
             foreach (var slot in Slots)
-                if (DeclaresConcretely(local, slot) != null) found.Add(slot.SlotInterface);
+                if (DeclaresConcretely(local, slot) != null) found.Members.Add(SlotKey(slot));
+            if (local.Methods != null)
+                foreach (var method in local.Methods.OfType<JsonObject>())
+                    if (method["clrInterfaceImpls"] is JsonArray implementations)
+                        foreach (var implementation in implementations.OfType<JsonObject>())
+                            if (TypeJson.Read(implementation["owner"]) is TypeNode.Fqn owner
+                                && Str(implementation["member"]) is string member)
+                                found.Members.Add(owner.Name + "\0" + member);
             baseSpec = local.Base;
         }
         return found;
@@ -226,8 +244,8 @@ static class KotlinCollectionSlotSynthesis
         // 2. Otherwise the implementation is inherited. Walk the LOCAL supertype closure — base classes and
         //    interfaces alike — for a concrete declaration overriding the same member: a base-class body, or an
         //    interface DEFAULT method (`interface I<E> : MutableCollection<E> { override fun removeAll(…) = … }`).
-        //    An EXTERNAL supertype is never searched: one carrying the implementation also carries the slot
-        //    interface (the same pass compiled it), so InheritedSlotInterfaces has already skipped us.
+        //    An EXTERNAL supertype is never searched: an interface default compiled by this pass carries the capability
+        //    interface and DIM bridge itself, so the CLR inherits it without reconstructing Kotlin semantics here.
         foreach (var (spec, def) in LocalSupertypeClosure(cls, defs))
         {
             if (DeclaresConcretely(def, slot) is not JsonObject inheritedMethod) continue;
@@ -330,6 +348,33 @@ static class KotlinCollectionSlotSynthesis
 
         var targetRet = Subst(TypeJson.Read(target.Method["ret"]) ?? new TypeNode.Fqn("kotlin.Boolean"), ownerArgs);
         var slotRet = slot.EraseReturn ? new TypeNode.Fqn("kotlin.Any") : targetRet;
+        JsonNode forwarded = new JsonObject
+        {
+            ["k"] = "callInstance",
+            ["ownerType"] = TypeJson.Write(target.Owner),
+            ["virtual"] = true,
+            // bir2cir authored this call with its exact declaration owner; no later pass may reinterpret it
+            // as an ordinary Kotlin receiver call and bind it back to the slot this bridge implements.
+            ["clrOwnerResolved"] = true,
+            ["recv"] = new JsonObject { ["k"] = "this" },
+            ["method"] = Str(target.Method["name"]),
+            ["sig"] = callSig,
+            ["ret"] = TypeJson.Write(targetRet),
+            ["args"] = callArgs,
+        };
+        // Kotlin's `contains`/`indexOf`/`lastIndexOf` type-safe barrier returns the query's not-found value when an
+        // erased star argument cannot inhabit E. Letting the bridge cast first would throw for `Collection<Int>`
+        // queried with a String or null. Guard before the cast; only the compatible arm invokes the user override.
+        for (var i = declaredParams.Length - 1; i >= 0; i--)
+            if (slot.Parameters[i] == ParameterCarrier.ErasedValue)
+                forwarded = new JsonObject
+                {
+                    ["k"] = "cond",
+                    ["type"] = TypeJson.Write(targetRet),
+                    ["cond"] = ErasedValueCompatible(Subst(declaredParams[i], ownerArgs), "p" + i),
+                    ["then"] = forwarded,
+                    ["else"] = ErasedQueryMiss(slot),
+                };
         var bridge = new JsonObject
         {
             ["name"] = slot.Bridge,
@@ -345,20 +390,7 @@ static class KotlinCollectionSlotSynthesis
             ["body"] = new JsonArray(new JsonObject
             {
                 ["k"] = "return",
-                ["value"] = new JsonObject
-                {
-                    ["k"] = "callInstance",
-                    ["ownerType"] = TypeJson.Write(target.Owner),
-                    ["virtual"] = true,
-                    // bir2cir authored this call with its exact declaration owner; no later pass may reinterpret it
-                    // as an ordinary Kotlin receiver call and bind it back to the slot this bridge implements.
-                    ["clrOwnerResolved"] = true,
-                    ["recv"] = new JsonObject { ["k"] = "this" },
-                    ["method"] = Str(target.Method["name"]),
-                    ["sig"] = callSig,
-                    ["ret"] = TypeJson.Write(targetRet),
-                    ["args"] = callArgs,
-                },
+                ["value"] = forwarded,
             }),
             ["attrs"] = new JsonArray(),
             [KotlinPropertyAccessors.PhysicalSlotBridgeKey] = true,
@@ -371,8 +403,69 @@ static class KotlinCollectionSlotSynthesis
                 ["ret"] = TypeJson.Write(slotRet),
             }),
         };
+        if (cls.Kind == "interface")
+            bridge[KotlinPropertyAccessors.ClrInterfaceSlotBridgeKey] = true;
         return MaterializedExecutable.Normalize(bridge);
     }
+
+    static JsonObject ErasedValueCompatible(TypeNode declared, string name) => new()
+    {
+        ["k"] = "cond",
+        ["type"] = TypeJson.Fqn("kotlin.Boolean"),
+        ["cond"] = new JsonObject
+        {
+            ["k"] = "objEq",
+            ["lhs"] = Local(name),
+            ["rhs"] = new JsonObject
+            {
+                ["k"] = "const",
+                ["type"] = TypeJson.Write(new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"))),
+                ["value"] = null,
+            },
+        },
+        ["then"] = NullFits(declared),
+        ["else"] = new JsonObject
+        {
+            ["k"] = "isInst",
+            ["type"] = TypeJson.Write(declared),
+            ["e"] = Local(name),
+        },
+    };
+
+    static JsonNode NullFits(TypeNode declared) => declared switch
+    {
+        TypeNode.Nullable => ConstBool(true),
+        TypeNode.Oblivious => ConstBool(true),
+        TypeNode.Projection projection => NullFits(projection.Of),
+        TypeNode.Tv => new JsonObject
+        {
+            ["k"] = "callStatic",
+            ["owner"] = TypeJson.Fqn("DotKt.Runtime.CompilerServices.StarProjectionRuntimeKt"),
+            ["method"] = "starProjectionTypeAcceptsNull",
+            ["sig"] = new JsonArray(TypeJson.Fqn("System.Type")),
+            ["ret"] = TypeJson.Fqn("kotlin.Boolean"),
+            ["args"] = new JsonArray(new JsonObject
+            {
+                ["k"] = "classRef",
+                ["type"] = TypeJson.Write(declared),
+            }),
+        },
+        _ => ConstBool(false),
+    };
+
+    static JsonNode ErasedQueryMiss(Slot slot) => slot.SlotMember switch
+    {
+        "dotktContains" => ConstBool(false),
+        "dotktIndexOf" or "dotktLastIndexOf" => new JsonObject
+            { ["k"] = "const", ["type"] = TypeJson.Fqn("kotlin.Int"), ["value"] = -1 },
+        _ => throw new InvalidOperationException(
+            $"bir2cir: erased-value slot '{slot.SlotInterface}.{slot.SlotMember}' has no query-miss value"),
+    };
+
+    static JsonObject ConstBool(bool value) => new()
+    {
+        ["k"] = "const", ["type"] = TypeJson.Fqn("kotlin.Boolean"), ["value"] = value,
+    };
 
     // CLR variance does not convert IReadOnlyCollection<Int32> to IReadOnlyCollection<Object>. An erased slot bridge
     // that merely casts its collection argument therefore skips a Kotlin override exactly for value-type elements.

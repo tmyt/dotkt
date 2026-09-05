@@ -168,6 +168,12 @@ class CollectionKotlinSlotEqualValue(val id: Int) {
     override fun hashCode(): Int = 0
 }
 
+fun collectionKotlinSlotProjectedEmptyAddAll(list: MutableList<*>, index: Int): Boolean =
+    list.addAll(index, emptyList<Nothing>())
+fun collectionKotlinSlotProjectedListIterator(list: List<*>, index: Int): ListIterator<*> =
+    list.listIterator(index)
+fun collectionKotlinSlotProjectedSubList(list: List<*>, fromIndex: Int, toIndex: Int): List<*> =
+    list.subList(fromIndex, toIndex)
 
 // A subclass of a slot-holding implementer: it must inherit the slot interface and receive no bridge of its own,
 // and the base's bridge must still reach THIS override. Deliberately does not call `super.` — a `super` call from a
@@ -215,6 +221,34 @@ class CollectionKotlinSlotTests {
         assertEquals("[1, 2, 3, 4]", l.toString())
         assertFalse(l.addAll(1, listOf()))
         assertEquals("[1, 2, 3, 4]", l.toString())
+    }
+
+    @TestAttribute
+    fun projectedListOperationsValidateTheirBoundsAtTheCall() {
+        val list: MutableList<*> = mutableListOf(1, 2)
+        var addAllRejected = false
+        try {
+            collectionKotlinSlotProjectedEmptyAddAll(list, -1)
+        } catch (e: IndexOutOfBoundsException) {
+            addAllRejected = true
+        }
+        assertTrue(addAllRejected)
+
+        var iteratorRejected = false
+        try {
+            collectionKotlinSlotProjectedListIterator(list, 3)
+        } catch (e: IndexOutOfBoundsException) {
+            iteratorRejected = true
+        }
+        assertTrue(iteratorRejected)
+
+        var reversedRangeRejected = false
+        try {
+            collectionKotlinSlotProjectedSubList(list, 2, 1)
+        } catch (e: IllegalArgumentException) {
+            reversedRangeRejected = true
+        }
+        assertTrue(reversedRangeRejected)
     }
 
     @TestAttribute
