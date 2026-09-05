@@ -5,6 +5,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+## 0.9.13-beta1 (2026-09-06)
+
 ### Toolchain
 
 - **Projected collection operations now retain an existential CLR receiver (#673).** bir2cir routes collection
