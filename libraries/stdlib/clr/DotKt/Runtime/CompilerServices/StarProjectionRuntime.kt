@@ -687,6 +687,101 @@ private fun erasedMutableCollectionMethod(receiver: Any, name: String, parameter
     return match ?: throw IllegalStateException("Missing ICollection member " + name)
 }
 
+private fun erasedMutableListView(receiver: Any): StarProjectionType {
+    var match: StarProjectionType? = null
+    for (candidate in receiver.starProjectionRuntimeType().getInterfaces()) {
+        if (!candidate.isGenericType
+            || candidate.getGenericTypeDefinition().fullName != "System.Collections.Generic.IList`1") continue
+        if (match != null && match != candidate)
+            throw IllegalStateException("Ambiguous mutable list view")
+        match = candidate
+    }
+    return match ?: throw UnsupportedOperationException("MutableList has no mutable CLR list surface")
+}
+
+private fun erasedMutableListMethod(receiver: Any, name: String, parameterCount: Int): StarProjectionMethod {
+    var match: StarProjectionMethod? = null
+    for (candidate in erasedMutableListView(receiver).getMethods()) {
+        if (candidate.name != name || candidate.getParameters().size != parameterCount) continue
+        if (match != null) throw IllegalStateException("Ambiguous IList member " + name)
+        match = candidate
+    }
+    return match ?: throw IllegalStateException("Missing IList member " + name)
+}
+
+// Read-only projected lists need their IReadOnlyCollection/IReadOnlyList faces. Do not assume an IList face merely
+// because the standard BCL List happens to provide both: a Kotlin implementation of List<E> is allowed to be truly
+// read-only. Prefer the read-only face and fall back to the mutable one only for foreign types exposing IList alone.
+private fun erasedProjectedView(receiver: Any, preferred: String, fallback: String): StarProjectionType {
+    var preferredMatch: StarProjectionType? = null
+    var fallbackMatch: StarProjectionType? = null
+    for (candidate in receiver.starProjectionRuntimeType().getInterfaces()) {
+        if (!candidate.isGenericType) continue
+        val definition = candidate.getGenericTypeDefinition().fullName
+        if (definition == preferred) {
+            if (preferredMatch != null && preferredMatch != candidate)
+                throw IllegalStateException("Ambiguous projected view " + preferred)
+            preferredMatch = candidate
+        } else if (definition == fallback) {
+            if (fallbackMatch != null && fallbackMatch != candidate)
+                throw IllegalStateException("Ambiguous projected view " + fallback)
+            fallbackMatch = candidate
+        }
+    }
+    return preferredMatch ?: fallbackMatch
+        ?: throw UnsupportedOperationException("Projected receiver has no " + preferred + " or " + fallback + " surface")
+}
+
+private fun erasedProjectedMethod(
+    receiver: Any,
+    preferred: String,
+    fallback: String,
+    name: String,
+    parameterCount: Int,
+): StarProjectionMethod {
+    var match: StarProjectionMethod? = null
+    for (candidate in erasedProjectedView(receiver, preferred, fallback).getMethods()) {
+        if (candidate.name != name || candidate.getParameters().size != parameterCount) continue
+        if (match != null) throw IllegalStateException("Ambiguous projected member " + name)
+        match = candidate
+    }
+    return match ?: throw IllegalStateException("Missing projected member " + name)
+}
+
+@PublishedApi
+internal fun projectedCollectionCountErased(receiver: Any): Int = try {
+    erasedProjectedMethod(
+        receiver,
+        "System.Collections.Generic.IReadOnlyCollection`1",
+        "System.Collections.Generic.ICollection`1",
+        "get_Count",
+        0,
+    ).invoke(receiver, arrayOfNulls<Any?>(0)) as Int
+} catch (failure: StarProjectionInvocationException) {
+    throw (failure.innerException ?: failure)
+}
+
+@PublishedApi
+internal fun projectedListGetErased(receiver: Any, index: Int): Any? = try {
+    erasedProjectedMethod(
+        receiver,
+        "System.Collections.Generic.IReadOnlyList`1",
+        "System.Collections.Generic.IList`1",
+        "get_Item",
+        1,
+    ).invoke(receiver, arrayOf(index))
+} catch (failure: StarProjectionInvocationException) {
+    throw (failure.innerException ?: failure)
+}
+
+@PublishedApi
+internal fun mutableCollectionCountErased(receiver: Any): Int = try {
+    erasedMutableCollectionMethod(receiver, "get_Count", 0)
+        .invoke(receiver, arrayOfNulls<Any?>(0)) as Int
+} catch (failure: StarProjectionInvocationException) {
+    throw (failure.innerException ?: failure)
+}
+
 @PublishedApi
 internal fun mutableCollectionAddErased(receiver: Any, element: Any?): Boolean = try {
     val count = erasedMutableCollectionMethod(receiver, "get_Count", 0)
@@ -717,6 +812,40 @@ internal fun mutableCollectionReplaceErased(receiver: Any, elements: Array<Any?>
     }
 }
 
+@PublishedApi
+internal fun mutableListGetErased(receiver: Any, index: Int): Any? = try {
+    erasedMutableListMethod(receiver, "get_Item", 1).invoke(receiver, arrayOf(index))
+} catch (failure: StarProjectionInvocationException) {
+    throw (failure.innerException ?: failure)
+}
+
+@PublishedApi
+internal fun mutableListSetErased(receiver: Any, index: Int, element: Any?) {
+    try {
+        erasedMutableListMethod(receiver, "set_Item", 2).invoke(receiver, arrayOf(index, element))
+    } catch (failure: StarProjectionInvocationException) {
+        throw (failure.innerException ?: failure)
+    }
+}
+
+@PublishedApi
+internal fun mutableListInsertErased(receiver: Any, index: Int, element: Any?) {
+    try {
+        erasedMutableListMethod(receiver, "Insert", 2).invoke(receiver, arrayOf(index, element))
+    } catch (failure: StarProjectionInvocationException) {
+        throw (failure.innerException ?: failure)
+    }
+}
+
+@PublishedApi
+internal fun mutableListRemoveAtErased(receiver: Any, index: Int) {
+    try {
+        erasedMutableListMethod(receiver, "RemoveAt", 1).invoke(receiver, arrayOf(index))
+    } catch (failure: StarProjectionInvocationException) {
+        throw (failure.innerException ?: failure)
+    }
+}
+
 private fun erasedMutableIteratorMethod(receiver: Any, name: String): StarProjectionMethod {
     var view: StarProjectionType? = null
     for (candidate in receiver.starProjectionRuntimeType().getInterfaces()) {
@@ -733,6 +862,63 @@ private fun erasedMutableIteratorMethod(receiver: Any, name: String): StarProjec
         match = candidate
     }
     return match ?: throw IllegalStateException("Missing MutableIterator member " + name)
+}
+
+private fun erasedIteratorMethod(receiver: Any, openInterface: String, name: String, parameterCount: Int): StarProjectionMethod {
+    var view: StarProjectionType? = null
+    for (candidate in receiver.starProjectionRuntimeType().getInterfaces()) {
+        if (!candidate.isGenericType || candidate.getGenericTypeDefinition().fullName != openInterface) continue
+        if (view != null && view != candidate) throw IllegalStateException("Ambiguous iterator view " + openInterface)
+        view = candidate
+    }
+    val closed = view ?: throw IllegalStateException("Missing iterator view " + openInterface)
+    var match: StarProjectionMethod? = null
+    for (candidate in closed.getMethods()) {
+        if (candidate.name != name || candidate.getParameters().size != parameterCount) continue
+        if (match != null) throw IllegalStateException("Ambiguous iterator member " + name)
+        match = candidate
+    }
+    return match ?: throw IllegalStateException("Missing iterator member " + name)
+}
+
+private fun invokeIteratorErased(receiver: Any, openInterface: String, name: String, arguments: Array<Any?>): Any? = try {
+    erasedIteratorMethod(receiver, openInterface, name, arguments.size).invoke(receiver, arguments)
+} catch (failure: StarProjectionInvocationException) {
+    throw (failure.innerException ?: failure)
+}
+
+@PublishedApi
+internal fun listIteratorHasNextErased(receiver: Any): Boolean =
+    invokeIteratorErased(receiver, "kotlin.collections.Iterator`1", "hasNext", arrayOfNulls<Any?>(0)) as Boolean
+
+@PublishedApi
+internal fun listIteratorNextErased(receiver: Any): Any? =
+    invokeIteratorErased(receiver, "kotlin.collections.Iterator`1", "next", arrayOfNulls<Any?>(0))
+
+@PublishedApi
+internal fun listIteratorHasPreviousErased(receiver: Any): Boolean =
+    invokeIteratorErased(receiver, "kotlin.collections.ListIterator`1", "hasPrevious", arrayOfNulls<Any?>(0)) as Boolean
+
+@PublishedApi
+internal fun listIteratorPreviousErased(receiver: Any): Any? =
+    invokeIteratorErased(receiver, "kotlin.collections.ListIterator`1", "previous", arrayOfNulls<Any?>(0))
+
+@PublishedApi
+internal fun listIteratorNextIndexErased(receiver: Any): Int =
+    invokeIteratorErased(receiver, "kotlin.collections.ListIterator`1", "nextIndex", arrayOfNulls<Any?>(0)) as Int
+
+@PublishedApi
+internal fun listIteratorPreviousIndexErased(receiver: Any): Int =
+    invokeIteratorErased(receiver, "kotlin.collections.ListIterator`1", "previousIndex", arrayOfNulls<Any?>(0)) as Int
+
+@PublishedApi
+internal fun mutableListIteratorSetErased(receiver: Any, element: Any?) {
+    invokeIteratorErased(receiver, "kotlin.collections.MutableListIterator`1", "set", arrayOf(element))
+}
+
+@PublishedApi
+internal fun mutableListIteratorAddErased(receiver: Any, element: Any?) {
+    invokeIteratorErased(receiver, "kotlin.collections.MutableListIterator`1", "add", arrayOf(element))
 }
 
 @PublishedApi

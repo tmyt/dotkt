@@ -19,9 +19,10 @@ internal interface KotlinMutableSetClassifier : KotlinSetClassifier
 // SUPPLEMENTAL KOTLIN SLOTS FOR @ClrTypeAlias'd COLLECTION INTERFACES.
 //
 // `kotlin.collections.MutableCollection<E>` IS `System.Collections.Generic.ICollection<E>` and
-// `MutableList<E>` IS `IList<E>`. Those BCL interfaces carry no slot for Kotlin's mutable `iterator()` return,
-// `removeAll`, `retainAll`, `addAll(elements)` or `addAll(index, elements)`, so a call through the Kotlin interface
-// has no physical member to dispatch on. Two receiver categories must both work, and they need opposite treatments:
+// `MutableList<E>` IS `IList<E>`. The substituted BCL interfaces carry no slot for Kotlin-only defaults such as
+// `isEmpty`, `containsAll`, `listIterator`, `subList`, `removeAll`, `retainAll` and `addAll`, so a call through the
+// Kotlin interface has no physical member to dispatch on. Two receiver categories must both work, and they need
+// opposite treatments:
 //
 //   * a BCL-backed value (`mutableListOf()` -> `List<T>`, `HashSet()`) has no Kotlin body at all and needs a
 //     default written over the slots that DO exist (`Remove`/`Add`/`Insert`/`GetEnumerator`);
@@ -64,6 +65,24 @@ internal interface KotlinMutableSetClassifier : KotlinSetClassifier
 internal interface KotlinMutableIteratorSlots {
     /** Returns the implementer's exact `MutableIterator<E>` erased only at this compiler-owned carrier boundary. */
     fun dotktIterator(): Any
+}
+
+/** Kotlin read-only collection members whose semantics are absent from the substituted BCL interfaces. */
+@PublishedApi
+internal interface KotlinCollectionDefaultSlots {
+    fun dotktIsEmpty(): Boolean
+    fun dotktContains(element: Any?): Boolean
+    fun dotktContainsAll(elements: Any): Boolean
+}
+
+/** Kotlin list members whose BCL surface is absent or whose projected argument cannot name its closed slot. */
+@PublishedApi
+internal interface KotlinListDefaultSlots {
+    fun dotktIndexOf(element: Any?): Int
+    fun dotktLastIndexOf(element: Any?): Int
+    fun dotktListIterator(): Any
+    fun dotktListIteratorAt(index: Int): Any
+    fun dotktSubList(fromIndex: Int, toIndex: Int): Any
 }
 
 /** The Kotlin-only `MutableCollection` slots that `System.Collections.Generic.ICollection<E>` does not carry. */

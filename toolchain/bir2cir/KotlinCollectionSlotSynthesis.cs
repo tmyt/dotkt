@@ -8,15 +8,17 @@ using DotKt.Bir;
 //
 // That pass fills the BCL members Kotlin's collection interfaces lack (`Contains`/`CopyTo`/`IsReadOnly`/`IndexOf`).
 // This one fills the other direction: `MutableCollection<E>` IS `ICollection<E>` and `MutableList<E>` IS `IList<E>`,
-// and those BCL interfaces carry NO slot for Kotlin's mutable `iterator()` return, `removeAll`, `retainAll`,
-// `addAll(elements)` or `addAll(index, elements)`. Without a slot there is nothing for a call to dispatch on, so a
-// Kotlin class that OVERRIDES one of them could not be reached: the call site can only see the BCL face.
+// and those BCL interfaces carry NO slot for several Kotlin members. Read-only Collection/List defaults have no
+// corresponding member at all (`contains`, `listIterator`, `subList`, ...); mutable defaults either have no BCL slot
+// (`removeAll`, `retainAll`, `addAll`) or a differently-shaped one. Without a slot there is nothing for a projected
+// call to dispatch on, so a Kotlin class that OVERRIDES one of them could not be reached: the call site can only see
+// an erased BCL face.
 //
-// Give every emitted class whose Kotlin supertypes reach such a member a real CLR interface slot for it. The class
-// gains `DotKt.Runtime.CompilerServices.KotlinMutableCollectionSlots` (plus `KotlinMutableListSlots` for the indexed
-// `addAll`) and one private `dotkt$slot$…` bridge per member, wired by an exact `clrInterfaceImpls` MethodImpl
-// descriptor. Each bridge casts the erased `Any` parameter back to the overridden member's own declared collection
-// type and forwards VIRTUALLY, so a further-derived override still wins and a subclass needs no bridge of its own.
+// Give every emitted class whose Kotlin supertypes reach such a member a real compiler-owned CLR interface slot and
+// one private `dotkt$slot$…` bridge per member, wired by an exact `clrInterfaceImpls` MethodImpl descriptor. Each
+// bridge restores erased arguments to the overridden member's own declared type (a live typed view for collection
+// arguments, a cast/unbox for element arguments) and forwards VIRTUALLY, so a further-derived override still wins and
+// a subclass needs no bridge of its own.
 //
 // THE MEMBER IS IDENTIFIED BY THE FRONTEND'S OVERRIDE FACTS, NEVER BY NAME AND ARITY. A declaration qualifies only
 // when its `overrides` chain names `kotlin.collections.MutableCollection` / `MutableList` with the slot member and
@@ -30,7 +32,7 @@ using DotKt.Bir;
 //
 // The bridge's parameter typing likewise comes from the OVERRIDDEN declaration, substituted into the implementer's
 // frame — never from guessing which parameter "looks like" the collection. Its collection parameter is ERASED to
-// `Any` to match the non-generic slot interface, then cast back to the implementer's own instantiation, so the
+// `Any` to match the non-generic slot interface, then adapted back to the implementer's own instantiation, so the
 // capability test at the call site never has to be re-argued from the dispatcher's generic arguments (see the note
 // on KotlinCollectionSlots.kt — a robustness choice, not a reproduced bug fix).
 //
@@ -40,11 +42,22 @@ using DotKt.Bir;
 static class KotlinCollectionSlotSynthesis
 {
     const string MutableIterable = "kotlin.collections.MutableIterable";
+    const string Collection = "kotlin.collections.Collection";
+    const string List = "kotlin.collections.List";
     const string MutableCollection = "kotlin.collections.MutableCollection";
     const string MutableList = "kotlin.collections.MutableList";
     const string IteratorSlots = "DotKt.Runtime.CompilerServices.KotlinMutableIteratorSlots";
+    const string CollectionDefaultSlots = "DotKt.Runtime.CompilerServices.KotlinCollectionDefaultSlots";
+    const string ListDefaultSlots = "DotKt.Runtime.CompilerServices.KotlinListDefaultSlots";
     const string CollectionSlots = "DotKt.Runtime.CompilerServices.KotlinMutableCollectionSlots";
     const string ListSlots = "DotKt.Runtime.CompilerServices.KotlinMutableListSlots";
+
+    enum ParameterCarrier
+    {
+        Exact,
+        ErasedValue,
+        ErasedCollection,
+    }
 
     /// <summary>One Kotlin member with no BCL slot, and the compiler-owned interface slot that carries it.</summary>
     sealed class Slot
@@ -56,6 +69,7 @@ static class KotlinCollectionSlotSynthesis
         public string SlotMember;           // the slot's member name
         public string Bridge;               // the synthesized forwarding method's name
         public bool EraseReturn;             // the non-generic carrier returns Any, while the target stays exact
+        public ParameterCarrier[] Parameters = Array.Empty<ParameterCarrier>();
     }
 
     static readonly Slot[] Slots =
@@ -63,14 +77,41 @@ static class KotlinCollectionSlotSynthesis
         new() { DeclaringInterface = MutableIterable, Member = "iterator", Arity = 0,
                 SlotInterface = IteratorSlots, SlotMember = "dotktIterator", Bridge = "dotkt$slot$iterator",
                 EraseReturn = true },
+        new() { DeclaringInterface = Collection, Member = "isEmpty", Arity = 0,
+                SlotInterface = CollectionDefaultSlots, SlotMember = "dotktIsEmpty", Bridge = "dotkt$slot$isEmpty" },
+        new() { DeclaringInterface = Collection, Member = "contains", Arity = 1,
+                SlotInterface = CollectionDefaultSlots, SlotMember = "dotktContains", Bridge = "dotkt$slot$contains",
+                Parameters = new[] { ParameterCarrier.ErasedValue } },
+        new() { DeclaringInterface = Collection, Member = "containsAll", Arity = 1,
+                SlotInterface = CollectionDefaultSlots, SlotMember = "dotktContainsAll", Bridge = "dotkt$slot$containsAll",
+                Parameters = new[] { ParameterCarrier.ErasedCollection } },
+        new() { DeclaringInterface = List, Member = "indexOf", Arity = 1,
+                SlotInterface = ListDefaultSlots, SlotMember = "dotktIndexOf", Bridge = "dotkt$slot$indexOf",
+                Parameters = new[] { ParameterCarrier.ErasedValue } },
+        new() { DeclaringInterface = List, Member = "lastIndexOf", Arity = 1,
+                SlotInterface = ListDefaultSlots, SlotMember = "dotktLastIndexOf", Bridge = "dotkt$slot$lastIndexOf",
+                Parameters = new[] { ParameterCarrier.ErasedValue } },
+        new() { DeclaringInterface = List, Member = "listIterator", Arity = 0,
+                SlotInterface = ListDefaultSlots, SlotMember = "dotktListIterator", Bridge = "dotkt$slot$listIterator",
+                EraseReturn = true },
+        new() { DeclaringInterface = List, Member = "listIterator", Arity = 1,
+                SlotInterface = ListDefaultSlots, SlotMember = "dotktListIteratorAt", Bridge = "dotkt$slot$listIteratorAt",
+                Parameters = new[] { ParameterCarrier.Exact }, EraseReturn = true },
+        new() { DeclaringInterface = List, Member = "subList", Arity = 2,
+                SlotInterface = ListDefaultSlots, SlotMember = "dotktSubList", Bridge = "dotkt$slot$subList",
+                Parameters = new[] { ParameterCarrier.Exact, ParameterCarrier.Exact }, EraseReturn = true },
         new() { DeclaringInterface = MutableCollection, Member = "removeAll", Arity = 1,
-                SlotInterface = CollectionSlots, SlotMember = "dotktRemoveAll", Bridge = "dotkt$slot$removeAll" },
+                SlotInterface = CollectionSlots, SlotMember = "dotktRemoveAll", Bridge = "dotkt$slot$removeAll",
+                Parameters = new[] { ParameterCarrier.ErasedCollection } },
         new() { DeclaringInterface = MutableCollection, Member = "retainAll", Arity = 1,
-                SlotInterface = CollectionSlots, SlotMember = "dotktRetainAll", Bridge = "dotkt$slot$retainAll" },
+                SlotInterface = CollectionSlots, SlotMember = "dotktRetainAll", Bridge = "dotkt$slot$retainAll",
+                Parameters = new[] { ParameterCarrier.ErasedCollection } },
         new() { DeclaringInterface = MutableCollection, Member = "addAll", Arity = 1,
-                SlotInterface = CollectionSlots, SlotMember = "dotktAddAll", Bridge = "dotkt$slot$addAll" },
+                SlotInterface = CollectionSlots, SlotMember = "dotktAddAll", Bridge = "dotkt$slot$addAll",
+                Parameters = new[] { ParameterCarrier.ErasedCollection } },
         new() { DeclaringInterface = MutableList, Member = "addAll", Arity = 2,
-                SlotInterface = ListSlots, SlotMember = "dotktAddAllAt", Bridge = "dotkt$slot$addAllAt" },
+                SlotInterface = ListSlots, SlotMember = "dotktAddAllAt", Bridge = "dotkt$slot$addAllAt",
+                Parameters = new[] { ParameterCarrier.Exact, ParameterCarrier.ErasedCollection } },
     };
 
     sealed class Def
@@ -159,7 +200,8 @@ static class KotlinCollectionSlotSynthesis
         {
             if (!defs.TryGetValue(baseSpec.Name, out var local)) break;
             foreach (var i in local.Interfaces)
-                if (i.Name == IteratorSlots || i.Name == CollectionSlots || i.Name == ListSlots) found.Add(i.Name);
+                if (i.Name == IteratorSlots || i.Name == CollectionDefaultSlots || i.Name == ListDefaultSlots
+                    || i.Name == CollectionSlots || i.Name == ListSlots) found.Add(i.Name);
             // A local base not yet visited still ANSWERS for its own declarations: the decision below is
             // declaration-driven, so a base that WILL receive the interface is detected by the same predicate
             // rather than by visit order.
@@ -242,19 +284,21 @@ static class KotlinCollectionSlotSynthesis
     /// <summary>
     /// `private bool dotkt$slot$&lt;member&gt;(object p0[, int index]) { return this.&lt;member&gt;((&lt;declared&gt;)p0, …) }`.
     ///
-    /// The erased `Any` parameter is what makes the capability test instantiation-independent; the cast re-establishes
-    /// the OVERRIDDEN member's own declared type at this class's instantiation, so a genuinely mismatched argument
-    /// fails LOUD (InvalidCastException) rather than silently taking the BCL default. The forward is VIRTUAL: the
-    /// bridge is inherited by subclasses and must reach the most-derived override.
+    /// The erased `Any` parameter is what makes the capability test instantiation-independent. An element is
+    /// cast/unboxed to the OVERRIDDEN member's declared E; a Collection argument gets a live Collection&lt;E&gt; view so
+    /// value-type generic variance never becomes an invalid cast. The forward is VIRTUAL: the bridge is inherited by
+    /// subclasses and must reach the most-derived override.
     /// </summary>
     static JsonObject Bridge(Def cls, Slot slot, (TypeNode.Fqn Owner, JsonObject Method) target)
     {
         var declaredParams = (target.Method["params"] as JsonArray)?.OfType<JsonObject>()
             .Select(p => TypeJson.Read(p["type"])).ToArray() ?? Array.Empty<TypeNode>();
-        if (declaredParams.Length != slot.Arity || declaredParams.Any(p => p == null))
+        if (declaredParams.Length != slot.Arity || declaredParams.Any(p => p == null)
+            || (slot.Arity != 0 && slot.Parameters.Length != slot.Arity))
             throw new InvalidOperationException(
                 $"bir2cir: the declaration implementing '{slot.DeclaringInterface}.{slot.Member}' on '{cls.Name}' has "
-                + $"{declaredParams.Length} readable parameter(s), not the {slot.Arity} the Kotlin slot declares.");
+                + $"{declaredParams.Length} readable parameter(s), but the slot declares {slot.Arity} parameter(s) and "
+                + $"{slot.Parameters.Length} carrier fact(s).");
         var ownerArgs = target.Owner.Args ?? Array.Empty<TypeNode>();
 
         var bridgeParams = new JsonArray();
@@ -267,15 +311,21 @@ static class KotlinCollectionSlotSynthesis
             // The ERASED positions are the ones the SLOT INTERFACE declares as `Any`; `MutableList.addAll(index,
             // elements)`'s leading `Int` index stays verbatim. Both facts come from the Kotlin slot declaration, not
             // from inspecting what a parameter type happens to look like.
-            var erase = !(slot.Arity == 2 && i == 0);
+            var carrier = slot.Parameters[i];
+            var erase = carrier != ParameterCarrier.Exact;
             var name = "p" + i;
             var slotParam = erase ? TypeJson.Fqn("kotlin.Any") : TypeJson.Write(declared);
             bridgeParams.Add(new JsonObject { ["name"] = name, ["type"] = Clone(slotParam) });
             slotParams.Add(Clone(slotParam));
             callSig.Add(TypeJson.Write(declared));
-            callArgs.Add(erase
-                ? new JsonObject { ["k"] = "cast", ["type"] = TypeJson.Write(declared), ["e"] = Local(name) }
-                : Local(name));
+            callArgs.Add(carrier switch
+            {
+                ParameterCarrier.Exact => Local(name),
+                ParameterCarrier.ErasedValue => new JsonObject
+                    { ["k"] = "cast", ["type"] = TypeJson.Write(declared), ["e"] = Local(name) },
+                ParameterCarrier.ErasedCollection => AdaptCollectionArgument(slot, declared, name),
+                _ => throw new InvalidOperationException($"bir2cir: unknown collection slot carrier {carrier}"),
+            });
         }
 
         var targetRet = Subst(TypeJson.Read(target.Method["ret"]) ?? new TypeNode.Fqn("kotlin.Boolean"), ownerArgs);
@@ -322,6 +372,27 @@ static class KotlinCollectionSlotSynthesis
             }),
         };
         return MaterializedExecutable.Normalize(bridge);
+    }
+
+    // CLR variance does not convert IReadOnlyCollection<Int32> to IReadOnlyCollection<Object>. An erased slot bridge
+    // that merely casts its collection argument therefore skips a Kotlin override exactly for value-type elements.
+    // Re-close the live projected view at the implementer's own declared E, which is known precisely in this bridge.
+    static JsonObject AdaptCollectionArgument(Slot slot, TypeNode declared, string name)
+    {
+        if (declared is not TypeNode.Fqn { Name: Collection, Args: { Length: 1 } args })
+            throw new InvalidOperationException(
+                $"bir2cir: '{slot.DeclaringInterface}.{slot.Member}' marks a non-Collection parameter as an erased "
+                + "collection carrier; the slot table and Kotlin declaration are inconsistent.");
+        return new JsonObject
+        {
+            ["k"] = "callStatic",
+            ["owner"] = TypeJson.Fqn("kotlin.collections.ClrCollectionDefaultsKt"),
+            ["method"] = "clrProjectedCollectionView",
+            ["sig"] = new JsonArray(TypeJson.Fqn("kotlin.Any")),
+            ["typeArgs"] = new JsonArray(TypeJson.Write(args[0])),
+            ["ret"] = TypeJson.Write(declared),
+            ["args"] = new JsonArray(Local(name)),
+        };
     }
 
     static TypeNode.Fqn SelfOwner(Def cls)

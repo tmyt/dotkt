@@ -19,6 +19,11 @@ static class MemberCallSubstitution
     // rerouted to the ClrIteratorBridge (which returns the base `Iterator`, not the declared `MutableIterator`). The
     // reroute is ONLY for the AbstractMutable* bases whose abstract iterator() slot vanished onto the BCL IEnumerable face.
     static HashSet<string> _typesWithConcreteIterator = new(StringComparer.Ordinal);
+    // Local `inner` classes flatten captured outer type parameters into their CLR generic frame. When such a type is
+    // also materialized through an existential view, FBoundStarProjectionErasure later replaces its constructed use
+    // with a non-generic `$star` carrier. Collection helpers are selected before that pass, so remember these owners
+    // here and avoid baking an invariant ICollection<Inner<T>> assertion into their receiver signature.
+    static HashSet<string> _localCapturedInnerTypes = new(StringComparer.Ordinal);
     internal readonly record struct LocalPropertyAccessorKey(
         string Owner, string Property, string Kind, int MethodArity, int ParameterCount);
 
@@ -116,6 +121,7 @@ static class MemberCallSubstitution
         _localPropertyOwners = _localPropertyAccessors.Keys.Select(key => key.Owner)
             .ToHashSet(StringComparer.Ordinal);
         _typesWithConcreteIterator = CollectConcreteIteratorTypes(root);
+        _localCapturedInnerTypes = CollectCapturedInnerTypes(root);
         return Rewrite(root, refs, new SubstCtx());
     }
 
@@ -197,6 +203,26 @@ static class MemberCallSubstitution
         return set;
     }
 
+    static HashSet<string> CollectCapturedInnerTypes(JsonNode root)
+    {
+        var set = new HashSet<string>(StringComparer.Ordinal);
+        void Walk(JsonNode node)
+        {
+            if (node is JsonObject obj)
+            {
+                if (Str(obj["name"]) is string name
+                    && (obj["outerTypeParamCount"] as JsonValue)?.GetValue<int>() > 0)
+                    set.Add(name);
+                foreach (var child in obj.Select(pair => pair.Value).ToArray())
+                    if (child != null) Walk(child);
+            }
+            else if (node is JsonArray array)
+                foreach (var child in array.ToArray()) if (child != null) Walk(child);
+        }
+        Walk(root);
+        return set;
+    }
+
     // Lexical type environment carried DOWN the walk: a name->type-token map for the enclosing decl's params, and a
     // type-param-name->constraint-tokens map for its generic parameters. Populated at each declaration node (anything
     // carrying `params`/`typeParams`) so a call site can recover its receiver's STATIC type — needed to route a call
@@ -208,15 +234,18 @@ static class MemberCallSubstitution
         // walked natively by Constrainify/CollElemArg/MapKvArgs (a receiver's static type / a collection element).
         public readonly Dictionary<string, TypeNode> VarTypes;
         public readonly Dictionary<string, List<TypeNode>> TpConstraints;
+        public readonly HashSet<string> ProjectedCollectionVars;
         public SubstCtx()
         {
             VarTypes = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
             TpConstraints = new Dictionary<string, List<TypeNode>>(StringComparer.Ordinal);
+            ProjectedCollectionVars = new HashSet<string>(StringComparer.Ordinal);
         }
         SubstCtx(SubstCtx parent)
         {
             VarTypes = new Dictionary<string, TypeNode>(parent.VarTypes, StringComparer.Ordinal);
             TpConstraints = new Dictionary<string, List<TypeNode>>(parent.TpConstraints, StringComparer.Ordinal);
+            ProjectedCollectionVars = new HashSet<string>(parent.ProjectedCollectionVars, StringComparer.Ordinal);
         }
         // A child scope extended with this declaration's params + generic-parameter constraints. Returns `this`
         // unchanged when the node introduces no bindings (so plain nodes don't allocate a scope).
@@ -256,7 +285,8 @@ static class MemberCallSubstitution
             }
             // Walk a DECLARATION's body once to record its local vars (a local shadows a same-name param; and a
             // materialized collection local is the receiver whose element type CollElemArg/Constrainify recover).
-            if (isDecl && decl["body"] is JsonNode body) RecordLocalVars(body, child.VarTypes);
+            if (isDecl && decl["body"] is JsonNode body)
+                RecordLocalVars(body, child.VarTypes, child.ProjectedCollectionVars);
             return child;
         }
 
@@ -276,7 +306,8 @@ static class MemberCallSubstitution
 
         // Record the `var name/type` of every local declaration in this decl's own body, so a local shadows a
         // same-named param. Stops at a nested param-bearing declaration (an inner lambda/fun scopes its own locals).
-        static void RecordLocalVars(JsonNode node, Dictionary<string, TypeNode> vars)
+        static void RecordLocalVars(JsonNode node, Dictionary<string, TypeNode> vars,
+            HashSet<string> projectedCollections)
         {
             switch (node)
             {
@@ -284,14 +315,28 @@ static class MemberCallSubstitution
                     if ((o["k"] as JsonValue)?.GetValue<string>() == "var"
                         && (o["name"] as JsonValue)?.GetValue<string>() is string vn
                         && TypeJson.Read(o["type"]) is TypeNode vt)
+                    {
                         vars[vn] = UnwrapNullability(vt);
+                        if (ContainsMarker(o["init"])) projectedCollections.Add(vn);
+                    }
                     if (o["params"] is JsonArray ip && ip.Count > 0) return;   // nested decl: its locals are its own
-                    foreach (var kv in o) if (kv.Value != null) RecordLocalVars(kv.Value, vars);
+                    foreach (var kv in o) if (kv.Value != null) RecordLocalVars(kv.Value, vars, projectedCollections);
                     break;
                 case JsonArray a:
-                    foreach (var it in a) if (it != null) RecordLocalVars(it, vars);
+                    foreach (var it in a) if (it != null) RecordLocalVars(it, vars, projectedCollections);
                     break;
             }
+        }
+
+        static bool ContainsMarker(JsonNode node)
+        {
+            if (node is JsonObject obj)
+            {
+                if ((obj[StarProjectionLowering.ProjectedCollectionMarker] as JsonValue)
+                    ?.TryGetValue<bool>(out var marked) == true && marked) return true;
+                return obj.Any(pair => pair.Value != null && ContainsMarker(pair.Value));
+            }
+            return node is JsonArray array && array.Any(child => child != null && ContainsMarker(child));
         }
     }
 
@@ -316,6 +361,8 @@ static class MemberCallSubstitution
 
     static JsonNode Transform(JsonObject node, ReferenceMetadataIndex refs, SubstCtx ctx)
     {
+        // Pass-local provenance consumed by SubstCtx above; CIR carries only the selected physical helper.
+        node.Remove(StarProjectionLowering.ProjectedCollectionMarker);
         var result = (node["k"] as JsonValue)?.GetValue<string>() switch
         {
             "new" => TransformNew(node, refs) ?? node,
@@ -1473,8 +1520,16 @@ static class MemberCallSubstitution
             // receiver-erased adapter; it resolves the receiver's actual ICollection<X> while the ordinary invariant
             // case keeps the direct helper. This also covers lifted closures, whose captured method variables have
             // already been rebound into their generated type frame by ClosureSynthesis.
-            if (slotHelper == "clrCollAdd" && HasProjectedCollectionReceiver(node, ownerFqnNode, ctx))
-                slotHelper = "clrProjectedCollAdd";
+            if (HasProjectedCollectionReceiver(node, ownerFqnNode, ctx))
+                slotHelper = slotHelper switch
+                {
+                    "clrCollAdd" => "clrProjectedCollAdd",
+                    "clrCollAddAll" => "clrProjectedCollAddAll",
+                    "clrCollRemoveAll" => "clrProjectedCollRemoveAll",
+                    "clrCollRetainAll" => "clrProjectedCollRetainAll",
+                    "clrListAddAllAt" => "clrProjectedListAddAllAt",
+                    _ => slotHelper,
+                };
             return CollDefaultCall(node, "kotlin.collections.ClrCollectionDefaultsKt", slotHelper,
                 CollElemArg(node, refs, ctx, ownerFqnNode), args);
         }
@@ -1489,8 +1544,16 @@ static class MemberCallSubstitution
         if (instance && kind == "interface" && ownerFqn == "kotlin.collections.MutableList"
             && (((member is "set" or "set_Item") && args.Count == 2) || ((member is "removeAt" or "RemoveAt") && args.Count == 1)))
         {
-            var listHelper = member is "set" or "set_Item" ? "clrListSet" : "clrListRemoveAt";
-            var listCall = (JsonObject)CollDefaultCall(node, "kotlin.collections.ClrCollectionDefaultsKt", listHelper, OwnerElemArg(ownerFqnNode), args);
+            var projected = HasProjectedCollectionReceiver(node, ownerFqnNode, ctx);
+            var listHelper = (member is "set" or "set_Item", projected) switch
+            {
+                (true, true) => "clrProjectedListSet",
+                (false, true) => "clrProjectedListRemoveAt",
+                (true, false) => "clrListSet",
+                _ => "clrListRemoveAt",
+            };
+            var elem = projected ? CollElemArg(node, refs, ctx, ownerFqnNode) : OwnerElemArg(ownerFqnNode);
+            var listCall = (JsonObject)CollDefaultCall(node, "kotlin.collections.ClrCollectionDefaultsKt", listHelper, elem, args);
             if (RetToken(node) is JsonNode lret && !IsTvType(lret)) listCall["ret"] = lret;
             return listCall;
         }
@@ -1662,7 +1725,8 @@ static class MemberCallSubstitution
         else if (instance && kind == "interface"
             && (ownerFqn.StartsWith("kotlin.collections.", StringComparison.Ordinal) || ownerFqn == "kotlin.sequences.Sequence"))
         {
-            var elem = OwnerElemArg(ownerFqnNode);
+            var projected = HasProjectedCollectionReceiver(node, ownerFqnNode, ctx);
+            var elem = projected ? CollElemArg(node, refs, ctx, ownerFqnNode) : OwnerElemArg(ownerFqnNode);
             if (member == "iterator" && args.Count == 0)
             {
                 if (ownerFqn is "kotlin.collections.MutableIterable"
@@ -1670,18 +1734,44 @@ static class MemberCallSubstitution
                     or "kotlin.collections.MutableList")
                     return CollDefaultCall(node, "kotlin.collections.ClrCollectionDefaultsKt",
                         "clrMutableIterator", elem, args);
+                if (projected)
+                    return CollDefaultCall(node, "kotlin.collections.ClrCollectionDefaultsKt",
+                        "clrProjectedIterator", elem, args);
                 return CollDefaultCall(node, "kotlin.collections.ClrIteratorBridgeKt", "iteratorOverEnumerable", elem, args);
             }
             if (member == "listIterator")
             {
-                var idx = args.Count >= 1 ? args : new JsonArray { new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("int"), ["value"] = 0 } };
                 if (ownerFqn == "kotlin.collections.MutableList")
                     return CollDefaultCall(node, "kotlin.collections.ClrCollectionDefaultsKt",
-                        "clrMutableListListIterator", elem, idx);
+                        projected
+                            ? (args.Count == 0 ? "clrProjectedMutableListIterator" : "clrProjectedMutableListListIterator")
+                            : "clrMutableListListIterator",
+                        elem,
+                        args.Count == 0 && !projected
+                            ? new JsonArray { new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("int"), ["value"] = 0 } }
+                            : args);
+                if (projected)
+                    return CollDefaultCall(node, "kotlin.collections.ClrCollectionDefaultsKt",
+                        args.Count == 0 ? "clrProjectedListIterator" : "clrProjectedListListIterator", elem, args);
+                var idx = args.Count >= 1 ? args : new JsonArray { new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("int"), ["value"] = 0 } };
                 return CollDefaultCall(node, "kotlin.collections.ClrCollectionDefaultsKt", "clrListListIterator", elem, idx);
             }
             if (CollectionDefaults.TryGetValue(member, out var helperMethod))
+            {
+                if (projected)
+                    helperMethod = helperMethod switch
+                    {
+                        "clrCollIsEmpty" => "clrProjectedCollIsEmpty",
+                        "clrCollContains" => "clrProjectedCollContains",
+                        "clrCollContainsAll" => "clrProjectedCollContainsAll",
+                        "clrListIndexOf" => "clrProjectedListIndexOf",
+                        "clrListLastIndexOf" => "clrProjectedListLastIndexOf",
+                        "clrListSubList" when ownerFqn == "kotlin.collections.MutableList" => "clrProjectedMutableListSubList",
+                        "clrListSubList" => "clrProjectedListSubList",
+                        _ => helperMethod,
+                    };
                 return CollDefaultCall(node, "kotlin.collections.ClrCollectionDefaultsKt", helperMethod, elem, args);
+            }
         }
 
         // A frontend-resolved property call may reach the general alias rules only while a specialized intrinsic,
@@ -1894,7 +1984,8 @@ static class MemberCallSubstitution
         static bool ContainsProjection(TypeNode type) => type switch
         {
             TypeNode.Star or TypeNode.Projection => true,
-            TypeNode.Fqn { Args: { } args } => args.Any(ContainsProjection),
+            TypeNode.Fqn f => _localCapturedInnerTypes.Contains(f.Name)
+                || f.Args?.Any(ContainsProjection) == true,
             TypeNode.Nullable nullable => ContainsProjection(nullable.Of),
             TypeNode.Oblivious oblivious => ContainsProjection(oblivious.Of),
             TypeNode.Array array => ContainsProjection(array.Elem),
@@ -1911,8 +2002,17 @@ static class MemberCallSubstitution
         if (ContainsProjection(owner)) return true;
         if (ctx == null || node["recv"] is not JsonObject receiver)
             return false;
+        if (Str(receiver["k"]) == "local" && Str(receiver["name"]) is string local
+            && ctx.ProjectedCollectionVars.Contains(local)) return true;
         var receiverType = RecvStaticType(receiver, ctx, allowExprShapes: true);
         if (receiverType == null) return false;
+        // A star-projection smart cast has already been lowered to its faithful non-generic CLR facade before
+        // member substitution (`List<*>` -> IList, `Iterable<*>` -> IEnumerable, and so on). The source projection
+        // is no longer present in that token, but the non-generic facade itself is an exact representation fact:
+        // it cannot name any closed element type and therefore must enter an erased collection helper.
+        if (receiverType is TypeNode.Fqn { Args: null, Name:
+            "System.Collections.IEnumerable" or "System.Collections.ICollection" or "System.Collections.IList" })
+            return true;
         if (receiverType is TypeNode.Fqn receiverOwner && receiverOwner.Args is { }
             && receiverOwner.Name == owner.Name && ContainsProjection(receiverOwner)) return true;
         if (receiverType is not TypeNode.Tv variable) return false;
@@ -1931,8 +2031,13 @@ static class MemberCallSubstitution
             foreach (var constraint in constraints)
             {
                 var core = ConstraintCore(constraint);
+                // A call owner is often the bare interface that declares the member while the receiver constraint is
+                // a projected derived collection interface (`C : MutableList<in T>`, call owner MutableCollection).
+                // Any projected Kotlin collection constraint therefore makes this receiver existential for collection
+                // helper purposes; requiring the two declaration names to be identical misses inherited members.
                 if (core is TypeNode.Fqn candidate && candidate.Args is { }
-                    && candidate.Name == owner.Name && ContainsProjection(candidate)) return true;
+                    && candidate.Name.StartsWith("kotlin.collections.", StringComparison.Ordinal)
+                    && ContainsProjection(candidate)) return true;
                 if (core is TypeNode.Tv next && Visit(next)) return true;
             }
             return false;
@@ -2080,6 +2185,10 @@ static class MemberCallSubstitution
             ("kotlin.collections.ClrIteratorBridgeKt", "iteratorOverEnumerable") => new[] { Gen("kotlin.collections.ClrEnumerable") },
             (_, "clrCollAdd") => new TypeNode[] { Gen("kotlin.collections.MutableCollection"), tv },
             (_, "clrProjectedCollAdd") => new TypeNode[] { new TypeNode.Fqn("kotlin.Any"), tv },
+            (_, "clrProjectedCollAddAll" or "clrProjectedCollRemoveAll" or "clrProjectedCollRetainAll") =>
+                new TypeNode[] { new TypeNode.Fqn("kotlin.Any"), Gen("kotlin.collections.Collection") },
+            (_, "clrProjectedListAddAllAt") => new TypeNode[]
+                { new TypeNode.Fqn("kotlin.Any"), new TypeNode.Fqn("kotlin.Int"), Gen("kotlin.collections.Collection") },
             (_, "clrCollAddAll" or "clrCollRemoveAll" or "clrCollRetainAll") =>
                 new TypeNode[] { Gen("kotlin.collections.MutableCollection"), Gen("kotlin.collections.Collection") },
             (_, "clrListAddAllAt") => new TypeNode[]
@@ -2087,17 +2196,34 @@ static class MemberCallSubstitution
             (_, "clrCollContains") => new TypeNode[] { Gen("kotlin.collections.Collection"), tv },
             (_, "clrCollContainsAll") => new TypeNode[] { Gen("kotlin.collections.Collection"), Gen("kotlin.collections.Collection") },
             (_, "clrCollIsEmpty") => new[] { Gen("kotlin.collections.Collection") },
+            (_, "clrProjectedCollContains") => new TypeNode[] { new TypeNode.Fqn("kotlin.Any"), tv },
+            (_, "clrProjectedCollContainsAll") => new TypeNode[]
+                { new TypeNode.Fqn("kotlin.Any"), Gen("kotlin.collections.Collection") },
+            (_, "clrProjectedCollIsEmpty") => new[] { new TypeNode.Fqn("kotlin.Any") },
             (_, "clrListSet") => new TypeNode[] { Gen("kotlin.collections.MutableList"), new TypeNode.Fqn("kotlin.Int"), tv },
             (_, "clrListRemoveAt") => new TypeNode[] { Gen("kotlin.collections.MutableList"), new TypeNode.Fqn("kotlin.Int") },
+            (_, "clrProjectedListSet") => new TypeNode[]
+                { new TypeNode.Fqn("kotlin.Any"), new TypeNode.Fqn("kotlin.Int"), tv },
+            (_, "clrProjectedListRemoveAt") => new TypeNode[]
+                { new TypeNode.Fqn("kotlin.Any"), new TypeNode.Fqn("kotlin.Int") },
             // MutableIterable is declaration-site covariant. A legal Kotlin view such as MutableIterable<Any?> over
             // MutableList<Int> cannot be passed as CLR IEnumerable<object>: CLR generic variance does not apply to
             // value-type arguments. The helper therefore receives the physical object erased and adapts its exact
             // runtime iterator while retaining T only in the return type.
             (_, "clrMutableIterator") => new[] { new TypeNode.Fqn("kotlin.Any") },
+            (_, "clrProjectedIterator") => new[] { new TypeNode.Fqn("kotlin.Any") },
             (_, "clrMutableListListIterator") => new TypeNode[] { Gen("kotlin.collections.MutableList"), new TypeNode.Fqn("kotlin.Int") },
+            (_, "clrProjectedMutableListIterator" or "clrProjectedListIterator") =>
+                new TypeNode[] { new TypeNode.Fqn("kotlin.Any") },
+            (_, "clrProjectedMutableListListIterator" or "clrProjectedListListIterator") => new TypeNode[]
+                { new TypeNode.Fqn("kotlin.Any"), new TypeNode.Fqn("kotlin.Int") },
             (_, "clrListIndexOf" or "clrListLastIndexOf") => new TypeNode[] { Gen("kotlin.collections.List"), tv },
+            (_, "clrProjectedListIndexOf" or "clrProjectedListLastIndexOf") =>
+                new TypeNode[] { new TypeNode.Fqn("kotlin.Any"), tv },
             (_, "clrListListIterator") => new TypeNode[] { Gen("kotlin.collections.List"), new TypeNode.Fqn("kotlin.Int") },
             (_, "clrListSubList") => new TypeNode[] { Gen("kotlin.collections.List"), new TypeNode.Fqn("kotlin.Int"), new TypeNode.Fqn("kotlin.Int") },
+            (_, "clrProjectedListSubList" or "clrProjectedMutableListSubList") => new TypeNode[]
+                { new TypeNode.Fqn("kotlin.Any"), new TypeNode.Fqn("kotlin.Int"), new TypeNode.Fqn("kotlin.Int") },
             _ => throw new InvalidOperationException($"bir2cir: no authored descriptor for collection helper {owner}.{method}"),
         };
         return new JsonArray(ps.Select(TypeJson.Write).ToArray());

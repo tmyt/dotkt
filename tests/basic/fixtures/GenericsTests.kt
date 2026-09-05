@@ -328,6 +328,55 @@ fun <C : MutableCollection<*>> useSiteStarProjectedCollectionAdd(destination: C,
 class UseSiteProjectedCollectionAppender<T, C : MutableCollection<in T>>(private val destination: C) {
     fun add(value: T): Boolean = destination.add(value)
 }
+fun <T, C : MutableCollection<in T>> useSiteProjectedCollectionIsEmpty(destination: C) = destination.isEmpty()
+fun <T, C : MutableCollection<in T>> useSiteProjectedCollectionContains(destination: C, value: T) =
+    destination.contains(value)
+fun <T, C : MutableCollection<in T>> useSiteProjectedCollectionContainsAll(
+    destination: C,
+    values: Collection<T>,
+) = destination.containsAll(values)
+fun <T, C : MutableCollection<in T>> useSiteProjectedCollectionAddAll(destination: C, values: Collection<T>) =
+    destination.addAll(values)
+fun <T, C : MutableCollection<in T>> useSiteProjectedCollectionRemoveAll(destination: C, values: Collection<T>) =
+    destination.removeAll(values)
+fun <T, C : MutableCollection<in T>> useSiteProjectedCollectionRetainAll(destination: C, values: Collection<T>) =
+    destination.retainAll(values)
+fun <T, C : MutableList<in T>> useSiteProjectedListAddAllAt(destination: C, values: Collection<T>) =
+    destination.addAll(0, values)
+fun <T, C : MutableList<in T>> useSiteProjectedListSet(destination: C, value: T) = destination.set(0, value)
+fun <T, C : MutableList<in T>> useSiteProjectedListRemoveAt(destination: C) = destination.removeAt(0)
+fun <T, C : MutableList<in T>> useSiteProjectedListIndexOf(destination: C, value: T) = destination.indexOf(value)
+fun <T, C : MutableList<in T>> useSiteProjectedListLastIndexOf(destination: C, value: T) =
+    destination.lastIndexOf(value)
+fun <T, C : MutableList<in T>> useSiteProjectedListIterator(destination: C) = destination.listIterator()
+fun <T, C : MutableList<in T>> useSiteProjectedListIteratorAt(destination: C, index: Int) =
+    destination.listIterator(index)
+fun <T, C : MutableList<in T>> useSiteProjectedListSubList(destination: C) = destination.subList(0, 2)
+fun <T> directProjectedCollectionIsEmpty(destination: MutableCollection<in T>) = destination.isEmpty()
+fun <T> directProjectedCollectionContains(destination: MutableCollection<in T>, value: T) =
+    destination.contains(value)
+fun <T> directProjectedCollectionContainsAll(destination: MutableCollection<in T>, values: Collection<T>) =
+    destination.containsAll(values)
+fun <T> directProjectedCollectionAddAll(destination: MutableCollection<in T>, values: Collection<T>) =
+    destination.addAll(values)
+fun <T> directProjectedCollectionRemoveAll(destination: MutableCollection<in T>, values: Collection<T>) =
+    destination.removeAll(values)
+fun <T> directProjectedCollectionRetainAll(destination: MutableCollection<in T>, values: Collection<T>) =
+    destination.retainAll(values)
+fun <T> directProjectedListAddAllAt(destination: MutableList<in T>, values: Collection<T>) =
+    destination.addAll(0, values)
+fun <T> directProjectedListSet(destination: MutableList<in T>, value: T) = destination.set(0, value)
+fun <T> directProjectedListRemoveAt(destination: MutableList<in T>) = destination.removeAt(0)
+fun <T> directProjectedListIndexOf(destination: MutableList<in T>, value: T) = destination.indexOf(value)
+fun <T> directProjectedListLastIndexOf(destination: MutableList<in T>, value: T) = destination.lastIndexOf(value)
+fun <T> directProjectedListIterator(destination: MutableList<in T>) = destination.listIterator()
+fun <T> directProjectedListSubList(destination: MutableList<in T>) = destination.subList(0, 2)
+fun directStarListFirst(values: List<*>): Any? = values.iterator().next()
+fun directStarSubListFirst(values: List<*>): Any? = values.subList(0, 1)[0]
+fun directStarMutableRemoveAt(values: MutableList<*>): Any? = values.removeAt(0)
+fun projectedCollectionArgumentSize(values: Collection<Any?>): Int = values.size
+fun projectedCollectionArgumentCrossing(values: Collection<*>): Int = projectedCollectionArgumentSize(values)
+fun projectedCollectionPlus(values: Collection<*>): List<Any?> = values + "tail"
 fun <T, C : MutableList<in T>?> useSiteNullableProjectedListInsert(destination: C, value: T): C {
     destination?.add(0, value)
     return destination
@@ -475,6 +524,111 @@ class GenericsTests {
         assertEquals(true, intSet.contains(2))
         assertEquals(true, useSiteProjectedListCollectionAdd(wideList, "list-add"))
         assertEquals(true, UseSiteProjectedCollectionAppender<String, MutableCollection<Any>>(wideSet).add("typed"))
+        val projectedOps = mutableListOf<Any>("a", "b", "a")
+        assertEquals(false, useSiteProjectedCollectionIsEmpty<String, MutableList<Any>>(projectedOps))
+        assertEquals(true, useSiteProjectedCollectionContains(projectedOps, "a"))
+        assertEquals(true, useSiteProjectedCollectionContainsAll(projectedOps, listOf("a", "b")))
+        assertEquals(true, useSiteProjectedCollectionAddAll(projectedOps, listOf("c", "d")))
+        assertEquals(true, useSiteProjectedCollectionRemoveAll(projectedOps, listOf("a")))
+        assertEquals(true, useSiteProjectedCollectionRetainAll(projectedOps, listOf("b", "c")))
+        assertEquals(true, useSiteProjectedListAddAllAt(projectedOps, listOf("head")))
+        assertEquals("head", useSiteProjectedListSet(projectedOps, "new-head"))
+        assertEquals("new-head", useSiteProjectedListRemoveAt<String, MutableList<Any>>(projectedOps))
+        assertEquals(0, useSiteProjectedListIndexOf(projectedOps, "b"))
+        assertEquals(1, useSiteProjectedListLastIndexOf(projectedOps, "c"))
+        assertEquals("b", useSiteProjectedListIterator<String, MutableList<Any>>(projectedOps).next())
+        val projectedSub = useSiteProjectedListSubList<String, MutableList<Any>>(projectedOps)
+        assertEquals("b", projectedSub[0])
+        projectedSub[0] = "B"
+        projectedSub.add("d")
+        assertEquals("B", projectedOps[0])
+        assertEquals("d", projectedOps[2])
+
+        // Projected routing must not turn a Kotlin implementer's virtual members into the BCL-backed defaults.
+        // Every assertion below observes an override-only side effect, including the two listIterator overloads.
+        val projectedOverrides = CollectionKotlinSlotCountingList()
+        projectedOverrides.add(10); projectedOverrides.add(20); projectedOverrides.add(10)
+        assertEquals(false, useSiteProjectedCollectionIsEmpty<Int, CollectionKotlinSlotCountingList>(projectedOverrides))
+        assertEquals(1, projectedOverrides.isEmptyCalls)
+        assertEquals(true, useSiteProjectedCollectionContains(projectedOverrides, 20))
+        assertEquals(1, projectedOverrides.containsCalls)
+        assertEquals(true, useSiteProjectedCollectionContainsAll(projectedOverrides, listOf(10, 20)))
+        assertEquals(1, projectedOverrides.containsAllCalls)
+        assertEquals(0, useSiteProjectedListIndexOf(projectedOverrides, 10))
+        assertEquals(1, projectedOverrides.indexOfCalls)
+        assertEquals(2, useSiteProjectedListLastIndexOf(projectedOverrides, 10))
+        assertEquals(1, projectedOverrides.lastIndexOfCalls)
+        assertEquals(10, useSiteProjectedListIterator<Int, CollectionKotlinSlotCountingList>(projectedOverrides).next())
+        assertEquals(1, projectedOverrides.listIteratorCalls)
+        assertEquals(20, useSiteProjectedListIteratorAt<Int, CollectionKotlinSlotCountingList>(projectedOverrides, 1).next())
+        assertEquals(1, projectedOverrides.listIteratorAtCalls)
+        val overrideSub = useSiteProjectedListSubList<Int, CollectionKotlinSlotCountingList>(projectedOverrides)
+        assertEquals(1, projectedOverrides.subListCalls)
+        overrideSub[0] = 11
+        assertEquals(11, projectedOverrides[0])
+
+        // The receiver override is declared at Collection<Any>, while these arguments are Collection<Int>.
+        // IReadOnlyCollection<Int32> is not CLR-variant to IReadOnlyCollection<Object>; the slot bridge must provide
+        // the implementer's exact live view instead of emitting a cast that only happens to work for reference types.
+        val valueArgumentOverrides = CollectionKotlinSlotCounting<Any>()
+        valueArgumentOverrides.add(1); valueArgumentOverrides.add(2); valueArgumentOverrides.add(3)
+        assertEquals(true, useSiteProjectedCollectionContainsAll<Int, CollectionKotlinSlotCounting<Any>>(
+            valueArgumentOverrides, listOf(1, 2)))
+        assertEquals(1, valueArgumentOverrides.containsAllCalls)
+        assertEquals(true, useSiteProjectedCollectionAddAll<Int, CollectionKotlinSlotCounting<Any>>(
+            valueArgumentOverrides, listOf(4)))
+        assertEquals(1, valueArgumentOverrides.addAllCalls)
+        assertEquals(true, useSiteProjectedCollectionRemoveAll<Int, CollectionKotlinSlotCounting<Any>>(
+            valueArgumentOverrides, listOf(2)))
+        assertEquals(1, valueArgumentOverrides.removeAllCalls)
+        assertEquals(true, useSiteProjectedCollectionRetainAll<Int, CollectionKotlinSlotCounting<Any>>(
+            valueArgumentOverrides, listOf(1, 4)))
+        assertEquals(1, valueArgumentOverrides.retainAllCalls)
+        assertEquals("[1, 4]", valueArgumentOverrides.snapshot().toString())
+
+        val directOps = mutableListOf<Any>("a", "b", "a")
+        assertEquals(false, directProjectedCollectionIsEmpty<String>(directOps))
+        assertEquals(true, directProjectedCollectionContains(directOps, "a"))
+        assertEquals(true, directProjectedCollectionContainsAll(directOps, listOf("a", "b")))
+        assertEquals(true, directProjectedCollectionAddAll(directOps, listOf("c", "d")))
+        assertEquals(true, directProjectedCollectionRemoveAll(directOps, listOf("a")))
+        assertEquals(true, directProjectedCollectionRetainAll(directOps, listOf("b", "c")))
+        assertEquals(true, directProjectedListAddAllAt(directOps, listOf("head")))
+        assertEquals("head", directProjectedListSet(directOps, "new-head"))
+        assertEquals("new-head", directProjectedListRemoveAt<String>(directOps))
+        assertEquals(0, directProjectedListIndexOf(directOps, "b"))
+        assertEquals(1, directProjectedListLastIndexOf(directOps, "c"))
+        assertEquals("b", directProjectedListIterator<String>(directOps).next())
+        val directSub = directProjectedListSubList<String>(directOps)
+        directSub[0] = "direct-B"
+        assertEquals("direct-B", directOps[0])
+
+        val projectedValueOps = mutableListOf(1, 2, 1)
+        assertEquals(false, useSiteProjectedCollectionIsEmpty<Int, MutableList<Int>>(projectedValueOps))
+        assertEquals(true, useSiteProjectedCollectionContains(projectedValueOps, 2))
+        assertEquals(true, useSiteProjectedCollectionContainsAll(projectedValueOps, listOf(1, 2)))
+        assertEquals(true, useSiteProjectedCollectionRemoveAll(projectedValueOps, listOf(1)))
+        assertEquals(true, useSiteProjectedCollectionAddAll(projectedValueOps, listOf(3, 4)))
+        assertEquals(true, useSiteProjectedCollectionRetainAll(projectedValueOps, listOf(2, 3)))
+        assertEquals(true, useSiteProjectedListAddAllAt(projectedValueOps, listOf(0)))
+        assertEquals(0, useSiteProjectedListSet(projectedValueOps, 5))
+        assertEquals(5, useSiteProjectedListRemoveAt<Int, MutableList<Int>>(projectedValueOps))
+        assertEquals(0, useSiteProjectedListIndexOf(projectedValueOps, 2))
+        assertEquals(1, useSiteProjectedListLastIndexOf(projectedValueOps, 3))
+        assertEquals(2, useSiteProjectedListIterator<Int, MutableList<Int>>(projectedValueOps).next())
+
+        val starList: List<*> = listOf(7, "seven")
+        assertEquals(7, directStarListFirst(starList))
+        assertEquals(7, directStarSubListFirst(starList))
+        val starMutable: MutableList<*> = mutableListOf(8, "eight")
+        assertEquals(8, directStarMutableRemoveAt(starMutable))
+        val projectedInts: Collection<*> = listOf(1, 2)
+        assertEquals(2, projectedCollectionArgumentCrossing(projectedInts))
+        val projectedPlus = projectedCollectionPlus(projectedInts)
+        assertEquals(3, projectedPlus.size)
+        assertEquals(1, projectedPlus[0])
+        assertEquals(2, projectedPlus[1])
+        assertEquals("tail", projectedPlus[2])
         assertEquals(true, useSiteDirectProjectedCollectionAdd(wideSet, "direct"))
         assertEquals(true, useSiteNullableProjectedCollectionAdd(wideSet, "nullable"))
         assertEquals(false, useSiteNullableProjectedCollectionAdd(null, "missing"))

@@ -7,6 +7,11 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Projected collection operations now retain an existential CLR receiver (#673).** bir2cir routes collection
+  defaults, mutable-list iterators, and live sub-list views through erased adapters instead of inventing a closed
+  generic collection face. Star-projected collections crossing an ordinary covariant `Collection<T>` call boundary
+  also receive a live view when CLR value-type variance cannot represent the legal Kotlin edge.
+
 - **Projected mutable-collection adds now use the receiver's actual CLR collection face (#671).** Calls through
   use-site-projected owners or generic constraints no longer pass an object-constrained receiver to an invented
   `ICollection<T>` helper signature. bir2cir selects an erased-receiver bridge which preserves Kotlin's changed-Boolean

@@ -26,14 +26,18 @@ import System.Collections.Generic.LinkedList as ClrLinkedList
 // A Kotlin class implementing MutableCollection DIRECTLY and overriding all three collection-level members.
 open class CollectionKotlinSlotCounting<E> : MutableCollection<E> {
     private val backing = ArrayList<E>()
+    var isEmptyCalls: Int = 0
+    var containsCalls: Int = 0
+    var containsAllCalls: Int = 0
     var removeAllCalls: Int = 0
     var retainAllCalls: Int = 0
     var addAllCalls: Int = 0
 
     override val size: Int get() = backing.size
-    override fun isEmpty(): Boolean = backing.size == 0
-    override fun contains(element: E): Boolean = backing.contains(element)
+    override fun isEmpty(): Boolean { isEmptyCalls++; return backing.size == 0 }
+    override fun contains(element: E): Boolean { containsCalls++; return backing.contains(element) }
     override fun containsAll(elements: Collection<E>): Boolean {
+        containsAllCalls++
         for (e in elements) if (!backing.contains(e)) return false
         return true
     }
@@ -76,11 +80,20 @@ class CollectionKotlinSlotCountingList : MutableList<Int> {
     var addAllAtCalls: Int = 0
     var removeAllCalls: Int = 0
     var iteratorCalls: Int = 0
+    var isEmptyCalls: Int = 0
+    var containsCalls: Int = 0
+    var containsAllCalls: Int = 0
+    var indexOfCalls: Int = 0
+    var lastIndexOfCalls: Int = 0
+    var listIteratorCalls: Int = 0
+    var listIteratorAtCalls: Int = 0
+    var subListCalls: Int = 0
 
     override val size: Int get() = backing.size
-    override fun isEmpty(): Boolean = backing.size == 0
-    override fun contains(element: Int): Boolean = backing.contains(element)
+    override fun isEmpty(): Boolean { isEmptyCalls++; return backing.size == 0 }
+    override fun contains(element: Int): Boolean { containsCalls++; return backing.contains(element) }
     override fun containsAll(elements: Collection<Int>): Boolean {
+        containsAllCalls++
         for (e in elements) if (!backing.contains(e)) return false
         return true
     }
@@ -88,13 +101,22 @@ class CollectionKotlinSlotCountingList : MutableList<Int> {
         iteratorCalls++
         return backing.iterator()
     }
-    override fun listIterator(): MutableListIterator<Int> = backing.listIterator()
-    override fun listIterator(index: Int): MutableListIterator<Int> = backing.listIterator(index)
-    override fun subList(fromIndex: Int, toIndex: Int): MutableList<Int> = backing.subList(fromIndex, toIndex)
+    override fun listIterator(): MutableListIterator<Int> {
+        listIteratorCalls++
+        return backing.listIterator()
+    }
+    override fun listIterator(index: Int): MutableListIterator<Int> {
+        listIteratorAtCalls++
+        return backing.listIterator(index)
+    }
+    override fun subList(fromIndex: Int, toIndex: Int): MutableList<Int> {
+        subListCalls++
+        return backing.subList(fromIndex, toIndex)
+    }
     override fun get(index: Int): Int = backing[index]
     override fun set(index: Int, element: Int): Int = backing.set(index, element)
-    override fun indexOf(element: Int): Int = backing.indexOf(element)
-    override fun lastIndexOf(element: Int): Int = backing.lastIndexOf(element)
+    override fun indexOf(element: Int): Int { indexOfCalls++; return backing.indexOf(element) }
+    override fun lastIndexOf(element: Int): Int { lastIndexOfCalls++; return backing.lastIndexOf(element) }
     override fun add(element: Int): Boolean { backing.add(element); return true }
     override fun add(index: Int, element: Int) { backing.add(index, element) }
     override fun remove(element: Int): Boolean = backing.remove(element)
