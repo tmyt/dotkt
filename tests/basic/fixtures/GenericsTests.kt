@@ -306,6 +306,21 @@ fun <T, C : MutableList<in T>> useSiteProjectedListInsert(destination: C, value:
     destination.add(0, value)
     return destination
 }
+fun <T, C : MutableCollection<in T>> useSiteProjectedCollectionAdd(destination: C, value: T): C {
+    destination.add(value)
+    return destination
+}
+fun <T, C : MutableCollection<in T>> useSiteProjectedCollectionAddChanged(destination: C, value: T): Boolean =
+    destination.add(value)
+fun <T, C : MutableCollection<in T>?> useSiteNullableProjectedCollectionAdd(destination: C, value: T): Boolean =
+    destination?.add(value) ?: false
+fun <T, C : MutableCollection<in T>> useSiteProjectedCollectionAddCaptured(destination: C, value: T): C {
+    val add = { destination.add(value) }
+    add()
+    return destination
+}
+fun useSiteDirectProjectedCollectionAdd(destination: MutableCollection<in String>, value: String): Boolean =
+    destination.add(value)
 fun <T, C : MutableList<in T>?> useSiteNullableProjectedListInsert(destination: C, value: T): C {
     destination?.add(0, value)
     return destination
@@ -439,6 +454,18 @@ class GenericsTests {
         val wideList = mutableListOf<Any>("tail")
         assertEquals(wideList, useSiteProjectedListInsert(wideList, "head"))
         assertEquals("head", wideList[0])
+        assertEquals(wideList, useSiteProjectedCollectionAdd(wideList, "tail-added"))
+        assertEquals("tail-added", wideList[wideList.size - 1])
+        assertEquals(wideList, useSiteProjectedCollectionAddCaptured(wideList, "captured-tail"))
+        assertEquals("captured-tail", wideList[wideList.size - 1])
+        val wideSet = mutableSetOf<Any>("same")
+        assertEquals(false, useSiteProjectedCollectionAddChanged(wideSet, "same"))
+        assertEquals(true, useSiteProjectedCollectionAddChanged(wideSet, "new"))
+        assertEquals(true, useSiteProjectedCollectionAddChanged(wideSet, 42))
+        assertEquals(true, wideSet.contains(42))
+        assertEquals(true, useSiteDirectProjectedCollectionAdd(wideSet, "direct"))
+        assertEquals(true, useSiteNullableProjectedCollectionAdd(wideSet, "nullable"))
+        assertEquals(false, useSiteNullableProjectedCollectionAdd(null, "missing"))
         assertEquals(wideList, useSiteDirectProjectedListInsert(wideList, "direct-head"))
         assertEquals("direct-head", wideList[0])
         val nestedWideLists = listOf(wideList)

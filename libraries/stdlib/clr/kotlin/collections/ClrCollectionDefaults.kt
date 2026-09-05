@@ -12,6 +12,7 @@ package kotlin.collections
 import DotKt.Runtime.CompilerServices.KotlinMutableCollectionSlots
 import DotKt.Runtime.CompilerServices.KotlinMutableIteratorSlots
 import DotKt.Runtime.CompilerServices.KotlinMutableListSlots
+import DotKt.Runtime.CompilerServices.mutableCollectionAddErased
 import DotKt.Runtime.CompilerServices.mutableCollectionRemoveErased
 import DotKt.Runtime.CompilerServices.mutableCollectionReplaceErased
 import DotKt.Runtime.CompilerServices.mutableIteratorHasNextErased
@@ -48,6 +49,9 @@ public fun <T> clrCollAdd(c: MutableCollection<T>, element: T): Boolean {
     c.clrCollNativeAdd(element)
     return c.size != before
 }
+
+/** Projected `MutableCollection.add`; the receiver's exact invariant collection element is known only at runtime. */
+public fun <T> clrProjectedCollAdd(c: Any, element: T): Boolean = mutableCollectionAddErased(c, element)
 
 // ---- Kotlin-only mutation members: capability dispatch, then the BCL default -----------------------------------
 //

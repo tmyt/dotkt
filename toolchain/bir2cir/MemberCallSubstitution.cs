@@ -1466,8 +1466,18 @@ static class MemberCallSubstitution
         // The 2-arg add(index, e) Insert form falls through to the intrinsic.
         if (instance && kind == "interface" && ownerFqn.StartsWith("kotlin.collections.", StringComparison.Ordinal)
             && CollectionSlotHelper(member, args.Count, ownerFqn) is string slotHelper)
+        {
+            // A projected collection view has no statically nameable closed ICollection<T> face. In particular,
+            // `C : MutableCollection<in T>` is physically constrained only to object: C may be ICollection<Any>,
+            // which cannot be passed to clrCollAdd<T>(ICollection<T>, T). Route that one semantic slot through the
+            // receiver-erased adapter; it resolves the receiver's actual ICollection<X> while the ordinary invariant
+            // case keeps the direct helper. This also covers lifted closures, whose captured method variables have
+            // already been rebound into their generated type frame by ClosureSynthesis.
+            if (slotHelper == "clrCollAdd" && HasProjectedCollectionReceiver(node, ownerFqnNode, ctx))
+                slotHelper = "clrProjectedCollAdd";
             return CollDefaultCall(node, "kotlin.collections.ClrCollectionDefaultsKt", slotHelper,
                 CollElemArg(node, refs, ctx, ownerFqnNode), args);
+        }
 
         // PRE-Rule-2 semantic override: MutableList.set(i,e) / removeAt(i) @ClrIntrinsic(set_Item/RemoveAt), but the
         // BCL slots are VOID while Kotlin RETURNS the previous/removed element — binding the intrinsic directly
@@ -1874,6 +1884,61 @@ static class MemberCallSubstitution
         return ObjType;
     }
 
+    // Whether the selected collection member is reached through an existential use-site projection. Choosing a
+    // closed defaults-helper signature for such a receiver would assert an invariant CLR interface that it need not
+    // have; the projected helper instead resolves the actual closed interface at runtime.
+    static bool HasProjectedCollectionReceiver(JsonObject node, TypeNode.Fqn owner, SubstCtx ctx)
+    {
+        static bool ContainsProjection(TypeNode type) => type switch
+        {
+            TypeNode.Projection => true,
+            TypeNode.Fqn { Args: { } args } => args.Any(ContainsProjection),
+            TypeNode.Nullable nullable => ContainsProjection(nullable.Of),
+            TypeNode.Oblivious oblivious => ContainsProjection(oblivious.Of),
+            TypeNode.Array array => ContainsProjection(array.Elem),
+            TypeNode.ByRef byRef => ContainsProjection(byRef.Of),
+            TypeNode.Ptr pointer => ContainsProjection(pointer.Of),
+            TypeNode.Mod modifier => ContainsProjection(modifier.M) || ContainsProjection(modifier.Of),
+            TypeNode.Fn function => ContainsProjection(function.Ret)
+                || function.Params.Any(ContainsProjection)
+                || (function.Recv != null && ContainsProjection(function.Recv))
+                || (function.Ctx?.Any(ContainsProjection) ?? false),
+            _ => false,
+        };
+
+        if (ContainsProjection(owner)) return true;
+        if (ctx == null || node["recv"] is not JsonObject receiver)
+            return false;
+        var receiverType = RecvStaticType(receiver, ctx, allowExprShapes: true)
+            ?? (Str(receiver["k"]) == "cast" ? TypeJson.Read(receiver["type"]) : null);
+        if (receiverType == null) return false;
+        if (receiverType is TypeNode.Fqn receiverOwner && receiverOwner.Args is { }
+            && receiverOwner.Name == owner.Name && ContainsProjection(receiverOwner)) return true;
+        if (receiverType is not TypeNode.Tv variable) return false;
+
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        static TypeNode ConstraintCore(TypeNode type) => type switch
+        {
+            TypeNode.Nullable nullable => ConstraintCore(nullable.Of),
+            TypeNode.Oblivious oblivious => ConstraintCore(oblivious.Of),
+            _ => type,
+        };
+        bool Visit(TypeNode.Tv current)
+        {
+            var key = current.Scope + ":" + current.I;
+            if (!seen.Add(key) || !ctx.TpConstraints.TryGetValue(key, out var constraints)) return false;
+            foreach (var constraint in constraints)
+            {
+                var core = ConstraintCore(constraint);
+                if (core is TypeNode.Fqn candidate && candidate.Args is { }
+                    && candidate.Name == owner.Name && ContainsProjection(candidate)) return true;
+                if (core is TypeNode.Tv next && Visit(next)) return true;
+            }
+            return false;
+        }
+        return Visit(variable);
+    }
+
     // The (K, V) type args for a map-defaults helper call — the two-arg twin of CollElemArg. The owner token's own args
     // (`Map[gp:K,gp:V]`) when present and concrete; otherwise — when the owner is BARE or an OVER-APPROXIMATED position
     // (`MutableMap` bare / `MutableMap[kotlin.Any,V]`, because the receiver is a `gp:M` whose `in K` projection erased the
@@ -2013,6 +2078,7 @@ static class MemberCallSubstitution
         {
             ("kotlin.collections.ClrIteratorBridgeKt", "iteratorOverEnumerable") => new[] { Gen("kotlin.collections.ClrEnumerable") },
             (_, "clrCollAdd") => new TypeNode[] { Gen("kotlin.collections.MutableCollection"), tv },
+            (_, "clrProjectedCollAdd") => new TypeNode[] { new TypeNode.Fqn("kotlin.Any"), tv },
             (_, "clrCollAddAll" or "clrCollRemoveAll" or "clrCollRetainAll") =>
                 new TypeNode[] { Gen("kotlin.collections.MutableCollection"), Gen("kotlin.collections.Collection") },
             (_, "clrListAddAllAt") => new TypeNode[]

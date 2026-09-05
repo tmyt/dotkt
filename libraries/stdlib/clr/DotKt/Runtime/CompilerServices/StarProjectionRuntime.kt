@@ -688,6 +688,17 @@ private fun erasedMutableCollectionMethod(receiver: Any, name: String, parameter
 }
 
 @PublishedApi
+internal fun mutableCollectionAddErased(receiver: Any, element: Any?): Boolean = try {
+    val count = erasedMutableCollectionMethod(receiver, "get_Count", 0)
+    val add = erasedMutableCollectionMethod(receiver, "Add", 1)
+    val before = count.invoke(receiver, arrayOfNulls<Any?>(0)) as Int
+    add.invoke(receiver, arrayOf(element))
+    (count.invoke(receiver, arrayOfNulls<Any?>(0)) as Int) != before
+} catch (failure: StarProjectionInvocationException) {
+    throw (failure.innerException ?: failure)
+}
+
+@PublishedApi
 internal fun mutableCollectionRemoveErased(receiver: Any, element: Any?): Boolean = try {
     erasedMutableCollectionMethod(receiver, "Remove", 1).invoke(receiver, arrayOf(element)) as Boolean
 } catch (failure: StarProjectionInvocationException) {
