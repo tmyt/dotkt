@@ -24,6 +24,19 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   `G<object>` construction. Member binding retains the runtime object's exact closed interface view, and projected map
   copy constructors use their trusted collection-factory contract rather than an invalid invariant cast.
 
+- **Non-array use-site projections now survive to the CLR representation boundary (#666).** kotc preserves authored
+  projections in BIR across constraints, nested types, callable signatures, constructors, and referenced declarations;
+  bir2cir then chooses an exact construction or existential carrier from the complete semantic type instead of losing
+  the projection early and emitting an invariant CLR type.
+
+- **Arrays of projected generic elements now use a verifier-safe existential carrier (#663).** Projected array element
+  types remain explicit through BIR, CLR lowering, metadata, DLL-to-KLIB round trips, allocation, and helper calls.
+  bir2cir relies on CLR variance only when assignability is proven, avoiding invalid `G<object>[]` array identities.
+
+- **Proven exact generic upcasts no longer collapse to star carriers (#661).** bir2cir retains a constructed generic
+  target when the declaration graph proves the source reaches that exact construction, including nullable, lifted,
+  generated, dispatch-`this`, and referenced paths, while genuinely erased casts keep their existential ABI.
+
 - **Nullable-generic substitution now preserves complete CLR type shapes (#651).** bir2cir retains general-array
   rank/vector identity and function-type delegate/context facets while substituting owner and method generic frames,
   instead of silently rebuilding those types as SZ vectors or family-less functions.
@@ -59,6 +72,14 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 - **Star-dependent generic member results now retain their existential CLR carrier (#645).** bir2cir preserves the
   exact physical result of a star-projected slot instead of casting invariant nested generics to an invalid
   `G<object>` construction, while concrete arguments in mixed star/exact projections keep their checked projection.
+
+- **Generated captures now keep one existential CLR representation end to end (#642).** Closure, SAM, and suspend-
+  lambda capture parameters, fields, initializers, and reads use the same physical carrier selected by bir2cir, with
+  explicit projections restoring Kotlin-visible constructed results instead of leaving verifier-invalid field edges.
+
+- **Existential member calls now state their physical result before semantic projection (#640).** bir2cir carries the
+  selected MethodDef's exact return ABI through direct, realigned-local, and referenced calls, closes method-generic
+  result slots from call arguments, and inserts an explicit checked projection at the Kotlin consumption boundary.
 
 - **Inherited class `super` calls now bind the concrete base MethodDef (#637).** bir2cir follows only the constructed
   base-class chain when an immediate superclass inherits a method or property implementation alongside an abstract
