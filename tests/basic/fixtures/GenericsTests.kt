@@ -321,6 +321,13 @@ fun <T, C : MutableCollection<in T>> useSiteProjectedCollectionAddCaptured(desti
 }
 fun useSiteDirectProjectedCollectionAdd(destination: MutableCollection<in String>, value: String): Boolean =
     destination.add(value)
+fun <T, C : MutableList<in T>> useSiteProjectedListCollectionAdd(destination: C, value: T): Boolean =
+    destination.add(value)
+fun <C : MutableCollection<*>> useSiteStarProjectedCollectionAdd(destination: C, value: Nothing): Boolean =
+    destination.add(value)
+class UseSiteProjectedCollectionAppender<T, C : MutableCollection<in T>>(private val destination: C) {
+    fun add(value: T): Boolean = destination.add(value)
+}
 fun <T, C : MutableList<in T>?> useSiteNullableProjectedListInsert(destination: C, value: T): C {
     destination?.add(0, value)
     return destination
@@ -463,6 +470,11 @@ class GenericsTests {
         assertEquals(true, useSiteProjectedCollectionAddChanged(wideSet, "new"))
         assertEquals(true, useSiteProjectedCollectionAddChanged(wideSet, 42))
         assertEquals(true, wideSet.contains(42))
+        val intSet = mutableSetOf<Int>(1)
+        assertEquals(true, useSiteProjectedCollectionAddChanged(intSet, 2))
+        assertEquals(true, intSet.contains(2))
+        assertEquals(true, useSiteProjectedListCollectionAdd(wideList, "list-add"))
+        assertEquals(true, UseSiteProjectedCollectionAppender<String, MutableCollection<Any>>(wideSet).add("typed"))
         assertEquals(true, useSiteDirectProjectedCollectionAdd(wideSet, "direct"))
         assertEquals(true, useSiteNullableProjectedCollectionAdd(wideSet, "nullable"))
         assertEquals(false, useSiteNullableProjectedCollectionAdd(null, "missing"))

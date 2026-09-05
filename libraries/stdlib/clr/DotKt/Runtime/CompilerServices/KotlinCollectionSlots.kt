@@ -38,12 +38,12 @@ internal interface KotlinMutableSetClassifier : KotlinSetClassifier
 // instantiation the dispatcher was called at. A generic `…Slots<E>` would instead be correct only as long as a
 // separate argument holds:
 // that a dispatcher instantiated at `<X>` can only ever receive a receiver whose Kotlin element type is `X`. That is
-// true for the collection-mutation dispatchers — they take an INVARIANT `ICollection<T>`/`IList<T>` receiver, so a `<System.Object>`
-// instantiation can only be handed an `ICollection<object>` — but it is a property of the helper signatures, not of
-// the slot design, and nothing pins it. bir2cir does erase collection element types to `System.Object` elsewhere
-// (`clrCollIsEmpty<System.Object>`, `clrCollContainsAll<System.Object>`, `clrCollAdd<object>` all occur in the
-// current corpus), so a constructed test would have to be re-argued from scratch after any change to a dispatcher's
-// parameter typing, and getting it wrong is fail-OPEN: the override is skipped with no diagnostic. The erased test
+// true for a dispatcher's direct invariant path — it takes an `ICollection<T>`/`IList<T>` receiver, so a `<System.Object>`
+// instantiation can only be handed an `ICollection<object>` — but projected receivers deliberately use erased adapters
+// because no such closed interface is statically nameable. The premise is therefore a property of an individual helper
+// signature, not of the slot design. bir2cir also erases collection element types to `System.Object` elsewhere, so a
+// constructed capability test would have to be re-argued from scratch after any change to a dispatcher's parameter
+// typing, and getting it wrong is fail-OPEN: the override is skipped with no diagnostic. The erased test
 // cannot be defeated that way and costs strictly less (one non-generic `isinst`). A collection-argument bridge
 // re-establishes the implementer's exact element instantiation. The iterator dispatcher instead adapts the returned
 // exact `MutableIterator<E>` at an erased/star call site; it cannot rely on CLR covariance because value-type generic

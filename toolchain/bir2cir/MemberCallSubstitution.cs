@@ -1819,6 +1819,8 @@ static class MemberCallSubstitution
             return TypeJson.Read(recv["ret"]);
         if (rk == "arrayGet")
             return TypeJson.Read(recv["elem"]);
+        if (rk == "cast")
+            return TypeJson.Read(recv["type"]);
         return null;
     }
 
@@ -1891,7 +1893,7 @@ static class MemberCallSubstitution
     {
         static bool ContainsProjection(TypeNode type) => type switch
         {
-            TypeNode.Projection => true,
+            TypeNode.Star or TypeNode.Projection => true,
             TypeNode.Fqn { Args: { } args } => args.Any(ContainsProjection),
             TypeNode.Nullable nullable => ContainsProjection(nullable.Of),
             TypeNode.Oblivious oblivious => ContainsProjection(oblivious.Of),
@@ -1909,8 +1911,7 @@ static class MemberCallSubstitution
         if (ContainsProjection(owner)) return true;
         if (ctx == null || node["recv"] is not JsonObject receiver)
             return false;
-        var receiverType = RecvStaticType(receiver, ctx, allowExprShapes: true)
-            ?? (Str(receiver["k"]) == "cast" ? TypeJson.Read(receiver["type"]) : null);
+        var receiverType = RecvStaticType(receiver, ctx, allowExprShapes: true);
         if (receiverType == null) return false;
         if (receiverType is TypeNode.Fqn receiverOwner && receiverOwner.Args is { }
             && receiverOwner.Name == owner.Name && ContainsProjection(receiverOwner)) return true;
