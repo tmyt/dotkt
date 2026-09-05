@@ -37,6 +37,7 @@ using DotKt.Bir;
 // storage is not widened here. App build only, before MemberCallSubstitution while the Kotlin owner is still visible.
 static class StarProjectionLowering
 {
+    internal const string ProjectedCollectionMarker = "dotktProjectedCollection";
     const string RuntimeOwner = "DotKt.Runtime.CompilerServices.StarProjectionRuntimeKt";
     static readonly TypeNode Any = new TypeNode.Fqn("kotlin.Any");
     static readonly TypeNode AnyN = new TypeNode.Nullable(Any);
@@ -58,6 +59,9 @@ static class StarProjectionLowering
         ["kotlin.collections.Map"] = "System.Collections.IDictionary",
         ["kotlin.collections.MutableMap"] = "System.Collections.IDictionary",
     };
+
+    internal static bool IsNonGenericCollectionFacade(TypeNode type) =>
+        type is TypeNode.Fqn { Args: null } fqn && NonGenericIface.Values.Contains(fqn.Name);
 
     // Classifiers whose operational aliases overlap. 0 = Collection, 1 = Set, 2 = MutableSet. MutableCollection keeps
     // its established non-generic ICollection classifier; #315 is the Collection-vs-Map and Set-vs-Collection hole.
@@ -116,6 +120,7 @@ static class StarProjectionLowering
     {
         if (node is JsonObject obj)
         {
+            AdaptProjectedCollectionArguments(obj);
             // The overlapping Collection/Set classifiers use their compiler-owned nominal identity for emitted Kotlin
             // values and the BCL's real generic faces for BCL-backed values. The checked value remains the original
             // object; member access below projects only the operation it needs.
@@ -155,7 +160,13 @@ static class StarProjectionLowering
             // castclass InvalidCast (the JVM erases both to `Map`, hiding it). The non-generic `IDictionary` it DOES
             // implement covariantly, and a `<*>` value can only be used non-generically anyway. Mirrors the isInst branch.
             if (Str(obj["k"]) == "cast" && IsStarCollection(obj["type"], out var castNg))
+            {
                 obj["type"] = TypeJson.Fqn(castNg);
+                // MemberCallSubstitution runs after this pass. Preserve the semantic fact that a local initialized
+                // from this physical non-generic facade came from a star-projected Kotlin collection; the facade's
+                // element type is otherwise intentionally absent and a later local read cannot reconstruct it.
+                obj[ProjectedCollectionMarker] = true;
+            }
             var kind = Str(obj["k"]);
             if (kind == "isInst"
                 && obj["e"] is JsonNode operand
@@ -170,6 +181,78 @@ static class StarProjectionLowering
         else if (node is JsonArray arr)
             foreach (var it in arr) if (it != null) Apply(it, refs);
     }
+
+    // Kotlin collection covariance permits a star-projected value to fill a Collection<T> parameter selected by
+    // ordinary overload resolution. The CLR call boundary is reified: a value-element collection in particular
+    // cannot be cast to IReadOnlyCollection<object>. Materialize the compiler/runtime-owned live view while both the
+    // source projection and the selected Kotlin parameter are still explicit. This is a rule for every Collection
+    // argument edge, not for any particular extension such as `plus`.
+    static void AdaptProjectedCollectionArguments(JsonObject call)
+    {
+        var kind = Str(call["k"]);
+        if (kind is not ("callStatic" or "callInstance")) return;
+        if (call["sig"] is not JsonArray signature || call["args"] is not JsonArray arguments
+            || signature.Count != arguments.Count) return;
+        var methodArguments = call["typeArgs"] is JsonArray typeArgs
+            ? typeArgs.Select(TypeJson.Read).ToArray()
+            : Array.Empty<TypeNode>();
+        if (methodArguments.Any(type => type == null)) return;
+
+        for (var index = 0; index < signature.Count; index++)
+        {
+            if (arguments[index] is not JsonObject argument || !IsProjectedCollectionValue(argument)) continue;
+            var parameter = TypeJson.Read(signature[index]);
+            if (parameter == null) continue;
+            var closed = FBoundStarProjectionErasure.SubstituteMethodTypeArguments(parameter, methodArguments);
+            var core = StripOuterWrappers(closed);
+            if (core is not TypeNode.Fqn collection || collection.Args is not { Length: 1 } elementArgs
+                || ContainsProjection(elementArgs[0])) continue;
+            var helper = collection.Name switch
+            {
+                "kotlin.collections.Iterable" => "clrProjectedIterableView",
+                "kotlin.collections.MutableIterable" => "clrProjectedMutableIterableView",
+                "kotlin.collections.Collection" or "kotlin.collections.Set" => "clrProjectedCollectionView",
+                "kotlin.collections.List" => "clrProjectedListView",
+                _ => null,
+            };
+            if (helper == null) continue;
+            arguments[index] = new JsonObject
+            {
+                ["k"] = "callStatic",
+                ["owner"] = TypeJson.Fqn("kotlin.collections.ClrCollectionDefaultsKt"),
+                ["method"] = helper,
+                ["sig"] = new JsonArray(TypeJson.Write(Any)),
+                ["typeArgs"] = new JsonArray(TypeJson.Write(elementArgs[0])),
+                ["ret"] = TypeJson.Write(closed),
+                ["args"] = new JsonArray(argument.DeepClone()),
+            };
+        }
+    }
+
+    static TypeNode StripOuterWrappers(TypeNode type) => type switch
+    {
+        TypeNode.Nullable nullable => StripOuterWrappers(nullable.Of),
+        TypeNode.Oblivious oblivious => StripOuterWrappers(oblivious.Of),
+        _ => type,
+    };
+
+    static bool IsProjectedCollectionValue(JsonObject expression)
+    {
+        foreach (var slot in new[] { expression["type"], expression["sty"] })
+            if (slot != null && (IsStarCollection(slot, out _) || IsIdentityCollection(slot, out _, out _)))
+                return true;
+        return false;
+    }
+
+    static bool ContainsProjection(TypeNode type) => type switch
+    {
+        TypeNode.Star or TypeNode.Projection => true,
+        TypeNode.Fqn f => f.Args?.Any(ContainsProjection) == true,
+        TypeNode.Nullable nullable => ContainsProjection(nullable.Of),
+        TypeNode.Oblivious oblivious => ContainsProjection(oblivious.Of),
+        TypeNode.Array array => ContainsProjection(array.Elem),
+        _ => false,
+    };
 
     static JsonObject LowerIdentityClassifier(string nodeKind, JsonNode operand, int classifierKind, bool nullable)
     {
@@ -207,11 +290,7 @@ static class StarProjectionLowering
             case "size" when propertyAccess == "get":
                 return Count();
             case "isEmpty":
-                return new JsonObject
-                {
-                    ["k"] = "binOp", ["op"] = "==", ["type"] = TypeJson.Write(Bool), ["lhs"] = Count(),
-                    ["rhs"] = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Write(Int), ["value"] = 0 },
-                };
+                return CollectionHelper("clrProjectedCollIsEmpty", Bool, checkedReceiver);
             case "iterator":
                 if (classifierKind == 2)
                     return new JsonObject
@@ -272,6 +351,17 @@ static class StarProjectionLowering
     {
         ["k"] = "callStatic", ["owner"] = TypeJson.Write(new TypeNode.Fqn(RuntimeOwner)), ["method"] = method,
         ["sig"] = new JsonArray(signature.Select(TypeJson.Write).ToArray()), ["ret"] = TypeJson.Write(result),
+        ["args"] = new JsonArray(args),
+    };
+
+    static JsonObject CollectionHelper(string method, TypeNode result, params JsonNode[] args) => new()
+    {
+        ["k"] = "callStatic",
+        ["owner"] = TypeJson.Fqn("kotlin.collections.ClrCollectionDefaultsKt"),
+        ["method"] = method,
+        ["sig"] = new JsonArray(TypeJson.Write(Any)),
+        ["typeArgs"] = new JsonArray(TypeJson.Write(AnyN)),
+        ["ret"] = TypeJson.Write(result),
         ["args"] = new JsonArray(args),
     };
 
@@ -337,15 +427,9 @@ static class StarProjectionLowering
                 // `.size` -> ICollection/IList/IDictionary.Count.
                 return new JsonObject { ["k"] = "clrPropGet", ["type"] = TypeJson.Fqn(iface), ["name"] = "Count", ["ret"] = TypeJson.Fqn("System.Int32"), ["static"] = false, ["recv"] = CastTo(iface) };
             case "isEmpty":
-                // `.isEmpty()` -> Count == 0 (non-generic interfaces expose no IsEmpty).
-                return new JsonObject
-                {
-                    ["k"] = "binOp",
-                    ["op"] = "==",
-                    ["type"] = TypeJson.Fqn("System.Boolean"),
-                    ["lhs"] = new JsonObject { ["k"] = "clrPropGet", ["type"] = TypeJson.Fqn(iface), ["name"] = "Count", ["ret"] = TypeJson.Fqn("System.Int32"), ["static"] = false, ["recv"] = CastTo(iface) },
-                    ["rhs"] = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("System.Int32"), ["value"] = 0 },
-                };
+                // The non-generic facade has no IsEmpty slot, but a Kotlin implementer may override it. Preserve the
+                // explicit star cast and let the compiler-owned capability dispatcher select the override or Count.
+                return CollectionHelper("clrProjectedCollIsEmpty", Bool, CastTo(iface));
             case "iterator":
                 if (mutable)
                     // Keep the original star cast observable before entering the erased helper. Passing recvInner

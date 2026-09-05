@@ -12,12 +12,29 @@ package kotlin.collections
 import DotKt.Runtime.CompilerServices.KotlinMutableCollectionSlots
 import DotKt.Runtime.CompilerServices.KotlinMutableIteratorSlots
 import DotKt.Runtime.CompilerServices.KotlinMutableListSlots
+import DotKt.Runtime.CompilerServices.KotlinCollectionDefaultSlots
+import DotKt.Runtime.CompilerServices.KotlinListDefaultSlots
+import DotKt.Runtime.CompilerServices.listIteratorHasNextErased
+import DotKt.Runtime.CompilerServices.listIteratorHasPreviousErased
+import DotKt.Runtime.CompilerServices.listIteratorNextErased
+import DotKt.Runtime.CompilerServices.listIteratorNextIndexErased
+import DotKt.Runtime.CompilerServices.listIteratorPreviousErased
+import DotKt.Runtime.CompilerServices.listIteratorPreviousIndexErased
 import DotKt.Runtime.CompilerServices.mutableCollectionAddErased
+import DotKt.Runtime.CompilerServices.mutableCollectionCountErased
 import DotKt.Runtime.CompilerServices.mutableCollectionRemoveErased
 import DotKt.Runtime.CompilerServices.mutableCollectionReplaceErased
+import DotKt.Runtime.CompilerServices.mutableListGetErased
+import DotKt.Runtime.CompilerServices.mutableListInsertErased
+import DotKt.Runtime.CompilerServices.mutableListIteratorAddErased
+import DotKt.Runtime.CompilerServices.mutableListIteratorSetErased
+import DotKt.Runtime.CompilerServices.mutableListRemoveAtErased
+import DotKt.Runtime.CompilerServices.mutableListSetErased
 import DotKt.Runtime.CompilerServices.mutableIteratorHasNextErased
 import DotKt.Runtime.CompilerServices.mutableIteratorNextErased
 import DotKt.Runtime.CompilerServices.mutableIteratorRemoveErased
+import DotKt.Runtime.CompilerServices.projectedCollectionCountErased
+import DotKt.Runtime.CompilerServices.projectedListGetErased
 
 /** Variance-independent mutable-list face used after `MutableIterable<out T>` has widened its element type. */
 @kotlin.clr.ClrTypeAlias("System.Collections.IList")
@@ -32,6 +49,44 @@ private class ClrErasedMutableIteratorAdapter<T>(private val iterator: Any) : Mu
     override fun next(): T = mutableIteratorNextErased(iterator) as T
     override fun remove() = mutableIteratorRemoveErased(iterator)
 }
+
+private class ClrProjectedIterator<T>(private val iterator: Iterator<Any?>) : Iterator<T> {
+    override fun hasNext(): Boolean = iterator.hasNext()
+    override fun next(): T = iterator.next() as T
+}
+
+public fun <T> clrProjectedIterator(iterable: Any): Iterator<T> =
+    ClrProjectedIterator(iteratorOverRawEnumerable(iterable))
+
+private class ClrProjectedIterableView<T>(private val source: Any) : Iterable<T> {
+    override fun iterator(): Iterator<T> = clrProjectedIterator(source)
+}
+
+public fun <T> clrProjectedIterableView(source: Any): Iterable<T> =
+    (source as? Iterable<T>) ?: ClrProjectedIterableView(source)
+
+private class ClrProjectedMutableIterableView<T>(private val source: Any) : MutableIterable<T> {
+    override fun iterator(): MutableIterator<T> = clrMutableIterator(source)
+}
+
+public fun <T> clrProjectedMutableIterableView(source: Any): MutableIterable<T> =
+    (source as? MutableIterable<T>) ?: ClrProjectedMutableIterableView(source)
+
+// A projected collection can legally cross into a covariant Collection<T> slot even when its actual element is a
+// value type. CLR variance cannot express that edge (`IReadOnlyCollection<Int32>` is not an
+// `IReadOnlyCollection<Object>`), so preserve the original receiver whenever it already inhabits the requested
+// closed face and otherwise expose a live, read-only view over its non-generic enumerable face.
+private class ClrProjectedCollectionView<T>(private val source: Any) : Collection<T> {
+    override val size: Int get() = projectedCollectionCountErased(source)
+
+    override fun isEmpty(): Boolean = clrProjectedCollIsEmpty<Any?>(source)
+    override fun contains(element: T): Boolean = clrProjectedCollContains(source, element)
+    override fun containsAll(elements: Collection<T>): Boolean = clrProjectedCollContainsAll(source, elements)
+    override fun iterator(): Iterator<T> = clrProjectedIterator(source)
+}
+
+public fun <T> clrProjectedCollectionView(source: Any): Collection<T> =
+    (source as? Collection<T>) ?: ClrProjectedCollectionView(source)
 
 public fun <T> clrCollIsEmpty(c: Collection<T>): Boolean = c.size == 0
 
@@ -52,6 +107,113 @@ public fun <T> clrCollAdd(c: MutableCollection<T>, element: T): Boolean {
 
 /** Projected `MutableCollection.add`; the receiver's exact invariant collection element is known only at runtime. */
 public fun <T> clrProjectedCollAdd(c: Any, element: T): Boolean = mutableCollectionAddErased(c, element)
+
+private fun <T> clrProjectedCollSnapshot(source: Any): ArrayList<T> {
+    val out = ArrayList<T>()
+    val iterator = iteratorOverRawEnumerable(source)
+    while (iterator.hasNext()) out.add(iterator.next() as T)
+    return out
+}
+
+public fun <T> clrProjectedCollIsEmpty(c: Any): Boolean {
+    val slots = c as? KotlinCollectionDefaultSlots
+    return slots?.dotktIsEmpty() ?: (projectedCollectionCountErased(c) == 0)
+}
+
+public fun <T> clrProjectedCollContains(c: Any, element: T): Boolean {
+    val slots = c as? KotlinCollectionDefaultSlots
+    if (slots != null) return slots.dotktContains(element)
+    val iterator = iteratorOverRawEnumerable(c)
+    while (iterator.hasNext()) if (iterator.next() == element) return true
+    return false
+}
+
+public fun <T> clrProjectedCollContainsAll(c: Any, elements: Collection<T>): Boolean {
+    val slots = c as? KotlinCollectionDefaultSlots
+    if (slots != null) return slots.dotktContainsAll(elements)
+    for (element in elements) if (!clrProjectedCollContains(c, element)) return false
+    return true
+}
+
+public fun <T> clrProjectedCollAddAll(c: Any, elements: Collection<T>): Boolean {
+    val slots = c as? KotlinMutableCollectionSlots
+    if (slots != null) return slots.dotktAddAll(elements)
+    var changed = false
+    for (element in clrCollSnapshot(elements)) if (mutableCollectionAddErased(c, element)) changed = true
+    return changed
+}
+
+public fun <T> clrProjectedCollRemoveAll(c: Any, elements: Collection<T>): Boolean {
+    val slots = c as? KotlinMutableCollectionSlots
+    if (slots != null) return slots.dotktRemoveAll(elements)
+    var changed = false
+    for (element in clrCollSnapshot(elements)) while (mutableCollectionRemoveErased(c, element)) changed = true
+    return changed
+}
+
+public fun <T> clrProjectedCollRetainAll(c: Any, elements: Collection<T>): Boolean {
+    val slots = c as? KotlinMutableCollectionSlots
+    if (slots != null) return slots.dotktRetainAll(elements)
+    val current = clrProjectedCollSnapshot<Any?>(c)
+    val keep = clrCollSnapshot(elements)
+    var changed = false
+    for (element in current) if (!clrProjectedCollContains(keep, element)) {
+        while (mutableCollectionRemoveErased(c, element)) changed = true
+    }
+    return changed
+}
+
+public fun <T> clrProjectedListAddAllAt(list: Any, index: Int, elements: Collection<T>): Boolean {
+    val slots = list as? KotlinMutableListSlots
+    if (slots != null) return slots.dotktAddAllAt(index, elements)
+    val size = mutableCollectionCountErased(list)
+    if (index < 0 || index > size) throw IndexOutOfBoundsException()
+    var at = index
+    var changed = false
+    for (element in clrCollSnapshot(elements)) {
+        mutableListInsertErased(list, at, element)
+        at++
+        changed = true
+    }
+    return changed
+}
+
+public fun <T> clrProjectedListSet(list: Any, index: Int, element: T): Any? {
+    val old = mutableListGetErased(list, index)
+    mutableListSetErased(list, index, element)
+    return old
+}
+
+public fun <T> clrProjectedListRemoveAt(list: Any, index: Int): Any? {
+    val old = mutableListGetErased(list, index)
+    mutableListRemoveAtErased(list, index)
+    return old
+}
+
+public fun <T> clrProjectedListIndexOf(list: Any, element: T): Int {
+    val slots = list as? KotlinListDefaultSlots
+    if (slots != null) return slots.dotktIndexOf(element)
+    var index = 0
+    val iterator = iteratorOverRawEnumerable(list)
+    while (iterator.hasNext()) {
+        if (iterator.next() == element) return index
+        index++
+    }
+    return -1
+}
+
+public fun <T> clrProjectedListLastIndexOf(list: Any, element: T): Int {
+    val slots = list as? KotlinListDefaultSlots
+    if (slots != null) return slots.dotktLastIndexOf(element)
+    var found = -1
+    var index = 0
+    val iterator = iteratorOverRawEnumerable(list)
+    while (iterator.hasNext()) {
+        if (iterator.next() == element) found = index
+        index++
+    }
+    return found
+}
 
 // ---- Kotlin-only mutation members: capability dispatch, then the BCL default -----------------------------------
 //
@@ -193,6 +355,9 @@ public fun <T> clrListLastIndexOf(list: List<T>, element: T): Int {
 // this class is emitted normally — no reverse-direction (C3b) GetEnumerator obligation.
 private class ClrListIterator<T>(private val list: List<T>, index: Int) : ListIterator<T> {
     private var cursor = index
+    init {
+        if (index < 0 || index > list.size) throw IndexOutOfBoundsException()
+    }
     override fun hasNext(): Boolean = cursor < list.size
     override fun next(): T { val v = list[cursor]; cursor++; return v }
     override fun hasPrevious(): Boolean = cursor > 0
@@ -340,7 +505,93 @@ public fun clrMutableIteratorErased(iterable: Any): MutableIterator<Any?> {
 public fun <T> clrMutableListListIterator(list: MutableList<T>, index: Int): MutableListIterator<T> =
     ClrMutableListIterator(list, index)
 
-// subList -> a copying view. ClrSubList implements List (@Clr) so it gets get_Count/get_Item (C3a) + a generated
+private class ClrProjectedMutableListIterator<T>(private val list: Any, index: Int) : MutableListIterator<T> {
+    private var cursor = index
+    private var last = -1
+
+    init {
+        if (index < 0 || index > mutableCollectionCountErased(list)) throw IndexOutOfBoundsException()
+    }
+
+    override fun hasNext(): Boolean = cursor < mutableCollectionCountErased(list)
+    override fun next(): T {
+        if (!hasNext()) throw NoSuchElementException()
+        last = cursor
+        cursor++
+        return mutableListGetErased(list, last) as T
+    }
+    override fun hasPrevious(): Boolean = cursor > 0
+    override fun previous(): T {
+        if (!hasPrevious()) throw NoSuchElementException()
+        cursor--
+        last = cursor
+        return mutableListGetErased(list, last) as T
+    }
+    override fun nextIndex(): Int = cursor
+    override fun previousIndex(): Int = cursor - 1
+    override fun remove() {
+        if (last < 0) throw IllegalStateException()
+        mutableListRemoveAtErased(list, last)
+        if (last < cursor) cursor--
+        last = -1
+    }
+    override fun set(element: T) {
+        if (last < 0) throw IllegalStateException()
+        mutableListSetErased(list, last, element)
+    }
+    override fun add(element: T) {
+        mutableListInsertErased(list, cursor, element)
+        cursor++
+        last = -1
+    }
+}
+
+private class ClrErasedListIteratorAdapter<T>(private val iterator: Any) : ListIterator<T> {
+    override fun hasNext(): Boolean = listIteratorHasNextErased(iterator)
+    override fun next(): T = listIteratorNextErased(iterator) as T
+    override fun hasPrevious(): Boolean = listIteratorHasPreviousErased(iterator)
+    override fun previous(): T = listIteratorPreviousErased(iterator) as T
+    override fun nextIndex(): Int = listIteratorNextIndexErased(iterator)
+    override fun previousIndex(): Int = listIteratorPreviousIndexErased(iterator)
+}
+
+private class ClrErasedMutableListIteratorAdapter<T>(private val iterator: Any) : MutableListIterator<T> {
+    override fun hasNext(): Boolean = listIteratorHasNextErased(iterator)
+    override fun next(): T = listIteratorNextErased(iterator) as T
+    override fun hasPrevious(): Boolean = listIteratorHasPreviousErased(iterator)
+    override fun previous(): T = listIteratorPreviousErased(iterator) as T
+    override fun nextIndex(): Int = listIteratorNextIndexErased(iterator)
+    override fun previousIndex(): Int = listIteratorPreviousIndexErased(iterator)
+    override fun remove() = mutableIteratorRemoveErased(iterator)
+    override fun set(element: T) = mutableListIteratorSetErased(iterator, element)
+    override fun add(element: T) = mutableListIteratorAddErased(iterator, element)
+}
+
+public fun <T> clrProjectedMutableListIterator(list: Any): MutableListIterator<T> {
+    val slots = list as? KotlinListDefaultSlots
+    if (slots != null) return ClrErasedMutableListIteratorAdapter(slots.dotktListIterator())
+    return ClrProjectedMutableListIterator(list, 0)
+}
+
+public fun <T> clrProjectedMutableListListIterator(list: Any, index: Int): MutableListIterator<T> {
+    val slots = list as? KotlinListDefaultSlots
+    if (slots != null) return ClrErasedMutableListIteratorAdapter(slots.dotktListIteratorAt(index))
+    return ClrProjectedMutableListIterator(list, index)
+}
+
+public fun <T> clrProjectedListIterator(list: Any): ListIterator<T> {
+    val slots = list as? KotlinListDefaultSlots
+    if (slots != null) return ClrErasedListIteratorAdapter(slots.dotktListIterator())
+    return ClrProjectedListView<T>(list, 0, projectedCollectionCountErased(list)).listIterator()
+}
+
+public fun <T> clrProjectedListListIterator(list: Any, index: Int): ListIterator<T> {
+    val slots = list as? KotlinListDefaultSlots
+    if (slots != null) return ClrErasedListIteratorAdapter(slots.dotktListIteratorAt(index))
+    return ClrProjectedListView<T>(list, 0, projectedCollectionCountErased(list)).listIterator(index)
+}
+
+// subList -> a live read-only view. ClrSubList implements List (@Clr) so it gets get_Count/get_Item (C3a) + a generated
 // GetEnumerator (the reverse bridge). It only needs size/get; the non-BCL members route to the helpers above.
 private class ClrSubList<T>(private val backing: List<T>, private val fromIndex: Int, private val toIndex: Int) : List<T> {
     override val size: Int get() = toIndex - fromIndex
@@ -357,6 +608,153 @@ private class ClrSubList<T>(private val backing: List<T>, private val fromIndex:
 }
 
 public fun <T> clrListSubList(list: List<T>, fromIndex: Int, toIndex: Int): List<T> = ClrSubList(list, fromIndex, toIndex)
+
+private fun clrCheckSubListBounds(size: Int, fromIndex: Int, toIndex: Int) {
+    if (fromIndex < 0 || toIndex > size) throw IndexOutOfBoundsException()
+    if (fromIndex > toIndex) throw IllegalArgumentException()
+}
+
+private class ClrProjectedListView<T>(
+    private val backing: Any,
+    private val fromIndex: Int,
+    private val toIndex: Int,
+) : List<T> {
+    init { clrCheckSubListBounds(projectedCollectionCountErased(backing), fromIndex, toIndex) }
+
+    override val size: Int get() = toIndex - fromIndex
+    override fun get(index: Int): T {
+        if (index < 0 || index >= size) throw IndexOutOfBoundsException()
+        return projectedListGetErased(backing, fromIndex + index) as T
+    }
+    override fun isEmpty(): Boolean = size == 0
+    override fun contains(element: T): Boolean = indexOf(element) >= 0
+    override fun containsAll(elements: Collection<T>): Boolean = clrCollContainsAll(this, elements)
+    override fun indexOf(element: T): Int = clrListIndexOf(this, element)
+    override fun lastIndexOf(element: T): Int = clrListLastIndexOf(this, element)
+    override fun iterator(): Iterator<T> = listIterator()
+    override fun listIterator(): ListIterator<T> = ClrListIterator(this, 0)
+    override fun listIterator(index: Int): ListIterator<T> = ClrListIterator(this, index)
+    override fun subList(fromIndex: Int, toIndex: Int): List<T> {
+        clrCheckSubListBounds(size, fromIndex, toIndex)
+        return ClrProjectedListView(backing, this.fromIndex + fromIndex, this.fromIndex + toIndex)
+    }
+}
+
+public fun <T> clrProjectedListView(source: Any): List<T> =
+    (source as? List<T>) ?: ClrProjectedListView(source, 0, projectedCollectionCountErased(source))
+
+public fun <T> clrProjectedListSubList(list: Any, fromIndex: Int, toIndex: Int): List<T> {
+    val slots = list as? KotlinListDefaultSlots
+    if (slots != null) {
+        val result = slots.dotktSubList(fromIndex, toIndex)
+        return (result as? List<T>)
+            ?: ClrProjectedListView(result, 0, projectedCollectionCountErased(result))
+    }
+    return ClrProjectedListView(list, fromIndex, toIndex)
+}
+
+private class ClrProjectedMutableSubList<T>(
+    private val backing: Any,
+    private val start: Int,
+    private var end: Int,
+    private val parent: ClrProjectedMutableSubList<T>? = null,
+) : MutableList<T> {
+    init { clrCheckSubListBounds(mutableCollectionCountErased(backing), start, end) }
+
+    override val size: Int get() = end - start
+
+    private fun checkElement(index: Int) {
+        if (index < 0 || index >= size) throw IndexOutOfBoundsException()
+    }
+
+    private fun checkPosition(index: Int) {
+        if (index < 0 || index > size) throw IndexOutOfBoundsException()
+    }
+
+    private fun resized(delta: Int) {
+        end += delta
+        parent?.resized(delta)
+    }
+
+    override fun get(index: Int): T {
+        checkElement(index)
+        return mutableListGetErased(backing, start + index) as T
+    }
+    override fun set(index: Int, element: T): T {
+        checkElement(index)
+        return clrProjectedListSet<T>(backing, start + index, element) as T
+    }
+    override fun add(element: T): Boolean { add(size, element); return true }
+    override fun add(index: Int, element: T) {
+        checkPosition(index)
+        mutableListInsertErased(backing, start + index, element)
+        resized(1)
+    }
+    override fun addAll(elements: Collection<T>): Boolean = addAll(size, elements)
+    override fun addAll(index: Int, elements: Collection<T>): Boolean {
+        checkPosition(index)
+        val added = elements.size
+        if (!clrProjectedListAddAllAt(backing, start + index, elements)) return false
+        resized(added)
+        return true
+    }
+    override fun removeAt(index: Int): T {
+        checkElement(index)
+        val removed = clrProjectedListRemoveAt<T>(backing, start + index) as T
+        resized(-1)
+        return removed
+    }
+    override fun remove(element: T): Boolean {
+        val index = indexOf(element)
+        if (index < 0) return false
+        removeAt(index)
+        return true
+    }
+    override fun removeAll(elements: Collection<T>): Boolean {
+        var changed = false
+        var index = size - 1
+        while (index >= 0) {
+            if (elements.contains(get(index))) { removeAt(index); changed = true }
+            index--
+        }
+        return changed
+    }
+    override fun retainAll(elements: Collection<T>): Boolean {
+        var changed = false
+        var index = size - 1
+        while (index >= 0) {
+            if (!elements.contains(get(index))) { removeAt(index); changed = true }
+            index--
+        }
+        return changed
+    }
+    override fun clear() {
+        var index = size - 1
+        while (index >= 0) { removeAt(index); index-- }
+    }
+    override fun isEmpty(): Boolean = size == 0
+    override fun contains(element: T): Boolean = indexOf(element) >= 0
+    override fun containsAll(elements: Collection<T>): Boolean = clrCollContainsAll(this, elements)
+    override fun indexOf(element: T): Int = clrListIndexOf(this, element)
+    override fun lastIndexOf(element: T): Int = clrListLastIndexOf(this, element)
+    override fun iterator(): MutableIterator<T> = listIterator()
+    override fun listIterator(): MutableListIterator<T> = ClrMutableListIterator(this, 0)
+    override fun listIterator(index: Int): MutableListIterator<T> = ClrMutableListIterator(this, index)
+    override fun subList(fromIndex: Int, toIndex: Int): MutableList<T> {
+        clrCheckSubListBounds(size, fromIndex, toIndex)
+        return ClrProjectedMutableSubList(backing, start + fromIndex, start + toIndex, this)
+    }
+}
+
+public fun <T> clrProjectedMutableListSubList(list: Any, fromIndex: Int, toIndex: Int): MutableList<T> {
+    val slots = list as? KotlinListDefaultSlots
+    if (slots != null) {
+        val result = slots.dotktSubList(fromIndex, toIndex)
+        return (result as? MutableList<T>)
+            ?: ClrProjectedMutableSubList(result, 0, mutableCollectionCountErased(result))
+    }
+    return ClrProjectedMutableSubList(list, fromIndex, toIndex)
+}
 
 // ---- Structural equality (Kotlin `==` on collections is structural; the substituted BCL types use REFERENCE ----
 // Object.Equals, so the backend routes a collection `==` here). Null-safe: the backend passes the raw operands.

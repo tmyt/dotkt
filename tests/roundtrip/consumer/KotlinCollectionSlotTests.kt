@@ -13,6 +13,7 @@ import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
 import roundtrip.collslots.Feed
 import roundtrip.collslots.ExternalDefaultIterator
+import roundtrip.collslots.ExternalDefaultCollection
 import roundtrip.collslots.ExternalIteratorProvider
 import roundtrip.collslots.TrackedBag
 import roundtrip.collslots.makeTrackedBag
@@ -26,6 +27,13 @@ class CrossModuleFeedNumbers : Feed<Int> {
 
 class CrossModuleInheritedIterator(items: List<String>) : ExternalIteratorProvider<String>(items), Feed<String>
 class CrossModuleDefaultIterator : ExternalDefaultIterator, Iterable<Int>
+class CrossModuleDefaultCollection : ExternalDefaultCollection {
+    private val backing = listOf(1)
+    override val size: Int get() = backing.size
+    override fun contains(element: Int): Boolean = backing.contains(element)
+    override fun containsAll(elements: Collection<Int>): Boolean = backing.containsAll(elements)
+    override fun iterator(): Iterator<Int> = backing.iterator()
+}
 
 class KotlinCollectionSlotTests {
     @TestAttribute
@@ -85,6 +93,13 @@ class KotlinCollectionSlotTests {
         val values = CrossModuleDefaultIterator()
         assertEquals(listOf(4, 5, 6), values.toList())
         assertEquals(15, values.sum())
+    }
+
+    @TestAttribute
+    fun aReferencedCollectionInterfaceDefaultOwnsTheProjectedSlot() {
+        val value: Any = CrossModuleDefaultCollection()
+        assertTrue(value is Collection<*>)
+        if (value is Collection<*>) assertTrue(value.isEmpty())
     }
 
     @TestAttribute
