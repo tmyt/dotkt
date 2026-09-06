@@ -374,21 +374,23 @@ static partial class SuspendColdLowering
         (Str(o["k"]) is null && o["params"] is JsonArray)
         || (Str(o["k"]) is string k && LambdaKinds.Contains(k));
 
-    /// A frame's initial scope: empty for a declaration, a COPY of the enclosing frame for a lambda, plus the
-    /// lambda's explicitly declared captures and its own parameters. A captured ordinary value read usually carries
-    /// a frontend `sty`, but compiler-authored location expressions need not: a captured mutable local is a ref-cell,
-    /// and its `setField(refCell.v, suspendingValue)` receiver is a bare `{k:local,name:cap$x}`. The capture declaration
-    /// is therefore the authoritative lexical type of that read, exactly as a parameter declaration types a bare
+    /// A frame's initial scope: empty for a declaration, a COPY of the enclosing frame for a lambda, plus a suspend
+    /// lambda's explicitly declared captures and every lambda's own parameters. `captures` is deliberately read only
+    /// on `newSuspendLambda`: there it is a declaration list, while other lambda kinds use the same key for VALUE
+    /// expressions evaluated in the enclosing frame. A captured ordinary value read usually carries a frontend
+    /// `sty`, but compiler-authored location expressions need not: a captured mutable local is a ref-cell, and its
+    /// `setField(refCell.v, suspendingValue)` receiver is a bare `{k:local,name:cap$x}`. The capture declaration is
+    /// therefore the authoritative lexical type of that read, exactly as a parameter declaration types a bare
     /// parameter read.
     static Dictionary<string, LocalDecl> NewFrame(JsonObject o, Dictionary<string, LocalDecl> outer)
     {
         var scope = Str(o["k"]) is null
             ? new Dictionary<string, LocalDecl>(StringComparer.Ordinal)
             : new Dictionary<string, LocalDecl>(outer, StringComparer.Ordinal);
-        if (o["captures"] is JsonArray cs)
+        if (Str(o["k"]) == "newSuspendLambda" && o["captures"] is JsonArray cs)
             foreach (var c in cs)
-                if (c is JsonObject co && Str(co["name"]) is string cn && TypeJson.Read(co["type"]) is TypeNode ct)
-                    scope[cn] = new LocalDecl(ct, null);
+                if (c is JsonObject co && Str(co["name"]) is string cn)
+                    scope[cn] = new LocalDecl(SuspendLambdaLowering.RequireCaptureType(co, cn), null);
         if (o["params"] is JsonArray ps)
             foreach (var p in ps)
                 if (p is JsonObject po && Str(po["name"]) is string pn && TypeJson.Read(po["type"]) is TypeNode pt)

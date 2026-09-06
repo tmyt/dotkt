@@ -60,6 +60,13 @@ fun suspendCaptureMake(k: Int): suspend () -> Int = { suspendCaptureAdd(k, 5) } 
 
 suspend fun suspendCaptureStringWork(): String = suspendContextAsyncResume().toString()
 
+suspend fun suspendCaptureAssignFromSuspendCaller(): String {
+    suspendContextAsyncResume()
+    var result = ""
+    blockOn { result = suspendCaptureStringWork() }
+    return result
+}
+
 // BIR local slots are declaration identities, not Kotlin source spellings. This deliberately keeps two `value`
 // declarations of different types alive around a genuinely asynchronous resume; bir2cir must spill the slots already
 // named by kotc, without reconstructing lexical shadowing from nested JSON.
@@ -103,5 +110,6 @@ class SuspendCaptureTests {
         blockOn { count = suspendContextAsyncResume() }
         assertEquals("42", result)
         assertEquals(42, count)
+        assertEquals("42", blockOn { suspendCaptureAssignFromSuspendCaller() })
     }
 }
