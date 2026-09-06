@@ -5,6 +5,12 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+### Toolchain
+
+- **Suspend lambdas can assign a suspending result through a captured mutable local (#678).** The suspend operand
+  planner now types bare capture reads from the lambda's explicit capture declarations, so preserving receiver-before-
+  value evaluation order for a ref-cell write no longer creates an untyped spill slot.
+
 ## 0.9.13-beta1 (2026-09-06)
 
 ### Toolchain

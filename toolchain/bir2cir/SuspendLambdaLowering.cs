@@ -432,9 +432,14 @@ static class SuspendLambdaLowering
         if (arr is JsonArray a)
             foreach (var it in a)
                 if (it is JsonObject o && Str(o["name"]) is string n)
-                    list.Add((n, RequiredType(o["type"], $"capture `{n}` of a suspend lambda")));
+                    list.Add((n, RequireCaptureType(o, n)));
         return list;
     }
+
+    // Stage 0 also reads capture declarations to type bare capture-local operands. Keep the malformed-current-BIR
+    // diagnostic at this ownership boundary whichever suspend phase first needs the mandatory type fact.
+    internal static TypeNode RequireCaptureType(JsonObject capture, string name) =>
+        RequiredType(capture["type"], $"capture `{name}` of a suspend lambda");
 
     // Both channels are mandatory BIR facts: captures are parameter declarations and `typeArgs` entries are type
     // nodes by schema. Inventing Any here would turn an earlier producer/schema violation into a differently-shaped
