@@ -381,10 +381,10 @@ GitHub Issues.
 
 ```text
 suspend fun f(x: Int): String        (in class C / top-level file class FKt)
-  ── cold entry:  public static/instance  object f$dotkt_suspend(int x, Continuation<object> completion)
+  ── cold entry:  public static/instance  object f$dotkt_suspend(int x, Continuation<object> dotkt$sm$completion)
   ── SM class:    internal sealed  class <owner>_f$sm : kotlin.coroutines.clr.internal.ContinuationImpl
-                    fields: int label; <spilled params/locals>; object $result-plumbing via base
-                    method: object invokeSuspend(object result)   // label dispatch: label/brIf/goto
+                    fields: int dotkt$sm$label; <spilled params/locals>; object result-plumbing via base
+                    method: object invokeSuspend(object dotkt$sm$result)   // state dispatch: label/brIf/goto
   ── public bridge: Task<string> f(int x)                          // [KotlinFunction(Suspend)] rides here
 ```
 

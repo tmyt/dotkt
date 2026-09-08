@@ -7,6 +7,11 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Suspend lowering keeps generated frame storage disjoint from Kotlin names (#684).** bir2cir assigns state,
+  continuation, resume-result, state-machine, and Task-bridge temporaries to a compiler-only physical namespace.
+  Parameters named `label`, `completion`, `result`, or like former generated locals now retain their own state-machine
+  fields and stack slots across direct, suspending, lambda, and public Task-bridge paths.
+
 - **Suspend-lambda capture storage is disjoint from user parameter names (#680).** kotc gives every capture a
   compiler-owned storage name and marks an enclosing receiver explicitly instead of encoding that role as `__outer`.
   bir2cir carries the exact field identity through inline materialization and state-machine lowering, so a legal

@@ -19,6 +19,8 @@
 // clash with sibling coroutine fixtures or the stdlib.
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
+import System.Type
+import System.Threading.Tasks.Task1
 import dotkt.support.blockOn
 
 // ---- il-suspendvalue -----------------------------------------------------------------------------------------
@@ -78,6 +80,24 @@ suspend fun suspendStorageMachineryParameterNames(label: String, completion: Str
     return label + completion + result
 }
 
+suspend fun suspendStorageDirectCompletionName(completion: String): String = completion
+
+suspend fun suspendStorageGeneratedLocalNames(
+    __sm: String,
+    __tcs: String,
+    __root: String,
+    __r: String,
+    __e: String,
+): String {
+    suspendContextAsyncResume()
+    return __sm + __tcs + __root + __r + __e
+}
+
+private fun invokeSuspendStorageGeneratedLocalNamesTask(): Task1<String> =
+    Type.GetType("SuspendCaptureTestsKt")!!
+        .GetMethod("suspendStorageGeneratedLocalNames")!!
+        .Invoke(null, arrayOf<Any?>("SM", "TCS", "ROOT", "RESULT", "EX")) as Task1<String>
+
 // BIR local slots are declaration identities, not Kotlin source spellings. This deliberately keeps two `value`
 // declarations of different types alive around a genuinely asynchronous resume; bir2cir must spill the slots already
 // named by kotc, without reconstructing lexical shadowing from nested JSON.
@@ -124,6 +144,18 @@ class SuspendCaptureTests {
         assertEquals("42", result)
         assertEquals(42, count)
         assertEquals("42", blockOn { suspendCaptureAssignFromSuspendCaller() })
+    }
+
+    @TestAttribute
+    fun suspendStorageNamesRemainDisjoint() {
         assertEquals("LCR", blockOn { suspendStorageMachineryParameterNames("L", "C", "R") })
+        assertEquals("direct", blockOn { suspendStorageDirectCompletionName("direct") })
+        assertEquals("SMTCSROOTRESULTEX", invokeSuspendStorageGeneratedLocalNamesTask().Result)
+
+        val lambda: suspend (String, String, String) -> String = { label, completion, result ->
+            suspendContextAsyncResume()
+            label + completion + result
+        }
+        assertEquals("LCR", blockOn { lambda("L", "C", "R") })
     }
 }
