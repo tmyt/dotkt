@@ -4,6 +4,11 @@ namespace Delegobj {
     public delegate void PostCb(object state);
     public delegate void PostCbTwin(object state);
     public delegate void RecursiveCb(RecursiveCb next);
+    public delegate void ArityCb(object state);
+    public delegate void ArityCb<T>(T state);
+    public static class DelegateContainer {
+        public delegate void NestedCb(object state);
+    }
     public class Ctx {
         public virtual void Post(PostCb cb, object state) { cb(state); }
     }

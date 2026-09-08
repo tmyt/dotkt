@@ -529,7 +529,8 @@ internal sealed record DelegateCatalogEntry(
     string AssemblyName,
     string MetadataName,
     string DefinitionPath,
-    int TypeDefinitionRow);
+    int TypeDefinitionRow,
+    bool IsCanonicalFunction);
 
 internal sealed class DelegateReferenceCatalog
 {
@@ -559,17 +560,18 @@ internal sealed class DelegateReferenceCatalog
             var path = assembly.Path;
             var md = assembly.Reader;
             var assemblyName = AssemblyName(md, path);
+            var attributes = new MetadataAttributes(md);
             foreach (var handle in md.TypeDefinitions)
             {
                 var def = md.GetTypeDefinition(handle);
                 if (!IsMulticastDelegate(md, def.BaseType)) continue;
                 var metadataName = DefinitionName(md, handle);
-                if (IsBuiltinDelegate(metadataName)) continue;
                 definitions.Add(new DelegateCatalogEntry(
                     assemblyName,
                     metadataName,
                     path,
-                    MetadataTokens.GetRowNumber(handle)));
+                    MetadataTokens.GetRowNumber(handle),
+                    IsCanonicalFunctionDefinition(assemblyName, metadataName, attributes.IsStandardLibrary)));
             }
         }
 
@@ -636,13 +638,28 @@ internal sealed class DelegateReferenceCatalog
             md.GetString(type.Name) == "MulticastDelegate";
     }
 
-    private static bool IsBuiltinDelegate(string metadataName)
+    private static bool IsCanonicalFunctionDefinition(
+        string assemblyName, string metadataName, bool isStandardLibrary) =>
+        ((assemblyName is "System.Private.CoreLib" or "System.Runtime" or "mscorlib") &&
+         IsCanonicalSystemFunctionDelegate(metadataName)) ||
+        (isStandardLibrary && IsCanonicalWideFunctionDelegate(metadataName));
+
+    internal static bool IsCanonicalSystemFunctionDelegate(string name) =>
+        name == "System.Action" ||
+        IsArityQualifiedFamily(name, "System.Action", 1, 16) ||
+        IsArityQualifiedFamily(name, "System.Func", 1, 17);
+
+    internal static bool IsCanonicalWideFunctionDelegate(string name) =>
+        IsArityQualifiedFamily(name, "DotKt.Runtime.CompilerServices.KAction", 17, 22) ||
+        IsArityQualifiedFamily(name, "DotKt.Runtime.CompilerServices.KFunc", 18, 23);
+
+    private static bool IsArityQualifiedFamily(string name, string family, int minimum, int maximum)
     {
-        var simple = metadataName[(metadataName.LastIndexOfAny(['.', '+']) + 1)..];
-        return metadataName.StartsWith("System.", StringComparison.Ordinal) &&
-            (simple == "Action" ||
-             simple.StartsWith("Action`", StringComparison.Ordinal) ||
-             simple.StartsWith("Func`", StringComparison.Ordinal));
+        if (!name.StartsWith(family, StringComparison.Ordinal)) return false;
+        var suffix = name.AsSpan(family.Length);
+        if (suffix.Length > 0 && suffix[0] == '`') suffix = suffix[1..];
+        return int.TryParse(suffix, NumberStyles.None, CultureInfo.InvariantCulture, out var arity)
+            && arity >= minimum && arity <= maximum;
     }
 
     private static string DefinitionName(MetadataReader md, TypeDefinitionHandle handle)
@@ -7365,7 +7382,17 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
     {
         if (_semanticCompanionTypes.Contains(genericType)) return genericType;
         if (_externalDelegateTypes.TryGetValue(genericType, out var externalDelegate))
-            return Substitute(DecodeExternalDelegate(externalDelegate), typeArguments);
+        {
+            if (externalDelegate.IsCanonicalFunction)
+                return Substitute(DecodeExternalDelegate(externalDelegate), typeArguments);
+            var nominal = genericType.Clone();
+            nominal.Argument.Add(typeArguments.Select(t => new KType.Types.Argument
+            {
+                Projection = KType.Types.Argument.Types.Projection.Inv,
+                Type = t,
+            }));
+            return nominal;
+        }
         var genericName = genericType.HasClassName ? _names.ClassName(genericType.ClassName) : null;
         if (genericName is "System.Nullable" or "System.Nullable1" &&
             typeArguments.Length == 1)
@@ -7533,7 +7560,7 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
         }
         if (_attrs.CarrierType(handle, MetadataAttributes.DotKtNs + "KotlinTypeAttribute") is { } carrier)
             return FromTypeNode(carrier);
-        if (_delegateDefinitions.ContainsKey(name) && IsCanonicalFunctionDelegate(name)
+        if (_delegateDefinitions.ContainsKey(name) && IsCanonicalLocalFunctionDelegate(name)
             && !def.GetGenericParameters().Any())
             return DecodeDelegate(handle);
         var result = rawTypeKind == (byte)SignatureTypeKind.Class
@@ -7560,11 +7587,14 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
         var full = ReferenceKotlinName(reader, handle);
         var className = ReferenceKotlinClassName(reader, handle);
         var metadataFull = ReferenceMetadataName(reader, handle);
-        if (_delegateCatalog.TryResolve(reader, handle, out var externalDelegate)
-            && IsCanonicalFunctionDelegate(externalDelegate.MetadataName))
+        if (_delegateCatalog.TryResolve(reader, handle, out var externalDelegate))
         {
             if (!metadataName.Contains('`'))
-                return DecodeExternalDelegate(externalDelegate);
+                return externalDelegate.IsCanonicalFunction
+                    ? DecodeExternalDelegate(externalDelegate)
+                    : rawTypeKind == (byte)SignatureTypeKind.Class
+                        ? Platform(className)
+                        : Named(className);
             var marker = rawTypeKind == (byte)SignatureTypeKind.Class
                 ? Platform(className)
                 : Named(className);
@@ -8005,7 +8035,7 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
         var className = DefinitionKotlinClassName(_md, handle);
         if (_semanticTypeNames.TryGetValue(handle, out var semanticName))
             return platform ? Platform(semanticName) : Named(semanticName);
-        if (_delegateDefinitions.ContainsKey(name) && IsCanonicalFunctionDelegate(name)
+        if (_delegateDefinitions.ContainsKey(name) && IsCanonicalLocalFunctionDelegate(name)
             && !def.GetGenericParameters().Any())
             return DecodeDelegate(handle);
         return platform ? Platform(className) : Named(className);
@@ -8083,20 +8113,18 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
         _ => null,
     };
 
-    private static bool IsCanonicalFunctionDelegate(string name) =>
-        name == "System.Action" ||
-        IsArityQualifiedFamily(name, "System.Action", 1, 16) ||
-        IsArityQualifiedFamily(name, "System.Func", 1, 17) ||
-        IsArityQualifiedFamily(name, "DotKt.Runtime.CompilerServices.KAction", 17, 22) ||
-        IsArityQualifiedFamily(name, "DotKt.Runtime.CompilerServices.KFunc", 18, 23);
-
-    private static bool IsArityQualifiedFamily(string name, string family, int minimum, int maximum)
+    private bool IsCanonicalLocalFunctionDelegate(string name)
     {
-        if (!name.StartsWith(family, StringComparison.Ordinal)) return false;
-        var suffix = name.AsSpan(family.Length);
-        return int.TryParse(suffix, NumberStyles.None, CultureInfo.InvariantCulture, out var arity)
-            && arity >= minimum && arity <= maximum;
+        var assemblyName = _md.IsAssembly
+            ? _md.GetString(_md.GetAssemblyDefinition().Name)
+            : null;
+        return ((assemblyName is "System.Private.CoreLib" or "System.Runtime" or "mscorlib") &&
+                DelegateReferenceCatalog.IsCanonicalSystemFunctionDelegate(name)) ||
+               (_attrs.IsStandardLibrary && DelegateReferenceCatalog.IsCanonicalWideFunctionDelegate(name));
     }
+
+    private static bool IsCanonicalFunctionDelegate(string name) =>
+        DelegateReferenceCatalog.IsCanonicalSystemFunctionDelegate(name);
 
     private bool IsKnownDelegate(string name) => IsCanonicalFunctionDelegate(name);
 

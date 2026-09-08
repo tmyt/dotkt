@@ -97,6 +97,7 @@ static class ClosureSynthesis
             // an already-declared type's member body — walk the pre-existing types without mutating while enumerating.
             inputs.AddRange(types.Where(node => node != null).ToList());
         SynthesizeAndAppend(file, inputs, refs);
+        RejectDirectClrDelegateImplementations(file, refs);
     }
 
     // A later phase that deliberately constructs executable subtrees supplies those exact roots here. Only the new
@@ -149,6 +150,26 @@ static class ClosureSynthesis
         return file;
     }
 
+    static void RejectDirectClrDelegateImplementations(JsonObject file, ReferenceMetadataIndex refs)
+    {
+        if (file["types"] is not JsonArray types) return;
+        foreach (var type in types.OfType<JsonObject>())
+        {
+            if (type["interfaces"] is not JsonArray interfaces) continue;
+            foreach (var implemented in interfaces)
+            {
+                var candidate = TypeJson.Read(implemented);
+                while (candidate is TypeNode.Nullable nullable) candidate = nullable.Of;
+                while (candidate is TypeNode.Oblivious oblivious) candidate = oblivious.Of;
+                if (candidate is not TypeNode.Fqn named || !refs.IsClrDelegate(named)) continue;
+                throw new InvalidOperationException(
+                    $"bir2cir: type '{Str(type["name"])}' directly implements CLR delegate '{named.Name}'. " +
+                    "Projected CLR delegates may be constructed through their SAM constructor but cannot be " +
+                    "inherited or implemented as CLR interfaces");
+            }
+        }
+    }
+
     // `decl` is the nearest enclosing DECLARATION (method/field/type), carried only so a capture diagnostic can
     // name it and print its source position.
     static void Walk(JsonNode node, List<JsonNode> newTypes, JsonNode decl)
@@ -156,6 +177,18 @@ static class ClosureSynthesis
         switch (node)
         {
             case JsonObject o:
+                // A callable-reference SAM conversion has no newSam shim: kotc emits the callable's ordinary
+                // construction and carries the frontend-selected fun-interface in samTarget. Consume that fact only
+                // when the exact referenced classifier is physically a CLR delegate; deciding the realization is
+                // bir2cir's responsibility. The mark survives this pass and is materialized after member resolution.
+                if (o["samTarget"] is JsonNode samTargetNode)
+                {
+                    var samTarget = TypeJson.Read(samTargetNode);
+                    if (samTarget is TypeNode.Fqn delegateType && _refs?.IsClrDelegate(delegateType) == true)
+                        ClrMemberResolution.MarkDelegateSlot(
+                            o, delegateType, _refs, new HashSet<string>());
+                    o.Remove("samTarget");
+                }
                 if (Str(o["k"]) == "newClosure" && o["synthClass"] is JsonObject sc)
                 {
                     // Bottom-up: synthesize any nested closures inside THIS closure's invoke body first, so the outer
@@ -248,7 +281,7 @@ static class ClosureSynthesis
         node["funcType"] = TypeJson.Write(new TypeNode.Fn(false, returnType, parameters));
         node["synthClass"] = closure;
         node.Remove("samType");
-        ClrMemberResolution.MarkDelegateSlot(node, delegateType);
+        ClrMemberResolution.MarkDelegateSlot(node, delegateType, _refs, new HashSet<string>());
         return true;
     }
 

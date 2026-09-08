@@ -8,14 +8,14 @@
         {
           "k": "exprStmt",
           "expr": {
-            "k": "clrEventRemove",
-            "handlerExact": true,
+            "k": "clrEventAdd",
             "type": { "t": "fqn", "name": "LocalEventOwner" },
             "event": "pulse",
             "static": false,
             "recv": { "k": "this" },
             "handler": { "k": "local", "name": "handler" },
-            "accessor": "remove_pulse",
+            "accessor": "add_pulse",
+            "accessorOwner": { "t": "fqn", "name": "LocalEventOwner" },
             "delegateType": { "t": "fqn", "name": "System.Action" },
             "sig": [ { "t": "fqn", "name": "System.Action" } ],
             "localAccessor": true,

@@ -559,8 +559,9 @@ It verifies:
    calls;
 6. binding through `bir2cir`;
 7. CIL emission through `ilemit`; and
-8. execution of the resulting CLR assembly, including nominal delegate SAM
-   construction, invocation, and exact virtual-slot identity.
+8. execution of the resulting CLR assembly.
 
-The round-trip and packaged-SDK suites are also authoritative because they
-exercise the same MSBuild reference-set path used by production projects.
+The interop consumer suite covers nominal delegate SAM construction, invocation,
+callable-reference conversion, events, and exact virtual-slot identity. The
+round-trip and packaged-SDK suites are also authoritative because they exercise
+the same MSBuild reference-set path used by production projects.

@@ -108,6 +108,9 @@ Notes:
   a custom delegate has no `fn` spelling at all. `delegateInvoke`, whose reader needs the parameter/return vector,
   keeps the structured `fn`. A construction carries no `invokeRef`: it names the constructor it runs, and the
   Invoke its value is called through is stated by the CALL.
+  A callable-reference SAM conversion additionally carries its frontend-selected interface as the transient BIR
+  `samTarget` Type node. bir2cir consumes that fact when the selected interface is physically a CLR delegate and
+  records the exact nominal delegate construction; `samTarget` never reaches CIR or ilemit.
 - **Nullability is TRI-STATE, named with the CLR/Roslyn vocabulary** (`NullableAttribute` 1/2/0 =
   not-annotated / annotated / **oblivious**). A reference type is one of three states, each a COHERENT node
   naming its own CLR state (the representation must NOT collapse oblivious to nullable — that breaks overload

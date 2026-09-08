@@ -266,7 +266,7 @@ static class ClrEventSubscriptionBinding
             // that construction again would bind the outer Action.Invoke pointer to the already-retargeted nominal
             // delegate object.
             if (handler?.DeepClone() is JsonObject construction
-                && ClrMemberResolution.MarkDelegateSlot(construction, targetType))
+                && ClrMemberResolution.MarkDelegateSlot(construction, targetType, _refs, _localTypes))
                 return construction;
             var sourceType = handler is JsonObject expression
                 ? TypeJson.Read(expression["sty"]) ?? TypeJson.Read(expression["funcType"])
@@ -295,7 +295,7 @@ static class ClrEventSubscriptionBinding
                 // constructed delegate to targetType and authors the existing Unit adapter if the returns require it.
                 ["funcType"] = TypeJson.Write(sourceFunction),
             };
-            ClrMemberResolution.MarkDelegateSlot(conversion, targetType);
+            ClrMemberResolution.MarkDelegateSlot(conversion, targetType, _refs, _localTypes);
             return conversion;
         }
 

@@ -955,18 +955,22 @@ static partial class ClrMemberResolution
     // Normalization for the rt-stdlib link) resolves its declared member sig here too. RESPECTS generic arity: a generic
     // owner (args present) binds the arity-suffixed def (`TaskCompletionSource`1`), never a same-named NON-generic sibling.
     internal static Type ResolveOwnerType(TypeNode.Fqn ownerFqn)
+        => ResolveOwnerType(ownerFqn, _refs);
+
+    internal static Type ResolveOwnerType(TypeNode.Fqn ownerFqn, ReferenceMetadataIndex refs)
     {
+        if (refs == null) return null;
         // A generated nested companion's CIR token deliberately omits CLR generic-arity punctuation, including the
         // outer owner's backtick. Its validated [KotlinCompanion] association is the authority for the exact reflected
         // TypeDef spelling; use that association before the ordinary flat-name arity probe.
-        if (_refs.TryCompanionMetadataCarrier(ownerFqn.Name, out _))
-            return _refs.ResolveCompanionMetadataCarrier(ownerFqn.Name, ownerFqn.Args?.Length ?? 0);
+        if (refs.TryCompanionMetadataCarrier(ownerFqn.Name, out _))
+            return refs.ResolveCompanionMetadataCarrier(ownerFqn.Name, ownerFqn.Args?.Length ?? 0);
         // A NESTED-generic reflection name already carries backtick arity + `+` separators (`Outer`1+Nested`, the
         // ConfigureAwait awaiter) — resolve it VERBATIM; BareOwnerFqn/StripGenericArity would truncate at the first
         // backtick and lose the nested type. (Its `args` instantiate the OUTER; a member whose sig has no outer type-var
         // — OnCompleted(Action) — matches on the open nested def regardless, so no MakeGenericType is needed.)
-        if (ownerFqn.Name.Contains('`')) return _refs.ResolveRefType(ownerFqn.Name, 0);
-        return RefDef(ownerFqn.Name, ownerFqn.Args?.Length ?? 0);
+        if (ownerFqn.Name.Contains('`')) return refs.ResolveRefType(ownerFqn.Name, 0);
+        return RefDef(ownerFqn.Name, ownerFqn.Args?.Length ?? 0, refs);
     }
 
     // The structured TypeNode carried by an owner slot.
@@ -1259,25 +1263,32 @@ static partial class ClrMemberResolution
     // Resolve a .NET type by name off the ref.dll, RESPECTING generic arity: probe the arity-suffixed def (`Foo`1`)
     // FIRST when arity>0, so a same-named NON-generic sibling (`TaskCompletionSource`/the `System.Nullable` static class)
     // never shadows the generic def (ResolveRefType/ResolveNetType probe the bare name first).
-    static Type RefDef(string owner, int arity)
+    static Type RefDef(string owner, int arity, ReferenceMetadataIndex refs = null)
     {
+        refs ??= _refs;
+        if (refs == null) return null;
         var physical = owner.Contains('`') || owner.Contains('+');
         if (physical)
-            return _refs.ResolveRefType(ReferenceMetadataIndex.ReflectedOwnerFqn(owner), 0);
+            return refs.ResolveRefType(ReferenceMetadataIndex.ReflectedOwnerFqn(owner), 0);
         var bare = ReferenceMetadataIndex.BareOwnerFqn(owner);
+        // A current-format [ClrExternal] classifier may have a collision-free Kotlin source name while naming an
+        // arity-bearing or nested CLR TypeDef (for example Foo1<T> -> Foo`1). The producer-authored mapping is the
+        // identity; do not reconstruct the physical name from the semantic spelling and argument count.
+        if (refs.PhysicalTypeNames.TryGetValue(bare, out var mapped))
+            return refs.ResolveRefType(mapped, 0);
         // A flattened nested identity needs each declaring segment's own metadata arity
         // (`Outer`1+Leaf`1`), not one suffix made from the flattened total (`Outer+Leaf`2`).
-        if (_refs.TryExactPhysicalTypeName(bare, arity, out var exact))
+        if (refs.TryExactPhysicalTypeName(bare, arity, out var exact))
         {
             if (exact == null)
                 throw new InvalidOperationException(
                     $"ambiguous CLR metadata identity for nested type '{bare}' with flattened arity {arity}");
             // The exact spelling is authoritative. If local-source precedence rejects it or its declaring reference
             // is unavailable, do not fall back to a different aggregate-arity TypeDef.
-            return _refs.ResolveRefType(exact, 0);
+            return refs.ResolveRefType(exact, 0);
         }
-        if (arity > 0 && !bare.Contains('`') && _refs.ResolveRefType(bare + "`" + arity, arity) is { } g) return g;
-        return _refs.ResolveRefType(bare, arity);
+        if (arity > 0 && !bare.Contains('`') && refs.ResolveRefType(bare + "`" + arity, arity) is { } g) return g;
+        return refs.ResolveRefType(bare, arity);
     }
 
     // A concrete arg TypeNode -> its MLC Type (null when it embeds an open tv / a local-emitted / a delegate / can't construct).

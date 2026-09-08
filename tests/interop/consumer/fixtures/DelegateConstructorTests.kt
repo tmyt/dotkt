@@ -11,6 +11,9 @@ import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import Cbk.Engine
 import Delegatearg.Box
 import Delegobj.Ctx
+import Delegobj.ArityCb
+import Delegobj.ArityCb1
+import Delegobj.DelegateContainer.NestedCb
 import Delegobj.PostCb
 import Delegobj.PostCbTwin
 import Delegobj.RecursiveCb
@@ -32,6 +35,11 @@ class DelegobjSynchronizationContext : SynchronizationContext() {
     override fun Post(d: SendOrPostCallback, state: Any?) {
         d(state)
     }
+}
+
+private class DelegobjReferenceTarget {
+    var seen = ""
+    fun record(state: Any?) { seen = "ref: $state" }
 }
 
 class DelegateConstructorTests {
@@ -76,6 +84,26 @@ class DelegateConstructorTests {
         val root = RecursiveCb { next -> recursiveCalls += 1; next(leaf) }
         root(leaf)
         assertEquals(2, recursiveCalls)
+
+        val target = DelegobjReferenceTarget()
+        val fromReference = PostCb(target::record)
+        fromReference(10)
+        assertEquals("ref: 10", target.seen)
+
+        val invokeReference = fromReference::invoke
+        invokeReference("eleven")
+        assertEquals("ref: eleven", target.seen)
+
+        val nested = NestedCb { s -> out = "nested: $s" }
+        nested(12)
+        assertEquals("nested: 12", out)
+
+        val arity0 = ArityCb { s -> out = "arity0: $s" }
+        arity0(13)
+        assertEquals("arity0: 13", out)
+        val arity1 = ArityCb1<String> { s -> out = "arity1: $s" }
+        arity1("fourteen")
+        assertEquals("arity1: fourteen", out)
     }
 
     @TestAttribute

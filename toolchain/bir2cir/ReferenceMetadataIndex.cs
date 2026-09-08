@@ -1609,7 +1609,13 @@ sealed partial class ReferenceMetadataIndex
     public bool IsClrDelegate(TypeNode.Fqn type)
     {
         if (type == null) return false;
-        var reflected = ResolveRefType(type.Name, type.Args?.Length ?? 0);
+        var arity = type.Args?.Length ?? 0;
+        var owner = PhysicalTypeNames.TryGetValue(type.Name, out var mapped)
+            ? mapped
+            : TryExactPhysicalTypeName(type.Name, arity, out var exact) && exact != null
+                ? exact
+                : type.Name;
+        var reflected = ResolveRefType(owner, owner.Contains('`') || owner.Contains('+') ? 0 : arity);
         if (reflected == null) return false;
         try { return IsDelegate(reflected); }
         catch { return false; }

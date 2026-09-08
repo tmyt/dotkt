@@ -203,6 +203,7 @@
           "k": "exprStmt",
           "expr": {
             "k": "clrEventAdd",
+            "handlerExact": true,
             "type": {
               "t": "fqn",
               "name": "System.AppDomain"

@@ -9,6 +9,7 @@
           "k": "exprStmt",
           "expr": {
             "k": "clrEventAdd",
+            "handlerExact": true,
             "type": { "t": "fqn", "name": "LocalEventOwner" },
             "event": "pulse",
             "static": false,

@@ -15,6 +15,7 @@ import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import System.Threading.Tasks.Task
 import System.Threading.Thread
+import System.Threading.ThreadStart
 import kotlin.coroutines.coroutineContext
 import kotlin.coroutines.suspendCoroutine
 import kotlin.coroutines.resume
@@ -52,7 +53,8 @@ suspend fun suspendContextCatchClassify(x: Int): Int =
 
 // ---- il-safecontresume ---------------------------------------------------------------------------------------
 suspend fun suspendContextAsyncResume(): Int = suspendCoroutine { cont ->
-    val worker = Thread({
+    // Thread has distinct zero- and one-argument nominal delegate overloads; select the zero-argument SAM.
+    val worker = Thread(ThreadStart {
         Thread.Sleep(50)
         cont.resume(42)
     })

@@ -21,6 +21,7 @@ import System.ComponentModel.INotifyPropertyChanged
 import System.ComponentModel.PropertyChangedEventArgs
 import System.ComponentModel.PropertyChangedEventHandler
 import EventDelegation.EventSource
+import Delegobj.PostCb
 import kotlin.clr.ClrEvent
 import kotlin.clr.clrEvent
 import kotlin.reflect.KProperty
@@ -56,6 +57,10 @@ private class NullableEventCarrier<T> {
 
 private fun <T> nullableEventCarrier(): NullableEventCarrier<T?> = NullableEventCarrier()
 
+private class NominalEventCarrier {
+    val Changed: ClrEvent<PostCb> by clrEvent()
+}
+
 class ClrEventTests {
     // The full §7 conformance: raise carries the property name, unchanged value doesn't raise, unsubscribe stops raises.
     @TestAttribute
@@ -88,6 +93,15 @@ class ClrEventTests {
         subscription.close()
         vm.PropertyChanged.invoke(vm, PropertyChangedEventArgs("after-close"))
         assertEquals(1, fired)
+
+        val nominal = NominalEventCarrier()
+        var nominalValue = ""
+        val nominalSubscription = nominal.Changed.subscribe { value -> nominalValue = value.toString() }
+        nominal.Changed.invoke("named")
+        assertEquals("named", nominalValue)
+        nominalSubscription.close()
+        nominal.Changed.invoke("removed")
+        assertEquals("named", nominalValue)
     }
 
     // Two distinct properties raise with their own names through one shared event.
