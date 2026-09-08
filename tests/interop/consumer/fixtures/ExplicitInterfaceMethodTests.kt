@@ -23,6 +23,7 @@ import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import Cbk.ICallbackEngine
 import Cbk.IGenericCallbackEngine
+import Cbk.GenericTransform
 import GenIm.IConv
 
 private class DerivedExplicitOperations : ExplicitOperations()
@@ -246,6 +247,6 @@ class ExplicitInterfaceMethodTests {
 interface LocalCallbackEngine : ICallbackEngine
 interface LocalGenericCallbackEngine<T> : IGenericCallbackEngine<T>
 interface LocalConstrainedCallback<T> : IGenericCallbackEngine<T> {
-    override fun Apply(value: T, transform: (T) -> String): String = "local:" + transform(value)
+    override fun Apply(value: T, transform: GenericTransform<T>): String = "local:" + transform(value)
 }
 interface LocalConv : IConv

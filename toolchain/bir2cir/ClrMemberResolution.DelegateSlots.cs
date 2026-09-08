@@ -119,11 +119,16 @@ static partial class ClrMemberResolution
     /// slot the call no longer has.
     /// </remarks>
     internal static bool MarkDelegateSlot(JsonObject construction, TypeNode slotType)
+        => MarkDelegateSlot(construction, slotType, _refs, _localTypes);
+
+    internal static bool MarkDelegateSlot(JsonObject construction, TypeNode slotType,
+        ReferenceMetadataIndex refs, IReadOnlySet<string> localTypes)
     {
         if ((construction["k"] as JsonValue)?.GetValue<string>() is not
             ("newDelegate" or "newClosure" or "newBoundDelegate" or "newBoundClrDelegate" or "newClrStaticDelegate"))
             return false;
-        if (DelegateFqnOfSlot(slotType) is not TypeNode.Fqn slotDelegate) return construction.ContainsKey(DelegateSlotKey);
+        if (DelegateFqnOfSlot(slotType, refs, localTypes) is not TypeNode.Fqn slotDelegate)
+            return construction.ContainsKey(DelegateSlotKey);
         construction[DelegateSlotKey] = TypeJson.Write(slotDelegate);
         return true;
     }
@@ -137,16 +142,21 @@ static partial class ClrMemberResolution
     // construction's `funcType` and its own `delegateCtorRef` would name two different delegates.
     // A delegate's arguments are METHOD slots (Root-H), the same classification the reference carrier makes for
     // them, so they are lowered in that position and not as storage.
-    static TypeNode.Fqn DelegateFqnOfSlot(TypeNode slotType)
+    static TypeNode.Fqn DelegateFqnOfSlot(TypeNode slotType, ReferenceMetadataIndex refs = null,
+        IReadOnlySet<string> localTypes = null)
     {
+        refs ??= _refs;
+        localTypes ??= _localTypes;
+        if (refs == null)
+            throw new InvalidOperationException("bir2cir: delegate slot resolution has no reference universe");
         var shape = slotType;
         while (shape is TypeNode.Nullable nullable) shape = nullable.Of;
         while (shape is TypeNode.Oblivious oblivious) shape = oblivious.Of;
-        var physical = BirTypeLowering.LowerPhysicalType(shape, _refs.Aliases, _refs.IsValueType,
-            _refs.PhysicalTypeNames, typeArg: false, _localTypes);
+        var physical = BirTypeLowering.LowerPhysicalType(shape, refs.Aliases, refs.IsValueType,
+            refs.PhysicalTypeNames, typeArg: false, localTypes ?? new HashSet<string>());
         if (physical is TypeNode.Fn fn) physical = BirTypeLowering.DelegateFqnOf(fn);
         if (physical is not TypeNode.Fqn named) return null;
-        var open = ResolveOwnerType(named);
+        var open = ResolveOwnerType(named, refs);
         return open != null && IsDelegate(open) ? named : null;
     }
 

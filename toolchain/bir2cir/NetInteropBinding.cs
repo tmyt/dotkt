@@ -114,6 +114,11 @@ static class NetInteropBinding
                 companionStatic = resolvedStatic;
         }
         var netType = _refs.ResolveNetType(physicalOwner, ownerFqnNode.Args?.Length ?? 0);
+        // A projected nested/arity-renamed CLR delegate carries a Kotlin-facing owner plus an exact ClrExternal
+        // mapping. Resolve that exact TypeDef for its sole call contract; the ordinary flat-name probe cannot spell
+        // `Outer+Nested` or recover which declaration an arity-disambiguated Kotlin name denotes.
+        if (netType == null && method == "invoke" && _refs.IsClrDelegate(ownerFqnNode))
+            netType = ClrMemberResolution.ResolveOwnerType(ownerFqnNode, _refs);
         Type dotKtEmittedType = null;
         // Compiler-generated companion carriers are deliberately absent from the ordinary source-visible DotKt owner
         // index. A validated companion association is its own, narrower authority to resolve that exact physical type.
@@ -175,6 +180,11 @@ static class NetInteropBinding
             && IsComparableSelfCall(dotKtComparable, ownerFqnNode, node))
             netType = dotKtComparable;
         if (netType == null) return;   // not a reachable .NET-interop owner -> leave for the other binders
+        // dll2klib publishes a CLR delegate's sole call contract as Kotlin's operator `invoke`. The owner remains the
+        // exact nominal delegate, so this is not a spelling heuristic: only a reflected MulticastDelegate subtype can
+        // cross this seam, and its one CLR call member is Invoke.
+        if (k == "callInstance" && method == "invoke" && _refs.IsClrDelegate(ownerFqnNode))
+            method = "Invoke";
         var comparableSelfCall = k == "callInstance" && method == "compareTo"
             && IsComparableSelfCall(netType, ownerFqnNode, node);
 
@@ -422,6 +432,8 @@ static class NetInteropBinding
         var netType = companionStatic != null
             ? _refs.ResolveRefType(physicalOwner, ownerFqnNode.Args?.Length ?? 0)
             : _refs.ResolveNetType(physicalOwner, ownerFqnNode.Args?.Length ?? 0);
+        if (netType == null && Str(node["method"]) == "invoke" && _refs.IsClrDelegate(ownerFqnNode))
+            netType = ClrMemberResolution.ResolveOwnerType(ownerFqnNode, _refs);
         if (companionCall && companionStatic == null)
         {
             var fieldName = Str(node["name"]);
@@ -571,6 +583,8 @@ static class NetInteropBinding
             ? TypeJson.Write(new TypeNode.Fqn(companionSemanticOwner, ownerFqnNode.Args))
             : Take("ownerType");
         var sourceMethod = Take("method");
+        if (!exactBoundCompanion && Str(sourceMethod) == "invoke" && _refs.IsClrDelegate(ownerFqnNode))
+            sourceMethod = "Invoke";
         node["method"] = exactBoundCompanion ? companionIntrinsic : sourceMethod;
         node["argTypes"] = Take("argTypes") ?? Take("shapeTypes") ?? Take("sig") ?? new JsonArray();
         var typeArgs = Take("typeArgs");

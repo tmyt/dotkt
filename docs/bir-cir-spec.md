@@ -108,6 +108,9 @@ Notes:
   a custom delegate has no `fn` spelling at all. `delegateInvoke`, whose reader needs the parameter/return vector,
   keeps the structured `fn`. A construction carries no `invokeRef`: it names the constructor it runs, and the
   Invoke its value is called through is stated by the CALL.
+  A callable-reference SAM conversion additionally carries its frontend-selected interface as the transient BIR
+  `samTarget` Type node. bir2cir consumes that fact when the selected interface is physically a CLR delegate and
+  records the exact nominal delegate construction; `samTarget` never reaches CIR or ilemit.
 - **Nullability is TRI-STATE, named with the CLR/Roslyn vocabulary** (`NullableAttribute` 1/2/0 =
   not-annotated / annotated / **oblivious**). A reference type is one of three states, each a COHERENT node
   naming its own CLR state (the representation must NOT collapse oblivious to nullable — that breaks overload
@@ -481,6 +484,9 @@ table). The presence of a `memberRef` is therefore itself the external-vs-emitte
 For `clrEventAdd`/`clrEventRemove`, `localAccessor:true` is the same-unit discriminator and is mutually exclusive
 with `memberRef`; it carries the emitted `accessorOwner`, exact accessor `sig`, `delegateType`, accessor name, and
 dispatch decision. This is scalar MethodDef linkage, not permission for ilemit to search an inherited event by name.
+Every emitted event accessor call also carries `handlerExact:true`: bir2cir has already materialized the handler as
+the accessor's nominal delegate and reuses that same object for add/remove. ilemit must not infer or rebuild a
+conversion from the handler's shape.
 
 For a BIR `new`, `memberSignature` is the frontend-selected OPEN constructor declaration vector (including any
 compiler-authored enclosing/capture slots), while `argTypes` is the substituted use-site vector. For a same-unit

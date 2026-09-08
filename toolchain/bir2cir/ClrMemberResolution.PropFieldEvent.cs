@@ -206,25 +206,24 @@ static partial class ClrMemberResolution
     // ---- events --------------------------------------------------------------------------------
 
     // A clrEventAdd/clrEventRemove. A local owner was already bound to its synthesized declaration by
-    // ClrEventImplBinding; resolve only its concrete delegate constructor here. For a .NET owner, resolve the owner off
-    // the ref.dll, find the EventInfo, and stamp the add/remove accessor's complete memberRef plus `dispatch`. Replaces ilemit's unchecked
+    // ClrEventImplBinding. For a .NET owner, resolve the owner off the ref.dll, find the EventInfo, and stamp the
+    // add/remove accessor's complete memberRef plus `dispatch`. Replaces ilemit's unchecked
     // `GetEvent(...).GetAddMethod()` (a NullReferenceException on a missing/value-type/constructed-generic event — #113):
     // a missing event is now a hard ABI error here, and the handler delegate type flows from the resolved accessor param.
     static void ResolveEvent(JsonObject node)
     {
         // The module-wide local binder has already named the exact emitted accessor. Its receiver may itself be a
         // type parameter, in which case `type` deliberately remains a `tv` so ilemit can emit constrained. dispatch;
-        // only the accessor's delegate constructor still needs reference-metadata resolution here.
+        // the exact handler was already materialized by the semantic producer.
         if (node["localAccessor"] is JsonValue local
             && local.TryGetValue<bool>(out var isLocal) && isLocal)
         {
-            var delegateType = TypeJson.Read(node["delegateType"])
+            _ = TypeJson.Read(node["delegateType"])
                 ?? throw new InvalidOperationException(
                     "bir2cir: local clrEvent is missing its bound delegate declaration");
             if (node["accessor"] == null || node["accessorOwner"] == null || node["dispatch"] == null)
                 throw new InvalidOperationException(
                     "bir2cir: local clrEvent is missing its bound accessor identity");
-            ResolveDelegateCtor(node, delegateType);
             return;
         }
         if (ReadOwnerNode(node["type"]) is not TypeNode.Fqn ownerFqn)
@@ -243,17 +242,7 @@ static partial class ClrMemberResolution
         if (acc == null)
             throw new InvalidOperationException($"bir2cir: no event '{name}' on .NET type '{open}' (clrEvent{(add ? "Add" : "Remove")})");
         RetargetToBaseInterface(node, "type", open, acc, ownerFqn);
-        // A stored Kotlin function value is re-wrapped in the event's own delegate type.  The accessor declaration
-        // fixes that target type; carry its constructor here so ilemit does not rediscover a member from the delegate
-        // shape.  RetargetToBaseInterface may have projected the owner onto a declaring base interface, so substitute
-        // the handler slot in that final owner frame.
-        var declaringSpec = ReadOwnerNode(node["type"]) as TypeNode.Fqn ?? ownerFqn;
-        var handlerType = SubstOwnerParams(acc.GetParameters().Single().ParameterType,
-            declaringSpec.Args ?? Array.Empty<TypeNode>());
-        ResolveDelegateCtor(node, handlerType);
-        // Subscription lowering spills the handler into a local so add/remove reuse the same callable value. The
-        // event node therefore carries a stored function value plus the exact target constructor above; direct
-        // delegate constructions are normalized at their own declared slots, never guessed here.
+        // Subscription lowering has already constructed and spilled the exact delegate so add/remove reuse one value.
         node["accessor"] = acc.Name;
         node["memberRef"] = MemberRefJson(acc, MemberRefNode.Kinds.EventAccessor, open, ownerFqn.Args);
         StampResolvedMemberReturn(node, acc.ReturnType);

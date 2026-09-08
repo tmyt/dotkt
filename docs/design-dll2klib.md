@@ -328,17 +328,17 @@ indexes remain keyed in Kotlin vocabulary.
 
 ### Delegates
 
-CLR delegates are exposed as Kotlin function types when their `Invoke`
-signature is known. This covers built-in `Func`/`Action`, delegates declared
-in the current assembly, and delegates declared in another resolved assembly.
+`System.Action`/`System.Func` and the stdlib's wide `KAction`/`KFunc` families
+are the physical representation of Kotlin function types, so their `Invoke`
+signatures are exposed structurally as `FunctionN`.
 
-A recursive CLR delegate graph cannot be represented as a finite Kotlin
-function type. `dll2klib` therefore rejects self-recursive and mutually
-recursive `Invoke` signatures, including generic and cross-assembly cycles,
-instead of truncating the graph to an order-dependent Kotlin type. The active
-expansion path is keyed by resolved definition path and TypeDef row, so
-reopening a defining assembly through the resolved catalog cannot evade the
-cycle check and producer-chosen MVID values cannot alias distinct inputs.
+Every other CLR delegate is exposed as a nominal Kotlin `fun interface` whose
+single abstract `operator fun invoke` mirrors the delegate's `Invoke` method.
+Signatures continue to name that interface rather than collapsing it to a
+same-shaped function type. This preserves the delegate identity needed by CLR
+overloads and virtual slots while retaining Kotlin SAM construction and call
+syntax. Recursive delegate signatures remain finite because their edges name
+the nominal interface instead of recursively expanding `Invoke` shapes.
 
 The batch coordinator builds a compact delegate catalog from the complete
 reference set. A conversion consults the defining assembly metadata only when a
@@ -528,12 +528,10 @@ Current deliberate limits are:
 
 - function-pointer types fall back to `Any?`; unmanaged pointers project as the compiler-only
   `kotlin.clr.ClrPointer<T>` vocabulary and bir2cir lowers them to exact `T*` signatures;
-- recursive CLR delegate graphs are refused because Kotlin metadata cannot
-  represent them as finite function types;
 - Kotlin function arities 17..22 use the stdlib's canonical
   `DotKt.Runtime.CompilerServices.KFunc`/`KAction`. The stdlib produces no projected KLIB, but remains in the
-  resolved delegate catalog so references are restored from the actual TypeDef/`Invoke` shape and assembly identity,
-  exactly like any other external delegate. Kotlin function arities of 23 and above have no CLR delegate and are
+  resolved delegate catalog so references are restored from the actual TypeDef/`Invoke` shape and assembly identity.
+  Kotlin function arities of 23 and above have no CLR delegate and are
   refused before this stage (dotkt-semantics §8e-bis);
 - arbitrary CLR custom-attribute applications are not round-tripped; and
 - explicit Kotlin companion-object reconstruction is not part of CLR static
@@ -561,9 +559,9 @@ It verifies:
    calls;
 6. binding through `bir2cir`;
 7. CIL emission through `ilemit`; and
-8. execution of the resulting CLR assembly; and
-9. bounded diagnostics for local, generic, and cross-assembly recursive CLR
-   delegate graphs.
+8. execution of the resulting CLR assembly.
 
-The round-trip and packaged-SDK suites are also authoritative because they
-exercise the same MSBuild reference-set path used by production projects.
+The interop consumer suite covers nominal delegate SAM construction, invocation,
+callable-reference conversion, events, and exact virtual-slot identity. The
+round-trip and packaged-SDK suites are also authoritative because they exercise
+the same MSBuild reference-set path used by production projects.

@@ -1,0 +1,4 @@
+InvalidDelegateImplementation
+directly implements CLR delegate
+ClrDelegateDirectImplementation.Callback
+cannot be inherited or implemented as CLR interfaces

@@ -18,6 +18,7 @@ import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
 import System.Threading.Thread
+import System.Threading.ThreadStart
 import System.Threading.Monitor
 import kotlin.concurrent.atomics.AtomicIntArray
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
@@ -48,7 +49,7 @@ class ThreadingInteropTests {
 
         // Cross-thread proof the monitor was released despite the throw.
         var observed = -1
-        val worker = Thread({ observed = arr.loadAt(1) })
+        val worker = Thread(ThreadStart { observed = arr.loadAt(1) })
         worker.Start()
         val finished = worker.Join(2000)
         assertTrue(finished)                              // not DEADLOCK — the lock was released cross-thread
@@ -63,9 +64,8 @@ class ThreadingInteropTests {
     @TestAttribute
     fun waitPulseCrossThreadDrain() {
         val sink = BclThreadingSink()
-        // A bare lambda `{ ... }` binds the .NET `Thread` ctor's preferred `ThreadStart` (`() -> Unit`) overload; the
-        // Pareto-dominated `ParameterizedThreadStart` sibling is `@LowPriorityInOverloadResolution` (#19), so no arity pin.
-        val worker = Thread({
+        // The overloads carry two distinct nominal delegate types, so select the intended zero-argument SAM explicitly.
+        val worker = Thread(ThreadStart {
             Thread.Sleep(100)
             Monitor.Enter(sink)
             try {

@@ -344,19 +344,6 @@ static partial class ClrMemberResolution
         ResolveDelegateInvoke(node, stated);
     }
 
-    // Used by a semantic producer that still has the handler's function type before transient `sty`
-    // annotations are consumed.  The result is the same ordinary invokeRef carrier used by all
-    // delegate-call nodes; no event-specific identity dialect is introduced.
-    internal static void ResolveDelegateInvoke(
-        JsonObject node, JsonNode stated, ReferenceMetadataIndex refs,
-        IReadOnlySet<string> localTypes)
-    {
-        _refs = refs ?? throw new ArgumentNullException(nameof(refs));
-        _localTypes = localTypes ?? new HashSet<string>();
-        ResolveDelegateInvoke(node, TypeJson.Read(stated)
-            ?? throw new InvalidOperationException("bir2cir: a delegate invocation has no readable handler type"));
-    }
-
     static void ResolveDelegateInvoke(JsonObject node, TypeNode stated)
     {
         if (node.ContainsKey("invokeRef")) return;

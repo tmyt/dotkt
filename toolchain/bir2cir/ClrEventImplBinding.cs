@@ -459,6 +459,27 @@ static class ClrEventImplBinding
         if (handlerType is JsonObject fn && Str(fn["t"]) == "fn")
             return FnToDelegate(fn);
 
+        // A dll2klib-projected nominal delegate is the other natural Kotlin spelling of an event handler. Keep its
+        // semantic classifier as the field/accessor type (the ordinary physical type lowering applies ClrExternal),
+        // and derive only the raise parameter vector from the exact referenced Invoke declaration here.
+        var handler = TypeJson.Read(handlerType);
+        while (handler is TypeNode.Nullable nullable) handler = nullable.Of;
+        while (handler is TypeNode.Oblivious oblivious) handler = oblivious.Of;
+        if (handler is TypeNode.Fqn named && refs.IsClrDelegate(named))
+        {
+            var declaration = ClrMemberResolution.ResolveOwnerType(named, refs);
+            var invoke = declaration?.GetMethod("Invoke");
+            if (invoke != null)
+            {
+                var ownerArgs = named.Args ?? Array.Empty<TypeNode>();
+                var invokeParams = invoke.GetParameters()
+                    .Select(p => TypeJson.Write(SubstituteOwnerTypeVariables(
+                        NetTypeToNode(p.ParameterType), ownerArgs)))
+                    .ToList();
+                return (TypeJson.Write(named), invokeParams);
+            }
+        }
+
         throw new InvalidOperationException(
             $"bir2cir: cannot resolve the delegate type for event '{name}' — it neither overrides a resolvable .NET interface "
             + "event nor carries an inferable handler function type");

@@ -1006,6 +1006,8 @@ class V:
             # reached ilemit, which has no notion of one. `preStmts` is the CIR form of a delegation's plan and is
             # authored by that same pass, so it must not appear in kotc's BIR.
             if f.endswith(".cir.json"):
+                if "samTarget" in o:
+                    self.err(f, path, "samTarget is a BIR SAM-conversion fact and must be consumed before CIR")
                 if o.get("k") in ("callEval", "bindRef"):
                     self.err(f, path, f"{o['k']!r} is a BIR call-evaluation plan node and must be lowered before CIR")
                 if "delegationBindings" in o:
@@ -1152,6 +1154,8 @@ class V:
                     if required_key not in o:
                         self.err(f, path, f"{o['k']} must carry {required_key}: the operation emits that external member operand")
                 kind = o.get("k")
+                if kind in ("clrEventAdd", "clrEventRemove") and o.get("handlerExact") is not True:
+                    self.err(f, path, f"{kind} must carry handlerExact:true: bir2cir must state that the handler already has the event's exact nominal delegate type")
                 if kind in ("clrEventAdd", "clrEventRemove") and "localAccessor" in o:
                     if o.get("localAccessor") is not True:
                         self.err(f, path, f"{kind}.localAccessor must be true when present")

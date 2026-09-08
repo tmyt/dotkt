@@ -11,15 +11,35 @@ import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import Cbk.Engine
 import Delegatearg.Box
 import Delegobj.Ctx
+import Delegobj.ArityCb
+import Delegobj.ArityCb1
+import Delegobj.DelegateContainer.NestedCb
+import Delegobj.PostCb
+import Delegobj.PostCbTwin
+import Delegobj.RecursiveCb
+import Delegobj.SameShape
 import Injstatic.App
 import Injstatic.GenericApp
+import System.Threading.SendOrPostCallback
+import System.Threading.SynchronizationContext
 
-// il-delegobj top-level helper: override a BCL virtual whose delegate param is `(Any?) -> Unit` (the
-// SynchronizationContext.Post shape). Unique name so it cannot collide with another battery's top-level decl.
+// A projected CLR delegate is a nominal callable SAM type. The source override and the emitted CLR slot therefore
+// name the same PostCb identity; its operator invoke remains Kotlin-callable.
 class DelegobjMyCtx : Ctx() {
-    override fun Post(cb: (Any?) -> Unit, state: Any?) {
+    override fun Post(cb: PostCb, state: Any?) {
         cb(state)
     }
+}
+
+class DelegobjSynchronizationContext : SynchronizationContext() {
+    override fun Post(d: SendOrPostCallback, state: Any?) {
+        d(state)
+    }
+}
+
+private class DelegobjReferenceTarget {
+    var seen = ""
+    fun record(state: Any?) { seen = "ref: $state" }
 }
 
 class DelegateConstructorTests {
@@ -45,10 +65,45 @@ class DelegateConstructorTests {
     fun delegobj() {
         val c = DelegobjMyCtx()
         var out = ""
-        c.Post({ s -> out = "posted: $s" }, 42)    // posted: 42
+        c.Post(PostCb { s -> out = "posted: $s" }, 42)    // posted: 42
         assertEquals("posted: 42", out)
-        (c as Ctx).Post({ s -> out = "base-typed: $s" }, 7)  // base-typed: 7 (virtual dispatch through Ctx)
+        (c as Ctx).Post(PostCb { s -> out = "base-typed: $s" }, 7)  // virtual dispatch through Ctx
         assertEquals("base-typed: 7", out)
+
+        val sync: SynchronizationContext = DelegobjSynchronizationContext()
+        sync.Post(SendOrPostCallback { s -> out = "system: $s" }, 9)
+        assertEquals("system: 9", out)
+
+        assertEquals("post", SameShape.Pick(PostCb { s -> out = "same: $s" }))
+        assertEquals("same: first", out)
+        assertEquals("twin", SameShape.Pick(PostCbTwin { s -> out = "same: $s" }))
+        assertEquals("same: second", out)
+
+        var recursiveCalls = 0
+        val leaf = RecursiveCb { _ -> recursiveCalls += 1 }
+        val root = RecursiveCb { next -> recursiveCalls += 1; next(leaf) }
+        root(leaf)
+        assertEquals(2, recursiveCalls)
+
+        val target = DelegobjReferenceTarget()
+        val fromReference = PostCb(target::record)
+        fromReference(10)
+        assertEquals("ref: 10", target.seen)
+
+        val invokeReference = fromReference::invoke
+        invokeReference("eleven")
+        assertEquals("ref: eleven", target.seen)
+
+        val nested = NestedCb { s -> out = "nested: $s" }
+        nested(12)
+        assertEquals("nested: 12", out)
+
+        val arity0 = ArityCb { s -> out = "arity0: $s" }
+        arity0(13)
+        assertEquals("arity0: 13", out)
+        val arity1 = ArityCb1<String> { s -> out = "arity1: $s" }
+        arity1("fourteen")
+        assertEquals("arity1: fourteen", out)
     }
 
     @TestAttribute

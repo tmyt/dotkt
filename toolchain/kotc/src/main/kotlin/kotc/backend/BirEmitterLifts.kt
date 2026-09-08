@@ -411,7 +411,16 @@ internal fun BirEmitter.lambda(node: IrFunctionExpression): String {
 internal fun BirEmitter.samConversion(node: IrTypeOperatorCall): String {
 	val funIface = node.typeOperand
 	val ifaceClass = funIface.classifierOrNull?.owner as? IrClass ?: return expr(node.argument)
-	val lamExpr = node.argument as? IrFunctionExpression ?: return expr(node.argument)   // fun-ref / existing impl -> fall back
+	val lamExpr = node.argument as? IrFunctionExpression
+	if (lamExpr == null) {
+		val value = expr(node.argument)   // callable reference / existing implementation
+		if (!isExternalNetType(ifaceClass)) return value
+		// Preserve the frontend-resolved SAM target on callable-reference conversions too. The nested expression says
+		// how to obtain the callable target; this field says only which Kotlin fun-interface conversion surrounds it.
+		// bir2cir alone decides whether that projected classifier is physically a CLR delegate and consumes the field.
+		check(value.startsWith('{') && value.endsWith('}')) { "SAM conversion operand is not a BIR object" }
+		return value.dropLast(1) + ",\"samTarget\":" + str(birType(funIface)) + "}"
+	}
 	val fn = lamExpr.function
 	val sam = ifaceClass.declarations.filterIsInstance<IrSimpleFunction>()
 		.singleOrNull { it.modality == org.jetbrains.kotlin.descriptors.Modality.ABSTRACT } ?: return expr(node.argument)
@@ -444,7 +453,13 @@ internal fun BirEmitter.samConversion(node: IrTypeOperatorCall): String {
 	savedSubst.forEach { (decl, prev) -> if (prev != null) captureSubst[decl] = prev else captureSubst.remove(decl) }
 	val fields = capPairs.joinToString(",") { (decl, fname) -> """{"name":${str(fname)},"type":${str(captureFieldType(decl))}}""" }
 	val ctorBody = capPairs.joinToString(",") { (_, fname) -> """{"k":"setField","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":${str(fname)},"value":{"k":"local","name":${str(fname)}}}""" }
-	val ifaceSpec = ownerSpec(ifaceClass, funIface) ?: birType(funIface)
+	// A projected CLR classifier carries its exact current-format [ClrExternal] TypeDef identity through birType.
+	// ownerSpec is the semantic owner spelling used for ordinary Kotlin member lookup; using it here would leave an
+	// arity-collision name (Foo1<T>) or flattened nested name inside the synthesized declaration, where bir2cir has no
+	// declaration annotation from which to recover Foo`1 / Outer+Foo. This remains a transported frontend fact: the
+	// CLR realization of the SAM is decided by bir2cir.
+	val ifaceSpec = if (isExternalNetType(ifaceClass)) birType(funIface)
+		else ownerSpec(ifaceClass, funIface) ?: birType(funIface)
 	val freeTps = freeTypeParams(listOf(funIface) + capPairs.map { it.first.type } + fn.parameters.map { it.type } + listOf(fn.returnType) + bodyTypeOperands(fn))
 	// #52/#75: the SAM shim class travels as a `synthClass` FACT ON the `newSam` node — NOT `liftedTypes.add`'d as a
 	// sibling type. A sibling type stays in the ORIGIN file; when this `newSam` rides in an inline fn's [KotlinInline]
