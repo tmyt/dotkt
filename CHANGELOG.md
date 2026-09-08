@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Shipped CLR tools now carry the DotKt release identity (#677).** `bir2cir`, `ilemit`, and `dll2klib` source
+  their assembly, file, and informational versions from the same contract as the NuGet packages, including the
+  embedded Kotlin compiler version in `AssemblyInformationalVersion`.
+
 - **Suspend lowering keeps generated frame storage disjoint from Kotlin names (#684).** bir2cir assigns state,
   continuation, resume-result, state-machine, and Task-bridge temporaries to a compiler-only physical namespace.
   Parameters named `label`, `completion`, `result`, or like former generated locals now retain their own state-machine

@@ -4,8 +4,10 @@
 # from real .nupkgs in a NuGet feed. `tests/msbuild/run.sh` uses the IN-REPO dev entry (eng/KotlinClr.targets,
 # hard-coded tool paths) and never restores a nupkg, so packaging-only bugs slip past it — 0.9.5 shipped
 # broken twice for exactly this reason (#131 stale SDK version, #132 a Library's non-copy-local reference
-# never reaching bir2cir/ilemit). This suite packs the 5 nupkgs to a local feed and drives EIGHT isolated
+# never reaching bir2cir/ilemit). This suite packs the 5 nupkgs to a local feed and drives NINE isolated
 # scenarios through `dotnet build`/`dotnet run` from that feed only:
+#   toolchain-assembly-identity — directly opens the three CLR executables shipped inside DotKt.Toolchain and
+#              requires their assembly, file, and informational versions to match DotKt.Versions.props.
 #   exe      — a plain `Sdk="DotKt.Sdk"` Exe under a punctuation/whitespace-containing path: build + RUN, assert
 #              stdout, and prove each >8191-byte compiler argument set travels through a packaged response file.
 #   multi-target-klib-references — one parallel two-TFM producer plus matching C# and DotKt consumers: preserve
@@ -43,7 +45,7 @@ source "$ROOT/scripts/lib.sh"
 
 usage() { cat <<EOF
 usage: $SCRIPT_NAME
-Packs the 5 nupkgs to build/nuget-feed and drives 8 packaged SDK/template scenarios from that feed only.
+Packs the 5 nupkgs to build/nuget-feed and drives 9 packaged SDK/template scenarios from that feed only.
 Green (exit 0) = no fail name outside XFAIL_PKG and no stale entry inside it.
 EOF
 }
@@ -233,6 +235,8 @@ using System; using System.Linq; using System.Reflection;
 //     -> exit 0 iff the assembly carries exactly that TargetFrameworkAttribute.FrameworkName.
 // refcheck --assembly-attribute <dll> <attributeType> <singleStringArgument> [exactRefs]
 //     -> exit 0 iff the assembly carries exactly one matching single-string custom attribute.
+// refcheck --assembly-identity <dll> <assemblyVersion> <fileVersion> <informationalVersion> [exactRefs]
+//     -> exit 0 iff all three release-identity surfaces match exactly.
 // The shape mode pins the ERASURE INVARIANT at the metadata level: a nullable-generic slot's physical type is
 // `System.Object` and its pre-erasure Kotlin shape travels in the carrier attribute. That is one assertion a
 // behavioral case cannot make — a slot can be physically wrong and still run when nothing crosses it.
@@ -248,13 +252,15 @@ class P {
         var shape = a.Length > 0 && a[0] == "--shape";
         var tfm = a.Length > 0 && a[0] == "--tfm";
         var assemblyAttribute = a.Length > 0 && a[0] == "--assembly-attribute";
-        if (shape || tfm || assemblyAttribute) a = a.Skip(1).ToArray();
+        var assemblyIdentity = a.Length > 0 && a[0] == "--assembly-identity";
+        if (shape || tfm || assemblyAttribute || assemblyIdentity) a = a.Skip(1).ToArray();
         var dll = System.IO.Path.GetFullPath(a[0]);
         // The TPA list is the runtime host's resolved platform set. Non-platform dependencies are explicit; never
         // turn the input assembly's parent directory into an implicit reference universe.
         var paths = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES"))
             .Split(System.IO.Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries).ToList();
-        var extraRefs = assemblyAttribute ? (a.Length > 3 ? a[3] : null)
+        var extraRefs = assemblyIdentity ? (a.Length > 4 ? a[4] : null)
+            : assemblyAttribute ? (a.Length > 3 ? a[3] : null)
             : tfm ? (a.Length > 2 ? a[2] : null)
             : shape ? (a.Length > 6 ? a[6] : null)
             : (a.Length > 3 ? a[3] : null);
@@ -262,6 +268,17 @@ class P {
         paths.Add(dll);
         using var mlc = new MetadataLoadContext(new PathAssemblyResolver(paths.Distinct()));
         var asm = mlc.LoadFromAssemblyPath(dll);
+        if (assemblyIdentity) {
+            string AttributeValue(string typeName) => asm.GetCustomAttributesData()
+                .Where(x => x.AttributeType.FullName == typeName && x.ConstructorArguments.Count == 1)
+                .Select(x => x.ConstructorArguments[0].Value as string).SingleOrDefault();
+            var assemblyVersion = asm.GetName().Version?.ToString();
+            var fileVersion = AttributeValue("System.Reflection.AssemblyFileVersionAttribute");
+            var informationalVersion = AttributeValue("System.Reflection.AssemblyInformationalVersionAttribute");
+            var identityOk = assemblyVersion == a[1] && fileVersion == a[2] && informationalVersion == a[3];
+            if (!identityOk) Console.Error.WriteLine($"refcheck: identity is assembly={assemblyVersion ?? "<missing>"}, file={fileVersion ?? "<missing>"}, informational={informationalVersion ?? "<missing>"}; expected assembly={a[1]}, file={a[2]}, informational={a[3]}");
+            return identityOk ? 0 : 1;
+        }
         if (tfm) {
             var attr = asm.GetCustomAttributesData().SingleOrDefault(x =>
                 x.AttributeType.FullName == "System.Runtime.Versioning.TargetFrameworkAttribute");
@@ -345,6 +362,44 @@ else
 		warn "refcheck build failed — the metadata verdict cannot be taken (see ${REFCHECK_STAGE#"$ROOT/"}/build.log)"
 	fi
 fi
+
+# ---------------------------------------------------------------------------------------------------------
+# Case: toolchain-assembly-identity — inspect the CLR executables as shipped in the nupkg, not the build-tree
+# copies. Package version and assembly identity are separate metadata surfaces; both are sourced from
+# DotKt.Versions.props and must not drift independently (#677).
+# ---------------------------------------------------------------------------------------------------------
+case_toolchain_assembly_identity() {
+	local d="$WS/toolchain-assembly-identity"; mkdir -p "$d"
+	local nupkg; nupkg="$(find "$FEED" -maxdepth 1 -name "DotKt.Toolchain.$VER.nupkg" | head -1)"
+	[[ -f "$nupkg" ]] || { fail toolchain-assembly-identity "DotKt.Toolchain.$VER.nupkg not packed"; return; }
+	if ! have_refcheck; then
+		fail toolchain-assembly-identity "the metadata verdict cannot be taken — refcheck did not build"; return
+	fi
+	if ! unzip -q "$nupkg" \
+		"tools/bir2cir/bir2cir.dll" \
+		"tools/ilemit/ilemit.dll" \
+		"tools/dll2klib/dll2klib.dll" \
+		-d "$d"; then
+		fail toolchain-assembly-identity "the three CLR tool assemblies are not present at their shipping paths"; return
+	fi
+	local numeric="$VER_PREFIX.0" informational="$VER+kotlin-$KOTLIN_VER" failures="" missing="" tool dll
+	for tool in bir2cir ilemit dll2klib; do
+		dll="$d/tools/$tool/$tool.dll"
+		if [[ ! -f "$dll" ]]; then
+			missing+="$tool: $dll"$'\n'
+			continue
+		fi
+		if ! dotnet "$REFCHECK/bin/refcheck.dll" --assembly-identity \
+			"$dll" "$numeric" "$numeric" "$informational" >"$d/$tool.log" 2>&1; then
+			failures+="$tool: $(cat "$d/$tool.log")"$'\n'
+		fi
+	done
+	if [[ -n "$missing" ]]; then
+		fail toolchain-assembly-identity "CLR tool assemblies are missing from their shipping paths" "$missing"; return
+	fi
+	if [[ -z "$failures" ]]; then pass toolchain-assembly-identity
+	else fail toolchain-assembly-identity "shipped CLR tool release identity mismatch" "$failures"; fi
+}
 
 # ---------------------------------------------------------------------------------------------------------
 # Case: exe — a plain packaged Exe, build + run.
@@ -1381,6 +1436,7 @@ EOF
 }
 selftest
 
+case_toolchain_assembly_identity
 case_exe
 case_multitarget_klib_references
 case_library
