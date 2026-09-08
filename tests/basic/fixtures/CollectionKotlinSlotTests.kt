@@ -305,6 +305,28 @@ class CollectionKotlinSlotTests {
     }
 
     @TestAttribute
+    fun concreteArrayListSubListRejectsAccessOutsideItsView() {
+        val backing: ArrayList<Int> = arrayListOf(0, 1, 2, 3, 4)
+        val view = backing.subList(1, 2)
+        assertEquals(1, view[0])
+
+        assertTrue(collectionKotlinSlotRejectsIndex { view[-1] })
+        assertTrue(collectionKotlinSlotRejectsIndex { view[1] })
+        assertTrue(collectionKotlinSlotRejectsIndex { view[1] = 10 })
+        assertTrue(collectionKotlinSlotRejectsIndex { view.removeAt(1) })
+        assertTrue(collectionKotlinSlotRejectsIndex { view.add(-1, 10) })
+        assertTrue(collectionKotlinSlotRejectsIndex { view.add(2, 10) })
+        assertEquals("[0, 1, 2, 3, 4]", backing.toString())
+
+        view.add(1, 10)
+        assertEquals("[0, 1, 10, 2, 3, 4]", backing.toString())
+
+        assertTrue(collectionKotlinSlotRejectsIndex { backing.subList(-1, 1) })
+        assertTrue(collectionKotlinSlotRejectsIndex { backing.subList(0, backing.size + 1) })
+        assertTrue(collectionKotlinSlotRejectsArgument { backing.subList(2, 1) })
+    }
+
+    @TestAttribute
     fun projectedListOperationsValidateTheirBoundsAtTheCall() {
         val list: MutableList<*> = mutableListOf(1, 2)
         var addAllRejected = false
@@ -675,4 +697,22 @@ class CollectionKotlinSlotTests {
         assertEquals(1, boxed.retainAllCalls)
         assertEquals("[2]", boxed.snapshot().toString())
     }
+}
+
+private fun collectionKotlinSlotRejectsIndex(operation: () -> Unit): Boolean {
+    try {
+        operation()
+    } catch (e: IndexOutOfBoundsException) {
+        return true
+    }
+    return false
+}
+
+private fun collectionKotlinSlotRejectsArgument(operation: () -> Unit): Boolean {
+    try {
+        operation()
+    } catch (e: IllegalArgumentException) {
+        return true
+    }
+    return false
 }
