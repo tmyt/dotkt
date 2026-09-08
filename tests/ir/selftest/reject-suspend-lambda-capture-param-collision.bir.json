@@ -1,0 +1,25 @@
+{
+  "methods": [{
+    "name": "probe",
+    "params": [],
+    "ret": { "t": "fqn", "name": "kotlin.Unit" },
+    "body": [{
+      "k": "exprStmt",
+      "expr": {
+        "k": "newSuspendLambda",
+        "arity": 1,
+        "captures": [{ "name": "same", "type": { "t": "fqn", "name": "Owner" }, "outer": true }],
+        "params": [{ "name": "same", "type": { "t": "fqn", "name": "kotlin.String" } }],
+        "suspendRet": { "t": "fqn", "name": "kotlin.Int" },
+        "typeParams": [],
+        "funcType": {
+          "t": "fn",
+          "suspend": true,
+          "ret": { "t": "fqn", "name": "kotlin.Int" },
+          "params": [{ "t": "fqn", "name": "kotlin.String" }]
+        },
+        "body": []
+      }
+    }]
+  }]
+}

@@ -13,11 +13,18 @@ inline fun escapingSuspendCarrierWrap(x: Int, crossinline t: suspend (Int) -> In
 
 inline fun escapingSuspendCarrierWrapPlus(x: Int, bonus: Int, crossinline t: suspend (Int) -> Int): Int = blockOn { t(x) + bonus }
 
+class EscapingSuspendCarrierOuterParameterCollision(val base: Int) {
+    fun run(): Int = escapingSuspendCarrierWrap(5) { __outer ->
+        escapingSuspendCarrierAdd(base, __outer)
+    }
+}
+
 class EscapingSuspendLambdaTests {
     @TestAttribute
     fun escapingCapturingSuspendLambda() {
         assertEquals(42, escapingSuspendCarrierWrap(20) { escapingSuspendCarrierAdd(it, 22) })          // 42
         assertEquals(42, escapingSuspendCarrierWrapPlus(10, 2, { escapingSuspendCarrierAdd(it, 30) }))  // 10+30=40, +2 = 42
         assertEquals(7, escapingSuspendCarrierWrap(0) { escapingSuspendCarrierAdd(it, 7) })             // 7
+        assertEquals(42, EscapingSuspendCarrierOuterParameterCollision(37).run())
     }
 }

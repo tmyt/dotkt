@@ -1350,12 +1350,12 @@ static class InlineSplice
     // BYTE SHAPE kotc mints for a source suspend-lambda literal (BirEmitterLifts.suspendLambda:142-165) so it flows
     // through SuspendLambdaLowering (the LIVE `newSuspendLambda` consumer, which runs AFTER InlineSplice in the pass
     // order) IDENTICALLY:
-    //  - CAPTURES come DIRECTLY from the carrier (kotc lists them; `__outer` = a captured enclosing `<this>`) and are
-    //    emitted VERBATIM as {name,type} descriptors. The SM builder (SuspendColdLowering.FunGen) makes each a ctor-set
+    //  - CAPTURES come DIRECTLY from the carrier (kotc explicitly marks a captured enclosing `<this>` as `outer:true`)
+    //    and are emitted VERBATIM as descriptors. The SM builder (SuspendColdLowering.FunGen) makes each a ctor-set
     //    FIELD and rewrites the body's plain `{k:local,name:X}` / `{k:this}` into field reads ITSELF — so, UNLIKE the
     //    newClosure arm, we do NOT RewriteCapturesToFields and do NOT run the `this`-outside-synthClass guard (the SM
-    //    lowering redirects a lambda-body `{k:this}` to the `__outer` field). The construction VALUES are synthesized by
-    //    SuspendLambdaLowering from each capture NAME (read as the enclosing local `{k:local,name}` / `this`).
+    //    lowering redirects a lambda-body `{k:this}` to the explicitly marked outer field). The construction VALUES are
+    //    synthesized by SuspendLambdaLowering from each capture descriptor (ordinary local name or explicit outer role).
     //  - the invoke BODY = the carrier statements + a value-position valueBlock flatten + a trailing `return <result>`
     //    (Unit -> a bare return), the SAME shape the newClosure arm builds; the SM lowering routes the returns.
     //  - typeParams = the DISTINCT enclosing tv keys the SM references — one placeholder name each. This is BYTE-faithful
@@ -1393,9 +1393,7 @@ static class InlineSplice
         // unblocks the `suspendCancellableCoroutineReusable` §4.4ii suspend carriers). A cross-module token fails loud.
         if (HasNonAppLocalDelegate(invBody)) return MatNull("MSC:non-applocal-delegate");
 
-        // Captures verbatim (drop the carrier's `outer` flag — the name `__outer` is itself the enclosing-`this` signal
-        // SuspendLambdaLowering keys on; a carrier `__outer` is SOUND at THIS materialization site — the carrier's
-        // captured `this` IS the caller's receiver). A capture with no name/type kotc failed to list -> refuse.
+        // Captures verbatim, including the outer role. A capture with no name/type kotc failed to list -> refuse.
         var captures = new JsonArray();
         // #126: positional construction-value overrides (the schema's `newSuspendLambda.capValues` channel), aligned with
         // `captures` — an ALPHA-CONVERTED capture's field/body use the fresh descriptor name while its construction value
@@ -1405,12 +1403,27 @@ static class InlineSplice
         var innerScope = new HashSet<string>(StringComparer.Ordinal);
         foreach (var p in lamParams.OfType<JsonObject>()) if (Str(p["name"]) is string pn) innerScope.Add(pn);
         CollectDeclaredLocals(invBody, innerScope);
+        var captureStorageNames = new HashSet<string>(innerScope, StringComparer.Ordinal);
+        string FreshOuterStorageName()
+        {
+            const string stem = "cap$__outer";
+            var candidate = stem;
+            for (var suffix = 1; !captureStorageNames.Add(candidate); suffix++)
+                candidate = stem + "$" + suffix;
+            return candidate;
+        }
         if (carrier["captures"] is JsonArray caps)
             foreach (var c in caps.OfType<JsonObject>())
             {
                 if (Str(c["name"]) is not string cn || c["type"] is not JsonNode ct) return MatNull("MSC:capture-no-name-type");
-                if (innerScope.Contains(cn)) return MatNull("MSC:innerscope-collide");   // FunGen name-conflation (a capture colliding with the SM's own scope)
-                captures.Add(new JsonObject { ["name"] = cn, ["type"] = ct.DeepClone() });
+                var outer = Bool(c["outer"]);
+                // An outer capture's body use is `{k:this}`, so its storage name is free to move into the compiler-only
+                // namespace here. Ordinary capture body refs remain name-keyed and must already be disjoint.
+                var storageName = outer ? FreshOuterStorageName() : cn;
+                if (!outer && !captureStorageNames.Add(storageName)) return MatNull("MSC:innerscope-collide");
+                var descriptor = new JsonObject { ["name"] = storageName, ["type"] = ct.DeepClone() };
+                if (outer) descriptor["outer"] = true;
+                captures.Add(descriptor);
                 if (c["value"] is JsonNode cval) { suspendCapValues.Add(cval.DeepClone()); anySuspendCapValue = true; }
                 else suspendCapValues.Add(null);
             }
@@ -1609,17 +1622,17 @@ static class InlineSplice
         if (nsl["params"] is JsonArray ps)
             foreach (var p in ps.OfType<JsonObject>()) if (Str(p["name"]) is string pn) inner.Add(pn);
         if (nsl["body"] is JsonNode b) CollectDeclaredLocals(b, inner);
-        // BATCH B (#75) — kotc names a suspend lambda's captured enclosing extension receiver `__outer` in the
-        // capture DESCRIPTOR, yet references it in the BODY as a plain `local __self` (SuspendColdLowering maps that
-        // body `__self` -> the `__outer` field). So `__self` is a CAPTURE-LINKED inner name, NOT a frame local — the
+        // BATCH B (#75) — kotc marks a suspend lambda's captured enclosing receiver explicitly, while a captured
+        // enclosing extension receiver is referenced in the BODY as a plain `local __self`. So `__self` is a
+        // CAPTURE-LINKED inner name, NOT a frame local — the
         // splice's frame renamers (subst/prefix) must SKIP it, leaving it literal for the SM lowering; its construction
         // value is carried explicitly in `capValues` and rewritten in the enclosing splice frame. Only when an
-        // `__outer` descriptor is present AND there is no real `__self` descriptor (which would be an ordinary
+        // outer:true descriptor is present AND there is no real `__self` descriptor (which would be an ordinary
         // joint-renamed capture).
         if (nsl["captures"] is JsonArray caps)
         {
             var names = caps.OfType<JsonObject>().Select(c => Str(c["name"])).Where(n => n != null).ToHashSet(StringComparer.Ordinal);
-            if (names.Contains("__outer") && !names.Contains("__self")) inner.Add("__self");
+            if (caps.OfType<JsonObject>().Any(c => Bool(c["outer"])) && !names.Contains("__self")) inner.Add("__self");
         }
         return inner;
     }
@@ -1641,10 +1654,10 @@ static class InlineSplice
     }
 
     // BATCH B (#75): a `newSuspendLambda` capture that CANNOT be soundly splice-rewritten (fail-loud, never silent):
-    //  - a capture named `__outer` when `refuseOuter` (a PAYLOAD suspend lambda that captured the enclosing dispatch/
+    //  - an `outer:true` capture when `refuseOuter` (a PAYLOAD suspend lambda that captured the enclosing dispatch/
     //    extension receiver): post-splice SuspendLambdaLowering would bind its construction value to the CALLER's `this`/
-    //    `__self`, not the payload's §4.3 dispatch temp / extension `__self` — a receiver mis-bind. (A CARRIER-side
-    //    `__outer` is sound — the carrier's captured `this` IS the caller's receiver — so `refuseOuter` is false there.)
+    //    `__self`, not the payload's §4.3 dispatch temp / extension `__self` — a receiver mis-bind. (A carrier-side
+    //    `outer:true` is sound — its captured `this` IS the caller's receiver — so `refuseOuter` is false there.)
     //  - a capture whose name collides with the SM's OWN inner scope: FunGen conflates them by name (one `_fields` slot),
     //    so a descriptor rename + a body-ref skip diverge irreconcilably.
     // Returns the first offending descriptor name, else null. Same frame boundaries as the other scanners.
@@ -1659,7 +1672,7 @@ static class InlineSplice
                 foreach (var c in caps.OfType<JsonObject>())
                     if (Str(c["name"]) is string cn)
                     {
-                        if (refuseOuter && cn == "__outer") return "__outer";
+                        if (refuseOuter && Bool(c["outer"])) return cn;
                         if (inner.Contains(cn)) return cn;
                     }
             }
@@ -2133,7 +2146,8 @@ static class InlineSplice
                 var inner = SuspendLambdaInnerScope(o);
                 if (o["captures"] is JsonArray caps)
                     foreach (var c in caps.OfType<JsonObject>())
-                        if (Str(c["name"]) is string cn && declared.Contains(cn) && !inner.Contains(cn)) c["name"] = prefix + cn;
+                        if (Str(c["name"]) is string cn && declared.Contains(cn) && !inner.Contains(cn)
+                            && !Bool(c["outer"])) c["name"] = prefix + cn;
                 var bodyDeclared = new HashSet<string>(declared, StringComparer.Ordinal);
                 bodyDeclared.ExceptWith(inner);
                 if (bodyDeclared.Count > 0 && o["body"] is JsonNode nb) ApplyPrefix(nb, bodyDeclared, prefix);
@@ -2214,7 +2228,8 @@ static class InlineSplice
                 var repin = new Dictionary<string, JsonNode>(StringComparer.Ordinal);
                 if (o["captures"] is JsonArray caps)
                     foreach (var c in caps.OfType<JsonObject>())
-                        if (Str(c["name"]) is string cn && !inner.Contains(cn) && subst.TryGetValue(cn, out var cb))
+                        if (Str(c["name"]) is string cn && !inner.Contains(cn) && !Bool(c["outer"])
+                            && subst.TryGetValue(cn, out var cb))
                             c["name"] = DescriptorName(cn, cb, pin, repin,
                                 "a payload newSuspendLambda captures", "");
                 if (o["body"] is JsonNode nb)

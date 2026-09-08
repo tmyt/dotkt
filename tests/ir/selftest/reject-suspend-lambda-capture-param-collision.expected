@@ -1,0 +1,1 @@
+newSuspendLambda captures and params must have disjoint storage names

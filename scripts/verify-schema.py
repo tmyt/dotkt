@@ -1001,6 +1001,38 @@ class V:
                         self.err(f, path, "newSuspendLambda.params must be an array")
                     if not isinstance(arity, int) or not isinstance(ps, list) or arity != len(ps):
                         self.err(f, path, "newSuspendLambda.arity must equal the physical params length")
+                    captures = o.get("captures")
+                    if not isinstance(captures, list):
+                        self.err(f, path, "newSuspendLambda.captures must be an array")
+                    else:
+                        capture_names = []
+                        outer_count = 0
+                        for i, capture in enumerate(captures):
+                            if not isinstance(capture, dict):
+                                self.err(f, path + f"/captures[{i}]", "suspend-lambda capture must be an object")
+                                continue
+                            name = capture.get("name")
+                            if not isinstance(name, str) or not name:
+                                self.err(f, path + f"/captures[{i}]", "suspend-lambda capture must carry a non-empty name")
+                            else:
+                                capture_names.append(name)
+                            capture_type = capture.get("type")
+                            if not isinstance(capture_type, dict) or not isinstance(capture_type.get("t"), str):
+                                self.err(f, path + f"/captures[{i}]", "suspend-lambda capture must carry a structured type")
+                            if "outer" in capture:
+                                if capture.get("outer") is not True:
+                                    self.err(f, path + f"/captures[{i}]/outer", "a suspend-lambda outer marker must be true")
+                                else:
+                                    outer_count += 1
+                        if len(capture_names) != len(set(capture_names)):
+                            self.err(f, path, "newSuspendLambda capture names must be unique")
+                        if isinstance(ps, list):
+                            param_names = {p.get("name") for p in ps if isinstance(p, dict)}
+                            overlap = sorted(set(capture_names) & param_names)
+                            if overlap:
+                                self.err(f, path, "newSuspendLambda captures and params must have disjoint storage names")
+                        if outer_count > 1:
+                            self.err(f, path, "newSuspendLambda may carry at most one outer:true capture")
             # §2.7 PHASE SPLIT. The call-evaluation plan is BIR vocabulary: `callEval`/`bindRef` and the ctor
             # declaration's `delegationBindings` are lowered by CallEvalLowering, so a survivor in CIR means a plan
             # reached ilemit, which has no notion of one. `preStmts` is the CIR form of a delegation's plan and is
