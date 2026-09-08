@@ -7,6 +7,11 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **`MutableList.subList` now returns a live mutable CLR view (#675).** bir2cir keeps the ordinary mutable-list
+  declaration on an exact `IList<T>` helper instead of routing it through the read-only `IReadOnlyList<T>` default.
+  Mutating the returned view updates its backing list, nested views track size changes, and Kotlin overrides remain
+  reachable through the collection slot bridge.
+
 - **Shipped CLR tools now carry the DotKt release identity (#677).** `bir2cir`, `ilemit`, and `dll2klib` source
   their assembly, file, and informational versions from the same contract as the NuGet packages, including the
   embedded Kotlin compiler version in `AssemblyInformationalVersion`.

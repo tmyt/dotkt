@@ -1737,7 +1737,9 @@ static class MemberCallSubstitution
             }
             if (CollectionDefaults.TryGetValue(member, out var helperMethod))
             {
-                if (projected)
+                if (helperMethod == "clrListSubList" && ownerFqn == "kotlin.collections.MutableList")
+                    helperMethod = projected ? "clrProjectedMutableListSubList" : "clrMutableListSubList";
+                else if (projected)
                     helperMethod = helperMethod switch
                     {
                         "clrCollIsEmpty" => "clrProjectedCollIsEmpty",
@@ -1745,7 +1747,6 @@ static class MemberCallSubstitution
                         "clrCollContainsAll" => "clrProjectedCollContainsAll",
                         "clrListIndexOf" => "clrProjectedListIndexOf",
                         "clrListLastIndexOf" => "clrProjectedListLastIndexOf",
-                        "clrListSubList" when ownerFqn == "kotlin.collections.MutableList" => "clrProjectedMutableListSubList",
                         "clrListSubList" => "clrProjectedListSubList",
                         _ => helperMethod,
                     };
@@ -2199,6 +2200,7 @@ static class MemberCallSubstitution
                 new TypeNode[] { new TypeNode.Fqn("kotlin.Any"), tv },
             (_, "clrListListIterator") => new TypeNode[] { Gen("kotlin.collections.List"), new TypeNode.Fqn("kotlin.Int") },
             (_, "clrListSubList") => new TypeNode[] { Gen("kotlin.collections.List"), new TypeNode.Fqn("kotlin.Int"), new TypeNode.Fqn("kotlin.Int") },
+            (_, "clrMutableListSubList") => new TypeNode[] { Gen("kotlin.collections.MutableList"), new TypeNode.Fqn("kotlin.Int"), new TypeNode.Fqn("kotlin.Int") },
             (_, "clrProjectedListSubList" or "clrProjectedMutableListSubList") => new TypeNode[]
                 { new TypeNode.Fqn("kotlin.Any"), new TypeNode.Fqn("kotlin.Int"), new TypeNode.Fqn("kotlin.Int") },
             _ => throw new InvalidOperationException($"bir2cir: no authored descriptor for collection helper {owner}.{method}"),

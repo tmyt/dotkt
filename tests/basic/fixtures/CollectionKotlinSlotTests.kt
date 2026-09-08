@@ -224,6 +224,37 @@ class CollectionKotlinSlotTests {
     }
 
     @TestAttribute
+    fun mutableSubListIsALiveWritableView() {
+        val backing: MutableList<Int> = mutableListOf(1, 2, 3, 4)
+        val view: MutableList<Int> = backing.subList(1, 3)
+        assertEquals(2, view.set(0, 20))
+        view.add(30)
+        assertEquals(3, view.removeAt(1))
+        assertEquals("[1, 20, 30, 4]", backing.toString())
+
+        val nested: MutableList<Int> = view.subList(1, 2)
+        nested.add(40)
+        assertEquals("[20, 30, 40]", view.toString())
+        assertEquals("[1, 20, 30, 40, 4]", backing.toString())
+
+        val implementer = CollectionKotlinSlotCountingList()
+        implementer.add(10); implementer.add(20); implementer.add(30)
+        val interfaceView: MutableList<Int> = implementer
+        val overridden: MutableList<Int> = interfaceView.subList(1, 3)
+        assertEquals(1, implementer.subListCalls)
+        overridden[0] = 200
+        assertEquals(200, implementer[1])
+
+        var badBoundsRejected = false
+        try {
+            backing.subList(-1, 1)
+        } catch (e: IndexOutOfBoundsException) {
+            badBoundsRejected = true
+        }
+        assertTrue(badBoundsRejected)
+    }
+
+    @TestAttribute
     fun projectedListOperationsValidateTheirBoundsAtTheCall() {
         val list: MutableList<*> = mutableListOf(1, 2)
         var addAllRejected = false

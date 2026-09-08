@@ -653,11 +653,11 @@ public fun <T> clrProjectedListSubList(list: Any, fromIndex: Int, toIndex: Int):
     return ClrProjectedListView(list, fromIndex, toIndex)
 }
 
-private class ClrProjectedMutableSubList<T>(
+private class ClrMutableSubList<T>(
     private val backing: Any,
     private val start: Int,
     private var end: Int,
-    private val parent: ClrProjectedMutableSubList<T>? = null,
+    private val parent: ClrMutableSubList<T>? = null,
 ) : MutableList<T> {
     init { clrCheckSubListBounds(mutableCollectionCountErased(backing), start, end) }
 
@@ -742,19 +742,28 @@ private class ClrProjectedMutableSubList<T>(
     override fun listIterator(index: Int): MutableListIterator<T> = ClrMutableListIterator(this, index)
     override fun subList(fromIndex: Int, toIndex: Int): MutableList<T> {
         clrCheckSubListBounds(size, fromIndex, toIndex)
-        return ClrProjectedMutableSubList(backing, start + fromIndex, start + toIndex, this)
+        return ClrMutableSubList(backing, start + fromIndex, start + toIndex, this)
     }
 }
 
-public fun <T> clrProjectedMutableListSubList(list: Any, fromIndex: Int, toIndex: Int): MutableList<T> {
+private fun <T> clrMutableListSubListImpl(list: Any, fromIndex: Int, toIndex: Int): MutableList<T> {
     val slots = list as? KotlinListDefaultSlots
     if (slots != null) {
         val result = slots.dotktSubList(fromIndex, toIndex)
         return (result as? MutableList<T>)
-            ?: ClrProjectedMutableSubList(result, 0, mutableCollectionCountErased(result))
+            ?: ClrMutableSubList(result, 0, mutableCollectionCountErased(result))
     }
-    return ClrProjectedMutableSubList(list, fromIndex, toIndex)
+    return ClrMutableSubList(list, fromIndex, toIndex)
 }
+
+public fun <T> clrMutableListSubList(
+    list: MutableList<T>,
+    fromIndex: Int,
+    toIndex: Int,
+): MutableList<T> = clrMutableListSubListImpl(list, fromIndex, toIndex)
+
+public fun <T> clrProjectedMutableListSubList(list: Any, fromIndex: Int, toIndex: Int): MutableList<T> =
+    clrMutableListSubListImpl(list, fromIndex, toIndex)
 
 // ---- Structural equality (Kotlin `==` on collections is structural; the substituted BCL types use REFERENCE ----
 // Object.Equals, so the backend routes a collection `==` here). Null-safe: the backend passes the raw operands.
