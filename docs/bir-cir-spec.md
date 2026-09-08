@@ -855,8 +855,9 @@ bare-FQN strings the wire format forbids):
   list. kotc gives source suspend-lambda captures compiler-owned, source-unspellable storage names. Every capture name
   is unique and disjoint from the lambda's parameter names, including a carrier materialized by bir2cir. The enclosing
   dispatch receiver, when captured, is identified by `outer:true`; bir2cir consumes that explicit marker when routing
-  body `this` and construction values and never infers the receiver role from a storage spelling. The optional `capValues` (per-capture construction-value
-  overrides, positional with `captures`) carries an SM-vocabulary spill (`SuspendColdLowering` GAP 2) or the marked
+  body `this` and construction values and never infers the receiver role from a storage spelling. The optional
+  `capValues` carries exactly one construction-value override or `null` per capture, positional with `captures`; it
+  carries an SM-vocabulary spill (`SuspendColdLowering` GAP 2) or the marked
   outer capture rebound to the splice's receiver temp (InlineSplice 2B). `funcType` is the canonical Kotlin function
   type: an extension receiver appears
   only in `funcType.recv`, while `funcType.params` contains regular parameters. The node's physical `params` remains

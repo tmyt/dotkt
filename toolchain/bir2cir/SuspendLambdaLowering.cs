@@ -255,12 +255,16 @@ static class SuspendLambdaLowering
         // `capValues` (a spilled local -> an SM field, `__outer` -> the member SM's `$this`). Use those verbatim; a
         // naive `this`/`local` here would denote the SM, not the captured enclosing instance/local.
         var capValues = node["capValues"] as JsonArray;
+        if (node["capValues"] != null && (capValues == null || capValues.Count != captureSlots.Count))
+            throw new NotSupportedException(
+                $"bir2cir: suspend-lambda lowering: `{smName}` carries a capValues vector that does not align "
+                + $"with its {captureSlots.Count} capture descriptor(s)");
         var args = new JsonArray();
         var argTypes = new JsonArray();
         for (var ci = 0; ci < captureSlots.Count; ci++)
         {
             var (n, t, outer) = captureSlots[ci];
-            if (capValues != null && ci < capValues.Count && capValues[ci] != null)
+            if (capValues != null && capValues[ci] != null)
                 args.Add(capValues[ci].DeepClone());
             else
                 // The explicit outer:true capture's VALUE at an ordinary (non-SM) construction site is the enclosing

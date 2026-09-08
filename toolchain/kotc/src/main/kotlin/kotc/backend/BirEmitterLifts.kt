@@ -221,13 +221,15 @@ private fun BirEmitter.suspendLambda(node: IrFunctionExpression): String? {
 	// facts and bir2cir picks the restricted base from the receiver scope's @RestrictsSuspension annotation.
 	val captures = capturedVars(fn, includeThis = true)
 	// Every capture, including the enclosing receiver, gets a compiler-prefixed descriptor. `$` is not legal in a
-	// Kotlin source identifier, so these names are disjoint from the lambda's own params/locals and from the SM's
-	// machinery names. The receiver ROLE is an explicit `outer:true` fact; downstream must not infer it from `__outer`.
+	// Kotlin source identifier, so these names are disjoint from source-declared lambda params/locals. The allocator is
+	// still seeded with the complete parameter frame because generated IR names are compiler input too. Body locals use
+	// file-unique `dotkt$localN` slots. The receiver ROLE is an explicit `outer:true` fact; downstream must not infer it
+	// from `__outer`.
 	val outerCapture = captures.firstOrNull {
 		(it as? IrValueParameter)?.kind == IrParameterKind.DispatchReceiver
 	}
 	val capturePairsByIdentity = java.util.IdentityHashMap<IrValueDeclaration, String>()
-	uniqueCaptureNames(captures, alwaysPrefix = true)
+	uniqueCaptureNames(captures, ownParams.mapTo(HashSet()) { it.name.asString() }, alwaysPrefix = true)
 		.forEach { (d, name) -> capturePairsByIdentity[d] = name }
 	val capturePairs = captures.map { it to capturePairsByIdentity.getValue(it) }
 	val capturesJson = capturePairs.joinToString(",") { (d, name) ->
@@ -1059,7 +1061,8 @@ internal fun BirEmitter.suspendFunctionRef(node: IrFunctionReference, fn: IrSimp
 	val captures: String; val capValues: String?; val bodyCall: String
 	when {
 		local != null -> {
-			val capPairs = uniqueCaptureNames(local.captures)
+			val capPairs = uniqueCaptureNames(
+				local.captures, paramNames.toMutableSet(), alwaysPrefix = true)
 			captures = capPairs.joinToString(",") { (declaration, fieldName) ->
 				"""{"name":${str(fieldName)},"type":${captureFieldType(declaration).toJson()}}"""
 			}
@@ -1855,9 +1858,10 @@ internal fun BirEmitter.captureFieldName(d: IrValueDeclaration): String =
  * shadow a like-named capture parameter from that point on. A lifted CLASS has no such problem: its captures are
  * FIELDS, read through `this`, and the names they must avoid are exactly its own fields and constructor parameters.
  *
- * `__outer` is the preferred spelling for an enclosing `this`, but it is not a reserved user identifier. It therefore
- * goes through the same collision-free allocation as every other capture. Downstream consumers must use the emitted
- * field/parameter identity carried by the BIR use sites, never infer capture semantics from that preferred spelling.
+ * Generated prefixes are a readable disjoint namespace for source identifiers, but callers must still seed [taken]
+ * with every other name in the target frame because generated IR can introduce compiler-owned names. Downstream
+ * consumers use the emitted field/parameter identity carried by the BIR use sites and never infer capture semantics
+ * from a preferred spelling.
  */
 internal fun BirEmitter.uniqueCaptureNames(
 	captured: List<IrValueDeclaration>,

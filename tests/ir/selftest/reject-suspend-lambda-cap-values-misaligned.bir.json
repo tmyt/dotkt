@@ -1,0 +1,26 @@
+{
+  "methods": [{
+    "name": "probe",
+    "params": [],
+    "ret": { "t": "fqn", "name": "kotlin.Unit" },
+    "body": [{
+      "k": "exprStmt",
+      "expr": {
+        "k": "newSuspendLambda",
+        "arity": 0,
+        "captures": [{ "name": "cap$value", "type": { "t": "fqn", "name": "kotlin.Int" } }],
+        "capValues": [],
+        "params": [],
+        "suspendRet": { "t": "fqn", "name": "kotlin.Int" },
+        "typeParams": [],
+        "funcType": {
+          "t": "fn",
+          "suspend": true,
+          "ret": { "t": "fqn", "name": "kotlin.Int" },
+          "params": []
+        },
+        "body": []
+      }
+    }]
+  }]
+}

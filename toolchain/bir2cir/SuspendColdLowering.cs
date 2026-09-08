@@ -3085,9 +3085,15 @@ static partial class SuspendColdLowering
         // An extension receiver is never inferred from this token: kotc/InlineSplice name its create()-set parameter
         // explicitly as a local, and the ordinary local-to-field rewrite handles it. Only synthesized SM-self nodes
         // use the `smSelf` marker, so they are unaffected. Absent an outer:true capture there is nothing to redirect.
-        JsonNode CapturedOuterField() =>
-            (_isLambda && _capturedOuterName != null && _fields.Contains(_capturedOuterName))
-                ? FieldOf(_capturedOuterName, RequiredFieldType(_capturedOuterName)) : null;
+        JsonNode CapturedOuterField()
+        {
+            if (!_isLambda) return null;
+            if (_capturedOuterName != null && _fields.Contains(_capturedOuterName))
+                return FieldOf(_capturedOuterName, RequiredFieldType(_capturedOuterName));
+            throw new NotSupportedException(
+                $"bir2cir: suspend-lowering: lambda `{DiagOwner}` reads its enclosing receiver but carries no "
+                + "outer:true capture descriptor");
+        }
 
         // GAP 2 — copy a `newSuspendLambda` verbatim (its body is the lambda's own scope, left for
         // SuspendLambdaLowering) and attach `capValues`: each capture's construction value resolved into THIS cold
@@ -3116,7 +3122,7 @@ static partial class SuspendColdLowering
                     else
                         capValues.Add(CaptureValueInSm(
                             Str(c["name"]),
-                            c["outer"] is JsonValue marker && marker.TryGetValue<bool>(out var outer) && outer));
+                            Bool(c["outer"])));
                     i++;
                 }
             }

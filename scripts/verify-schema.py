@@ -1033,6 +1033,16 @@ class V:
                                 self.err(f, path, "newSuspendLambda captures and params must have disjoint storage names")
                         if outer_count > 1:
                             self.err(f, path, "newSuspendLambda may carry at most one outer:true capture")
+                        cap_values = o.get("capValues")
+                        if cap_values is not None:
+                            if not isinstance(cap_values, list) or len(cap_values) != len(captures):
+                                self.err(f, path, "newSuspendLambda.capValues must contain one entry per capture")
+                            else:
+                                for i, value in enumerate(cap_values):
+                                    if value is not None and (not isinstance(value, dict)
+                                                              or not isinstance(value.get("k"), str)):
+                                        self.err(f, path + f"/capValues[{i}]",
+                                                 "newSuspendLambda capValues entries must be expression nodes or null")
             # §2.7 PHASE SPLIT. The call-evaluation plan is BIR vocabulary: `callEval`/`bindRef` and the ctor
             # declaration's `delegationBindings` are lowered by CallEvalLowering, so a survivor in CIR means a plan
             # reached ilemit, which has no notion of one. `preStmts` is the CIR form of a delegation's plan and is

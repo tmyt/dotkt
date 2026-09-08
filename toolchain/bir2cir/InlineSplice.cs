@@ -1393,7 +1393,8 @@ static class InlineSplice
         // unblocks the `suspendCancellableCoroutineReusable` §4.4ii suspend carriers). A cross-module token fails loud.
         if (HasNonAppLocalDelegate(invBody)) return MatNull("MSC:non-applocal-delegate");
 
-        // Captures verbatim, including the outer role. A capture with no name/type kotc failed to list -> refuse.
+        // Reconcile every capture with this generated state-machine namespace while preserving the explicit outer role.
+        // A capture with no name/type means kotc failed to provide the declaration fact -> refuse.
         var captures = new JsonArray();
         // #126: positional construction-value overrides (the schema's `newSuspendLambda.capValues` channel), aligned with
         // `captures` — an ALPHA-CONVERTED capture's field/body use the fresh descriptor name while its construction value
@@ -1403,30 +1404,61 @@ static class InlineSplice
         var innerScope = new HashSet<string>(StringComparer.Ordinal);
         foreach (var p in lamParams.OfType<JsonObject>()) if (Str(p["name"]) is string pn) innerScope.Add(pn);
         CollectDeclaredLocals(invBody, innerScope);
-        var captureStorageNames = new HashSet<string>(innerScope, StringComparer.Ordinal);
-        string FreshOuterStorageName()
+        // These names are owned by SuspendColdLowering's generated SM surface. Captures may be named this way in an
+        // inline callee, but must be alpha-converted before becoming fields/ctor parameters in the new SM frame.
+        var captureStorageNames = new HashSet<string>(innerScope, StringComparer.Ordinal)
         {
-            const string stem = "cap$__outer";
+            "label", "completion", "result",
+        };
+        string FreshCaptureStorageName(string stem)
+        {
             var candidate = stem;
             for (var suffix = 1; !captureStorageNames.Add(candidate); suffix++)
                 candidate = stem + "$" + suffix;
             return candidate;
         }
+        var captureRenames = new Dictionary<string, JsonNode>(StringComparer.Ordinal);
+        var sourceCaptureNames = new HashSet<string>(StringComparer.Ordinal);
+        var sourceStorageNames = new Dictionary<string, string>(StringComparer.Ordinal);
         if (carrier["captures"] is JsonArray caps)
             foreach (var c in caps.OfType<JsonObject>())
             {
                 if (Str(c["name"]) is not string cn || c["type"] is not JsonNode ct) return MatNull("MSC:capture-no-name-type");
+                if (!sourceCaptureNames.Add(cn)) return MatNull("MSC:duplicate-capture");
                 var outer = Bool(c["outer"]);
-                // An outer capture's body use is `{k:this}`, so its storage name is free to move into the compiler-only
-                // namespace here. Ordinary capture body refs remain name-keyed and must already be disjoint.
-                var storageName = outer ? FreshOuterStorageName() : cn;
-                if (!outer && !captureStorageNames.Add(storageName)) return MatNull("MSC:innerscope-collide");
+                // Materialization creates a new flat state-machine frame. Allocate every capture against that frame,
+                // then retarget name-keyed body reads when allocation changed the name. Preserve ordinary names when
+                // they are already disjoint: that keeps the established null-capValue promotion path intact across
+                // nested inline carriers. The positional capValues channel states the original construction value for
+                // every renamed/outer slot; no downstream pass reconstructs that edge from descriptor spelling.
+                var storageName = outer
+                    ? FreshCaptureStorageName("cap$__outer")
+                    : captureStorageNames.Add(cn) ? cn : FreshCaptureStorageName("cap$" + cn);
+                // Ordinary nested descriptors are name-keyed. An outer descriptor is role-keyed instead, and must not
+                // make a distinct ordinary nested capture with the same spelling alias the enclosing receiver.
+                if (!outer) sourceStorageNames.Add(cn, storageName);
                 var descriptor = new JsonObject { ["name"] = storageName, ["type"] = ct.DeepClone() };
                 if (outer) descriptor["outer"] = true;
                 captures.Add(descriptor);
-                if (c["value"] is JsonNode cval) { suspendCapValues.Add(cval.DeepClone()); anySuspendCapValue = true; }
+                if (!outer && storageName != cn)
+                {
+                    captureRenames.Add(cn, new JsonObject { ["k"] = "local", ["name"] = storageName });
+                }
+                if (c["value"] is JsonNode explicitValue)
+                {
+                    suspendCapValues.Add(explicitValue.DeepClone());
+                    anySuspendCapValue = true;
+                }
+                else if (outer || storageName != cn)
+                {
+                    suspendCapValues.Add(outer
+                        ? new JsonObject { ["k"] = "this" }
+                        : new JsonObject { ["k"] = "local", ["name"] = cn });
+                    anySuspendCapValue = true;
+                }
                 else suspendCapValues.Add(null);
             }
+        if (captureRenames.Count > 0) RewriteLocalRefs(invBody, captureRenames);
 
         // A first-level nested SM's default capture values are reads in THIS carrier frame. kotc may list that
         // dependency only on the nested `newSuspendLambda` (rather than redundantly on every enclosing inline carrier),
@@ -1438,22 +1470,64 @@ static class InlineSplice
         {
             if (nested["captures"] is not JsonArray nestedCaps) continue;
             var nestedValues = nested["capValues"] as JsonArray;
+            void SetNestedValue(int index, string storageName)
+            {
+                if (nestedValues == null)
+                {
+                    nestedValues = new JsonArray();
+                    while (nestedValues.Count < nestedCaps.Count) nestedValues.Add(null);
+                    nested["capValues"] = nestedValues;
+                }
+                nestedValues[index] = new JsonObject { ["k"] = "local", ["name"] = storageName };
+            }
             for (int i = 0; i < nestedCaps.Count; i++)
             {
                 if (nestedValues != null && i < nestedValues.Count && nestedValues[i] != null) continue;
                 if (nestedCaps[i] is not JsonObject nc
                     || Str(nc["name"]) is not string nn || nc["type"] is not JsonNode nt)
                     return MatNull("MSC:nested-capture-no-name-type");
+                if (Bool(nc["outer"]))
+                {
+                    var existingOuter = captures.OfType<JsonObject>().FirstOrDefault(c => Bool(c["outer"]));
+                    if (existingOuter != null)
+                    {
+                        if (!JsonNode.DeepEquals(existingOuter["type"], nt))
+                            return MatNull("MSC:nested-outer-type-conflict");
+                        SetNestedValue(i, Str(existingOuter["name"]));
+                        continue;
+                    }
+                    var outerStorageName = FreshCaptureStorageName("cap$__outer");
+                    captures.Add(new JsonObject {
+                        ["name"] = outerStorageName,
+                        ["type"] = nt.DeepClone(),
+                        ["outer"] = true,
+                    });
+                    suspendCapValues.Add(new JsonObject { ["k"] = "this" });
+                    anySuspendCapValue = true;
+                    SetNestedValue(i, outerStorageName);
+                    continue;
+                }
                 if (innerScope.Contains(nn)) continue;
 
-                var existing = captures.OfType<JsonObject>().FirstOrDefault(c => Str(c["name"]) == nn);
+                var existingStorageName = sourceStorageNames.TryGetValue(nn, out var sourceStorage)
+                    ? sourceStorage : nn;
+                var existing = captures.OfType<JsonObject>().FirstOrDefault(c => Str(c["name"]) == existingStorageName);
                 if (existing != null)
                 {
                     if (!JsonNode.DeepEquals(existing["type"], nt)) return MatNull("MSC:nested-capture-type-conflict");
+                    if (existingStorageName != nn) SetNestedValue(i, existingStorageName);
                     continue;
                 }
-                captures.Add(new JsonObject { ["name"] = nn, ["type"] = nt.DeepClone() });
-                suspendCapValues.Add(null);
+                var promotedStorageName = captureStorageNames.Add(nn) ? nn : FreshCaptureStorageName("cap$" + nn);
+                sourceStorageNames[nn] = promotedStorageName;
+                captures.Add(new JsonObject { ["name"] = promotedStorageName, ["type"] = nt.DeepClone() });
+                if (promotedStorageName == nn) suspendCapValues.Add(null);
+                else
+                {
+                    suspendCapValues.Add(new JsonObject { ["k"] = "local", ["name"] = nn });
+                    anySuspendCapValue = true;
+                    SetNestedValue(i, promotedStorageName);
+                }
             }
         }
 

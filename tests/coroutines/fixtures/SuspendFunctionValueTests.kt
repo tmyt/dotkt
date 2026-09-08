@@ -45,6 +45,16 @@ fun suspendFunctionValueReferenceRunRef(f: suspend (Int) -> Int, arg: Int): Int 
 fun suspendFunctionValueReferenceRunExtRef(f: suspend (String, Int) -> Int, recv: String, arg: Int): Int =
     blockOn { f(recv, arg) }
 
+fun suspendFunctionValueLocalReferenceCaptureCollision(): Int {
+    val __p0 = 40
+    suspend fun add(delta: Int): Int {
+        Task.Delay(1).await()
+        return __p0 + delta
+    }
+    val reference: suspend (Int) -> Int = ::add
+    return blockOn { reference(2) }
+}
+
 // ---- il-lam2 -------------------------------------------------------------------------------------------------
 suspend fun suspendFunctionValueCapturingLambdaH(): Int = 5
 
@@ -92,6 +102,7 @@ class SuspendFunctionValueTests {
         val bound: suspend (Int) -> Int = receiver()::suspendFunctionValueReferenceAddLength
         assertEquals(42, suspendFunctionValueReferenceRunRef(bound, 39))
         assertEquals(1, receiverReads)                        // a bound extension receiver is captured exactly once
+        assertEquals(42, suspendFunctionValueLocalReferenceCaptureCollision())
     }
 
     @TestAttribute

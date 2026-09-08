@@ -19,6 +19,17 @@ class EscapingSuspendCarrierOuterParameterCollision(val base: Int) {
     }
 }
 
+fun escapingSuspendCarrierMachineryNames(label: Int, completion: Int): Int =
+    escapingSuspendCarrierWrap(0) { escapingSuspendCarrierAdd(label, completion) }
+
+class EscapingSuspendCarrierMemberExtension(private val base: Int) {
+    private fun String.runCarrier(): Int = escapingSuspendCarrierWrap(5) { value ->
+        escapingSuspendCarrierAdd(base + length, value)
+    }
+
+    fun run(): Int = "1234567".runCarrier()
+}
+
 class EscapingSuspendLambdaTests {
     @TestAttribute
     fun escapingCapturingSuspendLambda() {
@@ -26,5 +37,7 @@ class EscapingSuspendLambdaTests {
         assertEquals(42, escapingSuspendCarrierWrapPlus(10, 2, { escapingSuspendCarrierAdd(it, 30) }))  // 10+30=40, +2 = 42
         assertEquals(7, escapingSuspendCarrierWrap(0) { escapingSuspendCarrierAdd(it, 7) })             // 7
         assertEquals(42, EscapingSuspendCarrierOuterParameterCollision(37).run())
+        assertEquals(42, escapingSuspendCarrierMachineryNames(20, 22))
+        assertEquals(42, EscapingSuspendCarrierMemberExtension(30).run())
     }
 }
