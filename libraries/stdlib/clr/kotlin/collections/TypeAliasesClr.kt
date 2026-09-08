@@ -145,17 +145,29 @@ private class ArrayListSubList<E>(
 ) : AbstractMutableList<E>(), RandomAccess {
     private var _size: Int = toIndex - fromIndex
 
+    init {
+        AbstractList.checkRangeIndexes(fromIndex, toIndex, list.size)
+    }
+
     override fun add(index: Int, element: E) {
+        AbstractList.checkPositionIndex(index, _size)
         list.add(fromIndex + index, element)
         _size++
     }
-    override fun get(index: Int): E = list[fromIndex + index]
+    override fun get(index: Int): E {
+        AbstractList.checkElementIndex(index, _size)
+        return list[fromIndex + index]
+    }
     override fun removeAt(index: Int): E {
+        AbstractList.checkElementIndex(index, _size)
         val result = list.removeAt(fromIndex + index)
         _size--
         return result
     }
-    override fun set(index: Int, element: E): E = list.set(fromIndex + index, element)
+    override fun set(index: Int, element: E): E {
+        AbstractList.checkElementIndex(index, _size)
+        return list.set(fromIndex + index, element)
+    }
     override val size: Int get() = _size
 }
 
