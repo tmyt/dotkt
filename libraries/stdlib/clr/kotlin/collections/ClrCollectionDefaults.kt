@@ -653,11 +653,11 @@ public fun <T> clrProjectedListSubList(list: Any, fromIndex: Int, toIndex: Int):
     return ClrProjectedListView(list, fromIndex, toIndex)
 }
 
-private class ClrMutableSubList<T>(
+private class ClrProjectedMutableSubList<T>(
     private val backing: Any,
     private val start: Int,
     private var end: Int,
-    private val parent: ClrMutableSubList<T>? = null,
+    private val parent: ClrProjectedMutableSubList<T>? = null,
 ) : MutableList<T> {
     init { clrCheckSubListBounds(mutableCollectionCountErased(backing), start, end) }
 
@@ -742,28 +742,74 @@ private class ClrMutableSubList<T>(
     override fun listIterator(index: Int): MutableListIterator<T> = ClrMutableListIterator(this, index)
     override fun subList(fromIndex: Int, toIndex: Int): MutableList<T> {
         clrCheckSubListBounds(size, fromIndex, toIndex)
-        return ClrMutableSubList(backing, start + fromIndex, start + toIndex, this)
+        return ClrProjectedMutableSubList(backing, start + fromIndex, start + toIndex, this)
     }
 }
 
-private fun <T> clrMutableListSubListImpl(list: Any, fromIndex: Int, toIndex: Int): MutableList<T> {
-    val slots = list as? KotlinListDefaultSlots
-    if (slots != null) {
-        val result = slots.dotktSubList(fromIndex, toIndex)
-        return (result as? MutableList<T>)
-            ?: ClrMutableSubList(result, 0, mutableCollectionCountErased(result))
+private class ClrMutableSubList<T>(
+    private val backing: MutableList<T>,
+    private val fromIndex: Int,
+    toIndex: Int,
+) : AbstractMutableList<T>() {
+    private var viewSize: Int = toIndex - fromIndex
+
+    init { clrCheckSubListBounds(backing.size, fromIndex, toIndex) }
+
+    override val size: Int get() = viewSize
+
+    private fun checkElement(index: Int) {
+        if (index < 0 || index >= size) throw IndexOutOfBoundsException()
     }
-    return ClrMutableSubList(list, fromIndex, toIndex)
+
+    private fun checkPosition(index: Int) {
+        if (index < 0 || index > size) throw IndexOutOfBoundsException()
+    }
+
+    override fun get(index: Int): T {
+        checkElement(index)
+        return backing[fromIndex + index]
+    }
+
+    override fun set(index: Int, element: T): T {
+        checkElement(index)
+        return backing.set(fromIndex + index, element)
+    }
+
+    override fun add(index: Int, element: T) {
+        checkPosition(index)
+        backing.add(fromIndex + index, element)
+        viewSize++
+    }
+
+    override fun removeAt(index: Int): T {
+        checkElement(index)
+        val removed = backing.removeAt(fromIndex + index)
+        viewSize--
+        return removed
+    }
 }
 
 public fun <T> clrMutableListSubList(
     list: MutableList<T>,
     fromIndex: Int,
     toIndex: Int,
-): MutableList<T> = clrMutableListSubListImpl(list, fromIndex, toIndex)
+): MutableList<T> {
+    val slots = list as? KotlinListDefaultSlots
+    if (slots != null) {
+        return slots.dotktSubList(fromIndex, toIndex) as MutableList<T>
+    }
+    return ClrMutableSubList(list, fromIndex, toIndex)
+}
 
-public fun <T> clrProjectedMutableListSubList(list: Any, fromIndex: Int, toIndex: Int): MutableList<T> =
-    clrMutableListSubListImpl(list, fromIndex, toIndex)
+public fun <T> clrProjectedMutableListSubList(list: Any, fromIndex: Int, toIndex: Int): MutableList<T> {
+    val slots = list as? KotlinListDefaultSlots
+    if (slots != null) {
+        val result = slots.dotktSubList(fromIndex, toIndex)
+        return (result as? MutableList<T>)
+            ?: ClrProjectedMutableSubList(result, 0, mutableCollectionCountErased(result))
+    }
+    return ClrProjectedMutableSubList(list, fromIndex, toIndex)
+}
 
 // ---- Structural equality (Kotlin `==` on collections is structural; the substituted BCL types use REFERENCE ----
 // Object.Equals, so the backend routes a collection `==` here). Null-safe: the backend passes the raw operands.
