@@ -1675,12 +1675,7 @@ static partial class SuspendColdLowering
             if (why != FieldRejection.None)
                 throw new NotSupportedException(FieldLegality.SuspendMessage(
                     FieldLegality.PosPrefix(_m), DiagOwner, role, roleNamesIt ? null : name, type, offending, why, across));
-            if (!_fields.Add(name))
-                throw new InvalidOperationException(
-                    $"bir2cir: {FieldLegality.PosPrefix(_m)}suspend-lowering: in `{DiagOwner}`, state-machine storage "
-                    + $"name `{name}` was allocated more than once. Source and compiler-generated slots must occupy "
-                    + "disjoint physical namespaces.");
-            _fieldDecls.Add((name, type ?? throw new NotSupportedException(
+            if (_fields.Add(name)) _fieldDecls.Add((name, type ?? throw new NotSupportedException(
                 $"bir2cir: {FieldLegality.PosPrefix(_m)}suspend-lowering: in `{DiagOwner}`, the {role} "
                 + $"`{name}` lives across a suspension but carries no static type, so its state-machine field would "
                 + "be untyped — an earlier lowering dropped the type.")));
