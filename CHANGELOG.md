@@ -7,6 +7,11 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Projected mutable-map index assignment now uses a receiver-erased CLR call boundary (#690).** Cross-module
+  `MutableMap.set` calls, including those moved into suspend state machines, no longer require an object-constrained
+  receiver to implement an invented `IDictionary<object, object>` face. They share the non-generic dictionary
+  mutation ABI already used by the other Kotlin mutable-map operations.
+
 - **List sub-ranges now enforce their own bounds (#688).** Reads, replacements, removals, and indexed insertions can
   no longer reach a backing-list element outside the selected sub-range, and invalid sub-range construction is
   rejected before the view is created. This applies both to concrete `ArrayList` receivers and read-only `List`
