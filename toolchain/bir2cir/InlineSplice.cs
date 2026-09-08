@@ -1418,14 +1418,23 @@ static class InlineSplice
             return candidate;
         }
         var captureRenames = new Dictionary<string, JsonNode>(StringComparer.Ordinal);
-        var sourceCaptureNames = new HashSet<string>(StringComparer.Ordinal);
+        var ordinarySourceCaptureNames = new HashSet<string>(StringComparer.Ordinal);
+        var hasOuterSourceCapture = false;
         var sourceStorageNames = new Dictionary<string, string>(StringComparer.Ordinal);
         if (carrier["captures"] is JsonArray caps)
             foreach (var c in caps.OfType<JsonObject>())
             {
                 if (Str(c["name"]) is not string cn || c["type"] is not JsonNode ct) return MatNull("MSC:capture-no-name-type");
-                if (!sourceCaptureNames.Add(cn)) return MatNull("MSC:duplicate-capture");
                 var outer = Bool(c["outer"]);
+                // Outer identity is role-keyed, not name-keyed: a valid carrier may capture both its dispatch receiver
+                // and an ordinary enclosing value called `__outer`. Reject only duplicate ordinary identities and a
+                // second outer role; the generated storage allocator keeps the two roles physically disjoint.
+                if (outer)
+                {
+                    if (hasOuterSourceCapture) return MatNull("MSC:duplicate-outer-capture");
+                    hasOuterSourceCapture = true;
+                }
+                else if (!ordinarySourceCaptureNames.Add(cn)) return MatNull("MSC:duplicate-capture");
                 // Materialization creates a new flat state-machine frame. Allocate every capture against that frame,
                 // then retarget name-keyed body reads when allocation changed the name. Preserve ordinary names when
                 // they are already disjoint: that keeps the established null-capValue promotion path intact across
@@ -1470,6 +1479,9 @@ static class InlineSplice
         {
             if (nested["captures"] is not JsonArray nestedCaps) continue;
             var nestedValues = nested["capValues"] as JsonArray;
+            if (nested["capValues"] != null && (nestedValues == null || nestedValues.Count != nestedCaps.Count))
+                throw new NotSupportedException(
+                    "inline splice: nested newSuspendLambda capValues must contain exactly one entry per capture");
             void SetNestedValue(int index, string storageName)
             {
                 if (nestedValues == null)
