@@ -499,9 +499,8 @@ sealed partial class Emitter
     // ilemit LINKS that exact accessor (LinkClrMethod — hard-fails a missing/ambiguous slot, so the old unchecked
     // `GetEvent(...).GetAddMethod()` NRE on a missing/value-type/constructed-generic event is gone) and consumes the
     // carried dispatch.
-    // The handler arrives in one of two STATED forms: `handlerExact` — an event-forwarder parameter already typed as
-    // the event's exact delegate — or a subscription's stored function value, re-wrapped below through the source
-    // delegate's own Invoke.
+    // bir2cir materializes the handler as the accessor's exact nominal delegate once, before it reaches either add or
+    // remove. ilemit neither re-resolves its Invoke nor reconstructs a delegate conversion from the value's shape.
     Type EmitClrEvent(JsonElement e, bool add)
     {
         var type = ClrRef(e.GetProperty("type"));
@@ -513,27 +512,13 @@ sealed partial class Emitter
             if (IsValueType(type) || dispatch == "constrained") EmitAddr(e.GetProperty("recv"));
             else EmitExpr(e.GetProperty("recv"));
         }
-        if (e.TryGetProperty("handlerExact", out var exact) && exact.GetBoolean())
-            EmitExpr(e.GetProperty("handler"));
-        else
-            EmitStoredHandlerRewrap(e, ParametersOf(accessor)[0].ParameterType);
+        if (!e.TryGetProperty("handlerExact", out var exact) || !exact.GetBoolean())
+            throw new InvalidOperationException(
+                "ilemit: CLR event handler is not the exact accessor delegate; bir2cir must materialize it");
+        EmitExpr(e.GetProperty("handler"));
         if (isStatic) EmitMethod(_il, OpCodes.Call, accessor);
         else EmitClrDispatch(accessor, dispatch, type);
         return Bcl("System.Void");
-    }
-
-    // A STORED handler value (a Func/Action local or field — the form the subscription spill produces) re-wrapped
-    // into the event's delegate: `new EventDelegate(value.Invoke)`. Two wrappers around the SAME stored value share
-    // target+method, so Delegate equality holds and `-=` removes the right handler. Both members are named by the
-    // node — `invokeRef` is the SOURCE delegate's Invoke, `delegateCtorRef` the event delegate's constructor; the
-    // event delegate TYPE is the resolved accessor's own parameter, read for the ctor encoding and nothing else.
-    void EmitStoredHandlerRewrap(JsonElement eventNode, Type eventDelegate)
-    {
-        EmitExpr(eventNode.GetProperty("handler"));      // stack: the stored delegate value
-        _il.Emit(OpCodes.Dup);
-        EmitMethod(_il, OpCodes.Ldvirtftn,
-            RequiredRef<MethodInfo>(eventNode, "invokeRef", "CLR event handler re-wrap"));
-        EmitDelegateCtor(_il, eventDelegate, eventNode);
     }
 
     // Resolve a newClosure node's ctor + invoke, INSTANTIATING the closure generic when it is a generic definition.

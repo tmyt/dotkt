@@ -481,6 +481,9 @@ table). The presence of a `memberRef` is therefore itself the external-vs-emitte
 For `clrEventAdd`/`clrEventRemove`, `localAccessor:true` is the same-unit discriminator and is mutually exclusive
 with `memberRef`; it carries the emitted `accessorOwner`, exact accessor `sig`, `delegateType`, accessor name, and
 dispatch decision. This is scalar MethodDef linkage, not permission for ilemit to search an inherited event by name.
+Every emitted event accessor call also carries `handlerExact:true`: bir2cir has already materialized the handler as
+the accessor's nominal delegate and reuses that same object for add/remove. ilemit must not infer or rebuild a
+conversion from the handler's shape.
 
 For a BIR `new`, `memberSignature` is the frontend-selected OPEN constructor declaration vector (including any
 compiler-authored enclosing/capture slots), while `argTypes` is the substituted use-site vector. For a same-unit

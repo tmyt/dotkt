@@ -175,6 +175,17 @@ static class ClosureSynthesis
                 // origin name can recur across splices).
                 if (Str(o["k"]) == "newSam" && o["synthClass"] is JsonObject scSam)
                 {
+                    // dll2klib exposes a CLR delegate as a nominal Kotlin fun interface. Kotlin's SAM conversion is
+                    // therefore the faithful frontend operation, but its CLR realization is a delegate over a target
+                    // method, not a class implementing the (physically sealed) MulticastDelegate subtype. Turn the
+                    // same capture/body ingredients into the ordinary closure-target form. The exact delegate remains
+                    // the declared slot; later member resolution supplies its ctor/Invoke references and ilemit only
+                    // emits them.
+                    if (LowerClrDelegateSam(o, scSam))
+                    {
+                        Walk(o, newTypes, decl);
+                        return;
+                    }
                     if (scSam["methods"] is JsonArray sms)
                         foreach (var m in sms) if (m is JsonObject mo && mo["body"] is JsonNode mb) Walk(mb, newTypes, decl);
                     CheckCaptureLegality(scSam, decl);
@@ -192,6 +203,53 @@ static class ClosureSynthesis
                     if (it != null) Walk(it, newTypes, decl);
                 break;
         }
+    }
+
+    static bool LowerClrDelegateSam(JsonObject node, JsonObject synthClass)
+    {
+        if (_refs == null
+            || synthClass["interfaces"] is not JsonArray interfaces || interfaces.Count != 1
+            || interfaces[0] is not JsonNode interfaceNode
+            || TypeJson.Read(interfaceNode) is not TypeNode.Fqn delegateType
+            || !_refs.IsClrDelegate(delegateType)
+            || synthClass["methods"] is not JsonArray methods || methods.Count != 1
+            || methods[0] is not JsonObject invoke
+            || node["samType"] is not JsonNode syntheticType)
+            return false;
+
+        var closure = new JsonObject
+        {
+            ["name"] = synthClass["name"]?.DeepClone(),
+            ["fields"] = synthClass["fields"]?.DeepClone() ?? new JsonArray(),
+            ["params"] = invoke["params"]?.DeepClone() ?? new JsonArray(),
+            ["ret"] = invoke["ret"]?.DeepClone(),
+            ["body"] = invoke["body"]?.DeepClone() ?? new JsonArray(),
+        };
+        foreach (var key in new[]
+                 {
+                     "typeParams", "semanticOwner", "outerTypeParamCount", "outerTypeParamOffset",
+                     "_syntheticTypeArgs", PreboundFrameKey,
+                 })
+            if (synthClass[key] is JsonNode value) closure[key] = value.DeepClone();
+
+        var parameters = (invoke["params"] as JsonArray)?.Select(parameter =>
+            parameter is JsonObject descriptor ? TypeJson.Read(descriptor["type"]) : null).ToArray()
+            ?? Array.Empty<TypeNode>();
+        var returnType = TypeJson.Read(invoke["ret"]);
+        if (parameters.Any(type => type == null) || returnType == null) return false;
+
+        node["k"] = "newClosure";
+        node["closureType"] = syntheticType.DeepClone();
+        node["method"] = "invoke";
+        // Keep the lambda's natural Kotlin function shape until the ordinary delegate-slot materializer runs. That
+        // shared rule retargets a compatible method pointer and authors the Unit-producing adapter when a Kotlin
+        // Unit/CLR-void target fills a value-returning delegate. Bypassing it would bind a void MethodDef directly to
+        // (for example) a delegate whose Invoke returns object.
+        node["funcType"] = TypeJson.Write(new TypeNode.Fn(false, returnType, parameters));
+        node["synthClass"] = closure;
+        node.Remove("samType");
+        ClrMemberResolution.MarkDelegateSlot(node, delegateType);
+        return true;
     }
 
     // A CAPTURE is unconditionally HEAP storage: it becomes an instance field of the synthesized class. A

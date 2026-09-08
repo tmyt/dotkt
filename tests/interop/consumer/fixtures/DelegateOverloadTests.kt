@@ -3,13 +3,14 @@
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import System.Threading.Thread
+import System.Threading.ThreadStart
 import System.Threading.Tasks.Task
 
 class DelegateOverloadTests {
     @TestAttribute
     fun bareLambdaPrefersUnitDelegate() {
         val log = mutableListOf<String>()
-        val thread = Thread({ log.add("x"); Unit })
+        val thread = Thread(ThreadStart { log.add("x"); Unit })
         thread.Start()
         thread.Join()
         val task = Task.Run({ log.add("y"); Unit })

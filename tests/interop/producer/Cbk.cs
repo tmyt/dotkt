@@ -1,5 +1,5 @@
-// Producer source for the migrated il-cbk case. A custom .NET delegate + a BCL Action parameter — a Kotlin lambda
-// binds to BOTH (the backend builds the specific delegate from the call-site signature). Own namespace.
+// Producer source for the migrated il-cbk case. Custom .NET delegates project as nominal Kotlin SAM types, while
+// System.Action remains the canonical Kotlin function representation. Own namespace.
 namespace Cbk {
     public delegate string Transform(int x);
     public delegate string GenericTransform<T>(T x);

@@ -19,6 +19,7 @@ import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
 import System.ComponentModel.INotifyPropertyChanged
 import System.ComponentModel.PropertyChangedEventArgs
+import System.ComponentModel.PropertyChangedEventHandler
 import EventDelegation.EventSource
 import kotlin.clr.ClrEvent
 import kotlin.clr.clrEvent
@@ -26,7 +27,7 @@ import kotlin.reflect.KProperty
 
 // IMPLEMENT — synthesize add_/remove_/raise_PropertyChanged + the backing delegate field + the `.event` metadata.
 open class ViewModelBase : INotifyPropertyChanged {
-    override val PropertyChanged: ClrEvent<(Any?, PropertyChangedEventArgs) -> Unit> by clrEvent()
+    override val PropertyChanged: ClrEvent<PropertyChangedEventHandler> by clrEvent()
 }
 
 // A property delegate that RAISES the ViewModel's event from OUTSIDE the declaring type (a DIFFERENT class) — the §6

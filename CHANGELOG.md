@@ -7,6 +7,13 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **CLR delegates now retain nominal identity in Kotlin imports (#681).** dll2klib projects every noncanonical CLR
+  delegate as a callable Kotlin `fun interface` instead of collapsing its `Invoke` shape to `FunctionN`. Exact delegate
+  types now participate in overloads and override slots, including `SynchronizationContext.Post`, while ordinary SAM
+  construction and invocation lower through bir2cir to the referenced delegate constructor and `Invoke` MethodDef.
+  Recursive delegate graphs are naturally finite, and only the canonical `Action`/`Func` and wide `KAction`/`KFunc`
+  families remain Kotlin function types.
+
 - **Suspend lambdas can assign a suspending result through a captured mutable local (#678).** The suspend operand
   planner now types bare capture reads from the lambda's explicit capture declarations, so preserving receiver-before-
   value evaluation order for a ref-cell write no longer creates an untyped spill slot.

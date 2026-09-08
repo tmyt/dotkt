@@ -175,6 +175,11 @@ static class NetInteropBinding
             && IsComparableSelfCall(dotKtComparable, ownerFqnNode, node))
             netType = dotKtComparable;
         if (netType == null) return;   // not a reachable .NET-interop owner -> leave for the other binders
+        // dll2klib publishes a CLR delegate's sole call contract as Kotlin's operator `invoke`. The owner remains the
+        // exact nominal delegate, so this is not a spelling heuristic: only a reflected MulticastDelegate subtype can
+        // cross this seam, and its one CLR call member is Invoke.
+        if (k == "callInstance" && method == "invoke" && _refs.IsClrDelegate(ownerFqnNode))
+            method = "Invoke";
         var comparableSelfCall = k == "callInstance" && method == "compareTo"
             && IsComparableSelfCall(netType, ownerFqnNode, node);
 

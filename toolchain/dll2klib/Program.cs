@@ -642,9 +642,7 @@ internal sealed class DelegateReferenceCatalog
         return metadataName.StartsWith("System.", StringComparison.Ordinal) &&
             (simple == "Action" ||
              simple.StartsWith("Action`", StringComparison.Ordinal) ||
-             simple.StartsWith("Func`", StringComparison.Ordinal) ||
-             simple == "EventHandler" ||
-             simple.StartsWith("EventHandler`", StringComparison.Ordinal));
+             simple.StartsWith("Func`", StringComparison.Ordinal));
     }
 
     private static string DefinitionName(MetadataReader md, TypeDefinitionHandle handle)
@@ -1681,7 +1679,6 @@ internal sealed class AssemblyScanner : IDisposable
                 _md, names, _attrs, _arityNames, _delegateCatalog, _companionCatalog, _innerCatalog,
                 _signatureSeeds,
                 _externalSignatureDecoders,
-                _definitionPath,
                 SemanticCompanionTypeNames(names));
             var projectedBySemanticName = new Dictionary<string, Class>(StringComparer.Ordinal);
 
@@ -2064,7 +2061,8 @@ internal sealed class AssemblyScanner : IDisposable
         var metadataName = _md.GetString(def.Name);
         var metadataNamespace = _md.GetString(def.Namespace);
         var kotlinName = KotlinDefinitionPath(handle).Chain[^1];
-        var isInterface = (def.Attributes & TypeAttributes.Interface) != 0;
+        var isClrDelegate = IsSystemType(def.BaseType, "System", "MulticastDelegate");
+        var isInterface = isClrDelegate || (def.Attributes & TypeAttributes.Interface) != 0;
         var isEnum = IsSystemType(def.BaseType, "System", "Enum");
         var isFlagsEnum = isEnum && IsExactSystemFlagsEnum(handle, def);
         var richEnumCarrier = ReadRichEnumCarrier(handle);
@@ -2099,7 +2097,7 @@ internal sealed class AssemblyScanner : IDisposable
                 modality,
                 kind,
                 isValue: isKotlinValue,
-                isFun: _attrs.Has(handle, MetadataAttributes.DotKtNs + "KotlinFunInterfaceAttribute"),
+                isFun: isClrDelegate || _attrs.Has(handle, MetadataAttributes.DotKtNs + "KotlinFunInterfaceAttribute"),
                 hasEnumEntries: isEnum || isKotlinRichEnum,
                 isInner: isKotlinInner),
         };
@@ -2237,7 +2235,7 @@ internal sealed class AssemblyScanner : IDisposable
             // inheritance is invented.
             if (isClrExceptionRoot)
                 result.Supertype.Add(signatures.NamedType("kotlin.Throwable"));
-            else if (!def.BaseType.IsNil &&
+            else if (!isClrDelegate && !def.BaseType.IsNil &&
                 !IsSystemType(def.BaseType, "System", "Object") &&
                 !IsSystemType(def.BaseType, "System", "ValueType") &&
                 !IsSystemType(def.BaseType, "System", "Attribute"))
@@ -2274,6 +2272,10 @@ internal sealed class AssemblyScanner : IDisposable
         foreach (var methodHandle in def.GetMethods())
         {
             var method = _md.GetMethodDefinition(methodHandle);
+            var clrMethodName = _md.GetString(method.Name);
+            // A CLR delegate is one nominal callable type in Kotlin. Its runtime constructor and implementation
+            // methods are physical machinery; publish only the Invoke contract as the fun interface's operator.
+            if (isClrDelegate && clrMethodName != "Invoke") continue;
             if (validatedRichEnum?.SyntheticMethods.Contains(methodHandle) == true) continue;
             // Compiler implementation methods (local functions, state-machine helpers, bridges) are executable CLR
             // details, not Kotlin declarations. Their MethodDefs stay in the assembly but never re-enter the source
@@ -2284,7 +2286,7 @@ internal sealed class AssemblyScanner : IDisposable
                 continue;
             if (!IsPublicOrProtected(method.Attributes)) continue;
             var declarationIdentity = KotlinDeclarationIdentityCarrier(methodHandle);
-            var name = declarationIdentity?.Name ?? _md.GetString(method.Name);
+            var name = isClrDelegate ? "invoke" : declarationIdentity?.Name ?? clrMethodName;
             if (accessorMethods.Contains(methodHandle)) continue;
             var context = new GenericContext(handle, methodHandle, typeParameterIds);
             var sig = method.DecodeSignature(signatures, context);
@@ -2333,9 +2335,11 @@ internal sealed class AssemblyScanner : IDisposable
             }
             else if ((method.Attributes & MethodAttributes.SpecialName) == 0 && !name.StartsWith('<'))
             {
-                var modalityForMethod = (method.Attributes & MethodAttributes.Abstract) != 0 ? 2
+                var modalityForMethod = isClrDelegate ? 2
+                    : (method.Attributes & MethodAttributes.Abstract) != 0 ? 2
                     : (method.Attributes & MethodAttributes.Virtual) != 0 && (method.Attributes & MethodAttributes.Final) == 0 ? 1 : 0;
-                var kotlinFlags = _attrs.Int32(methodHandle, MetadataAttributes.DotKtNs + "KotlinFunctionAttribute") ?? 0;
+                var kotlinFlags = isClrDelegate ? 2
+                    : _attrs.Int32(methodHandle, MetadataAttributes.DotKtNs + "KotlinFunctionAttribute") ?? 0;
                 var suspendResult = (kotlinFlags & 4) != 0
                     ? _attrs.CarrierType(methodHandle,
                         MetadataAttributes.DotKtNs + "KotlinSuspendResultAttribute")
@@ -3347,8 +3351,7 @@ internal sealed class AssemblyScanner : IDisposable
             _companionCatalog,
             _innerCatalog,
             source.Seeds,
-            _externalSignatureDecoders,
-            definitionPath);
+            _externalSignatureDecoders);
     }
 
     public void Dispose() => _externalSignatureDecoders.Dispose();
@@ -7276,73 +7279,6 @@ internal sealed class ExternalSignatureDecoderCache : IDisposable
     }
 }
 
-// CLR delegate signatures may form recursive graphs, but Kotlin metadata has no recursive function-type constructor:
-// expanding one edge to `Any?` would make the public type depend on which delegate happened to be visited first.
-// Track the exact resolved definitions on the active expansion path and reject only the recursive graph. The catalog's
-// definition path + TypeDef row remains the same when a cross-assembly edge reopens an assembly, and unlike MVID it is
-// an identity assigned by this exact resolved-input universe rather than a producer-supplied uniqueness hint.
-internal sealed class DelegateDecodingContext
-{
-    private readonly List<Entry> _active = [];
-
-    internal IDisposable Enter(
-        string definitionPath,
-        MetadataReader reader,
-        ArityNames arityNames,
-        TypeDefinitionHandle handle)
-    {
-        var key = new Key(definitionPath, MetadataTokens.GetRowNumber(handle));
-        var cycleStart = _active.FindIndex(entry => entry.Key == key);
-        if (cycleStart >= 0)
-        {
-            var repeated = new Entry(key, reader, arityNames, handle);
-            var cycle = _active.Skip(cycleStart).Append(repeated).Select(DisplayName);
-            throw new InvalidDataException(
-                "recursive CLR delegate graph cannot be represented as a finite Kotlin function type: " +
-                string.Join(" -> ", cycle));
-        }
-
-        _active.Add(new Entry(key, reader, arityNames, handle));
-        return new ExitScope(this, key);
-    }
-
-    private static string DisplayName(Entry entry)
-    {
-        var reader = entry.Reader;
-        var assemblyName = reader.IsAssembly
-            ? reader.GetString(reader.GetAssemblyDefinition().Name)
-            : reader.GetString(reader.GetModuleDefinition().Name);
-        return assemblyName + "/" +
-            SignatureDecoderSeeds.DefinitionKotlinName(reader, entry.ArityNames, entry.Handle);
-    }
-
-    private void Exit(Key key)
-    {
-        if (_active.Count == 0 || _active[^1].Key != key)
-            throw new InvalidOperationException("delegate decoding path was unwound out of order");
-        _active.RemoveAt(_active.Count - 1);
-    }
-
-    private readonly record struct Key(string DefinitionPath, int TypeDefinitionRow);
-    private sealed record Entry(
-        Key Key,
-        MetadataReader Reader,
-        ArityNames ArityNames,
-        TypeDefinitionHandle Handle);
-
-    private sealed class ExitScope(DelegateDecodingContext owner, Key key) : IDisposable
-    {
-        private bool _disposed;
-
-        public void Dispose()
-        {
-            if (_disposed) return;
-            _disposed = true;
-            owner.Exit(key);
-        }
-    }
-}
-
 internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericContext>
 {
     private readonly MetadataReader _md;
@@ -7353,8 +7289,6 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
     private readonly CompanionReferenceCatalog _companionCatalog;
     private readonly InnerReferenceCatalog _innerCatalog;
     private readonly ExternalSignatureDecoderCache _externalSignatureDecoders;
-    private readonly string _definitionPath;
-    private readonly DelegateDecodingContext _delegateDecoding;
     private readonly IReadOnlyDictionary<TypeDefinitionHandle, int> _semanticTypeNames;
     private readonly bool _restoreKotlinCollections;
     private readonly IReadOnlyDictionary<string, TypeDefinitionHandle> _delegateDefinitions;
@@ -7387,9 +7321,7 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
         InnerReferenceCatalog innerCatalog,
         SignatureDecoderSeeds seeds,
         ExternalSignatureDecoderCache externalSignatureDecoders,
-        string definitionPath,
-        IReadOnlyDictionary<TypeDefinitionHandle, int>? semanticTypeNames = null,
-        DelegateDecodingContext? delegateDecoding = null)
+        IReadOnlyDictionary<TypeDefinitionHandle, int>? semanticTypeNames = null)
     {
         _md = md;
         _names = names;
@@ -7399,8 +7331,6 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
         _companionCatalog = companionCatalog;
         _innerCatalog = innerCatalog;
         _externalSignatureDecoders = externalSignatureDecoders;
-        _definitionPath = Path.GetFullPath(definitionPath);
-        _delegateDecoding = delegateDecoding ?? new DelegateDecodingContext();
         _delegateDefinitions = seeds.DelegateDefinitions;
         _seedValueTypeNames = seeds.ValueTypeNames;
         _semanticTypeNames = semanticTypeNames ?? new Dictionary<TypeDefinitionHandle, int>();
@@ -7603,7 +7533,8 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
         }
         if (_attrs.CarrierType(handle, MetadataAttributes.DotKtNs + "KotlinTypeAttribute") is { } carrier)
             return FromTypeNode(carrier);
-        if (_delegateDefinitions.ContainsKey(name) && !def.GetGenericParameters().Any())
+        if (_delegateDefinitions.ContainsKey(name) && IsCanonicalFunctionDelegate(name)
+            && !def.GetGenericParameters().Any())
             return DecodeDelegate(handle);
         var result = rawTypeKind == (byte)SignatureTypeKind.Class
             ? Platform(className)
@@ -7629,7 +7560,8 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
         var full = ReferenceKotlinName(reader, handle);
         var className = ReferenceKotlinClassName(reader, handle);
         var metadataFull = ReferenceMetadataName(reader, handle);
-        if (_delegateCatalog.TryResolve(reader, handle, out var externalDelegate))
+        if (_delegateCatalog.TryResolve(reader, handle, out var externalDelegate)
+            && IsCanonicalFunctionDelegate(externalDelegate.MetadataName))
         {
             if (!metadataName.Contains('`'))
                 return DecodeExternalDelegate(externalDelegate);
@@ -7653,9 +7585,9 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
             return Named("kotlin.Comparable");
         // A generic signature is decoded in two callbacks: first its open
         // TypeRef, then GetGenericInstantiation. Do not prematurely turn
-        // Action`N/EventHandler`1 into Function0 here or the later arguments
+        // Action`N into Function0 here or the later arguments
         // would merely be appended to the wrong Function0 constructor.
-        if (full is "System.Action" or "System.EventHandler" && !metadataName.Contains('`'))
+        if (full == "System.Action" && !metadataName.Contains('`'))
             return KnownDelegate(full, ImmutableArray<KType>.Empty);
         return full switch
         {
@@ -8073,7 +8005,8 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
         var className = DefinitionKotlinClassName(_md, handle);
         if (_semanticTypeNames.TryGetValue(handle, out var semanticName))
             return platform ? Platform(semanticName) : Named(semanticName);
-        if (_delegateDefinitions.ContainsKey(name) && !def.GetGenericParameters().Any())
+        if (_delegateDefinitions.ContainsKey(name) && IsCanonicalFunctionDelegate(name)
+            && !def.GetGenericParameters().Any())
             return DecodeDelegate(handle);
         return platform ? Platform(className) : Named(className);
     }
@@ -8150,11 +8083,22 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
         _ => null,
     };
 
-    private bool IsKnownDelegate(string name) =>
-        name.StartsWith("System.Func", StringComparison.Ordinal) ||
-        name.StartsWith("System.Action", StringComparison.Ordinal) ||
-        name.StartsWith("System.EventHandler", StringComparison.Ordinal) ||
-        _delegateDefinitions.ContainsKey(name);
+    private static bool IsCanonicalFunctionDelegate(string name) =>
+        name == "System.Action" ||
+        IsArityQualifiedFamily(name, "System.Action", 1, 16) ||
+        IsArityQualifiedFamily(name, "System.Func", 1, 17) ||
+        IsArityQualifiedFamily(name, "DotKt.Runtime.CompilerServices.KAction", 17, 22) ||
+        IsArityQualifiedFamily(name, "DotKt.Runtime.CompilerServices.KFunc", 18, 23);
+
+    private static bool IsArityQualifiedFamily(string name, string family, int minimum, int maximum)
+    {
+        if (!name.StartsWith(family, StringComparison.Ordinal)) return false;
+        var suffix = name.AsSpan(family.Length);
+        return int.TryParse(suffix, NumberStyles.None, CultureInfo.InvariantCulture, out var arity)
+            && arity >= minimum && arity <= maximum;
+    }
+
+    private bool IsKnownDelegate(string name) => IsCanonicalFunctionDelegate(name);
 
     private KType ConstructDelegate(string name, ImmutableArray<KType> typeArguments)
     {
@@ -8165,12 +8109,6 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
         }
         if (name.StartsWith("System.Action", StringComparison.Ordinal))
             return Function(typeArguments, Named("kotlin.Unit"));
-        if (name.StartsWith("System.EventHandler", StringComparison.Ordinal))
-        {
-            var args = new List<KType> { Platform("kotlin.Any") };
-            args.AddRange(typeArguments);
-            return Function(args, Named("kotlin.Unit"));
-        }
         if (!_delegateDefinitions.TryGetValue(name, out var handle)) return Any(nullable: true);
         return Substitute(DecodeDelegate(handle), typeArguments);
     }
@@ -8181,8 +8119,6 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
     private KType DecodeDelegate(TypeDefinitionHandle handle)
     {
         var def = _md.GetTypeDefinition(handle);
-        using var active = _delegateDecoding.Enter(
-            _definitionPath, _md, _arityNames, handle);
         var invokeHandle = def.GetMethods()
             .FirstOrDefault(h => _md.GetString(_md.GetMethodDefinition(h).Name) == "Invoke");
         if (invokeHandle.IsNil) return Any(nullable: true);
@@ -8214,9 +8150,7 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
             _companionCatalog,
             _innerCatalog,
             source.Seeds,
-            _externalSignatureDecoders,
-            entry.DefinitionPath,
-            delegateDecoding: _delegateDecoding);
+            _externalSignatureDecoders);
         var shape = decoder.DecodeDelegate(handle);
         _externalDelegateShapes[key] = shape;
         return shape.Clone();

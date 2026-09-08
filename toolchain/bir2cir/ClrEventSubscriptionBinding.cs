@@ -143,6 +143,12 @@ static class ClrEventSubscriptionBinding
             var unit = Fqn("kotlin.Unit");
             var publicRemoveFnType = Fn(handlerType, unit);
             var closureFqn = Fqn(closureName);
+            // ClrEvent<T>.subscribe accepts T, and Kotlin permits a function value to undergo SAM conversion at that
+            // call. Keep that conversion explicit in CIR: construct the event's one exact nominal delegate once, then
+            // store and reuse the same object for add and remove. Re-wrapping an Action at each accessor would preserve
+            // Delegate equality, but it would leave the EventSubscription<T> constructor and the spill itself with a
+            // function/delegate type mismatch.
+            var exactHandler = ExactHandler(handler, handlerType);
 
             var fields = new JsonArray();
             var captures = new JsonArray();
@@ -168,6 +174,7 @@ static class ClrEventSubscriptionBinding
                 ["static"] = isStatic,
                 ["recv"] = removeReceiver,
                 ["handler"] = Local("handler", closureHandlerType),
+                ["handlerExact"] = true,
                 // The add site still lives in the source generic frame and can resolve a type-parameter event owner
                 // from its constraint.  The remove callback is a synthesized generic class with remapped slots; this
                 // key lets the later module-wide local-event pass copy that exact declaration binding rather than
@@ -175,9 +182,6 @@ static class ClrEventSubscriptionBinding
                 ["eventSubscriptionKey"] = bindingKey,
                 ["eventBindingFree"] = new JsonArray(free.Select(item => item.Original.DeepClone()).ToArray()),
             };
-            // The synthesized remove method receives the same spilled source delegate as the add operation.  Keep
-            // that delegate's Invoke identity before its transient expression type is gone.
-            ClrMemberResolution.ResolveDelegateInvoke(remove, handlerType, _refs, _localTypes);
             var synthClass = new JsonObject
             {
                 ["name"] = closureName,
@@ -218,7 +222,7 @@ static class ClrEventSubscriptionBinding
             stmts.Add(new JsonObject
             {
                 ["k"] = "var", ["name"] = handlerLocal, ["type"] = handlerType.DeepClone(),
-                ["init"] = handler?.DeepClone(),
+                ["init"] = exactHandler,
             });
             var add = new JsonObject
             {
@@ -228,12 +232,9 @@ static class ClrEventSubscriptionBinding
                 ["static"] = isStatic,
                 ["recv"] = isStatic ? null : Local(receiverLocal, ownerType),
                 ["handler"] = Local(handlerLocal, handlerType),
+                ["handlerExact"] = true,
                 ["eventSubscriptionKey"] = bindingKey,
             };
-            // The subscription spill turns the handler into a plain local and its transient `sty`
-            // is consumed before final member stamping.  Preserve the already-known source delegate
-            // declaration now, so ilemit can re-wrap it without looking up Invoke by name.
-            ClrMemberResolution.ResolveDelegateInvoke(add, handlerType, _refs, _localTypes);
             stmts.Add(new JsonObject { ["k"] = "exprStmt", ["expr"] = add });
 
             var subscriptionType = new JsonObject
@@ -254,6 +255,65 @@ static class ClrEventSubscriptionBinding
                     ["args"] = new JsonArray { Local(handlerLocal, handlerType), removeClosure },
                 },
             };
+        }
+
+        JsonNode ExactHandler(JsonNode handler, JsonNode targetTypeNode)
+        {
+            var targetType = TypeJson.Read(targetTypeNode)
+                ?? throw new InvalidOperationException("bir2cir: ClrEvent.subscribe has no readable handler target type");
+            // A literal/callable-reference construction can use the ordinary declared-slot mechanism directly. In
+            // particular, ClosureSynthesis has already turned a CLR-SAM newSam into a newClosure and marked it; wrapping
+            // that construction again would bind the outer Action.Invoke pointer to the already-retargeted nominal
+            // delegate object.
+            if (handler?.DeepClone() is JsonObject construction
+                && ClrMemberResolution.MarkDelegateSlot(construction, targetType))
+                return construction;
+            var sourceType = handler is JsonObject expression
+                ? TypeJson.Read(expression["sty"]) ?? TypeJson.Read(expression["funcType"])
+                : null;
+            sourceType ??= targetType;
+            if (SamePhysicalDelegate(sourceType, targetType)) return handler?.DeepClone();
+            if (sourceType is not TypeNode.Fn sourceFunction)
+                throw new InvalidOperationException(
+                    $"bir2cir: ClrEvent.subscribe cannot convert handler {TypeNode.ToJson(sourceType)} " +
+                    $"to {TypeNode.ToJson(targetType)}");
+
+            var loweredSource = (TypeNode.Fn)BirTypeLowering.LowerFnDelegate(
+                sourceFunction, refBuild: false, force: false);
+            var sourceDelegate = BirTypeLowering.DelegateFqnOf(loweredSource)
+                ?? throw new InvalidOperationException(
+                    $"bir2cir: ClrEvent.subscribe handler {TypeNode.ToJson(sourceType)} has no CLR delegate representation");
+            var conversion = new JsonObject
+            {
+                ["k"] = "newBoundClrDelegate",
+                ["clrType"] = TypeJson.Write(sourceDelegate),
+                ["method"] = "Invoke",
+                ["argTypes"] = new JsonArray(loweredSource.DelegateParams.Select(TypeJson.Write).ToArray()),
+                ["virtual"] = true,
+                ["recv"] = handler?.DeepClone(),
+                // This is the source method-pointer shape. The ordinary delegate-slot materializer below changes the
+                // constructed delegate to targetType and authors the existing Unit adapter if the returns require it.
+                ["funcType"] = TypeJson.Write(sourceFunction),
+            };
+            ClrMemberResolution.MarkDelegateSlot(conversion, targetType);
+            return conversion;
+        }
+
+        static bool SamePhysicalDelegate(TypeNode left, TypeNode right)
+        {
+            static TypeNode Physical(TypeNode type)
+            {
+                while (type is TypeNode.Nullable nullable) type = nullable.Of;
+                while (type is TypeNode.Oblivious oblivious) type = oblivious.Of;
+                if (type is not TypeNode.Fn function) return type;
+                var lowered = (TypeNode.Fn)BirTypeLowering.LowerFnDelegate(function, refBuild: false, force: false);
+                return BirTypeLowering.DelegateFqnOf(lowered);
+            }
+
+            var leftPhysical = Physical(left);
+            var rightPhysical = Physical(right);
+            return leftPhysical != null && rightPhysical != null
+                && TypeNode.ToJson(leftPhysical) == TypeNode.ToJson(rightPhysical);
         }
 
         static JsonNode SourceTypeParameter(FreeTv item, JsonArray typeParams, JsonArray methodParams)

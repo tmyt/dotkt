@@ -1614,36 +1614,29 @@ c.CollectionChanged.subscribe { sender, e -> println("scoped") }.use {
   on it stays an error — you still cannot raise an event you did not declare. Full model:
   [`docs/design-clr-event-model.md`](design-clr-event-model.md).
 
-## 8e. A .NET delegate parameter surfaces as a Kotlin FUNCTION TYPE — even when its Invoke takes/returns `object`
+## 8e. A custom .NET delegate is a nominal Kotlin `fun interface`
 
-A .NET method/ctor parameter typed as a delegate is projected as a Kotlin **function type** (`(A) -> R`), so a lambda
-binds directly and — when it is a `virtual` — a Kotlin subclass can **override** it naturally. This holds **even when
-the delegate's `Invoke` has an `object`/`Any?` param or return** (#1): `SendOrPostCallback.Invoke(object)` surfaces as
-`(Any?) -> Unit`, so `class MyCtx : SynchronizationContext() { override fun Post(cb: (Any?) -> Unit, state: Any?) }`
-resolves. (Previously such a delegate collapsed to a bare `Any?`, and the override matched *nothing*.)
+A CLR delegate other than the canonical function families is projected as its own Kotlin **nominal callable SAM
+type**. For example, `SendOrPostCallback` exposes
+`operator fun invoke(state: Any?): Unit`, and a value is constructed with
+`SendOrPostCallback { state -> ... }`. A method signature continues to name `SendOrPostCallback`; it does not collapse
+to `(Any?) -> Unit`. Consequently a Kotlin subclass overrides the exact CLR slot:
+`override fun Post(d: SendOrPostCallback, state: Any?)`, and two delegates with identical `Invoke` shapes remain
+distinct overload types. A bare lambda can use normal SAM conversion when the expected delegate is unambiguous;
+explicit `DelegateType { ... }` construction selects an identity when several nominal SAM overloads apply.
 
-- **Overload on delegate-typed params — a bare lambda binds the preferred sibling (#19).** When a .NET type overloads
-  a member on two delegates that differ only at their function positions — by adjacent **arity**
-  (`Thread(ThreadStart)` = `() -> Unit` **and** `Thread(ParameterizedThreadStart)` = `(Any?) -> Unit`) or by a
-  Unit-vs-value **return** (`Task.Run(Action)` = `() -> Unit` **and** `Task.Run(Func<T>)` = `() -> T`) — a bare no-arrow
-  `{ … }` lambda would be an *overload resolution ambiguity* (its arity/return is unspecified, matching both). dll2klib
-  — the only layer that sees the whole overload group — marks the **Pareto-dominated** sibling (the wider-arity /
-  value-returning one) `lowPriority`, and kotc stamps `@kotlin.internal.LowPriorityInOverloadResolution` on the
-  synthesized declaration. So a bare `Thread({ … })` binds `ThreadStart` and `Task.Run({ … })` binds `Action` with **no
-  ambiguity**, while an explicit `Thread({ x -> … })` (or a method reference) still reaches the wider
-  `ParameterizedThreadStart` — it is then the sole applicable candidate. Preference order (lower = preferred): fewer
-  function params first (arity 0 before 1), then a Unit-returning delegate before a value-returning one; two
-  equally-preferred delegates tie and neither is deprioritized. Coverage:
-  `tests/interop/consumer/fixtures/ThreadingInteropTests.kt` and `DelegateOverloadTests.kt`.
+The rule is independent of the parameter and return shapes, including `object`/`Any?`, generic constraints, and
+delegate types nested recursively inside their own signatures. Recursion stays finite because every edge names the
+nominal interface. `bir2cir` resolves that semantic SAM to the exact CLR delegate constructor and `Invoke` MethodDef;
+`ilemit` emits the already-resolved CIR one-to-one.
+
+`System.Action`/`System.Func` remain structural Kotlin function types because they are Kotlin `FunctionN`'s canonical
+CLR representation. The stdlib `KAction`/`KFunc` families do the same for arities 17..22. Overload-priority metadata
+for ambiguous bare function literals therefore applies only to overloads whose delegate slots are canonical function
+families (for example `Task.Run(Action)` versus `Task.Run(Func<T>)`). Nominal overloads such as
+`Thread(ThreadStart)` versus `Thread(ParameterizedThreadStart)` are selected explicitly with their SAM constructor.
 
 ## 8e-bis. A function type is a delegate: `System.Func`/`Action` to arity 16, the stdlib canonical `KFunc`/`KAction` for 17..22 (#220); above that there is none
-
-A recursive CLR delegate graph has no finite Kotlin function-type spelling.
-`dll2klib` rejects self-recursive and mutually recursive delegate `Invoke`
-signatures with a bounded cycle diagnostic rather than overflowing its worker
-or publishing a traversal-order-dependent truncation. This includes generic
-and cross-assembly cycles; ordinary acyclic CLR delegates retain the structural
-function-type projection described above.
 
 Every non-suspend Kotlin function type is one CLR delegate type, chosen by ARITY. An extension or context receiver
 occupies a delegate slot, so it counts toward that arity; a `suspend` function type is not a delegate at all (§4).
@@ -1668,11 +1661,12 @@ sibling** — `KFunc<in T1, …, out TResult>` / `KAction<in T1, …>` — becau
 in its parameters and covariant in its result, so `(Any, …) -> String` is assignable to a `(String, …) -> Any` slot
 at every arity. All twelve carry `[CompilerGenerated]`. bir2cir authors those physical declarations in CIR for
 both stdlib builds; ilemit does not synthesize the family out of band. `dll2klib` restores a referencing signature
-by resolving the TypeRef against the stdlib TypeDef and decoding the delegate's actual `Invoke` signature, through
-the same assembly-identity-aware catalog used for arbitrary external delegates. The stdlib still produces no
-projected KLIB of its own; keeping it in the reference catalog is distinct from projecting its Kotlin surface.
+by resolving the TypeRef against the stdlib TypeDef and decoding the delegate's actual `Invoke` signature. The stdlib
+still produces no projected KLIB of its own; keeping it in the reference catalog is distinct from projecting its
+Kotlin surface.
 The family deliberately needs no `[KotlinFunction]` marker: that attribute describes Kotlin declarations, whereas
-delegate restoration is the general structural TypeDef/`Invoke` rule and works identically for any CLR delegate.
+delegate restoration is the canonical function-family rule; arbitrary CLR delegates retain their nominal identity
+under §8e instead.
 
 An assembly that names a 17..22 function type therefore needs the stdlib in its compile reference set, which every
 ordinary build has.

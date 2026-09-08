@@ -192,7 +192,7 @@ and a plain `ClrEvent.subscribe` call; bir2cir's `ClrEventSubscriptionBinding` e
 once, emits `clrEventAdd`,
 then constructs the stdlib `EventSubscription<T>` with a synthesized remove callback that captures the receiver.
 ilemit's `EmitClrEvent` links the ref.dll accessor and emits
-the delegate-wrap + `callvirt add_E`. For a #186 use site, kotc produces `clrEventGet` whenever the
+the already-materialized exact delegate + `callvirt add_E`. For a #186 use site, kotc produces `clrEventGet` whenever the
 accessed member is a `ClrEvent<T>` property, **regardless of whether the receiver is a .NET type or a
 Kotlin type that implements a .NET-event interface**. bir2cir resolves a delegating Kotlin receiver
 through the module-wide forwarder relation from §4.4, then binds the accessor to the delegated CLR

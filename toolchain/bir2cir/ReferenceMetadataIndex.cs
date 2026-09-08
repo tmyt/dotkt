@@ -1603,6 +1603,18 @@ sealed partial class ReferenceMetadataIndex
         return ProbeNetType(fqn, genericArity);
     }
 
+    // A dll2klib-projected CLR delegate is a nominal Kotlin fun interface, but its physical referenced TypeDef is a
+    // System.MulticastDelegate subclass. Consumers that realize SAM construction/invocation ask that exact metadata
+    // question here; no function-shape or source-name inference participates.
+    public bool IsClrDelegate(TypeNode.Fqn type)
+    {
+        if (type == null) return false;
+        var reflected = ResolveRefType(type.Name, type.Args?.Length ?? 0);
+        if (reflected == null) return false;
+        try { return IsDelegate(reflected); }
+        catch { return false; }
+    }
+
     // A referenced Literal FieldDef has no storage to load. Select its exact Constant-table value and Kotlin surface
     // type here so ConstFieldLowering can author a `const` CIR node; ilemit must not rediscover this representation.
     public bool TryResolveLiteralField(TypeNode.Fqn owner, string name, out TypeNode type, out JsonNode value)
