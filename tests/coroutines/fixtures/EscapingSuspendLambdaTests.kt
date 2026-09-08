@@ -25,8 +25,8 @@ class EscapingSuspendCarrierOuterCaptureCollision(private val base: Int) {
     }
 }
 
-fun escapingSuspendCarrierMachineryNames(label: Int, completion: Int): Int =
-    escapingSuspendCarrierWrap(0) { escapingSuspendCarrierAdd(label, completion) }
+fun escapingSuspendCarrierMachineryNames(label: Int, completion: Int, result: Int): Int =
+    escapingSuspendCarrierWrap(0) { escapingSuspendCarrierAdd(label + completion, result) }
 
 class EscapingSuspendCarrierMemberExtension(private val base: Int) {
     private fun String.runCarrier(): Int = escapingSuspendCarrierWrap(5) { value ->
@@ -44,7 +44,7 @@ class EscapingSuspendLambdaTests {
         assertEquals(7, escapingSuspendCarrierWrap(0) { escapingSuspendCarrierAdd(it, 7) })             // 7
         assertEquals(42, EscapingSuspendCarrierOuterParameterCollision(37).run())
         assertEquals(42, EscapingSuspendCarrierOuterCaptureCollision(10).run(27))
-        assertEquals(42, escapingSuspendCarrierMachineryNames(20, 22))
+        assertEquals(42, escapingSuspendCarrierMachineryNames(10, 12, 20))
         assertEquals(42, EscapingSuspendCarrierMemberExtension(30).run())
     }
 }

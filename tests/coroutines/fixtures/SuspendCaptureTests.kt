@@ -82,6 +82,13 @@ suspend fun suspendStorageMachineryParameterNames(label: String, completion: Str
 
 suspend fun suspendStorageDirectCompletionName(completion: String): String = completion
 
+class SuspendStorageMember {
+    suspend fun combine(label: String, completion: String, result: String): String {
+        suspendContextAsyncResume()
+        return label + completion + result
+    }
+}
+
 suspend fun suspendStorageGeneratedLocalNames(
     __sm: String,
     __tcs: String,
@@ -150,6 +157,7 @@ class SuspendCaptureTests {
     fun suspendStorageNamesRemainDisjoint() {
         assertEquals("LCR", blockOn { suspendStorageMachineryParameterNames("L", "C", "R") })
         assertEquals("direct", blockOn { suspendStorageDirectCompletionName("direct") })
+        assertEquals("LCR", blockOn { SuspendStorageMember().combine("L", "C", "R") })
         assertEquals("SMTCSROOTRESULTEX", invokeSuspendStorageGeneratedLocalNamesTask().Result)
 
         val lambda: suspend (String, String, String) -> String = { label, completion, result ->
