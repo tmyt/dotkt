@@ -1404,12 +1404,9 @@ static class InlineSplice
         var innerScope = new HashSet<string>(StringComparer.Ordinal);
         foreach (var p in lamParams.OfType<JsonObject>()) if (Str(p["name"]) is string pn) innerScope.Add(pn);
         CollectDeclaredLocals(invBody, innerScope);
-        // These names are owned by SuspendColdLowering's generated SM surface. Captures may be named this way in an
-        // inline callee, but must be alpha-converted before becoming fields/ctor parameters in the new SM frame.
-        var captureStorageNames = new HashSet<string>(innerScope, StringComparer.Ordinal)
-        {
-            "label", "completion", "result",
-        };
+        // Capture storage shares the new SM field namespace with its own parameters and locals. SuspendColdLowering's
+        // physical machinery uses the compiler-only `dotkt$sm$…` namespace and therefore needs no source-name copy here.
+        var captureStorageNames = new HashSet<string>(innerScope, StringComparer.Ordinal);
         string FreshCaptureStorageName(string stem)
         {
             var candidate = stem;

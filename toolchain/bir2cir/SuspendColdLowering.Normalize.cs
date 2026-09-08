@@ -643,12 +643,12 @@ static partial class SuspendColdLowering
         // ---- #82 post-Build tripwire ----------------------------------------------------------------------
 
         // Every `{k:local}`/`{k:setLocal}` in the emitted invokeSuspend must resolve to a declaration the emitter can
-        // bind: the `result` param, an SM `{k:var}`, or a catch/structured-loop var. An SM FIELD is `{k:field}` post-
+        // bind: the resume-result param, an SM `{k:var}`, or a catch/structured-loop var. An SM FIELD is `{k:field}` post-
         // Rewrite, so a residual bare `{k:local}` naming a field (or naming nothing) is exactly the #82 unspilled-local
         // bug — it would reach ilemit as `load unknown var`. Fail loud here naming the SM/fun/local instead.
         void AssertLocalsResolved(JsonArray invoke)
         {
-            var declared = new HashSet<string>(System.StringComparer.Ordinal) { "result" };
+            var declared = new HashSet<string>(System.StringComparer.Ordinal) { ResumeResultParameter };
             var used = new List<string>();
             void Collect(JsonNode n)
             {
@@ -674,7 +674,7 @@ static partial class SuspendColdLowering
                 if (!declared.Contains(u))
                     throw new System.InvalidOperationException(
                         $"bir2cir suspend-lowering: SM '{_smType}' invokeSuspend for '{(_ownerClass ?? _fileClass)}.{_name}' "
-                        + $"references unspilled local '{u}' (neither the `result` param, an SM `var`, nor a catch/loop var). "
+                        + $"references unspilled local '{u}' (neither the resume-result param, an SM `var`, nor a catch/loop var). "
                         + "A splice-generated local crossing a resume point was not spilled into an SM field — it would reach "
                         + "ilemit as `load unknown var`.");
         }
