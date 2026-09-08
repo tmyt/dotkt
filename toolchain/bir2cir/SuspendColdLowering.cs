@@ -853,7 +853,8 @@ static partial class SuspendColdLowering
     // SuspendLambdaLowering). Handles arbitrary arity N: arities 0/1 override the fixed create() slots, arity
     // >= 2 overrides the general create(args, completion) slot (CreateMethods unpacks the boxed args).
     public static JsonObject BuildLambdaSm(string smName, int arity,
-        List<(string name, TypeNode type)> captures, List<JsonObject> lambdaParams, JsonArray body,
+        List<(string name, TypeNode type)> captures, string capturedOuterName,
+        List<JsonObject> lambdaParams, JsonArray body,
         TypeNode resultType, List<string> typeParams, JsonArray typeParamDecls, int ownerTypeParamCount,
         bool baseIsLocal,
         IReadOnlyDictionary<string, TypeNode> calleeRet = null, bool restricted = false,
@@ -863,7 +864,8 @@ static partial class SuspendColdLowering
         // #10: an `.await()` inside a suspend LAMBDA lowers through this path — keep the awaitable-pattern resolver set
         // (SuspendLambdaLowering runs after ApplyAll, but pass it explicitly rather than rely on the prior static write).
         if (refs != null) _refs = refs;
-        var gen = new FunGen(smName, arity, captures ?? new List<(string, TypeNode)>(), lambdaParams, body,
+        var gen = new FunGen(smName, arity, captures ?? new List<(string, TypeNode)>(), capturedOuterName,
+            lambdaParams, body,
             resultType, typeParams, typeParamDecls, ownerTypeParamCount,
             calleeRet as Dictionary<string, TypeNode> ??
                 (calleeRet != null ? new Dictionary<string, TypeNode>(calleeRet, StringComparer.Ordinal)
@@ -1183,6 +1185,7 @@ static partial class SuspendColdLowering
         readonly bool _restrictedBase;           // lambda mode: receiver is @RestrictsSuspension -> RestrictedSuspendLambda base
         readonly int _arity;                     // the lambda's own param count (v1: 0 or 1)
         readonly List<(string name, TypeNode type)> _captures;   // captured vars -> ctor params + fields
+        readonly string _capturedOuterName;       // exact field selected by the producer's outer:true descriptor
         readonly JsonArray _lambdaBody;          // the lambda's structured body (no `_m` in lambda mode)
         readonly string _smType;                 // bare SM type name
         readonly TypeNode _smTypeInst;           // instantiated (`f$sm<T>`) or bare when non-generic
@@ -1243,6 +1246,7 @@ static partial class SuspendColdLowering
             bool ownerIsInterface = false, bool staticMember = false)
         {
             _m = m; _name = name; _fileClass = fileClass; _ownerClass = ownerClass;
+            _capturedOuterName = null;
             _declarationId = Str(m[DeclarationIdentityBinding.Key]);
             _declarationSourceName = Str(m["declarationSourceName"]);
             _explicitClrName = Str(m[DeclarationIdentityBinding.ExplicitNameKey]);
@@ -1386,6 +1390,7 @@ static partial class SuspendColdLowering
         // Lambda-mode ctor (Part B). Builds a `<smName> : SuspendLambda` SM from a newSuspendLambda node's
         // parts. Captures become ctor params + fields; the lambda's own params become fields set by create().
         public FunGen(string smName, int arity, List<(string name, TypeNode type)> captures,
+            string capturedOuterName,
             List<JsonObject> lambdaParams, JsonArray body, TypeNode resultType, List<string> typeParams,
             JsonArray typeParamDecls, int ownerTypeParamCount, Dictionary<string, TypeNode> calleeRet,
             bool baseIsLocal, bool restricted = false)
@@ -1407,6 +1412,7 @@ static partial class SuspendColdLowering
             _m = null;
             _arity = arity;
             _captures = captures;
+            _capturedOuterName = capturedOuterName;
             _lambdaBody = body;
             _name = smName;
             _fileClass = null;
@@ -3072,16 +3078,22 @@ static partial class SuspendColdLowering
         TypeNode RequiredSlotType(string name) => FieldType(name) ?? throw new NotSupportedException(
             $"bir2cir: suspend-lowering: local slot `{name}` in `{DiagOwner}` carries no static type.");
 
-        // #34a — a suspend LAMBDA that closes over its enclosing INSTANCE captures it as the `__outer`
-        // field (SuspendLambdaLowering seeds the ctor arg from the enclosing `this`/`__self`). kotc emits references
+        // #34a — a suspend LAMBDA that closes over its enclosing INSTANCE carries one explicit outer:true capture
+        // field (SuspendLambdaLowering seeds the ctor arg from the enclosing `this`/extension slot). kotc emits references
         // to that instance's members as a bare `this.member` (recv `{k:"this"}`) inside the lambda body, but inside the
-        // SM `this` is the SM itself — so the body `this` must read the captured `__outer` field (`this.__outer`).
+        // SM `this` is the SM itself — so the body `this` must read the explicitly selected capture field.
         // An extension receiver is never inferred from this token: kotc/InlineSplice name its create()-set parameter
         // explicitly as a local, and the ordinary local-to-field rewrite handles it. Only synthesized SM-self nodes
-        // use the `smSelf` marker, so they are unaffected. Absent an `__outer` capture there is nothing to redirect.
-        JsonNode CapturedOuterField() =>
-            (_isLambda && _fields.Contains("__outer"))
-                ? FieldOf("__outer", RequiredFieldType("__outer")) : null;
+        // use the `smSelf` marker, so they are unaffected. Absent an outer:true capture there is nothing to redirect.
+        JsonNode CapturedOuterField()
+        {
+            if (!_isLambda) return null;
+            if (_capturedOuterName != null && _fields.Contains(_capturedOuterName))
+                return FieldOf(_capturedOuterName, RequiredFieldType(_capturedOuterName));
+            throw new NotSupportedException(
+                $"bir2cir: suspend-lowering: lambda `{DiagOwner}` reads its enclosing receiver but carries no "
+                + "outer:true capture descriptor");
+        }
 
         // GAP 2 — copy a `newSuspendLambda` verbatim (its body is the lambda's own scope, left for
         // SuspendLambdaLowering) and attach `capValues`: each capture's construction value resolved into THIS cold
@@ -3108,7 +3120,9 @@ static partial class SuspendColdLowering
                     if (overrides != null && i < overrides.Count && overrides[i] is JsonNode ov)
                         capValues.Add(RewriteNoSpill(ov.DeepClone()));
                     else
-                        capValues.Add(CaptureValueInSm(Str(c["name"]), Str(c["type"])));
+                        capValues.Add(CaptureValueInSm(
+                            Str(c["name"]),
+                            Bool(c["outer"])));
                     i++;
                 }
             }
@@ -3117,16 +3131,17 @@ static partial class SuspendColdLowering
         }
 
         // The value of a captured name AS SEEN from inside this cold SM's invokeSuspend: the enclosing instance
-        // (`__outer`) is the member SM's `$this` field (or a spilled `__self`/`__outer` for an extension/lambda SM);
+        // (outer:true) is the member SM's `$this` field (or the explicitly selected outer field for a lambda SM);
         // a captured plain local that was spilled is the matching SM field; anything else is a still-live local.
-        JsonNode CaptureValueInSm(string name, string type)
+        JsonNode CaptureValueInSm(string name, bool outer)
         {
-            if (name == "__outer")
+            if (outer)
             {
                 if (_isMember) return FieldOf(ThisField, _selfType);
                 if (_extensionReceiverName != null && _fields.Contains(_extensionReceiverName))
                     return FieldOf(_extensionReceiverName, RequiredFieldType(_extensionReceiverName));
-                if (_isLambda && _fields.Contains("__outer")) return FieldOf("__outer", RequiredFieldType("__outer"));
+                if (_isLambda && _capturedOuterName != null && _fields.Contains(_capturedOuterName))
+                    return FieldOf(_capturedOuterName, RequiredFieldType(_capturedOuterName));
                 return new JsonObject { ["k"] = "this" };
             }
             if (_fields.Contains(name)) return FieldOf(name, RequiredFieldType(name));

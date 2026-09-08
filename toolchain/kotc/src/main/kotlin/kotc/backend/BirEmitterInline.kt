@@ -488,7 +488,7 @@ internal fun BirEmitter.emitInlineLambdaCarrier(lambda: IrFunctionExpression): S
 				val name = selfRef.substringAfter(""""name":"""").substringBefore('"')
 				CarrierCapture(d, name)
 			}
-			d.name.asString() == "<this>" && captureSubst[d] == null ->
+			(d as? IrValueParameter)?.kind == IrParameterKind.DispatchReceiver && captureSubst[d] == null ->
 				CarrierCapture(d, "__outer", outer = true)
 			captureSubst[d] == null && selfRef == null && valSubst[d.name.asString()] == null ->
 				CarrierCapture(d, localSlotName(d))

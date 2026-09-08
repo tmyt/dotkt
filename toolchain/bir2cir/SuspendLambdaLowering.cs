@@ -11,7 +11,7 @@
 // The `newSuspendLambda` contract (v1; the spec kotc step 2 emits to):
 //   { "k":"newSuspendLambda",
 //     "arity": N,                                // the lambda's OWN param count (0/1 = fixed create() slots; >=2 = array create)
-//     "captures":[{"name","type"}],              // captured vars -> SM ctor params + fields
+//     "captures":[{"name","type","outer"?}],     // captured vars -> SM ctor params + fields; outer:true identifies enclosing this
 //     "params":  [{"name","type"}],              // the lambda's own params (create() sets them on the fresh SM)
 //     "suspendRet":"kotlin.X",                   // the lambda's result type ("void"/"kotlin.Unit" -> Unit)
 //     "typeParams":[<tp-name>,...],              // enclosing generic type-param NAME decls (open SM instantiation)
@@ -31,6 +31,8 @@ using DotKt.Bir;
 
 static class SuspendLambdaLowering
 {
+    readonly record struct CaptureSlot(string Name, TypeNode Type, bool Outer);
+
     static readonly TypeNode ContAnyTn = new TypeNode.Fqn("kotlin.coroutines.Continuation", new TypeNode[] { new TypeNode.Fqn("kotlin.Any") });
     static JsonNode ContAny() => TypeJson.Write(ContAnyTn);
     const string SuspendLambdaFqn = "kotlin.coroutines.clr.internal.SuspendLambda";
@@ -190,7 +192,14 @@ static class SuspendLambdaLowering
 
         var ownerTypeParamCount = NormalizeOwnerCapturePrefix(node, owner);
         var arity = IntOf(node["arity"]);
-        var captures = ReadNameTypes(node["captures"]);
+        var captureSlots = ReadCaptureSlots(node["captures"]);
+        var outerSlots = captureSlots.Where(capture => capture.Outer).ToList();
+        if (outerSlots.Count > 1)
+            throw new NotSupportedException(
+                $"bir2cir: suspend-lambda lowering: `{ctx}` carries {outerSlots.Count} enclosing-receiver captures; "
+                + "the producer must identify at most one outer:true capture");
+        var captures = captureSlots.Select(capture => (capture.Name, capture.Type)).ToList();
+        var outerCaptureName = outerSlots.Count == 1 ? outerSlots[0].Name : null;
         var lambdaParams = (node["params"] as JsonArray)?.OfType<JsonObject>().ToList() ?? new List<JsonObject>();
         var resultType = TypeJson.Read(node["suspendRet"]);
         var funcType = TypeJson.Read(node["funcType"]) as TypeNode.Fn;
@@ -207,7 +216,7 @@ static class SuspendLambdaLowering
         var effBaseIsLocal = restricted ? _restrictedBaseIsLocal : baseIsLocal;
 
         var sm = SuspendColdLowering.BuildLambdaSm(
-            smName, arity, captures, lambdaParams, body, resultType, typeArgs, typeParamDecls,
+            smName, arity, captures, outerCaptureName, lambdaParams, body, resultType, typeArgs, typeParamDecls,
             ownerTypeParamCount, effBaseIsLocal,
             _calleeRet, restricted, _refs);
         node.Remove("typeParamDecls");
@@ -246,19 +255,23 @@ static class SuspendLambdaLowering
         // `capValues` (a spilled local -> an SM field, `__outer` -> the member SM's `$this`). Use those verbatim; a
         // naive `this`/`local` here would denote the SM, not the captured enclosing instance/local.
         var capValues = node["capValues"] as JsonArray;
+        if (node["capValues"] != null && (capValues == null || capValues.Count != captureSlots.Count))
+            throw new NotSupportedException(
+                $"bir2cir: suspend-lambda lowering: `{smName}` carries a capValues vector that does not align "
+                + $"with its {captureSlots.Count} capture descriptor(s)");
         var args = new JsonArray();
         var argTypes = new JsonArray();
-        for (var ci = 0; ci < captures.Count; ci++)
+        for (var ci = 0; ci < captureSlots.Count; ci++)
         {
-            var (n, t) = captures[ci];
-            if (capValues != null && ci < capValues.Count && capValues[ci] != null)
+            var (n, t, outer) = captureSlots[ci];
+            if (capValues != null && capValues[ci] != null)
                 args.Add(capValues[ci].DeepClone());
             else
-                // `__outer` is kotc's name for a captured enclosing `<this>`/extension-receiver (BirEmitter.kt:2929).
-                // Its VALUE at an ORDINARY (non-SM) construction site is the enclosing method's receiver: an instance
-                // method reads `this`; a STATIC extension fun reads the exact physical receiver slot carried by
-                // `outerSelf`. Every other capture is a real local.
-                args.Add(n == "__outer"
+                // The explicit outer:true capture's VALUE at an ordinary (non-SM) construction site is the enclosing
+                // method's receiver: an instance method reads `this`; a static extension reads the exact physical
+                // receiver slot carried by outerSelf. Every other capture is a real local. Descriptor spelling has no
+                // semantic role here.
+                args.Add(outer
                     ? (outerSelf != null ? new JsonObject { ["k"] = "local", ["name"] = outerSelf }
                                  : new JsonObject { ["k"] = "this" })
                     : new JsonObject { ["k"] = "local", ["name"] = n });
@@ -426,13 +439,17 @@ static class SuspendLambdaLowering
 
     static int IntOf(JsonNode n) => n is JsonValue v && v.TryGetValue<int>(out var i) ? i : 0;
 
-    static List<(string name, TypeNode type)> ReadNameTypes(JsonNode arr)
+    static List<CaptureSlot> ReadCaptureSlots(JsonNode arr)
     {
-        var list = new List<(string, TypeNode)>();
+        var list = new List<CaptureSlot>();
         if (arr is JsonArray a)
             foreach (var it in a)
                 if (it is JsonObject o && Str(o["name"]) is string n)
-                    list.Add((n, RequireCaptureType(o, n)));
+                {
+                    var outer = o["outer"] is JsonValue marker
+                        && marker.TryGetValue<bool>(out var value) && value;
+                    list.Add(new CaptureSlot(n, RequireCaptureType(o, n), outer));
+                }
         return list;
     }
 

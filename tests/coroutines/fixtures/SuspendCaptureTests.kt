@@ -51,6 +51,12 @@ class SuspendCaptureBox(val n: Int) {
     fun outer(): suspend () -> Int = { suspendCaptureAdd(n, blockOn { suspendCaptureAdd(n, 0) }) } // NESTED capturing suspend lambda
 }
 
+class SuspendCaptureOuterParameterCollision(val base: Int) {
+    // `__outer` is an ordinary Kotlin parameter name. Its String-typed create() slot must remain distinct from the
+    // enclosing-instance capture field even though the compiler historically used that spelling for the latter.
+    fun make(): suspend (String) -> Int = { __outer -> suspendCaptureAdd(base, __outer.length) }
+}
+
 object SuspendCaptureHolder {
     val base: Int = 100
     fun runObj(): Int = blockOn { suspendCaptureAdd(base, 5) }                          // object-receiver capture
@@ -99,6 +105,8 @@ class SuspendCaptureTests {
         assertEquals(40, blockOn(SuspendCaptureBox(20).outer()))     // 40
         assertEquals(105, SuspendCaptureHolder.runObj())             // 105
         assertEquals(42, blockOn(suspendCaptureMake(37)))              // 42
+        val colliding = SuspendCaptureOuterParameterCollision(37).make()
+        assertEquals(42, blockOn { colliding("12345") })
         assertEquals("1:42:inner", blockOn { suspendCaptureShadowedFrameSlots() })
     }
 

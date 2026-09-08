@@ -220,20 +220,21 @@ private fun BirEmitter.suspendLambda(node: IrFunctionExpression): String? {
 	// (not the plain SuspendLambda), so the cold-core builder runs. No exclusion here — kotc emits the pure suspend
 	// facts and bir2cir picks the restricted base from the receiver scope's @RestrictsSuspension annotation.
 	val captures = capturedVars(fn, includeThis = true)
-	// The enclosing receiver keeps the established `__outer` descriptor because the SM body represents its reads as
-	// `{k:this}`. Every ordinary capture is compiler-prefixed and collision-free: capture fields share a namespace with
-	// the SM's generated `label` field and lambda-parameter fields, and Kotlin source names are not identities.
-	val outerCapture = captures.firstOrNull { it.name.asString() == "<this>" }
+	// Every capture, including the enclosing receiver, gets a compiler-prefixed descriptor. `$` is not legal in a
+	// Kotlin source identifier, so these names are disjoint from source-declared lambda params/locals. The allocator is
+	// still seeded with the complete parameter frame because generated IR names are compiler input too. Body locals use
+	// file-unique `dotkt$localN` slots. The receiver ROLE is an explicit `outer:true` fact; downstream must not infer it
+	// from `__outer`.
+	val outerCapture = captures.firstOrNull {
+		(it as? IrValueParameter)?.kind == IrParameterKind.DispatchReceiver
+	}
 	val capturePairsByIdentity = java.util.IdentityHashMap<IrValueDeclaration, String>()
-	if (outerCapture != null) capturePairsByIdentity[outerCapture] = "__outer"
-	uniqueCaptureNames(
-		captures.filter { it !== outerCapture },
-		mutableSetOf("__outer"),
-		alwaysPrefix = true,
-	).forEach { (d, name) -> capturePairsByIdentity[d] = name }
+	uniqueCaptureNames(captures, ownParams.mapTo(HashSet()) { it.name.asString() }, alwaysPrefix = true)
+		.forEach { (d, name) -> capturePairsByIdentity[d] = name }
 	val capturePairs = captures.map { it to capturePairsByIdentity.getValue(it) }
 	val capturesJson = capturePairs.joinToString(",") { (d, name) ->
-		"""{"name":${str(name)},"type":${str(captureFieldType(d))}}"""
+		val outer = if (d === outerCapture) ",\"outer\":true" else ""
+		"""{"name":${str(name)},"type":${str(captureFieldType(d))}$outer}"""
 	}
 	// Per-slot capture VALUES (`capValues`) + the descriptor-name body shadow — "one frame, one name; one value
 	// channel". For each captured decl the generated DESCRIPTOR name D is the ONLY name the SM body may use;
@@ -266,10 +267,10 @@ private fun BirEmitter.suspendLambda(node: IrFunctionExpression): String? {
 	// `captureSubst` by declaration identity, so the body names the capture EXACTLY as the descriptor declares it (the
 	// name bir2cir's spill rewrite keys on). This deliberately does NOT touch name-keyed `valSubst`: a same-spelled
 	// declaration is not the captured declaration. Saved + restored around the emission, mirroring samConversion.
-	// `__outer` is the one descriptor with an established body spelling: ordinary `{k:this}`. In the lambda's OWN
-	// frame bir2cir rewrites that spelling to its `__outer` capture field. A member extension can capture a SECOND
-	// `<this>` declaration; its descriptor is independently named (for example `cap$__outer`) and must stay an exact
-	// local spelling so the spill rewrite selects that field rather than collapsing both receivers to `__outer` (#563).
+	// The explicit outer descriptor is represented in the body by ordinary `{k:this}`. In the lambda's OWN frame
+	// bir2cir rewrites that spelling to the field named by `outer:true`. A member extension can capture a SECOND
+	// `<this>` declaration; its ordinary descriptor stays an exact local spelling so the spill rewrite selects that
+	// field rather than collapsing both receivers (#563).
 	// Force these spellings after capValues was computed so an enclosing carrier/closure substitution remains solely a
 	// CONSTRUCTION value and cannot leak a caller-frame token/local into the lambda body.
 	val shadowCap = java.util.IdentityHashMap<IrValueDeclaration, String?>()
@@ -277,7 +278,7 @@ private fun BirEmitter.suspendLambda(node: IrFunctionExpression): String? {
 	for ((d, name) in capturePairs) {
 		shadowCap[d] = captureSubst[d]
 		shadowCapLocalName[d] = captureLocalName[d]
-		val isOuterReceiver = name == "__outer"
+		val isOuterReceiver = d === outerCapture
 		captureSubst[d] = if (isOuterReceiver)
 			// The body spelling is owner-relative, but its exact static type is already known here. Carry that frontend
 			// fact on the value node so a later inline splice can move it into an array operation without asking
@@ -1060,7 +1061,8 @@ internal fun BirEmitter.suspendFunctionRef(node: IrFunctionReference, fn: IrSimp
 	val captures: String; val capValues: String?; val bodyCall: String
 	when {
 		local != null -> {
-			val capPairs = uniqueCaptureNames(local.captures)
+			val capPairs = uniqueCaptureNames(
+				local.captures, paramNames.toMutableSet(), alwaysPrefix = true)
 			captures = capPairs.joinToString(",") { (declaration, fieldName) ->
 				"""{"name":${str(fieldName)},"type":${captureFieldType(declaration).toJson()}}"""
 			}
@@ -1856,9 +1858,10 @@ internal fun BirEmitter.captureFieldName(d: IrValueDeclaration): String =
  * shadow a like-named capture parameter from that point on. A lifted CLASS has no such problem: its captures are
  * FIELDS, read through `this`, and the names they must avoid are exactly its own fields and constructor parameters.
  *
- * `__outer` is the preferred spelling for an enclosing `this`, but it is not a reserved user identifier. It therefore
- * goes through the same collision-free allocation as every other capture. Downstream consumers must use the emitted
- * field/parameter identity carried by the BIR use sites, never infer capture semantics from that preferred spelling.
+ * Generated prefixes are a readable disjoint namespace for source identifiers, but callers must still seed [taken]
+ * with every other name in the target frame because generated IR can introduce compiler-owned names. Downstream
+ * consumers use the emitted field/parameter identity carried by the BIR use sites and never infer capture semantics
+ * from a preferred spelling.
  */
 internal fun BirEmitter.uniqueCaptureNames(
 	captured: List<IrValueDeclaration>,
