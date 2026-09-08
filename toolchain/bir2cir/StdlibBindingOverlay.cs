@@ -14,9 +14,9 @@ static class StdlibBindingOverlay
     const int CodecVersion = 1;
     const string SequenceElementAdapter = "kotlin.clr.ClrSequenceElementAdapter";
 
-    public static void Apply(IEnumerable<JsonNode> roots, string path)
+    public static IReadOnlyDictionary<string, int[]> Apply(IEnumerable<JsonNode> roots, string path)
     {
-        if (path == null) return;
+        if (path == null) return new Dictionary<string, int[]>(StringComparer.Ordinal);
         JsonNode document;
         try
         {
@@ -27,10 +27,11 @@ static class StdlibBindingOverlay
             throw new InvalidDataException($"stdlib binding overlay '{path}' could not be read", ex);
         }
 
-        ApplyDocument(roots, document, path);
+        return ApplyDocument(roots, document, path);
     }
 
-    static void ApplyDocument(IEnumerable<JsonNode> roots, JsonNode document, string source)
+    static IReadOnlyDictionary<string, int[]> ApplyDocument(
+        IEnumerable<JsonNode> roots, JsonNode document, string source)
     {
         if (document is not JsonObject root
             || Str(root["type"]) != CodecType
@@ -49,6 +50,7 @@ static class StdlibBindingOverlay
         foreach (var birRoot in roots) IndexMethods(birRoot, selectedIds, methods);
 
         var seen = new HashSet<string>(StringComparer.Ordinal);
+        var physicalParameterIndices = new Dictionary<string, int[]>(StringComparer.Ordinal);
         foreach (var item in declarations)
         {
             if (item is not JsonObject binding
@@ -157,6 +159,7 @@ static class StdlibBindingOverlay
                     parameter["kotlinType"] = TypeNode.ToJson(TypeJson.Read(parameter["type"])!);
                     parameter["type"] = physicalType.DeepClone();
                 }
+                physicalParameterIndices[id] = rewritten.OrderBy(index => index).ToArray();
                 applied = true;
             }
 
@@ -164,6 +167,7 @@ static class StdlibBindingOverlay
                 throw new InvalidDataException(
                     $"stdlib binding overlay '{source}' declaration '{id}' supplies no binding fact");
         }
+        return physicalParameterIndices;
     }
 
     static void ValidateImplementationSignature(
@@ -280,7 +284,7 @@ static class StdlibBindingOverlay
             },
         };
 
-        ApplyDocument(new[] { bir }, overlay, "selftest");
+        var physicalParameterIndices = ApplyDocument(new[] { bir }, overlay, "selftest");
         var semanticRoot = new JsonObject { ["methods"] = new JsonArray { method.DeepClone() } };
         var semanticSignature = DeclarationIdentityBinding.PreserveSourceFacts(new[] { semanticRoot })[id];
         if (Str(method["explicitClrName"]) != "physical"
@@ -289,6 +293,8 @@ static class StdlibBindingOverlay
             || TypeJson.Read(method["params"]![0]!["type"]) is not TypeNode.Fqn { Name: "System.Object" }
             || Str(method["params"]![0]!["kotlinType"]) != TypeNode.ToJson(new TypeNode.Fqn("System.Int32"))
             || TypeJson.Read(semanticSignature["params"]![0]) is not TypeNode.Fqn { Name: "System.Int32" }
+            || !physicalParameterIndices.TryGetValue(id, out var rewrittenIndices)
+            || !rewrittenIndices.SequenceEqual(new[] { 0 })
             || ((method["body"] as JsonArray)?[0]?["e"]?["v"] as JsonValue)?.GetValue<int>() != 1)
             throw new InvalidOperationException("StdlibBindingOverlay self-test failed");
 

@@ -25,6 +25,7 @@ static class Bir2Cir
                 MemberRefNodeSelfTest.Run();
                 AliasConstructorDelegationExpansion.SelfTest();
                 StdlibBindingOverlay.SelfTest();
+                DeclarationIdentityBinding.SelfTest();
                 MaterializedBirPayload.SelfTest();
                 MaterializedExecutable.SelfTest();
                 NullableWitnessDemand.SelfTest();
@@ -135,7 +136,7 @@ sealed class Pipeline
         // CLR-only facts for the compiler-provided stdlib are authored in a checked sidecar so the common Kotlin
         // sources remain upstream-identical. Apply those exact declaration-identity bindings before any pass snapshots
         // source names or annotations. Ordinary app/library builds cannot opt into this trusted-stdlib input.
-        StdlibBindingOverlay.Apply(birRoots, _options.StdlibBindings);
+        var stdlibPhysicalParameterIndices = StdlibBindingOverlay.Apply(birRoots, _options.StdlibBindings);
         // #395: snapshot frontend declaration identity before ANY Kotlin-to-CLR representation pass can rename,
         // move, clone, or synthesize a declaration. These are source facts, never a physical-name reverse inference.
         var declarationSemanticSignatures = DeclarationIdentityBinding.PreserveSourceFacts(birRoots);
@@ -1240,7 +1241,8 @@ sealed class Pipeline
             declarationCollisionProjection, out var declarationSemanticCarrierIds);
         DeclarationIdentityBinding.ApplyLocal(
             loweredRoots.Select(s => s.Root), declarationPhysicalNames,
-            declarationSemanticCarrierIds, declarationSemanticSignatures, refs);
+            declarationSemanticCarrierIds, declarationSemanticSignatures,
+            stdlibPhysicalParameterIndices, refs);
         KotlinPropertyAccessors.FinalizePhysicalProperties(loweredRoots.Select(s => s.Root));
 
         // SAME-UNIT CONSTRUCTOR BINDING: resolve `new`, `this(...)`, and local `super(...)` to declaration indices
