@@ -73,6 +73,11 @@ suspend fun suspendCaptureAssignFromSuspendCaller(): String {
     return result
 }
 
+suspend fun suspendStorageMachineryParameterNames(label: String, completion: String, result: String): String {
+    suspendContextAsyncResume()
+    return label + completion + result
+}
+
 // BIR local slots are declaration identities, not Kotlin source spellings. This deliberately keeps two `value`
 // declarations of different types alive around a genuinely asynchronous resume; bir2cir must spill the slots already
 // named by kotc, without reconstructing lexical shadowing from nested JSON.
@@ -119,5 +124,6 @@ class SuspendCaptureTests {
         assertEquals("42", result)
         assertEquals(42, count)
         assertEquals("42", blockOn { suspendCaptureAssignFromSuspendCaller() })
+        assertEquals("LCR", blockOn { suspendStorageMachineryParameterNames("L", "C", "R") })
     }
 }

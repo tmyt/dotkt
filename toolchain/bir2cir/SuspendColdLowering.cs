@@ -1137,6 +1137,11 @@ static partial class SuspendColdLowering
     sealed partial class FunGen
     {
         const string ThisField = "$this";
+        // Physical coroutine machinery occupies a compiler-only namespace. Kotlin source identifiers cannot contain
+        // `$`, so these slots cannot collide with user parameters such as `label`, `completion`, or `result`.
+        const string StateLabelField = "dotkt$sm$label";
+        const string CompletionParameter = "dotkt$sm$completion";
+        const string ResumeResultParameter = "dotkt$sm$result";
         // BUG 1 (try/finally across a suspension): a boolean SM field gating a suspending-try's finally. Set true
         // right before every `return COROUTINE_SUSPENDED`, reset false at the top of each invokeSuspend; the
         // finally runs its real body only when it is false — so it is SKIPPED on the suspend-return unwind (when
@@ -1546,7 +1551,7 @@ static partial class SuspendColdLowering
             // local, which is both cheaper and the only way a byref-like value can live in a suspend function.
             var live = SuspendLiveness.Analyze(body);
 
-            FieldStorage("label", IntTn, RoleMachinery, lives: true, across: null);
+            FieldStorage(StateLabelField, IntTn, RoleMachinery, lives: true, across: null);
             if (_needSuspendGuard) FieldStorage(SuspendingField, BoolTn, RoleMachinery, true, null);   // BUG 1: the finally gate flag
             if (_isMember) FieldStorage(ThisField, _selfType, RoleMachinery, true, null);   // holds the enclosing (constructed) instance
             if (_isLambda)
@@ -1575,7 +1580,7 @@ static partial class SuspendColdLowering
             // it true just before returning SUSPENDED (see the EmitSuspensionPoint/EmitAwaitPoint sites).
             if (_needSuspendGuard) invoke.Add(SetField(SuspendingField, BoolConst(false)));
             foreach (var (state, label) in _dispatch)
-                invoke.Add(BrIf(BinEq(FieldOf("label", IntTn), IntConst(state)), true, label));
+                invoke.Add(BrIf(BinEq(FieldOf(StateLabelField, IntTn), IntConst(state)), true, label));
             foreach (var st in bodyOut) invoke.Add(st);
 
             // #82 — tripwire: every `{k:local}`/`{k:setLocal}` in the emitted invokeSuspend must resolve to the `result`
@@ -1816,7 +1821,7 @@ static partial class SuspendColdLowering
 
             var body2 = new JsonArray();
             foreach (var (state, label) in inner)
-                body2.Add(BrIf(BinEq(FieldOf("label", IntTn), IntConst(state)), true, label));
+                body2.Add(BrIf(BinEq(FieldOf(StateLabelField, IntTn), IntConst(state)), true, label));
             foreach (var st in tryBody) body2.Add(st);
 
             var catches = new JsonArray();
@@ -2221,12 +2226,12 @@ static partial class SuspendColdLowering
             // the cold entry's return slot is `Any?`).
             FieldStorage(field, retTok, RoleAwaited, lives: true, across: Str(callNode["method"]));
 
-            outp.Add(SetField("label", IntConst(state)));
-            outp.Add(new JsonObject { ["k"] = "setLocal", ["name"] = "result", ["value"] = ColdCall(callNode, outp) });
+            outp.Add(SetField(StateLabelField, IntConst(state)));
+            outp.Add(new JsonObject { ["k"] = "setLocal", ["name"] = ResumeResultParameter, ["value"] = ColdCall(callNode, outp) });
             outp.Add(BrIf(new JsonObject
             {
                 ["k"] = "objEq",
-                ["lhs"] = new JsonObject { ["k"] = "local", ["name"] = "result" },
+                ["lhs"] = new JsonObject { ["k"] = "local", ["name"] = ResumeResultParameter },
                 ["rhs"] = Suspended(),
             }, false, resumeLabel));
             if (_needSuspendGuard) outp.Add(SetField(SuspendingField, BoolConst(true)));   // BUG 1: mark the suspend-return
@@ -2234,8 +2239,8 @@ static partial class SuspendColdLowering
             outp.Add(Label(resumeLabel));
             outp.Add(new JsonObject { ["k"] = "exprStmt", ["expr"] = ThrowOnFailure() });
             outp.Add(SetField(field, IsAnyTn(retTok)
-                ? new JsonObject { ["k"] = "local", ["name"] = "result" }
-                : new JsonObject { ["k"] = "cast", ["type"] = Tw(retTok), ["e"] = new JsonObject { ["k"] = "local", ["name"] = "result" } }));
+                ? new JsonObject { ["k"] = "local", ["name"] = ResumeResultParameter }
+                : new JsonObject { ["k"] = "cast", ["type"] = Tw(retTok), ["e"] = new JsonObject { ["k"] = "local", ["name"] = ResumeResultParameter } }));
             return FieldOf(field, retTok);
         }
 
@@ -2345,7 +2350,7 @@ static partial class SuspendColdLowering
                 // INVARIANT: the intrinsic block is a PLAIN (non-suspend) lambda, so its pre-stmts carry no nested
                 // suspension that would re-arm the label to a later state — arming `state` here is the sole write in
                 // this segment.
-                outp.Add(SetField("label", IntConst(state)));
+                outp.Add(SetField(StateLabelField, IntConst(state)));
                 if (invBody != null)
                 {
                     JsonNode t = Suspended();
@@ -2361,12 +2366,12 @@ static partial class SuspendColdLowering
                 else tail = InvokeStoredBlock(arg, blockFn, cBinding);
             }
 
-            if (wrapper) outp.Add(SetField("label", IntConst(state)));
-            outp.Add(new JsonObject { ["k"] = "setLocal", ["name"] = "result", ["value"] = Rewrite(tail, outp, AnyTn) });
+            if (wrapper) outp.Add(SetField(StateLabelField, IntConst(state)));
+            outp.Add(new JsonObject { ["k"] = "setLocal", ["name"] = ResumeResultParameter, ["value"] = Rewrite(tail, outp, AnyTn) });
             outp.Add(BrIf(new JsonObject
             {
                 ["k"] = "objEq",
-                ["lhs"] = new JsonObject { ["k"] = "local", ["name"] = "result" },
+                ["lhs"] = new JsonObject { ["k"] = "local", ["name"] = ResumeResultParameter },
                 ["rhs"] = Suspended(),
             }, false, resumeLabel));
             if (_needSuspendGuard) outp.Add(SetField(SuspendingField, BoolConst(true)));
@@ -2374,8 +2379,8 @@ static partial class SuspendColdLowering
             outp.Add(Label(resumeLabel));
             outp.Add(new JsonObject { ["k"] = "exprStmt", ["expr"] = ThrowOnFailure() });
             outp.Add(SetField(awField, IsAnyTn(retTok)
-                ? new JsonObject { ["k"] = "local", ["name"] = "result" }
-                : new JsonObject { ["k"] = "cast", ["type"] = Tw(retTok), ["e"] = new JsonObject { ["k"] = "local", ["name"] = "result" } }));
+                ? new JsonObject { ["k"] = "local", ["name"] = ResumeResultParameter }
+                : new JsonObject { ["k"] = "cast", ["type"] = Tw(retTok), ["e"] = new JsonObject { ["k"] = "local", ["name"] = ResumeResultParameter } }));
             return FieldOf(awField, retTok);
         }
 
@@ -2746,7 +2751,7 @@ static partial class SuspendColdLowering
                 ["ret"] = Tw(BoolTn),
             }, true, afterLabel));
             // this.label = state; this.<aw>.OnCompleted(<callback Action>); return COROUTINE_SUSPENDED;
-            outp.Add(SetField("label", IntConst(state)));
+            outp.Add(SetField(StateLabelField, IntConst(state)));
             var cbName = "$awaitOnDone$" + state;
             _awaitResumeMethods.Add(AwaitResumeMethod(cbName));
             outp.Add(new JsonObject
@@ -3432,7 +3437,7 @@ static partial class SuspendColdLowering
                 ctorParams.Add(new JsonObject { ["name"] = pn, ["type"] = p["type"]?.DeepClone() });
                 ctorBody.Add(SetField(pn, new JsonObject { ["k"] = "local", ["name"] = pn }));
             }
-            ctorParams.Add(new JsonObject { ["name"] = "completion", ["type"] = ContAny() });
+            ctorParams.Add(new JsonObject { ["name"] = CompletionParameter, ["type"] = ContAny() });
 
             var invoke = new JsonObject
             {
@@ -3443,7 +3448,7 @@ static partial class SuspendColdLowering
                 ["abstract"] = false,
                 ["objectOverride"] = false,
                 ["vis"] = "public",
-                ["params"] = new JsonArray { new JsonObject { ["name"] = "result", ["type"] = Tw(AnyTn) } },
+                ["params"] = new JsonArray { new JsonObject { ["name"] = ResumeResultParameter, ["type"] = Tw(AnyTn) } },
                 ["ret"] = Tw(AnyTn),
                 ["body"] = invokeBody,
                 ["attrs"] = new JsonArray(),
@@ -3481,7 +3486,7 @@ static partial class SuspendColdLowering
                         // the interceptor (and any other context element) down the cold-entry call chain.
                         ["baseArgs"] = new JsonArray
                         {
-                            new JsonObject { ["k"] = "local", ["name"] = "completion" },
+                            new JsonObject { ["k"] = "local", ["name"] = CompletionParameter },
                         },
                         ["delegationSig"] = new JsonArray { NullableContAny() },
                         ["thisArgs"] = null,
@@ -3529,7 +3534,7 @@ static partial class SuspendColdLowering
                 ctorParams.Add(new JsonObject { ["name"] = n, ["type"] = Tw(t) });
                 ctorBody.Add(SetField(n, new JsonObject { ["k"] = "local", ["name"] = n }));
             }
-            ctorParams.Add(new JsonObject { ["name"] = "completion", ["type"] = ContAny() });
+            ctorParams.Add(new JsonObject { ["name"] = CompletionParameter, ["type"] = ContAny() });
 
             var invoke = new JsonObject
             {
@@ -3540,7 +3545,7 @@ static partial class SuspendColdLowering
                 ["abstract"] = false,
                 ["objectOverride"] = false,
                 ["vis"] = "public",
-                ["params"] = new JsonArray { new JsonObject { ["name"] = "result", ["type"] = Tw(AnyTn) } },
+                ["params"] = new JsonArray { new JsonObject { ["name"] = ResumeResultParameter, ["type"] = Tw(AnyTn) } },
                 ["ret"] = Tw(AnyTn),
                 ["body"] = invokeBody,
                 ["attrs"] = new JsonArray(),
@@ -3574,7 +3579,7 @@ static partial class SuspendColdLowering
                         ["baseArgs"] = new JsonArray
                         {
                             IntConst(_arity),
-                            new JsonObject { ["k"] = "local", ["name"] = "completion" },
+                            new JsonObject { ["k"] = "local", ["name"] = CompletionParameter },
                         },
                         ["delegationSig"] = new JsonArray { Tn("kotlin.Int"), NullableContAny() },
                         ["thisArgs"] = null,
@@ -3615,7 +3620,7 @@ static partial class SuspendColdLowering
             if (_arity == 0)
             {
                 yield return CreateMethod(
-                    new JsonArray { new JsonObject { ["name"] = "completion", ["type"] = ContStar() } },
+                    new JsonArray { new JsonObject { ["name"] = CompletionParameter, ["type"] = ContStar() } },
                     new JsonArray { Ret(NewSm()) });
             }
             else if (_arity >= 2)
@@ -3654,7 +3659,7 @@ static partial class SuspendColdLowering
                     new JsonArray
                     {
                         new JsonObject { ["name"] = "args", ["type"] = Tw(new TypeNode.Array(new TypeNode.Nullable(AnyTn))) },
-                        new JsonObject { ["name"] = "completion", ["type"] = ContStar() },
+                        new JsonObject { ["name"] = CompletionParameter, ["type"] = ContStar() },
                     },
                     body);
             }
@@ -3673,7 +3678,7 @@ static partial class SuspendColdLowering
                     new JsonArray
                     {
                         new JsonObject { ["name"] = "value", ["type"] = Tw(AnyTn) },
-                        new JsonObject { ["name"] = "completion", ["type"] = ContStar() },
+                        new JsonObject { ["name"] = CompletionParameter, ["type"] = ContStar() },
                     },
                     new JsonArray
                     {
@@ -3723,7 +3728,7 @@ static partial class SuspendColdLowering
             {
                 ["k"] = "cast",
                 ["type"] = ContAny(),
-                ["e"] = new JsonObject { ["k"] = "local", ["name"] = "completion" },
+                ["e"] = new JsonObject { ["k"] = "local", ["name"] = CompletionParameter },
             });
             argTypes.Add(ContAny());
             return new JsonObject { ["k"] = "new", ["type"] = Tw(_smTypeInst), ["argTypes"] = argTypes, ["args"] = args };
@@ -3761,7 +3766,7 @@ static partial class SuspendColdLowering
             var ctorArgs = new JsonArray();
             if (_isMember) ctorArgs.Add(new JsonObject { ["k"] = "this" });
             foreach (var p in _params) ctorArgs.Add(new JsonObject { ["k"] = "local", ["name"] = Str(p["name"]) });
-            ctorArgs.Add(new JsonObject { ["k"] = "local", ["name"] = "completion" });
+            ctorArgs.Add(new JsonObject { ["k"] = "local", ["name"] = CompletionParameter });
             var argTypes = new JsonArray();
             if (_isMember) argTypes.Add(Tw(_selfType));
             foreach (var p in _params) argTypes.Add(p["type"]?.DeepClone());
@@ -3848,7 +3853,7 @@ static partial class SuspendColdLowering
         {
             var ps = new JsonArray();
             foreach (var p in _params) ps.Add(p.DeepClone());
-            ps.Add(new JsonObject { ["name"] = "completion", ["type"] = ContAny() });
+            ps.Add(new JsonObject { ["name"] = CompletionParameter, ["type"] = ContAny() });
             var method = new JsonObject
             {
                 ["name"] = _coldName,
@@ -3995,7 +4000,7 @@ static partial class SuspendColdLowering
         {
             var ps = new JsonArray();
             foreach (var p in _params) ps.Add(p.DeepClone());
-            ps.Add(new JsonObject { ["name"] = "completion", ["type"] = ContAny() });
+            ps.Add(new JsonObject { ["name"] = CompletionParameter, ["type"] = ContAny() });
             var method = new JsonObject
             {
                 ["name"] = _coldName,
@@ -4506,7 +4511,7 @@ static partial class SuspendColdLowering
             // interface for the completion path). A callInstance defaults to a plain `call`, which is INVALID IL for
             // an interface method (Continuation) — so mark it virtual (a callvirt also dispatches to the SM's override).
             ["virtual"] = true,
-            ["recv"] = smPath ? new JsonObject { ["k"] = "this" } : Local("completion"),
+            ["recv"] = smPath ? new JsonObject { ["k"] = "this" } : Local(CompletionParameter),
             ["argTypes"] = new JsonArray(),
             ["args"] = new JsonArray(),
             ["ret"] = Tw(new TypeNode.Fqn(CoroutineContextFqn)),
@@ -4571,7 +4576,7 @@ static partial class SuspendColdLowering
             ["owner"] = Tn(ThrowOnFailureOwner),
             ["method"] = "throwOnFailure",
             ["sig"] = new JsonArray { Tw(new TypeNode.Nullable(AnyTn)) },
-            ["args"] = new JsonArray { new JsonObject { ["k"] = "local", ["name"] = "result" } },
+            ["args"] = new JsonArray { new JsonObject { ["k"] = "local", ["name"] = ResumeResultParameter } },
             ["ret"] = Tw(VoidTn),
         };
 

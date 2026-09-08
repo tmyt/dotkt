@@ -648,7 +648,7 @@ static partial class SuspendColdLowering
         // bug — it would reach ilemit as `load unknown var`. Fail loud here naming the SM/fun/local instead.
         void AssertLocalsResolved(JsonArray invoke)
         {
-            var declared = new HashSet<string>(System.StringComparer.Ordinal) { "result" };
+            var declared = new HashSet<string>(System.StringComparer.Ordinal) { ResumeResultParameter };
             var used = new List<string>();
             void Collect(JsonNode n)
             {
