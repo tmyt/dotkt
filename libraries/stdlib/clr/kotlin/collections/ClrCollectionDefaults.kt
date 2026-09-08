@@ -746,6 +746,61 @@ private class ClrProjectedMutableSubList<T>(
     }
 }
 
+private class ClrMutableSubList<T>(
+    private val backing: MutableList<T>,
+    private val fromIndex: Int,
+    toIndex: Int,
+) : AbstractMutableList<T>() {
+    private var viewSize: Int = toIndex - fromIndex
+
+    init { clrCheckSubListBounds(backing.size, fromIndex, toIndex) }
+
+    override val size: Int get() = viewSize
+
+    private fun checkElement(index: Int) {
+        if (index < 0 || index >= size) throw IndexOutOfBoundsException()
+    }
+
+    private fun checkPosition(index: Int) {
+        if (index < 0 || index > size) throw IndexOutOfBoundsException()
+    }
+
+    override fun get(index: Int): T {
+        checkElement(index)
+        return backing[fromIndex + index]
+    }
+
+    override fun set(index: Int, element: T): T {
+        checkElement(index)
+        return backing.set(fromIndex + index, element)
+    }
+
+    override fun add(index: Int, element: T) {
+        checkPosition(index)
+        backing.add(fromIndex + index, element)
+        viewSize++
+    }
+
+    override fun removeAt(index: Int): T {
+        checkElement(index)
+        val removed = backing.removeAt(fromIndex + index)
+        viewSize--
+        return removed
+    }
+}
+
+public fun <T> clrMutableListSubList(
+    list: MutableList<T>,
+    fromIndex: Int,
+    toIndex: Int,
+): MutableList<T> {
+    val slots = list as? KotlinListDefaultSlots
+    if (slots != null) {
+        return slots.dotktSubList(fromIndex, toIndex) as MutableList<T>
+    }
+    return ClrMutableSubList(list, fromIndex, toIndex)
+}
+
 public fun <T> clrProjectedMutableListSubList(list: Any, fromIndex: Int, toIndex: Int): MutableList<T> {
     val slots = list as? KotlinListDefaultSlots
     if (slots != null) {

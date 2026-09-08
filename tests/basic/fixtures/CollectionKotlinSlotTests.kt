@@ -224,6 +224,87 @@ class CollectionKotlinSlotTests {
     }
 
     @TestAttribute
+    fun mutableSubListIsALiveWritableView() {
+        val backing: MutableList<Int> = mutableListOf(1, 2, 3, 4)
+        val view: MutableList<Int> = backing.subList(1, 3)
+        assertEquals(2, view.set(0, 20))
+        view.add(30)
+        assertEquals(3, view.removeAt(1))
+        assertEquals("[1, 20, 30, 4]", backing.toString())
+
+        val nested: MutableList<Int> = view.subList(1, 2)
+        nested.add(40)
+        assertEquals("[20, 30, 40]", view.toString())
+        assertEquals("[1, 20, 30, 40, 4]", backing.toString())
+
+        val implementer = CollectionKotlinSlotCountingList()
+        implementer.add(10); implementer.add(20); implementer.add(30)
+        val interfaceView: MutableList<Int> = implementer
+        val overridden: MutableList<Int> = interfaceView.subList(1, 3)
+        assertEquals(1, implementer.subListCalls)
+        overridden[0] = 200
+        assertEquals(200, implementer[1])
+
+        var badBoundsRejected = false
+        try {
+            backing.subList(-1, 1)
+        } catch (e: IndexOutOfBoundsException) {
+            badBoundsRejected = true
+        }
+        assertTrue(badBoundsRejected)
+
+        var upperBoundRejected = false
+        try {
+            backing.subList(0, backing.size + 1)
+        } catch (e: IndexOutOfBoundsException) {
+            upperBoundRejected = true
+        }
+        assertTrue(upperBoundRejected)
+
+        var reversedRangeRejected = false
+        try {
+            backing.subList(2, 1)
+        } catch (e: IllegalArgumentException) {
+            reversedRangeRejected = true
+        }
+        assertTrue(reversedRangeRejected)
+    }
+
+    @TestAttribute
+    fun mutableSubListReadsAndIteratesWithinItsRange() {
+        val backing: MutableList<String> = mutableListOf("before", "a", "b", "a", "after")
+        val view: MutableList<String> = backing.subList(1, 4)
+        assertFalse(view.isEmpty())
+        assertEquals(3, view.size)
+        assertTrue(view.contains("b"))
+        assertTrue(view.containsAll(listOf("a", "b")))
+        assertEquals(0, view.indexOf("a"))
+        assertEquals(2, view.lastIndexOf("a"))
+
+        val iterator = view.iterator()
+        assertEquals("a", iterator.next())
+        assertEquals("b", iterator.next())
+        val listIterator = view.listIterator(1)
+        assertEquals("b", listIterator.next())
+        assertEquals("b", listIterator.previous())
+    }
+
+    @TestAttribute
+    fun mutableSubListBulkMutationsStayWithinItsRange() {
+        val backing: MutableList<Int> = mutableListOf(0, 1, 2, 3, 4)
+        val view: MutableList<Int> = backing.subList(1, 4)
+        assertTrue(view.addAll(listOf(5, 6)))
+        assertTrue(view.addAll(1, listOf(7, 8)))
+        assertTrue(view.remove(2))
+        assertTrue(view.removeAll(listOf(7, 5)))
+        assertTrue(view.retainAll(listOf(1, 3, 6)))
+        assertEquals("[0, 1, 3, 6, 4]", backing.toString())
+        view.clear()
+        assertTrue(view.isEmpty())
+        assertEquals("[0, 4]", backing.toString())
+    }
+
+    @TestAttribute
     fun projectedListOperationsValidateTheirBoundsAtTheCall() {
         val list: MutableList<*> = mutableListOf(1, 2)
         var addAllRejected = false
