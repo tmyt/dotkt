@@ -45,7 +45,7 @@ source "$ROOT/scripts/lib.sh"
 
 usage() { cat <<EOF
 usage: $SCRIPT_NAME
-Packs the 5 nupkgs to build/nuget-feed and drives 8 packaged SDK/template scenarios from that feed only.
+Packs the 5 nupkgs to build/nuget-feed and drives 9 packaged SDK/template scenarios from that feed only.
 Green (exit 0) = no fail name outside XFAIL_PKG and no stale entry inside it.
 EOF
 }
@@ -382,14 +382,21 @@ case_toolchain_assembly_identity() {
 		-d "$d"; then
 		fail toolchain-assembly-identity "the three CLR tool assemblies are not present at their shipping paths"; return
 	fi
-	local numeric="$VER_PREFIX.0" informational="$VER+kotlin-$KOTLIN_VER" failures="" tool dll
+	local numeric="$VER_PREFIX.0" informational="$VER+kotlin-$KOTLIN_VER" failures="" missing="" tool dll
 	for tool in bir2cir ilemit dll2klib; do
 		dll="$d/tools/$tool/$tool.dll"
+		if [[ ! -f "$dll" ]]; then
+			missing+="$tool: $dll"$'\n'
+			continue
+		fi
 		if ! dotnet "$REFCHECK/bin/refcheck.dll" --assembly-identity \
 			"$dll" "$numeric" "$numeric" "$informational" >"$d/$tool.log" 2>&1; then
 			failures+="$tool: $(cat "$d/$tool.log")"$'\n'
 		fi
 	done
+	if [[ -n "$missing" ]]; then
+		fail toolchain-assembly-identity "CLR tool assemblies are missing from their shipping paths" "$missing"; return
+	fi
 	if [[ -z "$failures" ]]; then pass toolchain-assembly-identity
 	else fail toolchain-assembly-identity "shipped CLR tool release identity mismatch" "$failures"; fi
 }
