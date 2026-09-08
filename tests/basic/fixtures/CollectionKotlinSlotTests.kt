@@ -319,11 +319,34 @@ class CollectionKotlinSlotTests {
         assertEquals("[0, 1, 2, 3, 4]", backing.toString())
 
         view.add(1, 10)
+        assertEquals(2, view.size)
+        assertEquals(10, view[1])
+        assertTrue(collectionKotlinSlotRejectsIndex { view[2] })
         assertEquals("[0, 1, 10, 2, 3, 4]", backing.toString())
+
+        val nested = view.subList(1, 2)
+        nested.add(11)
+        assertEquals(3, view.size)
+        assertEquals("[1, 10, 11]", view.toString())
+        assertEquals("[0, 1, 10, 11, 2, 3, 4]", backing.toString())
 
         assertTrue(collectionKotlinSlotRejectsIndex { backing.subList(-1, 1) })
         assertTrue(collectionKotlinSlotRejectsIndex { backing.subList(0, backing.size + 1) })
         assertTrue(collectionKotlinSlotRejectsArgument { backing.subList(2, 1) })
+    }
+
+    @TestAttribute
+    fun readOnlyListSubListRejectsAccessOutsideItsView() {
+        val backing: ArrayList<Int> = arrayListOf(0, 1, 2, 3, 4)
+        val readOnly: List<Int> = backing
+        val view = readOnly.subList(1, 2)
+        assertEquals(1, view[0])
+        assertTrue(collectionKotlinSlotRejectsIndex { view[-1] })
+        assertTrue(collectionKotlinSlotRejectsIndex { view[1] })
+        assertTrue(collectionKotlinSlotRejectsIndex { view.subList(-1, 1) })
+        assertTrue(collectionKotlinSlotRejectsIndex { view.subList(0, 2) })
+        assertTrue(collectionKotlinSlotRejectsArgument { readOnly.subList(2, 1) })
+        assertTrue(collectionKotlinSlotRejectsIndex { readOnly.slice(0..readOnly.size) })
     }
 
     @TestAttribute

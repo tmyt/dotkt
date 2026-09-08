@@ -7,9 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
-- **`ArrayList.subList` now enforces the view's own bounds (#688).** Reads, replacements, removals, and indexed
-  insertions can no longer reach a backing-list element outside the selected sub-range, and invalid sub-range
-  construction is rejected before the view is created.
+- **List sub-ranges now enforce their own bounds (#688).** Reads, replacements, removals, and indexed insertions can
+  no longer reach a backing-list element outside the selected sub-range, and invalid sub-range construction is
+  rejected before the view is created. This applies both to concrete `ArrayList` receivers and read-only `List`
+  views over CLR-backed lists.
 
 - **`MutableList.subList` now returns a live mutable CLR view (#675).** bir2cir keeps the ordinary mutable-list
   declaration on an exact `IList<T>` helper instead of routing it through the read-only `IReadOnlyList<T>` default.

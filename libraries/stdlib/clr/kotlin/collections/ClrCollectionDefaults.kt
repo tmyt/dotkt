@@ -594,8 +594,13 @@ public fun <T> clrProjectedListListIterator(list: Any, index: Int): ListIterator
 // subList -> a live read-only view. ClrSubList implements List (@Clr) so it gets get_Count/get_Item (C3a) + a generated
 // GetEnumerator (the reverse bridge). It only needs size/get; the non-BCL members route to the helpers above.
 private class ClrSubList<T>(private val backing: List<T>, private val fromIndex: Int, private val toIndex: Int) : List<T> {
+    init { clrCheckSubListBounds(backing.size, fromIndex, toIndex) }
+
     override val size: Int get() = toIndex - fromIndex
-    override fun get(index: Int): T = backing[fromIndex + index]
+    override fun get(index: Int): T {
+        AbstractList.checkElementIndex(index, size)
+        return backing[fromIndex + index]
+    }
     override fun isEmpty(): Boolean = clrCollIsEmpty(this)
     override fun contains(element: T): Boolean = clrCollContains(this, element)
     override fun containsAll(elements: Collection<T>): Boolean = clrCollContainsAll(this, elements)
