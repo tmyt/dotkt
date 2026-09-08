@@ -46,9 +46,11 @@ static class DeclarationIdentityBinding
                     var signature = new JsonObject
                     {
                         ["params"] = new JsonArray(parameters.OfType<JsonObject>()
-                            .Select(parameter => parameter["type"]?.DeepClone()
-                                ?? throw new InvalidOperationException(
-                                    $"declaration identity '{method[Key]}' has an untyped parameter"))
+                            .Select(parameter => Str(parameter["kotlinType"]) is string kotlinType
+                                ? JsonNode.Parse(kotlinType)
+                                : parameter["type"]?.DeepClone()
+                                    ?? throw new InvalidOperationException(
+                                        $"declaration identity '{method[Key]}' has an untyped parameter"))
                             .ToArray()),
                         ["ret"] = method["ret"]!.DeepClone(),
                     };
@@ -556,6 +558,16 @@ static class DeclarationIdentityBinding
         }
 
         var declarations = Collect(rootList);
+        var physicalSignatures = declarations.ToDictionary(
+            declaration => Str(declaration[Key])!,
+            declaration => declaration["params"] is JsonArray parameters
+                ? new JsonArray(parameters.OfType<JsonObject>()
+                    .Select(parameter => parameter["type"]?.DeepClone()
+                        ?? throw new InvalidOperationException(
+                            $"declaration identity '{declaration[Key]}' has an untyped physical parameter"))
+                    .ToArray())
+                : new JsonArray(),
+            StringComparer.Ordinal);
 
         foreach (var declaration in declarations)
         {
@@ -624,6 +636,11 @@ static class DeclarationIdentityBinding
                     or "newDelegate" or "newBoundDelegate")
                 {
                     obj["method"] = physical;
+                    // The identity selects the whole MethodDef, not only its name. Representation passes may have
+                    // deliberately changed a declaration parameter while preserving its Kotlin surface in metadata;
+                    // local uses must name that exact physical vector just like referenced uses do.
+                    if (obj["sig"] != null)
+                        obj["sig"] = physicalSignatures[id].DeepClone();
                     // KotlinPropertyAccessors has already allocated the exact local accessor declaration. Leaving
                     // the semantic role beside its physical MethodDef name would make late member resolution apply
                     // the one-way get_/set_ projection a second time (`get_get_x`).

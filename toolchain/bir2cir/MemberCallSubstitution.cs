@@ -891,30 +891,6 @@ static class MemberCallSubstitution
     {
         var ownerFqnNode = TypeJson.Read(node[instance ? "ownerType" : "owner"]) as TypeNode.Fqn;
         var ownerToken = ownerFqnNode?.Name;
-        var fn = Str(node["method"]);
-        var args0 = node["args"] as JsonArray ?? new JsonArray();
-        var sigParts0 = SplitSig(node);
-        // MutableMap index assignment is the top-level inline `MutableMap.set` extension. Its authoritative file-class
-        // owner may already have been restored from declaration identity, or may still be null, so recognize the exact
-        // frontend-selected stdlib declaration before branching on that physical owner. The identity check is essential:
-        // a user-authored extension with the same name and parameter shape retains its own Kotlin body.
-        if (!instance && fn == "set"
-            && Str(node[DeclarationIdentityBinding.Key]) is string setDeclarationId
-            && refs.TryDeclarationIdentity(
-                setDeclarationId, out var setPhysicalName, out var setPhysicalOwner, out var setIntrinsic, out _)
-            && setIntrinsic == null && setPhysicalName == fn && setPhysicalOwner == "kotlin.collections.MapsKt"
-            && args0.Count == 3 && sigParts0.Count == 3
-            && sigParts0[0] is TypeNode.Fqn { Name: "kotlin.collections.MutableMap" }
-            && node["typeArgs"] is JsonArray setTypeArgs && setTypeArgs.Count == 2)
-            return new JsonObject
-            {
-                ["k"] = "callStatic",
-                ["owner"] = TypeJson.Fqn("kotlin.collections.ClrMapDefaultsKt"),
-                ["method"] = "clrMapSet",
-                ["sig"] = MapHelperSig("clrMapSet"),
-                ["args"] = args0.DeepClone(),
-                ["typeArgs"] = setTypeArgs.DeepClone(),
-            };
         if (string.IsNullOrEmpty(ownerToken))
         {
             // Top-level fun call (`callStatic owner=null`) bound by @ClrIntrinsic. Two shapes (sourced from the ref.dll):
@@ -922,6 +898,7 @@ static class MemberCallSubstitution
             //   bare "Name"      -> an EXTENSION receiver's instance method (`Array<T>.nativeClone()`@ClrIntrinsic("Clone")
             //                       -> recv.Clone()): clrInstance on the first arg (the extension receiver). The first
             //                       sig type is the receiver type; the rest are the method args.
+            var fn = (node["method"] as JsonValue)?.GetValue<string>();
             if (instance || string.IsNullOrEmpty(fn)) return null;
             // A reference-KLIB-projected STATIC property on a referenced DotKt type carries its declaring type in
             // `ownerType`, while callStatic's `owner` remains null. Bind a real CLR property/public field immediately,
@@ -985,6 +962,8 @@ static class MemberCallSubstitution
             // that exact declaration's body. Keep its semantic node intact for the late identity binder instead of
             // falling through to any erased owner/name/signature resolver in this pass.
             if (exactFactory) return null;
+            var args0 = node["args"] as JsonArray ?? new JsonArray();
+            var sigParts0 = SplitSig(node);
             // #395: the early declaration-identity binder has already selected this exact ref.dll declaration.
             // Resolve only that declaration's @ClrIntrinsic representation; never repeat overload resolution from
             // owner/name/signature after erasure. Local declarations do not carry this transient marker.
@@ -2240,7 +2219,7 @@ static class MemberCallSubstitution
                 or "clrMapMutableKeys" or "clrMapMutableEntries" => new[] { any },
             "clrMapGet" or "clrMapContainsKey" or "clrMapRemove" => new[] { any, k },
             "clrMapContainsValue" => new[] { any, v },
-            "clrMapPut" or "clrMapSet" or "clrMapGetOrDefault" or "clrMapRemoveKV" or "clrMapPutIfAbsent" or "clrMapReplace"
+            "clrMapPut" or "clrMapGetOrDefault" or "clrMapRemoveKV" or "clrMapPutIfAbsent" or "clrMapReplace"
                 => new[] { any, k, v },
             "clrMapMerge" => new TypeNode[]
             {

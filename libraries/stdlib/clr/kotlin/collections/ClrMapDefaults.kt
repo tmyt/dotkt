@@ -169,10 +169,6 @@ public fun <K, V> clrMapPut(m: Any, key: K, value: V): V? {
     return null
 }
 
-/** Receiver-erased implementation of `MutableMap.set`: unlike [clrMapPut], index assignment discards the old value. */
-public fun <K, V> clrMapSet(m: Any, key: K, value: V): Unit =
-    (m as ClrRawDictionary).clrMapSetItem(key, value)
-
 public fun <K, V> clrMapRemove(m: Any, key: K): V? {
     val d = m as ClrRawDictionary
     if (d.Contains(key)) {

@@ -107,6 +107,15 @@ suspend fun <T, K, M : MutableMap<in K, in T>> constrainedSuspendSetProjected(
     return destination
 }
 
+fun <T, K, M : MutableMap<in K, in T>> constrainedSetProjected(
+    key: K,
+    value: T,
+    destination: M,
+): M {
+    destination[key] = value
+    return destination
+}
+
 suspend fun <T, C : MutableList<in T>> constrainedSuspendInsertProjected(
     value: T,
     destination: C,
@@ -163,6 +172,11 @@ class ConstrainedSuspendSynthesisTests {
         val setResult = blockOn { constrainedSuspendSetProjected("indexed", 24, destination) }
         assertEquals(true, setResult === destination)
         assertEquals(24, destination.put("indexed", 25))
+
+        destination["existing"] = 26
+        val plainSetResult = constrainedSetProjected("existing", 27, destination)
+        assertEquals(true, plainSetResult === destination)
+        assertEquals(27, destination.put("existing", 28))
 
         val list = mutableListOf<Any>("tail")
         val listResult = blockOn { constrainedSuspendInsertProjected("head", list) }
