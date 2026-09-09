@@ -6863,6 +6863,15 @@ sealed partial class ReferenceMetadataIndex
                 throw new InvalidOperationException(
                     "ReferenceMetadataIndex self-test dropped a reflected general-array rank/vector facet");
 
+        if (GenericParamDeclaration(typeof(IEnumerable<>).GetGenericArguments()[0]) is not JsonObject covariant
+            || (covariant["variance"] as JsonValue)?.GetValue<string>() != "out"
+            || GenericParamDeclaration(typeof(IComparer<>).GetGenericArguments()[0]) is not JsonObject contravariant
+            || (contravariant["variance"] as JsonValue)?.GetValue<string>() != "in"
+            || GenericParamDeclaration(typeof(List<>).GetGenericArguments()[0]) is not JsonObject invariant
+            || invariant["variance"] != null)
+            throw new InvalidOperationException(
+                "ReferenceMetadataIndex self-test dropped reflected generic-parameter variance");
+
         var closedGeneralArray = typeof(string).MakeArrayType(2);
         if (TypeNodeOf(closedGeneralArray)
             != TypeNode.Array.General(new TypeNode.Fqn("string"), 2))
@@ -6885,7 +6894,7 @@ sealed partial class ReferenceMetadataIndex
             throw new InvalidOperationException(
                 "ReferenceMetadataIndex self-test dropped an open function context or CLR family");
 
-        Console.WriteLine("[reference declaration types] self-test OK (general arrays + function facets)");
+        Console.WriteLine("[reference declaration types] self-test OK (generic variance + array/function facets)");
     }
 
     static bool IsFunc(Type type) =>
@@ -7073,6 +7082,13 @@ sealed partial class ReferenceMetadataIndex
 
         var special = new JsonArray();
         var attrs = gp.GenericParameterAttributes;
+        var variance = (attrs & GenericParameterAttributes.VarianceMask) switch
+        {
+            GenericParameterAttributes.Covariant => "out",
+            GenericParameterAttributes.Contravariant => "in",
+            _ => null,
+        };
+        if (variance != null) declaration["variance"] = variance;
         if ((attrs & GenericParameterAttributes.ReferenceTypeConstraint) != 0) special.Add("class");
         if ((attrs & GenericParameterAttributes.NotNullableValueTypeConstraint) != 0) special.Add("struct");
         if ((attrs & GenericParameterAttributes.DefaultConstructorConstraint) != 0) special.Add("new");

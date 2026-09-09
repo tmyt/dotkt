@@ -108,6 +108,9 @@ import starprojection.referencedExistentialFusibleFlow
 import starprojection.ReferencedIntProjectedArrayValue
 import starprojection.ReferencedStringProjectedArrayValue
 import starprojection.renderProjectedArrayValues
+import starprojection.ReferencedProjectedArrayHolder
+import starprojection.newReferencedProjectedArray
+import starprojection.writeReferencedProjectedArray
 import starprojection.ReferencedUseSiteInvariant
 import starprojection.referencedUseSiteInput
 import starprojection.referencedUseSiteOutput
@@ -504,6 +507,28 @@ class GenericMetadataRoundtripTests {
                     ReferencedStringProjectedArrayValue("cross-module"),
                 ),
             ),
+        )
+
+        val writableProjected = newReferencedProjectedArray()
+        writableProjected[0] = ReferencedIntProjectedArrayValue(13)
+        writableProjected[1] = ReferencedStringProjectedArrayValue("consumer")
+        ClassicAssert.AreEqual(
+            "13:consumer",
+            writableProjected[0]!!.value().toString() + ":" + writableProjected[1]!!.value().toString(),
+        )
+        writeReferencedProjectedArray(writableProjected)
+        ClassicAssert.AreEqual(
+            "17:producer",
+            writableProjected[0]!!.value().toString() + ":" + writableProjected[1]!!.value().toString(),
+        )
+
+        val projectedHolder = ReferencedProjectedArrayHolder(newReferencedProjectedArray())
+        projectedHolder.values[0] = ReferencedIntProjectedArrayValue(19)
+        projectedHolder.values[1] = ReferencedStringProjectedArrayValue("field")
+        ClassicAssert.AreEqual(
+            "19:field",
+            projectedHolder.values[0]!!.value().toString() + ":" +
+                projectedHolder.values[1]!!.value().toString(),
         )
 
         val projectedInput: ReferencedUseSiteInvariant<in String> = referencedUseSiteInput()

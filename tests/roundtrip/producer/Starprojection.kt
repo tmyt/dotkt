@@ -65,6 +65,18 @@ class ReferencedStringProjectedArrayValue(private val text: String) : ProjectedA
 fun <T> renderProjectedArrayValues(values: Array<out ProjectedArrayValue<T>>): String =
     values[0].value().toString() + ":" + values[1].value().toString()
 
+class ReferencedProjectedArrayHolder(
+    var values: Array<ProjectedArrayValue<Any>?>,
+)
+
+fun newReferencedProjectedArray(): Array<ProjectedArrayValue<Any>?> =
+    arrayOfNulls<ProjectedArrayValue<Any>>(2)
+
+fun writeReferencedProjectedArray(values: Array<ProjectedArrayValue<Any>?>) {
+    values[0] = ReferencedIntProjectedArrayValue(17)
+    values[1] = ReferencedStringProjectedArrayValue("producer")
+}
+
 // Ordinary (non-array) projections must survive producer DLL -> dll2klib -> consumer KLIB exactly. The physical
 // carrier is intentionally invisible to the consumer; these signatures cover every exported declaration position.
 interface ReferencedUseSiteInvariant<T> {

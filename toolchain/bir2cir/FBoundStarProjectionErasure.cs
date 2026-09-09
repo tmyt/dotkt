@@ -51,7 +51,7 @@ static class FBoundStarProjectionErasure
         MarkNeededClosure(owners);
 
         foreach (var owner in owners.Values.Where(o => o.Needed)) Synthesize(owner, owners, defs, refs);
-        foreach (var root in rootList) RecordDeclarationSurfaces(root);
+        foreach (var root in rootList) RecordDeclarationSurfaces(root, owners, refs);
         foreach (var root in rootList) EraseProjectedAliasConstraints(root, refs);
         ForeignStarProjectionBinding.ApplyAll(rootList,
             owners.Values.Where(owner => owner.Needed).ToDictionary(
@@ -199,13 +199,19 @@ static class FBoundStarProjectionErasure
         IReadOnlyDictionary<string, string> knownClrAliases = null)
     {
         var rootList = roots.ToList();
-        var owners = localExistentialOwners.ToDictionary(
-            pair => pair.Key,
-            pair => new Owner { Name = pair.Key, ErasedName = pair.Value, Needed = true },
-            StringComparer.Ordinal);
         var defs = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
         foreach (var root in rootList.OfType<JsonObject>())
             CollectDefinitions(root, defs);
+        var owners = localExistentialOwners.ToDictionary(
+            pair => pair.Key,
+            pair => new Owner
+            {
+                Name = pair.Key,
+                ErasedName = pair.Value,
+                Needed = true,
+                Def = defs.GetValueOrDefault(pair.Key),
+            },
+            StringComparer.Ordinal);
         var localClrAliases = new Dictionary<string, string>(
             knownClrAliases ?? new Dictionary<string, string>(StringComparer.Ordinal), StringComparer.Ordinal);
         foreach (var alias in CollectLocalClrAliases(defs)) localClrAliases.TryAdd(alias.Key, alias.Value);
@@ -437,10 +443,12 @@ static class FBoundStarProjectionErasure
     static bool IsAbiVisible(JsonObject def) => Str(def["vis"]) is null or "public" or "protected" or "internal";
 
     // The physical existential is one non-generic interface for every projection mask. Preserve each declaration's
-    // exact Kotlin type (`Pair<*, String>` or `Array<out G<T>>`) before the slot becomes that interface/object.
+    // exact Kotlin type (`Pair<*, String>`, `Array<out G<T>>`, or a mutable `Array<G<T>>` whose physical element is
+    // the declaration's existential carrier) before the slot becomes that interface/object.
     // RoundtripMetadata emits these facts as [KotlinType], and dll2klib restores them without inspecting the physical
     // carrier name. Calls and locals are intentionally excluded: this is exported declaration ABI only.
-    static void RecordDeclarationSurfaces(JsonNode node)
+    static void RecordDeclarationSurfaces(JsonNode node,
+        IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs)
     {
         switch (node)
         {
@@ -451,16 +459,17 @@ static class FBoundStarProjectionErasure
                 {
                     RecordProjectedMethodTypeParameterBounds(obj);
                     foreach (var parameter in parameters.OfType<JsonObject>())
-                        RecordProjectionSlot(parameter, "type", "kotlinType");
-                    RecordProjectionSlot(obj, "ret", "retKotlinType");
+                        RecordProjectionSlot(parameter, "type", "kotlinType", owners, refs);
+                    RecordProjectionSlot(obj, "ret", "retKotlinType", owners, refs);
                 }
                 if (obj["k"] == null && obj["type"] != null)
-                    RecordProjectionSlot(obj, "type", "kotlinType");
+                    RecordProjectionSlot(obj, "type", "kotlinType", owners, refs);
                 foreach (var child in obj.Select(kv => kv.Value).Where(v => v != null).ToList())
-                    RecordDeclarationSurfaces(child);
+                    RecordDeclarationSurfaces(child, owners, refs);
                 break;
             case JsonArray array:
-                foreach (var child in array.Where(v => v != null).ToList()) RecordDeclarationSurfaces(child);
+                foreach (var child in array.Where(v => v != null).ToList())
+                    RecordDeclarationSurfaces(child, owners, refs);
                 break;
         }
     }
@@ -555,13 +564,36 @@ static class FBoundStarProjectionErasure
         _ => false,
     };
 
-    static void RecordProjectionSlot(JsonObject declaration, string slot, string fact)
+    static void RecordProjectionSlot(JsonObject declaration, string slot, string fact,
+        IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs)
     {
         if (declaration[fact] != null || TypeJson.Read(declaration[slot]) is not TypeNode type
-            || !ContainsExistentialProjection(type))
+            || (!ContainsExistentialProjection(type) && !ContainsWritableVariantArray(type, owners, refs)))
             return;
         declaration[fact] = TypeNode.ToJson(type);
     }
+
+    static bool ContainsWritableVariantArray(TypeNode type,
+        IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs) => type switch
+    {
+        TypeNode.Array array => TryWritableVariantArrayElement(
+                array.Elem, owners, refs, out _, out _)
+            || ContainsWritableVariantArray(array.Elem, owners, refs),
+        TypeNode.Fqn { Args: { } args } => args.Any(argument =>
+            ContainsWritableVariantArray(argument, owners, refs)),
+        TypeNode.Nullable nullable => ContainsWritableVariantArray(nullable.Of, owners, refs),
+        TypeNode.Oblivious oblivious => ContainsWritableVariantArray(oblivious.Of, owners, refs),
+        TypeNode.Projection projection => ContainsWritableVariantArray(projection.Of, owners, refs),
+        TypeNode.ByRef byRef => ContainsWritableVariantArray(byRef.Of, owners, refs),
+        TypeNode.Ptr pointer => ContainsWritableVariantArray(pointer.Of, owners, refs),
+        TypeNode.Mod modifier => ContainsWritableVariantArray(modifier.M, owners, refs)
+            || ContainsWritableVariantArray(modifier.Of, owners, refs),
+        TypeNode.Fn function => ContainsWritableVariantArray(function.Ret, owners, refs)
+            || function.Params.Any(parameter => ContainsWritableVariantArray(parameter, owners, refs))
+            || function.Recv != null && ContainsWritableVariantArray(function.Recv, owners, refs)
+            || function.Ctx?.Any(context => ContainsWritableVariantArray(context, owners, refs)) == true,
+        _ => false,
+    };
 
     static void MarkNeeded(JsonNode node, IReadOnlyDictionary<string, Owner> owners,
         IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs)
@@ -1110,9 +1142,27 @@ static class FBoundStarProjectionErasure
     static bool ProjectionCanChangeConstruction(TypeNode.Fqn application,
         IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs)
     {
-        if (owners.TryGetValue(application.Name, out var local))
+        if (owners.TryGetValue(application.Name, out var local) && local.Def != null)
             return HasKotlinVariantParameter(application, local.Def["typeParams"] as JsonArray);
         return HasKotlinVariantParameter(application, refs.OwnerTypeParamDeclarations(application.Name));
+    }
+
+    // Kotlin's Array is mutable and invariant. If its element is a declaration-site variant Kotlin construction,
+    // values with different legal source arguments can enter the same exact Array<G<X>> storage. CLR variance is
+    // insufficient for that storage contract: it does not relate value-type constructions, and CLR classes are not
+    // variant at all. Use the declaration's nominal existential carrier as the one writable physical element type.
+    static bool TryWritableVariantArrayElement(TypeNode element,
+        IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs,
+        out TypeNode.Fqn semanticElement, out TypeNode.Fqn physicalElement)
+    {
+        semanticElement = StripSourceNullability(element) as TypeNode.Fqn;
+        physicalElement = null;
+        if (semanticElement?.Args is not { Length: > 0 }
+            || !ProjectionCanChangeConstruction(semanticElement, owners, refs)
+            || !TryExistentialCarrier(semanticElement.Name, owners, refs, out var carrier))
+            return false;
+        physicalElement = new TypeNode.Fqn(carrier);
+        return true;
     }
 
     static void MarkNeededType(TypeNode type, IReadOnlyDictionary<string, Owner> owners, bool runtimeClassifier)
@@ -1134,7 +1184,13 @@ static class FBoundStarProjectionErasure
                 break;
             case TypeNode.Nullable n: MarkNeededType(n.Of, owners, false); break;
             case TypeNode.Oblivious o: MarkNeededType(o.Of, owners, false); break;
-            case TypeNode.Array a: MarkNeededType(a.Elem, owners, false); break;
+            case TypeNode.Array a:
+                if (StripSourceNullability(a.Elem) is TypeNode.Fqn element
+                    && owners.TryGetValue(element.Name, out var arrayOwner) && arrayOwner.Def != null
+                    && HasKotlinVariantParameter(element, arrayOwner.Def["typeParams"] as JsonArray))
+                    arrayOwner.Needed = true;
+                MarkNeededType(a.Elem, owners, false);
+                break;
             case TypeNode.ByRef b: MarkNeededType(b.Of, owners, false); break;
             case TypeNode.Fn fn:
                 MarkNeededType(fn.Ret, owners, false);
@@ -2080,6 +2136,24 @@ static class FBoundStarProjectionErasure
         {
             case JsonObject obj:
                 var projectedArrayRead = Bool(obj[ProjectedArrayReadKey]);
+                if (ExpressionType(obj) is TypeNode.Array expressionArray
+                    && TryWritableVariantArrayElement(expressionArray.Elem, owners, refs,
+                        out var expressionSemanticElement, out _))
+                    obj[ExistentialArrayElementProjectionKey] = TypeJson.Write(expressionSemanticElement);
+                if (obj["array"] is JsonObject arrayExpression
+                    && ExpressionType(arrayExpression) is TypeNode.Array receiverArray
+                    && TryWritableVariantArrayElement(receiverArray.Elem, owners, refs,
+                        out var receiverSemanticElement, out _))
+                    arrayExpression[ExistentialArrayElementProjectionKey] =
+                        TypeJson.Write(receiverSemanticElement);
+                var nodeKind = Str(obj["k"]);
+                var writableVariantElement = TypeJson.Read(obj["elem"]);
+                TypeNode.Fqn writableSemanticElement = null;
+                TypeNode.Fqn writablePhysicalElement = null;
+                var hasWritableVariantElement = nodeKind is "newArray" or "newArrayInit" or "newArraySized"
+                        or "spreadConcat" or "arrayGet" or "arraySet" or "forArray"
+                    && TryWritableVariantArrayElement(writableVariantElement, owners, refs,
+                        out writableSemanticElement, out writablePhysicalElement);
                 var projectedConstructorArgumentTargets = ProjectedConstructorArgumentTargets(
                     obj, owners, refs, localClrAliases);
                 var childTypeParameters = existentialTypeParameters;
@@ -2133,6 +2207,29 @@ static class FBoundStarProjectionErasure
                         out var initializerArrayCarrier))
                     RewriteVarianceProjectedArrayInitializer(
                         obj, initializerArrayOwner, new TypeNode.Fqn(initializerArrayCarrier), defs, refs);
+                if (hasWritableVariantElement)
+                {
+                    switch (nodeKind)
+                    {
+                        case "newArrayInit":
+                            RewriteVarianceProjectedArrayInitializer(
+                                obj, writableSemanticElement, writablePhysicalElement, defs, refs);
+                            break;
+                        case "spreadConcat":
+                            RewriteVarianceProjectedArraySpread(
+                                obj, writableSemanticElement, writablePhysicalElement);
+                            break;
+                        default:
+                            obj["elem"] = TypeJson.Write(writablePhysicalElement);
+                            if (nodeKind is "newArray" or "newArraySized")
+                                obj[ExistentialArrayElementProjectionKey] =
+                                    TypeJson.Write(writableSemanticElement);
+                            if (nodeKind == "forArray")
+                                MarkWritableVariantArrayLoopVariable(
+                                    obj, writableSemanticElement, writablePhysicalElement);
+                            break;
+                    }
+                }
                 // A cast operand can itself lower onto an existential carrier. Decide whether the parent has an
                 // exact constructed source only after that physical representation is known; its stale frontend
                 // `sty` is not proof that `(x as Derived<T>) as Base<T>` still carries Derived<T> at this point.
@@ -2177,6 +2274,7 @@ static class FBoundStarProjectionErasure
                             childTypeParameterDeclarations, childMethodParameterDeclarations, childThisType,
                             childBoundDeclaration, localClrAliases);
                 }
+                BindProjectedArrayRead(obj, owners, refs);
                 ApplyProjectedConstructorArgumentCasts(obj, projectedConstructorArgumentTargets);
                 // A star-projected inner construction is replaced while visiting the receiver below this call.  Its
                 // result is the inner existential carrier, so bind the immediately-following member only after that
@@ -3138,6 +3236,32 @@ static class FBoundStarProjectionErasure
         return TypeJson.Read(obj["sty"]) ?? TypeJson.Read(obj["ret"]) ?? TypeJson.Read(obj["type"]);
     }
 
+    static void MarkWritableVariantArrayLoopVariable(
+        JsonObject loop, TypeNode.Fqn semanticElement, TypeNode.Fqn physicalElement)
+    {
+        if (Str(loop["var"]) is not string variable || loop["body"] == null) return;
+        void Mark(JsonNode node)
+        {
+            switch (node)
+            {
+                case JsonObject obj:
+                    if (Str(obj["k"]) == "local" && Str(obj["name"]) == variable)
+                    {
+                        obj["sty"] = TypeJson.Write(physicalElement);
+                        obj[ExistentialResultProjectionKey] = TypeJson.Write(semanticElement);
+                    }
+                    foreach (var value in obj.Select(pair => pair.Value).ToList())
+                        if (value != null) Mark(value);
+                    break;
+                case JsonArray array:
+                    foreach (var value in array)
+                        if (value != null) Mark(value);
+                    break;
+            }
+        }
+        Mark(loop["body"]);
+    }
+
     // The frontend can retain an explicit cast for a source-level generic upcast even though the source construction
     // already reaches that exact target construction. The relation is authoritative only when the current
     // declaration graph proves every target argument in the source frame; names or erased physical layouts are not
@@ -3851,8 +3975,12 @@ static class FBoundStarProjectionErasure
                 n.Of, owners, refs, boundDeclaration, localClrAliases));
             case TypeNode.Oblivious o: return new TypeNode.Oblivious(RewriteType(
                 o.Of, owners, refs, boundDeclaration, localClrAliases));
-            case TypeNode.Array a: return new TypeNode.Array(RewriteType(
-                a.Elem, owners, refs, boundDeclaration, localClrAliases));
+            case TypeNode.Array a:
+                if (!boundDeclaration && TryWritableVariantArrayElement(
+                        a.Elem, owners, refs, out _, out var writableElement))
+                    return new TypeNode.Array(writableElement, a.Rank, a.SzArray);
+                return new TypeNode.Array(RewriteType(
+                    a.Elem, owners, refs, boundDeclaration, localClrAliases), a.Rank, a.SzArray);
             case TypeNode.ByRef b: return new TypeNode.ByRef(RewriteType(
                 b.Of, owners, refs, boundDeclaration, localClrAliases));
             case TypeNode.Fn fn: return new TypeNode.Fn(fn.Suspend, RewriteType(
