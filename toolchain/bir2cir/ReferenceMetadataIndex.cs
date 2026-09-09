@@ -1468,7 +1468,7 @@ sealed partial class ReferenceMetadataIndex
     // already instantiated at the readable projection (`Pair<*, String>.Second = value` has a String argument).
     // Treat only declaration TVs as wildcards after exact candidates have been preferred; nominal structure remains
     // recursive and overload sets that still admit more than one candidate are rejected rather than guessed.
-    static bool ForeignStarDeclarationDescribesCall(TypeNode declaration, TypeNode call,
+    bool ForeignStarDeclarationDescribesCall(TypeNode declaration, TypeNode call,
         IReadOnlyList<TypeNode> ownerArgs)
     {
         // A use-site projection changes the set of operations Kotlin permits, not the identity of the selected CLR
@@ -1482,6 +1482,14 @@ sealed partial class ReferenceMetadataIndex
             return ForeignStarDeclarationDescribesCall(dOb.Of, call, ownerArgs);
         if (call is TypeNode.Oblivious cOb)
             return ForeignStarDeclarationDescribesCall(declaration, cOb.Of, ownerArgs);
+        // An earlier physical value-slot rewrite can already have replaced a nested Kotlin generic application with
+        // its metadata-declared existential carrier (Result<T> -> Result$star). That carrier is the declaration's
+        // exact physical projection, not a second source-level overload shape, so it still describes the selected
+        // declaration while the outer member is being bound.
+        if (declaration is TypeNode.Fqn declarationApplication
+            && call is TypeNode.Fqn { Args: null } physicalCarrier
+            && TryExistentialPhysicalOwner(declarationApplication.Name, out var declaredCarrier)
+            && string.Equals(declaredCarrier, physicalCarrier.Name, StringComparison.Ordinal)) return true;
         if (declaration is TypeNode.Nullable dn)
             return call is TypeNode.Nullable cn
                 ? ForeignStarDeclarationDescribesCall(dn.Of, cn.Of, ownerArgs)
@@ -2421,7 +2429,11 @@ sealed partial class ReferenceMetadataIndex
         // is already the final physical link target; neither the source declaration's allocated name nor an ordinal is
         // sufficient to derive it. In particular, an explicit @ClrName changes the source MethodDef but not the
         // compiler-owned dependent-slot spelling.
-        var selectedSourceMember = accessorKind is "get" or "set"
+        // A declaration-id-selected call can reach this late binding after Kotlin property-call syntax has already
+        // been allocated away. The selected declaration still carries the authoritative accessor role; use it to
+        // select the corresponding existential MethodDef rather than treating the accessor as an ordinary method.
+        var selectedAccessorKind = accessorKind ?? declarations[0].AccessorKind;
+        var selectedSourceMember = selectedAccessorKind is "get" or "set"
             ? declarations[0].SourcePropertyName ?? sourceMember
             : declarations[0].DeclarationSourceName ?? declarations[0].SourceMethodName ?? sourceMember;
         // Earlier physical lowering may deliberately give the ordinary declaration and its existential slot distinct
@@ -2444,10 +2456,10 @@ sealed partial class ReferenceMetadataIndex
         var shapedCandidates = members.Where(m => !m.IsStatic && m.ParamCount == paramCount
             && m.MethodArity == methodArity).ToList();
         List<MemberBinding> candidates;
-        if (accessorKind is "get" or "set")
+        if (selectedAccessorKind is "get" or "set")
         {
             candidates = shapedCandidates.Where(m => !m.IsPropertyBridge
-                && m.SourcePropertyName == selectedSourceMember && m.AccessorKind == accessorKind
+                && m.SourcePropertyName == selectedSourceMember && m.AccessorKind == selectedAccessorKind
                 && DescribesSelectedDeclaration(m)).ToList();
         }
         else

@@ -1073,6 +1073,7 @@ sealed class Pipeline
                 NullableTvErasureCallRealign.ApplyAfterUnsafeAccessorSynthesis(
                     stagedFile.Root, nullableTvDeclRets, isValueFqn, refs);
         }
+        FBoundStarProjectionErasure.RemoveTransientFacts(staged.Select(s => s.Root));
 
         // Resolve the Kotlin `lateinitGet` failure path to an ordinary UPAE construction before constructor binding.
         // This is deliberately after UnsafeAccessorLowering, which can rebuild a private-field lateinitGet around a

@@ -7,6 +7,11 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Declaration-site variant Kotlin classes now use verifier-safe CLR value boundaries (#693).** bir2cir represents
+  widened covariant and narrowed contravariant class values with the declaration's non-generic existential interface,
+  while retaining exact closed class types for construction, inheritance, and lexical receiver dispatch. The same
+  physical contract is restored from metadata across DLL-to-KLIB imports, avoiding invalid invariant CLR class casts.
+
 - **Mutable arrays of declaration-site variant Kotlin types now use one writable CLR carrier (#665).** bir2cir
   preserves the exact Kotlin array type in metadata while representing allocations, aliases, parameters, fields,
   reads, writes, and cross-module signatures with the declaration's existential element interface. Arrays such as

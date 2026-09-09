@@ -72,10 +72,36 @@ class AnyConsumer : Consumer<Any> { override fun consume(t: Any): String = "cons
 class IntConsumer : Consumer<Int> { override fun consume(t: Int): String = "int: $t" }
 class UnsafeStringProducer : UnsafeProducer<String> { override fun roundTrip(value: String): String = value }
 class CovariantValue<out T>(val value: T)
+private class PrivateCovariantValue<out T>(val value: T)
+class ContravariantAction<in T> {
+    fun render(value: T): String = value.toString()
+}
+class CovariantValueHolder(var value: CovariantValue<Any>)
 class InvariantValue<T>(val value: T)
 class ProjectedArrayHelper { fun <T> first(values: Array<out T>): T = values[0] }
 fun useProducer(p: Producer<Any>): String = p.produce().toString()   // covariance: Producer<String> flows in
 fun useConsumer(c: Consumer<String>): String = c.consume("world")    // contravariance: Consumer<Any> flows in
+
+fun readCovariantValue(value: CovariantValue<Any>): String = value.value.toString()
+fun newCovariantValueAsAny(): CovariantValue<Any> = CovariantValue(37)
+fun userNamedLexicalVariance(__outer: CovariantValue<Any>): String = __outer.value.toString()
+
+fun covariantClassWidening(): String {
+    val exactInt: CovariantValue<Int> = CovariantValue(31)
+    val widenedInt: CovariantValue<Any> = exactInt
+    val exactString: CovariantValue<String> = CovariantValue("class-wide")
+    val widenedString: CovariantValue<Any> = exactString
+    val holder = CovariantValueHolder(exactInt)
+    holder.value = exactString
+    val privateExact: PrivateCovariantValue<Int> = PrivateCovariantValue(41)
+    val privateWidened: PrivateCovariantValue<Any> = privateExact
+    val acceptsAny: ContravariantAction<Any> = ContravariantAction()
+    val acceptsString: ContravariantAction<String> = acceptsAny
+    return widenedInt.value.toString() + ":" + widenedString.value.toString() + ":" +
+        readCovariantValue(exactInt) + ":" + newCovariantValueAsAny().value.toString() + ":" +
+        holder.value.value.toString() + ":" + privateWidened.value.toString() + ":" +
+        acceptsString.render("contra") + ":" + userNamedLexicalVariance(exactInt)
+}
 
 // Different closed constructions of a covariant E share one logical projected array, but cannot be stored in the
 // CLR fiction `Producer<object>[]` (in particular Producer<Int> is not that type). Exercise heterogeneous allocation,
@@ -554,6 +580,7 @@ class GenericsTests {
         assertEquals("9", nullableProjectedProducer(arrayOf(PrivateIntProducer())))
         assertEquals("10:hello:12:hello:14:hello:10hello:10:10", mutableProjectedProducerStorage())
         assertEquals("consumed: 21:int: 22", mutableContravariantConsumerStorage())
+        assertEquals("31:class-wide:31:37:class-wide:41:contra:31", covariantClassWidening())
 
         val input = UseSiteAnyBox("initial")
         useSiteInParameter(input)

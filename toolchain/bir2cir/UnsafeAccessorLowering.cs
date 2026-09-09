@@ -165,6 +165,10 @@ static class UnsafeAccessorLowering
         IReadOnlyDictionary<string, Host> hosts, Dictionary<string, AccessorDefinition> accessors,
         ReferenceMetadataIndex refs)
     {
+        // An existential forwarding bridge already targets its exact same-owner source MethodDef. Suspend lowering
+        // may have projected that edge to the corresponding cold entry, but it remains a compiler-authored direct
+        // call rather than a cross-TypeDef Kotlin visibility access. Preserve it until F-bound transient cleanup.
+        if (Bool(access[FBoundStarProjectionErasure.ExactBridgeOwnerCallKey])) return;
         var superCall = Bool(access["super"]);
         var frontendVisibility = Str(access["memberVisibility"]);
         var ownerTypeParams = access["memberOwnerTypeParams"] as JsonArray;

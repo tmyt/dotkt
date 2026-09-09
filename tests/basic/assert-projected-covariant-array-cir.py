@@ -127,6 +127,69 @@ covariant_carrier = fqn("CovariantValue$star")
 if covariant_class.get("ret") != array(covariant_carrier):
     raise SystemExit(f"Kotlin class variance was mistaken for CLR class variance: {covariant_class.get('ret')!r}")
 
+# Declaration-site variance on a Kotlin class is source-level substitutability, not CLR class variance. Every
+# widened value slot therefore uses the declaration's existential interface, while allocations retain the exact
+# constructed class whose constructor is being invoked.
+widening = method("covariantClassWidening")
+widening_nodes = list(objects(widening.get("body", [])))
+expected_carriers = {
+    "CovariantValue$star",
+    "PrivateCovariantValue$star",
+    "ContravariantAction$star",
+}
+observed_carriers = {
+    node.get("type", {}).get("name")
+    for node in widening_nodes
+    if node.get("k") == "var" and node.get("type", {}).get("name") in expected_carriers
+}
+if observed_carriers != expected_carriers:
+    raise SystemExit(f"variant class values did not use their existential carriers: {observed_carriers!r}")
+
+expected_constructions = {
+    ("CovariantValue", "System.Int32"),
+    ("CovariantValue", "System.String"),
+    ("PrivateCovariantValue", "System.Int32"),
+    ("ContravariantAction", "System.Object"),
+}
+observed_constructions = {
+    (node.get("type", {}).get("name"), node.get("type", {}).get("args", [{}])[0].get("name"))
+    for node in widening_nodes
+    if node.get("k") == "new"
+    and node.get("type", {}).get("name") in {
+        "CovariantValue",
+        "PrivateCovariantValue",
+        "ContravariantAction",
+    }
+}
+if observed_constructions != expected_constructions:
+    raise SystemExit(f"variant class constructors lost their exact constructed heads: {observed_constructions!r}")
+
+carrier_calls = [
+    node
+    for node in widening_nodes
+    if node.get("k") == "callInstance" and node.get("ownerType", {}).get("name") in expected_carriers
+]
+if not carrier_calls or any(node.get("ownerType", {}).get("args") for node in carrier_calls):
+    raise SystemExit(f"variant class members did not bind through non-generic carriers: {carrier_calls!r}")
+
+holder_types = [item for item in root.get("types", []) if item.get("name") == "CovariantValueHolder"]
+if len(holder_types) != 1:
+    raise SystemExit(f"found {len(holder_types)} CovariantValueHolder declarations, expected 1")
+holder_type = holder_types[0]
+holder_value_slots = [field.get("type") for field in holder_type.get("fields", [])]
+holder_value_slots += [prop.get("type") for prop in holder_type.get("properties", [])]
+holder_value_slots += [param.get("type") for ctor in holder_type.get("ctors", []) for param in ctor.get("params", [])]
+if not holder_value_slots or any(slot != covariant_carrier for slot in holder_value_slots):
+    raise SystemExit(f"variant class declaration slots did not use CovariantValue$star: {holder_value_slots!r}")
+
+user_named_lexical = method("userNamedLexicalVariance")
+user_named_parameter_types = [parameter.get("type") for parameter in user_named_lexical.get("params", [])]
+if user_named_parameter_types != [covariant_carrier]:
+    raise SystemExit(
+        "user declarations named like generated lexical receivers were incorrectly kept exact: "
+        f"{user_named_parameter_types!r}"
+    )
+
 invariant = method("invariantProjectedValue")
 exact_invariant = array(fqn("InvariantValue", fqn("System.String")))
 parameters = invariant.get("params", [])

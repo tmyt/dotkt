@@ -3301,6 +3301,11 @@ static partial class SuspendColdLowering
             }
             if (callNode["typeArgs"] is JsonArray ta) call["typeArgs"] = ta.DeepClone();
             if (coldDeclarationId != null) call[DeclarationIdentityBinding.Key] = coldDeclarationId;
+            // F-bound forwarding bridges call the exact source declaration on their closed owning class. Preserve
+            // that already-selected representation edge when suspend lowering projects the call to its cold entry;
+            // the subsequent late existential type rewrite must not retarget it to the public carrier slot.
+            if (Bool(callNode[FBoundStarProjectionErasure.ExactBridgeOwnerCallKey]))
+                call[FBoundStarProjectionErasure.ExactBridgeOwnerCallKey] = true;
             if (!isInstance)
                 ClrMemberResolution.CarryReferencedStaticCallSignatureSnapshot(callNode, call);
             // BUG Y — overload disambiguation. `<method>$dotkt_suspend` may be one of several same-named IL

@@ -79,6 +79,18 @@ fun writeReferencedProjectedArray(values: Array<ProjectedArrayValue<Any>?>) {
 
 class ReferencedCovariantArrayClass<out T>(val value: T)
 
+class ReferencedCovariantClassHolder(var value: ReferencedCovariantArrayClass<Any>)
+
+class ReferencedContravariantClass<in T> {
+    fun render(value: T): String = value.toString()
+}
+
+fun readReferencedCovariantClass(value: ReferencedCovariantArrayClass<Any>): String =
+    value.value.toString()
+
+fun newReferencedCovariantClassAsAny(): ReferencedCovariantArrayClass<Any> =
+    ReferencedCovariantArrayClass(47)
+
 fun newReferencedCovariantClassArray(): Array<ReferencedCovariantArrayClass<Any>?> =
     arrayOfNulls<ReferencedCovariantArrayClass<Any>>(2)
 
