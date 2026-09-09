@@ -7,6 +7,13 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Mutable arrays of declaration-site variant Kotlin types now use one writable CLR carrier (#665).** bir2cir
+  preserves the exact Kotlin array type in metadata while representing allocations, aliases, parameters, fields,
+  reads, writes, and cross-module signatures with the declaration's existential element interface. Arrays such as
+  `Array<Producer<Any>?>` can therefore legally store both value- and reference-typed producer constructions without
+  invalid CLR array covariance or `ArrayTypeMismatchException` failures. Type metadata now also retains Kotlin
+  variance that CLR generic-parameter flags cannot express, including variant classes and `@UnsafeVariance` members.
+
 - **Projected mutable-map index assignment now uses a receiver-erased CLR call boundary (#690).** Cross-module
   `MutableMap.set` calls, including those moved into suspend state machines, no longer require an object-constrained
   receiver to implement an invented `IDictionary<object, object>` face. They share the non-generic dictionary

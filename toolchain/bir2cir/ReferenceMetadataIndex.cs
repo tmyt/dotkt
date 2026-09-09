@@ -88,6 +88,7 @@ sealed partial class ReferenceMetadataIndex
     const string KotlinFunctionAttr = "DotKt.Runtime.CompilerServices.KotlinFunctionAttribute";
     const string KotlinInlineAttr = "DotKt.Runtime.CompilerServices.KotlinInlineAttribute";
     const string KotlinTypeAttr = "DotKt.Runtime.CompilerServices.KotlinTypeAttribute";
+    const string KotlinSupertypesAttr = "DotKt.Runtime.CompilerServices.KotlinSupertypesAttribute";
     const string KotlinSuspendResultAttr = "DotKt.Runtime.CompilerServices.KotlinSuspendResultAttribute";
     const string KotlinCompanionAttr = "DotKt.Runtime.CompilerServices.KotlinCompanionAttribute";
     const string KotlinCompanionExtensionAttr = "DotKt.Runtime.CompilerServices.KotlinCompanionExtensionAttribute";
@@ -4584,8 +4585,10 @@ sealed partial class ReferenceMetadataIndex
                         metadata.TypeArity[DottedFqn(ownerFqn)] = gargs.Length;
                         metadata.TypeParamNames[ownerFqn] = gargs.Select(g => g.Name).ToArray();
                         metadata.TypeParamNames[DottedFqn(ownerFqn)] = gargs.Select(g => g.Name).ToArray();
-                        var typeParamDeclarations = new JsonArray(
-                            gargs.Select(GenericParamDeclaration).ToArray()).ToJsonString();
+                        var declarations = gargs.Select(GenericParamDeclaration).ToArray();
+                        if (dotKtAuthored)
+                            RestoreKotlinTypeParameterVariances(type, asm, declarations);
+                        var typeParamDeclarations = new JsonArray(declarations).ToJsonString();
                         metadata.TypeParamDeclarations[ownerFqn] = typeParamDeclarations;
                         metadata.TypeParamDeclarations[DottedFqn(ownerFqn)] = typeParamDeclarations;
                         // The struct-ness ORACLE for a TYPE VARIABLE (#37/#48): record each type-param's CLR constraint
@@ -5525,6 +5528,28 @@ sealed partial class ReferenceMetadataIndex
             cad.ConstructorArguments[0].Value is not string version)
             return null;
         return BirCarrier.DecodeBody(version, ReadByteArrayArg(cad.ConstructorArguments[1]));
+    }
+
+    static void RestoreKotlinTypeParameterVariances(
+        Type type, Assembly declaringAssembly, JsonNode[] declarations)
+    {
+        if (CarrierJsonOf(type.GetCustomAttributesData(), declaringAssembly, KotlinSupertypesAttr)
+                is not JsonObject payload
+            || payload["variances"] is null)
+            return;
+        if (payload["variances"] is not JsonObject variances || variances.Count == 0)
+            throw new InvalidDataException("malformed trusted [KotlinSupertypes] variances");
+        var seen = new HashSet<int>();
+        foreach (var entry in variances)
+        {
+            if (!int.TryParse(entry.Key, out var index) || index < 0 || index >= declarations.Length
+                || declarations[index] is not JsonObject declaration
+                || !seen.Add(index)
+                || (entry.Value as JsonValue)?.TryGetValue<string>(out var variance) != true
+                || variance is not ("in" or "out"))
+                throw new InvalidDataException("malformed trusted [KotlinSupertypes] variance entry");
+            declaration["variance"] = variance;
+        }
     }
 
     static void IndexCompanionExtensionMembers(
@@ -6863,6 +6888,15 @@ sealed partial class ReferenceMetadataIndex
                 throw new InvalidOperationException(
                     "ReferenceMetadataIndex self-test dropped a reflected general-array rank/vector facet");
 
+        if (GenericParamDeclaration(typeof(IEnumerable<>).GetGenericArguments()[0]) is not JsonObject covariant
+            || (covariant["variance"] as JsonValue)?.GetValue<string>() != "out"
+            || GenericParamDeclaration(typeof(IComparer<>).GetGenericArguments()[0]) is not JsonObject contravariant
+            || (contravariant["variance"] as JsonValue)?.GetValue<string>() != "in"
+            || GenericParamDeclaration(typeof(List<>).GetGenericArguments()[0]) is not JsonObject invariant
+            || invariant["variance"] != null)
+            throw new InvalidOperationException(
+                "ReferenceMetadataIndex self-test dropped reflected generic-parameter variance");
+
         var closedGeneralArray = typeof(string).MakeArrayType(2);
         if (TypeNodeOf(closedGeneralArray)
             != TypeNode.Array.General(new TypeNode.Fqn("string"), 2))
@@ -6885,7 +6919,7 @@ sealed partial class ReferenceMetadataIndex
             throw new InvalidOperationException(
                 "ReferenceMetadataIndex self-test dropped an open function context or CLR family");
 
-        Console.WriteLine("[reference declaration types] self-test OK (general arrays + function facets)");
+        Console.WriteLine("[reference declaration types] self-test OK (generic variance + array/function facets)");
     }
 
     static bool IsFunc(Type type) =>
@@ -7073,6 +7107,13 @@ sealed partial class ReferenceMetadataIndex
 
         var special = new JsonArray();
         var attrs = gp.GenericParameterAttributes;
+        var variance = (attrs & GenericParameterAttributes.VarianceMask) switch
+        {
+            GenericParameterAttributes.Covariant => "out",
+            GenericParameterAttributes.Contravariant => "in",
+            _ => null,
+        };
+        if (variance != null) declaration["variance"] = variance;
         if ((attrs & GenericParameterAttributes.ReferenceTypeConstraint) != 0) special.Add("class");
         if ((attrs & GenericParameterAttributes.NotNullableValueTypeConstraint) != 0) special.Add("struct");
         if ((attrs & GenericParameterAttributes.DefaultConstructorConstraint) != 0) special.Add("new");

@@ -6265,6 +6265,9 @@ internal sealed class AssemblyScanner : IDisposable
     // author wrote it. Keyed by parameter INDEX — a type's own parameter list IS a transcription of the metadata's,
     // unlike its supertype list — and restored as the complete source list. The CLR rows are an erased physical
     // approximation of that same list, so retaining any of them beside the carrier can publish a false stronger bound.
+    // Kotlin variance also rides this carrier because CLR cannot express declaration-site variance on classes, and
+    // a conflicting @UnsafeVariance use can require an interface's CLR GenericParam row to be invariant. Restoring the
+    // authored variance here preserves the Kotlin declaration without asking consumers to infer it from physical ABI.
     private void RestoreErasedSupertypes(TypeDefinitionHandle handle, Class result, SignatureDecoder signatures,
         NameTable names, int capturedOuterTypeParameterCount)
     {
@@ -6278,6 +6281,7 @@ internal sealed class AssemblyScanner : IDisposable
             foreach (var i in ifs.EnumerateArray())
                 if (TypeNode.Read(i) is { } n) pre.Add(signatures.FromTypeNode(n));
         RestoreErasedBounds(doc, result, signatures, capturedOuterTypeParameterCount);
+        RestoreKotlinVariances(doc, result, capturedOuterTypeParameterCount);
         if (pre.Count == 0) return;
         for (var i = 0; i < result.Supertype.Count; i++)
         {
@@ -6320,6 +6324,31 @@ internal sealed class AssemblyScanner : IDisposable
             // one semantic unit so the KLIB surface is exactly the producer-authored list.
             parameter.UpperBound.Clear();
             parameter.UpperBound.Add(restored);
+        }
+    }
+
+    private static void RestoreKotlinVariances(System.Text.Json.JsonDocument doc, Class result,
+        int capturedOuterTypeParameterCount)
+    {
+        if (!doc.RootElement.TryGetProperty("variances", out var variances)) return;
+        if (variances.ValueKind != System.Text.Json.JsonValueKind.Object || !variances.EnumerateObject().Any())
+            throw new InvalidDataException("malformed [KotlinSupertypes] variances");
+        var seen = new HashSet<int>();
+        foreach (var entry in variances.EnumerateObject())
+        {
+            if (!int.TryParse(entry.Name, out var index) || index < 0 || !seen.Add(index)
+                || entry.Value.ValueKind != System.Text.Json.JsonValueKind.String)
+                throw new InvalidDataException("malformed [KotlinSupertypes] variance entry");
+            var variance = entry.Value.GetString() switch
+            {
+                "out" => TypeParameter.Types.Variance.Out,
+                "in" => TypeParameter.Types.Variance.In,
+                _ => throw new InvalidDataException("unknown [KotlinSupertypes] variance"),
+            };
+            if (index < capturedOuterTypeParameterCount) continue;
+            var parameter = result.TypeParameter.FirstOrDefault(candidate => candidate.Id == index)
+                ?? throw new InvalidDataException("[KotlinSupertypes] variance index exceeds type generic arity");
+            parameter.Variance = variance;
         }
     }
 

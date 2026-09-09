@@ -272,4 +272,47 @@ for source_name, projected_type in {
             f"{source_name} must remain {projected_type!r} through the chained call: {matching_locals!r}"
         )
 
+def assert_referenced_variant_array(stem, carrier_name, minimum_ops):
+    carrier = {"t": "array", "elem": {"t": "fqn", "name": carrier_name}}
+    new_name = f"new{stem}"
+    write_name = f"write{stem}"
+    calls = {
+        node.get("method"): node
+        for node in objects(body)
+        if node.get("k") == "callStatic" and node.get("method") in (new_name, write_name)
+    }
+    if set(calls) != {new_name, write_name}:
+        raise SystemExit(f"referenced variant-array calls are incomplete: {calls!r}")
+    if (
+        calls[new_name].get("ret") != carrier
+        or calls[new_name].get("memberRef", {}).get("returnType") != carrier
+        or calls[write_name].get("sig") != [carrier]
+        or calls[write_name].get("memberRef", {}).get("parameterTypes") != [carrier]
+    ):
+        raise SystemExit(
+            f"referenced {stem} signatures did not use one physical carrier: {calls!r}"
+        )
+    array_ops = [
+        node
+        for node in objects(body)
+        if node.get("k") in ("arrayGet", "arraySet")
+        and node.get("elem", {}).get("name") == carrier_name
+    ]
+    if len(array_ops) < minimum_ops:
+        raise SystemExit(
+            f"referenced {stem} reads/writes did not retain the carrier: {array_ops!r}"
+        )
+
+
+assert_referenced_variant_array(
+    "ReferencedCovariantClassArray",
+    "starprojection.ReferencedCovariantArrayClass$star",
+    6,
+)
+assert_referenced_variant_array(
+    "ReferencedUnsafeArray",
+    "starprojection.ReferencedUnsafeArrayValue$star",
+    6,
+)
+
 print("referenced existential results preserve exact and star-dependent physical projections")

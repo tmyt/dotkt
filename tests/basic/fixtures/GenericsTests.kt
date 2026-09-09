@@ -69,6 +69,7 @@ interface UnsafeProducer<out T> {
 class HelloProducer : Producer<String> { override fun produce(): String = "hello" }
 class IntProducer(private val value: Int) : Producer<Int> { override fun produce(): Int = value }
 class AnyConsumer : Consumer<Any> { override fun consume(t: Any): String = "consumed: $t" }
+class IntConsumer : Consumer<Int> { override fun consume(t: Int): String = "int: $t" }
 class UnsafeStringProducer : UnsafeProducer<String> { override fun roundTrip(value: String): String = value }
 class CovariantValue<out T>(val value: T)
 class InvariantValue<T>(val value: T)
@@ -136,6 +137,46 @@ fun spreadProjectedProducerInputs(
     ints: Array<IntProducer>,
     strings: Array<HelloProducer>,
 ): Array<Producer<Any>> = arrayOf(*ints, *strings)
+
+class ProjectedProducerArrayHolder(
+    var values: Array<Producer<Any>?>,
+)
+
+fun writeProjectedProducerParameter(values: Array<Producer<Any>?>) {
+    values[0] = IntProducer(12)
+    values[1] = HelloProducer()
+}
+
+fun mutableProjectedProducerStorage(): String {
+    val direct = arrayOfNulls<Producer<Any>>(2)
+    direct[0] = IntProducer(10)
+    direct[1] = HelloProducer()
+
+    val aliasSource = arrayOfNulls<Producer<Any>>(2)
+    val alias = aliasSource
+    writeProjectedProducerParameter(alias)
+
+    val holder = ProjectedProducerArrayHolder(arrayOfNulls<Producer<Any>>(2))
+    holder.values[0] = IntProducer(14)
+    holder.values[1] = HelloProducer()
+
+    var iterated = ""
+    for (producer in direct) iterated += producer!!.produce().toString()
+    val genericRead = firstProjectedValue(direct)!!.produce().toString()
+    val memberGenericRead = ProjectedArrayHelper().first(direct)!!.produce().toString()
+
+    return direct[0]!!.produce().toString() + ":" + direct[1]!!.produce().toString() + ":" +
+        aliasSource[0]!!.produce().toString() + ":" + aliasSource[1]!!.produce().toString() + ":" +
+        holder.values[0]!!.produce().toString() + ":" + holder.values[1]!!.produce().toString() + ":" + iterated +
+        ":" + genericRead + ":" + memberGenericRead
+}
+
+fun mutableContravariantConsumerStorage(): String {
+    val consumers = arrayOfNulls<Consumer<Int>>(2)
+    consumers[0] = AnyConsumer()
+    consumers[1] = IntConsumer()
+    return consumers[0]!!.consume(21) + ":" + consumers[1]!!.consume(22)
+}
 
 private interface PrivateProducer<out T> { fun producePrivate(): T }
 private class PrivateIntProducer : PrivateProducer<Int> { override fun producePrivate(): Int = 9 }
@@ -511,6 +552,8 @@ class GenericsTests {
             )),
         )
         assertEquals("9", nullableProjectedProducer(arrayOf(PrivateIntProducer())))
+        assertEquals("10:hello:12:hello:14:hello:10hello:10:10", mutableProjectedProducerStorage())
+        assertEquals("consumed: 21:int: 22", mutableContravariantConsumerStorage())
 
         val input = UseSiteAnyBox("initial")
         useSiteInParameter(input)

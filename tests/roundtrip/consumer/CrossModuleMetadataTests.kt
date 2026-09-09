@@ -108,6 +108,16 @@ import starprojection.referencedExistentialFusibleFlow
 import starprojection.ReferencedIntProjectedArrayValue
 import starprojection.ReferencedStringProjectedArrayValue
 import starprojection.renderProjectedArrayValues
+import starprojection.ReferencedProjectedArrayHolder
+import starprojection.newReferencedProjectedArray
+import starprojection.writeReferencedProjectedArray
+import starprojection.ReferencedCovariantArrayClass
+import starprojection.newReferencedCovariantClassArray
+import starprojection.writeReferencedCovariantClassArray
+import starprojection.ReferencedUnsafeIntArrayValue
+import starprojection.ReferencedUnsafeStringArrayValue
+import starprojection.newReferencedUnsafeArray
+import starprojection.writeReferencedUnsafeArray
 import starprojection.ReferencedUseSiteInvariant
 import starprojection.referencedUseSiteInput
 import starprojection.referencedUseSiteOutput
@@ -505,6 +515,53 @@ class GenericMetadataRoundtripTests {
                 ),
             ),
         )
+
+        val writableProjected = newReferencedProjectedArray()
+        writableProjected[0] = ReferencedIntProjectedArrayValue(13)
+        writableProjected[1] = ReferencedStringProjectedArrayValue("consumer")
+        ClassicAssert.AreEqual(
+            "13:consumer",
+            writableProjected[0]!!.value().toString() + ":" + writableProjected[1]!!.value().toString(),
+        )
+        writeReferencedProjectedArray(writableProjected)
+        ClassicAssert.AreEqual(
+            "17:producer",
+            writableProjected[0]!!.value().toString() + ":" + writableProjected[1]!!.value().toString(),
+        )
+
+        val projectedHolder = ReferencedProjectedArrayHolder(newReferencedProjectedArray())
+        projectedHolder.values[0] = ReferencedIntProjectedArrayValue(19)
+        projectedHolder.values[1] = ReferencedStringProjectedArrayValue("field")
+        ClassicAssert.AreEqual(
+            "19:field",
+            projectedHolder.values[0]!!.value().toString() + ":" +
+                projectedHolder.values[1]!!.value().toString(),
+        )
+
+        val covariantClassArray = newReferencedCovariantClassArray()
+        val covariantInt: ReferencedCovariantArrayClass<Int> = ReferencedCovariantArrayClass(29)
+        val covariantString: ReferencedCovariantArrayClass<String> =
+            ReferencedCovariantArrayClass("class-consumer")
+        covariantClassArray[0] = covariantInt
+        covariantClassArray[1] = covariantString
+        ClassicAssert.AreEqual(
+            "29:class-consumer",
+            covariantClassArray[0]!!.value.toString() + ":" + covariantClassArray[1]!!.value.toString(),
+        )
+        writeReferencedCovariantClassArray(covariantClassArray)
+        ClassicAssert.AreEqual(
+            "23:class-producer",
+            covariantClassArray[0]!!.value.toString() + ":" + covariantClassArray[1]!!.value.toString(),
+        )
+
+        val unsafeArray = newReferencedUnsafeArray()
+        unsafeArray[0] = ReferencedUnsafeIntArrayValue()
+        unsafeArray[1] = ReferencedUnsafeStringArrayValue()
+        ClassicAssert.IsNotNull(unsafeArray[0])
+        ClassicAssert.IsNotNull(unsafeArray[1])
+        writeReferencedUnsafeArray(unsafeArray)
+        ClassicAssert.IsNotNull(unsafeArray[0])
+        ClassicAssert.IsNotNull(unsafeArray[1])
 
         val projectedInput: ReferencedUseSiteInvariant<in String> = referencedUseSiteInput()
         val projectedOutput: ReferencedUseSiteInvariant<out String> = referencedUseSiteOutput()

@@ -41,7 +41,11 @@ def fqn(name, *args):
 
 
 producer_carrier = fqn("Producer$star")
-for method_name in ("initializedProjectedProducerArray", "charSequenceProducerArray"):
+for method_name in (
+    "exactCovariantProducerArray",
+    "initializedProjectedProducerArray",
+    "charSequenceProducerArray",
+):
     declaration = method(method_name)
     if declaration.get("ret") != array(producer_carrier):
         raise SystemExit(f"{method_name} did not expose Producer$star[] physically: {declaration.get('ret')!r}")
@@ -52,6 +56,61 @@ for method_name in ("initializedProjectedProducerArray", "charSequenceProducerAr
     ]
     if len(allocations) != 1 or allocations[0].get("elem") != producer_carrier:
         raise SystemExit(f"{method_name} did not allocate Producer$star[]: {allocations!r}")
+
+writable_parameter = method("writeProjectedProducerParameter")
+if writable_parameter.get("params", [{}])[0].get("type") != array(producer_carrier):
+    raise SystemExit(
+        f"writable projected parameter did not expose Producer$star[]: {writable_parameter.get('params')!r}"
+    )
+parameter_writes = [
+    node for node in objects(writable_parameter.get("body", [])) if node.get("k") == "arraySet"
+]
+if len(parameter_writes) != 2 or any(node.get("elem") != producer_carrier for node in parameter_writes):
+    raise SystemExit(f"writable projected parameter stores were not Producer$star: {parameter_writes!r}")
+
+writable_storage = method("mutableProjectedProducerStorage")
+sized_allocations = [
+    node for node in objects(writable_storage.get("body", [])) if node.get("k") == "newArraySized"
+]
+if len(sized_allocations) != 3 or any(node.get("elem") != producer_carrier for node in sized_allocations):
+    raise SystemExit(f"sized projected arrays did not allocate Producer$star[]: {sized_allocations!r}")
+writable_ops = [
+    node
+    for node in objects(writable_storage.get("body", []))
+    if node.get("k") in ("arrayGet", "arraySet", "forArray")
+]
+if not writable_ops or any(node.get("elem") != producer_carrier for node in writable_ops):
+    raise SystemExit(f"projected array storage operations did not use Producer$star: {writable_ops!r}")
+generic_reads = [
+    node
+    for node in objects(writable_storage.get("body", []))
+    if node.get("method") in ("firstProjectedValue", "first") and node.get("typeArgs") is not None
+]
+if len(generic_reads) != 2 or any(
+    node.get("typeArgs") != [producer_carrier] or node.get("ret") != producer_carrier
+    for node in generic_reads
+):
+    raise SystemExit(f"generic projected-array reads did not close over Producer$star: {generic_reads!r}")
+
+holders = [item for item in root.get("types", []) if item.get("name") == "ProjectedProducerArrayHolder"]
+if len(holders) != 1:
+    raise SystemExit(f"found {len(holders)} projected array holders, expected 1")
+holder = holders[0]
+holder_slots = [field.get("type") for field in holder.get("fields", [])]
+holder_slots += [prop.get("type") for prop in holder.get("properties", [])]
+holder_slots += [param.get("type") for ctor in holder.get("ctors", []) for param in ctor.get("params", [])]
+if not holder_slots or any(slot != array(producer_carrier) for slot in holder_slots):
+    raise SystemExit(f"projected array holder slots did not use Producer$star[]: {holder_slots!r}")
+
+consumer_carrier = fqn("Consumer$star")
+contravariant_storage = method("mutableContravariantConsumerStorage")
+contravariant_ops = [
+    node
+    for node in objects(contravariant_storage.get("body", []))
+    if node.get("k") in ("newArraySized", "arrayGet", "arraySet")
+]
+if not contravariant_ops or any(node.get("elem") != consumer_carrier for node in contravariant_ops):
+    raise SystemExit(f"contravariant array storage operations did not use Consumer$star: {contravariant_ops!r}")
 
 unsafe = method("unsafeVarianceProducerArray")
 unsafe_carrier = fqn("UnsafeProducer$star")
