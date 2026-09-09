@@ -93,6 +93,24 @@
       "physicalName": "plusSequence"
     },
     {
+      "declarationId": "dotkt-declaration-v1:9bc066bb4b60845b870821cb6af9ae06e0195cd4c5c76b610a0754e47b623440",
+      "sourceName": "set",
+      "physicalParameterTypes": [
+        {
+          "index": 0,
+          "expectedType": {
+            "t": "fqn",
+            "name": "kotlin.collections.MutableMap",
+            "args": [
+              { "t": "tv", "scope": "method", "i": 0 },
+              { "t": "tv", "scope": "method", "i": 1 }
+            ]
+          },
+          "type": { "t": "fqn", "name": "kotlin.Any" }
+        }
+      ]
+    },
+    {
       "declarationId": "dotkt-declaration-v1:3c97e22a6fa3bccaef29adcb325cffd0d55bd77de2c5c8f7c9a4e1a2752c93b3",
       "sourceName": "filterIsInstance",
       "sequenceElementAdapter": true

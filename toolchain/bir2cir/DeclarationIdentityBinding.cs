@@ -46,9 +46,11 @@ static class DeclarationIdentityBinding
                     var signature = new JsonObject
                     {
                         ["params"] = new JsonArray(parameters.OfType<JsonObject>()
-                            .Select(parameter => parameter["type"]?.DeepClone()
-                                ?? throw new InvalidOperationException(
-                                    $"declaration identity '{method[Key]}' has an untyped parameter"))
+                            .Select(parameter => Str(parameter["kotlinType"]) is string kotlinType
+                                ? JsonNode.Parse(kotlinType)
+                                : parameter["type"]?.DeepClone()
+                                    ?? throw new InvalidOperationException(
+                                        $"declaration identity '{method[Key]}' has an untyped parameter"))
                             .ToArray()),
                         ["ret"] = method["ret"]!.DeepClone(),
                     };
@@ -536,6 +538,7 @@ static class DeclarationIdentityBinding
         IReadOnlyDictionary<string, string> physicalById,
         IReadOnlySet<string> semanticCarrierIds,
         IReadOnlyDictionary<string, JsonObject> semanticSignatures,
+        IReadOnlyDictionary<string, int[]> physicalParameterIndices,
         ReferenceMetadataIndex refs)
     {
         var rootList = roots.ToList();
@@ -556,6 +559,8 @@ static class DeclarationIdentityBinding
         }
 
         var declarations = Collect(rootList);
+        var declarationsById = declarations.ToDictionary(
+            declaration => Str(declaration[Key])!, StringComparer.Ordinal);
 
         foreach (var declaration in declarations)
         {
@@ -624,6 +629,18 @@ static class DeclarationIdentityBinding
                     or "newDelegate" or "newBoundDelegate")
                 {
                     obj["method"] = physical;
+                    // A trusted overlay can deliberately change selected declaration slots while retaining their
+                    // Kotlin surface in metadata. Rewrite only those physical slots: an ordinary call's remaining
+                    // descriptor is already substituted into the caller's owner/method frame and must stay there.
+                    if (physicalParameterIndices.TryGetValue(id, out var rewrittenIndices))
+                    {
+                        if (obj["sig"] is not JsonArray callSignature
+                            || declarationsById[id]["params"] is not JsonArray declarationParameters)
+                            throw new InvalidOperationException(
+                                $"bir2cir: declaration identity '{id}' has no complete local call signature");
+                        RewritePhysicalParameterSlots(
+                            id, callSignature, declarationParameters, rewrittenIndices);
+                    }
                     // KotlinPropertyAccessors has already allocated the exact local accessor declaration. Leaving
                     // the semantic role beside its physical MethodDef name would make late member resolution apply
                     // the one-way get_/set_ projection a second time (`get_get_x`).
@@ -649,6 +666,41 @@ static class DeclarationIdentityBinding
                 foreach (var child in array.ToList()) if (child != null) RejectUnboundUse(child);
         }
         foreach (var root in rootList) RejectUnboundUse(root);
+    }
+
+    static void RewritePhysicalParameterSlots(
+        string declarationId, JsonArray callSignature, JsonArray declarationParameters,
+        IEnumerable<int> rewrittenIndices)
+    {
+        foreach (var index in rewrittenIndices)
+        {
+            if (index < 0 || index >= callSignature.Count
+                || index >= declarationParameters.Count
+                || declarationParameters[index]?["type"] is not JsonNode physicalType)
+                throw new InvalidOperationException(
+                    $"bir2cir: declaration identity '{declarationId}' has no physical parameter {index}");
+            callSignature[index] = physicalType.DeepClone();
+        }
+    }
+
+    public static void SelfTest()
+    {
+        var callSignature = new JsonArray(
+            TypeJson.Fqn("semantic.Receiver"),
+            TypeJson.Fqn("System.String"),
+            TypeJson.Fqn("System.Int32"));
+        var declarationParameters = new JsonArray(
+            new JsonObject { ["type"] = TypeJson.Fqn("System.Object") },
+            new JsonObject { ["type"] = TypeJson.Write(new TypeNode.Tv("method", 0)) },
+            new JsonObject { ["type"] = TypeJson.Write(new TypeNode.Tv("method", 1)) });
+
+        RewritePhysicalParameterSlots(
+            "dotkt-declaration-v1:selftest", callSignature, declarationParameters, new[] { 0 });
+        if (TypeJson.Read(callSignature[0]) is not TypeNode.Fqn { Name: "System.Object" }
+            || TypeJson.Read(callSignature[1]) is not TypeNode.Fqn { Name: "System.String" }
+            || TypeJson.Read(callSignature[2]) is not TypeNode.Fqn { Name: "System.Int32" })
+            throw new InvalidOperationException(
+                "DeclarationIdentityBinding self-test clobbered caller-substituted signature slots");
     }
 
     static void RewriteUnsafeAccessorTarget(JsonObject method, string physicalName)
