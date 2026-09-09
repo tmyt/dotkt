@@ -111,6 +111,13 @@ import starprojection.renderProjectedArrayValues
 import starprojection.ReferencedProjectedArrayHolder
 import starprojection.newReferencedProjectedArray
 import starprojection.writeReferencedProjectedArray
+import starprojection.ReferencedCovariantArrayClass
+import starprojection.newReferencedCovariantClassArray
+import starprojection.writeReferencedCovariantClassArray
+import starprojection.ReferencedUnsafeIntArrayValue
+import starprojection.ReferencedUnsafeStringArrayValue
+import starprojection.newReferencedUnsafeArray
+import starprojection.writeReferencedUnsafeArray
 import starprojection.ReferencedUseSiteInvariant
 import starprojection.referencedUseSiteInput
 import starprojection.referencedUseSiteOutput
@@ -530,6 +537,31 @@ class GenericMetadataRoundtripTests {
             projectedHolder.values[0]!!.value().toString() + ":" +
                 projectedHolder.values[1]!!.value().toString(),
         )
+
+        val covariantClassArray = newReferencedCovariantClassArray()
+        val covariantInt: ReferencedCovariantArrayClass<Int> = ReferencedCovariantArrayClass(29)
+        val covariantString: ReferencedCovariantArrayClass<String> =
+            ReferencedCovariantArrayClass("class-consumer")
+        covariantClassArray[0] = covariantInt
+        covariantClassArray[1] = covariantString
+        ClassicAssert.AreEqual(
+            "29:class-consumer",
+            covariantClassArray[0]!!.value.toString() + ":" + covariantClassArray[1]!!.value.toString(),
+        )
+        writeReferencedCovariantClassArray(covariantClassArray)
+        ClassicAssert.AreEqual(
+            "23:class-producer",
+            covariantClassArray[0]!!.value.toString() + ":" + covariantClassArray[1]!!.value.toString(),
+        )
+
+        val unsafeArray = newReferencedUnsafeArray()
+        unsafeArray[0] = ReferencedUnsafeIntArrayValue()
+        unsafeArray[1] = ReferencedUnsafeStringArrayValue()
+        ClassicAssert.IsNotNull(unsafeArray[0])
+        ClassicAssert.IsNotNull(unsafeArray[1])
+        writeReferencedUnsafeArray(unsafeArray)
+        ClassicAssert.IsNotNull(unsafeArray[0])
+        ClassicAssert.IsNotNull(unsafeArray[1])
 
         val projectedInput: ReferencedUseSiteInvariant<in String> = referencedUseSiteInput()
         val projectedOutput: ReferencedUseSiteInvariant<out String> = referencedUseSiteOutput()

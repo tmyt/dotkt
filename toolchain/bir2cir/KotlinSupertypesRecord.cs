@@ -4,8 +4,8 @@ using System.Text.Json.Nodes;
 using DotKt.Bir;
 
 // Shared pass-local hand-off for every BIR transform that changes the Kotlin identity of a supertype edge or a
-// type-parameter bound. Producers contribute only the positions they move; RoundtripMetadata consumes the merged
-// source truth into one [KotlinSupertypes] carrier.
+// type-parameter declaration fact. Producers contribute only the positions they move; RoundtripMetadata consumes the
+// merged source truth into one [KotlinSupertypes] carrier.
 static class KotlinSupertypesRecord
 {
     internal const string PreKey = "kotlinSupertypesPre";
@@ -21,6 +21,7 @@ static class KotlinSupertypesRecord
 
         MergeInterfaces(merged, additions);
         MergeBounds(merged, additions);
+        MergeVariances(merged, additions);
         declaration[PreKey] = merged.ToJsonString();
     }
 
@@ -62,6 +63,19 @@ static class KotlinSupertypesRecord
         // earlier list already preserves every sibling at its least-erased form.
         foreach (var bound in added)
             if (!target.ContainsKey(bound.Key)) target[bound.Key] = bound.Value?.DeepClone();
+    }
+
+    static void MergeVariances(JsonObject merged, JsonObject additions)
+    {
+        if (additions["variances"] is not JsonObject added || added.Count == 0) return;
+        var target = merged["variances"] as JsonObject;
+        if (target == null)
+        {
+            target = new JsonObject();
+            merged["variances"] = target;
+        }
+        foreach (var variance in added)
+            if (!target.ContainsKey(variance.Key)) target[variance.Key] = variance.Value?.DeepClone();
     }
 
     static bool SameHead(TypeNode left, TypeNode right) => left is TypeNode.Fqn lf && right is TypeNode.Fqn rf

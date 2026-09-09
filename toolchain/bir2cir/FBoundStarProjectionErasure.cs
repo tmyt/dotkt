@@ -2275,6 +2275,7 @@ static class FBoundStarProjectionErasure
                             childBoundDeclaration, localClrAliases);
                 }
                 BindProjectedArrayRead(obj, owners, refs);
+                BindProjectedArrayGenericCall(obj, owners, refs);
                 ApplyProjectedConstructorArgumentCasts(obj, projectedConstructorArgumentTargets);
                 // A star-projected inner construction is replaced while visiting the receiver below this call.  Its
                 // result is the inner existential carrier, so bind the immediately-following member only after that
@@ -2636,7 +2637,7 @@ static class FBoundStarProjectionErasure
             };
             if (variable == null || variable.I < 0 || variable.I >= typeArguments.Count) continue;
 
-            var exact = TypeJson.Read(typeArguments[variable.I]);
+            var exact = StripSourceNullability(TypeJson.Read(typeArguments[variable.I]));
             TypeNode projectedExact;
             TypeNode physical;
             if (ProjectedArrayElement(arguments[parameterIndex]) is TypeNode flowedProjection
@@ -3079,14 +3080,19 @@ static class FBoundStarProjectionErasure
                     if (Str(obj["k"]) == "var" && Str(obj["name"]) is string name
                         && ExpressionType(obj["init"]) is TypeNode resultType
                         && TryPhysicalExistential(resultType, out var result)
-                        && TypeJson.Read(obj["type"]) is TypeNode declared
-                        && LogicalTypeMatchesPhysical(declared, result))
+                        && TypeJson.Read(obj["type"]) is TypeNode declared)
                     {
-                        locals[name] = result;
-                        if (ProjectedExistentialType(obj["init"]) is { } projected)
-                            projectedLocals[name] = projected;
-                        if (ProjectedArrayElement(obj["init"]) is { } arrayProjection)
-                            projectedArrayLocals[name] = arrayProjection;
+                        var projected = ProjectedExistentialType(obj["init"]);
+                        var arrayProjection = ProjectedArrayElement(obj["init"]);
+                        if (LogicalTypeMatchesPhysical(declared, result)
+                            || projected != null || arrayProjection != null)
+                        {
+                            locals[name] = result;
+                            if (projected != null)
+                                projectedLocals[name] = projected;
+                            if (arrayProjection != null)
+                                projectedArrayLocals[name] = arrayProjection;
+                        }
                     }
                     foreach (var value in obj.Select(pair => pair.Value))
                         if (value != null) Collect(value);
@@ -3116,6 +3122,8 @@ static class FBoundStarProjectionErasure
                     }
                     foreach (var value in obj.Select(pair => pair.Value).ToList())
                         if (value != null) Normalize(value);
+                    BindProjectedArrayRead(obj, owners, refs);
+                    BindProjectedArrayGenericCall(obj, owners, refs);
                     BindInheritedStarMember(obj, owners, defs, refs);
                     break;
                 case JsonArray array:

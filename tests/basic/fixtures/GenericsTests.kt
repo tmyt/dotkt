@@ -162,10 +162,13 @@ fun mutableProjectedProducerStorage(): String {
 
     var iterated = ""
     for (producer in direct) iterated += producer!!.produce().toString()
+    val genericRead = firstProjectedValue(direct)!!.produce().toString()
+    val memberGenericRead = ProjectedArrayHelper().first(direct)!!.produce().toString()
 
     return direct[0]!!.produce().toString() + ":" + direct[1]!!.produce().toString() + ":" +
         aliasSource[0]!!.produce().toString() + ":" + aliasSource[1]!!.produce().toString() + ":" +
-        holder.values[0]!!.produce().toString() + ":" + holder.values[1]!!.produce().toString() + ":" + iterated
+        holder.values[0]!!.produce().toString() + ":" + holder.values[1]!!.produce().toString() + ":" + iterated +
+        ":" + genericRead + ":" + memberGenericRead
 }
 
 fun mutableContravariantConsumerStorage(): String {
@@ -549,7 +552,7 @@ class GenericsTests {
             )),
         )
         assertEquals("9", nullableProjectedProducer(arrayOf(PrivateIntProducer())))
-        assertEquals("10:hello:12:hello:14:hello:10hello", mutableProjectedProducerStorage())
+        assertEquals("10:hello:12:hello:14:hello:10hello:10:10", mutableProjectedProducerStorage())
         assertEquals("consumed: 21:int: 22", mutableContravariantConsumerStorage())
 
         val input = UseSiteAnyBox("initial")

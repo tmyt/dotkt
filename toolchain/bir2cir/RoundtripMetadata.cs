@@ -233,11 +233,18 @@ static class RoundtripMetadata
             Append(to, JsonCarrierAttr(AKStaticCarrier, staticCarrier));
             to.Remove("staticCarrier");
         }
+        // CLR GenericParam variance cannot state Kotlin declaration-site variance on classes, and ilemit must also
+        // omit an interface variance flag when @UnsafeVariance puts the parameter in a conflicting CLR position.
+        // Preserve every authored variant parameter by physical frame index in the same type-level source carrier as
+        // pre-erasure bounds. dll2klib and bir2cir's reference index consume this fact instead of guessing it back
+        // from the necessarily weaker CLR row.
+        RecordTypeParameterVariances(to);
         // [KotlinType(version, bytes)] — a compiler-synthesized CLR type whose Kotlin surface is a different TypeNode.
         // FBoundStarProjectionErasure uses this on its non-generic existential interface so a downstream reader restores
         // the original G<*> projection rather than exposing the CLR implementation type or degrading it to Any?.
-        // [KotlinSupertypes(version, bytes)] (#86) — the type's PRE-ERASURE supertype edges and type-parameter
-        // bounds. A supertype argument erases like any other reified argument, and unlike a member slot there is no
+        // [KotlinSupertypes(version, bytes)] (#86) — the type's PRE-ERASURE supertype edges, type-parameter
+        // bounds, and Kotlin declaration-site variance. A supertype argument erases like any other reified argument,
+        // and unlike a member slot there is no
         // per-slot attribute to hang the Kotlin type on: the edge itself is what a consumer binds to when it writes
         // `val s: Sink<Int?> = E()`. Same opaque TypeNode payload as every other carrier.
         if ((to[KotlinSupertypesRecord.PreKey] as JsonValue)?.GetValue<string>() is string sup)
@@ -269,6 +276,22 @@ static class RoundtripMetadata
             }
         if (to["types"] is JsonArray nested)
             foreach (var t in nested) if (t is JsonObject nto) StampType(nto);
+    }
+
+    static void RecordTypeParameterVariances(JsonObject type)
+    {
+        if (type["typeParams"] is not JsonArray parameters) return;
+        var offset = type["capturedTypeParams"] is JsonArray captured ? captured.Count : 0;
+        var variances = new JsonObject();
+        for (var index = 0; index < parameters.Count; index++)
+        {
+            var variance = parameters[index] is JsonObject parameter
+                ? (parameter["variance"] as JsonValue)?.GetValue<string>() : null;
+            if (variance is "in" or "out")
+                variances[(offset + index).ToString()] = variance;
+        }
+        if (variances.Count != 0)
+            KotlinSupertypesRecord.Merge(type, new JsonObject { ["variances"] = variances });
     }
 
     static void StampMethods(JsonNode methods)

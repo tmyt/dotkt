@@ -81,6 +81,16 @@ writable_ops = [
 ]
 if not writable_ops or any(node.get("elem") != producer_carrier for node in writable_ops):
     raise SystemExit(f"projected array storage operations did not use Producer$star: {writable_ops!r}")
+generic_reads = [
+    node
+    for node in objects(writable_storage.get("body", []))
+    if node.get("method") in ("firstProjectedValue", "first") and node.get("typeArgs") is not None
+]
+if len(generic_reads) != 2 or any(
+    node.get("typeArgs") != [producer_carrier] or node.get("ret") != producer_carrier
+    for node in generic_reads
+):
+    raise SystemExit(f"generic projected-array reads did not close over Producer$star: {generic_reads!r}")
 
 holders = [item for item in root.get("types", []) if item.get("name") == "ProjectedProducerArrayHolder"]
 if len(holders) != 1:

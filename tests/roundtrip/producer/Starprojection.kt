@@ -77,6 +77,36 @@ fun writeReferencedProjectedArray(values: Array<ProjectedArrayValue<Any>?>) {
     values[1] = ReferencedStringProjectedArrayValue("producer")
 }
 
+class ReferencedCovariantArrayClass<out T>(val value: T)
+
+fun newReferencedCovariantClassArray(): Array<ReferencedCovariantArrayClass<Any>?> =
+    arrayOfNulls<ReferencedCovariantArrayClass<Any>>(2)
+
+fun writeReferencedCovariantClassArray(values: Array<ReferencedCovariantArrayClass<Any>?>) {
+    values[0] = ReferencedCovariantArrayClass(23)
+    values[1] = ReferencedCovariantArrayClass("class-producer")
+}
+
+interface ReferencedUnsafeArrayValue<out T> {
+    fun roundTrip(value: @UnsafeVariance T): T
+}
+
+class ReferencedUnsafeIntArrayValue : ReferencedUnsafeArrayValue<Int> {
+    override fun roundTrip(value: Int): Int = value
+}
+
+class ReferencedUnsafeStringArrayValue : ReferencedUnsafeArrayValue<String> {
+    override fun roundTrip(value: String): String = value
+}
+
+fun newReferencedUnsafeArray(): Array<ReferencedUnsafeArrayValue<Any>?> =
+    arrayOfNulls<ReferencedUnsafeArrayValue<Any>>(2)
+
+fun writeReferencedUnsafeArray(values: Array<ReferencedUnsafeArrayValue<Any>?>) {
+    values[0] = ReferencedUnsafeIntArrayValue()
+    values[1] = ReferencedUnsafeStringArrayValue()
+}
+
 // Ordinary (non-array) projections must survive producer DLL -> dll2klib -> consumer KLIB exactly. The physical
 // carrier is intentionally invisible to the consumer; these signatures cover every exported declaration position.
 interface ReferencedUseSiteInvariant<T> {
