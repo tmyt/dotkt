@@ -17,7 +17,9 @@ def objects(node):
 with open(sys.argv[1], encoding="utf-8") as stream:
     bir = json.load(stream)
 method = next(method for method in bir["methods"] if method["name"] == "unitBlockDeclaration")
-conditional = method["body"][0]["value"]
+returns = [node for node in objects(method["body"]) if node.get("k") == "return"]
+assert len(returns) == 1, returns
+conditional = returns[0]["value"]
 assert conditional["k"] == "cond", conditional
 unit = {"t": "fqn", "name": "kotlin.Unit"}
 for side, kinds, tags in [("then", ["exprStmt", "var"], ["a", "d"]), ("else", ["var"], ["e"])]:

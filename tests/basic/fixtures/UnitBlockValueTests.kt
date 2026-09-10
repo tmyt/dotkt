@@ -16,7 +16,7 @@ private fun unitBlockWhen(mode: Int): Any = when (unitBlockSubject(mode)) {
     1 -> { }
     else -> { unitBlockEffect("i"); 42 }
 }
-private fun unitBlockReturn(stop: Boolean): Any = if (true) {
+private fun unitBlockReturn(flag: Boolean, stop: Boolean): Any = if (flag) {
     if (stop) return "early"
     val ignored = unitBlockEffect("r")
 } else Unit
@@ -62,7 +62,7 @@ class UnitBlockValueTests {
         var captured = 0
         val values = arrayOf<Any>(
             unitBlockEffect("p"),
-            if (true) {
+            if (captured == 0) {
                 val add = { captured++ }
                 add()
                 val nested: Any = if (captured == 1) { val ignored = unitBlockEffect("n") } else Unit
@@ -81,7 +81,7 @@ class UnitBlockValueTests {
         unitBlockTrace = ""
         var caught = false
         try {
-            val value: Any = if (true) {
+            val value: Any = if (!caught) {
                 unitBlockEffect("x")
                 val ignored = throw IllegalStateException("initializer")
             } else Unit
@@ -91,8 +91,9 @@ class UnitBlockValueTests {
         }
         assertEquals(true, caught)
         assertEquals("x", unitBlockTrace)
-        assertEquals("early", unitBlockReturn(true))
-        assertSame(Unit, unitBlockReturn(false))
+        assertEquals("early", unitBlockReturn(true, true))
+        assertSame(Unit, unitBlockReturn(true, false))
+        assertSame(Unit, unitBlockReturn(false, true))
         assertEquals("xr", unitBlockTrace)
     }
 }
