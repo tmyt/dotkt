@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Ordinary local declarations retain their identity before if/when tails (#711).** Subject binding uses
+  Kotlin IR origins, so mutable locals are not mistaken for when, safe-call, or Elvis temporary subjects.
+
 - **Unit-valued conditional blocks preserve their statements (#708).** Declaration initializers, preceding effects,
   assignments and loop tails execute before the block supplies Unit, including nested if/when value branches.
 
