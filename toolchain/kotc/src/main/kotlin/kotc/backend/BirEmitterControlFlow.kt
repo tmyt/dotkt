@@ -461,10 +461,19 @@ internal fun BirEmitter.blockExpr(block: IrBlock): String {
 		return if (subjVar == null) result
 		else valueBlockJson(type = birType(whenExpr.type).toJson(), stmts = subjVar, result = result)
 	}
-	// A general block in value position: emit its preceding (side-effecting) statements, then the last value.
+	val last = block.statements.lastOrNull()
+	// After the specialized paths, a Unit-valued block executes every statement and produces Unit.
+	// A Nothing tail never produces that value, even if IR gives its enclosing block the Unit type;
+	// retain the terminal expression below. Physical Unit representation belongs to bir2cir.
+	if (block.type.isUnit() && !(last is IrExpression && last.type.isNothing())) return valueBlockJson(
+		type = birType(block.type).toJson(),
+		stmts = bodyStmts(block),
+		result = """{"k":"const","type":${fqnJson("kotlin.Unit")},"value":null}""",
+		yieldsNull = false,
+	)
+	// A value or terminal block: emit its preceding statements, then the last expression.
 	// e.g. `{ counter++ }` lowers to `{ val <unary> = counter; counter = counter + 1; <unary> }` — dropping the
 	// leading statements would lose the temp + the assignment.
-	val last = block.statements.lastOrNull()
 	if (block.statements.size > 1 && last is IrExpression) {
 		val pre = block.statements.dropLast(1).joinToString(",") { stmt(it) }
 		return valueBlockJson(type = null, stmts = pre, result = expr(last))
