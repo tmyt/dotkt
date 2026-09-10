@@ -1181,7 +1181,8 @@ sealed class Pipeline
             // that LowerNode walks as generic JSON without routing through LowerType. ilemit's MapType asserts a value
             // inner, so a reference nullable in ANY position (a `Continuation<Any?>` owner arg crashed the ref emit) must
             // be gone. Runs AFTER DeclNullableFlags (byte walk already captured the semantic nullability) and BEFORE type
-            // lowering (oracle unambiguous on kotlin.* names). Value/struct/enum `{t:nullable}` stays for ilemit.
+            // lowering (oracle unambiguous on kotlin.* names). Value/struct/enum `{t:nullable}` stays for ilemit;
+            // Unit? remains until type lowering distinguishes its value ABI from Unit's void convention.
             ReferenceNullableStrip.Apply(substituted, isValueFqn);
             // #66 — RUNTIME stdlib build only: remove the `kotlin.Comparable` upper bound that substituted CLR
             // primitives cannot satisfy, plus `in` declaration-site variance that the CLR rejects for the realized

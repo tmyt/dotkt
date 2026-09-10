@@ -1677,6 +1677,9 @@ occupies a delegate slot, so it counts toward that arity; a `suspend` function t
 | 23 and above | — | **unsupported — refused by bir2cir** (see below) |
 | any arity, `suspend` | not a delegate — an object carrier (§4) | **no arity limit applies** |
 
+Here `Unit` means the non-null return type. `Unit?` is a value return and uses `Func`/`KFunc`, preserving both
+the Unit singleton and null; its physical return type is the `kotlin.Unit` class, not CLR `void`.
+
 `System.Func`/`Action` stop at 16 value parameters, so 17..22 is the band that needs a DotKt type — and 22 is where
 it stops, because each arity is one more pre-baked type in the stdlib (see the refusal below). Those six pairs are
 emitted **unconditionally into both stdlib twins** (`DotKt.Private.Stdlib.dll` and `DotKt.Stdlib.dll`, with
@@ -1815,8 +1818,9 @@ same slot shifts with it. `bir2cir` writes the same flattening from the other si
 own rule would give it one; DotKt does not, because `Unit` is also the type ECMA `void` projects to and a reader cannot
 tell the two apart by name. Both ends implement the same rule — `dll2klib` seeds `kotlin.Unit` into the set of names
 that hold no byte, `bir2cir` skips it when it writes the array — so `Pair<Unit, String?>` is `[1, 2]` and its `?`
-survives the round trip. Two consequences: a C# consumer reading such a signature counts one position too few, and a
-`Unit?` in a projected signature carries no nullability of its own (it re-imports as `Unit`).
+survives the round trip. A C# consumer reading such an NRT signature counts one position too few. Nullable Unit
+in DotKt declaration signatures (including nested types) instead retains its exact source type through the
+`KotlinType` carrier, so DLL-to-KLIB import restores `Unit?` without changing this NRT byte convention.
 
 `T!` is a flexible type `(T..T?)` (`ConeFlexibleType`): the consumer may use it as `T` or `T?` and the compiler
 enforces neither — exactly how Kotlin/JVM treats un-annotated Java. This avoids the unsound alternative of forcing a

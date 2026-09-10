@@ -504,8 +504,8 @@ static class BirTypeLowering
                     // inner in EVERY build — a CLR reference is nullable in IL regardless, and its `?` was already emitted as
                     // an NRT byte by the decl walk. NEVER produce `Nullable<referenceType>` (ilemit's MapNullable asserts the
                     // inner is a value type, in the ref build too). Decided on the SEMANTIC inner via the struct-ness oracle.
-                    // Only VALUE inners reach here (so `typeArg` is moot): bir2cir's ReferenceNullableStrip (Program.cs) removes
-                    // every reference-`T?` wrapper — INCLUDING nested type-args — BEFORE this pass, so a nullable collection
+                    // Except Unit's return-contract distinction, only VALUE inners reach here: ReferenceNullableStrip
+                    // removes reference-`T?` wrappers — INCLUDING nested type-args — BEFORE this pass, so a nullable collection
                     // type-arg (`Map<K, List<V>?>`) already had its `?` stripped and collapses via the bare-List path (Root-V).
                     // (This is why the #100/H3 "propagate typeArg through Nullable" idea was a no-op — the smuggle can't occur here.)
                     var lowered = LowerType(n.Of, refBuild, force, typeArg: false);

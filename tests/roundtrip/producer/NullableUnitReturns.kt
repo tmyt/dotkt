@@ -9,3 +9,7 @@ fun callback(): (Boolean) -> Unit? = ::optionalUnit
 fun action(): () -> Unit = ::plainUnit
 fun optionalList(): List<Unit?> = listOf(Unit, null)
 class Holder(var value: Unit?)
+class CallbackHolder(var callback: (Boolean) -> Unit?)
+fun invokeCallback(callback: (Boolean) -> Unit?, present: Boolean): Unit? = callback(present)
+private fun plainCallback(present: Boolean) {}
+fun unitCallback(): (Boolean) -> Unit = ::plainCallback

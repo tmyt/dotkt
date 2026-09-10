@@ -163,9 +163,75 @@ static partial class ClrMemberResolution
     // ---- materialization -----------------------------------------------------------------------
 
     static JsonObject _adapterHost;
+    static JsonObject _valueAdapterDocument;
     static string _adapterScope = "File";
     static int _nextAdapter;
+    static int _nextValueAdapter;
     static readonly Dictionary<string, string> _adapters = new(StringComparer.Ordinal);
+
+    // A Kotlin function value can cross the same void-to-value seam through ordinary storage, returns,
+    // or local calls, without a CLR member resolver marking a construction. The final value-flow pass supplies
+    // both physical types. Capture the value once and reuse the same adapter as literal delegate slots.
+    internal static JsonObject AdaptUnitDelegateValue(JsonObject document, JsonObject value,
+        TypeNode source, TypeNode target)
+    {
+        if (PhysicalFunctionShape(source) is not TypeNode.Fn { Ret: TypeNode.Fqn { Name: "void" or "System.Void", Args: null } } natural
+            || PhysicalFunctionShape(target) is not TypeNode.Fn { Ret: TypeNode.Fqn { Name: "kotlin.Unit" or "object" or "System.Object", Args: null } } wanted)
+            return null;
+        if (!ReferenceEquals(_valueAdapterDocument, document))
+        {
+            _valueAdapterDocument = document;
+            _adapters.Clear();
+            _adapterScope = string.Concat(((document["fileClass"] as JsonValue)?.GetValue<string>() ?? "File")
+                .Select(c => char.IsLetterOrDigit(c) ? c : '_'));
+        }
+        _adapterHost = document;
+        // Store before testing for null: nullable function values must stay null, and producing a delegate
+        // can have effects. Capturing the temporary preserves one evaluation on either branch.
+        var temporary = $"dotkt$unitDelegateValue{_nextValueAdapter++}";
+        var adapted = new JsonObject { ["k"] = "local", ["name"] = temporary };
+        AdaptVoidConstruction(adapted, natural, BirTypeLowering.DelegateFqnOf(wanted), wanted.Ret);
+        _adapterHost = null;
+        JsonObject NullValue() => new()
+        {
+            ["k"] = "const", ["type"] = TypeJson.Write(new TypeNode.Fqn("System.Object")), ["value"] = null,
+        };
+        return new JsonObject
+        {
+            ["k"] = "valueBlock", ["type"] = TypeJson.Write(target),
+            ["stmts"] = new JsonArray(new JsonObject
+            {
+                ["k"] = "var", ["name"] = temporary, ["type"] = TypeJson.Write(source),
+                ["init"] = value.DeepClone(),
+            }),
+            ["result"] = new JsonObject
+            {
+                ["k"] = "cond", ["type"] = TypeJson.Write(target),
+                ["cond"] = new JsonObject
+                {
+                    ["k"] = "objEq", ["lhs"] = new JsonObject { ["k"] = "local", ["name"] = temporary },
+                    ["rhs"] = NullValue(),
+                },
+                ["then"] = NullValue(), ["else"] = adapted,
+            },
+        };
+    }
+
+    // Local function slots use Fn; exact imported CLR signatures use the equivalent named Func/Action.
+    // Read the latter's physical Invoke and close its owner parameters, without folding the Unit class to void.
+    static TypeNode.Fn PhysicalFunctionShape(TypeNode type)
+    {
+        if (type is TypeNode.Fn fn) return fn;
+        if (type is not TypeNode.Fqn named || ResolveOwnerType(named) is not Type owner
+            || DelegateFamily(owner) is not string family) return null;
+        var invoke = owner.GetMethod("Invoke");
+        if (invoke == null) return null;
+        var args = named.Args ?? Array.Empty<TypeNode>();
+        var ret = invoke.ReturnType.FullName == "System.Void"
+            ? new TypeNode.Fqn("void") : SubstOwnerParams(invoke.ReturnType, args);
+        return new TypeNode.Fn(false, ret,
+            invoke.GetParameters().Select(p => SubstOwnerParams(p.ParameterType, args)).ToArray(), null, family);
+    }
 
     /// <summary>
     /// Rewrite every marked delegate construction so it states the delegate it physically builds, authoring the

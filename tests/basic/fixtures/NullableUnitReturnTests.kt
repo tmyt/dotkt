@@ -4,6 +4,15 @@ import NUnit.Framework.Legacy.ClassicAssert.AreSame as assertSame
 
 private fun localOptionalUnit(present: Boolean): Unit? = if (present) Unit else null
 private fun localPlainUnit() {}
+private fun localPlainUnitArgument(present: Boolean) {}
+private fun invokeNullableUnitCallback(callback: (Boolean) -> Unit?, present: Boolean): Unit? = callback(present)
+private class LocalNullableUnitCallback(var callback: (Boolean) -> Unit?)
+private var unitDelegateEvaluations = 0
+private fun unitDelegateFactory(): (Boolean) -> Unit {
+    unitDelegateEvaluations++
+    return ::localPlainUnitArgument
+}
+private fun widenedUnitDelegate(): (Boolean) -> Unit? = unitDelegateFactory()
 private fun <T> localUnitIdentity(value: T): T = value
 private var nullableUnitFinally = 0
 private fun localTryUnit(present: Boolean): Unit? = try {
@@ -34,6 +43,29 @@ class NullableUnitReturnTests {
         assertEquals(null, reference(false))
         assertSame(Unit, lambda(true))
         assertEquals(null, lambda(false))
+    }
+
+    @TestAttribute
+    fun nullableFunctionDeclarationSlotsPreserveValueContracts() {
+        val holder = LocalNullableUnitCallback { present -> if (present) Unit else null }
+        assertSame(Unit, invokeNullableUnitCallback(holder.callback, true))
+        assertEquals(null, invokeNullableUnitCallback(holder.callback, false))
+        holder.callback = ::localPlainUnitArgument
+        assertSame(Unit, invokeNullableUnitCallback(holder.callback, false))
+        val empty: (Boolean) -> Unit? = { }
+        assertSame(Unit, invokeNullableUnitCallback(empty, false))
+        unitDelegateEvaluations = 0
+        val stored = unitDelegateFactory()
+        val widened: (Boolean) -> Unit? = stored
+        assertSame(Unit, widened(false))
+        assertSame(Unit, invokeNullableUnitCallback(unitDelegateFactory(), false))
+        assertEquals(2, unitDelegateEvaluations)
+        assertSame(Unit, widenedUnitDelegate()(false))
+        assertEquals(3, unitDelegateEvaluations)
+        assertSame(Unit, LocalNullableUnitCallback(::localPlainUnitArgument).callback(false))
+        val absent: ((Boolean) -> Unit)? = null
+        val nullableWidened: ((Boolean) -> Unit?)? = absent
+        assertEquals(null, nullableWidened)
     }
 
     @TestAttribute

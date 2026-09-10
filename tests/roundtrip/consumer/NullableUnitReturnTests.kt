@@ -36,6 +36,19 @@ class NullableUnitReturnRoundtripTests {
     }
 
     @TestAttribute
+    fun importedNullableFunctionDeclarationSlotsKeepValues() {
+        val holder = CallbackHolder { present -> if (present) Unit else null }
+        assertSame(Unit, invokeCallback(holder.callback, true))
+        assertEquals(null, invokeCallback(holder.callback, false))
+        holder.callback = { }
+        assertSame(Unit, invokeCallback(holder.callback, false))
+        val original = unitCallback()
+        holder.callback = original
+        assertSame(Unit, invokeCallback(holder.callback, false))
+        assertSame(Unit, invokeCallback(original, true))
+    }
+
+    @TestAttribute
     fun inheritedInterfaceSlotsKeepExactReturns() {
         val derived = NullableUnitDerived()
         val base: Base = derived
