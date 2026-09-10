@@ -43,6 +43,7 @@ static class FBoundStarProjectionErasure
 
     public static IReadOnlyDictionary<string, string> ApplyAll(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs)
     {
+        ConstrainedCarrierBridge.Reset();
         var rootList = roots.OfType<JsonObject>().ToList();
         var owners = new Dictionary<string, Owner>(StringComparer.Ordinal);
         var defs = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
@@ -336,6 +337,7 @@ static class FBoundStarProjectionErasure
         IReadOnlyDictionary<string, string> localClrAliases)
     {
         var kind = Str(owner["k"]);
+        if (kind == "classRef" && key == "type" && Bool(owner[ConstrainedCarrierBridge.ExactOwnerKey])) return true;
         if (kind == "callInstance" && key == "ownerType" && Bool(owner[ExactBridgeOwnerCallKey])) return true;
         if (key == "ownerType" && owner["recv"] is JsonObject receiver
             && (Str(receiver["k"]) == "this" || Bool(receiver[ExactOuterKey])))
@@ -1335,7 +1337,7 @@ static class FBoundStarProjectionErasure
                 if (Bool(method["static"])) continue;
                 // `<R : T>` has no sound CLR signature on a non-generic existential interface. Concrete Kotlin casts
                 // retain G<X> and call this member there; a true G<*> receiver cannot supply a value for T.
-                if (HasOwnerDependentMethodConstraint(method)) continue;
+                if (HasOwnerDependentMethodConstraint(method) && IsSuspend(method)) continue;
                 // A non-public method cannot implicitly fill a public CLR interface slot. Give it the same
                 // deterministic forwarding bridge as an owner-T-dependent signature. The bridge is declared on the
                 // original owner, so it can invoke a private implementation without changing source visibility.
@@ -1346,8 +1348,13 @@ static class FBoundStarProjectionErasure
                 if (key == null || !seen.Add(key)) continue;
                 methods.Add(slot);
                 if (dependent)
-                    declared.Add(BridgeMethod(owner, method, owners, refs,
-                        slotTypeParams: slot["typeParams"] as JsonArray));
+                {
+                    var bridge = BridgeMethod(owner, method, owners, refs,
+                        slotTypeParams: slot["typeParams"] as JsonArray);
+                    if (HasOwnerDependentMethodConstraint(method))
+                        declared.Add(ConstrainedCarrierBridge.CreateThunk(owner.Def, method, bridge));
+                    declared.Add(bridge);
+                }
                 else if (Str(owner.Def["kind"]) == "interface")
                     // A concrete/default declaration on a derived CLR interface does not implicitly implement the
                     // same-shaped abstract slot on the synthesized existential base interface. Give every source
@@ -3968,6 +3975,7 @@ static class FBoundStarProjectionErasure
                 obj.Remove(ExactBridgeOwnerCallKey);
                 obj.Remove(ExactOuterKey);
                 obj.Remove(DelegationOuterSlotKey);
+                obj.Remove(ConstrainedCarrierBridge.ExactOwnerKey);
                 foreach (var value in obj.Select(pair => pair.Value).ToList())
                     if (value != null) RemoveTransientMarkers(value);
                 break;

@@ -27,6 +27,9 @@ internal interface StarProjectionMethod {
     @kotlin.clr.ClrIntrinsic("MakeGenericMethod")
     fun makeGenericMethod(typeArguments: Array<StarProjectionType>): StarProjectionMethod
 
+    @kotlin.clr.ClrIntrinsic("CreateDelegate")
+    fun createDelegate(delegateType: StarProjectionType, receiver: Any): StarProjectionDelegate
+
     @kotlin.clr.ClrIntrinsic("Invoke")
     fun invoke(receiver: Any?, arguments: Array<Any?>): Any?
 
@@ -60,6 +63,7 @@ internal interface StarProjectionConstructor {
 @kotlin.clr.ClrEnum
 internal enum class StarProjectionBindingFlags(value: Int) {
     INSTANCE_PUBLIC_NON_PUBLIC(52),
+    DECLARED_INSTANCE_PUBLIC_NON_PUBLIC(54),
 }
 
 @kotlin.clr.ClrTypeAlias("System.Reflection.ParameterInfo")
@@ -147,6 +151,9 @@ internal interface StarProjectionType {
 
     @kotlin.clr.ClrIntrinsic("GetMethods")
     fun getMethods(): Array<StarProjectionMethod>
+
+    @kotlin.clr.ClrIntrinsic("GetMethods")
+    fun getMethods(flags: StarProjectionBindingFlags): Array<StarProjectionMethod>
 
     @kotlin.clr.ClrIntrinsic("GetConstructors")
     fun getConstructors(flags: StarProjectionBindingFlags): Array<StarProjectionConstructor>

@@ -72,7 +72,8 @@ sealed class Pipeline
         foreach (var d in diagnostics) Console.Error.WriteLine($"bir2cir: WARNING ref-scan diagnostic: {d}");
         var cirFiles = TransformFiles(birFiles, refs);
         if (_options.ReflectionRestricted
-            && (ForeignStarProjectionBinding.UsedRuntimeFallback || StarProjectionLowering.UsedRuntimeFallback))
+            && (ForeignStarProjectionBinding.UsedRuntimeFallback || StarProjectionLowering.UsedRuntimeFallback
+                || ConstrainedCarrierBridge.Used))
             Console.Error.WriteLine(
                 "bir2cir: warning DOTKTSTAR001: a CLR star projection uses reflection; "
                 + "NativeAOT/trimming must preserve the referenced generic type and member metadata");
