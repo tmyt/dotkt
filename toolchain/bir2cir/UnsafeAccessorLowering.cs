@@ -189,7 +189,7 @@ static class UnsafeAccessorLowering
         {
             if (Str(access["recv"]?["k"]) == "this") return;
             RewriteNestedSuperMethod(access, caller, hosts, accessors, methodTypeParams, memberSignature,
-                memberReturnType);
+                memberReturnType, refs);
             return;
         }
         // Top-level Kotlin calls deliberately keep `owner:null` for semantic substitutions and carry their exact
@@ -326,7 +326,8 @@ static class UnsafeAccessorLowering
 
     static void RewriteNestedSuperMethod(JsonObject access, Host caller,
         IReadOnlyDictionary<string, Host> hosts, Dictionary<string, AccessorDefinition> accessors,
-        JsonArray methodTypeParams, JsonArray memberSignature, JsonNode memberReturnType)
+        JsonArray methodTypeParams, JsonArray memberSignature, JsonNode memberReturnType,
+        ReferenceMetadataIndex refs)
     {
         if (access["recv"] is not JsonObject receiver
             || NodeType.Of(receiver) is not TypeNode.Fqn receiverType
@@ -357,8 +358,26 @@ static class UnsafeAccessorLowering
             ?? new TypeNode.Fqn("kotlin.Unit");
         var declaredReturn = SubstituteOwnerSlots(declarationReturn, ownerArgs);
         var declaredReturnJson = TypeJson.Write(declaredReturn);
-        var forwarderTypeParams = SubstituteOwnerSlotsInDescriptors(methodTypeParams, ownerArgs);
         var methodArity = access["typeArgs"] is JsonArray typeArgs ? typeArgs.Count : 0;
+        JsonObject physicalTarget = null;
+        var identity = Str(access[DeclarationIdentityBinding.Key]);
+        if (hosts.TryGetValue(targetOwner.Name, out var targetHost))
+        {
+            var candidates = targetHost.LookupMethods.Where(method =>
+                !KotlinPropertyAccessors.IsPhysicalSlotBridge(method)
+                && (identity != null ? Str(method[DeclarationIdentityBinding.Key]) == identity
+                    : Str(method["name"]) == targetName)
+                && !Bool(method["static"])
+                && ((method["typeParams"] as JsonArray)?.Count ?? 0) == methodArity).ToArray();
+            physicalTarget = identity != null && candidates.Length == 1 ? candidates[0]
+                : SelectMethod(candidates, declarationSignature, ownerArgs);
+            if (physicalTarget == null)
+                throw new InvalidOperationException($"Nested Kotlin super target '{targetOwner.Name}.{targetName}' is not unique");
+        }
+        var referencedTarget = ResolveReferencedMethodTarget(physicalTarget, identity, resolvedOwner, targetName,
+            methodArity, false, declarationSignature, declarationReturn, methodTypeParams, false, refs);
+        var physicalParameters = referencedTarget?.TypeParams ?? PhysicalMethodTypeParams(physicalTarget, methodTypeParams);
+        var forwarderTypeParams = SubstituteOwnerSlotsInDescriptors(physicalParameters, ownerArgs);
         if ((forwarderTypeParams?.Count ?? 0) != methodArity)
             throw new InvalidOperationException(
                 $"Kotlin super call '{targetOwner.Name}.{targetName}' has {methodArity} method arguments but " +

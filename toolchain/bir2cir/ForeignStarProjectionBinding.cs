@@ -13,6 +13,23 @@ using DotKt.Bir;
 static class ForeignStarProjectionBinding
 {
     const string RuntimeOwner = "DotKt.Runtime.CompilerServices.StarProjectionRuntimeKt";
+    const string DeclarationSignatureKey = "_foreignDeclarationSignature";
+
+    internal static void PreserveDeclarationSignature(JsonObject target, JsonNode signature)
+    {
+        if (signature is JsonArray) target[DeclarationSignatureKey] = signature.ToJsonString();
+    }
+
+    internal static void DropDeclarationSignatures(JsonNode node)
+    {
+        if (node is JsonObject obj)
+        {
+            obj.Remove(DeclarationSignatureKey);
+            foreach (var child in obj.ToList()) DropDeclarationSignatures(child.Value);
+        }
+        else if (node is JsonArray array)
+            foreach (var child in array) DropDeclarationSignatures(child);
+    }
     static readonly TypeNode Any = new TypeNode.Fqn("kotlin.Any");
     static readonly TypeNode AnyN = new TypeNode.Nullable(Any);
     static readonly TypeNode Bool = new TypeNode.Fqn("kotlin.Boolean");
@@ -216,7 +233,12 @@ static class ForeignStarProjectionBinding
                 $"bir2cir: foreign byref-like generic star projection `{owner.Name}<*>` has no boxable CLR existential representation");
         var valueReceiver = refs.IsValueType(owner);
 
-        var signature = ((obj["sig"] ?? obj["argTypes"] ?? obj["resolvedMemberParams"]) as JsonArray)?.Select(TypeJson.Read).ToArray();
+        // Source CLR calls retain their selected declaration descriptor before Kotlin nullable-value erasure.
+        // Compiler-authored calls already state the descriptor in sig/argTypes; neither route infers it from values.
+        var declaredSignature = Str(obj[DeclarationSignatureKey]) is string encodedSignature
+            ? JsonNode.Parse(encodedSignature) as JsonArray
+            : (obj["sig"] ?? obj["argTypes"] ?? obj["resolvedMemberParams"]) as JsonArray;
+        var signature = declaredSignature?.Select(TypeJson.Read).ToArray();
         if (signature == null && kind == "clrPropSet" && obj["value"] is JsonNode setValue)
             signature = new[] { NodeType.Of(setValue) };
         signature ??= Array.Empty<TypeNode>();

@@ -333,11 +333,11 @@ static class TypeOwnershipLowering
             for (var index = 0; index < remaining.Length; index++)
                 oldToNew[remaining[index]] = ownerParams.Count + index;
 
-            // MaterializeCarrier dense-numbers free variables before it knows the eventual CLR owner. Once the owner
-            // segment moves to the required prefix, every use in that synthetic declaration must move with it. Merely
-            // reordering typeParams/typeArgs swaps `A` and `B` in fields and bodies while still producing well-formed
-            // metadata, which is why the failure surfaced as a runtime value corruption rather than a linker error.
-            if (oldToNew.Where((mapped, old) => mapped != old).Any())
+            // Only an explicitly prebound payload uses these dense class-slot indices already. Raw kotc ingredients
+            // still name lexical type/method variables; ClosureSynthesis binds those through the reordered typeArgs.
+            // Remapping a lexical type#0 as dense slot 0 would turn the owner's T into a captured method parameter.
+            if (ClosureSynthesis.HasPreboundFrame(synth)
+                && oldToNew.Where((mapped, old) => mapped != old).Any())
                 RemapSyntheticFrame(synth, oldToNew);
 
             var remappedParams = synth["typeParams"] as JsonArray ?? new JsonArray();

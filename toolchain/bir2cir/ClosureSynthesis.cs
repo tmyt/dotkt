@@ -85,6 +85,8 @@ static class ClosureSynthesis
     internal static bool HasPreboundFrame(JsonNode source) =>
         source is JsonObject obj && obj[PreboundFrameKey] != null;
 
+    internal static void MarkPreboundFrame(JsonObject source) => source[PreboundFrameKey] = true;
+
     public static void Apply(JsonNode root, ReferenceMetadataIndex refs)
     {
         if (root is not JsonObject file) return;

@@ -138,6 +138,15 @@ for proj in "${PROJECTS[@]}"; do
 			echo "  PROJECTED COVARIANT ARRAY FAIL — see build/nunit-$name.projected-covariant-array.log"
 			tail -25 "$ROOT/build/nunit-$name.projected-covariant-array.log"; rc=1
 		fi
+		constrained_carrier_cir="$dir/obj/$CONFIGURATION/net10.0/cir/ConstrainedCarrierTests.cir.json"
+		constrained_carrier_bir="$dir/obj/$CONFIGURATION/net10.0/bir/ConstrainedCarrierTests.bir.json"
+		if python3 "$ROOT/tests/basic/assert-constrained-carrier-cir.py" "$constrained_carrier_cir" "$constrained_carrier_bir" \
+			>"$ROOT/build/nunit-$name.constrained-carrier.log" 2>&1; then
+			echo "  constrained generic carrier calls preserve source bounds and direct dispatch"
+		else
+			echo "  CONSTRAINED CARRIER FAIL — see build/nunit-$name.constrained-carrier.log"
+			tail -25 "$ROOT/build/nunit-$name.constrained-carrier.log"; rc=1
+		fi
 		star_copy_cir="$dir/obj/$CONFIGURATION/net10.0/cir/DefaultArgumentTests.cir.json"
 		if python3 "$ROOT/tests/basic/assert-star-copy-default-fields-cir.py" "$star_copy_cir" \
 			>"$ROOT/build/nunit-$name.star-copy-default-fields.log" 2>&1; then

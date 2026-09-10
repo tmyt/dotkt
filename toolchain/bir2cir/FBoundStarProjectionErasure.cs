@@ -43,7 +43,7 @@ static class FBoundStarProjectionErasure
 
     public static IReadOnlyDictionary<string, string> ApplyAll(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs)
     {
-        ConstrainedCarrierBridge.Reset();
+        OwnerConstrainedMethodLowering.Reset();
         var rootList = roots.OfType<JsonObject>().ToList();
         var owners = new Dictionary<string, Owner>(StringComparer.Ordinal);
         var defs = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
@@ -54,9 +54,53 @@ static class FBoundStarProjectionErasure
         foreach (var root in rootList) MarkNeeded(root, owners, defs, refs);
         MarkNeededClosure(owners);
 
+        foreach (var definition in defs.Values)
+            if (definition["methods"] is JsonArray declaredMethods)
+                foreach (var method in declaredMethods.OfType<JsonObject>())
+                    if (!IsSuspend(method) && (HasOwnerDependentMethodConstraint(method)
+                        || method[OwnerConstrainedMethodLowering.OverrideBoundsKey] != null))
+                        OwnerConstrainedMethodLowering.Record(method, definition);
         foreach (var owner in owners.Values.Where(o => o.Needed)) Synthesize(owner, owners, defs, refs);
         foreach (var root in rootList) RecordDeclarationSurfaces(root, owners, refs);
         foreach (var root in rootList) EraseProjectedAliasConstraints(root, refs);
+        var generatedMethodFrames = new Dictionary<string, HashSet<int>>(StringComparer.Ordinal);
+        foreach (var (name, definition) in defs)
+        {
+            if (!Bool(definition["generated"]) || Int(definition["outerTypeParamCount"]) is not int prefix
+                || prefix <= 0 || definition["typeParams"] is not JsonArray parameters) continue;
+            var bounds = new JsonObject();
+            var dispatch = new JsonObject();
+            for (var index = prefix; index < parameters.Count; index++)
+            {
+                if (parameters[index] is not JsonObject parameter
+                    || parameter["constraints"] is not JsonArray constraints) continue;
+                var retained = new JsonArray();
+                var removed = new JsonArray();
+                foreach (var constraint in constraints)
+                    if (ContainsOwnerPrefixTv(TypeJson.Read(constraint), prefix))
+                    {
+                        removed.Add(TypeJson.Write(ProjectOwnerMethodBound(
+                            TypeJson.Read(constraint), owners, refs, physical: false, ownerCount: prefix)));
+                        foreach (var consequence in OwnerConstrainedMethodLowering.IndependentBounds(
+                            TypeJson.Read(constraint), parameters)) retained.Add(TypeJson.Write(consequence));
+                    }
+                    else retained.Add(constraint.DeepClone());
+                if (removed.Count == 0) continue;
+                bounds[index.ToString()] = constraints.DeepClone();
+                dispatch[index.ToString()] = removed.DeepClone();
+                parameter["constraints"] = retained;
+                parameter[ErasedInnerConstraintKey] = removed;
+                if (!generatedMethodFrames.TryGetValue(name, out var slots))
+                    generatedMethodFrames[name] = slots = new HashSet<int>();
+                slots.Add(index);
+            }
+            if (bounds.Count == 0) continue;
+            KotlinSupertypesRecord.Merge(definition, new JsonObject { ["bounds"] = bounds });
+            definition[OwnerConstrainedMethodLowering.DispatchBoundsKey] = dispatch.ToJsonString();
+            ConstrainedTypeParameterReceiverBinding.CloseTypeOwners(definition, rootList);
+        }
+        OwnerConstrainedMethodLowering.CloseOwners(rootList, ContainsOwnerTv,
+            bound => ProjectOwnerMethodBound(bound, owners, refs, physical: false));
         ForeignStarProjectionBinding.ApplyAll(rootList,
             owners.Values.Where(owner => owner.Needed).ToDictionary(
                 owner => owner.Name, owner => owner.ErasedName, StringComparer.Ordinal), refs, localClrAliases);
@@ -77,8 +121,17 @@ static class FBoundStarProjectionErasure
         // Binding above consumes the complete Kotlin constraint graph. Only after every local call and generated
         // seam has been selected may the physical inner TypeDefs drop constraints that cannot name a star outer.
         var weakenedOwnerSlots = WeakenOwnerDependentInnerConstraints(
-            owners.Values.Where(owner => owner.Needed));
+            owners.Values.Where(owner => owner.Needed)).ToDictionary(pair => pair.Key, pair => pair.Value,
+                StringComparer.Ordinal);
+        foreach (var (name, slots) in generatedMethodFrames)
+        {
+            if (!weakenedOwnerSlots.TryGetValue(name, out var changed))
+                weakenedOwnerSlots[name] = changed = new HashSet<int>();
+            changed.UnionWith(slots);
+        }
         SynchronizeGeneratedOwnerConstraintPrefixes(defs, weakenedOwnerSlots);
+        OwnerConstrainedMethodLowering.Apply(ContainsOwnerTv,
+            bound => ProjectOwnerMethodBound(bound, owners, refs));
         return owners.Values.Where(o => o.Needed)
             .ToDictionary(o => o.Name, o => o.ErasedName, StringComparer.Ordinal);
     }
@@ -337,7 +390,6 @@ static class FBoundStarProjectionErasure
         IReadOnlyDictionary<string, string> localClrAliases)
     {
         var kind = Str(owner["k"]);
-        if (kind == "classRef" && key == "type" && Bool(owner[ConstrainedCarrierBridge.ExactOwnerKey])) return true;
         if (kind == "callInstance" && key == "ownerType" && Bool(owner[ExactBridgeOwnerCallKey])) return true;
         if (key == "ownerType" && owner["recv"] is JsonObject receiver
             && (Str(receiver["k"]) == "this" || Bool(receiver[ExactOuterKey])))
@@ -1335,8 +1387,8 @@ static class FBoundStarProjectionErasure
             foreach (var method in originals)
             {
                 if (Bool(method["static"])) continue;
-                // `<R : T>` has no sound CLR signature on a non-generic existential interface. Concrete Kotlin casts
-                // retain G<X> and call this member there; a true G<*> receiver cannot supply a value for T.
+                // Non-suspend owner-dependent bounds remain Kotlin metadata while their physical slots use direct
+                // forwarding. Suspend declarations also need a cold-entry bridge outside this representation path.
                 if (HasOwnerDependentMethodConstraint(method) && IsSuspend(method)) continue;
                 // A non-public method cannot implicitly fill a public CLR interface slot. Give it the same
                 // deterministic forwarding bridge as an owner-T-dependent signature. The bridge is declared on the
@@ -1351,8 +1403,6 @@ static class FBoundStarProjectionErasure
                 {
                     var bridge = BridgeMethod(owner, method, owners, refs,
                         slotTypeParams: slot["typeParams"] as JsonArray);
-                    if (HasOwnerDependentMethodConstraint(method))
-                        declared.Add(ConstrainedCarrierBridge.CreateThunk(owner.Def, method, bridge));
                     declared.Add(bridge);
                 }
                 else if (Str(owner.Def["kind"]) == "interface")
@@ -1472,7 +1522,9 @@ static class FBoundStarProjectionErasure
             ["attrs"] = new JsonArray(),
         };
         if (method["typeParams"] is JsonArray tps && tps.Count > 0)
-            slot["typeParams"] = EraseOwnerTypeParamConstraints(tps, owners, refs);
+            slot["typeParams"] = EraseOwnerTypeParamConstraints(tps, owners, refs,
+                owners.TryGetValue(semanticCarrierOwner, out var constraintOwner)
+                    ? constraintOwner.Def["typeParams"] as JsonArray : null);
         // An owner-independent existential slot is the same physical contract as the source MethodDef. Preserve an
         // explicit source allocation while it is still a stated BIR fact so the forwarding MethodImpl descriptor is
         // authored with that name before module-wide declaration allocation runs. A dependent slot has its own
@@ -2129,7 +2181,7 @@ static class FBoundStarProjectionErasure
             + "an earlier lowering dropped it.");
 
     static JsonArray EraseOwnerTypeParamConstraints(JsonArray typeParams,
-        IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs)
+        IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs, JsonArray ownerParameters)
     {
         var result = new JsonArray();
         foreach (var typeParamNode in typeParams)
@@ -2148,6 +2200,15 @@ static class FBoundStarProjectionErasure
                 foreach (var constraintNode in constraints)
                 {
                     if (TypeJson.Read(constraintNode) is not TypeNode constraint) continue;
+                    // No approximation of I<T> can constrain R on a carrier with hidden T. Kotlin metadata retains
+                    // the original bound; only owner-independent constraints remain on the physical declarations.
+                    if (ContainsOwnerTv(constraint))
+                    {
+                        foreach (var consequence in OwnerConstrainedMethodLowering.IndependentBounds(constraint, ownerParameters))
+                            if (!IsObjectish(consequence) && !erased.Any(row => TypeJson.Read(row).Equals(consequence)))
+                                erased.Add(TypeJson.Write(consequence));
+                        continue;
+                    }
                     var erasedConstraint = EraseOwnerTv(constraint, owners, refs);
                     // `R : T` becomes the existential top bound. It imposes no useful CLR constraint, and emitting an
                     // explicit System.Object constraint is both redundant and less portable across metadata readers.
@@ -2158,6 +2219,26 @@ static class FBoundStarProjectionErasure
             result.Add(copy);
         }
         return result;
+    }
+
+    static TypeNode ProjectOwnerMethodBound(TypeNode bound, IReadOnlyDictionary<string, Owner> owners,
+        ReferenceMetadataIndex refs, bool physical = true, int ownerCount = int.MaxValue)
+    {
+        TypeNode Project(TypeNode node) => node switch
+        {
+            TypeNode.Tv { Scope: "type" } tv when tv.I < ownerCount => new TypeNode.Star(),
+            TypeNode.Fqn f => new TypeNode.Fqn(f.Name, f.Args?.Select(Project).ToArray()),
+            TypeNode.Nullable n => new TypeNode.Nullable(Project(n.Of)),
+            TypeNode.Oblivious o => new TypeNode.Oblivious(Project(o.Of)),
+            TypeNode.Array a => new TypeNode.Array(Project(a.Elem), a.Rank, a.SzArray),
+            _ => node,
+        };
+        // A direct edge R : T still supplies T's own bound graph. Constructed bounds instead name an existential
+        // receiver: Kotlin variance does not imply the same closed CLR generic construction for value arguments.
+        if (bound is TypeNode.Tv) return bound;
+        var projected = Project(bound);
+        return physical && projected is TypeNode.Fqn named && TryExistentialCarrier(named.Name, owners, refs, out var carrier)
+            ? new TypeNode.Fqn(carrier) : projected;
     }
 
     static string StarMethodName(Owner owner, JsonObject method)
@@ -3975,7 +4056,6 @@ static class FBoundStarProjectionErasure
                 obj.Remove(ExactBridgeOwnerCallKey);
                 obj.Remove(ExactOuterKey);
                 obj.Remove(DelegationOuterSlotKey);
-                obj.Remove(ConstrainedCarrierBridge.ExactOwnerKey);
                 foreach (var value in obj.Select(pair => pair.Value).ToList())
                     if (value != null) RemoveTransientMarkers(value);
                 break;
@@ -4215,7 +4295,24 @@ static class FBoundStarProjectionErasure
             && refs.IsByRefLikeFqn(new TypeNode.Fqn(physical, type.Args));
     }
 
-    static bool ContainsOwnerTv(TypeNode t) => t switch
+    static bool ContainsOwnerPrefixTv(TypeNode t, int count) => t switch
+    {
+        TypeNode.Tv { Scope: "type" } tv => tv.I < count,
+        TypeNode.Fqn { Args: { } args } => args.Any(arg => ContainsOwnerPrefixTv(arg, count)),
+        TypeNode.Nullable n => ContainsOwnerPrefixTv(n.Of, count),
+        TypeNode.Oblivious o => ContainsOwnerPrefixTv(o.Of, count),
+        TypeNode.Projection p => ContainsOwnerPrefixTv(p.Of, count),
+        TypeNode.Array a => ContainsOwnerPrefixTv(a.Elem, count),
+        TypeNode.ByRef b => ContainsOwnerPrefixTv(b.Of, count),
+        TypeNode.Ptr p => ContainsOwnerPrefixTv(p.Of, count),
+        TypeNode.Mod m => ContainsOwnerPrefixTv(m.M, count) || ContainsOwnerPrefixTv(m.Of, count),
+        TypeNode.Fn fn => ContainsOwnerPrefixTv(fn.Ret, count)
+            || fn.DelegateParams.Any(p => ContainsOwnerPrefixTv(p, count))
+            || fn.Ctx?.Any(p => ContainsOwnerPrefixTv(p, count)) == true,
+        _ => false,
+    };
+
+    internal static bool ContainsOwnerTv(TypeNode t) => t switch
     {
         TypeNode.Tv { Scope: "type" } => true,
         TypeNode.Fqn { Args: { } args } => args.Any(ContainsOwnerTv),
