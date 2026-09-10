@@ -16,6 +16,8 @@ using DotKt.Bir;
 // `{t:nullable,of:<value/struct/enum>}` STAYS `{t:nullable}` (ilemit builds `System.Nullable<T>`); a `Tv` inner is
 // non-value -> bare `Tv` (the object-erasure lifeline passes already converted the dataflow-critical unconstrained
 // `T?` to `object` upstream, so a surviving `Nullable(Tv)` is a non-erased usage that lowers to the bare tv).
+// Nullable Unit is retained until BirTypeLowering chooses its value-returning ABI rather than Unit's void ABI;
+// that lowering removes its reference wrapper before CIR reaches ilemit.
 //
 // Runs on the SEMANTIC tree (kotlin.* names) AFTER DeclNullableFlags (so the NRT byte walk still saw the nullability)
 // and BEFORE BirTypeLowering — the oracle is unambiguous on the semantic names, and USAGE positions get ONLY the bare
@@ -53,7 +55,8 @@ static class ReferenceNullableStrip
     }
 
     // Recursively strip reference nullables within a Type: a `Nullable` with a value inner keeps its wrapper; a
-    // `Nullable` with a reference/tv/generic/array/fn inner collapses to the (recursively-stripped) bare inner.
+    // `Nullable` with a reference/tv/generic/array/fn inner collapses to the (recursively-stripped) bare inner,
+    // except Unit's return-contract distinction, which BirTypeLowering consumes.
     static TypeNode Strip(TypeNode t, ValueTypeOracle isValue) => t switch
     {
         // Unit? is a value-returning reference contract, unlike Unit's void return convention.
