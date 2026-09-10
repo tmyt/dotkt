@@ -31,6 +31,46 @@ private fun ordinaryWhenBranch(mode: Int): Int = if (mode >= 0) {
 
 class LocalSubjectIdentityTests {
     @TestAttribute
+    fun mutableLocalsBeforeSubjectlessWhenKeepTheirDeclaration() {
+        subjectIdentityTrace = ""
+        fun choose(mode: Int): Int = if (mode >= 0) {
+            var value = subjectIdentityEffect("w", 10)
+            when {
+                mode == 0 -> { value += 1; value }
+                else -> { value += 2; value }
+            }
+        } else -1
+        assertEquals(11, choose(0))
+        assertEquals(12, choose(1))
+        assertEquals(-1, choose(-1))
+        assertEquals("ww", subjectIdentityTrace)
+    }
+
+    @TestAttribute
+    fun nullableMutableLocalsAndCapturedWritesKeepTheirSlots() {
+        fun choose(seed: Int?): Int = if (seed != -1) {
+            var value = seed
+            if (value != null) { value = 3; value ?: -2 } else { value = 4; value ?: -3 }
+        } else -1
+        fun captured(seed: Int?): Int = if (seed != -1) {
+            var value = seed
+            if (value != null) {
+                val update = { value = 5 }
+                update()
+                value ?: -4
+            } else {
+                val update = { value = 6 }
+                update()
+                value ?: -5
+            }
+        } else -1
+        assertEquals(3, choose(1))
+        assertEquals(4, choose(null))
+        assertEquals(5, captured(1))
+        assertEquals(6, captured(null))
+    }
+
+    @TestAttribute
     fun mutableDeclarationsKeepTheirWritesInIfAndWhenTails() {
         subjectIdentityTrace = ""
         assertSame(Unit, ordinaryMutableUnit(true))
