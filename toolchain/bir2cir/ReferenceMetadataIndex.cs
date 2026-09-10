@@ -1496,6 +1496,9 @@ sealed partial class ReferenceMetadataIndex
                 : ForeignStarDeclarationDescribesCall(dn.Of, call, ownerArgs);
         if (call is TypeNode.Nullable callNullable)
             return ForeignStarDeclarationDescribesCall(declaration, callNullable.Of, ownerArgs);
+        // Nullability annotations do not change an imported CLR declaration slot. After peeling them, an exact
+        // structural slot identity is still exact even when its owner argument is hidden by a projection.
+        if (declaration.Equals(call)) return true;
         // kotc keeps an already-selected CLR overload's owner slot in `sig` (`Duo<*, String>.Pick(B)` carries
         // `tv(type,1)`, not the substituted String). Compare both declaration and call slots in the source owner's
         // constructed semantic view; otherwise T0 and T1 either both look wildcard-like or neither matches.
@@ -3599,7 +3602,7 @@ sealed partial class ReferenceMetadataIndex
         int methodArity, IReadOnlyList<TypeNode> resolvedSignature, TypeNode resolvedReturn,
         TypeNode[] ownerTypeArguments, JsonArray selectedTypeParams, TypeNode[] selectedOwnerTypeArguments,
         out TypeNode declaredRet, out TypeNode[] declaredParams, out bool[] paramsRefused,
-        out string physicalMember, out JsonArray declarationTypeParams)
+        out string physicalMember, out JsonArray declarationTypeParams, bool semanticConstraints = false)
     {
         declaredRet = null;
         declaredParams = null;
@@ -3614,7 +3617,8 @@ sealed partial class ReferenceMetadataIndex
                 ownerTypeArguments: ownerTypeArguments, includeUnchangedMethod: true,
                 methodSignature: resolvedSignature, methodReturn: resolvedReturn,
                 selectedTypeParams: selectedTypeParams,
-                selectedOwnerTypeArguments: selectedOwnerTypeArguments) != SlotLookup.Declared
+                selectedOwnerTypeArguments: selectedOwnerTypeArguments,
+                semanticConstraints: semanticConstraints) != SlotLookup.Declared
             || declaration == null)
             return false;
         declaredRet = ret.Node;
@@ -3645,7 +3649,7 @@ sealed partial class ReferenceMetadataIndex
         TypeNode[] ownerTypeArguments = null, bool includeClosedPropertyReturn = false,
         bool includeUnchangedMethod = false, IReadOnlyList<TypeNode> methodSignature = null,
         TypeNode methodReturn = null, JsonArray selectedTypeParams = null,
-        TypeNode[] selectedOwnerTypeArguments = null)
+        TypeNode[] selectedOwnerTypeArguments = null, bool semanticConstraints = false)
     {
         declaredRet = default;
         declaredParams = null;
@@ -3665,7 +3669,7 @@ sealed partial class ReferenceMetadataIndex
                     && m.ParamTypeNodes.Length == argCount
                     && (propertyName != null || selectedTypeParams == null
                         || KotlinOverrideSlotBridge.SameMethodTypeParameterShape(
-                            m.MethodTypeParams, selectedTypeParams,
+                            semanticConstraints ? m.SemanticMethodTypeParams ?? m.MethodTypeParams : m.MethodTypeParams, selectedTypeParams,
                             ownerTypeArguments, selectedOwnerTypeArguments)))
                 .ToArray();
             var shapeMatches = declaredHere.Where(m =>
@@ -3702,7 +3706,8 @@ sealed partial class ReferenceMetadataIndex
                             accessorSignature?[i]);
                 if (propertyName == null)
                     declaredMethod = new MethodSlotIdentity(member.Name,
-                        member.MethodTypeParams?.DeepClone() as JsonArray);
+                        (semanticConstraints ? member.SemanticMethodTypeParams ?? member.MethodTypeParams
+                            : member.MethodTypeParams)?.DeepClone() as JsonArray);
                 // DECLARED HERE TERMINATES THE SEARCH, facts or no facts. A concrete member that shadows or
                 // implements an inherited namesake IS the declaration the call binds to; continuing upward because
                 // this one happens to carry no erasure fact would hand the call the BASE's carrier and rewrite a
@@ -3734,7 +3739,7 @@ sealed partial class ReferenceMetadataIndex
             var found = FindDeclaredSlot(super.Name, name, isStatic, argCount, methodArity, path,
                 out var sret, out var sps, out var smethod, propertyName, accessorKind, accessorSignature,
                 superTypeArguments, includeClosedPropertyReturn, includeUnchangedMethod,
-                methodSignature, methodReturn, selectedTypeParams, selectedOwnerTypeArguments);
+                methodSignature, methodReturn, selectedTypeParams, selectedOwnerTypeArguments, semanticConstraints);
             path.Remove(key);
             if (found == SlotLookup.Refused) return SlotLookup.Refused;
             if (found != SlotLookup.Declared) continue;
@@ -4818,7 +4823,8 @@ sealed partial class ReferenceMetadataIndex
                                 : null,
                             innerConstructorFactory?.Inner,
                             innerConstructorFactory?.Parameters,
-                            innerConstructorFactory?.TypeArguments));
+                            innerConstructorFactory?.TypeArguments,
+                            SemanticMethodTypeParameters(method, dotKtAuthored)));
                         // [KotlinInline] raw-BIR carrier (#71/#75 S1): decode the versioned carrier now (the codec is
                         // BirCarrier, shared) and key it owner|name|pc|ga so InlineSplice can splice this external inline
                         // fn's body at a cross-module call site. This carrier is compiler-internal ABI: an older or
@@ -5540,6 +5546,23 @@ sealed partial class ReferenceMetadataIndex
             cad.ConstructorArguments[0].Value is not string version)
             return null;
         return BirCarrier.DecodeBody(version, ReadByteArrayArg(cad.ConstructorArguments[1]));
+    }
+
+    static JsonArray SemanticMethodTypeParameters(MethodInfo method, bool dotKtAuthored)
+    {
+        var parameters = new JsonArray(method.GetGenericArguments().Select(GenericParamDeclaration).ToArray());
+        if (!dotKtAuthored || CarrierJsonOf(method.GetCustomAttributesData(), method.DeclaringType?.Assembly,
+                "DotKt.Runtime.CompilerServices.KotlinTypeParameterBoundsAttribute") is not JsonObject payload
+            || payload["bounds"] is not JsonObject bounds) return parameters;
+        foreach (var pair in bounds)
+        {
+            var index = int.Parse(pair.Key);
+            var parameter = parameters[index] as JsonObject
+                ?? new JsonObject { ["name"] = parameters[index].GetValue<string>() };
+            if (parameters[index] is not JsonObject) parameters[index] = parameter;
+            parameter["constraints"] = pair.Value.DeepClone();
+        }
+        return parameters;
     }
 
     static void RestoreKotlinTypeParameterVariances(
@@ -7270,7 +7293,7 @@ sealed record MethodSlotIdentity(string PhysicalMember, JsonArray TypeParams);
 // (DeclarationTypeNode), the same one `ParamTypeNodes` uses, which keeps generic parameters as `Tv` — a declaration
 // the caller substitutes. The two are not interchangeable: `Iterable<E>.iterator()` is `Iterator` in the first and
 // `Iterator<!0>` in the second, and only the second says what the call site's type argument completes.
-sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic, int PropertyAccess = 0, string PropertyName = null, int[] ByrefPositions = null, bool Suspend = false, bool Conv = false, TypeNode ConvTo = null, TypeNode ReturnType = null, int MethodArity = 0, TypeNode[] ParamTypeNodes = null, bool IsVirtual = false, TypeNode KotlinReturnType = null, TypeNode SuspendReturnType = null, TypeNode NullableGenericRet = null, TypeNode[] NullableGenericParams = null, TypeNode ReturnTypeNode = null, int MetadataToken = 0, string SourcePropertyName = null, string AccessorKind = null, string AssociatedPropertyName = null, bool IsPropertyBridge = false, bool IsPublic = false, string PropertyAssociation = null, string SourcePropertyAssociation = null, string SourceMethodName = null, JsonArray MethodTypeParams = null, string DeclarationId = null, string DeclarationSourceName = null, string DeclarationPhysicalOwner = null, TypeNode[] DeclarationSemanticParams = null, TypeNode DeclarationSemanticReturn = null, string CollectionFactoryKind = null, string ArrayFactoryKind = null, string ArrayFactoryElementHint = null, int CountStart = -1, int CountEnd = -1, int[] SemanticReifiedTypeParameterIndices = null, int[] NullableWitnessTypeParameterIndices = null, TypeNode[] KotlinParameterTypes = null, string InnerConstructorOwner = null, TypeNode[] InnerConstructorParameters = null, int[] InnerConstructorTypeArguments = null);
+sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic, int PropertyAccess = 0, string PropertyName = null, int[] ByrefPositions = null, bool Suspend = false, bool Conv = false, TypeNode ConvTo = null, TypeNode ReturnType = null, int MethodArity = 0, TypeNode[] ParamTypeNodes = null, bool IsVirtual = false, TypeNode KotlinReturnType = null, TypeNode SuspendReturnType = null, TypeNode NullableGenericRet = null, TypeNode[] NullableGenericParams = null, TypeNode ReturnTypeNode = null, int MetadataToken = 0, string SourcePropertyName = null, string AccessorKind = null, string AssociatedPropertyName = null, bool IsPropertyBridge = false, bool IsPublic = false, string PropertyAssociation = null, string SourcePropertyAssociation = null, string SourceMethodName = null, JsonArray MethodTypeParams = null, string DeclarationId = null, string DeclarationSourceName = null, string DeclarationPhysicalOwner = null, TypeNode[] DeclarationSemanticParams = null, TypeNode DeclarationSemanticReturn = null, string CollectionFactoryKind = null, string ArrayFactoryKind = null, string ArrayFactoryElementHint = null, int CountStart = -1, int CountEnd = -1, int[] SemanticReifiedTypeParameterIndices = null, int[] NullableWitnessTypeParameterIndices = null, TypeNode[] KotlinParameterTypes = null, string InnerConstructorOwner = null, TypeNode[] InnerConstructorParameters = null, int[] InnerConstructorTypeArguments = null, JsonArray SemanticMethodTypeParams = null);
 
 sealed record ReferencedMethodDeclaration(string PhysicalMember, TypeNode[] Parameters, TypeNode Return,
     JsonArray TypeParams);

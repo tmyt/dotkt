@@ -1315,7 +1315,13 @@ static class InlineSplice
         }
         if (remap.Count > 0)
         {
-            RenumberTvs(invBody, remap); RenumberTvs(invParams, remap); RenumberTvs(invRet, remap); RenumberTvs(fields, remap);
+            // Nested payloads must own their frame before their construction-side arguments move into this class.
+            // Otherwise a lexical method TV in a nested field loses its correspondence to the rewritten typeArg.
+            ClosureSynthesis.PrebindSplicedFrames(invBody);
+            RenumberTvs(invBody, remap, classFrame: true);
+            RenumberTvs(invParams, remap, classFrame: true);
+            RenumberTvs(invRet, remap, classFrame: true);
+            RenumberTvs(fields, remap, classFrame: true);
         }
 
         var synthClass = new JsonObject
@@ -1328,6 +1334,7 @@ static class InlineSplice
             ["body"] = invBody,
         };
         if (typeParams.Count > 0) synthClass["typeParams"] = typeParams;
+        ClosureSynthesis.MarkPreboundFrame(synthClass);
 
         var newClosure = new JsonObject
         {
@@ -1935,12 +1942,16 @@ static class InlineSplice
     // Renumber every CALLER-FRAME `{t:tv}` index in place via `remap` keyed by (scope, index). Scope is PRESERVED on the
     // ref. ClosureSynthesis subsequently rebinds those references to the generated class's exact `type#i` frame.
     // Referenced-declaration descriptors stay in their callee's frame and are never rewritten (#74/#557).
-    static void RenumberTvs(JsonNode node, Dictionary<(string, int), int> remap)
+    static void RenumberTvs(JsonNode node, Dictionary<(string, int), int> remap, bool classFrame = false)
     {
         if (node is JsonObject o)
         {
             if (Str(o["t"]) == "tv" && o["i"] is JsonValue iv && iv.TryGetValue<int>(out var i)
-                && remap.TryGetValue((Str(o["scope"]) ?? "method", i), out var ni)) o["i"] = ni;
+                && remap.TryGetValue((Str(o["scope"]) ?? "method", i), out var ni))
+            {
+                o["i"] = ni;
+                if (classFrame) o["scope"] = "type";
+            }
             // Skip a nested closure's `synthClass` (its tvs are its own frame — see CollectTvKeys); its outer-frame tv
             // refs on `captures`/`funcType`/`typeArgs` ARE renumbered into the materialized closure's param space (#22).
             // A nested dense `newSuspendLambda`'s own frame is shielded identically — only its outer-frame refs are
@@ -1949,9 +1960,9 @@ static class InlineSplice
             foreach (var kv in o)
                 if (kv.Value != null && !IsIndependentDeclarationFrameField(o, kv.Key) && kv.Key != "synthClass"
                     && !(nestedSm && SuspendLambdaOwnFrame.Contains(kv.Key)))
-                    RenumberTvs(kv.Value, remap);
+                    RenumberTvs(kv.Value, remap, classFrame);
         }
-        else if (node is JsonArray a) foreach (var c in a) if (c != null) RenumberTvs(c, remap);
+        else if (node is JsonArray a) foreach (var c in a) if (c != null) RenumberTvs(c, remap, classFrame);
     }
 
     // Route origin-fn returns: mirror kotc spliceBodyWithReturns. Tail `{k:return,value}` folds to the block value; an

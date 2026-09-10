@@ -7,6 +7,11 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Non-suspend owner-constrained generic methods remain callable through variant class values (#695).** Direct
+  forwarding preserves method arguments and virtual dispatch; source bounds remain in Kotlin metadata while
+  unrepresentable CLR constraint rows are omitted. This fixes absent existential methods without per-call delegate
+  allocation or an artificial method-arity limit.
+
 - **Declaration-site variant Kotlin classes now use verifier-safe CLR value boundaries (#693).** bir2cir represents
   widened covariant and narrowed contravariant class values with the declaration's non-generic existential interface,
   while retaining exact closed class types for construction, inheritance, and lexical receiver dispatch. The same

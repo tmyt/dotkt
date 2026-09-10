@@ -93,6 +93,25 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   `this`, an inner class's hidden enclosing-instance slot, and compiler-generated storage for that receiver retain
   `G<T>`. kotc identifies the lexical-receiver role structurally in transient BIR; bir2cir consumes it while choosing
   the CLR representation and removes it before CIR. No generated or user source name is treated as an ABI oracle.
+- **Non-suspend generic members retain owner-dependent Kotlin constraints as metadata, not CLR constraint rows.**
+  For `G<in T>.f<R : T>` and constructed bounds such as `R : I<T>`, the receiver's exact CLR construction need not
+  express the source view's subtype relation, particularly when Kotlin variance crosses a value-type argument.
+  The source MethodDef and existential slot retain owner-independent constraints; exact Kotlin bounds remain in
+  DLL-to-KLIB metadata. The carrier forwards directly with the actual method arguments, preserving virtual dispatch,
+  managed-reference aliasing and ordinary exception propagation without a per-call delegate allocation.
+  Calls to members of an erased bound use its nominal existential interface or, for a foreign CLR generic, the
+  existing exact reflection-dispatch ABI. The latter retains its usual trimming/AOT metadata requirements.
+  The same projection applies to constructed method bounds depending on another method parameter, such as
+  `fun <T, R : I<T>> helper(value: R)`: forwarding through that helper must not reintroduce the erased CLR obligation.
+  Invariant foreign CLR constructions retain their exact constraints: their declaration does not permit satisfying
+  `I<T>` through a different construction `I<U>`. Self F-bounds also remain exact.
+  Independent consequences such as `R : Tag` from `R : T, T : Tag` remain physical;
+  value flow between distinct generic slots uses explicit CIR conversions. Override selection uses Kotlin bounds,
+  while its CLR slot wiring uses physical bounds, including when the base declaration comes from another DLL.
+  Generated capture frames inherit those physical bounds through their explicit construction type arguments,
+  including concrete bounds substituted on an override and captures nested inside other generated frames.
+  Suspend members with owner-dependent constraints still require a separate cold-entry representation and are not
+  covered by this bridge.
 - **An arbitrary imported CLR `G<*>` uses an `object` value slot plus exact reflection dispatch.** A foreign assembly
   cannot retroactively implement DotKt's existential interface. `is`/`as`, methods, properties, and fields therefore
   call the pure-Kotlin `DotKt.Runtime.CompilerServices` star runtime. `bir2cir` resolves overloads and supplies the

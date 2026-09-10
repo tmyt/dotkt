@@ -4,15 +4,20 @@ using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 
-// Materialize every resolved CLR collection-view conversion in CIR.
+// Materialize representation-induced value conversions in CIR.
 //
 // Kotlin relates its mutable and read-only collection surfaces, while their lowered CLR sibling interfaces are
 // unrelated in the CLR type lattice. BirTypeLowering owns that physical projection; this final value-flow pass owns
 // the casts the projection requires. It runs only after memberRef and every synthetic declaration are final, so both
 // sides of an edge come from CIR facts: declaration slots, lexical storage, or an exact resolved external member.
-// ilemit consequently emits ordinary `cast` nodes and has no collection-family vocabulary.
-static class CollectionViewCoercion
+// Owner-dependent Kotlin constraints likewise do not imply a physical CLR relation between two generic slots.
+// A value crossing those slots needs an explicit boxed conversion, even when Kotlin proved the assignment legal.
+// ilemit consequently emits ordinary `cast` nodes without recovering source constraints or collection vocabulary.
+static class PhysicalValueCoercion
 {
+    static bool NeedsConversion(TypeNode source, TypeNode target) =>
+        source is TypeNode.Tv && target is TypeNode.Tv && !source.Equals(target)
+        || CollectionViewFaces.IsViewSeam(source, target);
     sealed record MethodShape(string Owner, string Name, int Arity, TypeNode[] Parameters, TypeNode Return);
 
     sealed class Index
@@ -324,8 +329,8 @@ static class CollectionViewCoercion
         if (target != null && value is JsonObject conditional && Str(conditional["k"]) == "cond"
             && conditional["type"] == null)
         {
-            var thenSeam = CollectionViewFaces.IsViewSeam(ExprType(conditional["then"], scope, index), target);
-            var elseSeam = CollectionViewFaces.IsViewSeam(ExprType(conditional["else"], scope, index), target);
+            var thenSeam = NeedsConversion(ExprType(conditional["then"], scope, index), target);
+            var elseSeam = NeedsConversion(ExprType(conditional["else"], scope, index), target);
             if (thenSeam || elseSeam)
             {
                 CoerceSlot(conditional, "then", target, scope, index);
@@ -335,7 +340,7 @@ static class CollectionViewCoercion
             }
         }
         var got = ExprType(value, scope, index);
-        if (!CollectionViewFaces.IsViewSeam(got, target)) return value;
+        if (!NeedsConversion(got, target)) return value;
         return new JsonObject
         {
             ["k"] = "cast",
@@ -349,6 +354,8 @@ static class CollectionViewCoercion
         var declared = TypeJson.Read(expression["ret"]) ?? TypeJson.Read(expression["dynRet"]);
         if (declared == null) return expression;
         var actual = PhysicalResult(expression, scope, index);
+        // ret can still be the callee's declaration-frame generic spelling. Generic conversions belong on the
+        // consuming edge, whose target is in the caller's frame, not between these two potentially different frames.
         if (!CollectionViewFaces.IsViewSeam(actual, declared)) return expression;
         var physical = expression.DeepClone().AsObject();
         // The inner expression leaves the exact member/declaration result on the CLR stack. Once the caller-facing
@@ -446,6 +453,7 @@ static class CollectionViewCoercion
 
     static TypeNode.Fqn CallOwner(JsonObject call)
         => TypeJson.Read(call["ownerType"]) as TypeNode.Fqn
+            ?? TypeJson.Read(call["iface"]) as TypeNode.Fqn
             ?? TypeJson.Read(call["owner"]) as TypeNode.Fqn
             ?? TypeJson.Read(call["type"]) as TypeNode.Fqn
             ?? TypeJson.Read(call["calleeOwner"]) as TypeNode.Fqn;

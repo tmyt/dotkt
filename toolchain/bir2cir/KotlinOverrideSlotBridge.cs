@@ -151,6 +151,12 @@ static class KotlinOverrideSlotBridge
             string identityName, string descriptorMember, string propertyAccessor,
             TypeNode[] slotParams, TypeNode slotRet, JsonObject impl, JsonArray slotTypeParams = null)
         {
+            if (!emitBridges && !IsSuspendMethod(impl))
+                OwnerConstrainedMethodLowering.RecordOverride(impl, slotTypeParams,
+                    semanticSpec.Args ?? Array.Empty<TypeNode>(),
+                    defs.TryGetValue(semanticSpec.Name, out var constraintOwner)
+                        ? constraintOwner.Node["typeParams"] as JsonArray
+                        : refs?.OwnerTypeParamDeclarations(semanticSpec.Name));
             // An abstract interface slot reached only through a base class already has that base's mapping. A derived
             // declaration does not acquire a fresh MethodImpl unless the source class re-lists the interface; this is
             // what keeps an inherited CLR explicit implementation intact. A DEFAULT interface slot is different:
@@ -344,7 +350,7 @@ static class KotlinOverrideSlotBridge
             {
                 // A referenced BASE CLASS reaches the same arm; only its wiring differs (a MethodImpl against the
                 // constructed base rather than the interface), and the emitter resolves that base externally.
-                FillFromReference(cls, defs, spec, supIsInterface, methods, ownArgs, isValue, refs,
+                FillFromReference(cls, defs, spec, supIsInterface, methods, ownArgs, isValue, refs, !emitBridges,
                     (owner, isInterface, referenced, identity, member, accessor, parameters, ret, implementation,
                             slotTypeParams, slotHasDefault) =>
                         Fill(spec, owner, isInterface, referenced, slotHasDefault, identity, member, accessor,
@@ -1015,7 +1021,7 @@ static class KotlinOverrideSlotBridge
     // the derivation the refusal exists to prevent.
     static void FillFromReference(Def cls, IReadOnlyDictionary<string, Def> defs, TypeNode.Fqn spec,
         bool supIsInterface, JsonArray methods, TypeNode[] ownArgs, ValueTypeOracle isValue,
-        ReferenceMetadataIndex refs,
+        ReferenceMetadataIndex refs, bool semanticConstraints,
         Action<TypeNode.Fqn, bool, bool, string, string, string, TypeNode[], TypeNode, JsonObject, JsonArray, bool> fill)
     {
         if (refs == null) return;
@@ -1073,7 +1079,7 @@ static class KotlinOverrideSlotBridge
                         implementationSignature, TypeJson.Read(impl["ret"]),
                         spec.Args ?? Array.Empty<TypeNode>(), impl["typeParams"] as JsonArray, ownArgs,
                         out slotRet0, out slotParams0, out refused,
-                        out selectedPhysicalMember, out selectedSlotTypeParams);
+                        out selectedPhysicalMember, out selectedSlotTypeParams, semanticConstraints);
                 if (!foundSlot)
                     continue;
                 if (slotParams0 == null || slotParams0.Length != ps.Count) continue;

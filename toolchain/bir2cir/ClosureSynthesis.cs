@@ -49,6 +49,7 @@ static class ClosureSynthesis
                 // Nested synthClasses own independent frames. Bind them first, then shield them from the outer walk.
                 foreach (var pair in synth.ToList())
                     if (pair.Value != null) PrebindSplicedFrames(pair.Value);
+                if (HasPreboundFrame(synth)) return;
                 var rebound = RebindSyntheticTypeVariables(synth, typeArgs, recordOrigins: false);
                 rebound[PreboundFrameKey] = true;
                 obj["synthClass"] = rebound;
@@ -84,6 +85,8 @@ static class ClosureSynthesis
     // must map payload `type#i` positions to typeArgs[i] rather than trying to recover the old outer-TV identity.
     internal static bool HasPreboundFrame(JsonNode source) =>
         source is JsonObject obj && obj[PreboundFrameKey] != null;
+
+    internal static void MarkPreboundFrame(JsonObject source) => source[PreboundFrameKey] = true;
 
     public static void Apply(JsonNode root, ReferenceMetadataIndex refs)
     {

@@ -1383,6 +1383,7 @@ sealed class Pipeline
             // can be authored as ordinary CIR. Runs after the last resolution pass, because the rule compares the
             // construction's FINAL function type with the slot's.
             ClrMemberResolution.MaterializeDelegateSlots(lowered, refs, emittedLocalTypes);
+            ForeignStarProjectionBinding.DropDeclarationSignatures(lowered);
             // THE STAMPING CHOKEPOINT: every node resolved against a .NET member carries that member's declared
             // return. Two omissions of exactly that shape — a generic method and a public field — each removed a
             // whole family from the crossing refusal below without any gate noticing.
@@ -1408,7 +1409,7 @@ sealed class Pipeline
         // stable. ilemit then emits those ordinary CIR casts without recognizing the collection ABI. A metadata/ref
         // build keeps kotlin.collections.* verbatim and never creates these physical sibling faces.
         if (!_options.RefBuild)
-            CollectionViewCoercion.ApplyAll(loweredRoots.Select(file => file.Root).ToList());
+            PhysicalValueCoercion.ApplyAll(loweredRoots.Select(file => file.Root).ToList());
 
         // Every representation synthesis is now complete. Validate the exact MethodDef table that CIR will describe;
         // do not defer a generated/user collision to ilemit and do not invent a late name after calls are bound.

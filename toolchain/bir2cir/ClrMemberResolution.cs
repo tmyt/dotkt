@@ -449,7 +449,13 @@ static partial class ClrMemberResolution
                 return;
             }
             if (kind is not ("callStatic" or "callInstance" or "constrainedCall")) return;
-            if (obj["sig"] is JsonArray) return;
+            if (obj["sig"] is JsonArray)
+            {
+                // A preceding binding pass may already have supplied the authoritative physical descriptor.
+                // Consume the redundant frontend vector in that case too; it is not a second CIR signature.
+                obj.Remove("shapeTypes");
+                return;
+            }
             if (obj["shapeTypes"] is JsonArray shapeTypes)
             {
                 obj["sig"] = shapeTypes.DeepClone();

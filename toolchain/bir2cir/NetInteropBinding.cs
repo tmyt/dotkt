@@ -248,6 +248,8 @@ static class NetInteropBinding
         // rides in each branch's OWN key position, so it is carried by the branches through `CarryRet`, which leaves a
         // `ret` a branch has already written where that branch put it.
         if (Take("sty") is JsonNode styCarry) node["sty"] = styCarry;
+        if (!isStatic && v.TryGetValue("sig", out var declarationSignature))
+            ForeignStarProjectionBinding.PreserveDeclarationSignature(node, declarationSignature);
         void CarryRet() { if (node["ret"] == null && Take("ret") is JsonNode retCarry) node["ret"] = retCarry; }
 
         // GENERIC .NET method: the presence of `typeArgs` (a frontend fact) is the signal. ilemit MakeGenericMethods it.
