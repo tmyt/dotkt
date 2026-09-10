@@ -6902,7 +6902,9 @@ sealed partial class ReferenceMetadataIndex
             if (IsNullableDefinition(def)) return new TypeNode.Nullable(args[0]);
             return new TypeNode.Fqn(DottedFqn(StripGenericArity(def.FullName ?? def.Name)), args);
         }
-        var prim = PrimitiveBirName(type);
+        // This is an exact reflected declaration, not Kotlin's Unit-return convention. A real Unit class must stay
+        // a value-position token here, particularly beneath constructed interfaces; only System.Void denotes no value.
+        var prim = type.FullName == "kotlin.Unit" ? null : PrimitiveBirName(type);
         return new TypeNode.Fqn(prim ?? DottedFqn(StripGenericArity(type.FullName ?? type.Name)));
     }
 

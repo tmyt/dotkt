@@ -16,7 +16,26 @@ private fun inheritedCarrierName(value: InheritedCarrierName<String>): String = 
 private fun <T> inheritedCarrierForward(value: InheritedCarrierTask<T>): String =
     "${inheritedCarrierRun(value)}:${inheritedCarrierName(value)}"
 
+open class InheritedCarrierGenericBase<T>(private val item: T) : InheritedCarrierName<T> {
+    override fun name(): T = item
+}
+open class InheritedCarrierGenericMiddle : InheritedCarrierGenericBase<String>("indirect")
+class InheritedCarrierDirect<out T>(val value: T) : InheritedCarrierGenericBase<String>("direct")
+class InheritedCarrierIndirect<out T>(val value: T) : InheritedCarrierGenericMiddle()
+private fun inheritedCarrierBaseName(value: InheritedCarrierGenericBase<*>): Any? = value.name()
+private fun <T> inheritedCarrierDirect(value: InheritedCarrierDirect<T>): String = inheritedCarrierName(value)
+private fun <T> inheritedCarrierIndirect(value: InheritedCarrierIndirect<T>): String =
+    "${inheritedCarrierName(value)}:${inheritedCarrierBaseName(value)}"
+
 class InheritedCarrierInterfaceTests {
+    @TestAttribute
+    fun genericBasesPreserveClosedInterfacesAndAncestorCarriers() {
+        val direct: InheritedCarrierDirect<Any> = InheritedCarrierDirect(7)
+        val indirect: InheritedCarrierIndirect<Any> = InheritedCarrierIndirect("text")
+        assertEquals("direct", inheritedCarrierDirect(direct))
+        assertEquals("indirect:indirect", inheritedCarrierIndirect(indirect))
+    }
+
     @TestAttribute
     fun concreteBaseInterfacesRemainContractsOfVariantValues() {
         assertEquals("42:local", inheritedCarrierForward(InheritedCarrierTask(7)))
