@@ -31,7 +31,10 @@ class OwnerBoundDog : OwnerBoundAnimal() {
 }
 
 class OwnerBoundAnimalDerived : OwnerBoundSink<OwnerBoundAnimal>() {
-    override fun <R : OwnerBoundAnimal> render(value: R): String = "animal:$value"
+    override fun <R : OwnerBoundAnimal> render(value: R): String {
+        val renderCaptured = { "animal:$value" }
+        return renderCaptured()
+    }
 }
 
 class OwnerBoundWide<in T> {
@@ -64,10 +67,18 @@ class OwnerForeignComparer : System.Collections.Generic.IComparer<Any> {
     override fun Compare(x: Any?, y: Any?): Int = x.toString().toInt()
 }
 
+fun <T, R : System.Collections.Generic.IComparer<T>> compareOwnerGeneric(value: R, item: T): Int =
+    value.Compare(item, item)
+fun <T, R : System.Collections.Generic.IComparer<T>> deferOwnerGeneric(value: R, item: T): () -> Int =
+    { value.Compare(item, item) }
+
 class OwnerComparableValue<out T>(val item: T) {
     fun <R : System.Collections.Generic.IComparer<T>> compare(value: R): Int = value.Compare(item, item)
     fun <R : System.Collections.Generic.IComparer<T>> deferred(value: R): () -> Int =
         { value.Compare(item, item) }
+    fun <R : System.Collections.Generic.IComparer<T>> viaHelper(value: R): Int = compareOwnerGeneric<T, R>(value, item)
+    fun <R : System.Collections.Generic.IComparer<T>> deferredViaHelper(value: R): () -> Int =
+        deferOwnerGeneric<T, R>(value, item)
 }
 
 interface OwnerLocalComparable<in T> {
@@ -78,9 +89,14 @@ class OwnerLocalValues : OwnerLocalComparable<Any> {
     override fun compare(value: Any): Int = value.toString().toInt()
 }
 
+fun <T, R : OwnerLocalComparable<T>> compareOwnerLocalGeneric(value: R, item: T): Int = value.compare(item)
+fun <T, R : OwnerLocalComparable<T>> deferOwnerLocalGeneric(value: R, item: T): () -> Int = { value.compare(item) }
+
 class OwnerLocalValue<out T>(val item: T) {
     fun <R : OwnerLocalComparable<T>> compare(value: R): Int = value.compare(item)
     fun <R : OwnerLocalComparable<T>> deferred(value: R): () -> Int = { value.compare(item) }
+    fun <R : OwnerLocalComparable<T>> viaHelper(value: R): Int = compareOwnerLocalGeneric<T, R>(value, item)
+    fun <R : OwnerLocalComparable<T>> deferredViaHelper(value: R): () -> Int = deferOwnerLocalGeneric<T, R>(value, item)
 }
 
 interface OwnerBoundTag
@@ -122,9 +138,13 @@ class ConstrainedCarrierTests {
         val comparable: OwnerComparableValue<Any> = OwnerComparableValue(17)
         assertEquals(17, comparable.compare(OwnerForeignComparer()))
         assertEquals(17, comparable.deferred(OwnerForeignComparer())())
+        assertEquals(17, comparable.viaHelper(OwnerForeignComparer()))
+        assertEquals(17, comparable.deferredViaHelper(OwnerForeignComparer())())
         val local: OwnerLocalValue<Any> = OwnerLocalValue(23)
         assertEquals(23, local.compare(OwnerLocalValues()))
         assertEquals(23, local.deferred(OwnerLocalValues())())
+        assertEquals(23, local.viaHelper(OwnerLocalValues()))
+        assertEquals(23, local.deferredViaHelper(OwnerLocalValues())())
     }
 
     @TestAttribute

@@ -212,6 +212,22 @@ static class ConstrainedTypeParameterReceiverBinding
             {
                 case JsonObject call:
                     var kind = Str(call["k"]);
+                    // Event binding selected the exact accessor while the Kotlin constraint graph was intact.
+                    // Once a reference-owner proof is erased, constrained dispatch cannot establish that receiver
+                    // relation for the verifier. Convert to the selected accessor owner explicitly, as for methods.
+                    if (!close && !resolvedPropertiesOnly && kind is "clrEventAdd" or "clrEventRemove"
+                        && Str(call["dispatch"]) == "constrained"
+                        && TypeJson.Read(call["accessorOwner"]) is TypeNode.Fqn eventOwner
+                        && isValue != null && !isValue(eventOwner)
+                        && call["recv"] is JsonObject eventReceiver
+                        && ReceiverTypeVariable(eventReceiver, scope, locals) is TypeNode.Tv eventTv
+                        && ConstraintDeclarations(eventTv, typeParams, methodParams).Any(bound => bound.Erased))
+                    {
+                        call["recv"] = new JsonObject { ["k"] = "cast", ["type"] = TypeJson.Write(eventOwner),
+                            ["e"] = eventReceiver.DeepClone() };
+                        call["type"] = TypeJson.Write(eventOwner);
+                        call["dispatch"] = "callvirt";
+                    }
                     // MemberCallSubstitution may already have authored a constrained CLR-interface call before the
                     // star-inner pass weakens an unrepresentable bound. Such a call cannot keep `constrained.` once
                     // that proof has deliberately been removed from the TypeDef. Preserve its already-selected

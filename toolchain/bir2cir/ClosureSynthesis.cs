@@ -49,6 +49,7 @@ static class ClosureSynthesis
                 // Nested synthClasses own independent frames. Bind them first, then shield them from the outer walk.
                 foreach (var pair in synth.ToList())
                     if (pair.Value != null) PrebindSplicedFrames(pair.Value);
+                if (HasPreboundFrame(synth)) return;
                 var rebound = RebindSyntheticTypeVariables(synth, typeArgs, recordOrigins: false);
                 rebound[PreboundFrameKey] = true;
                 obj["synthClass"] = rebound;

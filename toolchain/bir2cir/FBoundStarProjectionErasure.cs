@@ -43,7 +43,7 @@ static class FBoundStarProjectionErasure
 
     public static IReadOnlyDictionary<string, string> ApplyAll(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs)
     {
-        OwnerConstrainedMethodLowering.Reset();
+        OwnerConstrainedMethodLowering.Reset(refs);
         var rootList = roots.OfType<JsonObject>().ToList();
         var owners = new Dictionary<string, Owner>(StringComparer.Ordinal);
         var defs = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
@@ -54,22 +54,25 @@ static class FBoundStarProjectionErasure
         foreach (var root in rootList) MarkNeeded(root, owners, defs, refs);
         MarkNeededClosure(owners);
 
-        foreach (var definition in defs.Values)
+        foreach (var definition in defs.Values.Concat(rootList))
             if (definition["methods"] is JsonArray declaredMethods)
                 foreach (var method in declaredMethods.OfType<JsonObject>())
                     if (!IsSuspend(method) && (HasOwnerDependentMethodConstraint(method)
+                        || OwnerConstrainedMethodLowering.HasMethodDependentBounds(method)
                         || method[OwnerConstrainedMethodLowering.OverrideBoundsKey] != null))
                         OwnerConstrainedMethodLowering.Record(method, definition);
         foreach (var owner in owners.Values.Where(o => o.Needed)) Synthesize(owner, owners, defs, refs);
         foreach (var root in rootList) RecordDeclarationSurfaces(root, owners, refs);
+        var generatedMethodFrames = OwnerConstrainedMethodLowering.PropagateCapturedBounds(defs, ContainsOwnerTv,
+            bound => ProjectOwnerMethodBound(bound, owners, refs, physical: false));
         foreach (var root in rootList) EraseProjectedAliasConstraints(root, refs);
-        var generatedMethodFrames = new Dictionary<string, HashSet<int>>(StringComparer.Ordinal);
         foreach (var (name, definition) in defs)
         {
-            if (!Bool(definition["generated"]) || Int(definition["outerTypeParamCount"]) is not int prefix
-                || prefix <= 0 || definition["typeParams"] is not JsonArray parameters) continue;
+            if (!Bool(definition["generated"]) || definition["typeParams"] is not JsonArray parameters) continue;
+            var prefix = Int(definition["outerTypeParamCount"]) ?? 0;
             var bounds = new JsonObject();
-            var dispatch = new JsonObject();
+            var dispatch = definition[OwnerConstrainedMethodLowering.DispatchBoundsKey] is JsonValue encodedDispatch
+                ? JsonNode.Parse(encodedDispatch.GetValue<string>()).AsObject() : new JsonObject();
             for (var index = prefix; index < parameters.Count; index++)
             {
                 if (parameters[index] is not JsonObject parameter
@@ -77,10 +80,11 @@ static class FBoundStarProjectionErasure
                 var retained = new JsonArray();
                 var removed = new JsonArray();
                 foreach (var constraint in constraints)
-                    if (ContainsOwnerPrefixTv(TypeJson.Read(constraint), prefix))
+                    if (ContainsOwnerPrefixTv(TypeJson.Read(constraint), prefix)
+                        || OwnerConstrainedMethodLowering.HasConstructedDependency(TypeJson.Read(constraint), "type", index))
                     {
                         removed.Add(TypeJson.Write(ProjectOwnerMethodBound(
-                            TypeJson.Read(constraint), owners, refs, physical: false, ownerCount: prefix)));
+                            TypeJson.Read(constraint), owners, refs, physical: false)));
                         foreach (var consequence in OwnerConstrainedMethodLowering.IndependentBounds(
                             TypeJson.Read(constraint), parameters)) retained.Add(TypeJson.Write(consequence));
                     }
@@ -94,7 +98,7 @@ static class FBoundStarProjectionErasure
                     generatedMethodFrames[name] = slots = new HashSet<int>();
                 slots.Add(index);
             }
-            if (bounds.Count == 0) continue;
+            if (bounds.Count == 0 && dispatch.Count == 0) continue;
             KotlinSupertypesRecord.Merge(definition, new JsonObject { ["bounds"] = bounds });
             definition[OwnerConstrainedMethodLowering.DispatchBoundsKey] = dispatch.ToJsonString();
             ConstrainedTypeParameterReceiverBinding.CloseTypeOwners(definition, rootList);
@@ -2184,7 +2188,7 @@ static class FBoundStarProjectionErasure
         IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs, JsonArray ownerParameters)
     {
         var result = new JsonArray();
-        foreach (var typeParamNode in typeParams)
+        foreach (var (typeParamNode, parameterIndex) in typeParams.Select((node, index) => (node, index)))
         {
             // Unconstrained BIR method parameters use the compact string spelling ("R"); constrained declarations
             // use an object. Both spellings contribute to generic arity and must survive unchanged.
@@ -2202,9 +2206,12 @@ static class FBoundStarProjectionErasure
                     if (TypeJson.Read(constraintNode) is not TypeNode constraint) continue;
                     // No approximation of I<T> can constrain R on a carrier with hidden T. Kotlin metadata retains
                     // the original bound; only owner-independent constraints remain on the physical declarations.
-                    if (ContainsOwnerTv(constraint))
+                    if (ContainsOwnerTv(constraint)
+                        || OwnerConstrainedMethodLowering.HasConstructedDependency(constraint, "method", parameterIndex))
                     {
-                        foreach (var consequence in OwnerConstrainedMethodLowering.IndependentBounds(constraint, ownerParameters))
+                        foreach (var consequence in ContainsOwnerTv(constraint)
+                            ? OwnerConstrainedMethodLowering.IndependentBounds(constraint, ownerParameters)
+                            : Enumerable.Empty<TypeNode>())
                             if (!IsObjectish(consequence) && !erased.Any(row => TypeJson.Read(row).Equals(consequence)))
                                 erased.Add(TypeJson.Write(consequence));
                         continue;

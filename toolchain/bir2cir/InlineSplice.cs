@@ -1315,6 +1315,9 @@ static class InlineSplice
         }
         if (remap.Count > 0)
         {
+            // Nested payloads must own their frame before their construction-side arguments move into this class.
+            // Otherwise a lexical method TV in a nested field loses its correspondence to the rewritten typeArg.
+            ClosureSynthesis.PrebindSplicedFrames(invBody);
             RenumberTvs(invBody, remap, classFrame: true);
             RenumberTvs(invParams, remap, classFrame: true);
             RenumberTvs(invRet, remap, classFrame: true);

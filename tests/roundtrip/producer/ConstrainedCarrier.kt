@@ -14,3 +14,8 @@ fun createReferencedSink(): ReferencedSink<Any> = ReferencedSinkDerived()
 
 open class ReferencedAnimal
 class ReferencedDog : ReferencedAnimal()
+
+fun <T, R : System.Collections.Generic.IComparer<T>> compareReferencedGeneric(value: R, item: T): Int =
+    value.Compare(item, item)
+fun <T, R : System.Collections.Generic.IComparer<T>> deferReferencedGeneric(value: R, item: T): () -> Int =
+    { value.Compare(item, item) }
