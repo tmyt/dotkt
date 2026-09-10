@@ -406,10 +406,14 @@ internal fun BirEmitter.blockExpr(block: IrBlock): String {
 	// must keep its identity for writes and captures. Only Kotlin's subject-bearing constructs bind a subject.
 	val hasSubject = origin == IrStatementOrigin.WHEN || origin == IrStatementOrigin.SAFE_CALL || origin == IrStatementOrigin.ELVIS
 	if (hasSubject && block.statements.size == 2 && tmp != null && whenExpr != null && tmp.initializer != null) {
-		val key = tmp.name.asString()
-		// Save/restore (not remove) the key: a nested same-named subject must not clobber the outer splice.
+		val key = tmp
+		// Preserve an active projection if the same IR declaration is emitted recursively.
 		val saved = valSubst[key]
-		fun restore() { if (saved != null) valSubst[key] = saved else valSubst.remove(key); valSubstUnwrapped.remove(key) }
+		val wasUnwrapped = key in valSubstUnwrapped
+		fun restore() {
+			if (saved != null) valSubst[key] = saved else valSubst.remove(key)
+			if (wasUnwrapped) valSubstUnwrapped.add(key) else valSubstUnwrapped.remove(key)
+		}
 		// `a?.member` where member is a value type -> Nullable<T>: bind `a` once, then null-gate. A nullable
 		// VALUE-type receiver (`Char?`) is gated by HasValue and the member sees the UNWRAPPED .Value (the
 		// ELVIS shape below) — splicing the raw Nullable<T> where the element is required emitted invalid IL

@@ -265,8 +265,8 @@ private fun BirEmitter.suspendLambda(node: IrFunctionExpression): String? {
 	val extensionReceiver = extensionReceiverParam(fn)
 	// (B) body shadow: emit the SM body with each captured decl bound to its DESCRIPTOR name `{k:local,name:D}` in
 	// `captureSubst` by declaration identity, so the body names the capture EXACTLY as the descriptor declares it (the
-	// name bir2cir's spill rewrite keys on). This deliberately does NOT touch name-keyed `valSubst`: a same-spelled
-	// declaration is not the captured declaration. Saved + restored around the emission, mirroring samConversion.
+	// name bir2cir's spill rewrite keys on). Capture bindings take precedence over subject substitutions for that
+	// declaration. Saved + restored around the emission, mirroring samConversion.
 	// The explicit outer descriptor is represented in the body by ordinary `{k:this}`. In the lambda's OWN frame
 	// bir2cir rewrites that spelling to the field named by `outer:true`. A member extension can capture a SECOND
 	// `<this>` declaration; its ordinary descriptor stays an exact local spelling so the spill rewrite selects that
@@ -308,23 +308,6 @@ private fun BirEmitter.suspendLambda(node: IrFunctionExpression): String? {
 	return """{"k":"newSuspendLambda","arity":${ownParams.size},"captures":[$capturesJson]$capValuesJson,"params":[$paramsJson],"suspendRet":${str(resultType)},"typeParams":[$typeParamsBare]$typeParamDecls$typeArgsJson,"body":[$body],"funcType":${funcTypeOf(fn).toJson()}}"""
 }
 
-/** SHADOW the lambda's own regular params in `valSubst` while emitting its body: an enclosing lambda carrier
- *  may have bound the SAME name (e.g. `it`) to an outer local. A lifted lambda's params are its OWN method
- *  params — `IrGetValue` resolves them by NAME through `valSubst` (BirEmitterExpressions), so a stale outer
- *  binding would make the body reference a foreign local that is not in the lifted method's scope (`load unknown
- *  var` at ilemit). Removing them yields the correct bare `{"k":"local","name":<param>}`. Saved + restored,
- *  mirroring `emitInlineLambdaCarrier`. */
-private inline fun <T> BirEmitter.withLambdaParamShadow(fn: IrSimpleFunction, block: () -> T): T {
-	// [isValueParameter], matching what `lambdaParamsJson` DECLARES for this lift — shadowing only the regular ones
-	// would leave a context parameter's body read bound to an enclosing carrier's same-named local.
-	val names = fn.parameters.filter { isValueParameter(it) }.map { it.name.asString() }
-	val saved = names.associateWith { valSubst[it] }
-	names.forEach { valSubst.remove(it) }
-	try { return block() } finally {
-		saved.forEach { (n, prev) -> if (prev != null) valSubst[n] = prev else valSubst.remove(n) }
-	}
-}
-
 /** Every emitted lambda/adapter body is a distinct BIR declaration projection, even when the frontend reuses the
  * same IR function for a default carrier and its in-module executable form. Give local declarations in that body a
  * fresh identity as one atomic projection; callers still supply the surrounding capture/parameter substitutions. */
@@ -355,7 +338,7 @@ internal fun BirEmitter.lambda(node: IrFunctionExpression): String {
 			val recvName = lambdaRecvName(fn)
 			val body = withFreshLambdaLocalFunctionIds(fn) {
 				withLambdaSelf(fn, recvName) {
-					withLambdaParamShadow(fn) { (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) } }
+					(fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
 				}
 			}
 			// The frontend may represent a non-capturing lambda as a file-level helper, but its declaration still belongs
@@ -383,7 +366,7 @@ internal fun BirEmitter.lambda(node: IrFunctionExpression): String {
 	val recvName = lambdaRecvName(fn)
 	val body = withFreshLambdaLocalFunctionIds(fn) {
 		withLambdaSelf(fn, recvName) {
-			withLambdaParamShadow(fn) { (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) } }
+			(fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
 		}
 	}
 	capPairs.forEach { (decl, _) -> val prev = savedSubst[decl]; if (prev != null) captureSubst[decl] = prev else captureSubst.remove(decl) }
@@ -1297,7 +1280,7 @@ internal fun BirEmitter.adapterRef(node: IrFunctionReference, fn: IrSimpleFuncti
 				"""{"name":${str(parameter.name.asString())},"type":${type.toJson()}}"""
 			}
 			val body = withFreshLambdaLocalFunctionIds(fn) {
-				withLambdaParamShadow(fn) { (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) } }
+				(fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
 			}
 			"""{"name":${str(lname)},"generated":true,"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$liftedParams],"ret":${liftedFnType.ret.toJson()},"body":[$body]}"""
 		}
@@ -1313,7 +1296,7 @@ internal fun BirEmitter.adapterRef(node: IrFunctionReference, fn: IrSimpleFuncti
 		captureSubst[decl] = """{"k":"field","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":${str(fname)}}"""
 	}
 	val body = withFreshLambdaLocalFunctionIds(fn) {
-		withLambdaParamShadow(fn) { (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) } }
+		(fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
 	}
 	capPairs.forEach { (decl, _) -> val prev = savedSubst[decl]; if (prev != null) captureSubst[decl] = prev else captureSubst.remove(decl) }
 	val fields = capPairs.joinToString(",") { (decl, fname) -> """{"name":${str(fname)},"type":${captureFieldType(decl).toJson()}}""" }
@@ -1918,7 +1901,7 @@ internal fun BirEmitter.capValueExpr(d: IrValueDeclaration): String =
 	// without this a `buildString { … appendTwoDigits(x) … }` carrier passed `$this$buildString` verbatim while its
 	// param was `__recvN` -> ilemit "load unknown var $this$buildString"), then `valSubst`, then the `<this>`/local
 	// fallback. selfSubst/captureSubst are IDENTITY-keyed (the receiver by symbol, not name).
-	captureSubst[d] ?: selfSubst[d] ?: valSubst[d.name.asString()]
+	captureSubst[d] ?: selfSubst[d] ?: valSubst[d]
 		?: if (d.name.asString() == "<this>") """{"k":"this"}""" else """{"k":"local","name":${str(localSlotName(d))}}"""
 
 /**

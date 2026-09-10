@@ -464,7 +464,7 @@ internal fun BirEmitter.coerceValue(node: IrExpression, expected: IrType): Strin
  *  `valSubst` substitution was pre-unwrapped to `Nullable<T>.Value` (a `SAFE_CALL` receiver). The unwrap helpers
  *  must then NOT wrap again, or the `.Value` is read twice (`n?.plus(1)` -> 1 instead of 8). */
 internal fun BirEmitter.isPreUnwrappedRead(o: IrExpression): Boolean =
-	o is IrGetValue && o.symbol.owner.name.asString() in valSubstUnwrapped
+	o is IrGetValue && o.symbol.owner in valSubstUnwrapped
 
 /** Kotlin visibility -> BIR access keyword (public/private/internal/protected). A `@kotlin.PublishedApi internal`
  *  declaration emits as PUBLIC: it is part of the inline-published surface, so a cross-assembly spliced inline body

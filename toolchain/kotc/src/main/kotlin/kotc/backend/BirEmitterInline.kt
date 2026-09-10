@@ -490,7 +490,7 @@ internal fun BirEmitter.emitInlineLambdaCarrier(lambda: IrFunctionExpression): S
 			}
 			(d as? IrValueParameter)?.kind == IrParameterKind.DispatchReceiver && captureSubst[d] == null ->
 				CarrierCapture(d, "__outer", outer = true)
-			captureSubst[d] == null && selfRef == null && valSubst[d.name.asString()] == null ->
+			captureSubst[d] == null && selfRef == null && valSubst[d] == null ->
 				CarrierCapture(d, localSlotName(d))
 			else -> CarrierCapture(d, freshFrameName("dotkt\$inlineCapture\$", fn), capValueExpr(d))
 		}
@@ -516,14 +516,6 @@ internal fun BirEmitter.emitInlineLambdaCarrier(lambda: IrFunctionExpression): S
 		val nm = if (p === extParam) freshRecv!! else p.name.asString()
 		"""{"name":${str(nm)},"type":${birType(p.type).toJson()}}"""
 	}
-	// SHADOW the lambda's own params in `valSubst` while emitting its body: an enclosing lambda carrier
-	// may have bound the SAME name (e.g. `it`) to an outer local. Without removing it here, the body's ref to this
-	// lambda's param would resolve to the OUTER binding — the carrier param is named correctly but the body dangles
-	// on a foreign local. Emitting them as BARE `{"k":"local","name":<param>}` refs lets bir2cir bind the carrier
-	// param. (The ext-receiver already does this via `selfSubst`, so it is excluded here.) Saved + restored around
-	// the body emission.
-	val shadowed = ordered.filter { it !== extParam }.map { it.name.asString() }.associateWith { valSubst[it] }
-	shadowed.keys.forEach { valSubst.remove(it) }
 	val body = ArrayList<String>()
 	// The `selfSubst[extParam]` binding above (restored just below) is the guarantee that the receiver's `this`/
 	// implicit-member refs resolve to `freshRecv`, not a dangling `{"k":"this"}` — no post-hoc string guard needed.
@@ -533,7 +525,6 @@ internal fun BirEmitter.emitInlineLambdaCarrier(lambda: IrFunctionExpression): S
 		val previous = savedCaptureSubst[d]
 		if (previous != null) captureSubst[d] = previous else captureSubst.remove(d)
 	}
-	shadowed.forEach { (name, prev) -> if (prev != null) valSubst[name] = prev else valSubst.remove(name) }
 	if (extParam != null) { if (hadSelf) selfSubst[extParam] = savedSelf!! else selfSubst.remove(extParam) }
 	// CAPTURES (bir2cir §4.4ii MaterializeCarrier): the free vars the carrier body references, computed by REUSING
 	// kotc's real-closure capture machinery (`capturedVars`/`captureFieldType`) so the set + types EXACTLY equal what a

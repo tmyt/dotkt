@@ -81,6 +81,24 @@ class LocalSubjectIdentityTests {
             else -> value + 1
         }
         assertEquals(8, named)
+        fun shadowed(n: Int): Int = when (val value = n) {
+            0 -> 0
+            else -> {
+                val value = 20
+                if (value == 20) value + 1 else -1
+            }
+        }
+        assertEquals(21, shadowed(7))
+        assertEquals(0, shadowed(0))
+        val closures = when (val value = 7) {
+            0 -> 0
+            else -> {
+                val captured = { value + 1 }
+                val parameter = { value: Int -> value + 1 }
+                captured() + parameter(20)
+            }
+        }
+        assertEquals(29, closures)
         assertEquals("sssn", subjectIdentityTrace)
     }
 

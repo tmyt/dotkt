@@ -254,7 +254,7 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 			}
 			captureSubst.containsKey(owner) -> captureSubst[owner]!!
 			selfSubst.containsKey(owner) -> selfSubst[owner]!!   // extension `__self` (by identity, before name-based `<this>`)
-			valSubst.containsKey(name) -> valSubst[name]!!
+			valSubst.containsKey(owner) -> valSubst[owner]!!
 			name == "<this>" -> """{"k":"this"}"""
 			else -> {
 				val slot = localSlotName(owner)
