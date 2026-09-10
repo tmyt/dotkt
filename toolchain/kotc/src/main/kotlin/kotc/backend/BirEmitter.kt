@@ -337,13 +337,13 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 		try { return body() } finally { clrEventReceiverOk = prev }
 	}
 
-	// Inline substitutions for synthetic temporaries (e.g. a `when` subject) in expression position.
-	internal val valSubst = HashMap<String, String>()
+	// Subject substitutions follow the resolved declaration, not its spelling in an enclosing scope.
+	internal val valSubst = java.util.IdentityHashMap<IrValueDeclaration, String>()
 	// Subset of `valSubst` keys whose substitution ALREADY yields the bare non-null VALUE of a value-type-nullable
 	// (`Int?`) — e.g. a `SAFE_CALL` receiver bound to `Nullable<T>.Value`. The value-nullable unwrap helpers
 	// (coerceValue / argExpr) must NOT re-wrap such a read, else the `.Value` is unwrapped twice
 	// (`n?.plus(1)` gave 1 instead of 8). Registered/cleared alongside the corresponding valSubst entry.
-	internal val valSubstUnwrapped = HashSet<String>()
+	internal val valSubstUnwrapped = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<IrValueDeclaration, Boolean>())
 	// While splicing an inline fun / inlined-lambda body: the SPLICED target's own `return`s must NOT emit as raw
 	// method returns (the splice is a valueBlock INSIDE the caller). Maps the return target -> (result local or
 	// null-for-unit, end label id); stmt(IrReturn) rewrites to `res = v; goto end`. See spliceBodyWithReturns.

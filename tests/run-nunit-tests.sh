@@ -50,7 +50,7 @@ PROJECTS=(
 # Reviewed on the v0.9.8 main baseline at the start of #227. Updating a suite requires updating this number in
 # the same change, making otherwise-silent test proliferation or accidental deletion an explicit review event.
 declare -A EXPECTED_DISCOVERED=(
-	["tests/basic"]=512
+	["tests/basic"]=518
 	["tests/coroutines"]=202
 	["tests/roundtrip/consumer"]=102
 	["tests/roundtrip/bidirectional/consumer"]=10
@@ -154,6 +154,13 @@ for proj in "${PROJECTS[@]}"; do
 		else
 			echo "  UNIT BLOCK VALUES BIR FAIL — see build/nunit-$name.unit-block-values-bir.log"
 			tail -25 "$ROOT/build/nunit-$name.unit-block-values-bir.log"; rc=1
+		fi
+		if python3 "$ROOT/tests/basic/assert-local-subject-identity-bir.py" "$dir/obj/$CONFIGURATION/net10.0/bir/LocalSubjectIdentityTests.bir.json" \
+			>"$ROOT/build/nunit-$name.local-subject-identity-bir.log" 2>&1; then
+			echo "  ordinary local declarations retain their branch assignment identity"
+		else
+			echo "  LOCAL SUBJECT IDENTITY BIR FAIL — see build/nunit-$name.local-subject-identity-bir.log"
+			tail -25 "$ROOT/build/nunit-$name.local-subject-identity-bir.log"; rc=1
 		fi
 		if python3 "$ROOT/tests/basic/assert-unit-try-values-bir.py" "$dir/obj/$CONFIGURATION/net10.0/bir/UnitTryValueTests.bir.json" \
 			>"$ROOT/build/nunit-$name.unit-try-values-bir.log" 2>&1; then

@@ -401,17 +401,24 @@ internal fun BirEmitter.blockExpr(block: IrBlock): String {
 	// safe-call receiver ran twice).
 	val tmp = block.statements.getOrNull(0) as? IrVariable
 	val whenExpr = block.statements.getOrNull(1) as? IrWhen
-	if (block.statements.size == 2 && tmp != null && whenExpr != null && tmp.initializer != null) {
-		val key = tmp.name.asString()
-		val origin = block.origin?.toString()
-		// Save/restore (not remove) the key: a nested same-named subject must not clobber the outer splice.
+	val origin = block.origin
+	// An ordinary `{ var x = ...; if/when (...) ... }` has the same shape, but its declaration
+	// must keep its identity for writes and captures. Only Kotlin's subject-bearing constructs bind a subject.
+	val hasSubject = origin == IrStatementOrigin.WHEN || origin == IrStatementOrigin.SAFE_CALL || origin == IrStatementOrigin.ELVIS
+	if (hasSubject && block.statements.size == 2 && tmp != null && whenExpr != null && tmp.initializer != null) {
+		val key = tmp
+		// Preserve an active projection if the same IR declaration is emitted recursively.
 		val saved = valSubst[key]
-		fun restore() { if (saved != null) valSubst[key] = saved else valSubst.remove(key); valSubstUnwrapped.remove(key) }
+		val wasUnwrapped = key in valSubstUnwrapped
+		fun restore() {
+			if (saved != null) valSubst[key] = saved else valSubst.remove(key)
+			if (wasUnwrapped) valSubstUnwrapped.add(key) else valSubstUnwrapped.remove(key)
+		}
 		// `a?.member` where member is a value type -> Nullable<T>: bind `a` once, then null-gate. A nullable
 		// VALUE-type receiver (`Char?`) is gated by HasValue and the member sees the UNWRAPPED .Value (the
 		// ELVIS shape below) — splicing the raw Nullable<T> where the element is required emitted invalid IL
 		// (e.g. `conv int` over a Nullable<char> -> InvalidProgramException).
-		if (origin == "SAFE_CALL") nullableElem(block.type)?.let { elem ->
+		if (origin == IrStatementOrigin.SAFE_CALL) nullableElem(block.type)?.let { elem ->
 			val (subjVar, subj) = bindOnce(tmp.initializer!!, tmp.type, "__nv")
 			val recvElem = nullableElem(tmp.type)
 			// #198: when the accessed member is ITSELF value-nullable (`b?.n` with `val n: Int?`), `b.n` already
@@ -439,7 +446,7 @@ internal fun BirEmitter.blockExpr(block: IrBlock): String {
 			else valueBlockJson(type = birType(block.type).toJson(), stmts = subjVar, result = core)
 		}
 		// `nv ?: d` where nv is a Nullable<T> -> evaluate once, then HasValue ? Value : d.
-		if (origin == "ELVIS") nullableElem(tmp.type)?.let { elem ->
+		if (origin == IrStatementOrigin.ELVIS) nullableElem(tmp.type)?.let { elem ->
 			val nv = "__nv${scopeCounter++}"
 			val init = expr(tmp.initializer!!)
 			// ELVIS lowers to `when { tmp == null -> fallback; else -> tmp }`:
