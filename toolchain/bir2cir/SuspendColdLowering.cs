@@ -1332,14 +1332,11 @@ static partial class SuspendColdLowering
                 : new TypeNode.Fqn(_ownerClass, TypeTvs(_ownerTypeParams.Count));
             _smTypeInst = _smAllTps.Count == 0 ? new TypeNode.Fqn(_smType) : new TypeNode.Fqn(_smType, TypeTvs(_smAllTps.Count));
             // R1 classifier — decide the segmentable-vs-call-time-throw shape for a CONCRETE member (an abstract
-            // member has no body and is handled by the `_memberAbstract` branch). M4: a member generic on its OWN
-            // type params AND on a generic class needs the SM to thread the union of both param lists (deferred v1).
-            // Otherwise the body must have every suspension in a segmentable position (SuspensionRefusalReason).
+            // member has no body and is handled by the `_memberAbstract` branch). The state-machine frame above
+            // carries both owner and method parameters; classify the body's suspension positions independently.
             if (!_memberAbstract)
             {
-                if (_typeParams.Count > 0 && _ownerTypeParams.Count > 0 && !_staticMember)
-                    _stubReason = "a generic suspend method on a generic class";
-                else if ((m["body"] as JsonArray) is JsonArray b0)
+                if ((m["body"] as JsonArray) is JsonArray b0)
                     _stubReason = SuspensionRefusalReason(b0, inHandler: false, tryDepth: 0);
             }
         }
@@ -3949,10 +3946,14 @@ static partial class SuspendColdLowering
         // lowering replaces. The public Task MethodDef is still that Kotlin declaration's metadata owner, so move
         // the opaque pre-erasure fact with it; the generated cold entry and state machine are physical details and
         // must not publish a second Kotlin declaration carrier.
-        void CarryMethodTypeParameterBounds(JsonObject method)
+        void CarryKotlinDeclarationMetadata(JsonObject method)
         {
             if (_m[NullableGenericErasure.MethodTypeParameterBoundsPre] is JsonNode bounds)
                 method[NullableGenericErasure.MethodTypeParameterBoundsPre] = bounds.DeepClone();
+            // The existential slot's source identity belongs to its public Task projection too. Without it,
+            // a separately compiled consumer cannot select this slot from the original Kotlin declaration.
+            if (Str(_m[FBoundStarProjectionErasure.SourceMemberKey]) is string sourceMember)
+                RoundtripMetadata.AddSourceMethodIdentity(method, sourceMember);
         }
 
         // A resolved MethodImpl descriptor names the declaration signature, not merely its logical source method.
@@ -4225,7 +4226,7 @@ static partial class SuspendColdLowering
                     am["typeParams"] = _methodTypeParamDecls.DeepClone();
                 if (_generated) am["generated"] = true;
                 CarrySourceDeclaration(am);
-                CarryMethodTypeParameterBounds(am);
+                CarryKotlinDeclarationMetadata(am);
                 CarryOverrideMarkers(am);
                 CarryPhysicalSlotFacts(am, coldEntry: false);
                 if (TaskReturnNullableFlags() is JsonArray arnf) am["retNullableFlags"] = arnf;
@@ -4341,7 +4342,7 @@ static partial class SuspendColdLowering
                 method["typeParams"] = _methodTypeParamDecls.DeepClone();
             if (_generated) method["generated"] = true;
             CarrySourceDeclaration(method);
-            CarryMethodTypeParameterBounds(method);
+            CarryKotlinDeclarationMetadata(method);
             CarryOverrideMarkers(method);
             CarryPhysicalSlotFacts(method, coldEntry: false);
             // BUG 2 (nested return nullability): a `suspend fun f(): String?`'s bridge return `Task<string?>` needs the

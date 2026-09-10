@@ -2483,9 +2483,12 @@ sealed partial class ReferenceMetadataIndex
         erasedMember = candidates[0].Name;
         erasedSignature = candidates[0].ParamTypeNodes ?? Array.Empty<TypeNode>();
         declarationResult = declarations[0].NullableGenericRet
+            ?? declarations[0].SuspendReturnType
             ?? declarations[0].KotlinReturnType
             ?? declarations[0].ReturnTypeNode;
-        physicalResult = candidates[0].ReturnTypeNode;
+        // Selection happens while calls still have Kotlin suspend semantics. The Task MethodDef is the metadata
+        // owner, not the value produced by the later cold-entry call; use its explicit logical result carrier.
+        physicalResult = candidates[0].SuspendReturnType ?? candidates[0].ReturnTypeNode;
         return true;
     }
 

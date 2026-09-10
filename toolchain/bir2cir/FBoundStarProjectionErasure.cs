@@ -57,9 +57,9 @@ static class FBoundStarProjectionErasure
         foreach (var definition in defs.Values.Concat(rootList))
             if (definition["methods"] is JsonArray declaredMethods)
                 foreach (var method in declaredMethods.OfType<JsonObject>())
-                    if (!IsSuspend(method) && (HasOwnerDependentMethodConstraint(method)
+                    if (HasOwnerDependentMethodConstraint(method)
                         || OwnerConstrainedMethodLowering.HasMethodDependentBounds(method)
-                        || method[OwnerConstrainedMethodLowering.OverrideBoundsKey] != null))
+                        || method[OwnerConstrainedMethodLowering.OverrideBoundsKey] != null)
                         OwnerConstrainedMethodLowering.Record(method, definition);
         foreach (var owner in owners.Values.Where(o => o.Needed)) Synthesize(owner, owners, defs, refs);
         foreach (var root in rootList) RecordDeclarationSurfaces(root, owners, refs);
@@ -1391,9 +1391,6 @@ static class FBoundStarProjectionErasure
             foreach (var method in originals)
             {
                 if (Bool(method["static"])) continue;
-                // Non-suspend owner-dependent bounds remain Kotlin metadata while their physical slots use direct
-                // forwarding. Suspend declarations also need a cold-entry bridge outside this representation path.
-                if (HasOwnerDependentMethodConstraint(method) && IsSuspend(method)) continue;
                 // A non-public method cannot implicitly fill a public CLR interface slot. Give it the same
                 // deterministic forwarding bridge as an owner-T-dependent signature. The bridge is declared on the
                 // original owner, so it can invoke a private implementation without changing source visibility.
