@@ -101,9 +101,9 @@ internal fun BirEmitter.breakContinueExpr(xfer: String): String =
 	valueBlockJson(type = null, stmts = xfer, result = unreachableResultJson())
 
 /** The result of a valueBlock that never falls through (a control transfer already left it): `throw null`, dead code
- *  the surrounding merge must not take a type from. Typed `kotlin.Unit`, so it is not a null VALUE. */
+ *  the surrounding merge must not take a type from. The throw, rather than its null operand, never returns. */
 private fun BirEmitter.unreachableResultJson(): String =
-	"""{"k":"throwExpr","value":{"k":"const","type":${fqnJson("kotlin.Unit")},"value":null}}"""
+	"""{"k":"throwExpr","value":${nullConstJson()}}"""
 
 /** The standard tail-call optimization: a self-tail-call in a `tailrec` fn becomes a back-jump to the method's
  *  entry after reassigning the parameters to the call's arguments (Kotlin/JVM's own `tailrec` lowering, which our

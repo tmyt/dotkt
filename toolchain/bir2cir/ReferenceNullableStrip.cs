@@ -27,6 +27,11 @@ static class ReferenceNullableStrip
         switch (node)
         {
             case JsonObject o:
+                // Preserve a reference null literal before removing its nullable wrapper. In particular,
+                // Unit? null is not the non-null Unit literal, whose physical representation is different.
+                if (o["k"]?.GetValue<string>() == "const" && o.ContainsKey("value") && o["value"] == null
+                    && TypeJson.Read(o["type"]) is TypeNode.Nullable literal && !IsValueInner(literal.Of, isValue))
+                    o["type"] = TypeJson.Fqn("kotlin.Nothing");
                 foreach (var key in o.Select(kv => kv.Key).ToList())
                 {
                     var child = o[key];

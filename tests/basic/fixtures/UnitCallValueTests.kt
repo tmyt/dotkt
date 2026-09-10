@@ -28,6 +28,15 @@ private fun unitValueArguments(left: String, value: Any?, right: String): String
 }
 private fun unitDiscardedCall() { unitValueEffect("d") }
 
+interface UnitCallSource<T> { fun get(): T }
+class UnitCallSourceValue<T>(private val value: T) : UnitCallSource<T> {
+    override fun get(): T = value
+}
+fun <S : UnitCallSource<Unit>> unitConstrainedValue(source: S): Any = source.get()
+private class UnitNullReceiverDelegate {
+    operator fun getValue(thisRef: Any?, property: kotlin.reflect.KProperty<*>): Any? = thisRef
+}
+
 class UnitCallValueTests {
     @TestAttribute
     fun unitCallsSupplyValuesToStorageReturnsAndArguments() {
@@ -57,6 +66,7 @@ class UnitCallValueTests {
         assertSame(Unit, action())
         // This generic call physically returns a Unit value, not void.
         assertSame(Unit, unitIdentity(Unit))
+        assertSame(Unit, unitConstrainedValue(UnitCallSourceValue(Unit)))
         assertEquals("xecml", unitValueTrace)
     }
 
@@ -67,6 +77,16 @@ class UnitCallValueTests {
         assertSame(Unit, choose(true))
         assertSame(Unit, choose(false))
         assertEquals("tf", unitValueTrace)
+        val absent: Unit? = null
+        assertEquals(null, absent)
+        val delegated by UnitNullReceiverDelegate()
+        assertEquals(null, delegated)
+        assertSame(Unit, run { })
+        assertSame(Unit, check(true))
+        val missing: String? = null
+        var rejected = false
+        try { requireNotNull(missing) } catch (error: IllegalArgumentException) { rejected = true }
+        assertEquals(true, rejected)
     }
 
     @TestAttribute

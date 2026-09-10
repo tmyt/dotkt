@@ -79,7 +79,8 @@ private fun BirEmitter.ownerIsNamed(fn: IrFunction): Boolean {
 	return !owner.name.isSpecial
 }
 
-private fun BirEmitter.nullConstJson(): String = """{"k":"const","type":${fqnJson("kotlin.Unit")},"value":null}"""
+internal fun BirEmitter.nullConstJson(): String =
+	"""{"k":"const","type":{"t":"nullable","of":${fqnJson("kotlin.Nothing")}},"value":null}"""
 
 /** `if (<ref> == null) throw NullPointerException(<msg>)` as a single `if`-branch BIR statement (no stack merge). */
 private fun BirEmitter.nullCheckStmt(refJson: String, msgJson: String): String =

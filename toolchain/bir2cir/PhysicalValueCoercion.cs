@@ -203,6 +203,8 @@ static class PhysicalValueCoercion
 
         CoerceInputs(obj, scope, index);
         var result = CoerceDeclaredResult(obj, scope, index);
+        if (resultUsed && Str(obj["k"]) == "const" && IsVoid(ExprType(result, scope, index)))
+            return index.UnitValue();
         if (resultUsed && CanProduceVoidValue(Str(obj["k"])) && IsVoid(ExprType(result, scope, index)))
             return new JsonObject
             {
@@ -218,7 +220,7 @@ static class PhysicalValueCoercion
 
     static bool CanProduceVoidValue(string kind) => kind is
         "callStatic" or "callInstance" or "constrainedCall" or "clrStatic" or "clrInstance"
-        or "clrGenericStatic" or "clrGenericInstance" or "delegateInvoke" or "const" or "cond" or "valueBlock";
+        or "clrGenericStatic" or "clrGenericInstance" or "delegateInvoke" or "cond" or "valueBlock";
 
     static bool ChildUsesValue(JsonObject parent, string key, Scope scope, bool resultUsed) =>
         (Str(parent["k"]), key) switch
@@ -386,6 +388,14 @@ static class PhysicalValueCoercion
         var declared = TypeJson.Read(expression["ret"]) ?? TypeJson.Read(expression["dynRet"]);
         if (declared == null) return expression;
         var actual = PhysicalResult(expression, scope, index);
+        // A closed generic return can be a real value even when the Kotlin Unit return stamp folded to void.
+        // Keep the exact closed physical result on the call instead of asking ilemit to recover its generic frame.
+        if (IsVoid(declared) && actual != null && !IsVoid(actual))
+        {
+            foreach (var key in new[] { "ret", "dynRet" })
+                if (expression[key] != null) expression[key] = TypeJson.Write(actual);
+            return expression;
+        }
         // ret can still be the callee's declaration-frame generic spelling. Generic conversions belong on the
         // consuming edge, whose target is in the caller's frame, not between these two potentially different frames.
         if (!CollectionViewFaces.IsViewSeam(actual, declared)) return expression;
@@ -424,7 +434,7 @@ static class PhysicalValueCoercion
                 or "clrStatic" or "clrInstance" or "clrGenericStatic" or "clrGenericInstance"
                 or "clrPropGet" or "field" or "staticField" or "clrStaticField" or "lateinitGet")
             return Close(TypeJson.Read(member["returnType"]), OwnerArgs(member), MethodArgs(expression));
-        if (kind is "callStatic" or "callInstance" && index.Method(expression) is MethodShape method)
+        if (kind is "callStatic" or "callInstance" or "constrainedCall" && index.Method(expression) is MethodShape method)
         {
             var owner = CallOwner(expression);
             return Close(method.Return, owner?.Args, MethodArgs(expression));

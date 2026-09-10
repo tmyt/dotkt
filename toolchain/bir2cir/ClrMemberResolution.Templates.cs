@@ -177,8 +177,8 @@ static partial class ClrMemberResolution
     /// </summary>
     /// <remarks>
     /// Every Kotlin `object` reaches its instance through this node, so no singleton is a special case —
-    /// including the `kotlin.Unit` instance a void-to-value delegate adapter returns, which reaches this
-    /// resolver through the ordinary `staticField` node its authored body carries. An owner this compilation
+    /// including the `kotlin.Unit` instance supplied by delegate adapters and physical value coercion, which
+    /// reaches this resolver through an ordinary `staticField` node. An owner this compilation
     /// emits does not resolve and correctly carries nothing: that is the local axis, which is #395's subject
     /// and not this one's.
     /// </remarks>
