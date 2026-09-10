@@ -13,6 +13,8 @@ using DotKt.Bir;
 // Owner-dependent Kotlin constraints likewise do not imply a physical CLR relation between two generic slots.
 // A value crossing those slots needs an explicit boxed conversion, even when Kotlin proved the assignment legal.
 // ilemit consequently emits ordinary `cast` nodes without recovering source constraints or collection vocabulary.
+// A physical void invocation likewise needs an explicit Unit value when its result is consumed. Preserve the call
+// as an expression statement and read the resolved singleton afterwards; discarded calls remain ordinary void calls.
 static class PhysicalValueCoercion
 {
     static bool NeedsConversion(TypeNode source, TypeNode target) =>
@@ -24,10 +26,14 @@ static class PhysicalValueCoercion
     {
         readonly Dictionary<string, List<MethodShape>> _methods = new(StringComparer.Ordinal);
         readonly Dictionary<string, TypeNode> _fields = new(StringComparer.Ordinal);
+        readonly Func<JsonObject> _unitValue;
 
-        internal static Index Build(IReadOnlyList<JsonNode> roots)
+        Index(Func<JsonObject> unitValue) => _unitValue = unitValue;
+        internal JsonObject UnitValue() => _unitValue();
+
+        internal static Index Build(IReadOnlyList<JsonNode> roots, Func<JsonObject> unitValue)
         {
-            var result = new Index();
+            var result = new Index(unitValue);
             foreach (var root in roots.OfType<JsonObject>())
             {
                 var fileOwner = Str(root["fileClass"]);
@@ -115,9 +121,9 @@ static class PhysicalValueCoercion
         internal Scope Copy() => new(Owner, Return, new Dictionary<string, TypeNode>(Locals, StringComparer.Ordinal));
     }
 
-    public static void ApplyAll(IReadOnlyList<JsonNode> roots)
+    public static void ApplyAll(IReadOnlyList<JsonNode> roots, Func<JsonObject> unitValue)
     {
-        var index = Index.Build(roots);
+        var index = Index.Build(roots, unitValue);
         foreach (var root in roots.OfType<JsonObject>()) RewriteDocument(root, index);
     }
 
@@ -171,7 +177,7 @@ static class PhysicalValueCoercion
             }
     }
 
-    static JsonNode Rewrite(JsonNode node, Scope scope, Index index)
+    static JsonNode Rewrite(JsonNode node, Scope scope, Index index, bool resultUsed = true)
     {
         if (node is JsonArray array) { RewriteArray(array, scope, index); return array; }
         if (node is not JsonObject obj) return node;
@@ -190,13 +196,39 @@ static class PhysicalValueCoercion
         {
             if (child.Value == null) continue;
             var childScope = child.Key == "body" && loopScope != null ? loopScope : scope;
-            var rewritten = Rewrite(child.Value, childScope, index);
+            var rewritten = Rewrite(child.Value, childScope, index,
+                ChildUsesValue(obj, child.Key, scope, resultUsed));
             if (!ReferenceEquals(rewritten, child.Value)) obj[child.Key] = rewritten;
         }
 
         CoerceInputs(obj, scope, index);
-        return CoerceDeclaredResult(obj, scope, index);
+        var result = CoerceDeclaredResult(obj, scope, index);
+        if (resultUsed && CanProduceVoidValue(Str(obj["k"])) && IsVoid(ExprType(result, scope, index)))
+            return new JsonObject
+            {
+                ["k"] = "valueBlock",
+                ["type"] = TypeJson.Write(new TypeNode.Fqn("kotlin.Unit")),
+                ["stmts"] = new JsonArray(new JsonObject { ["k"] = "exprStmt", ["expr"] = result.DeepClone() }),
+                ["result"] = index.UnitValue(),
+            };
+        return result;
     }
+
+    static bool IsVoid(TypeNode type) => type is TypeNode.Fqn { Args: null, Name: "void" or "System.Void" };
+
+    static bool CanProduceVoidValue(string kind) => kind is
+        "callStatic" or "callInstance" or "constrainedCall" or "clrStatic" or "clrInstance"
+        or "clrGenericStatic" or "clrGenericInstance" or "delegateInvoke" or "const" or "cond" or "valueBlock";
+
+    static bool ChildUsesValue(JsonObject parent, string key, Scope scope, bool resultUsed) =>
+        (Str(parent["k"]), key) switch
+        {
+            ("exprStmt", "expr") => false,
+            ("return" or "returnExpr", "value") => !IsVoid(scope.Return),
+            ("valueBlock", "result") or ("cond", "then" or "else") =>
+                resultUsed && !IsVoid(TypeJson.Read(parent["type"])),
+            _ => true,
+        };
 
     static void RewriteArray(JsonArray array, Scope scope, Index index)
     {

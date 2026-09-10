@@ -1409,7 +1409,8 @@ sealed class Pipeline
         // stable. ilemit then emits those ordinary CIR casts without recognizing the collection ABI. A metadata/ref
         // build keeps kotlin.collections.* verbatim and never creates these physical sibling faces.
         if (!_options.RefBuild)
-            PhysicalValueCoercion.ApplyAll(loweredRoots.Select(file => file.Root).ToList());
+            PhysicalValueCoercion.ApplyAll(loweredRoots.Select(file => file.Root).ToList(),
+                ClrMemberResolution.UnitSingletonRead);
 
         // Every representation synthesis is now complete. Validate the exact MethodDef table that CIR will describe;
         // do not defer a generated/user collision to ilemit and do not invent a late name after calls are bound.
