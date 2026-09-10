@@ -1,4 +1,5 @@
-+},{"k":"return","value":{"k":"const","type":{"t":"fqn","name":"void"},"value":null}},{"k":"return"
+# A consumed Unit placeholder becomes the exact singleton, not a null/void literal.
++},{"k":"return","value":{"k":"staticField","ownerType":{"t":"fqn","name":"kotlin.Unit"},"name":"INSTANCE","fieldRef":{"kind":"field","assembly":"DotKt.Stdlib","declaringType":{"t":"fqn","name":"kotlin.Unit"},"name":"INSTANCE","genericArity":0,"returnType":{"t":"fqn","name":"kotlin.Unit"}}}},{"k":"return"
 -},{"k":"return","value":{"k":"const","type":{"t":"fqn","name":"System.Object"},"value":null}},{"k":"return","value":{"k":"const","type":{"t":"fqn","name":"System.Object"},"value":null}}
 +},{"k":"return","value":{"k":"default","type":{"t":"fqn","name":"System.Int32"}}}
 -"value":{"k":"const","type":{"t":"fqn","name":"System.Int32"},"value":null}
