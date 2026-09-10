@@ -306,7 +306,8 @@ static class FBoundStarProjectionErasure
                         obj[key] = TypeJson.Write(RewriteType(
                             type, owners, refs, childBoundDeclaration, localClrAliases,
                             preserveConstructedHead: Str(obj["k"]) == "new" && key == "type"
-                                || IsTypeDefinition(obj) && key == "base"));
+                                || IsTypeDefinition(obj) && key == "base"
+                                || IsBaseMethodImplDescriptor(obj) && key == "owner"));
                     else
                         RewriteTypesOnly(value, owners, defs, refs, localClrAliases, childBoundDeclaration);
                 }
@@ -354,6 +355,11 @@ static class FBoundStarProjectionErasure
 
     static bool IsTypeDefinition(JsonObject node) =>
         Str(node["kind"]) is "class" or "interface" or "enum" or "struct" or "delegate";
+
+    // A base MethodImpl names a declaration on the exact inheritance edge, not an ordinary Kotlin value slot.
+    static bool IsBaseMethodImplDescriptor(JsonObject node) =>
+        node.Parent is JsonArray entries && entries.Parent is JsonObject method
+            && ReferenceEquals(method["clrBaseImpls"], entries);
 
     static bool IsInnerConstructionOuterSlot(JsonObject node, int index,
         IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs)
@@ -2404,7 +2410,8 @@ static class FBoundStarProjectionErasure
                         obj[key] = TypeJson.Write(RewriteType(
                             type, owners, refs, childBoundDeclaration, localClrAliases,
                             preserveConstructedHead: Str(obj["k"]) == "new" && key == "type"
-                                || IsTypeDefinition(obj) && key == "base"));
+                                || IsTypeDefinition(obj) && key == "base"
+                                || IsBaseMethodImplDescriptor(obj) && key == "owner"));
                     else
                         Rewrite(value, owners, defs, refs,
                             childTypeParameters, childMethodParameters,

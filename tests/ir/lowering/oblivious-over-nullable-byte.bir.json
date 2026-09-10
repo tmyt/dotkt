@@ -12,7 +12,7 @@
           "name": "p",
           "type": {
             "t": "fqn",
-            "name": "kotlin.Pair",
+            "name": "System.Tuple`2",
             "args": [
               {
                 "t": "oblivious",
