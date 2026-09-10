@@ -1558,7 +1558,7 @@ static partial class ClrMemberResolution
         var invoke = t.GetMethod("Invoke");
         if (invoke == null) return new TypeNode.Fqn(StripArity(Dotted(t.FullName ?? t.Name)));   // defensive: not a real delegate
         var ps = invoke.GetParameters().Select(p => MemberSigOf(p.ParameterType)).ToArray();
-        var ret = invoke.ReturnType.FullName is "System.Void" or "kotlin.Unit" ? new TypeNode.Fqn("void") : MemberSigOf(invoke.ReturnType);
+        var ret = invoke.ReturnType.FullName == "System.Void" ? new TypeNode.Fqn("void") : MemberSigOf(invoke.ReturnType);
         return new TypeNode.Fn(false, ret, ps, null, DelegateFamily(t));
     }
 

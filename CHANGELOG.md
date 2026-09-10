@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Nullable Unit returns retain their value ABI (#705).** Local and imported methods, overrides, and function
+  values preserve both Unit and null; ordinary non-null Unit returns keep their void convention. Exact Kotlin
+  metadata preserves nullable Unit in declaration signatures and nested types across DLL imports.
+
 - **Ordinary local declarations retain their identity before if/when tails (#711).** Subject binding uses
   Kotlin IR origins, so mutable locals are not mistaken for when, safe-call, or Elvis temporary subjects.
 

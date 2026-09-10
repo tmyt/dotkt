@@ -56,6 +56,9 @@ static class ReferenceNullableStrip
     // `Nullable` with a reference/tv/generic/array/fn inner collapses to the (recursively-stripped) bare inner.
     static TypeNode Strip(TypeNode t, ValueTypeOracle isValue) => t switch
     {
+        // Unit? is a value-returning reference contract, unlike Unit's void return convention.
+        // Keep that distinction until BirTypeLowering selects the physical return/delegate shape.
+        TypeNode.Nullable { Of: TypeNode.Fqn { Name: "kotlin.Unit", Args: null } } n => n,
         TypeNode.Nullable n => IsValueInner(n.Of, isValue)
             ? new TypeNode.Nullable(Strip(n.Of, isValue))
             : Strip(n.Of, isValue),

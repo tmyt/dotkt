@@ -2971,7 +2971,7 @@ sealed partial class ReferenceMetadataIndex
             "kotlin.Boolean" or "System.Boolean" or "bool" => new TypeKey(TypeKeyKind.Boolean),
             "kotlin.Char" or "System.Char" or "char" => new TypeKey(TypeKeyKind.Char),
             "kotlin.String" or "System.String" or "string" => new TypeKey(TypeKeyKind.String),
-            "kotlin.Unit" or "System.Void" or "void" => new TypeKey(TypeKeyKind.Void),
+            "System.Void" or "void" => new TypeKey(TypeKeyKind.Void),
             "kotlin.Any" or "System.Object" or "object" => new TypeKey(TypeKeyKind.Object),
             // Unsigned scalars, folded like every other primitive: the specialized ARRAYS were already folded below, but
             // the element types were not, so a `UInt` parameter keyed as `kotlin.UInt` from a pre-lowering call site and
@@ -7041,7 +7041,6 @@ sealed partial class ReferenceMetadataIndex
         "kotlin.UInt" => "uint",
         "kotlin.ULong" => "ulong",
         "kotlin.UShort" => "ushort",
-        "kotlin.Unit" => "void",
         _ => null,
     };
 
