@@ -137,6 +137,16 @@ for proj in "${PROJECTS[@]}"; do
 			tail -25 "$ROOT/build/nunit-$name.inherited-carrier-cir.log"; rc=1
 		fi
 	fi
+	if [[ "$proj" == "tests/basic" || "$proj" == "tests/roundtrip/consumer" ]]; then
+		if python3 "$ROOT/tests/assert-unit-call-values-cir.py" "${proj##*/}" \
+			"$dir/obj/$CONFIGURATION/net10.0/cir/UnitCallValueTests.cir.json" \
+			>"$ROOT/build/nunit-$name.unit-call-values-cir.log" 2>&1; then
+			echo "  consumed Unit call values retain exact physical result contracts"
+		else
+			echo "  UNIT CALL VALUES CIR FAIL — see build/nunit-$name.unit-call-values-cir.log"
+			tail -25 "$ROOT/build/nunit-$name.unit-call-values-cir.log"; rc=1
+		fi
+	fi
 	if [[ "$proj" == "tests/basic" ]]; then
 		default_vararg_bir="$dir/obj/$CONFIGURATION/net10.0/bir/VarargOmissionTests.bir.json"
 		if python3 "$ROOT/tests/basic/assert-inherited-default-vararg-bir.py" "$default_vararg_bir" \
