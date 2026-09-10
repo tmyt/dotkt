@@ -112,6 +112,10 @@ import starprojection.ReferencedProjectedArrayHolder
 import starprojection.newReferencedProjectedArray
 import starprojection.writeReferencedProjectedArray
 import starprojection.ReferencedCovariantArrayClass
+import starprojection.ReferencedCovariantClassHolder
+import starprojection.ReferencedContravariantClass
+import starprojection.readReferencedCovariantClass
+import starprojection.newReferencedCovariantClassAsAny
 import starprojection.newReferencedCovariantClassArray
 import starprojection.writeReferencedCovariantClassArray
 import starprojection.ReferencedUnsafeIntArrayValue
@@ -542,6 +546,16 @@ class GenericMetadataRoundtripTests {
         val covariantInt: ReferencedCovariantArrayClass<Int> = ReferencedCovariantArrayClass(29)
         val covariantString: ReferencedCovariantArrayClass<String> =
             ReferencedCovariantArrayClass("class-consumer")
+        val widenedCovariant: ReferencedCovariantArrayClass<Any> = covariantInt
+        ClassicAssert.AreEqual("29", widenedCovariant.value.toString())
+        ClassicAssert.AreEqual("29", readReferencedCovariantClass(covariantInt))
+        ClassicAssert.AreEqual("47", newReferencedCovariantClassAsAny().value.toString())
+        val covariantHolder = ReferencedCovariantClassHolder(covariantInt)
+        covariantHolder.value = covariantString
+        ClassicAssert.AreEqual("class-consumer", covariantHolder.value.value.toString())
+        val acceptsAny: ReferencedContravariantClass<Any> = ReferencedContravariantClass()
+        val acceptsString: ReferencedContravariantClass<String> = acceptsAny
+        ClassicAssert.AreEqual("cross-contra", acceptsString.render("cross-contra"))
         covariantClassArray[0] = covariantInt
         covariantClassArray[1] = covariantString
         ClassicAssert.AreEqual(

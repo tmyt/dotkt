@@ -315,4 +315,81 @@ assert_referenced_variant_array(
     6,
 )
 
+# A referenced Kotlin class's declaration-site variance remains Kotlin metadata. The consuming module must use
+# the producer's non-generic existential carrier at widened value boundaries without weakening exact constructor
+# heads or trying to model the source variance as CLR class variance.
+referenced_covariant_carrier = {
+    "t": "fqn",
+    "name": "starprojection.ReferencedCovariantArrayClass$star",
+}
+referenced_contravariant_carrier = {
+    "t": "fqn",
+    "name": "starprojection.ReferencedContravariantClass$star",
+}
+
+variant_constructions = [
+    node
+    for node in objects(body)
+    if node.get("k") == "new"
+    and node.get("type", {}).get("name") in {
+        "starprojection.ReferencedCovariantArrayClass`1",
+        "starprojection.ReferencedContravariantClass`1",
+    }
+]
+expected_constructions = {
+    ("starprojection.ReferencedCovariantArrayClass`1", "System.Int32"),
+    ("starprojection.ReferencedCovariantArrayClass`1", "System.String"),
+    ("starprojection.ReferencedContravariantClass`1", "System.Object"),
+}
+observed_constructions = {
+    (node["type"]["name"], node["type"].get("args", [{}])[0].get("name"))
+    for node in variant_constructions
+}
+if observed_constructions != expected_constructions:
+    raise SystemExit(
+        f"referenced variant class constructors lost their exact constructed heads: {observed_constructions!r}"
+    )
+
+variant_member_calls = [
+    node
+    for node in objects(body)
+    if node.get("k") == "callInstance"
+    and node.get("ownerType") in (referenced_covariant_carrier, referenced_contravariant_carrier)
+]
+if not variant_member_calls:
+    raise SystemExit("referenced variant class members did not bind through existential carriers")
+for variant_call in variant_member_calls:
+    member_ref = variant_call.get("memberRef", {})
+    if (
+        variant_call.get("virtual") is not True
+        or member_ref.get("declaringType") != variant_call.get("ownerType")
+        or member_ref.get("returnType") != variant_call.get("ret")
+        or member_ref.get("parameterTypes") != variant_call.get("sig", [])
+    ):
+        raise SystemExit(f"referenced variant carrier call/memberRef disagree: {variant_call!r}")
+
+variant_static_calls = {
+    node.get("method"): node
+    for node in objects(body)
+    if node.get("k") == "callStatic"
+    and node.get("method") in {
+        "readReferencedCovariantClass",
+        "newReferencedCovariantClassAsAny",
+    }
+}
+if set(variant_static_calls) != {
+    "readReferencedCovariantClass",
+    "newReferencedCovariantClassAsAny",
+}:
+    raise SystemExit(f"referenced variant boundary calls are incomplete: {variant_static_calls!r}")
+read_call = variant_static_calls["readReferencedCovariantClass"]
+new_call = variant_static_calls["newReferencedCovariantClassAsAny"]
+if (
+    read_call.get("sig") != [referenced_covariant_carrier]
+    or read_call.get("memberRef", {}).get("parameterTypes") != [referenced_covariant_carrier]
+    or new_call.get("ret") != referenced_covariant_carrier
+    or new_call.get("memberRef", {}).get("returnType") != referenced_covariant_carrier
+):
+    raise SystemExit(f"referenced variant boundaries did not use one physical carrier: {variant_static_calls!r}")
+
 print("referenced existential results preserve exact and star-dependent physical projections")

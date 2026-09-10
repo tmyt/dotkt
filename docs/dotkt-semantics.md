@@ -86,6 +86,13 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   arbitrary arity and mixed masks such as `Pair<*, String>`, and is hidden when the DLL is re-imported. Trusted
   `[KotlinType]` metadata records the semantic owner and projected declaration types; the carrier's allocated CLR
   name has no meaning and is chosen collision-free.
+- **Declaration-site variance on a Kotlin class uses the same nominal existential value representation.** CLR classes
+  are invariant even when Kotlin declares `class G<out T>` or `class G<in T>`, so every ordinary parameter, return,
+  field, property, local, and nested value position carrying `G<X>` uses the declaration's non-generic existential
+  interface. Construction and inheritance remain exact closed CLR types: a `new G<String>`, a base TypeSpec, lexical
+  `this`, an inner class's hidden enclosing-instance slot, and compiler-generated storage for that receiver retain
+  `G<T>`. kotc identifies the lexical-receiver role structurally in transient BIR; bir2cir consumes it while choosing
+  the CLR representation and removes it before CIR. No generated or user source name is treated as an ABI oracle.
 - **An arbitrary imported CLR `G<*>` uses an `object` value slot plus exact reflection dispatch.** A foreign assembly
   cannot retroactively implement DotKt's existential interface. `is`/`as`, methods, properties, and fields therefore
   call the pure-Kotlin `DotKt.Runtime.CompilerServices` star runtime. `bir2cir` resolves overloads and supplies the

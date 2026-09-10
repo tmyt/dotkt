@@ -7,14 +7,14 @@
 #
 # The document calls `kotlin.Pair<A, B>.first` — declared `A`, emitted `!0` — on a receiver that came through the
 # erasure as `Pair<object, String>`, while the call site (which kotc emitted with `A` already substituted) says the
-# result is `Int?`. The reference index answers with the real declaration, so the corrected owner is kept and the
-# result is `Subst(!0, [object, String])` = `object`.
-+"ownerType":{"t":"fqn","name":"kotlin.Pair\u00602","args":[{"t":"fqn","name":"object"},{"t":"fqn","name":"System.String"}]}
-+"method":"prop_get\u003Cfirst\u003E","sig":[],"ret":{"t":"fqn","name":"object"}
+# result is `Int?`. Pair's declaration-site variance now projects the receiver to its existential interface;
+# the referenced physical getter returns object, and the use-site nullable result still needs explicit projection.
++"ownerType":{"t":"fqn","name":"kotlin.Pair$star"}
++"method":"$star$prop_get\u003Cfirst\u003E$6","sig":[],"ret":{"t":"fqn","name":"object"}
 # The value still reaches its declared `Int?` slot, and it reaches it through an explicit narrowing — ilemit's
 # `unbox.any` — rather than as a silently mistyped stack slot.
 +"k":"cast","type":{"t":"nullable","of":{"t":"fqn","name":"System.Int32"}}
 # The defect this document exists to catch: keeping the call site's SUBSTITUTED return. That is what the call said
 # before the referenced declaration was consulted, and it is not what the producer's member returns — at a value
 # instantiation the two are unrelated CLR types and the mismatch is a memory-corrupting unbox, not a mistype.
--"method":"prop_get\u003Cfirst\u003E","sig":[],"ret":{"t":"nullable"
+-"method":"$star$prop_get\u003Cfirst\u003E$6","sig":[],"ret":{"t":"nullable"

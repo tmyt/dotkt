@@ -1231,6 +1231,10 @@ static partial class SuspendColdLowering
         readonly string _explicitClrName;
         readonly HashSet<string> _fields = new(StringComparer.Ordinal);
         readonly List<(string name, TypeNode type)> _fieldDecls = new();
+
+        bool IsExactOuterStorage(string name) =>
+            _isMember && name == ThisField || _isLambda && name == _capturedOuterName;
+
         // Declared type of every `{k:var}` of this body, INCLUDING the ones the storage gate leaves as MoveNext
         // locals — so a lexical type lookup does not depend on a name having been promoted to a field.
         readonly Dictionary<string, TypeNode> _localTypes = new(StringComparer.Ordinal);
@@ -3301,6 +3305,11 @@ static partial class SuspendColdLowering
             }
             if (callNode["typeArgs"] is JsonArray ta) call["typeArgs"] = ta.DeepClone();
             if (coldDeclarationId != null) call[DeclarationIdentityBinding.Key] = coldDeclarationId;
+            // F-bound forwarding bridges call the exact source declaration on their closed owning class. Preserve
+            // that already-selected representation edge when suspend lowering projects the call to its cold entry;
+            // the subsequent late existential type rewrite must not retarget it to the public carrier slot.
+            if (Bool(callNode[FBoundStarProjectionErasure.ExactBridgeOwnerCallKey]))
+                call[FBoundStarProjectionErasure.ExactBridgeOwnerCallKey] = true;
             if (!isInstance)
                 ClrMemberResolution.CarryReferencedStaticCallSignatureSnapshot(callNode, call);
             // BUG Y — overload disambiguation. `<method>$dotkt_suspend` may be one of several same-named IL
@@ -3427,14 +3436,19 @@ static partial class SuspendColdLowering
         {
             var fields = new JsonArray();
             foreach (var (n, t) in _fieldDecls)
-                fields.Add(new JsonObject { ["name"] = n, ["type"] = Tw(t), ["vis"] = "internal" });
+            {
+                var field = new JsonObject { ["name"] = n, ["type"] = Tw(t), ["vis"] = "internal" };
+                if (IsExactOuterStorage(n)) field["outer"] = true;
+                fields.Add(field);
+            }
 
             var ctorParams = new JsonArray();
             var ctorBody = new JsonArray();
             if (_isMember)
             {
-                ctorParams.Add(new JsonObject { ["name"] = ThisField, ["type"] = Tw(_selfType) });
-                ctorBody.Add(SetField(ThisField, new JsonObject { ["k"] = "local", ["name"] = ThisField }));
+                ctorParams.Add(new JsonObject { ["name"] = ThisField, ["type"] = Tw(_selfType), ["outer"] = true });
+                ctorBody.Add(SetField(ThisField,
+                    new JsonObject { ["k"] = "local", ["name"] = ThisField, ["outer"] = true }));
             }
             foreach (var p in _params)
             {
@@ -3530,14 +3544,26 @@ static partial class SuspendColdLowering
             var lambdaBaseFqn = _restrictedBase ? RestrictedSuspendLambdaFqn : SuspendLambdaFqn;
             var fields = new JsonArray();
             foreach (var (n, t) in _fieldDecls)
-                fields.Add(new JsonObject { ["name"] = n, ["type"] = Tw(t), ["vis"] = "internal" });
+            {
+                var field = new JsonObject { ["name"] = n, ["type"] = Tw(t), ["vis"] = "internal" };
+                if (IsExactOuterStorage(n)) field["outer"] = true;
+                fields.Add(field);
+            }
 
             var ctorParams = new JsonArray();
             var ctorBody = new JsonArray();
             foreach (var (n, t) in _captures)
             {
-                ctorParams.Add(new JsonObject { ["name"] = n, ["type"] = Tw(t) });
-                ctorBody.Add(SetField(n, new JsonObject { ["k"] = "local", ["name"] = n }));
+                var exactOuter = IsExactOuterStorage(n);
+                var parameter = new JsonObject { ["name"] = n, ["type"] = Tw(t) };
+                var value = new JsonObject { ["k"] = "local", ["name"] = n };
+                if (exactOuter)
+                {
+                    parameter["outer"] = true;
+                    value["outer"] = true;
+                }
+                ctorParams.Add(parameter);
+                ctorBody.Add(SetField(n, value));
             }
             ctorParams.Add(new JsonObject { ["name"] = CompletionParameter, ["type"] = ContAny() });
 
@@ -4547,23 +4573,33 @@ static partial class SuspendColdLowering
 
         // ---- small node builders ----
 
-        JsonObject SetField(string name, JsonNode value) => new()
+        JsonObject SetField(string name, JsonNode value)
         {
-            ["k"] = "setField",
-            ["ownerType"] = Tw(_smTypeInst),
-            ["recv"] = new JsonObject { ["k"] = "this" },
-            ["name"] = name,
-            ["value"] = value,
-        };
+            var assignment = new JsonObject
+            {
+                ["k"] = "setField",
+                ["ownerType"] = Tw(_smTypeInst),
+                ["recv"] = new JsonObject { ["k"] = "this" },
+                ["name"] = name,
+                ["value"] = value,
+            };
+            if (IsExactOuterStorage(name)) assignment["outer"] = true;
+            return assignment;
+        }
 
-        JsonObject FieldOf(string name, TypeNode type) => new()
+        JsonObject FieldOf(string name, TypeNode type)
         {
-            ["k"] = "field",
-            ["ownerType"] = Tw(_smTypeInst),
-            ["recv"] = new JsonObject { ["k"] = "this" },
-            ["name"] = name,
-            ["ret"] = Tw(type),
-        };
+            var field = new JsonObject
+            {
+                ["k"] = "field",
+                ["ownerType"] = Tw(_smTypeInst),
+                ["recv"] = new JsonObject { ["k"] = "this" },
+                ["name"] = name,
+                ["ret"] = Tw(type),
+            };
+            if (IsExactOuterStorage(name)) field["outer"] = true;
+            return field;
+        }
 
         static JsonObject Suspended() => new()
         {

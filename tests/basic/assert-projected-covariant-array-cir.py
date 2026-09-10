@@ -29,6 +29,13 @@ def method(name):
     return matches[0]
 
 
+def type_def(name):
+    matches = [item for item in root.get("types", []) if item.get("name") == name]
+    if len(matches) != 1:
+        raise SystemExit(f"found {len(matches)} {name} types, expected 1")
+    return matches[0]
+
+
 def array(element):
     return {"t": "array", "elem": element}
 
@@ -126,6 +133,149 @@ covariant_class = method("covariantClassArray")
 covariant_carrier = fqn("CovariantValue$star")
 if covariant_class.get("ret") != array(covariant_carrier):
     raise SystemExit(f"Kotlin class variance was mistaken for CLR class variance: {covariant_class.get('ret')!r}")
+
+# Declaration-site variance on a Kotlin class is source-level substitutability, not CLR class variance. Every
+# widened value slot therefore uses the declaration's existential interface, while allocations retain the exact
+# constructed class whose constructor is being invoked.
+widening = method("covariantClassWidening")
+widening_nodes = list(objects(widening.get("body", [])))
+expected_carriers = {
+    "CovariantValue$star",
+    "PrivateCovariantValue$star",
+    "ContravariantAction$star",
+}
+observed_carriers = {
+    node.get("type", {}).get("name")
+    for node in widening_nodes
+    if node.get("k") == "var" and node.get("type", {}).get("name") in expected_carriers
+}
+if observed_carriers != expected_carriers:
+    raise SystemExit(f"variant class values did not use their existential carriers: {observed_carriers!r}")
+
+expected_constructions = {
+    ("CovariantValue", "System.Int32"),
+    ("CovariantValue", "System.String"),
+    ("PrivateCovariantValue", "System.Int32"),
+    ("ContravariantAction", "System.Object"),
+}
+observed_constructions = {
+    (node.get("type", {}).get("name"), node.get("type", {}).get("args", [{}])[0].get("name"))
+    for node in widening_nodes
+    if node.get("k") == "new"
+    and node.get("type", {}).get("name") in {
+        "CovariantValue",
+        "PrivateCovariantValue",
+        "ContravariantAction",
+    }
+}
+if observed_constructions != expected_constructions:
+    raise SystemExit(f"variant class constructors lost their exact constructed heads: {observed_constructions!r}")
+
+carrier_calls = [
+    node
+    for node in widening_nodes
+    if node.get("k") == "callInstance" and node.get("ownerType", {}).get("name") in expected_carriers
+]
+if not carrier_calls or any(node.get("ownerType", {}).get("args") for node in carrier_calls):
+    raise SystemExit(f"variant class members did not bind through non-generic carriers: {carrier_calls!r}")
+
+holder_types = [item for item in root.get("types", []) if item.get("name") == "CovariantValueHolder"]
+if len(holder_types) != 1:
+    raise SystemExit(f"found {len(holder_types)} CovariantValueHolder declarations, expected 1")
+holder_type = holder_types[0]
+holder_value_slots = [field.get("type") for field in holder_type.get("fields", [])]
+holder_value_slots += [prop.get("type") for prop in holder_type.get("properties", [])]
+holder_value_slots += [param.get("type") for ctor in holder_type.get("ctors", []) for param in ctor.get("params", [])]
+if not holder_value_slots or any(slot != covariant_carrier for slot in holder_value_slots):
+    raise SystemExit(f"variant class declaration slots did not use CovariantValue$star: {holder_value_slots!r}")
+
+user_named_lexical = method("userNamedLexicalVariance")
+user_named_parameter_types = [parameter.get("type") for parameter in user_named_lexical.get("params", [])]
+if user_named_parameter_types != [covariant_carrier]:
+    raise SystemExit(
+        "user declarations named like generated lexical receivers were incorrectly kept exact: "
+        f"{user_named_parameter_types!r}"
+    )
+
+# A declaration-site variant class is existential only in value slots. Lexical receivers, hidden inner-class outer
+# slots, and suspend-lambda storage retain the exact constructed owner; all producer-only role markers are gone by CIR.
+transient_leaks = [
+    node
+    for node in objects(root)
+    if "outer" in node or "delegationOuterSlot" in node
+]
+if transient_leaks:
+    raise SystemExit(f"lexical-receiver BIR facts leaked into CIR: {transient_leaks[:3]!r}")
+
+owner_tv = fqn("VariantLexicalOwner", {"t": "tv", "scope": "type", "i": 0})
+reader = type_def("VariantLexicalOwner.Reader")
+outer_fields = [field for field in reader.get("fields", []) if field.get("name") == "__outer"]
+if len(outer_fields) != 1 or outer_fields[0].get("type") != owner_tv:
+    raise SystemExit(f"inner class lost its exact lexical owner field: {outer_fields!r}")
+if any(ctor.get("params", [{}])[0].get("type") != owner_tv for ctor in reader.get("ctors", [])):
+    raise SystemExit(f"inner constructors lost their exact lexical owner parameter: {reader.get('ctors')!r}")
+
+through_local = next(item for item in type_def("VariantLexicalOwner").get("methods", [])
+                     if item.get("name") == "readerThroughLocal")
+through_nodes = list(objects(through_local.get("body", [])))
+if not any(node.get("k") == "var" and node.get("type") == owner_tv for node in through_nodes):
+    raise SystemExit("an immutable alias of lexical this was widened to the existential carrier")
+if not any(node.get("k") == "new" and node.get("argTypes", [None])[0] == owner_tv
+           for node in through_nodes):
+    raise SystemExit("inner construction through a lexical-this alias lost its exact outer descriptor")
+
+widened_local = next(item for item in type_def("VariantLexicalOwner").get("methods", [])
+                     if item.get("name") == "readerThroughWidenedLocal")
+widened_nodes = list(objects(widened_local.get("body", [])))
+if not any(node.get("k") == "var" and node.get("type") == fqn("VariantLexicalOwner$star")
+           for node in widened_nodes):
+    raise SystemExit("an explicitly widened lexical-this alias did not use the existential carrier")
+if not any(node.get("k") == "callInstance"
+           and node.get("ownerType") == fqn("VariantLexicalOwner$star")
+           and node.get("method", "").startswith("$star$new$")
+           for node in widened_nodes):
+    raise SystemExit("inner construction through an explicitly widened alias did not use its existential factory")
+
+regular_reader = next(item for item in type_def("VariantLexicalOwner").get("methods", [])
+                      if item.get("name") == "regularReader")
+regular_closures = [node for node in objects(regular_reader.get("body", [])) if node.get("k") == "newClosure"]
+if len(regular_closures) != 1:
+    raise SystemExit(f"variant lexical regular reader produced {len(regular_closures)} closures")
+regular_closure = type_def(regular_closures[0].get("closureType", {}).get("name"))
+regular_outer_fields = [field for field in regular_closure.get("fields", []) if field.get("name") == "__outer"]
+if len(regular_outer_fields) != 1 or regular_outer_fields[0].get("type") != owner_tv:
+    raise SystemExit(f"ordinary lambda lost its exact lexical receiver field: {regular_outer_fields!r}")
+regular_calls = [node for node in objects(regular_closure.get("methods", [])) if node.get("k") == "callInstance"]
+if not any(node.get("ownerType") == owner_tv for node in regular_calls):
+    raise SystemExit(f"ordinary lambda rebound lexical member calls through a carrier: {regular_calls!r}")
+
+lambda_sm = type_def("VariantLexicalOwner_suspendedReader_lambda1$sm")
+sm_outer_fields = [field for field in lambda_sm.get("fields", []) if field.get("name") == "cap$__outer"]
+if len(sm_outer_fields) != 1 or sm_outer_fields[0].get("type") != owner_tv:
+    raise SystemExit(f"suspend lambda lost its exact lexical receiver field: {sm_outer_fields!r}")
+sm_calls = [node for node in objects(lambda_sm.get("methods", [])) if node.get("k") == "callInstance"]
+if not any(node.get("ownerType") == owner_tv for node in sm_calls):
+    raise SystemExit(f"suspend lambda rebound lexical member calls through a carrier: {sm_calls!r}")
+
+variant_use = method("variantLexicalOwners")
+factory_calls = [
+    node for node in objects(variant_use.get("body", []))
+    if node.get("k") == "callInstance"
+    and node.get("ownerType") == fqn("VariantLexicalOwner$star")
+    and node.get("method", "").startswith("$star$new$")
+]
+if len(factory_calls) != 1:
+    raise SystemExit(f"inner construction through a variant value slot did not use its existential factory: {factory_calls!r}")
+
+generated_collision = method("userNamedGeneratedLexicalVariance")
+closures = [node for node in objects(generated_collision.get("body", [])) if node.get("k") == "newClosure"]
+if len(closures) != 1:
+    raise SystemExit(f"generated lexical-name collision fixture produced {len(closures)} closures")
+collision_closure = type_def(closures[0].get("closureType", {}).get("name"))
+collision_locals = [node.get("type") for node in objects(collision_closure.get("methods", []))
+                    if node.get("k") == "var"]
+if covariant_carrier not in collision_locals:
+    raise SystemExit(f"a user __outer local in a generated frame was mistaken for lexical this: {collision_locals!r}")
 
 invariant = method("invariantProjectedValue")
 exact_invariant = array(fqn("InvariantValue", fqn("System.String")))

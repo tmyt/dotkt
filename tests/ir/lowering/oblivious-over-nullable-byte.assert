@@ -11,10 +11,10 @@
 # claimed: zero occurrences of an oblivious-over-nullable node across the stdlib build and all five NUnit suites.
 # The bytes below are what the rule requires either way.
 #
-# `sequenced`'s parameter is `Pair<Oblivious(String?), String?>` — three byte positions, so the wrong byte is pinned in
+# `sequenced`'s parameter is `System.Tuple<Oblivious(String?), String?>` — three byte positions, so the wrong byte is pinned in
 # the middle of a sequence and the two neighbours are pinned as unmoved (the reader's traversal comes from the
 # signature, so a wrong byte VALUE mis-annotates its own position and only its own). The flattening is
-# (Pair, a reference)=1, (oblivious over nullable)=0, (nullable String)=2, which RoundtripMetadata packs as the base64
+# (Tuple, a reference)=1, (oblivious over nullable)=0, (nullable String)=2, which RoundtripMetadata packs as the base64
 # `[Nullable(byte[])]` argument asserted below:
 #     [1,0,2] / AQAC   the rule
 #     [1,2,2] / AQIC   the nullable arm deciding it a second time
