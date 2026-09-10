@@ -52,7 +52,7 @@ static class FBoundStarProjectionErasure
         _localMethods = IndexLocalMethods(rootList);
         AllocateCarrierNames(owners, defs.Keys);
         foreach (var root in rootList) MarkNeeded(root, owners, defs, refs);
-        MarkNeededClosure(owners);
+        MarkNeededClosure(owners, defs, refs);
 
         foreach (var definition in defs.Values.Concat(rootList))
             if (definition["methods"] is JsonArray declaredMethods)
@@ -445,14 +445,15 @@ static class FBoundStarProjectionErasure
 
     // If G<T>'s existential surface exposes H<T>, substituting object would manufacture the invalid invariant
     // conversion H<T> -> H<object>. H's existential view is part of the same closure and must exist first-class.
-    static void MarkNeededClosure(IReadOnlyDictionary<string, Owner> owners)
+    static void MarkNeededClosure(IReadOnlyDictionary<string, Owner> owners,
+        IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs)
     {
         // A newly-bound carrier result can initialize the next local in a chain. Discover and normalize to a fixed
         // point so each lexical hop retains the same projected star mask before its consumer is rebound.
         while (true)
         {
             var before = owners.Values.Count(o => o.Needed);
-            MarkNeededAncestors(owners);
+            MarkNeededAncestors(owners, defs, refs);
             foreach (var owner in owners.Values.Where(o => o.Needed).ToList())
             {
                 // A star-typed outer receiver cannot be converted to one arbitrary invariant G<object> merely so an
@@ -498,7 +499,8 @@ static class FBoundStarProjectionErasure
         }
     }
 
-    static void MarkNeededAncestors(IReadOnlyDictionary<string, Owner> owners)
+    static void MarkNeededAncestors(IReadOnlyDictionary<string, Owner> owners,
+        IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs)
     {
         var changed = true;
         while (changed)
@@ -518,6 +520,8 @@ static class FBoundStarProjectionErasure
                 Mark(owner.Def["base"]);
                 if (owner.Def["interfaces"] is JsonArray interfaces)
                     foreach (var i in interfaces) Mark(i);
+                foreach (var inheritedInterface in InheritedBaseInterfaces(owner, owners, defs, refs))
+                    Mark(TypeJson.Write(inheritedInterface));
             }
         }
     }
@@ -1382,6 +1386,8 @@ static class FBoundStarProjectionErasure
         AddErasedAncestor(owner.Def["base"], inherited, owners, refs, allowConcrete: false);
         if (owner.Def["interfaces"] is JsonArray interfaces)
             foreach (var i in interfaces) AddErasedAncestor(i, inherited, owners, refs, allowConcrete: true);
+        foreach (var inheritedInterface in InheritedBaseInterfaces(owner, owners, defs, refs))
+            AddErasedAncestor(TypeJson.Write(inheritedInterface), inherited, owners, refs, allowConcrete: true);
 
         var methods = new JsonArray();
         var seen = new HashSet<string>(StringComparer.Ordinal);
@@ -1481,23 +1487,61 @@ static class FBoundStarProjectionErasure
             ownerIfaces.Add(TypeJson.Write(new TypeNode.Fqn(owner.ErasedName)));
     }
 
+    // A carrier cannot inherit a concrete base class, but every instance still implements the interfaces inherited
+    // through that base. Walk declaration-owned base edges, closing each generic frame before selecting contracts.
+    // A base with its own existential carrier already supplies this surface and terminates the walk.
+    static IEnumerable<TypeNode.Fqn> InheritedBaseInterfaces(Owner owner,
+        IReadOnlyDictionary<string, Owner> owners, IReadOnlyDictionary<string, JsonObject> defs,
+        ReferenceMetadataIndex refs)
+    {
+        var current = TypeJson.Read(owner.Def["base"]) as TypeNode.Fqn;
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        while (current != null && seen.Add(current.Name))
+        {
+            if (owners.ContainsKey(current.Name) || refs.TryExistentialPhysicalOwner(current.Name, out _))
+                yield break;
+
+            IEnumerable<(TypeNode.Fqn Spec, bool Interface)> Edges()
+            {
+                if (defs.TryGetValue(current.Name, out var definition))
+                {
+                    if (definition["interfaces"] is JsonArray interfaces)
+                        foreach (var node in interfaces)
+                            if (TypeJson.Read(node) is TypeNode.Fqn iface) yield return (iface, true);
+                    if (TypeJson.Read(definition["base"]) is TypeNode.Fqn baseType) yield return (baseType, false);
+                }
+                else
+                    foreach (var edge in refs.ReferencedSupertypes(current)) yield return edge;
+            }
+
+            TypeNode.Fqn next = null;
+            foreach (var (edge, isInterface) in Edges())
+                if (SubstituteDeclarationTypeArguments(edge, current.Args ?? Array.Empty<TypeNode>(),
+                        Array.Empty<TypeNode>()) is TypeNode.Fqn closed)
+                {
+                    if (isInterface) yield return closed;
+                    else next = closed;
+                }
+            current = next;
+        }
+    }
+
     static void AddErasedAncestor(JsonNode slot, JsonArray target, IReadOnlyDictionary<string, Owner> owners,
         ReferenceMetadataIndex refs, bool allowConcrete)
     {
         if (TypeJson.Read(slot) is not TypeNode.Fqn f) return;
         TypeNode.Fqn inherited;
-        if (owners.TryGetValue(f.Name, out var ancestor))
+        if (allowConcrete && !ContainsStarOrTypeVariable(f))
+            // A fixed interface construction is a contract of every closed owner. Keep that exact contract even
+            // when the interface also has an existential view; replacing I<String> with I$star loses valid upcasts.
+            inherited = f;
+        else if (owners.TryGetValue(f.Name, out var ancestor))
             inherited = new TypeNode.Fqn(ancestor.ErasedName);
         else if (refs.TryExistentialPhysicalOwner(f.Name, out var referenced))
             // A local Derived<T> can inherit a generic Base<T> from a referenced DotKt assembly. The semantic base
             // application contains this owner's T, but Base's trusted non-generic existential is precisely the contract
             // every closed Base<X> implements, so it is the one legal ancestor of Derived's non-generic view.
             inherited = new TypeNode.Fqn(referenced);
-        else if (allowConcrete && !ContainsOwnerTv(f))
-            // A non-generic (or owner-T-independent constructed) interface is implemented by
-            // every closed G<T> already, so it is also a sound contract of G's existential
-            // view. Keeping it is essential for inherited members such as Job.parent.
-            inherited = f;
         else
             return;
         if (!target.Any(i => TypeJson.Read(i) == inherited))
