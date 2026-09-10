@@ -4087,6 +4087,11 @@ sealed partial class ReferenceMetadataIndex
         if (declared == null) return false;
         if (ownerTypeArguments != null)
             declared = SupertypeGraph.SubstOwnerTvs(declared, ownerTypeArguments);
+        // This comparison consumes a Kotlin method-return fact, not a physical value type. CLR void projects
+        // to non-null Unit here; do not restore that equivalence in parameter keys or delegate result types.
+        if (declared is TypeNode.Fqn { Args: null, Name: "void" or "System.Void" }
+            && resolvedReturn is TypeNode.Fqn { Args: null, Name: "kotlin.Unit" })
+            return true;
         return AccessorDeclarationDescribesCall(declared, resolvedReturn);
     }
 
