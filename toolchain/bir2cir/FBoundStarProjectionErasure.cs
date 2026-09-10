@@ -49,10 +49,17 @@ static class FBoundStarProjectionErasure
         var defs = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
         foreach (var root in rootList) Collect(root, root, owners, defs);
         var localClrAliases = CollectLocalClrAliases(defs);
+        var aliases = new Dictionary<string, string>(refs.Aliases, StringComparer.Ordinal);
+        foreach (var alias in localClrAliases) aliases[alias.Key] = alias.Value;
+        var supertypeDefs = SupertypeGraph.Collect(rootList);
+        // Snapshot declaration-owned edges before synthesis attaches carrier interfaces to the live definitions.
+        var baseContracts = owners.Values.ToDictionary(owner => owner.Name, owner => SupertypeGraph.Reachable(
+            new SupertypeGraph.Def { Base = TypeJson.Read(owner.Def["base"]) as TypeNode.Fqn },
+            supertypeDefs, refs).ToArray(), StringComparer.Ordinal);
         _localMethods = IndexLocalMethods(rootList);
         AllocateCarrierNames(owners, defs.Keys);
         foreach (var root in rootList) MarkNeeded(root, owners, defs, refs);
-        MarkNeededClosure(owners);
+        MarkNeededClosure(owners, baseContracts);
 
         foreach (var definition in defs.Values.Concat(rootList))
             if (definition["methods"] is JsonArray declaredMethods)
@@ -61,7 +68,8 @@ static class FBoundStarProjectionErasure
                         || OwnerConstrainedMethodLowering.HasMethodDependentBounds(method)
                         || method[OwnerConstrainedMethodLowering.OverrideBoundsKey] != null)
                         OwnerConstrainedMethodLowering.Record(method, definition);
-        foreach (var owner in owners.Values.Where(o => o.Needed)) Synthesize(owner, owners, defs, refs);
+        foreach (var owner in owners.Values.Where(o => o.Needed))
+            Synthesize(owner, owners, defs, refs, baseContracts[owner.Name], aliases);
         foreach (var root in rootList) RecordDeclarationSurfaces(root, owners, refs);
         var generatedMethodFrames = OwnerConstrainedMethodLowering.PropagateCapturedBounds(defs, ContainsOwnerTv,
             bound => ProjectOwnerMethodBound(bound, owners, refs, physical: false));
@@ -445,14 +453,15 @@ static class FBoundStarProjectionErasure
 
     // If G<T>'s existential surface exposes H<T>, substituting object would manufacture the invalid invariant
     // conversion H<T> -> H<object>. H's existential view is part of the same closure and must exist first-class.
-    static void MarkNeededClosure(IReadOnlyDictionary<string, Owner> owners)
+    static void MarkNeededClosure(IReadOnlyDictionary<string, Owner> owners,
+        IReadOnlyDictionary<string, (TypeNode.Fqn spec, bool isInterface)[]> baseContracts)
     {
         // A newly-bound carrier result can initialize the next local in a chain. Discover and normalize to a fixed
         // point so each lexical hop retains the same projected star mask before its consumer is rebound.
         while (true)
         {
             var before = owners.Values.Count(o => o.Needed);
-            MarkNeededAncestors(owners);
+            MarkNeededAncestors(owners, baseContracts);
             foreach (var owner in owners.Values.Where(o => o.Needed).ToList())
             {
                 // A star-typed outer receiver cannot be converted to one arbitrary invariant G<object> merely so an
@@ -498,7 +507,8 @@ static class FBoundStarProjectionErasure
         }
     }
 
-    static void MarkNeededAncestors(IReadOnlyDictionary<string, Owner> owners)
+    static void MarkNeededAncestors(IReadOnlyDictionary<string, Owner> owners,
+        IReadOnlyDictionary<string, (TypeNode.Fqn spec, bool isInterface)[]> baseContracts)
     {
         var changed = true;
         while (changed)
@@ -518,6 +528,7 @@ static class FBoundStarProjectionErasure
                 Mark(owner.Def["base"]);
                 if (owner.Def["interfaces"] is JsonArray interfaces)
                     foreach (var i in interfaces) Mark(i);
+                foreach (var (spec, _) in baseContracts[owner.Name]) Mark(TypeJson.Write(spec));
             }
         }
     }
@@ -1371,7 +1382,8 @@ static class FBoundStarProjectionErasure
     }
 
     static void Synthesize(Owner owner, IReadOnlyDictionary<string, Owner> owners,
-        IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs)
+        IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs,
+        (TypeNode.Fqn spec, bool isInterface)[] baseContracts, IReadOnlyDictionary<string, string> aliases)
     {
         var rootTypes = owner.Root["types"] as JsonArray;
         if (rootTypes == null || rootTypes.OfType<JsonObject>().Any(t => Str(t["name"]) == owner.ErasedName)) return;
@@ -1382,6 +1394,17 @@ static class FBoundStarProjectionErasure
         AddErasedAncestor(owner.Def["base"], inherited, owners, refs, allowConcrete: false);
         if (owner.Def["interfaces"] is JsonArray interfaces)
             foreach (var i in interfaces) AddErasedAncestor(i, inherited, owners, refs, allowConcrete: true);
+        // Ancestor carriers supply their open contracts, but a constructed base may additionally make an interface
+        // fixed (Base<String> : I<String>). Retain both, including across non-generic intermediate classes.
+        foreach (var (spec, isInterface) in baseContracts)
+            AddErasedAncestor(TypeJson.Write(spec), inherited, owners, refs, allowConcrete: isInterface);
+        var localNames = defs.Keys.ToHashSet(StringComparer.Ordinal);
+        string PhysicalKey(JsonNode node) => TypeJson.Write(BirTypeLowering.CanonicalPhysicalSlotType(
+            BirTypeLowering.LowerPhysicalType(TypeJson.Read(node), aliases, refs.IsValueType,
+                refs.PhysicalTypeNames, typeArg: false, localTypeNames: localNames))).ToJsonString();
+        // Local Kotlin and reflected CLR spellings can denote the same InterfaceImpl. ilemit emits this set 1:1.
+        inherited = new JsonArray(inherited.GroupBy(PhysicalKey, StringComparer.Ordinal)
+            .Select(group => group.First().DeepClone()).ToArray());
 
         var methods = new JsonArray();
         var seen = new HashSet<string>(StringComparer.Ordinal);
@@ -1486,18 +1509,17 @@ static class FBoundStarProjectionErasure
     {
         if (TypeJson.Read(slot) is not TypeNode.Fqn f) return;
         TypeNode.Fqn inherited;
-        if (owners.TryGetValue(f.Name, out var ancestor))
+        if (allowConcrete && !ContainsStarOrTypeVariable(f))
+            // A fixed interface construction is a contract of every closed owner. Keep that exact contract even
+            // when the interface also has an existential view; replacing I<String> with I$star loses valid upcasts.
+            inherited = f;
+        else if (owners.TryGetValue(f.Name, out var ancestor))
             inherited = new TypeNode.Fqn(ancestor.ErasedName);
         else if (refs.TryExistentialPhysicalOwner(f.Name, out var referenced))
             // A local Derived<T> can inherit a generic Base<T> from a referenced DotKt assembly. The semantic base
             // application contains this owner's T, but Base's trusted non-generic existential is precisely the contract
             // every closed Base<X> implements, so it is the one legal ancestor of Derived's non-generic view.
             inherited = new TypeNode.Fqn(referenced);
-        else if (allowConcrete && !ContainsOwnerTv(f))
-            // A non-generic (or owner-T-independent constructed) interface is implemented by
-            // every closed G<T> already, so it is also a sound contract of G's existential
-            // view. Keeping it is essential for inherited members such as Job.parent.
-            inherited = f;
         else
             return;
         if (!target.Any(i => TypeJson.Read(i) == inherited))

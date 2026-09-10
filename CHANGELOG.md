@@ -7,6 +7,11 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Variant class carriers retain interface contracts inherited through concrete bases (#699).** Local and referenced
+  base chains contribute their interfaces with the exact generic arguments, including fixed constructed interfaces
+  and CLR explicit implementations. Upcasts through variant values no longer lose these inherited contracts;
+  reflected Unit type arguments remain real class tokens, and duplicate physical interface entries are removed.
+
 - **Owner-constrained suspend methods preserve generic frames through variant carriers (#695).** Task and cold-entry
   slots share representable CLR constraints, including overrides with concrete source bounds. State machines retain
   owner and method type arguments across suspension; referenced carrier slots retain their Kotlin source identity.

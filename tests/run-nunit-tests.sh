@@ -50,11 +50,11 @@ PROJECTS=(
 # Reviewed on the v0.9.8 main baseline at the start of #227. Updating a suite requires updating this number in
 # the same change, making otherwise-silent test proliferation or accidental deletion an explicit review event.
 declare -A EXPECTED_DISCOVERED=(
-	["tests/basic"]=496
+	["tests/basic"]=498
 	["tests/coroutines"]=202
-	["tests/roundtrip/consumer"]=97
+	["tests/roundtrip/consumer"]=100
 	["tests/roundtrip/bidirectional/consumer"]=10
-	["tests/interop/consumer"]=173
+	["tests/interop/consumer"]=174
 )
 
 # Validate the baseline map before doing any expensive work. A new/renamed suite without a reviewed count is a
@@ -120,6 +120,22 @@ for proj in "${PROJECTS[@]}"; do
 	# Build (restore from the local feed via tests/nuget.config). A build failure is a red gate.
 	if ! dotnet build "$dir" -c "$CONFIGURATION" --no-incremental -m:1 -v q --nologo >"$ROOT/build/nunit-$name.build.log" 2>&1; then
 		echo "  BUILD FAIL — see build/nunit-$name.build.log"; tail -25 "$ROOT/build/nunit-$name.build.log"; rc=1; continue
+	fi
+	case "$proj" in
+		"tests/basic") inherited_lane=basic ;;
+		"tests/roundtrip/consumer") inherited_lane=consumer ;;
+		"tests/interop/consumer") inherited_lane=interop ;;
+		*) inherited_lane="" ;;
+	esac
+	if [[ -n "$inherited_lane" ]]; then
+		if python3 "$ROOT/tests/assert-inherited-carrier-cir.py" "$inherited_lane" \
+			"$dir/obj/$CONFIGURATION/net10.0/cir/InheritedCarrierInterfaceTests.cir.json" \
+			>"$ROOT/build/nunit-$name.inherited-carrier-cir.log" 2>&1; then
+			echo "  inherited carrier interface contracts are exact and unique"
+		else
+			echo "  INHERITED CARRIER CIR FAIL — see build/nunit-$name.inherited-carrier-cir.log"
+			tail -25 "$ROOT/build/nunit-$name.inherited-carrier-cir.log"; rc=1
+		fi
 	fi
 	if [[ "$proj" == "tests/basic" ]]; then
 		default_vararg_bir="$dir/obj/$CONFIGURATION/net10.0/bir/VarargOmissionTests.bir.json"
