@@ -289,7 +289,7 @@ internal fun BirEmitter.assignBranch(e: IrExpression, tv: String): Pair<String, 
 			yieldsNull = emittedYieldsNull(value)
 			"""{"k":"setLocal","name":${str(tv)},"value":$value}"""
 		}
-		last != null -> stmt(last).also { yieldsNull = emittedStmtYieldsNull(it) }
+		last != null -> stmt(last)
 		else -> ""
 	}
 	return listOf(pre, tail).filter { it.isNotEmpty() }.joinToString(",") to yieldsNull
@@ -522,14 +522,6 @@ internal fun BirEmitter.emittedYieldsNull(emitted: String): Boolean =
 	isEmittedNullConst(emitted) ||
 		emitted.startsWith("""{"k":"cond","joinNullBranch":true""") ||
 		emitted.startsWith("""{"k":"valueBlock","joinNullBranch":true""")
-
-/** The statement form of [emittedYieldsNull]: a branch whose result type is `Unit`/`Nothing` is emitted as a plain
- *  expression statement rather than an assignment, and a bare `null` literal (typed `Nothing?`) is exactly that. */
-internal fun BirEmitter.emittedStmtYieldsNull(emitted: String): Boolean {
-	val prefix = """{"k":"exprStmt","expr":"""
-	return emitted.startsWith(prefix) && emitted.endsWith("}") &&
-		emittedYieldsNull(emitted.substring(prefix.length, emitted.length - 1))
-}
 
 /** True if an EMITTED BIR expression is a bare `null` const — `{"k":"const",…,"value":null}` (a
  *  `void`/`kotlin.Nothing`-typed null). Used to spot a `when`/`if` branch that yields `null`. */

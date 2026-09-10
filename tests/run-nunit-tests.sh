@@ -50,7 +50,7 @@ PROJECTS=(
 # Reviewed on the v0.9.8 main baseline at the start of #227. Updating a suite requires updating this number in
 # the same change, making otherwise-silent test proliferation or accidental deletion an explicit review event.
 declare -A EXPECTED_DISCOVERED=(
-	["tests/basic"]=506
+	["tests/basic"]=508
 	["tests/coroutines"]=202
 	["tests/roundtrip/consumer"]=102
 	["tests/roundtrip/bidirectional/consumer"]=10
@@ -148,7 +148,7 @@ for proj in "${PROJECTS[@]}"; do
 		fi
 	fi
 	if [[ "$proj" == "tests/basic" ]]; then
-		if python3 "$ROOT/tests/assert-unit-try-values-bir.py" "$dir/obj/$CONFIGURATION/net10.0/bir/UnitTryValueTests.bir.json" \
+		if python3 "$ROOT/tests/basic/assert-unit-try-values-bir.py" "$dir/obj/$CONFIGURATION/net10.0/bir/UnitTryValueTests.bir.json" \
 			>"$ROOT/build/nunit-$name.unit-try-values-bir.log" 2>&1; then
 			echo "  Unit try branches explicitly assign their Kotlin result"
 		else
