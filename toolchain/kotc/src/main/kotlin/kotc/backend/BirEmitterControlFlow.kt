@@ -69,6 +69,7 @@ import org.jetbrains.kotlin.ir.types.IrType
 import org.jetbrains.kotlin.ir.types.classFqName
 import org.jetbrains.kotlin.ir.types.classifierOrNull
 import org.jetbrains.kotlin.ir.types.isUnit
+import org.jetbrains.kotlin.ir.types.isNothing
 import org.jetbrains.kotlin.ir.types.isMarkedNullable
 import org.jetbrains.kotlin.ir.types.isBoxedArray
 import org.jetbrains.kotlin.ir.types.isUnsignedType
@@ -267,21 +268,28 @@ internal fun BirEmitter.valueBlockJson(
  *  -> emitted as-is). For try-as-expression: each branch leaves its result in the temp. Returns the emitted
  *  statements paired with whether this branch MAY LEAVE THE JOIN NULL — decided on the EMITTED result, because that
  *  is where a nested join's own verdict and the emitter's own `valueBlock` wrapping are visible; [emittedYieldsNull]
- *  states which emitted shapes count. A bare `null` literal is `Nothing?`-typed, so it is emitted as a plain
- *  statement and assigns nothing at all: the temp keeps its default, which is exactly why that default has to be
- *  able to BE null. */
+ *  states which emitted shapes count. A nullable Nothing literal is a real null value and must be assigned;
+ *  only non-null Nothing transfers control without producing a result. */
 internal fun BirEmitter.assignBranch(e: IrExpression, tv: String): Pair<String, Boolean> {
+	// The branch's Kotlin type owns Unit coercion, including empty blocks and declaration-final blocks.
+	// Execute every statement first; only normal completion reaches the explicit Unit result assignment.
+	if (e.type.isUnit()) {
+		val body = bodyStmts(e)
+		val unit = """{"k":"const","type":${fqnJson("kotlin.Unit")},"value":null}"""
+		val result = """{"k":"setLocal","name":${str(tv)},"value":$unit}"""
+		return listOf(body, result).filter { it.isNotEmpty() }.joinToString(",") to false
+	}
 	val stmts = if (e is IrBlock) e.statements else listOf(e)
 	val pre = stmts.dropLast(1).joinToString(",") { stmt(it) }
 	val last = stmts.lastOrNull()
 	var yieldsNull = false
 	val tail = when {
-		last is IrExpression && !last.type.isUnit() && last.type.classFqName?.asString() != "kotlin.Nothing" -> {
+		last is IrExpression && !last.type.isNothing() -> {
 			val value = expr(last)
 			yieldsNull = emittedYieldsNull(value)
 			"""{"k":"setLocal","name":${str(tv)},"value":$value}"""
 		}
-		last != null -> stmt(last).also { yieldsNull = emittedStmtYieldsNull(it) }
+		last != null -> stmt(last)
 		else -> ""
 	}
 	return listOf(pre, tail).filter { it.isNotEmpty() }.joinToString(",") to yieldsNull
@@ -514,14 +522,6 @@ internal fun BirEmitter.emittedYieldsNull(emitted: String): Boolean =
 	isEmittedNullConst(emitted) ||
 		emitted.startsWith("""{"k":"cond","joinNullBranch":true""") ||
 		emitted.startsWith("""{"k":"valueBlock","joinNullBranch":true""")
-
-/** The statement form of [emittedYieldsNull]: a branch whose result type is `Unit`/`Nothing` is emitted as a plain
- *  expression statement rather than an assignment, and a bare `null` literal (typed `Nothing?`) is exactly that. */
-internal fun BirEmitter.emittedStmtYieldsNull(emitted: String): Boolean {
-	val prefix = """{"k":"exprStmt","expr":"""
-	return emitted.startsWith(prefix) && emitted.endsWith("}") &&
-		emittedYieldsNull(emitted.substring(prefix.length, emitted.length - 1))
-}
 
 /** True if an EMITTED BIR expression is a bare `null` const — `{"k":"const",…,"value":null}` (a
  *  `void`/`kotlin.Nothing`-typed null). Used to spot a `when`/`if` branch that yields `null`. */

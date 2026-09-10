@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Unit-valued try/catch branches assign their result (#702).** Kotlin-to-BIR projection preserves Unit results
+  from ordinary, empty, and declaration-final branches, without losing finally execution or confusing null with Unit.
+
 - **Unit-returning calls supply real Unit values when their results are consumed (#701).** bir2cir preserves
   physical void calls as statements and materializes Unit on the value edge, including cross-DLL calls, delegates,
   storage, returns, and conditional branches. Discarded calls remain void, and actual generic Unit results stay values.
