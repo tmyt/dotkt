@@ -60,6 +60,13 @@ class OwnerSuspendCovariantValue<out T>(val item: T) {
     }
 }
 
+class OwnerSuspendProjectedValue<out T> {
+    suspend fun <R : MutableList<in T>> size(value: R, pause: suspend () -> Unit): String {
+        pause()
+        return value.size.toString()
+    }
+}
+
 // Resume only after startCoroutine returns, so every call crosses a real suspension boundary.
 private fun ownerSuspendRun(expected: String, body: suspend (suspend () -> Unit) -> String) {
     var actual = "pending"
@@ -93,5 +100,9 @@ class OwnerConstrainedSuspendTests {
         ownerSuspendRun("default:text") { pause -> defaultSink.render("text", pause) }
         val covariant: OwnerSuspendCovariantValue<Any> = OwnerSuspendCovariantValue(19)
         ownerSuspendRun("19") { pause -> covariant.render(OwnerSuspendComparer(), pause) }
+        val projected: OwnerSuspendProjectedValue<Any> = OwnerSuspendProjectedValue<Int>()
+        ownerSuspendRun("2") { pause -> projected.size(mutableListOf<Any>(1, 2), pause) }
+        val projectedStrings: OwnerSuspendProjectedValue<String> = OwnerSuspendProjectedValue<Nothing>()
+        ownerSuspendRun("1") { pause -> projectedStrings.size(mutableListOf("text"), pause) }
     }
 }

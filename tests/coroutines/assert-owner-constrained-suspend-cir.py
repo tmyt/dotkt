@@ -25,6 +25,9 @@ def payload(method, short_name):
 with open(sys.argv[1], encoding="utf-8") as stream:
     types = {t["name"]: t for t in json.load(stream)["types"]}
 
+assert not any("_ownerConstraintDispatchBounds" in node or "erasedInnerConstraints" in node
+               for node in objects(list(types.values())))
+
 for owner_name, source_bound in (
     ("OwnerSuspendSink", {"t": "tv", "scope": "type", "i": 0}),
     ("OwnerSuspendAnimalSink", {"t": "fqn", "name": "OwnerSuspendAnimal"}),

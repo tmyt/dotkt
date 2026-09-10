@@ -212,16 +212,20 @@ static class OwnerConstrainedMethodLowering
         {
             RewriteConstraints(method, owner, method["typeParams"].AsArray(), dependsOnOwner, projectedBound);
             method.Remove(OverrideBoundsKey);
-            var parameters = method["typeParams"].AsArray();
-            var bounds = new JsonObject();
-            for (var index = 0; index < parameters.Count; index++)
-                if (parameters[index] is JsonObject parameter
-                    && parameter[FBoundStarProjectionErasure.ErasedInnerConstraintKey] is JsonArray removed)
-                    bounds[index.ToString()] = removed.DeepClone();
-            // These are dispatch plans, not value/storage types. Preserve their projection masks across ordinary
-            // type lowering until the constrained-receiver pass consumes the exact planned bound.
-            method[DispatchBoundsKey] = bounds.ToJsonString();
+            PreserveDispatchBounds(method, method["typeParams"].AsArray());
         }
+    }
+
+    internal static void PreserveDispatchBounds(JsonObject declaration, JsonArray parameters)
+    {
+        var bounds = new JsonObject();
+        for (var index = 0; index < parameters.Count; index++)
+            if (parameters[index] is JsonObject parameter
+                && parameter[FBoundStarProjectionErasure.ErasedInnerConstraintKey] is JsonArray removed)
+                bounds[index.ToString()] = removed.DeepClone();
+        // These are dispatch plans, not value/storage types. Preserve their projection masks across ordinary
+        // type lowering until the constrained-receiver pass consumes the exact planned bound.
+        declaration[DispatchBoundsKey] = bounds.ToJsonString();
     }
 
     static void RewriteConstraints(JsonObject method, JsonObject owner, JsonArray parameters, Func<TypeNode, bool> dependsOnOwner,

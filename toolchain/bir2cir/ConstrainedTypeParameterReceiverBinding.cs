@@ -272,8 +272,14 @@ static class ConstrainedTypeParameterReceiverBinding
                         && call["recv"] is JsonObject unresolvedPropertyRecv
                         && ReceiverTypeVariable(unresolvedPropertyRecv, scope, locals) is TypeNode.Tv unresolvedPropertyTv
                         && ConstraintAtPhysical(unresolvedPropertyTv, unresolvedPropertyOwner.Name,
-                            typeParams, methodParams, refs, out var propertyConstraintErased) is not null)
+                            typeParams, methodParams, refs, out var propertyConstraintErased) is TypeNode.Fqn propertyConstraint)
+                    {
                         call[ErasedConstraintDispatchKey] = propertyConstraintErased;
+                        // A use-site projected foreign constraint is not an invariant object construction. Keep its
+                        // selected source projection for the late foreign binder, just as for method calls below.
+                        if (propertyConstraintErased && ProjectedForeignConstraint(propertyConstraint, refs) is { } projectedProperty)
+                            call["type"] = TypeJson.Write(projectedProperty);
+                    }
                     if (resolvedPropertiesOnly
                         && (kind == "clrPropGet" || kind == "clrPropSet")
                         && Str(call["member"]) == "accessor"
@@ -400,7 +406,7 @@ static class ConstrainedTypeParameterReceiverBinding
     // declaration fact. Give the binding walk a private copy under the existing "erased edge" key: the emitted
     // GenericParam table remains untouched, while late call-shape selection can still distinguish an erased source
     // proof from a real CLR constraint.
-    static JsonArray CloneMethodParametersWithErasedSourceBounds(JsonObject method)
+    internal static JsonArray CloneMethodParametersWithErasedSourceBounds(JsonObject method)
     {
         var result = method["typeParams"] is JsonArray parameters
             ? new JsonArray(parameters.Select(parameter => parameter?.DeepClone()).ToArray())
