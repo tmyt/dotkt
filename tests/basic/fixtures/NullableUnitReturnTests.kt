@@ -37,6 +37,19 @@ class NullableUnitReturnTests {
     }
 
     @TestAttribute
+    fun clrConstructorsAcceptValueReturningUnitDelegates() {
+        val absent = System.Threading.ThreadLocal<Unit?>({ null })
+        val present = System.Threading.ThreadLocal<Unit?>({ Unit })
+        try {
+            assertEquals(null, absent.Value)
+            assertSame(Unit, present.Value)
+        } finally {
+            absent.Dispose()
+            present.Dispose()
+        }
+    }
+
+    @TestAttribute
     fun ordinaryUnitAndGenericValuesKeepTheirContracts() {
         val action: () -> Unit = ::localPlainUnit
         assertSame(Unit, action())
