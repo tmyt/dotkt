@@ -50,9 +50,9 @@ PROJECTS=(
 # Reviewed on the v0.9.8 main baseline at the start of #227. Updating a suite requires updating this number in
 # the same change, making otherwise-silent test proliferation or accidental deletion an explicit review event.
 declare -A EXPECTED_DISCOVERED=(
-	["tests/basic"]=498
+	["tests/basic"]=502
 	["tests/coroutines"]=202
-	["tests/roundtrip/consumer"]=100
+	["tests/roundtrip/consumer"]=102
 	["tests/roundtrip/bidirectional/consumer"]=10
 	["tests/interop/consumer"]=174
 )
@@ -135,6 +135,16 @@ for proj in "${PROJECTS[@]}"; do
 		else
 			echo "  INHERITED CARRIER CIR FAIL — see build/nunit-$name.inherited-carrier-cir.log"
 			tail -25 "$ROOT/build/nunit-$name.inherited-carrier-cir.log"; rc=1
+		fi
+	fi
+	if [[ "$proj" == "tests/basic" || "$proj" == "tests/roundtrip/consumer" ]]; then
+		if python3 "$ROOT/tests/assert-unit-call-values-cir.py" "${proj##*/}" \
+			"$dir/obj/$CONFIGURATION/net10.0/cir/UnitCallValueTests.cir.json" \
+			>"$ROOT/build/nunit-$name.unit-call-values-cir.log" 2>&1; then
+			echo "  consumed Unit call values retain exact physical result contracts"
+		else
+			echo "  UNIT CALL VALUES CIR FAIL — see build/nunit-$name.unit-call-values-cir.log"
+			tail -25 "$ROOT/build/nunit-$name.unit-call-values-cir.log"; rc=1
 		fi
 	fi
 	if [[ "$proj" == "tests/basic" ]]; then

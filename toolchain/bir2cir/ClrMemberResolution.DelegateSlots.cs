@@ -444,7 +444,7 @@ static partial class ClrMemberResolution
 
     // The `Unit` singleton, read exactly as any Kotlin `object` instance is. A build that is EMITTING
     // `kotlin.Unit` has no reference to name and correctly carries none — the local axis.
-    static JsonObject UnitSingletonRead()
+    internal static JsonObject UnitSingletonRead()
     {
         var read = new JsonObject
         {

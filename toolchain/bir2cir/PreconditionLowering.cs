@@ -153,7 +153,7 @@ static class PreconditionLowering
                     cond = new JsonObject
                     {
                         ["k"] = "cond",
-                        ["cond"] = new JsonObject { ["k"] = "unaryOp", ["op"] = "!", ["e"] = new JsonObject { ["k"] = "objEq", ["lhs"] = local.DeepClone(), ["rhs"] = UnitNull() } },
+                        ["cond"] = new JsonObject { ["k"] = "unaryOp", ["op"] = "!", ["e"] = new JsonObject { ["k"] = "objEq", ["lhs"] = local.DeepClone(), ["rhs"] = NullLiteral() } },
                         ["then"] = local.DeepClone(),
                         ["else"] = ThrowExpr(NewExc(exc, "Required value was null")),
                     };
@@ -167,6 +167,7 @@ static class PreconditionLowering
     }
 
     static JsonObject UnitNull() => new() { ["k"] = "const", ["type"] = TypeJson.Fqn("kotlin.Unit"), ["value"] = null };
+    static JsonObject NullLiteral() => new() { ["k"] = "const", ["type"] = Nullable(TypeJson.Fqn("kotlin.Nothing")), ["value"] = null };
 
     static JsonObject Nullable(JsonNode of) => new() { ["t"] = "nullable", ["of"] = of };
 

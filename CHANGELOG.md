@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Unit-returning calls supply real Unit values when their results are consumed (#701).** bir2cir preserves
+  physical void calls as statements and materializes Unit on the value edge, including cross-DLL calls, delegates,
+  storage, returns, and conditional branches. Discarded calls remain void, and actual generic Unit results stay values.
+
 - **Variant class carriers retain interface contracts inherited through concrete bases (#699).** Local and referenced
   base chains contribute their interfaces with the exact generic arguments, including fixed constructed interfaces
   and CLR explicit implementations. Upcasts through variant values no longer lose these inherited contracts;

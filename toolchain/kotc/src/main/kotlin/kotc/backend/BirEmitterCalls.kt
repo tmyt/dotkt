@@ -1127,7 +1127,7 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 		val ownerGeneric = (providerOwner as? TypeNode.Fqn)?.args != null
 		if (owner != null) {
 			val kprop = kPropertyStub(ldp.name.asString())
-			val nullRef = """{"k":"const","type":${fqnJson("kotlin.Unit")},"value":null}"""
+			val nullRef = nullConstJson()
 			return delegateInlined(call, if (callee === ldp.setter)
 				"""{"k":"callInstance","ownerType":$owner,"virtual":true,"recv":$dlocal,"method":"setValue"${delegatedOperatorSig(callee)},"args":[$nullRef,$kprop,${expr(regularArgs(call).first())}]}"""
 				else """{"k":"callInstance","ownerType":$owner,"virtual":true,"recv":$dlocal,"method":"getValue"${delegatedOperatorSig(callee)},"args":[$nullRef,$kprop]${retHint(ownerGeneric, ldp.getter.returnType)}}""",
@@ -1410,7 +1410,7 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 		// and throws. (Unsigned `UInt?`/`UByte?`/... take the value-type HasValue/Value branch ABOVE: #118 -- they
 		// ARE value types on the CLR (`Nullable<uint>`), so `nullableElem` includes them via `isPrimitiveOrUnsigned`;
 		// a bare pass-through would leave a `Nullable<uint>` STRUCT at the use site, the #56 struct-consumer issue.)
-		val nullConst = """{"k":"const","type":${fqnJson("kotlin.Unit")},"value":null}"""
+		val nullConst = nullConstJson()
 		return valueBlockJson(
 			type = null,
 			stmts = """{"k":"var","name":${str(nv)},"type":${birType(arg.type).toJson()},"init":${expr(arg)}}""",
