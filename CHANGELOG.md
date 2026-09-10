@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Owner-constrained suspend methods preserve generic frames through variant carriers (#695).** Task and cold-entry
+  slots share representable CLR constraints, including overrides with concrete source bounds. State machines retain
+  owner and method type arguments across suspension; referenced carrier slots retain their Kotlin source identity.
+
 - **Non-suspend owner-constrained generic methods remain callable through variant class values (#695).** Direct
   forwarding preserves method arguments and virtual dispatch; source bounds remain in Kotlin metadata while
   unrepresentable CLR constraint rows are omitted. This fixes absent existential methods without per-call delegate

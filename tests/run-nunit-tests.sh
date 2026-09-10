@@ -51,8 +51,8 @@ PROJECTS=(
 # the same change, making otherwise-silent test proliferation or accidental deletion an explicit review event.
 declare -A EXPECTED_DISCOVERED=(
 	["tests/basic"]=496
-	["tests/coroutines"]=201
-	["tests/roundtrip/consumer"]=96
+	["tests/coroutines"]=202
+	["tests/roundtrip/consumer"]=97
 	["tests/roundtrip/bidirectional/consumer"]=10
 	["tests/interop/consumer"]=173
 )
@@ -328,6 +328,14 @@ for proj in "${PROJECTS[@]}"; do
 		fi
 	fi
 	if [[ "$proj" == "tests/coroutines" ]]; then
+		owner_suspend_cir="$dir/obj/$CONFIGURATION/net10.0/cir/OwnerConstrainedSuspendTests.cir.json"
+		if python3 "$ROOT/tests/coroutines/assert-owner-constrained-suspend-cir.py" "$owner_suspend_cir" \
+			>"$ROOT/build/nunit-$name.owner-constrained-suspend-cir.log" 2>&1; then
+			echo "  owner-constrained suspend metadata and generic frames OK"
+		else
+			echo "  OWNER-CONSTRAINED SUSPEND CIR FAIL — see build/nunit-$name.owner-constrained-suspend-cir.log"
+			tail -25 "$ROOT/build/nunit-$name.owner-constrained-suspend-cir.log"; rc=1
+		fi
 		coroutine_cir="$dir/obj/$CONFIGURATION/net10.0/cir/SuspendDispatchTests.cir.json"
 		if python3 "$ROOT/tests/coroutines/assert-suspend-super-cir.py" "$coroutine_cir" \
 			>"$ROOT/build/nunit-$name.suspend-super-cir.log" 2>&1; then

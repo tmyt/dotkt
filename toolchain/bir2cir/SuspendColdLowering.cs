@@ -32,7 +32,7 @@
 //   * concrete + NOT segmentable (v1)    -> a call-time-throw cold entry (`throw NotSupportedException(reason)`)
 //                                           + bridge, and a bir2cir WARNING naming the fun + the refusal site.
 // The v1-non-segmentable set is: a suspension in a catch/finally, a nested suspending try, a suspend lambda
-// body reached in a disallowed position, and the M4 own-generic-on-a-generic-class combination. Because the
+// body reached in a disallowed position. Because the
 // cold entry ALWAYS exists (concrete, callable), same-assembly call-site rewrite is UNCONDITIONAL for
 // callStatic/callInstance/clr* alike (resolvability holds by construction), and virtual dispatch through the
 // virtual/override-lockstep cold slot resolves inherited/overridden members natively — no hierarchy walk.
@@ -910,8 +910,8 @@ static partial class SuspendColdLowering
     }
 
     // A suspend member of a class (instance, static/companion, abstract, interface, or generic). All shapes are
-    // admitted — a non-segmentable one (the M4 own-generic-on-generic-class combination, a suspension in a
-    // catch/finally, …) still gets a call-time-throw cold entry from FunGen, never a drop.
+    // admitted — a non-segmentable one (a suspension in a catch/finally, …) still gets a call-time-throw
+    // cold entry from FunGen, never a drop.
     static bool IsMemberColdCandidate(JsonObject m)
     {
         if (!Mod(m, "suspend")) return false;
@@ -1169,7 +1169,7 @@ static partial class SuspendColdLowering
         readonly bool _staticMember;             // M3 — a `static` member (companion suspend fun): cold entry/bridge stay static in the class, no `$this`
         readonly bool _generated;                // implementation declaration (e.g. a materialized local suspend fun)
         // R1 classifier — non-null when this concrete member cannot be segmented (a v1-unsupported suspension
-        // position, or M4 own-generic-on-generic-class): the cold entry becomes a call-time `throw NotSupportedException`
+        // position): the cold entry becomes a call-time `throw NotSupportedException`
         // carrying this reason (design §11 policy). null for a segmentable or an abstract member.
         readonly string _stubReason;
         readonly Dictionary<string, TypeNode> _calleeRet;
@@ -1311,7 +1311,7 @@ static partial class SuspendColdLowering
                     ? Str(first["name"])
                     : null;
             _typeParams = ReadTypeParamNames(m["typeParams"]);
-            _methodTypeParamDecls = (m["typeParams"] as JsonArray)?.DeepClone() as JsonArray ?? new JsonArray();
+            _methodTypeParamDecls = ConstrainedTypeParameterReceiverBinding.CloneMethodParametersWithErasedSourceBounds(m);
             _overrideMarkers = (m["overrides"] as JsonArray)?.DeepClone() as JsonArray ?? new JsonArray();
             _physicalSlotBridge = Bool(m[KotlinPropertyAccessors.PhysicalSlotBridgeKey]);
             _clrInterfaceSlotBridge = Bool(m[KotlinPropertyAccessors.ClrInterfaceSlotBridgeKey]);
@@ -1332,14 +1332,11 @@ static partial class SuspendColdLowering
                 : new TypeNode.Fqn(_ownerClass, TypeTvs(_ownerTypeParams.Count));
             _smTypeInst = _smAllTps.Count == 0 ? new TypeNode.Fqn(_smType) : new TypeNode.Fqn(_smType, TypeTvs(_smAllTps.Count));
             // R1 classifier — decide the segmentable-vs-call-time-throw shape for a CONCRETE member (an abstract
-            // member has no body and is handled by the `_memberAbstract` branch). M4: a member generic on its OWN
-            // type params AND on a generic class needs the SM to thread the union of both param lists (deferred v1).
-            // Otherwise the body must have every suspension in a segmentable position (SuspensionRefusalReason).
+            // member has no body and is handled by the `_memberAbstract` branch). The state-machine frame above
+            // carries both owner and method parameters; classify the body's suspension positions independently.
             if (!_memberAbstract)
             {
-                if (_typeParams.Count > 0 && _ownerTypeParams.Count > 0 && !_staticMember)
-                    _stubReason = "a generic suspend method on a generic class";
-                else if ((m["body"] as JsonArray) is JsonArray b0)
+                if ((m["body"] as JsonArray) is JsonArray b0)
                     _stubReason = SuspensionRefusalReason(b0, inHandler: false, tryDepth: 0);
             }
         }
@@ -1483,8 +1480,8 @@ static partial class SuspendColdLowering
                 return;
             }
 
-            // R1 — a concrete but NOT-segmentable member (a v1-unsupported suspension position, or M4
-            // own-generic-on-generic-class) still gets its cold-entry + bridge slot UNCONDITIONALLY, with a
+            // R1 — a concrete but NOT-segmentable member (a v1-unsupported suspension position)
+            // still gets its cold-entry + bridge slot UNCONDITIONALLY, with a
             // CALL-TIME throw body (design §11: "call-time NotSupportedException, never an emit crash"). Both call
             // paths observe the throw: a Kotlin->Kotlin cold call propagates it synchronously; the public Task
             // bridge catches it (its try/catch) and faults the Task. Warn once here, naming the fun + the root
@@ -3531,6 +3528,8 @@ static partial class SuspendColdLowering
             if (_ownerTypeParams.Count > 0)
                 type["outerTypeParamCount"] = _ownerTypeParams.Count;
             RebindMethodTypeVariablesToSm(type, _ownerTypeParams.Count);
+            if (type["typeParams"] is JsonArray frameParameters)
+                OwnerConstrainedMethodLowering.PreserveDispatchBounds(type, frameParameters);
             return type;
         }
 
@@ -3936,6 +3935,8 @@ static partial class SuspendColdLowering
         // inspected to recover the original declaration.
         void CarrySourceDeclaration(JsonObject method)
         {
+            if (method["typeParams"] is JsonArray methodParameters)
+                OwnerConstrainedMethodLowering.PreserveDispatchBounds(method, methodParameters);
             method[DeclarationRename.SourceMemberKey] =
                 _m[DeclarationRename.SourceMemberKey]?.DeepClone() ?? JsonValue.Create(_name);
             var parameters = new JsonArray();
@@ -3949,10 +3950,14 @@ static partial class SuspendColdLowering
         // lowering replaces. The public Task MethodDef is still that Kotlin declaration's metadata owner, so move
         // the opaque pre-erasure fact with it; the generated cold entry and state machine are physical details and
         // must not publish a second Kotlin declaration carrier.
-        void CarryMethodTypeParameterBounds(JsonObject method)
+        void CarryKotlinDeclarationMetadata(JsonObject method)
         {
             if (_m[NullableGenericErasure.MethodTypeParameterBoundsPre] is JsonNode bounds)
                 method[NullableGenericErasure.MethodTypeParameterBoundsPre] = bounds.DeepClone();
+            // The existential slot's source identity belongs to its public Task projection too. Without it,
+            // a separately compiled consumer cannot select this slot from the original Kotlin declaration.
+            if (Str(_m[FBoundStarProjectionErasure.SourceMemberKey]) is string sourceMember)
+                RoundtripMetadata.AddSourceMethodIdentity(method, sourceMember);
         }
 
         // A resolved MethodImpl descriptor names the declaration signature, not merely its logical source method.
@@ -4225,7 +4230,7 @@ static partial class SuspendColdLowering
                     am["typeParams"] = _methodTypeParamDecls.DeepClone();
                 if (_generated) am["generated"] = true;
                 CarrySourceDeclaration(am);
-                CarryMethodTypeParameterBounds(am);
+                CarryKotlinDeclarationMetadata(am);
                 CarryOverrideMarkers(am);
                 CarryPhysicalSlotFacts(am, coldEntry: false);
                 if (TaskReturnNullableFlags() is JsonArray arnf) am["retNullableFlags"] = arnf;
@@ -4341,7 +4346,7 @@ static partial class SuspendColdLowering
                 method["typeParams"] = _methodTypeParamDecls.DeepClone();
             if (_generated) method["generated"] = true;
             CarrySourceDeclaration(method);
-            CarryMethodTypeParameterBounds(method);
+            CarryKotlinDeclarationMetadata(method);
             CarryOverrideMarkers(method);
             CarryPhysicalSlotFacts(method, coldEntry: false);
             // BUG 2 (nested return nullability): a `suspend fun f(): String?`'s bridge return `Task<string?>` needs the

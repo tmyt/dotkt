@@ -151,7 +151,7 @@ static class KotlinOverrideSlotBridge
             string identityName, string descriptorMember, string propertyAccessor,
             TypeNode[] slotParams, TypeNode slotRet, JsonObject impl, JsonArray slotTypeParams = null)
         {
-            if (!emitBridges && !IsSuspendMethod(impl))
+            if (!emitBridges)
                 OwnerConstrainedMethodLowering.RecordOverride(impl, slotTypeParams,
                     semanticSpec.Args ?? Array.Empty<TypeNode>(),
                     defs.TryGetValue(semanticSpec.Name, out var constraintOwner)
