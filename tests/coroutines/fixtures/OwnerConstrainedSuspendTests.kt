@@ -35,6 +35,31 @@ class OwnerSuspendGenericSink<in T> : OwnerSuspendSink<T>() {
     }
 }
 
+class OwnerSuspendShadowFrame<T>(val owner: T) {
+    suspend fun <T> render(value: T, pause: suspend () -> Unit): String {
+        pause()
+        return "$owner:$value"
+    }
+}
+
+interface OwnerSuspendDefaultSink<in T> {
+    suspend fun <R : T> render(value: R, pause: suspend () -> Unit): String {
+        pause()
+        return "default:$value"
+    }
+}
+class OwnerSuspendDefaultImpl : OwnerSuspendDefaultSink<Any>
+
+class OwnerSuspendComparer : System.Collections.Generic.IComparer<Any> {
+    override fun Compare(x: Any?, y: Any?): Int = x.toString().toInt()
+}
+class OwnerSuspendCovariantValue<out T>(val item: T) {
+    suspend fun <R : System.Collections.Generic.IComparer<T>> render(value: R, pause: suspend () -> Unit): String {
+        pause()
+        return value.Compare(item, item).toString()
+    }
+}
+
 // Resume only after startCoroutine returns, so every call crosses a real suspension boundary.
 private fun ownerSuspendRun(expected: String, body: suspend (suspend () -> Unit) -> String) {
     var actual = "pending"
@@ -63,5 +88,10 @@ class OwnerConstrainedSuspendTests {
         ownerSuspendRun("derived:dog") { pause -> animals.render(OwnerSuspendDog(), pause) }
         val generic: OwnerSuspendSink<Int> = OwnerSuspendGenericSink<Any>()
         ownerSuspendRun("generic:44") { pause -> generic.render(44, pause) }
+        ownerSuspendRun("owner:17") { pause -> OwnerSuspendShadowFrame("owner").render(17, pause) }
+        val defaultSink: OwnerSuspendDefaultSink<String> = OwnerSuspendDefaultImpl()
+        ownerSuspendRun("default:text") { pause -> defaultSink.render("text", pause) }
+        val covariant: OwnerSuspendCovariantValue<Any> = OwnerSuspendCovariantValue(19)
+        ownerSuspendRun("19") { pause -> covariant.render(OwnerSuspendComparer(), pause) }
     }
 }
