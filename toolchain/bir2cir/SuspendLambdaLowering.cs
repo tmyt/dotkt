@@ -264,17 +264,20 @@ static class SuspendLambdaLowering
         for (var ci = 0; ci < captureSlots.Count; ci++)
         {
             var (n, t, outer) = captureSlots[ci];
+            JsonNode argument;
             if (capValues != null && capValues[ci] != null)
-                args.Add(capValues[ci].DeepClone());
+                argument = capValues[ci].DeepClone();
             else
                 // The explicit outer:true capture's VALUE at an ordinary (non-SM) construction site is the enclosing
                 // method's receiver: an instance method reads `this`; a static extension reads the exact physical
                 // receiver slot carried by outerSelf. Every other capture is a real local. Descriptor spelling has no
                 // semantic role here.
-                args.Add(outer
+                argument = outer
                     ? (outerSelf != null ? new JsonObject { ["k"] = "local", ["name"] = outerSelf }
                                  : new JsonObject { ["k"] = "this" })
-                    : new JsonObject { ["k"] = "local", ["name"] = n });
+                    : new JsonObject { ["k"] = "local", ["name"] = n };
+            if (outer && argument is JsonObject exactOuter) exactOuter["outer"] = true;
+            args.Add(argument);
             // BuildLambdaSm moves the enclosing method's generic parameters onto the synthesized SM type. Its ctor
             // therefore declares capture slots with those variables in TYPE scope. InlineSplice has already flattened
             // method variables follow the complete owner prefix on the nested SM. NormalizeOwnerCapturePrefix made

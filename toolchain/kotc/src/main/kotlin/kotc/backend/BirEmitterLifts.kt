@@ -377,7 +377,8 @@ internal fun BirEmitter.lambda(node: IrFunctionExpression): String {
 	// VALUE (capValueExpr below) is still evaluated correctly in the enclosing context.
 	val savedSubst = capPairs.associate { (decl, _) -> decl to captureSubst[decl] }
 	capPairs.forEach { (decl, fname) ->
-		captureSubst[decl] = """{"k":"field","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":${str(fname)}}"""
+		val outer = if (isExactOuterDeclaration(decl)) ""","outer":true""" else ""
+		captureSubst[decl] = """{"k":"field","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":${str(fname)}$outer}"""
 	}
 	val recvName = lambdaRecvName(fn)
 	val body = withFreshLambdaLocalFunctionIds(fn) {
@@ -386,7 +387,10 @@ internal fun BirEmitter.lambda(node: IrFunctionExpression): String {
 		}
 	}
 	capPairs.forEach { (decl, _) -> val prev = savedSubst[decl]; if (prev != null) captureSubst[decl] = prev else captureSubst.remove(decl) }
-	val fields = capPairs.joinToString(",") { (decl, fname) -> """{"name":${str(fname)},"type":${str(captureFieldType(decl))}}""" }
+	val fields = capPairs.joinToString(",") { (decl, fname) ->
+		val outer = if (isExactOuterDeclaration(decl)) ""","outer":true""" else ""
+		"""{"name":${str(fname)},"type":${str(captureFieldType(decl))}$outer}"""
+	}
 	// The closure must be GENERIC over any enclosing type parameters it captures (reified CLR generics — a `gp:T`
 	// field is unresolved otherwise). Declare them on the class and pass them as type arguments at `newClosure`.
 	val freeTps = freeTypeParams(capPairs.map { it.first.type } + fn.parameters.map { it.type } + listOf(fn.returnType) + bodyTypeOperands(fn))
@@ -435,7 +439,11 @@ internal fun BirEmitter.samConversion(node: IrTypeOperatorCall): String {
 	// object-param erasure / SAM-arg cast bridge to apply here; the SAM shim implements the Kotlin fun-interface
 	// identity directly and bir2cir derives any CLR type off the ref.dll.
 	val savedSubst = java.util.IdentityHashMap<IrValueDeclaration, String?>()
-	capPairs.forEach { (decl, fname) -> savedSubst[decl] = captureSubst[decl]; captureSubst[decl] = """{"k":"field","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":${str(fname)}}""" }
+	capPairs.forEach { (decl, fname) ->
+		savedSubst[decl] = captureSubst[decl]
+		val outer = if (isExactOuterDeclaration(decl)) ""","outer":true""" else ""
+		captureSubst[decl] = """{"k":"field","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":${str(fname)}$outer}"""
+	}
 	val samParams = lambdaParamsJson(fn.parameters)
 	val body = withFreshLambdaLocalFunctionIds(fn) {
 		(fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
@@ -452,8 +460,14 @@ internal fun BirEmitter.samConversion(node: IrTypeOperatorCall): String {
 	val samMods = if (sam.isSuspend) ""","mods":{"suspend":true},"suspendRet":${str(ret)}""" else ""
 	val samMethod = """{"name":${str(samName)},"static":false,"override":true,"virtual":true,"params":[$samParams],"ret":${str(ret)}$samMods,"body":[$body]}"""
 	savedSubst.forEach { (decl, prev) -> if (prev != null) captureSubst[decl] = prev else captureSubst.remove(decl) }
-	val fields = capPairs.joinToString(",") { (decl, fname) -> """{"name":${str(fname)},"type":${str(captureFieldType(decl))}}""" }
-	val ctorBody = capPairs.joinToString(",") { (_, fname) -> """{"k":"setField","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":${str(fname)},"value":{"k":"local","name":${str(fname)}}}""" }
+	val fields = capPairs.joinToString(",") { (decl, fname) ->
+		val outer = if (isExactOuterDeclaration(decl)) ""","outer":true""" else ""
+		"""{"name":${str(fname)},"type":${str(captureFieldType(decl))}$outer}"""
+	}
+	val ctorBody = capPairs.joinToString(",") { (decl, fname) ->
+		val outer = if (isExactOuterDeclaration(decl)) ""","outer":true""" else ""
+		"""{"k":"setField","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":${str(fname)},"value":{"k":"local","name":${str(fname)}$outer}$outer}"""
+	}
 	// A projected CLR classifier carries its exact current-format [ClrExternal] TypeDef identity through birType.
 	// ownerSpec is the semantic owner spelling used for ordinary Kotlin member lookup; using it here would leave an
 	// arity-collision name (Foo1<T>) or flattened nested name inside the synthesized declaration, where bir2cir has no

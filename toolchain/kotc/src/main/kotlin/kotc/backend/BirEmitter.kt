@@ -25,6 +25,7 @@ import org.jetbrains.kotlin.ir.expressions.IrDelegatingConstructorCall
 import org.jetbrains.kotlin.ir.expressions.IrClassReference
 import org.jetbrains.kotlin.ir.expressions.IrEnumConstructorCall
 import org.jetbrains.kotlin.ir.expressions.IrExpressionBody
+import org.jetbrains.kotlin.ir.expressions.IrExpression
 import org.jetbrains.kotlin.ir.declarations.IrEnumEntry
 import org.jetbrains.kotlin.ir.expressions.IrGetEnumValue
 import org.jetbrains.kotlin.ir.expressions.IrGetField
@@ -509,6 +510,19 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 	// Captured outer values inside a capturing object literal -> `this.<field>`. Keyed by value-declaration
 	// IDENTITY (not name): the anon's own `<this>` and a captured outer `<this>` share the name "<this>".
 	internal val captureSubst = java.util.IdentityHashMap<IrValueDeclaration, String>()
+	// A declaration that is an immutable alias of the current lexical dispatch receiver remains the exact enclosing
+	// instance.  Declaration-site variance may change the physical representation of ordinary VALUE slots, but it must
+	// never turn `this` (or `val owner = this`) into the declaration's existential carrier: inner construction and
+	// member dispatch need the exact constructed owner.  This identity fact is transient BIR vocabulary consumed by
+	// bir2cir; downstream must not infer it from a source spelling such as `__outer`.
+	internal val exactOuterValues = java.util.IdentityHashMap<IrValueDeclaration, Boolean>()
+	internal fun isExactOuterDeclaration(declaration: IrValueDeclaration): Boolean =
+		(declaration as? IrValueParameter)?.kind == IrParameterKind.DispatchReceiver ||
+			exactOuterValues.containsKey(declaration)
+	internal fun isExactOuterValue(expression: IrExpression?): Boolean {
+		val declaration = (expression as? IrGetValue)?.symbol?.owner ?: return false
+		return isExactOuterDeclaration(declaration)
+	}
 	// When captureSubst deliberately names a bare local slot, retain that slot as an identity fact. Consumers that emit
 	// movable carriers can reuse it without parsing JSON or guessing from a source name; field/other expression
 	// substitutions intentionally have no entry here.

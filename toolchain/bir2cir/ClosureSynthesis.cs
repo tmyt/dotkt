@@ -27,6 +27,7 @@ using DotKt.Bir;
 static class ClosureSynthesis
 {
     static string Str(JsonNode n) => (n as JsonValue)?.GetValue<string>();
+    static bool Bool(JsonNode n) => n is JsonValue value && value.TryGetValue<bool>(out var result) && result;
     const string PreboundFrameKey = "_syntheticFrameBound";
 
     // The referenced-metadata `ref struct` oracle, for the capture legality check (see CheckCaptureLegality).
@@ -443,14 +444,23 @@ static class ClosureSynthesis
         var ctorBody = new JsonArray();
         foreach (var f in fields)
             if (f is JsonObject fo && Str(fo["name"]) is string fn)
-                ctorBody.Add(new JsonObject
+            {
+                var exactOuter = Bool(fo["outer"]);
+                var assignment = new JsonObject
                 {
                     ["k"] = "setField",
                     ["ownerType"] = fqName.DeepClone(),
                     ["recv"] = new JsonObject { ["k"] = "this" },
                     ["name"] = fn,
                     ["value"] = new JsonObject { ["k"] = "local", ["name"] = fn },
-                });
+                };
+                if (exactOuter)
+                {
+                    assignment["outer"] = true;
+                    ((JsonObject)assignment["value"])["outer"] = true;
+                }
+                ctorBody.Add(assignment);
+            }
 
         var ctor = new JsonObject
         {
@@ -506,10 +516,10 @@ static class ClosureSynthesis
     // untouched). No re-resolution: the type is read straight off the closure's own `fields` decl.
     static void StampCaptureFieldSty(JsonNode body, JsonArray fields)
     {
-        var fieldTypes = new Dictionary<string, JsonNode>(System.StringComparer.Ordinal);
+        var fieldTypes = new Dictionary<string, (JsonNode Type, bool Outer)>(System.StringComparer.Ordinal);
         foreach (var f in fields)
             if (f is JsonObject fo && Str(fo["name"]) is string fn && fo["type"] is JsonNode ft)
-                fieldTypes[fn] = ft;
+                fieldTypes[fn] = (ft, Bool(fo["outer"]));
         if (fieldTypes.Count == 0) return;
         void Walk(JsonNode n)
         {
@@ -517,8 +527,11 @@ static class ClosureSynthesis
             {
                 if (Str(o["k"]) == "field" && o["sty"] == null
                     && o["recv"] is JsonObject rc && Str(rc["k"]) == "this"
-                    && Str(o["name"]) is string nm && fieldTypes.TryGetValue(nm, out var t))
-                    o["sty"] = t.DeepClone();
+                    && Str(o["name"]) is string nm && fieldTypes.TryGetValue(nm, out var field))
+                {
+                    o["sty"] = field.Type.DeepClone();
+                    if (field.Outer) o["outer"] = true;
+                }
                 // Do NOT descend into a NESTED closure's own invoke body (`synthClass`) — its `this` is a different
                 // closure, processed by its own BuildClosureClass. A nested closure's CAPTURE value exprs are evaluated
                 // in THIS scope and stay reachable (they are not under `synthClass`), so they still get stamped.

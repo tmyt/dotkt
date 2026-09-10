@@ -570,7 +570,7 @@ internal fun BirEmitter.enclosingThisSubst(
 	var hop = !calleeIsCtor
 	val out = ArrayList<Pair<IrValueDeclaration, String>>()
 	for ((t, inner) in chain) {
-		if (hop) value = """{"k":"field","ownerType":${fqnJson(typeName(inner))},"recv":$value,"name":"__outer"}"""
+		if (hop) value = """{"k":"field","ownerType":${fqnJson(typeName(inner))},"recv":$value,"name":"__outer","outer":true}"""
 		hop = true
 		out.add(t to value)
 	}

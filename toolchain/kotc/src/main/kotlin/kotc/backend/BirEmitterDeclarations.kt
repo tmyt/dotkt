@@ -1138,7 +1138,7 @@ internal fun BirEmitter.innerClassDef(inner: IrClass): String {
 	var receiver = """{"k":"this"}"""
 	while (child.isInner) {
 		val parent = child.parent as? IrClass ?: break
-		receiver = """{"k":"field","ownerType":${fqnJson(typeName(child))},"recv":$receiver,"name":"__outer"}"""
+		receiver = """{"k":"field","ownerType":${fqnJson(typeName(child))},"recv":$receiver,"name":"__outer","outer":true}"""
 		parent.thisReceiver?.let {
 			saved[it] = captureSubst[it]
 			captureSubst[it] = receiver
@@ -1667,7 +1667,8 @@ internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDecla
 	val staticPropFields = staticPropertyFields(klass)
 	// A capturing object literal carries its captured outer values as extra instance fields.
 	val capFields = captures.map { (decl, fname) ->
-		"""{"name":${str(fname)},"type":${str(captureFieldType(decl))},"vis":"private"}"""
+		val outer = if (isExactOuterDeclaration(decl)) ""","outer":true""" else ""
+		"""{"name":${str(fname)},"type":${str(captureFieldType(decl))},"vis":"private"$outer}"""
 	}
 	// `object` singleton: a static `INSTANCE` field initialized to `new Foo()` (run in the .cctor) — same shape
 	// as an enum entry. `IrGetObjectValue` loads it; member access then routes as normal instance access.
@@ -1817,9 +1818,13 @@ internal fun BirEmitter.ctor(klass: IrClass, ctor: IrConstructor, captures: List
 	else typeName(klass)
 	// Captured outer values arrive as leading ctor params and are stored into the capture fields first
 	// (the instance initializers below read them, e.g. `var cur = from` -> `this.__outer.from`).
-	val capParams = captures.map { (decl, fname) -> """{"name":${str(fname)},"type":${str(captureFieldType(decl))}}""" }
-	val capAssigns = captures.map { (_, fname) ->
-		"""{"k":"setField","ownerType":${fqnJson(typeName(klass))},"recv":{"k":"this"},"name":${str(fname)},"value":{"k":"local","name":${str(fname)}}}"""
+	val capParams = captures.map { (decl, fname) ->
+		val outer = if (isExactOuterDeclaration(decl)) ""","outer":true""" else ""
+		"""{"name":${str(fname)},"type":${str(captureFieldType(decl))}$outer}"""
+	}
+	val capAssigns = captures.map { (decl, fname) ->
+		val outer = if (isExactOuterDeclaration(decl)) ""","outer":true""" else ""
+		"""{"k":"setField","ownerType":${fqnJson(typeName(klass))},"recv":{"k":"this"},"name":${str(fname)},"value":{"k":"local","name":${str(fname)}$outer}$outer}"""
 	}
 	// `ctor` as the owner so its defaulted params carry `@KotlinDefault` (the cross-module splice source), exactly as a
 	// carrying function's do — a re-consumed constructor's non-constant default has no other carrier. NOT for a lifted
@@ -1845,9 +1850,13 @@ internal fun BirEmitter.ctor(klass: IrClass, ctor: IrConstructor, captures: List
 	val savedCapSubst = java.util.IdentityHashMap<IrValueDeclaration, String?>()
 	captures.forEach { (d, fname) ->
 		savedCapSubst[d] = captureSubst[d]
-		captureSubst[d] = """{"k":"local","name":${str(fname)}}"""
+		val outer = if (isExactOuterDeclaration(d)) ""","outer":true""" else ""
+		captureSubst[d] = """{"k":"local","name":${str(fname)}$outer}"""
 	}
-	val capForwardArgs = if (klass.isInner) emptyList() else captures.map { (_, f) -> """{"k":"local","name":${str(f)}}""" }
+	val capForwardArgs = if (klass.isInner) emptyList() else captures.map { (decl, f) ->
+		val outer = if (isExactOuterDeclaration(decl)) ""","outer":true""" else ""
+		"""{"k":"local","name":${str(f)}$outer}"""
+	}
 	// A delegation is an ordinary call site with its own EVALUATION PLAN (§2.7), but it is not an expression — it rides
 	// the ctor declaration, ahead of the body — so there is no wrapping `valueBlock` to lower the plan into. The
 	// bindings ride the declaration instead, as `delegationBindings`; bir2cir's CallEvalLowering turns them into
@@ -1871,7 +1880,8 @@ internal fun BirEmitter.ctor(klass: IrClass, ctor: IrConstructor, captures: List
 				val here = captures.firstOrNull { (own, _) -> own === baseCapture }?.second
 					?: return@let invariantBroken(delegating,
 						"a local base class's capture is not a capture of the derived local class")
-				"""{"k":"local","name":${str(here)}}"""
+				val outer = if (isExactOuterDeclaration(baseCapture)) ""","outer":true""" else ""
+				"""{"k":"local","name":${str(here)}$outer}"""
 			}
 			withCallPlan(d) { baseCaptureArgs + delegatedCtorArgs(d) }
 				.let { (plan, a) ->
@@ -1911,6 +1921,9 @@ internal fun BirEmitter.ctor(klass: IrClass, ctor: IrConstructor, captures: List
 		(hiddenDelegationSig + enclosing + declared).joinToString(",")
 	}
 		?.let { ""","delegationSig":[$it]""" } ?: ""
+	val delegationOuterSlot = delegating?.let { d ->
+		dispatchReceiver(d)?.let { hiddenDelegationSig.size }
+	}?.let { ""","delegationOuterSlot":$it""" } ?: ""
 	// #6 non-null parameter PRECONDITIONS at entry. They land AFTER the base/`this` ctor delegation (baseArgs/thisArgs
 	// ride a separate field), so a null user param dereferenced by a base-ctor arg NREs before this friendly NPE — an
 	// accepted ordering deviation from JVM's before-super() insertion (docs/dotkt-semantics.md).
@@ -1920,7 +1933,7 @@ internal fun BirEmitter.ctor(klass: IrClass, ctor: IrConstructor, captures: List
 	// Constructor annotations are declaration metadata just like method annotations. In particular, trusted CLR
 	// binding annotations on an alias constructor must reach bir2cir before the alias TypeDef is hoisted away; omitting
 	// this slot makes a consumer unable to distinguish a Kotlin copy contract from the physical CLR constructor shape.
-	return """{"params":[$params],"baseArgs":$baseJson,"thisArgs":$thisJson$delegationSig$bindingsJson,"vis":${str(visOf(ctor))},"body":[$ctorBody],"attrs":[${attrsJson(ctor.annotations)}]}"""
+	return """{"params":[$params],"baseArgs":$baseJson,"thisArgs":$thisJson$delegationSig$delegationOuterSlot$bindingsJson,"vis":${str(visOf(ctor))},"body":[$ctorBody],"attrs":[${attrsJson(ctor.annotations)}]}"""
 }
 
 internal fun BirEmitter.method(fn: IrSimpleFunction, static: Boolean, semanticOwnerOverride: String? = null): String {

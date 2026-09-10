@@ -258,6 +258,8 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 			name == "<this>" -> """{"k":"this"}"""
 			else -> {
 				val slot = localSlotName(owner)
+				val outerFact = if (isExactOuterValue(node)) ""","outer":true""" else ""
+				val local = """{"k":"local","name":${str(slot)}$outerFact}"""
 				// Smart-cast narrowing carried directly on the IrGetValue (no IMPLICIT_CAST node — e.g. the `&&`
 				// RHS / a compound condition: `x is Int && x > 10`): the use-site type is narrower than the
 				// declared type, so emit a cast (ilemit unboxes Any->Int / castclass for refs). Without it the
@@ -268,9 +270,9 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 				// invalid IL / reads garbage (the C1 smart-cast miscompile). This is the twin of the IMPLICIT_CAST path.
 				val vElem = nullableValueUnwrapElem(owner.type, node.type)
 				// The declared type is the boxed Any token ("object" fallback, or "kotlin.Any" for an Any/Nothing source type).
-				if (vElem != null) """{"k":"nullableValue","elem":${vElem.toJson()},"e":{"k":"local","name":${str(slot)}}}"""
-				else if (ut != dt && dt == OBJ) """{"k":"cast","type":${ut.toJson()},"e":{"k":"local","name":${str(slot)}}}"""
-				else """{"k":"local","name":${str(slot)}}"""
+				if (vElem != null) """{"k":"nullableValue","elem":${vElem.toJson()},"e":$local}"""
+				else if (ut != dt && dt == OBJ) """{"k":"cast","type":${ut.toJson()},"e":$local}"""
+				else local
 			}
 		}
 	}
