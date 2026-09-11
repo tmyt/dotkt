@@ -70,6 +70,7 @@ static partial class SuspendColdLowering
     // entry points); FunGen (nested) reads it. ApplyAll runs before the lambda phase, so it is always populated by then.
     static ReferenceMetadataIndex _refs;
     static ValueTypeOracle _isValueFqn = _ => false;
+    static IReadOnlySet<string> _localTypeFqns;
 
     // APP-build gate for cold-lowering an `inline suspend fun`'s STANDALONE body. In an app build an inline suspend fun
     // is a user/kotlinx WRAPPER (e.g. `suspendCancellableCoroutine`, or the issue-#22 `mySuspend`) whose standalone body
@@ -334,6 +335,7 @@ static partial class SuspendColdLowering
     {
         _refs = refs;   // #10: EmitAwaitPoint reads it to resolve the .NET awaitable pattern for each `.await()`.
         _isValueFqn = isValueFqn ?? (_ => false);
+        _localTypeFqns = localTypeFqns;
         _appBuild = appBuild;
         const string continuation = "kotlin.coroutines.Continuation";
         var continuationCarrier = localExistentialOwners.GetValueOrDefault(continuation);
@@ -4388,7 +4390,9 @@ static partial class SuspendColdLowering
             if (_resultNullable && result is not TypeNode.Nullable)
                 result = new TypeNode.Nullable(result);
             return NullableFlags.Compute(new TypeNode.Fqn(taskReturn.Name, new[] { result }),
-                _isValueFqn, NullableFlags.Convention.ClrSignature);
+                _isValueFqn, NullableFlags.Convention.ClrSignature,
+                type => BirTypeLowering.LowerPhysicalType(type, _refs.Aliases, _isValueFqn,
+                    _refs.PhysicalTypeNames, typeArg: true, _localTypeFqns) is TypeNode.Fqn { Args: not null });
         }
 
         // The bridge's cold-entry call: forward the bridge params + the RootContinuation (cast to the erased

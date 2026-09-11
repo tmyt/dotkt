@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 using System.Threading.Tasks;
 using NUnit.Framework;
@@ -11,6 +13,15 @@ public class NestedSuspendNullabilityTests
 
     private static void State(NullabilityInfo info, NullabilityState expected) =>
         Assert.That(info.ReadState, Is.EqualTo(expected));
+
+    private static byte[] Flags(string name)
+    {
+        var attribute = typeof(NestedSuspendNullabilityKt).GetMethod(name)!.ReturnParameter
+            .GetCustomAttributesData().Single(a => a.AttributeType.Name == "NullableAttribute");
+        var value = attribute.ConstructorArguments[0].Value;
+        return value is byte scalar ? new[] { scalar } :
+            ((IEnumerable<CustomAttributeTypedArgument>)value!).Select(a => (byte)a.Value!).ToArray();
+    }
 
     [Test]
     public async Task TaskResultsRetainNestedReferenceAndArrayNullability()
@@ -70,6 +81,19 @@ public class NestedSuspendNullabilityTests
         Assert.That(collapsed.GenericTypeArguments[0].Type.IsGenericType, Is.False);
         State(collapsed.GenericTypeArguments[0], NullabilityState.Nullable);
         State(collapsed.GenericTypeArguments[1], NullabilityState.Nullable);
+        foreach (var name in new[] { "lateCollapsedResult", "starComparableResult", "enumResult" })
+        {
+            var pair = Result(name).GenericTypeArguments[0];
+            Assert.That(pair.GenericTypeArguments[0].Type,
+                Is.EqualTo(name == "enumResult" ? typeof(Enum) : typeof(IComparable)));
+            State(pair.GenericTypeArguments[0], NullabilityState.Nullable);
+            State(pair.GenericTypeArguments[1], NullabilityState.NotNull);
+            Assert.That(Flags(name), Is.EqualTo(new byte[] { 1, 1, 2, 1 }));
+        }
+        State(Result("lateCollapsedNullableResult").GenericTypeArguments[0].GenericTypeArguments[1],
+            NullabilityState.Nullable);
+        Assert.That(Flags("lateCollapsedNullableResult"), Is.EqualTo(new byte[] { 1, 1, 2, 2 }));
+        State(Result("primitiveResult").GenericTypeArguments[0].GenericTypeArguments[1], NullabilityState.Nullable);
     }
 
     [Test]
@@ -83,6 +107,8 @@ public class NestedSuspendNullabilityTests
         Assert.That(unit.GenericTypeArguments[0].Type, Is.EqualTo(typeof(kotlin.Unit)));
         State(Result("nonNullControl").GenericTypeArguments[0].GenericTypeArguments[0], NullabilityState.NotNull);
         State(Result("ordinaryBox").GenericTypeArguments[0], NullabilityState.Nullable);
+        Assert.That(Flags("ordinaryFunction"), Is.EqualTo(new byte[] { 2 }));
+        Assert.That(Flags("ordinaryUnitBox"), Is.EqualTo(new byte[] { 2 }));
         var context = new NullabilityInfoContext();
         var defaultResult = context.Create(typeof(NestedDefault).GetMethod("read")!.ReturnParameter);
         State(defaultResult.GenericTypeArguments[0], NullabilityState.Nullable);
