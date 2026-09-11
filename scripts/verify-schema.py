@@ -1043,6 +1043,17 @@ class V:
                                                               or not isinstance(value.get("k"), str)):
                                         self.err(f, path + f"/capValues[{i}]",
                                                  "newSuspendLambda capValues entries must be expression nodes or null")
+            if "inheritedClassMethods" in o:
+                facts = o["inheritedClassMethods"]
+                allowed = {"member", "params", "ret", "typeParams", "mods", "overrides", "inheritedImplementation"}
+                required = {"member", "params", "ret", "inheritedImplementation"}
+                if not isinstance(facts, list):
+                    self.err(f, path, "inheritedClassMethods must be a list of declaration facts")
+                else:
+                    for i, fact in enumerate(facts):
+                        if not isinstance(fact, dict) or not required.issubset(fact) or set(fact) - allowed:
+                            self.err(f, path + f"/inheritedClassMethods[{i}]",
+                                     "inheritedClassMethods must contain only selected declaration facts, not executable method bodies")
             # §2.7 PHASE SPLIT. The call-evaluation plan is BIR vocabulary: `callEval`/`bindRef` and the ctor
             # declaration's `delegationBindings` are lowered by CallEvalLowering, so a survivor in CIR means a plan
             # reached ilemit, which has no notion of one. `preStmts` is the CIR form of a delegation's plan and is
@@ -1050,6 +1061,8 @@ class V:
             if f.endswith(".cir.json"):
                 if "samTarget" in o:
                     self.err(f, path, "samTarget is a BIR SAM-conversion fact and must be consumed before CIR")
+                if "dotktValueReturn" in o:
+                    self.err(f, path, "dotktValueReturn is an internal return-representation fact and must be consumed before CIR")
                 if o.get("k") in ("callEval", "bindRef"):
                     self.err(f, path, f"{o['k']!r} is a BIR call-evaluation plan node and must be lowered before CIR")
                 if "delegationBindings" in o:
@@ -1069,7 +1082,7 @@ class V:
                 for property_key in ("propertyName", "propertyAccessor", "propertyAssociation", "kotlinAccessors",
                                      "kotlinPropertyAccessorCarrier", "physicalSlotBridge",
                                      "inheritedImplementation", "inheritedDefaultAccessors",
-                                     "inheritedDefaultMethods"):
+                                     "inheritedDefaultMethods", "inheritedClassMethods"):
                     if property_key in o:
                         self.err(f, path, f"{property_key} is a BIR property-accessor fact and must be consumed before CIR")
                 for declaration_key in ("declarationId", "declarationSourceName", "explicitClrName"):

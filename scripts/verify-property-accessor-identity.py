@@ -23,6 +23,7 @@ SEMANTIC_KEYS = {
     "inheritedImplementation",
     "inheritedDefaultAccessors",
     "inheritedDefaultMethods",
+    "inheritedClassMethods",
 }
 PHYSICAL_PROPERTY_DESCRIPTOR_KEYS = {"getSig", "setSig", "getMethodArity", "setMethodArity"}
 

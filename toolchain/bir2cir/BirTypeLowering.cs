@@ -22,6 +22,9 @@ using DotKt.Bir;
 // resolve ("cannot resolve .NET type kotlin.Byte").
 static class BirTypeLowering
 {
+    // A synthesized declaration/MethodImpl may fill a value-returning generic CLR slot even when its closed
+    // Kotlin type is Unit. This representation fact is consumed here, never serialized into final CIR.
+    internal const string ValueReturnKey = "dotktValueReturn";
     // Kotlin's generic Enum<E> classifier is represented by the non-generic CLR System.Enum classifier. Passes that
     // synthesize ABI for physically reified generic owners must consult this rule instead of treating the BIR arity
     // as proof that a CLR generic TypeDef exists.
@@ -748,10 +751,11 @@ static class BirTypeLowering
                 {
                     continue;
                 }
-                if (kv.Key is "overrides" or "fakeOverride"
+                if (kv.Key is ValueReturnKey or "overrides" or "fakeOverride"
                     or KotlinPropertyAccessors.InheritedImplementationKey
                     or KotlinPropertyAccessors.InheritedDefaultAccessorsKey
                     or KotlinPropertyAccessors.InheritedDefaultMethodsKey
+                    or "inheritedClassMethods"
                     or KotlinPropertyAccessors.SuspendSourceParamsKey
                     or KotlinPropertyAccessors.SuspendSourceRetKey
                     or KotlinPropertyAccessors.SuspendTaskResultKey
@@ -770,7 +774,9 @@ static class BirTypeLowering
                 else if (kv.Key is "sig" or "getSig" or "setSig")
                     copy[kv.Key] = LowerSigValue(kv.Value, refBuild, here);   // sig = param types
                 else if (ReturnKeys.Contains(kv.Key))
-                    copy[kv.Key] = LowerReturnValued(kv.Value, refBuild, here);   // Unit-in-return -> void (uniform)
+                    copy[kv.Key] = kv.Key == "ret" && obj[ValueReturnKey]?.GetValue<bool>() == true
+                        ? LowerTypeValued(kv.Value, refBuild, here)
+                        : LowerReturnValued(kv.Value, refBuild, here);
                 else if (kv.Key == "funcType")
                     copy[kv.Key] = LowerFuncTypeValued(kv.Value, refBuild, here);  // delegate slot -> keep sfunc as func:
                 else if ((kv.Key == "ownerType" || kv.Key == "owner") && IsTypeObject(kv.Value))
