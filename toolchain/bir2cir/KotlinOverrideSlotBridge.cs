@@ -368,9 +368,9 @@ static class KotlinOverrideSlotBridge
                 // A referenced BASE CLASS reaches the same arm; only its wiring differs (a MethodImpl against the
                 // constructed base rather than the interface), and the emitter resolves that base externally.
                 FillFromReference(cls, defs, spec, supIsInterface, candidates, ownArgs, isValue, refs, !emitBridges,
-                    (owner, isInterface, referenced, identity, member, accessor, parameters, ret, implementation,
+                    (semanticOwner, owner, isInterface, referenced, identity, member, accessor, parameters, ret, implementation,
                             slotTypeParams, slotHasDefault, unitValueReturn) =>
-                        Fill(spec, owner, isInterface, referenced, slotHasDefault, identity, member, accessor,
+                        Fill(semanticOwner, owner, isInterface, referenced, slotHasDefault, identity, member, accessor,
                             parameters, ret, implementation, slotTypeParams, unitValueReturn));
                 continue;
             }
@@ -1123,7 +1123,7 @@ static class KotlinOverrideSlotBridge
     static void FillFromReference(Def cls, IReadOnlyDictionary<string, Def> defs, TypeNode.Fqn spec,
         bool supIsInterface, IEnumerable<JsonObject> methods, TypeNode[] ownArgs, ValueTypeOracle isValue,
         ReferenceMetadataIndex refs, bool semanticConstraints,
-        Action<TypeNode.Fqn, bool, bool, string, string, string, TypeNode[], TypeNode, JsonObject, JsonArray, bool, bool> fill)
+        Action<TypeNode.Fqn, TypeNode.Fqn, bool, bool, string, string, string, TypeNode[], TypeNode, JsonObject, JsonArray, bool, bool> fill)
     {
         if (refs == null) return;
         var supArgs = spec.Args ?? Array.Empty<TypeNode>();
@@ -1282,7 +1282,7 @@ static class KotlinOverrideSlotBridge
                     : refs.IsInterfaceType(descriptorOwner);
                 var slotHasDefault = descriptorIsInterface && refs.IsPublicConcreteInstanceMethod(
                     descriptorOwner.Name, descriptorMember, methodArity, slotParams, slotRet);
-                fill(descriptorOwner, descriptorIsInterface, true, accessorKind != null ? member : sourceIdentity,
+                fill(selectedSpec, descriptorOwner, descriptorIsInterface, true, accessorKind != null ? member : sourceIdentity,
                     descriptorMember, accessorKind, slotParams, slotRet, impl, selectedSlotTypeParams,
                     slotHasDefault, slotReturnsValue && IsUnit(slotRet));
                 // Flattened property override facts can name several distinct CLR obligations (a redeclared Kotlin

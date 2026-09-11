@@ -1,6 +1,9 @@
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import NUnit.Framework.Legacy.ClassicAssert.AreSame as assertSame
+import kotlin.coroutines.Continuation
+import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.EmptyCoroutineContext
 
 interface InheritedNameStringSlot { fun read(): String }
 interface InheritedNameValueSlot<T> { fun read(): T }
@@ -56,6 +59,14 @@ class InheritedNameProperty : InheritedNamePropertyBody(), InheritedNameProperty
 interface InheritedNameMutableSlot<T> { var value: T }
 open class InheritedNameMutableBody<T>(initial: T) { var value: T = initial }
 class InheritedNameMutable : InheritedNameMutableBody<String>("before"), InheritedNameMutableSlot<String>
+interface InheritedNameUnrelatedSlot : CoroutineContext.Element
+object InheritedNameContextKey : CoroutineContext.Key<CoroutineContext.Element>
+open class InheritedNameContinuation<T> : Continuation<T>, CoroutineContext.Element {
+    override val context: CoroutineContext get() = EmptyCoroutineContext
+    override val key: CoroutineContext.Key<*> get() = InheritedNameContextKey
+    override fun resumeWith(result: Result<T>) {}
+}
+class InheritedNameContinuationChild<T> : InheritedNameContinuation<T>(), InheritedNameUnrelatedSlot
 
 class InheritedClrNameTests {
     @TestAttribute
@@ -67,6 +78,8 @@ class InheritedClrNameTests {
         assertEquals("before", mutable.value)
         mutable.value = "after"
         assertEquals("after", body.value)
+        val continuation = InheritedNameContinuationChild<String>()
+        assertSame(EmptyCoroutineContext, continuation.context)
     }
 
     @TestAttribute
