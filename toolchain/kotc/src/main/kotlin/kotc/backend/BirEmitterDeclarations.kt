@@ -285,7 +285,7 @@ private fun BirEmitter.inheritedImplementationFact(fn: IrSimpleFunction): String
 		target === property.getter -> "getter"
 		else -> "setter"
 	}
-	return ""","inheritedImplementation":{"owner":${fqnJson(owner)},"member":${str(member)},"kind":${str(kind)},"arity":${target.typeParameters.size},"typeParams":${typeParamDeclarationsJson(target.typeParameters)}}"""
+	return ""","inheritedImplementation":{"owner":${fqnJson(owner)},"member":${str(member)},"kind":${str(kind)},"arity":${target.typeParameters.size},"typeParams":${typeParamDeclarationsJson(target.typeParameters)}${overloadSigField(target)}}"""
 }
 
 /**
@@ -341,8 +341,10 @@ private fun BirEmitter.inheritedClassMethodsJson(klass: IrClass): String {
 		if (owner.kind == ClassKind.INTERFACE || isInheritedStaticFunction(fn)) return@mapNotNull null
 		val implementation = inheritedImplementationFact(fn)
 		if (implementation.isEmpty()) return@mapNotNull null
-		val parameters = (listOfNotNull(extensionReceiverParam(fn)) + fn.parameters.filter { isValueParameter(it) })
-			.joinToString(",") { """{"name":${str(it.name.asString())},"type":${birValueParameterType(it).toJson()}}""" }
+		val extension = extensionReceiverParam(fn)?.let {
+			"""{"name":${str(extensionReceiverSlotName(fn))},"type":${birType(it.type).toJson()},"mods":{"extensionReceiver":true}}"""
+		}
+		val parameters = (listOfNotNull(extension) + paramsJsonList(fn.parameters, ownerFn = fn)).joinToString(",")
 		val property = fn.correspondingPropertySymbol?.owner
 		val member = property?.name?.asString() ?: fn.name.asString()
 		val accessor = property?.let {

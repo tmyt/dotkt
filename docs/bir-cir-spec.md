@@ -264,6 +264,10 @@ not additional method declarations; only inherited methods whose override closur
 need this fact.
 Accessor entries additionally carry `propertyName`, `propertyAccessor`, and their shared `propertyAssociation`; the backend must consume that explicit
 role rather than recover it from the accessor's physical method name.
+Inherited parameter facts retain declaration roles such as extension receiver, context parameter and vararg.
+The selected implementation's `sig` carries its declaration parameter vector in the callee's formal generic frame,
+not the derived class's instantiated parameter frame. Suspend forwarding materialization requires this signature
+and preserves it separately from the caller-owned argument and result types.
 bir2cir resolves the stated source and allocates a forwarding bridge when the inherited implementation's physical
 signature differs from a newly implemented interface slot. A generic result closed over `Unit` is value-returning,
 whereas an ordinary Kotlin `Unit` method is void-returning; the bridge must materialize `Unit` after the void call

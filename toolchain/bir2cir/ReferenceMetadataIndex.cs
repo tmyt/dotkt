@@ -2931,12 +2931,12 @@ sealed partial class ReferenceMetadataIndex
         var matches = list.Where(member => !member.IsStatic && !member.IsPropertyBridge
                 && (accessorKind == null
                     ? member.SourcePropertyName == null
-                        && (member.SourceMethodName ?? member.Name) == sourceMember
+                        && (member.DeclarationSourceName ?? member.SourceMethodName ?? member.Name) == sourceMember
                     : member.SourcePropertyName == sourceMember && member.AccessorKind == accessorKind)
                 && member.MethodArity == methodArity
                 && member.Suspend == selectedSuspend
                 && KotlinOverrideSlotBridge.SameMethodTypeParameterShape(
-                    member.MethodTypeParams, selectedTypeParams,
+                    member.SemanticMethodTypeParams ?? member.MethodTypeParams, selectedTypeParams,
                     ownerTypeArguments, implementationOwnerTypeArguments)
                 && AccessorSignatureMatches(member, signature, ownerTypeArguments)
                 && member.ParamTypeNodes != null && member.ReturnTypeNode != null
@@ -2953,7 +2953,8 @@ sealed partial class ReferenceMetadataIndex
             selectedSuspend
                 ? match.SuspendReturnType
                 : match.NullableGenericRet ?? match.KotlinReturnType ?? match.ReturnTypeNode,
-            match.MethodTypeParams, match.ReturnTypeNode is not TypeNode.Fqn { Name: "void" or "System.Void", Args: null });
+            match.MethodTypeParams, match.ReturnTypeNode is not TypeNode.Fqn { Name: "void" or "System.Void", Args: null },
+            match.IsVirtual);
         return true;
     }
 
@@ -7323,7 +7324,7 @@ sealed record MethodSlotIdentity(string PhysicalMember, JsonArray TypeParams, bo
 sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic, int PropertyAccess = 0, string PropertyName = null, int[] ByrefPositions = null, bool Suspend = false, bool Conv = false, TypeNode ConvTo = null, TypeNode ReturnType = null, int MethodArity = 0, TypeNode[] ParamTypeNodes = null, bool IsVirtual = false, TypeNode KotlinReturnType = null, TypeNode SuspendReturnType = null, TypeNode NullableGenericRet = null, TypeNode[] NullableGenericParams = null, TypeNode ReturnTypeNode = null, int MetadataToken = 0, string SourcePropertyName = null, string AccessorKind = null, string AssociatedPropertyName = null, bool IsPropertyBridge = false, bool IsPublic = false, string PropertyAssociation = null, string SourcePropertyAssociation = null, string SourceMethodName = null, JsonArray MethodTypeParams = null, string DeclarationId = null, string DeclarationSourceName = null, string DeclarationPhysicalOwner = null, TypeNode[] DeclarationSemanticParams = null, TypeNode DeclarationSemanticReturn = null, string CollectionFactoryKind = null, string ArrayFactoryKind = null, string ArrayFactoryElementHint = null, int CountStart = -1, int CountEnd = -1, int[] SemanticReifiedTypeParameterIndices = null, int[] NullableWitnessTypeParameterIndices = null, TypeNode[] KotlinParameterTypes = null, string InnerConstructorOwner = null, TypeNode[] InnerConstructorParameters = null, int[] InnerConstructorTypeArguments = null, JsonArray SemanticMethodTypeParams = null);
 
 sealed record ReferencedMethodDeclaration(string PhysicalMember, TypeNode[] Parameters, TypeNode Return,
-    JsonArray TypeParams, bool ReturnsValue);
+    JsonArray TypeParams, bool ReturnsValue, bool IsVirtual = false);
 
 sealed record ReferencedUnsafeAccessorMethod(string PhysicalMember, TypeNode[] Parameters, TypeNode Return,
     JsonArray TypeParams, TypeNode NullableGenericReturn);

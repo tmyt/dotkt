@@ -20,6 +20,14 @@ private class Derived<T>(gate: Gate<T>) : Body<T>(gate), Slot<T>
 private interface MethodSlot { suspend fun <R> echo(gate: Gate<R>): R }
 private open class MethodBody { suspend fun <R> echo(gate: Gate<R>): R = gate.await() }
 private class DerivedMethod : MethodBody(), MethodSlot
+private interface ArgumentSlot<T> { suspend fun read(value: T): T }
+private open class ArgumentBody<T> { suspend fun read(value: T): T = value }
+private class CapturedOwner<T> {
+    fun make(): ArgumentSlot<T> {
+        class Local<U> : ArgumentBody<T>(), ArgumentSlot<T>
+        return Local<Int>()
+    }
+}
 private open class VirtualBody(private val gate: Gate<String>) {
     open suspend fun read(): String = gate.await()
 }
@@ -44,6 +52,15 @@ private fun <T> verifySuspension(gate: Gate<T>, value: T, expected: T, action: s
 
 class InheritedSuspendTests {
     @TestAttribute
+    fun capturedOwnerPermutationKeepsCalleeSignature() {
+        val slot = CapturedOwner<String>().make()
+        val completion = Completion<String>()
+        val action: suspend () -> String = { slot.read("permuted") }
+        action.startCoroutine(completion)
+        assertEquals("permuted", completion.outcome!!.getOrThrow())
+    }
+
+    @TestAttribute
     fun genericOwnerRetainsRenamedSuspendSlots() {
         val text = Gate<String>()
         val textSlot: Slot<String> = Derived(text)
@@ -51,6 +68,9 @@ class InheritedSuspendTests {
         val number = Gate<Int>()
         val numberSlot: Slot<Int> = Derived(number)
         verifySuspension(number, 42, 42) { numberSlot.read() }
+        val nullable = Gate<Int?>()
+        val nullableSlot: Slot<Int?> = Derived(nullable)
+        verifySuspension(nullable, null, null) { nullableSlot.read() }
     }
 
     @TestAttribute
@@ -67,5 +87,8 @@ class InheritedSuspendTests {
         val gate = Gate<String>()
         val slot: Slot<String> = DerivedOverride(gate)
         verifySuspension(gate, "base", "base!") { slot.read() }
+        val baseGate = Gate<String>()
+        val base: VirtualBody = DerivedOverride(baseGate)
+        verifySuspension(baseGate, "base", "base!") { base.read() }
     }
 }

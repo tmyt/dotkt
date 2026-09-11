@@ -1107,10 +1107,11 @@ class V:
                 if "inheritedImplementation" in o:
                     implementation = o["inheritedImplementation"]
                     required = {"owner", "member", "kind", "arity", "typeParams"}
-                    if not isinstance(implementation, dict) or set(implementation) != required:
+                    if (not isinstance(implementation, dict) or not required <= set(implementation)
+                            or not set(implementation) <= required | {"sig"}):
                         self.err(
                             f, path + "/inheritedImplementation",
-                            "inheritedImplementation must contain exact owner/member/kind/arity/typeParams facts"
+                            "inheritedImplementation must contain exact owner/member/kind/arity/typeParams facts and optional declaration sig"
                         )
                     else:
                         if (not isinstance(implementation.get("owner"), dict)

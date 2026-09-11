@@ -571,7 +571,14 @@
         "inheritedImplementation": {
           "type": "object",
           "$comment": "BIR-only concrete Kotlin declaration selected by frontend fake-override resolution. Presence means this fake override inherits an implementation; bir2cir consumes the fact directly instead of inspecting ancestor bodies or CLR metadata.",
-          "properties": { "owner": { "$ref": "#/$defs/type" }, "member": { "type": "string" }, "kind": { "enum": ["method", "getter", "setter"] }, "arity": { "type": "integer", "minimum": 0, "$comment": "method generic arity" }, "typeParams": { "type": "array", "items": { "$ref": "#/$defs/typeParam" }, "$comment": "Exact frontend-selected target declarations, including generic constraints." } },
+          "properties": {
+            "owner": { "$ref": "#/$defs/type" },
+            "member": { "type": "string" },
+            "kind": { "enum": ["method", "getter", "setter"] },
+            "arity": { "type": "integer", "minimum": 0, "$comment": "method generic arity" },
+            "typeParams": { "type": "array", "items": { "$ref": "#/$defs/typeParam" }, "$comment": "Exact frontend-selected target declarations, including generic constraints." },
+            "sig": { "type": "array", "items": { "$ref": "#/$defs/type" }, "$comment": "Selected declaration parameter vector in the callee formal generic frame; required when materializing a suspend forwarding call." }
+          },
           "required": ["owner", "member", "kind", "arity", "typeParams"], "additionalProperties": false
         },
         "physicalSlotBridge": { "type": "boolean", "$comment": "bir2cir-internal role fact: this generated declaration exists only as a CLR MethodImpl forwarding body and must not participate in Kotlin declaration binding. Descriptor presence alone is insufficient because a source accessor may directly carry a MethodImpl for an external property slot." },
