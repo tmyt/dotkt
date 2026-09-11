@@ -36,6 +36,11 @@ public class NullableSuspendUnitTests
             Assert.That(forwarded.IsCompleted, Is.False);
             gate.resume(present);
             Assert.That(await forwarded, Is.SameAs(present ? kotlin.Unit.INSTANCE : null));
+            GenericUnitSource<kotlin.Unit?> genericSource = gate;
+            Task<kotlin.Unit?> generic = genericSource.read();
+            Assert.That(generic.IsCompleted, Is.False);
+            gate.resume(present);
+            Assert.That(await generic, Is.SameAs(present ? kotlin.Unit.INSTANCE : null));
         }
     }
 

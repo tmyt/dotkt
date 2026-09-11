@@ -4,7 +4,10 @@ using System.Text.Json.Nodes;
 using DotKt.Bir;
 
 // The flattened NullableAttribute (NRT) byte walk, shared across the decl-position NRT collection (params / method
-// returns / fields / properties) and the suspend Task-bridge return (#37/#48 nullability fold). A reference type's
+// returns / fields / properties). The suspend Task-bridge return has a separate walk in SuspendColdLowering:
+// its Unit reference positions occupy bytes for CLR consumers, whereas this writer and dll2klib's ordinary
+// declaration reader skip them (docs/dotkt-semantics.md §9). DotKt reads the bridge's KotlinSuspendResult instead.
+// A reference type's
 // `?` no longer rides a decl-level scalar flag nor a `System.Nullable<>` wrapper — it is stripped to the bare type by
 // BirTypeLowering, and its nullability is carried HERE as a `NullableAttribute` byte array (RoundtripMetadata folds it
 // into the decl's `attrs`/`retAttrs` for ilemit to stamp; dll2klib reads it back off the dll). One byte per NODE in
@@ -12,7 +15,7 @@ using DotKt.Bir;
 // `Nullable<T>`, not an NRT one — but it still holds a byte POSITION (always 0) once it is constructed, and its
 // arguments are walked either way; `dll2klib`'s reader implements the same rule from the other side.
 //
-// This is the promoted, oracle-keyed generalization of SuspendColdLowering's former private `WalkNullable` +
+// This is an oracle-keyed generalization of SuspendColdLowering's private `WalkNullable` +
 // `ValueTypeFqns` (which only ever handled the Task<R> return). The value-ness decision is the struct-ness ORACLE
 // (ReferenceMetadataIndex.IsValueType + local enum/struct types), not a hardcoded FQN set. `kotlin.Unit` is the one
 // name answered here rather than by the oracle — it is a CLASS on the CLR but the type ECMA `void` projects to, and

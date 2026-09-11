@@ -7,7 +7,11 @@ interface NullableUnitSource {
     suspend fun read(): Unit?
 }
 
-class NullableUnitGate : NullableUnitSource {
+interface GenericUnitSource<T> {
+    suspend fun read(): T
+}
+
+class NullableUnitGate : NullableUnitSource, GenericUnitSource<Unit?> {
     private var pending: Continuation<Unit?>? = null
     override suspend fun read(): Unit? = suspendCoroutine<Unit?> { pending = it }
     fun resume(present: Boolean) { pending!!.resume(if (present) Unit else null) }

@@ -4389,9 +4389,10 @@ static partial class SuspendColdLowering
 
         // BUG 2: the pre-order NullableAttribute byte walk for the bridge return `Task<R>`, or null when it carries no
         // nullable position (then the type-level [NullableContext(1)] non-null default suffices). Reference nodes get 1
-        // (non-null) or 2 (nullable); value-type nodes are skipped (no byte). Unit in a Task result is a reference
-        // type, not void, and participates in the walk. kotc conveys only R's OUTER
-        // nullability (`retNullable` on the suspend method), so inner reference args stay non-null (1) — the common
+        // (non-null) or 2 (nullable); value-type nodes are skipped (no byte). Unit reference positions at any depth
+        // participate in this CLR-facing walk, unlike NullableFlags' ordinary declaration convention (§9 of
+        // docs/dotkt-semantics.md). DotKt imports KotlinSuspendResult instead of these Task return NRT bytes.
+        // This walk uses R's outer nullability recorded in _resultNullable; inner reference args stay non-null (1) — the common
         // `suspend fun f(): String?` -> {1,2}; `List<String>?` -> {1,2,1}.
         JsonArray TaskReturnNullableFlags()
         {

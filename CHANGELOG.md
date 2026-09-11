@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Nullable suspend Unit results expose a value-bearing Task (#716).** CLR callers can observe both Unit and null
+  through `Task<kotlin.Unit?>`, including interface calls and asynchronous completion. Non-null Unit keeps its
+  non-generic Task convention; exceptions, cancellation, and Kotlin suspend metadata are preserved.
+
 - **Consumed suspend Unit results preserve the singleton (#704).** Direct and resumed cold completions return
   Kotlin `Unit`, including generic and cross-DLL consumers, without changing nullable nulls or failure propagation.
 

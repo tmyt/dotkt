@@ -50,6 +50,11 @@ class NullableSuspendUnitTests {
             assertTrue(!forwarded.completed)
             gate.resume(present)
             assertValue(forwarded, present)
+            val genericSource: GenericUnitSource<Unit?> = gate
+            val generic = start { genericSource.read() }
+            assertTrue(!generic.completed)
+            gate.resume(present)
+            assertValue(generic, present)
         }
     }
 
