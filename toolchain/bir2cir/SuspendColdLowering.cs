@@ -506,15 +506,8 @@ static partial class SuspendColdLowering
             if (e.Root["methods"] is JsonArray flm)
                 foreach (var lm in flm)
                     if (lm is JsonObject lmo && Str(lmo["name"]) is string lmn) fileLambdas[lmn] = lmo;
-            // An interface member (kotc emits interface `suspend fun`s with `virtual:true` but WITHOUT the
-            // `abstract` flag — unlike an abstract-CLASS member) with no body is abstract by definition (an
-            // interface method with no default). Treat it exactly like the abstract-class case so its cold entry
-            // AND Task bridge are emitted ABSTRACT (no body), rather than a concrete bridge whose non-virtual
-            // `call` to the (interface-abstract) cold entry is unverifiable (ilverify CallAbstract). Concrete
-            // implementations in classes fill both slots — ilemit's interface-impl pass binds them by name/sig.
             var gen = new FunGen(e.Method, key.Name, e.FileClass, e.Owner, calleeRet, baseIsLocal, tcsBcl, taskBcl,
-                ownerTpDecls, closures, smSuffix[key], fileLambdas,
-                e.TypeNode != null && Str(e.TypeNode["kind"]) == "interface", staticMember);
+                ownerTpDecls, closures, smSuffix[key], fileLambdas, staticMember);
             var newMethods = new List<JsonNode>();
             var newTypes = new List<JsonNode>();
             gen.Build(newMethods, newTypes);
@@ -1259,7 +1252,7 @@ static partial class SuspendColdLowering
             JsonArray ownerTypeParamDecls = null, IReadOnlyDictionary<string, JsonObject> closures = null,
             string smNameSuffix = "",
             IReadOnlyDictionary<string, JsonObject> lambdaMethods = null,
-            bool ownerIsInterface = false, bool staticMember = false)
+            bool staticMember = false)
         {
             _m = m; _name = name; _fileClass = fileClass; _ownerClass = ownerClass;
             _capturedOuterName = null;
@@ -1275,11 +1268,9 @@ static partial class SuspendColdLowering
             _lambdaMethods = lambdaMethods ?? new Dictionary<string, JsonObject>(StringComparer.Ordinal);
             _ownerTypeParamDecls = ownerTypeParamDecls?.DeepClone() as JsonArray ?? new JsonArray();
             _ownerTypeParams = ReadTypeParamNames(_ownerTypeParamDecls);
-            // Virtuality of the source member (kept in lockstep on the cold entry). An interface declaration with no
-            // body is abstract even when kotc omitted the explicit abstract bit; a concrete DIM remains concrete.
-            var interfaceAbstract = ownerIsInterface
-                && (m["body"] is not JsonArray interfaceBody || interfaceBody.Count == 0);
-            _memberAbstract = _isMember && (Bool(m["abstract"]) || interfaceAbstract);
+            // Modality is a declaration fact, independent of whether a concrete implementation has an empty body.
+            // Preserve it on both physical entries; never infer an abstract interface slot from body contents.
+            _memberAbstract = _isMember && Bool(m["abstract"]);
             _memberOverride = _isMember && Bool(m["override"]);
             _memberVirtual = _isMember && Bool(m["virtual"]);
             _smType = (ownerClass ?? fileClass) + "_" + name + smNameSuffix + "$sm";
