@@ -3622,7 +3622,7 @@ sealed partial class ReferenceMetadataIndex
         TypeNode[] ownerTypeArguments, JsonArray selectedTypeParams, TypeNode[] selectedOwnerTypeArguments,
         out TypeNode declaredRet, out TypeNode[] declaredParams, out bool[] paramsRefused,
         out string physicalMember, out JsonArray declarationTypeParams, out bool returnsValue,
-        bool semanticConstraints = false)
+        bool semanticConstraints = false, string selectedPhysicalMember = null)
     {
         declaredRet = null;
         declaredParams = null;
@@ -3639,7 +3639,8 @@ sealed partial class ReferenceMetadataIndex
                 methodSignature: resolvedSignature, methodReturn: resolvedReturn,
                 selectedTypeParams: selectedTypeParams,
                 selectedOwnerTypeArguments: selectedOwnerTypeArguments,
-                semanticConstraints: semanticConstraints) != SlotLookup.Declared
+                semanticConstraints: semanticConstraints,
+                selectedPhysicalMember: selectedPhysicalMember) != SlotLookup.Declared
             || declaration == null)
             return false;
         declaredRet = ret.Node;
@@ -3671,7 +3672,8 @@ sealed partial class ReferenceMetadataIndex
         TypeNode[] ownerTypeArguments = null, bool includeClosedPropertyReturn = false,
         bool includeUnchangedMethod = false, IReadOnlyList<TypeNode> methodSignature = null,
         TypeNode methodReturn = null, JsonArray selectedTypeParams = null,
-        TypeNode[] selectedOwnerTypeArguments = null, bool semanticConstraints = false)
+        TypeNode[] selectedOwnerTypeArguments = null, bool semanticConstraints = false,
+        string selectedPhysicalMember = null)
     {
         declaredRet = default;
         declaredParams = null;
@@ -3681,7 +3683,9 @@ sealed partial class ReferenceMetadataIndex
         {
             var declaredHere = list.Where(m =>
                     (propertyName == null
-                        ? (m.SourceMethodName ?? m.Name) == name
+                        ? selectedPhysicalMember != null
+                            ? m.Name == selectedPhysicalMember
+                            : (m.SourceMethodName ?? m.Name) == name
                         : !m.IsPropertyBridge && m.SourcePropertyName == propertyName
                             && m.AccessorKind == accessorKind)
                     && m.IsStatic == isStatic
@@ -3763,7 +3767,8 @@ sealed partial class ReferenceMetadataIndex
             var found = FindDeclaredSlot(super.Name, name, isStatic, argCount, methodArity, path,
                 out var sret, out var sps, out var smethod, propertyName, accessorKind, accessorSignature,
                 superTypeArguments, includeClosedPropertyReturn, includeUnchangedMethod,
-                methodSignature, methodReturn, selectedTypeParams, selectedOwnerTypeArguments, semanticConstraints);
+                methodSignature, methodReturn, selectedTypeParams, selectedOwnerTypeArguments, semanticConstraints,
+                selectedPhysicalMember);
             path.Remove(key);
             if (found == SlotLookup.Refused) return SlotLookup.Refused;
             if (found != SlotLookup.Declared) continue;

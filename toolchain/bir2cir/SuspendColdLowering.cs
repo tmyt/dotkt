@@ -1215,8 +1215,10 @@ static partial class SuspendColdLowering
         // Some suspend declarations are already compiler-authored physical MethodImpl bodies (for example the
         // forwarding method from G<T> to its existential G<*> interface). Suspend lowering replaces one MethodDef
         // with a cold entry and a Task bridge, so the physical role and its exact declaration descriptors must be
-        // transformed onto both outputs. Dropping them forces ilemit to rediscover the relation from names/hierarchy.
+        // transformed onto their selected outputs. Most bridges fill both; a Task-only adapter leaves the original
+        // declaration's cold obligation to the ordinary slot pass instead of remapping it through its own helper.
         readonly bool _physicalSlotBridge;
+        readonly bool _taskOnlySlotBridge;
         readonly bool _clrInterfaceSlotBridge;
         readonly string _physicalSlotVisibility;
         readonly JsonArray _clrInterfaceImpls;
@@ -1314,6 +1316,7 @@ static partial class SuspendColdLowering
             _methodTypeParamDecls = ConstrainedTypeParameterReceiverBinding.CloneMethodParametersWithErasedSourceBounds(m);
             _overrideMarkers = (m["overrides"] as JsonArray)?.DeepClone() as JsonArray ?? new JsonArray();
             _physicalSlotBridge = Bool(m[KotlinPropertyAccessors.PhysicalSlotBridgeKey]);
+            _taskOnlySlotBridge = Bool(m[KotlinPropertyAccessors.SuspendTaskOnlyBridgeKey]);
             _clrInterfaceSlotBridge = Bool(m[KotlinPropertyAccessors.ClrInterfaceSlotBridgeKey]);
             _physicalSlotVisibility = Str(m["vis"]);
             _clrInterfaceImpls = (m["clrInterfaceImpls"] as JsonArray)?.DeepClone() as JsonArray;
@@ -3968,6 +3971,9 @@ static partial class SuspendColdLowering
             method[KotlinPropertyAccessors.PhysicalSlotBridgeKey] = true;
             if (_clrInterfaceSlotBridge)
                 method[KotlinPropertyAccessors.ClrInterfaceSlotBridgeKey] = true;
+            if (coldEntry && _taskOnlySlotBridge) return;
+            if (_taskOnlySlotBridge)
+                method[KotlinPropertyAccessors.SuspendTaskOnlyBridgeKey] = true;
 
             void Carry(string key, JsonArray source)
             {
@@ -3988,10 +3994,11 @@ static partial class SuspendColdLowering
                     else if (TypeJson.Read(descriptor["ret"]) is TypeNode result)
                     {
                         var slot = BirTypeLowering.AsReadonlyResultSlot(result);
-                        descriptor["ret"] = Tw(IsUnitTn(result)
+                        descriptor["ret"] = Tw(IsUnitTn(result) && !Bool(descriptor[BirTypeLowering.ValueReturnKey])
                             ? new TypeNode.Fqn(_taskBcl)
                             : new TypeNode.Fqn(_taskBcl, new[] { slot }));
                     }
+                    descriptor.Remove(BirTypeLowering.ValueReturnKey);
                     descriptors.Add(descriptor);
                 }
                 method[key] = descriptors;
@@ -4188,7 +4195,8 @@ static partial class SuspendColdLowering
         // carries `suspendBridge:true` so ilemit stamps [KotlinFunction(Suspend)] (a re-consuming Kotlin sees `suspend fun`).
         JsonObject BuildBridge()
         {
-            var isUnit = IsUnitTn(_resultType) && !_resultNullable;
+            var isUnit = IsUnitTn(_resultType) && !_resultNullable
+                && !Bool(_m?[BirTypeLowering.ValueReturnKey]);
             var rKotlin = IsUnitTn(_resultType) ? UnitTn : _taskResultType;
             // Name the readonly public result representation now and use it for every producer/consumer of the slot.
             // Otherwise Root-V independently makes the nested TCS/Task owner invariant while the head-position

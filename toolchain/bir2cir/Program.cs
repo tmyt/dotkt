@@ -834,6 +834,9 @@ sealed class Pipeline
         // (so a synthesized suspend member is transformed normally). Exact signature/return only; ambiguity is skipped.
         InheritedClassInterfaceBridge.ApplyAll(staged.Select(s => s.Root).ToList());
 
+        KotlinOverrideSlotBridge.PrepareSuspendValueBridges(
+            staged.Select(s => s.Root).ToList(), isValueFqn, refs, localTypeFqns);
+
         // KOTLIN COVARIANT OVERRIDE -> EXACT CLR METHODIMPL: preserve the Kotlin declaration's narrow return and add a
         // private forwarding bridge with the interface slot's exact return. The bridge carries a resolved
         // `clrInterfaceImpls` instruction; ilemit only consumes that instruction and does not infer covariance.
