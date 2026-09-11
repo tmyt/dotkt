@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Consumed suspend Unit results preserve the singleton (#704).** Direct and resumed cold completions return
+  Kotlin `Unit`, including generic and cross-DLL consumers, without changing nullable nulls or failure propagation.
+
 - **Inherited suspend methods retain their interface slots (#720).** Forwarders preserve suspend calls and logical
   results before CLR hot/cold lowering, including cross-DLL inheritance, generic frames, renamed base methods,
   and virtual dispatch through a further override.

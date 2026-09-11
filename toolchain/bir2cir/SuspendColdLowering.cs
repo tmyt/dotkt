@@ -1515,6 +1515,9 @@ static partial class SuspendColdLowering
             }
 
             var body = _isLambda ? _lambdaBody : ((_m["body"] as JsonArray) ?? new JsonArray());
+            // Every cold completion is object-valued. Preserve Unit before finally routing stores a pending
+            // return or a suspension-free subtree bypasses EmitStmt; both must carry the same singleton value.
+            if (IsUnitTn(_resultType)) body = (JsonArray)MaterializeUnitReturns(body);
             var hasSuspension = HasSuspension(body);
             // #78/#82/#98 — normalize a suspending body BEFORE segmentation so a suspension in a POSITION the straight-line
             // SM cannot segment is lifted into one it can: a structured loop whose body spans a suspension is
@@ -1578,7 +1581,7 @@ static partial class SuspendColdLowering
             var bodyOut = new List<JsonNode>();
             foreach (var s in body) EmitStmt(s, bodyOut);
             if (IsUnitTn(_resultType))
-                bodyOut.Add(Ret(NullConst(AnyTn)));
+                bodyOut.Add(Ret(UnitValue()));
 
             var invoke = new JsonArray();
             // BUG 1: reset the finally gate at every entry (first call + each resume) BEFORE the label dispatch,
@@ -1766,7 +1769,7 @@ static partial class SuspendColdLowering
                 case "return":
                     {
                         var v = o["value"];
-                        outp.Add(v == null ? Ret(NullConst(AnyTn))
+                        outp.Add(v == null ? Ret(UnitValue())
                             : Ret(Rewrite(v, outp, IsUnitTn(_resultType) ? UnitTn : _resultType)));
                         break;
                     }
@@ -2115,7 +2118,7 @@ static partial class SuspendColdLowering
                     {
                         ["k"] = terminalKind == "throwExpr" ? "throw" : "return",
                         ["value"] = terminalKind == "returnExpr" && terminal["value"] == null
-                            ? NullConst(AnyTn)
+                            ? UnitValue()
                             : terminal["value"]?.DeepClone(),
                     }
                     : value);
@@ -3840,18 +3843,13 @@ static partial class SuspendColdLowering
             // over a restricted-scope suspend member, e.g. cases/il-corestrict).
             if (IsUnitTn(_resultType))
             {
-                // The source declaration's Unit return is physically `object` on the cold entry. Materialize the
-                // established null Unit result on EVERY return edge, not only on fallthrough. A source-level
-                // `return` is deliberately value-less BIR because its semantic target returns Unit; cloning that
-                // node verbatim into this different physical signature used to emit a bare `ret`.
-                cloned = (JsonArray)MaterializeDirectUnitReturns(cloned);
                 if (!(cloned.Count > 0 && cloned[^1] is JsonObject last && Str(last["k"]) == "return"))
-                    cloned.Add(Ret(NullConst(AnyTn)));
+                    cloned.Add(Ret(UnitValue()));
             }
             return ColdMethod(cloned);
         }
 
-        static JsonNode MaterializeDirectUnitReturns(JsonNode node)
+        static JsonNode MaterializeUnitReturns(JsonNode node)
         {
             if (node is JsonObject obj)
             {
@@ -3864,16 +3862,16 @@ static partial class SuspendColdLowering
                 foreach (var property in obj)
                     copy[property.Key] = property.Value == null
                         ? null
-                        : MaterializeDirectUnitReturns(property.Value);
+                        : MaterializeUnitReturns(property.Value);
                 if ((kind is "return" or "returnExpr") && copy["value"] == null)
-                    copy["value"] = NullConst(AnyTn);
+                    copy["value"] = UnitValue();
                 return copy;
             }
             if (node is JsonArray array)
             {
                 var copy = new JsonArray();
                 foreach (var item in array)
-                    copy.Add(item == null ? null : MaterializeDirectUnitReturns(item));
+                    copy.Add(item == null ? null : MaterializeUnitReturns(item));
                 return copy;
             }
             return node?.DeepClone();
@@ -4185,8 +4183,8 @@ static partial class SuspendColdLowering
         // body completed inline (complete the TCS here); a SUSPENDED return means the eventual resume lands in
         // RootContinuation.resumeWith, which completes the TCS. A synchronous throw is caught and routed through the
         // SAME RootContinuation.resumeWith choke point (via RootResumeFailure, #109) so an OCE Cancels — not Faults — the Task.
-        // R = Unit/void is treated uniformly as kotlin.Unit (the cold entry returns null for a Unit body; `(Unit)null`
-        // is null, matching what RootContinuation.resumeWith stores for the async Unit path — the two agree). The bridge
+        // R = Unit/void is treated uniformly as kotlin.Unit: both the synchronous cold completion and the resumed
+        // completion carry the Unit singleton into TaskCompletionSource<Unit>. The bridge
         // carries `suspendBridge:true` so ilemit stamps [KotlinFunction(Suspend)] (a re-consuming Kotlin sees `suspend fun`).
         JsonObject BuildBridge()
         {
@@ -4630,6 +4628,14 @@ static partial class SuspendColdLowering
         static JsonObject IntConst(int v) => new() { ["k"] = "const", ["type"] = TypeJson.Write(IntTn), ["value"] = v };
         static JsonObject BoolConst(bool v) => new() { ["k"] = "const", ["type"] = TypeJson.Write(BoolTn), ["value"] = v };
         static JsonObject NullConst(TypeNode type) => new() { ["k"] = "const", ["type"] = TypeJson.Write(type), ["value"] = null };
+        // The cold return slot is object-valued, but a successful Kotlin Unit completion is its singleton,
+        // not the null wake-up token used to enter/resume a state machine. Ordinary field resolution later
+        // binds this read for both local stdlib emission and referenced application builds.
+        static JsonObject UnitValue() => new()
+        {
+            ["k"] = "staticField", ["ownerType"] = TypeJson.Write(UnitTn),
+            ["name"] = "INSTANCE", ["sty"] = TypeJson.Write(UnitTn),
+        };
         JsonObject MissingValuePlaceholder(TypeNode expectedType)
         {
             var type = expectedType ?? throw new NotSupportedException(
