@@ -2883,7 +2883,7 @@ sealed partial class ReferenceMetadataIndex
         declaration = null;
         if (!TryMembersByBirOwner(ownerFqn, out var list)) return false;
         var matches = list.Where(member => member.SourcePropertyName == null
-                && (member.SourceMethodName ?? member.Name) == sourceMember
+                && (member.DeclarationSourceName ?? member.SourceMethodName ?? member.Name) == sourceMember
                 && member.MethodArity == methodArity
                 && KotlinOverrideSlotBridge.SameMethodTypeParameterShape(
                     member.MethodTypeParams, selectedTypeParams, ownerTypeArguments, ownerTypeArguments)

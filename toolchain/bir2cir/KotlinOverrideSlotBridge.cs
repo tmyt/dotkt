@@ -245,7 +245,8 @@ static class KotlinOverrideSlotBridge
             // overrides; realize that decision here as an exact private/final MethodImpl bridge. Leaving it to ilemit
             // would force the emitter to rediscover override meaning from names, bodies, and hierarchy order.
             var needsExactInterfaceSlot = supIsInterface &&
-                (cls.Kind == "interface" && !Bool(impl["abstract"])
+                (inheritedOwner != null
+                    || cls.Kind == "interface" && !Bool(impl["abstract"])
                     || cls.Kind == "class" && reimplementsInterface
                         && descriptorMember != Str(impl["name"])
                     || cls.Kind == "class" && overridesInheritedDefault);

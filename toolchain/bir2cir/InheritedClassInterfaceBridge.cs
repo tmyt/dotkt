@@ -8,8 +8,8 @@ using DotKt.Bir;
 //
 // Kotlin fake-override resolution accepts `class D : B(), I` when B has the matching public concrete function. CLR
 // implicit interface implementation cannot bind I.M to an inherited non-virtual method, so D is unloadable unless it
-// owns a virtual slot. kotc must remain a Kotlin-IR projection; bir2cir uses the explicit local hierarchy/signatures to
-// synthesize a forwarding method in D. ilemit then emits an ordinary CIR method and wires its declared override; it
+// owns a virtual slot. kotc records the selected inherited implementation and override closure; bir2cir resolves that
+// exact declaration in its constructed owner frame. ilemit then emits an ordinary CIR method and wires its declared override; it
 // performs no fake-override inference.
 //
 // Exact formal signature, generic arity and return equality are mandatory. Ambiguity is skipped, never guessed. This is
@@ -90,7 +90,7 @@ static class InheritedClassInterfaceBridge
 
             foreach (var im in iface.Methods.OfType<JsonObject>().ToList())
             {
-                if (Bool(im["static"]) || HasConcreteBody(im)) continue;
+                if (Bool(im["static"]) || !Bool(im["abstract"])) continue;
                 if (Str(im["name"]) is not string name || im["params"] is not JsonArray ips) continue;
                 var methodArity = (im["typeParams"] as JsonArray)?.Count ?? 0;
                 var slotParams = ips.OfType<JsonObject>().Select(p => TypeJson.Read(p["type"]))
@@ -106,7 +106,7 @@ static class InheritedClassInterfaceBridge
 
                 if (Bool(cls.Node["abstract"])) continue;
 
-                var inherited = FindNonVirtualBaseMethod(cls, defs, name, methodArity, slotParams, slotRet);
+                var inherited = FindSelectedBaseMethod(cls, defs, iface.Name, name, methodArity, slotParams, slotRet);
                 if (inherited == null) continue;
                 classMethods.Add(BuildBridge(iface, ifaceSpec, ifaceArgs, im, slotParams, slotRet, inherited.Value));
             }
@@ -163,9 +163,25 @@ static class InheritedClassInterfaceBridge
         }
     }
 
-    static MethodMatch? FindNonVirtualBaseMethod(Def cls, Dictionary<string, Def> defs, string name, int methodArity,
+    static MethodMatch? FindSelectedBaseMethod(Def cls, Dictionary<string, Def> defs, string ifaceName, string name, int methodArity,
         TypeNode[] slotParams, TypeNode slotRet)
     {
+        if (cls.Node["inheritedClassMethods"] is not JsonArray facts) return null;
+        var selected = facts.OfType<JsonObject>().Where(fact =>
+            Str(fact["member"]) == name
+            && fact["params"] is JsonArray ps && ps.Count == slotParams.Length
+            && ps.OfType<JsonObject>().Select(p => TypeJson.Read(p["type"])).SequenceEqual(slotParams)
+            && TypeJson.Read(fact["ret"]) == slotRet
+            && fact["inheritedImplementation"] is JsonObject implementation
+            && ((implementation["typeParams"] as JsonArray)?.Count ?? 0) == methodArity
+            && fact["overrides"] is JsonArray overrides
+            && overrides.OfType<JsonObject>().Any(edge =>
+                TypeJson.OwnerName(edge["owner"]) == ifaceName && Str(edge["member"]) == name
+                && Str(edge["kind"]) == "method")).ToList();
+        if (selected.Count != 1) return null;
+        var target = (JsonObject)selected[0]["inheritedImplementation"];
+        var selectedOwner = TypeJson.OwnerName(target["owner"]);
+        var selectedMember = Str(target["member"]);
         var current = cls.Base;
         var currentOwnerArgs = ClassOwnArgs(cls);
         if (current != null) current = (TypeNode.Fqn)SubstOwnerTvs(current, currentOwnerArgs);
@@ -174,13 +190,14 @@ static class InheritedClassInterfaceBridge
         {
             var args = EffectiveArgs(current, def.Arity);
             if (args == null) return null;
-            var matches = ExactMethods(def.Methods, name, methodArity, slotParams, slotRet, args)
-                .Where(m => !Bool(m["static"]) && !Bool(m["abstract"]) && HasConcreteBody(m)
-                    && (Str(m["vis"]) is null or "public"))
-                .ToList();
-            if (matches.Count > 1) return null;
-            if (matches.Count == 1)
+            if (current.Name == selectedOwner)
             {
+                var matches = ExactMethods(def.Methods, selectedMember, methodArity, slotParams, slotRet, args)
+                    .Where(m => !Bool(m["static"]) && !Bool(m["abstract"])
+                        && (Str(m["vis"]) is null or "public")
+                        && KotlinOverrideSlotBridge.SameMethodTypeParameterShape(m["typeParams"] as JsonArray,
+                            target["typeParams"] as JsonArray, args, args)).ToList();
+                if (matches.Count != 1) return null;
                 var method = matches[0];
                 // A virtual inherited member already participates in CLR slot dispatch. The missing case is exactly the
                 // Kotlin concrete/non-virtual method; don't introduce an unnecessary shadow slot.
@@ -223,8 +240,9 @@ static class InheritedClassInterfaceBridge
             ["k"] = "callInstance",
             ["ownerType"] = TypeJson.Write(target.ConstructedOwner),
             ["virtual"] = false,
+            ["clrOwnerResolved"] = true,
             ["recv"] = new JsonObject { ["k"] = "this" },
-            ["method"] = name,
+            ["method"] = Str(target.Method["name"]),
             ["sig"] = rawTargetSig,
             // `slotRet` has already been closed through the interface specification into the derived class's frame.
             // Preserve that call-site fact just like kotc does for an ordinary call: the constructed-member return
@@ -234,6 +252,8 @@ static class InheritedClassInterfaceBridge
             ["ret"] = TypeJson.Write(slotRet),
             ["args"] = args,
         };
+        if (target.Method[DeclarationIdentityBinding.Key] is JsonNode declarationId)
+            call[DeclarationIdentityBinding.Key] = declarationId.DeepClone();
         if (typeArgs.Count > 0) call["typeArgs"] = typeArgs;
 
         var body = new JsonArray();
@@ -264,7 +284,8 @@ static class InheritedClassInterfaceBridge
             },
         };
         CopyNullableGenericFact(im, bridge, "nullableGenericRet", ifaceArgs);
-        if (im["typeParams"] is JsonArray tps) bridge["typeParams"] = tps.DeepClone();
+        if (im["typeParams"] is JsonArray tps)
+            bridge["typeParams"] = KotlinOverrideSlotBridge.SubstituteOwnerTypeParameterConstraints(tps, ifaceArgs);
         return MaterializedExecutable.Normalize(bridge);
     }
 

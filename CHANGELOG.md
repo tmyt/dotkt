@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Inherited final methods preserve their CLR names when satisfying interfaces (#718).** Forwarders retain
+  the selected Kotlin declaration identity through physical name allocation, including cross-DLL inheritance,
+  generic owners and methods, overloads, and Unit-valued slots.
+
 - **Generic Unit return slots receive value-returning bridges (#714).** Direct and inherited implementations keep
   their ordinary void-returning methods while satisfying generic class and interface slots with real Unit values,
   including cross-DLL consumption and further virtual overrides.
