@@ -321,6 +321,20 @@ private fun BirEmitter.inheritedDefaultMethodFact(fn: IrSimpleFunction): String?
 	return """{"member":${str(fn.name.asString())},"params":[$parameterTypes],"ret":${birType(fn.returnType).toJson()},"implementation":{"owner":${fqnJson(targetOwnerName)},"member":${str(target.name.asString())},"kind":"method","arity":${target.typeParameters.size},"typeParams":${typeParamDeclarationsJson(target.typeParameters)}}}"""
 }
 
+/** Keep the selected class implementation and override closure even when no method is emitted on this class. */
+private fun BirEmitter.inheritedClassMethodsJson(klass: IrClass): String {
+	val facts = klass.declarations.filterIsInstance<IrSimpleFunction>().mapNotNull { fn ->
+		if (fn.correspondingPropertySymbol != null || !isInheritedSynthetic(fn)) return@mapNotNull null
+		val target = selectedInheritedImplementation(fn) ?: return@mapNotNull null
+		val owner = target.parent as? IrClass ?: return@mapNotNull null
+		if (owner.kind == ClassKind.INTERFACE || isInheritedStaticFunction(fn)) return@mapNotNull null
+		val implementation = inheritedImplementationFact(fn)
+		if (implementation.isEmpty()) return@mapNotNull null
+		method(fn, static = false).removeSuffix("}") + implementation + "}"
+	}
+	return if (facts.isEmpty()) "" else ""","inheritedClassMethods":[${facts.joinToString(",")}]"""
+}
+
 private fun BirEmitter.kotlinCompanionFact(owner: IrClass, companion: IrClass): String {
 	val ownerName = owner.fqNameWhenAvailable?.asString()
 		?: error("companion owner '${owner.name}' has no Kotlin qualified name")
@@ -891,7 +905,7 @@ internal fun BirEmitter.richEnumDef(ec: IrClass): String {
 	}
 	val richEnum = ""","richEnum":{"entries":[$richEnumEntries],"name":"__name","ordinal":"__ordinal","values":"values","valueOf":"valueOf"}"""
 	val kotlinCompanion = ""
-	val baseDef = """{"name":${str(name)},"kind":"class","enumRich":true,"abstract":$baseAbstract,"vis":${str(sourceVisOf(ec))}${semanticOwnerJson(ec)}$kotlinCompanion,"base":null,"interfaces":[$ifaces],"fields":[${fields.joinToString(",")}],"ctors":[$ctors],"methods":[$methods],"properties":[$allPropsList]$inheritedDefaultsJson$inheritedDefaultMethodsJson$richEnum,"attrs":[${attrsJson(ec.annotations)}]}"""
+	val baseDef = """{"name":${str(name)},"kind":"class","enumRich":true,"abstract":$baseAbstract,"vis":${str(sourceVisOf(ec))}${semanticOwnerJson(ec)}$kotlinCompanion,"base":null,"interfaces":[$ifaces],"fields":[${fields.joinToString(",")}],"ctors":[$ctors],"methods":[$methods],"properties":[$allPropsList]$inheritedDefaultsJson$inheritedDefaultMethodsJson${inheritedClassMethodsJson(ec)}$richEnum,"attrs":[${attrsJson(ec.annotations)}]}"""
 	// Emit the base enum class first, then each per-entry subclass.
 	val result = (listOf(baseDef) + subDefs).joinToString(",")
 	activeSemanticOwner = savedSemanticOwner
@@ -1805,7 +1819,7 @@ internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDecla
 		""","inheritedDefaultAccessors":[${inheritedDefaultAccessors.joinToString(",")}]"""
 	val inheritedDefaultMethodsJson = if (inheritedDefaultMethods.isEmpty()) "" else
 		""","inheritedDefaultMethods":[${inheritedDefaultMethods.joinToString(",")}]"""
-	val result = """{"name":${str(typeName(klass))},"kind":"class","abstract":$isAbstract,"vis":${str(vis)}$semanticOwner$staticSemanticOwnerFact$outerTypeParamsFact$outerTypeParamOffsetFact$sealedFlag$tpJson$generatedFlag$kotlinCompanion,"base":$baseJson,"interfaces":[$ifaces],"fields":[$fields],"ctors":[$ctors],"methods":[$methods],"properties":[$propsList]$inheritedDefaultsJson$inheritedDefaultMethodsJson$clrEventsJson$clrEventForwardersJson,"attrs":[${attrsJson(klass.annotations)}]${posJson(klass)}}"""
+	val result = """{"name":${str(typeName(klass))},"kind":"class","abstract":$isAbstract,"vis":${str(vis)}$semanticOwner$staticSemanticOwnerFact$outerTypeParamsFact$outerTypeParamOffsetFact$sealedFlag$tpJson$generatedFlag$kotlinCompanion,"base":$baseJson,"interfaces":[$ifaces],"fields":[$fields],"ctors":[$ctors],"methods":[$methods],"properties":[$propsList]$inheritedDefaultsJson$inheritedDefaultMethodsJson${inheritedClassMethodsJson(klass)}$clrEventsJson$clrEventForwardersJson,"attrs":[${attrsJson(klass.annotations)}]${posJson(klass)}}"""
 	// Restore the captured-param remap installed at the top.
 	savedCaptureSubst.forEach { (tp, prev) -> if (prev != null) typeArgSubst[tp] = prev else typeArgSubst.remove(tp) }
 	return result

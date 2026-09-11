@@ -136,6 +136,10 @@ static class KotlinOverrideSlotBridge
         var ownArgs = ClassOwnArgs(cls);
         var bridges = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
         var ordinal = 0;
+        var candidates = methods.OfType<JsonObject>().ToList();
+        var inheritedOwners = new Dictionary<JsonObject, TypeNode.Fqn>(ReferenceEqualityComparer.Instance);
+        if (emitBridges)
+            CollectInheritedClassMethods(cls, defs, refs, isValue, candidates, inheritedOwners);
 
         // EVERY EARLY EXIT BELOW MEANS "THIS SUPERTYPE OR SLOT IS NOT ONE THIS ERASURE DIVERGED", never "give up on a
         // slot that needs filling". A supertype absent from `defs` is declared elsewhere and goes to the referenced
@@ -149,8 +153,11 @@ static class KotlinOverrideSlotBridge
         void Fill(TypeNode.Fqn semanticSpec, TypeNode.Fqn descriptorSpec,
             bool supIsInterface, bool referencedSlot, bool interfaceSlotHasDefault,
             string identityName, string descriptorMember, string propertyAccessor,
-            TypeNode[] slotParams, TypeNode slotRet, JsonObject impl, JsonArray slotTypeParams = null)
+            TypeNode[] slotParams, TypeNode slotRet, JsonObject impl, JsonArray slotTypeParams = null,
+            bool unitValueReturn = false)
         {
+            inheritedOwners.TryGetValue(impl, out var inheritedOwner);
+            if (inheritedOwner != null && !supIsInterface) return;
             if (!emitBridges)
                 OwnerConstrainedMethodLowering.RecordOverride(impl, slotTypeParams,
                     semanticSpec.Args ?? Array.Empty<TypeNode>(),
@@ -185,8 +192,10 @@ static class KotlinOverrideSlotBridge
             }
             // A parameter difference this erasure did not create belongs to whatever pass did create it.
             if (fit == null || fit.Contains(Fit.Foreign)) return;
-            var retFit = Classify(slotRet, SupertypeGraph.SubstOwnerTvs(declRet, ownArgs), refs, isValue,
-                returnPosition: true);
+            var retFit = unitValueReturn && IsVoid(declRet) && !Bool(impl[BirTypeLowering.ValueReturnKey])
+                ? Fit.Bridge
+                : Classify(slotRet, SupertypeGraph.SubstOwnerTvs(declRet, ownArgs), refs, isValue,
+                    returnPosition: true);
             if (retFit == Fit.Foreign)
             {
                 // The covariant pass now resolves referenced Kotlin declarations too. Its explicit hand-off says
@@ -256,7 +265,7 @@ static class KotlinOverrideSlotBridge
                     impl["virtual"] = true;
                     var descriptor = ImplDescriptor(descriptorSpec, descriptorMember,
                         (impl["typeParams"] as JsonArray)?.Count ?? 0, slotParams, slotRet,
-                        constructedSlotTypeParams);
+                        constructedSlotTypeParams, unitValueReturn);
                     AddImplDescriptor(impl, "clrInterfaceImpls", descriptor);
                 }
                 return;
@@ -268,7 +277,7 @@ static class KotlinOverrideSlotBridge
                 impl["virtual"] = true;
                 var descriptor = ImplDescriptor(descriptorSpec, descriptorMember,
                     (impl["typeParams"] as JsonArray)?.Count ?? 0, slotParams, slotRet,
-                    constructedSlotTypeParams);
+                    constructedSlotTypeParams, unitValueReturn);
                 AddImplDescriptor(impl, "clrInterfaceImpls", descriptor);
                 return;
             }
@@ -301,6 +310,7 @@ static class KotlinOverrideSlotBridge
                       + "{" + Str(impl["name"]) + "<"
                       + MethodTypeParameterShapeKey(impl["typeParams"] as JsonArray, ownArgs)
                       + ">(" + body + ")}";
+            if (inheritedOwner != null) key += "[body-owner:" + SupertypeGraph.TypeKey(inheritedOwner) + "]";
             // A private-final MethodDef used as an interface MethodImpl body belongs to one exact declaration slot.
             // Sharing that final body across an inherited chain (I::m and I.Base::m) makes the derived interface's
             // MethodImpl graph invalid on CoreCLR even though both descriptors forward to the same Kotlin declaration.
@@ -308,11 +318,14 @@ static class KotlinOverrideSlotBridge
             // interface-implementation shape by the complete declaration owner/member identity.
             if (cls.Kind == "interface")
                 key += "[slot:" + SupertypeGraph.TypeKey(descriptorSpec) + "::" + descriptorMember + "]";
+            if (unitValueReturn) key += "[value-return]";
             if (!bridges.TryGetValue(key, out var bridge))
             {
                 var bridgeOrdinal = ordinal++;
                 bridge = BuildBridge(cls, impl, slotParams, slotRet,
-                    $"dotkt$ovslot${SafeName(identityName)}${bridgeOrdinal}", isValue, refs);
+                    $"dotkt$ovslot${SafeName(identityName)}${bridgeOrdinal}", isValue, refs,
+                    callOwner: inheritedOwner,
+                    unitValueReturn: unitValueReturn);
                 if (propertyAccessor == null)
                     RoundtripMetadata.AddSourceMethodIdentity(bridge, identityName);
                 bridges[key] = bridge;
@@ -340,7 +353,7 @@ static class KotlinOverrideSlotBridge
             // interface, a base-class slot a MethodImpl against the constructed base. ilemit consumes the
             // resolved descriptor and resolves nothing itself.
             var bridgeDescriptor = ImplDescriptor(descriptorSpec, descriptorMember, arity, slotParams, slotRet,
-                constructedSlotTypeParams);
+                constructedSlotTypeParams, unitValueReturn);
             AddImplDescriptor(bridge, supIsInterface ? "clrInterfaceImpls" : "clrBaseImpls", bridgeDescriptor);
         }
 
@@ -350,11 +363,11 @@ static class KotlinOverrideSlotBridge
             {
                 // A referenced BASE CLASS reaches the same arm; only its wiring differs (a MethodImpl against the
                 // constructed base rather than the interface), and the emitter resolves that base externally.
-                FillFromReference(cls, defs, spec, supIsInterface, methods, ownArgs, isValue, refs, !emitBridges,
+                FillFromReference(cls, defs, spec, supIsInterface, candidates, ownArgs, isValue, refs, !emitBridges,
                     (owner, isInterface, referenced, identity, member, accessor, parameters, ret, implementation,
-                            slotTypeParams, slotHasDefault) =>
+                            slotTypeParams, slotHasDefault, unitValueReturn) =>
                         Fill(spec, owner, isInterface, referenced, slotHasDefault, identity, member, accessor,
-                            parameters, ret, implementation, slotTypeParams));
+                            parameters, ret, implementation, slotTypeParams, unitValueReturn));
                 continue;
             }
             var supArgs = SupertypeGraph.EffectiveArgs(spec, sup.Arity);
@@ -382,11 +395,12 @@ static class KotlinOverrideSlotBridge
                 var slotRet0 = TypeJson.Read(slot["ret"]);
                 if (slotParams.Any(p => p == null) || slotRet0 == null) continue;
                 var slotRet = SupertypeGraph.SubstOwnerTvs(NullableGenericErasure.EraseNullableTv(slotRet0, isValue), supArgs);
+                var slotReturnsValue = !IsVoid(slotRet0) || Bool(slot[BirTypeLowering.ValueReturnKey]);
 
                 KotlinPropertyAccessors.TryIdentity(slot, out var propertyName, out var accessorKind);
                 var semanticName = propertyName ?? Str(slot[DeclarationRename.SourceMemberKey])
                     ?? Str(slot[FBoundStarProjectionErasure.SourceMemberKey]) ?? name;
-                if (Implementer(cls, defs, methods, spec.Name, name, semanticName,
+                if (Implementer(cls, defs, candidates, spec.Name, name, semanticName,
                     Str(slot[DeclarationIdentityBinding.Key]), propertyName, accessorKind,
                     methodArity, slotParams, slot["typeParams"] as JsonArray, supArgs, ownArgs) is not JsonObject impl)
                     continue;
@@ -456,6 +470,7 @@ static class KotlinOverrideSlotBridge
                     descriptorMember = declarationMember;
                     slotParams = physicalParams;
                     slotRet = physicalRet;
+                    slotReturnsValue = physicalRet is not TypeNode.Fqn { Name: "void" or "System.Void", Args: null };
                 }
                 if (propertyName != null && refs != null
                     && refs.TryExternalPropertyAccessor(spec.Name, propertyName, accessorKind,
@@ -486,10 +501,77 @@ static class KotlinOverrideSlotBridge
                     && slot["body"] is JsonArray;
                 Fill(spec, descriptorOwner, supIsInterface, false, slotHasDefault,
                     semanticName, descriptorMember, accessorKind,
-                    slotParams, slotRet, impl, slot["typeParams"] as JsonArray);
+                    slotParams, slotRet, impl, slot["typeParams"] as JsonArray,
+                    slotReturnsValue && IsUnit(slotRet));
             }
         }
 
+    }
+
+    static void CollectInheritedClassMethods(Def cls, IReadOnlyDictionary<string, Def> defs,
+        ReferenceMetadataIndex refs, ValueTypeOracle isValue, List<JsonObject> candidates,
+        Dictionary<JsonObject, TypeNode.Fqn> inheritedOwners)
+    {
+        if (cls.Node["inheritedClassMethods"] is not JsonArray facts) return;
+        var bases = SupertypeGraph.Reachable(cls, defs, refs).Where(edge => !edge.isInterface).ToList();
+        foreach (var fact in facts.OfType<JsonObject>())
+        {
+            if (fact[KotlinPropertyAccessors.InheritedImplementationKey] is not JsonObject implementation
+                || TypeJson.OwnerName(implementation["owner"]) is not string ownerName
+                || Str(implementation["member"]) is not string member
+                || fact["params"] is not JsonArray parameters
+                || TypeJson.Read(fact["ret"]) is not TypeNode factRet) continue;
+            var factParams = parameters.OfType<JsonObject>().Select(p => TypeJson.Read(p["type"])).ToArray();
+            if (factParams.Any(p => p == null)) continue;
+            var arity = Int(implementation["arity"]);
+            foreach (var (spec, _) in bases.Where(edge => edge.spec.Name == ownerName)
+                         .GroupBy(edge => SupertypeGraph.TypeKey(edge.spec)).Select(group => group.First()))
+            {
+                var args = spec.Args ?? Array.Empty<TypeNode>();
+                TypeNode[] sourceParams;
+                TypeNode sourceRet;
+                bool returnsValue;
+                string physicalMember;
+                var callOwner = spec;
+                if (defs.TryGetValue(spec.Name, out var sourceOwner))
+                {
+                    var sources = sourceOwner.Methods.OfType<JsonObject>().Where(source =>
+                        !Bool(source["static"]) && !KotlinPropertyAccessors.IsPhysicalSlotBridge(source)
+                        && (Str(source[DeclarationRename.SourceMemberKey]) ?? Str(source["name"])) == member
+                        && ((source["typeParams"] as JsonArray)?.Count ?? 0) == arity
+                        && SameMethodTypeParameterShape(source["typeParams"] as JsonArray,
+                            implementation["typeParams"] as JsonArray, args, args)
+                        && SignatureMatches(source, factParams, factRet, args, refs, isValue)).ToList();
+                    if (sources.Count != 1) continue;
+                    var source = sources[0];
+                    sourceParams = ((JsonArray)source["params"]).OfType<JsonObject>()
+                        .Select(p => SupertypeGraph.SubstOwnerTvs(TypeJson.Read(p["type"]), args)).ToArray();
+                    var openRet = TypeJson.Read(source["ret"]);
+                    returnsValue = !IsVoid(openRet) || Bool(source[BirTypeLowering.ValueReturnKey]);
+                    sourceRet = SupertypeGraph.SubstOwnerTvs(openRet, args);
+                    physicalMember = Str(source[DeclarationIdentityBinding.ExplicitNameKey]) ?? Str(source["name"]);
+                }
+                else
+                {
+                    if (refs == null || !refs.TrySelectedMethodDeclaration(spec.Name, member, arity,
+                            factParams, factRet, args, implementation["typeParams"] as JsonArray,
+                            out var source)) continue;
+                    sourceParams = source.Parameters.Select(p => SupertypeGraph.SubstOwnerTvs(p, args)).ToArray();
+                    sourceRet = SupertypeGraph.SubstOwnerTvs(source.Return, args);
+                    returnsValue = source.ReturnsValue;
+                    physicalMember = source.PhysicalMember;
+                    callOwner = new TypeNode.Fqn(refs.ExactReflectedOwner(spec.Name, args.Length), spec.Args);
+                }
+                var candidate = (JsonObject)fact.DeepClone();
+                candidate["name"] = physicalMember;
+                candidate["ret"] = TypeJson.Write(sourceRet);
+                for (var i = 0; i < sourceParams.Length; i++)
+                    ((JsonObject)((JsonArray)candidate["params"])[i])["type"] = TypeJson.Write(sourceParams[i]);
+                if (returnsValue && IsUnit(sourceRet)) candidate[BirTypeLowering.ValueReturnKey] = true;
+                candidates.Add(candidate);
+                inheritedOwners.Add(candidate, callOwner);
+            }
+        }
     }
 
     // Ordinary-function twin of the property rule below. This matters when a DIM has a CLR physical name that differs
@@ -1020,9 +1102,9 @@ static class KotlinOverrideSlotBridge
     // the reader saw the declaration and declined to state it, and inventing a slot from the physical signature is
     // the derivation the refusal exists to prevent.
     static void FillFromReference(Def cls, IReadOnlyDictionary<string, Def> defs, TypeNode.Fqn spec,
-        bool supIsInterface, JsonArray methods, TypeNode[] ownArgs, ValueTypeOracle isValue,
+        bool supIsInterface, IEnumerable<JsonObject> methods, TypeNode[] ownArgs, ValueTypeOracle isValue,
         ReferenceMetadataIndex refs, bool semanticConstraints,
-        Action<TypeNode.Fqn, bool, bool, string, string, string, TypeNode[], TypeNode, JsonObject, JsonArray, bool> fill)
+        Action<TypeNode.Fqn, bool, bool, string, string, string, TypeNode[], TypeNode, JsonObject, JsonArray, bool, bool> fill)
     {
         if (refs == null) return;
         var supArgs = spec.Args ?? Array.Empty<TypeNode>();
@@ -1071,6 +1153,7 @@ static class KotlinOverrideSlotBridge
                     continue;
                 string selectedPhysicalMember = null;
                 JsonArray selectedSlotTypeParams = null;
+                var slotReturnsValue = false;
                 var foundSlot = accessorKind != null
                     ? refs.TryNullableGenericPropertySlot(selectedSpec.Name, member, accessorKind, isStatic: false,
                         ps.Count, methodArity, implementationSignature, selectedArgs,
@@ -1079,7 +1162,7 @@ static class KotlinOverrideSlotBridge
                         implementationSignature, TypeJson.Read(impl["ret"]),
                         spec.Args ?? Array.Empty<TypeNode>(), impl["typeParams"] as JsonArray, ownArgs,
                         out slotRet0, out slotParams0, out refused,
-                        out selectedPhysicalMember, out selectedSlotTypeParams, semanticConstraints);
+                        out selectedPhysicalMember, out selectedSlotTypeParams, out slotReturnsValue, semanticConstraints);
                 if (!foundSlot)
                     continue;
                 if (slotParams0 == null || slotParams0.Length != ps.Count) continue;
@@ -1100,6 +1183,7 @@ static class KotlinOverrideSlotBridge
                     : SupertypeGraph.SubstOwnerTvs(NullableGenericErasure.EraseNullableTv(slotRet0, isValue),
                         accessorKind != null ? selectedArgs : supArgs);
                 if (slotRet == null) continue;
+                if (accessorKind != null) slotReturnsValue = slotRet0 != null && !IsVoid(slotRet0);
                 // The CLR slot's own NAME. A referenced Kotlin interface that is `@ClrTypeAlias`'d onto a BCL one
                 // fills a differently-named member (`compareTo` -> `CompareTo`), and the MethodImpl has to name the
                 // member the interface actually declares.
@@ -1165,6 +1249,7 @@ static class KotlinOverrideSlotBridge
                         descriptorMember = declarationMember;
                         slotParams = physicalParams;
                         slotRet = physicalRet;
+                        slotReturnsValue = physicalRet is not TypeNode.Fqn { Name: "void" or "System.Void", Args: null };
                     }
                 }
                 // Property overrides carry their Kotlin identity in the override marker. An ordinary declaration may
@@ -1176,7 +1261,7 @@ static class KotlinOverrideSlotBridge
                     descriptorOwner.Name, descriptorMember, methodArity, slotParams, slotRet);
                 fill(descriptorOwner, supIsInterface, true, accessorKind != null ? member : sourceIdentity,
                     descriptorMember, accessorKind, slotParams, slotRet, impl, selectedSlotTypeParams,
-                    slotHasDefault);
+                    slotHasDefault, slotReturnsValue && IsUnit(slotRet));
                 // Flattened property override facts can name several distinct CLR obligations (a redeclared Kotlin
                 // accessor and its aliased BCL ancestor). Let each exact owner contribute its descriptor; the common
                 // Fill/AddImplDescriptor path deduplicates genuinely identical rows. Ordinary methods retain their
@@ -1243,6 +1328,8 @@ static class KotlinOverrideSlotBridge
     static bool IsVoid(TypeNode type) =>
         type is TypeNode.Fqn { Name: "kotlin.Unit" or "void" or "System.Void", Args: null };
 
+    static bool IsUnit(TypeNode type) => type is TypeNode.Fqn { Name: "kotlin.Unit", Args: null };
+
     // WHICH PASS OWNS A DIVERGENT SLOT. `CovariantInterfaceReturnBridge` bridges a return the override narrowed, and
     // it runs first; this erasure narrows returns too, so without a boundary both fire on one slot and emit two
     // private bridges with the SAME signature and the SAME MethodImpl descriptor — and the emitter, taking the first
@@ -1298,7 +1385,7 @@ static class KotlinOverrideSlotBridge
     // and a slot may be reached through a supertype the author never named (`Sink`'s own base interfaces, including
     // a synthesized existential view of `Sink`), so an ANCESTOR of an overridden owner counts too. An
     // unrelated same-name overload proves neither and is left alone — mis-wiring a MethodImpl fails type LOAD.
-    static JsonObject Implementer(Def cls, IReadOnlyDictionary<string, Def> defs, JsonArray methods, string supName,
+    static JsonObject Implementer(Def cls, IReadOnlyDictionary<string, Def> defs, IEnumerable<JsonObject> methods, string supName,
         string physicalName, string semanticName, string slotDeclarationId,
         string propertyName, string accessorKind, int methodArity,
         TypeNode[] slotParams, JsonArray slotTypeParams, TypeNode[] slotOwnerArgs, TypeNode[] ownArgs)
@@ -1449,7 +1536,7 @@ static class KotlinOverrideSlotBridge
     // (`unbox.any` for a value, `castclass` for a reference) and the result widened back.
     static JsonObject BuildBridge(Def cls, JsonObject impl, TypeNode[] slotParams, TypeNode slotRet, string bridgeName,
         ValueTypeOracle isValue, ReferenceMetadataIndex refs, TypeNode.Fqn callOwner = null,
-        bool virtualCall = true, string callMember = null)
+        bool virtualCall = true, string callMember = null, bool unitValueReturn = false)
     {
         var declParams = impl["params"] as JsonArray ?? new JsonArray();
         var bridgeParams = new JsonArray();
@@ -1514,7 +1601,7 @@ static class KotlinOverrideSlotBridge
         }
         var body = new JsonArray();
         var retCarried = false;
-        if (IsVoid(slotRet))
+        if (IsVoid(slotRet) && !unitValueReturn)
             body.Add(new JsonObject { ["k"] = "exprStmt", ["expr"] = call });
         else
         {
@@ -1557,6 +1644,7 @@ static class KotlinOverrideSlotBridge
         };
         if (cls.Kind == "interface")
             bridge[KotlinPropertyAccessors.ClrInterfaceSlotBridgeKey] = true;
+        if (unitValueReturn) bridge[BirTypeLowering.ValueReturnKey] = true;
         if (retCarried && implRet != null)
             CarryKotlinType(bridge, "nullableGenericRet", "retNullableFlags", implRet, slotRet, isValue);
         if (impl["typeParams"] is JsonArray tps) bridge["typeParams"] = tps.DeepClone();
@@ -1588,7 +1676,7 @@ static class KotlinOverrideSlotBridge
     }
 
     static JsonObject ImplDescriptor(TypeNode.Fqn spec, string member, int arity, TypeNode[] slotParams,
-        TypeNode slotRet, JsonArray typeParams = null)
+        TypeNode slotRet, JsonArray typeParams = null, bool unitValueReturn = false)
     {
         var ps = new JsonArray();
         foreach (var p in slotParams) ps.Add(TypeJson.Write(p));
@@ -1603,6 +1691,7 @@ static class KotlinOverrideSlotBridge
             ["ret"] = TypeJson.Write(slotRet),
         };
         if (typeParams != null) descriptor["typeParams"] = typeParams.DeepClone();
+        if (unitValueReturn) descriptor[BirTypeLowering.ValueReturnKey] = true;
         return descriptor;
     }
 

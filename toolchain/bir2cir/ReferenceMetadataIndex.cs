@@ -2899,7 +2899,7 @@ sealed partial class ReferenceMetadataIndex
                     ? carriers[index]
                     : type).ToArray(),
             match.NullableGenericRet ?? match.KotlinReturnType ?? match.ReturnTypeNode,
-            match.MethodTypeParams);
+            match.MethodTypeParams, match.ReturnTypeNode is not TypeNode.Fqn { Name: "void" or "System.Void", Args: null });
         return true;
     }
 
@@ -2941,7 +2941,7 @@ sealed partial class ReferenceMetadataIndex
             selectedSuspend
                 ? match.SuspendReturnType
                 : match.NullableGenericRet ?? match.KotlinReturnType ?? match.ReturnTypeNode,
-            match.MethodTypeParams);
+            match.MethodTypeParams, match.ReturnTypeNode is not TypeNode.Fqn { Name: "void" or "System.Void", Args: null });
         return true;
     }
 
@@ -3605,13 +3605,15 @@ sealed partial class ReferenceMetadataIndex
         int methodArity, IReadOnlyList<TypeNode> resolvedSignature, TypeNode resolvedReturn,
         TypeNode[] ownerTypeArguments, JsonArray selectedTypeParams, TypeNode[] selectedOwnerTypeArguments,
         out TypeNode declaredRet, out TypeNode[] declaredParams, out bool[] paramsRefused,
-        out string physicalMember, out JsonArray declarationTypeParams, bool semanticConstraints = false)
+        out string physicalMember, out JsonArray declarationTypeParams, out bool returnsValue,
+        bool semanticConstraints = false)
     {
         declaredRet = null;
         declaredParams = null;
         paramsRefused = null;
         physicalMember = null;
         declarationTypeParams = null;
+        returnsValue = false;
         if (ownerFqn == null || name == null) return false;
         var path = new HashSet<string>(StringComparer.Ordinal)
             { ReferenceWalkKey(ownerFqn, ownerTypeArguments) };
@@ -3628,6 +3630,7 @@ sealed partial class ReferenceMetadataIndex
         declaredParams = parameters.Select(parameter => parameter.Node).ToArray();
         paramsRefused = parameters.Select(parameter => parameter.Refused).ToArray();
         physicalMember = declaration.PhysicalMember;
+        returnsValue = declaration.ReturnsValue;
         declarationTypeParams = declaration.TypeParams?.DeepClone() as JsonArray;
         return declaredRet != null || parameters.Any(parameter => parameter.Node != null || parameter.Refused);
     }
@@ -3710,7 +3713,9 @@ sealed partial class ReferenceMetadataIndex
                 if (propertyName == null)
                     declaredMethod = new MethodSlotIdentity(member.Name,
                         (semanticConstraints ? member.SemanticMethodTypeParams ?? member.MethodTypeParams
-                            : member.MethodTypeParams)?.DeepClone() as JsonArray);
+                            : member.MethodTypeParams)?.DeepClone() as JsonArray,
+                        member.ReturnTypeNode != null
+                            && member.ReturnTypeNode is not TypeNode.Fqn { Name: "void" or "System.Void", Args: null });
                 // DECLARED HERE TERMINATES THE SEARCH, facts or no facts. A concrete member that shadows or
                 // implements an inherited namesake IS the declaration the call binds to; continuing upward because
                 // this one happens to carry no erasure fact would hand the call the BASE's carrier and rewrite a
@@ -3749,7 +3754,8 @@ sealed partial class ReferenceMetadataIndex
             var mret = MapThroughSupertype(sret, super.Args);
             var mps = sps.Select(p => MapThroughSupertype(p, super.Args)).ToArray();
             var mmethod = smethod == null ? null : new MethodSlotIdentity(smethod.PhysicalMember,
-                KotlinOverrideSlotBridge.SubstituteOwnerTypeParameterConstraints(smethod.TypeParams, super.Args));
+                KotlinOverrideSlotBridge.SubstituteOwnerTypeParameterConstraints(smethod.TypeParams, super.Args),
+                smethod.ReturnsValue);
             if (answers++ == 0)
             {
                 foundRet = mret;
@@ -3770,7 +3776,7 @@ sealed partial class ReferenceMetadataIndex
     static bool SameMethodIdentity(MethodSlotIdentity left, MethodSlotIdentity right)
     {
         if (left == null || right == null) return left == right;
-        return left.PhysicalMember == right.PhysicalMember
+        return left.PhysicalMember == right.PhysicalMember && left.ReturnsValue == right.ReturnsValue
             && KotlinOverrideSlotBridge.SameMethodTypeParameterShape(
                 left.TypeParams, right.TypeParams, Array.Empty<TypeNode>(), Array.Empty<TypeNode>());
     }
@@ -7295,7 +7301,7 @@ readonly record struct SlotFact(TypeNode Node, bool Refused);
 
 // Exact MethodDef selected together with a nullable-generic slot. TypeParams are kept in the current referenced
 // owner's declaration frame and are mapped through each supertype edge in lockstep with the slot types.
-sealed record MethodSlotIdentity(string PhysicalMember, JsonArray TypeParams);
+sealed record MethodSlotIdentity(string PhysicalMember, JsonArray TypeParams, bool ReturnsValue);
 
 // `ReturnType` is the best-effort STATIC-RESULT projection (TypeNodeOf): it drops a generic parameter, because its
 // consumers want a usable concrete identity or nothing. `ReturnTypeNode` is the DECLARATION projection
@@ -7305,7 +7311,7 @@ sealed record MethodSlotIdentity(string PhysicalMember, JsonArray TypeParams);
 sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic, int PropertyAccess = 0, string PropertyName = null, int[] ByrefPositions = null, bool Suspend = false, bool Conv = false, TypeNode ConvTo = null, TypeNode ReturnType = null, int MethodArity = 0, TypeNode[] ParamTypeNodes = null, bool IsVirtual = false, TypeNode KotlinReturnType = null, TypeNode SuspendReturnType = null, TypeNode NullableGenericRet = null, TypeNode[] NullableGenericParams = null, TypeNode ReturnTypeNode = null, int MetadataToken = 0, string SourcePropertyName = null, string AccessorKind = null, string AssociatedPropertyName = null, bool IsPropertyBridge = false, bool IsPublic = false, string PropertyAssociation = null, string SourcePropertyAssociation = null, string SourceMethodName = null, JsonArray MethodTypeParams = null, string DeclarationId = null, string DeclarationSourceName = null, string DeclarationPhysicalOwner = null, TypeNode[] DeclarationSemanticParams = null, TypeNode DeclarationSemanticReturn = null, string CollectionFactoryKind = null, string ArrayFactoryKind = null, string ArrayFactoryElementHint = null, int CountStart = -1, int CountEnd = -1, int[] SemanticReifiedTypeParameterIndices = null, int[] NullableWitnessTypeParameterIndices = null, TypeNode[] KotlinParameterTypes = null, string InnerConstructorOwner = null, TypeNode[] InnerConstructorParameters = null, int[] InnerConstructorTypeArguments = null, JsonArray SemanticMethodTypeParams = null);
 
 sealed record ReferencedMethodDeclaration(string PhysicalMember, TypeNode[] Parameters, TypeNode Return,
-    JsonArray TypeParams);
+    JsonArray TypeParams, bool ReturnsValue);
 
 sealed record ReferencedUnsafeAccessorMethod(string PhysicalMember, TypeNode[] Parameters, TypeNode Return,
     JsonArray TypeParams, TypeNode NullableGenericReturn);

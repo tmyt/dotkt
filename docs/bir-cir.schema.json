@@ -429,6 +429,11 @@
             "additionalProperties": false
           }
         },
+        "inheritedClassMethods": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/funDecl" },
+          "$comment": "BIR-only inherited method signatures with the frontend-selected class implementation and override closure. These are facts, not new declarations or bodies. bir2cir uses them to allocate signature bridges to inherited implementations."
+        },
         "inheritedDefaultMethods": {
           "type": "array",
           "$comment": "BIR-only frontend-selected inherited default ordinary-function implementations on a class. This is the method twin of inheritedDefaultAccessors and is consumed only for explicit CLR MethodImpl allocation when another physical method would capture the DIM slot.",

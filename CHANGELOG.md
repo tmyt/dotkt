@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Generic Unit return slots receive value-returning bridges (#714).** Direct and inherited implementations keep
+  their ordinary void-returning methods while satisfying generic class and interface slots with real Unit values,
+  including cross-DLL consumption and further virtual overrides.
+
 - **Nullable Unit returns retain their value ABI (#705).** Non-suspend local and imported methods, overrides, and function
   values preserve both Unit and null; ordinary non-null Unit returns keep their void convention. Exact Kotlin
   metadata preserves nullable Unit in declaration signatures and nested types across DLL imports.

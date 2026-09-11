@@ -1069,7 +1069,7 @@ class V:
                 for property_key in ("propertyName", "propertyAccessor", "propertyAssociation", "kotlinAccessors",
                                      "kotlinPropertyAccessorCarrier", "physicalSlotBridge",
                                      "inheritedImplementation", "inheritedDefaultAccessors",
-                                     "inheritedDefaultMethods"):
+                                     "inheritedDefaultMethods", "inheritedClassMethods"):
                     if property_key in o:
                         self.err(f, path, f"{property_key} is a BIR property-accessor fact and must be consumed before CIR")
                 for declaration_key in ("declarationId", "declarationSourceName", "explicitClrName"):
