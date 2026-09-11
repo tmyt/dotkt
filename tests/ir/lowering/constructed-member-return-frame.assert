@@ -8,6 +8,6 @@
 # The inherited-class/interface bridge also authors an already-closed result. It must stamp its synthesized call so
 # both sweeps preserve Pairish<K,V> instead of substituting it through PassBase<Pairish<K,V>> once per sweep.
 +"name":"DerivedPasser","kind":"class"
-+"ownerType":{"t":"fqn","name":"PassBase","args":[{"t":"fqn","name":"Pairish","args":[{"t":"tv","scope":"type","i":0},{"t":"tv","scope":"type","i":1}]}]},"virtual":false,"recv":{"k":"this"},"method":"pass"
++"ownerType":{"t":"fqn","name":"PassBase","args":[{"t":"fqn","name":"Pairish","args":[{"t":"tv","scope":"type","i":0},{"t":"tv","scope":"type","i":1}]}]},"virtual":false,"clrOwnerResolved":true,"recv":{"k":"this"},"method":"pass"
 +"dynRet":{"t":"fqn","name":"Pairish","args":[{"t":"tv","scope":"type","i":0},{"t":"tv","scope":"type","i":1}]},"ret":{"t":"fqn","name":"Pairish","args":[{"t":"tv","scope":"type","i":0},{"t":"tv","scope":"type","i":1}]}
 -"ret":{"t":"fqn","name":"Pairish","args":[{"t":"fqn","name":"Pairish"
