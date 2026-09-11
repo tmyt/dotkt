@@ -8,8 +8,23 @@ private class ConsumedNamedOwner : OwnerBody<String>("constructed"), ValueSlot<S
 private class ConsumedNamedMethod : MethodBody(), MethodSlot
 private class ConsumedNamedBound : BoundBody<BoundValue>(), BoundSlot<BoundValue>
 private class ConsumedNamedUnit : UnitBody(), ValueSlot<Unit>
+private class ConsumedProperty : PropertyBody(), PropertySlot
+private class ConsumedMutable : MutableBody<String>("before"), MutableSlot<String>
 
 class InheritedClrNameRoundtripTests {
+    @TestAttribute
+    fun importedInheritedFinalPropertiesKeepAccessorSlots() {
+        val producer: PropertySlot = ProducedProperty()
+        val consumer: PropertySlot = ConsumedProperty()
+        assertEquals("property", producer.tag)
+        assertEquals("property", consumer.tag)
+        val body = ConsumedMutable()
+        val mutable: MutableSlot<String> = body
+        assertEquals("before", mutable.value)
+        mutable.value = "after"
+        assertEquals("after", body.value)
+    }
+
     @TestAttribute
     fun producerAndConsumerMappingsKeepKotlinNames() {
         val producer: StringSlot = ProducedString()

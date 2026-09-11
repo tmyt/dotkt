@@ -2,6 +2,11 @@ package inheritedclrnames
 
 interface StringSlot { fun read(): String }
 interface ValueSlot<T> { fun read(): T }
+interface PropertySlot { val tag: String }
+open class PropertyBody { val tag: String get() = "property" }
+class ProducedProperty : PropertyBody(), PropertySlot
+interface MutableSlot<T> { var value: T }
+open class MutableBody<T>(initial: T) { var value: T = initial }
 open class StringBody {
     @kotlin.clr.ClrName("ReadText")
     fun read(): String = "producer"

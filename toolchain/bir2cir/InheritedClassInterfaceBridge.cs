@@ -125,7 +125,7 @@ static class InheritedClassInterfaceBridge
 
             foreach (var im in iface.Methods.OfType<JsonObject>())
             {
-                if (Bool(im["static"]) || HasConcreteBody(im)) continue;
+                if (Bool(im["static"]) || !Bool(im["abstract"])) continue;
                 if (Str(im["name"]) is not string name || im["params"] is not JsonArray ips) continue;
                 var methodArity = (im["typeParams"] as JsonArray)?.Count ?? 0;
                 var slotParams = ips.OfType<JsonObject>().Select(p => TypeJson.Read(p["type"]))

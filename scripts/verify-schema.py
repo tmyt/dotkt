@@ -1045,7 +1045,7 @@ class V:
                                                  "newSuspendLambda capValues entries must be expression nodes or null")
             if "inheritedClassMethods" in o:
                 facts = o["inheritedClassMethods"]
-                allowed = {"member", "params", "ret", "typeParams", "mods", "overrides", "inheritedImplementation"}
+                allowed = {"member", "propertyName", "propertyAccessor", "propertyAssociation", "params", "ret", "typeParams", "mods", "overrides", "inheritedImplementation"}
                 required = {"member", "params", "ret", "inheritedImplementation"}
                 if not isinstance(facts, list):
                     self.err(f, path, "inheritedClassMethods must be a list of declaration facts")

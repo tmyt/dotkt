@@ -50,7 +50,25 @@ open class InheritedNameUnitBody {
 }
 class InheritedNameUnit : InheritedNameUnitBody(), InheritedNameUnitSlot, InheritedNameValueSlot<Unit>
 
+interface InheritedNamePropertySlot { val tag: String }
+open class InheritedNamePropertyBody { val tag: String get() = "property" }
+class InheritedNameProperty : InheritedNamePropertyBody(), InheritedNamePropertySlot
+interface InheritedNameMutableSlot<T> { var value: T }
+open class InheritedNameMutableBody<T>(initial: T) { var value: T = initial }
+class InheritedNameMutable : InheritedNameMutableBody<String>("before"), InheritedNameMutableSlot<String>
+
 class InheritedClrNameTests {
+    @TestAttribute
+    fun inheritedFinalPropertiesKeepAccessorSlots() {
+        val property: InheritedNamePropertySlot = InheritedNameProperty()
+        assertEquals("property", property.tag)
+        val body = InheritedNameMutable()
+        val mutable: InheritedNameMutableSlot<String> = body
+        assertEquals("before", mutable.value)
+        mutable.value = "after"
+        assertEquals("after", body.value)
+    }
+
     @TestAttribute
     fun renamedFinalBodyFillsMultipleInterfaceSlots() {
         val body = InheritedNameString()

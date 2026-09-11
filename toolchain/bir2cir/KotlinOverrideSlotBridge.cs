@@ -533,6 +533,7 @@ static class KotlinOverrideSlotBridge
             var factParams = parameters.OfType<JsonObject>().Select(p => TypeJson.Read(p["type"])).ToArray();
             if (factParams.Any(p => p == null)) continue;
             var arity = Int(implementation["arity"]);
+            var propertyAccessor = Str(fact[KotlinPropertyAccessors.KindKey]);
             foreach (var (spec, _) in bases.Where(edge => edge.spec.Name == ownerName)
                          .GroupBy(edge => SupertypeGraph.TypeKey(edge.spec)).Select(group => group.First()))
             {
@@ -547,7 +548,11 @@ static class KotlinOverrideSlotBridge
                 {
                     var sources = sourceOwner.Methods.OfType<JsonObject>().Where(source =>
                         !Bool(source["static"]) && !KotlinPropertyAccessors.IsPhysicalSlotBridge(source)
-                        && (Str(source[DeclarationRename.SourceMemberKey]) ?? Str(source["name"])) == member
+                        && (propertyAccessor == null
+                            ? !KotlinPropertyAccessors.TryIdentity(source, out _, out _)
+                                && (Str(source[DeclarationRename.SourceMemberKey]) ?? Str(source["name"])) == member
+                            : Str(source[KotlinPropertyAccessors.SourceNameKey]) == member
+                                && Str(source[KotlinPropertyAccessors.KindKey]) == propertyAccessor)
                         && ((source["typeParams"] as JsonArray)?.Count ?? 0) == arity
                         && SameMethodTypeParameterShape(SemanticMethodTypeParameters(source),
                             implementation["typeParams"] as JsonArray, args, args)
@@ -566,7 +571,7 @@ static class KotlinOverrideSlotBridge
                 {
                     if (refs == null || !refs.TrySelectedMethodDeclaration(spec.Name, member, arity,
                             factParams, factRet, args, implementation["typeParams"] as JsonArray,
-                            out var source)) continue;
+                            out var source, propertyAccessor)) continue;
                     sourceParams = source.Parameters.Select(p => SupertypeGraph.SubstOwnerTvs(p, args)).ToArray();
                     physicalTypeParams = source.TypeParams;
                     sourceRet = SupertypeGraph.SubstOwnerTvs(source.Return, args);
@@ -1271,9 +1276,13 @@ static class KotlinOverrideSlotBridge
                 // pre-rename identity it handed off instead of reflecting meaning back out of that physical spelling.
                 // This identity also becomes the round-trip carrier on an exact interface MethodImpl bridge.
                 var sourceIdentity = Str(impl[DeclarationRename.SourceMemberKey]) ?? ownName;
-                var slotHasDefault = supIsInterface && refs.IsPublicConcreteInstanceMethod(
+                // A flattened property closure may name both a class body and an interface declaration. The actual
+                // descriptor owner determines the CLR table kind, not the supertype currently being traversed.
+                var descriptorIsInterface = accessorKind == null ? supIsInterface
+                    : refs.IsInterfaceType(descriptorOwner);
+                var slotHasDefault = descriptorIsInterface && refs.IsPublicConcreteInstanceMethod(
                     descriptorOwner.Name, descriptorMember, methodArity, slotParams, slotRet);
-                fill(descriptorOwner, supIsInterface, true, accessorKind != null ? member : sourceIdentity,
+                fill(descriptorOwner, descriptorIsInterface, true, accessorKind != null ? member : sourceIdentity,
                     descriptorMember, accessorKind, slotParams, slotRet, impl, selectedSlotTypeParams,
                     slotHasDefault, slotReturnsValue && IsUnit(slotRet));
                 // Flattened property override facts can name several distinct CLR obligations (a redeclared Kotlin
