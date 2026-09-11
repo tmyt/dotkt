@@ -105,7 +105,7 @@
           "t": "fqn", "name": "Pairish",
           "args": [{ "t": "tv", "scope": "type", "i": 0 }, { "t": "tv", "scope": "type", "i": 1 }]
         }] },
-        "member": "pass", "kind": "method", "arity": 1, "typeParams": []
+        "member": "pass", "kind": "method", "arity": 0, "typeParams": []
       }
     }],
     "fields": [], "ctors": [], "methods": [], "properties": [], "attrs": []
