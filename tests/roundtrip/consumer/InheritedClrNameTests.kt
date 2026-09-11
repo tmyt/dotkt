@@ -6,6 +6,7 @@ import inheritedclrnames.*
 private class ConsumedNamedString : StringBody(), StringSlot, ValueSlot<String>
 private class ConsumedNamedOwner : OwnerBody<String>("constructed"), ValueSlot<String>
 private class ConsumedNamedMethod : MethodBody(), MethodSlot
+private class ConsumedNamedBound : BoundBody<BoundValue>(), BoundSlot<BoundValue>
 private class ConsumedNamedUnit : UnitBody(), ValueSlot<Unit>
 
 class InheritedClrNameRoundtripTests {
@@ -28,6 +29,11 @@ class InheritedClrNameRoundtripTests {
         assertEquals("constructed", owner.read())
         assertEquals("method", method.identity("method"))
         assertEquals(42, method.identity(42))
+        val bounded: BoundSlot<BoundValue> = ConsumedNamedBound()
+        val produced: BoundSlot<BoundValue> = ProducedBound()
+        val payload = BoundPayload()
+        assertSame(payload, bounded.identity(payload))
+        assertSame(payload, produced.identity(payload))
     }
 
     @TestAttribute

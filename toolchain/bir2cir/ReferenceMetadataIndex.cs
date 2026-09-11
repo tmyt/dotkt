@@ -2886,7 +2886,7 @@ sealed partial class ReferenceMetadataIndex
                 && (member.DeclarationSourceName ?? member.SourceMethodName ?? member.Name) == sourceMember
                 && member.MethodArity == methodArity
                 && KotlinOverrideSlotBridge.SameMethodTypeParameterShape(
-                    member.MethodTypeParams, selectedTypeParams, ownerTypeArguments, ownerTypeArguments)
+                    member.SemanticMethodTypeParams ?? member.MethodTypeParams, selectedTypeParams, ownerTypeArguments, ownerTypeArguments)
                 && MethodSignatureMatches(member, signature, resolvedReturn, ownerTypeArguments)
                 && member.ParamTypeNodes != null && member.ReturnTypeNode != null)
             .ToList();

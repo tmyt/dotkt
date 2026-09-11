@@ -12,6 +12,14 @@ open class OwnerBody<T>(private val value: T) {
     fun read(): T = value
 }
 interface MethodSlot { fun <T> identity(value: T): T }
+interface BoundSlot<T> { fun <R : T> identity(value: R): R }
+interface BoundValue
+class BoundPayload : BoundValue
+open class BoundBody<T> {
+    @kotlin.clr.ClrName("BoundIdentity")
+    fun <R : T> identity(value: R): R = value
+}
+class ProducedBound : BoundBody<BoundValue>(), BoundSlot<BoundValue>
 open class MethodBody {
     @kotlin.clr.ClrName("Identity")
     fun <T> identity(value: T): T = value

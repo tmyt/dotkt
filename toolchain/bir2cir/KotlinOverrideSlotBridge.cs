@@ -541,6 +541,7 @@ static class KotlinOverrideSlotBridge
                 TypeNode sourceRet;
                 bool returnsValue;
                 string physicalMember;
+                JsonArray physicalTypeParams;
                 var callOwner = spec;
                 if (defs.TryGetValue(spec.Name, out var sourceOwner))
                 {
@@ -548,11 +549,12 @@ static class KotlinOverrideSlotBridge
                         !Bool(source["static"]) && !KotlinPropertyAccessors.IsPhysicalSlotBridge(source)
                         && (Str(source[DeclarationRename.SourceMemberKey]) ?? Str(source["name"])) == member
                         && ((source["typeParams"] as JsonArray)?.Count ?? 0) == arity
-                        && SameMethodTypeParameterShape(source["typeParams"] as JsonArray,
+                        && SameMethodTypeParameterShape(SemanticMethodTypeParameters(source),
                             implementation["typeParams"] as JsonArray, args, args)
                         && SignatureMatches(source, factParams, factRet, args, refs, isValue)).ToList();
                     if (sources.Count != 1) continue;
                     var source = sources[0];
+                    physicalTypeParams = source["typeParams"] as JsonArray;
                     sourceParams = ((JsonArray)source["params"]).OfType<JsonObject>()
                         .Select(p => SupertypeGraph.SubstOwnerTvs(TypeJson.Read(p["type"]), args)).ToArray();
                     var openRet = TypeJson.Read(source["ret"]);
@@ -566,6 +568,7 @@ static class KotlinOverrideSlotBridge
                             factParams, factRet, args, implementation["typeParams"] as JsonArray,
                             out var source)) continue;
                     sourceParams = source.Parameters.Select(p => SupertypeGraph.SubstOwnerTvs(p, args)).ToArray();
+                    physicalTypeParams = source.TypeParams;
                     sourceRet = SupertypeGraph.SubstOwnerTvs(source.Return, args);
                     returnsValue = source.ReturnsValue;
                     physicalMember = source.PhysicalMember;
@@ -573,6 +576,7 @@ static class KotlinOverrideSlotBridge
                 }
                 var candidate = (JsonObject)fact.DeepClone();
                 candidate["name"] = Str(fact["member"]);
+                candidate["typeParams"] = SubstituteOwnerTypeParameterConstraints(physicalTypeParams, args);
                 candidate[DeclarationIdentityBinding.ExplicitNameKey] = physicalMember;
                 candidate["ret"] = TypeJson.Write(sourceRet);
                 for (var i = 0; i < sourceParams.Length; i++)
@@ -1448,6 +1452,24 @@ static class KotlinOverrideSlotBridge
         TypeNode[] slotOwnerArgs, TypeNode[] implementationOwnerArgs)
         => MethodTypeParameterShapeKey(slotTypeParams, slotOwnerArgs)
             == MethodTypeParameterShapeKey(implementationTypeParams, implementationOwnerArgs);
+
+    // Selected implementations carry Kotlin constraints, not the CLR constraint rows after erasure.
+    internal static JsonArray SemanticMethodTypeParameters(JsonObject method)
+    {
+        var parameters = (method["typeParams"] as JsonArray)?.DeepClone() as JsonArray ?? new JsonArray();
+        if (Str(method[NullableGenericErasure.MethodTypeParameterBoundsPre]) is not string encoded)
+            return parameters;
+        var bounds = JsonNode.Parse(encoded)["bounds"].AsObject();
+        foreach (var pair in bounds)
+        {
+            var index = int.Parse(pair.Key);
+            var parameter = parameters[index] as JsonObject
+                ?? new JsonObject { ["name"] = parameters[index].GetValue<string>() };
+            if (parameters[index] is not JsonObject) parameters[index] = parameter;
+            parameter["constraints"] = pair.Value.DeepClone();
+        }
+        return parameters;
+    }
 
     internal static string MethodTypeParameterShapeKey(JsonArray typeParams, TypeNode[] ownerArgs)
     {

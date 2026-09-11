@@ -195,7 +195,7 @@ static class InheritedClassInterfaceBridge
                 var matches = ExactMethods(def.Methods, selectedMember, methodArity, slotParams, slotRet, args)
                     .Where(m => !Bool(m["static"]) && !Bool(m["abstract"])
                         && (Str(m["vis"]) is null or "public")
-                        && KotlinOverrideSlotBridge.SameMethodTypeParameterShape(m["typeParams"] as JsonArray,
+                        && KotlinOverrideSlotBridge.SameMethodTypeParameterShape(KotlinOverrideSlotBridge.SemanticMethodTypeParameters(m),
                             target["typeParams"] as JsonArray, args, args)).ToList();
                 if (matches.Count != 1) return null;
                 var method = matches[0];

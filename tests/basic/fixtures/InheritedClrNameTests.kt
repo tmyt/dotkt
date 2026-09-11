@@ -26,6 +26,13 @@ open class InheritedNameMethodBody {
 }
 class InheritedNameMethod : InheritedNameMethodBody(), InheritedNameMethodSlot
 
+interface InheritedNameBoundSlot<T> { fun <R : T> identity(value: R): R }
+open class InheritedNameBoundBody<T> {
+    @kotlin.clr.ClrName("BoundIdentity")
+    fun <R : T> identity(value: R): R = value
+}
+class InheritedNameBound : InheritedNameBoundBody<CharSequence>(), InheritedNameBoundSlot<CharSequence>
+
 interface InheritedNameStringArgument { fun read(value: String): String }
 interface InheritedNameIntArgument { fun read(value: Int): Int }
 open class InheritedNameOverloadBody {
@@ -69,6 +76,8 @@ class InheritedClrNameTests {
         assertEquals(42, number.read())
         assertEquals("method", method.identity("method"))
         assertEquals(43, method.identity(43))
+        val bounded: InheritedNameBoundSlot<CharSequence> = InheritedNameBound()
+        assertEquals("bounded", bounded.identity("bounded"))
     }
 
     @TestAttribute
