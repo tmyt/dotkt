@@ -8,6 +8,7 @@ This document fixes the public boundary between Kotlin coroutines and ordinary C
 |---|---|
 | `suspend fun f(...): T` | `Task<T> F(...)` |
 | `suspend fun f(...): Unit` | `Task F(...)` |
+| `suspend fun f(...): Unit?` | `Task<kotlin.Unit?> F(...)` |
 
 The public method has no hidden `Continuation` parameter. C# and F# consume it as an ordinary task-returning method:
 

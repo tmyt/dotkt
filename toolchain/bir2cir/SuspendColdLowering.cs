@@ -4188,8 +4188,8 @@ static partial class SuspendColdLowering
         // carries `suspendBridge:true` so ilemit stamps [KotlinFunction(Suspend)] (a re-consuming Kotlin sees `suspend fun`).
         JsonObject BuildBridge()
         {
-            var isUnit = IsUnitTn(_resultType);
-            var rKotlin = isUnit ? UnitTn : _taskResultType;
+            var isUnit = IsUnitTn(_resultType) && !_resultNullable;
+            var rKotlin = IsUnitTn(_resultType) ? UnitTn : _taskResultType;
             // Name the readonly public result representation now and use it for every producer/consumer of the slot.
             // Otherwise Root-V independently makes the nested TCS/Task owner invariant while the head-position
             // TrySetResult value and Kotlin call sites remain readonly, producing either a resolver or IL mismatch.
@@ -4197,7 +4197,8 @@ static partial class SuspendColdLowering
             // coroutine-abi.md §1: `suspend fun f(): Unit` -> a NON-generic public `Task` (the C#-idiomatic
             // async-void-returning-Task shape); `suspend fun f(): R` -> `Task<R>`. The internal drive stays generic
             // over Unit (TaskCompletionSource<Unit> / RootContinuation<Unit>); the returned TCS task (a Task<Unit>)
-            // upcasts to the non-generic Task on return (Task<T> : Task). So ONLY the PUBLIC return type differs for Unit.
+            // upcasts to the non-generic Task on return (Task<T> : Task). Nullable Unit is value-bearing: its
+            // public Task<Unit?> must preserve the distinction between the singleton and null.
             var taskType = new TypeNode.Fqn(_taskBcl, new[] { rTaskSlot }); // TaskCompletionSource<R>.Task runtime type
             var taskRetType = isUnit ? new TypeNode.Fqn(_taskBcl) : taskType;   // the public bridge return type
 
@@ -4388,7 +4389,8 @@ static partial class SuspendColdLowering
 
         // BUG 2: the pre-order NullableAttribute byte walk for the bridge return `Task<R>`, or null when it carries no
         // nullable position (then the type-level [NullableContext(1)] non-null default suffices). Reference nodes get 1
-        // (non-null) or 2 (nullable); value-type / Unit nodes are skipped (no byte). kotc conveys only R's OUTER
+        // (non-null) or 2 (nullable); value-type nodes are skipped (no byte). Unit in a Task result is a reference
+        // type, not void, and participates in the walk. kotc conveys only R's OUTER
         // nullability (`retNullable` on the suspend method), so inner reference args stay non-null (1) — the common
         // `suspend fun f(): String?` -> {1,2}; `List<String>?` -> {1,2,1}.
         JsonArray TaskReturnNullableFlags()
@@ -4407,10 +4409,10 @@ static partial class SuspendColdLowering
         static bool WalkNullable(TypeNode t, bool outerNullable, List<int> flags)
         {
             if (t == null) return false;
-            // A value type / Unit / void carries no nullability byte; every other head (a reference type or a
+            // A value type / void carries no nullability byte; every other head (a reference type or a
             // generic application) contributes a flag (2 if this position is nullable, else 1), then recurses its args.
             var head = t is TypeNode.Fqn f ? f.Name : null;
-            if (head != null && (ValueTypeFqns.Contains(head) || head is "kotlin.Unit" or "void")) return false;
+            if (head != null && (ValueTypeFqns.Contains(head) || head is "void")) return false;
             flags.Add(outerNullable ? 2 : 1);
             var any = outerNullable;
             if (t is TypeNode.Fqn { Args: { } args })
