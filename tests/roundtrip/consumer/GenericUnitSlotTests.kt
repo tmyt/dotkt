@@ -23,8 +23,27 @@ private class ConsumerUnitDefault : UnitDefault
 private class ConsumerOverrideDefault : UnitDefault {
     override fun get() { effects += 10 }
 }
+private class ConsumerFinalUnit : FinalBody(), Source<Unit>
+private class ConsumerArgumentUnit : ArgumentBody<String>(), ArgumentSource<String, Unit>
+private class ConsumerComparableUnitControl : ComparableBody(), Comparable<Int>
 
 class GenericUnitSlotRoundtripTests {
+    @TestAttribute
+    fun importedPropertyAndInheritedArgumentSlotsKeepTheirPhysicalContracts() {
+        effects = 0
+        val property: PropertySource<Unit> = UnitPropertySource()
+        val absent: Source<Unit?> = NullableUnitSource()
+        val final: Source<Unit> = ConsumerFinalUnit()
+        val argument: ArgumentSource<String, Unit> = ConsumerArgumentUnit()
+        assertSame(Unit, property.value)
+        assertEquals(null, absent.get())
+        assertSame(Unit, final.get())
+        assertSame(Unit, argument.accept("argument"))
+        assertEquals(2, effects)
+        val comparable: Comparable<Int> = ConsumerComparableUnitControl()
+        assertEquals(43, comparable.compareTo(42))
+    }
+
     @TestAttribute
     fun importedImplementationsRetainUnitValueAndVoidSlots() {
         effects = 0

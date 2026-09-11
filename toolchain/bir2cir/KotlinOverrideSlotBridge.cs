@@ -272,7 +272,9 @@ static class KotlinOverrideSlotBridge
             }
             if (!needsSignatureBridge && !needsExplicitSlot)
                 return;
-            if (!needsSignatureBridge && cls.Kind != "interface")
+            // An inherited candidate is a signature fact, not a MethodDef on this class. It needs a real forwarding
+            // body even for an exact-signature MethodImpl; attaching the descriptor to the fact would discard it.
+            if (!needsSignatureBridge && cls.Kind != "interface" && inheritedOwner == null)
             {
                 impl["virtual"] = true;
                 var descriptor = ImplDescriptor(descriptorSpec, descriptorMember,
@@ -325,6 +327,7 @@ static class KotlinOverrideSlotBridge
                 bridge = BuildBridge(cls, impl, slotParams, slotRet,
                     $"dotkt$ovslot${SafeName(identityName)}${bridgeOrdinal}", isValue, refs,
                     callOwner: inheritedOwner,
+                    callMember: inheritedOwner == null ? null : Str(impl[DeclarationIdentityBinding.ExplicitNameKey]),
                     unitValueReturn: unitValueReturn);
                 if (propertyAccessor == null)
                     RoundtripMetadata.AddSourceMethodIdentity(bridge, identityName);
@@ -400,10 +403,15 @@ static class KotlinOverrideSlotBridge
                 KotlinPropertyAccessors.TryIdentity(slot, out var propertyName, out var accessorKind);
                 var semanticName = propertyName ?? Str(slot[DeclarationRename.SourceMemberKey])
                     ?? Str(slot[FBoundStarProjectionErasure.SourceMemberKey]) ?? name;
-                if (Implementer(cls, defs, candidates, spec.Name, name, semanticName,
+                // A prior pass may already have materialized a final inherited method's forwarding declaration.
+                // Its selected override owns this slot; the inherited fact must not make that declaration ambiguous.
+                var impl = Implementer(cls, defs, methods.OfType<JsonObject>(), spec.Name, name, semanticName,
                     Str(slot[DeclarationIdentityBinding.Key]), propertyName, accessorKind,
-                    methodArity, slotParams, slot["typeParams"] as JsonArray, supArgs, ownArgs) is not JsonObject impl)
-                    continue;
+                    methodArity, slotParams, slot["typeParams"] as JsonArray, supArgs, ownArgs)
+                    ?? Implementer(cls, defs, candidates.Where(inheritedOwners.ContainsKey), spec.Name, name, semanticName,
+                        Str(slot[DeclarationIdentityBinding.Key]), propertyName, accessorKind,
+                        methodArity, slotParams, slot["typeParams"] as JsonArray, supArgs, ownArgs);
+                if (impl == null) continue;
                 // A locally-emitted Kotlin interface may itself be @ClrTypeAlias-bound to a referenced CLR
                 // interface. Its Kotlin accessor keeps the dedicated property name, while the MethodImpl descriptor
                 // must name the exact external Property/MethodSemantics accessor (Collection.size -> get_Count).
@@ -563,7 +571,8 @@ static class KotlinOverrideSlotBridge
                     callOwner = new TypeNode.Fqn(refs.ExactReflectedOwner(spec.Name, args.Length), spec.Args);
                 }
                 var candidate = (JsonObject)fact.DeepClone();
-                candidate["name"] = physicalMember;
+                candidate["name"] = Str(fact["member"]);
+                candidate[DeclarationIdentityBinding.ExplicitNameKey] = physicalMember;
                 candidate["ret"] = TypeJson.Write(sourceRet);
                 for (var i = 0; i < sourceParams.Length; i++)
                     ((JsonObject)((JsonArray)candidate["params"])[i])["type"] = TypeJson.Write(sourceParams[i]);

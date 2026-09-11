@@ -431,7 +431,39 @@
         },
         "inheritedClassMethods": {
           "type": "array",
-          "items": { "$ref": "#/$defs/funDecl" },
+          "items": {
+            "type": "object",
+            "properties": {
+              "member": { "type": "string" },
+              "params": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": { "name": { "type": "string" }, "type": { "$ref": "#/$defs/type" } },
+                  "required": ["name", "type"], "additionalProperties": false
+                }
+              },
+              "ret": { "$ref": "#/$defs/type" },
+              "typeParams": { "type": "array", "items": { "$ref": "#/$defs/typeParam" } },
+              "mods": { "$ref": "#/$defs/mods" },
+              "overrides": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "owner": { "$ref": "#/$defs/type" },
+                    "member": { "type": "string" },
+                    "kind": { "const": "method" },
+                    "arity": { "type": "integer", "minimum": 0 },
+                    "declarationId": { "type": "string" }
+                  },
+                  "required": ["owner", "member", "kind", "arity"], "additionalProperties": false
+                }
+              },
+              "inheritedImplementation": { "$ref": "#/$defs/funDecl/properties/inheritedImplementation" }
+            },
+            "required": ["member", "params", "ret", "inheritedImplementation"], "additionalProperties": false
+          },
           "$comment": "BIR-only inherited method signatures with the frontend-selected class implementation and override closure. These are facts, not new declarations or bodies. bir2cir uses them to allocate signature bridges to inherited implementations."
         },
         "inheritedDefaultMethods": {

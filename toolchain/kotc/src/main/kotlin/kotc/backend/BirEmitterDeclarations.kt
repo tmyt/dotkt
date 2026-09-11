@@ -325,12 +325,22 @@ private fun BirEmitter.inheritedDefaultMethodFact(fn: IrSimpleFunction): String?
 private fun BirEmitter.inheritedClassMethodsJson(klass: IrClass): String {
 	val facts = klass.declarations.filterIsInstance<IrSimpleFunction>().mapNotNull { fn ->
 		if (fn.correspondingPropertySymbol != null || !isInheritedSynthetic(fn)) return@mapNotNull null
+		val visited = hashSetOf<IrSimpleFunction>()
+		fun reachesInterfaceDeclaration(candidate: IrSimpleFunction): Boolean {
+			if (!visited.add(candidate)) return false
+			if (!isInheritedSynthetic(candidate) && (candidate.parent as? IrClass)?.kind == ClassKind.INTERFACE)
+				return true
+			return candidate.overriddenSymbols.any { reachesInterfaceDeclaration(it.owner) }
+		}
+		if (!reachesInterfaceDeclaration(fn)) return@mapNotNull null
 		val target = selectedInheritedImplementation(fn) ?: return@mapNotNull null
 		val owner = target.parent as? IrClass ?: return@mapNotNull null
 		if (owner.kind == ClassKind.INTERFACE || isInheritedStaticFunction(fn)) return@mapNotNull null
 		val implementation = inheritedImplementationFact(fn)
 		if (implementation.isEmpty()) return@mapNotNull null
-		method(fn, static = false).removeSuffix("}") + implementation + "}"
+		val parameters = (listOfNotNull(extensionReceiverParam(fn)) + fn.parameters.filter { isValueParameter(it) })
+			.joinToString(",") { """{"name":${str(it.name.asString())},"type":${birValueParameterType(it).toJson()}}""" }
+		"""{"member":${str(fn.name.asString())},"params":[$parameters],"ret":${birType(fn.returnType).toJson()}${typeParamsJson(fn.typeParameters)}${funModsJson(fn)}${overridesJson(fn)}$implementation}"""
 	}
 	return if (facts.isEmpty()) "" else ""","inheritedClassMethods":[${facts.joinToString(",")}]"""
 }

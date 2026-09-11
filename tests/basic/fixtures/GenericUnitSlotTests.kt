@@ -36,8 +36,47 @@ private class OverrideUnitDefault : DefaultUnitSlot {
 private class GenericUnitOwner<T>(private val value: T) : GenericUnitSlot<T> {
     override fun get(): T = value
 }
+private interface UnitPropertySlot<T> { val value: T }
+private class UnitPropertyBody : UnitPropertySlot<Unit> { override val value: Unit get() = Unit }
+private class NullableUnitBody : GenericUnitSlot<Unit?> { override fun get(): Unit? = null }
+private open class FinalUnitBody { fun get() { genericUnitEffects++ } }
+private class FinalInheritedUnit : FinalUnitBody(), GenericUnitSlot<Unit>
+private interface UnitArgumentSlot<P, R> { fun accept(value: P): R }
+private interface OtherUnitArgumentSlot<P, R> { fun accept(value: P): R }
+private open class UnitArgumentBody<T> {
+    open fun accept(value: T) { assertEquals("argument", value); genericUnitEffects++ }
+}
+private class InheritedUnitArgument : UnitArgumentBody<String>(),
+    UnitArgumentSlot<String, Unit>, OtherUnitArgumentSlot<String, Unit>
+private open class ComparableUnitControlBody { open fun compareTo(other: Int): Int = other + 1 }
+private class InheritedComparableUnitControl : ComparableUnitControlBody(), Comparable<Int>
 
 class GenericUnitSlotTests {
+    @TestAttribute
+    fun propertyNullableAndFinalInheritedResultsKeepTheirRepresentations() {
+        genericUnitEffects = 0
+        val property: UnitPropertySlot<Unit> = UnitPropertyBody()
+        val absent: GenericUnitSlot<Unit?> = NullableUnitBody()
+        val final: GenericUnitSlot<Unit> = FinalInheritedUnit()
+        assertSame(Unit, property.value)
+        assertEquals(null, absent.get())
+        assertSame(Unit, final.get())
+        assertEquals(1, genericUnitEffects)
+    }
+
+    @TestAttribute
+    fun inheritedGenericArgumentsAndRenamedSlotsRetainTheirTargets() {
+        genericUnitEffects = 0
+        val body = InheritedUnitArgument()
+        val first: UnitArgumentSlot<String, Unit> = body
+        val second: OtherUnitArgumentSlot<String, Unit> = body
+        assertSame(Unit, first.accept("argument"))
+        assertSame(Unit, second.accept("argument"))
+        assertEquals(2, genericUnitEffects)
+        val comparable: Comparable<Int> = InheritedComparableUnitControl()
+        assertEquals(43, comparable.compareTo(42))
+    }
+
     @TestAttribute
     fun genericAndOrdinaryUnitSlotsShareTheSourceBody() {
         genericUnitEffects = 0
