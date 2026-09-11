@@ -29,6 +29,88 @@ static class InheritedClassInterfaceBridge
 
     readonly record struct MethodMatch(Def Owner, TypeNode.Fqn ConstructedOwner, JsonObject Method);
 
+    public static void MaterializeSuspendDeclarations(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs)
+    {
+        // Source-known suspend forwarders must exist before inline carriers, signature ownership and hot/cold
+        // lowering snapshot declarations. The later exact bridge pass also handles types materialized afterwards.
+        var defs = SupertypeGraph.Collect(roots);
+        foreach (var cls in defs.Values.Where(d => d.Kind == "class"))
+        {
+            if (cls.Node["inheritedClassMethods"] is not JsonArray facts) continue;
+            foreach (var fact in facts.OfType<JsonObject>())
+            {
+                if (fact["mods"] is not JsonObject mods || !Bool(mods["suspend"])) continue;
+                if (fact["inheritedImplementation"] is not JsonObject selected
+                    || TypeJson.OwnerName(selected["owner"]) is not string ownerName
+                    || Str(selected["member"]) is not string member
+                    || fact["params"] is not JsonArray parameters
+                    || fact["overrides"] is not JsonArray overrides) continue;
+                var owners = SupertypeGraph.Reachable(cls, defs, refs)
+                    .Where(edge => !edge.isInterface && edge.spec.Name == ownerName)
+                    .Select(edge => edge.spec).Distinct().ToList();
+                if (owners.Count != 1) continue;
+                var interfaceEdges = overrides.OfType<JsonObject>().Where(edge =>
+                    TypeJson.OwnerName(edge["owner"]) is string name
+                    && (defs.TryGetValue(name, out var owner) ? owner.Kind == "interface" : refs.IsInterfaceType(new TypeNode.Fqn(name))))
+                    .ToList();
+                if (interfaceEdges.Count == 0) continue;
+                var selectedEdge = overrides.OfType<JsonObject>().FirstOrDefault(edge =>
+                    TypeJson.OwnerName(edge["owner"]) == ownerName && Str(edge["member"]) == member);
+                var declarationId = Str(selectedEdge?[DeclarationIdentityBinding.Key]);
+                var selectedSignature = (selected["sig"] as JsonArray)?.Select(TypeJson.Read).ToArray()
+                    ?? throw new InvalidOperationException("selected inherited suspend implementation has no signature");
+                var methodArity = (selected["typeParams"] as JsonArray)?.Count ?? 0;
+                var targetIsVirtual = defs.TryGetValue(ownerName, out var localOwner)
+                    ? localOwner.Methods.OfType<JsonObject>().Where(method =>
+                            !Bool(method["static"]) && Str(method["name"]) == member
+                            && ((method["typeParams"] as JsonArray)?.Count ?? 0) == methodArity
+                            && KotlinOverrideSlotBridge.SameMethodTypeParameterShape(method["typeParams"] as JsonArray,
+                                selected["typeParams"] as JsonArray, owners[0].Args ?? Array.Empty<TypeNode>(),
+                                owners[0].Args ?? Array.Empty<TypeNode>())
+                            && (method["params"] as JsonArray)?.OfType<JsonObject>()
+                                .Select(p => TypeJson.Read(p["type"])).SequenceEqual(selectedSignature) == true)
+                        .Select(method => Bool(method["virtual"]) || Bool(method["override"])).Single()
+                    : refs.TrySelectedOverrideDeclaration(ownerName, member, null, methodArity,
+                        parameters.OfType<JsonObject>().Select(p => TypeJson.Read(p["type"])).ToArray(),
+                        owners[0].Args ?? Array.Empty<TypeNode>(), selected["typeParams"] as JsonArray,
+                        owners[0].Args ?? Array.Empty<TypeNode>(), true, out var target, semanticConstraints: true)
+                        ? target.IsVirtual
+                        : throw new InvalidOperationException($"selected inherited suspend declaration '{ownerName}.{member}' is unresolved");
+                if (targetIsVirtual) continue;
+                var call = new JsonObject
+                {
+                    ["k"] = "callInstance", ["ownerType"] = TypeJson.Write(owners[0]),
+                    ["virtual"] = true, ["clrOwnerResolved"] = true, ["suspendCall"] = true,
+                    ["recv"] = new JsonObject { ["k"] = "this" }, ["method"] = member,
+                    ["sig"] = selected["sig"]?.DeepClone()
+                        ?? throw new InvalidOperationException("selected inherited suspend implementation has no signature"),
+                    ["args"] = new JsonArray(parameters.OfType<JsonObject>().Select(p => (JsonNode)new JsonObject
+                        { ["k"] = "local", ["name"] = Str(p["name"]) }).ToArray()),
+                    ["ret"] = fact["ret"]!.DeepClone(), ["dynRet"] = fact["ret"]!.DeepClone(),
+                    ["sty"] = fact["ret"]!.DeepClone(),
+                };
+                if (declarationId != null) call[DeclarationIdentityBinding.Key] = declarationId;
+                if (fact["typeParams"] is JsonArray typeParams && typeParams.Count > 0)
+                    call["typeArgs"] = new JsonArray(Enumerable.Range(0, typeParams.Count)
+                        .Select(i => TypeJson.Write(new TypeNode.Tv("method", i))).ToArray());
+                var bridge = (JsonObject)fact.DeepClone();
+                bridge.Remove("member");
+                bridge.Remove("inheritedImplementation");
+                bridge["name"] = Str(fact["member"]);
+                bridge["static"] = false;
+                bridge["override"] = false;
+                bridge["abstract"] = false;
+                bridge["virtual"] = true;
+                bridge["vis"] = "public";
+                bridge["suspendRet"] = fact["ret"]!.DeepClone();
+                bridge["overrides"] = new JsonArray(interfaceEdges.Select(edge => edge.DeepClone()).ToArray());
+                bridge["attrs"] = new JsonArray();
+                bridge["body"] = new JsonArray(new JsonObject { ["k"] = "return", ["value"] = call });
+                cls.Methods.Add(MaterializedExecutable.Normalize(bridge));
+            }
+        }
+    }
+
     public static void ApplyAll(IEnumerable<JsonNode> roots)
     {
         var rootList = roots.ToList();
@@ -254,6 +336,8 @@ static class InheritedClassInterfaceBridge
         };
         if (target.Method[DeclarationIdentityBinding.Key] is JsonNode declarationId)
             call[DeclarationIdentityBinding.Key] = declarationId.DeepClone();
+        var suspend = im["mods"] is JsonObject mods && Bool(mods["suspend"]);
+        if (suspend) call["suspendCall"] = true;
         if (typeArgs.Count > 0) call["typeArgs"] = typeArgs;
 
         var body = new JsonArray();
@@ -283,6 +367,14 @@ static class InheritedClassInterfaceBridge
                 }
             },
         };
+        if (suspend)
+        {
+            bridge["mods"] = new JsonObject { ["suspend"] = true };
+            bridge["suspendRet"] = TypeJson.Write(slotRet);
+            var logicalResult = Str(im["suspendResult"])
+                ?? throw new InvalidOperationException("inherited suspend bridge has no logical slot result");
+            bridge["suspendResult"] = TypeNode.ToJson(SubstOwnerTvs(TypeNode.Parse(logicalResult), ifaceArgs));
+        }
         CopyNullableGenericFact(im, bridge, "nullableGenericRet", ifaceArgs);
         if (im["typeParams"] is JsonArray tps)
             bridge["typeParams"] = KotlinOverrideSlotBridge.SubstituteOwnerTypeParameterConstraints(tps, ifaceArgs);

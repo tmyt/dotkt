@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Inherited suspend methods retain their interface slots (#720).** Forwarders preserve suspend calls and logical
+  results before CLR hot/cold lowering, including cross-DLL inheritance, generic frames, renamed base methods,
+  and virtual dispatch through a further override.
+
 - **Inherited final methods preserve their CLR names when satisfying interfaces (#718).** Forwarders retain
   the selected Kotlin declaration identity through physical name allocation, including cross-DLL inheritance,
   generic owners and methods, overloads, and Unit-valued slots. Inherited property accessors likewise carry their
