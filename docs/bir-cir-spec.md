@@ -257,11 +257,13 @@ frontend declarations when their generic constraints differ. The ordinary-functi
 the non-declaration and, only if the CLR shape collides with an unrelated ordinary virtual method, allocating a class-level
 MethodImpl bridge. It may resolve the stated Kotlin declaration to a CLR slot, but must not rediscover whether a
 default exists or which declaration won by inspecting ancestor bodies, metadata abstractness, or physical names.
-Class-inherited ordinary methods likewise retain their class-frame signatures, override closures, and selected
+Class-inherited methods and property accessors likewise retain their class-frame signatures, override closures, and selected
 `inheritedImplementation` in `inheritedClassMethods`. These entries carry the Kotlin `member` identity, not an
 allocatable physical `name`, and contain no executable body, declaration attributes, or source positions. They are
 not additional method declarations; only inherited methods whose override closure reaches an interface declaration
 need this fact.
+Accessor entries additionally carry `propertyName`, `propertyAccessor`, and their shared `propertyAssociation`; the backend must consume that explicit
+role rather than recover it from the accessor's physical method name.
 bir2cir resolves the stated source and allocates a forwarding bridge when the inherited implementation's physical
 signature differs from a newly implemented interface slot. A generic result closed over `Unit` is value-returning,
 whereas an ordinary Kotlin `Unit` method is void-returning; the bridge must materialize `Unit` after the void call

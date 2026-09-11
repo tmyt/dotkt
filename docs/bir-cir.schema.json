@@ -435,6 +435,9 @@
             "type": "object",
             "properties": {
               "member": { "type": "string" },
+              "propertyName": { "type": "string" },
+              "propertyAccessor": { "enum": ["get", "set"] },
+              "propertyAssociation": { "type": "string" },
               "params": {
                 "type": "array",
                 "items": {
@@ -453,7 +456,7 @@
                   "properties": {
                     "owner": { "$ref": "#/$defs/type" },
                     "member": { "type": "string" },
-                    "kind": { "const": "method" },
+                    "kind": { "enum": ["method", "getter", "setter"] },
                     "arity": { "type": "integer", "minimum": 0 },
                     "declarationId": { "type": "string" }
                   },

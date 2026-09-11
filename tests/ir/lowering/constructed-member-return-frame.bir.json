@@ -77,6 +77,37 @@
         "args": [{ "t": "tv", "scope": "type", "i": 0 }, { "t": "tv", "scope": "type", "i": 1 }]
       }]
     }],
+    "inheritedClassMethods": [{
+      "member": "pass",
+      "params": [{ "name": "value", "type": {
+        "t": "fqn", "name": "Pairish",
+        "args": [{ "t": "tv", "scope": "type", "i": 0 }, { "t": "tv", "scope": "type", "i": 1 }]
+      } }],
+      "ret": {
+        "t": "fqn", "name": "Pairish",
+        "args": [{ "t": "tv", "scope": "type", "i": 0 }, { "t": "tv", "scope": "type", "i": 1 }]
+      },
+      "overrides": [{
+        "owner": { "t": "fqn", "name": "PassBase", "args": [{
+          "t": "fqn", "name": "Pairish",
+          "args": [{ "t": "tv", "scope": "type", "i": 0 }, { "t": "tv", "scope": "type", "i": 1 }]
+        }] },
+        "member": "pass", "kind": "method", "arity": 1
+      }, {
+        "owner": { "t": "fqn", "name": "Passer", "args": [{
+          "t": "fqn", "name": "Pairish",
+          "args": [{ "t": "tv", "scope": "type", "i": 0 }, { "t": "tv", "scope": "type", "i": 1 }]
+        }] },
+        "member": "pass", "kind": "method", "arity": 1
+      }],
+      "inheritedImplementation": {
+        "owner": { "t": "fqn", "name": "PassBase", "args": [{
+          "t": "fqn", "name": "Pairish",
+          "args": [{ "t": "tv", "scope": "type", "i": 0 }, { "t": "tv", "scope": "type", "i": 1 }]
+        }] },
+        "member": "pass", "kind": "method", "arity": 0, "typeParams": []
+      }
+    }],
     "fields": [], "ctors": [], "methods": [], "properties": [], "attrs": []
   }],
   "refTypes": []

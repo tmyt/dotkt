@@ -323,8 +323,11 @@ private fun BirEmitter.inheritedDefaultMethodFact(fn: IrSimpleFunction): String?
 
 /** Keep the selected class implementation and override closure even when no method is emitted on this class. */
 private fun BirEmitter.inheritedClassMethodsJson(klass: IrClass): String {
-	val facts = klass.declarations.filterIsInstance<IrSimpleFunction>().mapNotNull { fn ->
-		if (fn.correspondingPropertySymbol != null || !isInheritedSynthetic(fn)) return@mapNotNull null
+	val functions = klass.declarations.filterIsInstance<IrSimpleFunction>().filter { it.correspondingPropertySymbol == null } +
+		klass.declarations.filterIsInstance<IrProperty>().filter { !isClrEventProperty(it) && !isInheritedStaticProperty(it) }
+			.flatMap { listOfNotNull(it.getter, it.setter) }
+	val facts = functions.mapNotNull { fn ->
+		if (!isInheritedSynthetic(fn)) return@mapNotNull null
 		val visited = hashSetOf<IrSimpleFunction>()
 		fun reachesInterfaceDeclaration(candidate: IrSimpleFunction): Boolean {
 			if (!visited.add(candidate)) return false
@@ -340,7 +343,12 @@ private fun BirEmitter.inheritedClassMethodsJson(klass: IrClass): String {
 		if (implementation.isEmpty()) return@mapNotNull null
 		val parameters = (listOfNotNull(extensionReceiverParam(fn)) + fn.parameters.filter { isValueParameter(it) })
 			.joinToString(",") { """{"name":${str(it.name.asString())},"type":${birValueParameterType(it).toJson()}}""" }
-		"""{"member":${str(fn.name.asString())},"params":[$parameters],"ret":${birType(fn.returnType).toJson()}${typeParamsJson(fn.typeParameters)}${funModsJson(fn)}${overridesJson(fn)}$implementation}"""
+		val property = fn.correspondingPropertySymbol?.owner
+		val member = property?.name?.asString() ?: fn.name.asString()
+		val accessor = property?.let {
+			""","propertyName":${str(member)},"propertyAccessor":${str(if (fn === it.getter) "get" else "set")},"propertyAssociation":${str(propertyAssociation(it))}"""
+		} ?: ""
+		"""{"member":${str(member)}$accessor,"params":[$parameters],"ret":${birType(fn.returnType).toJson()}${typeParamsJson(fn.typeParameters)}${funModsJson(fn)}${overridesJson(fn)}$implementation}"""
 	}
 	return if (facts.isEmpty()) "" else ""","inheritedClassMethods":[${facts.joinToString(",")}]"""
 }

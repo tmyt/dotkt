@@ -1738,9 +1738,18 @@ sealed partial class ReferenceMetadataIndex
             Convert.ToString(raw, CultureInfo.InvariantCulture));
     }
 
-    public bool IsEnumType(TypeNode.Fqn type)
+    public bool IsEnumType(TypeNode.Fqn type) => ReferencedTypeKind(type) == "enum";
+
+    public bool IsInterfaceType(TypeNode.Fqn type)
     {
-        if (type == null) return false;
+        var kind = ReferencedTypeKind(type);
+        return kind != null ? kind == "interface"
+            : type != null && ProbeNetType(type.Name, type.Args?.Length ?? 0)?.IsInterface == true;
+    }
+
+    string ReferencedTypeKind(TypeNode.Fqn type)
+    {
+        if (type == null) return null;
         var identity = OwnerIdentity(type.Name, type.Args?.Length ?? 0);
         string kind;
         if (HasExactOwnerPunctuation(type.Name))
@@ -1749,7 +1758,7 @@ sealed partial class ReferenceMetadataIndex
             kind = exact == null ? null : _ownerKindByPhysicalOwner.GetValueOrDefault(exact);
         else
             kind = _ownerKind.GetValueOrDefault(identity);
-        return kind == "enum";
+        return kind;
     }
 
     // Resolve the physical representation of the exact referenced CLR enum selected by a dll2klib
@@ -2878,15 +2887,18 @@ sealed partial class ReferenceMetadataIndex
     // trusted carrier states them, and the physical declaration types otherwise.
     public bool TrySelectedMethodDeclaration(string ownerFqn, string sourceMember, int methodArity,
         IReadOnlyList<TypeNode> signature, TypeNode resolvedReturn, TypeNode[] ownerTypeArguments,
-        JsonArray selectedTypeParams, out ReferencedMethodDeclaration declaration)
+        JsonArray selectedTypeParams, out ReferencedMethodDeclaration declaration, string propertyAccessor = null)
     {
         declaration = null;
         if (!TryMembersByBirOwner(ownerFqn, out var list)) return false;
-        var matches = list.Where(member => member.SourcePropertyName == null
-                && (member.SourceMethodName ?? member.Name) == sourceMember
+        var matches = list.Where(member => (propertyAccessor == null
+                    ? member.SourcePropertyName == null
+                        && (member.DeclarationSourceName ?? member.SourceMethodName ?? member.Name) == sourceMember
+                    : (member.SourcePropertyName ?? member.PropertyName) == sourceMember
+                        && member.AccessorKind == propertyAccessor)
                 && member.MethodArity == methodArity
                 && KotlinOverrideSlotBridge.SameMethodTypeParameterShape(
-                    member.MethodTypeParams, selectedTypeParams, ownerTypeArguments, ownerTypeArguments)
+                    member.SemanticMethodTypeParams ?? member.MethodTypeParams, selectedTypeParams, ownerTypeArguments, ownerTypeArguments)
                 && MethodSignatureMatches(member, signature, resolvedReturn, ownerTypeArguments)
                 && member.ParamTypeNodes != null && member.ReturnTypeNode != null)
             .ToList();

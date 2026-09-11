@@ -91,7 +91,7 @@ static partial class ClrMemberResolution
     // A memberRef keeps the target's exact metadata spelling (`List`1`, nested `+`) but the MethodImpl descriptor is
     // ordinary CIR type vocabulary (arity-free, dotted).  Selection compares those two vocabularies structurally;
     // only the comparison drops metadata punctuation.  MemberRefJson below still serializes the exact reflected name.
-    static TypeNode MethodImplComparisonType(TypeNode type)
+    internal static TypeNode MethodImplComparisonType(TypeNode type)
     {
         type = BirTypeLowering.CanonicalPhysicalSlotType(type);
         return type switch
