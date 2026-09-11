@@ -1578,7 +1578,7 @@ static partial class SuspendColdLowering
             var bodyOut = new List<JsonNode>();
             foreach (var s in body) EmitStmt(s, bodyOut);
             if (IsUnitTn(_resultType))
-                bodyOut.Add(Ret(NullConst(AnyTn)));
+                bodyOut.Add(Ret(UnitValue()));
 
             var invoke = new JsonArray();
             // BUG 1: reset the finally gate at every entry (first call + each resume) BEFORE the label dispatch,
@@ -1766,7 +1766,7 @@ static partial class SuspendColdLowering
                 case "return":
                     {
                         var v = o["value"];
-                        outp.Add(v == null ? Ret(NullConst(AnyTn))
+                        outp.Add(v == null ? Ret(UnitValue())
                             : Ret(Rewrite(v, outp, IsUnitTn(_resultType) ? UnitTn : _resultType)));
                         break;
                     }
@@ -2115,7 +2115,7 @@ static partial class SuspendColdLowering
                     {
                         ["k"] = terminalKind == "throwExpr" ? "throw" : "return",
                         ["value"] = terminalKind == "returnExpr" && terminal["value"] == null
-                            ? NullConst(AnyTn)
+                            ? UnitValue()
                             : terminal["value"]?.DeepClone(),
                     }
                     : value);
@@ -3841,12 +3841,12 @@ static partial class SuspendColdLowering
             if (IsUnitTn(_resultType))
             {
                 // The source declaration's Unit return is physically `object` on the cold entry. Materialize the
-                // established null Unit result on EVERY return edge, not only on fallthrough. A source-level
+                // Kotlin Unit singleton on EVERY bare return edge, not only on fallthrough. A source-level
                 // `return` is deliberately value-less BIR because its semantic target returns Unit; cloning that
                 // node verbatim into this different physical signature used to emit a bare `ret`.
                 cloned = (JsonArray)MaterializeDirectUnitReturns(cloned);
                 if (!(cloned.Count > 0 && cloned[^1] is JsonObject last && Str(last["k"]) == "return"))
-                    cloned.Add(Ret(NullConst(AnyTn)));
+                    cloned.Add(Ret(UnitValue()));
             }
             return ColdMethod(cloned);
         }
@@ -3866,7 +3866,7 @@ static partial class SuspendColdLowering
                         ? null
                         : MaterializeDirectUnitReturns(property.Value);
                 if ((kind is "return" or "returnExpr") && copy["value"] == null)
-                    copy["value"] = NullConst(AnyTn);
+                    copy["value"] = UnitValue();
                 return copy;
             }
             if (node is JsonArray array)
@@ -4630,6 +4630,14 @@ static partial class SuspendColdLowering
         static JsonObject IntConst(int v) => new() { ["k"] = "const", ["type"] = TypeJson.Write(IntTn), ["value"] = v };
         static JsonObject BoolConst(bool v) => new() { ["k"] = "const", ["type"] = TypeJson.Write(BoolTn), ["value"] = v };
         static JsonObject NullConst(TypeNode type) => new() { ["k"] = "const", ["type"] = TypeJson.Write(type), ["value"] = null };
+        // The cold return slot is object-valued, but a successful Kotlin Unit completion is its singleton,
+        // not the null wake-up token used to enter/resume a state machine. Ordinary field resolution later
+        // binds this read for both local stdlib emission and referenced application builds.
+        static JsonObject UnitValue() => new()
+        {
+            ["k"] = "staticField", ["ownerType"] = TypeJson.Write(UnitTn),
+            ["name"] = "INSTANCE", ["sty"] = TypeJson.Write(UnitTn),
+        };
         JsonObject MissingValuePlaceholder(TypeNode expectedType)
         {
             var type = expectedType ?? throw new NotSupportedException(
