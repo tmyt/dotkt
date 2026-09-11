@@ -27,6 +27,9 @@ static class KotlinPropertyAccessors
     // The early slot pass states that required physical Task result explicitly so the generated TCS/body and the
     // eventual MethodDef signature are authored together; the late pass must never rewrite only the signature.
     internal const string SuspendTaskResultKey = "suspendTaskResult";
+    // This adapter fills only the hot Task slot. The original declaration's cold override remains owned by the
+    // ordinary final slot pass; mapping both onto a base-class cold slot would redispatch the adapter to itself.
+    internal const string SuspendTaskOnlyBridgeKey = "suspendTaskOnlyBridge";
     // A declaration synthesized solely to carry a CLR MethodImpl is not a Kotlin declaration candidate. MethodImpl
     // descriptors may also live directly on a source accessor when only its physical name differs from an external
     // property slot, so descriptor presence alone cannot distinguish the two roles.

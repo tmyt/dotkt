@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Suspend Unit implementations satisfy generic return slots (#729).** Private value-bearing Task adapters fill
+  generic interface and base-class slots while ordinary Unit methods retain their non-generic Task surface.
+  Cross-DLL consumers preserve actual suspension, virtual dispatch, erased arguments, exceptions, and cancellation.
+
 - **Nullable suspend Unit results expose a value-bearing Task (#716).** CLR callers can observe both Unit and null
   through `Task<kotlin.Unit?>`, including interface calls and asynchronous completion. Non-null Unit keeps its
   non-generic Task convention; exceptions, cancellation, and Kotlin suspend metadata are preserved.
