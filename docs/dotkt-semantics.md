@@ -1814,13 +1814,19 @@ projects its enum parameter as `StringComparison`, and `Dictionary<int, string?>
 the `string`. Reading a value type's position as an annotation does not merely mis-annotate it — every later byte in the
 same slot shifts with it. `bir2cir` writes the same flattening from the other side (`NullableFlags`).
 
-**Deviation: `kotlin.Unit` occupies no byte in this flattening, at any depth.** On the CLR `Unit` is a class, so C#'s
+**Deviation for ordinary declaration slots: `kotlin.Unit` occupies no byte in this flattening, at any depth.** On the CLR `Unit` is a class, so C#'s
 own rule would give it one; DotKt does not, because `Unit` is also the type ECMA `void` projects to and a reader cannot
 tell the two apart by name. Both ends implement the same rule — `dll2klib` seeds `kotlin.Unit` into the set of names
 that hold no byte, `bir2cir` skips it when it writes the array — so `Pair<Unit, String?>` is `[1, 2]` and its `?`
 survives the round trip. A C# consumer reading such an NRT signature counts one position too few. Nullable Unit
 in DotKt declaration signatures (including nested types) instead retains its exact source type through the
 `KotlinType` carrier, so DLL-to-KLIB import restores `Unit?` without changing this NRT byte convention.
+
+The public **suspend Task bridge return** is a separate boundary: its Unit reference positions do occupy NRT bytes
+for CLR consumers. In particular, `suspend fun f(): Unit?` exports `Task<kotlin.Unit?>` with `[Nullable({1,2})]`;
+non-null `Unit` still exports non-generic `Task`. DotKt imports this return's logical Kotlin type from the exact
+`KotlinSuspendResult` carrier, not by decoding those Task return NRT bytes. `SuspendColdLowering` therefore must not
+apply the ordinary `NullableFlags` Unit-skipping convention to this return slot.
 
 `T!` is a flexible type `(T..T?)` (`ConeFlexibleType`): the consumer may use it as `T` or `T?` and the compiler
 enforces neither — exactly how Kotlin/JVM treats un-annotated Java. This avoids the unsound alternative of forcing a
