@@ -2921,10 +2921,12 @@ sealed partial class ReferenceMetadataIndex
     // does not overload on return type. Inherited declarations are not searched here: kotc emits an override marker
     // for each interface that contributes a direct declaration (including a synthesized redeclaration on an
     // intermediate interface), and each such CLR MethodImpl must name that exact declaring interface.
+    // Early declaration materialization compares Kotlin constraints; post-erasure slot bridges compare CLR
+    // constraints. The caller states its phase so the two sides are always compared in the same representation.
     public bool TrySelectedOverrideDeclaration(string ownerFqn, string sourceMember, string accessorKind,
         int methodArity, IReadOnlyList<TypeNode> signature, TypeNode[] ownerTypeArguments,
         JsonArray selectedTypeParams, TypeNode[] implementationOwnerTypeArguments,
-        bool selectedSuspend, out ReferencedMethodDeclaration declaration)
+        bool selectedSuspend, out ReferencedMethodDeclaration declaration, bool semanticConstraints = false)
     {
         declaration = null;
         if (!TryMembersByBirOwner(ownerFqn, out var list)) return false;
@@ -2936,7 +2938,8 @@ sealed partial class ReferenceMetadataIndex
                 && member.MethodArity == methodArity
                 && member.Suspend == selectedSuspend
                 && KotlinOverrideSlotBridge.SameMethodTypeParameterShape(
-                    member.SemanticMethodTypeParams ?? member.MethodTypeParams, selectedTypeParams,
+                    semanticConstraints ? member.SemanticMethodTypeParams ?? member.MethodTypeParams : member.MethodTypeParams,
+                    selectedTypeParams,
                     ownerTypeArguments, implementationOwnerTypeArguments)
                 && AccessorSignatureMatches(member, signature, ownerTypeArguments)
                 && member.ParamTypeNodes != null && member.ReturnTypeNode != null

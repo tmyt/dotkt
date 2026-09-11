@@ -73,7 +73,7 @@ static class InheritedClassInterfaceBridge
                     : refs.TrySelectedOverrideDeclaration(ownerName, member, null, methodArity,
                         parameters.OfType<JsonObject>().Select(p => TypeJson.Read(p["type"])).ToArray(),
                         owners[0].Args ?? Array.Empty<TypeNode>(), selected["typeParams"] as JsonArray,
-                        owners[0].Args ?? Array.Empty<TypeNode>(), true, out var target)
+                        owners[0].Args ?? Array.Empty<TypeNode>(), true, out var target, semanticConstraints: true)
                         ? target.IsVirtual
                         : throw new InvalidOperationException($"selected inherited suspend declaration '{ownerName}.{member}' is unresolved");
                 if (targetIsVirtual) continue;
