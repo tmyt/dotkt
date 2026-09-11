@@ -1392,7 +1392,7 @@ static partial class ClrMemberResolution
     internal static JsonNode DeclaringTypeDescriptor(MethodBase member)
         => TypeJson.Write(new TypeNode.Fqn(DeclaringTypeIdentity(member)));
     static bool IsObjectMlc(Type t) { try { return t.FullName == "System.Object"; } catch { return false; } }
-    static bool IsVoidNode(TypeNode t) => t is TypeNode.Fqn { Args: null, Name: "void" or "System.Void" or "kotlin.Unit" };
+    static bool IsVoidNode(TypeNode t) => t is TypeNode.Fqn { Args: null, Name: "void" or "System.Void" };
 
     // A function-type arg binds an `object` param OR a delegate param (BCL Func/Action or a stdlib delegate, possibly
     // OPEN — `Func<T>`). Match arity + void-ness, and each param/return STRUCTURALLY — but ONLY reject on a genuine
@@ -1410,7 +1410,7 @@ static partial class ClrMemberResolution
         var ips = invoke.GetParameters();
         var dp = fn.DelegateParams;
         if (ips.Length != dp.Length) return MatchKind.No;
-        bool retVoid; try { retVoid = invoke.ReturnType.FullName is "System.Void" or "kotlin.Unit"; } catch { retVoid = false; }
+        bool retVoid; try { retVoid = invoke.ReturnType.FullName == "System.Void"; } catch { retVoid = false; }
         if (retVoid != IsVoidNode(fn.Ret)) return MatchKind.No;
         for (int i = 0; i < dp.Length; i++) if (Incompatible(dp[i], ips[i].ParameterType, ownerArgs)) return MatchKind.No;
         if (!retVoid && Incompatible(fn.Ret, invoke.ReturnType, ownerArgs)) return MatchKind.No;
@@ -1558,7 +1558,7 @@ static partial class ClrMemberResolution
         var invoke = t.GetMethod("Invoke");
         if (invoke == null) return new TypeNode.Fqn(StripArity(Dotted(t.FullName ?? t.Name)));   // defensive: not a real delegate
         var ps = invoke.GetParameters().Select(p => MemberSigOf(p.ParameterType)).ToArray();
-        var ret = invoke.ReturnType.FullName is "System.Void" or "kotlin.Unit" ? new TypeNode.Fqn("void") : MemberSigOf(invoke.ReturnType);
+        var ret = invoke.ReturnType.FullName == "System.Void" ? new TypeNode.Fqn("void") : MemberSigOf(invoke.ReturnType);
         return new TypeNode.Fn(false, ret, ps, null, DelegateFamily(t));
     }
 

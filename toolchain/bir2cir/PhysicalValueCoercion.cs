@@ -27,6 +27,7 @@ static class PhysicalValueCoercion
         readonly Dictionary<string, List<MethodShape>> _methods = new(StringComparer.Ordinal);
         readonly Dictionary<string, TypeNode> _fields = new(StringComparer.Ordinal);
         readonly Func<JsonObject> _unitValue;
+        internal JsonObject Document;
 
         Index(Func<JsonObject> unitValue) => _unitValue = unitValue;
         internal JsonObject UnitValue() => _unitValue();
@@ -129,10 +130,11 @@ static class PhysicalValueCoercion
 
     static void RewriteDocument(JsonObject root, Index index)
     {
+        index.Document = root;
         var fileOwner = Str(root["fileClass"]);
         RewriteMembers(root, fileOwner == null ? null : new TypeNode.Fqn(fileOwner), index);
         if (root["types"] is JsonArray types)
-            foreach (var type in types.OfType<JsonObject>()) RewriteType(type, index);
+            foreach (var type in types.OfType<JsonObject>().ToArray()) RewriteType(type, index);
     }
 
     static void RewriteType(JsonObject type, Index index)
@@ -374,6 +376,9 @@ static class PhysicalValueCoercion
             }
         }
         var got = ExprType(value, scope, index);
+        if (value is JsonObject expression
+            && ClrMemberResolution.AdaptUnitDelegateValue(index.Document, expression, got, target) is JsonObject adapter)
+            return adapter;
         if (!NeedsConversion(got, target)) return value;
         return new JsonObject
         {

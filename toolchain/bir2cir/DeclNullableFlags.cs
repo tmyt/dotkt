@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 
@@ -48,6 +49,7 @@ static class DeclNullableFlags
 
     static void ApplyToMethod(JsonObject mo, ValueTypeOracle isValue)
     {
+        PreserveNullableUnitSurface(mo, "ret", "retKotlinType", "nullableGenericRet");
         if (!mo.ContainsKey("retNullableFlags")
             && TypeJson.Read(mo["ret"]) is TypeNode ret
             && NullableFlags.Compute(ret, isValue) is JsonArray rf)
@@ -61,10 +63,37 @@ static class DeclNullableFlags
     {
         if (arr is not JsonArray a) return;
         foreach (var d in a)
-            if (d is JsonObject po
-                && !po.ContainsKey("nullableFlags")
+            if (d is JsonObject po)
+            {
+                PreserveNullableUnitSurface(po, "type", "kotlinType", "nullableGeneric");
+                if (!po.ContainsKey("nullableFlags")
                 && TypeJson.Read(po["type"]) is TypeNode t
                 && NullableFlags.Compute(t, isValue) is JsonArray f)
-                po["nullableFlags"] = f;
+                    po["nullableFlags"] = f;
+            }
     }
+
+    // Unit has no NRT byte in the Kotlin projection (including nested generic positions). Its nullable
+    // source contract therefore uses the existing exact KotlinType carrier, not a guessed CLR signature.
+    // Earlier representation passes may already own a more original source surface; never replace it.
+    static void PreserveNullableUnitSurface(JsonObject slot, string key, string carrier, string genericCarrier)
+    {
+        if (slot[carrier] != null || slot[genericCarrier] != null) return;
+        if (TypeJson.Read(slot[key]) is TypeNode type && ContainsNullableUnit(type))
+            slot[carrier] = TypeNode.ToJson(type);
+    }
+
+    static bool ContainsNullableUnit(TypeNode type) => type switch
+    {
+        TypeNode.Nullable { Of: TypeNode.Fqn { Name: "kotlin.Unit", Args: null } } => true,
+        TypeNode.Nullable n => ContainsNullableUnit(n.Of),
+        TypeNode.Oblivious o => ContainsNullableUnit(o.Of),
+        TypeNode.Projection p => ContainsNullableUnit(p.Of),
+        TypeNode.Fqn f => f.Args?.Any(ContainsNullableUnit) == true,
+        TypeNode.Array a => ContainsNullableUnit(a.Elem),
+        TypeNode.ByRef b => ContainsNullableUnit(b.Of),
+        TypeNode.Fn f => ContainsNullableUnit(f.Ret) || f.Params.Any(ContainsNullableUnit)
+            || (f.Recv != null && ContainsNullableUnit(f.Recv)) || f.Ctx?.Any(ContainsNullableUnit) == true,
+        _ => false,
+    };
 }

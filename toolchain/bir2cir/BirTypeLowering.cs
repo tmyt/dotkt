@@ -504,8 +504,8 @@ static class BirTypeLowering
                     // inner in EVERY build — a CLR reference is nullable in IL regardless, and its `?` was already emitted as
                     // an NRT byte by the decl walk. NEVER produce `Nullable<referenceType>` (ilemit's MapNullable asserts the
                     // inner is a value type, in the ref build too). Decided on the SEMANTIC inner via the struct-ness oracle.
-                    // Only VALUE inners reach here (so `typeArg` is moot): bir2cir's ReferenceNullableStrip (Program.cs) removes
-                    // every reference-`T?` wrapper — INCLUDING nested type-args — BEFORE this pass, so a nullable collection
+                    // Except Unit's return-contract distinction, only VALUE inners reach here: ReferenceNullableStrip
+                    // removes reference-`T?` wrappers — INCLUDING nested type-args — BEFORE this pass, so a nullable collection
                     // type-arg (`Map<K, List<V>?>`) already had its `?` stripped and collapses via the bare-List path (Root-V).
                     // (This is why the #100/H3 "propagate typeArg through Nullable" idea was a no-op — the smuggle can't occur here.)
                     var lowered = LowerType(n.Of, refBuild, force, typeArg: false);
@@ -642,7 +642,9 @@ static class BirTypeLowering
     // TypeBuilder.
     internal static TypeNode LowerFnDelegate(TypeNode.Fn fn, bool refBuild, bool force)
     {
-        var ret = (fn.Ret is TypeNode.Fqn rf && rf.Args == null && rf.Name == "kotlin.Unit")
+        // A function with an explicit CLR family already carries a physical return contract. In particular,
+        // Func<..., Unit> must not become Action when a later member-binding step visits it again.
+        var ret = (fn.Clr == null && fn.Ret is TypeNode.Fqn rf && rf.Args == null && rf.Name == "kotlin.Unit")
             ? VoidType : LowerType(fn.Ret, refBuild, force, typeArg: false);
         var ps = fn.Params.Select(p => LowerType(p, refBuild, force, typeArg: false)).ToArray();
         var recv = fn.Recv == null ? null : LowerType(fn.Recv, refBuild, force, typeArg: false);
@@ -655,9 +657,9 @@ static class BirTypeLowering
                 + "is a distinct pre-baked type in the stdlib and Kotlin's function types are unbounded. A receiver "
                 + "counts toward the arity. Group the parameters into a class, or pass them as a collection.");
         bool returnsVoid = ret is TypeNode.Fqn { Args: null, Name: "void" or "System.Void" };
-        string clr = returnsVoid
+        string clr = fn.Clr ?? (returnsVoid
             ? arity <= MaxBclDelegateArity ? "System.Action" : "DotKt.Runtime.CompilerServices.KAction"
-            : arity <= MaxBclDelegateArity ? "System.Func" : "DotKt.Runtime.CompilerServices.KFunc";
+            : arity <= MaxBclDelegateArity ? "System.Func" : "DotKt.Runtime.CompilerServices.KFunc");
         return new TypeNode.Fn(false, ret, ps, recv, clr);
     }
 
@@ -838,7 +840,7 @@ static class BirTypeLowering
             // generic TYPE-ARG like `Continuation[kotlin.Unit]`) stays `kotlin.Unit` — a `void` field/param/arg is
             // invalid metadata. (Return slots fold via the ReturnKeys path; this covers the rest.)
             if (copy["k"] is JsonValue kv2 && kv2.TryGetValue<string>(out var kind2) && (kind2 == "const" || kind2 == "try")
-                && copy["type"] is JsonObject tobj && tobj["t"] is JsonValue tvt && tvt.TryGetValue<string>(out var tvts)
+                && obj["type"] is JsonObject tobj && tobj["t"] is JsonValue tvt && tvt.TryGetValue<string>(out var tvts)
                 && tvts == "fqn" && tobj["name"] is JsonValue tnm && tnm.TryGetValue<string>(out var tnms) && tnms == "kotlin.Unit")
                 copy["type"] = TypeNode.Write(VoidType);
             return copy;

@@ -800,7 +800,7 @@ static class DeclarationIdentityBinding
 
     static string PhysicalTypeName(string name) => name switch
     {
-        "void" or "kotlin.Unit" => "System.Void",
+        "void" => "System.Void",
         "int" or "kotlin.Int" => "System.Int32",
         "long" or "kotlin.Long" => "System.Int64",
         "short" or "kotlin.Short" => "System.Int16",

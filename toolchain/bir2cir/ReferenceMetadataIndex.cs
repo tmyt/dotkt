@@ -2971,7 +2971,7 @@ sealed partial class ReferenceMetadataIndex
             "kotlin.Boolean" or "System.Boolean" or "bool" => new TypeKey(TypeKeyKind.Boolean),
             "kotlin.Char" or "System.Char" or "char" => new TypeKey(TypeKeyKind.Char),
             "kotlin.String" or "System.String" or "string" => new TypeKey(TypeKeyKind.String),
-            "kotlin.Unit" or "System.Void" or "void" => new TypeKey(TypeKeyKind.Void),
+            "System.Void" or "void" => new TypeKey(TypeKeyKind.Void),
             "kotlin.Any" or "System.Object" or "object" => new TypeKey(TypeKeyKind.Object),
             // Unsigned scalars, folded like every other primitive: the specialized ARRAYS were already folded below, but
             // the element types were not, so a `UInt` parameter keyed as `kotlin.UInt` from a pre-lowering call site and
@@ -4087,6 +4087,11 @@ sealed partial class ReferenceMetadataIndex
         if (declared == null) return false;
         if (ownerTypeArguments != null)
             declared = SupertypeGraph.SubstOwnerTvs(declared, ownerTypeArguments);
+        // This comparison consumes a Kotlin method-return fact, not a physical value type. CLR void projects
+        // to non-null Unit here; do not restore that equivalence in parameter keys or delegate result types.
+        if (declared is TypeNode.Fqn { Args: null, Name: "void" or "System.Void" }
+            && resolvedReturn is TypeNode.Fqn { Args: null, Name: "kotlin.Unit" })
+            return true;
         return AccessorDeclarationDescribesCall(declared, resolvedReturn);
     }
 
@@ -7041,7 +7046,6 @@ sealed partial class ReferenceMetadataIndex
         "kotlin.UInt" => "uint",
         "kotlin.ULong" => "ulong",
         "kotlin.UShort" => "ushort",
-        "kotlin.Unit" => "void",
         _ => null,
     };
 
