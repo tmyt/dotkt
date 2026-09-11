@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Empty suspend default interface methods remain concrete (#731).** Cold and Task entries retain the declaration's
+  explicit abstractness instead of inferring it from an empty body, including generic Unit slots and DLL consumers.
+
 - **Suspend Unit implementations satisfy generic return slots (#729).** Private value-bearing Task adapters fill
   generic interface and base-class slots while ordinary Unit methods retain their non-generic Task surface.
   Cross-DLL consumers preserve actual suspension, virtual dispatch, erased arguments, exceptions, and cancellation.
