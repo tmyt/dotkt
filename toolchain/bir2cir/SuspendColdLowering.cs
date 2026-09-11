@@ -1515,6 +1515,9 @@ static partial class SuspendColdLowering
             }
 
             var body = _isLambda ? _lambdaBody : ((_m["body"] as JsonArray) ?? new JsonArray());
+            // Every cold completion is object-valued. Preserve Unit before finally routing stores a pending
+            // return or a suspension-free subtree bypasses EmitStmt; both must carry the same singleton value.
+            if (IsUnitTn(_resultType)) body = (JsonArray)MaterializeUnitReturns(body);
             var hasSuspension = HasSuspension(body);
             // #78/#82/#98 — normalize a suspending body BEFORE segmentation so a suspension in a POSITION the straight-line
             // SM cannot segment is lifted into one it can: a structured loop whose body spans a suspension is
@@ -3840,18 +3843,13 @@ static partial class SuspendColdLowering
             // over a restricted-scope suspend member, e.g. cases/il-corestrict).
             if (IsUnitTn(_resultType))
             {
-                // The source declaration's Unit return is physically `object` on the cold entry. Materialize the
-                // Kotlin Unit singleton on EVERY bare return edge, not only on fallthrough. A source-level
-                // `return` is deliberately value-less BIR because its semantic target returns Unit; cloning that
-                // node verbatim into this different physical signature used to emit a bare `ret`.
-                cloned = (JsonArray)MaterializeDirectUnitReturns(cloned);
                 if (!(cloned.Count > 0 && cloned[^1] is JsonObject last && Str(last["k"]) == "return"))
                     cloned.Add(Ret(UnitValue()));
             }
             return ColdMethod(cloned);
         }
 
-        static JsonNode MaterializeDirectUnitReturns(JsonNode node)
+        static JsonNode MaterializeUnitReturns(JsonNode node)
         {
             if (node is JsonObject obj)
             {
@@ -3864,7 +3862,7 @@ static partial class SuspendColdLowering
                 foreach (var property in obj)
                     copy[property.Key] = property.Value == null
                         ? null
-                        : MaterializeDirectUnitReturns(property.Value);
+                        : MaterializeUnitReturns(property.Value);
                 if ((kind is "return" or "returnExpr") && copy["value"] == null)
                     copy["value"] = UnitValue();
                 return copy;
@@ -3873,7 +3871,7 @@ static partial class SuspendColdLowering
             {
                 var copy = new JsonArray();
                 foreach (var item in array)
-                    copy.Add(item == null ? null : MaterializeDirectUnitReturns(item));
+                    copy.Add(item == null ? null : MaterializeUnitReturns(item));
                 return copy;
             }
             return node?.DeepClone();
@@ -4185,8 +4183,8 @@ static partial class SuspendColdLowering
         // body completed inline (complete the TCS here); a SUSPENDED return means the eventual resume lands in
         // RootContinuation.resumeWith, which completes the TCS. A synchronous throw is caught and routed through the
         // SAME RootContinuation.resumeWith choke point (via RootResumeFailure, #109) so an OCE Cancels — not Faults — the Task.
-        // R = Unit/void is treated uniformly as kotlin.Unit (the cold entry returns null for a Unit body; `(Unit)null`
-        // is null, matching what RootContinuation.resumeWith stores for the async Unit path — the two agree). The bridge
+        // R = Unit/void is treated uniformly as kotlin.Unit: both the synchronous cold completion and the resumed
+        // completion carry the Unit singleton into TaskCompletionSource<Unit>. The bridge
         // carries `suspendBridge:true` so ilemit stamps [KotlinFunction(Suspend)] (a re-consuming Kotlin sees `suspend fun`).
         JsonObject BuildBridge()
         {

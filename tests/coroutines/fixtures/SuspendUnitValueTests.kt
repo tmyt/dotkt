@@ -39,6 +39,28 @@ private suspend fun delayedEffect(gate: Gate<Unit>, trace: Trace) {
 private suspend fun <T> invokeGeneric(block: suspend () -> T): T = block()
 private suspend fun <T> echo(value: T): T = value
 private suspend fun nullableUnit(): Unit? = null
+private suspend fun returnThroughSuspendingFinally(gate: Gate<Unit>, synchronous: Boolean) {
+    try { return } finally {
+        if (synchronous) suspendCoroutine<Unit> { it.resume(Unit) } else gate.await()
+    }
+}
+private suspend fun returnThroughPlainFinallyAfterSuspension(gate: Gate<Unit>, trace: Trace) {
+    gate.await()
+    try { return } finally { trace.text += "finally;" }
+}
+private suspend fun observeFinally(gate: Gate<Unit>, synchronous: Boolean): Any =
+    returnThroughSuspendingFinally(gate, synchronous)
+private suspend fun observePlainFinally(gate: Gate<Unit>, trace: Trace): Any =
+    returnThroughPlainFinallyAfterSuspension(gate, trace)
+private suspend fun observeEffect(trace: Trace, early: Boolean): Any = effect(trace, early)
+private suspend fun observeDelayed(gate: Gate<Unit>, trace: Trace): Any = delayedEffect(gate, trace)
+private suspend fun observeAction(action: suspend () -> Unit): Any = invokeGeneric(action)
+private suspend fun returnFromExpression(gate: Gate<Unit>, early: Boolean, trace: Trace) {
+    val value = if (early) return else gate.await()
+    trace.text += "after;"
+}
+private suspend fun observeExpression(gate: Gate<Unit>, early: Boolean, trace: Trace): Any =
+    returnFromExpression(gate, early, trace)
 private fun consume(first: Any?, second: Any?): Any? = first
 private fun second(trace: Trace): String { trace.text += "second;"; return "second" }
 private fun <T> start(block: suspend () -> T): Completion<T> {
@@ -54,12 +76,46 @@ private fun assertUnit(completion: Completion<*>) {
 
 class SuspendUnitValueTests {
     @TestAttribute
+    fun expressionPositionEarlyReturnProducesUnit() {
+        val gate = Gate<Unit>()
+        val trace = Trace()
+        assertUnit(start<Any> { observeExpression(gate, true, trace) })
+        assertEquals("", trace.text)
+        val completion = start<Any> { observeExpression(gate, false, trace) }
+        assertTrue(!completion.completed)
+        gate.resume(Unit)
+        assertUnit(completion)
+        assertEquals("after;", trace.text)
+    }
+
+    @TestAttribute
+    fun earlyReturnThroughSuspendingFinallyProducesUnit() {
+        val gate = Gate<Unit>()
+        assertUnit(start<Any> { observeFinally(gate, true) })
+        val completion = start<Any> { observeFinally(gate, false) }
+        assertTrue(!completion.completed)
+        gate.resume(Unit)
+        assertUnit(completion)
+    }
+
+    @TestAttribute
+    fun earlyReturnThroughPlainFinallyAfterSuspensionProducesUnit() {
+        val gate = Gate<Unit>()
+        val trace = Trace()
+        val completion = start<Any> { observePlainFinally(gate, trace) }
+        assertTrue(!completion.completed)
+        gate.resume(Unit)
+        assertEquals("finally;", trace.text)
+        assertUnit(completion)
+    }
+
+    @TestAttribute
     fun directCompletionAndBareReturnProduceUnitValues() {
         val trace = Trace()
-        assertUnit(start<Any> { effect(trace, false) })
+        assertUnit(start<Any> { observeEffect(trace, false) })
         assertEquals("effect;end;", trace.text)
         trace.text = ""
-        assertUnit(start<Any> { effect(trace, true) })
+        assertUnit(start<Any> { observeEffect(trace, true) })
         assertEquals("effect;", trace.text)
     }
 
@@ -67,7 +123,7 @@ class SuspendUnitValueTests {
     fun actualSuspensionCompletesWithUnit() {
         val trace = Trace()
         val gate = Gate<Unit>()
-        val completion = start<Any> { delayedEffect(gate, trace) }
+        val completion = start<Any> { observeDelayed(gate, trace) }
         assertTrue(!completion.completed)
         assertEquals("before;", trace.text)
         gate.resume(Unit)
@@ -87,10 +143,10 @@ class SuspendUnitValueTests {
     fun suspendFunctionValuesAndGenericConsumersKeepUnit() {
         val trace = Trace()
         val direct: suspend () -> Unit = { effect(trace, false) }
-        assertUnit(start<Any> { invokeGeneric(direct) })
+        assertUnit(start<Any> { observeAction(direct) })
         val gate = Gate<Unit>()
         val delayed: suspend () -> Unit = { delayedEffect(gate, trace) }
-        val completion = start<Any> { invokeGeneric(delayed) }
+        val completion = start<Any> { observeAction(delayed) }
         assertTrue(!completion.completed)
         gate.resume(Unit)
         assertUnit(completion)

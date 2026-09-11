@@ -27,18 +27,32 @@ private fun assertUnit(completion: Completion<*>) {
     assertTrue(completion.failure == null)
     assertTrue(completion.value === Unit)
 }
+private suspend fun observeDirect(early: Boolean): Any = directUnit(early)
+private suspend fun observeDelayed(gate: UnitGate): Any = delayedUnit(gate)
+private suspend fun observeFinally(gate: UnitGate): Any = finallyUnit(gate)
+private suspend fun observeAction(action: suspend () -> Unit): Any = invokeAction(action)
 
 class SuspendUnitValueTests {
     @TestAttribute
+    fun importedEarlyReturnThroughSuspendingFinallyKeepsUnit() {
+        val gate = UnitGate()
+        val completion = start<Any> { observeFinally(gate) }
+        assertTrue(!completion.completed)
+        gate.resume()
+        assertUnit(completion)
+        assertEquals(1, gate.calls)
+    }
+
+    @TestAttribute
     fun importedDirectCompletionProducesUnit() {
-        assertUnit(start<Any> { directUnit(false) })
-        assertUnit(start<Any> { directUnit(true) })
+        assertUnit(start<Any> { observeDirect(false) })
+        assertUnit(start<Any> { observeDirect(true) })
     }
 
     @TestAttribute
     fun importedSuspensionCompletesWithUnitExactlyOnce() {
         val gate = UnitGate()
-        val completion = start<Any> { delayedUnit(gate) }
+        val completion = start<Any> { observeDelayed(gate) }
         assertTrue(!completion.completed)
         assertEquals(1, gate.calls)
         gate.resume()
@@ -50,7 +64,7 @@ class SuspendUnitValueTests {
     fun importedSuspendValueAndGenericInvocationKeepUnit() {
         val gate = UnitGate()
         val action = unitAction(gate)
-        val completion = start<Any> { invokeAction(action) }
+        val completion = start<Any> { observeAction(action) }
         assertTrue(!completion.completed)
         gate.resume()
         assertUnit(completion)
@@ -61,10 +75,15 @@ class SuspendUnitValueTests {
     @TestAttribute
     fun importedFailureDoesNotBecomeSuccessfulUnit() {
         val gate = UnitGate()
-        val completion = start<Any> { delayedUnit(gate) }
+        val completion = start<Any> { observeDelayed(gate) }
         gate.fail()
         assertTrue(completion.completed)
         assertEquals("imported failure", completion.failure!!.message)
         assertEquals(1, gate.calls)
+        val pendingGate = UnitGate()
+        val pendingReturn = start<Any> { observeFinally(pendingGate) }
+        pendingGate.fail()
+        assertTrue(pendingReturn.completed)
+        assertEquals("imported failure", pendingReturn.failure!!.message)
     }
 }

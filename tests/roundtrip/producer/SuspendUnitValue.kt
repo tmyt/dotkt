@@ -14,5 +14,6 @@ class UnitGate {
 }
 suspend fun directUnit(early: Boolean) { if (early) return }
 suspend fun delayedUnit(gate: UnitGate) { gate.await() }
+suspend fun finallyUnit(gate: UnitGate) { try { return } finally { gate.await() } }
 fun unitAction(gate: UnitGate): suspend () -> Unit = { delayedUnit(gate) }
 suspend fun <T> invokeAction(action: suspend () -> T): T = action()
