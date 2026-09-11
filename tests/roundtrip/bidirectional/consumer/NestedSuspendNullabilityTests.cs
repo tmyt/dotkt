@@ -36,6 +36,43 @@ public class NestedSuspendNullabilityTests
     }
 
     [Test]
+    public async Task ConstructedValuesAndDelegatesFollowTheirPhysicalTypeArguments()
+    {
+        var segment = Result("valueSegment").GenericTypeArguments[0];
+        Assert.That(segment.Type, Is.EqualTo(typeof(ArraySegment<string>)));
+        State(segment, NullabilityState.NotNull);
+        State(segment.GenericTypeArguments[0], NullabilityState.Nullable);
+        Assert.That((await NestedSuspendNullabilityKt.valueSegment())[0], Is.Null);
+
+        var function = Result("functionResult").GenericTypeArguments[0];
+        Assert.That(function.Type, Is.EqualTo(typeof(Func<string, string>)));
+        State(function, NullabilityState.Nullable);
+        State(function.GenericTypeArguments[0], NullabilityState.Nullable);
+        State(function.GenericTypeArguments[1], NullabilityState.Nullable);
+        Assert.That((await NestedSuspendNullabilityKt.functionResult())!(null!), Is.Null);
+
+        var action = Result("actionResult").GenericTypeArguments[0];
+        Assert.That(action.Type, Is.EqualTo(typeof(Action<string>)));
+        State(action.GenericTypeArguments[0], NullabilityState.Nullable);
+        var receiver = Result("receiverResult").GenericTypeArguments[0];
+        Assert.That(receiver.Type, Is.EqualTo(typeof(Func<string, string, string>)));
+        State(receiver.GenericTypeArguments[0], NullabilityState.Nullable);
+        State(receiver.GenericTypeArguments[1], NullabilityState.NotNull);
+        State(receiver.GenericTypeArguments[2], NullabilityState.Nullable);
+        var unitFunction = Result("unitFunctionResult").GenericTypeArguments[0];
+        Assert.That(unitFunction.Type, Is.EqualTo(typeof(Func<kotlin.Unit>)));
+        State(unitFunction.GenericTypeArguments[0], NullabilityState.Nullable);
+        var suspendFunction = Result("suspendFunctionResult").GenericTypeArguments[0];
+        Assert.That(suspendFunction.Type, Is.EqualTo(typeof(object)));
+        State(suspendFunction, NullabilityState.Nullable);
+        Assert.That(suspendFunction.GenericTypeArguments, Is.Empty);
+        var collapsed = Result("collapsedResult").GenericTypeArguments[0];
+        Assert.That(collapsed.GenericTypeArguments[0].Type.IsGenericType, Is.False);
+        State(collapsed.GenericTypeArguments[0], NullabilityState.Nullable);
+        State(collapsed.GenericTypeArguments[1], NullabilityState.Nullable);
+    }
+
+    [Test]
     public void UnitAndAbstractDefaultSlotsUseTheirOwnNullabilityConventions()
     {
         var unit = Result("nestedUnit").GenericTypeArguments[0];

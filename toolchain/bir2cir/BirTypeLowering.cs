@@ -647,8 +647,7 @@ static class BirTypeLowering
     {
         // A function with an explicit CLR family already carries a physical return contract. In particular,
         // Func<..., Unit> must not become Action when a later member-binding step visits it again.
-        var ret = (fn.Clr == null && fn.Ret is TypeNode.Fqn rf && rf.Args == null && rf.Name == "kotlin.Unit")
-            ? VoidType : LowerType(fn.Ret, refBuild, force, typeArg: false);
+        var ret = LowerType(DelegateReturnSlot(fn), refBuild, force, typeArg: false);
         var ps = fn.Params.Select(p => LowerType(p, refBuild, force, typeArg: false)).ToArray();
         var recv = fn.Recv == null ? null : LowerType(fn.Recv, refBuild, force, typeArg: false);
         int arity = ps.Length + (recv == null ? 0 : 1);
@@ -666,29 +665,32 @@ static class BirTypeLowering
         return new TypeNode.Fn(false, ret, ps, recv, clr);
     }
 
-    /// <summary>
-    /// The constructed delegate a lowered function type IS, named.
-    /// </summary>
-    /// <remarks>
-    /// `LowerFnDelegate` leaves the node an `fn` carrying the delegate's family in `clr`, and the emitter builds
-    /// the constructed type from that. A member reference has to NAME the type, so the same construction is
-    /// spelled here — beside the pass that decided the family, so the two cannot drift.
-    ///
-    /// `Action` takes the parameters alone; `Func` takes the parameters then the return. A receiver is the
-    /// leading parameter either way, exactly as the arity above counts it.
-    /// </remarks>
+    internal static TypeNode DelegateReturnSlot(TypeNode.Fn fn) =>
+        fn.Clr == null && fn.Ret is TypeNode.Fqn { Args: null, Name: "kotlin.Unit" }
+            ? VoidType : fn.Ret;
+
+    // Preserve annotation wrappers when called before lowering. Both the physical delegate construction and
+    // the CLR-facing NRT walk use this order: receiver, parameters, and a value-bearing return (if any).
+    internal static TypeNode[] DelegateTypeArguments(TypeNode.Fn fn)
+    {
+        var args = new List<TypeNode>(fn.DelegateParams);
+        var ret = DelegateReturnSlot(fn);
+        if (ret is not TypeNode.Fqn { Args: null, Name: "void" or "System.Void" }) args.Add(ret);
+        return args.ToArray();
+    }
+
+    /// <summary>The constructed delegate a lowered function type is, named.</summary>
+    /// <remarks>The function's explicit CLR family and shared argument order also drive its emitted signature.</remarks>
     internal static TypeNode.Fqn DelegateFqnOf(TypeNode.Fn lowered)
     {
         if (lowered.Clr == null) return null;
         // DelegateParams is the shared property the EMITTER builds its delegate from — it prepends an extension
         // receiver so a receiver-lambda and the flat closure bound to it land on the same CLR delegate. Rebuilding
         // that list here instead is a second implementation of one decision, and the two disagreed.
-        var args = new List<TypeNode>(lowered.DelegateParams);
-        bool returnsVoid = lowered.Ret is TypeNode.Fqn { Args: null, Name: "void" or "System.Void" };
-        if (!returnsVoid) args.Add(lowered.Ret);
-        return args.Count == 0
+        var args = DelegateTypeArguments(lowered);
+        return args.Length == 0
             ? new TypeNode.Fqn(lowered.Clr)
-            : new TypeNode.Fqn(lowered.Clr, args.ToArray());
+            : new TypeNode.Fqn(lowered.Clr, args);
     }
 
     // Read a structured Type node out of the BIR JSON, lower it, and write it back.

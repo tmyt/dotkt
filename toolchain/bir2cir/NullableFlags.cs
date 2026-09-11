@@ -21,7 +21,7 @@ using DotKt.Bir;
 // the reader answers both with one rule (see the [TypeNode.Fqn] arm).
 //
 // KNOWN DIVERGENCES from that reader, both older than the value-type rule above and both narrow:
-//   * a FUNCTION TYPE writes ONE byte here while the reader walks the delegate's type arguments, so
+//   * an ordinary-declaration FUNCTION TYPE writes ONE byte here while the reader walks the delegate's type arguments, so
 //     `(String?) -> String?` does not round-trip through these bytes (it rides its `[KotlinType]` carrier instead);
 //   * `Compute` emits nothing unless some position is NULLABLE, so an all-oblivious type writes no attribute and
 //     reimports under the declaration's `[NullableContext(1)]` as non-null.
@@ -109,12 +109,17 @@ static class NullableFlags
                 var anyA = HeadIsNullable();
                 anyA |= Walk(a.Elem, nullableHere: false, flags, isValue, convention);
                 return anyA;
-            case TypeNode.Fn:
-                // A function type is a reference (delegate / object-erased state machine); its inner shape is not walked
-                // for NRT. See the FUNCTION-TYPE note in the header: the reader DOES walk the delegate's type arguments,
-                // so a function-typed slot must reach it through its `[KotlinType]` carrier, not through these bytes.
+            case TypeNode.Fn fn:
+                // A function type is a reference (delegate / object-erased state machine). Ordinary Kotlin
+                // declarations preserve its inner shape through KotlinType rather than these bytes.
                 flags.Add(Head());
-                return HeadIsNullable();
+                var anyFn = HeadIsNullable();
+                // Plain functions become constructed delegates; suspend-function values become object and
+                // therefore have no physical type arguments. Ordinary Kotlin slots retain their carrier convention.
+                if (convention == Convention.ClrSignature && !fn.Suspend)
+                    foreach (var arg in BirTypeLowering.DelegateTypeArguments(fn))
+                        anyFn |= Walk(arg, nullableHere: false, flags, isValue, convention);
+                return anyFn;
             case TypeNode.Tv:
                 // A type variable is treated as a reference position (bare + NRT byte); a struct-constrained tv would be
                 // a value `Nullable<T>` but is resolved to a value elsewhere / erased by the object-erasure lifelines.
