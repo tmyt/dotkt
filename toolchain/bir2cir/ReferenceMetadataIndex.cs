@@ -1740,7 +1740,12 @@ sealed partial class ReferenceMetadataIndex
 
     public bool IsEnumType(TypeNode.Fqn type) => ReferencedTypeKind(type) == "enum";
 
-    public bool IsInterfaceType(TypeNode.Fqn type) => ReferencedTypeKind(type) == "interface";
+    public bool IsInterfaceType(TypeNode.Fqn type)
+    {
+        var kind = ReferencedTypeKind(type);
+        return kind != null ? kind == "interface"
+            : type != null && ProbeNetType(type.Name, type.Args?.Length ?? 0)?.IsInterface == true;
+    }
 
     string ReferencedTypeKind(TypeNode.Fqn type)
     {

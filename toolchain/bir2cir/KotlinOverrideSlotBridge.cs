@@ -171,7 +171,9 @@ static class KotlinOverrideSlotBridge
             // per-type MethodImpl for that override. `semanticSpec` deliberately remains in Kotlin vocabulary:
             // `descriptorSpec` may already be the physical owner of @ClrTypeAlias.
             var reimplementsInterface = supIsInterface && cls.Kind == "class"
-                && ReachesFromDeclaredInterface(cls, semanticSpec, defs, refs);
+                && (ReachesFromDeclaredInterface(cls, semanticSpec, defs, refs)
+                    || referencedSlot && ReachesFromDeclaredPhysicalInterface(cls, descriptorSpec, defs, refs,
+                        isValue, localTypeNames));
             var overridesInheritedDefault = supIsInterface && cls.Kind == "class"
                 && !reimplementsInterface && interfaceSlotHasDefault;
             if (supIsInterface && cls.Kind == "class"
@@ -1558,6 +1560,20 @@ static class KotlinOverrideSlotBridge
             if (SupertypeGraph.Reaches(direct, slotOwner, defs, refs))
                 return true;
         return false;
+    }
+
+    static bool ReachesFromDeclaredPhysicalInterface(Def cls, TypeNode.Fqn slotOwner,
+        IReadOnlyDictionary<string, Def> defs, ReferenceMetadataIndex refs, ValueTypeOracle isValue,
+        IReadOnlySet<string> localTypeNames)
+    {
+        // A referenced graph is already in CLR vocabulary, while the selected owner may still carry Kotlin type
+        // arguments. Compare both physical projections, retaining exact construction and excluding the base chain.
+        TypeNode Physical(TypeNode type) => ClrMemberResolution.MethodImplComparisonType(
+            BirTypeLowering.LowerPhysicalType(
+                type, refs.Aliases, isValue, refs.PhysicalTypeNames, typeArg: false, localTypeNames));
+        var physicalSlot = Physical(slotOwner);
+        return SupertypeGraph.Reachable(new Def { Interfaces = cls.Interfaces }, defs, refs)
+            .Any(edge => edge.isInterface && Equals(Physical(edge.spec), physicalSlot));
     }
 
     // Move a slot the CLR cannot bridge onto the supertype's shape, carrying the override's own pre-erasure Kotlin
