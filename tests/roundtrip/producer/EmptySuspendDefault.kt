@@ -16,6 +16,9 @@ class DefaultGate {
     suspend fun pause() { entries++; suspendCoroutine<Unit> { pending = it } }
     fun release() { pending!!.resume(Unit) }
 }
+class OverridingBody(private val gate: DefaultGate) : EmptyBody() {
+    override suspend fun read() { gate.pause() }
+}
 interface SuspendingDefault {
     suspend fun read(gate: DefaultGate) { gate.pause() }
 }

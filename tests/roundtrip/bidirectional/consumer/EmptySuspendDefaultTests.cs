@@ -33,6 +33,13 @@ public class EmptySuspendDefaultTests
         var task = ((SuspendingDefault)new SuspendingBody()).read(gate);
         Assert.That(task.IsCompleted, Is.False);
         Assert.That(gate.entries, Is.EqualTo(1));
+        var overrideGate = new DefaultGate();
+        var overridden = ((EmptyDefault)new OverridingBody(overrideGate)).read();
+        Assert.That(overridden.IsCompleted, Is.False);
+        Assert.That(overrideGate.entries, Is.EqualTo(1));
+        overrideGate.release();
+        await overridden;
+        Assert.That(overridden.IsCompletedSuccessfully, Is.True);
         gate.release();
         await task;
         Assert.That(task.IsCompletedSuccessfully, Is.True);

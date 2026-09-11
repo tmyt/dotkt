@@ -514,9 +514,12 @@ UNCONDITIONALLY. The classifier assigns each admitted member one of three shapes
 
 | Classification | Shape emitted |
 |---|---|
-| abstract member / interface-no-body | abstract cold entry + abstract Task bridge (no SM) |
+| abstract member (explicit declaration modality) | abstract cold entry + abstract Task bridge (no SM) |
 | concrete + segmentable (`SuspensionRefusalReason == null`) | SM class + cold entry + bridge (the full transform) |
 | concrete + NOT segmentable (v1 limit, or M4 own-generic-on-generic-class) | a call-time `throw NotSupportedException(reason)` cold entry + bridge, and a bir2cir WARNING naming the fun + the refusal site |
+
+An empty concrete Unit-returning default interface body remains concrete. It uses a direct cold entry returning
+the Unit value plus its Task bridge; body length does not determine declaration modality.
 
 The only members NOT admitted are the reference-KLIB `@ClrAwaitBridge` declarations, the old kotc CPS/sequence
 path (`steps`/`coClass`), and stdlib inline coroutine intrinsics (`suspendCoroutine*`, left un-lowered in stdlib
