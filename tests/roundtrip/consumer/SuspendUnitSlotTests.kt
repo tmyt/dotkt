@@ -39,6 +39,8 @@ private suspend fun observeBase(slot: UnitBaseSlot<Unit>): Any? = slot.read()
 private suspend fun observeErased(slot: ErasedUnitSlot<Unit>, value: Unit?): Any? = slot.read(value)
 private suspend fun observeNullable(slot: NullableResultSlot<Unit>): Any? = slot.read()
 private suspend fun observeMethod(slot: MethodUnitSlot<Unit>): Any? = slot.read("method frame")
+private suspend fun observeErasedBase(slot: ErasedBaseUnitSlot<Unit>): Any? = slot.read(null)
+private suspend fun observeUnconstrainedMethod(slot: UnconstrainedMethodUnitSlot<Unit>): Any? = slot.read("method frame")
 
 private class ImportedInterfaceBody(private val gate: UnitGate) : UnitSlot<Unit>, PlainUnitSlot {
     override suspend fun read() { gate.pause() }
@@ -52,6 +54,19 @@ private class ImportedErasedBody(private val gate: UnitGate) : ErasedUnitSlot<Un
 private class ImportedFurtherBody(private val gate: UnitGate) : DelayedUnitSlot(gate) {
     var calls = 0
     override suspend fun read() { calls++; gate.pause() }
+}
+private class ImportedOpenBody(gate: UnitGate) : OpenUnitBodyBase(gate), UnitSlot<Unit>
+private class ImportedMethodBody(private val gate: UnitGate) : UnconstrainedMethodUnitSlot<Unit> {
+    override suspend fun <U> read(value: U) { gate.pause() }
+}
+private class ImportedNullableBody(private val gate: UnitGate) : NullableResultSlot<Unit> {
+    override suspend fun read() { gate.pause() }
+}
+private class ImportedErasedBaseBody(private val gate: UnitGate) : ErasedBaseUnitSlot<Unit>() {
+    override suspend fun read(value: Unit?) { gate.pause() }
+}
+private class ImportedDefaultBody(private val gate: UnitGate) : DefaultUnitBase() {
+    override suspend fun read() { gate.pause() }
 }
 
 class SuspendUnitSlotTests {
@@ -84,6 +99,12 @@ class SuspendUnitSlotTests {
         val erased = ErasedParameterUnitSlot(erasedGate)
         complete(erasedGate, start { observeErased(erased, null) })
         assertTrue(erased.wasNull)
+        val openGate = UnitGate()
+        complete(openGate, start { observe(InheritedOpenUnitBody(openGate)) })
+        val furtherGate = UnitGate()
+        val further = FurtherInheritedUnitBody(furtherGate)
+        complete(furtherGate, start { observe(further) })
+        assertEquals(1, further.calls)
     }
 
     @TestAttribute
@@ -98,6 +119,16 @@ class SuspendUnitSlotTests {
         val further = ImportedFurtherBody(furtherGate)
         complete(furtherGate, start { observe(further) })
         assertEquals(1, further.calls)
+        val openGate = UnitGate()
+        complete(openGate, start { observe(ImportedOpenBody(openGate)) })
+        val methodGate = UnitGate()
+        complete(methodGate, start { observeUnconstrainedMethod(ImportedMethodBody(methodGate)) })
+        val nullableGate = UnitGate()
+        complete(nullableGate, start { observeNullable(ImportedNullableBody(nullableGate)) })
+        val erasedBaseGate = UnitGate()
+        complete(erasedBaseGate, start { observeErasedBase(ImportedErasedBaseBody(erasedBaseGate)) })
+        val defaultGate = UnitGate()
+        complete(defaultGate, start { observe(ImportedDefaultBody(defaultGate)) })
     }
 
     @TestAttribute

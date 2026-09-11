@@ -155,7 +155,8 @@ static class KotlinOverrideSlotBridge
         var candidates = methods.OfType<JsonObject>().ToList();
         var inheritedOwners = new Dictionary<JsonObject, TypeNode.Fqn>(ReferenceEqualityComparer.Instance);
         if (emitBridges)
-            CollectInheritedClassMethods(cls, defs, refs, isValue, candidates, inheritedOwners);
+            CollectInheritedClassMethods(cls, defs, refs, isValue, candidates, inheritedOwners,
+                phase == Phase.SuspendValueBridges);
 
         // EVERY EARLY EXIT BELOW MEANS "THIS SUPERTYPE OR SLOT IS NOT ONE THIS ERASURE DIVERGED", never "give up on a
         // slot that needs filling". A supertype absent from `defs` is declared elsewhere and goes to the referenced
@@ -550,7 +551,7 @@ static class KotlinOverrideSlotBridge
 
     static void CollectInheritedClassMethods(Def cls, IReadOnlyDictionary<string, Def> defs,
         ReferenceMetadataIndex refs, ValueTypeOracle isValue, List<JsonObject> candidates,
-        Dictionary<JsonObject, TypeNode.Fqn> inheritedOwners)
+        Dictionary<JsonObject, TypeNode.Fqn> inheritedOwners, bool suspendValues)
     {
         if (cls.Node["inheritedClassMethods"] is not JsonArray facts) return;
         var bases = SupertypeGraph.Reachable(cls, defs, refs).Where(edge => !edge.isInterface).ToList();
@@ -574,6 +575,7 @@ static class KotlinOverrideSlotBridge
                 bool returnsValue;
                 string physicalMember;
                 JsonArray physicalTypeParams;
+                TypeNode logicalSuspendResult = null;
                 var callOwner = spec;
                 if (defs.TryGetValue(spec.Name, out var sourceOwner))
                 {
@@ -597,16 +599,29 @@ static class KotlinOverrideSlotBridge
                     returnsValue = !IsVoid(openRet) || Bool(source[BirTypeLowering.ValueReturnKey]);
                     sourceRet = SupertypeGraph.SubstOwnerTvs(openRet, args);
                     physicalMember = Str(source[DeclarationIdentityBinding.ExplicitNameKey]) ?? Str(source["name"]);
+                    if (suspendValues && IsSuspendMethod(source))
+                        logicalSuspendResult = SupertypeGraph.SubstOwnerTvs(TypeNode.Parse(
+                            Str(source["suspendResult"]) ?? throw new InvalidOperationException(
+                                "inherited suspend source has no logical result")), args);
                 }
                 else
                 {
-                    if (refs == null || !refs.TrySelectedMethodDeclaration(spec.Name, member, arity,
+                    if (refs == null) continue;
+                    ReferencedMethodDeclaration source;
+                    if (suspendValues && IsSuspendMethod(fact))
+                    {
+                        if (!refs.TrySelectedOverrideDeclaration(spec.Name, member, propertyAccessor, arity,
+                                factParams, args, implementation["typeParams"] as JsonArray, args,
+                                selectedSuspend: true, out source)) continue;
+                        logicalSuspendResult = SupertypeGraph.SubstOwnerTvs(source.Return, args);
+                    }
+                    else if (!refs.TrySelectedMethodDeclaration(spec.Name, member, arity,
                             factParams, factRet, args, implementation["typeParams"] as JsonArray,
-                            out var source, propertyAccessor)) continue;
+                            out source, propertyAccessor)) continue;
                     sourceParams = source.Parameters.Select(p => SupertypeGraph.SubstOwnerTvs(p, args)).ToArray();
                     physicalTypeParams = source.TypeParams;
                     sourceRet = SupertypeGraph.SubstOwnerTvs(source.Return, args);
-                    returnsValue = source.ReturnsValue;
+                    returnsValue = logicalSuspendResult != null ? !IsVoid(source.Return) : source.ReturnsValue;
                     physicalMember = source.PhysicalMember;
                     callOwner = new TypeNode.Fqn(refs.ExactReflectedOwner(spec.Name, args.Length), spec.Args);
                 }
@@ -615,6 +630,13 @@ static class KotlinOverrideSlotBridge
                 candidate["typeParams"] = SubstituteOwnerTypeParameterConstraints(physicalTypeParams, args);
                 candidate[DeclarationIdentityBinding.ExplicitNameKey] = physicalMember;
                 candidate["ret"] = TypeJson.Write(sourceRet);
+                if (logicalSuspendResult != null)
+                {
+                    candidate["suspendResult"] = TypeNode.ToJson(logicalSuspendResult);
+                    candidate["suspendRet"] = TypeJson.Write(sourceRet);
+                }
+                else if (candidate["mods"] is JsonObject candidateMods)
+                    candidateMods.Remove("suspend");
                 for (var i = 0; i < sourceParams.Length; i++)
                     ((JsonObject)((JsonArray)candidate["params"])[i])["type"] = TypeJson.Write(sourceParams[i]);
                 if (returnsValue && IsUnit(sourceRet)) candidate[BirTypeLowering.ValueReturnKey] = true;

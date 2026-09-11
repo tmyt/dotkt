@@ -8,7 +8,9 @@ interface PlainUnitSlot { suspend fun read() }
 interface ErasedUnitSlot<T> { suspend fun read(value: T?): T }
 interface NullableResultSlot<T> { suspend fun read(): T? }
 interface MethodUnitSlot<T> { suspend fun <U : Any> read(value: U): T }
+interface UnconstrainedMethodUnitSlot<T> { suspend fun <U> read(value: U): T }
 abstract class UnitBaseSlot<T> { abstract suspend fun read(): T }
+abstract class ErasedBaseUnitSlot<T> { abstract suspend fun read(value: T?): T }
 
 class UnitGate {
     private var pending: Continuation<Unit>? = null
@@ -52,10 +54,20 @@ interface DefaultUnitSlot : UnitSlot<Unit> {
     override suspend fun read() { defaultCalls++ }
 }
 class DefaultUnitBody : DefaultUnitSlot
+open class DefaultUnitBase : DefaultUnitSlot
 open class FinalUnitBodyBase { suspend fun read() {} }
 class InheritedUnitBody : FinalUnitBodyBase(), UnitSlot<Unit>
 abstract class AbstractUnitBody : UnitSlot<Unit> { abstract override suspend fun read() }
 class ConcreteUnitBody : AbstractUnitBody() { override suspend fun read() {} }
+
+open class OpenUnitBodyBase(private val gate: UnitGate) {
+    open suspend fun read() { gate.pause() }
+}
+open class InheritedOpenUnitBody(gate: UnitGate) : OpenUnitBodyBase(gate), UnitSlot<Unit>
+class FurtherInheritedUnitBody(private val gate: UnitGate) : InheritedOpenUnitBody(gate) {
+    var calls = 0
+    override suspend fun read() { calls++; gate.pause() }
+}
 
 // These calls are compiled beside the declarations, independently of the consumers' DLL imports.
 suspend fun observeLocal(slot: UnitSlot<Unit>): Any? = slot.read()

@@ -45,6 +45,8 @@ public class SuspendUnitSlotTests
         await Complete(gate => ((UnitSlot<kotlin.Unit>)new DelayedUnitSlot(gate)).read());
         await Complete(gate => ((UnitBaseSlot<kotlin.Unit>)new DelayedBaseUnitSlot(gate)).read());
         await Complete(gate => ((MethodUnitSlot<kotlin.Unit>)new GenericMethodUnitSlot(gate)).read("method"));
+        await Complete(gate => ((UnitSlot<kotlin.Unit>)new InheritedOpenUnitBody(gate)).read());
+        await Complete(gate => ((UnitSlot<kotlin.Unit>)new FurtherInheritedUnitBody(gate)).read());
         var gate = new UnitGate();
         var source = new FurtherUnitSlot(gate);
         var task = ((UnitSlot<kotlin.Unit>)source).read();

@@ -3717,7 +3717,11 @@ sealed partial class ReferenceMetadataIndex
             if (shapeMatches.Length == 1)
             {
                 var member = shapeMatches[0];
-                declaredRet = propertyName != null && includeClosedPropertyReturn
+                // A selected suspend projection is already a physical hot/cold MethodDef. Its logical Kotlin
+                // result carrier belongs to the source declaration, not to the Task-returning MethodImpl row.
+                declaredRet = selectedPhysicalMember != null
+                    ? new SlotFact(member.ReturnTypeNode, false)
+                    : propertyName != null && includeClosedPropertyReturn
                     ? new SlotFact(member.NullableGenericRet ?? member.KotlinReturnType ?? member.ReturnTypeNode, false)
                     : propertyName == null && includeUnchangedMethod
                         ? new SlotFact(member.NullableGenericRet ?? member.KotlinReturnType ?? member.ReturnTypeNode, false)
