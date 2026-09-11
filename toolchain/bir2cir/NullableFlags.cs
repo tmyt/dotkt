@@ -4,9 +4,9 @@ using System.Text.Json.Nodes;
 using DotKt.Bir;
 
 // The flattened NullableAttribute (NRT) byte walk, shared across the decl-position NRT collection (params / method
-// returns / fields / properties). The suspend Task-bridge return has a separate walk in SuspendColdLowering:
-// its Unit reference positions occupy bytes for CLR consumers, whereas this writer and dll2klib's ordinary
-// declaration reader skip them (docs/dotkt-semantics.md §9). DotKt reads the bridge's KotlinSuspendResult instead.
+// returns / fields / properties). The CLR-facing suspend Task return uses the same traversal with an explicit
+// convention: Unit reference positions occupy bytes, whereas ordinary declarations and their DotKt reader
+// skip them (docs/dotkt-semantics.md §9). DotKt reads the bridge's KotlinSuspendResult instead.
 // A reference type's
 // `?` no longer rides a decl-level scalar flag nor a `System.Nullable<>` wrapper — it is stripped to the bare type by
 // BirTypeLowering, and its nullability is carried HERE as a `NullableAttribute` byte array (RoundtripMetadata folds it
@@ -15,8 +15,7 @@ using DotKt.Bir;
 // `Nullable<T>`, not an NRT one — but it still holds a byte POSITION (always 0) once it is constructed, and its
 // arguments are walked either way; `dll2klib`'s reader implements the same rule from the other side.
 //
-// This is an oracle-keyed generalization of SuspendColdLowering's private `WalkNullable` +
-// `ValueTypeFqns` (which only ever handled the Task<R> return). The value-ness decision is the struct-ness ORACLE
+// The value-ness decision is the struct-ness ORACLE
 // (ReferenceMetadataIndex.IsValueType + local enum/struct types), not a hardcoded FQN set. `kotlin.Unit` is the one
 // name answered here rather than by the oracle — it is a CLASS on the CLR but the type ECMA `void` projects to, and
 // the reader answers both with one rule (see the [TypeNode.Fqn] arm).
@@ -28,14 +27,17 @@ using DotKt.Bir;
 //     reimports under the declaration's `[NullableContext(1)]` as non-null.
 static class NullableFlags
 {
+    internal enum Convention { KotlinDeclaration, ClrSignature }
+
     // Compute the flattened NRT byte array for a SEMANTIC type node (BEFORE BirTypeLowering strips reference wrappers),
     // or null when the type carries NO nullable (2) position — in which case the type's [NullableContext(1)] non-null
     // default already covers every node, so no per-position override is needed. `isValue` is the struct-ness oracle.
-    public static JsonArray Compute(TypeNode t, ValueTypeOracle isValue)
+    public static JsonArray Compute(TypeNode t, ValueTypeOracle isValue,
+        Convention convention = Convention.KotlinDeclaration)
     {
         if (t == null) return null;
         var flags = new List<int>();
-        bool anyNullable = Walk(t, nullableHere: false, flags, isValue);
+        bool anyNullable = Walk(t, nullableHere: false, flags, isValue, convention);
         if (!anyNullable) return null;
         var arr = new JsonArray();
         foreach (var b in flags) arr.Add(b);
@@ -52,7 +54,8 @@ static class NullableFlags
     // at the nullable wrapper wrote 2 where the rule says 0. That is one position's nullability, not a shift — the
     // reader's traversal is driven by the signature, so a wrong byte VALUE leaves every other position where it was;
     // it is a wrong byte COUNT (the value-type rule above) that moves them.
-    static bool Walk(TypeNode t, bool nullableHere, List<int> flags, ValueTypeOracle isValue, bool obliviousHere = false)
+    static bool Walk(TypeNode t, bool nullableHere, List<int> flags, ValueTypeOracle isValue,
+        Convention convention, bool obliviousHere = false)
     {
         // The head byte for a node that HOLDS one. Oblivious wins over nullable: `T!` is the un-annotated position.
         int Head() => obliviousHere ? 0 : nullableHere ? 2 : 1;
@@ -62,7 +65,7 @@ static class NullableFlags
         switch (t)
         {
             case TypeNode.Nullable n:
-                return Walk(n.Of, nullableHere: true, flags, isValue, obliviousHere);
+                return Walk(n.Of, nullableHere: true, flags, isValue, convention, obliviousHere);
             case TypeNode.Oblivious o:
                 // NRT-oblivious position (NullableAttribute = 0). kotc emits it for every FLEXIBLE/platform type —
                 // `{t:oblivious}` wrapping the NOT-NULL core (BirEmitterTypes) — so the FRONTEND cannot hand over an
@@ -74,37 +77,37 @@ static class NullableFlags
                 // `String?`, whose bridge shape KotlinOverrideSlotBridge feeds straight back into `Compute`. Not
                 // observed in the current corpus (see tests/ir/lowering/oblivious-over-nullable-byte, which is the
                 // witness and records the measurement); nothing makes it unreachable.
-                return Walk(o.Of, nullableHere: false, flags, isValue, obliviousHere: true);
+                return Walk(o.Of, nullableHere: false, flags, isValue, convention, obliviousHere: true);
             case TypeNode.Fqn f:
                 // `kotlin.Unit` holds NO byte and takes no annotation, wherever it stands. It is the type ECMA `void`
                 // projects to, and the reader answers `void` and `Unit` with one rule (dll2klib seeds `kotlin.Unit`
                 // into its value-name set), so writing a byte here would put every later byte in the slot one position
                 // off — `Pair<Unit, String?>` re-imported as `Pair<Unit!, String>`. It is a DotKt deviation from what
                 // csc would flatten for the `Unit` CLASS, and it is stated as one in docs/dotkt-semantics.md § 9.
-                if (f.Name == "kotlin.Unit") return false;
+                if (f.Name == "kotlin.Unit" && convention == Convention.KotlinDeclaration) return false;
                 // A value type carries NO annotation — its one nullable form is the structural `Nullable<T>`. It still
                 // holds a byte POSITION when it is CONSTRUCTED, and its arguments are always walked, because that is
                 // how the flattening a .NET consumer reads back is shaped: `KeyValuePair<string?, int>` is `[0, 2]`,
                 // `Dictionary<E, string?>` (E an enum) is `[1, 2]`. Dropping the position, or the arguments under it,
                 // shifts every later byte in the same slot. `Args` is tested for EMPTINESS, not for null, because the
                 // reader asks the projected type's argument COUNT and an empty non-null list is not a construction.
-                if (isValue(f))
+                if (f.Name != "kotlin.Unit" && isValue(f))
                 {
                     if (f.Args == null || f.Args.Length == 0) return false;
                     flags.Add(0);
                     var anyV = false;
-                    foreach (var a in f.Args) anyV |= Walk(a, nullableHere: false, flags, isValue);
+                    foreach (var a in f.Args) anyV |= Walk(a, nullableHere: false, flags, isValue, convention);
                     return anyV;
                 }
                 flags.Add(Head());
                 var any = HeadIsNullable();
                 if (f.Args != null)
-                    foreach (var a in f.Args) any |= Walk(a, nullableHere: false, flags, isValue);
+                    foreach (var a in f.Args) any |= Walk(a, nullableHere: false, flags, isValue, convention);
                 return any;
             case TypeNode.Array a:
                 flags.Add(Head());
                 var anyA = HeadIsNullable();
-                anyA |= Walk(a.Elem, nullableHere: false, flags, isValue);
+                anyA |= Walk(a.Elem, nullableHere: false, flags, isValue, convention);
                 return anyA;
             case TypeNode.Fn:
                 // A function type is a reference (delegate / object-erased state machine); its inner shape is not walked
@@ -119,7 +122,7 @@ static class NullableFlags
                 return HeadIsNullable();
             case TypeNode.ByRef b:
                 // `ref T` is transparent for nullability — the referent's nullability is what matters.
-                return Walk(b.Of, nullableHere, flags, isValue, obliviousHere);
+                return Walk(b.Of, nullableHere, flags, isValue, convention, obliviousHere);
             default:
                 return false;
         }

@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Suspend Task returns retain nested nullability (#730).** Nullable reference positions inside constructed
+  results and arrays are annotated recursively, with CLR Unit positions distinct from ordinary Kotlin metadata.
+
 - **Empty suspend default interface methods remain concrete (#731).** Cold and Task entries retain the declaration's
   explicit abstractness instead of inferring it from an empty body, including generic Unit slots and DLL consumers.
 
