@@ -70,6 +70,7 @@ static partial class SuspendColdLowering
     // entry points); FunGen (nested) reads it. ApplyAll runs before the lambda phase, so it is always populated by then.
     static ReferenceMetadataIndex _refs;
     static ValueTypeOracle _isValueFqn = _ => false;
+    static IReadOnlySet<string> _localTypeFqns;
 
     // APP-build gate for cold-lowering an `inline suspend fun`'s STANDALONE body. In an app build an inline suspend fun
     // is a user/kotlinx WRAPPER (e.g. `suspendCancellableCoroutine`, or the issue-#22 `mySuspend`) whose standalone body
@@ -334,6 +335,7 @@ static partial class SuspendColdLowering
     {
         _refs = refs;   // #10: EmitAwaitPoint reads it to resolve the .NET awaitable pattern for each `.await()`.
         _isValueFqn = isValueFqn ?? (_ => false);
+        _localTypeFqns = localTypeFqns;
         _appBuild = appBuild;
         const string continuation = "kotlin.coroutines.Continuation";
         var continuationCarrier = localExistentialOwners.GetValueOrDefault(continuation);
@@ -4231,7 +4233,7 @@ static partial class SuspendColdLowering
                 CarryKotlinDeclarationMetadata(am);
                 CarryOverrideMarkers(am);
                 CarryPhysicalSlotFacts(am, coldEntry: false);
-                if (TaskReturnNullableFlags() is JsonArray arnf) am["retNullableFlags"] = arnf;
+                if (TaskReturnNullableFlags(taskRetType) is JsonArray arnf) am["retNullableFlags"] = arnf;
                 if (_resultNullableGeneric != null) am["nullableGenericRet"] = _resultNullableGeneric;
                 if (_companionReceiver != null) am["companionReceiver"] = _companionReceiver;
                 if (_companionSourceName != null) am["companionSourceName"] = _companionSourceName;
@@ -4351,7 +4353,7 @@ static partial class SuspendColdLowering
             // inner `?` — the scalar retNullable can't express a nullability that rides an INNER type arg. Emit the
             // flattened NullableAttribute byte walk (RoundtripMetadata folds it into the return's `retAttrs` for ilemit
             // to stamp; dll2klib reads it back).
-            if (TaskReturnNullableFlags() is JsonArray rnf) method["retNullableFlags"] = rnf;
+            if (TaskReturnNullableFlags(taskRetType) is JsonArray rnf) method["retNullableFlags"] = rnf;
             // #86: the Kotlin type of an object-erased `T?` result. dll2klib unwraps the bridge's `Task<R>` to `R`
             // FIRST and only then reads the slot's carrier, so the carrier holds the UNWRAPPED Kotlin result — and the
             // NRT byte above (offset past the Task node) is what puts its `?` back.
@@ -4378,46 +4380,19 @@ static partial class SuspendColdLowering
             return method;
         }
 
-        // Value-type Kotlin FQNs — NRT [Nullable] never annotates these (a nullable value type is `Nullable<T>`, a
-        // DISTINCT type, not an attribute), so they contribute NO byte to the pre-order NullableAttribute walk.
-        static readonly HashSet<string> ValueTypeFqns = new(StringComparer.Ordinal)
+        // Annotate the selected public Task slot, not the cold result or its logical metadata carrier.
+        // The result's outer nullable wrapper was peeled when establishing the coroutine frame; restore only
+        // that annotation here. Nested wrappers already belong to the selected result type and are walked intact.
+        JsonArray TaskReturnNullableFlags(TypeNode.Fqn taskReturn)
         {
-            "kotlin.Int", "kotlin.Long", "kotlin.Short", "kotlin.Byte", "kotlin.Char", "kotlin.Boolean",
-            "kotlin.Double", "kotlin.Float", "kotlin.UInt", "kotlin.ULong", "kotlin.UShort", "kotlin.UByte",
-        };
-
-        // BUG 2: the pre-order NullableAttribute byte walk for the bridge return `Task<R>`, or null when it carries no
-        // nullable position (then the type-level [NullableContext(1)] non-null default suffices). Reference nodes get 1
-        // (non-null) or 2 (nullable); value-type nodes are skipped (no byte). Unit reference positions at any depth
-        // participate in this CLR-facing walk, unlike NullableFlags' ordinary declaration convention (§9 of
-        // docs/dotkt-semantics.md). DotKt imports KotlinSuspendResult instead of these Task return NRT bytes.
-        // This walk uses R's outer nullability recorded in _resultNullable; inner reference args stay non-null (1) — the common
-        // `suspend fun f(): String?` -> {1,2}; `List<String>?` -> {1,2,1}.
-        JsonArray TaskReturnNullableFlags()
-        {
-            if (!_resultNullable) return null;   // no outer `?` (off the type node now) -> nothing nullable to encode
-            var rKotlin = IsUnitTn(_resultType) ? UnitTn : _resultType;
-            var flags = new List<int> { 1 };             // the Task<...> outer node is a non-null reference
-            if (!WalkNullable(rKotlin, outerNullable: true, flags)) return null;   // R was a value type -> Nullable<T>
-            var arr = new JsonArray();
-            foreach (var b in flags) arr.Add(b);
-            return arr;
-        }
-
-        // Append the pre-order NRT bytes for `token` (a Kotlin type FQN, possibly `Owner[arg,...]`). Returns whether any
-        // nullable (2) byte was emitted. `outerNullable` marks this node's own `?`; inner args are non-null.
-        static bool WalkNullable(TypeNode t, bool outerNullable, List<int> flags)
-        {
-            if (t == null) return false;
-            // A value type / void carries no nullability byte; every other head (a reference type or a
-            // generic application) contributes a flag (2 if this position is nullable, else 1), then recurses its args.
-            var head = t is TypeNode.Fqn f ? f.Name : null;
-            if (head != null && (ValueTypeFqns.Contains(head) || head is "void")) return false;
-            flags.Add(outerNullable ? 2 : 1);
-            var any = outerNullable;
-            if (t is TypeNode.Fqn { Args: { } args })
-                foreach (var arg in args) any |= WalkNullable(arg, outerNullable: false, flags);
-            return any;
+            if (taskReturn.Args == null) return null;
+            var result = taskReturn.Args[0];
+            if (_resultNullable && result is not TypeNode.Nullable)
+                result = new TypeNode.Nullable(result);
+            return NullableFlags.Compute(new TypeNode.Fqn(taskReturn.Name, new[] { result }),
+                _isValueFqn, NullableFlags.Convention.ClrSignature,
+                type => BirTypeLowering.LowerPhysicalType(type, _refs.Aliases, _isValueFqn,
+                    _refs.PhysicalTypeNames, typeArg: true, _localTypeFqns) is TypeNode.Fqn { Args: not null });
         }
 
         // The bridge's cold-entry call: forward the bridge params + the RootContinuation (cast to the erased
