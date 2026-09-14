@@ -248,7 +248,7 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 			// keyed on the cell element type `owner.type` (NOT the smart-cast-narrowed `node.type`, which alone would defeat
 			// the leaf coerceValue). Consumed as `Nullable<T>` (no narrowing) -> the raw field. (#36)
 			isRefCell(owner) -> {
-				val raw = """{"k":"field","ownerType":${fqnJson(refTypeName(owner))},"recv":${refBase(owner)},"name":"v"}"""
+				val raw = """{"k":"field","ownerType":${refType(owner).toJson()},"recv":${refBase(owner)},"name":"v"}"""
 				val vElem = nullableValueUnwrapElem(owner.type, node.type)
 				if (vElem != null) """{"k":"nullableValue","elem":${vElem.toJson()},"e":$raw}""" else raw
 			}

@@ -273,13 +273,11 @@ internal fun BirEmitter.birType(t0: IrType): TypeNode {
 				// bir2cir owns the later projection to CLR's [outer..., own...] order.
 				val args = if (klass.isInner && semanticArgs.size < klass.typeParameters.size + enclArgs.size &&
 					semanticArgs.size >= klass.typeParameters.size) semanticArgs + enclArgs else semanticArgs
-				// Local generic classifiers may already expose the backend-added captured suffix in their IrSimpleType.
-				// Append only the missing suffix; otherwise `class L<U>` inside `Owner<T>` becomes L<U,T,T>.
+				// A local classifier's IR may already include captured arguments, but their order need not match the
+				// captured declaration segment emitted by typeDef. Use that declaration's recorded correspondence.
 				val semanticArity = klass.typeParameters.size + if (klass.isInner) enclArgs.size else 0
-				val missingLiftedCaps = if (liftedCaps.isNotEmpty() &&
-					args.size == semanticArity + liftedCaps.size)
-					emptyList() else liftedCaps
-				return TypeNode.Fqn(typeName(klass), args + missingLiftedCaps)
+				val all = if (liftedCaps.isEmpty()) args else args.take(semanticArity) + liftedCaps
+				return TypeNode.Fqn(typeName(klass), all)
 			}
 		}
 		val head = enclArgs + liftedCaps
@@ -527,10 +525,7 @@ internal fun BirEmitter.ownerSpec(klass: IrClass?, recvType: IrType?): TypeNode 
 	val recvArgs = projectedArgs(recvType)
 	if (klass.isInner && recvArgs != null && recvArgs.size >= enclArgs.size + klass.typeParameters.size) {
 		val semanticArity = klass.typeParameters.size + enclArgs.size
-		val missingLiftedCaps = if (liftedCaps.isNotEmpty() &&
-			recvArgs.size == semanticArity + liftedCaps.size)
-			emptyList() else liftedCaps
-		val all = recvArgs + missingLiftedCaps
+		val all = if (liftedCaps.isEmpty()) recvArgs else recvArgs.take(semanticArity) + liftedCaps
 		return if (all.isEmpty()) TypeNode.Fqn(name) else TypeNode.Fqn(name, all)
 	}
 	if (klass.typeParameters.isEmpty()) {
@@ -541,10 +536,8 @@ internal fun BirEmitter.ownerSpec(klass: IrClass?, recvType: IrType?): TypeNode 
 	// A `Unit` TYPE-ARG stays the real Unit identity; a STAR projection stays `star` for bir2cir.
 	val args = recvArgs ?: klass.typeParameters.map { tvOf(it) }
 	val semanticArity = klass.typeParameters.size + if (klass.isInner) enclArgs.size else 0
-	val missingLiftedCaps = if (liftedCaps.isNotEmpty() &&
-		args.size == semanticArity + liftedCaps.size)
-		emptyList() else liftedCaps
-	val all = if (klass.isInner) args + enclArgs + missingLiftedCaps else args + missingLiftedCaps
+	val semanticArgs = if (klass.isInner) args + enclArgs else args
+	val all = if (liftedCaps.isEmpty()) semanticArgs else semanticArgs.take(semanticArity) + liftedCaps
 	return if (all.isEmpty()) TypeNode.Fqn(name) else TypeNode.Fqn(name, all)
 }
 

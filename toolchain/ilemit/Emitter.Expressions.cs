@@ -146,18 +146,8 @@ sealed partial class Emitter
                     // lives): bir2cir resolved its physical declaration and stamped `memberRef`. Link that identity
                     // exactly; this path must not choose a constructor from the argument expressions.
                     var ext = constructed ?? ResolveType(open);
-                    var ctorE = LinkClrCtor(ext, e, out var reanchor);
-                    if (reanchor)
-                    {
-                        var classArgs = ext.GetGenericArguments();
-                        var openPs = ParametersOf(ctorE);
-                        int ai = 0;
-                        foreach (var a in nargs.EnumerateArray())
-                        { EmitArg(a, SubstituteIfaceArgs(openPs[ai].ParameterType, classArgs)); ai++; }
-                        RequireArgCount(ai, openPs.Length, ctorE.ToString());
-                        ctorE = AnchorOn(ext, ctorE);
-                    }
-                    else EmitArgs(nargs, ParametersOf(ctorE));
+                    var ctorE = LinkClrCtor(ext, e);
+                    EmitArgs(nargs, ParametersOf(ctorE));
                     EmitConstructor(_il, OpCodes.Newobj, ctorE);
                     return ext;
                 }

@@ -613,7 +613,7 @@ sealed partial class Emitter
             if (m is MethodBuilder mbk && _methodTypeParams.TryGetValue(mbk, out var gps))
             {
                 int k = 0;
-                foreach (var gp in gps.Values) { if (k < targs.Length) sub[gp] = targs[k]; k++; }
+                foreach (var gp in gps) { if (k < targs.Length) sub[gp] = targs[k]; k++; }
             }
             // A generic method on a CONSTRUCTED-generic TypeBuilder owner must keep BOTH instantiations from CIR:
             // owner `Base<X>` and method `<Y>`. TypeBuilder.GetMethod has already anchored `m` to that owner; applying
@@ -630,10 +630,10 @@ sealed partial class Emitter
                 // Keep using that MethodDef here: looking it up again by name + generic arity can select a sibling
                 // overload and substitute the wrong parameter/return types even though `m` itself is the right token.
                 if (_methodTypeParams.TryGetValue(openMb, out var ogps)
-                    && ogps.Count == targs.Length)
+                    && ogps.Length == targs.Length)
                 {
                     int k = 0;
-                    foreach (var gp in ogps.Values) { if (k < targs.Length) sub[gp] = targs[k]; k++; }
+                    foreach (var gp in ogps) { if (k < targs.Length) sub[gp] = targs[k]; k++; }
                     var cpars = openTb.GetGenericArguments();
                     var cargs = constructedOwner.GetGenericArguments();
                     for (int i = 0; i < cpars.Length && i < cargs.Length; i++) sub[cpars[i]] = cargs[i];

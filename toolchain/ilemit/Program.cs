@@ -247,24 +247,11 @@ sealed partial class Emitter
     Dictionary<int, Label> _cfgLabels;
     Type _methodRetType;
     TypeInfo _curTi;   // the TypeInfo whose method/ctor body is being emitted (for a synthesized-event accessor's backing field)
-    // The generic context for emitting a type's members = the type's OWN params PLUS every enclosing (`nestedIn`) type's
-    // params — a .NET nested type references its outer generic type's parameters by the outer's builder (a Kotlin `inner
-    // class IteratorImpl` inside `AbstractList<E>` whose `next(): E` must resolve `gp:E` to AbstractList's `E`).
-    Dictionary<string, GenericTypeParameterBuilder> EffectiveTps(TypeInfo ti)
-    {
-        var chain = new List<TypeInfo>();
-        for (var cur = ti; cur != null;
-             cur = (cur.Def.TryGetProperty("nestedIn", out var ni) && _types.TryGetValue(ni.GetString(), out var p)) ? p : null)
-            chain.Add(cur);
-        if (chain.Count == 1) return ti.TypeParams;   // not nested -> the common case, no merge
-        var merged = new Dictionary<string, GenericTypeParameterBuilder>();
-        chain.Reverse();   // outermost first; an inner param of the same name shadows
-        foreach (var c in chain) foreach (var kv in c.TypeParams) merged[kv.Key] = kv.Value;
-        return merged;
-    }
-    // Generic context for resolving `gp:T` type references: method params shadow the enclosing type's.
-    Dictionary<string, GenericTypeParameterBuilder> _curTypeParams;
-    Dictionary<string, GenericTypeParameterBuilder> _curMethodParams;
+    // CIR declares the complete physical frame, including any captured outer slots. Names are metadata labels,
+    // not identities: two source declarations may legitimately contribute identically named parameters.
+    IReadOnlyList<GenericTypeParameterBuilder> EffectiveTps(TypeInfo ti) => ti.TypeParams;
+    IReadOnlyList<GenericTypeParameterBuilder> _curTypeParams;
+    IReadOnlyList<GenericTypeParameterBuilder> _curMethodParams;
 
     // The stdlib self-build mode, from `--build-stdlib` (mirrors bir2cir's BuildStdlibMode; separate assembly).
     public enum BuildStdlibMode { App, Metadata, Runtime }

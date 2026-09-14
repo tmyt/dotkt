@@ -1597,7 +1597,7 @@ internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDecla
 	// typeArgSubst remapping each captured param onto THIS class's own generic space (scope="type", the flattened index
 	// AFTER the class's own params). Rendering members then honors the remap → resolvable `{tv,type,i}`; restored at end.
 	val ownTps = innerEnclosingTypeParams(klass) + klass.typeParameters
-	val ownNames = ownTps.map { it.name.asString() }.toHashSet()
+	val ownParameterSet = ownTps.toSet()
 	val capturedTpParams = LinkedHashSet<org.jetbrains.kotlin.ir.declarations.IrTypeParameter>()
 	// A lifted implementation type retains its lexical class owner as a Kotlin semantic fact. Record the complete
 	// owner-generic correspondence even when this particular body does not otherwise mention every owner parameter:
@@ -1626,7 +1626,7 @@ internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDecla
 	}.orEmpty() else emptyList()
 	if (captureEnclosingGenerics) {
 		capturedTpParams.addAll(liftedOwnerTps)
-		fun scan(t: IrType, excluded: Set<String>) {
+		fun scan(t: IrType, excluded: Set<org.jetbrains.kotlin.ir.declarations.IrTypeParameter>) {
 			val cls = t.classifierOrNull
 			if (cls is org.jetbrains.kotlin.ir.symbols.IrTypeParameterSymbol) {
 				// Capture a param that is (a) NOT inline-substituted, OR (b) substituted to an unresolved ENCLOSING
@@ -1638,33 +1638,33 @@ internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDecla
 				// declared on THIS class + instantiated at the `new` site; a subst to a CONCRETE type resolves fine.
 				val subst = typeArgSubst[cls.owner]
 				if ((subst == null || containsTv(subst)) && cls.owner !in staticOwnerTps &&
-					cls.owner.name.asString() !in excluded)
+					cls.owner !in excluded)
 					capturedTpParams.add(cls.owner)
 				return
 			}
 			(t as? IrSimpleType)?.arguments?.forEach { (it as? IrTypeProjection)?.type?.let { at -> scan(at, excluded) } }
 		}
 		// Supertypes, own type-param bounds, and captured-var field types can only reference ENCLOSING params.
-		klass.superTypes.forEach { scan(it, ownNames) }
-		klass.typeParameters.forEach { tp -> tp.superTypes.forEach { scan(it, ownNames) } }
-		captures.forEach { scan(it.first.type, ownNames) }
+		klass.superTypes.forEach { scan(it, ownParameterSet) }
+		klass.typeParameters.forEach { tp -> tp.superTypes.forEach { scan(it, ownParameterSet) } }
+		captures.forEach { scan(it.first.type, ownParameterSet) }
 		klass.declarations.forEach { d ->
 			when (d) {
 				// A member/ctor may ALSO reference an enclosing param in its signature or a reified body operand (`is R`);
 				// exclude that member's OWN type params (a generic method's `<U>` is not a class capture).
 				is IrSimpleFunction -> {
-					val excl = ownNames + d.typeParameters.map { it.name.asString() }
+					val excl = ownParameterSet + d.typeParameters
 					d.parameters.forEach { scan(it.type, excl) }
 					scan(d.returnType, excl)
 					bodyTypeOperands(d).forEach { scan(it, excl) }
 				}
 				is IrConstructor -> {
-					d.parameters.forEach { scan(it.type, ownNames) }
-					bodyTypeOperands(d).forEach { scan(it, ownNames) }
+					d.parameters.forEach { scan(it.type, ownParameterSet) }
+					bodyTypeOperands(d).forEach { scan(it, ownParameterSet) }
 				}
 				is IrProperty -> {
-					d.backingField?.let { scan(it.type, ownNames) }
-					d.getter?.let { scan(it.returnType, ownNames) }
+					d.backingField?.let { scan(it.type, ownParameterSet) }
+					d.getter?.let { scan(it.returnType, ownParameterSet) }
 				}
 				else -> {}
 			}
@@ -1676,7 +1676,7 @@ internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDecla
 		val pending = ArrayDeque(capturedTpParams)
 		while (pending.isNotEmpty()) {
 			val before = capturedTpParams.size
-			pending.removeFirst().superTypes.forEach { scan(it, ownNames) }
+			pending.removeFirst().superTypes.forEach { scan(it, ownParameterSet) }
 			if (capturedTpParams.size != before) pending.addAll(capturedTpParams.drop(before))
 		}
 	}
