@@ -256,33 +256,16 @@ sealed partial class Emitter
         var args = e.GetProperty("args");
         // bir2cir already resolved the constructor and carried its complete scalar memberRef. Link that exact
         // declaration; there is no argument-applicability or arity fallback here.
-        var openCtor = LinkClrCtor(type, e, out var tb);
-        if (tb)
-        {
-            // A generic collection constructed with an EMITTED element type (`new HashSet<EmittedType>()`) is a
-            // TypeBuilderInstantiation whose members can't be reflected — the winner was matched on the OPEN def. Emit
-            // the args against the SUBSTITUTED param types (so a delegate/closure arg's rewrap target is the CLOSED
-            // param `Func<Box>`, not the open `Func<T>`), then re-anchor the ctor.
-            var classArgs = type.GetGenericArguments();
-            var openPs = openCtor.GetParameters();
-            int ai = 0;
-            foreach (var a in args.EnumerateArray()) { EmitArg(a, SubstituteIfaceArgs(openPs[ai].ParameterType, classArgs)); ai++; }
-            RequireArgCount(ai, openPs.Length, openCtor.ToString());
-            EmitConstructor(_il, OpCodes.Newobj, AnchorOn(type, openCtor));
-            return type;
-        }
-        EmitArgs(args, openCtor.GetParameters());
-        EmitConstructor(_il, OpCodes.Newobj, openCtor);
+        var ctor = LinkClrCtor(type, e);
+        EmitArgs(args, ParametersOf(ctor));
+        EmitConstructor(_il, OpCodes.Newobj, ctor);
         return type;
     }
 
-    // The scalar reference names the open declaration. A TypeBuilderInstantiation is re-anchored mechanically after
-    // lookup; that operation changes no member-selection decision.
+    // PrimaryFromRef already anchors the declaration onto the exact use-site owner from the scalar reference.
     /// <summary>The constructor a `newClr` or a base delegation names. A lookup, not a choice.</summary>
-    ConstructorInfo LinkClrCtor(Type type, JsonElement e, out bool tb, string carrier = "memberRef",
-        bool includeNonPublic = false)
+    ConstructorInfo LinkClrCtor(Type type, JsonElement e, string carrier = "memberRef")
     {
-        tb = IsTbInstantiation(type);
         if (PrimaryFromRef(e, carrier) is ConstructorInfo referenced) return referenced;
         throw new InvalidOperationException(
             $"ilemit: construction of {type?.FullName} carries no resolved `{carrier}`. Every external member "
@@ -524,9 +507,7 @@ sealed partial class Emitter
     // Resolve a newClosure node's ctor + invoke, INSTANTIATING the closure generic when it is a generic definition.
     // A capturing closure over an enclosing type param (`{ seed }` in `generateSequence<T>`) is a GENERIC class;
     // left as its open definition the `newobj Closure`1::.ctor(!0)` operand is OPEN -> a TypeLoadException at run.
-    // Close it with the node's explicit `typeArgs`, else (C13a: kotc/bir2cir omitted them for the non-`this`-capturing
-    // form) with the enclosing params matched by NAME (GenericParamByName). Shared by the
-    // main newClosure emit and the delegate-arg binding path so neither can diverge.
+    // Close it with the node's explicit `typeArgs`. Shared by the main newClosure emit and delegate-arg binding.
     (ConstructorInfo Ctor, MethodInfo Invoke) ResolveClosure(JsonElement e)
     {
         var ct = _types[SlotName(e.GetProperty("closureType"))];
@@ -536,7 +517,7 @@ sealed partial class Emitter
         if (e.TryGetProperty("typeArgs", out var taProp) && taProp.GetArrayLength() > 0)
             constructed = ConstructedType(ct.TB, taProp.EnumerateArray().Select(a => MapType(a)).ToArray());
         else if (ct.TB.IsGenericTypeDefinition)
-            constructed = ConstructedType(ct.TB, ct.TB.GetGenericArguments().Select(gp => GenericParamByName(gp.Name)).ToArray());
+            throw new InvalidOperationException("generic CIR closure has no explicit type arguments");
         if (constructed != null)
         {
             ctor = AnchorConstructor(constructed, ct.Ctor);

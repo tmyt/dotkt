@@ -147,7 +147,7 @@ sealed partial class Emitter
                         {
                             var names = TpNames(dtps);
                             var gps = delegateTb.DefineGenericParameters(names);
-                            for (var gi = 0; gi < names.Length; gi++) dti.TypeParams[names[gi]] = gps[gi];
+                            dti.TypeParams.AddRange(gps);
                         }
                         _types[name] = dti;
                         continue;
@@ -264,8 +264,7 @@ sealed partial class Emitter
                     if (allTypeParamNames.Length > 0)
                     {
                         var gps = tb.DefineGenericParameters(allTypeParamNames);
-                        for (int gi = 0; gi < allTypeParamNames.Length; gi++)
-                            nti.TypeParams[allTypeParamNames[gi]] = gps[gi];
+                        nti.TypeParams.AddRange(gps);
                     }
                     _types[name] = nti;
             }
@@ -292,7 +291,8 @@ sealed partial class Emitter
             if (ti.IsGeneric && ti.Def.TryGetProperty("capturedTypeParams", out var capturedTps2))
                 ApplyConstraints(capturedTps2, ti.TypeParams, false);
             if (ti.IsGeneric && ti.Def.TryGetProperty("typeParams", out var tps2))
-                ApplyConstraints(tps2, ti.TypeParams, ti.IsInterface || ti.IsDelegate, ti.Def);
+                ApplyConstraints(tps2, ti.TypeParams, ti.IsInterface || ti.IsDelegate, ti.Def,
+                    ti.Def.TryGetProperty("capturedTypeParams", out var captured) ? captured.GetArrayLength() : 0);
             if (ti.BaseName != null)
             {
                 // A constructed base carries its actual type arguments in the structured Fqn. Resolve local
@@ -956,7 +956,7 @@ sealed partial class Emitter
     }
 
     // Method-level generic params, keyed by MethodInfo, so call sites can MakeGenericMethod.
-    readonly Dictionary<MethodBuilder, Dictionary<string, GenericTypeParameterBuilder>> _methodTypeParams = new();
+    readonly Dictionary<MethodBuilder, GenericTypeParameterBuilder[]> _methodTypeParams = new();
 
     // Every generic parameter belonging to an EMITTED METHOD, by identity. `GenericTypeParameterBuilder` reports
     // neither `DeclaringMethod` nor `DeclaringType` — measured, and identically so for a TYPE's parameter — so
@@ -964,10 +964,10 @@ sealed partial class Emitter
     // method that declares generic parameters records them here, through `RecordMethodTps`.
     readonly HashSet<Type> _emittedMethodTps = new(ReferenceEqualityComparer.Instance);
 
-    void RecordMethodTps(MethodBuilder mb, Dictionary<string, GenericTypeParameterBuilder> map)
+    void RecordMethodTps(MethodBuilder mb, GenericTypeParameterBuilder[] parameters)
     {
-        _methodTypeParams[mb] = map;
-        foreach (var g in map.Values) _emittedMethodTps.Add(g);
+        _methodTypeParams[mb] = parameters;
+        foreach (var g in parameters) _emittedMethodTps.Add(g);
     }
 
     void DeclareMethod(TypeInfo ti, JsonElement m, bool isStatic)
@@ -1048,11 +1048,9 @@ sealed partial class Emitter
             var genNames = TpNames(genTps.Value);
             mb = ti.TB.DefineMethod(name, attrs);
             var gps = mb.DefineGenericParameters(genNames);
-            var map = new Dictionary<string, GenericTypeParameterBuilder>();
-            for (int gi = 0; gi < genNames.Length; gi++) map[genNames[gi]] = gps[gi];
-            RecordMethodTps(mb, map);
-            _curMethodParams = map;
-            ApplyConstraints(genTps.Value, map, false);   // `<T : Comparable<T>>` on the method (variance N/A on methods)
+            RecordMethodTps(mb, gps);
+            _curMethodParams = gps;
+            ApplyConstraints(genTps.Value, gps, false);   // `<T : Comparable<T>>` on the method (variance N/A on methods)
             ps = m.GetProperty("params").EnumerateArray().Select(p => MapType(p.GetProperty("type"))).ToArray();
             mb.SetParameters(ps);
             mb.SetReturnType(MapType(m.GetProperty("ret")));
@@ -1228,12 +1226,13 @@ sealed partial class Emitter
         };
     }
 
-    void ApplyConstraints(JsonElement tps, Dictionary<string, GenericTypeParameterBuilder> map, bool isInterface, JsonElement? typeDef = null)
+    void ApplyConstraints(JsonElement tps, IReadOnlyList<GenericTypeParameterBuilder> parameters, bool isInterface,
+        JsonElement? typeDef = null, int offset = 0)
     {
         foreach (var x in tps.EnumerateArray())
         {
+            var gp = parameters[offset++];
             if (x.ValueKind != JsonValueKind.Object) continue;
-            var gp = map[x.GetProperty("name").GetString()];
             var parameterAttributes = GenericParameterAttributes.None;
             // Declaration-site variance is legal CLR metadata only on an interface type param, AND only when the param
             // is NOT used in a conflicting position: a covariant `out E` may not appear in an `in` (method-argument)

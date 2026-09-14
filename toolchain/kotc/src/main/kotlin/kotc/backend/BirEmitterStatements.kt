@@ -95,10 +95,10 @@ internal fun BirEmitter.stmt(node: org.jetbrains.kotlin.ir.IrElement): String = 
 	// `null` -> `default(Nullable<T>)`) exactly as it coerces a plain-local var initializer / a `setField` value — without
 	// it the `new Ref(5)` pushed a bare `int32` into a `Nullable<int32>` ctor slot -> InvalidProgram (#36).
 	else if (isRefCell(node)) {
-		val rt = refTypeName(node)
+		val rt = refType(node).toJson()
 		val elem = birType(node.type)
 		val init = node.initializer?.let { expr(it) } ?: """{"k":"default","type":${elem.toJson()}}"""
-		"""{"k":"var","name":${str(localSlotName(node))},"type":${fqnJson(rt)},"init":{"k":"new","type":${fqnJson(rt)},"args":[$init],"argTypes":[${elem.toJson()}]}}"""
+		"""{"k":"var","name":${str(localSlotName(node))},"type":$rt,"init":{"k":"new","type":$rt,"args":[$init],"argTypes":[${elem.toJson()}]}}"""
 	} else {
 		// Evaluate the initializer FIRST so an object-expr init registers its synthetic name before the var's
 		// type is read (`val x = object {}` whose type IS that anonymous class). A value-type-nullable initializer
@@ -124,7 +124,7 @@ internal fun BirEmitter.stmt(node: org.jetbrains.kotlin.ir.IrElement): String = 
 	}
 	// A ref-cell var write `x = e` -> `x.v = e` (through the shared heap cell, via the capture field inside a closure).
 	is IrSetValue -> if (isRefCell(node.symbol.owner))
-		"""{"k":"setField","ownerType":${fqnJson(refTypeName(node.symbol.owner))},"recv":${refBase(node.symbol.owner)},"name":"v","value":${expr(node.value)}}"""
+		"""{"k":"setField","ownerType":${refType(node.symbol.owner).toJson()},"recv":${refBase(node.symbol.owner)},"name":"v","value":${expr(node.value)}}"""
 	else """{"k":"setLocal","name":${str(localSlotName(node.symbol.owner))},"value":${expr(node.value)}}"""
 	is IrSetField -> {
 		val ownerClass = node.symbol.owner.parent as? IrClass

@@ -3125,7 +3125,7 @@ static class InlineSplice
         var present = new HashSet<string>(reg.OfType<JsonObject>().Select(e => Str(e["name"])).Where(n => n != null), StringComparer.Ordinal);
         foreach (var (varName, refName, elem) in _boxRequests)
             if (present.Add(refName))
-                reg.Add(new JsonObject { ["name"] = refName, ["elem"] = elem.DeepClone() });
+                reg.Add(new JsonObject { ["name"] = refName, ["elem"] = elem.DeepClone(), ["typeParams"] = new JsonArray() });
 
         // Rewrite each body that OWNS the materialized cell for a boxed var — i.e. contains a `newClosure`/etc whose
         // `synthClass` has a field {name:X, type:Fqn(refName)} (the cell this pass just minted). Scoping by the cell (not by

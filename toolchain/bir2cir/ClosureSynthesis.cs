@@ -50,7 +50,7 @@ static class ClosureSynthesis
                 foreach (var pair in synth.ToList())
                     if (pair.Value != null) PrebindSplicedFrames(pair.Value);
                 if (HasPreboundFrame(synth)) return;
-                var rebound = RebindSyntheticTypeVariables(synth, typeArgs, recordOrigins: false);
+                var rebound = RebindSyntheticTypeVariables(synth, typeArgs);
                 rebound[PreboundFrameKey] = true;
                 obj["synthClass"] = rebound;
                 return;
@@ -75,7 +75,7 @@ static class ClosureSynthesis
         var ownFrame = new JsonArray(Enumerable.Range(0, arity).Select(index => (JsonNode)new JsonObject {
             ["t"] = "tv", ["scope"] = "method", ["i"] = index,
         }).ToArray());
-        var rebound = RebindSyntheticTypeVariables(source, ownFrame, recordOrigins: false);
+        var rebound = RebindSyntheticTypeVariables(source, ownFrame);
         rebound[PreboundFrameKey] = true;
         return rebound;
     }
@@ -265,7 +265,7 @@ static class ClosureSynthesis
         foreach (var key in new[]
                  {
                      "typeParams", "semanticOwner", "outerTypeParamCount", "outerTypeParamOffset",
-                     "_syntheticTypeArgs", PreboundFrameKey,
+                     PreboundFrameKey,
                  })
             if (synthClass[key] is JsonNode value) closure[key] = value.DeepClone();
 
@@ -357,12 +357,10 @@ static class ClosureSynthesis
             throw new InvalidOperationException(
                 $"generic synthetic class `{Str(clone["name"])}` has {count} type params but "
                 + $"{typeArgs?.Count ?? 0} construction type args");
-        clone["_syntheticTypeArgs"] = typeArgs.DeepClone();
         return clone;
     }
 
-    static JsonObject RebindSyntheticTypeVariables(JsonObject source, JsonArray typeArgs,
-        bool recordOrigins = true)
+    static JsonObject RebindSyntheticTypeVariables(JsonObject source, JsonArray typeArgs)
     {
         var clone = source.DeepClone() as JsonObject
                     ?? throw new InvalidOperationException("synthetic class must be an object");
@@ -372,10 +370,6 @@ static class ClosureSynthesis
             throw new InvalidOperationException(
                 $"generic synthetic class `{Str(clone["name"])}` has {tps.Count} type params but "
                 + $"{typeArgs?.Count ?? 0} construction type args");
-        // Transient bir2cir fact consumed by SharedSyntheticSynthesis: a bare Ref-cell identity inside this lifted
-        // class must construct its generic arguments in the NEW class scope, using the same outer-TV correspondence.
-        if (recordOrigins) clone["_syntheticTypeArgs"] = typeArgs.DeepClone();
-
         var positions = new Dictionary<(string Scope, int Index), int>();
         for (var i = 0; i < typeArgs.Count; i++)
         {
@@ -504,7 +498,6 @@ static class ClosureSynthesis
             cls["outerTypeParamCount"] = outerCount.DeepClone();
         if (sc["outerTypeParamOffset"] is JsonValue outerOffset)
             cls["outerTypeParamOffset"] = outerOffset.DeepClone();
-        if (sc["_syntheticTypeArgs"] is JsonArray origins) cls["_syntheticTypeArgs"] = origins.DeepClone();
         cls["base"] = null;
         cls["interfaces"] = new JsonArray();
         cls["fields"] = fields.DeepClone();

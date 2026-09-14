@@ -106,9 +106,7 @@ sealed partial class Emitter
     Type ResolveTv(DotKt.Bir.TypeNode.Tv tv)
     {
         var pool = tv.Scope == "method" ? _curMethodParams : _curTypeParams;
-        if (pool != null)
-            foreach (var g in pool.Values)
-                if (g.GenericParameterPosition == tv.I) return g;
+        if (pool != null && tv.I >= 0 && tv.I < pool.Count) return pool[tv.I];
         throw new NotSupportedException(
             $"unresolved CIR {tv.Scope} generic parameter at index {tv.I}; "
             + "bir2cir must provide the exact CLR generic-parameter frame");
@@ -143,16 +141,6 @@ sealed partial class Emitter
             _ => throw new NotSupportedException(
                 $"invalid CIR delegate family `{clr}` for arity {args.Length}, return {ret}")
         };
-    }
-
-    // A generic type parameter resolved by NAME in context (method params shadow the enclosing type's). The structured
-    // TypeNode.Tv path uses positional `ResolveTv`; this name lookup serves the few places that hold only the CLR
-    // builder's generic-param NAME (a closure's own type args — ResolveClosure).
-    Type GenericParamByName(string gpName)
-    {
-        if (_curMethodParams != null && _curMethodParams.TryGetValue(gpName, out var mgp)) return mgp;
-        if (_curTypeParams != null && _curTypeParams.TryGetValue(gpName, out var tgp)) return tgp;
-        throw new NotSupportedException("unresolved generic type parameter " + gpName);
     }
 
     // A type NAME slot that is NOT a structured node — a bare FQN / CLR-shorthand IDENTITY (an owner-FQN island, a

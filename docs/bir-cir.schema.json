@@ -10,7 +10,7 @@
     "types":    { "type": "array", "items": { "$ref": "#/$defs/typeDecl" } },
     "topLevel": { "type": "array", "items": { "$ref": "#/$defs/decl" }, "description": "top-level funs/props (the file-class members)" },
     "properties": { "type": "array", "items": { "$ref": "#/$defs/propDecl" }, "description": "top-level accessor-routed properties, explicitly linked to their file-class accessor methods" },
-    "refTypes": { "type": "array", "items": { "type": "object", "properties": { "name": { "type": "string" }, "elem": { "$ref": "#/$defs/type" }, "declaringLocalFunctionId": { "type": "string" } }, "required": ["name", "elem"] }, "$comment": "#52 BIR-ONLY transient: the heap-ref-cell registry ({name, element type, optional lexical local-function declaration owner}). bir2cir's SharedSyntheticSynthesis ASSEMBLES each `dotkt$<scope>$Ref$<elem>{ var v }` cell class from it, then DROPS the key — absent in CIR." }
+    "refTypes": { "type": "array", "items": { "type": "object", "properties": { "name": { "type": "string" }, "elem": { "$ref": "#/$defs/type" }, "typeParams": { "type": "array", "items": { "$ref": "#/$defs/typeParam" } } }, "required": ["name", "elem", "typeParams"] }, "$comment": "BIR-only capture-cell facts. kotc supplies captured typeParams (including their bound closure), elem in that declaration's type frame, and explicit arguments at each use. bir2cir materializes the CLR cell class. Closed cells introduced during inline lowering supply an empty typeParams array. The registry is removed before CIR." }
   },
   "additionalProperties": true,
 
@@ -381,7 +381,6 @@
         "underlying": { "$ref": "#/$defs/type", "$comment": "CIR-only exact CLR underlying type for an explicit native enum; absent on ordinary Int32 ordinal-valued basic enums." },
         "mods":       { "$ref": "#/$defs/mods" },
         "vis":        { "$ref": "#/$defs/vis" },
-        "_syntheticTypeArgs": { "type": "array", "items": { "$ref": "#/$defs/type" }, "$comment": "#68 BIR-ONLY transient correspondence between a synthetic declaration's dense typeParams and the lexical frame from which they were captured. kotc authors it on a lexical local `fun`; bir2cir's ClosureSynthesis derives it for a lifted closure class. Consumers use it for owner-slot partition and shared synthetic identity. Consumed and DROPPED before CIR." },
         "typeParams": { "type": "array", "items": { "$ref": "#/$defs/typeParam" } },
         "base":       { "$ref": "#/$defs/type", "description": "superclass; absent = none/Object" },
         "interfaces": { "type": "array", "items": { "$ref": "#/$defs/type" } },
@@ -597,7 +596,7 @@
         "virtual":    { "type": "boolean" },
         "abstract":   { "type": "boolean", "$comment": "Declaration modality fact. In particular, a concrete interface Unit method may have an empty body array, so consumers must never derive abstractness from body presence." },
         "objectOverride": { "type": "boolean" },
-        "_syntheticTypeArgs": { "type": "array", "items": { "$ref": "#/$defs/type" }, "$comment": "#68 BIR-ONLY transient correspondence between a synthetic declaration's dense typeParams and the lexical frame from which they were captured. kotc authors it on a lexical local `fun`; bir2cir's ClosureSynthesis derives it for a lifted closure class. Consumers use it for owner-slot partition and shared synthetic identity. Consumed and DROPPED before CIR." },
+        "_syntheticTypeArgs": { "type": "array", "items": { "$ref": "#/$defs/type" }, "$comment": "BIR-only correspondence from a lexical local function's dense parameters to its enclosing frame. LocalFunctionLowering uses it to partition physical owner and method slots, then removes it." },
         "lexicalOwnerTypeParamCount": { "type": "integer", "minimum": 0, "$comment": "bir2cir-internal hand-off: a materialized local suspend MethodDef on a generic semantic owner retains this many leading owner slots when SuspendColdLowering moves its body into a state-machine TypeDef. Consumed before CIR." },
         "typeParams": { "type": "array", "items": { "$ref": "#/$defs/typeParam" } },
         "params":     { "type": "array", "items": { "$ref": "#/$defs/param" } },

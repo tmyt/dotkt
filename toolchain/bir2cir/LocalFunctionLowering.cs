@@ -25,10 +25,6 @@ static class LocalFunctionLowering
             .Where(type => Str(type["name"]) != null)
             .ToDictionary(type => Str(type["name"]), StringComparer.Ordinal)
             ?? new Dictionary<string, JsonObject>(StringComparer.Ordinal);
-        var refCells = (file["refTypes"] as JsonArray)?.OfType<JsonObject>()
-            .Where(cell => Str(cell["name"]) != null && cell["elem"] != null)
-            .ToDictionary(cell => Str(cell["name"]), StringComparer.Ordinal)
-            ?? new Dictionary<string, JsonObject>(StringComparer.Ordinal);
         var bindings = new Dictionary<string, Binding>(StringComparer.Ordinal);
         var counter = 0;
 
@@ -65,7 +61,7 @@ static class LocalFunctionLowering
                     declaration.Remove("sourceName");
                     declaration["name"] = physicalName;
                     declaration["generated"] = true;
-                    var binding = PrepareGenericOwnerBinding(declaration, physicalOwner, ownerType, id, refCells);
+                    var binding = PrepareGenericOwnerBinding(declaration, physicalOwner, ownerType);
                     binding = binding with { SemanticOwnerArgOrder = SemanticOwnerArgOrder(ownerType) };
                     binding = binding with { Name = physicalName, Owner = physicalOwner };
                     if (!bindings.TryAdd(id, binding))
@@ -173,8 +169,7 @@ static class LocalFunctionLowering
         RewriteUses(file);
     }
 
-    static Binding PrepareGenericOwnerBinding(JsonObject method, string owner, JsonObject ownerType,
-        string declarationId, IReadOnlyDictionary<string, JsonObject> refCells)
+    static Binding PrepareGenericOwnerBinding(JsonObject method, string owner, JsonObject ownerType)
     {
         var ownerArity = ownerType?["typeParams"] is JsonArray ownerTypeParams ? ownerTypeParams.Count : 0;
         var ownerArgPositions = Enumerable.Repeat(-1, ownerArity).ToArray();
@@ -233,26 +228,11 @@ static class LocalFunctionLowering
                     : new TypeNode.Tv("method", nextMethodSlot++);
             }
             method["typeParams"] = new JsonArray(keep.Select(p => methodTypeParams[p]?.DeepClone()).ToArray());
-            // Preserve each retained parameter's ORIGINAL lexical key. SharedSyntheticSynthesis uses this authored
-            // correspondence to construct a file-registry ref cell in the new dense method frame; replacing sparse
-            // method#N origins with method#0 here loses the only edge back to the registry element declaration.
-            method["_syntheticTypeArgs"] = new JsonArray(keep
-                .Select(position => origins[position]?.DeepClone()).ToArray());
-            // A cell DECLARED in this local function was registered in this declaration's dense method frame, unlike
-            // a cell merely captured from an enclosing sparse frame. kotc identifies that ownership edge explicitly;
-            // only those registry elements move with this declaration.
-            foreach (var cell in refCells.Values)
-                if (Str(cell["declaringLocalFunctionId"]) == declarationId)
-                {
-                    cell["elem"] = TypeJson.Write(
-                        RewriteCapturedType(TypeJson.Read(cell["elem"]), capturedToPhysical));
-                    cell.Remove("declaringLocalFunctionId");
-                }
             RewriteCapturedTypeVariables(method, capturedToPhysical);
+            method.Remove("_syntheticTypeArgs");
             if (keep.Count == 0)
             {
                 method.Remove("typeParams");
-                method.Remove("_syntheticTypeArgs");
             }
         }
         return new Binding(null, owner, ownerArgPositions, Array.Empty<int>());
@@ -273,7 +253,7 @@ static class LocalFunctionLowering
                 var value = obj[key];
                 if (value == null) continue;
                 // These vectors are expressed in the referenced declaration's generic frame, not this local method's
-                // frame. `_syntheticTypeArgs` deliberately retains the original lexical ids for later ref-cell binding.
+                // frame. The origin vector itself belongs to the enclosing lexical frame, not the receiving frame.
                 if (key is "sig" or "resolvedMemberParams" or "shapeTypes" or "paramSig"
                     or "delegationSig" or "_syntheticTypeArgs" || (key == "argTypes" && kind != "new"))
                     continue;

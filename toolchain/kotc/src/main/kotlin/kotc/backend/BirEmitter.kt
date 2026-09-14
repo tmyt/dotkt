@@ -806,11 +806,13 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 	internal data class RefTypeFact(
 		val name: String,
 		val elemJson: String,
-		val declaringLocalFunctionId: String?,
+		val capturedParameters: List<org.jetbrains.kotlin.ir.declarations.IrTypeParameter>,
+		val capturedDeclarationsJson: String,
 	)
 	/** identity key -> ref-cell representation facts. One entry per DISTINCT cell shape in the file. */
 	internal val refTypes = LinkedHashMap<String, RefTypeFact>()
-	private val refTypeByVariable = java.util.IdentityHashMap<IrValueDeclaration, String>()
+	private val refTypeByVariable = java.util.IdentityHashMap<IrValueDeclaration, RefTypeFact>()
+	private val refTypeParameterIds = java.util.IdentityHashMap<org.jetbrains.kotlin.ir.declarations.IrTypeParameter, Int>()
 	internal val localFunctionOwnerByVariable = java.util.IdentityHashMap<IrValueDeclaration, String>()
 	internal val localFunctionIds = java.util.IdentityHashMap<IrSimpleFunction, String>()
 
@@ -821,39 +823,73 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 	 * class and `T` of another in the same file print identically while carrying DIFFERENT bounds. Sharing one cell
 	 * between them gives it one class's bounds and instantiates it with the other's argument — rejected downstream if
 	 * the bounds conflict, and a bound the argument does not satisfy if they merely differ. So the key closes over the
-	 * bounds of every variable the element mentions, and a second distinct cell for the same printed element gets a
-	 * suffixed name.
+	 * declaration identity and bounds of every variable the element mentions. Equal bounds do not make two lexical
+	 * parameters interchangeable: they can occupy different slots when captured together in a lifted class. A second
+	 * distinct cell for the same printed element gets a suffixed name.
 	 */
 	internal fun refTypeName(d: IrValueDeclaration): String {
-		refTypeByVariable[d]?.let { return it }
+		refTypeByVariable[d]?.let { return it.name }
 		val elem = birType(d.type)
 		val elemJson = elem.toJson()
 		// The declaration parent, not the frame that happens to request the type, owns this fact. localFns is registered
 		// before a local body is rendered, so a var declared there names the localFun id even if a nested closure is the
 		// first consumer; a captured outer var keeps no such owner.
 		val declaringLocalFunctionId = localFunctionOwnerByVariable[d]
-		val key = elemJson + "|" + typeVarBoundsKey(d.type) + "|local:" + (declaringLocalFunctionId ?: "")
+		val key = elemJson + "|" + typeVarIdentityAndBoundsKey(d.type) + "|local:" + (declaringLocalFunctionId ?: "")
 		refTypes[key]?.let {
-			refTypeByVariable[d] = it.name
+			refTypeByVariable[d] = it
 			return it.name
 		}
 		val base = "dotkt\$${synthScope}\$Ref\$" + mangle(elem)
 		val taken = refTypes.values.count { it.name == base || it.name.startsWith("$base\$") }
 		val name = if (taken == 0) base else "$base\$$taken"
-		refTypes[key] = RefTypeFact(name, elemJson, declaringLocalFunctionId)
-		refTypeByVariable[d] = name
+		val parameters = ArrayList<org.jetbrains.kotlin.ir.declarations.IrTypeParameter>()
+		val seen = java.util.Collections.newSetFromMap(
+			java.util.IdentityHashMap<org.jetbrains.kotlin.ir.declarations.IrTypeParameter, Boolean>())
+		fun collect(type: IrType) {
+			(type.classifierOrNull as? org.jetbrains.kotlin.ir.symbols.IrTypeParameterSymbol)?.let { symbol ->
+				if (seen.add(symbol.owner)) {
+					parameters.add(symbol.owner)
+					symbol.owner.superTypes.forEach(::collect)
+				}
+				return
+			}
+			(type as? org.jetbrains.kotlin.ir.types.IrSimpleType)?.arguments?.forEach {
+				(it as? org.jetbrains.kotlin.ir.types.IrTypeProjection)?.type?.let(::collect)
+			}
+		}
+		collect(d.type)
+		// The registry has its own semantic captured-parameter frame. Each use below supplies the corresponding
+		// arguments in THAT use's lexical frame; a later lift can rewrite them as ordinary type occurrences.
+		val savedSubst = typeArgSubst.toMap()
+		val fact = try {
+			parameters.forEachIndexed { index, parameter -> typeArgSubst[parameter] = TypeNode.Tv("type", index) }
+			RefTypeFact(name, birType(d.type).toJson(), parameters, typeParamDeclarationsJson(parameters))
+		} finally {
+			typeArgSubst.clear()
+			typeArgSubst.putAll(savedSubst)
+		}
+		refTypes[key] = fact
+		refTypeByVariable[d] = fact
 		return name
 	}
 
-	/** A stable key for the BOUNDS of every type variable [t] mentions (see [refTypeName]); empty for a closed type. */
-	private fun typeVarBoundsKey(t: IrType): String {
+	internal fun refType(d: IrValueDeclaration): TypeNode {
+		val name = refTypeName(d)
+		val parameters = refTypeByVariable.getValue(d).capturedParameters
+		return TypeNode.Fqn(name, parameters.takeIf { it.isNotEmpty() }?.map { typeArgSubst[it] ?: tvOf(it) })
+	}
+
+	/** A key for the declaration identity and bounds of every type variable [t] mentions; empty for a closed type. */
+	private fun typeVarIdentityAndBoundsKey(t: IrType): String {
 		val seen = java.util.Collections.newSetFromMap(
 			java.util.IdentityHashMap<org.jetbrains.kotlin.ir.declarations.IrTypeParameter, Boolean>())
 		val parts = ArrayList<String>()
 		fun walk(ty: IrType) {
 			(ty.classifierOrNull as? org.jetbrains.kotlin.ir.symbols.IrTypeParameterSymbol)?.let { sym ->
 				if (!seen.add(sym.owner)) return
-				parts.add(tvOf(sym.owner).toJson() + ":" + sym.owner.superTypes.joinToString(",") { birType(it).toJson() })
+				val identity = refTypeParameterIds.getOrPut(sym.owner) { refTypeParameterIds.size }
+				parts.add("$identity:" + tvOf(sym.owner).toJson() + ":" + sym.owner.superTypes.joinToString(",") { birType(it).toJson() })
 				sym.owner.superTypes.forEach(::walk)
 				return
 			}
@@ -870,14 +906,13 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 	// (single `v` field + its init ctor) into the file `types` from this registry. The element type is unrecoverable
 	// from the use-site nodes alone (a bare `field .v` read carries no type), so the registry is the required fact.
 	internal fun refTypesJson(): String = refTypes.values.joinToString(",") { fact ->
-		val localOwner = fact.declaringLocalFunctionId?.let { ",\"declaringLocalFunctionId\":${str(it)}" } ?: ""
-		"""{"name":${str(fact.name)},"elem":${fact.elemJson}$localOwner}"""
+		"""{"name":${str(fact.name)},"elem":${fact.elemJson},"typeParams":${fact.capturedDeclarationsJson}}"""
 	}
 	internal fun isRefCell(d: IrValueDeclaration) = d in refCellVars
 	/** The Ref-typed base expression for a ref-cell var: its capture field inside a closure, else the local. */
 	internal fun refBase(d: IrValueDeclaration) = captureSubst[d] ?: """{"k":"local","name":${str(localSlotName(d))}}"""
 	/** A captured value's type as held in the closure: the Ref cell for a ref-cell var, else its plain type. */
-	internal fun captureFieldType(d: IrValueDeclaration): TypeNode = if (isRefCell(d)) TypeNode.Fqn(refTypeName(d)) else birType(d.type)
+	internal fun captureFieldType(d: IrValueDeclaration): TypeNode = if (isRefCell(d)) refType(d) else birType(d.type)
 
 	/** Local `var`s captured AND mutated across a capture boundary within [node] (-> need a heap ref-cell). The
 	 *  boundaries are every class (an object expression or a local class) and every function — a lambda, whose
@@ -920,6 +955,7 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 		// de-duplicated by ilemit, but lifted generated methods are file-class methods that are NOT — so the duplication is
 		// real metadata bloat and a correctness hazard.
 		liftedMethods.clear(); liftedTypes.clear(); refTypes.clear(); refTypeByVariable.clear()
+		refTypeParameterIds.clear()
 		localFunctionOwnerByVariable.clear(); localFunctionIds.clear()
 		propertyAssociations.clear(); propertyAssociationCounter = 0
 		indexLocalFunctionOwnership(file)
