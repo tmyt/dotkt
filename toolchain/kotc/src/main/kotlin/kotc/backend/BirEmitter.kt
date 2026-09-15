@@ -785,11 +785,11 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 	// generic stdlib interface identity (like `by lazy`'s `kotlin.Lazy<T>`), so delegate field/local types,
 	// the `Delegates.observable(…)` value, and the getValue/setValue dispatch owner share one type (ilverify-clean).
 
-	// heap ref-cell: local `var`s captured-and-mutated by a lambda / local `fun` / object expression / local class
-	// are promoted to a shared `dotkt$Ref<T>{ var v }` so the mutation is visible across the capture boundary; all
-	// reads/writes of such a var go through `.v`. No inline test: an inline-argument lambda is celled like any other,
-	// so the decision does not depend on which call the lambda is passed to.
-	// Needing a cell is a property of the VARIABLE — "something in its scope captures and WRITES it" — not of
+	// Captured local `var`s share storage so writes, including writes through a managed reference, remain visible
+	// across the capture boundary. They are represented by `dotkt$Ref<T>{ var v }`; all
+	// reads/writes of such a var go through `.v`. An inline argument carries deferred shared-location facts:
+	// direct invocation reads the enclosing location; materialization requires shared storage.
+	// Needing shared storage is a property of the VARIABLE — mutable and captured — not of
 	// the frame that happens to be emitting it. So the set is computed ONCE for the whole module ([initRefCells],
 	// before any file is emitted) and is IDENTITY-keyed, which makes an entry for a declaration the tree at hand never
 	// mentions inert. Every emission root therefore sees the same decision for the same variable — a method body, a
@@ -880,6 +880,11 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 		return TypeNode.Fqn(name, parameters.takeIf { it.isNotEmpty() }?.map { typeArgSubst[it] ?: tvOf(it) })
 	}
 
+	internal fun refTypeParametersJson(d: IrValueDeclaration): String {
+		refTypeName(d)
+		return refTypeByVariable.getValue(d).capturedDeclarationsJson
+	}
+
 	/** A key for the declaration identity and bounds of every type variable [t] mentions; empty for a closed type. */
 	private fun typeVarIdentityAndBoundsKey(t: IrType): String {
 		val seen = java.util.Collections.newSetFromMap(
@@ -914,7 +919,11 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 	/** A captured value's type as held in the closure: the Ref cell for a ref-cell var, else its plain type. */
 	internal fun captureFieldType(d: IrValueDeclaration): TypeNode = if (isRefCell(d)) refType(d) else birType(d.type)
 
-	/** Local `var`s captured AND mutated across a capture boundary within [node] (-> need a heap ref-cell). The
+	/** Materialized captures of local `var`s need shared storage, even when writes occur only in the declaring
+	 *  scope or through managed references rather than IrSetValue. Inline arguments and direct local-function
+	 *  captures carry deferred shared-location facts: bir2cir promotes them if materialization requires it.
+	 *  Inline writes retain the existing shared-location representation; directly called non-suspend functions
+	 *  carry location facts that bir2cir represents as borrowed ref parameters unless a cell is required. The
 	 *  boundaries are every class (an object expression or a local class) and every function — a lambda, whose
 	 *  `IrSimpleFunction` is visited as the `IrFunctionExpression`'s child, or a LOCAL `fun`, which lifts to a static
 	 *  method taking its captures as BY-VALUE params and would otherwise write its own parameter and lose the update.
@@ -923,16 +932,49 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 	 *  rather than inert, being a subset of what the enclosing class arm already contributes. */
 	private fun computeRefCells(node: IrElement): Set<IrValueDeclaration> {
 		val out = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<IrValueDeclaration, Boolean>())
+		val inlineArguments = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<IrSimpleFunction, Boolean>())
+		val materializedFunctions = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<IrSimpleFunction, Boolean>())
 		node.acceptChildrenVoid(object : IrVisitorVoid() {
 			override fun visitElement(element: IrElement) {
+				when (element) {
+					is IrFunctionExpression -> materializedFunctions.add(element.function)
+					is IrFunctionReference -> (element.symbol.owner as? IrSimpleFunction)?.let(materializedFunctions::add)
+				}
+				element.acceptChildrenVoid(this)
+			}
+		})
+		node.acceptChildrenVoid(object : IrVisitorVoid() {
+			override fun visitElement(element: IrElement) {
+				// The call is visited before its argument functions. Both ordinary and crossinline arguments
+				// carry deferred capture facts; noinline is an ordinary delegate value from the outset.
+				if (element is IrCall && element.symbol.owner.isInline) {
+					val callee = element.symbol.owner
+					val companionExtension = isCompanionExtensionCallee(callee) ||
+						companionReceiverCallTag(callee, element).isNotEmpty()
+					val phantomReceiverIndex = if (companionExtension)
+						callee.parameters.indexOfFirst { it.kind == IrParameterKind.ExtensionReceiver }
+					else -1
+					callee.parameters.forEachIndexed { index, parameter ->
+						val argumentIndex = if (phantomReceiverIndex >= 0 && index > phantomReceiverIndex) index - 1 else index
+						if (parameter.kind == IrParameterKind.Regular && !parameter.isNoinline &&
+							birType(parameter.type) is TypeNode.Fn) {
+							(element.arguments.getOrNull(argumentIndex) as? IrFunctionExpression)?.function?.let(inlineArguments::add)
+						}
+					}
+				}
 				val caps: List<IrValueDeclaration>? = when (element) {
 					is IrClass -> capturedVarsForObject(element)
 					is IrSimpleFunction -> capturedVars(element)
 					else -> null
 				}
 				if (caps != null) {
-					val muts = mutatedIn(element)
-					out.addAll(caps.filter { it is IrVariable && it.isVar && it in muts })
+					val deferredWrites = when {
+						element !is IrSimpleFunction -> null
+						element in inlineArguments -> mutatedIn(element)
+						element !in materializedFunctions && !element.isSuspend -> emptySet()
+						else -> null
+					}
+					out.addAll(caps.filter { it is IrVariable && it.isVar && (deferredWrites == null || it in deferredWrites) })
 				}
 				element.acceptChildrenVoid(this)
 			}

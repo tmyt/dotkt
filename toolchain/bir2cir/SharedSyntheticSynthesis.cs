@@ -36,7 +36,7 @@ static class SharedSyntheticSynthesis
 
     static JsonObject Fqn(string name) => new() { ["t"] = "fqn", ["name"] = name };
 
-    public static void Apply(JsonNode root)
+    public static void Apply(JsonNode root, ReferenceMetadataIndex refs)
     {
         if (root is not JsonObject file) return;
         var types = file["types"] as JsonArray;
@@ -55,9 +55,33 @@ static class SharedSyntheticSynthesis
                     specs.Add(name, spec);
                 }
 
+            var liveCells = new HashSet<string>(StringComparer.Ordinal);
+            void CollectCellUses(JsonNode node)
+            {
+                if (ReferenceEquals(node, refTypes)) return;
+                if (node is JsonObject obj)
+                {
+                    if (Str(obj["t"]) == "fqn" && Str(obj["name"]) is string name) liveCells.Add(name);
+                    foreach (var pair in obj)
+                        if (pair.Key != "sharedCellType") CollectCellUses(pair.Value);
+                }
+                else if (node is JsonArray array) foreach (var child in array) CollectCellUses(child);
+            }
+            CollectCellUses(file);
             foreach (var spec in specs.Values)
+            {
+                // Inline carriers author a possible cell without requiring an allocation. A byref-like value
+                // used only in place must not acquire an unused, illegal heap TypeDef from that declaration hint.
+                if (!liveCells.Contains(spec.Name)
+                    && FieldLegality.Classify(TypeJson.Read(spec.Elem), refs.IsByRefLikeFqn, out _) == FieldRejection.ByRefLike)
+                    continue;
                 if (present.Add(spec.Name))
-                    types.Add(BuildRefCell(spec));
+                {
+                    var cell = BuildRefCell(spec);
+                    ClosureSynthesis.RecordCaptureLegality(cell, file, refs);
+                    types.Add(cell);
+                }
+            }
             file.Remove("refTypes");
         }
 
@@ -81,6 +105,8 @@ static class SharedSyntheticSynthesis
         {
             case JsonObject o:
                 o.Remove("_syntheticTypeArgs");
+                o.Remove("sharedCellType");
+                o.Remove("sharedCellTypeParams");
                 foreach (var kv in o) if (kv.Value != null) DropSyntheticTypeArgs(kv.Value);
                 break;
             case JsonArray a:

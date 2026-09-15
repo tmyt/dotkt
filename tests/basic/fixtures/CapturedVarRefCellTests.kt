@@ -1,4 +1,4 @@
-// #68 — a local `var` that is CAPTURED AND WRITTEN across a capture boundary is promoted to a shared heap ref-cell,
+// A captured local `var` has shared storage so writes are visible across the capture boundary,
 // under EVERY emission root and for EVERY boundary kind. Two axes:
 //
 // EMISSION ROOT (which emitter builds the tree). LambdaTests.kt's `localClassObject` pins the function-body root

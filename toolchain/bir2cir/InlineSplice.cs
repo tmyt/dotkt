@@ -51,7 +51,10 @@ static class InlineSplice
     // per element-type-JSON per file; `_boxRequests` records each enclosing `var` to box (name -> {refName, elem}); flushed
     // to the file `refTypes` registry (SharedSyntheticSynthesis assembles the class) + a whole-method box post-pass at Apply.
     static Dictionary<string, string> _refCellNames;          // elem-type JSON -> ref-cell class name (per file)
-    static List<(string varName, string refName, JsonNode elem)> _boxRequests;   // DISTINCT (enclosing var, ref class, elem) box requests — keyed by cell, NOT bare name, so two same-named-but-different-typed captures both survive (BoxMaterializedCaptures scopes each by its own cell)
+    sealed record BoxRequest(string VarName, string RefName, JsonNode CellType, JsonNode Elem, bool Synthesize,
+        HashSet<string> CaptureNames);
+    static List<BoxRequest> _boxRequests;
+    static Dictionary<JsonObject, HashSet<int>> _boxedLocalCallArgs;
     static CompanionExtensionBinding.LocalIndex _companionExtensions;
 
     public static void Apply(JsonNode root, ReferenceMetadataIndex refs, IReadOnlyCollection<string> moduleWideAppLocalMethods,
@@ -70,7 +73,8 @@ static class InlineSplice
         // per-file set so drained #34 re-hoists (added below) never leak across files.
         _appLocalMethods = new HashSet<string>(moduleWideAppLocalMethods, StringComparer.Ordinal);
         _refCellNames = new Dictionary<string, string>(StringComparer.Ordinal);
-        _boxRequests = new List<(string, string, JsonNode)>();
+        _boxRequests = new List<BoxRequest>();
+        _boxedLocalCallArgs = new();
         Walk(root, 0);
         // A closed carrier (`defaultCarrier`, or a cross-module [KotlinInline] payload) re-hoists its generated
         // delegate target into THIS file's file-class methods under a fresh name. Do it BEFORE the post-passes so they
@@ -1005,6 +1009,13 @@ static class InlineSplice
             {
                 if (!outer && !JsonNode.DeepEquals(existing["type"], c["type"]))
                     throw new NotSupportedException($"inline splice: spliced carrier capture '{cn}' type-conflicts with the host carrier's same-named capture");
+                if (c["sharedCellType"] is JsonNode shared)
+                {
+                    if (existing["sharedCellType"] is JsonNode previous && !JsonNode.DeepEquals(previous, shared))
+                        throw new InvalidOperationException($"inline capture '{cn}' has conflicting shared locations");
+                    existing["sharedCellType"] = shared.DeepClone();
+                    existing["sharedCellTypeParams"] = c["sharedCellTypeParams"]?.DeepClone();
+                }
                 continue;   // same enclosing entity in the flattened frame — already listed
             }
             if (!outer)
@@ -1023,7 +1034,10 @@ static class InlineSplice
                     // already carries a `value`; ride it forward rather than re-aliasing to the intermediate fresh name).
                     var srcVal = c["value"]?.DeepClone() ?? new JsonObject { ["k"] = "local", ["name"] = cn };
                     if (hostCaps == null) { hostCaps = new JsonArray(); host["captures"] = hostCaps; }
-                    hostCaps.Add(new JsonObject { ["name"] = fresh, ["type"] = c["type"].DeepClone(), ["value"] = srcVal });
+                    var forwarded = (JsonObject)c.DeepClone();
+                    forwarded["name"] = fresh;
+                    forwarded["value"] = srcVal;
+                    hostCaps.Add(forwarded);
                     (renameMap ??= new(StringComparer.Ordinal))[cn] = new JsonObject { ["k"] = "local", ["name"] = fresh };
                     continue;
                 }
@@ -1257,11 +1271,23 @@ static class InlineSplice
         // uses in the ENCLOSING scope. Mirrors kotc's own ref-cell path (BirEmitterStatements.stmt), one axis over.
         var boxedCaps = new HashSet<string>(StringComparer.Ordinal);
         CollectWrittenCaptures(invBody, capNames, boxedCaps);
+        var declaredCells = new Dictionary<string, JsonNode>(StringComparer.Ordinal);
+        var declaredCaptures = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
+        if (carrier["captures"] is JsonArray mutableCaptures)
+            foreach (var capture in mutableCaptures.OfType<JsonObject>())
+                if (Str(capture["name"]) is string capturedName && capNames.Contains(capturedName)
+                    && capture["sharedCellType"] is JsonNode cellType)
+                {
+                    declaredCells.Add(capturedName, cellType);
+                    declaredCaptures.Add(capturedName, capture);
+                    boxedCaps.Add(capturedName);
+                }
         // A written capture whose element type references an enclosing type variable would bake a raw `tv` into the
         // non-generic Ref cell's field (a BadImageFormat, the same hazard the closure-frame tv scan guards) — refuse loud.
         if (boxedCaps.Count > 0)
             foreach (var f in fields.OfType<JsonObject>())
-                if (Str(f["name"]) is string fn && boxedCaps.Contains(fn) && HasTv(f["type"])) return MatNull("MC:boxed-cap-has-tv");
+                if (Str(f["name"]) is string fn && boxedCaps.Contains(fn) && !declaredCells.ContainsKey(fn)
+                    && HasTv(f["type"])) return MatNull("MC:boxed-cap-has-tv");
         // Non-boxed caps first (B1): RewriteCapturesToFields rewrites a bare enclosing `{k:this}` to `this.__outer` when
         // outerName!=null — it MUST run BEFORE the boxed rewrite, else it would also rewrite the closure-instance `{k:this}`
         // the boxed `this.<X>.v` recv carries (turning it into `this.__outer.<X>.v`). Boxed names are excluded here.
@@ -1269,18 +1295,18 @@ static class InlineSplice
         RewriteCapturesToFields(invBody, plainCaps, outerName, cname);
         if (boxedCaps.Count > 0)
         {
-            var boxRefName = new Dictionary<string, string>(StringComparer.Ordinal);
+            var boxRefName = new Dictionary<string, JsonNode>(StringComparer.Ordinal);
             var boxRefElem = new Dictionary<string, JsonNode>(StringComparer.Ordinal);   // #122: cap -> element type (for the `.v` read's `sty`)
             foreach (var f in fields.OfType<JsonObject>())
             {
                 if (Str(f["name"]) is not string fn || !boxedCaps.Contains(fn)) continue;
                 var elem = f["type"];   // the capture's plain type = the cell's element type
-                var refName = RefCellNameFor(elem);
-                boxRefName[fn] = refName;
+                var supplied = declaredCells.TryGetValue(fn, out var declaredCell);
+                var cellType = supplied ? declaredCell.DeepClone() : TypeJson.Fqn(RefCellNameFor(elem));
+                boxRefName[fn] = cellType;
                 if (elem != null) boxRefElem[fn] = elem.DeepClone();
-                f["type"] = TypeJson.Fqn(refName);            // the closure FIELD now holds the Ref cell
-                if (!_boxRequests.Any(r => r.varName == fn && r.refName == refName))
-                    _boxRequests.Add((fn, refName, elem.DeepClone()));   // DISTINCT enclosing-scope box request (flushed at Apply)
+                f["type"] = cellType.DeepClone();
+                RequestBox(supplied ? declaredCaptures[fn] : null, fn, cellType, elem, !supplied);
             }
             RewriteBoxedCaptureInCarrier(invBody, boxedCaps, boxRefName, boxRefElem, cname);
         }
@@ -1303,6 +1329,8 @@ static class InlineSplice
         var keys = new SortedSet<(string scope, int i)>();
         CollectTvKeys(invBody, keys); CollectTvKeys(invParams, keys); CollectTvKeys(invRet, keys);
         CollectTvKeys(ft, keys); CollectTvKeys(fields, keys);
+        var captureConstraints = SharedCaptureConstraints(carrier);
+        foreach (var bounds in captureConstraints.Values) CollectTvKeys(bounds, keys);
         var remap = new Dictionary<(string, int), int>();
         var typeArgs = new JsonArray();
         var typeParams = new JsonArray();
@@ -1311,7 +1339,9 @@ static class InlineSplice
             int ni = remap.Count;
             remap[key] = ni;
             typeArgs.Add(new JsonObject { ["t"] = "tv", ["scope"] = key.scope, ["i"] = key.i });
-            typeParams.Add("T" + ni);
+            typeParams.Add(captureConstraints.TryGetValue(key, out var bounds)
+                ? new JsonObject { ["name"] = "T" + ni, ["constraints"] = bounds.DeepClone() }
+                : JsonValue.Create("T" + ni));
         }
         if (remap.Count > 0)
         {
@@ -1322,6 +1352,7 @@ static class InlineSplice
             RenumberTvs(invParams, remap, classFrame: true);
             RenumberTvs(invRet, remap, classFrame: true);
             RenumberTvs(fields, remap, classFrame: true);
+            RenumberTvs(typeParams, remap, classFrame: true);
         }
 
         var synthClass = new JsonObject
@@ -1451,6 +1482,12 @@ static class InlineSplice
                 // make a distinct ordinary nested capture with the same spelling alias the enclosing receiver.
                 if (!outer) sourceStorageNames.Add(cn, storageName);
                 var descriptor = new JsonObject { ["name"] = storageName, ["type"] = ct.DeepClone() };
+                if (!outer && c["sharedCellType"] is JsonNode cellType)
+                {
+                    descriptor["type"] = cellType.DeepClone();
+                    BoxVarInBody(invBody, cn, cellType, ct);
+                    RequestBox(c, storageName, cellType, ct, false);
+                }
                 if (outer) descriptor["outer"] = true;
                 captures.Add(descriptor);
                 if (!outer && storageName != cn)
@@ -1571,15 +1608,21 @@ static class InlineSplice
         var invSuspendRet = ft["ret"]?.DeepClone() ?? TypeJson.Fqn("kotlin.Unit");
         var keys = new SortedSet<(string scope, int i)>();
         CollectTvKeys(invBody, keys); CollectTvKeys(invParams, keys); CollectTvKeys(invSuspendRet, keys); CollectTvKeys(captures, keys);
+        var captureConstraints = SharedCaptureConstraints(carrier);
+        foreach (var bounds in captureConstraints.Values) CollectTvKeys(bounds, keys);
         var remap = new Dictionary<(string, int), int>();
         var ctorTypeArgs = new JsonArray();
         var typeParams = new JsonArray();
+        var typeParamDecls = new JsonArray();
         foreach (var key in keys)
         {
             int ni = remap.Count;
             remap[key] = ni;
             ctorTypeArgs.Add(new JsonObject { ["t"] = "tv", ["scope"] = key.scope, ["i"] = key.i });
             typeParams.Add("Tsm" + ni);
+            typeParamDecls.Add(captureConstraints.TryGetValue(key, out var bounds)
+                ? new JsonObject { ["name"] = "Tsm" + ni, ["constraints"] = bounds.DeepClone() }
+                : JsonValue.Create("Tsm" + ni));
         }
         // A NESTED kotc-emitted `newSuspendLambda` inside this carrier body keeps its OWN `typeParams` and resolves its
         // body tvs POSITIONALLY against them — so CollectTvKeys/RenumberTvs SHIELD its own frame (body/params/suspendRet/
@@ -1598,6 +1641,7 @@ static class InlineSplice
         if (remap.Count > 0)
         {
             RenumberTvs(invBody, remap); RenumberTvs(invParams, remap); RenumberTvs(invSuspendRet, remap); RenumberTvs(captures, remap);
+            RenumberTvs(typeParamDecls, remap);
         }
 
         var newSuspendLambda = new JsonObject
@@ -1611,6 +1655,7 @@ static class InlineSplice
             ["params"] = invParams,
             ["suspendRet"] = invSuspendRet,
             ["typeParams"] = typeParams,
+            ["typeParamDecls"] = typeParamDecls,
             ["body"] = invBody,
             ["funcType"] = ft.DeepClone(),
         };
@@ -1870,9 +1915,37 @@ static class InlineSplice
     // frame. Letting a declaration descriptor participate in carrier dependency discovery invents generic parameters
     // that the caller does not own (#557). Keep the boundary common to substitution, dependency collection, and frame
     // renumbering so adding another descriptor cannot make those three walks disagree.
+    // The frontend-authored cell declaration's bounds use the cell's own frame. Instantiate those facts into
+    // the carrier's lexical frame before building its new generic declaration; never infer them from names.
+    static Dictionary<(string scope, int i), JsonArray> SharedCaptureConstraints(JsonObject carrier)
+    {
+        var result = new Dictionary<(string scope, int i), JsonArray>();
+        if (carrier["captures"] is not JsonArray captures) return result;
+        foreach (var capture in captures.OfType<JsonObject>())
+        {
+            if (capture["sharedCellType"] is not JsonObject cell || cell["args"] is not JsonArray args) continue;
+            if (capture["sharedCellTypeParams"] is not JsonArray declarations || declarations.Count != args.Count)
+                throw new InvalidOperationException("shared capture is missing its cell's generic declarations");
+            for (int i = 0; i < args.Count; i++)
+            {
+                if (TypeJson.Read(args[i]) is not TypeNode.Tv tv
+                    || declarations[i] is not JsonObject declaration || declaration["constraints"] is not JsonArray bounds)
+                    continue;
+                var instantiated = (JsonArray)bounds.DeepClone();
+                SubstTvIn(instantiated, new JsonArray(), 0, args);
+                var key = (tv.Scope, tv.I);
+                if (!result.TryGetValue(key, out var combined)) result[key] = combined = new JsonArray();
+                foreach (var bound in instantiated)
+                    if (!combined.Any(existing => JsonNode.DeepEquals(existing, bound))) combined.Add(bound.DeepClone());
+            }
+        }
+        return result;
+    }
+
     static bool IsForeignDeclarationFrameKey(string key) => key is
         "sig" or "resolvedMemberParams" or "shapeTypes" or "paramSig" or "delegationSig" or "overrides"
         or "memberOwnerTypeParams" or "memberMethodTypeParams" or "memberReturnType" or "memberSignature" or "memberType"
+        or "sharedCellTypeParams"
         or ClrMemberResolution.ResolvedMethodTypeParamsKey or ClrMemberResolution.ResolvedMemberReturnKey;
 
     // `new.argTypes` is the constructor APPLICATION vector and therefore belongs to the caller; other call shapes use
@@ -3039,7 +3112,7 @@ static class InlineSplice
     // Carrier-side ref-cell rewrite: a boxed capture X read `{k:local,name:X}` -> `this.<X>.v` (the cell field's `.v`), and a
     // write `{k:setLocal,name:X,value:E}` -> `setField this.<X>.v = E`. `this.<X>` is the closure FIELD holding the cell
     // (typed as the Ref class). Replaces the node at its slot; does NOT descend into a nested `synthClass` (its X is its own).
-    static void RewriteBoxedCaptureInCarrier(JsonNode node, HashSet<string> boxed, Dictionary<string, string> refName, Dictionary<string, JsonNode> refElem, string cname)
+    static void RewriteBoxedCaptureInCarrier(JsonNode node, HashSet<string> boxed, Dictionary<string, JsonNode> refName, Dictionary<string, JsonNode> refElem, string cname)
     {
         JsonNode CapField(string x) => new JsonObject
         {
@@ -3053,7 +3126,7 @@ static class InlineSplice
         JsonNode ReadV(string x) => new JsonObject
         {
             ["k"] = "field",
-            ["ownerType"] = TypeJson.Fqn(refName[x]),
+            ["ownerType"] = refName[x].DeepClone(),
             ["recv"] = CapField(x),
             ["name"] = "v",
             ["sty"] = refElem != null && refElem.TryGetValue(x, out var el) ? el.DeepClone() : null,
@@ -3098,7 +3171,7 @@ static class InlineSplice
     // In-place turn a `{k:setLocal,name:X,value:E}` into `{k:setField, ownerType:Ref, recv:this.<X>, name:v, value:E}`. The
     // recv (the closure field holding the cell) is `this.<X>` when boxing a CARRIER-side write (ownerCname != null), or the
     // enclosing local cell `{k:local,name:X}` when boxing an ENCLOSING-scope write (ownerCname == null).
-    static void RewriteBoxedWrite(JsonObject o, string x, Dictionary<string, string> refName, string ownerCname)
+    static void RewriteBoxedWrite(JsonObject o, string x, Dictionary<string, JsonNode> refName, string ownerCname)
     {
         JsonNode recv = ownerCname != null
             ? new JsonObject { ["k"] = "field", ["ownerType"] = TypeJson.Fqn(ownerCname), ["recv"] = new JsonObject { ["k"] = "this" }, ["name"] = x }
@@ -3106,16 +3179,30 @@ static class InlineSplice
         var value = o["value"];
         foreach (var k in new List<string>(((IDictionary<string, JsonNode>)o).Keys)) o.Remove(k);
         o["k"] = "setField";
-        o["ownerType"] = TypeJson.Fqn(refName[x]);
+        o["ownerType"] = refName[x].DeepClone();
         o["recv"] = recv;
         o["name"] = "v";
         o["value"] = value;
     }
 
     // §4.4ii ENCLOSING-scope box: for each recorded `var` (a materialized carrier writes it), rewrite — per method/ctor body
-    // that OWNS the cell (see BodyHasMaterializedCell) — the decl `var X = init` -> `var X:Ref = new Ref(init)`, every read
+    // that OWNS the cell (see MaterializedCaptureSources) — the decl `var X = init` -> `var X:Ref = new Ref(init)`, every read
     // `{k:local,name:X}` -> `X.v`, and every write `{k:setLocal,name:X}` -> `setField X.v`. The Ref classes are flushed to
     // the file `refTypes` registry (SharedSyntheticSynthesis assembles them).
+    static void RequestBox(JsonObject capture, string captureName, JsonNode cellType, JsonNode elem, bool synthesize)
+    {
+        var sourceName = capture == null ? captureName : Str(capture["name"]);
+        if (capture?["value"] is JsonObject value)
+            sourceName = Str(value["k"]) == "local" ? Str(value["name"])
+                : throw new InvalidOperationException("a mutable inline capture must retain its source local location");
+        var refName = TypeJson.Read(cellType) is TypeNode.Fqn cell ? cell.Name
+            : throw new InvalidOperationException("inline capture sharedCellType must name its cell declaration");
+        var existing = _boxRequests.FirstOrDefault(r => r.VarName == sourceName && JsonNode.DeepEquals(r.CellType, cellType));
+        if (existing != null) existing.CaptureNames.Add(captureName);
+        else _boxRequests.Add(new BoxRequest(sourceName, refName, cellType.DeepClone(), elem.DeepClone(), synthesize,
+            new HashSet<string>(StringComparer.Ordinal) { captureName }));
+    }
+
     static void BoxMaterializedCaptures(JsonNode root)
     {
         if (root is not JsonObject file) return;
@@ -3123,26 +3210,139 @@ static class InlineSplice
         var reg = file["refTypes"] as JsonArray;
         if (reg == null) { reg = new JsonArray(); file["refTypes"] = reg; }
         var present = new HashSet<string>(reg.OfType<JsonObject>().Select(e => Str(e["name"])).Where(n => n != null), StringComparer.Ordinal);
-        foreach (var (varName, refName, elem) in _boxRequests)
-            if (present.Add(refName))
-                reg.Add(new JsonObject { ["name"] = refName, ["elem"] = elem.DeepClone(), ["typeParams"] = new JsonArray() });
+        foreach (var request in _boxRequests)
+            if (request.Synthesize && present.Add(request.RefName))
+                reg.Add(new JsonObject { ["name"] = request.RefName, ["elem"] = request.Elem.DeepClone(), ["typeParams"] = new JsonArray() });
 
         // Rewrite each body that OWNS the materialized cell for a boxed var — i.e. contains a `newClosure`/etc whose
         // `synthClass` has a field {name:X, type:Fqn(refName)} (the cell this pass just minted). Scoping by the cell (not by
         // bare var name) is PRECISE: it boxes exactly the enclosing method that got the materialized carrier, so a same-named
-        // var in an unrelated method — including one kotc ALREADY ref-cell-boxed — is never touched (no double-boxing). The
-        // var's decl is guaranteed in the same body (a materialized carrier captures it from that scope). Runs BEFORE
-        // ClosureSynthesis strips `synthClass`, so the cell field is still visible here.
-        foreach (var body in AllBodies(file))
-            foreach (var (varName, refName, elem) in _boxRequests)
-                if (BodyHasMaterializedCell(body, varName, refName))
+        // var in an unrelated method — including one kotc ALREADY ref-cell-boxed — is never touched (no double-boxing).
+        // A local-function capture parameter instead forwards the requirement to its callers. Runs BEFORE
+        // ClosureSynthesis strips `synthClass`, so fields and their construction arguments are still visible here.
+        var scopes = new List<(JsonObject Declaration, JsonNode Body, string LocalId)>();
+        void CollectLocals(JsonNode node)
+        {
+            if (node is JsonObject obj)
+            {
+                if (Str(obj["k"]) == "localFun" && obj["decl"] is JsonObject decl && decl["body"] is JsonArray body)
                 {
-                    // Name-based in-method rewrite is safe only when X binds ONE way and no OTHER capturer expects the plain
-                    // element type. Refuse the pathological shapes loud (beats a silent type-skew miscompile).
-                    if (BoxUnsafeReason(body, varName, refName, elem) is string reason)
-                        throw new NotSupportedException($"inline splice: cannot ref-cell-box captured var '{varName}' — {reason}");
-                    BoxVarInBody(body, varName, refName, elem);
+                    scopes.Add((decl, body, Str(obj["id"])));
+                    CollectLocals(body);
+                    return;
                 }
+                if (obj["synthClass"] is JsonObject synth && synth["body"] is JsonArray closureBody)
+                {
+                    scopes.Add((synth, closureBody, null));
+                    CollectLocals(closureBody);
+                }
+                bool suspend = Str(obj["k"]) == "newSuspendLambda";
+                if (suspend && obj["body"] is JsonArray suspendBody)
+                {
+                    scopes.Add((obj, suspendBody, null));
+                    CollectLocals(suspendBody);
+                }
+                foreach (var pair in obj)
+                    if (pair.Key != "synthClass" && !(suspend && pair.Key == "body")) CollectLocals(pair.Value);
+            }
+            else if (node is JsonArray array) foreach (var child in array) CollectLocals(child);
+        }
+        foreach (var body in AllBodies(file))
+        {
+            scopes.Add(((JsonObject)body.Parent, body, null));
+            CollectLocals(body);
+        }
+        void CollectInitializers(JsonNode fields)
+        {
+            if (fields is not JsonArray array) return;
+            foreach (var field in array.OfType<JsonObject>())
+                if (field["init"] is JsonNode initializer)
+                {
+                    scopes.Add((field, initializer, null));
+                    CollectLocals(initializer);
+                }
+        }
+        CollectInitializers(file["fields"]);
+        if (file["types"] is JsonArray types)
+            foreach (var type in types.OfType<JsonObject>()) CollectInitializers(type["fields"]);
+        var pending = new Queue<(int Scope, BoxRequest Request)>();
+        for (int i = 0; i < scopes.Count; i++)
+            foreach (var request in _boxRequests)
+                foreach (var source in MaterializedCaptureSources(scopes[i].Body, request))
+                    pending.Enqueue((i, request with { VarName = source }));
+        var completed = new HashSet<(int Scope, string Name, string Cell)>();
+        var rewrites = new List<(int Scope, BoxRequest Request)>();
+        while (pending.TryDequeue(out var entry))
+        {
+            var request = entry.Request;
+            var scope = scopes[entry.Scope];
+            if (!completed.Add((entry.Scope, request.VarName, request.CellType.ToJsonString()))) continue;
+            if (scope.Declaration["params"] is JsonArray parameters)
+            {
+                int index = Enumerable.Range(0, parameters.Count).FirstOrDefault(
+                    i => Str(parameters[i]?["name"]) == request.VarName, -1);
+                if (index >= 0)
+                {
+                    if (scope.LocalId == null || parameters[index]?["sharedCellType"] == null)
+                        throw new InvalidOperationException("shared inline capture is missing its lexical parameter location");
+                    parameters[index]["type"] = request.CellType.DeepClone();
+                    // A local function's capture parameter is a forwarding edge, not a new storage location.
+                    // Update every call by declaration identity, then propagate the demand into each caller's frame.
+                    for (int caller = 0; caller < scopes.Count; caller++)
+                    {
+                        void VisitCalls(JsonNode node)
+                        {
+                            if (node is JsonObject call)
+                            {
+                                if (Str(call["k"]) == "localFun") return;
+                                if (Str(call["k"]) == "callLocal" && Str(call["id"]) == scope.LocalId)
+                                {
+                                    if (call["args"] is not JsonArray args || args[index] is not JsonObject arg)
+                                        throw new InvalidOperationException("shared local-function capture must pass its source location");
+                                    var cell = request.CellType.DeepClone();
+                                    var elem = request.Elem.DeepClone();
+                                    var typeArgs = call["typeArgs"] as JsonArray ?? new JsonArray();
+                                    SubstTvIn(cell, typeArgs, typeArgs.Count);
+                                    SubstTvIn(elem, typeArgs, typeArgs.Count);
+                                    ((JsonArray)call["sig"])[index] = cell.DeepClone();
+                                    // Materialization already redirected a captured read through this cell's value.
+                                    // The local-function capture argument must forward that existing cell, not its value.
+                                    if (Str(arg["k"]) == "field" && Str(arg["name"]) == "v"
+                                        && JsonNode.DeepEquals(arg["ownerType"], cell) && arg["recv"] is JsonNode cellValue)
+                                    {
+                                        args[index] = cellValue.DeepClone();
+                                    }
+                                    else
+                                    {
+                                        if (Str(arg["k"]) != "local" || Str(arg["name"]) is not string source)
+                                            throw new InvalidOperationException("shared local-function capture must pass its source location");
+                                        if (!_boxedLocalCallArgs.TryGetValue(call, out var slots))
+                                            _boxedLocalCallArgs[call] = slots = new();
+                                        slots.Add(index);
+                                        pending.Enqueue((caller, new BoxRequest(source, request.RefName, cell, elem, false, new())));
+                                    }
+                                }
+                                foreach (var pair in call)
+                                    if (pair.Key != "synthClass" && !(Str(call["k"]) == "newSuspendLambda" && pair.Key == "body"))
+                                        VisitCalls(pair.Value);
+                            }
+                            else if (node is JsonArray array) foreach (var child in array) VisitCalls(child);
+                        }
+                        VisitCalls(scopes[caller].Body);
+                    }
+                }
+            }
+            rewrites.Add(entry);
+        }
+        // Resolve the whole forwarding graph before changing reads: a caller may feed several local functions.
+        foreach (var entry in rewrites)
+        {
+            var request = entry.Request;
+            var scope = scopes[entry.Scope];
+            if (BoxUnsafeReason(scope.Body, request.VarName, request.RefName, request.Elem) is string reason)
+                throw new NotSupportedException($"inline splice: cannot ref-cell-box captured var '{request.VarName}' — {reason}");
+            BoxVarInBody(scope.Body, request.VarName, request.CellType, request.Elem);
+        }
     }
 
     // Null if boxing var X in `body` is safe; else a reason. Refuses: (a) a FOREIGN capturer of X — a `synthClass` field or a
@@ -3157,6 +3357,7 @@ static class InlineSplice
             if (reason != null) return;
             if (n is JsonObject o)
             {
+                if (Str(o["k"]) == "localFun") return;
                 if (Str(o["k"]) == "var" && Str(o["name"]) == x)
                 {
                     decls++;
@@ -3169,7 +3370,8 @@ static class InlineSplice
                         if (Str(dsc["name"]) == x && dsc["type"] is JsonObject dt
                             && !(Str(dt["t"]) == "fqn" && Str(dt["name"]) == refName))
                             reason = "a second closure/suspend-lambda captures it (would receive the ref-cell where the plain value is expected)";
-                foreach (var kv in o) Rec(kv.Value);
+                foreach (var kv in o)
+                    if (kv.Key != "synthClass" && !(Str(o["k"]) == "newSuspendLambda" && kv.Key == "body")) Rec(kv.Value);
             }
             else if (n is JsonArray a) foreach (var c in a) Rec(c);
         }
@@ -3179,20 +3381,35 @@ static class InlineSplice
         return null;
     }
 
-    // True if the body contains a `newClosure`/`newSuspendLambda`/`newSam`/`newDelegate`/`inlineLambda` whose `synthClass`
-    // declares a FIELD {name:x, type:Fqn(refName)} — the ref-cell capture MaterializeCarrier just minted for `x`.
-    static bool BodyHasMaterializedCell(JsonNode node, string x, string refName)
+    // Constructor arguments, not the names recorded before inline alpha-renaming, identify the source location.
+    static IEnumerable<string> MaterializedCaptureSources(JsonNode node, BoxRequest request)
     {
         if (node is JsonObject o)
         {
-            if (o["synthClass"] is JsonObject sc && sc["fields"] is JsonArray fs)
-                foreach (var f in fs.OfType<JsonObject>())
-                    if (Str(f["name"]) == x && f["type"] is JsonObject ft && Str(ft["t"]) == "fqn" && Str(ft["name"]) == refName)
-                        return true;
-            foreach (var kv in o) if (kv.Value != null && BodyHasMaterializedCell(kv.Value, x, refName)) return true;
+            if (Str(o["k"]) == "localFun") yield break;
+            bool suspend = Str(o["k"]) == "newSuspendLambda";
+            var fields = suspend ? o["captures"] as JsonArray : o["synthClass"]?["fields"] as JsonArray;
+            var values = suspend ? o["capValues"] as JsonArray : o["captures"] as JsonArray;
+            if (fields != null)
+                for (int i = 0; i < fields.Count; i++)
+                {
+                    if (fields[i] is not JsonObject field || Str(field["name"]) is not string name
+                        || !request.CaptureNames.Contains(name)
+                        || TypeJson.Read(field["type"]) is not TypeNode.Fqn type || type.Name != request.RefName)
+                        continue;
+                    var value = values?.ElementAtOrDefault(i);
+                    if (value == null && suspend) yield return name;
+                    else if (value is JsonObject local && Str(local["k"]) == "local" && Str(local["name"]) is string source)
+                        yield return source;
+                }
+            foreach (var kv in o)
+                if (kv.Key != "synthClass" && !(suspend && kv.Key == "body") && kv.Value != null)
+                    foreach (var source in MaterializedCaptureSources(kv.Value, request)) yield return source;
         }
-        else if (node is JsonArray a) foreach (var c in a) if (c != null && BodyHasMaterializedCell(c, x, refName)) return true;
-        return false;
+        else if (node is JsonArray array)
+            foreach (var child in array)
+                if (child != null)
+                    foreach (var source in MaterializedCaptureSources(child, request)) yield return source;
     }
 
     static IEnumerable<JsonArray> AllBodies(JsonObject file)
@@ -3212,7 +3429,7 @@ static class InlineSplice
     // nested `synthClass` (the closure's own frame) AND the exact `{k:local,name:X}` in a `newClosure`/etc `captures` entry
     // (that passes the CELL by reference and must stay a bare local). Replaces at the parent slot (no re-descent into a
     // freshly-built `{k:local,name:X}` recv).
-    static void BoxVarInBody(JsonNode node, string x, string refName, JsonNode elem)
+    static void BoxVarInBody(JsonNode node, string x, JsonNode refName, JsonNode elem)
     {
         // #122: the ref-cell `.v` read's static type IS the boxed var's element type — stamp `sty` so a downstream
         // StaticType consumer (e.g. ArrayConstructionLowering off a boxed captured ARRAY) recovers it without a decl
@@ -3220,12 +3437,12 @@ static class InlineSplice
         JsonNode ReadV() => new JsonObject
         {
             ["k"] = "field",
-            ["ownerType"] = TypeJson.Fqn(refName),
+            ["ownerType"] = refName.DeepClone(),
             ["recv"] = new JsonObject { ["k"] = "local", ["name"] = x },
             ["name"] = "v",
             ["sty"] = elem?.DeepClone(),
         };
-        var refMap = new Dictionary<string, string>(StringComparer.Ordinal) { [x] = refName };
+        var refMap = new Dictionary<string, JsonNode>(StringComparer.Ordinal) { [x] = refName };
         bool IsRead(JsonNode v) => v is JsonObject lo && Str(lo["k"]) == "local" && Str(lo["name"]) == x;
         bool IsWrite(JsonNode v) => v is JsonObject wo && Str(wo["k"]) == "setLocal" && Str(wo["name"]) == x;
         // Wrap a `{k:setLocal name:X}` into `setField X.v = <value>`, rewriting the value's X reads first — INCLUDING a
@@ -3247,16 +3464,17 @@ static class InlineSplice
             return;
         }
         if (node is not JsonObject o) return;
+        if (Str(o["k"]) == "localFun") return;
         // The var declaration: `var X = init` -> `var X:Ref = new Ref(init)`.
         if (Str(o["k"]) == "var" && Str(o["name"]) == x)
         {
             var init = o["init"];   // a JSON `null` init parses to a C# null node (as does an absent key)
             var arg = init != null ? init.DeepClone() : new JsonObject { ["k"] = "default", ["type"] = elem.DeepClone() };
             BoxVarInBody(arg, x, refName, elem);   // an init that itself reads X (rare) still routes through the cell
-            o["type"] = TypeJson.Fqn(refName);
+            o["type"] = refName.DeepClone();
             o["init"] = new JsonObject
             {
-                ["k"] = "new", ["type"] = TypeJson.Fqn(refName),
+                ["k"] = "new", ["type"] = refName.DeepClone(),
                 ["argTypes"] = new JsonArray { elem.DeepClone() }, ["args"] = new JsonArray { arg },
             };
             return;
@@ -3265,12 +3483,23 @@ static class InlineSplice
         bool suspendNested = Str(o["k"]) == "newSuspendLambda";
         foreach (var key in new List<string>(((IDictionary<string, JsonNode>)o).Keys))
         {
+            if (key == "args" && _boxedLocalCallArgs.TryGetValue(o, out var sharedSlots)
+                && o[key] is JsonArray args)
+            {
+                for (int i = 0; i < args.Count; i++)
+                {
+                    if (sharedSlots.Contains(i) && IsRead(args[i])) continue;
+                    if (IsRead(args[i])) args[i] = ReadV();
+                    else BoxVarInBody(args[i], x, refName, elem);
+                }
+                continue;
+            }
             // A nested closure's `synthClass` is its own frame; a `newSuspendLambda`'s `body` is redirected by
             // SuspendColdLowering (capture name -> SM field) — do NOT rewrite either here (BoxUnsafeReason already refused a
             // FOREIGN capturer of X, so any suspend lambda reaching here does not capture X).
             if (nested && (key == "synthClass" || (suspendNested && key == "body"))) continue;
             // A capture-ctor-arg `{k:local,name:X}` passes the CELL — leave it bare.
-            if (nested && key == "captures" && o[key] is JsonArray caps)
+            if (nested && (key == "captures" || key == "capValues") && o[key] is JsonArray caps)
             {
                 for (int i = 0; i < caps.Count; i++)
                 {

@@ -1601,16 +1601,12 @@ sealed partial class ReferenceMetadataIndex
     // does NOT apply to ClrMemberResolution, which runs AFTER substitution and only reflects a member's DECLARED sig).
     // Used for a clr* node IteratorConsumerNormalization deliberately keeps on its `kotlin.collections.Iterator` owner for
     // the rt-stdlib link. Still honors the local-emitted skip (a self-build's own kotlin.* type is authored, not reflected)
-    // + the dotkt-synthetic skip (dotkt$CharSequence has no ref.dll type).  One synthetic family is deliberately a
-    // real referenced declaration: `dotkt$obj*` anonymous-object classes captured in inline bodies.  When such a body
-    // is spliced into a consumer, its constructor still belongs to the referenced assembly and must be resolved like
-    // every other external member; excluding it leaves ilemit to rediscover the constructor from the runtime DLL.
+    // Generated declarations carried by inline bodies may also belong to a referenced assembly. Resolve their
+    // exact metadata identity like any other external type; a generated-name prefix does not decide ownership.
     // Null when the type is not in the ref universe.
     public Type ResolveRefType(string fqn, int genericArity = 0)
     {
         if (string.IsNullOrEmpty(fqn)) return null;
-        if (fqn.StartsWith("dotkt$", StringComparison.Ordinal)
-            && !fqn.StartsWith("dotkt$obj", StringComparison.Ordinal)) return null;
         if (IsLocalEmittedType(fqn)) return null;
         return ProbeNetType(fqn, genericArity);
     }
@@ -1796,7 +1792,7 @@ sealed partial class ReferenceMetadataIndex
     }
 
     // The shared MLC probe (cache + candidate spellings + forwarder collapse) — the caller applies the owner-universe
-    // policy (ResolveNetType excludes kotlin.*/dotkt$ synthetics/local; ResolveRefType excludes only the latter two).
+    // policy (ResolveNetType excludes kotlin.*/dotkt$ synthetics/local; ResolveRefType excludes local declarations).
     /// <summary>
     /// The type named by <paramref name="fqn"/> as DECLARED BY a specific reference assembly (#370). An applied
     /// external attribute may state its declaring scope precisely because the FQN alone is ambiguous — a

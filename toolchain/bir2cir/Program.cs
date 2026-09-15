@@ -448,7 +448,7 @@ sealed class Pipeline
             // lowering can erase those facts; Kotlin `reified` remains a separate round-trip declaration fact.
             ReifiedNullabilityWitnessLowering.Apply(bir.Root, nullableWitnessDemand, refs);
             ClosureSynthesis.Apply(bir.Root, refs);
-            SharedSyntheticSynthesis.Apply(bir.Root);
+            SharedSyntheticSynthesis.Apply(bir.Root, refs);
             // Heap ref-cell types only become declarations in the transition above. Preserve their pristine element
             // slots in the nullable-generic use index before the declaration erasure below. Otherwise a late
             // inherited protected-property read may be correctly realigned to object[] while its store into a

@@ -125,7 +125,7 @@ internal fun BirEmitter.stmt(node: org.jetbrains.kotlin.ir.IrElement): String = 
 	// A ref-cell var write `x = e` -> `x.v = e` (through the shared heap cell, via the capture field inside a closure).
 	is IrSetValue -> if (isRefCell(node.symbol.owner))
 		"""{"k":"setField","ownerType":${refType(node.symbol.owner).toJson()},"recv":${refBase(node.symbol.owner)},"name":"v","value":${expr(node.value)}}"""
-	else """{"k":"setLocal","name":${str(localSlotName(node.symbol.owner))},"value":${expr(node.value)}}"""
+	else """{"k":"setLocal","name":${str(captureLocalName[node.symbol.owner] ?: localSlotName(node.symbol.owner))},"value":${expr(node.value)}}"""
 	is IrSetField -> {
 		val ownerClass = node.symbol.owner.parent as? IrClass
 		val clr = ownerClass?.let { clrName(it) }

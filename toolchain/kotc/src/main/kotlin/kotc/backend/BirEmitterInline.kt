@@ -40,6 +40,7 @@ import org.jetbrains.kotlin.ir.expressions.IrComposite
 import org.jetbrains.kotlin.ir.expressions.IrVararg
 import org.jetbrains.kotlin.ir.expressions.IrSpreadElement
 import org.jetbrains.kotlin.ir.expressions.IrFunctionExpression
+import org.jetbrains.kotlin.ir.declarations.IrVariable
 import org.jetbrains.kotlin.ir.expressions.IrPropertyReference
 import org.jetbrains.kotlin.ir.expressions.IrFunctionReference
 import org.jetbrains.kotlin.ir.expressions.IrGetClass
@@ -541,12 +542,17 @@ internal fun BirEmitter.emitInlineLambdaCarrier(lambda: IrFunctionExpression): S
 	// OWN params/ext-receiver are `declared` (excluded). Emitted on EVERY carrier (cheap); bir2cir consumes it only when
 	// it must materialize the carrier into a closure (the common invoke-and-splice path ignores it).
 	val capturesJson = carrierCaptures.joinToString(",") { (d, name, value, outer) ->
+		// The carrier may be invoked in place or materialized later. Preserve the exact shared-location type
+		// for a mutable value whose storage has not already been promoted by another capture boundary.
+		val shared = if (d is IrVariable && d.isVar && !isRefCell(d))
+			",\"sharedCellType\":" + refType(d).toJson() +
+				",\"sharedCellTypeParams\":" + refTypeParametersJson(d) else ""
 		if (outer)
 			"""{"name":"__outer","type":${captureFieldType(d).toJson()},"outer":true}"""
 		else if (value == null)
-			"""{"name":${str(name)},"type":${captureFieldType(d).toJson()}}"""
+			"""{"name":${str(name)},"type":${captureFieldType(d).toJson()}$shared}"""
 		else
-			"""{"name":${str(name)},"type":${captureFieldType(d).toJson()},"value":$value}"""
+			"""{"name":${str(name)},"type":${captureFieldType(d).toJson()},"value":$value$shared}"""
 	}
 	return """{"k":"inlineLambda","params":[$paramsJson],"captures":[$capturesJson],"body":[${body.joinToString(",")}],"result":$result}"""
 }
