@@ -287,6 +287,7 @@ CLR_OWNER_KINDS = {
 # TypeNode data and never crosses either serialized phase boundary; the retired lossy `shapes` island is gone.
 STRARR_OK = {
     "typeParams",
+    "sharedCellTypeParams",                    # inline capture cell declaration's independent generic frame.
     "typeParamDecls",                          # newSuspendLambda's full declaration-form copy of typeParams;
                                                 # bare names are the same declaration shorthand, not type usages.
     "capturedTypeParams",                       # #275: enclosing CLR generic-slot declaration names copied onto

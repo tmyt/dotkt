@@ -11,7 +11,10 @@ using DotKt.Bir;
 // shape is inspected to reconstruct ownership.
 static class LocalFunctionLowering
 {
-    sealed record Binding(string Name, string Owner, int[] OwnerArgPositions, int[] SemanticOwnerArgOrder);
+    sealed record Binding(string Name, string Owner, int[] OwnerArgPositions, int[] SemanticOwnerArgOrder)
+    {
+        public int[] ByRefCaptureSlots { get; init; } = Array.Empty<int>();
+    }
 
     static string Str(JsonNode node) => (node as JsonValue)?.GetValue<string>();
 
@@ -61,7 +64,9 @@ static class LocalFunctionLowering
                     declaration.Remove("sourceName");
                     declaration["name"] = physicalName;
                     declaration["generated"] = true;
+                    var byRefCaptures = PrepareCaptureLocations(declaration);
                     var binding = PrepareGenericOwnerBinding(declaration, physicalOwner, ownerType);
+                    binding = binding with { ByRefCaptureSlots = byRefCaptures };
                     binding = binding with { SemanticOwnerArgOrder = SemanticOwnerArgOrder(ownerType) };
                     binding = binding with { Name = physicalName, Owner = physicalOwner };
                     if (!bindings.TryAdd(id, binding))
@@ -290,8 +295,74 @@ static class LocalFunctionLowering
             _ => type,
         };
 
+    // A non-materialized mutable capture is a borrowed location for the duration of a direct call. Heap cells
+    // selected by InlineSplice already have the shared type; the remaining captures use real CLR ref parameters.
+    static int[] PrepareCaptureLocations(JsonObject declaration)
+    {
+        if (declaration["params"] is not JsonArray parameters) return Array.Empty<int>();
+        var slots = new List<int>();
+        var locations = new Dictionary<string, JsonNode>(StringComparer.Ordinal);
+        for (int i = 0; i < parameters.Count; i++)
+        {
+            if (parameters[i] is not JsonObject parameter || parameter["sharedCellType"] is not JsonNode shared
+                || JsonNode.DeepEquals(parameter["type"], shared)) continue;
+            var element = parameter["type"].DeepClone();
+            locations.Add(Str(parameter["name"]), element);
+            parameter["type"] = TypeJson.Write(new TypeNode.ByRef(TypeJson.Read(element)));
+            slots.Add(i);
+        }
+        if (slots.Count == 0) return Array.Empty<int>();
+        JsonNode Rewrite(JsonNode node)
+        {
+            if (node is JsonObject obj)
+            {
+                var kind = Str(obj["k"]);
+                if (kind == "localFun") return obj;
+                if (kind == "local" && Str(obj["name"]) is string name && locations.TryGetValue(name, out var element))
+                    return new JsonObject
+                    {
+                        ["k"] = "byrefLoad", ["ptr"] = new JsonObject { ["k"] = "local", ["name"] = name },
+                        ["elem"] = element.DeepClone(),
+                    };
+                foreach (var key in obj.Select(pair => pair.Key).ToList())
+                {
+                    if (key == "synthClass") continue;
+                    var before = obj[key];
+                    var after = Rewrite(before);
+                    if (!ReferenceEquals(before, after)) obj[key] = after;
+                }
+                if (kind == "setLocal" && Str(obj["name"]) is string target && locations.TryGetValue(target, out var written))
+                {
+                    obj["k"] = "byrefStore";
+                    obj.Remove("name");
+                    obj["ptr"] = new JsonObject { ["k"] = "local", ["name"] = target };
+                    obj["elem"] = written.DeepClone();
+                    return new JsonObject { ["k"] = "exprStmt", ["expr"] = obj.DeepClone() };
+                }
+            }
+            else if (node is JsonArray array)
+                for (int i = 0; i < array.Count; i++)
+                {
+                    var before = array[i];
+                    var after = Rewrite(before);
+                    if (!ReferenceEquals(before, after)) array[i] = after;
+                }
+            return node;
+        }
+        Rewrite(declaration["body"]);
+        return slots.ToArray();
+    }
+
     static void RewriteUse(JsonObject use, string kind, Binding binding)
     {
+        foreach (var slot in binding.ByRefCaptureSlots)
+        {
+            if (kind != "callLocal" || use["args"] is not JsonArray args || use["sig"] is not JsonArray signature)
+                throw new InvalidOperationException("a borrowed local-function capture requires a direct call");
+            // A by-ref call slot consumes the argument as an lvalue, like any other CLR ref parameter.
+            // Keep that lvalue rather than wrapping it in a second address-producing expression.
+            signature[slot] = TypeJson.Write(new TypeNode.ByRef(TypeJson.Read(signature[slot])));
+        }
         var callTypeArgs = use["typeArgs"] as JsonArray;
         var ownerArgs = Enumerable.Range(0, binding.OwnerArgPositions.Length).Select(slot =>
         {

@@ -650,9 +650,16 @@ values are:
 **Deferred mutable captures.** An `inlineLambda.captures` descriptor for a mutable local not already represented by
 shared storage carries `sharedCellType`, a structured type referencing its `refTypes` declaration in the current
 generic frame. A local function's leading capture parameter carries the same fact when it forwards that location.
+An inline capture also carries `sharedCellTypeParams`, the cell's complete generic declarations in the cell's own
+frame. Those bounds are instantiated against `sharedCellType.args` when declaring a materialized carrier's frame;
+ordinary inline substitution must not reinterpret the independent cell-declaration frame.
 This fact does not require allocation: direct inline invocation and direct local-function reads can retain the
 original local. When a carrier is materialized, `InlineSplice` uses the declared shared location even for a read-only
 capture, and propagates that requirement through local-function declaration identities and their capture arguments.
+After materialization decisions, `LocalFunctionLowering` passes a remaining mutable capture of a directly called
+non-suspend local function as a CLR managed reference, with explicit `byrefLoad`/`byrefStore` operations. A call
+borrows the original location rather than taking a value snapshot. Suspend or callable-reference captures require
+storage that outlives a direct call and are represented by shared cells instead.
 The enclosing variable, forwarding parameters, and materialized captures must agree on the same storage. The hint
 survives inline metadata and type substitution but is consumed before CIR; `ilemit` never decides capture sharing.
 

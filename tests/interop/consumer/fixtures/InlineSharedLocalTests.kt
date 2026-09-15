@@ -12,6 +12,9 @@ class InlineSharedLocalTests {
         val first = read()
         span = ByRefLikeApi.Chars("d")
         assertEquals(4, first + read())
+        fun update() { span = ByRefLikeApi.Chars("updated") }
+        update()
+        assertEquals(7, read())
     }
 
     @TestAttribute

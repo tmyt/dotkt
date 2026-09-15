@@ -106,6 +106,7 @@ static class SharedSyntheticSynthesis
             case JsonObject o:
                 o.Remove("_syntheticTypeArgs");
                 o.Remove("sharedCellType");
+                o.Remove("sharedCellTypeParams");
                 foreach (var kv in o) if (kv.Value != null) DropSyntheticTypeArgs(kv.Value);
                 break;
             case JsonArray a:

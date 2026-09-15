@@ -8,6 +8,51 @@ import kotlin.coroutines.*
 
 class ReadOnlyMutableCaptureTests {
     @TestAttribute
+    fun deferredReaderInsideCapturingLambdaSharesItsLocal() {
+        fun factory(seed: Int): () -> (() -> Int) = {
+            var current = seed
+            val read = deferGeneric { current }
+            current = 2
+            read
+        }
+        assertEquals(2, factory(1)()())
+    }
+
+    @TestAttribute
+    fun boundedDeferredReaderPreservesConstraints() {
+        val initial = CaptureBoundValue()
+        val next = CaptureBoundValue()
+        check(boundedDeferredRead(initial, next)() === next)
+    }
+
+    @TestAttribute
+    fun materializedReaderCallsLocalReaderFactory() {
+        var current = 1
+        fun first(): () -> Int = defer { current }
+        val read = defer { first()() }
+        current = 2
+        assertEquals(2, read())
+    }
+
+    @TestAttribute
+    fun staticInitializerSharesDeferredLocal() {
+        assertEquals(2, staticDeferredReader())
+    }
+
+    @TestAttribute
+    fun directLocalFunctionSharesManagedReferenceWrites() {
+        var current = 7
+        fun update() { increment(byref(current)) }
+        update()
+        assertEquals(12, current)
+        fun readAfterUpdate(slot: ClrRef<Int>): Int {
+            increment(slot)
+            return current
+        }
+        assertEquals(17, readAfterUpdate(byref(current)))
+        assertEquals(17, current)
+    }
+    @TestAttribute
     fun readersObserveWritesThroughManagedReferences() {
         var current = 7
         val read = { current }
@@ -124,6 +169,20 @@ class ReadOnlyMutableCaptureTests {
 }
 
 private fun increment(slot: ClrRef<Int>) { slot.value += 5 }
+private interface CaptureBound
+private val staticDeferredReader = run {
+    var current = 1
+    val read = defer { current }
+    current = 2
+    read
+}
+private class CaptureBoundValue : CaptureBound
+private fun <T : CaptureBound> boundedDeferredRead(initial: T, next: T): () -> T {
+    var current = initial
+    val read = deferGeneric { current }
+    current = next
+    return read
+}
 private inline fun defer(crossinline read: () -> Int): () -> Int = { read() }
 private inline fun keep(noinline read: () -> Int): () -> Int = read
 private inline fun <T> deferGeneric(crossinline read: () -> T): () -> T = { read() }

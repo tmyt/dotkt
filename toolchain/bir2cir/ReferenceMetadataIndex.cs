@@ -1792,7 +1792,7 @@ sealed partial class ReferenceMetadataIndex
     }
 
     // The shared MLC probe (cache + candidate spellings + forwarder collapse) — the caller applies the owner-universe
-    // policy (ResolveNetType excludes kotlin.*/dotkt$ synthetics/local; ResolveRefType excludes only the latter two).
+    // policy (ResolveNetType excludes kotlin.*/dotkt$ synthetics/local; ResolveRefType excludes local declarations).
     /// <summary>
     /// The type named by <paramref name="fqn"/> as DECLARED BY a specific reference assembly (#370). An applied
     /// external attribute may state its declaring scope precisely because the FQN alone is ambiguous — a

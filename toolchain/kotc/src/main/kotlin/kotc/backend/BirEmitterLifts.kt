@@ -2054,11 +2054,15 @@ internal fun BirEmitter.localFunctionDecl(fn: IrSimpleFunction): String {
 	// Removing the binding instead would leave the enclosing frame reading the bare local again, so the `bump()` call
 	// site after it (capValueExpr) emits a local that does not exist in that frame.
 	val savedCaptureSubst = capPairs.associate { (decl, _) -> decl to captureSubst[decl] }
+	val savedCaptureNames = capPairs.associate { (decl, _) -> decl to captureLocalName[decl] }
 	// Register cell identities before changing frames, but render their arguments in the receiving method's frame.
 	capPairs.forEach { (decl, _) -> if (isRefCell(decl) || (decl is IrVariable && decl.isVar)) refTypeName(decl) }
 	val savedTypeSubst = freeTps.associateWith { typeArgSubst[it] }
 	freeTps.forEachIndexed { index, parameter -> typeArgSubst[parameter] = TypeNode.Tv("method", index) }
-	capPairs.forEach { (decl, fname) -> captureSubst[decl] = """{"k":"local","name":${str(fname)}}""" }
+	capPairs.forEach { (decl, fname) ->
+		captureSubst[decl] = """{"k":"local","name":${str(fname)}}"""
+		captureLocalName[decl] = fname
+	}
 	val capParams: List<String>
 	val ownParams: List<String>
 	val body: String
@@ -2079,6 +2083,8 @@ internal fun BirEmitter.localFunctionDecl(fn: IrSimpleFunction): String {
 		capPairs.forEach { (decl, _) ->
 			val previous = savedCaptureSubst[decl]
 			if (previous != null) captureSubst[decl] = previous else captureSubst.remove(decl)
+			val previousName = savedCaptureNames[decl]
+			if (previousName != null) captureLocalName[decl] = previousName else captureLocalName.remove(decl)
 		}
 		freeTps.forEach { parameter ->
 			val previous = savedTypeSubst[parameter]

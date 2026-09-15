@@ -545,7 +545,8 @@ internal fun BirEmitter.emitInlineLambdaCarrier(lambda: IrFunctionExpression): S
 		// The carrier may be invoked in place or materialized later. Preserve the exact shared-location type
 		// for a mutable value whose storage has not already been promoted by another capture boundary.
 		val shared = if (d is IrVariable && d.isVar && !isRefCell(d))
-			",\"sharedCellType\":" + refType(d).toJson() else ""
+			",\"sharedCellType\":" + refType(d).toJson() +
+				",\"sharedCellTypeParams\":" + refTypeParametersJson(d) else ""
 		if (outer)
 			"""{"name":"__outer","type":${captureFieldType(d).toJson()},"outer":true}"""
 		else if (value == null)
