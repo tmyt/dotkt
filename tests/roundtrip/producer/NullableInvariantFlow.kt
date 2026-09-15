@@ -23,3 +23,18 @@ class KeyImpl<K>(override val key: K) : KeyChild<K> {
 }
 
 fun readLocalMarker(value: KeyRoot<String>): Int = value.marker
+
+class Bound<T : Box<String?>>(val box: T)
+fun <T : Box<String?>> readBound(value: T): String? = value.value
+
+abstract class Receiver<T> {
+    abstract fun echo(value: Box<T>): T
+    abstract fun echo(value: T): T
+    abstract fun accept(value: Box<T>)
+}
+class StringReceiver : Receiver<String>() {
+    var last: String = ""
+    override fun echo(value: Box<String>): String = "box:" + value.value
+    override fun echo(value: String): String = "value:" + value
+    override fun accept(value: Box<String>) { last = value.value }
+}

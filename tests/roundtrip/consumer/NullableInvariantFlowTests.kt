@@ -7,6 +7,24 @@ import roundtrip.nullableinvariantflow.*
 
 class NullableInvariantFlowTests {
     @TestAttribute
+    fun separateProducerFilesSelectTheOriginalAbstractOverload() {
+        val receiver = StringReceiver()
+        assertEquals("box:selected", invokeBoxReceiver(receiver, Box("selected")))
+        assertEquals("value:selected", invokeValueReceiver(receiver, "selected"))
+        invokeAcceptReceiver(receiver, Box("accepted"))
+        assertEquals("accepted", receiver.last)
+    }
+
+    @TestAttribute
+    fun typeAndMethodBoundsRetainTheirKotlinGenericArguments() {
+        val box = Box<String?>("bounded")
+        val owner = Bound(box)
+        assertTrue(owner.box === box)
+        assertEquals("bounded", owner.box.value)
+        assertEquals("bounded", readBound(box))
+    }
+
+    @TestAttribute
     fun inheritedPropertySlotsShareTheirImplementation() {
         val value = KeyImpl("key")
         val child: KeyChild<String> = value
