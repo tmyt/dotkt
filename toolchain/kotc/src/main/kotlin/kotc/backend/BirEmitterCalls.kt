@@ -1977,12 +1977,25 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 				"""{"k":"callInstance","ownerType":$owner,"virtual":$virtual,"recv":$recv,"method":${str(property.name.asString())},"prop":"set"${overloadSigField(callee)},"args":[$accArgs]${overridesJson(callee)}${superTag(call)}}"""
 			else """{"k":"callInstance","ownerType":$owner,"virtual":$virtual,"recv":$recv,"method":${str(property.name.asString())},"prop":"get"${overloadSigField(callee)},"args":[$accArgs]${retHint((ownerStr as? TypeNode.Fqn)?.args != null, call.type)}${overridesJson(callee)}${superTag(call)}}"""
 		}
+		// A fake override selects inherited storage, not a field declared by the receiver class. Preserve the
+		// selected Kotlin declaration and its substituted supertype frame; synthetic capture names are unrelated.
+		val fieldDeclaration = if (callee.isFakeOverride)
+			callee.resolveFakeOverride() ?: error("field accessor '${callee.name}' has no declaration")
+		else callee
+		val fieldClass = fieldDeclaration.parent as? IrClass
+			?: error("field accessor '${fieldDeclaration.name}' has no class owner")
+		val fieldOwner = if (fieldClass === declaringClass) ownerStr else {
+			val inheritedType = correspondingSupertypeInstantiation(
+				recvExpr?.type ?: declaringClass.defaultType, fieldClass, allowCapturedArguments = true,
+			) ?: error("field accessor '${fieldDeclaration.name}' has no corresponding receiver supertype")
+			ownerSpec(fieldClass, inheritedType)
+		}
 		return if (callee === property.setter)
-			"""{"k":"setFieldExpr","ownerType":$owner,"recv":$recv,"name":${str(property.name.asString())},"value":${expr(regularArgs(call).first())}}"""
+			"""{"k":"setFieldExpr","ownerType":${str(fieldOwner)},"recv":$recv,"name":${str(property.name.asString())},"value":${expr(regularArgs(call).first())}}"""
 		// `lateinit var` read -> throw if still uninitialized (the field is null) — proper lateinit semantics.
 		else if (isLateinitProperty(property))
-			"""{"k":"lateinitGet","ownerType":$owner,"recv":$recv,"name":${str(property.name.asString())}}"""
-		else """{"k":"field","ownerType":$owner,"recv":$recv,"name":${str(property.name.asString())}${retHint((ownerStr as? TypeNode.Fqn)?.args != null, call.type)}}"""
+			"""{"k":"lateinitGet","ownerType":${str(fieldOwner)},"recv":$recv,"name":${str(property.name.asString())}}"""
+		else """{"k":"field","ownerType":${str(fieldOwner)},"recv":$recv,"name":${str(property.name.asString())}${retHint((fieldOwner as? TypeNode.Fqn)?.args != null, call.type)}}"""
 	}
 
 	// Kotlin universal methods (hashCode/toString/equals) on a builtin receiver. The System.Object slot is correct
