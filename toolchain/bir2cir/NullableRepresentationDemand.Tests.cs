@@ -25,11 +25,20 @@ static partial class NullableRepresentationDemand
         Check(frame.NullableVariable(new TypeNode.Tv("method", 1)) == new TypeNode.Tv("method", 2), "method scope");
         var restored = NullableRepresentationFrame.Read(frame.ToJson());
         Check(restored.SourceArity == 2 && restored.NullableIndices.SequenceEqual(new[] { 1 }), "metadata correspondence");
+        Check(restored.SemanticVariable(new TypeNode.Tv("method", 2)) == new TypeNode.Nullable(new TypeNode.Tv("method", 1)),
+            "physical companion restores nullable source method variable");
+        Check(restored.SemanticVariable(new TypeNode.Tv("type", 2)) == new TypeNode.Nullable(new TypeNode.Tv("type", 1)),
+            "physical companion restores nullable source owner variable");
+        Check(restored.SemanticVariable(new TypeNode.Tv("type", 0)) == new TypeNode.Tv("type", 0),
+            "ordinary source variable identity is retained");
         var stringType = new TypeNode.Fqn("kotlin.String");
         var nullableString = new TypeNode.Nullable(stringType);
         var closed = frame.Close(new TypeNode[] { stringType, nullableString },
             _ => new TypeNode.Fqn("object"), source => source);
         Check(closed[2] == nullableString, "nullable closure must receive original source argument");
+        Check(restored.OrdinaryArguments(closed).Length == 2, "physical companions are hidden using explicit frame metadata");
+        Malformed(() => restored.SemanticVariable(new TypeNode.Tv("type", 3)));
+        Malformed(() => restored.OrdinaryArguments(new TypeNode[] { stringType }));
         Malformed(() => new NullableRepresentationFrame(1, new[] { 1 }));
         Malformed(() => new NullableRepresentationFrame(2, new[] { 1, 0 }));
         Malformed(() => new NullableRepresentationFrame(2, new[] { 1, 1 }));

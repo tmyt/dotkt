@@ -45,6 +45,23 @@ internal sealed class NullableRepresentationFrame
             .Concat(NullableIndices.Select(index => nullable(sourceArguments[index]))).ToArray();
     }
 
+    public TypeNode SemanticVariable(TypeNode.Tv physical)
+    {
+        if (physical.Scope is not ("type" or "method") || physical.I < 0 || physical.I >= PhysicalArity)
+            throw new ArgumentException("Physical generic variable does not match nullable representation frame");
+        return physical.I < SourceArity ? physical
+            : new TypeNode.Nullable(new TypeNode.Tv(physical.Scope, NullableIndices[physical.I - SourceArity]));
+    }
+
+    // Drops only the frame's added arguments. The retained physical arguments still require the ordinary
+    // Kotlin metadata projection; this operation cannot recover source types erased by another representation.
+    public TypeNode[] OrdinaryArguments(IReadOnlyList<TypeNode> physicalArguments)
+    {
+        if (physicalArguments.Count != PhysicalArity)
+            throw new ArgumentException("Physical generic arity does not match nullable representation frame");
+        return physicalArguments.Take(SourceArity).ToArray();
+    }
+
     public JsonObject ToJson() => new()
     {
         ["sourceArity"] = SourceArity,
