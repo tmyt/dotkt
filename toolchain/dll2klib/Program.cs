@@ -1696,6 +1696,7 @@ internal sealed class AssemblyScanner : IDisposable
                 _md, names, _attrs, _arityNames, _delegateCatalog, _companionCatalog, _innerCatalog,
                 _signatureSeeds,
                 _externalSignatureDecoders,
+                _publicTypeCatalog,
                 SemanticCompanionTypeNames(names));
             var projectedBySemanticName = new Dictionary<string, Class>(StringComparer.Ordinal);
 
@@ -3370,7 +3371,8 @@ internal sealed class AssemblyScanner : IDisposable
             _companionCatalog,
             _innerCatalog,
             source.Seeds,
-            _externalSignatureDecoders);
+            _externalSignatureDecoders,
+            _publicTypeCatalog);
     }
 
     public void Dispose() => _externalSignatureDecoders.Dispose();
@@ -7356,6 +7358,7 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
     private readonly CompanionReferenceCatalog _companionCatalog;
     private readonly InnerReferenceCatalog _innerCatalog;
     private readonly ExternalSignatureDecoderCache _externalSignatureDecoders;
+    private readonly PublicTypeCatalog _publicTypeCatalog;
     private readonly IReadOnlyDictionary<TypeDefinitionHandle, int> _semanticTypeNames;
     private readonly bool _restoreKotlinCollections;
     private readonly IReadOnlyDictionary<string, TypeDefinitionHandle> _delegateDefinitions;
@@ -7389,6 +7392,7 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
         InnerReferenceCatalog innerCatalog,
         SignatureDecoderSeeds seeds,
         ExternalSignatureDecoderCache externalSignatureDecoders,
+        PublicTypeCatalog publicTypeCatalog,
         IReadOnlyDictionary<TypeDefinitionHandle, int>? semanticTypeNames = null)
     {
         _md = md;
@@ -7399,6 +7403,7 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
         _companionCatalog = companionCatalog;
         _innerCatalog = innerCatalog;
         _externalSignatureDecoders = externalSignatureDecoders;
+        _publicTypeCatalog = publicTypeCatalog;
         _delegateDefinitions = seeds.DelegateDefinitions;
         _seedValueTypeNames = seeds.ValueTypeNames;
         _semanticTypeNames = semanticTypeNames ?? new Dictionary<TypeDefinitionHandle, int>();
@@ -7679,6 +7684,7 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
                 ? Platform(className)
                 : MarkValueTypeIfStated(rawTypeKind, Named(className));
             _semanticInnerTypes[marker] = externalInner.SemanticArgumentOrder;
+            RememberExternalNullableFrame(reader, handle, marker);
             return marker;
         }
         if (_restoreKotlinCollections && KotlinCollection(full) is string collection)
@@ -7691,12 +7697,28 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
         // would merely be appended to the wrong Function0 constructor.
         if (full == "System.Action" && !metadataName.Contains('`'))
             return KnownDelegate(full, ImmutableArray<KType>.Empty);
-        return full switch
+        var result = full switch
         {
             "System.String" => Platform("kotlin.String"),
             "System.Object" => Platform("kotlin.Any"),
             _ => rawTypeKind == (byte)SignatureTypeKind.Class ? Platform(className) : MarkValueTypeIfStated(rawTypeKind, Named(className)),
         };
+        RememberExternalNullableFrame(reader, handle, result);
+        return result;
+    }
+
+    private void RememberExternalNullableFrame(MetadataReader reader, TypeReferenceHandle handle, KType type)
+    {
+        if (!_publicTypeCatalog.TryResolveDefinition(reader, handle, out var definition)) return;
+        if (definition.DefinitionPath is null)
+            throw new InvalidDataException("Resolved external type requires its definition path");
+        var source = _externalSignatureDecoders.Get(definition.DefinitionPath, definition.Reader);
+        var frame = NullableFrameMetadata.TypeFrame(source.Reader, source.Attributes, definition.Handle);
+        if (frame is null) return;
+        _nullableTypeFrames[type] = frame;
+        if (source.Attributes.Int32(definition.Handle, MetadataAttributes.DotKtNs + "KotlinInnerAttribute") is int capturedOuter)
+            _semanticInnerTypes[type] = Enumerable.Range(capturedOuter, frame.SourceArity - capturedOuter)
+                .Concat(Enumerable.Range(0, capturedOuter)).ToArray();
     }
     public KType GetTypeFromSpecification(MetadataReader reader, GenericContext genericContext, TypeSpecificationHandle handle, byte rawTypeKind) =>
         reader.GetTypeSpecification(handle).DecodeSignature(this, genericContext);
@@ -8250,7 +8272,8 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
             _companionCatalog,
             _innerCatalog,
             source.Seeds,
-            _externalSignatureDecoders);
+            _externalSignatureDecoders,
+            _publicTypeCatalog);
         var shape = decoder.DecodeDelegate(handle);
         _externalDelegateShapes[key] = shape;
         return shape.Clone();
