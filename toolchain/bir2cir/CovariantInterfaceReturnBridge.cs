@@ -124,7 +124,9 @@ static class CovariantInterfaceReturnBridge
 
                 // Method generic arity is part of the CLI slot identity. An arity-0 and arity-1 accessor can otherwise
                 // share one bridge even though no MethodImpl body can implement both declarations.
-                var key = name + "`" + methodArity + "<"
+                // Distinct interface slots may have different allocated names but forward to the same source
+                // implementation with the same signature. Share that body, not a second Property getter.
+                var key = Str(implementation["name"]) + "`" + methodArity + "<"
                           + KotlinOverrideSlotBridge.MethodTypeParameterShapeKey(
                               slot["typeParams"] as JsonArray, ifaceArgs)
                           + ">(" + string.Join(",", slotParams.Select(type =>
@@ -242,7 +244,7 @@ static class CovariantInterfaceReturnBridge
                 // spellings (`T` substituted through an oblivious edge versus the concrete type directly). One CLR
                 // body can implement both MethodImpl declarations, so key the body by the canonical physical
                 // signature while retaining each declaration's own descriptor below.
-                var key = declaration.PhysicalMember + "`" + methodArity + "<"
+                var key = implementationName + "`" + methodArity + "<"
                           + KotlinOverrideSlotBridge.MethodTypeParameterShapeKey(
                               declaration.TypeParams, ownerArgs)
                           + ">(" + string.Join(",", slotParams.Select(type =>
