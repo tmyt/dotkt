@@ -1096,6 +1096,13 @@ sealed partial class ReferenceMetadataIndex
         owner != null && TryMembersByBirOwner(owner, out var list)
         && list.Any(m => m.Suspend && string.Equals(m.Name, name, StringComparison.Ordinal));
 
+    // Exact MethodDef identity, not a same-name overload: only a trusted logical-result carrier identifies
+    // the compiler-generated Task wrapper as suspend ABI rather than an ordinary CLR generic result.
+    internal bool HasLogicalSuspendResult(MethodInfo method) =>
+        method.DeclaringType?.FullName is string owner && TryMembersByBirOwner(owner, out var members)
+        && members.Any(member => member.MetadataToken == method.MetadataToken
+            && member.Suspend && member.SuspendReturnType != null);
+
     // #78 Defect A (cross-assembly axis) — the exact-owner HasSuspendMember above misses a suspend member declared on a
     // SUPERTYPE of the call site's referenced static-receiver (e.g. a local subclass extending a referenced coroutine
     // base, or a referenced interface whose suspend member is declared on a super-interface). Walk the reflected owner's
@@ -3724,7 +3731,9 @@ sealed partial class ReferenceMetadataIndex
                         : DeclaredSlot(member.NullableGenericRet, member.ReturnTypeNode);
                 declaredParams = new SlotFact[argCount];
                 for (var i = 0; i < argCount; i++)
-                    declaredParams[i] = propertyName == null
+                    declaredParams[i] = selectedPhysicalMember != null
+                        ? new SlotFact(member.ParamTypeNodes[i], false)
+                        : propertyName == null
                         ? includeUnchangedMethod
                             ? new SlotFact(member.NullableGenericParams?[i] ?? member.ParamTypeNodes[i], false)
                             : DeclaredSlot(member.NullableGenericParams?[i], member.ParamTypeNodes[i])

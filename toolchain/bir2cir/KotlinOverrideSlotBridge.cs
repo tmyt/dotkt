@@ -142,6 +142,9 @@ static class KotlinOverrideSlotBridge
                 method.Remove(KotlinPropertyAccessors.SuspendTaskOnlyBridgeKey);
     }
 
+    static TypeNode DeclaredSlot(TypeNode type, ValueTypeOracle isValue, bool physical) =>
+        physical ? type : NullableGenericErasure.EraseNullableTv(type, isValue);
+
     static void ApplyClass(Def cls, IReadOnlyDictionary<string, Def> defs, ValueTypeOracle isValue,
         ReferenceMetadataIndex refs, Phase phase, IDictionary<JsonObject, string> exactBridgeSources,
         IReadOnlySet<string> localTypeNames,
@@ -398,7 +401,7 @@ static class KotlinOverrideSlotBridge
             {
                 // A referenced BASE CLASS reaches the same arm; only its wiring differs (a MethodImpl against the
                 // constructed base rather than the interface), and the emitter resolves that base externally.
-                FillFromReference(cls, defs, spec, supIsInterface, candidates, ownArgs, isValue, refs, !emitBridges,
+                FillFromReference(cls, defs, spec, supIsInterface, candidates, ownArgs, isValue, refs, phase,
                     (semanticOwner, owner, isInterface, referenced, identity, member, accessor, parameters, ret, implementation,
                             slotTypeParams, slotHasDefault, unitValueReturn) =>
                         Fill(semanticOwner, owner, isInterface, referenced, slotHasDefault, identity, member, accessor,
@@ -420,17 +423,20 @@ static class KotlinOverrideSlotBridge
                 var methodArity = (slot["typeParams"] as JsonArray)?.Count ?? 0;
                 // `Subst(Erase(declared), typeArgs)` and never `Erase(Subst(...))` — a substituted `Nullable(kotlin.Int)`
                 // has no type variable left to erase and would state the wrong slot. The erasure is idempotent, so
-                // this reads the same slot before the sweep has run and after.
+                // this reads the same slot before the sweep has run and after. Once physical bridges run,
+                // generated signatures already own their CLR ABI: in particular Task<Nullable<V>> was introduced
+                // by suspend lowering, not by a Kotlin generic instantiation, and must not be erased again.
                 var rawSlotParams = slotParamNodes.OfType<JsonObject>()
                     .Select(p => TypeJson.Read(p["type"])).ToArray();
                 var semanticSlotParams = rawSlotParams
                     .Select(t => t == null ? null : SupertypeGraph.SubstOwnerTvs(t, supArgs)).ToArray();
                 var slotParams = rawSlotParams
                     .Select(t => t == null ? null : SupertypeGraph.SubstOwnerTvs(
-                        NullableGenericErasure.EraseNullableTv(t, isValue), supArgs)).ToArray();
+                        DeclaredSlot(t, isValue, physical: phase == Phase.PhysicalBridges), supArgs)).ToArray();
                 var slotRet0 = TypeJson.Read(slot["ret"]);
                 if (slotParams.Any(p => p == null) || slotRet0 == null) continue;
-                var slotRet = SupertypeGraph.SubstOwnerTvs(NullableGenericErasure.EraseNullableTv(slotRet0, isValue), supArgs);
+                var slotRet = SupertypeGraph.SubstOwnerTvs(
+                    DeclaredSlot(slotRet0, isValue, physical: phase == Phase.PhysicalBridges), supArgs);
                 var slotReturnsValue = !IsVoid(slotRet0) || Bool(slot[BirTypeLowering.ValueReturnKey]);
 
                 KotlinPropertyAccessors.TryIdentity(slot, out var propertyName, out var accessorKind);
@@ -1175,7 +1181,7 @@ static class KotlinOverrideSlotBridge
     // the derivation the refusal exists to prevent.
     static void FillFromReference(Def cls, IReadOnlyDictionary<string, Def> defs, TypeNode.Fqn spec,
         bool supIsInterface, IEnumerable<JsonObject> methods, TypeNode[] ownArgs, ValueTypeOracle isValue,
-        ReferenceMetadataIndex refs, bool semanticConstraints,
+        ReferenceMetadataIndex refs, Phase phase,
         Action<TypeNode.Fqn, TypeNode.Fqn, bool, bool, string, string, string, TypeNode[], TypeNode, JsonObject, JsonArray, bool, bool> fill,
         bool suspendValues = false)
     {
@@ -1231,6 +1237,8 @@ static class KotlinOverrideSlotBridge
                 TypeNode slotRet0;
                 TypeNode[] slotParams0;
                 bool[] refused;
+                var physicalProjection = !suspendValues && accessorKind == null
+                    && impl[KotlinPropertyAccessors.SuspendSourceParamsKey] is JsonArray ? ownName : null;
                 if (suspendValues)
                 {
                     if (accessorKind != null || !refs.TrySelectedOverrideDeclaration(
@@ -1256,11 +1264,12 @@ static class KotlinOverrideSlotBridge
                             implementationSignature, TypeJson.Read(impl["ret"]),
                             spec.Args ?? Array.Empty<TypeNode>(), impl["typeParams"] as JsonArray, ownArgs,
                             out slotRet0, out slotParams0, out refused,
-                            out selectedPhysicalMember, out selectedSlotTypeParams, out slotReturnsValue, semanticConstraints,
+                            out selectedPhysicalMember, out selectedSlotTypeParams, out slotReturnsValue,
+                            phase == Phase.DeclarationMoves,
                             // Suspend lowering supplied the physical MethodDef and preserved the unchanged source
                             // override marker. Match its cold/Task projection exactly, as the local-slot arm does;
                             // a cold entry is not another Kotlin method with the marker's source name.
-                            impl[KotlinPropertyAccessors.SuspendSourceParamsKey] is JsonArray ? ownName : null);
+                            physicalProjection);
                     if (!foundSlot) continue;
                 }
                 if (slotParams0 == null || slotParams0.Length != ps.Count) continue;
@@ -1268,8 +1277,10 @@ static class KotlinOverrideSlotBridge
                 // A null PARAMETER fact is a slot this reader cannot state, and inventing one from the physical
                 // signature is the derivation its silence exists to prevent — so the member is left alone.
                 if (slotParams0.Any(t => t == null)) continue;
+                // Only an explicitly selected hot/cold MethodDef is returned as an entirely physical signature.
+                // Ordinary reference lookups may restore Kotlin nullable-generic carriers even in the late phase.
                 var slotParams = slotParams0
-                    .Select(t => SupertypeGraph.SubstOwnerTvs(NullableGenericErasure.EraseNullableTv(t, isValue),
+                    .Select(t => SupertypeGraph.SubstOwnerTvs(DeclaredSlot(t, isValue, physical: physicalProjection != null),
                         accessorKind != null ? selectedArgs : supArgs))
                     .ToArray();
                 // A null RETURN fact is the opposite: the reader states a return only while it still says something a
@@ -1278,7 +1289,7 @@ static class KotlinOverrideSlotBridge
                 // `compareTo(T): Int` is exactly that — the parameter is the whole divergence.
                 var slotRet = slotRet0 == null
                     ? SupertypeGraph.SubstOwnerTvs(TypeJson.Read(impl["ret"]), ownArgs)
-                    : SupertypeGraph.SubstOwnerTvs(NullableGenericErasure.EraseNullableTv(slotRet0, isValue),
+                    : SupertypeGraph.SubstOwnerTvs(DeclaredSlot(slotRet0, isValue, physical: physicalProjection != null),
                         accessorKind != null ? selectedArgs : supArgs);
                 if (slotRet == null) continue;
                 if (accessorKind != null) slotReturnsValue = slotRet0 != null && !IsVoid(slotRet0);

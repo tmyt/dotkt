@@ -131,7 +131,7 @@ static class ForeignNullableGenericCrossing
         {
             if (defs.ContainsKey(spec.Name)) continue;   // declared here: erased consistently with its users
             var supArgs = spec.Args ?? Array.Empty<TypeNode>();
-            foreach (var m in ReflectedSlots(spec))
+            foreach (var m in ReflectedSlots(spec, refs))
             {
                 var ps = m.Params.Select(p => SupertypeGraph.SubstOwnerTvs(p, supArgs)).ToArray();
                 var ret = m.Ret == null ? null : SupertypeGraph.SubstOwnerTvs(m.Ret, supArgs);
@@ -141,6 +141,7 @@ static class ForeignNullableGenericCrossing
                     {
                         Name = m.Name, Owner = m.Owner ?? spec.Name, Arity = m.Arity, Params = ps, Ret = ret,
                         PhysicalOwner = m.PhysicalOwner,
+                        SuspendResult = m.SuspendResult,
                     };
                 if (m.Implemented) slot.Implemented = true;
             }
@@ -170,6 +171,7 @@ static class ForeignNullableGenericCrossing
         public TypeNode[] Params;
         public TypeNode Ret;
         public bool Implemented;
+        public bool SuspendResult;
     }
 
     // The virtual slots a referenced type DECLARES, in this pass's vocabulary, read off its OPEN definition. Cached
@@ -193,7 +195,7 @@ static class ForeignNullableGenericCrossing
     // hands a class its inherited members too, and the message must name the type that states the slot.
     static readonly Dictionary<string, Slot[]> ReflectedSlotCache = new(StringComparer.Ordinal);
 
-    static Slot[] ReflectedSlots(TypeNode.Fqn spec)
+    static Slot[] ReflectedSlots(TypeNode.Fqn spec, ReferenceMetadataIndex refs)
     {
         var cacheKey = spec.Name + "`" + (spec.Args?.Length ?? 0);
         if (ReflectedSlotCache.TryGetValue(cacheKey, out var cached)) return cached;
@@ -217,6 +219,7 @@ static class ForeignNullableGenericCrossing
                     Params = m.GetParameters().Select(p => ClrMemberResolution.MemberSigOf(p.ParameterType)).ToArray(),
                     Ret = m.ReturnType == typeof(void) ? null : ClrMemberResolution.MemberSigOf(m.ReturnType),
                     Implemented = !m.IsAbstract,
+                    SuspendResult = refs.HasLogicalSuspendResult(m),
                 };
                 result.Add(slot);
                 // The interface member an explicit implementation fills. Its own name is qualified, so without this
@@ -227,6 +230,7 @@ static class ForeignNullableGenericCrossing
                     {
                         Name = slot.Name[(dot + 1)..], Owner = slot.Owner, Arity = slot.Arity,
                         PhysicalOwner = slot.PhysicalOwner, Params = slot.Params, Ret = slot.Ret, Implemented = true,
+                        SuspendResult = slot.SuspendResult,
                     });
             }
             catch (Exception e) when (e is NotSupportedException or TypeLoadException or FileNotFoundException) { }
@@ -254,7 +258,12 @@ static class ForeignNullableGenericCrossing
         for (var i = 0; i < slot.Params.Length; i++)
             if (NullableGenericErasure.ErasureWouldMove(slot.Params[i]))
                 return ("parameter " + i, slot.Params[i]);
-        if (slot.Ret != null && NullableGenericErasure.ErasureWouldMove(slot.Ret)) return ("return", slot.Ret);
+        // A trusted suspend MethodDef wraps its result in Task as compiler ABI. The result remains a Kotlin
+        // return slot, not a Kotlin-authored generic argument; nullable values are representable in that slot.
+        var result = slot.SuspendResult && slot.Ret is TypeNode.Fqn
+            { Name: "System.Threading.Tasks.Task" or "System.Threading.Tasks.Task`1", Args.Length: 1 } task
+                ? task.Args[0] : slot.Ret;
+        if (result != null && NullableGenericErasure.ErasureWouldMove(result)) return ("return", result);
         return null;
     }
 

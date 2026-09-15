@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Nullable struct suspend results retain their CLR representation (#739).** Task results and coroutine
+  completion preserve nullable value types, including constructed structs and interface implementations.
+
 - **Abstract enum methods retain suspend declarations (#738).** Abstract declarations on enum bases use
   the common method emitter, preserving suspend and generic facts for local and cross-DLL calls.
 
