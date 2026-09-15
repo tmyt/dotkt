@@ -160,6 +160,12 @@ static partial class SuspendColdLowering
         return call;
     }
     static bool IsUnitTn(TypeNode t) => t is TypeNode.Fqn { Args: null, Name: "void" or "kotlin.Unit" };
+
+    // Reference nullability is metadata, but a nullable CLR value needs its wrapper in every result slot.
+    // The oracle handles constructed structs as well as primitives and enums.
+    static TypeNode ResultStorageType(TypeNode type) => type is TypeNode.Nullable nullable
+        && !(nullable.Of is TypeNode.Fqn value && _isValueFqn(value))
+            ? nullable.Of : type;
     static bool IsAnyTn(TypeNode t) => t is TypeNode.Fqn { Args: null, Name: "kotlin.Any" };
     // #151 — the suspend RESULT type is `kotlin.Nothing` (`suspend fun f(): Nothing`, incl. `Nothing?` — the outer `?`
     // is peeled onto _resultNullable, leaving a bare `kotlin.Nothing`). The Task<Nothing> bridge return must carry the
@@ -1195,7 +1201,7 @@ static partial class SuspendColdLowering
         readonly string _smType;                 // bare SM type name
         readonly TypeNode _smTypeInst;           // instantiated (`f$sm<T>`) or bare when non-generic
         readonly string _coldName;
-        readonly TypeNode _resultType;           // Kotlin resultType, OUTER `?` stripped (VoidTn for Unit)
+        readonly TypeNode _resultType;           // result storage type, preserving nullable CLR values
         readonly TypeNode _taskResultType;       // explicitly selected physical Task<T> result, else _resultType
         readonly string _logicalSuspendResult;  // exact pre-CLR TypeNode payload for the public Task MethodDef
         readonly bool _resultNullable;           // the suspend fn's result had an outer `?` (#37/#48: read off the type node)
@@ -1284,8 +1290,8 @@ static partial class SuspendColdLowering
             // still fail the final MethodDef check instead of receiving a hash or traversal-order suffix.
             _coldName = (_explicitClrName ?? name) + "$dotkt_suspend";
             // #37/#48: the result nullability now rides the `suspendRet` TYPE NODE (`{t:nullable,of:R}`), not a retired
-            // scalar `retNullable` flag. Strip the outer `?` so `_resultType` is the bare R (as it always was for the
-            // reference case) and record it in `_resultNullable` for the Task-bridge NRT walk.
+            // scalar `retNullable` flag. Reference nullability rides the Task-bridge NRT walk; nullable value
+            // results retain their physical wrapper for both cold completion and the public Task bridge.
             var suspendRetRaw = TypeJson.Read(m["suspendRet"]);
             // #86: a `suspend fun <T> f(): T?` had its result object-erased before this pass ran, so `suspendRet`
             // reads a bare `object` and the outer `?` is no longer visible on it. The pre-erasure result was stashed
@@ -1298,7 +1304,7 @@ static partial class SuspendColdLowering
                 ?? throw new InvalidOperationException("suspend declaration has no logical result");
             _resultNullable = suspendRetRaw is TypeNode.Nullable
                 || TypeNode.Parse(_logicalSuspendResult) is TypeNode.Nullable;
-            _resultType = (suspendRetRaw is TypeNode.Nullable srn ? srn.Of : suspendRetRaw) ?? VoidTn;
+            _resultType = ResultStorageType(suspendRetRaw) ?? VoidTn;
             _taskResultType = TypeJson.Read(m[KotlinPropertyAccessors.SuspendTaskResultKey]) ?? _resultType;
             _params = (m["params"] as JsonArray)?.OfType<JsonObject>().ToList() ?? new List<JsonObject>();
             _extensionReceiverName = _params.FirstOrDefault() is JsonObject first
@@ -1430,7 +1436,7 @@ static partial class SuspendColdLowering
             _smType = smName;
             _coldName = null;
             _resultNullable = resultType is TypeNode.Nullable;
-            _resultType = (resultType is TypeNode.Nullable lrn ? lrn.Of : resultType) ?? VoidTn;
+            _resultType = ResultStorageType(resultType) ?? VoidTn;
             _params = lambdaParams ?? new List<JsonObject>();
             _methodTypeParamDecls = new JsonArray(allTypeParamDecls.Skip(ownerTypeParamCount)
                 .Select(p => p?.DeepClone()).ToArray());

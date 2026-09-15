@@ -420,17 +420,21 @@ static class KotlinOverrideSlotBridge
                 var methodArity = (slot["typeParams"] as JsonArray)?.Count ?? 0;
                 // `Subst(Erase(declared), typeArgs)` and never `Erase(Subst(...))` — a substituted `Nullable(kotlin.Int)`
                 // has no type variable left to erase and would state the wrong slot. The erasure is idempotent, so
-                // this reads the same slot before the sweep has run and after.
+                // this reads the same slot before the sweep has run and after. Once physical bridges run,
+                // generated signatures already own their CLR ABI: in particular Task<Nullable<V>> was introduced
+                // by suspend lowering, not by a Kotlin generic instantiation, and must not be erased again.
+                TypeNode DeclaredSlot(TypeNode type) => phase == Phase.PhysicalBridges
+                    ? type : NullableGenericErasure.EraseNullableTv(type, isValue);
                 var rawSlotParams = slotParamNodes.OfType<JsonObject>()
                     .Select(p => TypeJson.Read(p["type"])).ToArray();
                 var semanticSlotParams = rawSlotParams
                     .Select(t => t == null ? null : SupertypeGraph.SubstOwnerTvs(t, supArgs)).ToArray();
                 var slotParams = rawSlotParams
                     .Select(t => t == null ? null : SupertypeGraph.SubstOwnerTvs(
-                        NullableGenericErasure.EraseNullableTv(t, isValue), supArgs)).ToArray();
+                        DeclaredSlot(t), supArgs)).ToArray();
                 var slotRet0 = TypeJson.Read(slot["ret"]);
                 if (slotParams.Any(p => p == null) || slotRet0 == null) continue;
-                var slotRet = SupertypeGraph.SubstOwnerTvs(NullableGenericErasure.EraseNullableTv(slotRet0, isValue), supArgs);
+                var slotRet = SupertypeGraph.SubstOwnerTvs(DeclaredSlot(slotRet0), supArgs);
                 var slotReturnsValue = !IsVoid(slotRet0) || Bool(slot[BirTypeLowering.ValueReturnKey]);
 
                 KotlinPropertyAccessors.TryIdentity(slot, out var propertyName, out var accessorKind);
