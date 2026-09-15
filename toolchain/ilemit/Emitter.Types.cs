@@ -92,13 +92,17 @@ sealed partial class Emitter
     Type ConstructGeneric(string name, DotKt.Bir.TypeNode[] args)
     {
         var mapped = args.Select(a => RequireGenericArgument(MapType(a), a)).ToArray();
-        if (_types.TryGetValue(name, out var oti)) return ConstructedType(oti.AsType, mapped);
+        return ConstructedType(GenericDefinition(name, args.Length), mapped);
+    }
+
+    Type GenericDefinition(string name, int arity)
+    {
+        if (_types.TryGetValue(name, out var oti)) return oti.AsType;
         // A NESTED generic whose arity backtick rides an OUTER type already carries a backtick in `name` (e.g. the #3
         // generic ConfigureAwait(false) awaiter `System...ConfiguredTaskAwaitable`1+ConfiguredTaskAwaiter` — arity `1 is
         // on the OUTER ConfiguredTaskAwaitable, the nested awaiter has none). Appending a SECOND arity suffix here yields
         // `...ConfiguredTaskAwaiter`1`, which ResolveType can't find — the name is already arity-complete, use it verbatim.
-        var open = name.Contains('`') ? ResolveType(name) : ResolveType(name + "`" + mapped.Length);
-        return ConstructedType(open, mapped);
+        return name.Contains('`') ? ResolveType(name) : ResolveType(name + "`" + arity);
     }
 
     // A `tv` (scope + flattened index) -> the CLR generic-parameter builder: scope "method" -> the method's own params

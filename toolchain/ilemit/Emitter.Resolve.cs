@@ -768,7 +768,7 @@ sealed partial class Emitter
         // Reference nullability is metadata-only and not part of ECMA-335 member identity. Value nullability is the
         // physical `System.Nullable<T>` type and therefore must remain in the key: `Compare(Int?, Int?)` and the
         // synthesized `Compare(Int, Int)` interface bridge are real overloads, not duplicate declarations.
-        DotKt.Bir.TypeNode.Nullable n => IsValueType(MapType(n.Of))
+        DotKt.Bir.TypeNode.Nullable n => IsSignatureValueType(n.Of)
             ? "nullable[" + SigCanon(n.Of) + "]"
             : SigCanon(n.Of),
         DotKt.Bir.TypeNode.Oblivious o => SigCanon(o.Of),
@@ -784,7 +784,7 @@ sealed partial class Emitter
         DotKt.Bir.TypeNode.Tv tv => "gp:" + tv.Scope + ":" + tv.I,
         DotKt.Bir.TypeNode.Fn fn => (fn.Suspend ? "sfunc:" : "func:") + DefinitionSigCanon(fn.Ret) + ":" +
             string.Join(",", fn.DelegateParams.Select(DefinitionSigCanon)),
-        DotKt.Bir.TypeNode.Nullable n => IsValueType(MapType(n.Of))
+        DotKt.Bir.TypeNode.Nullable n => IsSignatureValueType(n.Of)
             ? "nullable[" + DefinitionSigCanon(n.Of) + "]"
             : DefinitionSigCanon(n.Of),
         DotKt.Bir.TypeNode.Oblivious o => DefinitionSigCanon(o.Of),
@@ -792,6 +792,13 @@ sealed partial class Emitter
         DotKt.Bir.TypeNode.ByRef b => "byref:" + DefinitionSigCanon(b.Of),
         _ => "object",
     };
+
+    // Signature indexing precedes creation of the MethodDef's generic-parameter builders. A constructed
+    // type's value/reference classification belongs to its TypeDef, independent of its arguments. Resolve
+    // that definition without trying to instantiate method variables in a frame that does not exist yet.
+    bool IsSignatureValueType(DotKt.Bir.TypeNode type) => type is DotKt.Bir.TypeNode.Fqn { Args: not null } f
+        ? IsValueType(GenericDefinition(f.Name, f.Args.Length))
+        : IsValueType(MapType(type));
 
     static string SigFqn(string name) => name switch
     {
