@@ -86,19 +86,13 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   arbitrary arity and mixed masks such as `Pair<*, String>`, and is hidden when the DLL is re-imported. Trusted
   `[KotlinType]` metadata records the semantic owner and projected declaration types; the carrier's allocated CLR
   name has no meaning and is chosen collision-free.
-- **Kotlin-owned generic reference types use the same nominal existential value representation.** CLR classes
-  are invariant even when Kotlin declares `class G<out T>` or `class G<in T>`. Nullable substitution also crosses
-  invariant constructions: an open `G<T?>` can allocate `G<object>` while a concrete `G<String?>` allocates
-  `G<string>`. An existing object cannot be retyped or copied without changing identity and mutation semantics.
-  Every ordinary parameter, return, field, property, local, and nested value position carrying an emitted Kotlin
-  generic class or interface `G<X>` therefore uses its non-generic nominal interface. The source type and constraints
-  remain in Kotlin metadata; native foreign CLR generics are not retrofitted with these interfaces.
-  Construction and inheritance remain exact closed CLR types: a `new G<String>`, a base TypeSpec, lexical
+- **Declaration-site variance on a Kotlin class uses the same nominal existential value representation.** CLR classes
+  are invariant even when Kotlin declares `class G<out T>` or `class G<in T>`, so every ordinary parameter, return,
+  field, property, local, and nested value position carrying `G<X>` uses the declaration's non-generic existential
+  interface. Construction and inheritance remain exact closed CLR types: a `new G<String>`, a base TypeSpec, lexical
   `this`, an inner class's hidden enclosing-instance slot, and compiler-generated storage for that receiver retain
   `G<T>`. kotc identifies the lexical-receiver role structurally in transient BIR; bir2cir consumes it while choosing
   the CLR representation and removes it before CIR. No generated or user source name is treated as an ABI oracle.
-  A C# consumer sees that compiler-generated interface in projected value slots. This is generated internal ABI,
-  not a promise that a Kotlin `G<X>` parameter is exposed as the closed CLR class `G<X>`.
 - **Generic members retain owner-dependent Kotlin constraints as metadata, not CLR constraint rows.**
   For `G<in T>.f<R : T>` and constructed bounds such as `R : I<T>`, the receiver's exact CLR construction need not
   express the source view's subtype relation, particularly when Kotlin variance crosses a value-type argument.
@@ -1991,7 +1985,7 @@ member's own slot is not the compiler's to do. The exception, its cost and what 
 `X` "may be a value type" means **any** type variable, or a concrete value type (a constructed `KeyValuePair<K,V>`
 counts, exactly as `Int` does). Concretely:
 
-| Kotlin | CLR scalar / generic-argument representation before nominal value projection |
+| Kotlin | CLR |
 |---|---|
 | `fun f(x: Int?)`, `fun f(): Int?`, `val x: Int?` | `Nullable<int32>` — the direct slot is unchanged |
 | `fun <T> f(x: T?)` | `object` — no CLR slot expresses an unconstrained `T?` |
@@ -2046,15 +2040,18 @@ This test is against the emitted CLR shape, not Kotlin call syntax: a rich enum 
 does not satisfy a CLR `System.Enum` row, while a constructor whose arguments are all defaulted is still not a CLR
 parameterless constructor unless the emitted metadata contains a public zero-parameter `.ctor`.
 
-**Restoring the surface is only half of consuming it.** The argument-erasure rule determines the actual generic
-construction, but cannot by itself reconcile every value flow: `Slot<T?>` and `Slot<String?>` can allocate unrelated
-invariant `Slot<object>` and `Slot<string>` objects. Retyping a construction does not solve a call that passes an
-already existing, aliased value. Kotlin-owned generic reference values therefore use the nominal interface described
-in §2, implemented by both constructions. Calls, fields, returns, generic bounds, and nested value positions agree
-on that interface without copying or changing object identity; member dispatch explicitly converts the scalar payload.
-The exported Kotlin type is the earliest recorded declaration type, not the intermediate object-erased signature.
-Constructors and inheritance still name their real CLR constructions, and an authoritative foreign CLR declaration
-continues to own its physical slots. This distinction applies equally within a module and across a DLL boundary.
+**Restoring the surface is only half of consuming it.** A consumer that re-imports `unwrapSlot(slot: Slot<T?>)` writes
+`unwrapSlot(Slot<Int?>(5))`, and `Slot<Nullable<int32>>` is not the `Slot<object>` the producer's slot actually is —
+those are unrelated invariant reified generics that no cast reconciles. So the same carrier is read a second time, by
+`bir2cir`, to type the consumer's *use* as `Subst(Erase(declared), typeArgs)`: the construction is built as
+`Slot<object>` instead of being built wrongly and converted afterwards. The rule is the one above with no
+cross-module exception — a slot's physical type is a function of its declaration, wherever that declaration lives.
+
+This construction alignment does not solve all nullable substitutions. In particular, an existing `Slot<String?>`
+has physical type `Slot<string>` and cannot flow into a slot erased to `Slot<object>` without an invalid cast or
+loss of identity. This is an unresolved compiler defect tracked by #752, not undefined user behavior. Projecting
+every invariant value to an existential interface is not a valid general fix: exact CLR fields, managed references,
+and constructor signatures must continue to agree with their declared types.
 
 What this is observable as:
 

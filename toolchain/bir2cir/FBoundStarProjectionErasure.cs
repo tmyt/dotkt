@@ -674,7 +674,7 @@ static class FBoundStarProjectionErasure
             if (parameters[index] is not JsonObject parameter
                 || parameter["constraints"] is not JsonArray constraints
                 || !constraints.Any(constraint => TypeJson.Read(constraint) is TypeNode type
-                    && (ContainsUseSiteProjection(type) || ContainsKotlinGenericValue(type, owners, refs)))) continue;
+                    && (ContainsUseSiteProjection(type) || ContainsKotlinVariantClass(type, owners, refs)))) continue;
             bounds[index.ToString()] = constraints.DeepClone();
         }
         return bounds;
@@ -731,7 +731,7 @@ static class FBoundStarProjectionErasure
         if (declaration[fact] != null || TypeJson.Read(declaration[slot]) is not TypeNode type
             || (!ContainsExistentialProjection(type)
                 && !ContainsWritableVariantArray(type, owners, refs)
-                && !ContainsKotlinGenericValue(type, owners, refs)))
+                && !ContainsKotlinVariantClass(type, owners, refs)))
             return;
         // Nullable erasure may already have moved a declaration or an override slot. The next representation
         // change must retain that recorded Kotlin surface, not publish the intermediate CLR argument types.
@@ -739,23 +739,23 @@ static class FBoundStarProjectionErasure
         declaration[fact] = original ?? TypeNode.ToJson(type);
     }
 
-    static bool ContainsKotlinGenericValue(TypeNode type,
+    static bool ContainsKotlinVariantClass(TypeNode type,
         IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs) => type switch
     {
-        TypeNode.Fqn f => RequiresKotlinGenericValueCarrier(f, owners, refs)
-            || f.Args?.Any(argument => ContainsKotlinGenericValue(argument, owners, refs)) == true,
-        TypeNode.Nullable nullable => ContainsKotlinGenericValue(nullable.Of, owners, refs),
-        TypeNode.Oblivious oblivious => ContainsKotlinGenericValue(oblivious.Of, owners, refs),
-        TypeNode.Projection projection => ContainsKotlinGenericValue(projection.Of, owners, refs),
-        TypeNode.Array array => ContainsKotlinGenericValue(array.Elem, owners, refs),
-        TypeNode.ByRef byRef => ContainsKotlinGenericValue(byRef.Of, owners, refs),
-        TypeNode.Ptr pointer => ContainsKotlinGenericValue(pointer.Of, owners, refs),
-        TypeNode.Mod modifier => ContainsKotlinGenericValue(modifier.M, owners, refs)
-            || ContainsKotlinGenericValue(modifier.Of, owners, refs),
-        TypeNode.Fn function => ContainsKotlinGenericValue(function.Ret, owners, refs)
-            || function.Params.Any(parameter => ContainsKotlinGenericValue(parameter, owners, refs))
-            || function.Recv != null && ContainsKotlinGenericValue(function.Recv, owners, refs)
-            || function.Ctx?.Any(context => ContainsKotlinGenericValue(context, owners, refs)) == true,
+        TypeNode.Fqn f => RequiresKotlinVariantClassCarrier(f, owners, refs)
+            || f.Args?.Any(argument => ContainsKotlinVariantClass(argument, owners, refs)) == true,
+        TypeNode.Nullable nullable => ContainsKotlinVariantClass(nullable.Of, owners, refs),
+        TypeNode.Oblivious oblivious => ContainsKotlinVariantClass(oblivious.Of, owners, refs),
+        TypeNode.Projection projection => ContainsKotlinVariantClass(projection.Of, owners, refs),
+        TypeNode.Array array => ContainsKotlinVariantClass(array.Elem, owners, refs),
+        TypeNode.ByRef byRef => ContainsKotlinVariantClass(byRef.Of, owners, refs),
+        TypeNode.Ptr pointer => ContainsKotlinVariantClass(pointer.Of, owners, refs),
+        TypeNode.Mod modifier => ContainsKotlinVariantClass(modifier.M, owners, refs)
+            || ContainsKotlinVariantClass(modifier.Of, owners, refs),
+        TypeNode.Fn function => ContainsKotlinVariantClass(function.Ret, owners, refs)
+            || function.Params.Any(parameter => ContainsKotlinVariantClass(parameter, owners, refs))
+            || function.Recv != null && ContainsKotlinVariantClass(function.Recv, owners, refs)
+            || function.Ctx?.Any(context => ContainsKotlinVariantClass(context, owners, refs)) == true,
         _ => false,
     };
 
@@ -1333,18 +1333,16 @@ static class FBoundStarProjectionErasure
         return HasKotlinVariantParameter(application, refs.OwnerTypeParamDeclarations(application.Name));
     }
 
-    // Nullable substitution can change an invariant CLR construction too: G<T?> is allocated at object while a
-    // concrete G<String?> can be allocated at string. Retyping a new expression cannot reconcile existing or aliased
-    // objects. Use the declaration's identity-preserving nominal interface for every Kotlin generic value slot,
-    // retaining the source type in [KotlinType]. Constructors and inheritance edges keep exact CLR constructions.
-    static bool RequiresKotlinGenericValueCarrier(TypeNode.Fqn application,
+    // CLR permits declaration-site variance only on interfaces and delegates. A Kotlin class may nevertheless declare
+    // out/in, requiring its identity-preserving nominal interface for value slots. Invariant constructions must remain
+    // exact: projecting them loses native field/ref storage and can collapse distinct constructor signatures.
+    static bool RequiresKotlinVariantClassCarrier(TypeNode.Fqn application,
         IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs)
     {
         if (application.Args is not { Length: > 0 }) return false;
         if (owners.TryGetValue(application.Name, out var local) && local.Def != null)
-            return Str(local.Def["kind"]) is "class" or "interface";
-        if (refs.TryExistentialPhysicalOwner(application.Name, out _))
-            return true;
+            return Str(local.Def["kind"]) == "class"
+                && HasKotlinVariantParameter(application, local.Def["typeParams"] as JsonArray);
         if (!HasKotlinVariantParameter(
                 application, refs.OwnerTypeParamDeclarations(application.Name))) return false;
         var arity = application.Args.Length;
@@ -1381,7 +1379,6 @@ static class FBoundStarProjectionErasure
             case TypeNode.Fqn { Args: { } args } f:
                 if (owners.TryGetValue(f.Name, out var owner)
                     && (runtimeClassifier || args.Any(IsExistentialArgument)
-                        || Str(owner.Def?["kind"]) is "class" or "interface"
                         || Str(owner.Def?["kind"]) == "class"
                             && HasKotlinVariantParameter(f, owner.Def?["typeParams"] as JsonArray)))
                     owner.Needed = true;
@@ -3162,7 +3159,7 @@ static class FBoundStarProjectionErasure
         // Constructing an inner class through an ordinary value slot must therefore use the carrier's generated
         // factory too: casting G$star back to one guessed G<X> would fail for a value widened from G<Y>. A lexical
         // receiver and a direct construction retain their exact closed owner and stay on the ordinary `new` path.
-        var variantOuter = !exactOuterValue && RequiresKotlinGenericValueCarrier(selectedOuter, owners, refs);
+        var variantOuter = !exactOuterValue && RequiresKotlinVariantClassCarrier(selectedOuter, owners, refs);
         if (!variantOuter && (suppliedOuter == null || !ContainsExistential(suppliedOuter,
                 existentialTypeParameters, existentialMethodParameters))) return;
 
@@ -3783,7 +3780,7 @@ static class FBoundStarProjectionErasure
         var lexicalReceiver = call["recv"] is JsonObject receiver
             && (Str(receiver["k"]) == "this" || Bool(receiver[ExactOuterKey]));
         var kotlinVariantClassOwner = !lexicalReceiver
-            && RequiresKotlinGenericValueCarrier(f, owners, refs);
+            && RequiresKotlinVariantClassCarrier(f, owners, refs);
         var erasedSmartCast = call["recv"] is JsonObject recv && Str(recv["k"]) == "cast"
             && TypeJson.Read(recv["type"]) is TypeNode.Fqn { Args: { } castArgs } castF
             && castF.Name == f.Name
@@ -4265,7 +4262,7 @@ static class FBoundStarProjectionErasure
             case TypeNode.Fqn preserved when preserveConstructedHead:
                 return preserved;
             case TypeNode.Fqn f when !boundDeclaration
-                && RequiresKotlinGenericValueCarrier(f, owners, refs)
+                && RequiresKotlinVariantClassCarrier(f, owners, refs)
                 && TryExistentialCarrier(f.Name, owners, refs, out var variantClassCarrier):
                 return new TypeNode.Fqn(variantClassCarrier);
             case TypeNode.Fqn { Args: { } nestedArgs } nestedForeign
