@@ -3731,7 +3731,9 @@ sealed partial class ReferenceMetadataIndex
                         : DeclaredSlot(member.NullableGenericRet, member.ReturnTypeNode);
                 declaredParams = new SlotFact[argCount];
                 for (var i = 0; i < argCount; i++)
-                    declaredParams[i] = propertyName == null
+                    declaredParams[i] = selectedPhysicalMember != null
+                        ? new SlotFact(member.ParamTypeNodes[i], false)
+                        : propertyName == null
                         ? includeUnchangedMethod
                             ? new SlotFact(member.NullableGenericParams?[i] ?? member.ParamTypeNodes[i], false)
                             : DeclaredSlot(member.NullableGenericParams?[i], member.ParamTypeNodes[i])
