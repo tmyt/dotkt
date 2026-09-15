@@ -7,8 +7,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
-- **Abstract enum methods retain suspend declarations (#738).** Enum entries use the same complete method
-  declarations as ordinary classes, preserving suspend and generic facts for local and cross-DLL calls.
+- **Abstract enum methods retain suspend declarations (#738).** Abstract declarations on enum bases use
+  the common method emitter, preserving suspend and generic facts for local and cross-DLL calls.
 
 - **Read-only captures observe enclosing variable updates (#736).** Mutable locals share storage when written
   in their declaring scope or through managed references, even if local classes, objects, lambdas, and local

@@ -17,3 +17,16 @@ enum class SuspendEcho {
     VALUE { override suspend fun <T> read(gate: EnumGate<T>): T = gate.await() };
     abstract suspend fun <T> read(gate: EnumGate<T>): T
 }
+
+interface EnumReader { suspend fun read(): String }
+enum class InheritedSuspendReader : EnumReader {
+    FIRST { override suspend fun read(): String = "first" },
+    SECOND { override suspend fun read(): String = "second" }
+}
+
+enum class BoundedSuspendEcho {
+    VALUE {
+        override suspend fun <T : Comparable<T>> read(gate: EnumGate<T>): T = gate.await()
+    };
+    abstract suspend fun <T : Comparable<T>> read(gate: EnumGate<T>): T
+}
