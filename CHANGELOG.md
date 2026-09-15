@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Backing-field renaming respects field shadowing (#725).** Anonymous captures and plain fields retain their
+  own storage when a base class declares a same-named property, avoiding invalid private-field access.
+
 - **Generic mutable captures preserve their lexical frame (#724).** Capture cells carry explicit Kotlin type
   parameters and use-site arguments, including across nested anonymous classes and local functions.
 
