@@ -21,3 +21,5 @@ interface KeyChild<K> : KeyRoot<K> { override val key: K }
 class KeyImpl<K>(override val key: K) : KeyChild<K> {
     override val marker: Int get() = 1
 }
+
+fun readLocalMarker(value: KeyRoot<String>): Int = value.marker

@@ -15,6 +15,7 @@ class NullableInvariantFlowTests {
         assertEquals("key", child.key)
         assertEquals("key", root.key)
         assertEquals(1, root.marker)
+        assertEquals(1, readLocalMarker(root))
         val integerRoot: KeyRoot<Int> = KeyImpl(23)
         assertEquals(23, integerRoot.key)
     }

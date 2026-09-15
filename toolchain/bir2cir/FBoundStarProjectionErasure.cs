@@ -3795,8 +3795,9 @@ static class FBoundStarProjectionErasure
             CloseDeclarationResult(TypeJson.Read(declaration["ret"]));
             BindOwner(declaring.ErasedName);
             call["virtual"] = true; // erased owner is an interface; CIR must carry callvirt explicitly
-            if (ContainsOwnerTvInSignature(declaration) || !IsPublic(declaration))
-                call["method"] = StarMethodName(declaring, declaration);
+            call["method"] = ContainsOwnerTvInSignature(declaration) || !IsPublic(declaration)
+                ? StarMethodName(declaring, declaration)
+                : Str(declaration["name"]);
             call["sig"] = ErasedPhysicalSignature(declaration, owners, refs);
             MarkPhysicalPropertyCall(call, propertyCall, sourcePropertyName, accessorKind,
                 ExistentialSlotIdentity(declaration, declaring.Name));
