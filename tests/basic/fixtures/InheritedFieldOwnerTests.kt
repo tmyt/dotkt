@@ -14,6 +14,15 @@ open class InheritedFieldMiddle<A, B>(seed: B) : InheritedPlainBase<B>(seed)
 
 class InheritedFieldOwnerTests {
     @TestAttribute
+    fun boundReceiversKeepTheSelectedBaseField() {
+        fun <T, U : InheritedFieldMiddle<Int, T>> readBound(instance: U): T = instance.value
+        val text = InheritedFieldMiddle<Int, String>("text")
+        val number = InheritedFieldMiddle<Int, Int>(42)
+        assertEquals("text", readBound(text))
+        assertEquals(42, readBound(number))
+    }
+
+    @TestAttribute
     fun anonymousCaptureDoesNotReplaceInheritedLateinit() {
         fun make(value: String) {
             val instance = object : InheritedLateinitBase(value) {
@@ -65,17 +74,19 @@ class InheritedFieldOwnerTests {
 
     @TestAttribute
     fun transitiveGenericOwnerUsesBaseArgumentsNotReceiverArguments() {
-        fun <T> exercise(value: T) {
+        fun <T> exercise(value: T, next: T) {
             val instance = object : InheritedFieldMiddle<Int, T>(value) {
                 fun read(): T = this.value
                 fun write(next: T) { this.value = next }
                 fun capture(): T = value
             }
             assertEquals(value, instance.read())
-            instance.write(value)
+            instance.write(next)
+            assertEquals(next, instance.read())
+            assertEquals(next, (instance as InheritedPlainBase<T>).value)
             assertEquals(value, instance.capture())
         }
-        exercise("text")
-        exercise(42)
+        exercise("text", "changed")
+        exercise(42, 73)
     }
 }
