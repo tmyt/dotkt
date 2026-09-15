@@ -160,6 +160,8 @@ sealed partial class ReferenceMetadataIndex
     // receiver block's constraints verbatim; the coarser nullability/star-projection indexes below are insufficient
     // for F-bounds and the CLR class/struct/new() flags.
     readonly Dictionary<string, string> _ownerTypeParamDeclarations = new(StringComparer.Ordinal);
+    readonly Dictionary<string, NullableRepresentationFrame> _ownerNullableFrames = new(StringComparer.Ordinal);
+    public IReadOnlyDictionary<string, NullableRepresentationFrame> NullableTypeFrames => _ownerNullableFrames;
     // A referenced concrete type satisfies the CLR new() constraint exactly when it is a non-abstract reference type
     // with a public parameterless instance constructor, or any value type. This is a physical metadata fact used by
     // ExternalGenericConstraintValidation; Kotlin has no nominal upper bound that can encode it.
@@ -396,6 +398,8 @@ sealed partial class ReferenceMetadataIndex
         id != null && _declarationById.TryGetValue(id, out var binding)
             ? binding.NullableWitnessTypeParameterIndices
             : null;
+    public NullableRepresentationFrame NullableMethodFrame(string id) =>
+        id != null && _declarationById.TryGetValue(id, out var binding) ? binding.NullableFrame : null;
     public bool TryDeclarationFactory(
         string id,
         out string collectionKind,
@@ -699,6 +703,12 @@ sealed partial class ReferenceMetadataIndex
             foreach (var kv in asm.DotKt.TypeArity) _ownerArity[kv.Key] = kv.Value;
             foreach (var kv in asm.DotKt.TypeParamNames) _ownerTypeParams[kv.Key] = kv.Value;
             foreach (var kv in asm.DotKt.TypeParamDeclarations) _ownerTypeParamDeclarations[kv.Key] = kv.Value;
+            foreach (var kv in asm.DotKt.NullableFrames)
+            {
+                if (_ownerNullableFrames.TryGetValue(kv.Key, out var prior) && !SameFrame(prior, kv.Value))
+                    throw new InvalidOperationException($"Conflicting nullable representation frame for '{kv.Key}'");
+                _ownerNullableFrames[kv.Key] = kv.Value;
+            }
             foreach (var owner in asm.DotKt.PublicParameterlessConstructibleOwners)
                 _publicParameterlessConstructibleOwners.Add(owner);
             foreach (var owner in asm.DotKt.PublicParameterlessConstructiblePhysicalOwners)
@@ -1075,7 +1085,12 @@ sealed partial class ReferenceMetadataIndex
         && a.CollectionFactoryKind == b.CollectionFactoryKind && a.ArrayFactoryKind == b.ArrayFactoryKind
         && a.ArrayFactoryElementHint == b.ArrayFactoryElementHint
         && Same(a.SemanticReifiedTypeParameterIndices, b.SemanticReifiedTypeParameterIndices)
-        && Same(a.NullableWitnessTypeParameterIndices, b.NullableWitnessTypeParameterIndices);
+        && Same(a.NullableWitnessTypeParameterIndices, b.NullableWitnessTypeParameterIndices)
+        && SameFrame(a.NullableFrame, b.NullableFrame);
+
+    static bool SameFrame(NullableRepresentationFrame a, NullableRepresentationFrame b) =>
+        ReferenceEquals(a, b) || a != null && b != null && a.SourceArity == b.SourceArity
+            && a.NullableIndices.SequenceEqual(b.NullableIndices);
 
     static bool Same<T>(T[] a, T[] b) where T : IEquatable<T> =>
         ReferenceEquals(a, b) || a != null && b != null && a.SequenceEqual(b);
@@ -4642,6 +4657,15 @@ sealed partial class ReferenceMetadataIndex
                     if (type.IsGenericType)
                     {
                         var gargs = type.GetGenericArguments();
+                        if (dotKtAuthored && CarrierJsonOf(type.GetCustomAttributesData(), asm, KotlinSupertypesAttr)
+                                is JsonObject sourceFacts
+                            && sourceFacts[NullableRepresentationFrame.MetadataKey] is JsonNode frameNode)
+                        {
+                            var frame = ReadNullableFrame(frameNode, gargs.Length);
+                            metadata.NullableFrames[ownerFqn] = frame;
+                            metadata.NullableFrames[DottedFqn(ownerFqn)] = frame;
+                            metadata.NullableFrames[exactPhysicalOwner] = frame;
+                        }
                         metadata.TypeArity[ownerFqn] = gargs.Length;
                         metadata.TypeArity[DottedFqn(ownerFqn)] = gargs.Length;
                         metadata.TypeParamNames[ownerFqn] = gargs.Select(g => g.Name).ToArray();
@@ -4868,7 +4892,7 @@ sealed partial class ReferenceMetadataIndex
                             innerConstructorFactory?.Inner,
                             innerConstructorFactory?.Parameters,
                             innerConstructorFactory?.TypeArguments,
-                            SemanticMethodTypeParameters(method, dotKtAuthored)));
+                            SemanticMethodTypeParameters(method, dotKtAuthored), declarationIdentity?.NullableFrame));
                         // [KotlinInline] raw-BIR carrier (#71/#75 S1): decode the versioned carrier now (the codec is
                         // BirCarrier, shared) and key it owner|name|pc|ga so InlineSplice can splice this external inline
                         // fn's body at a cross-module call site. This carrier is compiler-internal ABI: an older or
@@ -5998,23 +6022,33 @@ sealed partial class ReferenceMetadataIndex
         string SourceAssociation);
     sealed record DeclarationIdentityPayloadInfo(string Id, string Name, TypeNode[] SemanticParams,
         TypeNode SemanticReturn, int[] SemanticReifiedTypeParameterIndices,
-        int[] NullableWitnessTypeParameterIndices);
+        int[] NullableWitnessTypeParameterIndices, NullableRepresentationFrame NullableFrame);
 
     static DeclarationIdentityPayloadInfo KotlinDeclarationIdentityPayload(
         IList<CustomAttributeData> attrs, Assembly declaringAssembly, int methodGenericArity = int.MaxValue)
     {
         var payload = CarrierJsonOf(attrs, declaringAssembly, KotlinDeclarationIdentityAttr) as JsonObject;
         if (payload == null) return null;
-        if (payload.Count is < 2 or > 5 ||
+        return ParseDeclarationIdentityPayload(payload, methodGenericArity);
+    }
+
+    static DeclarationIdentityPayloadInfo ParseDeclarationIdentityPayload(JsonObject payload, int methodGenericArity)
+    {
+        if (payload.Count is < 2 or > 6 ||
             payload["id"] is not JsonValue idValue || !idValue.TryGetValue<string>(out var id) ||
             payload["name"] is not JsonValue nameValue || !nameValue.TryGetValue<string>(out var name)
-            || payload.Any(kv => kv.Key is not ("id" or "name" or "signature" or "reified" or "nullableWitness"))
+            || payload.Any(kv => kv.Key is not ("id" or "name" or "signature" or "reified" or "nullableWitness" or NullableRepresentationFrame.MetadataKey))
             || payload["signature"] is JsonNode signature && signature is not JsonObject
             || payload["reified"] is JsonNode reifiedNode && reifiedNode is not JsonArray
             || payload["nullableWitness"] is JsonNode witnessNode && witnessNode is not JsonArray
             || string.IsNullOrEmpty(id) || string.IsNullOrEmpty(name))
             throw new InvalidDataException(
                 $"malformed [KotlinDeclarationIdentity] payload: {payload.ToJsonString()}");
+        var nullableFrame = payload[NullableRepresentationFrame.MetadataKey] is JsonNode frameNode
+            ? ReadNullableFrame(frameNode, methodGenericArity) : null;
+        if (nullableFrame != null && payload["signature"] == null)
+            throw new InvalidDataException("Nullable representation frame requires original Kotlin signature");
+        var sourceArity = nullableFrame?.SourceArity ?? methodGenericArity;
         var reified = payload["reified"] is JsonArray reifiedArray
             ? reifiedArray.Select(node => node is JsonValue value && value.TryGetValue<int>(out var index) && index >= 0
                 ? index
@@ -6023,7 +6057,7 @@ sealed partial class ReferenceMetadataIndex
             : Array.Empty<int>();
         if (reified.Distinct().Count() != reified.Length)
             throw new InvalidDataException("duplicate [KotlinDeclarationIdentity] reified index");
-        if (reified.Any(index => index >= methodGenericArity))
+        if (reified.Any(index => index >= sourceArity))
             throw new InvalidDataException("[KotlinDeclarationIdentity] reified index exceeds method generic arity");
         var nullableWitness = payload["nullableWitness"] is JsonArray witnessArray
             ? witnessArray.Select(node => node is JsonValue value && value.TryGetValue<int>(out var index) && index >= 0
@@ -6034,7 +6068,7 @@ sealed partial class ReferenceMetadataIndex
             : Array.Empty<int>();
         if (nullableWitness.Distinct().Count() != nullableWitness.Length)
             throw new InvalidDataException("duplicate [KotlinDeclarationIdentity] nullable-witness index");
-        if (nullableWitness.Any(index => index >= methodGenericArity))
+        if (nullableWitness.Any(index => index >= sourceArity))
             throw new InvalidDataException(
                 "[KotlinDeclarationIdentity] nullable-witness index exceeds method generic arity");
         TypeNode[] semanticParams = null;
@@ -6063,7 +6097,15 @@ sealed partial class ReferenceMetadataIndex
             }
         }
         return new DeclarationIdentityPayloadInfo(
-            id, name, semanticParams, semanticReturn, reified, nullableWitness);
+            id, name, semanticParams, semanticReturn, reified, nullableWitness, nullableFrame);
+    }
+
+    static NullableRepresentationFrame ReadNullableFrame(JsonNode node, int physicalArity)
+    {
+        var frame = NullableRepresentationFrame.Read(node);
+        if (physicalArity != int.MaxValue && frame.PhysicalArity != physicalArity)
+            throw new InvalidDataException("Nullable representation frame disagrees with declared CLR generic arity");
+        return frame;
     }
 
     static PropertyAccessorPayloadInfo KotlinPropertyAccessorPayload(
@@ -6951,6 +6993,32 @@ sealed partial class ReferenceMetadataIndex
 
     internal static void SelfTest()
     {
+        var nullableFrame = new NullableRepresentationFrame(1, new[] { 0 });
+        var sourceReturn = new TypeNode.Nullable(new TypeNode.Tv("method", 0));
+        var framePayload = new JsonObject {
+            ["id"] = "frame-test", ["name"] = "sourceMethod",
+            ["signature"] = new JsonObject { ["params"] = new JsonArray(), ["ret"] = TypeJson.Write(sourceReturn) },
+            ["reified"] = new JsonArray(0), ["nullableWitness"] = new JsonArray(0),
+            [NullableRepresentationFrame.MetadataKey] = nullableFrame.ToJson(),
+        };
+        var parsedFrame = ParseDeclarationIdentityPayload(framePayload, 2);
+        if (!SameFrame(parsedFrame.NullableFrame, nullableFrame) || parsedFrame.SemanticReturn != sourceReturn)
+            throw new InvalidOperationException("Reference metadata reader lost nullable frame or original signature");
+        void MustRejectFrame(Action action)
+        {
+            try { action(); }
+            catch (InvalidDataException) { return; }
+            throw new InvalidOperationException("Reference metadata reader accepted inconsistent current frame");
+        }
+        MustRejectFrame(() => ParseDeclarationIdentityPayload(framePayload, 1));
+        var outOfRange = (JsonObject)framePayload.DeepClone();
+        outOfRange["reified"] = new JsonArray(1);
+        MustRejectFrame(() => ParseDeclarationIdentityPayload(outOfRange, 2));
+        var noSignature = (JsonObject)framePayload.DeepClone();
+        noSignature.Remove("signature");
+        MustRejectFrame(() => ParseDeclarationIdentityPayload(noSignature, 2));
+        if (!SameFrame(ReadNullableFrame(nullableFrame.ToJson(), 2), nullableFrame))
+            throw new InvalidOperationException("Type frame metadata reader lost explicit correspondence");
         var reflectedTypeParameter = typeof(List<>).GetGenericArguments()[0];
         var reflectedArrays = new[]
         {
@@ -7245,6 +7313,7 @@ sealed class ReferenceDotKtMetadata
     public readonly Dictionary<string, int> TypeArity = new(StringComparer.Ordinal);       // ownerFqn -> generic arity
     public readonly Dictionary<string, string[]> TypeParamNames = new(StringComparer.Ordinal); // ownerFqn -> generic param names
     public readonly Dictionary<string, string> TypeParamDeclarations = new(StringComparer.Ordinal); // ownerFqn -> exact descriptor array JSON
+    public readonly Dictionary<string, NullableRepresentationFrame> NullableFrames = new(StringComparer.Ordinal);
     public readonly HashSet<ReferenceMetadataIndex.OwnerTypeIdentity> PublicParameterlessConstructibleOwners = new();
     public readonly HashSet<string> PublicParameterlessConstructiblePhysicalOwners = new(StringComparer.Ordinal);
     public readonly Dictionary<string, TypeNode[]> CtorParamTypes = new(StringComparer.Ordinal); // ownerFqn -> sole ctor parameter types
@@ -7338,7 +7407,7 @@ sealed record MethodSlotIdentity(string PhysicalMember, JsonArray TypeParams, bo
 // (DeclarationTypeNode), the same one `ParamTypeNodes` uses, which keeps generic parameters as `Tv` — a declaration
 // the caller substitutes. The two are not interchangeable: `Iterable<E>.iterator()` is `Iterator` in the first and
 // `Iterator<!0>` in the second, and only the second says what the call site's type argument completes.
-sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic, int PropertyAccess = 0, string PropertyName = null, int[] ByrefPositions = null, bool Suspend = false, bool Conv = false, TypeNode ConvTo = null, TypeNode ReturnType = null, int MethodArity = 0, TypeNode[] ParamTypeNodes = null, bool IsVirtual = false, TypeNode KotlinReturnType = null, TypeNode SuspendReturnType = null, TypeNode NullableGenericRet = null, TypeNode[] NullableGenericParams = null, TypeNode ReturnTypeNode = null, int MetadataToken = 0, string SourcePropertyName = null, string AccessorKind = null, string AssociatedPropertyName = null, bool IsPropertyBridge = false, bool IsPublic = false, string PropertyAssociation = null, string SourcePropertyAssociation = null, string SourceMethodName = null, JsonArray MethodTypeParams = null, string DeclarationId = null, string DeclarationSourceName = null, string DeclarationPhysicalOwner = null, TypeNode[] DeclarationSemanticParams = null, TypeNode DeclarationSemanticReturn = null, string CollectionFactoryKind = null, string ArrayFactoryKind = null, string ArrayFactoryElementHint = null, int CountStart = -1, int CountEnd = -1, int[] SemanticReifiedTypeParameterIndices = null, int[] NullableWitnessTypeParameterIndices = null, TypeNode[] KotlinParameterTypes = null, string InnerConstructorOwner = null, TypeNode[] InnerConstructorParameters = null, int[] InnerConstructorTypeArguments = null, JsonArray SemanticMethodTypeParams = null);
+sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic, int PropertyAccess = 0, string PropertyName = null, int[] ByrefPositions = null, bool Suspend = false, bool Conv = false, TypeNode ConvTo = null, TypeNode ReturnType = null, int MethodArity = 0, TypeNode[] ParamTypeNodes = null, bool IsVirtual = false, TypeNode KotlinReturnType = null, TypeNode SuspendReturnType = null, TypeNode NullableGenericRet = null, TypeNode[] NullableGenericParams = null, TypeNode ReturnTypeNode = null, int MetadataToken = 0, string SourcePropertyName = null, string AccessorKind = null, string AssociatedPropertyName = null, bool IsPropertyBridge = false, bool IsPublic = false, string PropertyAssociation = null, string SourcePropertyAssociation = null, string SourceMethodName = null, JsonArray MethodTypeParams = null, string DeclarationId = null, string DeclarationSourceName = null, string DeclarationPhysicalOwner = null, TypeNode[] DeclarationSemanticParams = null, TypeNode DeclarationSemanticReturn = null, string CollectionFactoryKind = null, string ArrayFactoryKind = null, string ArrayFactoryElementHint = null, int CountStart = -1, int CountEnd = -1, int[] SemanticReifiedTypeParameterIndices = null, int[] NullableWitnessTypeParameterIndices = null, TypeNode[] KotlinParameterTypes = null, string InnerConstructorOwner = null, TypeNode[] InnerConstructorParameters = null, int[] InnerConstructorTypeArguments = null, JsonArray SemanticMethodTypeParams = null, NullableRepresentationFrame NullableFrame = null);
 
 sealed record ReferencedMethodDeclaration(string PhysicalMember, TypeNode[] Parameters, TypeNode Return,
     JsonArray TypeParams, bool ReturnsValue, bool IsVirtual = false);

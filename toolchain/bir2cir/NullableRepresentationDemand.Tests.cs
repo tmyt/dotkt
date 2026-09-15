@@ -132,6 +132,11 @@ static partial class NullableRepresentationDemand
         };
         var root = new JsonObject { ["fileClass"] = "FrameFile", ["types"] = new JsonArray(owner), ["methods"] = new JsonArray(method) };
         var runtime = root.DeepClone();
+        DeclarationIdentityBinding.ApplyLocal(new[] { root },
+            new Dictionary<string, string> { ["frame-test-method"] = "physical" }, new HashSet<string>(),
+            new Dictionary<string, JsonObject> {
+                ["frame-test-method"] = (JsonObject)method[DeclarationIdentityBinding.SemanticSignatureKey].DeepClone(),
+            }, new Dictionary<string, int[]>(), null);
         RoundtripMetadata.Stamp(root);
 
         static JsonNode Payload(JsonObject declaration, string name)

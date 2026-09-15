@@ -601,7 +601,8 @@ static class DeclarationIdentityBinding
             // Ordinary declarations retain the established specialized metadata paths for nesting/context/companions.
             if (semanticCarrierIds.Contains(id)
                 || declaration[ReifiedNullabilityWitnessLowering.SemanticIndicesKey] != null
-                || declaration[ReifiedNullabilityWitnessLowering.WitnessIndicesKey] != null)
+                || declaration[ReifiedNullabilityWitnessLowering.WitnessIndicesKey] != null
+                || declaration[NullableRepresentationTypes.MethodFrameKey] != null)
                 declaration[SemanticSignatureKey] = semanticSignatures.TryGetValue(id, out var signature)
                     ? signature.DeepClone()
                     : throw new InvalidOperationException(
