@@ -2126,10 +2126,12 @@ internal sealed class AssemblyScanner : IDisposable
 
         var typeParameterIds = new Dictionary<GenericParameterHandle, int>();
         var retainedTypeParameters = new Dictionary<GenericParameterHandle, TypeParameter>();
+        var nullableTypeFrame = NullableFrameMetadata.TypeFrame(_md, _attrs, handle);
         foreach (var gpHandle in def.GetGenericParameters())
         {
             var gp = _md.GetGenericParameter(gpHandle);
             var id = gp.Index;
+            if (nullableTypeFrame is not null && id >= nullableTypeFrame.SourceArity) continue;
             typeParameterIds[gpHandle] = id;
             if (id < capturedOuterTypeParameters.GetValueOrDefault()) continue;
             var parameter = new TypeParameter
@@ -3600,9 +3602,11 @@ internal sealed class AssemblyScanner : IDisposable
         GenericContext context,
         ImmutableArray<KType> interfaceArguments)
     {
+        var nullableFrame = NullableFrameMetadata.MethodFrame(reader, signatures.Attributes, methodHandle);
         foreach (var parameterHandle in method.GetGenericParameters())
         {
             var parameter = reader.GetGenericParameter(parameterHandle);
+            if (nullableFrame is not null && parameter.Index >= nullableFrame.SourceArity) continue;
             var projected = new TypeParameter
             {
                 Id = 10000 + parameter.Index,
@@ -3684,7 +3688,7 @@ internal sealed class AssemblyScanner : IDisposable
         GenericContext context,
         IReadOnlySet<int>? semanticReified)
     {
-        foreach (var gpHandle in method.GetGenericParameters())
+        foreach (var gpHandle in SourceMethodParameters(methodHandle))
         {
             var gp = _md.GetGenericParameter(gpHandle);
             var parameter = new TypeParameter
@@ -4539,7 +4543,7 @@ internal sealed class AssemblyScanner : IDisposable
             };
             PromoteContextParameters(method, function);
             PromoteReceiver(methodHandle, method, function);
-            foreach (var gpHandle in method.GetGenericParameters())
+            foreach (var gpHandle in SourceMethodParameters(methodHandle))
             {
                 var gp = _md.GetGenericParameter(gpHandle);
                 var tp = new TypeParameter
@@ -4800,7 +4804,7 @@ internal sealed class AssemblyScanner : IDisposable
         GenericContext context,
         IReadOnlySet<int>? semanticReified)
     {
-        foreach (var gpHandle in method.GetGenericParameters())
+        foreach (var gpHandle in SourceMethodParameters(methodHandle))
         {
             var gp = _md.GetGenericParameter(gpHandle);
             var parameter = new TypeParameter
@@ -4991,7 +4995,7 @@ internal sealed class AssemblyScanner : IDisposable
                 function.ReceiverType = companion.Receiver;
             }
             else PromoteReceiver(methodHandle, method, function);
-            foreach (var gpHandle in method.GetGenericParameters())
+            foreach (var gpHandle in SourceMethodParameters(methodHandle))
             {
                 var gp = _md.GetGenericParameter(gpHandle);
                 var tp = new TypeParameter
@@ -5588,6 +5592,14 @@ internal sealed class AssemblyScanner : IDisposable
         IReadOnlySet<int> NullableWitnessTypeParameterIndices,
         NullableRepresentationFrame? NullableFrame);
 
+    private IEnumerable<GenericParameterHandle> SourceMethodParameters(MethodDefinitionHandle methodHandle)
+    {
+        var frame = NullableFrameMetadata.MethodFrame(_md, _attrs, methodHandle);
+        foreach (var parameter in _md.GetMethodDefinition(methodHandle).GetGenericParameters())
+            if (frame is null || _md.GetGenericParameter(parameter).Index < frame.SourceArity)
+                yield return parameter;
+    }
+
     private DeclarationIdentityCarrier? KotlinDeclarationIdentityCarrier(MethodDefinitionHandle methodHandle)
     {
         using var document = _attrs.CarrierDocument(
@@ -5740,7 +5752,7 @@ internal sealed class AssemblyScanner : IDisposable
                         propertyPhysical[i].Handle, propertySignature.ParameterTypes[i], owner, names, signatures, context),
             });
         }
-        foreach (var gpHandle in representative.GetGenericParameters())
+        foreach (var gpHandle in SourceMethodParameters(representativeHandle))
         {
             var gp = _md.GetGenericParameter(gpHandle);
             var parameter = new TypeParameter
@@ -7357,6 +7369,7 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
     // A trusted DotKt inner TypeDef re-declares its enclosing CLR generic slots as a leading physical prefix. They are
     // not Kotlin type arguments of the inner classifier; consume that prefix when a signature constructs the type.
     private readonly Dictionary<KType, int[]> _semanticInnerTypes = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<KType, NullableRepresentationFrame> _nullableTypeFrames = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<string, KType> _externalDelegateShapes = new(StringComparer.Ordinal);
     // The struct-ness oracle for the NRT byte walk, keyed by the PROJECTED name a KType carries. An ECMA signature
     // states value-ness at every occurrence (`ELEMENT_TYPE_VALUETYPE` vs `ELEMENT_TYPE_CLASS`, the `rawTypeKind` the
@@ -7449,6 +7462,12 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
             return ConstructDelegate(genericName, typeArguments);
         // CLR nested TypeSpecs flatten an inner class as [outer capture..., own...]. Kotlin metadata flattens the
         // same classifier as [own..., outer...]; preserve every argument and rotate at this representation boundary.
+        if (_nullableTypeFrames.TryGetValue(genericType, out var nullableFrame))
+        {
+            if (typeArguments.Length != nullableFrame.PhysicalArity)
+                throw new InvalidDataException("Constructed type disagrees with nullable representation frame");
+            typeArguments = typeArguments.Take(nullableFrame.SourceArity).ToImmutableArray();
+        }
         IEnumerable<KType> semanticTypeArguments = typeArguments;
         if (_semanticInnerTypes.TryGetValue(genericType, out var semanticArgumentOrder))
         {
@@ -7472,8 +7491,18 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
             }));
         return copy;
     }
-    public KType GetGenericMethodParameter(GenericContext genericContext, int index) => new() { TypeParameter = 10000 + index };
-    public KType GetGenericTypeParameter(GenericContext genericContext, int index) => new() { TypeParameter = index };
+    public KType GetGenericMethodParameter(GenericContext genericContext, int index)
+    {
+        var variable = new TypeNode.Tv("method", index);
+        var frame = NullableFrameMetadata.MethodFrame(_md, _attrs, genericContext.Method);
+        return FromTypeNode(frame?.SemanticVariable(variable) ?? variable);
+    }
+    public KType GetGenericTypeParameter(GenericContext genericContext, int index)
+    {
+        var variable = new TypeNode.Tv("type", index);
+        var frame = NullableFrameMetadata.TypeFrame(_md, _attrs, genericContext.Type);
+        return FromTypeNode(frame?.SemanticVariable(variable) ?? variable);
+    }
     public KType GetModifiedType(KType modifier, KType unmodifiedType, bool isRequired) => unmodifiedType;
     public KType GetPinnedType(KType elementType) => elementType;
     public KType GetPointerType(KType elementType)
@@ -7604,8 +7633,13 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
         var result = rawTypeKind == (byte)SignatureTypeKind.Class
             ? Platform(className)
             : MarkValueTypeIfStated(rawTypeKind, Named(className));
-        if (_attrs.Int32(handle, MetadataAttributes.DotKtNs + "KotlinInnerAttribute") is not null)
-            _semanticInnerTypes[result] = InnerReferenceCatalog.SemanticArgumentOrder(reader, handle);
+        var nullableFrame = NullableFrameMetadata.TypeFrame(reader, _attrs, handle);
+        if (nullableFrame is not null) _nullableTypeFrames[result] = nullableFrame;
+        if (_attrs.Int32(handle, MetadataAttributes.DotKtNs + "KotlinInnerAttribute") is int capturedOuter)
+            _semanticInnerTypes[result] = nullableFrame is null
+                ? InnerReferenceCatalog.SemanticArgumentOrder(reader, handle)
+                : Enumerable.Range(capturedOuter, nullableFrame.SourceArity - capturedOuter)
+                    .Concat(Enumerable.Range(0, capturedOuter)).ToArray();
         return result;
     }
     public KType GetTypeFromReference(MetadataReader reader, TypeReferenceHandle handle, byte rawTypeKind)
