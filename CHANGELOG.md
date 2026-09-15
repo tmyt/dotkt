@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Read-only captures observe enclosing variable updates (#736).** Mutable locals share storage when written
+  in their declaring scope, even if local classes, objects, lambdas, and local functions only read them.
+
 - **Inherited field accesses retain their declaring owner (#743).** Reads and writes of inherited plain and
   lateinit properties use the base declaration's generic frame rather than same-named anonymous capture storage.
 

@@ -785,11 +785,11 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 	// generic stdlib interface identity (like `by lazy`'s `kotlin.Lazy<T>`), so delegate field/local types,
 	// the `Delegates.observable(…)` value, and the getValue/setValue dispatch owner share one type (ilverify-clean).
 
-	// heap ref-cell: local `var`s captured-and-mutated by a lambda / local `fun` / object expression / local class
+	// heap ref-cell: local `var`s captured by a lambda / local `fun` / object expression / local class and mutated
 	// are promoted to a shared `dotkt$Ref<T>{ var v }` so the mutation is visible across the capture boundary; all
 	// reads/writes of such a var go through `.v`. No inline test: an inline-argument lambda is celled like any other,
 	// so the decision does not depend on which call the lambda is passed to.
-	// Needing a cell is a property of the VARIABLE — "something in its scope captures and WRITES it" — not of
+	// Needing a cell is a property of the VARIABLE — captured somewhere and written anywhere in its scope — not of
 	// the frame that happens to be emitting it. So the set is computed ONCE for the whole module ([initRefCells],
 	// before any file is emitted) and is IDENTITY-keyed, which makes an entry for a declaration the tree at hand never
 	// mentions inert. Every emission root therefore sees the same decision for the same variable — a method body, a
@@ -914,7 +914,8 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 	/** A captured value's type as held in the closure: the Ref cell for a ref-cell var, else its plain type. */
 	internal fun captureFieldType(d: IrValueDeclaration): TypeNode = if (isRefCell(d)) refType(d) else birType(d.type)
 
-	/** Local `var`s captured AND mutated across a capture boundary within [node] (-> need a heap ref-cell). The
+	/** Local `var`s captured across a boundary and assigned anywhere within [node] need a shared heap ref-cell.
+	 *  The write may be in the declaring scope: a read-only closure must still observe later enclosing writes. The
 	 *  boundaries are every class (an object expression or a local class) and every function — a lambda, whose
 	 *  `IrSimpleFunction` is visited as the `IrFunctionExpression`'s child, or a LOCAL `fun`, which lifts to a static
 	 *  method taking its captures as BY-VALUE params and would otherwise write its own parameter and lose the update.
@@ -923,6 +924,7 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 	 *  rather than inert, being a subset of what the enclosing class arm already contributes. */
 	private fun computeRefCells(node: IrElement): Set<IrValueDeclaration> {
 		val out = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<IrValueDeclaration, Boolean>())
+		val mutations = mutatedIn(node)
 		node.acceptChildrenVoid(object : IrVisitorVoid() {
 			override fun visitElement(element: IrElement) {
 				val caps: List<IrValueDeclaration>? = when (element) {
@@ -931,8 +933,7 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 					else -> null
 				}
 				if (caps != null) {
-					val muts = mutatedIn(element)
-					out.addAll(caps.filter { it is IrVariable && it.isVar && it in muts })
+					out.addAll(caps.filter { it is IrVariable && it.isVar && it in mutations })
 				}
 				element.acceptChildrenVoid(this)
 			}
