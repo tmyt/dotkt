@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Nullable constructed generic parameters retain their method identity (#749).** Signature indexing no
+  longer instantiates generic arguments before their declaration frame exists, preserving nullable overloads.
+
 - **Nullable struct suspend results retain their CLR representation (#739).** Task results and coroutine
   completion preserve nullable value types, including constructed structs and interface implementations.
 
