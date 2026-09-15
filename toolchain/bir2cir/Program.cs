@@ -29,6 +29,7 @@ static class Bir2Cir
                 MaterializedBirPayload.SelfTest();
                 MaterializedExecutable.SelfTest();
                 NullableWitnessDemand.SelfTest();
+                NullableRepresentationDemand.SelfTest();
                 ReferenceMetadataIndex.SelfTest();
                 NullableTvErasureCallRealign.SelfTest();
                 DriverOptions.SelfTest();

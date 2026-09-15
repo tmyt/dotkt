@@ -482,7 +482,7 @@ static class NullableGenericErasure
             case JsonObject obj:
                 var retSlotErased = false;
                 var k = Str(obj["k"]);
-                var elemPos = ArgumentElemKinds.Contains(k) ? Pos.Argument : Pos.Slot;
+                var elemPos = IsArgumentElementKind(k) ? Pos.Argument : Pos.Slot;
                 foreach (var key in obj.Select(kv => kv.Key).ToList())
                 {
                     var child = obj[key];
@@ -540,6 +540,8 @@ static class NullableGenericErasure
     // argument too and is absent for one reason: MemberCallSubstitution BUILDS those nodes long after this sweep,
     // from the call's own `typeArgs` — which this sweep has already canonicalized — so they arrive at `object`
     // rather than being erased into it. Adding them here would be listing a kind this pass never sees.
+    internal static bool IsArgumentElementKind(string kind) => ArgumentElemKinds.Contains(kind);
+
     static readonly HashSet<string> ArgumentElemKinds = new(StringComparer.Ordinal)
     {
         "newArray", "newArraySized", "newArrayInit", "arrayGet", "arraySet", "forArray",
