@@ -212,6 +212,17 @@ static class ConstrainedTypeParameterReceiverBinding
             {
                 case JsonObject call:
                     var kind = Str(call["k"]);
+                    // A field has no constrained-call instruction. Its selected reference-type owner requires a
+                    // reference value even when Kotlin proved that an otherwise erased generic receiver inherits it.
+                    // Materialize that physical conversion here; keep value-type field receivers addressable.
+                    if (!close && !resolvedPropertiesOnly
+                        && kind is "field" or "setField" or "setFieldExpr" or "lateinitGet"
+                        && !Bool(call["static"])
+                        && TypeJson.Read(call["ownerType"]) is TypeNode.Fqn fieldOwner
+                        && isValue != null && !isValue(fieldOwner)
+                        && call["recv"] is JsonObject fieldReceiver
+                        && ReceiverTypeVariable(fieldReceiver, scope, locals) != null)
+                        CastResolvedPropertyReceiver(call, fieldOwner);
                     // Event binding selected the exact accessor while the Kotlin constraint graph was intact.
                     // Once a reference-owner proof is erased, constrained dispatch cannot establish that receiver
                     // relation for the verifier. Convert to the selected accessor owner explicitly, as for methods.

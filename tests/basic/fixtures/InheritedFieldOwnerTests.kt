@@ -53,10 +53,15 @@ class InheritedFieldOwnerTests {
     @TestAttribute
     fun boundReceiversKeepTheSelectedBaseField() {
         fun <T, U : InheritedFieldMiddle<Int, T>> readBound(instance: U): T = instance.value
+        fun <T, U : InheritedFieldMiddle<Int, T>> writeBound(instance: U, next: T) { instance.value = next }
         val text = InheritedFieldMiddle<Int, String>("text")
         val number = InheritedFieldMiddle<Int, Int>(42)
         assertEquals("text", readBound(text))
         assertEquals(42, readBound(number))
+        writeBound(text, "changed")
+        writeBound(number, 73)
+        assertEquals("changed", readBound(text))
+        assertEquals(73, readBound(number))
     }
 
     @TestAttribute
