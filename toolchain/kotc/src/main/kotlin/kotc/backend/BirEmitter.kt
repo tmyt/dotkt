@@ -787,8 +787,8 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 
 	// Captured local `var`s share storage so writes, including writes through a managed reference, remain visible
 	// across the capture boundary. They are represented by `dotkt$Ref<T>{ var v }`; all
-	// reads/writes of such a var go through `.v`. No inline test: an inline-argument lambda is celled like any other,
-	// so the decision does not depend on which call the lambda is passed to.
+	// reads/writes of such a var go through `.v`. A read-only, non-crossinline inline argument needs no cell by
+	// itself: Kotlin guarantees that its body is invoked inline, so it reads the enclosing location directly.
 	// Needing shared storage is a property of the VARIABLE — mutable and captured — not of
 	// the frame that happens to be emitting it. So the set is computed ONCE for the whole module ([initRefCells],
 	// before any file is emitted) and is IDENTITY-keyed, which makes an entry for a declaration the tree at hand never
@@ -914,8 +914,9 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 	/** A captured value's type as held in the closure: the Ref cell for a ref-cell var, else its plain type. */
 	internal fun captureFieldType(d: IrValueDeclaration): TypeNode = if (isRefCell(d)) refType(d) else birType(d.type)
 
-	/** Captured local `var`s need shared storage, even when writes occur only in the declaring scope or through
-	 *  managed references rather than IrSetValue. bir2cir can remove cells that do not escape after inline splicing. The
+	/** Materialized captures of local `var`s need shared storage, even when writes occur only in the declaring
+	 *  scope or through managed references rather than IrSetValue. Read-only inline arguments do not materialize;
+	 *  inline writes retain the existing shared-location representation. The
 	 *  boundaries are every class (an object expression or a local class) and every function — a lambda, whose
 	 *  `IrSimpleFunction` is visited as the `IrFunctionExpression`'s child, or a LOCAL `fun`, which lifts to a static
 	 *  method taking its captures as BY-VALUE params and would otherwise write its own parameter and lose the update.
@@ -924,15 +925,34 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 	 *  rather than inert, being a subset of what the enclosing class arm already contributes. */
 	private fun computeRefCells(node: IrElement): Set<IrValueDeclaration> {
 		val out = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<IrValueDeclaration, Boolean>())
+		val inPlaceLambdas = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<IrSimpleFunction, Boolean>())
 		node.acceptChildrenVoid(object : IrVisitorVoid() {
 			override fun visitElement(element: IrElement) {
+				// The call is visited before its argument functions. Only ordinary inline parameters cannot
+				// escape; crossinline can be materialized and noinline is an ordinary delegate value.
+				if (element is IrCall && element.symbol.owner.isInline) {
+					val callee = element.symbol.owner
+					val companionExtension = isCompanionExtensionCallee(callee) ||
+						companionReceiverCallTag(callee, element).isNotEmpty()
+					val phantomReceiverIndex = if (companionExtension)
+						callee.parameters.indexOfFirst { it.kind == IrParameterKind.ExtensionReceiver }
+					else -1
+					callee.parameters.forEachIndexed { index, parameter ->
+						val argumentIndex = if (phantomReceiverIndex >= 0 && index > phantomReceiverIndex) index - 1 else index
+						if (parameter.kind == IrParameterKind.Regular && !parameter.isNoinline && !parameter.isCrossinline &&
+							birType(parameter.type) is TypeNode.Fn) {
+							(element.arguments.getOrNull(argumentIndex) as? IrFunctionExpression)?.function?.let(inPlaceLambdas::add)
+						}
+					}
+				}
 				val caps: List<IrValueDeclaration>? = when (element) {
 					is IrClass -> capturedVarsForObject(element)
 					is IrSimpleFunction -> capturedVars(element)
 					else -> null
 				}
 				if (caps != null) {
-					out.addAll(caps.filter { it is IrVariable && it.isVar })
+					val inlineWrites = if (element is IrSimpleFunction && element in inPlaceLambdas) mutatedIn(element) else null
+					out.addAll(caps.filter { it is IrVariable && it.isVar && (inlineWrites == null || it in inlineWrites) })
 				}
 				element.acceptChildrenVoid(this)
 			}
