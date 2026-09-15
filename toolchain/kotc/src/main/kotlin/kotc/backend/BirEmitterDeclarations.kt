@@ -862,7 +862,7 @@ internal fun BirEmitter.richEnumDef(ec: IrClass): String {
 		.filter { (it.origin.toString() == "DEFINED" || it.origin == IrDeclarationOrigin.DELEGATED_MEMBER) &&
 			it.correspondingPropertySymbol == null && (it.body != null || it.isExternal) }
 		.map { method(it, static = isKotlinStaticFunction(it)) } +
-		absMethods.map { m -> """{"name":${str(m.name.asString())},"static":false,"override":false,"virtual":true,"abstract":true,"vis":"public","params":[${paramsJsonList(m.parameters).joinToString(",")}],"ret":${birType(m.returnType).toJson()},"body":[]}""" }
+		absMethods.map { method(it, static = false) }
 	val sf = { e: IrEnumEntry -> """{"k":"staticField","ownerType":${fqnJson(name)},"name":${str(e.name.asString())}}""" }
 	val toStr = """{"name":"toString","static":false,"override":true,"virtual":true,"objectOverride":true,"vis":"public","params":[],"ret":${fqnJson("kotlin.String")},"body":[{"k":"return","value":{"k":"field","ownerType":${fqnJson(name)},"recv":{"k":"this"},"name":"__name"}}]}"""
 	val valuesArr = """{"k":"newArray","elem":${fqnJson(name)},"elems":[${entries.joinToString(",") { sf(it) }}]}"""
