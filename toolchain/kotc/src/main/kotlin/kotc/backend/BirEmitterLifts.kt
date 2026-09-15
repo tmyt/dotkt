@@ -2055,7 +2055,7 @@ internal fun BirEmitter.localFunctionDecl(fn: IrSimpleFunction): String {
 	// site after it (capValueExpr) emits a local that does not exist in that frame.
 	val savedCaptureSubst = capPairs.associate { (decl, _) -> decl to captureSubst[decl] }
 	// Register cell identities before changing frames, but render their arguments in the receiving method's frame.
-	capPairs.forEach { (decl, _) -> if (isRefCell(decl)) refTypeName(decl) }
+	capPairs.forEach { (decl, _) -> if (isRefCell(decl) || (decl is IrVariable && decl.isVar)) refTypeName(decl) }
 	val savedTypeSubst = freeTps.associateWith { typeArgSubst[it] }
 	freeTps.forEachIndexed { index, parameter -> typeArgSubst[parameter] = TypeNode.Tv("method", index) }
 	capPairs.forEach { (decl, fname) -> captureSubst[decl] = """{"k":"local","name":${str(fname)}}""" }
@@ -2067,7 +2067,9 @@ internal fun BirEmitter.localFunctionDecl(fn: IrSimpleFunction): String {
 	try {
 		capParams = capPairs.map { (decl, fname) ->
 			val type = captureFieldType(decl)
-			"""{"name":${str(fname)},"type":${type.toJson()}}"""
+			val shared = if (decl is IrVariable && decl.isVar && !isRefCell(decl))
+				",\"sharedCellType\":" + refType(decl).toJson() else ""
+			"""{"name":${str(fname)},"type":${type.toJson()}$shared}"""
 		}
 		ownParams = ownValueParams.map { pj(it.name.asString(), it.type) }
 		body = (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }

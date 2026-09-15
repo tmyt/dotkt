@@ -915,8 +915,9 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 	internal fun captureFieldType(d: IrValueDeclaration): TypeNode = if (isRefCell(d)) refType(d) else birType(d.type)
 
 	/** Materialized captures of local `var`s need shared storage, even when writes occur only in the declaring
-	 *  scope or through managed references rather than IrSetValue. Read-only inline arguments do not materialize;
-	 *  inline writes retain the existing shared-location representation. The
+	 *  scope or through managed references rather than IrSetValue. Inline arguments and direct local-function
+	 *  captures carry deferred shared-location facts: bir2cir promotes them if materialization requires it.
+	 *  Writes within these functions retain the existing shared-location representation. The
 	 *  boundaries are every class (an object expression or a local class) and every function — a lambda, whose
 	 *  `IrSimpleFunction` is visited as the `IrFunctionExpression`'s child, or a LOCAL `fun`, which lifts to a static
 	 *  method taking its captures as BY-VALUE params and would otherwise write its own parameter and lose the update.
@@ -925,11 +926,21 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 	 *  rather than inert, being a subset of what the enclosing class arm already contributes. */
 	private fun computeRefCells(node: IrElement): Set<IrValueDeclaration> {
 		val out = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<IrValueDeclaration, Boolean>())
-		val inPlaceLambdas = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<IrSimpleFunction, Boolean>())
+		val inlineArguments = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<IrSimpleFunction, Boolean>())
+		val materializedFunctions = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<IrSimpleFunction, Boolean>())
 		node.acceptChildrenVoid(object : IrVisitorVoid() {
 			override fun visitElement(element: IrElement) {
-				// The call is visited before its argument functions. Only ordinary inline parameters cannot
-				// escape; crossinline can be materialized and noinline is an ordinary delegate value.
+				when (element) {
+					is IrFunctionExpression -> materializedFunctions.add(element.function)
+					is IrFunctionReference -> (element.symbol.owner as? IrSimpleFunction)?.let(materializedFunctions::add)
+				}
+				element.acceptChildrenVoid(this)
+			}
+		})
+		node.acceptChildrenVoid(object : IrVisitorVoid() {
+			override fun visitElement(element: IrElement) {
+				// The call is visited before its argument functions. Both ordinary and crossinline arguments
+				// carry deferred capture facts; noinline is an ordinary delegate value from the outset.
 				if (element is IrCall && element.symbol.owner.isInline) {
 					val callee = element.symbol.owner
 					val companionExtension = isCompanionExtensionCallee(callee) ||
@@ -939,9 +950,9 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 					else -1
 					callee.parameters.forEachIndexed { index, parameter ->
 						val argumentIndex = if (phantomReceiverIndex >= 0 && index > phantomReceiverIndex) index - 1 else index
-						if (parameter.kind == IrParameterKind.Regular && !parameter.isNoinline && !parameter.isCrossinline &&
+						if (parameter.kind == IrParameterKind.Regular && !parameter.isNoinline &&
 							birType(parameter.type) is TypeNode.Fn) {
-							(element.arguments.getOrNull(argumentIndex) as? IrFunctionExpression)?.function?.let(inPlaceLambdas::add)
+							(element.arguments.getOrNull(argumentIndex) as? IrFunctionExpression)?.function?.let(inlineArguments::add)
 						}
 					}
 				}
@@ -951,8 +962,9 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 					else -> null
 				}
 				if (caps != null) {
-					val inlineWrites = if (element is IrSimpleFunction && element in inPlaceLambdas) mutatedIn(element) else null
-					out.addAll(caps.filter { it is IrVariable && it.isVar && (inlineWrites == null || it in inlineWrites) })
+					val deferredWrites = if (element is IrSimpleFunction &&
+						(element in inlineArguments || element !in materializedFunctions)) mutatedIn(element) else null
+					out.addAll(caps.filter { it is IrVariable && it.isVar && (deferredWrites == null || it in deferredWrites) })
 				}
 				element.acceptChildrenVoid(this)
 			}

@@ -9,7 +9,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 - **Read-only captures observe enclosing variable updates (#736).** Mutable locals share storage when written
   in their declaring scope or through managed references, even if local classes, objects, lambdas, and local
-  functions only read them. Read-only non-crossinline inline arguments keep accessing the enclosing location directly.
+  functions only read them. Inline arguments and direct local functions retain local storage until a materialized
+  capture requires sharing; that requirement propagates through local-function calls.
 
 - **Inherited field accesses retain their declaring owner (#743).** Reads and writes of inherited plain and
   lateinit properties use the base declaration's generic frame rather than same-named anonymous capture storage.

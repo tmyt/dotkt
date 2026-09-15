@@ -6,6 +6,23 @@ import kotlin.clr.byref
 
 class InlineSharedLocalTests {
     @TestAttribute
+    fun directLocalFunctionReadsCurrentByrefLikeValue() {
+        var span = ByRefLikeApi.Chars("abc")
+        fun read(): Int = span.Length
+        val first = read()
+        span = ByRefLikeApi.Chars("d")
+        assertEquals(4, first + read())
+    }
+
+    @TestAttribute
+    fun directCrossinlineReadStaysLocal() {
+        var span = ByRefLikeApi.Chars("abc")
+        val first = readInlineSharedLocal { span.Length }
+        span = ByRefLikeApi.Chars("d")
+        assertEquals(4, first + readInlineSharedLocal { span.Length })
+    }
+
+    @TestAttribute
     fun reassignedReadOnlySpanStaysLocal() {
         var span = ByRefLikeApi.Chars("abc")
         var total = 0
@@ -41,3 +58,4 @@ class InlineSharedLocalTests {
 }
 
 private fun incrementInlineSharedLocal(slot: ClrRef<Int>) { slot.value += 5 }
+private inline fun readInlineSharedLocal(crossinline read: () -> Int): Int = read()

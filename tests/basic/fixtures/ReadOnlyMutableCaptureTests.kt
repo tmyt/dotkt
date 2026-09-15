@@ -4,6 +4,7 @@ import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import kotlin.clr.ClrRef
 import kotlin.clr.byref
+import kotlin.coroutines.*
 
 class ReadOnlyMutableCaptureTests {
     @TestAttribute
@@ -75,6 +76,38 @@ class ReadOnlyMutableCaptureTests {
     }
 
     @TestAttribute
+    fun genericMaterializedInlineReadersShareOneVariable() {
+        assertEquals("changed", deferredRead("initial", "changed"))
+        assertEquals(2, deferredRead(1, 2))
+        assertEquals(null, deferredRead<String?>("initial", null))
+    }
+
+    @TestAttribute
+    fun suspendedMaterializedInlineReaderObservesUpdate() {
+        assertEquals("changed", suspendedDeferredRead("initial", "changed"))
+        assertEquals(2, suspendedDeferredRead(1, 2))
+    }
+
+    @TestAttribute
+    fun forwardedInlineReadersObserveEnclosingWrites() {
+        var current = "initial"
+        val read = forwardRead { current }
+        current = "changed"
+        assertEquals("changed", read())
+    }
+
+    @TestAttribute
+    fun localFunctionMaterializedReaderObservesEnclosingWrites() {
+        var current = "initial"
+        fun makeReader(): () -> String = deferGeneric { current }
+        val read = makeReader()
+        current = "changed"
+        assertEquals("changed", read())
+        assertEquals("changed", localDeferredRead("initial", "changed"))
+        assertEquals(2, localDeferredRead(1, 2))
+    }
+
+    @TestAttribute
     fun eachInvocationKeepsItsOwnVariable() {
         fun reader(initial: Int): () -> Int {
             var current = initial
@@ -93,6 +126,40 @@ class ReadOnlyMutableCaptureTests {
 private fun increment(slot: ClrRef<Int>) { slot.value += 5 }
 private inline fun defer(crossinline read: () -> Int): () -> Int = { read() }
 private inline fun keep(noinline read: () -> Int): () -> Int = read
+private inline fun <T> deferGeneric(crossinline read: () -> T): () -> T = { read() }
+private inline fun <T> forwardRead(crossinline read: () -> T): () -> T = deferGeneric { read() }
+private fun <T> localDeferredRead(initial: T, next: T): T {
+    var current = initial
+    fun first(): () -> T = deferGeneric { current }
+    fun second(): () -> T {
+        fun nested(): () -> T = first()
+        return nested()
+    }
+    val read = second()
+    current = next
+    check(first()() == next)
+    return read()
+}
+private inline fun <T> deferSuspended(crossinline read: suspend () -> T): suspend () -> T = { read() }
+private fun <T> suspendedDeferredRead(initial: T, next: T): T {
+    var current = initial
+    val read = deferSuspended { current }
+    current = next
+    var outcome: Result<T>? = null
+    read.startCoroutine(object : Continuation<T> {
+        override val context: CoroutineContext get() = EmptyCoroutineContext
+        override fun resumeWith(result: Result<T>) { outcome = result }
+    })
+    return outcome!!.getOrThrow()
+}
+private fun <T> deferredRead(initial: T, next: T): T {
+    var current = initial
+    val first = deferGeneric { current }
+    val second = deferGeneric { current }
+    current = next
+    check(first() == next)
+    return second()
+}
 
 private fun <T> nestedRead(initial: T, next: T): T {
     var current = initial
