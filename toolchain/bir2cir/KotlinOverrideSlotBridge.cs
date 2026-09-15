@@ -81,27 +81,32 @@ static class KotlinOverrideSlotBridge
     //
     // The declaration half, over every file at once (a base may be declared in another file of this compilation).
     public static void PropagateErasedSlots(IEnumerable<JsonNode> roots, ValueTypeOracle isValue,
-        ReferenceMetadataIndex refs) => ApplyAll(roots, isValue, refs, Phase.DeclarationMoves, localTypeNames: null);
+        ReferenceMetadataIndex refs, bool refBuild) =>
+        ApplyAll(roots, isValue, refs, Phase.DeclarationMoves, localTypeNames: null, refBuild: refBuild);
 
     // Unit is a value in a constructed generic result slot even though a plain Unit suspend declaration exports
     // non-generic Task. Build this adapter while calls are still suspend calls; cold lowering then drives a real
     // Task<Unit> for the slot, rather than casting an arbitrary Task returned by the public declaration.
     public static void PrepareSuspendValueBridges(IEnumerable<JsonNode> roots, ValueTypeOracle isValue,
-        ReferenceMetadataIndex refs, IReadOnlySet<string> localTypeNames) =>
-        ApplyAll(roots, isValue, refs, Phase.SuspendValueBridges, localTypeNames);
+        ReferenceMetadataIndex refs, IReadOnlySet<string> localTypeNames, bool refBuild) =>
+        ApplyAll(roots, isValue, refs, Phase.SuspendValueBridges, localTypeNames, refBuild: refBuild);
 
     // The bridge half.
     public static void ApplyAll(IEnumerable<JsonNode> roots, ValueTypeOracle isValue, ReferenceMetadataIndex refs,
-        IReadOnlySet<string> localTypeNames,
+        IReadOnlySet<string> localTypeNames, bool refBuild,
         IReadOnlySet<CovariantInterfaceReturnBridge.BridgedSlot> covariantBridgedSlots = null) =>
-        ApplyAll(roots, isValue, refs, Phase.PhysicalBridges, localTypeNames, covariantBridgedSlots);
+        ApplyAll(roots, isValue, refs, Phase.PhysicalBridges, localTypeNames, covariantBridgedSlots, refBuild);
 
     static void ApplyAll(IEnumerable<JsonNode> roots, ValueTypeOracle isValue, ReferenceMetadataIndex refs,
         Phase phase, IReadOnlySet<string> localTypeNames,
-        IReadOnlySet<CovariantInterfaceReturnBridge.BridgedSlot> covariantBridgedSlots = null)
+        IReadOnlySet<CovariantInterfaceReturnBridge.BridgedSlot> covariantBridgedSlots = null, bool refBuild = false)
     {
         var emitBridges = phase != Phase.DeclarationMoves;
         var defs = SupertypeGraph.Collect(roots);
+        var annotationLocalTypes = localTypeNames ?? defs.Keys.ToHashSet(StringComparer.Ordinal);
+        bool RetainsTypeArguments(TypeNode.Fqn type) =>
+            BirTypeLowering.LowerPhysicalType(type, refs.Aliases, isValue, refs.PhysicalTypeNames,
+                typeArg: false, annotationLocalTypes, refBuild) is TypeNode.Fqn { Args: not null };
         // The source accessor relation is needed only between the two halves of this one pass. Keep it in memory by
         // JsonObject identity rather than minting another BIR/CIR identifier or parsing the bridge's metadata
         // association. The relation cannot escape this ApplyAll invocation.
@@ -121,7 +126,7 @@ static class KotlinOverrideSlotBridge
                     exactBridgeSources[method] = sourceAssociation;
         foreach (var cls in defs.Values.Where(d => d.Kind is "class" or "interface").ToList())
             ApplyClass(cls, defs, isValue, refs, phase, exactBridgeSources, localTypeNames,
-                covariantBridgedSlots);
+                covariantBridgedSlots, RetainsTypeArguments);
         // A class-level inherited-DIM bridge consumes the exact MethodImpl descriptor synthesized on its interface.
         // Declarations may appear in either order and in different input files, so first finish every interface/class's
         // own slot allocation above, then inspect classes. Reading the live method arrays during the first loop would
@@ -148,7 +153,8 @@ static class KotlinOverrideSlotBridge
     static void ApplyClass(Def cls, IReadOnlyDictionary<string, Def> defs, ValueTypeOracle isValue,
         ReferenceMetadataIndex refs, Phase phase, IDictionary<JsonObject, string> exactBridgeSources,
         IReadOnlySet<string> localTypeNames,
-        IReadOnlySet<CovariantInterfaceReturnBridge.BridgedSlot> covariantBridgedSlots)
+        IReadOnlySet<CovariantInterfaceReturnBridge.BridgedSlot> covariantBridgedSlots,
+        Func<TypeNode.Fqn, bool> retainsTypeArguments)
     {
         var emitBridges = phase != Phase.DeclarationMoves;
         if (cls.Node["methods"] is not JsonArray methods) return;
@@ -260,8 +266,9 @@ static class KotlinOverrideSlotBridge
             // CLR leaves under a constructed generic — carrying its Kotlin surface on the round-trip channels.
             for (var i = 0; i < slotParams.Length; i++)
                 if (fit[i] == Fit.Rewrite && declParams[i] is JsonObject po)
-                    Rewrite(po, "type", "nullableGeneric", "nullableFlags", slotParams[i], isValue);
-            if (retFit == Fit.Rewrite) Rewrite(impl, "ret", "nullableGenericRet", "retNullableFlags", slotRet, isValue);
+                    Rewrite(po, "type", "nullableGeneric", "nullableFlags", slotParams[i], isValue, retainsTypeArguments);
+            if (retFit == Fit.Rewrite)
+                Rewrite(impl, "ret", "nullableGenericRet", "retNullableFlags", slotRet, isValue, retainsTypeArguments);
 
             // A Kotlin accessor keeps its dedicated physical name even when it implements a property imported from a
             // CLR interface whose slot uses the ordinary get_/set_ convention. With an otherwise-identical signature,
@@ -1688,12 +1695,14 @@ static class KotlinOverrideSlotBridge
     // Move a slot the CLR cannot bridge onto the supertype's shape, carrying the override's own pre-erasure Kotlin
     // type across on the round-trip channels so the surface survives the move.
     static void Rewrite(JsonObject decl, string typeKey, string factKey, string flagsKey, TypeNode slot,
-        ValueTypeOracle isValue)
+        ValueTypeOracle isValue, Func<TypeNode.Fqn, bool> retainsTypeArguments)
     {
         if (TypeJson.Read(decl[typeKey]) is not TypeNode t || t.Equals(slot)) return;
         decl[typeKey] = TypeJson.Write(slot);
         decl[factKey] ??= TypeNode.ToJson(t);
-        if (!decl.ContainsKey(flagsKey) && NullableFlags.Compute(t, isValue) is JsonArray f) decl[flagsKey] = f;
+        if (!decl.ContainsKey(flagsKey)
+            && NullableFlags.Compute(t, isValue, retainsTypeArguments: retainsTypeArguments) is JsonArray f)
+            decl[flagsKey] = f;
     }
 
     // The bridge: the slot's exact signature. Local Kotlin defaults forward virtually so a further-derived override

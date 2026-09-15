@@ -12,6 +12,8 @@ using DotKt.Bir;
 //   * a method param      -> `nullableFlags`    (its `type` node)
 //   * a CONSTRUCTOR param -> `nullableFlags`    (its `type` node)
 //   * a field / property  -> `nullableFlags`    (its `type` node)
+// The physical-head query determines which generic arguments still occupy signature positions, without
+// discarding the semantic annotation wrappers on surviving arguments. It uses the current build's representation.
 //
 // The CONSUMER is RoundtripMetadata (Stamp), which turns each flags key into a real `[Nullable]` entry in the decl's
 // `attrs`/`retAttrs` array; ilemit then stamps those entries through its generic BuildCab path and never reads the
@@ -26,40 +28,40 @@ using DotKt.Bir;
 // Task-bridge sets its own `retNullableFlags` up-front and must win).
 static class DeclNullableFlags
 {
-    public static void Apply(JsonNode root, ValueTypeOracle isValue)
+    public static void Apply(JsonNode root, ValueTypeOracle isValue, Func<TypeNode.Fqn, bool> retainsTypeArguments)
     {
-        if (root is JsonObject o) ApplyRec(o, isValue);
+        if (root is JsonObject o) ApplyRec(o, isValue, retainsTypeArguments);
     }
 
-    static void ApplyRec(JsonObject o, ValueTypeOracle isValue)
+    static void ApplyRec(JsonObject o, ValueTypeOracle isValue, Func<TypeNode.Fqn, bool> retainsTypeArguments)
     {
         if (o["methods"] is JsonArray methods)
             foreach (var m in methods)
-                if (m is JsonObject mo) ApplyToMethod(mo, isValue);
+                if (m is JsonObject mo) ApplyToMethod(mo, isValue, retainsTypeArguments);
         // A ctor decl has params but no `ret` (BirEmitterDeclarations.ctor), so its params are stamped directly
         // rather than through ApplyToMethod.
         if (o["ctors"] is JsonArray ctors)
             foreach (var c in ctors)
-                if (c is JsonObject co) ApplyToDecls(co["params"], isValue);
-        ApplyToDecls(o["fields"], isValue);
-        ApplyToDecls(o["properties"], isValue);
+                if (c is JsonObject co) ApplyToDecls(co["params"], isValue, retainsTypeArguments);
+        ApplyToDecls(o["fields"], isValue, retainsTypeArguments);
+        ApplyToDecls(o["properties"], isValue, retainsTypeArguments);
         if (o["types"] is JsonArray types)
-            foreach (var t in types) if (t is JsonObject to) ApplyRec(to, isValue);
+            foreach (var t in types) if (t is JsonObject to) ApplyRec(to, isValue, retainsTypeArguments);
     }
 
-    static void ApplyToMethod(JsonObject mo, ValueTypeOracle isValue)
+    static void ApplyToMethod(JsonObject mo, ValueTypeOracle isValue, Func<TypeNode.Fqn, bool> retainsTypeArguments)
     {
         PreserveNullableUnitSurface(mo, "ret", "retKotlinType", "nullableGenericRet");
         if (!mo.ContainsKey("retNullableFlags")
             && TypeJson.Read(mo["ret"]) is TypeNode ret
-            && NullableFlags.Compute(ret, isValue) is JsonArray rf)
+            && NullableFlags.Compute(ret, isValue, retainsTypeArguments: retainsTypeArguments) is JsonArray rf)
             mo["retNullableFlags"] = rf;
-        ApplyToDecls(mo["params"], isValue);
+        ApplyToDecls(mo["params"], isValue, retainsTypeArguments);
     }
 
     // Stamp `nullableFlags` on each declaration in a params/fields/properties array whose Type node carries a nullable
     // reference position (and that lacks the key already).
-    static void ApplyToDecls(JsonNode arr, ValueTypeOracle isValue)
+    static void ApplyToDecls(JsonNode arr, ValueTypeOracle isValue, Func<TypeNode.Fqn, bool> retainsTypeArguments)
     {
         if (arr is not JsonArray a) return;
         foreach (var d in a)
@@ -68,7 +70,7 @@ static class DeclNullableFlags
                 PreserveNullableUnitSurface(po, "type", "kotlinType", "nullableGeneric");
                 if (!po.ContainsKey("nullableFlags")
                 && TypeJson.Read(po["type"]) is TypeNode t
-                && NullableFlags.Compute(t, isValue) is JsonArray f)
+                && NullableFlags.Compute(t, isValue, retainsTypeArguments: retainsTypeArguments) is JsonArray f)
                     po["nullableFlags"] = f;
             }
     }

@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Ordinary declaration nullability follows the CLR generic shape (#740).** Removed generic arguments
+  no longer shift the nullable annotations on subsequent return, parameter, field, and property positions.
+
 - **Nullable constructed generic parameters retain their method identity (#749).** Signature indexing no
   longer instantiates generic arguments before their declaration frame exists, preserving nullable overloads.
 
