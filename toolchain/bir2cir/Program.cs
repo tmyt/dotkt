@@ -1181,7 +1181,12 @@ sealed class Pipeline
             // DECL-position NRT byte collection (#37/#48): stamp `nullableFlags`/`retNullableFlags` from the SEMANTIC
             // `{t:nullable}` reference wrappers BEFORE BirTypeLowering strips them to bare types. Runs in ALL builds so
             // the ref.dll + rt.dll + app views of a signature's nullability agree (the scalar decl flags are retired).
-            DeclNullableFlags.Apply(substituted, isValueFqn);
+            // Count only arguments retained by the selected physical head, preserving the source annotation
+            // wrappers on those arguments. The reference build must query its own representation as well.
+            DeclNullableFlags.Apply(substituted, isValueFqn,
+                type => BirTypeLowering.LowerPhysicalType(type, refs.Aliases, isValueFqn,
+                    refs.PhysicalTypeNames, typeArg: false, emittedLocalTypes, _options.RefBuild)
+                    is TypeNode.Fqn { Args: not null });
             // COMPREHENSIVE reference-nullable strip (#37/#48): remove EVERY `{t:nullable,of:<reference>}` from the whole
             // tree — decl slots AND usage positions (owner generic type-args, argTypes/typeArgs, cast/expression types)
             // that LowerNode walks as generic JSON without routing through LowerType. ilemit's MapType asserts a value

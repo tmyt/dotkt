@@ -557,7 +557,7 @@ static class BirTypeLowering
     internal static TypeNode LowerPhysicalType(TypeNode type,
         IReadOnlyDictionary<string, string> aliases, ValueTypeOracle isValueFqn,
         IReadOnlyDictionary<string, string> physicalTypeNames, bool typeArg,
-        IReadOnlySet<string> localTypeNames = null)
+        IReadOnlySet<string> localTypeNames = null, bool refBuild = false)
     {
         var savedAliases = _aliases;
         var savedIsValue = _isValueFqn;
@@ -569,7 +569,7 @@ static class BirTypeLowering
             _isValueFqn = isValueFqn ?? (_ => false);
             _physicalTypeNames = physicalTypeNames ?? new Dictionary<string, string>(StringComparer.Ordinal);
             _localTypeNames = localTypeNames ?? new HashSet<string>(StringComparer.Ordinal);
-            return LowerType(type, refBuild: false, force: false, typeArg);
+            return LowerType(type, refBuild, force: false, typeArg);
         }
         finally
         {
