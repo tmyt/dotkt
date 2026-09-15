@@ -361,8 +361,7 @@ internal fun BirEmitter.blockExpr(block: IrBlock): String {
 			val captured = capturedVarsForObject(anon)
 			// Writing an outer local through the object goes through its heap ref-cell: the module-wide scan
 			// (BirEmitter.initRefCells) already promoted every captured-and-mutated `var`, so `isRefCell(it)` holds
-			// here — the shape is SUPPORTED. Reaching the branch below means the scan and this predicate disagree
-			// (they read the same two helpers over the same node), i.e. a mutated capture that is not a `var` local,
+			// here — the shape is SUPPORTED. Reaching the branch below means an assigned capture was not a mutable local,
 			// which valid frontend IR cannot produce: a Kotlin parameter cannot be assigned.
 			if (captured.any { it in mutatedIn(anon) && !isRefCell(it) })
 				return invariantBroken(block, "an object expression writes a captured outer variable that was not " +

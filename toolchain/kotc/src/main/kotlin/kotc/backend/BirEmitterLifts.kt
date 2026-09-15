@@ -1836,7 +1836,7 @@ private fun BirEmitter.captureScan(
 internal fun BirEmitter.capturedVarsForObject(anon: IrClass): List<IrValueDeclaration> =
 	captureScan(anon, emptyList(), includeThis = true, guard = newCycleGuard().also { it.add(anon) })
 
-/** Value declarations assigned (IrSetValue) anywhere inside an object literal (for mutable-capture detection). */
+/** Value declarations assigned (IrSetValue) anywhere under a node (for capture invariants). */
 internal fun BirEmitter.mutatedIn(node: IrElement): Set<IrValueDeclaration> {
 	val out = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<IrValueDeclaration, Boolean>())
 	node.acceptChildrenVoid(object : IrVisitorVoid() {
@@ -2110,8 +2110,7 @@ internal fun BirEmitter.liftLocalClass(klass: IrClass): String {
 	// module-wide ref-cell scan (BirEmitter.initRefCells, run before ANY file is emitted) promoted every
 	// captured-and-mutated `var` to a shared `dotkt$Ref<T>`, so `isRefCell(it)` is true here whatever root we are
 	// under — a method, a constructor/init block, an initializer expression — and the class reads/writes the shared
-	// cell. The shape is SUPPORTED; reaching the branch below means the scan and this predicate disagree (they read
-	// the same two helpers over the same node), i.e. a mutated capture that is not a `var` local, which valid
+	// cell. The shape is SUPPORTED; reaching the branch below means an assigned capture was not a mutable local, which valid
 	// frontend IR cannot produce: a Kotlin parameter cannot be assigned.
 	if (captured.any { it in mutatedIn(klass) && !isRefCell(it) })
 		return invariantBroken(klass, "a local class writes a captured outer variable that was not promoted to a " +

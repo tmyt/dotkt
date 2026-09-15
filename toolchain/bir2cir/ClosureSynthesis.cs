@@ -306,14 +306,17 @@ static class ClosureSynthesis
     static readonly Dictionary<string, string> _pendingCaptureRefusals = new(StringComparer.Ordinal);
 
     static void CheckCaptureLegality(JsonObject synthClass, JsonNode decl)
+        => RecordCaptureLegality(synthClass, decl, _refs);
+
+    internal static void RecordCaptureLegality(JsonObject synthClass, JsonNode decl, ReferenceMetadataIndex refs)
     {
-        if (_refs == null || synthClass["fields"] is not JsonArray fields) return;
+        if (refs == null || synthClass["fields"] is not JsonArray fields) return;
         if (Str(synthClass["name"]) is not string typeName) return;
         foreach (var f in fields.OfType<JsonObject>())
         {
             if (f["type"] is not JsonNode tj) continue;
             var t = TypeJson.Read(tj);
-            var why = FieldLegality.Classify(t, _refs.IsByRefLikeFqn, out var offending);
+            var why = FieldLegality.Classify(t, refs.IsByRefLikeFqn, out var offending);
             if (why == FieldRejection.None) continue;
             _pendingCaptureRefusals[typeName] = FieldLegality.CaptureMessage(
                 FieldLegality.PosPrefix(decl), Str((decl as JsonObject)?["name"]) ?? "<file>",

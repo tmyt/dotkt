@@ -2,8 +2,26 @@ package readonlymutablecapture
 
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
+import kotlin.clr.ClrRef
+import kotlin.clr.byref
 
 class ReadOnlyMutableCaptureTests {
+    @TestAttribute
+    fun readersObserveWritesThroughManagedReferences() {
+        var current = 7
+        val read = { current }
+        class Local { fun read(): Int = current }
+        val local = Local()
+        increment(byref(current))
+        assertEquals(12, read())
+        assertEquals(12, local.read())
+        val update = { increment(byref(current)) }
+        update()
+        assertEquals(17, current)
+        assertEquals(17, read())
+        assertEquals(17, local.read())
+    }
+
     @TestAttribute
     fun localClassObservesEnclosingWrites() {
         var current = "initial"
@@ -47,6 +65,16 @@ class ReadOnlyMutableCaptureTests {
     }
 
     @TestAttribute
+    fun materializedInlineReadersRetainSharedStorage() {
+        var current = 1
+        val crossinlineReader = defer { current }
+        val noinlineReader = keep { current }
+        current = 2
+        assertEquals(2, crossinlineReader())
+        assertEquals(2, noinlineReader())
+    }
+
+    @TestAttribute
     fun eachInvocationKeepsItsOwnVariable() {
         fun reader(initial: Int): () -> Int {
             var current = initial
@@ -61,6 +89,10 @@ class ReadOnlyMutableCaptureTests {
         assertEquals(11, second())
     }
 }
+
+private fun increment(slot: ClrRef<Int>) { slot.value += 5 }
+private inline fun defer(crossinline read: () -> Int): () -> Int = { read() }
+private inline fun keep(noinline read: () -> Int): () -> Int = read
 
 private fun <T> nestedRead(initial: T, next: T): T {
     var current = initial

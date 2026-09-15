@@ -36,7 +36,7 @@ static class SharedSyntheticSynthesis
 
     static JsonObject Fqn(string name) => new() { ["t"] = "fqn", ["name"] = name };
 
-    public static void Apply(JsonNode root)
+    public static void Apply(JsonNode root, ReferenceMetadataIndex refs)
     {
         if (root is not JsonObject file) return;
         var types = file["types"] as JsonArray;
@@ -57,7 +57,11 @@ static class SharedSyntheticSynthesis
 
             foreach (var spec in specs.Values)
                 if (present.Add(spec.Name))
-                    types.Add(BuildRefCell(spec));
+                {
+                    var cell = BuildRefCell(spec);
+                    ClosureSynthesis.RecordCaptureLegality(cell, file, refs);
+                    types.Add(cell);
+                }
             file.Remove("refTypes");
         }
 
