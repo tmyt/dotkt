@@ -7,6 +7,10 @@ import System.ArraySegment
 import kotlin.coroutines.*
 import roundtrip.nullablesuspendstruct.*
 
+private class ConsumerSegmentSource : SegmentSource {
+    override suspend fun read(present: Boolean): ArraySegment<String?>? = nullableSegment(present)
+}
+
 private class Completion<T> : Continuation<T> {
     var outcome: Result<T>? = null
     override val context: CoroutineContext get() = EmptyCoroutineContext
@@ -20,6 +24,13 @@ private fun <T> start(block: suspend () -> T): Completion<T> {
 }
 
 class NullableSuspendStructTests {
+    @TestAttribute
+    fun consumerImplementationKeepsImportedNullableStructSlot() {
+        val source: SegmentSource = ConsumerSegmentSource()
+        assertTrue(start { source.read(false) }.outcome!!.getOrThrow() == null)
+        assertEquals(2, start { source.read(true) }.outcome!!.getOrThrow()!!.Count)
+    }
+
     @TestAttribute
     fun importedNullableStructPreservesNullAndPresent() {
         assertTrue(start { nullableSegment(false) }.outcome!!.getOrThrow() == null)

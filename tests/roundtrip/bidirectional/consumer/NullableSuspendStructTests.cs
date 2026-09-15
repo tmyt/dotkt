@@ -6,6 +6,38 @@ using roundtrip.nullablesuspendstruct;
 public class NullableSuspendStructTests
 {
     [Test]
+    public async Task PrimitiveAndEnumResultsKeepNullableValueSignatures()
+    {
+        Task<int?> number = NullableSuspendStructKt.nullableNumber(false);
+        Task<DayOfWeek?> day = NullableSuspendStructKt.nullableDay(false);
+        Assert.That(await number, Is.Null);
+        Assert.That(await day, Is.Null);
+        Assert.That(await NullableSuspendStructKt.nullableNumber(true), Is.EqualTo(42));
+        Assert.That(await NullableSuspendStructKt.nullableDay(true), Is.EqualTo(DayOfWeek.Monday));
+    }
+
+    [Test]
+    public async Task GenericStructResultRetainsItsTypeArgumentAndNullableWrapper()
+    {
+        Task<ArraySegment<string>?> absent = NullableSuspendStructKt.genericNullableSegment<string>(
+            new ArraySegment<string>(new[] { "unused" }), false);
+        Assert.That(await absent, Is.Null);
+        var value = new ArraySegment<int>(new[] { 7, 8 });
+        Task<ArraySegment<int>?> present = NullableSuspendStructKt.genericNullableSegment<int>(value, true);
+        Assert.That((await present)!.Value[1], Is.EqualTo(8));
+    }
+
+    [Test]
+    public async Task NullReturnSurvivesSuspensionInFinally()
+    {
+        var gate = new SegmentGate();
+        Task<ArraySegment<string?>?> result = NullableSuspendStructKt.segmentThroughFinally(gate);
+        Assert.That(result.IsCompleted, Is.False);
+        gate.complete(true);
+        Assert.That(await result, Is.Null);
+    }
+
+    [Test]
     public async Task NullableStructTaskSignatureAndSynchronousValues()
     {
         Assert.That(typeof(NullableSuspendStructKt).GetMethod("nullableSegment")!.ReturnType,
