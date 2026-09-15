@@ -263,7 +263,7 @@ sealed class Pipeline
         // BEFORE the declaration snapshot below: a call reached through the DERIVED type is typed against that
         // declaration, so a snapshot taken first would type it against the slot the override no longer has. The
         // top-level `object` seam is bridged instead, beside the other bridge synthesizers.
-        KotlinOverrideSlotBridge.PropagateErasedSlots(birFiles.Select(f => f.Root), isValueFqn, refs);
+        KotlinOverrideSlotBridge.PropagateErasedSlots(birFiles.Select(f => f.Root), isValueFqn, refs, _options.RefBuild);
 
         // Snapshot every LOCAL generic type's declared member returns BEFORE the per-file DEF-side EraseNullableTv
         // (NullableGenericErasure runs inside the transform loop, mutating declarations in place). Feeds
@@ -835,7 +835,7 @@ sealed class Pipeline
         InheritedClassInterfaceBridge.ApplyAll(staged.Select(s => s.Root).ToList());
 
         KotlinOverrideSlotBridge.PrepareSuspendValueBridges(
-            staged.Select(s => s.Root).ToList(), isValueFqn, refs, localTypeFqns);
+            staged.Select(s => s.Root).ToList(), isValueFqn, refs, localTypeFqns, _options.RefBuild);
 
         // KOTLIN COVARIANT OVERRIDE -> EXACT CLR METHODIMPL: preserve the Kotlin declaration's narrow return and add a
         // private forwarding bridge with the interface slot's exact return. The bridge carries a resolved
@@ -922,7 +922,7 @@ sealed class Pipeline
         // Ref builds skip suspend lowering and normalize their logical declaration here; app and rt builds normalize
         // the final Task/cold shapes. Star views already exist, and all types are still in the Kotlin vocabulary.
         KotlinOverrideSlotBridge.ApplyAll(
-            staged.Select(s => s.Root).ToList(), isValueFqn, refs, localTypeFqns,
+            staged.Select(s => s.Root).ToList(), isValueFqn, refs, localTypeFqns, _options.RefBuild,
             covariantBridgedSlots);
 
         // The final override bridge deliberately runs after the main F-bound/star rewrite because suspend lowering

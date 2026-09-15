@@ -17,3 +17,12 @@ class NrtSlots(initial: NrtPair<Comparable<Any?>?, String>) {
     @ClrField var nullableFieldSlot: NrtPair<Comparable<Any?>?, String?> = collapsedNullable()
     var nullablePropertySlot: NrtPair<Comparable<Any?>?, String?> = collapsedNullable()
 }
+
+class NrtTriple<A, B, C>(val first: A, val second: B, val third: C)
+interface NrtExchange<T> {
+    fun exchange(value: NrtTriple<T?, Comparable<Any?>?, String>): NrtTriple<T?, Comparable<Any?>?, String>
+}
+class StringNrtExchange : NrtExchange<String> {
+    override fun exchange(value: NrtTriple<String?, Comparable<Any?>?, String>):
+        NrtTriple<String?, Comparable<Any?>?, String> = value
+}

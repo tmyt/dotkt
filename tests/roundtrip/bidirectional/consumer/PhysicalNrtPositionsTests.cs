@@ -54,4 +54,19 @@ public class PhysicalNrtPositionsTests
         AssertPair(nested.GenericTypeArguments[0], NullabilityState.NotNull);
         Assert.That(nested.GenericTypeArguments[1].ReadState, Is.EqualTo(NullabilityState.Nullable));
     }
+
+    [Test]
+    public void RewrittenOverridePreservesPhysicalParameterAndReturnPositions()
+    {
+        var method = typeof(StringNrtExchange).GetMethod("exchange")!;
+        foreach (var info in new[] { Context.Create(method.ReturnParameter), Context.Create(method.GetParameters()[0]) })
+        {
+            Assert.That(info.GenericTypeArguments.Length, Is.EqualTo(3));
+            Assert.That(info.GenericTypeArguments[0].Type, Is.EqualTo(typeof(object)));
+            Assert.That(info.GenericTypeArguments[0].ReadState, Is.EqualTo(NullabilityState.Nullable));
+            Assert.That(info.GenericTypeArguments[1].Type, Is.EqualTo(typeof(IComparable)));
+            Assert.That(info.GenericTypeArguments[1].ReadState, Is.EqualTo(NullabilityState.Nullable));
+            Assert.That(info.GenericTypeArguments[2].ReadState, Is.EqualTo(NullabilityState.NotNull));
+        }
+    }
 }

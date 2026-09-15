@@ -5,7 +5,21 @@ import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
 import roundtrip.physicalnrtpositions.*
 
+private fun <T> useExchange(contract: NrtExchange<T>): String {
+    val value = NrtTriple<T?, Comparable<Any?>?, String>(null, null, "override")
+    val result: String = contract.exchange(value).third
+    return result
+}
+
 class PhysicalNrtPositionsTests {
+    @TestAttribute
+    fun importedRewrittenOverrideKeepsFollowingArgumentNonNull() {
+        val implementation = StringNrtExchange()
+        val contract: NrtExchange<String> = implementation
+        val throughInterface: String = useExchange(contract)
+        assertEquals("override", throughInterface)
+    }
+
     @TestAttribute
     fun importedOrdinarySlotsKeepNonNullFollowingArguments() {
         val value: String = collapsedNonNull().second
