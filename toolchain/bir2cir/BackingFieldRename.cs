@@ -58,7 +58,7 @@ static class BackingFieldRename
 
     public static void ApplyAll(IReadOnlyList<JsonNode> roots)
     {
-        // owner FQN -> (Kotlin property name -> mangled backing-field name), and owner FQN -> its declared base, so a
+        // owner FQN -> (declared field name -> physical field name), and owner FQN -> its declared base, so a
         // field node whose `ownerType` names a SUBCLASS (kotc spells a fake-override property's owner as the receiver's
         // class) still resolves to the base that declares the storage.
         var renames = new Dictionary<string, Dictionary<string, string>>(StringComparer.Ordinal);
@@ -92,12 +92,12 @@ static class BackingFieldRename
         var owner = ReferenceMetadataIndex.BareOwnerFqn(rawName);
         if (TypeJson.OwnerName(td["base"]) is string rawBase)
             bases[owner] = ReferenceMetadataIndex.BareOwnerFqn(rawBase);
-        if (td["fields"] is not JsonArray fields || td["properties"] is not JsonArray props) return;
+        if (td["fields"] is not JsonArray fields) return;
 
         var propNames = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var p in props)
-            if (p is JsonObject po && IsReceiverless(po) && Str(po["name"]) is string pn) propNames.Add(pn);
-        if (propNames.Count == 0) return;
+        if (td["properties"] is JsonArray props)
+            foreach (var p in props)
+                if (p is JsonObject po && IsReceiverless(po) && Str(po["name"]) is string pn) propNames.Add(pn);
 
         var declared = new HashSet<string>(StringComparer.Ordinal);
         foreach (var f in fields)
@@ -115,9 +115,15 @@ static class BackingFieldRename
         foreach (var f in fields)
         {
             if (f is not JsonObject fo) continue;
-            if (Str(fo["name"]) is not string fieldName || !propNames.Contains(fieldName)) continue;
+            if (Str(fo["name"]) is not string fieldName) continue;
             var isStatic = (fo["static"] as JsonValue)?.GetValue<bool>() == true;
-            if (isStatic && instanceNames.Contains(fieldName)) continue;
+            var fieldMap = isStatic
+                ? staticMap ??= new Dictionary<string, string>(StringComparer.Ordinal)
+                : map ??= new Dictionary<string, string>(StringComparer.Ordinal);
+            // An unrenamed declaration still owns this name. Capture and plain fields must stop base lookup
+            // just like property-backed storage, without changing their visibility or physical identity.
+            fieldMap[fieldName] = fieldName;
+            if (!propNames.Contains(fieldName) || isStatic && instanceNames.Contains(fieldName)) continue;
             var mangled = Mangle(fieldName);
             // Belt-and-braces. The frontend already rejects the spelling outright — a backtick-quoted
             // `` `<Value>k__BackingField` `` fails kotc with "name contains illegal characters: <>" — so no user
@@ -127,8 +133,7 @@ static class BackingFieldRename
                     $"bir2cir: '{owner}' already declares a field named '{mangled}'; cannot rename the backing field of property '{fieldName}'");
             fo["name"] = mangled;
             StampCompilerGenerated(fo);
-            if (isStatic) (staticMap ??= new Dictionary<string, string>(StringComparer.Ordinal))[fieldName] = mangled;
-            else (map ??= new Dictionary<string, string>(StringComparer.Ordinal))[fieldName] = mangled;
+            fieldMap[fieldName] = mangled;
         }
         // MERGE, never replace: `owner` is the arity-stripped FQN, so two decls could in principle share the key —
         // dropping the earlier map would silently leave its use sites pointing at the old name.
@@ -187,9 +192,8 @@ static class BackingFieldRename
             foreach (var it in arr) if (it != null) RewriteUses(it, renames, staticRenames, bases);
     }
 
-    // The mangled name for (owner, field), consulting the owner first and then its base chain — an `override var`
-    // re-declares its OWN storage, so the nearest declaring owner wins. null = not an auto-property backing field of
-    // any local type (a referenced owner, a `@ClrField`, a delegate/capture/static field).
+    // Consult the owner first and then its base chain: the nearest field declaration wins, whether or not
+    // it owns a property. null means no declaration of the addressed storage kind exists in the local chain.
     static string Resolve(string owner, string name, Dictionary<string, Dictionary<string, string>> renames,
         Dictionary<string, string> bases)
     {
