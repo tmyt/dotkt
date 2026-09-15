@@ -3,8 +3,39 @@ import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
 import fieldowner.FieldBase
 import fieldowner.FieldMiddle
+import fieldowner.StaticFieldOwner
 
 class ReferencedInheritedFieldOwnerTests {
+    @TestAttribute
+    fun referencedGenericPropertyReferencesUseBaseTypeArguments() {
+        fun <T> exercise(value: T, next: T) {
+            class Local : FieldMiddle<Int, T>(value) { fun capture(): T = value }
+            val instance = Local()
+            val unbound = Local::value
+            val bound = instance::value
+            assertEquals(value, unbound.get(instance))
+            bound.set(next)
+            assertEquals(next, unbound.get(instance))
+            assertEquals(next, bound.get())
+            unbound.set(instance, value)
+            assertEquals(value, bound.get())
+            assertEquals(value, instance.capture())
+        }
+        exercise("first", "second")
+        exercise(1, 2)
+    }
+
+    @TestAttribute
+    fun referencedStaticLateinitDirectReadChecksInitialization() {
+        var threw = false
+        try { StaticFieldOwner.text } catch (e: Exception) {
+            threw = e.message == "lateinit property text has not been initialized"
+        }
+        assertTrue(threw)
+        StaticFieldOwner.text = "initialized"
+        assertEquals("initialized", StaticFieldOwner.text)
+    }
+
     @TestAttribute
     fun referencedGenericFieldKeepsItsDeclaringFrame() {
         fun <T> exercise(value: T, next: T) {

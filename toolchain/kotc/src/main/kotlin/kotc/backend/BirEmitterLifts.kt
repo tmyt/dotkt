@@ -1360,9 +1360,12 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 	// its get/set below read/write the field directly (`lateinitGet`/`field`/`setFieldExpr`), the SAME nodes the
 	// ordinary member-property access path emits for these (BirEmitterCalls). `fieldBacked` gates that in readBody/
 	// setMethod; everything else (interface identity, receiver capture, generics) is shared with the accessor path.
-	val fieldBacked = prop.isConst || isLateinitProperty(prop) || isClrField(prop)
 	val getterFn = node.getter?.owner ?: prop.getter
 		?: return unsupported(node, "this property reference", "the referenced property has no getter")
+	val declarationProperty = (if (getterFn.isFakeOverride) getterFn.resolveFakeOverride() else getterFn)
+		?.correspondingPropertySymbol?.owner
+	val fieldLateinit = isLateinitProperty(prop) || declarationProperty?.let(::isLateinitProperty) == true
+	val fieldBacked = prop.isConst || fieldLateinit || isClrField(prop)
 	val setterFn = if (prop.isVar) (node.setter?.owner ?: prop.setter) else null
 	val declClass = getterFn.parent as? IrClass
 	val name = prop.name.asString()
@@ -1455,6 +1458,12 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 	}
 	val memberOwner: TypeNode = when {
 		staticProperty -> TypeNode.Fqn(staticPropertyOwner!!)
+		fieldBacked && !hasExtRecv && (bound || unbound) -> {
+			val receiverType = if (bound) boundRecv!!.type else
+				((node.type as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type
+					?: error("field property reference '$name' has no receiver type")
+			fieldDeclarationOwner(getterFn, receiverType)
+		}
 		bound && semanticCompanionType != null -> semanticCompanionType
 		bound && companionCaptureClass != null -> ownerSpec(companionCaptureClass, boundRecv!!.type)
 		bound && declClass != null -> ownerSpec(declClass, boundRecv!!.type)
@@ -1511,7 +1520,7 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 	// (bound = the captured `__recv` field, unbound = the `receiver` param).
 	fun fieldAccess(isSetter: Boolean, valueArg: String?): String = when {
 		isSetter -> """{"k":"setFieldExpr","ownerType":${memberOwner.toJson()},"recv":${recvExprIn()},"name":${str(name)},"value":$valueArg}"""
-		isLateinitProperty(prop) -> """{"k":"lateinitGet","ownerType":${memberOwner.toJson()},"recv":${recvExprIn()},"name":${str(name)}}"""
+		fieldLateinit -> """{"k":"lateinitGet","ownerType":${memberOwner.toJson()},"recv":${recvExprIn()},"name":${str(name)}}"""
 		// A field read carries the constructed-generic ret hint (a `tv`-typed field on `B<T>`) — parity with the
 		// ordinary member field-read path (BirEmitterCalls).
 		else -> """{"k":"field","ownerType":${memberOwner.toJson()},"recv":${recvExprIn()},"name":${str(name)}${retHint((memberOwner as? TypeNode.Fqn)?.args != null, getterFn.returnType)}}"""
@@ -1520,7 +1529,7 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 		val owner = memberOwner.toJson()
 		if (fieldBacked) return if (isSetter)
 			"""{"k":"staticFieldSet","ownerType":$owner,"name":${str(name)},"value":$valueArg}"""
-		else if (isLateinitProperty(prop))
+		else if (fieldLateinit)
 			"""{"k":"lateinitGet","ownerType":$owner,"static":true,"name":${str(name)}}"""
 		else """{"k":"staticField","ownerType":$owner,"name":${str(name)},"ret":${vType.toJson()}}"""
 		val kind = if (isSetter) "set" else "get"

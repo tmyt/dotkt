@@ -97,7 +97,7 @@ import java.io.File
 private val defaultArgPlaceholder = """{"k":"defaultArg"}"""
 
 /** A field-routed property's selected declaration, closed through the receiver's Kotlin supertype graph. */
-private fun BirEmitter.fieldDeclarationOwner(callee: IrSimpleFunction, receiverType: IrType): TypeNode {
+internal fun BirEmitter.fieldDeclarationOwner(callee: IrSimpleFunction, receiverType: IrType): TypeNode {
 	val declaration = if (callee.isFakeOverride)
 		callee.resolveFakeOverride() ?: error("field accessor '${callee.name}' has no declaration")
 	else callee

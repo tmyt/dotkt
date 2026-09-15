@@ -59,8 +59,8 @@ static class BackingFieldRename
     public static void ApplyAll(IReadOnlyList<JsonNode> roots)
     {
         // owner FQN -> (declared field name -> physical field name), and owner FQN -> its declared base, so a
-        // field node whose `ownerType` names a SUBCLASS (kotc spells a fake-override property's owner as the receiver's
-        // class) still resolves to the base that declares the storage.
+        // field node naming an inherited owner can still resolve to the base that declares the storage. Ordinary
+        // Kotlin property accesses and references carry their selected declaration owner directly.
         var renames = new Dictionary<string, Dictionary<string, string>>(StringComparer.Ordinal);
         var staticRenames = new Dictionary<string, Dictionary<string, string>>(StringComparer.Ordinal);
         var bases = new Dictionary<string, string>(StringComparer.Ordinal);

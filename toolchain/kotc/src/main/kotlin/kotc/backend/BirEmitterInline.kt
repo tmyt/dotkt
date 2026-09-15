@@ -347,13 +347,11 @@ internal fun BirEmitter.correspondingSupertypeInstantiation(
 	val superType = AbstractTypeChecker.findCorrespondingSupertypes(state, recvSimple, ownerClass.symbol)
 		.firstOrNull() as? IrSimpleType ?: return null
 	// findCorrespondingSupertypes CAPTURES a projected/star owner arg (`Derived<*> : Base<E>` -> `Base<captured>`,
-	// or a star-projected BOUND `S : Slot<*>` -> `Slot<captured>`). birType silently renders an IrCapturedType — and a
-	// bare star — as `kotlin.Any`, and the downstream arity guard can't tell that from a GENUINE `Any` arg. Carrying it
-	// would type the dispatch temp at the INVARIANT `Base<Any>` while the runtime value inhabits `Base<something>` (a
-	// castclass/verify hazard; value-type instantiations erased to Any). OMIT such an instantiation (return null) so the
-	// caller falls back to the status-quo positional bind — the correct erased answer for an unknown/star owner arg. Only
-	// the owner's OWN top-level args are checked; a concrete arg CONTAINING a nested capture (`Base<List<*>>`) is fine
-	// (birType renders the concrete `List<Any>`). Port-relevant shape: kotlinx.coroutines `AbstractSharedFlow<S :
+	// or a star-projected BOUND `S : Slot<*>` -> `Slot<captured>`). Generic-argument rendering preserves the original
+	// projection, but F2A cannot use a top-level existential argument as an invariant dispatch frame. Its callers
+	// therefore omit that frame here unless they explicitly consume semantic projections. Only the owner's OWN
+	// top-level args are checked; a concrete arg containing a nested capture (`Base<List<*>>`) keeps that nested
+	// projection when rendered. Port-relevant shape: kotlinx.coroutines `AbstractSharedFlow<S :
 	// AbstractSharedFlowSlot<*>>`.
 	if (!allowCapturedArguments &&
 		superType.arguments.any { it !is IrTypeProjection || it.type is IrCapturedType }) return null

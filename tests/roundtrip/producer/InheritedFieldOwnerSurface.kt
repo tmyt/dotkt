@@ -7,3 +7,7 @@ open class FieldBase<T>(seed: T) {
     lateinit var text: String
 }
 open class FieldMiddle<A, B>(seed: B) : FieldBase<B>(seed)
+
+class StaticFieldOwner {
+    companion { lateinit var text: String }
+}

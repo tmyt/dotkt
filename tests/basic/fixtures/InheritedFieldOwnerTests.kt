@@ -1,5 +1,6 @@
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
 import kotlin.clr.ClrField
 
 open class InheritedLateinitBase(seed: String) {
@@ -11,8 +12,44 @@ open class InheritedPlainBase<T>(seed: T) {
     @ClrField var value: T = seed
 }
 open class InheritedFieldMiddle<A, B>(seed: B) : InheritedPlainBase<B>(seed)
+open class InheritedUninitializedBase { lateinit var value: String }
 
 class InheritedFieldOwnerTests {
+    @TestAttribute
+    fun boundAndUnboundReferencesUseInheritedStorage() {
+        fun exercise(value: String) {
+            class Local : InheritedUninitializedBase() { fun capture(): String = value }
+            val instance = Local()
+            val unbound = Local::value
+            val bound = instance::value
+            var threw = false
+            try { unbound.get(instance) } catch (e: Exception) {
+                threw = e.message == "lateinit property value has not been initialized"
+            }
+            assertTrue(threw)
+            unbound.set(instance, "first")
+            assertEquals("first", bound.get())
+            bound.set("second")
+            assertEquals("second", unbound.get(instance))
+            assertEquals("second", (instance as InheritedUninitializedBase).value)
+            assertEquals("captured", instance.capture())
+        }
+        exercise("captured")
+    }
+
+    @TestAttribute
+    fun nullableReceiversKeepTheirNonNullFieldOwnerAfterChecks() {
+        fun read(instance: InheritedFieldMiddle<Int, String>?): String? {
+            if (instance != null) return instance.value
+            return null
+        }
+        fun safeRead(instance: InheritedFieldMiddle<Int, String>?): String? = instance?.value
+        assertEquals("text", read(InheritedFieldMiddle("text")))
+        assertEquals("text", safeRead(InheritedFieldMiddle("text")))
+        assertEquals(null, read(null))
+        assertEquals(null, safeRead(null))
+    }
+
     @TestAttribute
     fun boundReceiversKeepTheSelectedBaseField() {
         fun <T, U : InheritedFieldMiddle<Int, T>> readBound(instance: U): T = instance.value
