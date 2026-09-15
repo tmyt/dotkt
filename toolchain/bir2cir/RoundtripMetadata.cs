@@ -249,8 +249,11 @@ static class RoundtripMetadata
         // `val s: Sink<Int?> = E()`. Same opaque TypeNode payload as every other carrier.
         if ((to[KotlinSupertypesRecord.PreKey] as JsonValue)?.GetValue<string>() is string sup)
         {
+            var sourceFacts = JsonNode.Parse(sup);
+            if (sourceFacts[NullableRepresentationFrame.MetadataKey] is JsonNode frameNode)
+                ValidateNullableFrame(frameNode, to);
             Append(to, Marker(AKSupertypes, StringArg(BirCarrier.JsonV1),
-                BytesArg(Convert.ToBase64String(BirCarrier.EncodeBody(BirCarrier.JsonV1, JsonNode.Parse(sup))))));
+                BytesArg(Convert.ToBase64String(BirCarrier.EncodeBody(BirCarrier.JsonV1, sourceFacts)))));
             to.Remove(KotlinSupertypesRecord.PreKey);
         }
         if ((to["kotlinType"] as JsonValue)?.GetValue<string>() is string kt)
@@ -336,6 +339,15 @@ static class RoundtripMetadata
                 identity["reified"] = reified.DeepClone();
             if (mo[ReifiedNullabilityWitnessLowering.WitnessIndicesKey] is JsonArray nullableWitness)
                 identity["nullableWitness"] = nullableWitness.DeepClone();
+            if ((mo[NullableRepresentationTypes.MethodFrameKey] as JsonValue)?.GetValue<string>() is string frameText)
+            {
+                if (identity["signature"] == null)
+                    throw new InvalidOperationException("Nullable representation frame requires the original Kotlin signature");
+                var frameNode = JsonNode.Parse(frameText);
+                ValidateNullableFrame(frameNode, mo);
+                identity[NullableRepresentationFrame.MetadataKey] = frameNode;
+                mo.Remove(NullableRepresentationTypes.MethodFrameKey);
+            }
             Append(mo, JsonCarrierAttr(AKDeclarationIdentity, identity));
             mo.Remove(DeclarationIdentityBinding.Key);
             mo.Remove("declarationSourceName");
@@ -343,6 +355,8 @@ static class RoundtripMetadata
             mo.Remove(ReifiedNullabilityWitnessLowering.SemanticIndicesKey);
             mo.Remove(ReifiedNullabilityWitnessLowering.WitnessIndicesKey);
         }
+        if (mo[NullableRepresentationTypes.MethodFrameKey] != null)
+            throw new InvalidOperationException("Nullable representation frame requires declaration identity metadata");
         // CLR Property rows cannot describe method-generic accessors. The allocator leaves this exact semantic
         // association only on those MethodDefs; turn it into trusted metadata before the hand-off fact disappears.
         StampPropertyAccessorCarrier(mo);
@@ -578,6 +592,13 @@ static class RoundtripMetadata
     // it as the first arg), so — unlike the suspend carrier — there is NO shape to record: the bare marker plus the
     // delegate's own type args fully reconstruct `P.() -> R`. (A SUSPEND receiver fn is erased to `object` and rides the
     // suspendFnType carrier instead, so it never reaches here.)
+    static void ValidateNullableFrame(JsonNode frameNode, JsonObject declaration)
+    {
+        var frame = NullableRepresentationFrame.Read(frameNode);
+        if (frame.PhysicalArity != (declaration["typeParams"] as JsonArray)?.Count)
+            throw new InvalidOperationException("Nullable representation frame does not match emitted declaration arity");
+    }
+
     static bool HasRecvFn(JsonNode slot) =>
         slot is JsonObject o && o["t"] is JsonValue tv && tv.TryGetValue<string>(out var s) && s == "fn"
         && o["recv"] is JsonObject
@@ -635,6 +656,7 @@ static class RoundtripMetadata
             po.Remove("declarationSourceName");
             po.Remove(DeclarationIdentityBinding.SemanticSignatureKey);
             po.Remove(NullableGenericErasure.MethodTypeParameterBoundsPre);
+            po.Remove(NullableRepresentationTypes.MethodFrameKey);
             if (po["mods"] is JsonObject mods)
             {
                 // BIR-only slot role. Metadata builds consume it into [KotlinExtensionReceiver]; runtime builds emit

@@ -106,6 +106,52 @@ static partial class NullableRepresentationDemand
             ["ForeignProducer"] = new NullableRepresentationFrame(1, new[] { 0 }),
         });
         Check(imported[0].Frame.NullableIndices.SequenceEqual(new[] { 0 }), "referenced declaration correspondence");
+        MetadataSelfTest();
         Console.WriteLine("[nullable representation frame] self-test OK (source correspondence, scopes, declaration/body demand, fixed point)");
+    }
+
+    static void MetadataSelfTest()
+    {
+        var frame = new NullableRepresentationFrame(1, new[] { 0 });
+        var owner = new JsonObject {
+            ["kind"] = "class", ["name"] = "FrameOwner", ["typeParams"] = new JsonArray("T", "N"),
+        };
+        KotlinSupertypesRecord.Merge(owner, new JsonObject { [NullableRepresentationFrame.MetadataKey] = frame.ToJson() });
+        KotlinSupertypesRecord.Merge(owner, new JsonObject {
+            ["bounds"] = new JsonObject { ["0"] = new JsonArray(TypeJson.Fqn("System.Object")) },
+        });
+        var sourceResult = new TypeNode.Fqn("Box", new TypeNode[] { new TypeNode.Nullable(new TypeNode.Tv("method", 0)) });
+        var method = new JsonObject {
+            ["name"] = "physical", [DeclarationIdentityBinding.Key] = "frame-test-method", ["declarationSourceName"] = "source",
+            ["typeParams"] = new JsonArray("T", "N"), ["params"] = new JsonArray(),
+            ["ret"] = TypeJson.Write(new TypeNode.Fqn("Box", new TypeNode[] { new TypeNode.Tv("method", 1) })),
+            [DeclarationIdentityBinding.SemanticSignatureKey] = new JsonObject {
+                ["params"] = new JsonArray(), ["ret"] = TypeJson.Write(sourceResult),
+            },
+            [NullableRepresentationTypes.MethodFrameKey] = frame.ToJson().ToJsonString(),
+        };
+        var root = new JsonObject { ["fileClass"] = "FrameFile", ["types"] = new JsonArray(owner), ["methods"] = new JsonArray(method) };
+        var runtime = root.DeepClone();
+        RoundtripMetadata.Stamp(root);
+
+        static JsonNode Payload(JsonObject declaration, string name)
+        {
+            var attribute = ((JsonArray)declaration["attrs"]).OfType<JsonObject>().Single(attr =>
+                TypeJson.OwnerName(attr["attr"]) == "DotKt.Runtime.CompilerServices." + name);
+            var bytes = attribute["args"][1]["bytes"].GetValue<string>();
+            return BirCarrier.DecodeBody(BirCarrier.JsonV1, Convert.FromBase64String(bytes));
+        }
+        var typePayload = Payload(owner, "KotlinSupertypesAttribute");
+        var methodPayload = Payload(method, "KotlinDeclarationIdentityAttribute");
+        if (!JsonNode.DeepEquals(typePayload[NullableRepresentationFrame.MetadataKey], frame.ToJson())
+            || typePayload["bounds"] == null
+            || !JsonNode.DeepEquals(methodPayload[NullableRepresentationFrame.MetadataKey], frame.ToJson())
+            || TypeJson.Read(methodPayload["signature"]["ret"]) != sourceResult
+            || owner[KotlinSupertypesRecord.PreKey] != null || method[NullableRepresentationTypes.MethodFrameKey] != null)
+            throw new InvalidOperationException("Nullable representation metadata lost source facts or leaked transient frames");
+        RoundtripMetadata.StripRuntimeAttrs(runtime);
+        if (runtime["types"][0][KotlinSupertypesRecord.PreKey] != null
+            || runtime["methods"][0][NullableRepresentationTypes.MethodFrameKey] != null)
+            throw new InvalidOperationException("Runtime metadata stripping leaked nullable representation facts");
     }
 }

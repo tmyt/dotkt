@@ -5585,7 +5585,8 @@ internal sealed class AssemblyScanner : IDisposable
         IReadOnlyList<TypeNode>? Parameters,
         TypeNode? ReturnType,
         IReadOnlySet<int> SemanticReifiedTypeParameterIndices,
-        IReadOnlySet<int> NullableWitnessTypeParameterIndices);
+        IReadOnlySet<int> NullableWitnessTypeParameterIndices,
+        NullableRepresentationFrame? NullableFrame);
 
     private DeclarationIdentityCarrier? KotlinDeclarationIdentityCarrier(MethodDefinitionHandle methodHandle)
     {
@@ -5594,11 +5595,11 @@ internal sealed class AssemblyScanner : IDisposable
         if (document is null) return null;
         var root = document.RootElement;
         var propertyCount = root.ValueKind == JsonValueKind.Object ? root.EnumerateObject().Count() : 0;
-        if (propertyCount is < 2 or > 5 ||
+        if (propertyCount is < 2 or > 6 ||
             !root.TryGetProperty("id", out var idNode) || idNode.ValueKind != JsonValueKind.String ||
             !root.TryGetProperty("name", out var nameNode) || nameNode.ValueKind != JsonValueKind.String ||
             root.EnumerateObject().Any(property => property.Name is not (
-                "id" or "name" or "signature" or "reified" or "nullableWitness")) ||
+                "id" or "name" or "signature" or "reified" or "nullableWitness" or NullableRepresentationFrame.MetadataKey)) ||
             root.TryGetProperty("signature", out var signatureNode) && signatureNode.ValueKind != JsonValueKind.Object ||
             root.TryGetProperty("reified", out var reifiedNode) && reifiedNode.ValueKind != JsonValueKind.Array ||
             root.TryGetProperty("nullableWitness", out var witnessNode)
@@ -5608,6 +5609,14 @@ internal sealed class AssemblyScanner : IDisposable
         var name = nameNode.GetString();
         if (string.IsNullOrEmpty(id) || string.IsNullOrEmpty(name))
             throw new InvalidDataException("empty [KotlinDeclarationIdentity] payload");
+        NullableRepresentationFrame? nullableFrame = null;
+        if (root.TryGetProperty(NullableRepresentationFrame.MetadataKey, out var frameNode))
+        {
+            nullableFrame = NullableRepresentationFrame.Read(System.Text.Json.Nodes.JsonNode.Parse(frameNode.GetRawText())!);
+            if (nullableFrame.PhysicalArity != _md.GetMethodDefinition(methodHandle).GetGenericParameters().Count)
+                throw new InvalidDataException("Nullable representation frame disagrees with MethodDef generic arity");
+        }
+        var sourceArity = nullableFrame?.SourceArity ?? _md.GetMethodDefinition(methodHandle).GetGenericParameters().Count;
         var reified = root.TryGetProperty("reified", out reifiedNode)
             ? reifiedNode.EnumerateArray().Select(index => index.ValueKind == JsonValueKind.Number
                 && index.TryGetInt32(out var value) && value >= 0
@@ -5615,7 +5624,7 @@ internal sealed class AssemblyScanner : IDisposable
                 : throw new InvalidDataException("malformed [KotlinDeclarationIdentity] reified index"))
                 .ToHashSet()
             : new HashSet<int>();
-        if (reified.Any(index => index >= _md.GetMethodDefinition(methodHandle).GetGenericParameters().Count))
+        if (reified.Any(index => index >= sourceArity))
             throw new InvalidDataException("[KotlinDeclarationIdentity] reified index exceeds method generic arity");
         var nullableWitness = root.TryGetProperty("nullableWitness", out witnessNode)
             ? witnessNode.EnumerateArray().Select(index => index.ValueKind == JsonValueKind.Number
@@ -5626,15 +5635,15 @@ internal sealed class AssemblyScanner : IDisposable
                 .ToHashSet()
             : new HashSet<int>();
         if (nullableWitness.Any(index =>
-            index >= _md.GetMethodDefinition(methodHandle).GetGenericParameters().Count))
+            index >= sourceArity))
             throw new InvalidDataException(
                 "[KotlinDeclarationIdentity] nullable-witness index exceeds method generic arity");
         if (!root.TryGetProperty("signature", out signatureNode))
         {
-            if (nullableWitness.Count != 0)
+            if (nullableWitness.Count != 0 || nullableFrame is not null)
                 throw new InvalidDataException(
                     "[KotlinDeclarationIdentity] nullable-witness indices require a semantic signature");
-            return new DeclarationIdentityCarrier(id, name, null, null, reified, nullableWitness);
+            return new DeclarationIdentityCarrier(id, name, null, null, reified, nullableWitness, nullableFrame);
         }
         if (signatureNode.EnumerateObject().Count() != 2 ||
             !signatureNode.TryGetProperty("params", out var paramsNode) || paramsNode.ValueKind != JsonValueKind.Array ||
@@ -5643,7 +5652,7 @@ internal sealed class AssemblyScanner : IDisposable
         var parameters = paramsNode.EnumerateArray().Select(parameter =>
             TypeNode.Read(parameter) ?? throw new InvalidDataException(
                 "malformed [KotlinDeclarationIdentity] semantic parameter type")).ToArray();
-        return new DeclarationIdentityCarrier(id, name, parameters, returnType, reified, nullableWitness);
+        return new DeclarationIdentityCarrier(id, name, parameters, returnType, reified, nullableWitness, nullableFrame);
     }
 
     /// `isStatic` is the caller's, because the two call sites read it from different places: a CLASS member accessor

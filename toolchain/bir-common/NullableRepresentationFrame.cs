@@ -10,6 +10,7 @@ namespace DotKt.Bir;
 // Source parameters keep their indices. Demanded nullable representations follow in source-index order.
 internal sealed class NullableRepresentationFrame
 {
+    public const string MetadataKey = "nullableFrame";
     public int SourceArity { get; }
     public IReadOnlyList<int> NullableIndices { get; }
     public int PhysicalArity => SourceArity + NullableIndices.Count;

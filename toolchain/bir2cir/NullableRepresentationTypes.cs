@@ -7,6 +7,7 @@ using DotKt.Bir;
 // declaration identities or discover frame demand; both are inputs. Original Kotlin types remain immutable.
 sealed class NullableRepresentationTypes
 {
+    internal const string MethodFrameKey = "nullableRepresentationFrame";
     readonly NullableRepresentationFrame _owner;
     readonly NullableRepresentationFrame _method;
     readonly IReadOnlyDictionary<string, NullableRepresentationFrame> _types;
