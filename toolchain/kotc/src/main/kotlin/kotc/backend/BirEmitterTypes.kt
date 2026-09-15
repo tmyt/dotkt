@@ -402,6 +402,10 @@ internal fun BirEmitter.birValueParameterType(parameter: IrValueParameter): Type
  * type-parameter descriptor; bir2cir consumes this occurrence when selecting a reifiable CLR representation. */
 internal fun BirEmitter.birTypeProjection(argument: org.jetbrains.kotlin.ir.types.IrTypeArgument): TypeNode {
 	val projection = argument as? IrTypeProjection ?: return TypeNode.Star
+	// Corresponding-supertype lookup captures projected arguments. A capture is not a classifier: retain the
+	// source projection that introduced it rather than trying to name it or replacing it with its upper bound.
+	val captured = projection.type as? org.jetbrains.kotlin.ir.types.impl.IrCapturedType
+	if (captured != null) return birTypeProjection(captured.constructor.argument)
 	return projectTypeArgument(projection.variance, birTypeArgument(projection.type))
 }
 

@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Inherited field accesses retain their declaring owner (#743).** Reads and writes of inherited plain and
+  lateinit properties use the base declaration's generic frame rather than same-named anonymous capture storage.
+
 - **Backing-field renaming respects field shadowing (#725).** Anonymous captures and plain fields retain their
   own storage when a base class declares a same-named property, avoiding invalid private-field access.
 

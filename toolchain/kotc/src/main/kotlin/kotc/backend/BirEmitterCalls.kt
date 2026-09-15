@@ -96,6 +96,19 @@ import java.io.File
  *  bir2cir's DefaultArgSplice replaces it (by array index) from the selected reference DLL. */
 private val defaultArgPlaceholder = """{"k":"defaultArg"}"""
 
+/** A field-routed property's selected declaration, closed through the receiver's Kotlin supertype graph. */
+internal fun BirEmitter.fieldDeclarationOwner(callee: IrSimpleFunction, receiverType: IrType): TypeNode {
+	val declaration = if (callee.isFakeOverride)
+		callee.resolveFakeOverride() ?: error("field accessor '${callee.name}' has no declaration")
+	else callee
+	val owner = declaration.parent as? IrClass
+		?: error("field accessor '${declaration.name}' has no class owner")
+	val ownerType = if (receiverType.classifierOrNull?.owner === owner) receiverType else
+		correspondingSupertypeInstantiation(receiverType, owner, allowCapturedArguments = true)
+			?: error("field accessor '${declaration.name}' has no corresponding receiver supertype")
+	return birType(ownerType)
+}
+
 /** Regular args, POSITIONALLY complete, filling omitted default arguments (IL has no default-parameter mechanism).
  *  ONE pass for every KOTLIN call shape whose callee IR carries its defaults — a function call, a `new`, an array ctor,
  *  a lifted local/class `new`, a constructor delegation, an enum entry. Reference-KLIB calls whose dependency IR has
@@ -1680,18 +1693,26 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 			// field against the selected reference assembly.
 			if (isClrField(prop)) {
 				val fieldName = str(prop.name.asString())
-				val ownerType = memberType!!.toJson()
+				val fieldOwner = if (isStatic) memberType!! else fieldDeclarationOwner(callee, recv!!.type)
+				val ownerType = fieldOwner.toJson()
+				val declarationProperty = (if (callee.isFakeOverride) callee.resolveFakeOverride() else callee)
+					?.correspondingPropertySymbol?.owner
+				val lateinit = isLateinitProperty(prop) || declarationProperty?.let(::isLateinitProperty) == true
 				return if (isStatic) {
 					if (callee === prop.setter)
 						"""{"k":"staticFieldSet","ownerType":$ownerType,"name":$fieldName,"value":${expr(regularArgs(call).first())}$companionCallTag}"""
+					else if (lateinit)
+						"""{"k":"lateinitGet","ownerType":$ownerType,"static":true,"name":$fieldName$companionCallTag}"""
 					else
-						"""{"k":"staticField","ownerType":$ownerType,"name":$fieldName${retHint((memberType as? TypeNode.Fqn)?.args != null, call.type)}$companionCallTag}"""
+						"""{"k":"staticField","ownerType":$ownerType,"name":$fieldName${retHint((fieldOwner as? TypeNode.Fqn)?.args != null, call.type)}$companionCallTag}"""
 				} else {
 					val receiver = expr(recv!!)
 					if (callee === prop.setter)
 						"""{"k":"setFieldExpr","ownerType":$ownerType,"recv":$receiver,"name":$fieldName,"value":${expr(regularArgs(call).first())}$companionCallTag}"""
+					else if (lateinit)
+						"""{"k":"lateinitGet","ownerType":$ownerType,"recv":$receiver,"name":$fieldName$companionCallTag}"""
 					else
-						"""{"k":"field","ownerType":$ownerType,"recv":$receiver,"name":$fieldName${retHint((memberType as? TypeNode.Fqn)?.args != null, call.type)}$companionCallTag}"""
+						"""{"k":"field","ownerType":$ownerType,"recv":$receiver,"name":$fieldName${retHint((fieldOwner as? TypeNode.Fqn)?.args != null, call.type)}$companionCallTag}"""
 				}
 			}
 			// A `kotlin.clr.ClrEvent<T>` property read is legal ONLY as the receiver of `.subscribe(h)`, where
@@ -1977,12 +1998,15 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 				"""{"k":"callInstance","ownerType":$owner,"virtual":$virtual,"recv":$recv,"method":${str(property.name.asString())},"prop":"set"${overloadSigField(callee)},"args":[$accArgs]${overridesJson(callee)}${superTag(call)}}"""
 			else """{"k":"callInstance","ownerType":$owner,"virtual":$virtual,"recv":$recv,"method":${str(property.name.asString())},"prop":"get"${overloadSigField(callee)},"args":[$accArgs]${retHint((ownerStr as? TypeNode.Fqn)?.args != null, call.type)}${overridesJson(callee)}${superTag(call)}}"""
 		}
+		// A fake override selects inherited storage, not a field declared by the receiver class. Preserve the
+		// selected Kotlin declaration and its substituted supertype frame; synthetic capture names are unrelated.
+		val fieldOwner = fieldDeclarationOwner(callee, recvExpr?.type ?: declaringClass.defaultType)
 		return if (callee === property.setter)
-			"""{"k":"setFieldExpr","ownerType":$owner,"recv":$recv,"name":${str(property.name.asString())},"value":${expr(regularArgs(call).first())}}"""
+			"""{"k":"setFieldExpr","ownerType":${str(fieldOwner)},"recv":$recv,"name":${str(property.name.asString())},"value":${expr(regularArgs(call).first())}}"""
 		// `lateinit var` read -> throw if still uninitialized (the field is null) — proper lateinit semantics.
 		else if (isLateinitProperty(property))
-			"""{"k":"lateinitGet","ownerType":$owner,"recv":$recv,"name":${str(property.name.asString())}}"""
-		else """{"k":"field","ownerType":$owner,"recv":$recv,"name":${str(property.name.asString())}${retHint((ownerStr as? TypeNode.Fqn)?.args != null, call.type)}}"""
+			"""{"k":"lateinitGet","ownerType":${str(fieldOwner)},"recv":$recv,"name":${str(property.name.asString())}}"""
+		else """{"k":"field","ownerType":${str(fieldOwner)},"recv":$recv,"name":${str(property.name.asString())}${retHint((fieldOwner as? TypeNode.Fqn)?.args != null, call.type)}}"""
 	}
 
 	// Kotlin universal methods (hashCode/toString/equals) on a builtin receiver. The System.Object slot is correct
