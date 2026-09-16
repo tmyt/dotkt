@@ -473,7 +473,8 @@ static partial class NullableTvErasureCallRealign
         {
             if (type is not TypeNode.Tv variable) return false;
             var frame = variable.Scope == "type" ? OwnerNullableFrame : MethodNullableFrame;
-            return frame != null && variable.I >= frame.SourceArity && variable.I < frame.PhysicalArity;
+            return frame != null && variable.I >= 0 && variable.I < frame.PhysicalArity
+                && frame.SourceIndex(variable.I) == null;
         }
     }
 

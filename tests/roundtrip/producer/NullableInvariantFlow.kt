@@ -48,6 +48,13 @@ class KeyImpl<K>(override val key: K) : KeyChild<K> {
     override val marker: Int get() = 1
 }
 
+class NullableOwner<T>(val value: Box<T?>) {
+    fun <U> view(selected: U): KeyRoot<U> = object : KeyRoot<U> {
+        override val key: U = selected
+        override val marker: Int get() = if (value.value == null) 0 else 1
+    }
+}
+
 fun readLocalMarker(value: KeyRoot<String>): Int = value.marker
 
 class Bound<T : Box<String?>>(val box: T)

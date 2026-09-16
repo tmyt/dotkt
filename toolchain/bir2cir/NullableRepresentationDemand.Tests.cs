@@ -44,6 +44,24 @@ static partial class NullableRepresentationDemand
         Malformed(() => new NullableRepresentationFrame(2, new[] { 1, 1 }));
         Malformed(() => NullableRepresentationFrame.Read(new JsonObject { ["sourceArity"] = 1 }));
 
+        // An outer T, N(T) prefix precedes the child's own U. Source order remains T, U.
+        var nested = new NullableRepresentationFrame(2, new[] { 0 }, new[] { 0, 2, 1 });
+        var nestedRoundtrip = NullableRepresentationFrame.Read(nested.ToJson());
+        Check(nestedRoundtrip.SourcePosition(1) == 2, "nested ordinary slot follows enclosing companion");
+        Check(nestedRoundtrip.SourceIndex(1) == null && nestedRoundtrip.SourceIndex(2) == 1,
+            "physical slots classify by correspondence, not source arity");
+        Check(nestedRoundtrip.NullableVariable(new TypeNode.Tv("type", 0)) == new TypeNode.Tv("type", 1),
+            "nested companion keeps enclosing prefix");
+        Check(nestedRoundtrip.SemanticVariable(new TypeNode.Tv("type", 2)) == new TypeNode.Tv("type", 1),
+            "nested ordinary slot restores source identity");
+        var nestedClosed = nestedRoundtrip.Close(new TypeNode[] { stringType, new TypeNode.Fqn("kotlin.Int") },
+            type => type, type => new TypeNode.Nullable(type));
+        Check(nestedClosed[1] == nullableString && nestedClosed[2] == new TypeNode.Fqn("kotlin.Int"),
+            "nested applications follow physical order");
+        Check(nestedRoundtrip.OrdinaryArguments(nestedClosed).SequenceEqual(new TypeNode[] {
+            stringType, new TypeNode.Fqn("kotlin.Int") }), "nested source arguments are not a physical prefix");
+        Malformed(() => new NullableRepresentationFrame(2, new[] { 0 }, new[] { 0, 2, 2 }));
+
         static JsonNode Tv(string scope = "type", int index = 0) => TypeJson.Write(new TypeNode.Tv(scope, index));
         static JsonNode NullableTv(string scope = "type") => new JsonObject { ["t"] = "nullable", ["of"] = Tv(scope) };
         static JsonNode Applied(string name, JsonNode argument) => new JsonObject {

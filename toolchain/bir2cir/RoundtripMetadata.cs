@@ -595,7 +595,9 @@ static class RoundtripMetadata
     static void ValidateNullableFrame(JsonNode frameNode, JsonObject declaration)
     {
         var frame = NullableRepresentationFrame.Read(frameNode);
-        if (frame.PhysicalArity != (declaration["typeParams"] as JsonArray)?.Count)
+        var physicalArity = ((declaration["typeParams"] as JsonArray)?.Count ?? 0)
+            + ((declaration["capturedTypeParams"] as JsonArray)?.Count ?? 0);
+        if (frame.PhysicalArity != physicalArity)
             throw new InvalidOperationException("Nullable representation frame does not match emitted declaration arity");
     }
 

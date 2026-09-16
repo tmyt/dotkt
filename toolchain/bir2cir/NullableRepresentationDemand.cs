@@ -39,9 +39,30 @@ static partial class NullableRepresentationDemand
 
     internal sealed record OwnerDemand(JsonObject Declaration, Variables Signature, Variables Body, List<MethodDemand> Methods)
     {
-        public NullableRepresentationFrame Frame => new(
-            (Declaration["typeParams"] as JsonArray)?.Count ?? 0,
-            Signature.Type.Concat(Methods.SelectMany(method => method.Signature.Type)).Distinct().OrderBy(i => i));
+        public OwnerDemand CapturedOwner { get; set; }
+        public int CaptureOffset { get; set; }
+
+        public NullableRepresentationFrame Frame
+        {
+            get
+            {
+                var arity = (Declaration["typeParams"] as JsonArray)?.Count ?? 0;
+                var enclosing = CapturedOwner?.Frame;
+                var indices = Signature.Type.Concat(Methods.SelectMany(method => method.Signature.Type))
+                    .Concat(enclosing?.NullableIndices.Select(index => CaptureOffset + index) ?? Enumerable.Empty<int>())
+                    .Distinct().OrderBy(i => i).ToArray();
+                if (enclosing == null) return new NullableRepresentationFrame(arity, indices);
+                // Source capture segments can occur after the child's own variables. CLR requires the entire
+                // enclosing physical frame first, including its companions, in exactly the enclosing order.
+                var prefix = enclosing.PhysicalOrder.Select(slot => slot < enclosing.SourceArity
+                    ? CaptureOffset + slot
+                    : arity + Array.IndexOf(indices, CaptureOffset + enclosing.NullableIndices[slot - enclosing.SourceArity]))
+                    .ToArray();
+                var captured = prefix.ToHashSet();
+                return new NullableRepresentationFrame(arity, indices,
+                    prefix.Concat(Enumerable.Range(0, arity + indices.Length).Where(slot => !captured.Contains(slot))));
+            }
+        }
     }
 
     public static IReadOnlyList<OwnerDemand> Collect(IEnumerable<JsonNode> roots,
@@ -58,6 +79,28 @@ static partial class NullableRepresentationDemand
                 Discover(nested);
         }
         foreach (var root in roots.OfType<JsonObject>()) Discover(root);
+
+        var declarations = owners.Where(owner => Text(owner.Declaration["kind"]) != null)
+            .ToDictionary(owner => Text(owner.Declaration["name"]), StringComparer.Ordinal);
+        foreach (var owner in owners)
+        {
+            if (owner.Declaration["outerTypeParamCount"] is not JsonValue capturedValue
+                || !capturedValue.TryGetValue<int>(out var captured) || captured == 0) continue;
+            if (Text(owner.Declaration["semanticOwner"]) is not string parentName
+                || !declarations.TryGetValue(parentName, out var parent)) continue;
+            var offset = (owner.Declaration["outerTypeParamOffset"] as JsonValue)?.GetValue<int>() ?? 0;
+            if (captured != (parent.Declaration["typeParams"] as JsonArray)?.Count || offset < 0
+                || offset + captured > (owner.Declaration["typeParams"] as JsonArray)?.Count)
+                throw new InvalidOperationException("Semantic owner capture does not match source generic frame");
+            owner.CapturedOwner = parent;
+            owner.CaptureOffset = offset;
+        }
+        foreach (var owner in owners)
+        {
+            var seen = new HashSet<JsonObject>();
+            for (var cursor = owner; cursor != null; cursor = cursor.CapturedOwner)
+                if (!seen.Add(cursor.Declaration)) throw new InvalidOperationException("Cyclic semantic owner capture");
+        }
 
         bool changed;
         do
@@ -133,7 +176,7 @@ static partial class NullableRepresentationDemand
                     RequireNullable(TypeJson.Read(arguments[index]), result);
             }
             foreach (var (key, value) in obj)
-                if (key is not ("attrs" or "overrides"))
+                if (key is not ("attrs" or "overrides" or "inheritedImplementation"))
                 {
                     if (Text(obj["k"]) != null && (NullableRepresentationTypes.IsDeclarationFrameKey(key, Text(obj["k"]), obj)
                         || key == "resolvedMemberParams" || key == ClrMemberResolution.ResolvedMemberReturnKey

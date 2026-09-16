@@ -21,6 +21,7 @@ sealed class NullableRepresentationTypes
         "sig" or "shapeTypes" or "paramSig" or "delegationSig"
         or "memberOwnerTypeParams" or "memberMethodTypeParams"
         or "memberReturnType" or "memberSignature" or "memberType"
+        || key == "retType" && kind == "callInline"
         || key == "argTypes" && kind != null && kind != "new"
         // BIR's exact result-stamp contract (spec §2.7): a result equal to sty is already caller-relative,
         // even on a constructed member/property call. Owner presence does not establish result ownership.
@@ -72,6 +73,10 @@ sealed class NullableRepresentationTypes
             && type is TypeNode.Nullable { Of: TypeNode.Fqn value } && _isValue(value))
             return new TypeNode.Fqn("object");
         return type switch {
+            TypeNode.Tv { Scope: "type" } ownerVariable when _owner != null =>
+                new TypeNode.Tv("type", _owner.SourcePosition(ownerVariable.I)),
+            TypeNode.Tv { Scope: "method" } methodVariable when _method != null =>
+                new TypeNode.Tv("method", _method.SourcePosition(methodVariable.I)),
             TypeNode.Nullable nullable => new TypeNode.Nullable(Slot(nullable.Of)),
             TypeNode.Oblivious oblivious => new TypeNode.Oblivious(Rewrite(oblivious.Of, position)),
             TypeNode.Projection projection => new TypeNode.Projection(projection.Variance, Rewrite(projection.Of, position)),

@@ -1090,7 +1090,7 @@ sealed partial class ReferenceMetadataIndex
 
     static bool SameFrame(NullableRepresentationFrame a, NullableRepresentationFrame b) =>
         ReferenceEquals(a, b) || a != null && b != null && a.SourceArity == b.SourceArity
-            && a.NullableIndices.SequenceEqual(b.NullableIndices);
+            && a.NullableIndices.SequenceEqual(b.NullableIndices) && a.PhysicalOrder.SequenceEqual(b.PhysicalOrder);
 
     static bool Same<T>(T[] a, T[] b) where T : IEquatable<T> =>
         ReferenceEquals(a, b) || a != null && b != null && a.SequenceEqual(b);
@@ -3902,9 +3902,12 @@ sealed partial class ReferenceMetadataIndex
         if (!byArity.TryGetValue(argCount, out var ctors) || ctors.Count != 1) return false;
         var ctor = ctors[0];
         if (ctor.ParamTypeNodes == null || ctor.ParamTypeNodes.Length != argCount) return false;
+        var explicitNullableFrame = _ownerNullableFrames.ContainsKey(ctor.Owner)
+            || _ownerNullableFrames.ContainsKey(lookupOwner);
         var facts = new SlotFact[argCount];
         for (var i = 0; i < argCount; i++)
-            facts[i] = DeclaredSlot(ctor.NullableGenericParams?[i], ctor.ParamTypeNodes[i]);
+            facts[i] = explicitNullableFrame ? new SlotFact(Canonical(ctor.ParamTypeNodes[i]), false)
+                : DeclaredSlot(ctor.NullableGenericParams?[i], ctor.ParamTypeNodes[i]);
         declaredParams = facts.Select(f => f.Node).ToArray();
         paramsRefused = facts.Select(f => f.Refused).ToArray();
         return facts.Any(f => f.Node != null || f.Refused);

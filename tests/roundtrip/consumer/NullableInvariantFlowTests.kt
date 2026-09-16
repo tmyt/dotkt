@@ -37,6 +37,12 @@ class NullableInvariantFlowTests {
         assertEquals(1, readLocalMarker(root))
         val integerRoot: KeyRoot<Int> = KeyImpl(23)
         assertEquals(23, integerRoot.key)
+        val nestedInteger = NullableOwner<String>(Box("present")).view(31)
+        assertEquals(31, nestedInteger.key)
+        assertEquals(1, nestedInteger.marker)
+        val nestedString = NullableOwner<Int>(Box(null)).view("captured")
+        assertEquals("captured", nestedString.key)
+        assertEquals(0, nestedString.marker)
     }
 
     @TestAttribute

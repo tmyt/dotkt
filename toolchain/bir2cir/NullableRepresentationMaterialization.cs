@@ -26,16 +26,20 @@ static class NullableRepresentationMaterialization
         }
         foreach (var root in roots) FindReferencedCalls(root);
         var demands = NullableRepresentationDemand.Collect(roots, references?.NullableTypeFrames, importedMethods);
+        // Frames refer to immutable source arities. Snapshot before any declaration's parameters are expanded.
+        var ownerFrames = demands.ToDictionary(owner => owner.Declaration, owner => owner.Frame);
+        var methodFrames = demands.SelectMany(owner => owner.Methods)
+            .ToDictionary(method => method.Declaration, method => method.Frame);
         // Check before editing any declaration. A caller that needs body specialization cannot use this entry
         // until that specialization has given its implementation an explicit frame.
         foreach (var owner in demands)
         {
             var ownerName = Text(owner.Declaration["name"]) ?? Text(owner.Declaration["fileClass"]);
-            RequireCovered(owner.Body.Type, owner.Frame, ownerName + " (type)");
+            RequireCovered(owner.Body.Type, ownerFrames[owner.Declaration], ownerName + " (type)");
             foreach (var method in owner.Methods)
             {
                 var methodName = ownerName + "." + Text(method.Declaration["name"]);
-                RequireCovered(method.Body.Type, owner.Frame, methodName + " (type)");
+                RequireCovered(method.Body.Type, ownerFrames[owner.Declaration], methodName + " (type)");
                 if (method.Declaration["body"] is not JsonArray)
                     RequireCovered(method.Body.Method, method.Frame, methodName + " (method)");
             }
@@ -43,7 +47,7 @@ static class NullableRepresentationMaterialization
         var types = references == null ? new Dictionary<string, NullableRepresentationFrame>(StringComparer.Ordinal)
             : new Dictionary<string, NullableRepresentationFrame>(references.NullableTypeFrames, StringComparer.Ordinal);
         foreach (var owner in demands.Where(d => Text(d.Declaration["kind"]) != null))
-            types[Text(owner.Declaration["name"])] = owner.Frame;
+            types[Text(owner.Declaration["name"])] = ownerFrames[owner.Declaration];
         var methods = new Dictionary<string, NullableRepresentationFrame>(importedMethods, StringComparer.Ordinal);
         foreach (var method in demands.SelectMany(d => d.Methods))
             if (Text(method.Declaration[DeclarationIdentityBinding.Key]) is string id) methods[id] = method.Frame;
@@ -60,45 +64,59 @@ static class NullableRepresentationMaterialization
         {
             if (Text(use[DeclarationIdentityBinding.Key]) is string id && declarations.TryGetValue(id, out var selected))
                 return selected;
-            var ownerType = Text(use["k"]) == "new" ? use["type"] : use["ownerType"];
+            var ownerType = Text(use["k"]) == "new" ? use["type"] : use["ownerType"] ?? use["owner"];
             return TypeJson.Read(ownerType) is TypeNode.Fqn owner && types.TryGetValue(owner.Name, out var frame)
-                ? new NullableRepresentationTypes(frame, empty, types, isValue) : null;
+                // Knowing the owner does not establish a zero-arity method frame. Unbound method variables in
+                // its declaration signature must not be interpreted as variables of a fictitious empty method.
+                ? new NullableRepresentationTypes(frame, null, types, isValue) : null;
         }
         foreach (var owner in demands)
         {
-            var frame = owner.Frame;
-            var mapping = new NullableRepresentationTypes(frame, empty, types, isValue);
-            PreserveEdges(owner.Declaration, mapping);
-            foreach (var key in owner.Declaration.Select(p => p.Key).ToArray())
-                if (key is not ("types" or "methods" or "attrs" or "overrides"))
-                {
-                    if (TypeJson.Read(owner.Declaration[key]) is TypeNode type)
-                        owner.Declaration[key] = TypeJson.Write(mapping.Slot(type));
-                    else Rewrite(owner.Declaration[key], mapping, methods, DeclarationMapping);
-                }
-            foreach (var method in owner.Methods)
+            try
             {
-                var methodFrame = method.Frame;
-                var splitBody = method.Body.Method.Except(methodFrame.NullableIndices).Any();
-                var source = splitBody ? (JsonObject)method.Declaration.DeepClone() : null;
-                if (splitBody) method.Declaration["body"] = new JsonArray();
-                var methodMapping = new NullableRepresentationTypes(frame, methodFrame, types, isValue);
-                Rewrite(method.Declaration, methodMapping, methods, DeclarationMapping);
-                AppendParameters(method.Declaration, methodFrame);
-                if (methodFrame.NullableIndices.Count != 0)
-                    method.Declaration[NullableRepresentationTypes.MethodFrameKey] = methodFrame.ToJson().ToJsonString();
-                if (splitBody)
-                    NullableBodyDispatch.Build(owner.Declaration, source, method.Declaration, frame, methodFrame,
-                        method.Body.Method, (helper, helperFrame) => {
-                            Rewrite(helper, new NullableRepresentationTypes(frame, helperFrame, types, isValue), methods, DeclarationMapping);
-                            AppendParameters(helper, helperFrame);
-                            helper[NullableRepresentationTypes.MethodFrameKey] = helperFrame.ToJson().ToJsonString();
-                        });
+                var frame = ownerFrames[owner.Declaration];
+                var mapping = new NullableRepresentationTypes(frame, empty, types, isValue);
+                PreserveEdges(owner.Declaration, mapping);
+                foreach (var key in owner.Declaration.Select(p => p.Key).ToArray())
+                    if (key is not ("types" or "methods" or "attrs" or "overrides"))
+                    {
+                        if (TypeJson.Read(owner.Declaration[key]) is TypeNode type)
+                            owner.Declaration[key] = TypeJson.Write(mapping.Slot(type));
+                        else Rewrite(owner.Declaration[key], mapping, methods, DeclarationMapping);
+                    }
+                foreach (var method in owner.Methods)
+                {
+                    var methodFrame = methodFrames[method.Declaration];
+                    var splitBody = method.Body.Method.Except(methodFrame.NullableIndices).Any();
+                    var source = splitBody ? (JsonObject)method.Declaration.DeepClone() : null;
+                    if (splitBody) method.Declaration["body"] = new JsonArray();
+                    var methodMapping = new NullableRepresentationTypes(frame, methodFrame, types, isValue);
+                    Rewrite(method.Declaration, methodMapping, methods, DeclarationMapping);
+                    AppendParameters(method.Declaration, methodFrame);
+                    if (methodFrame.NullableIndices.Count != 0)
+                        method.Declaration[NullableRepresentationTypes.MethodFrameKey] = methodFrame.ToJson().ToJsonString();
+                    if (splitBody)
+                        NullableBodyDispatch.Build(owner.Declaration, source, method.Declaration, frame, methodFrame,
+                            method.Body.Method, (helper, helperFrame) => {
+                                Rewrite(helper, new NullableRepresentationTypes(frame, helperFrame, types, isValue), methods, DeclarationMapping);
+                                AppendParameters(helper, helperFrame);
+                                helper[NullableRepresentationTypes.MethodFrameKey] = helperFrame.ToJson().ToJsonString();
+                            });
+                }
+                AppendParameters(owner.Declaration, frame);
+                if (owner.CapturedOwner != null)
+                {
+                    owner.Declaration["outerTypeParamCount"] = ownerFrames[owner.CapturedOwner.Declaration].PhysicalArity;
+                    owner.Declaration.Remove("outerTypeParamOffset");
+                }
+                if (frame.NullableIndices.Count != 0 || frame.PhysicalOrder.Where((slot, index) => slot != index).Any())
+                    KotlinSupertypesRecord.Merge(owner.Declaration,
+                        new JsonObject { [NullableRepresentationFrame.MetadataKey] = frame.ToJson() });
             }
-            AppendParameters(owner.Declaration, frame);
-            if (frame.NullableIndices.Count != 0)
-                KotlinSupertypesRecord.Merge(owner.Declaration,
-                    new JsonObject { [NullableRepresentationFrame.MetadataKey] = frame.ToJson() });
+            catch (Exception error) when (error is ArgumentException or InvalidOperationException)
+            {
+                throw new InvalidOperationException($"Nullable owner {Text(owner.Declaration["name"]) ?? Text(owner.Declaration["fileClass"])}: {error.Message}", error);
+            }
         }
     }
 
@@ -111,9 +129,10 @@ static class NullableRepresentationMaterialization
 
     static void AppendParameters(JsonObject declaration, NullableRepresentationFrame frame)
     {
-        if (frame.NullableIndices.Count == 0) return;
+        if (frame.PhysicalArity == 0) return;
         var parameters = (JsonArray)declaration["typeParams"];
         foreach (var index in frame.NullableIndices) parameters.Add("$nullable" + index);
+        declaration["typeParams"] = new JsonArray(frame.PhysicalOrder.Select(index => parameters[index]?.DeepClone()).ToArray());
     }
 
     static void PreserveEdges(JsonObject owner, NullableRepresentationTypes mapping)
@@ -136,12 +155,12 @@ static class NullableRepresentationMaterialization
         NullableGenericErasure.Pos position = NullableGenericErasure.Pos.Slot)
     {
         try { RewriteCore(node, mapping, methods, declarationMapping, position); }
-        catch (InvalidOperationException error) when (node is JsonObject method
+        catch (Exception error) when (error is InvalidOperationException or ArgumentException && node is JsonObject method
             && method["k"] == null && method["params"] is JsonArray && Text(method["name"]) != null)
         {
             throw new InvalidOperationException($"Nullable frame rewrite of {Text(method["name"])}: {error.Message}", error);
         }
-        catch (InvalidOperationException error) when (node is JsonObject expression && Text(expression["k"]) != null)
+        catch (Exception error) when (error is InvalidOperationException or ArgumentException && node is JsonObject expression && Text(expression["k"]) != null)
         {
             throw new InvalidOperationException($"{Text(expression["k"])} {Text(expression["method"])}: {error.Message}", error);
         }
@@ -177,6 +196,11 @@ static class NullableRepresentationMaterialization
             foreach (var key in obj.Select(p => p.Key).ToArray())
             {
                 if (key is "attrs" or "overrides" || key == "typeArgs" && closedArguments != null) continue;
+                if (key == "inheritedImplementation" && obj[key] is JsonObject implementation)
+                {
+                    RewriteDescriptor(obj, key, declarationMapping(implementation), mapping);
+                    continue;
+                }
                 if (declarationKeys.Contains(key))
                 {
                     RewriteDescriptor(obj, key, selectedMapping, mapping);
@@ -214,7 +238,10 @@ static class NullableRepresentationMaterialization
         var frame = key == "memberOwnerTypeParams" ? declaration?.OwnerFrame
             : key == "memberMethodTypeParams" ? declaration?.MethodFrame : null;
         if (frame != null && node[key] is JsonArray parameters)
+        {
             foreach (var index in frame.NullableIndices) parameters.Add("$nullable" + index);
+            node[key] = new JsonArray(frame.PhysicalOrder.Select(index => parameters[index]?.DeepClone()).ToArray());
+        }
     }
 
     static string Text(JsonNode node) => (node as JsonValue)?.TryGetValue<string>(out var text) == true ? text : null;
@@ -251,6 +278,13 @@ static class NullableRepresentationMaterialization
         genericCall["memberReturnType"] = root["methods"][0]["ret"].DeepClone();
         genericCall["argTypes"] = genericCall["memberSignature"].DeepClone();
         genericCall["ret"] = genericCall["memberReturnType"].DeepClone();
+        var nested = JsonNode.Parse("""
+        {"kind":"class","name":"NestedStore","semanticOwner":"Store","outerTypeParamOffset":1,
+         "outerTypeParamCount":1,"typeParams":["Own","T"],"fields":[
+         {"name":"own","type":{"t":"tv","scope":"type","i":0}},
+         {"name":"captured","type":{"t":"fqn","name":"Box","args":[{"t":"nullable","of":{"t":"tv","scope":"type","i":1}}]}}]}
+        """);
+        ((JsonArray)root["types"]).Add(nested);
         var closedCalls = new List<JsonObject>();
         foreach (var stampFirst in new[] { true, false })
         {
@@ -272,6 +306,12 @@ static class NullableRepresentationMaterialization
             closedCalls.Add(closedCall);
         }
         Apply(new[] { root }, _ => false);
+        if ((int)nested["outerTypeParamCount"] != 2 || nested["outerTypeParamOffset"] != null
+            || TypeJson.Read(nested["fields"][0]["type"]) != new TypeNode.Tv("type", 2)
+            || TypeJson.Read(nested["fields"][1]["type"]) != new TypeNode.Fqn("Box", new TypeNode[] { new TypeNode.Tv("type", 1) })
+            || ((JsonArray)nested["typeParams"]).Count != 3)
+            throw new InvalidOperationException("Nested frame lost enclosing companions or child source positions");
+        TypeOwnershipLowering.PrepareOwnershipFacts(new[] { root });
         foreach (var closedCall in closedCalls)
             if (TypeJson.Read(closedCall["ret"]) != new TypeNode.Fqn("Box", new TypeNode[] { new TypeNode.Tv("method", 2) })
                 || TypeJson.Read(closedCall["ret"]) != TypeJson.Read(closedCall["sty"]))

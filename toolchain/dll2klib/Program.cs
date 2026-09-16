@@ -2128,13 +2128,17 @@ internal sealed class AssemblyScanner : IDisposable
         var typeParameterIds = new Dictionary<GenericParameterHandle, int>();
         var retainedTypeParameters = new Dictionary<GenericParameterHandle, TypeParameter>();
         var nullableTypeFrame = NullableFrameMetadata.TypeFrame(_md, _attrs, handle);
+        var capturedSourceIndices = Enumerable.Range(0, capturedOuterTypeParameters.GetValueOrDefault())
+            .Select(index => nullableTypeFrame is null ? (int?)index : nullableTypeFrame.SourceIndex(index))
+            .Where(index => index.HasValue).Select(index => index!.Value).ToHashSet();
         foreach (var gpHandle in def.GetGenericParameters())
         {
             var gp = _md.GetGenericParameter(gpHandle);
-            var id = gp.Index;
-            if (nullableTypeFrame is not null && id >= nullableTypeFrame.SourceArity) continue;
+            var sourceIndex = nullableTypeFrame?.SourceIndex(gp.Index);
+            if (nullableTypeFrame is not null && sourceIndex is null) continue;
+            var id = sourceIndex ?? gp.Index;
             typeParameterIds[gpHandle] = id;
-            if (id < capturedOuterTypeParameters.GetValueOrDefault()) continue;
+            if (capturedSourceIndices.Contains(id)) continue;
             var parameter = new TypeParameter
             {
                 Id = id,
@@ -7471,7 +7475,8 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
         {
             if (typeArguments.Length != nullableFrame.PhysicalArity)
                 throw new InvalidDataException("Constructed type disagrees with nullable representation frame");
-            typeArguments = typeArguments.Take(nullableFrame.SourceArity).ToImmutableArray();
+            typeArguments = Enumerable.Range(0, nullableFrame.SourceArity)
+                .Select(nullableFrame.SourcePosition).Select(index => typeArguments[index]).ToImmutableArray();
         }
         IEnumerable<KType> semanticTypeArguments = typeArguments;
         if (_semanticInnerTypes.TryGetValue(genericType, out var semanticArgumentOrder))
@@ -7643,8 +7648,7 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
         if (_attrs.Int32(handle, MetadataAttributes.DotKtNs + "KotlinInnerAttribute") is int capturedOuter)
             _semanticInnerTypes[result] = nullableFrame is null
                 ? InnerReferenceCatalog.SemanticArgumentOrder(reader, handle)
-                : Enumerable.Range(capturedOuter, nullableFrame.SourceArity - capturedOuter)
-                    .Concat(Enumerable.Range(0, capturedOuter)).ToArray();
+                : SemanticInnerArgumentOrder(nullableFrame, capturedOuter);
         return result;
     }
     public KType GetTypeFromReference(MetadataReader reader, TypeReferenceHandle handle, byte rawTypeKind)
@@ -7717,9 +7721,13 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
         if (frame is null) return;
         _nullableTypeFrames[type] = frame;
         if (source.Attributes.Int32(definition.Handle, MetadataAttributes.DotKtNs + "KotlinInnerAttribute") is int capturedOuter)
-            _semanticInnerTypes[type] = Enumerable.Range(capturedOuter, frame.SourceArity - capturedOuter)
-                .Concat(Enumerable.Range(0, capturedOuter)).ToArray();
+            _semanticInnerTypes[type] = SemanticInnerArgumentOrder(frame, capturedOuter);
     }
+
+    private static int[] SemanticInnerArgumentOrder(NullableRepresentationFrame frame, int capturedOuter)
+        => Enumerable.Range(capturedOuter, frame.PhysicalArity - capturedOuter)
+            .Concat(Enumerable.Range(0, capturedOuter)).Select(frame.SourceIndex)
+            .Where(index => index.HasValue).Select(index => index!.Value).ToArray();
     public KType GetTypeFromSpecification(MetadataReader reader, GenericContext genericContext, TypeSpecificationHandle handle, byte rawTypeKind) =>
         reader.GetTypeSpecification(handle).DecodeSignature(this, genericContext);
 
