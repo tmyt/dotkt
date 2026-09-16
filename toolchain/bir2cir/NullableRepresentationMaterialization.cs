@@ -206,8 +206,10 @@ static class NullableRepresentationMaterialization
             var closureReturn = kind == "newClosure" && obj["synthClass"] is JsonObject closure
                 && !ClosureSynthesis.HasPreboundFrame(closure) && TypeJson.Read(closure["ret"]) is TypeNode returnType
                     ? mapping.Argument(returnType) : null;
-            if (kind is "newSam" or "newClosure" && obj["synthClass"] is JsonObject synthetic
-                && !ClosureSynthesis.HasPreboundFrame(synthetic)
+            var synthetic = kind == "newSuspendLambda" ? obj : obj["synthClass"] as JsonObject;
+            if (kind is "newSam" or "newClosure" or "newSuspendLambda" && synthetic != null
+                && (kind == "newSuspendLambda" ? Text(obj["typeFrame"]) != "dense"
+                    : !ClosureSynthesis.HasPreboundFrame(synthetic))
                 && obj["typeArgs"] is JsonArray captureArguments && synthetic["typeParams"] is JsonArray captureParameters)
             {
                 // Raw payload types still belong to the lexical frame. Materializing T? inside that payload
@@ -224,7 +226,12 @@ static class NullableRepresentationMaterialization
                     closedArguments = new JsonArray(captures.Select(mapping.Argument)
                         .Concat(nullableCaptures.Select(mapping.NullableArgument)).Select(TypeJson.Write).ToArray());
                     foreach (var variable in nullableCaptures)
-                        captureParameters.Add("$nullableCapture" + variable.Scope + variable.I);
+                    {
+                        var name = "$nullableCapture" + variable.Scope + variable.I;
+                        captureParameters.Add(name);
+                        if (kind == "newSuspendLambda" && obj["typeParamDecls"] is JsonArray declarations)
+                            declarations.Add(name);
+                    }
                 }
             }
             if (kind != null && Text(obj[DeclarationIdentityBinding.Key]) is string id

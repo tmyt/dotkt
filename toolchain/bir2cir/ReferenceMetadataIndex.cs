@@ -3740,10 +3740,14 @@ sealed partial class ReferenceMetadataIndex
                 var explicitNullableFrame = member.NullableFrame != null
                     || _ownerNullableFrames.ContainsKey(member.Owner)
                     || _ownerNullableFrames.ContainsKey(lookupOwner);
+                SlotFact FramedSlot(TypeNode carrier, TypeNode physical)
+                    => selectedPhysicalMember == null && carrier is TypeNode.Nullable { Of: TypeNode.Tv }
+                        ? DeclaredSlot(carrier, physical)
+                        : new SlotFact(Canonical(physical), false);
                 // A selected suspend projection is already a physical hot/cold MethodDef. Its logical Kotlin
                 // result carrier belongs to the source declaration, not to the Task-returning MethodImpl row.
                 declaredRet = explicitNullableFrame
-                    ? new SlotFact(Canonical(member.ReturnTypeNode), false)
+                    ? FramedSlot(member.NullableGenericRet, member.ReturnTypeNode)
                     : selectedPhysicalMember != null
                     ? new SlotFact(member.ReturnTypeNode, false)
                     : propertyName != null && includeClosedPropertyReturn
@@ -3754,7 +3758,7 @@ sealed partial class ReferenceMetadataIndex
                 declaredParams = new SlotFact[argCount];
                 for (var i = 0; i < argCount; i++)
                     declaredParams[i] = explicitNullableFrame
-                        ? new SlotFact(Canonical(member.ParamTypeNodes[i]), false)
+                        ? FramedSlot(member.NullableGenericParams?[i], member.ParamTypeNodes[i])
                         : selectedPhysicalMember != null
                         ? new SlotFact(member.ParamTypeNodes[i], false)
                         : propertyName == null
@@ -7032,6 +7036,27 @@ sealed partial class ReferenceMetadataIndex
             if (reference is not TypeNode.Fqn { Name: owner, Args: { } referenceArguments }
                 || !referenceArguments.SequenceEqual(sourceOwner.Args))
                 throw new InvalidOperationException("Reference type projection discarded the Kotlin implementation frame");
+            var annotationType = new TypeNode.Fqn("probe.Pair", new TypeNode[] {
+                sourceOwner, new TypeNode.Nullable(new TypeNode.Fqn("kotlin.String")),
+            });
+            var annotationFlags = NullableFlags.Compute(annotationType, _ => false,
+                annotationArguments: type => BirTypeLowering.AnnotationArguments(type, aliasIndex.Aliases,
+                    _ => false, nullableFrames: aliasIndex.NullableTypeFrames));
+            if (annotationFlags?.ToJsonString() != "[1,1,1,1,2]")
+                throw new InvalidOperationException("CLR alias companions shifted a following nullable annotation: " + annotationFlags);
+            var referenceFlags = NullableFlags.Compute(annotationType, _ => false,
+                annotationArguments: type => BirTypeLowering.AnnotationArguments(type, aliasIndex.Aliases,
+                    _ => false, refBuild: true, nullableFrames: aliasIndex.NullableTypeFrames));
+            if (referenceFlags?.ToJsonString() != "[1,1,1,1,1,2]")
+                throw new InvalidOperationException("Reference annotations discarded their implementation frame");
+            var nullableAlias = new TypeNode.Fqn(owner, new TypeNode[] {
+                new TypeNode.Nullable(new TypeNode.Fqn("kotlin.String")), companion, second,
+            });
+            var nullableAliasFlags = NullableFlags.Compute(nullableAlias, _ => false,
+                annotationArguments: type => BirTypeLowering.AnnotationArguments(type, aliasIndex.Aliases,
+                    _ => false, nullableFrames: aliasIndex.NullableTypeFrames));
+            if (nullableAliasFlags?.ToJsonString() != "[1,2,1]")
+                throw new InvalidOperationException("Alias argument projection discarded a retained nullable wrapper");
             aliasIndex._ownerAlias[owner] = "System.IComparable";
             aliasIndex._ownerArity[owner] = 2;
             aliasIndex._ownerNullableFrames[owner] = new NullableRepresentationFrame(1, new[] { 0 });

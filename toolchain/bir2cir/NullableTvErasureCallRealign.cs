@@ -840,7 +840,14 @@ static partial class NullableTvErasureCallRealign
             RestampSty(obj, derived);
             return derived;
         }
-        if (derived.Equals(stampedRet) || !IsObjectErasureOf(derived, stampedRet)) return stampedRet;
+        if (derived.Equals(stampedRet))
+        {
+            // The exact imported descriptor can already state the erased return while the frontend stamp
+            // still states the closed Kotlin result. Proven scalar erasure owns both claims about this node.
+            if (erasureApplied) RestampSty(obj, derived);
+            return stampedRet;
+        }
+        if (!IsObjectErasureOf(derived, stampedRet)) return stampedRet;
 
         // This pass owns only nullable-generic erasure. A late generated declaration can legitimately return object
         // for another ABI (notably deferred unchecked `Any? as T`) while its call retains a concrete use-site stamp.
@@ -1125,6 +1132,12 @@ static partial class NullableTvErasureCallRealign
         accessor["nullableGenericRet"] = TypeNode.ToJson(scalarReturn);
         if (ReadDeclaredSlot(accessor, "ret", "nullableGenericRet", true) != scalarReturn)
             throw new InvalidOperationException("Late accessor lost scalar nullable-erasure ownership");
+        var scalarCall = new JsonObject {
+            ["ret"] = TypeJson.Fqn("object"), ["sty"] = TypeJson.Fqn("kotlin.String"),
+        };
+        ApplyDerivedRet(scalarCall, new TypeNode.Fqn("object"), new TypeNode.Fqn("object"), true);
+        if (TypeJson.Read(scalarCall["sty"]) != TypeJson.Read(scalarCall["ret"]))
+            throw new InvalidOperationException("An already-erased scalar descriptor kept its semantic result stamp");
         var typeArgs = new TypeNode[] { new TypeNode.Fqn("System.Int32") };
         var methodArgs = new TypeNode[] { new TypeNode.Fqn("System.String") };
 

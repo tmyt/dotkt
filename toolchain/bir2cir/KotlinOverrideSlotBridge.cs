@@ -104,9 +104,9 @@ static class KotlinOverrideSlotBridge
         var emitBridges = phase != Phase.DeclarationMoves;
         var defs = SupertypeGraph.Collect(roots);
         var annotationLocalTypes = localTypeNames ?? defs.Keys.ToHashSet(StringComparer.Ordinal);
-        bool RetainsTypeArguments(TypeNode.Fqn type) =>
-            BirTypeLowering.LowerPhysicalType(type, refs.Aliases, isValue, refs.PhysicalTypeNames,
-                typeArg: false, annotationLocalTypes, refBuild, refs.NullableTypeFrames) is TypeNode.Fqn { Args: not null };
+        TypeNode[] AnnotationArguments(TypeNode.Fqn type) =>
+            BirTypeLowering.AnnotationArguments(type, refs.Aliases, isValue, refs.PhysicalTypeNames,
+                annotationLocalTypes, refBuild, refs.NullableTypeFrames);
         // The source accessor relation is needed only between the two halves of this one pass. Keep it in memory by
         // JsonObject identity rather than minting another BIR/CIR identifier or parsing the bridge's metadata
         // association. The relation cannot escape this ApplyAll invocation.
@@ -126,7 +126,7 @@ static class KotlinOverrideSlotBridge
                     exactBridgeSources[method] = sourceAssociation;
         foreach (var cls in defs.Values.Where(d => d.Kind is "class" or "interface").ToList())
             ApplyClass(cls, defs, isValue, refs, phase, exactBridgeSources, localTypeNames,
-                covariantBridgedSlots, RetainsTypeArguments);
+                covariantBridgedSlots, AnnotationArguments);
         // A class-level inherited-DIM bridge consumes the exact MethodImpl descriptor synthesized on its interface.
         // Declarations may appear in either order and in different input files, so first finish every interface/class's
         // own slot allocation above, then inspect classes. Reading the live method arrays during the first loop would
@@ -154,7 +154,7 @@ static class KotlinOverrideSlotBridge
         ReferenceMetadataIndex refs, Phase phase, IDictionary<JsonObject, string> exactBridgeSources,
         IReadOnlySet<string> localTypeNames,
         IReadOnlySet<CovariantInterfaceReturnBridge.BridgedSlot> covariantBridgedSlots,
-        Func<TypeNode.Fqn, bool> retainsTypeArguments)
+        Func<TypeNode.Fqn, TypeNode[]> annotationArguments)
     {
         var emitBridges = phase != Phase.DeclarationMoves;
         if (cls.Node["methods"] is not JsonArray methods) return;
@@ -266,9 +266,9 @@ static class KotlinOverrideSlotBridge
             // CLR leaves under a constructed generic — carrying its Kotlin surface on the round-trip channels.
             for (var i = 0; i < slotParams.Length; i++)
                 if (fit[i] == Fit.Rewrite && declParams[i] is JsonObject po)
-                    Rewrite(po, "type", "nullableGeneric", "nullableFlags", slotParams[i], isValue, retainsTypeArguments);
+                    Rewrite(po, "type", "nullableGeneric", "nullableFlags", slotParams[i], isValue, annotationArguments);
             if (retFit == Fit.Rewrite)
-                Rewrite(impl, "ret", "nullableGenericRet", "retNullableFlags", slotRet, isValue, retainsTypeArguments);
+                Rewrite(impl, "ret", "nullableGenericRet", "retNullableFlags", slotRet, isValue, annotationArguments);
 
             // A Kotlin accessor keeps its dedicated physical name even when it implements a property imported from a
             // CLR interface whose slot uses the ordinary get_/set_ convention. With an otherwise-identical signature,
@@ -1700,13 +1700,13 @@ static class KotlinOverrideSlotBridge
     // Move a slot the CLR cannot bridge onto the supertype's shape, carrying the override's own pre-erasure Kotlin
     // type across on the round-trip channels so the surface survives the move.
     static void Rewrite(JsonObject decl, string typeKey, string factKey, string flagsKey, TypeNode slot,
-        ValueTypeOracle isValue, Func<TypeNode.Fqn, bool> retainsTypeArguments)
+        ValueTypeOracle isValue, Func<TypeNode.Fqn, TypeNode[]> annotationArguments)
     {
         if (TypeJson.Read(decl[typeKey]) is not TypeNode t || t.Equals(slot)) return;
         decl[typeKey] = TypeJson.Write(slot);
         decl[factKey] ??= TypeNode.ToJson(t);
         if (!decl.ContainsKey(flagsKey)
-            && NullableFlags.Compute(t, isValue, retainsTypeArguments: retainsTypeArguments) is JsonArray f)
+            && NullableFlags.Compute(t, isValue, annotationArguments: annotationArguments) is JsonArray f)
             decl[flagsKey] = f;
     }
 

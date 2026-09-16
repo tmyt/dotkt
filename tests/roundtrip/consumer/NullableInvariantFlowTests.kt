@@ -5,6 +5,34 @@ import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
 import roundtrip.nullableinvariantflow.*
 import kotlin.clr.byref
+import kotlin.coroutines.*
+
+private class NullableCompletion<T> : Continuation<T> {
+    var outcome: Result<T>? = null
+    override val context: CoroutineContext get() = EmptyCoroutineContext
+    override fun resumeWith(result: Result<T>) { outcome = result }
+}
+private fun <T> runNullableSuspend(action: suspend () -> T): T {
+    val completion = NullableCompletion<T>()
+    action.startCoroutine(completion)
+    return completion.outcome!!.getOrThrow()
+}
+private fun <T> resumeNullableAfterPause(box: Box<T?>): Box<T?> {
+    val completion = NullableCompletion<Box<T?>>()
+    var pending: Continuation<Unit>? = null
+    val operation: suspend () -> Box<T?> = {
+        nullableAfterPause(box) { suspendCoroutine<Unit> { pending = it } }
+    }
+    operation.startCoroutine(completion)
+    assertTrue(completion.outcome == null)
+    pending!!.resume(Unit)
+    return completion.outcome!!.getOrThrow()
+}
+private class ConsumerNullableOwner<T>(val box: Box<T?>) {
+    inner class View<U>(val other: U) {
+        fun read(helper: UnframedHelper<T>): T = helper.value
+    }
+}
 
 private fun <T> inlineNullableEarlyExit(): Int {
     InlineNullableBody().isAbsent<T>(null) { return 17 }
@@ -86,6 +114,34 @@ class NullableInvariantFlowTests {
         assertEquals(2, observed)
         assertEquals(17, inlineNullableEarlyExit<String>())
         assertEquals(17, inlineNullableEarlyExit<Int>())
+        assertTrue(nullableFactory<String>()().value == null)
+        assertTrue(nullableFactory<Int>()().value == null)
+        assertTrue(inlineNullableFactory<String>()().value == null)
+        assertTrue(inlineNullableFactory<Int>()().value == null)
+        assertTrue(runNullableSuspend(nullableDeferred<String>(strings)) === strings)
+        assertTrue(runNullableSuspend { nullableSuspendEcho<String>(strings) } === strings)
+        assertTrue(runNullableSuspend(nullableDeferred<Int>(nextInteger)) === nextInteger)
+        assertTrue(runNullableSuspend { nullableSuspendEcho<Int>(nextInteger) } === nextInteger)
+        assertTrue(resumeNullableAfterPause<String>(strings) === strings)
+        assertTrue(resumeNullableAfterPause<Int>(nextInteger) === nextInteger)
+        assertTrue(scalarFromNullableBox<String>(strings) == null)
+        assertEquals("next", scalarFromNullableBox<String>(nextStrings))
+        assertEquals(42, scalarFromNullableBox<Int>(nextInteger))
+        assertTrue(NullableScalarHolder<String>(strings).scalar() == null)
+        assertEquals("next", NullableScalarHolder<String>(nextStrings).scalar())
+        assertTrue(NullableScalarHolder<Int>(initialInteger).scalar() == null)
+        assertEquals(42, NullableScalarHolder<Int>(nextInteger).scalar())
+        assertEquals("helper", ConsumerNullableOwner<String>(strings).View(12).read(UnframedHelper("helper")))
+        assertEquals(23, ConsumerNullableOwner<Int>(nextInteger).View("other").read(UnframedHelper(23)))
+        val bodyDefault = InheritedNullableBodyDefault()
+        val bodyDefaultSlot: NullableBodyDefault = bodyDefault
+        assertTrue(bodyDefaultSlot.isAbsent<String>(null))
+        assertTrue(!bodyDefaultSlot.isAbsent<String>("present"))
+        assertTrue(bodyDefault.isAbsent<Int>(null))
+        assertTrue(!bodyDefault.isAbsent<Int>(0))
+        val suspendBody: NullableSuspendBodySlot = NullableSuspendBodyImpl()
+        assertTrue(runNullableSuspend { suspendBody.isAbsent<String>(null) })
+        assertTrue(!runNullableSuspend { suspendBody.isAbsent<Int>(42) })
         val inheritedDefault = InheritedNullableDefault()
         val constrainedDefault = InheritedNullableConstrainedDefault()
         assertTrue(constrainedDefault.constrainedIdentity<String, Box<String?>>(strings) === strings)

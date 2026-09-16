@@ -373,6 +373,22 @@ static class BirTypeLowering
     internal static bool IsMethodSlotCarrier(string kotlinFqn) =>
         InterfaceMethodSlotCarriers.Contains(kotlinFqn);
 
+    // Select the surviving arguments without lowering their annotation wrappers. The NRT byte walk must use
+    // the same physical head/frame as the signature, but still read nullability from the semantic arguments.
+    internal static TypeNode[] AnnotationArguments(TypeNode.Fqn type,
+        IReadOnlyDictionary<string, string> aliases, ValueTypeOracle isValue,
+        IReadOnlyDictionary<string, string> physicalNames = null, IReadOnlySet<string> localTypes = null,
+        bool refBuild = false, IReadOnlyDictionary<string, NullableRepresentationFrame> nullableFrames = null)
+    {
+        if (LowerPhysicalType(type, aliases, isValue, physicalNames, typeArg: false,
+                localTypes, refBuild, nullableFrames) is not TypeNode.Fqn { Args: not null })
+            return null;
+        if (!refBuild && aliases.ContainsKey(type.Name)
+            && nullableFrames != null && nullableFrames.TryGetValue(type.Name, out var frame))
+            return frame.OrdinaryArguments(type.Args);
+        return type.Args;
+    }
+
     // A synthesized result slot sometimes has to be named before this lowering pass runs (the suspend
     // TaskCompletionSource<R>/RootContinuation<R> drive is the canonical case). Its public Task<R> must retain the
     // same readonly head type a Kotlin call observes; spelling that BCL head explicitly also exempts this one coherent

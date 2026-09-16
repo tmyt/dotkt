@@ -1964,31 +1964,37 @@ Consequences:
   8-bit storage; on the CLR the two arrays are already the same bytes). Mutations through one view are visible through
   the other. The scalar `UByte.toByte()` / `Byte.toUByte()` remain bit-reinterprets of a single 8-bit value as before.
 
-## 9c-bis. CARRIER-ARGUMENT ERASURE: `X?` is `System.Object` in every reified argument (#86)
+## 9c-bis. Nullable carrier arguments and explicit representation frames
 
 `Int?` is `System.Nullable<int32>` and `String?` is a bare `string` plus an NRT byte (§9). Neither shape can express
 `T?` for an **unconstrained** type variable: `Nullable<T>` requires `T : struct`, and a bare `!T` slot collapses a
 null to `default(T)` — at `T = Int` a `null` written through it reads back as `0`, and `ldnull` into an `int32` slot
-does not even pass JIT verification. And a CLR reified generic is **invariant**, so if an open `G<T?>` is `G<object>`
-while a concrete `G<Int?>` is `G<Nullable<int32>>`, the two are unrelated types that can never meet. The
-representation is therefore decided by POSITION, not by whether a type variable is still open:
+does not even pass JIT verification. A CLR generic construction is also invariant unless its declaration says
+otherwise: `Box<object>` is not a substitute for an existing `Box<string>`. Representation must therefore agree
+between an open declaration and each closed use, without copying the object or changing its identity.
 
-> **A direct concrete `V?` slot remains `System.Nullable<V>`. When `X?` is used as an ARRAY ELEMENT or as an ACTUAL
-> ARGUMENT to a CLR-reified construction — type, method, or delegate — and `X` may be a value type, its physical form
-> is `System.Object`. References keep their normal CLR representation. The original Kotlin type is preserved in
-> `[KotlinNullableGeneric]` metadata.**
+> **A direct concrete value-type `V?` slot remains `System.Nullable<V>`; a direct unconstrained `T?` slot is
+> `object`. In a reified argument position, a concrete nullable value type uses `object`, a reference type keeps
+> its reference representation, and an open `T?` uses an explicit companion generic parameter `N(T)`.**
 
-One position does not yet obey it: a delegate PARAMETER keeps a concrete `V?` (`(Int?) -> String` is
-`Func<Nullable<int32>, string>`), because a delegate's target may be a member the author declared and moving that
+For example, the ordinary parameter `T` and its nullable companion close to `string, string` for `T = String`,
+and to `int32, object` for `T = Int`. Thus an open `Box<T?>` is `Box<N(T)>`: both an existing `Box<String?>` and
+an existing `Box<Int?>` reach the matching construction unchanged. Passing an open type variable forwards its
+companion from the caller's frame. The rule applies to constructed arguments, array elements and delegate return
+arguments; it does not replace ordinary `Box<T>` values with existential interfaces.
+
+Delegate parameter slots follow their target method's convention: a concrete `V?` (`(Int?) -> String`) is
+`Func<Nullable<int32>, string>`, because a delegate's target may be a member the author declared and moving that
 member's own slot is not the compiler's to do. The exception, its cost and what closes it are recorded below.
 
-`X` "may be a value type" means **any** type variable, or a concrete value type (a constructed `KeyValuePair<K,V>`
-counts, exactly as `Int` does). Concretely:
+Constructed value types such as `KeyValuePair<K,V>` follow the same concrete nullable-value rule as `Int`.
+Concretely:
 
 | Kotlin | CLR |
 |---|---|
 | `fun f(x: Int?)`, `fun f(): Int?`, `val x: Int?` | `Nullable<int32>` — the direct slot is unchanged |
 | `fun <T> f(x: T?)` | `object` — no CLR slot expresses an unconstrained `T?` |
+| Open `Box<T?>`, `Array<T?>` | `Box<N(T)>`, `N(T)[]` in the declaration's explicit frame |
 | `List<Int?>` / `MutableList<Int?>` | `IReadOnlyList<object>` / `IList<object>` |
 | `Map<String, Int?>`, `Pair<Int?, String>`, `Box<Int?>` | `IDictionary<string, object>`, `Pair<object, string>`, `Box<object>` |
 | `Array<Int?>` | `object[]` |
@@ -2006,28 +2012,35 @@ CLR's own boxed form of a nullable value: boxing an empty `Nullable<V>` produces
 instruction and **null stays distinct from `0`**. A bare `T` stays monomorphized and unboxed and `List<Int>` keeps
 `int32` storage — only the `?` moves anything.
 
-Every type variable qualifies, whatever its bound: `fun <T : CharSequence> f(xs: List<T?>)` erases too, although no
-instantiation of it can be a struct. That is uniformity chosen deliberately over consulting the bound — one physical
-form per declaration, decided without resolving where each bound leads. The alternative is a slot whose
-representation depends on a bound the reader has to chase, and two `List<T?>` declarations that cannot meet because
-one is bounded and one is not.
+Frame demand is structural, not inferred by chasing upper bounds. A nullable argument can require a companion even
+when its source variable has a reference-only bound. Ordinary source parameters retain their constraints. Companions
+are implementation parameters, not new Kotlin parameters or a requirement that users add a `reified` modifier.
+
+Each frame records its source arity, the source indices requiring nullable companions and the physical slot order.
+Nested types preserve the entire enclosing CLR parameter prefix using that explicit correspondence. Owned TypeDefs
+and independent nonvirtual methods may include body-only demands. A virtual method's body-only demand must not grow
+its dispatch slot: private implementation entries select reference/value representations without changing the
+published slot. Independent inline methods retain their body and lambda operations in their own expanded frame.
 
 The formula holds recursively and everywhere the slot's type is written — method return, method parameter,
 constructor parameter, field, property, body local, nested type argument, array element, delegate component,
 supertype edge, generic constraint, and the signature a call is resolved by. A **use** of a slot `s` is typed
-`Subst(Erase(declared), typeArgs)` and never `Erase(Subst(...))`; a generic is INSTANTIATED at the erased argument
-from the start rather than instantiated wrongly and cast, because no cast joins two instantiations of one invariant
-generic.
+`Subst(Materialize(declared, declarationFrame), closedPhysicalArguments)`. Declaration-owned descriptors use that
+declaration's frame; supplied arguments and expression results use the caller's frame. No cast between unrelated
+invariant constructions is introduced to repair a disagreement. A CLR alias retains only its ordinary arguments;
+the extra implementation parameters do not alter the native CLR TypeDef's arity.
 
-The Kotlin surface survives on three channels, which a re-consuming DotKt reader recombines:
+The Kotlin surface survives through explicit metadata, which a re-consuming DotKt reader recombines:
 `[KotlinNullableGeneric]` carries the pre-erasure type node of a declaration SLOT, the ordinary `[Nullable(2)]` NRT
 byte carries the outer `?`, and `[KotlinSupertypes]` carries the type's pre-erasure supertype EDGES and the upper
 bounds of the type's OWN type parameters — the erased positions with no slot to hang a per-slot carrier on. Without
 that third one a consumer re-imports `class E : Sink<Int?>` as `Sink<Any?>` and `val s: Sink<Int?> = E()` stops
 compiling, and `class Box<T : Sink<Int?>>` re-imports with the erased physical bound unless the carrier restores it,
-so `Box<BadSink>` can fail at the wrong layer. Both are Kotlin source breaks rather than internal ones. A METHOD's
-type-parameter bound is not on that carrier (it is type-level) and re-imports as the physical `Sink<object>`. A CLASS
-type parameter's ordinary CLR constraint rows are projected directly, however: an unmoved
+so `Box<BadSink>` can fail at the wrong layer. Both are Kotlin source breaks rather than internal ones. Method
+type-parameter bounds are preserved separately in `[KotlinTypeParameterBounds]`. Type frames travel in
+`[KotlinSupertypes]`, while method frames and original signatures travel in `[KotlinDeclarationIdentity]`.
+`dll2klib` consumes those facts to hide companions and restore source variables, rather than deriving a frame from
+parameter names or CLR arity. A class type parameter's ordinary CLR constraint rows are projected directly: an unmoved
 `class Box<T : Sink<String>>` retains that bound, while the carrier replaces only bounds whose Kotlin type arguments
 were erased. The physical-only roots and flags cannot be represented as Kotlin nominal upper bounds: a type or member
 parameter's `System.ValueType`/`System.Enum` rows, including the modified `ValueType` row used by `unmanaged`, are
@@ -2040,18 +2053,11 @@ This test is against the emitted CLR shape, not Kotlin call syntax: a rich enum 
 does not satisfy a CLR `System.Enum` row, while a constructor whose arguments are all defaulted is still not a CLR
 parameterless constructor unless the emitted metadata contains a public zero-parameter `.ctor`.
 
-**Restoring the surface is only half of consuming it.** A consumer that re-imports `unwrapSlot(slot: Slot<T?>)` writes
-`unwrapSlot(Slot<Int?>(5))`, and `Slot<Nullable<int32>>` is not the `Slot<object>` the producer's slot actually is —
-those are unrelated invariant reified generics that no cast reconciles. So the same carrier is read a second time, by
-`bir2cir`, to type the consumer's *use* as `Subst(Erase(declared), typeArgs)`: the construction is built as
-`Slot<object>` instead of being built wrongly and converted afterwards. The rule is the one above with no
-cross-module exception — a slot's physical type is a function of its declaration, wherever that declaration lives.
-
-This construction alignment does not solve all nullable substitutions. In particular, an existing `Slot<String?>`
-has physical type `Slot<string>` and cannot flow into a slot erased to `Slot<object>` without an invalid cast or
-loss of identity. This is an unresolved compiler defect tracked by #752, not undefined user behavior. Projecting
-every invariant value to an existential interface is not a valid general fix: exact CLR fields, managed references,
-and constructor signatures must continue to agree with their declared types.
+**Restoring the surface is only half of consuming it.** Consuming `unwrapSlot(slot: Slot<T?>)` also closes the
+producer's physical frame: `T = String` selects `Slot<string>` and `T = Int` selects `Slot<object>`. Existing values,
+fields, managed references and constructor signatures must agree with those exact constructions. Metadata is trusted
+compiler input; older generated artifacts are unsupported and missing frame facts are not reconstructed from names,
+layout or bodies. This representation is internal ABI, not a compatibility promise to older compiler versions.
 
 What this is observable as:
 
@@ -2070,7 +2076,7 @@ What this is observable as:
 - **A C# consumer sees `object`.** `fun <T> firstOr(x: T?, d: T): T` surfaces as
   `static T firstOr<T>(object x, T d)`, so a C# caller passes `null` or a boxed value rather than a `T?`.
 
-### `Array<X?>` is `object[]` — where the erasure is most visible
+### Nullable arrays: concrete value elements use `object[]`
 
 An array element is the position where the erasure is hardest to miss, because `object[]` and `Nullable<int32>[]` are
 **unrelated** CLR types: array compatibility requires reference-compatible elements (ECMA-335 I.8.7.1), and no cast
@@ -2095,16 +2101,12 @@ What this is observable as, beyond the boxing already listed above:
   only instantiation whose `T[]` parameter the receiver inhabits, and for the collection because that is what
   `List<Int?>` is. The two agree by construction, which is what lets an `Array<T>` extension over an `Array<Int?>`
   hand its `List<object>` result to a declared `List<Int?>` slot.
-- **`copyOf(newSize)` decides at runtime.** Its generic body has no `T : struct` constraint and no reified `T`, so it
-  reads the receiver's own element type: a value element allocates `object[]`, a reference element allocates
-  `elem[]`. Both inhabit the erased `object[]` the declaration states — the reference one by array covariance.
-- **A concrete reference array keeps its runtime element type through an open `Array<T?>` slot.** A `string[]` can
-  enter the declaration's `object[]` slot by CLR array covariance, so compiler-created argument arrays are not rebuilt
-  as `object[]`. When the open result is consumed again as `Array<String?>`, bir2cir states the inverse checked
-  `object[]`-to-`string[]` projection explicitly. This preserves the typed CLR surface without changing the open ABI;
-  an unchecked cast that launders a genuine `object[]` into the Kotlin type fails at that checked use boundary.
+- **An open `Array<T?>` uses its companion element.** `N(String)[]` is `string[]` and `N(Int)[]` is `object[]`.
+  Forwarding an existing reference array therefore preserves its exact element type, without rebuilding the array
+  or relying on an invariant generic conversion. Array allocation and resize operations must obey the same frame.
 - **The `arrayOfNulls<T>(n) … as Array<T>` idiom no longer works.** `arrayOfNulls` honestly returns `Array<T?>`, which
-  is `object[]`, and `object[]` is not castable to `int32[]`. Allocate the real thing instead: the array constructor
+  has boxed nullable elements at a value-type instantiation, and `object[]` is not castable to `int32[]`.
+  Allocate the real thing instead: the array constructor
   `Array(n) { … }` for a concrete or reified element when an initializer is available, or
   `System.Array.CreateInstance(T::class, n)` when a zero-filled array is required.
 

@@ -28,40 +28,40 @@ using DotKt.Bir;
 // Task-bridge sets its own `retNullableFlags` up-front and must win).
 static class DeclNullableFlags
 {
-    public static void Apply(JsonNode root, ValueTypeOracle isValue, Func<TypeNode.Fqn, bool> retainsTypeArguments)
+    public static void Apply(JsonNode root, ValueTypeOracle isValue, Func<TypeNode.Fqn, TypeNode[]> annotationArguments)
     {
-        if (root is JsonObject o) ApplyRec(o, isValue, retainsTypeArguments);
+        if (root is JsonObject o) ApplyRec(o, isValue, annotationArguments);
     }
 
-    static void ApplyRec(JsonObject o, ValueTypeOracle isValue, Func<TypeNode.Fqn, bool> retainsTypeArguments)
+    static void ApplyRec(JsonObject o, ValueTypeOracle isValue, Func<TypeNode.Fqn, TypeNode[]> annotationArguments)
     {
         if (o["methods"] is JsonArray methods)
             foreach (var m in methods)
-                if (m is JsonObject mo) ApplyToMethod(mo, isValue, retainsTypeArguments);
+                if (m is JsonObject mo) ApplyToMethod(mo, isValue, annotationArguments);
         // A ctor decl has params but no `ret` (BirEmitterDeclarations.ctor), so its params are stamped directly
         // rather than through ApplyToMethod.
         if (o["ctors"] is JsonArray ctors)
             foreach (var c in ctors)
-                if (c is JsonObject co) ApplyToDecls(co["params"], isValue, retainsTypeArguments);
-        ApplyToDecls(o["fields"], isValue, retainsTypeArguments);
-        ApplyToDecls(o["properties"], isValue, retainsTypeArguments);
+                if (c is JsonObject co) ApplyToDecls(co["params"], isValue, annotationArguments);
+        ApplyToDecls(o["fields"], isValue, annotationArguments);
+        ApplyToDecls(o["properties"], isValue, annotationArguments);
         if (o["types"] is JsonArray types)
-            foreach (var t in types) if (t is JsonObject to) ApplyRec(to, isValue, retainsTypeArguments);
+            foreach (var t in types) if (t is JsonObject to) ApplyRec(to, isValue, annotationArguments);
     }
 
-    static void ApplyToMethod(JsonObject mo, ValueTypeOracle isValue, Func<TypeNode.Fqn, bool> retainsTypeArguments)
+    static void ApplyToMethod(JsonObject mo, ValueTypeOracle isValue, Func<TypeNode.Fqn, TypeNode[]> annotationArguments)
     {
         PreserveNullableUnitSurface(mo, "ret", "retKotlinType", "nullableGenericRet");
         if (!mo.ContainsKey("retNullableFlags")
             && TypeJson.Read(mo["ret"]) is TypeNode ret
-            && NullableFlags.Compute(ret, isValue, retainsTypeArguments: retainsTypeArguments) is JsonArray rf)
+            && NullableFlags.Compute(ret, isValue, annotationArguments: annotationArguments) is JsonArray rf)
             mo["retNullableFlags"] = rf;
-        ApplyToDecls(mo["params"], isValue, retainsTypeArguments);
+        ApplyToDecls(mo["params"], isValue, annotationArguments);
     }
 
     // Stamp `nullableFlags` on each declaration in a params/fields/properties array whose Type node carries a nullable
     // reference position (and that lacks the key already).
-    static void ApplyToDecls(JsonNode arr, ValueTypeOracle isValue, Func<TypeNode.Fqn, bool> retainsTypeArguments)
+    static void ApplyToDecls(JsonNode arr, ValueTypeOracle isValue, Func<TypeNode.Fqn, TypeNode[]> annotationArguments)
     {
         if (arr is not JsonArray a) return;
         foreach (var d in a)
@@ -70,7 +70,7 @@ static class DeclNullableFlags
                 PreserveNullableUnitSurface(po, "type", "kotlinType", "nullableGeneric");
                 if (!po.ContainsKey("nullableFlags")
                 && TypeJson.Read(po["type"]) is TypeNode t
-                && NullableFlags.Compute(t, isValue, retainsTypeArguments: retainsTypeArguments) is JsonArray f)
+                && NullableFlags.Compute(t, isValue, annotationArguments: annotationArguments) is JsonArray f)
                     po["nullableFlags"] = f;
             }
     }

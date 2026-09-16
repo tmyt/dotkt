@@ -91,6 +91,11 @@ import java.io.File
 // therefore cannot collide with arbitrary source declarations; the counter only has to separate helpers from peers.
 private fun BirEmitter.freshLiftedMethodName(kind: String): String = "dotkt:$kind:${lambdaCounter++}"
 
+// Author a declaration/use binding at the same time as the lifted Kotlin body. The file-local allocation token
+// is unique within this projection; downstream must carry this ID, never reconstruct it from a physical name.
+private fun BirEmitter.liftedDeclarationIdentityField(token: String): String =
+	""","declarationId":${str("dotkt-lifted-v1:$fileClass:$token")}"""
+
 /**
  * The enclosing type parameters a synthesized closure CLASS must be generic over: those referenced by its capture
  * field types (and its own parameter/return types). On the CLR generics are reified, so a closure that captures a
@@ -344,10 +349,10 @@ internal fun BirEmitter.lambda(node: IrFunctionExpression): String {
 			// The frontend may represent a non-capturing lambda as a file-level helper, but its declaration still belongs
 			// to the surrounding Kotlin type. Preserve that owner explicitly: bir2cir decides whether/how it nests the
 			// helper, and nested declarations created in this body retain the owner's generic frame and constraints.
-			"""{"name":${str(lname)},"generated":true,"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[${lambdaParamsJson(fn.parameters, recvName)}],"ret":${birType(fn.returnType).toJson()},"body":[$body]$semanticOwner}"""
+			"""{"name":${str(lname)}${liftedDeclarationIdentityField(lname)},"generated":true,"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[${lambdaParamsJson(fn.parameters, recvName)}],"ret":${birType(fn.returnType).toJson()},"body":[$body]$semanticOwner}"""
 		}
 		liftedMethods.add(declaration)
-		return """{"k":"newDelegate","method":${str(lname)},"funcType":${str(ftype)}$typeArgs,"calleeOwner":${semanticUseSiteOwnerSpec(fn).toJson()}}"""
+		return """{"k":"newDelegate","method":${str(lname)}${liftedDeclarationIdentityField(lname)},"funcType":${str(ftype)}$typeArgs,"calleeOwner":${semanticUseSiteOwnerSpec(fn).toJson()}}"""
 	}
 	// Capturing: build a closure class. Captures rewrite to `this.<field>` (by symbol identity, so the
 	// enclosing `this` — captured when the lambda reads a member — maps to a `__outer` field, not the

@@ -79,6 +79,30 @@ class InlineNullableBody {
     }
 }
 
+fun <T> nullableFactory(): () -> Box<T?> = { Box<T?>(null) }
+inline fun <T> inlineNullableFactory(): () -> Box<T?> = { Box<T?>(null) }
+fun <T> nullableDeferred(box: Box<T?>): suspend () -> Box<T?> = { box }
+suspend fun <T> nullableSuspendEcho(box: Box<T?>): Box<T?> = box
+suspend fun <T> nullableAfterPause(box: Box<T?>, pause: suspend () -> Unit): Box<T?> {
+    pause()
+    return box
+}
+fun <T> scalarFromNullableBox(box: Box<T?>): T? = box.value
+class NullableScalarHolder<T>(val box: Box<T?>) {
+    fun scalar(): T? = box.value
+}
+class UnframedHelper<T>(val value: T)
+interface NullableBodyDefault {
+    fun <T> isAbsent(value: T?): Boolean = Box<T?>(value).value == null
+}
+class InheritedNullableBodyDefault : NullableBodyDefault
+interface NullableSuspendBodySlot {
+    suspend fun <T> isAbsent(value: T?): Boolean
+}
+class NullableSuspendBodyImpl : NullableSuspendBodySlot {
+    override suspend fun <T> isAbsent(value: T?): Boolean = Box<T?>(value).value == null
+}
+
 interface NullableBodySlot {
     fun <T> isAbsent(value: T?): Boolean
     fun <A, B> bothAbsent(first: A?, second: B?): Boolean
