@@ -20,7 +20,8 @@
 #   README/getting-started version guards,
 #     packaged *.md                    -> verify-packaged-sdk
 #   global.json / packaging/**         -> FULL + verify-packaged-sdk
-#   other *.md / docs/** / CHANGELOG*  -> nothing  (schema doc -> verify-schema only)
+#   BIR/CIR spec/schema + architecture docs -> verify-schema + DLL-to-KLIB E2E
+#   other *.md / docs/** / CHANGELOG*  -> nothing
 #   tests/<suite>/**                   -> that suite
 #   scripts/gate.sh                    -> verify-gate-selection
 #   scripts/{lib,build-stdlib*,dotkt,  -> FULL   (shared build machinery — affects every stage)
