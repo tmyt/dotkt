@@ -248,6 +248,7 @@ STR_OK = {
     "propertyName", "propertyAccessor", "propertyAssociation", # #397: BIR-only Kotlin property identity,
                                                  # explicit get/set role, and file-local Property/accessor association.
                                                  # bir2cir consumes these after every semantic property pass has run.
+    "defaultDeclarationId",                    # selected Kotlin default-argument declaration; consumed by DefaultArgSplice.
     "declarationId", "declarationSourceName",    # #395: frontend declaration fingerprint + original Kotlin callable name;
                                                  # consumed by physical member allocation / round-trip metadata.
     "explicitClrName",                           # #402: BIR-only source-authored MethodDef name from @ClrName/@JvmName;
@@ -1086,7 +1087,7 @@ class V:
                                      "inheritedDefaultMethods", "inheritedClassMethods"):
                     if property_key in o:
                         self.err(f, path, f"{property_key} is a BIR property-accessor fact and must be consumed before CIR")
-                for declaration_key in ("declarationId", "declarationSourceName", "explicitClrName"):
+                for declaration_key in ("declarationId", "defaultDeclarationId", "declarationSourceName", "explicitClrName"):
                     if declaration_key in o:
                         self.err(f, path, f"{declaration_key} is a BIR declaration-identity fact and must be consumed before CIR")
                 for ownership_key in ("semanticOwner", "staticSemanticOwner", "outerTypeParamCount", "outerTypeParamOffset", "typeParamDecls", "lexicalOwnerTypeParamCount"):

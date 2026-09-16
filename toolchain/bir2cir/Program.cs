@@ -167,6 +167,7 @@ sealed class Pipeline
         foreach (var b in birFiles) CollectLocalValueTypes(b.Root, localValueTypeFqns);
         ValueTypeOracle isValueFqn = type => refs.IsValueType(type) || localValueTypeFqns.Contains(type.Name);
         RoundtripMetadata.FreezeSuspendResults(birRoots);
+        InheritedMemberOwnerBinding.ProjectOwners(birRoots, refs);
         NullableRepresentationMaterialization.Apply(birRoots, isValueFqn, refs);
         if (!_options.RefBuild) SequenceElementAdapterLowering.Apply(birRoots);
         var companionRepresentations = CompanionRepresentationLowering.Apply(birRoots);

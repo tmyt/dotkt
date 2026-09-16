@@ -119,6 +119,9 @@ static class IteratorConsumerNormalization
                 obj["k"] = "clrInstance";
                 obj.Remove("ownerType");
                 obj.Remove("virtual");
+                // The iterator representation selects the physical slot below. Its source declaration
+                // identity has been consumed and must not survive on that CLR-bound call.
+                obj.Remove(DeclarationIdentityBinding.Key);
                 obj["type"] = IterType(e);
                 obj["method"] = method;
                 obj["argTypes"] = new JsonArray();
