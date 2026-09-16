@@ -313,9 +313,15 @@ static partial class ClrMemberResolution
         var sourceParameters = natural.DelegateParams;
         var targetParameters = target.DelegateParams;
         var arity = sourceParameters.Length;
+        var producesUnit = natural.Ret is TypeNode.Fqn { Args: null, Name: "void" or "System.Void" }
+            && target.Ret is not TypeNode.Fqn { Args: null, Name: "void" or "System.Void" };
+        if (producesUnit && target.Ret is not TypeNode.Fqn { Args: null, Name: "kotlin.Unit" or "object" or "System.Object" })
+            throw new InvalidOperationException("Delegate return slot cannot receive the Unit singleton");
         var arguments = new List<TypeNode>();
         TypeNode Lift(TypeNode type)
         {
+            // Void is a return-slot shape, not a CLR generic argument or a value to box.
+            if (type is TypeNode.Fqn { Args: null, Name: "void" or "System.Void" }) return type;
             // A managed reference is a slot shape, never a generic argument. Equal slots share a variable,
             // preserving byref identity and avoiding box/unbox on unchanged (possibly byref-like) values.
             if (type is TypeNode.ByRef byRef) return new TypeNode.ByRef(Lift(byRef.Of));
@@ -326,7 +332,7 @@ static partial class ClrMemberResolution
         var sourceFrame = new TypeNode.Fn(false, Lift(natural.Ret),
             sourceParameters.Select(Lift).ToArray(), null, natural.Clr);
         var targetFrame = targetParameters.Select(Lift).ToArray();
-        var targetReturn = Lift(target.Ret);
+        var targetReturn = producesUnit ? target.Ret : Lift(target.Ret);
         var adapter = AdapterClass(sourceFrame, arity, targetReturn, targetFrame, arguments.Count);
         var captured = (JsonObject)construction.DeepClone();
         construction.Clear();
@@ -413,6 +419,11 @@ static partial class ClrMemberResolution
     static void AdaptVoidConstruction(JsonObject construction, TypeNode.Fn naturalFn,
         TypeNode.Fqn slot, TypeNode slotReturn)
     {
+        if (PhysicalFunctionShape(slot) is TypeNode.Fn target && HasBoxedSlotSeam(naturalFn, target))
+        {
+            AdaptBoxedSlots(construction, naturalFn, slot, target);
+            return;
+        }
         // The value the adapter returns is the `Unit` singleton, so the slot's Invoke must be able to receive it.
         // Kotlin resolution only fills such a slot from a `Unit` lambda, so anything else is a producer defect
         // rather than a program this rule has to accept.
@@ -480,12 +491,19 @@ static partial class ClrMemberResolution
                     ["k"] = "cast", ["type"] = TypeJson.Write(frame.DelegateParams[i]),
                     ["e"] = arguments[i].DeepClone(),
                 };
-            var result = frame.Ret.Equals(slotReturn) ? (JsonNode)call : new JsonObject {
+            if (slotReturn is TypeNode.Fqn { Args: null, Name: "void" or "System.Void" })
+                invokeBody = new JsonArray(new JsonObject { ["k"] = "exprStmt", ["expr"] = call },
+                    new JsonObject { ["k"] = "return" });
+            else if (frame.Ret is TypeNode.Fqn { Args: null, Name: "void" or "System.Void" })
+                invokeBody = new JsonArray(new JsonObject { ["k"] = "exprStmt", ["expr"] = call },
+                    new JsonObject { ["k"] = "return", ["value"] = UnitSingletonRead() });
+            else
+            {
+                var result = frame.Ret.Equals(slotReturn) ? (JsonNode)call : new JsonObject {
                     ["k"] = "cast", ["type"] = TypeJson.Write(slotReturn), ["e"] = call,
                 };
-            invokeBody = new JsonArray(new JsonObject {
-                ["k"] = "return", ["value"] = result,
-            });
+                invokeBody = new JsonArray(new JsonObject { ["k"] = "return", ["value"] = result });
+            }
         }
         var invoke = new JsonObject
         {

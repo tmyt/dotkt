@@ -33,6 +33,8 @@ class NullableLocalOwner<T> {
 fun <T> identity(value: Box<T>): Box<T> = value
 fun <T> create(value: T?): Box<T?> = Box<T?>(value)
 fun <T> replace(box: Box<T?>, value: T?) { box.value = value }
+fun <T> visitNullable(value: T?, visit: (T?) -> Unit) { visit(value) }
+fun <T> nullableCallbackResult(value: T?, visit: (T?) -> Any?): Any? = visit(value)
 
 inline fun <A, B, T> inlineNullableTransform(box: Box<T?>, transform: (T?) -> T?): Box<T?> {
     replace<T>(box, transform(box.value))

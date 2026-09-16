@@ -226,6 +226,13 @@ fun ngNestedCount(xss: List<List<Int?>>): Int {
 }
 // A delegate PARAMETER component, a delegate RETURN component, and the reference control for each.
 fun ngApplyQ(x: Int?, f: (Int?) -> String): String = f(x)
+fun ngApplyQUnit(x: Int?, f: (Int?) -> Unit) { f(x) }
+var ngRecordedQ = ""
+fun ngRecordQ(x: Int?) { ngRecordedQ = x?.toString() ?: "none" }
+class NgUnitRefOwner {
+    var value = ""
+    fun member(x: Int?) { value = x?.toString() ?: "none" }
+}
 fun ngApplyQRef(x: String?, f: (String?) -> String): String = f(x)
 fun ngApplyToQ(x: Int, f: (Int) -> Int?): Int? = f(x)
 // The targets of a CALLABLE REFERENCE into a `(Int?) -> String` slot. Their declared `Int?` parameter is the Kotlin
@@ -610,6 +617,15 @@ class NullableTests {
         val viaBound: (Int?) -> String = NgRefOwner()::member
         assertEquals("m4", viaBound(4))                                  // m4
         assertEquals("mnone", viaBound(null))                            // mnone
+        ngApplyQUnit(5, ::ngRecordQ)
+        assertEquals("5", ngRecordedQ)
+        ngApplyQUnit(null, ::ngRecordQ)
+        assertEquals("none", ngRecordedQ)
+        val unitOwner = NgUnitRefOwner()
+        ngApplyQUnit(6, unitOwner::member)
+        assertEquals("6", unitOwner.value)
+        ngApplyQUnit(null, unitOwner::member)
+        assertEquals("none", unitOwner.value)
         // KOTLIN COVARIANCE OVER A VALUE ELEMENT: `List<Int>` IS an `Iterable<Int?>`, while an
         // `IReadOnlyList<int32>` is not the `IEnumerable<object>` that slot erases to. The conversion is the
         // callee's to receive, and without it the iteration finds no `GetEnumerator` at all.

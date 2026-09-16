@@ -144,9 +144,12 @@ static partial class NullableTvErasureCallRealign
             // callable references use those adapter forms too. A remaining direct delegate carrying a `sig` is a
             // reserved representation whose declaration is not ours to move, so retyping it would state a
             // shape no target can fill and turn a formal mismatch into an invalid program.
-            if (target is TypeNode.Fn && args[i] is JsonObject dl
+            if (target is TypeNode.Fn targetFunction && args[i] is JsonObject dl
                 && Str(dl["k"]) is "newDelegate" or "newClosure" && dl["sig"] is not JsonArray
                 && TypeJson.Read(dl["funcType"]) is TypeNode.Fn dft
+                // A void target cannot acquire a value return by retyping its delegate. Preserve the
+                // natural construction for the physical adapter, which invokes it and produces Unit.
+                && !(IsVoidish(dft.Ret) && !IsVoidish(targetFunction.Ret))
                 && !dft.Equals(target) && IsObjectErasureOf(target, dft))
                 dl["funcType"] = TypeJson.Write(target);
             argTypes[i] = args[i] != null ? Eval(args[i], ctx) : null;

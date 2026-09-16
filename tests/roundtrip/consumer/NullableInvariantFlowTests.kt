@@ -38,6 +38,12 @@ private fun <T> inlineNullableEarlyExit(): Int {
     InlineNullableBody().isAbsent<T>(null) { return 17 }
     return -1
 }
+private var recordedNullable = ""
+private fun recordNullable(value: Int?) { recordedNullable = value?.toString() ?: "none" }
+private class NullableRecorder {
+    var value = ""
+    fun record(input: Int?) { value = input?.toString() ?: "none" }
+}
 
 class NullableInvariantFlowTests {
     @TestAttribute
@@ -64,6 +70,23 @@ class NullableInvariantFlowTests {
         assertEquals("value:selected", invokeValueReceiver(receiver, "selected"))
         invokeAcceptReceiver(receiver, Box("accepted"))
         assertEquals("accepted", receiver.last)
+    }
+
+    @TestAttribute
+    fun nullableCallableReferencesPreserveUnitAcrossAssemblyBoundary() {
+        visitNullable<Int>(5, ::recordNullable)
+        assertEquals("5", recordedNullable)
+        visitNullable<Int>(null, ::recordNullable)
+        assertEquals("none", recordedNullable)
+        val recorder = NullableRecorder()
+        visitNullable<Int>(6, recorder::record)
+        assertEquals("6", recorder.value)
+        visitNullable<Int>(null, recorder::record)
+        assertEquals("none", recorder.value)
+        assertTrue(nullableCallbackResult<Int>(7, ::recordNullable) === Unit)
+        assertEquals("7", recordedNullable)
+        assertTrue(nullableCallbackResult<Int>(null, recorder::record) === Unit)
+        assertEquals("none", recorder.value)
     }
 
     @TestAttribute
