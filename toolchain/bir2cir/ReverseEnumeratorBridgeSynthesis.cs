@@ -144,7 +144,7 @@ static class ReverseEnumeratorBridgeSynthesis
                 {
                     ["k"] = "new",
                     ["type"] = TypeJson.Write(Constructed(AdapterName, element)),
-                    ["argTypes"] = new JsonArray(TypeJson.Write(IteratorCarrier(refs))),
+                    ["argTypes"] = new JsonArray(TypeJson.Write(KotlinIteratorPhysicalProtocol.Carrier(refs))),
                     ["args"] = new JsonArray(iteratorCall),
                     // The adapter declares exactly one constructor and this pass authored it; naming its index is
                     // the same explicit local-declaration link every other CIR construction carries.
@@ -414,39 +414,16 @@ static class ReverseEnumeratorBridgeSynthesis
 
     static TypeNode Tv0 => new TypeNode.Tv("type", 0);
 
-    static TypeNode IteratorCarrier(ReferenceMetadataIndex refs) =>
-        refs.TryExistentialPhysicalOwner(KotlinIterator, out var carrier)
-            ? new TypeNode.Fqn(carrier)
-            : throw new InvalidOperationException("Iterator declaration has no existential physical owner");
-
     static JsonObject Adapter(string name, ReferenceMetadataIndex refs)
     {
         var sourceElement = Tv0;
         var targetElement = Tv0;
-        var wrapped = IteratorCarrier(refs);
+        var wrapped = KotlinIteratorPhysicalProtocol.Carrier(refs);
         var self = TypeJson.Write(Constructed(name, Tv0));
         var it = new JsonObject { ["k"] = "field", ["ownerType"] = self.DeepClone(), ["recv"] = This(), ["name"] = "_it" };
 
-        JsonObject Wrapped(string member, TypeNode ret)
-        {
-            if (!refs.TryStarProjectionMember((TypeNode.Fqn)Constructed(KotlinIterator, sourceElement), member,
-                    null, 0, Array.Empty<TypeNode>(), 0, null, out var slotOwner, out var slotName,
-                    out var signature, out _, out var physicalReturn))
-                throw new InvalidOperationException($"Iterator member {member} has no existential physical slot");
-            var call = new JsonObject
-            {
-                ["k"] = "callInstance",
-                ["ownerType"] = TypeJson.Write(new TypeNode.Fqn(slotOwner)),
-                ["virtual"] = true,
-                ["recv"] = it.DeepClone(),
-                ["method"] = slotName,
-                ["sig"] = new JsonArray(signature.Select(TypeJson.Write).ToArray()),
-                ["ret"] = TypeJson.Write(physicalReturn),
-                ["args"] = new JsonArray(),
-            };
-            return physicalReturn.Equals(ret) ? call
-                : new JsonObject { ["k"] = "cast", ["type"] = TypeJson.Write(ret), ["e"] = call };
-        }
+        JsonObject Wrapped(string member, TypeNode ret) =>
+            KotlinIteratorPhysicalProtocol.Call(refs, it.DeepClone().AsObject(), member, sourceElement, ret);
 
         // `bool MoveNext() { if (_it.hasNext()) { _cur = (TTarget)_it.next(); return true } return false }`.
         // The cast is explicit CIR because adapting an iterator's element to the enumerable slot is bir2cir-owned

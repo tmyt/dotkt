@@ -1295,7 +1295,7 @@ sealed class Pipeline
             // each missing slot with an ordinary public forwarding member. Return-DROPPING slots
             // (Add/set_Item/RemoveAt) are allocated by the common KotlinOverrideSlotBridge pass below, which carries
             // their exact MethodImpl descriptors to ilemit.
-            if (!_options.RefBuild) CollectionBclSlotSynthesis.Apply(lowered);
+            if (!_options.RefBuild) CollectionBclSlotSynthesis.Apply(lowered, refs);
             // The READ-ONLY sibling of every mutable collection face this unit's types name. Kotlin's `MutableList<E>`
             // IS-A `List<E>`, but their lowered CLR faces (`IList<T>` / `IReadOnlyList<T>`) are unrelated interfaces,
             // so the read-only view is real only when the emitted type declares it. Runs AFTER the mutable faces are

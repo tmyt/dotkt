@@ -26,6 +26,8 @@ class VariantInterfaceRoundtripTests {
         assertEquals("producer", fromInterface)
     }
     @TestAttribute fun importedCovariantParametersResultsAndProperties() {
+        val nullable: Source<Int?> = nullableSourceIdentity<Int>(IntSource())
+        assertEquals(17, nullable.read())
         assertEquals("17", text<Any>(IntSource()))
         assertEquals("producer", text<Any>(TextSource()))
         assertEquals(18, read<Int>(IntSource()) + 1)

@@ -735,7 +735,10 @@ static class FBoundStarProjectionErasure
                 && !ContainsWritableVariantArray(type, owners, refs)
                 && !ContainsKotlinVariantType(type, owners, refs)))
             return;
-        declaration[fact] = TypeNode.ToJson(type);
+        // An earlier representation pass may already have replaced nullable generic arguments with object.
+        // Its preserved Kotlin declaration, not that intermediate physical slot, is the exported source truth.
+        declaration[fact] = Str(declaration[slot == "ret" ? "nullableGenericRet" : "nullableGeneric"])
+            ?? TypeNode.ToJson(type);
     }
 
     static bool ContainsKotlinVariantType(TypeNode type,
@@ -1340,6 +1343,9 @@ static class FBoundStarProjectionErasure
         IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs)
     {
         if (application.Args is not { Length: > 0 }) return false;
+        // A compiler binding alias already owns the representation of this declaration. Its reflected Kotlin
+        // interface variance must not allocate a nominal carrier or replace its preserved collection metadata.
+        if (refs.Aliases.ContainsKey(application.Name)) return false;
         if (owners.TryGetValue(application.Name, out var local) && local.Def != null)
             return Str(local.Def["kind"]) is "class" or "interface"
                 && HasKotlinVariantParameter(application, local.Def["typeParams"] as JsonArray);
@@ -2254,6 +2260,10 @@ static class FBoundStarProjectionErasure
                 foreach (var constraintNode in constraints)
                 {
                     if (TypeJson.Read(constraintNode) is not TypeNode constraint) continue;
+                    // A variant Kotlin bound can already have an owner-independent nominal representation.
+                    // Keep that same constraint on the carrier slot and its forwarding method; dropping it here
+                    // would let the bridge instantiate the source method with an unconstrained CLR parameter.
+                    constraint = RewriteType(constraint, owners, refs);
                     // No approximation of I<T> can constrain R on a carrier with hidden T. Kotlin metadata retains
                     // the original bound; only owner-independent constraints remain on the physical declarations.
                     if (ContainsOwnerTv(constraint)

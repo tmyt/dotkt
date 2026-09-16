@@ -12,6 +12,7 @@ class AnySink : Sink<Any> {
     override fun accept(value: Any) { last = value.toString() }
 }
 fun <T> read(source: Source<T>): T = source.read()
+fun <T> nullableSourceIdentity(source: Source<T?>): Source<T?> = source
 fun <T> text(source: Source<T>): String = source.item.toString()
 fun <T> write(sink: Sink<T>, value: T) = sink.accept(value)
 fun source(): Source<Any> = IntSource()
