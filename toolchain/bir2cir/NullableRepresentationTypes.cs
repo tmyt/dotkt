@@ -68,10 +68,8 @@ sealed class NullableRepresentationTypes
             return (frame ?? throw new InvalidOperationException("Missing nullable representation frame"))
                 .NullableVariable(variable);
         }
-        // Retain the concrete nullable-value boxing policy. Only open nullable arguments need the extra frame.
-        if (position == NullableGenericErasure.Pos.Argument
-            && type is TypeNode.Nullable { Of: TypeNode.Fqn value } && _isValue(value))
-            return new TypeNode.Fqn("object");
+        // This pass allocates open nullable frames, not concrete value boxing. Keep concrete V? intact until
+        // NullableGenericErasure runs after reified nullability witnesses have consumed the source argument.
         return type switch {
             TypeNode.Tv { Scope: "type" } ownerVariable when _owner != null =>
                 new TypeNode.Tv("type", _owner.SourcePosition(ownerVariable.I)),
@@ -116,7 +114,7 @@ sealed class NullableRepresentationTypes
         Equal(mapping.Slot(Box(new TypeNode.Nullable(tv))), Box(tn), "owner nullable argument");
         Equal(mapping.Slot(Box(new TypeNode.Nullable(mv))), Box(mn), "method nullable argument");
         Equal(mapping.Slot(Box(new TypeNode.Nullable(text))), Box(new TypeNode.Nullable(text)), "native reference argument");
-        Equal(mapping.Slot(Box(new TypeNode.Nullable(integer))), Box(obj), "boxed nullable value argument");
+        Equal(mapping.Slot(Box(new TypeNode.Nullable(integer))), Box(new TypeNode.Nullable(integer)), "deferred concrete nullable argument");
         Equal(mapping.Slot(new TypeNode.Nullable(integer)), new TypeNode.Nullable(integer), "native nullable scalar");
         Equal(mapping.Slot(new TypeNode.ByRef(new TypeNode.Nullable(tv))), new TypeNode.ByRef(obj), "direct ref scalar");
         Equal(mapping.Slot(new TypeNode.ByRef(Box(tv))), new TypeNode.ByRef(Box(tv)), "exact invariant ref referent");
@@ -129,7 +127,7 @@ sealed class NullableRepresentationTypes
             new TypeNode.Fqn("Exchange", new TypeNode[] { tn, tn }), "already nullable construction");
         var closed = mapping.CloseMethod(owner, new TypeNode[] { integer });
         Equal(closed[0], integer, "method ordinary argument");
-        Equal(closed[1], obj, "method nullable argument");
+        Equal(closed[1], new TypeNode.Nullable(integer), "method nullable argument before concrete erasure");
         var foreign = new TypeNode.Fqn("Foreign", new TypeNode[] { new TypeNode.Nullable(integer) });
         Equal(mapping.Rewrite(foreign, NullableGenericErasure.Pos.Bound), foreign, "foreign fixed nullable construction");
         var function = new TypeNode.Fn(false, Box(new TypeNode.Nullable(mv)), new[] { new TypeNode.Nullable(integer) },

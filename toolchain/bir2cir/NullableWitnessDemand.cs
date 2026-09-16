@@ -154,8 +154,9 @@ sealed class NullableWitnessDemand
         {
             if (owner["methods"] is JsonArray methods)
                 foreach (var method in methods.OfType<JsonObject>())
+                    // A generated delegate target may carry an explicit binding ID. That does not turn its
+                    // captured nullability witness into an ordinary user-visible method parameter.
                     if (Bool(method["generated"])
-                        && method[DeclarationIdentityBinding.Key] == null
                         && Str(method["name"]) is string name
                         && referencedTargets.Contains(name))
                     {

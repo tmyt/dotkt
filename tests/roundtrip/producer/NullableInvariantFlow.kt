@@ -81,6 +81,7 @@ class InlineNullableBody {
 
 fun <T> nullableFactory(): () -> Box<T?> = { Box<T?>(null) }
 inline fun <T> inlineNullableFactory(): () -> Box<T?> = { Box<T?>(null) }
+inline fun <reified T> nullableTypePredicate(): (Any?) -> Boolean = { it is T }
 fun <T> nullableDeferred(box: Box<T?>): suspend () -> Box<T?> = { box }
 suspend fun <T> nullableSuspendEcho(box: Box<T?>): Box<T?> = box
 suspend fun <T> nullableAfterPause(box: Box<T?>, pause: suspend () -> Unit): Box<T?> {

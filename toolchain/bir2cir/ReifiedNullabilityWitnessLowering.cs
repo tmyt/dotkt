@@ -228,7 +228,6 @@ static class ReifiedNullabilityWitnessLowering
                 foreach (var method in methods.OfType<JsonObject>())
                 {
                     if (!Bool(method["generated"])
-                        || method[DeclarationIdentityBinding.Key] != null
                         || Str(method["name"]) is not string candidate
                         || !referencedTargets.Contains(candidate)
                         || !demands.TryGetValue(candidate, out var indices)

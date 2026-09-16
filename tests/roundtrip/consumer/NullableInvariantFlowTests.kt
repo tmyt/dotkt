@@ -41,6 +41,23 @@ private fun <T> inlineNullableEarlyExit(): Int {
 
 class NullableInvariantFlowTests {
     @TestAttribute
+    fun reifiedDelegateAcceptsNullableString() {
+        assertTrue(nullableTypePredicate<String?>()(null))
+    }
+    @TestAttribute
+    fun reifiedDelegateRejectsNullString() {
+        assertTrue(!nullableTypePredicate<String>()(null))
+    }
+    @TestAttribute
+    fun reifiedDelegateAcceptsNullableInt() {
+        assertTrue(nullableTypePredicate<Int?>()(null))
+    }
+    @TestAttribute
+    fun reifiedDelegateAcceptsBoxedInt() {
+        val input: Any? = 42
+        assertTrue(nullableTypePredicate<Int>()(input))
+    }
+    @TestAttribute
     fun separateProducerFilesSelectTheOriginalAbstractOverload() {
         val receiver = StringReceiver()
         assertEquals("box:selected", invokeBoxReceiver(receiver, Box("selected")))
