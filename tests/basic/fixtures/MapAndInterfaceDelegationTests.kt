@@ -21,6 +21,12 @@ class MapDelegationUser(val data: Map<String, Any?>) {
     val name: String by data
     val age: Int by data
 }
+class MapDelegationGeneric<V>(val data: Map<String, V>)
+fun <V> mapDelegationGeneric(value: V): MapDelegationGeneric<V> =
+    MapDelegationGeneric(mapOf("value" to value))
+class MapDelegationGenericOwner<V>(val value: V) {
+    fun create(): MapDelegationGeneric<V> = MapDelegationGeneric(mapOf("value" to value))
+}
 
 // ---- il-computedprop : #89 backing field + custom accessor must route through the accessor ---------------------
 val mapDelegationTopProp: Int = 41
@@ -53,6 +59,10 @@ class MapAndInterfaceDelegationTests {
         val u = MapDelegationUser(mapOf("name" to "Alice", "age" to 30))
         assertEquals("Alice", u.name)  // Alice
         assertEquals(30, u.age)        // 30
+        assertEquals(42, mapDelegationGeneric(42).data["value"])
+        assertEquals("text", mapDelegationGeneric("text").data["value"])
+        assertEquals(43, MapDelegationGenericOwner(43).create().data["value"])
+        assertEquals("owner", MapDelegationGenericOwner("owner").create().data["value"])
     }
 
     @TestAttribute

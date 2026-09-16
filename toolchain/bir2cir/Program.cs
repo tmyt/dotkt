@@ -578,8 +578,8 @@ sealed class Pipeline
             // (a reified argument is invariant for a value type), so the callee's `GetEnumerator` is not found. Wrap
             // that argument in `Enumerable.Cast<object>`, which boxes each element into a real object-enumerable.
             // Only an `Iterable<T?>` slot, per position — that is the one slot the wrap's own `IEnumerable<object>`
-            // inhabits. Runs FIRST, before the erasure sweeps the slot's `Nullable(Tv)` to `object` (this pass keys
-            // on it); self-gates to concrete value instantiations, so it is a no-op in the rt-stdlib self-build.
+            // inhabits. Read the materialized method frame's argument at the slot's exact index, rather than
+            // expecting the source Nullable(Tv) spelling to survive physical frame allocation.
             if (!_options.RefBuild) ValueElementIterableCoercion.Apply(bir.Root, isValueFqn);
             // ARRAY-ELEMENT CANONICALIZATION (#86 D2): an `Array<X?>` with a possibly-value `X` is `object[]`, so an
             // array CREATION filling such a slot allocates `object[]` too. kotc writes the source's own element there

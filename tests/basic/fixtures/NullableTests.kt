@@ -240,6 +240,7 @@ fun <T> ngCountIterable(xs: Iterable<T?>): Int {
     for (x in xs) if (x != null) n++
     return n
 }
+fun <T> ngCountThroughGenericIterable(xs: Iterable<T>): Int = ngCountIterable<T>(xs)
 // A generic METHOD whose instantiation is itself `Int?`: it must be emitted at `object` from the start, because
 // `List<object>` is the only argument its `IReadOnlyList<!!0>` parameter accepts.
 fun <T> ngFirstOr(xs: List<T>, d: T): T {
@@ -615,6 +616,11 @@ class NullableTests {
         assertEquals(3, ngCountIterable(listOf(1, 2, 3)))                // 3   non-nullable value element
         assertEquals(2, ngCountIterable(listOf<Int?>(1, null, 3)))       // 2   the nullable twin, already object
         assertEquals(2, ngCountIterable(listOf("a", "b")))               // 2   reference control
+        val valueElements: Iterable<Int> = listOf(4, 5)
+        assertEquals(2, ngCountIterable(valueElements))
+        assertEquals(2, ngCountThroughGenericIterable(valueElements))
+        assertEquals(2, ngCountThroughGenericIterable(listOf("a", "b")))
+        assertEquals(1, ngCountThroughGenericIterable(listOf<Int?>(null, 2)))
 
         // A generic METHOD instantiated at `Int?` must be instantiated at `object` from the start.
         assertEquals(2, ngFirstOr(listOf<Int?>(null, 2), 9) ?: 0)  // 2

@@ -62,18 +62,36 @@ static class MapVarianceRealign
     public static void Apply(JsonNode root, IReadOnlyDictionary<string, TypeNode[]> calleeTypeParams, ReferenceMetadataIndex refs)
     {
         if (root is not JsonObject o) return;
-        ProcessMethods(o["methods"], calleeTypeParams, refs);
+        var ownerFrame = Str(o[KotlinSupertypesRecord.PreKey]) is string facts
+            && JsonNode.Parse(facts)?[NullableRepresentationFrame.MetadataKey] is JsonNode frame
+            ? NullableRepresentationFrame.Read(frame) : null;
+        ProcessMethods(o["methods"], calleeTypeParams, refs, ownerFrame);
         if (o["types"] is JsonArray types)
             foreach (var t in types)
                 if (t != null) Apply(t, calleeTypeParams, refs);
     }
 
-    static void ProcessMethods(JsonNode methods, IReadOnlyDictionary<string, TypeNode[]> calleeTypeParams, ReferenceMetadataIndex refs)
+    static void ProcessMethods(JsonNode methods, IReadOnlyDictionary<string, TypeNode[]> calleeTypeParams,
+        ReferenceMetadataIndex refs, NullableRepresentationFrame ownerFrame)
     {
         if (methods is not JsonArray arr) return;
         foreach (var m in arr)
         {
             if (m is not JsonObject mo) continue;
+            var methodFrame = Str(mo[NullableRepresentationTypes.MethodFrameKey]) is string encoded
+                ? NullableRepresentationFrame.Read(JsonNode.Parse(encoded)) : null;
+            TypeNode NullableArgument(TypeNode argument)
+            {
+                if (argument is TypeNode.Tv variable)
+                {
+                    var callerFrame = variable.Scope == "type" ? ownerFrame : methodFrame;
+                    if (callerFrame == null)
+                        throw new System.InvalidOperationException("Collection factory requires a missing caller nullable frame");
+                    var semantic = callerFrame.SemanticVariable(variable);
+                    return semantic is TypeNode.Nullable ? variable : callerFrame.NullableVariable((TypeNode.Tv)semantic);
+                }
+                return argument is TypeNode.Nullable ? argument : new TypeNode.Nullable(argument);
+            }
             // Per-method local type environment: params + local `var` declarations -> its declared structured type.
             var env = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
             if (mo["params"] is JsonArray ps)
@@ -97,7 +115,7 @@ static class MapVarianceRealign
                 // physical source type. The latter has no CLR value-type covariance, and its sole Kotlin operation
                 // is routed through an erased receiver by MemberCallSubstitution.
                 RealignVarTypes(body, env, aliases, constraints);
-                Walk(body, env, calleeTypeParams, aliases, constraints, refs);
+                Walk(body, env, calleeTypeParams, aliases, constraints, refs, NullableArgument);
             }
         }
     }
@@ -168,7 +186,8 @@ static class MapVarianceRealign
     }
 
     static void Walk(JsonNode node, Dictionary<string, TypeNode> env, IReadOnlyDictionary<string, TypeNode[]> calleeTypeParams,
-        IReadOnlyDictionary<string, string> aliases, IReadOnlyDictionary<int, TypeNode> constraints, ReferenceMetadataIndex refs)
+        IReadOnlyDictionary<string, string> aliases, IReadOnlyDictionary<int, TypeNode> constraints, ReferenceMetadataIndex refs,
+        System.Func<TypeNode, TypeNode> nullableArgument)
     {
         if (node is JsonObject o)
         {
@@ -178,13 +197,13 @@ static class MapVarianceRealign
             if (k == "callInstance")
                 OwnerVarianceRealign(o, env, aliases, constraints);
             if (k == "new")
-                RealignFactoryCtorArgTypes(o, refs);
+                RealignFactoryCtorArgTypes(o, refs, nullableArgument);
             foreach (var kv in o)
-                if (kv.Value != null) Walk(kv.Value, env, calleeTypeParams, aliases, constraints, refs);
+                if (kv.Value != null) Walk(kv.Value, env, calleeTypeParams, aliases, constraints, refs, nullableArgument);
         }
         else if (node is JsonArray a)
             foreach (var it in a)
-                if (it != null) Walk(it, env, calleeTypeParams, aliases, constraints, refs);
+                if (it != null) Walk(it, env, calleeTypeParams, aliases, constraints, refs, nullableArgument);
     }
 
     // CONSTRUCTION-ARGUMENT covariance realign (il-bymap regression, klib migration #80): a collection-factory
@@ -202,7 +221,8 @@ static class MapVarianceRealign
     // type Kotlin already type-checked the assignment against — the same "realign to the actually-intended type"
     // move as `Realign`/`OwnerVarianceRealign` above, just sourced from the ENCLOSING slot instead of a callee
     // constraint. BIR-space (Kotlin FQNs) — runs before type lowering + MemberCallSubstitution.
-    static void RealignFactoryCtorArgTypes(JsonObject newNode, ReferenceMetadataIndex refs)
+    static void RealignFactoryCtorArgTypes(JsonObject newNode, ReferenceMetadataIndex refs,
+        System.Func<TypeNode, TypeNode> nullableArgument)
     {
         if (newNode["argTypes"] is not JsonArray declaredArgTypes) return;
         if (newNode["args"] is not JsonArray args) return;
@@ -215,12 +235,22 @@ static class MapVarianceRealign
         for (var i = 0; i < n; i++)
         {
             if (args[i] is not JsonObject call || Str(call["k"]) != "callStatic") continue;
-            if (Str(call["method"]) is not string fn || refs.CollectionFactoryKind(fn) is not string kind) continue;
+            string kind;
+            if (Str(call[DeclarationIdentityBinding.Key]) is string declarationId)
+            {
+                // A selected declaration owns its factory annotation; the physical method name
+                // need not be the Kotlin source name recorded in the name-based factory index.
+                if (!refs.TryDeclarationFactory(declarationId, out kind, out _, out _)) continue;
+            }
+            else
+                kind = Str(call["method"]) is string fn ? refs.CollectionFactoryKind(fn) : null;
+            if (kind == null) continue;
             if (call["typeArgs"] is not JsonArray callTypeArgs || callTypeArgs.Count == 0) continue;
             if (TypeJson.Read(declaredArgTypes[i]) is not TypeNode declared) continue;
             if (UnwrapNullableOblivious(declared) is not TypeNode.Fqn { Args: { } rawDeclArgs }) continue;
             var expected = kind == "map" ? 2 : 1;                       // map -> [K,V]; list/set -> [E]
-            if (rawDeclArgs.Length != expected || callTypeArgs.Count != expected) continue;
+            var factoryFrame = Str(call[DeclarationIdentityBinding.Key]) is string id ? refs.NullableMethodFrame(id) : null;
+            if (rawDeclArgs.Length != expected || (factoryFrame?.SourceArity ?? callTypeArgs.Count) != expected) continue;
             // Instantiate every declared arg through the `new` binding. A class-scope `tv{type,i}` whose binding
             // is unavailable (the `new` type has no/too-few Args, or nested index out of range) makes this SKIP
             // the whole rewrite for this argument — stamping the unbound class-scope token is the #122 bug (it
@@ -233,11 +263,9 @@ static class MapVarianceRealign
                 declArgs[j] = inst;
             }
             if (skip) continue;
-            for (var j = 0; j < expected; j++)
-            {
-                var cur = TypeJson.Read(callTypeArgs[j]);
-                if (cur != declArgs[j]) callTypeArgs[j] = TypeJson.Write(declArgs[j]);
-            }
+            var closedArgs = factoryFrame == null ? declArgs
+                : factoryFrame.Close(declArgs, argument => argument, nullableArgument);
+            call["typeArgs"] = new JsonArray(closedArgs.Select(TypeJson.Write).ToArray());
         }
     }
 

@@ -25,9 +25,9 @@ using DotKt.Bir;
 // `Box<T?>` parameter must not make an ordinary `Iterable<String>` argument convert, and an `Iterable<T?>` parameter
 // in second place must not be missed because the first one is not.
 //
-// Runs on the substituted BIR BEFORE the erasure (the slot still says `Nullable(Tv)` and the call's `typeArgs` are
-// still `kotlin.*`), and self-gates to concrete VALUE instantiations — an open `gp:T` argument is not a value type —
-// so it is a no-op in the rt-stdlib self-build. A REFERENCE element needs nothing: covariance already works there.
+// Runs after nullable-frame materialization and before type lowering. Read the selected slot through its physical
+// method arguments, including nullable companions, and compare it with the operand's own element type. A concrete
+// reference element needs nothing: CLR covariance already works there. An open element may be a value at runtime.
 static class ValueElementIterableCoercion
 {
     // The struct-ness ORACLE (ReferenceMetadataIndex.IsValueType + the local enum/struct types), not a hardcoded
@@ -72,20 +72,30 @@ static class ValueElementIterableCoercion
         if (sig.Count != args.Count) return;
         for (var i = 0; i < sig.Count; i++)
         {
-            // The slot must be exactly `Iterable<T?>`: that is the only Kotlin type whose CLR form the wrap's
-            // `IEnumerable<object>` inhabits.
+            // Only Iterable produces precisely the interface implemented by Enumerable.Cast<TResult>.
             if (TypeJson.Read(sig[i]) is not TypeNode.Fqn { Name: IterableFqn, Args: { Length: 1 } sa }) continue;
-            if (sa[0] is not TypeNode.Nullable { Of: TypeNode.Tv { Scope: "method" } tv }) continue;
-            // WHICH type argument is the element: the index of the `Tv` under the slot's own `Nullable(Tv)`.
-            // `filterNotNull()` declares `<T : Any>` so it is `typeArgs[0]`, but `filterNotNullTo(destination: C)`
-            // declares `<C, T>` and it is `typeArgs[1]`; reading position 0 unconditionally answers about `C`, a
-            // collection type and never a value.
-            if (call["typeArgs"] is not JsonArray ta || tv.I < 0 || tv.I >= ta.Count) continue;
-            if (!IsValueTypeArg(ta[tv.I])) continue;
+            var target = sa[0];
+            if (target is TypeNode.Tv { Scope: "method" } tv)
+            {
+                if (call["typeArgs"] is not JsonArray ta || tv.I < 0 || tv.I >= ta.Count) continue;
+                target = TypeJson.Read(ta[tv.I]);
+            }
+            target = NullableGenericErasure.EraseArgument(target, _isValue);
+            if (args[i] is not JsonObject argument
+                || TypeJson.Read(argument["sty"]) is not TypeNode.Fqn { Args: { Length: 1 } sourceArgs } source
+                || source.Name is not ("kotlin.collections.Iterable" or "kotlin.collections.Collection"
+                    or "kotlin.collections.List" or "kotlin.collections.Set"
+                    or "kotlin.collections.MutableIterable" or "kotlin.collections.MutableCollection"
+                    or "kotlin.collections.MutableList" or "kotlin.collections.MutableSet"
+                    or "kotlin.collections.ArrayList" or "kotlin.collections.HashSet"
+                    or "kotlin.collections.LinkedHashSet")) continue;
+            var sourceElement = NullableGenericErasure.EraseArgument(sourceArgs[0], _isValue);
+            if (sourceElement == target
+                || !(sourceElement is TypeNode.Tv || sourceElement is TypeNode.Fqn value && _isValue(value))) continue;
             // Idempotence: never re-wrap an already-cast argument.
             if (args[i] is JsonObject ro && (ro["k"] as JsonValue)?.GetValue<string>() == "clrGenericStatic"
                 && (ro["method"] as JsonValue)?.GetValue<string>() == "Cast") continue;
-            args[i] = CastElements(args[i], new TypeNode.Fqn("object"));
+            args[i] = CastElements(args[i], target);
         }
     }
 
@@ -113,9 +123,4 @@ static class ValueElementIterableCoercion
         };
     }
 
-    // Is this type argument a value type, per the struct-ness oracle, on the pre-lowering structured Type node? A
-    // CONSTRUCTED name is asked like any other — `KeyValuePair<K,V>` is a struct — and its full argument count
-    // distinguishes it from an arity-sharing reference declaration.
-    static bool IsValueTypeArg(JsonNode n)
-        => TypeJson.Read(n) is TypeNode.Fqn f && _isValue(f);
 }
