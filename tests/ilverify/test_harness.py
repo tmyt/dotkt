@@ -69,6 +69,18 @@ class HarnessTests(unittest.TestCase):
     def test_crash_even_with_footer(self):
         self.run_probe(self.complete([self.finding()]) + "\nUnhandled exception.", 1, 1)
 
+    def test_incomplete_audit_does_not_claim_baseline_is_fixed(self):
+        out = self.run_probe("Unhandled exception.", 1, 1, "--audit-baseline")
+        self.assertNotIn("FIXED", out)
+
+    def test_missing_input_does_not_claim_baseline_is_fixed(self):
+        out = self.run_probe(self.complete(), 0, 1, "--audit-baseline", missing=True)
+        self.assertNotIn("FIXED", out)
+
+    def test_incomplete_pointer_audit_does_not_claim_allowance_is_stale(self):
+        out = self.run_probe("Unhandled exception.", 1, 1, "--allow-unmanaged-pointer=Pointer::run()")
+        self.assertNotIn("no matching", out)
+
     def test_nonzero_without_findings(self):
         for status in (1, 2, 127, 134):
             with self.subTest(status=status):

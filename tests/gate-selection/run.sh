@@ -37,6 +37,7 @@ assert_suites unrelated-broad-change build-logic/unknown.input "$FULL_SUITES"
 assert_suites compiler-full toolchain/bir-common/TypeNode.cs "$FULL_SUITES"
 assert_suites stdlib-source libraries/stdlib/common/src/generated/_Arrays.kt "$FULL_SUITES"
 assert_suites stdlib-snapshot-test tests/stdlib-common-upstream/upstream-v2.4.10.sha256 stdlib_upstream
+assert_suites ilverify-harness tests/ilverify/test_harness.py compiler_tests
 
 # Exercise the default Git collector, not only explicit path classification. With rename folding enabled,
 # Git reports only docs/moved.props and loses the removed packaging path, incorrectly selecting no gate.

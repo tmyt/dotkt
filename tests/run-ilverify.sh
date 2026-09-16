@@ -99,8 +99,9 @@ classify_finding() { # <finding line> -> 0 if classified, setting FINDING_CLASS 
 }
 
 rc=0
+verification_incomplete=0
 for dll in "${DLLS[@]}"; do
-	[[ -f "$dll" ]] || { echo "ilverify: MISSING $dll"; rc=1; continue; }
+	[[ -f "$dll" ]] || { echo "ilverify: MISSING $dll"; rc=1; verification_incomplete=1; continue; }
 	bindir="$(dirname "$dll")"
 	# Use an absolute input so the completion footer identifies precisely this assembly.
 	dll="$(cd "$bindir" && pwd)/$(basename "$dll")"
@@ -121,6 +122,7 @@ for dll in "${DLLS[@]}"; do
 		echo "VERIFY FAIL  $(basename "$dll") — incomplete or inconsistent verifier result (exit $verifier_status):"
 		printf '%s\n' "$out"
 		rc=1
+		verification_incomplete=1
 		continue
 	fi
 	declare -a newfails=() xfailed=() unverifiable=() unmanaged_pointer=()
@@ -158,6 +160,10 @@ for dll in "${DLLS[@]}"; do
 	fi
 	unset newfails xfailed unverifiable unmanaged_pointer
 done
+
+# Missing evidence cannot establish that an allowance is stale. Keep the failed verdict without
+# advising baseline removal when any assembly's verification did not finish.
+if (( verification_incomplete )); then exit "$rc"; fi
 
 # An invocation-local pointer allowance is an assertion that the named unsafe method exists and produces exactly the
 # expected ILVerify classification. If it matched nothing, the focused exception is stale or misspelled and must not

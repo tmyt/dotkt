@@ -136,7 +136,7 @@ classify() { # <path>
 		tests/packaged-sdk/*) want packagedsdk; reason "$p -> packaged SDK tests" ;;
 		tests/gate-selection/*) want gate_selection; reason "$p -> gate selector policy tests" ;;
 		tests/stdlib-common-upstream/*) want stdlib_upstream; reason "$p -> upstream stdlib snapshot gate" ;;
-		tests/basic/*|tests/coroutines/*|tests/interop/*|tests/roundtrip/*|tests/support/*|tests/run-nunit-tests.sh|tests/run-ilverify.sh)
+		tests/basic/*|tests/coroutines/*|tests/interop/*|tests/roundtrip/*|tests/support/*|tests/ilverify/*|tests/run-nunit-tests.sh|tests/run-ilverify.sh)
 			want compiler_tests; reason "$p -> categorized compiler tests" ;;
 		tests/target-universe/*)
 			want targetuniverse; reason "$p -> host/target metadata-universe calibration" ;;
