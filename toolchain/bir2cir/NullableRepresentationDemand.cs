@@ -125,7 +125,7 @@ static partial class NullableRepresentationDemand
             foreach (var (key, value) in obj)
                 if (key is not ("attrs" or "overrides"))
                 {
-                    if (Text(obj["k"]) != null && (NullableRepresentationTypes.IsDeclarationFrameKey(key)
+                    if (Text(obj["k"]) != null && (NullableRepresentationTypes.IsDeclarationFrameKey(key, Text(obj["k"]))
                         || key == "resolvedMemberParams" || key == ClrMemberResolution.ResolvedMemberReturnKey
                         || key == "argTypes" && ClrBoundNode.IsAny(Text(obj["k"])))) continue;
                     Scan(value, result, types, methods, key == "typeArgs"

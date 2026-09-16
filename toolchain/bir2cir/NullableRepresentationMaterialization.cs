@@ -5,7 +5,7 @@ using System.Text.Json.Nodes;
 using DotKt.Bir;
 
 // Materializes a signature-demanded frame. Body-only specialization is a separate operation: it must not
-// silently grow a published virtual slot. Not yet scheduled by Program's normal lowering pipeline.
+// silently grow a published virtual slot. Runs after the immutable Kotlin declaration snapshot.
 static class NullableRepresentationMaterialization
 {
     public static void Apply(IEnumerable<JsonNode> inputs, ValueTypeOracle isValue, ReferenceMetadataIndex references = null)
@@ -30,11 +30,13 @@ static class NullableRepresentationMaterialization
         // until that specialization has given its implementation an explicit frame.
         foreach (var owner in demands)
         {
-            RequireCovered(owner.Body.Type, owner.Frame);
+            var ownerName = Text(owner.Declaration["name"]) ?? Text(owner.Declaration["fileClass"]);
+            RequireCovered(owner.Body.Type, owner.Frame, ownerName + " (type)");
             foreach (var method in owner.Methods)
             {
-                RequireCovered(method.Body.Type, owner.Frame);
-                RequireCovered(method.Body.Method, method.Frame);
+                var methodName = ownerName + "." + Text(method.Declaration["name"]);
+                RequireCovered(method.Body.Type, owner.Frame, methodName + " (type)");
+                RequireCovered(method.Body.Method, method.Frame, methodName + " (method)");
             }
         }
         var types = references == null ? new Dictionary<string, NullableRepresentationFrame>(StringComparer.Ordinal)
@@ -89,10 +91,11 @@ static class NullableRepresentationMaterialization
         }
     }
 
-    static void RequireCovered(IEnumerable<int> indices, NullableRepresentationFrame frame)
+    static void RequireCovered(IEnumerable<int> indices, NullableRepresentationFrame frame, string declaration)
     {
-        if (indices.Except(frame.NullableIndices).Any())
-            throw new InvalidOperationException("Nullable frame materialization requires body specialization first");
+        var missing = indices.Except(frame.NullableIndices).ToArray();
+        if (missing.Length != 0)
+            throw new InvalidOperationException($"Nullable frame materialization requires body specialization first: {declaration}, slots {string.Join(",", missing)}");
     }
 
     static void AppendParameters(JsonObject declaration, NullableRepresentationFrame frame)
@@ -143,7 +146,7 @@ static class NullableRepresentationMaterialization
             foreach (var key in obj.Select(p => p.Key).ToArray())
             {
                 if (key is "attrs" or "overrides" || key == "typeArgs" && closedArguments != null) continue;
-                if (kind != null && NullableRepresentationTypes.IsDeclarationFrameKey(key))
+                if (kind != null && NullableRepresentationTypes.IsDeclarationFrameKey(key, kind))
                 {
                     RewriteDescriptor(obj, key, selectedMapping, mapping);
                     continue;
@@ -214,6 +217,8 @@ static class NullableRepresentationMaterialization
         genericCall["memberMethodTypeParams"] = new JsonArray("T");
         genericCall["memberSignature"] = new JsonArray(root["methods"][0]["params"][0]["type"].DeepClone());
         genericCall["memberReturnType"] = root["methods"][0]["ret"].DeepClone();
+        genericCall["argTypes"] = genericCall["memberSignature"].DeepClone();
+        genericCall["ret"] = genericCall["memberReturnType"].DeepClone();
         Apply(new[] { root }, _ => false);
         var method = root["methods"][0];
         var store = root["types"][1];
@@ -228,6 +233,8 @@ static class NullableRepresentationMaterialization
             || ((JsonArray)genericCall["memberMethodTypeParams"]).Count != 2
             || TypeJson.Read(genericCall["memberSignature"][0]) != new TypeNode.Fqn("Box", new TypeNode[] { new TypeNode.Tv("method", 1) })
             || TypeJson.Read(genericCall["memberReturnType"]) != TypeJson.Read(method["ret"])
+            || TypeJson.Read(genericCall["argTypes"][0]) != TypeJson.Read(method["ret"])
+            || TypeJson.Read(genericCall["ret"]) != TypeJson.Read(method["ret"])
             || Text(method[NullableRepresentationTypes.MethodFrameKey]) == null
             || Text(store[KotlinSupertypesRecord.PreKey]) == null
             || Text(method["nullableGenericRet"]) == null)

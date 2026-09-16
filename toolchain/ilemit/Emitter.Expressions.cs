@@ -207,10 +207,16 @@ sealed partial class Emitter
                 var ifaceSpec = ReadFqn(ifaceNode);
                 var ccSig = SigNodes(e);
                 var ccArity = CalledMethodArity(e);
-                var mi0 = ifaceSpec != null && _types.ContainsKey(ifaceSpec.Name)
-                    ? ResolveMethod(ParseOwnerSlot(ifaceNode), e.GetProperty("method").GetString(), out _,
-                        ccSig, ccArity)
-                    : RequiredRef<MethodInfo>(e, "memberRef", "an external constrained-call interface slot");
+                Type declaredReturn;
+                MethodInfo mi0;
+                if (ifaceSpec != null && _types.ContainsKey(ifaceSpec.Name))
+                    mi0 = ResolveMethod(ParseOwnerSlot(ifaceNode), e.GetProperty("method").GetString(),
+                        out declaredReturn, ccSig, ccArity);
+                else
+                {
+                    mi0 = RequiredRef<MethodInfo>(e, "memberRef", "an external constrained-call interface slot");
+                    declaredReturn = ReturnTypeOf(mi0);
+                }
                 // The receiver being a type variable changes the DISPATCH, not the member: a generic member still
                 // needs its `typeArgs` instantiation, exactly as the callInstance arm applies it. Without this a
                 // `fun <R> pick(a: R, b: R): R` called on a `!!T` receiver emitted a callvirt on the generic
@@ -226,7 +232,9 @@ sealed partial class Emitter
                 EmitMethod(_il, OpCodes.Callvirt, mi);
                 // …and the object-erasure conversion is a property of the call, not of how its receiver was addressed.
                 // Any other physical/result-view conversion is already an explicit enclosing CIR node.
-                return CoerceReturn(e, mi == mi0 ? ReturnTypeOf(mi) : ccRet);
+                // ResolveMethod's stack type already includes the constructed owner arguments. The anchored
+                // MethodInfo retains the open declaration type for its metadata token; that !N is not a caller slot.
+                return CoerceReturn(e, mi == mi0 ? declaredReturn : ccRet);
             }
             case "callStatic":
             {

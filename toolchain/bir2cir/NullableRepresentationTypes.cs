@@ -16,10 +16,12 @@ sealed class NullableRepresentationTypes
     internal NullableRepresentationFrame MethodFrame => _method;
 
     // These facts are expressed in the selected declaration's frame, not the lexical caller's frame.
-    internal static bool IsDeclarationFrameKey(string key) => key is
+    internal static bool IsDeclarationFrameKey(string key, string kind) => key is
         "sig" or "shapeTypes" or "paramSig" or "delegationSig"
         or "memberOwnerTypeParams" or "memberMethodTypeParams"
-        or "memberReturnType" or "memberSignature" or "memberType";
+        or "memberReturnType" or "memberSignature" or "memberType"
+        || key == "argTypes" && kind != null && kind != "new"
+        || key == "ret" && kind is "callStatic" or "callInstance";
 
     public NullableRepresentationTypes(NullableRepresentationFrame owner, NullableRepresentationFrame method,
         IReadOnlyDictionary<string, NullableRepresentationFrame> types, ValueTypeOracle isValue)

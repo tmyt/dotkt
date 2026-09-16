@@ -3735,9 +3735,16 @@ sealed partial class ReferenceMetadataIndex
             if (shapeMatches.Length == 1)
             {
                 var member = shapeMatches[0];
+                // A nullable companion frame is already materialized in this MethodDef. Re-erasing its semantic
+                // carrier would replace the companion by object and lose substitution stability again.
+                var explicitNullableFrame = member.NullableFrame != null
+                    || _ownerNullableFrames.ContainsKey(member.Owner)
+                    || _ownerNullableFrames.ContainsKey(lookupOwner);
                 // A selected suspend projection is already a physical hot/cold MethodDef. Its logical Kotlin
                 // result carrier belongs to the source declaration, not to the Task-returning MethodImpl row.
-                declaredRet = selectedPhysicalMember != null
+                declaredRet = explicitNullableFrame
+                    ? new SlotFact(Canonical(member.ReturnTypeNode), false)
+                    : selectedPhysicalMember != null
                     ? new SlotFact(member.ReturnTypeNode, false)
                     : propertyName != null && includeClosedPropertyReturn
                     ? new SlotFact(member.NullableGenericRet ?? member.KotlinReturnType ?? member.ReturnTypeNode, false)
@@ -3746,7 +3753,9 @@ sealed partial class ReferenceMetadataIndex
                         : DeclaredSlot(member.NullableGenericRet, member.ReturnTypeNode);
                 declaredParams = new SlotFact[argCount];
                 for (var i = 0; i < argCount; i++)
-                    declaredParams[i] = selectedPhysicalMember != null
+                    declaredParams[i] = explicitNullableFrame
+                        ? new SlotFact(Canonical(member.ParamTypeNodes[i]), false)
+                        : selectedPhysicalMember != null
                         ? new SlotFact(member.ParamTypeNodes[i], false)
                         : propertyName == null
                         ? includeUnchangedMethod
