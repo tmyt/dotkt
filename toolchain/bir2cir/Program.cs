@@ -914,6 +914,12 @@ sealed class Pipeline
         // Kotlin meaning from the now-physical `suspendRet`.
         RoundtripMetadata.RequireSuspendResults(staged.Select(s => s.Root));
 
+        // Suspend lowering has just introduced completion parameters and state-machine declarations. Compare
+        // their final carrier types with referenced physical slots, not a fresh Kotlin construction against an
+        // already-erased reference signature. The post-bridge rewrite below still covers newly authored bridges.
+        FBoundStarProjectionErasure.RewriteLateTypes(
+            staged.Select(s => s.Root).ToList(), localExistentialOwners, refs);
+
         // KOTLIN ERASURE-NARROWED OVERRIDE -> FINAL CLR METHODIMPL (#344 / #86 D3). The declaration-move half ran
         // early, but the bridge half must see the FINAL declarations: one logical suspend override becomes a public
         // Task member AND a continuation cold entry, and each is a distinct CLR slot. SuspendColdLowering carries the
