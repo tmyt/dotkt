@@ -267,6 +267,11 @@ static class NullableRepresentationMaterialization
             var kind = Text(obj["k"]);
             var selectedMapping = kind == null && obj["delegationSig"] == null ? null : declarationMapping(obj);
             JsonArray closedArguments = null;
+            JsonArray closedDispatchArguments = null;
+            if (kind == "callInline" && selectedMapping?.OwnerFrame is { } dispatchFrame
+                && obj["recvs"] is JsonObject receivers && receivers["dispatchTypeArgs"] is JsonArray dispatchArguments)
+                closedDispatchArguments = new JsonArray(mapping.CloseMethod(dispatchFrame,
+                    dispatchArguments.Select(TypeJson.Read).ToArray()).Select(TypeJson.Write).ToArray());
             if (kind == "localFun")
             {
                 var local = (JsonObject)obj["decl"];
@@ -342,6 +347,15 @@ static class NullableRepresentationMaterialization
             foreach (var key in obj.Select(p => p.Key).ToArray())
             {
                 if (key is "attrs" or "overrides" or "_syntheticTypeArgs" || key == "typeArgs" && closedArguments != null) continue;
+                if (key == "recvs" && closedDispatchArguments != null && obj[key] is JsonObject rewrittenReceivers)
+                {
+                    // This is a separate application of the selected owner's frame, not just a list of
+                    // independent caller types. InlineSplice consumes its complete physical correspondence.
+                    rewrittenReceivers.Remove("dispatchTypeArgs");
+                    Rewrite(rewrittenReceivers, mapping, methods, declarationMapping, position);
+                    rewrittenReceivers["dispatchTypeArgs"] = closedDispatchArguments;
+                    continue;
+                }
                 // The lexical ID already selects the declaration. LocalFunctionLowering supplies its final
                 // descriptor after dense captures have been split into owner and method parameters.
                 if (kind is "callLocal" or "localFunRef" && key == "sig") continue;
@@ -438,11 +452,22 @@ static class NullableRepresentationMaterialization
           {"kind":"class","name":"Child","base":{"t":"fqn","name":"Base","args":[{"t":"fqn","name":"kotlin.String"}]},
            "ctors":[{"params":[],"baseArgs":[],"delegationSig":[{"t":"tv","scope":"type","i":0}],"body":[]}]}]}
         """);
+        ((JsonArray)descriptorOwners["methods"][1]["body"]).Add(JsonNode.Parse("""
+        {"k":"callInline","owner":{"t":"fqn","name":"Base"},"typeArgs":[],"ga":0,
+         "recvs":{"dispatchTypeArgs":[{"t":"fqn","name":"kotlin.String"}],
+          "dispatch":{"k":"local","name":"receiver","sty":{"t":"fqn","name":"Base",
+           "args":[{"t":"fqn","name":"kotlin.String"}]}}}}
+        """));
         Apply(new[] { descriptorOwners }, _ => false);
         if (TypeJson.Read(descriptorOwners["properties"][0]["type"]["args"][0]) != new TypeNode.Tv("method", 1)
             || TypeJson.Read(descriptorOwners["types"][1]["ctors"][0]["delegationSig"][0]) != new TypeNode.Tv("type", 0)
             || TypeJson.Read(descriptorOwners["methods"][1]["body"][0]["awaitResult"]) != new TypeNode.Tv("type", 0))
             throw new InvalidOperationException("Property, constructor, or await descriptors lost their declaration frames");
+        var dispatch = descriptorOwners["methods"][1]["body"][1]["recvs"];
+        if (dispatch["dispatchTypeArgs"] is not JsonArray { Count: 2 } dispatchArguments
+            || TypeJson.Read(dispatchArguments[1]) != new TypeNode.Nullable(new TypeNode.Fqn("kotlin.String"))
+            || !JsonNode.DeepEquals(dispatch["dispatch"]["sty"]["args"], dispatchArguments))
+            throw new InvalidOperationException("Inline dispatch application lost its owner's nullable companion");
         var root = JsonNode.Parse("""
         {"fileClass":"FrameTest","methods":[
           {"name":"pass","declarationId":"pass","typeParams":["T"],
