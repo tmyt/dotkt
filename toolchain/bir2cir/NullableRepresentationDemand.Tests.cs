@@ -101,6 +101,30 @@ static partial class NullableRepresentationDemand
             "managed reference referent is a direct scalar slot");
         Check(file.ToJsonString() == original, "analysis must preserve all source facts");
 
+        // Static implementation demand propagates through calls without changing a fixed instance/virtual slot.
+        var freeArray = Method("freeArray", TypeJson.Fqn("kotlin.Unit"), new JsonArray(new JsonObject {
+            ["k"] = "newArraySized", ["elem"] = NullableTv("method"),
+        }));
+        freeArray["static"] = true;
+        var freeCaller = Method("freeCaller", TypeJson.Fqn("kotlin.Unit"), new JsonArray(new JsonObject {
+            ["k"] = "callStatic", [DeclarationIdentityBinding.Key] = "freeArray", ["typeArgs"] = new JsonArray(Tv("method")),
+        }));
+        freeCaller["static"] = true;
+        var fixedCaller = Method("fixedCaller", TypeJson.Fqn("kotlin.Unit"), new JsonArray(new JsonObject {
+            ["k"] = "callStatic", [DeclarationIdentityBinding.Key] = "freeCaller", ["typeArgs"] = new JsonArray(Tv("method")),
+        }));
+        fixedCaller["static"] = false;
+        fixedCaller["virtual"] = true;
+        var freeDemands = Collect(new[] { new JsonObject { ["fileClass"] = "FreeFrame",
+            ["methods"] = new JsonArray(fixedCaller, freeCaller, freeArray) } }).Single().Methods;
+        Check(freeDemands.Single(m => ReferenceEquals(m.Declaration, freeArray)).Frame.PhysicalArity == 2,
+            "static body-only demand owns a method frame");
+        Check(freeDemands.Single(m => ReferenceEquals(m.Declaration, freeCaller)).Frame.PhysicalArity == 2,
+            "static body-only call demand reaches a fixed point");
+        var fixedDemand = freeDemands.Single(m => ReferenceEquals(m.Declaration, fixedCaller));
+        Check(fixedDemand.Frame.PhysicalArity == 1 && fixedDemand.Body.Method.SetEquals(new[] { 0 }),
+            "static body-only propagation must not grow an instance dispatch slot");
+
         var importedUse = Owner("ImportedUse", Applied("ForeignProducer", Tv()));
         var imported = Collect(new[] { importedUse }, new Dictionary<string, NullableRepresentationFrame> {
             ["ForeignProducer"] = new NullableRepresentationFrame(1, new[] { 0 }),

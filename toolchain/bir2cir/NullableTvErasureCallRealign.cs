@@ -401,7 +401,7 @@ static partial class NullableTvErasureCallRealign
     static void ApplyRec(JsonNode root, DeclIndex idx)
     {
         if (root is not JsonObject o) return;
-        ProcessMethods(o["methods"], idx);
+        ProcessMethods(o["methods"], idx, OwnerNullableFrame(o));
         if (o["types"] is JsonArray types)
             foreach (var t in types)
                 if (t is JsonObject to)
@@ -425,7 +425,7 @@ static partial class NullableTvErasureCallRealign
         foreach (var c in ctors)
         {
             if (c is not JsonObject co) continue;
-            var ctx = new Ctx { Idx = idx };
+            var ctx = new Ctx { Idx = idx, OwnerNullableFrame = OwnerNullableFrame(to) };
             if (co["params"] is JsonArray ps)
                 foreach (var p in ps)
                     if (p is JsonObject po && Str(po["name"]) is string pn && TypeJson.Read(po["type"]) is TypeNode pt)
@@ -466,15 +466,31 @@ static partial class NullableTvErasureCallRealign
         public readonly Dictionary<string, TypeNode> Env = new(StringComparer.Ordinal);
         public DeclIndex Idx;
         public TypeNode Ret;
+        public NullableRepresentationFrame OwnerNullableFrame;
+        public NullableRepresentationFrame MethodNullableFrame;
+
+        public bool IsNullableCompanion(TypeNode type)
+        {
+            if (type is not TypeNode.Tv variable) return false;
+            var frame = variable.Scope == "type" ? OwnerNullableFrame : MethodNullableFrame;
+            return frame != null && variable.I >= frame.SourceArity && variable.I < frame.PhysicalArity;
+        }
     }
 
-    static void ProcessMethods(JsonNode methods, DeclIndex idx)
+    static NullableRepresentationFrame OwnerNullableFrame(JsonObject owner)
+        => Str(owner[KotlinSupertypesRecord.PreKey]) is string encoded
+            && JsonNode.Parse(encoded)?[NullableRepresentationFrame.MetadataKey] is JsonNode frame
+                ? NullableRepresentationFrame.Read(frame) : null;
+
+    static void ProcessMethods(JsonNode methods, DeclIndex idx, NullableRepresentationFrame ownerFrame)
     {
         if (methods is not JsonArray arr) return;
         foreach (var m in arr)
             if (m is JsonObject mo)
             {
-                var ctx = new Ctx { Idx = idx, Ret = TypeJson.Read(mo["ret"]) };
+                var ctx = new Ctx { Idx = idx, Ret = TypeJson.Read(mo["ret"]), OwnerNullableFrame = ownerFrame,
+                    MethodNullableFrame = Str(mo[NullableRepresentationTypes.MethodFrameKey]) is string encoded
+                        ? NullableRepresentationFrame.Read(JsonNode.Parse(encoded)) : null };
                 if (mo["params"] is JsonArray ps)
                     foreach (var p in ps)
                         if (p is JsonObject po && Str(po["name"]) is string pn && TypeJson.Read(po["type"]) is TypeNode pt)
@@ -725,7 +741,7 @@ static partial class NullableTvErasureCallRealign
         var erasedRet = NullableGenericErasure.EraseNullableTv(decl.Ret, _isValue);
         var derived = Subst(erasedRet, owner.Args, methodArgs);
         return ApplyDerivedRet(obj, derived, stampedRet, !erasedRet.Equals(decl.Ret),
-            decl.NullableErasureOwnershipKnown);
+            decl.NullableErasureOwnershipKnown, ctx.IsNullableCompanion(derived));
     }
 
     static TypeNode EvalCallStatic(JsonObject obj, Ctx ctx)
@@ -771,7 +787,7 @@ static partial class NullableTvErasureCallRealign
         var erasedRet = NullableGenericErasure.EraseNullableTv(decl.Ret, _isValue);
         var derived = Subst(erasedRet, ownerArgs, methodArgs);
         return ApplyDerivedRet(obj, derived, stampedRet, !erasedRet.Equals(decl.Ret),
-            decl.NullableErasureOwnershipKnown);
+            decl.NullableErasureOwnershipKnown, ctx.IsNullableCompanion(derived));
     }
 
     // What the CALL SITE says its result is: the explicit `ret`/`dynRet` it carries.
@@ -802,9 +818,19 @@ static partial class NullableTvErasureCallRealign
     // none stood: `erasureApplied` is false wherever `Erase` left the declared return alone, so an ordinary generic
     // call keeps stating nothing and ilemit keeps inferring it from the member exactly as before.
     static TypeNode ApplyDerivedRet(JsonObject obj, TypeNode derived, TypeNode stampedRet, bool erasureApplied,
-        bool nullableErasureOwnershipKnown = false)
+        bool nullableErasureOwnershipKnown = false, bool nullableCompanionResult = false)
     {
         if (derived == null) return stampedRet;
+        // Substitution through a materialized frame can return its companion directly (Box<N>.value). That is
+        // a real generic stack slot, not the object-erased source T? stamp. Keep the physical result explicit so
+        // consumers such as equality emit the required generic boxing instead of treating an unboxed N as object.
+        if (nullableCompanionResult)
+        {
+            obj["ret"] = TypeJson.Write(derived);
+            if (obj["dynRet"] != null) obj["dynRet"] = TypeJson.Write(derived);
+            RestampSty(obj, derived);
+            return derived;
+        }
         if (stampedRet == null)
         {
             if (!erasureApplied) return null;

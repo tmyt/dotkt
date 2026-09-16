@@ -67,6 +67,10 @@ class NullableInvariantFlowTests {
         assertTrue(create<String>(null).value == null)
         assertEquals(42, create<Int>(42).value)
         assertTrue(create<Int>(null).value == null)
+        assertTrue(nullableBodyOnly<String>(null))
+        assertTrue(!nullableBodyOnly<String>("present"))
+        assertTrue(forwardNullableBodyOnly<Int>(null))
+        assertTrue(!forwardNullableBodyOnly<Int>(42))
     }
 
     @TestAttribute

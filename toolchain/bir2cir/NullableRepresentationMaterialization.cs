@@ -4,8 +4,8 @@ using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 
-// Materializes a signature-demanded frame. Body-only specialization is a separate operation: it must not
-// silently grow a published virtual slot. Runs after the immutable Kotlin declaration snapshot.
+// Materializes signature frames and independently owned static implementation frames. Instance body-only
+// specialization is separate: it must not grow a published virtual slot. Runs after the Kotlin declaration snapshot.
 static class NullableRepresentationMaterialization
 {
     public static void Apply(IEnumerable<JsonNode> inputs, ValueTypeOracle isValue, ReferenceMetadataIndex references = null)

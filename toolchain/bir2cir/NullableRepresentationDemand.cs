@@ -23,9 +23,19 @@ static partial class NullableRepresentationDemand
 
     internal sealed record MethodDemand(JsonObject Declaration, Variables Signature, Variables Body)
     {
+        // A static implementation owns its generic MethodDef frame. It has no inherited dispatch slot whose
+        // arity must remain fixed; the explicit metadata frame restores its unchanged Kotlin source arity.
+        // Instance dispatch still needs a separate implementation entry for body-only demand.
+        public bool CanExtendBodyFrame => Flag(Declaration["static"])
+            && !Flag(Declaration["virtual"]) && !Flag(Declaration["override"]) && !Flag(Declaration["abstract"])
+            && (Declaration["overrides"] as JsonArray)?.Count is not > 0;
+
         public NullableRepresentationFrame Frame => new(
-            (Declaration["typeParams"] as JsonArray)?.Count ?? 0, Signature.Method.OrderBy(i => i));
+            (Declaration["typeParams"] as JsonArray)?.Count ?? 0,
+            Signature.Method.Concat(CanExtendBodyFrame ? Body.Method : Enumerable.Empty<int>()).Distinct().OrderBy(i => i));
     }
+
+    static bool Flag(JsonNode node) => (node as JsonValue)?.TryGetValue<bool>(out var value) == true && value;
 
     internal sealed record OwnerDemand(JsonObject Declaration, Variables Signature, Variables Body, List<MethodDemand> Methods)
     {

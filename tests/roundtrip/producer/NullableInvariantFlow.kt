@@ -16,6 +16,12 @@ fun <T> identity(value: Box<T>): Box<T> = value
 fun <T> create(value: T?): Box<T?> = Box<T?>(value)
 fun <T> replace(box: Box<T?>, value: T?) { box.value = value }
 
+fun <T> nullableBodyOnly(value: T?): Boolean {
+    val box = Box<T?>(value)
+    return box.value == null
+}
+fun <T> forwardNullableBodyOnly(value: T?): Boolean = nullableBodyOnly<T>(value)
+
 interface KeyRoot<K> { val marker: Int; val key: K }
 interface KeyChild<K> : KeyRoot<K> { override val key: K }
 class KeyImpl<K>(override val key: K) : KeyChild<K> {
