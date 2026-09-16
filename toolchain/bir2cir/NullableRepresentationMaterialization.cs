@@ -151,7 +151,7 @@ static class NullableRepresentationMaterialization
                             else Rewrite(method.Declaration[key], inheritedMapping, methods, DeclarationMapping);
                         }
                         var implementationMapping = DeclarationMapping(method.Implementation);
-                        RewriteDescriptor(method.Declaration, method.ImplementationKey,
+                        RewriteImplementation(method.Implementation,
                             implementationMapping == null ? null : new NullableRepresentationTypes(
                                 implementationMapping.OwnerFrame, methodFrame, types, isValue), inheritedMapping);
                         AppendParameters(method.Implementation, methodFrame);
@@ -361,7 +361,7 @@ static class NullableRepresentationMaterialization
                 if (kind is "callLocal" or "localFunRef" && key == "sig") continue;
                 if (key == "inheritedImplementation" && obj[key] is JsonObject implementation)
                 {
-                    RewriteDescriptor(obj, key, declarationMapping(implementation), mapping);
+                    RewriteImplementation(implementation, declarationMapping(implementation), mapping);
                     continue;
                 }
                 if (declarationKeys.Contains(key))
@@ -383,6 +383,17 @@ static class NullableRepresentationMaterialization
             if (closedArguments != null) obj["typeArgs"] = closedArguments;
             if (closureReturn != null) obj["synthClass"]["ret"] = TypeJson.Write(closureReturn);
         }
+    }
+
+    static void RewriteImplementation(JsonObject implementation, NullableRepresentationTypes declaration,
+        NullableRepresentationTypes lexical)
+    {
+        // The selected member's descriptors use its declaration frame, but its constructed owner is
+        // an application in the inheriting type's frame (Base<Pair<K,V>>, not Base<Base.T>).
+        foreach (var key in implementation.Select(pair => pair.Key).ToArray())
+            if (key == "owner" && TypeJson.Read(implementation[key]) is TypeNode owner)
+                implementation[key] = TypeJson.Write(lexical.Slot(owner));
+            else RewriteDescriptor(implementation, key, declaration, lexical);
     }
 
     static void RewriteDescriptor(JsonObject node, string key, NullableRepresentationTypes declaration,
