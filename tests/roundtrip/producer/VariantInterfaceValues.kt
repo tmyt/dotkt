@@ -18,3 +18,8 @@ fun source(): Source<Any> = IntSource()
 fun <T, R> transform(values: Array<out T>, block: (T) -> R): R = block(values[0])
 open class ValueBase<T>(val value: T)
 class ValueFromSource<T>(source: Source<T>) : ValueBase<T>(source.item)
+class BoundHolder<S : Source<String>>(val source: S)
+fun <S : Source<String>> boundIdentity(source: S): S = source
+open class GenericStorage<T>(val value: T)
+class TextStorage : GenericStorage<Source<String>>(TextSource())
+class NestedSource : Source<Source<String>> { override val item: Source<String> get() = TextSource() }

@@ -596,10 +596,13 @@ static class FBoundStarProjectionErasure
         {
             case JsonObject obj:
                 if (Str(obj["kind"]) != null)
-                    RecordProjectedTypeParameterBounds(obj);
+                {
+                    RecordProjectedTypeParameterBounds(obj, owners, refs);
+                    RecordProjectedSupertypes(obj, owners, refs);
+                }
                 if (obj["k"] == null && obj["name"] is JsonValue && obj["params"] is JsonArray parameters)
                 {
-                    RecordProjectedMethodTypeParameterBounds(obj);
+                    RecordProjectedMethodTypeParameterBounds(obj, owners, refs);
                     foreach (var parameter in parameters.OfType<JsonObject>())
                         RecordProjectionSlot(parameter, "type", "kotlinType", owners, refs);
                     RecordProjectionSlot(obj, "ret", "retKotlinType", owners, refs);
@@ -616,21 +619,38 @@ static class FBoundStarProjectionErasure
         }
     }
 
-    // A use-site projection in a bound is Kotlin declaration truth but is not a legal CLR
-    // GenericParamConstraint when the physical generic is invariant. Preserve the complete sibling list in the
+    // A projection or variant construction in a bound or supertype is Kotlin declaration truth, even when its
+    // physical form contains an existential carrier. Preserve changed edges and complete sibling bound lists in the
     // existing round-trip carriers before RewriteType chooses the CLR approximation below. The payload is opaque to
     // every intervening physical pass, so dll2klib restores exactly the authored `in`/`out` nodes rather than
     // reconstructing them from an erased constraint row.
-    static void RecordProjectedTypeParameterBounds(JsonObject declaration)
+    static void RecordProjectedSupertypes(JsonObject declaration,
+        IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs)
     {
-        var bounds = ProjectedTypeParameterBounds(declaration["typeParams"] as JsonArray);
+        var source = new JsonObject();
+        bool Moves(JsonNode node) => TypeJson.Read(node) is TypeNode type
+            && !RewriteType(type, owners, refs, preserveConstructedHead: true).Equals(type);
+        if (Moves(declaration["base"])) source["base"] = declaration["base"].DeepClone();
+        if (declaration["interfaces"] is JsonArray interfaces)
+        {
+            var moved = new JsonArray(interfaces.Where(Moves).Select(edge => edge.DeepClone()).ToArray());
+            if (moved.Count > 0) source["interfaces"] = moved;
+        }
+        KotlinSupertypesRecord.Merge(declaration, source);
+    }
+
+    static void RecordProjectedTypeParameterBounds(JsonObject declaration,
+        IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs)
+    {
+        var bounds = ProjectedTypeParameterBounds(declaration["typeParams"] as JsonArray, owners, refs);
         if (bounds.Count > 0)
             KotlinSupertypesRecord.Merge(declaration, new JsonObject { ["bounds"] = bounds });
     }
 
-    static void RecordProjectedMethodTypeParameterBounds(JsonObject declaration)
+    static void RecordProjectedMethodTypeParameterBounds(JsonObject declaration,
+        IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs)
     {
-        var bounds = ProjectedTypeParameterBounds(declaration["typeParams"] as JsonArray);
+        var bounds = ProjectedTypeParameterBounds(declaration["typeParams"] as JsonArray, owners, refs);
         if (bounds.Count == 0) return;
         var payload = Str(declaration[NullableGenericErasure.MethodTypeParameterBoundsPre]) is string encoded
             ? JsonNode.Parse(encoded) as JsonObject ?? new JsonObject()
@@ -646,7 +666,8 @@ static class FBoundStarProjectionErasure
         declaration[NullableGenericErasure.MethodTypeParameterBoundsPre] = payload.ToJsonString();
     }
 
-    static JsonObject ProjectedTypeParameterBounds(JsonArray parameters)
+    static JsonObject ProjectedTypeParameterBounds(JsonArray parameters,
+        IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs)
     {
         var bounds = new JsonObject();
         if (parameters == null) return bounds;
@@ -655,7 +676,7 @@ static class FBoundStarProjectionErasure
             if (parameters[index] is not JsonObject parameter
                 || parameter["constraints"] is not JsonArray constraints
                 || !constraints.Any(constraint => TypeJson.Read(constraint) is TypeNode type
-                    && ContainsUseSiteProjection(type))) continue;
+                    && (ContainsUseSiteProjection(type) || !RewriteType(type, owners, refs).Equals(type)))) continue;
             bounds[index.ToString()] = constraints.DeepClone();
         }
         return bounds;
@@ -3788,7 +3809,8 @@ static class FBoundStarProjectionErasure
             var allocatedSlot = declaring.Slots[declaration].Slot;
             call["method"] = Str(allocatedSlot[DeclarationIdentityBinding.ExplicitNameKey])
                 ?? Str(allocatedSlot["name"]);
-            call["sig"] = ErasedPhysicalSignature(declaration, owners, refs);
+            call["sig"] = new JsonArray((allocatedSlot["params"] as JsonArray ?? new JsonArray())
+                .OfType<JsonObject>().Select(parameter => parameter["type"]?.DeepClone()).ToArray());
             MarkPhysicalPropertyCall(call, propertyCall, sourcePropertyName, accessorKind,
                 ExistentialSlotIdentity(declaration, declaring.Name));
             var selectedDeclarationResult = TypeJson.Read(declaration["ret"])
@@ -4172,15 +4194,6 @@ static class FBoundStarProjectionErasure
             return accessorKind != null && propertyName == sourceMember && propertyAccessor == accessorKind;
         return accessorKind == null
             && (Str(declaration[SourceMemberKey]) ?? Str(declaration["name"])) == sourceMember;
-    }
-
-    static bool SignatureMatches(JsonObject declaration, IReadOnlyList<TypeNode> authoredSignature)
-    {
-        if (authoredSignature == null) return true;
-        var parameters = (declaration["params"] as JsonArray)?.OfType<JsonObject>()
-            .Select(p => TypeJson.Read(p["type"])).ToArray() ?? Array.Empty<TypeNode>();
-        return parameters.Length == authoredSignature.Count
-            && parameters.Select((p, i) => p == authoredSignature[i]).All(equal => equal);
     }
 
     static (Owner BridgeOwner, string DeclaringName, JsonObject Method)? FindInheritedConcreteBaseMember(

@@ -10,6 +10,14 @@ class VariantAnySink : VariantValueSink<Any> {
     override fun accept(value: Any) { result = value.toString() }
 }
 class VariantStorage<T>(val value: T)
+interface VariantCallbackSink<in T> { fun accept(block: () -> VariantValueSource<T>) }
+class VariantAnyCallbackSink : VariantCallbackSink<Any> {
+    var result = ""
+    override fun accept(block: () -> VariantValueSource<Any>) { result = block().read().toString() }
+}
+class VariantCallbackCaller {
+    fun run(sink: VariantCallbackSink<String>, block: () -> VariantValueSource<String>) { sink.accept(block) }
+}
 
 fun <T> readVariantValue(source: VariantValueSource<T>): T = source.read()
 fun <T> variantValueText(source: VariantValueSource<T>): String = source.read().toString()
@@ -24,6 +32,11 @@ fun <T> variantReferencedCallback(values: Array<out VariantValueSource<T>>): Str
     transformVariantFirst(values, ::variantValueText)
 
 class VariantInterfaceValueTests {
+    @TestAttribute fun nestedCallbackParameterUsesAllocatedSlotSignature() {
+        val sink = VariantAnyCallbackSink()
+        VariantCallbackCaller().run(sink) { VariantTextSource() }
+        assertEquals("hello", sink.result)
+    }
     @TestAttribute fun valueTypeCovarianceAtOrdinaryCall() {
         assertEquals("7", variantValueText<Any>(VariantIntSource()))
         assertEquals("hello", variantValueText<Any>(VariantTextSource()))

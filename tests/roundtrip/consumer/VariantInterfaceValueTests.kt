@@ -10,8 +10,21 @@ class ConsumerVariantSink : Sink<Any> {
 fun <T> importedVariantCallback(values: Array<out Source<T>>, prefix: String): String =
     transform(values) { prefix + it.read().toString() }
 fun <T> importedVariantReference(values: Array<out Source<T>>): String = transform(values, ::text)
+fun <S : Source<String>> importedOwnerBound(holder: BoundHolder<S>): String = holder.source.read()
+fun <S : Source<String>> importedMethodBound(source: S): String = boundIdentity(source).read()
 
 class VariantInterfaceRoundtripTests {
+    @TestAttribute fun importedOwnerAndMethodBoundsRetainKotlinArguments() {
+        assertEquals("producer", importedOwnerBound(BoundHolder(TextSource())))
+        assertEquals("producer", importedMethodBound(TextSource()))
+    }
+    @TestAttribute fun nestedSupertypeArgumentsRetainKotlinMeaning() {
+        val nested: Source<Source<String>> = NestedSource()
+        val fromBase: String = TextStorage().value.read()
+        val fromInterface: String = nested.read().read()
+        assertEquals("producer", fromBase)
+        assertEquals("producer", fromInterface)
+    }
     @TestAttribute fun importedCovariantParametersResultsAndProperties() {
         assertEquals("17", text<Any>(IntSource()))
         assertEquals("producer", text<Any>(TextSource()))
