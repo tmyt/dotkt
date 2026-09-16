@@ -450,6 +450,23 @@ static class NullableRepresentationMaterialization
         if (Text(carrierRoot["methods"][0]["nullableGenericRet"]) != sourceCarrierType
             || Text(carrierRoot["methods"][0]["params"][0]["nullableGeneric"]) != sourceCarrierType)
             throw new InvalidOperationException("A physical companion argument replaced a Kotlin source slot carrier");
+        var boundRoot = JsonNode.Parse("""
+        {"fileClass":"BoundProbe","types":[{"kind":"class","name":"Bound","typeParams":["A","B"]}],
+         "methods":[{"name":"keep","declarationId":"bound-probe","typeParams":["T",
+          {"name":"U","constraints":[{"t":"fqn","name":"Bound","args":[
+           {"t":"nullable","of":{"t":"tv","scope":"method","i":0}},
+           {"t":"nullable","of":{"t":"fqn","name":"kotlin.Int"}}]}]}],
+          "params":[{"name":"x","type":{"t":"tv","scope":"method","i":1}}],
+          "ret":{"t":"tv","scope":"method","i":1},"body":[]}]}
+        """)!.AsObject();
+        var sourceBounds = boundRoot["methods"][0]["typeParams"][1]["constraints"].DeepClone();
+        Apply(new[] { boundRoot }, type => type.Name == "kotlin.Int");
+        if (((JsonArray)boundRoot["methods"][0]["typeParams"]).Count != 3)
+            throw new InvalidOperationException("Method-bound probe did not materialize its nullable companion");
+        NullableGenericErasure.Apply(boundRoot, type => type.Name == "kotlin.Int");
+        var recordedBounds = JsonNode.Parse(Text(boundRoot["methods"][0][NullableGenericErasure.MethodTypeParameterBoundsPre]));
+        if (!JsonNode.DeepEquals(recordedBounds["bounds"]["1"], sourceBounds))
+            throw new InvalidOperationException("A physical companion index replaced a Kotlin method-bound carrier");
         var descriptorOwners = JsonNode.Parse("""
         {"fileClass":"DescriptorOwners","properties":[
           {"name":"extensionValue","propertyAssociation":"p","type":{"t":"fqn","name":"Box","args":[{"t":"nullable","of":{"t":"tv","scope":"method","i":0}}]}}],
