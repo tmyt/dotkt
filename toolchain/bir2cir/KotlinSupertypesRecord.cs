@@ -33,6 +33,10 @@ static class KotlinSupertypesRecord
         declaration[PreKey] = merged.ToJsonString();
     }
 
+    internal static NullableRepresentationFrame ReadNullableFrame(JsonObject declaration) =>
+        Read(declaration)?[NullableRepresentationFrame.MetadataKey] is JsonNode frame
+            ? NullableRepresentationFrame.Read(frame) : null;
+
     static JsonObject Read(JsonObject declaration)
     {
         if ((declaration[PreKey] as JsonValue)?.TryGetValue<string>(out var encoded) != true)
