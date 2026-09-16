@@ -21,24 +21,29 @@ static partial class NullableRepresentationDemand
         }
     }
 
-    internal sealed record MethodDemand(JsonObject Declaration, Variables Signature, Variables Body)
+    internal sealed record MethodDemand(JsonObject Declaration, Variables Signature, Variables Body,
+        string ImplementationKey = null)
     {
+        public JsonObject Implementation => ImplementationKey == null ? null : (JsonObject)Declaration[ImplementationKey];
+        public JsonArray TypeParameters => (Implementation ?? Declaration)["typeParams"] as JsonArray;
         // A static implementation owns its generic MethodDef frame. It has no inherited dispatch slot whose
         // arity must remain fixed; the explicit metadata frame restores its unchanged Kotlin source arity.
         // Instance dispatch still needs a separate implementation entry for body-only demand.
-        public bool CanExtendBodyFrame => Flag(Declaration["static"])
+        public bool CanExtendBodyFrame => ImplementationKey == null && Flag(Declaration["static"])
             && !Flag(Declaration["virtual"]) && !Flag(Declaration["override"]) && !Flag(Declaration["abstract"])
             && (Declaration["overrides"] as JsonArray)?.Count is not > 0;
 
         public NullableRepresentationFrame Frame => new(
-            (Declaration["typeParams"] as JsonArray)?.Count ?? 0,
+            TypeParameters?.Count ?? 0,
             Signature.Method.Concat(CanExtendBodyFrame ? Body.Method : Enumerable.Empty<int>()).Distinct().OrderBy(i => i));
     }
 
     static bool Flag(JsonNode node) => (node as JsonValue)?.TryGetValue<bool>(out var value) == true && value;
 
-    internal sealed record OwnerDemand(JsonObject Declaration, Variables Signature, Variables Body, List<MethodDemand> Methods)
+    internal sealed record OwnerDemand(JsonObject Declaration, Variables Signature, Variables Body, List<MethodDemand> Methods,
+        bool IsRefCell = false)
     {
+        public bool IsTypeDeclaration => IsRefCell || Text(Declaration["kind"]) != null;
         public OwnerDemand CapturedOwner { get; set; }
         public int CaptureOffset { get; set; }
 
@@ -70,17 +75,23 @@ static partial class NullableRepresentationDemand
         IReadOnlyDictionary<string, NullableRepresentationFrame> referencedMethods = null)
     {
         var owners = new List<OwnerDemand>();
-        void Discover(JsonObject declaration)
+        void Discover(JsonObject declaration, bool isRefCell = false)
         {
             var methods = (declaration["methods"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()
                 .Select(method => new MethodDemand(method, new Variables(), new Variables())).ToList();
-            owners.Add(new OwnerDemand(declaration, new Variables(), new Variables(), methods));
+            foreach (var key in InheritedMemberKeys)
+                foreach (var fact in (declaration[key] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
+                    methods.Add(new MethodDemand(fact, new Variables(), new Variables(),
+                        key == "inheritedClassMethods" ? "inheritedImplementation" : "implementation"));
+            owners.Add(new OwnerDemand(declaration, new Variables(), new Variables(), methods, isRefCell));
             foreach (var nested in (declaration["types"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
                 Discover(nested);
+            foreach (var cell in (declaration["refTypes"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
+                Discover(cell, true);
         }
         foreach (var root in roots.OfType<JsonObject>()) Discover(root);
 
-        var declarations = owners.Where(owner => Text(owner.Declaration["kind"]) != null)
+        var declarations = owners.Where(owner => owner.IsTypeDeclaration)
             .ToDictionary(owner => Text(owner.Declaration["name"]), StringComparer.Ordinal);
         foreach (var owner in owners)
         {
@@ -113,7 +124,7 @@ static partial class NullableRepresentationDemand
                 : new Dictionary<string, NullableRepresentationFrame>(referencedMethods, StringComparer.Ordinal);
             foreach (var owner in owners)
             {
-                if (Text(owner.Declaration["kind"]) != null)
+                if (owner.IsTypeDeclaration)
                     typeFrames[Text(owner.Declaration["name"])] = owner.Frame;
                 foreach (var method in owner.Methods)
                     if (Text(method.Declaration[DeclarationIdentityBinding.Key]) is string id)
@@ -124,6 +135,7 @@ static partial class NullableRepresentationDemand
             {
                 foreach (var key in new[] { "base", "interfaces", "typeParams" })
                     Scan(owner.Declaration[key], owner.Signature, typeFrames, methodFrames);
+                if (owner.IsRefCell) Scan(owner.Declaration["elem"], owner.Signature, typeFrames, methodFrames);
                 foreach (var key in new[] { "fields", "properties" })
                     foreach (var slot in (owner.Declaration[key] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
                     {
@@ -137,8 +149,12 @@ static partial class NullableRepresentationDemand
                 }
                 foreach (var method in owner.Methods)
                 {
-                    foreach (var key in new[] { "params", "ret", "typeParams" })
+                    foreach (var key in new[] { "params", "ret" })
                         Scan(method.Declaration[key], method.Signature, typeFrames, methodFrames);
+                    // Implementation constraints are declaration-owned; only ordinary declarations' constraints
+                    // refer to this owner's variables. An inherited fact's instantiated params/ret are above.
+                    if (method.ImplementationKey == null)
+                        Scan(method.TypeParameters, method.Signature, typeFrames, methodFrames);
                     Scan(method.Declaration["body"], method.Body, typeFrames, methodFrames);
                 }
             }
@@ -146,6 +162,12 @@ static partial class NullableRepresentationDemand
         } while (changed);
         return owners;
     }
+
+    internal static readonly string[] InheritedMemberKeys = {
+        KotlinPropertyAccessors.InheritedDefaultMethodsKey,
+        KotlinPropertyAccessors.InheritedDefaultAccessorsKey,
+        "inheritedClassMethods",
+    };
 
     static int Count(IEnumerable<OwnerDemand> owners) => owners.Sum(owner =>
         owner.Signature.Type.Count + owner.Signature.Method.Count + owner.Body.Type.Count + owner.Body.Method.Count + owner.Methods.Sum(method =>

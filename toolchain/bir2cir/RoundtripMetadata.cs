@@ -356,7 +356,7 @@ static class RoundtripMetadata
             mo.Remove(ReifiedNullabilityWitnessLowering.WitnessIndicesKey);
         }
         if (mo[NullableRepresentationTypes.MethodFrameKey] != null)
-            throw new InvalidOperationException("Nullable representation frame requires declaration identity metadata");
+            throw new InvalidOperationException($"Nullable representation frame on {mo["name"]} requires declaration identity metadata");
         // CLR Property rows cannot describe method-generic accessors. The allocator leaves this exact semantic
         // association only on those MethodDefs; turn it into trusted metadata before the hand-off fact disappears.
         StampPropertyAccessorCarrier(mo);

@@ -26,6 +26,11 @@ fun <T> nullableBodyOnly(value: T?): Boolean {
 }
 fun <T> forwardNullableBodyOnly(value: T?): Boolean = nullableBodyOnly<T>(value)
 
+interface NullableDefault {
+    fun <T> defaultIdentity(value: Box<T?>): Box<T?> = value
+}
+class InheritedNullableDefault : NullableDefault
+
 interface NullableBodySlot {
     fun <T> isAbsent(value: T?): Boolean
     fun <A, B> bothAbsent(first: A?, second: B?): Boolean

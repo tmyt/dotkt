@@ -65,6 +65,11 @@ class NullableInvariantFlowTests {
     @TestAttribute
     fun genericFunctionsPreserveAliasesAndNullablePayloads() {
         val strings = Box<String?>(null)
+        val inheritedDefault = InheritedNullableDefault()
+        assertTrue(inheritedDefault.defaultIdentity<String>(strings) === strings)
+        val defaultSlot: NullableDefault = inheritedDefault
+        val defaultIntegers = Box<Int?>(null)
+        assertTrue(defaultSlot.defaultIdentity<Int>(defaultIntegers) === defaultIntegers)
         val alias = identity(nullableIdentity<String>(strings))
         assertTrue(alias === strings)
         replace<String>(alias, "present")

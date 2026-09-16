@@ -46,7 +46,7 @@ static class NullableRepresentationMaterialization
         }
         var types = references == null ? new Dictionary<string, NullableRepresentationFrame>(StringComparer.Ordinal)
             : new Dictionary<string, NullableRepresentationFrame>(references.NullableTypeFrames, StringComparer.Ordinal);
-        foreach (var owner in demands.Where(d => Text(d.Declaration["kind"]) != null))
+        foreach (var owner in demands.Where(d => d.IsTypeDeclaration))
             types[Text(owner.Declaration["name"])] = ownerFrames[owner.Declaration];
         var methods = new Dictionary<string, NullableRepresentationFrame>(importedMethods, StringComparer.Ordinal);
         foreach (var method in demands.SelectMany(d => d.Methods))
@@ -78,7 +78,8 @@ static class NullableRepresentationMaterialization
                 var mapping = new NullableRepresentationTypes(frame, empty, types, isValue);
                 PreserveEdges(owner.Declaration, mapping);
                 foreach (var key in owner.Declaration.Select(p => p.Key).ToArray())
-                    if (key is not ("types" or "methods" or "attrs" or "overrides"))
+                    if (key is not ("types" or "methods" or "attrs" or "overrides" or "refTypes")
+                        && !NullableRepresentationDemand.InheritedMemberKeys.Contains(key))
                     {
                         if (TypeJson.Read(owner.Declaration[key]) is TypeNode type)
                             owner.Declaration[key] = TypeJson.Write(mapping.Slot(type));
@@ -87,6 +88,23 @@ static class NullableRepresentationMaterialization
                 foreach (var method in owner.Methods)
                 {
                     var methodFrame = methodFrames[method.Declaration];
+                    if (method.ImplementationKey != null)
+                    {
+                        var inheritedMapping = new NullableRepresentationTypes(frame, methodFrame, types, isValue);
+                        foreach (var key in new[] { "params", "ret" })
+                        {
+                            if (TypeJson.Read(method.Declaration[key]) is TypeNode type)
+                                method.Declaration[key] = TypeJson.Write(inheritedMapping.Slot(type));
+                            else Rewrite(method.Declaration[key], inheritedMapping, methods, DeclarationMapping);
+                        }
+                        var implementationMapping = DeclarationMapping(method.Implementation);
+                        RewriteDescriptor(method.Declaration, method.ImplementationKey,
+                            implementationMapping == null ? null : new NullableRepresentationTypes(
+                                implementationMapping.OwnerFrame, methodFrame, types, isValue), inheritedMapping);
+                        AppendParameters(method.Implementation, methodFrame);
+                        method.Implementation["arity"] = methodFrame.PhysicalArity;
+                        continue;
+                    }
                     var splitBody = method.Body.Method.Except(methodFrame.NullableIndices).Any();
                     var source = splitBody ? (JsonObject)method.Declaration.DeepClone() : null;
                     if (splitBody) method.Declaration["body"] = new JsonArray();
@@ -182,6 +200,27 @@ static class NullableRepresentationMaterialization
             var kind = Text(obj["k"]);
             var selectedMapping = kind == null ? null : declarationMapping(obj);
             JsonArray closedArguments = null;
+            if (kind is "newSam" or "newClosure" && obj["synthClass"] is JsonObject synthetic
+                && !ClosureSynthesis.HasPreboundFrame(synthetic)
+                && obj["typeArgs"] is JsonArray captureArguments && synthetic["typeParams"] is JsonArray captureParameters)
+            {
+                // Raw payload types still belong to the lexical frame. Materializing T? inside that payload
+                // creates a use of N(T), so the generated class must capture N(T) alongside the ordinary T.
+                // The later closure binder consumes this explicit argument/parameter correspondence.
+                var captures = captureArguments.Select(TypeJson.Read).ToArray();
+                if (captures.Length != captureParameters.Count)
+                    throw new InvalidOperationException("Synthetic capture arguments do not match their declarations");
+                var nullableCaptures = captures.OfType<TypeNode.Tv>().Where(variable =>
+                    (variable.Scope == "type" ? mapping.OwnerFrame : mapping.MethodFrame)?.NullableIndices.Contains(variable.I) == true)
+                    .Distinct().ToArray();
+                if (nullableCaptures.Length != 0)
+                {
+                    closedArguments = new JsonArray(captures.Select(mapping.Argument)
+                        .Concat(nullableCaptures.Select(mapping.NullableArgument)).Select(TypeJson.Write).ToArray());
+                    foreach (var variable in nullableCaptures)
+                        captureParameters.Add("$nullableCapture" + variable.Scope + variable.I);
+                }
+            }
             if (kind != null && Text(obj[DeclarationIdentityBinding.Key]) is string id
                 && methods.TryGetValue(id, out var frame) && frame.NullableIndices.Count != 0)
             {
@@ -285,6 +324,38 @@ static class NullableRepresentationMaterialization
          {"name":"captured","type":{"t":"fqn","name":"Box","args":[{"t":"nullable","of":{"t":"tv","scope":"type","i":1}}]}}]}
         """);
         ((JsonArray)root["types"]).Add(nested);
+        var defaultMember = root["methods"][0].DeepClone();
+        defaultMember[DeclarationIdentityBinding.Key] = "defaultPass";
+        ((JsonArray)root["types"]).Add(new JsonObject {
+            ["name"] = "DefaultSource", ["kind"] = "interface", ["methods"] = new JsonArray(defaultMember),
+        });
+        var inherited = new JsonObject {
+            ["member"] = "pass", ["params"] = new JsonArray(defaultMember["params"][0]["type"].DeepClone()),
+            ["ret"] = defaultMember["ret"].DeepClone(),
+            ["implementation"] = new JsonObject {
+                ["owner"] = TypeJson.Fqn("DefaultSource"), ["member"] = "pass", ["kind"] = "method",
+                ["arity"] = 1, ["typeParams"] = new JsonArray("T"),
+            },
+        };
+        ((JsonArray)root["types"]).Add(new JsonObject {
+            ["name"] = "DefaultUser", ["kind"] = "class",
+            [KotlinPropertyAccessors.InheritedDefaultMethodsKey] = new JsonArray(inherited),
+        });
+        var refCell = new JsonObject {
+            ["name"] = "Cell", ["typeParams"] = new JsonArray("S"),
+            ["elem"] = TypeJson.Write(new TypeNode.Fqn("Box", new TypeNode[] {
+                new TypeNode.Nullable(new TypeNode.Tv("type", 0)) })),
+        };
+        root["refTypes"] = new JsonArray(refCell);
+        var rawSam = new JsonObject {
+            ["k"] = "newSam", ["typeArgs"] = new JsonArray(TypeJson.Write(new TypeNode.Tv("method", 0))),
+            ["synthClass"] = new JsonObject {
+                ["name"] = "CapturedSam", ["typeParams"] = new JsonArray("T"),
+                ["interfaces"] = new JsonArray(TypeJson.Write(new TypeNode.Fqn("Comparator", new TypeNode[] {
+                    new TypeNode.Nullable(new TypeNode.Tv("method", 0)) }))),
+            },
+        };
+        ((JsonArray)root["methods"][0]["body"]).Add(rawSam);
         var closedCalls = new List<JsonObject>();
         foreach (var stampFirst in new[] { true, false })
         {
@@ -306,6 +377,18 @@ static class NullableRepresentationMaterialization
             closedCalls.Add(closedCall);
         }
         Apply(new[] { root }, _ => false);
+        if (((JsonArray)rawSam["typeArgs"]).Count != 2
+            || ((JsonArray)rawSam["synthClass"]["typeParams"]).Count != 2
+            || TypeJson.Read(rawSam["typeArgs"][1]) != new TypeNode.Tv("method", 1)
+            || TypeJson.Read(rawSam["synthClass"]["interfaces"][0]) !=
+                new TypeNode.Fqn("Comparator", new TypeNode[] { new TypeNode.Tv("method", 1) }))
+            throw new InvalidOperationException("Synthetic payload companion is absent from its capture correspondence");
+        if ((int)inherited["implementation"]["arity"] != 2
+            || ((JsonArray)inherited["implementation"]["typeParams"]).Count != 2
+            || TypeJson.Read(inherited["ret"]) != TypeJson.Read(defaultMember["ret"])
+            || ((JsonArray)refCell["typeParams"]).Count != 2
+            || TypeJson.Read(refCell["elem"]) != new TypeNode.Fqn("Box", new TypeNode[] { new TypeNode.Tv("type", 1) }))
+            throw new InvalidOperationException("Inherited methods or reference cells lost their declaration-owned frames");
         if ((int)nested["outerTypeParamCount"] != 2 || nested["outerTypeParamOffset"] != null
             || TypeJson.Read(nested["fields"][0]["type"]) != new TypeNode.Tv("type", 2)
             || TypeJson.Read(nested["fields"][1]["type"]) != new TypeNode.Fqn("Box", new TypeNode[] { new TypeNode.Tv("type", 1) })

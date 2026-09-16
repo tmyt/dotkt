@@ -184,12 +184,12 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 		val carried = carriedDeclarationId(fn)
 		if (carried != null) return carried
 		// A concrete interface member owns a real default-interface MethodDef even though Kotlin models the declaration
-		// as open. An explicit source name can therefore be allocated on that declaration independently: derived
+		// as open. Its source identity can therefore be allocated on that declaration independently: derived
 		// implementations keep their own Kotlin declaration identities and bir2cir binds them to this renamed slot with
 		// an exact MethodImpl. This is not the unsupported class-virtual case, where changing one MethodDef name would
 		// require a shared naming decision across the CLR override chain.
-		if (owner.kind == ClassKind.INTERFACE && simple.body != null && simple.modality != Modality.ABSTRACT
-			&& hasExplicitClrNameAnnotation(simple)) return declarationId(fn)
+		if (projectedClrOwner == null && owner.kind == ClassKind.INTERFACE
+			&& simple.body != null && simple.modality != Modality.ABSTRACT) return declarationId(fn)
 		if (simple.modality != Modality.FINAL || simple.overriddenSymbols.isNotEmpty()) return null
 		if (projectedClrOwner != null) return null
 		return declarationId(fn)
