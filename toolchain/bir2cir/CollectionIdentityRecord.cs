@@ -132,11 +132,9 @@ static class CollectionIdentityRecord
     }
 
     // True iff a read-only List/Set/Collection appears where BirTypeLowering's Root-V collapse would REWRITE it — i.e.
-    // reached with `typeArg == true`, which becomes true ONLY inside a Fqn's Args (BirTypeLowering line 209, sticky
-    // across nested Args) and RESETS to false through an Array elem / ByRef / Nullable / Fn position (those recurse
-    // with typeArg:false). This mirrors the collapse condition exactly, so a slot is stamped iff at least one nested
-    // read-only collection genuinely collapses (a TOP-LEVEL / array-elem read-only collection stays the covariant
-    // IReadOnlyList alias — dll2klib restores it without a stamp — and is deliberately NOT recorded).
+    // reached with `typeArg == true`: constructed generic arguments and array elements both use the reified
+    // storage projection. ByRef / Nullable / Fn positions reset it to false. Preserve array and vararg element
+    // identity just like other invariant storage; only a top-level read-only collection needs no such record.
     static bool NestsCollapsingReadonly(TypeNode t) => Scan(t, typeArg: false);
 
     static bool Scan(TypeNode t, bool typeArg) => t switch
@@ -144,7 +142,7 @@ static class CollectionIdentityRecord
         TypeNode.Fqn f =>
             (typeArg && CollapsingReadonly.Contains(f.Name))
             || (f.Args?.Any(a => Scan(a, typeArg: true)) ?? false),
-        TypeNode.Array a => Scan(a.Elem, typeArg: false),
+        TypeNode.Array a => Scan(a.Elem, typeArg: true),
         TypeNode.ByRef b => Scan(b.Of, typeArg: false),
         TypeNode.Nullable n => Scan(n.Of, typeArg: false),
         // Oblivious (`T!`) is a pure nullability annotation — BirTypeLowering lowers its inner with THIS node's incoming
