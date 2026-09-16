@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Composite generic delegates retain verifiable construction (#757).** Delegate constructors are emitted
+  directly from their CIR member references, preserving method-pointer verification and exact open array owners.
+
 - **Ordinary declaration nullability follows the CLR generic shape (#740).** Removed generic arguments
   no longer shift the nullable annotations on subsequent return, parameter, field, and property positions.
 
