@@ -43,16 +43,17 @@ if len(accessors) != 1:
 
 accessor = accessors[0]
 base = {"t": "fqn", "name": "roundtrip.protectedmethodgeneric.ReferencedProtectedMethodGenericBase"}
-physical_object_array = {"t": "array", "elem": {"t": "fqn", "name": "System.Object"}}
-call_object_array = {"t": "array", "elem": {"t": "fqn", "name": "object"}}
-expected_params = [base, physical_object_array]
+physical_array = {"t": "array", "elem": {"t": "tv", "scope": "method", "i": 1}}
+string_type = {"t": "fqn", "name": "System.String"}
+call_array = {"t": "array", "elem": string_type}
+expected_params = [base, physical_array]
 actual_params = [param.get("type") for param in accessor.get("params", [])]
 if actual_params != expected_params:
     raise SystemExit(
         "method-generic UnsafeAccessor must declare target plus the original value parameter: "
         f"{accessor!r}"
     )
-if accessor.get("typeParams") != [{"name": "__method0"}] or accessor.get("ret") != physical_object_array:
+if accessor.get("typeParams") != [{"name": "__method0"}, {"name": "__method1"}] or accessor.get("ret") != physical_array:
     raise SystemExit(f"method-generic UnsafeAccessor lost its generic frame or physical return: {accessor!r}")
 
 calls = [
@@ -69,8 +70,8 @@ call = calls[0]
 if (
     call.get("sig") != expected_params
     or len(call.get("args", [])) != 2
-    or call.get("typeArgs") != [{"t": "fqn", "name": "System.String"}]
-    or call.get("ret") != call_object_array
+    or call.get("typeArgs") != [string_type, string_type]
+    or call.get("ret") != call_array
 ):
     raise SystemExit(f"UnsafeAccessor call and declaration are not arity/type coherent: {call!r}")
 

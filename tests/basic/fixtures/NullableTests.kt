@@ -60,8 +60,8 @@ class NgCell<T>(private val slot: T?) {             // `T?` CTOR PARAM + backing
 open class NgBase<T>(val held: T?)                  // a ctor DELEGATION target whose param is erased
 class NgDerived(y: Int?) : NgBase<Int>(y)           // `Base<Int>(y)` hands a Nullable<int32> to an `object` slot
 // The inherited protected-property use axis is resolved only after bir2cir binds the call from the derived receiver
-// to its declaring generic base. The declaration `Array<T?>` is physically `object[]` under #86, while this concrete
-// reference instantiation observes the original `String[]`; CIR must state the checked projection between them.
+// to its declaring generic base. The declaration `Array<T?>` uses the base's nullable companion; this concrete
+// reference instantiation closes that companion to String and retains the original String[] identity.
 open class NgProtectedArrayBase<T>(protected val values: Array<T?>?)
 class NgProtectedArrayText(values: Array<String?>) : NgProtectedArrayBase<String>(values) {
     private fun invoke(block: () -> Unit) = block()
@@ -433,7 +433,7 @@ class NullableTests {
         assertEquals(4, NgDerived(4).held)               // 4
         val strings = arrayOf<String?>("a", null)
         val snapshot = NgProtectedArrayText(strings).snapshot()
-        assertTrue(snapshot === strings)                 // inherited protected `object[]` slot projects to String[]
+        assertTrue(snapshot === strings)                 // inherited protected owner closes its nullable companion
         assertEquals("a", snapshot[0])
         assertNull(snapshot[1])
         val capturedSnapshot = NgProtectedArrayText(strings).capturedSnapshot()
@@ -441,7 +441,7 @@ class NullableTests {
         assertEquals("a", capturedSnapshot[0])
         assertNull(capturedSnapshot[1])
         val methodSnapshot = NgProtectedMethodText().capturedSnapshot(strings)
-        assertTrue(methodSnapshot === strings)           // method-generic erasure on a non-generic protected owner
+        assertTrue(methodSnapshot === strings)           // method-owned companion on a non-generic protected owner
         assertEquals("a", methodSnapshot[0])
         assertNull(methodSnapshot[1])
         val si: NgSink<Int> = NgIntSink()

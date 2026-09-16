@@ -32,17 +32,18 @@ if len(holders) != 4:
     raise SystemExit(f"found {len(holders)} generic UnsafeAccessor holders, expected 4")
 
 owner_tv = {"t": "tv", "scope": "type", "i": 0}
+nullable_tv = {"t": "tv", "scope": "type", "i": 1}
 base_open = {
     "t": "fqn",
-    "name": "roundtrip.protectedgenericowner.ReferencedProtectedGenericOwnerBase`1",
-    "args": [owner_tv],
+    "name": "roundtrip.protectedgenericowner.ReferencedProtectedGenericOwnerBase`2",
+    "args": [owner_tv, nullable_tv],
 }
-physical_array = {"t": "array", "elem": {"t": "fqn", "name": "System.Object"}}
+physical_array = {"t": "array", "elem": nullable_tv}
 expected_params = [base_open, physical_array]
 
 accessor_targets = []
 for holder in holders:
-    if holder.get("typeParams") != [{"name": "__owner0"}]:
+    if holder.get("typeParams") != [{"name": "__owner0"}, {"name": "__owner1"}]:
         raise SystemExit(f"UnsafeAccessor holder lost the referenced owner's generic frame: {holder!r}")
     accessors = [
         method
@@ -58,6 +59,10 @@ for holder in holders:
         )
     if accessor.get("ret") != physical_array:
         raise SystemExit(f"UnsafeAccessor does not state the referenced MethodDef's physical return: {accessor!r}")
+    wrappers = [method for method in holder.get("methods", []) if method.get("name", "").endswith("$invoke")]
+    if (len(wrappers) != 1 or wrappers[0].get("ret") != physical_array
+            or [param.get("type") for param in wrappers[0].get("params", [])] != expected_params):
+        raise SystemExit(f"UnsafeAccessor wrapper does not preserve the complete owner frame: {wrappers!r}")
     names = [
         argument.get("value", {}).get("value")
         for attribute in accessor.get("attrs", [])
@@ -86,32 +91,14 @@ constructed_frames = Counter(
     tuple(argument.get("name") for argument in call.get("owner", {}).get("args", []))
     for call in wrapper_calls
 )
-if constructed_frames != Counter({("System.String",): 3, ("System.Int32",): 1}):
+if constructed_frames != Counter({("System.String", "System.String"): 3, ("System.Int32", "object"): 1}):
     raise SystemExit(f"holder calls use the wrong referenced owner frames: {constructed_frames!r}")
 
-physical_call_return = {"t": "array", "elem": {"t": "fqn", "name": "object"}}
 for call in wrapper_calls:
+    physical_call_return = {"t": "array", "elem": call["owner"]["args"][1]}
     if call.get("sig") != expected_params or call.get("ret") != physical_call_return:
         raise SystemExit(f"holder call and physical accessor declaration disagree: {call!r}")
-
-casts = [
-    node
-    for node in objects(root.get("types", []))
-    if node.get("k") == "cast"
-    and node.get("e", {}).get("k") == "callStatic"
-    and node.get("e", {}).get("owner", {}).get("name") in holder_names
-]
-if len(casts) != 3:
-    raise SystemExit(f"found {len(casts)} concrete projections from holder calls, expected 3")
-
-semantic_array = {"t": "array", "elem": {"t": "fqn", "name": "System.String"}}
-for projection in casts:
-    call = projection["e"]
-    if projection.get("type") != semantic_array:
-        raise SystemExit(f"holder result is not projected to the concrete Kotlin array: {projection!r}")
-    if call.get("owner", {}).get("args") != [{"t": "fqn", "name": "System.String"}]:
-        raise SystemExit(f"holder call does not construct the referenced owner frame with String: {call!r}")
 print(
     "referenced generic-owner direct/open/callable/value access keeps exact physical ABI "
-    "and use projections"
+    "and closes nullable companion results"
 )
