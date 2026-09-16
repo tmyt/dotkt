@@ -39,7 +39,7 @@ static class FBoundStarProjectionErasure
         public JsonObject Root;
         public int Arity;
         public bool Needed;
-        public readonly Dictionary<JsonObject, JsonObject> Slots = new();
+        public readonly Dictionary<JsonObject, (JsonObject Slot, TypeNode[] Signature)> Slots = new();
     }
 
     public static IReadOnlyDictionary<string, string> ApplyAll(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs)
@@ -1428,7 +1428,8 @@ static class FBoundStarProjectionErasure
                 var dependent = ContainsOwnerTvInSignature(method) || !IsPublic(method);
                 var slot = InterfaceSlot(method, dependent ? StarMethodName(owner, method) : null,
                     owner.Name, owners, refs);
-                owner.Slots[method] = slot;
+                owner.Slots[method] = (slot, (method["params"] as JsonArray)?.OfType<JsonObject>()
+                    .Select(parameter => TypeJson.Read(parameter["type"])).ToArray() ?? Array.Empty<TypeNode>());
                 var key = MethodKey(slot);
                 if (key == null || !seen.Add(key)) continue;
                 methods.Add(slot);
@@ -3784,7 +3785,7 @@ static class FBoundStarProjectionErasure
             call["virtual"] = true; // erased owner is an interface; CIR must carry callvirt explicitly
             // Declaration types may already have moved to carriers during this walk. Do not recompute whether
             // the original signature depended on its owner: consume the slot allocated during synthesis.
-            var allocatedSlot = declaring.Slots[declaration];
+            var allocatedSlot = declaring.Slots[declaration].Slot;
             call["method"] = Str(allocatedSlot[DeclarationIdentityBinding.ExplicitNameKey])
                 ?? Str(allocatedSlot["name"]);
             call["sig"] = ErasedPhysicalSignature(declaration, owners, refs);
@@ -4137,8 +4138,7 @@ static class FBoundStarProjectionErasure
             foreach (var owner in frontier)
             {
                 if (!seen.Add(owner.Name)) continue;
-                if (owner.Def["methods"] is JsonArray methods)
-                    foreach (var m in methods.OfType<JsonObject>())
+                foreach (var (m, allocation) in owner.Slots)
                         // Synthesize() exposes every non-static source member through a public forwarding
                         // bridge when needed, including private members used by lifted nested classes.
                         if ((declarationId != null
@@ -4147,7 +4147,8 @@ static class FBoundStarProjectionErasure
                             && !Bool(m["static"])
                             && ((m["params"] as JsonArray)?.Count ?? 0) == pc
                             && ((m["typeParams"] as JsonArray)?.Count ?? 0) == ga
-                            && (declarationId != null || SignatureMatches(m, authoredSignature)))
+                            && (declarationId != null || authoredSignature == null
+                                || allocation.Signature.SequenceEqual(authoredSignature)))
                             matches.Add((owner, m));
             }
             if (matches.Count == 1) return matches[0];
