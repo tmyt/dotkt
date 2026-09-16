@@ -348,16 +348,22 @@ static class ReverseEnumeratorBridgeSynthesis
     static TypeNode Element(SupertypeGraph.Def def, IReadOnlyDictionary<string, SupertypeGraph.Def> defs,
         ReferenceMetadataIndex refs, TypeNode iteratorReturn)
     {
-        var iteratorElement = IteratorElement(iteratorReturn, defs, refs);
+        var localNames = defs.Keys.ToHashSet(StringComparer.Ordinal);
+        TypeNode PhysicalElement(TypeNode type) => type == null ? null
+            : BirTypeLowering.LowerPhysicalType(type, refs.Aliases, refs.IsValueType,
+                refs.PhysicalTypeNames, typeArg: true, localTypeNames: localNames);
+        var iteratorElement = PhysicalElement(IteratorElement(iteratorReturn, defs, refs));
         TypeNode first = null;
         foreach (var (spec, isInterface) in SupertypeGraph.Reachable(def, defs, refs))
         {
             if (!isInterface || spec.Args is not { Length: 1 } args) continue;
             // Bare names: a face stated by this unit carries no arity, one reached through a reference assembly does.
             if (Array.IndexOf(EnumerableFaces, Bare(spec.Name)) < 0) continue;
-            if (iteratorElement != null && SupertypeGraph.TypeKey(args[0]) == SupertypeGraph.TypeKey(iteratorElement))
-                return args[0];
-            first ??= args[0];
+            // Referenced supertype metadata retains Kotlin arguments even though this pass authors CLR CIR.
+            var physicalElement = PhysicalElement(args[0]);
+            if (iteratorElement != null && SupertypeGraph.TypeKey(physicalElement) == SupertypeGraph.TypeKey(iteratorElement))
+                return physicalElement;
+            first ??= physicalElement;
         }
         return first;
     }
