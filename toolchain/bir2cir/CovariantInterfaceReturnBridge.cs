@@ -241,6 +241,39 @@ static class CovariantInterfaceReturnBridge
                 var logicalSuspendResult = IsSuspend(implementation)
                     ? SupertypeGraph.SubstOwnerTvs(declaration.Return, ownerArgs)
                     : null;
+                var physicalOwner = refs.ExactReflectedOwner(semanticOwner.Name, ownerArity);
+                if (physicalOwner == null) continue;
+                var descriptorOwner = new TypeNode.Fqn(physicalOwner,
+                    physicalOwnerArgs.Length == 0 ? null : physicalOwnerArgs);
+                var descriptorMember = declaration.PhysicalMember;
+                if (refs.TryResolveClrOwner(semanticOwner.Name, out _, out _))
+                {
+                    // A reference-surface MethodDef on an alias is not a MethodDef on its CLR face.
+                    // Resolve the selected binding against the actual interface before synthesizing a row.
+                    // Kotlin-only members handled by a dedicated ABI lowering contribute no such slot.
+                    if (accessorKind != null)
+                    {
+                        if (!refs.TryExternalPropertyAccessor(semanticOwner.Name, sourceMember, accessorKind,
+                                implementationParams.Length, methodArity, implementationParams, ownerArgs,
+                                out _, out _, out descriptorMember)) continue;
+                    }
+                    else if (refs.TryExactMemberIntrinsic(semanticOwner.Name, sourceMember, methodArity,
+                                 implementationParams, ownerArgs, out var intrinsic))
+                        descriptorMember = intrinsic;
+                    var comparableParams = slotParams.Select(type => BirTypeLowering.LowerPhysicalType(
+                        type, refs.Aliases, isValue, refs.PhysicalTypeNames,
+                        typeArg: false, nullableFrames: refs.NullableTypeFrames)).ToArray();
+                    if (!ClrMemberResolution.TryResolveAliasedInterfaceSlot(refs, descriptorOwner,
+                            descriptorMember, methodArity, comparableParams, declaration.TypeParams,
+                            physicalOwnerArgs, out descriptorOwner, out descriptorMember,
+                            out slotParams, out slotRet)) continue;
+                    // An alias can change the return ABI (for example Boolean to void). That is not
+                    // Kotlin return covariance; its binding/override lowering owns the adaptation.
+                    var referenceReturn = SupertypeGraph.SubstOwnerTvs(declaration.PhysicalReturn, physicalOwnerArgs);
+                    if (!BirTypeLowering.SamePhysicalSlotType(referenceReturn, slotRet,
+                            refs.Aliases, isValue, refs.PhysicalTypeNames, returnPosition: true,
+                            nullableFrames: refs.NullableTypeFrames)) continue;
+                }
                 if (slotParams.Any(type => type == null) || slotRet == null
                     || !ParamsPhysicallyEqual(implementation, slotParams, ownArgs, refs, isValue))
                     continue;
@@ -251,10 +284,6 @@ static class CovariantInterfaceReturnBridge
                     || KotlinOverrideSlotBridge.IsErasureDivergence(slotRet, implementationRet))
                     continue;
 
-                var physicalOwner = refs.ExactReflectedOwner(semanticOwner.Name, ownerArity);
-                if (physicalOwner == null) continue;
-                var descriptorOwner = new TypeNode.Fqn(physicalOwner,
-                    physicalOwnerArgs.Length == 0 ? null : physicalOwnerArgs);
                 // Two referenced interfaces can redeclare the same physical slot with equivalent Kotlin surface
                 // spellings (`T` substituted through an oblivious edge versus the concrete type directly). One CLR
                 // body can implement both MethodImpl declarations, so key the body by the canonical physical
@@ -282,7 +311,7 @@ static class CovariantInterfaceReturnBridge
                                 accessorKind, sourceAssociation, slotParams, slotRet);
                     }
                 }
-                var descriptor = ImplDescriptor(descriptorOwner, declaration.PhysicalMember, methodArity,
+                var descriptor = ImplDescriptor(descriptorOwner, descriptorMember, methodArity,
                     slotParams, slotRet,
                     KotlinOverrideSlotBridge.SubstituteOwnerTypeParameterConstraints(
                         declaration.TypeParams, physicalOwnerArgs));
@@ -291,7 +320,7 @@ static class CovariantInterfaceReturnBridge
                     .Any(existing => existing?.ToJsonString() == encoded))
                     ((JsonArray)bridge["clrInterfaceImpls"]).Add(descriptor);
                 bridgedSlots.Add(BridgedSlotKey(implementation, descriptorOwner,
-                    declaration.PhysicalMember, methodArity, slotParams, slotRet, refs, isValue));
+                    descriptorMember, methodArity, slotParams, slotRet, refs, isValue));
             }
         }
     }

@@ -14,6 +14,13 @@ private class GenericFactory<A, T>(val seed: Array<T?>) : ReferencedCompanionCov
     override fun make(): ReferencedNarrowCovariantValue = ReferencedNarrowCovariantValue(42)
 }
 
+private class CovariantIteratorCollection : AbstractMutableCollection<Int>() {
+    private val elements = mutableListOf(43)
+    override val size: Int get() = elements.size
+    override fun add(element: Int): Boolean = elements.add(element)
+    override fun iterator(): MutableIterator<Int> = elements.iterator()
+}
+
 class CompanionCovariantTests {
     @TestAttribute
     fun importedCovariantSlotsCloseTheDeclarationAndCallerFrames() {
@@ -25,5 +32,8 @@ class CompanionCovariantTests {
         assertEquals(42, integers.make().value)
         assertEquals(7, integers.storage()[0])
         assertEquals(null, integers.storage()[1])
+        // Collection.iterator is Kotlin vocabulary, not a CLR IReadOnlyCollection.iterator slot.
+        val collection: Collection<Int> = CovariantIteratorCollection()
+        assertEquals(43, collection.iterator().next())
     }
 }
