@@ -138,6 +138,7 @@ verify-integration: toolchain stdlib ## independent MSBuild/target/ABI/policy ga
 	+$(MAKE) verify-target-universe
 	+$(MAKE) verify-csharp14-extension-abi
 	+$(MAKE) verify-pinvoke
+	+$(MAKE) dll2klib-e2e
 	+$(MAKE) verify-xfail-policy
 	+$(MAKE) verify-gate-selection
 

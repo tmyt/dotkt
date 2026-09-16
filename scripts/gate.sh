@@ -32,6 +32,7 @@
 #   toolchain/bir-common/**            -> FULL   (TypeNode/IrSanity are <Compile Link/>-shared into every tool)
 #   toolchain/kotc/** | libraries/stdlib/**  -> FULL + clean stdlib rebuild
 #   tests/{basic,interop,coroutines,roundtrip}/** -> compiler tests
+#   tests/run-ilverify.sh              -> compiler tests + C# ABI + P/Invoke + DLL-to-KLIB E2E + packaged SDK
 #   anything else                      -> FULL
 #
 # CLEAN STDLIB REBUILD (rm -rf build/clr-stdlib*) happens iff a stdlib-BAKING axis changed
@@ -130,13 +131,16 @@ classify() { # <path>
 		libraries/stdlib/*)
 			NEED_FULL=1; CLEAN=1; reason "$p -> FULL + clean stdlib (stdlib source changed)" ;;
 		# ---- tests ------------------------------------------------------------------------------
+		tests/run-ilverify.sh)
+			want compiler_tests; want csharp14; want pinvoke; want dll2klib; want packagedsdk
+			reason "$p -> all shared ILVerify consumers, including packaged SDK" ;;
 		tests/ir/run-schema.sh) want schema; reason "$p -> verify-schema" ;;
 		tests/ir/run-sanity.sh) want sanity; reason "$p -> verify-sanity" ;;
 		tests/msbuild/*) want msbuild; reason "$p -> stateful MSBuild tests" ;;
 		tests/packaged-sdk/*) want packagedsdk; reason "$p -> packaged SDK tests" ;;
 		tests/gate-selection/*) want gate_selection; reason "$p -> gate selector policy tests" ;;
 		tests/stdlib-common-upstream/*) want stdlib_upstream; reason "$p -> upstream stdlib snapshot gate" ;;
-		tests/basic/*|tests/coroutines/*|tests/interop/*|tests/roundtrip/*|tests/support/*|tests/ilverify/*|tests/run-nunit-tests.sh|tests/run-ilverify.sh)
+		tests/basic/*|tests/coroutines/*|tests/interop/*|tests/roundtrip/*|tests/support/*|tests/ilverify/*|tests/run-nunit-tests.sh)
 			want compiler_tests; reason "$p -> categorized compiler tests" ;;
 		tests/target-universe/*)
 			want targetuniverse; reason "$p -> host/target metadata-universe calibration" ;;
@@ -149,16 +153,18 @@ classify() { # <path>
 }
 
 # ---- suite targets --------------------------------------------------------------------------------
-declare -a RUN_ORDER=(compiler_tests schema sanity msbuild targetuniverse stdlib_upstream gate_selection packagedsdk)
+declare -a RUN_ORDER=(compiler_tests schema sanity lowering stdlib_upstream msbuild targetuniverse csharp14 pinvoke dll2klib xfail gate_selection packagedsdk)
 declare -A SUITE_TARGET=(
 	[compiler_tests]=verify-tests [schema]=verify-schema [sanity]=verify-sanity
 	[msbuild]=verify-msbuild
 	[targetuniverse]=verify-target-universe [gate_selection]=verify-gate-selection
 	[stdlib_upstream]=verify-stdlib-upstream
+	[lowering]=verify-lowering [csharp14]=verify-csharp14-extension-abi
+	[pinvoke]=verify-pinvoke [dll2klib]=dll2klib-e2e [xfail]=verify-xfail-policy
 	[packagedsdk]=verify-packaged-sdk
 )
 
-FULL_SUITES=(compiler_tests schema sanity msbuild targetuniverse stdlib_upstream gate_selection)
+FULL_SUITES=(compiler_tests schema sanity lowering stdlib_upstream msbuild targetuniverse csharp14 pinvoke dll2klib xfail gate_selection)
 
 # ---- compute the plan -----------------------------------------------------------------------------
 mapfile -t CHANGES < <(collect_changes)

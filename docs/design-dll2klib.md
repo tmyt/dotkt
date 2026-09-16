@@ -548,6 +548,10 @@ The permanent end-to-end regression is:
 make dll2klib-e2e
 ```
 
+This target also runs once through `make verify-integration`, including the CI
+integration shard and the canonical `make verify` gate. It does not need a
+separate invocation after a successful canonical gate.
+
 It verifies:
 
 1. generation of CLR reference assemblies;

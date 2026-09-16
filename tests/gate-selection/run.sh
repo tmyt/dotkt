@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Self-test the change-aware selector with its public dry-run surface. The FULL compiler set is derived
-# from gate.sh itself; these fixtures pin only when the separate packaged-SDK release gate is added.
+# Self-test the selector's public dry-run surface and canonical Make/CI gate composition.
 set -euo pipefail
 
 ROOT="$(cd -- "$(dirname -- "$0")/../.." && pwd -P)"
@@ -13,6 +12,8 @@ suite_line() { # [gate.sh arguments...]
 FULL_SUITES="$(suite_line --full)"
 [[ -n "$FULL_SUITES" && "$FULL_SUITES" != '(none)' ]] || die "could not obtain the FULL suite set"
 [[ " $FULL_SUITES " != *' packagedsdk '* ]] || die "ordinary --full unexpectedly includes packagedsdk"
+expected_full="compiler_tests schema sanity lowering stdlib_upstream msbuild targetuniverse csharp14 pinvoke dll2klib xfail gate_selection"
+[[ "$FULL_SUITES" == "$expected_full" ]] || die "FULL must cover every canonical core gate once: got '$FULL_SUITES'"
 
 assert_suites() { # <fixture-name> <changed-path> <expected suites>
 	local name="$1" path="$2" expected="$3" actual
@@ -38,6 +39,21 @@ assert_suites compiler-full toolchain/bir-common/TypeNode.cs "$FULL_SUITES"
 assert_suites stdlib-source libraries/stdlib/common/src/generated/_Arrays.kt "$FULL_SUITES"
 assert_suites stdlib-snapshot-test tests/stdlib-common-upstream/upstream-v2.4.10.sha256 stdlib_upstream
 assert_suites ilverify-harness tests/ilverify/test_harness.py compiler_tests
+verifier_suites="compiler_tests csharp14 pinvoke dll2klib packagedsdk"
+assert_suites shared-ilverify tests/run-ilverify.sh "$verifier_suites"
+mixed_suites="$(suite_line tests/run-ilverify.sh tests/basic/fixtures/SomeTest.kt tests/packaged-sdk/run.sh)"
+[[ "$mixed_suites" == "$verifier_suites" ]] || die "overlapping verifier consumers were duplicated: '$mixed_suites'"
+assert_suites dll2klib-test tests/special/dll2klib-e2e/run.sh "$FULL_SUITES"
+
+# Inspect real Make composition without running tool builds or tests. The standalone E2E target
+# belongs to integration, so both local canonical entry points and that CI shard must reach it once.
+# The other CI shards must not execute a second copy.
+for target in verify verify-core verify-integration verify-test-corpus verify-compile-fail verify-lowering verify-packaged-sdk; do
+	plan="$(make --no-print-directory -n -C "$ROOT" -o toolchain -o stdlib -o pack -o bir2cir -o stdlib-ref "$target")"
+	count="$(grep -Fxc 'bash tests/special/dll2klib-e2e/run.sh' <<<"$plan" || true)"
+	case "$target" in verify|verify-core|verify-integration) expected_count=1 ;; *) expected_count=0 ;; esac
+	[[ "$count" == "$expected_count" ]] || die "$target: expected $expected_count DLL-to-KLIB E2E invocation(s), got $count"
+done
 
 # Exercise the default Git collector, not only explicit path classification. With rename folding enabled,
 # Git reports only docs/moved.props and loses the removed packaging path, incorrectly selecting no gate.
