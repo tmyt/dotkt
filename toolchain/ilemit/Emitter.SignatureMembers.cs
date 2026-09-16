@@ -84,10 +84,24 @@ sealed partial class Emitter
     static bool ContainsEmissionBuilder(Type type)
     {
         if (type is TypeBuilder || type is GenericTypeParameterBuilder) return true;
-        if (type.HasElementType) return ContainsEmissionBuilder(type.GetElementType());
-        return type.IsConstructedGenericType
-            && (type.GetGenericTypeDefinition() is TypeBuilder
-                || type.GetGenericArguments().Any(ContainsEmissionBuilder));
+        return IsConstructedFromEmissionBuilder(type);
+    }
+
+    // Match PAB's normalization predicate, not the broader question of whether a type contains a
+    // generic parameter. In particular PAB descends through an array with this second predicate,
+    // which does not recognize a bare generic-parameter element. Thus Func<T[]> still needs the
+    // transparent owner view even though Func<T> is exempt from member normalization.
+    static bool IsConstructedFromEmissionBuilder(Type type)
+    {
+        if (type.IsConstructedGenericType)
+            return type.GetGenericTypeDefinition() is TypeBuilder
+                || type.GetGenericArguments().Any(ContainsEmissionBuilder);
+        if (type.HasElementType)
+        {
+            var element = type.GetElementType();
+            return element is TypeBuilder || IsConstructedFromEmissionBuilder(element);
+        }
+        return false;
     }
 
     static MethodInfo MethodDeclaration(MethodInfo method)

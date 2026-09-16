@@ -28,7 +28,7 @@ derived_type = {"t": "fqn", "name": derived_name}
 base_type = {"t": "fqn", "name": base_name}
 string_type = {"t": "fqn", "name": "System.String"}
 object_type = {"t": "fqn", "name": "System.Object"}
-continuation_type = {"t": "fqn", "name": "kotlin.coroutines.Continuation`1", "args": [object_type]}
+continuation_type = {"t": "fqn", "name": "kotlin.coroutines.Continuation$star"}
 types = {item.get("name"): item for item in root.get("types", []) if isinstance(item, dict)}
 
 derived = types.get(derived_name)
