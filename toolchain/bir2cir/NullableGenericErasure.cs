@@ -82,8 +82,7 @@ static class NullableGenericErasure
         // `object`, which dll2klib cannot infer back. Keep the pre-erasure TypeNode opaque until it is CONSUMED —
         // a ref/app build mints it into [KotlinNullableGeneric] on that exact CLR declaration slot, and the
         // runtime build, which mints nothing, carries it to ForeignNullableGenericCrossing instead.
-        RecordNullableGenericSlots(o, isValue);
-        RecordSuspendFnShapes(o);
+        PreserveSourceFacts(o, isValue);
         ApplyRec(o, isValue);
         // The blanket type-slot sweep: every REMAINING position the rule rewrites, anywhere in the tree — a
         // `Nullable(Tv)` in a standalone param/field/local slot or a call `sig` element, and a possibly-value `X?`
@@ -91,6 +90,12 @@ static class NullableGenericErasure
         // or a call's own `typeArgs`. `Nullable(Tv)` lowers to `Nullable<T>`, which is not even expressible for an
         // unconstrained (reference-allowed) `T`, so ilemit must NEVER see one; this sweep is what makes that true.
         EraseNullableGpAllStrings(o, isValue);
+    }
+
+    internal static void PreserveSourceFacts(JsonObject root, ValueTypeOracle isValue)
+    {
+        RecordNullableGenericSlots(root, isValue);
+        RecordSuspendFnShapes(root);
     }
 
     // Record the PRE-erasure TypeNode on every declaration slot carrying a `Nullable(Tv)`, at the head or nested.
