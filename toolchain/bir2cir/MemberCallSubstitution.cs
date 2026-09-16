@@ -209,6 +209,8 @@ static class MemberCallSubstitution
         public readonly Dictionary<string, TypeNode> VarTypes;
         public readonly Dictionary<string, List<TypeNode>> TpConstraints;
         public readonly HashSet<string> ProjectedCollectionVars;
+        public NullableRepresentationFrame OwnerFrame;
+        public NullableRepresentationFrame MethodFrame;
         public SubstCtx()
         {
             VarTypes = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
@@ -220,6 +222,8 @@ static class MemberCallSubstitution
             VarTypes = new Dictionary<string, TypeNode>(parent.VarTypes, StringComparer.Ordinal);
             TpConstraints = new Dictionary<string, List<TypeNode>>(parent.TpConstraints, StringComparer.Ordinal);
             ProjectedCollectionVars = new HashSet<string>(parent.ProjectedCollectionVars, StringComparer.Ordinal);
+            OwnerFrame = parent.OwnerFrame;
+            MethodFrame = parent.MethodFrame;
         }
         // A child scope extended with this declaration's params + generic-parameter constraints. Returns `this`
         // unchanged when the node introduces no bindings (so plain nodes don't allocate a scope).
@@ -242,6 +246,16 @@ static class MemberCallSubstitution
             var isDecl = ps != null && decl["body"] != null && decl["k"] == null;
             if ((ps == null || ps.Count == 0) && (tps == null || tps.Count == 0) && !isDecl) return this;
             var child = new SubstCtx(this);
+            if (decl["kind"]?.GetValue<string>() is "class" or "interface")
+            {
+                child.OwnerFrame = (decl[KotlinSupertypesRecord.PreKey] as JsonValue)?.GetValue<string>() is string facts
+                    && JsonNode.Parse(facts)?[NullableRepresentationFrame.MetadataKey] is JsonNode frame
+                    ? NullableRepresentationFrame.Read(frame) : null;
+                child.MethodFrame = null;
+            }
+            else if (ps != null && decl["k"] == null)
+                child.MethodFrame = (decl[NullableRepresentationTypes.MethodFrameKey] as JsonValue)?.GetValue<string>() is string frame
+                    ? NullableRepresentationFrame.Read(JsonNode.Parse(frame)) : null;
             if (ps != null)
                 foreach (var p in ps)
                     if (p is JsonObject po && (po["name"] as JsonValue)?.GetValue<string>() is string pn
@@ -2147,12 +2161,37 @@ static class MemberCallSubstitution
             ["args"] = hargs,
             ["typeArgs"] = new JsonArray { TypeJson.Write(k), TypeJson.Write(v) },
         };
+        BindAuthoredHelper(call, refs, ctx);
         // Carry the call's statically-known return (same rationale + `gp:` guard as Rule3HelperCall): a helper
         // returning the BARE map value param (`getOrDefault` -> V) reflects as the callee's own `!!1` at the call
         // site — boxing that out-of-scope token is invalid metadata -> BadImageFormatException at run (both the
         // Map- and MutableMap-typed receivers). `retType` lets ilemit box/convert the concrete instantiation.
         if (RetToken(node) is JsonNode ret && !IsTvType(ret)) call["ret"] = ret;
         return call;
+    }
+
+    static void BindAuthoredHelper(JsonObject call, ReferenceMetadataIndex refs, SubstCtx ctx)
+    {
+        var arguments = ((JsonArray)call["typeArgs"]).Select(TypeJson.Read).ToArray();
+        var helper = refs.AuthoredKotlinHelper(TypeJson.OwnerName(call["owner"]),
+            call["method"].GetValue<string>(), arguments.Length,
+            ((JsonArray)call["sig"]).Select(TypeJson.Read).ToArray());
+        TypeNode NullablePhysicalArgument(TypeNode argument)
+        {
+            if (argument is TypeNode.Tv variable)
+            {
+                var frame = variable.Scope == "type" ? ctx.OwnerFrame : ctx.MethodFrame;
+                if (frame == null) throw new InvalidOperationException("Compiler helper requires a missing caller nullable frame");
+                return frame.SemanticVariable(variable) is TypeNode.Nullable
+                    ? variable : frame.NullableVariable((TypeNode.Tv)frame.SemanticVariable(variable));
+            }
+            return NullableGenericErasure.EraseArgument(new TypeNode.Nullable(argument), _isValue);
+        }
+        var physicalArguments = helper.NullableFrame == null ? arguments
+            : helper.NullableFrame.Close(arguments, argument => argument, NullablePhysicalArgument);
+        call["typeArgs"] = new JsonArray(physicalArguments.Select(TypeJson.Write).ToArray());
+        call["sig"] = new JsonArray(helper.ParamTypeNodes.Select(TypeJson.Write).ToArray());
+        call[DeclarationIdentityBinding.Key] = helper.DeclarationId;
     }
 
     static JsonArray CollectionHelperSig(string owner, string method)
@@ -2225,7 +2264,7 @@ static class MemberCallSubstitution
             "clrMapMerge" => new TypeNode[]
             {
                 any, k, v,
-                new TypeNode.Fn(false, new TypeNode.Fqn("object"), new[] { v, v }, null, "System.Func"),
+                new TypeNode.Fn(false, new TypeNode.Nullable(v), new[] { v, v }, null, "System.Func"),
             },
             "clrMapPutAll" => new[] { any, any },
             "clrMapReplaceKVV" => new[] { any, k, v, v },

@@ -413,6 +413,26 @@ sealed partial class ReferenceMetadataIndex
             : null;
     public NullableRepresentationFrame NullableMethodFrame(string id) =>
         id != null && _declarationById.TryGetValue(id, out var binding) ? binding.NullableFrame : null;
+
+    internal MemberBinding AuthoredKotlinHelper(string owner, string name, int sourceArity,
+        IReadOnlyList<TypeNode> sourceParameters)
+    {
+        if (!TryMembersByBirOwner(owner, out var members))
+            throw new InvalidOperationException($"Compiler-authored helper owner '{owner}' is absent");
+        var matches = members.Where(member => member.IsStatic && member.DeclarationId != null
+            && (member.DeclarationSourceName ?? member.Name) == name
+            && (member.NullableFrame?.SourceArity ?? member.MethodArity) == sourceArity
+            && member.ParamCount == sourceParameters.Count).Where(member => {
+                var parameters = member.DeclarationSemanticParams ?? member.ParamTypeNodes;
+                return parameters != null && parameters.Select((parameter, index) =>
+                    SourceDeclarationDescribesCall(member.DeclarationSemanticParams == null
+                        ? member.NullableGenericParams?[index] ?? parameter : parameter,
+                        sourceParameters[index])).All(match => match);
+            }).ToArray();
+        if (matches.Length != 1)
+            throw new InvalidOperationException($"Compiler-authored helper '{owner}.{name}' has {matches.Length} exact source declarations");
+        return matches[0];
+    }
     public bool TryDeclarationFactory(
         string id,
         out string collectionKind,
