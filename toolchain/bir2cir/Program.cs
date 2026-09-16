@@ -333,6 +333,7 @@ sealed class Pipeline
         var appLocalFileClassMethods = InlineSplice.CollectAppLocalMethodNames(birFiles.Select(f => f.Root));
         var inlineDispatchHierarchy = InlineSplice.CollectDispatchHierarchy(birFiles.Select(f => f.Root));
         var genericDowncastHierarchy = GenericDowncastRealignment.Collect(birFiles.Select(f => f.Root));
+        var iterableHierarchy = SupertypeGraph.Collect(birFiles.Select(f => f.Root));
         // INLINE-BIR STASH (#71/#75 S1): after module-wide companion representation selection and before ordinary
         // per-file lowering, capture every `mods.inline` method's representation-selected BIR body into an OPAQUE
         // `inlineBir` base64 string (ilemit stamps it verbatim as the [KotlinInline] carrier) plus an in-memory
@@ -581,7 +582,7 @@ sealed class Pipeline
             // Only an `Iterable<T?>` slot, per position — that is the one slot the wrap's own `IEnumerable<object>`
             // inhabits. Read the materialized method frame's argument at the slot's exact index, rather than
             // expecting the source Nullable(Tv) spelling to survive physical frame allocation.
-            if (!_options.RefBuild) ValueElementIterableCoercion.Apply(bir.Root, isValueFqn);
+            if (!_options.RefBuild) ValueElementIterableCoercion.Apply(bir.Root, isValueFqn, iterableHierarchy, refs);
             // ARRAY-ELEMENT CANONICALIZATION (#86 D2): an `Array<X?>` with a possibly-value `X` is `object[]`, so an
             // array CREATION filling such a slot allocates `object[]` too. kotc writes the source's own element there
             // (`arrayOf(1,2,3)` into an `Array<Int?>` says `kotlin.Int`), which is not a `Nullable(...)` the erasure

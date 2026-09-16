@@ -45,30 +45,38 @@ static class ValueElementIterableCoercion
     static readonly TypeNode CastResultTn =
         new TypeNode.Fqn("System.Collections.Generic.IEnumerable", new TypeNode[] { new TypeNode.Fqn("object") });
 
-    public static void Apply(JsonNode root, ValueTypeOracle isValue)
+    public static void Apply(JsonNode root, ValueTypeOracle isValue,
+        Dictionary<string, SupertypeGraph.Def> definitions, ReferenceMetadataIndex refs)
     {
         _isValue = isValue ?? (_ => false);
-        Walk(root);
+        // Include classes materialized by inlining and closure synthesis after the module-wide collection.
+        foreach (var entry in SupertypeGraph.Collect(new[] { root })) definitions[entry.Key] = entry.Value;
+        Walk(root, definitions, refs);
     }
 
-    static void Walk(JsonNode node)
+    static void Walk(JsonNode node, IReadOnlyDictionary<string, SupertypeGraph.Def> definitions,
+        ReferenceMetadataIndex refs)
     {
         switch (node)
         {
             case JsonObject obj:
-                MaybeWrap(obj);
-                foreach (var kv in obj) Walk(kv.Value);
+                MaybeWrap(obj, definitions, refs);
+                foreach (var kv in obj) Walk(kv.Value, definitions, refs);
                 break;
             case JsonArray arr:
-                foreach (var it in arr) Walk(it);
+                foreach (var it in arr) Walk(it, definitions, refs);
                 break;
         }
     }
 
-    static void MaybeWrap(JsonObject call)
+    static void MaybeWrap(JsonObject call, IReadOnlyDictionary<string, SupertypeGraph.Def> definitions,
+        ReferenceMetadataIndex refs)
     {
         if ((call["k"] as JsonValue)?.TryGetValue<string>(out var k) != true || k != "callStatic") return;
-        if (call["sig"] is not JsonArray sig || call["args"] is not JsonArray args) return;   // sig is a structured TypeNode array (#37 m3b)
+        // Local calls carry sig; imported Kotlin calls carry the same selected declaration facts in shapeTypes
+        // until reference binding. Both have already been translated into the declaration's companion frame.
+        var sig = call["sig"] as JsonArray ?? call["shapeTypes"] as JsonArray;
+        if (sig == null || call["args"] is not JsonArray args) return;
         if (sig.Count != args.Count) return;
         for (var i = 0; i < sig.Count; i++)
         {
@@ -82,14 +90,19 @@ static class ValueElementIterableCoercion
             }
             target = NullableGenericErasure.EraseArgument(target, _isValue);
             if (args[i] is not JsonObject argument
-                || TypeJson.Read(argument["sty"]) is not TypeNode.Fqn { Args: { Length: 1 } sourceArgs } source
-                || source.Name is not ("kotlin.collections.Iterable" or "kotlin.collections.Collection"
-                    or "kotlin.collections.List" or "kotlin.collections.Set"
-                    or "kotlin.collections.MutableIterable" or "kotlin.collections.MutableCollection"
-                    or "kotlin.collections.MutableList" or "kotlin.collections.MutableSet"
-                    or "kotlin.collections.ArrayList" or "kotlin.collections.HashSet"
-                    or "kotlin.collections.LinkedHashSet")) continue;
-            var sourceElement = NullableGenericErasure.EraseArgument(sourceArgs[0], _isValue);
+                || NodeType.Of(argument) is not TypeNode.Fqn source) continue;
+            // The iterable element belongs to the reached interface, not to an arbitrary first type argument
+            // on the operand. This also covers non-generic ranges and inherited user-defined implementations.
+            var application = new SupertypeGraph.Def { Base = source };
+            var elements = SupertypeGraph.Reachable(application, definitions, refs)
+                .Select(edge => edge.spec)
+                .Where(spec => spec.Name is IterableFqn or "System.Collections.Generic.IEnumerable"
+                        or "System.Collections.Generic.IEnumerable`1"
+                    && spec.Args is { Length: 1 })
+                .Select(spec => NullableGenericErasure.EraseArgument(spec.Args[0], _isValue))
+                .Distinct().ToArray();
+            if (elements.Length != 1) continue;
+            var sourceElement = elements[0];
             if (sourceElement == target
                 || !(sourceElement is TypeNode.Tv || sourceElement is TypeNode.Fqn value && _isValue(value))) continue;
             // Idempotence: never re-wrap an already-cast argument.
