@@ -59,6 +59,16 @@ class HarnessTests(unittest.TestCase):
     def test_clean(self):
         self.run_probe(self.complete(), 0, 0)
 
+    def test_clean_footer_with_diagnostic_text_in_filename(self):
+        self.dll = self.work / "Error [name].dll"
+        self.dll.touch()
+        self.run_probe(self.complete(), 0, 0)
+
+    def test_findings_footer_with_diagnostic_text_in_filename(self):
+        self.dll = self.work / "Error [name].dll"
+        self.dll.touch()
+        self.run_probe(self.complete([self.finding()]), 2, 0)
+
     def test_crash_without_findings(self):
         out = self.run_probe("Unhandled exception. System.NullReferenceException", 1, 1)
         self.assertIn("NullReferenceException", out)

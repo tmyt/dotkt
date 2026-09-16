@@ -107,7 +107,7 @@ for dll in "${DLLS[@]}"; do
 	dll="$(cd "$bindir" && pwd)/$(basename "$dll")"
 	verifier_status=0
 	out="$(dotnet "$ILV" "$dll" -r "$RTDIR/*.dll" -r "$bindir/*.dll" 2>&1)" || verifier_status=$?
-	mapfile -t findings < <(grep -E '^\[(IL|MD)\]: Error|Error \[' <<<"$out" || true)
+	mapfile -t findings < <(grep -E '^(\[(IL|MD)\]: Error|Error \[)' <<<"$out" || true)
 	# ILVerify returns 2 for a completed run with findings, 0 for a clean run. Exceptions and
 	# invocation failures must not become baseline allowances, even after some findings were printed.
 	# The footer is emitted only after both method and type verification. Matching its count also
