@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Kotlin interface variance preserves value-type conversions (#759, #760).** Ordinary generic calls and projected
+  array callbacks use the interface's nominal carrier, preserving Kotlin covariance and contravariance across
+  primitive and reference instantiations without changing exact interface implementation edges.
+
 - **Ordinary declaration nullability follows the CLR generic shape (#740).** Removed generic arguments
   no longer shift the nullable annotations on subsequent return, parameter, field, and property positions.
 

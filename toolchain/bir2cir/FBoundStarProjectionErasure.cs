@@ -373,7 +373,7 @@ static class FBoundStarProjectionErasure
                             type, owners, refs, childBoundDeclaration, localClrAliases,
                             preserveConstructedHead: Str(obj["k"]) == "new" && key == "type"
                                 || IsTypeDefinition(obj) && key == "base"
-                                || IsBaseMethodImplDescriptor(obj) && key == "owner"));
+                                || IsMethodImplDescriptor(obj) && key == "owner"));
                     else
                         RewriteTypesOnly(value, owners, defs, refs, localClrAliases, childBoundDeclaration);
                 }
@@ -385,7 +385,8 @@ static class FBoundStarProjectionErasure
                     if (value == null) continue;
                     if (TypeJson.Read(value) is TypeNode type)
                         arr[i] = TypeJson.Write(RewriteType(
-                            type, owners, refs, boundDeclaration, localClrAliases));
+                            type, owners, refs, boundDeclaration, localClrAliases,
+                            preserveConstructedHead: IsInterfaceDeclarationList(arr)));
                     else
                         RewriteTypesOnly(value, owners, defs, refs, localClrAliases, boundDeclaration);
                 }
@@ -422,10 +423,15 @@ static class FBoundStarProjectionErasure
     static bool IsTypeDefinition(JsonObject node) =>
         Str(node["kind"]) is "class" or "interface" or "enum" or "struct" or "delegate";
 
-    // A base MethodImpl names a declaration on the exact inheritance edge, not an ordinary Kotlin value slot.
-    static bool IsBaseMethodImplDescriptor(JsonObject node) =>
+    static bool IsInterfaceDeclarationList(JsonArray entries) =>
+        entries.Parent is JsonObject definition && IsTypeDefinition(definition)
+            && ReferenceEquals(definition["interfaces"], entries);
+
+    // A MethodImpl names a declaration on the exact inheritance edge, not an ordinary Kotlin value slot.
+    static bool IsMethodImplDescriptor(JsonObject node) =>
         node.Parent is JsonArray entries && entries.Parent is JsonObject method
-            && ReferenceEquals(method["clrBaseImpls"], entries);
+            && (ReferenceEquals(method["clrBaseImpls"], entries)
+                || ReferenceEquals(method["clrInterfaceImpls"], entries));
 
     static bool IsInnerConstructionOuterSlot(JsonObject node, int index,
         IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs)
@@ -704,28 +710,28 @@ static class FBoundStarProjectionErasure
         if (declaration[fact] != null || TypeJson.Read(declaration[slot]) is not TypeNode type
             || (!ContainsExistentialProjection(type)
                 && !ContainsWritableVariantArray(type, owners, refs)
-                && !ContainsKotlinVariantClass(type, owners, refs)))
+                && !ContainsKotlinVariantType(type, owners, refs)))
             return;
         declaration[fact] = TypeNode.ToJson(type);
     }
 
-    static bool ContainsKotlinVariantClass(TypeNode type,
+    static bool ContainsKotlinVariantType(TypeNode type,
         IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs) => type switch
     {
-        TypeNode.Fqn f => RequiresKotlinVariantClassCarrier(f, owners, refs)
-            || f.Args?.Any(argument => ContainsKotlinVariantClass(argument, owners, refs)) == true,
-        TypeNode.Nullable nullable => ContainsKotlinVariantClass(nullable.Of, owners, refs),
-        TypeNode.Oblivious oblivious => ContainsKotlinVariantClass(oblivious.Of, owners, refs),
-        TypeNode.Projection projection => ContainsKotlinVariantClass(projection.Of, owners, refs),
-        TypeNode.Array array => ContainsKotlinVariantClass(array.Elem, owners, refs),
-        TypeNode.ByRef byRef => ContainsKotlinVariantClass(byRef.Of, owners, refs),
-        TypeNode.Ptr pointer => ContainsKotlinVariantClass(pointer.Of, owners, refs),
-        TypeNode.Mod modifier => ContainsKotlinVariantClass(modifier.M, owners, refs)
-            || ContainsKotlinVariantClass(modifier.Of, owners, refs),
-        TypeNode.Fn function => ContainsKotlinVariantClass(function.Ret, owners, refs)
-            || function.Params.Any(parameter => ContainsKotlinVariantClass(parameter, owners, refs))
-            || function.Recv != null && ContainsKotlinVariantClass(function.Recv, owners, refs)
-            || function.Ctx?.Any(context => ContainsKotlinVariantClass(context, owners, refs)) == true,
+        TypeNode.Fqn f => RequiresKotlinVariantCarrier(f, owners, refs)
+            || f.Args?.Any(argument => ContainsKotlinVariantType(argument, owners, refs)) == true,
+        TypeNode.Nullable nullable => ContainsKotlinVariantType(nullable.Of, owners, refs),
+        TypeNode.Oblivious oblivious => ContainsKotlinVariantType(oblivious.Of, owners, refs),
+        TypeNode.Projection projection => ContainsKotlinVariantType(projection.Of, owners, refs),
+        TypeNode.Array array => ContainsKotlinVariantType(array.Elem, owners, refs),
+        TypeNode.ByRef byRef => ContainsKotlinVariantType(byRef.Of, owners, refs),
+        TypeNode.Ptr pointer => ContainsKotlinVariantType(pointer.Of, owners, refs),
+        TypeNode.Mod modifier => ContainsKotlinVariantType(modifier.M, owners, refs)
+            || ContainsKotlinVariantType(modifier.Of, owners, refs),
+        TypeNode.Fn function => ContainsKotlinVariantType(function.Ret, owners, refs)
+            || function.Params.Any(parameter => ContainsKotlinVariantType(parameter, owners, refs))
+            || function.Recv != null && ContainsKotlinVariantType(function.Recv, owners, refs)
+            || function.Ctx?.Any(context => ContainsKotlinVariantType(context, owners, refs)) == true,
         _ => false,
     };
 
@@ -1303,18 +1309,18 @@ static class FBoundStarProjectionErasure
         return HasKotlinVariantParameter(application, refs.OwnerTypeParamDeclarations(application.Name));
     }
 
-    // CLR permits declaration-site variance only on interfaces and delegates. A Kotlin class may nevertheless declare
-    // `out`/`in`, and source typing then permits closed constructions to flow through a wider/narrower value slot that
-    // has no corresponding CLR class conversion. Every closed construction already implements the declaration's
+    // CLR variance does not relate value-type instantiations, even for an interface. Kotlin permits those same
+    // subtype conversions for both classes and interfaces. Every closed construction implements the declaration's
     // non-generic existential interface, so use that interface as the physical value-slot contract while retaining the
     // authored construction in [KotlinType]. Constructors and inheritance edges remain exact closed class types.
-    static bool RequiresKotlinVariantClassCarrier(TypeNode.Fqn application,
+    static bool RequiresKotlinVariantCarrier(TypeNode.Fqn application,
         IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs)
     {
         if (application.Args is not { Length: > 0 }) return false;
         if (owners.TryGetValue(application.Name, out var local) && local.Def != null)
-            return Str(local.Def["kind"]) == "class"
+            return Str(local.Def["kind"]) is "class" or "interface"
                 && HasKotlinVariantParameter(application, local.Def["typeParams"] as JsonArray);
+        if (!refs.HasDotKtOwner(application.Name)) return false;
         if (!HasKotlinVariantParameter(
                 application, refs.OwnerTypeParamDeclarations(application.Name))) return false;
         var arity = application.Args.Length;
@@ -1322,7 +1328,7 @@ static class FBoundStarProjectionErasure
             && exact != null ? exact : application.Name;
         var reflected = refs.ResolveRefType(physicalOwner,
             physicalOwner.Contains('`') || physicalOwner.Contains('+') ? 0 : arity);
-        return reflected != null && !reflected.IsValueType && !reflected.IsInterface
+        return reflected != null && !reflected.IsValueType
             && !typeof(MulticastDelegate).IsAssignableFrom(reflected);
     }
 
@@ -1351,7 +1357,7 @@ static class FBoundStarProjectionErasure
             case TypeNode.Fqn { Args: { } args } f:
                 if (owners.TryGetValue(f.Name, out var owner)
                     && (runtimeClassifier || args.Any(IsExistentialArgument)
-                        || Str(owner.Def?["kind"]) == "class"
+                        || Str(owner.Def?["kind"]) is "class" or "interface"
                             && HasKotlinVariantParameter(f, owner.Def?["typeParams"] as JsonArray)))
                     owner.Needed = true;
                 foreach (var a in args) MarkNeededType(a, owners, false);
@@ -2525,7 +2531,7 @@ static class FBoundStarProjectionErasure
                             type, owners, refs, childBoundDeclaration, localClrAliases,
                             preserveConstructedHead: Str(obj["k"]) == "new" && key == "type"
                                 || IsTypeDefinition(obj) && key == "base"
-                                || IsBaseMethodImplDescriptor(obj) && key == "owner"));
+                                || IsMethodImplDescriptor(obj) && key == "owner"));
                     else
                         Rewrite(value, owners, defs, refs,
                             childTypeParameters, childMethodParameters,
@@ -2554,7 +2560,8 @@ static class FBoundStarProjectionErasure
                     if (value == null) continue;
                     if (TypeJson.Read(value) is TypeNode type)
                         arr[i] = TypeJson.Write(RewriteType(
-                            type, owners, refs, boundDeclaration, localClrAliases));
+                            type, owners, refs, boundDeclaration, localClrAliases,
+                            preserveConstructedHead: IsInterfaceDeclarationList(arr)));
                     else
                         Rewrite(value, owners, defs, refs,
                             existentialTypeParameters, existentialMethodParameters,
@@ -3125,7 +3132,7 @@ static class FBoundStarProjectionErasure
         // Constructing an inner class through an ordinary value slot must therefore use the carrier's generated
         // factory too: casting G$star back to one guessed G<X> would fail for a value widened from G<Y>. A lexical
         // receiver and a direct construction retain their exact closed owner and stay on the ordinary `new` path.
-        var variantOuter = !exactOuterValue && RequiresKotlinVariantClassCarrier(selectedOuter, owners, refs);
+        var variantOuter = !exactOuterValue && RequiresKotlinVariantCarrier(selectedOuter, owners, refs);
         if (!variantOuter && (suppliedOuter == null || !ContainsExistential(suppliedOuter,
                 existentialTypeParameters, existentialMethodParameters))) return;
 
@@ -3745,8 +3752,8 @@ static class FBoundStarProjectionErasure
         // implementation-side dispatch on its source MethodDef; only value-slot receivers need the existential ABI.
         var lexicalReceiver = call["recv"] is JsonObject receiver
             && (Str(receiver["k"]) == "this" || Bool(receiver[ExactOuterKey]));
-        var kotlinVariantClassOwner = !lexicalReceiver
-            && RequiresKotlinVariantClassCarrier(f, owners, refs);
+        var kotlinVariantOwner = !lexicalReceiver
+            && RequiresKotlinVariantCarrier(f, owners, refs);
         var erasedSmartCast = call["recv"] is JsonObject recv && Str(recv["k"]) == "cast"
             && TypeJson.Read(recv["type"]) is TypeNode.Fqn { Args: { } castArgs } castF
             && castF.Name == f.Name
@@ -3755,7 +3762,7 @@ static class FBoundStarProjectionErasure
             || ExpressionType(call["recv"]) is TypeNode.Fqn receiverType
                 && (owners.Values.Any(owner => owner.ErasedName == receiverType.Name)
                     || refs.IsExistentialPhysicalOwner(receiverType.Name));
-        if (!starOwner && !erasedSmartCast && !existentialReceiver && !kotlinVariantClassOwner) return;
+        if (!starOwner && !erasedSmartCast && !existentialReceiver && !kotlinVariantOwner) return;
 
         var pc = (call["sig"] as JsonArray)?.Count
             ?? (call["argTypes"] as JsonArray)?.Count
@@ -4225,9 +4232,9 @@ static class FBoundStarProjectionErasure
             case TypeNode.Fqn preserved when preserveConstructedHead:
                 return preserved;
             case TypeNode.Fqn f when !boundDeclaration
-                && RequiresKotlinVariantClassCarrier(f, owners, refs)
-                && TryExistentialCarrier(f.Name, owners, refs, out var variantClassCarrier):
-                return new TypeNode.Fqn(variantClassCarrier);
+                && RequiresKotlinVariantCarrier(f, owners, refs)
+                && TryExistentialCarrier(f.Name, owners, refs, out var variantCarrier):
+                return new TypeNode.Fqn(variantCarrier);
             case TypeNode.Fqn { Args: { } nestedArgs } nestedForeign
                 when !boundDeclaration && nestedArgs.Any(ContainsExistentialProjection)
                     && IsOpaqueForeignProjection(nestedForeign, refs, localClrAliases):

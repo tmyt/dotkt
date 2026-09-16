@@ -86,10 +86,12 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   arbitrary arity and mixed masks such as `Pair<*, String>`, and is hidden when the DLL is re-imported. Trusted
   `[KotlinType]` metadata records the semantic owner and projected declaration types; the carrier's allocated CLR
   name has no meaning and is chosen collision-free.
-- **Declaration-site variance on a Kotlin class uses the same nominal existential value representation.** CLR classes
-  are invariant even when Kotlin declares `class G<out T>` or `class G<in T>`, so every ordinary parameter, return,
+- **Declaration-site variance on a Kotlin class or interface uses the same nominal existential value representation.**
+  CLR classes are invariant, and CLR interface variance does not relate value-type instantiations. Kotlin permits
+  both conversions, so every ordinary parameter, return,
   field, property, local, and nested value position carrying `G<X>` uses the declaration's non-generic existential
-  interface. Construction and inheritance remain exact closed CLR types: a `new G<String>`, a base TypeSpec, lexical
+  interface. External CLR declarations retain their CLR contract. Construction and inheritance remain exact closed
+  CLR types: a `new G<String>`, a base or implemented-interface TypeSpec, lexical
   `this`, an inner class's hidden enclosing-instance slot, and compiler-generated storage for that receiver retain
   `G<T>`. kotc identifies the lexical-receiver role structurally in transient BIR; bir2cir consumes it while choosing
   the CLR representation and removes it before CIR. No generated or user source name is treated as an ABI oracle.
