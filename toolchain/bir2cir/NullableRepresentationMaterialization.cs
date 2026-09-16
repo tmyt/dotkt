@@ -328,6 +328,17 @@ static class NullableRepresentationMaterialization
                         if (kind == "newSuspendLambda" && obj["typeParamDecls"] is JsonArray declarations)
                             declarations.Add(name);
                     }
+                    if (kind is "newSam" or "newClosure")
+                    {
+                        // The payload's untouched override edges remain source vocabulary. Record the same
+                        // capture-to-companion correspondence that constructs the synthetic CLR owner, so later
+                        // slot resolution can translate those edges without reconstructing it from field names.
+                        var captureFrame = new NullableRepresentationFrame(captures.Length,
+                            nullableCaptures.Select(variable => Array.IndexOf(captures, variable)).ToArray());
+                        KotlinSupertypesRecord.Merge(synthetic, new JsonObject {
+                            [NullableRepresentationFrame.MetadataKey] = captureFrame.ToJson(),
+                        });
+                    }
                 }
             }
             if (kind != null && Text(obj[DeclarationIdentityBinding.Key]) is string id
@@ -600,6 +611,10 @@ static class NullableRepresentationMaterialization
             || TypeJson.Read(rawSam["synthClass"]["interfaces"][0]) !=
                 new TypeNode.Fqn("Comparator", new TypeNode[] { new TypeNode.Tv("method", 1) }))
             throw new InvalidOperationException("Synthetic payload companion is absent from its capture correspondence");
+        var samFrame = KotlinSupertypesRecord.ReadNullableFrame(rawSam["synthClass"].AsObject());
+        if (samFrame == null || samFrame.SourceArity != 1
+            || samFrame.NullableVariable(new TypeNode.Tv("type", 0)) != new TypeNode.Tv("type", 1))
+            throw new InvalidOperationException("Synthetic owner lost its declaration-owned nullable frame");
         if ((int)inherited["implementation"]["arity"] != 2
             || ((JsonArray)inherited["implementation"]["typeParams"]).Count != 2
             || TypeJson.Read(inherited["ret"]) != TypeJson.Read(defaultMember["ret"])

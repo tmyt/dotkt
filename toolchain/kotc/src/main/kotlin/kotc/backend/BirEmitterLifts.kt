@@ -446,7 +446,14 @@ internal fun BirEmitter.samConversion(node: IrTypeOperatorCall): String {
 	// slot — a declaration carrying the modifier without it has had its result type dropped, which cost the suspend
 	// SAM's awaited values their type. Same value as `ret` here, since `ret` is the lambda's own Kotlin return type.
 	val samMods = if (sam.isSuspend) ""","mods":{"suspend":true},"suspendRet":${str(ret)}""" else ""
-	val samMethod = """{"name":${str(samName)},"static":false,"override":true,"virtual":true,"params":[$samParams],"ret":${str(ret)}$samMods,"body":[$body]}"""
+	// Preserve a projected CLR classifier's exact TypeDef identity, including nested owners and arity collisions.
+	// The CLR realization of the SAM is still decided by bir2cir.
+	val ifaceSpec = if (isExternalNetType(ifaceClass)) birType(funIface)
+		else ownerSpec(ifaceClass, funIface) ?: birType(funIface)
+	// A SAM body implements the selected Kotlin declaration just like an authored override. Preserve that
+	// relation independently of its substituted signature; bir2cir owns any physical slot adaptation.
+	val samOverride = ""","overrides":[{"owner":${str(ifaceSpec)},"member":${str(samName)},"kind":"method","arity":${emittedParamCount(sam)}${declarationIdField(sam)}}]"""
+	val samMethod = """{"name":${str(samName)},"static":false,"override":true,"virtual":true,"params":[$samParams],"ret":${str(ret)}$samMods$samOverride,"body":[$body]}"""
 	savedSubst.forEach { (decl, prev) -> if (prev != null) captureSubst[decl] = prev else captureSubst.remove(decl) }
 	val fields = capPairs.joinToString(",") { (decl, fname) ->
 		val outer = if (isExactOuterDeclaration(decl)) ""","outer":true""" else ""
@@ -456,13 +463,6 @@ internal fun BirEmitter.samConversion(node: IrTypeOperatorCall): String {
 		val outer = if (isExactOuterDeclaration(decl)) ""","outer":true""" else ""
 		"""{"k":"setField","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":${str(fname)},"value":{"k":"local","name":${str(fname)}$outer}$outer}"""
 	}
-	// A projected CLR classifier carries its exact current-format [ClrExternal] TypeDef identity through birType.
-	// ownerSpec is the semantic owner spelling used for ordinary Kotlin member lookup; using it here would leave an
-	// arity-collision name (Foo1<T>) or flattened nested name inside the synthesized declaration, where bir2cir has no
-	// declaration annotation from which to recover Foo`1 / Outer+Foo. This remains a transported frontend fact: the
-	// CLR realization of the SAM is decided by bir2cir.
-	val ifaceSpec = if (isExternalNetType(ifaceClass)) birType(funIface)
-		else ownerSpec(ifaceClass, funIface) ?: birType(funIface)
 	val freeTps = freeTypeParams(listOf(funIface) + capPairs.map { it.first.type } + fn.parameters.map { it.type } + listOf(fn.returnType) + bodyTypeOperands(fn))
 	// #52/#75: the SAM shim class travels as a `synthClass` FACT ON the `newSam` node — NOT `liftedTypes.add`'d as a
 	// sibling type. A sibling type stays in the ORIGIN file; when this `newSam` rides in an inline fn's [KotlinInline]

@@ -1461,8 +1461,15 @@ static class KotlinOverrideSlotBridge
             // `Any?`/`Any` reach the same bare `object` the slot is, one lowering later — a bridge for them would
             // declare a second member with the identical CLR signature.
             return LowersToObject(declared) ? Fit.Same : Fit.Bridge;
+        // Substitution into an interface's bare T can select a nullable companion variable, whereas the
+        // overriding body's scalar T? is object-erased. The selected override relation licenses an outer
+        // box/unbox bridge; it does not license rewriting invariant constructions containing either type.
+        if (IsCompanionScalarSeam(slot, declared)) return Fit.Bridge;
         return ErasureAligned(slot, declared) ? Fit.Rewrite : Fit.Foreign;
     }
+
+    static bool IsCompanionScalarSeam(TypeNode slot, TypeNode declared) =>
+        slot is TypeNode.Tv && IsBareObject(declared);
 
     static bool IsNullableValueSlot(TypeNode slot, TypeNode declared, ReferenceMetadataIndex refs,
         ValueTypeOracle isValue, bool returnPosition) =>
@@ -1482,7 +1489,8 @@ static class KotlinOverrideSlotBridge
     // belongs to this pass, whose bridge forwards VIRTUALLY (so a further-derived override is what runs) where the
     // covariant one deliberately does not.
     public static bool IsErasureDivergence(TypeNode slot, TypeNode declared) =>
-        slot != null && declared != null && !slot.Equals(declared) && ErasureAligned(slot, declared);
+        slot != null && declared != null && !slot.Equals(declared)
+        && (ErasureAligned(slot, declared) || IsCompanionScalarSeam(slot, declared));
 
     // True iff `slot` is `declared` with a bare `object` at some positions and nothing else changed — i.e. the two
     // differ ONLY where the base declaration was object-erased. Every other divergence, at any depth, says the slot
@@ -1570,7 +1578,9 @@ static class KotlinOverrideSlotBridge
             for (var i = 0; i < ps.Count && ok; i++)
             {
                 var t = TypeJson.Read((ps[i] as JsonObject)?["type"]);
-                ok = t != null && ErasureAligned(slotParams[i], SupertypeGraph.SubstOwnerTvs(t, ownArgs));
+                var declared = t == null ? null : SupertypeGraph.SubstOwnerTvs(t, ownArgs);
+                ok = declared != null && (ErasureAligned(slotParams[i], declared)
+                    || IsCompanionScalarSeam(slotParams[i], declared));
             }
             if (!ok) continue;
             if (found != null) return null;   // ambiguous overload set: never guess which declaration owns the slot
