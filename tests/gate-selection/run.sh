@@ -44,12 +44,28 @@ assert_suites shared-ilverify tests/run-ilverify.sh "$verifier_suites"
 mixed_suites="$(suite_line tests/run-ilverify.sh tests/basic/fixtures/SomeTest.kt tests/packaged-sdk/run.sh)"
 [[ "$mixed_suites" == "$verifier_suites" ]] || die "overlapping verifier consumers were duplicated: '$mixed_suites'"
 assert_suites dll2klib-test tests/special/dll2klib-e2e/run.sh "$FULL_SUITES"
+assert_suites schema-consumers scripts/verify-schema.py 'schema dll2klib'
+assert_suites schema-contract docs/bir-cir.schema.json 'schema dll2klib'
+
+make_plan() {
+	make --no-print-directory -n -C "$ROOT" -o toolchain -o stdlib -o pack -o bir2cir -o stdlib-ref "$@"
+}
+test_commands() { sed -nE '/^(bash|python3) tests\//p' | LC_ALL=C sort; }
+read -r -a full_targets <<<"$(bash "$ROOT/scripts/gate.sh" --dry-run --full | sed -n 's/^make targets to run: //p')"
+canonical_commands="$(make_plan verify-core | test_commands)"
+selected_commands="$(make_plan "${full_targets[@]}" | test_commands)"
+[[ -n "$canonical_commands" && "$canonical_commands" == "$selected_commands" ]] ||
+	die "FULL test-command multiset differs from canonical Make composition"
+mapfile -t ci_targets < <(sed -nE 's/^[[:space:]]*target: (verify-[[:alnum:]-]+)$/\1/p' "$ROOT/.github/workflows/verify.yml")
+(( ${#ci_targets[@]} )) || die "no CI shard targets found"
+ci_commands="$(make_plan "${ci_targets[@]}" | test_commands)"
+[[ "$canonical_commands" == "$ci_commands" ]] || die "CI shard test-command multiset differs from canonical core"
 
 # Inspect real Make composition without running tool builds or tests. The standalone E2E target
 # belongs to integration, so both local canonical entry points and that CI shard must reach it once.
 # The other CI shards must not execute a second copy.
-for target in verify verify-core verify-integration verify-test-corpus verify-compile-fail verify-lowering verify-packaged-sdk; do
-	plan="$(make --no-print-directory -n -C "$ROOT" -o toolchain -o stdlib -o pack -o bir2cir -o stdlib-ref "$target")"
+for target in verify verify-core "${ci_targets[@]}" verify-packaged-sdk; do
+	plan="$(make_plan "$target")"
 	count="$(grep -Fxc 'bash tests/special/dll2klib-e2e/run.sh' <<<"$plan" || true)"
 	case "$target" in verify|verify-core|verify-integration) expected_count=1 ;; *) expected_count=0 ;; esac
 	[[ "$count" == "$expected_count" ]] || die "$target: expected $expected_count DLL-to-KLIB E2E invocation(s), got $count"

@@ -108,13 +108,13 @@ classify() { # <path>
 			NEED_FULL=1; want packagedsdk; reason "$p -> FULL + verify-packaged-sdk (release/package input)" ;;
 		# ---- docs / changelog -------------------------------------------------------------------
 		docs/bir-cir-spec.md|docs/bir-cir.schema.json|docs/architecture.md)
-			want schema; reason "$p -> verify-schema (BIR/CIR schema doc)" ;;
+			want schema; want dll2klib; reason "$p -> schema consumers (corpus and fresh DLL-to-KLIB E2E)" ;;
 		*.md|docs/*|CHANGELOG*)
 			reason "$p -> (no gate: docs)" ;;
 		# ---- shared build/validation scripts ------------------------------------------------------
 		scripts/gate.sh)
 			want gate_selection; reason "$p -> verify-gate-selection" ;;
-		scripts/verify-schema.py) want schema; reason "$p -> verify-schema" ;;
+		scripts/verify-schema.py) want schema; want dll2klib; reason "$p -> schema consumers (corpus and fresh DLL-to-KLIB E2E)" ;;
 		scripts/verify-sanity.py) want sanity; reason "$p -> verify-sanity" ;;
 		scripts/pack-nuget.sh)
 			NEED_FULL=1; want packagedsdk; reason "$p -> FULL + verify-packaged-sdk (package assembly)" ;;
@@ -202,6 +202,9 @@ printf '  %s\n' "${REASONS[@]}"
 echo "clean stdlib rebuild: $( ((CLEAN)) && echo YES || echo no )"
 if (( ${#selected[@]} )); then
 	echo "suites to run: ${selected[*]}"
+	targets=()
+	for s in "${selected[@]}"; do targets+=("${SUITE_TARGET[$s]}"); done
+	echo "make targets to run: ${targets[*]}"
 else
 	echo "suites to run: (none)"
 fi

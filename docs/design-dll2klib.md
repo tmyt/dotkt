@@ -551,6 +551,9 @@ make dll2klib-e2e
 This target also runs once through `make verify-integration`, including the CI
 integration shard and the canonical `make verify` gate. It does not need a
 separate invocation after a successful canonical gate.
+The E2E gate validates its freshly emitted BIR/CIR and property-accessor identity
+before reporting success; the earlier corpus-schema shard does not consume stale
+E2E output from a previous run.
 
 It verifies:
 
