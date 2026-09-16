@@ -39,6 +39,7 @@ static class FBoundStarProjectionErasure
         public JsonObject Root;
         public int Arity;
         public bool Needed;
+        public readonly Dictionary<JsonObject, JsonObject> Slots = new();
     }
 
     public static IReadOnlyDictionary<string, string> ApplyAll(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs)
@@ -373,7 +374,7 @@ static class FBoundStarProjectionErasure
                             type, owners, refs, childBoundDeclaration, localClrAliases,
                             preserveConstructedHead: Str(obj["k"]) == "new" && key == "type"
                                 || IsTypeDefinition(obj) && key == "base"
-                                || IsMethodImplDescriptor(obj) && key == "owner"));
+                                || IsDeclarationOwnerDescriptor(obj) && key == "owner"));
                     else
                         RewriteTypesOnly(value, owners, defs, refs, localClrAliases, childBoundDeclaration);
                 }
@@ -427,11 +428,12 @@ static class FBoundStarProjectionErasure
         entries.Parent is JsonObject definition && IsTypeDefinition(definition)
             && ReferenceEquals(definition["interfaces"], entries);
 
-    // A MethodImpl names a declaration on the exact inheritance edge, not an ordinary Kotlin value slot.
-    static bool IsMethodImplDescriptor(JsonObject node) =>
+    // Override facts and MethodImpls name declarations on exact inheritance edges, not Kotlin value slots.
+    static bool IsDeclarationOwnerDescriptor(JsonObject node) =>
         node.Parent is JsonArray entries && entries.Parent is JsonObject method
             && (ReferenceEquals(method["clrBaseImpls"], entries)
-                || ReferenceEquals(method["clrInterfaceImpls"], entries));
+                || ReferenceEquals(method["clrInterfaceImpls"], entries)
+                || ReferenceEquals(method["overrides"], entries));
 
     static bool IsInnerConstructionOuterSlot(JsonObject node, int index,
         IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs)
@@ -1426,6 +1428,7 @@ static class FBoundStarProjectionErasure
                 var dependent = ContainsOwnerTvInSignature(method) || !IsPublic(method);
                 var slot = InterfaceSlot(method, dependent ? StarMethodName(owner, method) : null,
                     owner.Name, owners, refs);
+                owner.Slots[method] = slot;
                 var key = MethodKey(slot);
                 if (key == null || !seen.Add(key)) continue;
                 methods.Add(slot);
@@ -2531,7 +2534,7 @@ static class FBoundStarProjectionErasure
                             type, owners, refs, childBoundDeclaration, localClrAliases,
                             preserveConstructedHead: Str(obj["k"]) == "new" && key == "type"
                                 || IsTypeDefinition(obj) && key == "base"
-                                || IsMethodImplDescriptor(obj) && key == "owner"));
+                                || IsDeclarationOwnerDescriptor(obj) && key == "owner"));
                     else
                         Rewrite(value, owners, defs, refs,
                             childTypeParameters, childMethodParameters,
@@ -3779,8 +3782,11 @@ static class FBoundStarProjectionErasure
             CloseDeclarationResult(TypeJson.Read(declaration["ret"]));
             BindOwner(declaring.ErasedName);
             call["virtual"] = true; // erased owner is an interface; CIR must carry callvirt explicitly
-            if (ContainsOwnerTvInSignature(declaration) || !IsPublic(declaration))
-                call["method"] = StarMethodName(declaring, declaration);
+            // Declaration types may already have moved to carriers during this walk. Do not recompute whether
+            // the original signature depended on its owner: consume the slot allocated during synthesis.
+            var allocatedSlot = declaring.Slots[declaration];
+            call["method"] = Str(allocatedSlot[DeclarationIdentityBinding.ExplicitNameKey])
+                ?? Str(allocatedSlot["name"]);
             call["sig"] = ErasedPhysicalSignature(declaration, owners, refs);
             MarkPhysicalPropertyCall(call, propertyCall, sourcePropertyName, accessorKind,
                 ExistentialSlotIdentity(declaration, declaring.Name));
