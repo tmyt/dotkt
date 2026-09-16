@@ -16,6 +16,20 @@ fun sameModule(value: Box<String?>): Box<String?> = StringExchange().exchange(va
 fun <T> exchangeIdentity(value: Exchange<T>): Exchange<T> = value
 fun <A, B, C> exchangeThroughExtraFrame(value: Exchange<C>): Exchange<C> = exchangeIdentity<C>(value)
 fun <T> nullableIdentity(value: Box<T?>): Box<T?> = value
+fun <T> nullableLocalIdentity(value: Box<T?>): Box<T?> {
+    fun local(input: Box<T?>): Box<T?> = input
+    return local(value)
+}
+
+class NullableLocalOwner<T> {
+    fun <U> choose(first: Box<T?>, second: Box<U?>): Box<U?> {
+        fun local(input: Box<U?>): Box<U?> {
+            first.value = first.value
+            return input
+        }
+        return local(second)
+    }
+}
 fun <T> identity(value: Box<T>): Box<T> = value
 fun <T> create(value: T?): Box<T?> = Box<T?>(value)
 fun <T> replace(box: Box<T?>, value: T?) { box.value = value }

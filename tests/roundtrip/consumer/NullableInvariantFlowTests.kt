@@ -230,6 +230,14 @@ class NullableInvariantFlowTests {
 
     @TestAttribute
     fun ordinaryInvariantValuesRetainTypedReadsAndWrites() {
+        val localStrings = create<String>("local")
+        val localIntegers = create<Int>(42)
+        assertTrue(nullableLocalIdentity(localStrings) === localStrings)
+        assertTrue(nullableLocalIdentity(localIntegers) === localIntegers)
+        assertTrue(NullableLocalOwner<String>().choose(localStrings, localIntegers) === localIntegers)
+        assertTrue(NullableLocalOwner<Int>().choose(localIntegers, localStrings) === localStrings)
+        assertEquals("local", localStrings.value)
+        assertEquals(42, localIntegers.value)
         val integers = Box(10)
         val alias = identity(integers)
         assertTrue(alias === integers)

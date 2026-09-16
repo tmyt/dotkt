@@ -15,6 +15,7 @@ static class LocalFunctionLowering
     {
         public int[] ByRefCaptureSlots { get; init; } = Array.Empty<int>();
         public JsonArray ParameterTypes { get; init; }
+        public string DeclarationId { get; init; }
     }
 
     static string Str(JsonNode node) => (node as JsonValue)?.GetValue<string>();
@@ -65,11 +66,16 @@ static class LocalFunctionLowering
                     declaration.Remove("sourceName");
                     declaration["name"] = physicalName;
                     declaration["generated"] = true;
+                    var declarationId = DeclarationIdentityBinding.PhysicalOnlyId(
+                        fileClass + ":" + id, "local-function");
+                    declaration[DeclarationIdentityBinding.Key] = declarationId;
+                    declaration["declarationSourceName"] = sourceName;
                     var byRefCaptures = PrepareCaptureLocations(declaration);
                     var binding = PrepareGenericOwnerBinding(declaration, physicalOwner, ownerType);
                     binding = binding with { ByRefCaptureSlots = byRefCaptures };
                     binding = binding with { SemanticOwnerArgOrder = SemanticOwnerArgOrder(ownerType) };
                     binding = binding with { Name = physicalName, Owner = physicalOwner };
+                    binding = binding with { DeclarationId = declarationId };
                     binding = binding with { ParameterTypes = new JsonArray(
                         ((JsonArray)declaration["params"]).OfType<JsonObject>()
                             .Select(parameter => parameter["type"]?.DeepClone()).ToArray()) };
@@ -237,6 +243,44 @@ static class LocalFunctionLowering
                     : new TypeNode.Tv("method", nextMethodSlot++);
             }
             method["typeParams"] = new JsonArray(keep.Select(p => methodTypeParams[p]?.DeepClone()).ToArray());
+            var priorFrame = Str(method[NullableRepresentationTypes.MethodFrameKey]) is string encodedFrame
+                ? NullableRepresentationFrame.Read(JsonNode.Parse(encodedFrame))
+                : new NullableRepresentationFrame(origins.Count, Array.Empty<int>());
+            var retainedSources = Enumerable.Range(0, priorFrame.SourceArity)
+                .Where(index => keep.Contains(priorFrame.SourcePosition(index))).ToArray();
+            var nullableSources = priorFrame.NullableIndices.Where(retainedSources.Contains).ToArray();
+            var order = keep.Select(position => {
+                var canonical = priorFrame.PhysicalOrder[position];
+                return canonical < priorFrame.SourceArity ? Array.IndexOf(retainedSources, canonical)
+                    : retainedSources.Length + Array.IndexOf(nullableSources,
+                        priorFrame.NullableIndices[canonical - priorFrame.SourceArity]);
+            }).ToArray();
+            var newFrame = new NullableRepresentationFrame(retainedSources.Length,
+                nullableSources.Select(index => Array.IndexOf(retainedSources, index)), order);
+            if (method[NullableRepresentationTypes.MethodFrameKey] != null)
+                method[NullableRepresentationTypes.MethodFrameKey] = newFrame.ToJson().ToJsonString();
+            var ownerFrame = Str(ownerType?[KotlinSupertypesRecord.PreKey]) is string ownerFacts
+                && JsonNode.Parse(ownerFacts)?[NullableRepresentationFrame.MetadataKey] is JsonNode ownerFrameNode
+                ? NullableRepresentationFrame.Read(ownerFrameNode) : null;
+            var sourceMapping = new Dictionary<int, TypeNode>();
+            for (var sourceIndex = 0; sourceIndex < priorFrame.SourceArity; sourceIndex++)
+            {
+                var physical = (TypeNode.Tv)capturedToPhysical[priorFrame.SourcePosition(sourceIndex)];
+                sourceMapping[sourceIndex] = physical.Scope == "type"
+                    ? ownerFrame?.SemanticVariable(physical) ?? physical
+                    : newFrame.SemanticVariable(physical);
+            }
+            // These opaque carriers retain SOURCE coordinates, unlike the structured physical slots below.
+            void RewriteSourceCarrier(JsonObject declaration, string key)
+            {
+                if (Str(declaration[key]) is string encoded)
+                    declaration[key] = TypeNode.ToJson(RewriteCapturedType(
+                        TypeJson.Read(JsonNode.Parse(encoded)), sourceMapping));
+            }
+            RewriteSourceCarrier(method, "nullableGenericRet");
+            if (method["params"] is JsonArray parameters)
+                foreach (var parameter in parameters.OfType<JsonObject>())
+                    RewriteSourceCarrier(parameter, "nullableGeneric");
             RewriteCapturedTypeVariables(method, capturedToPhysical);
             method.Remove("_syntheticTypeArgs");
             if (keep.Count == 0)
@@ -385,6 +429,7 @@ static class LocalFunctionLowering
             ? new TypeNode.Fqn(binding.Owner)
             : new TypeNode.Fqn(binding.Owner, semanticOwnerArgs));
         use["method"] = binding.Name;
+        use[DeclarationIdentityBinding.Key] = binding.DeclarationId;
         use["sig"] = binding.ParameterTypes.DeepClone();
         use.Remove("id");
 
