@@ -1429,7 +1429,7 @@ static class FBoundStarProjectionErasure
         var localNames = defs.Keys.ToHashSet(StringComparer.Ordinal);
         string PhysicalKey(JsonNode node) => TypeJson.Write(BirTypeLowering.CanonicalPhysicalSlotType(
             BirTypeLowering.LowerPhysicalType(TypeJson.Read(node), aliases, refs.IsValueType,
-                refs.PhysicalTypeNames, typeArg: false, localTypeNames: localNames))).ToJsonString();
+                refs.PhysicalTypeNames, typeArg: false, localTypeNames: localNames, nullableFrames: refs.NullableTypeFrames))).ToJsonString();
         // Local Kotlin and reflected CLR spellings can denote the same InterfaceImpl. ilemit emits this set 1:1.
         inherited = new JsonArray(inherited.GroupBy(PhysicalKey, StringComparer.Ordinal)
             .Select(group => group.First().DeepClone()).ToArray());
@@ -2763,7 +2763,7 @@ static class FBoundStarProjectionErasure
         while (argument is TypeNode.Oblivious oblivious) argument = oblivious.Of;
         if (ContainsExistentialProjection(argument)) argument = new TypeNode.Fqn("kotlin.Any");
         var physical = BirTypeLowering.LowerPhysicalType(argument, refs.Aliases, refs.IsValueType,
-            refs.PhysicalTypeNames, typeArg: true, localTypeNames: localNames);
+            refs.PhysicalTypeNames, typeArg: true, localTypeNames: localNames, nullableFrames: refs.NullableTypeFrames);
         return physical is TypeNode.Fn function
             ? BirTypeLowering.DelegateFqnOf(function)
                 ?? throw new InvalidOperationException("projected constructor fallback has no CLR delegate family")
@@ -2775,7 +2775,7 @@ static class FBoundStarProjectionErasure
     {
         while (type is TypeNode.Projection projection) type = projection.Of;
         var physical = BirTypeLowering.LowerPhysicalType(type, refs.Aliases, refs.IsValueType,
-            refs.PhysicalTypeNames, typeArg: false, localTypeNames: localNames);
+            refs.PhysicalTypeNames, typeArg: false, localTypeNames: localNames, nullableFrames: refs.NullableTypeFrames);
         if (physical is TypeNode.Fn function)
             physical = BirTypeLowering.DelegateFqnOf(function)
                 ?? throw new InvalidOperationException("projected constructor parameter has no CLR delegate family");

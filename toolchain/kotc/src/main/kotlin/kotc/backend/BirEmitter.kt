@@ -143,16 +143,10 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 		return direct
 	}
 
-	/** Declaration families for which #395 owns a complete CLR allocation rule.
-	 *
-	 * Top-level/file-facade callables are always covered. A final, non-overriding class member is also an independent
-	 * MethodDef identity: renaming it cannot disturb an override slot. A concrete interface declaration likewise owns
-	 * its default-interface MethodDef and can be named independently while MethodImpl binds derived implementations.
-	 * Open/abstract/override class members need a slot-wide allocation shared by the whole override chain; until that
-	 * exists, duplicate CIR signatures fail closed in ilemit. Imported Kotlin members from the compiler-owned frontend
-	 * KLIB use the same semantic fingerprint as their reference-DLL MethodDef. A projected CLR member participates only
-	 * when dll2klib carried an identity, leaving arbitrary CLR alias members on their existing bir2cir representation
-	 * path. */
+	/** Semantic identity for a declaration that has an emitted method representation.
+	 * Identity is independent of modality: bir2cir needs the selected declaration's frame even for virtual calls.
+	 * Whether a CLR name can change independently of an override chain is a separate bir2cir allocation decision.
+	 * Projected CLR members participate only through their trusted identity carrier. */
 	internal fun declarationIdForPhysicalAllocation(
 		fn: org.jetbrains.kotlin.ir.declarations.IrFunction,
 	): String? {
@@ -171,7 +165,7 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 			if (projectedClrOwner != null) return carried
 			return carried ?: declarationId(fn)
 		}
-		val simple = fn as? IrSimpleFunction ?: return null
+		if (fn !is IrSimpleFunction) return null
 		val owner = fn.parent as? IrClass ?: return null
 		// Native array and compile-time-handle classifiers deliberately have no MethodDefs in the emitted module.
 		if (owner.defaultType.isUnsignedArray() ||
@@ -179,18 +173,9 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 		// A dll2klib-projected Kotlin member can be virtual because its already allocated MethodDef participates in an
 		// interface/override slot. Its trusted metadata identity is nevertheless the exact FIR-selected declaration and
 		// must survive at every call site; rejecting it on modality sends the backend back to erased-signature overload
-		// resolution. The restriction below applies only to locally authored members whose whole override chain has not
-		// yet received a shared physical allocation.
+		// resolution. Native Kotlin declarations likewise retain their identity independently of override allocation.
 		val carried = carriedDeclarationId(fn)
 		if (carried != null) return carried
-		// A concrete interface member owns a real default-interface MethodDef even though Kotlin models the declaration
-		// as open. Its source identity can therefore be allocated on that declaration independently: derived
-		// implementations keep their own Kotlin declaration identities and bir2cir binds them to this renamed slot with
-		// an exact MethodImpl. This is not the unsupported class-virtual case, where changing one MethodDef name would
-		// require a shared naming decision across the CLR override chain.
-		if (projectedClrOwner == null && owner.kind == ClassKind.INTERFACE
-			&& simple.body != null && simple.modality != Modality.ABSTRACT) return declarationId(fn)
-		if (simple.modality != Modality.FINAL || simple.overriddenSymbols.isNotEmpty()) return null
 		if (projectedClrOwner != null) return null
 		return declarationId(fn)
 	}

@@ -262,11 +262,11 @@ static class DeclarationIdentityBinding
         out IReadOnlySet<string> semanticCarrierIds)
     {
         static List<(JsonObject Method, string Owner, string Package, string Id, string Name, string SourceName,
-            string Sig, string ExplicitName, bool Generated)> Collect(
+            string Sig, string ExplicitName, bool Generated, bool IndependentName)> Collect(
             IEnumerable<JsonNode> sourceRoots)
         {
             var result = new List<(JsonObject Method, string Owner, string Package, string Id, string Name,
-                string SourceName, string Sig, string ExplicitName, bool Generated)>();
+                string SourceName, string Sig, string ExplicitName, bool Generated, bool IndependentName)>();
 
             void CollectMethods(JsonObject owner, string ownerName, string packageName, bool generatedOwner)
             {
@@ -275,7 +275,10 @@ static class DeclarationIdentityBinding
                         if (Str(method["name"]) is string name)
                             result.Add((method, ownerName, packageName, Str(method[Key]), name,
                                 Str(method["declarationSourceName"]) ?? name, PhysicalSignature(method),
-                                Str(method[ExplicitNameKey]), generatedOwner || Bool(method["generated"])));
+                                Str(method[ExplicitNameKey]), generatedOwner || Bool(method["generated"]),
+                                !Bool(method["abstract"]) && (Str(owner["kind"]) == "interface"
+                                    || !Bool(method["virtual"]) && !Bool(method["override"])
+                                        && (method["overrides"] as JsonArray)?.Count is not > 0)));
                 if (owner["types"] is JsonArray types)
                     foreach (var type in types.OfType<JsonObject>())
                         CollectMethods(type, Str(type["name"]) ?? ownerName + "/<anonymous>", null,
@@ -321,10 +324,10 @@ static class DeclarationIdentityBinding
         foreach (var declaration in allDeclarations.Where(declaration => declaration.ExplicitName != null))
         {
             ValidateExplicitName(declaration.ExplicitName, declaration.Owner, declaration.SourceName);
-            if (declaration.Id == null)
+            if (declaration.Id == null || !declaration.IndependentName)
                 throw new InvalidOperationException(
                     $"bir2cir: @ClrName on '{declaration.Owner}.{declaration.SourceName}' cannot be applied " +
-                    "independently because the frontend supplied no allocatable declaration identity (for example, " +
+                    "independently because the declaration has no independent physical-name allocation (for example, " +
                     "an open/override family or a local implementation artifact); complete slot-wide explicit-name " +
                     "propagation is not supported");
         }
@@ -345,7 +348,7 @@ static class DeclarationIdentityBinding
 
         string AllocatedName(
             (JsonObject Method, string Owner, string Package, string Id, string Name, string SourceName,
-                string Sig, string ExplicitName, bool Generated) declaration)
+                string Sig, string ExplicitName, bool Generated, bool IndependentName) declaration)
         {
             if (declaration.ExplicitName != null) return declaration.ExplicitName;
             var allocationId = AllocationIdentity(declaration.Id);
@@ -687,6 +690,26 @@ static class DeclarationIdentityBinding
 
     public static void SelfTest()
     {
+        var virtualMethod = new JsonObject {
+            [Key] = "dotkt-declaration-v1:virtual-test", ["name"] = "echo", ["virtual"] = true,
+            ["params"] = new JsonArray(), ["ret"] = TypeJson.Fqn("void"),
+        };
+        var virtualOwner = new JsonObject {
+            ["name"] = "VirtualOwner", ["kind"] = "class", ["methods"] = new JsonArray(virtualMethod),
+        };
+        var identityRoot = new JsonObject { ["fileClass"] = "IdentityTest", ["types"] = new JsonArray(virtualOwner) };
+        if (AllocatePhysicalNames(new[] { identityRoot }, out _)[Str(virtualMethod[Key])] != "echo")
+            throw new InvalidOperationException("Virtual declaration identity changed its physical slot name");
+        virtualMethod[ExplicitNameKey] = "renamed";
+        var refusedIndependentName = false;
+        try { AllocatePhysicalNames(new[] { identityRoot }, out _); }
+        catch (InvalidOperationException error) when (error.Message.Contains("independent physical-name allocation"))
+        { refusedIndependentName = true; }
+        if (!refusedIndependentName)
+            throw new InvalidOperationException("Virtual identity incorrectly authorized an independent CLR rename");
+        virtualOwner["kind"] = "interface";
+        if (AllocatePhysicalNames(new[] { identityRoot }, out _)[Str(virtualMethod[Key])] != "renamed")
+            throw new InvalidOperationException("Concrete interface declaration lost its independent name allocation");
         var callSignature = new JsonArray(
             TypeJson.Fqn("semantic.Receiver"),
             TypeJson.Fqn("System.String"),

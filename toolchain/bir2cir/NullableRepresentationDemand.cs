@@ -53,7 +53,10 @@ static partial class NullableRepresentationDemand
             {
                 var arity = (Declaration["typeParams"] as JsonArray)?.Count ?? 0;
                 var enclosing = CapturedOwner?.Frame;
-                var indices = Signature.Type.Concat(Methods.SelectMany(method => method.Signature.Type))
+                // A compiler-owned TypeDef can carry its implementation's nullable owner arguments too.
+                // Unlike a virtual method's generic arity, this frame is closed at every constructed-type use.
+                var indices = Signature.Type.Concat(Body.Type)
+                    .Concat(Methods.SelectMany(method => method.Signature.Type.Concat(method.Body.Type)))
                     .Concat(enclosing?.NullableIndices.Select(index => CaptureOffset + index) ?? Enumerable.Empty<int>())
                     .Distinct().OrderBy(i => i).ToArray();
                 if (enclosing == null) return new NullableRepresentationFrame(arity, indices);
@@ -155,6 +158,14 @@ static partial class NullableRepresentationDemand
                     // refer to this owner's variables. An inherited fact's instantiated params/ret are above.
                     if (method.ImplementationKey == null)
                         Scan(method.TypeParameters, method.Signature, typeFrames, methodFrames);
+                    else
+                    {
+                        var implementationConstraints = new Variables();
+                        Scan(method.TypeParameters, implementationConstraints, typeFrames, methodFrames);
+                        // The method frame is shared by this inherited fact and its selected implementation.
+                        // Owner variables in those same constraints still belong to the implementation owner.
+                        method.Signature.Method.UnionWith(implementationConstraints.Method);
+                    }
                     Scan(method.Declaration["body"], method.Body, typeFrames, methodFrames);
                 }
             }

@@ -97,8 +97,9 @@ static partial class NullableRepresentationDemand
                 ["k"] = "callStatic", [DeclarationIdentityBinding.Key] = "callee", ["typeArgs"] = new JsonArray(Tv()),
             }),
         });
+        var usesBodyOwner = Owner("UsesBodyOwner", Applied("BodyOnly", Tv()));
         var file = new JsonObject {
-            ["fileClass"] = "FrameTests", ["types"] = new JsonArray(outer, wrapper, exchange, box, scalar, callFromCtor),
+            ["fileClass"] = "FrameTests", ["types"] = new JsonArray(outer, wrapper, exchange, box, scalar, callFromCtor, usesBodyOwner),
             ["methods"] = new JsonArray(caller, callee, arrayBody, refBody),
         };
         var original = file.ToJsonString();
@@ -111,8 +112,11 @@ static partial class NullableRepresentationDemand
         var callerDemand = Find(file).Methods.Single(method => ReferenceEquals(method.Declaration, caller));
         Check(callerDemand.Frame.PhysicalArity == 1 && callerDemand.Body.Method.SetEquals(new[] { 0 }),
             "body-only call demand must not alter virtual declaration arity");
-        Check(Find(callFromCtor).Frame.PhysicalArity == 1 && Find(callFromCtor).Body.Type.SetEquals(new[] { 0 }),
-            "constructor body demand is separate from owner ABI");
+        Check(Find(callFromCtor).Frame.PhysicalArity == 2 && Find(callFromCtor).Body.Type.SetEquals(new[] { 0 })
+            && Find(callFromCtor).Signature.Type.Count == 0,
+            "constructor implementation demand contributes to the owned TypeDef frame without becoming a source signature fact");
+        Check(Find(usesBodyOwner).Frame.NullableIndices.SequenceEqual(new[] { 0 }),
+            "body-only owner arguments propagate through constructed type applications");
         Check(Find(file).Methods.Single(method => ReferenceEquals(method.Declaration, arrayBody)).Body.Method.SetEquals(new[] { 0 }),
             "array element is a reified argument position even without a container type");
         Check(Find(file).Methods.Single(method => ReferenceEquals(method.Declaration, refBody)).Body.Method.Count == 0,
@@ -148,6 +152,19 @@ static partial class NullableRepresentationDemand
             ["ForeignProducer"] = new NullableRepresentationFrame(1, new[] { 0 }),
         });
         Check(imported[0].Frame.NullableIndices.SequenceEqual(new[] { 0 }), "referenced declaration correspondence");
+        var constrainedInherited = JsonNode.Parse("""
+        {"kind":"class","name":"ConstraintUser","inheritedDefaultMethods":[{
+          "member":"use","params":[],"ret":{"t":"fqn","name":"kotlin.Unit"},
+          "implementation":{"owner":{"t":"fqn","name":"Foreign"},"member":"use","arity":2,
+            "typeParams":["T",{"name":"U","constraints":[
+              {"t":"fqn","name":"Box","args":[{"t":"nullable","of":{"t":"tv","scope":"method","i":0}}]},
+              {"t":"fqn","name":"Box","args":[{"t":"nullable","of":{"t":"tv","scope":"type","i":4}}]}
+            ]}]}}]}
+        """);
+        var constrainedDemand = Collect(new[] { constrainedInherited }).Single();
+        Check(constrainedDemand.Methods.Single().Frame.NullableIndices.SequenceEqual(new[] { 0 })
+            && constrainedDemand.Frame.PhysicalArity == 0,
+            "inherited implementation constraints contribute method demand without importing the foreign owner's frame");
         MetadataSelfTest();
         Console.WriteLine("[nullable representation frame] self-test OK (source correspondence, scopes, declaration/body demand, fixed point)");
     }

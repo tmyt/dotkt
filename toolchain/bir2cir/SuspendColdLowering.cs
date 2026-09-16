@@ -4398,7 +4398,7 @@ static partial class SuspendColdLowering
             return NullableFlags.Compute(new TypeNode.Fqn(taskReturn.Name, new[] { result }),
                 _isValueFqn, NullableFlags.Convention.ClrSignature,
                 type => BirTypeLowering.LowerPhysicalType(type, _refs.Aliases, _isValueFqn,
-                    _refs.PhysicalTypeNames, typeArg: true, _localTypeFqns) is TypeNode.Fqn { Args: not null });
+                    _refs.PhysicalTypeNames, typeArg: true, _localTypeFqns, nullableFrames: _refs.NullableTypeFrames) is TypeNode.Fqn { Args: not null });
         }
 
         // The bridge's cold-entry call: forward the bridge params + the RootContinuation (cast to the erased

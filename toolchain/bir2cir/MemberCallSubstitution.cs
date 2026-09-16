@@ -443,7 +443,8 @@ static class MemberCallSubstitution
         // instantiation: the structured `Fqn(bcl, sourceArgs)` (the SAME generic-alias form BirTypeLowering produces
         // for type positions — the newClr `type` is a TypeKey, so the subsequent type-lowering pass lowers the args). A
         // non-generic owner is the bare BCL Fqn.
-        var typeNode = ownerFqn.Args != null ? new TypeNode.Fqn(bcl, ownerFqn.Args) : new TypeNode.Fqn(bcl);
+        var typeNode = viaAlias ? (TypeNode.Fqn)ClrOwnerType(refs, ownerFqn)
+            : new TypeNode.Fqn(bcl, ownerFqn.Args);
 
         var args = node["args"] as JsonArray ?? new JsonArray();
         var sourceSignature = (node["argTypes"] as JsonArray)?.Select(TypeJson.Read).ToArray();
@@ -455,7 +456,7 @@ static class MemberCallSubstitution
         if (sourceSignature != null
             && refs.CollectionCopyConstructorKind(
                 ownerFqn.Name, sourceSignature, ownerFqn.Args ?? Array.Empty<TypeNode>()) == "map"
-            && args.Count == 1 && ownerFqn.Args is { Length: 2 } mapTypeArguments)
+            && args.Count == 1 && typeNode.Args is { Length: 2 } mapTypeArguments)
             return MapCopyConstruction(typeNode, mapTypeArguments, args[0]);
 
         // JVM (initialCapacity: Int, loadFactor: Float) collection ctor -> the capacity-only (int) BCL ctor. .NET's
@@ -2316,7 +2317,7 @@ static class MemberCallSubstitution
     // A CLR-bound owner token's ClrRef-resolvable BCL type: a non-generic alias is its bare BCL FQN ("System.String"
     // -- NOT the "string" shorthand, which ilemit ClrRef can't resolve as a clr* `type`); a generic alias keeps its
     // element args (clrg:<bcl>[<args>], or [object x arity] when the token erased them). Null if not CLR-bound.
-    static TypeNode ClrOwnerType(ReferenceMetadataIndex refs, TypeNode.Fqn ownerFqn)
+    internal static TypeNode ClrOwnerType(ReferenceMetadataIndex refs, TypeNode.Fqn ownerFqn)
     {
         if (!refs.TryResolveClrOwner(ownerFqn.Name, out var bcl, out _)) return null;
         // Some generic aliases select a non-generic physical classifier from their FINAL lowered arguments. Keep
@@ -2333,7 +2334,14 @@ static class MemberCallSubstitution
             // fail to resolve. The trailing/all erased args become `object`.
             var kept = (ownerFqn.Args ?? Array.Empty<TypeNode>()).Where(a => a != null).ToList();
             for (var i = kept.Count; i < arity; i++) kept.Add(ObjType);
-            if (kept.Count > 0) return new TypeNode.Fqn(head, kept.ToArray());
+            // The Kotlin reference declaration may carry nullable companion parameters for its helper
+            // implementation. They are not parameters of the fixed CLR alias TypeDef. Select ordinary
+            // arguments by the explicit frame correspondence, not by truncating to the CLR arity.
+            // A deferred semantic head still owns its complete frame until type lowering selects its head.
+            var ownerArguments = head != ownerFqn.Name
+                && refs.NullableTypeFrames.TryGetValue(ReferenceMetadataIndex.BareOwnerFqn(ownerFqn.Name), out var frame)
+                    ? frame.OrdinaryArguments(kept) : kept.ToArray();
+            if (ownerArguments.Length > 0) return new TypeNode.Fqn(head, ownerArguments);
         }
         return new TypeNode.Fqn(head);
     }

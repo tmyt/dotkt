@@ -232,7 +232,7 @@ static class CovariantInterfaceReturnBridge
                 var implementationRet = SubstOwnerTvs(implementationRet0, ownArgs);
                 if (implementationRet == slotRet
                     || BirTypeLowering.SamePhysicalSlotType(slotRet, implementationRet,
-                        refs.Aliases, isValue, refs.PhysicalTypeNames, returnPosition: true)
+                        refs.Aliases, isValue, refs.PhysicalTypeNames, returnPosition: true, nullableFrames: refs.NullableTypeFrames)
                     || KotlinOverrideSlotBridge.IsErasureDivergence(slotRet, implementationRet))
                     continue;
 
@@ -299,7 +299,7 @@ static class CovariantInterfaceReturnBridge
 
     static string ReferencedPhysicalTypeKey(TypeNode type, ReferenceMetadataIndex refs, ValueTypeOracle isValue) =>
         TypeKey(BirTypeLowering.LowerPhysicalType(type, refs.Aliases, isValue,
-            refs.PhysicalTypeNames, typeArg: false));
+            refs.PhysicalTypeNames, typeArg: false, nullableFrames: refs.NullableTypeFrames));
 
     static JsonObject BuildBridge(Def cls, JsonObject implementation, TypeNode[] slotParams, TypeNode slotRet,
         TypeNode logicalSuspendResult, string bridgeName)
@@ -433,7 +433,7 @@ static class CovariantInterfaceReturnBridge
             var implementation = SubstOwnerTvs(parameter, ownerArgs);
             if (implementation != slotParams[i]
                 && !BirTypeLowering.SamePhysicalSlotType(slotParams[i], implementation,
-                    refs.Aliases, isValue, refs.PhysicalTypeNames, returnPosition: false))
+                    refs.Aliases, isValue, refs.PhysicalTypeNames, returnPosition: false, nullableFrames: refs.NullableTypeFrames))
                 return false;
         }
         return true;

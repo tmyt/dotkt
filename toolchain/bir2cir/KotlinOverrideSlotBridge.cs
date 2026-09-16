@@ -106,7 +106,7 @@ static class KotlinOverrideSlotBridge
         var annotationLocalTypes = localTypeNames ?? defs.Keys.ToHashSet(StringComparer.Ordinal);
         bool RetainsTypeArguments(TypeNode.Fqn type) =>
             BirTypeLowering.LowerPhysicalType(type, refs.Aliases, isValue, refs.PhysicalTypeNames,
-                typeArg: false, annotationLocalTypes, refBuild) is TypeNode.Fqn { Args: not null };
+                typeArg: false, annotationLocalTypes, refBuild, refs.NullableTypeFrames) is TypeNode.Fqn { Args: not null };
         // The source accessor relation is needed only between the two halves of this one pass. Keep it in memory by
         // JsonObject identity rather than minting another BIR/CIR identifier or parsing the bridge's metadata
         // association. The relation cannot escape this ApplyAll invocation.
@@ -471,7 +471,8 @@ static class KotlinOverrideSlotBridge
                 var descriptorMember = explicitDescriptorMember ?? name;
                 var descriptorOwner = spec;
                 var loweredDescriptorOwner = refs == null ? null : BirTypeLowering.LowerPhysicalType(
-                    spec, refs.Aliases, isValue, refs.PhysicalTypeNames, typeArg: false, localTypeNames) as TypeNode.Fqn;
+                    spec, refs.Aliases, isValue, refs.PhysicalTypeNames, typeArg: false, localTypeNames,
+                    nullableFrames: refs.NullableTypeFrames) as TypeNode.Fqn;
                 string aliasedPhysicalMember = null;
                 if (propertyName == null && refs != null)
                 {
@@ -505,7 +506,7 @@ static class KotlinOverrideSlotBridge
                 {
                     var comparableParams = slotParams.Select(parameter => BirTypeLowering.LowerPhysicalType(
                         parameter, refs.Aliases, isValue, refs.PhysicalTypeNames, typeArg: false,
-                        localTypeNames)).ToArray();
+                        localTypeNames, nullableFrames: refs.NullableTypeFrames)).ToArray();
                     if (!ClrMemberResolution.TryResolveAliasedInterfaceSlot(
                             refs, loweredDescriptorOwner, aliasedPhysicalMember, methodArity, comparableParams,
                             slot["typeParams"] as JsonArray, supArgs,
@@ -531,14 +532,14 @@ static class KotlinOverrideSlotBridge
                         slotParams.Length, methodArity, slotParams, spec.Args ?? Array.Empty<TypeNode>(),
                         out var physicalOwner, out _, out var externalAccessor))
                 {
-                    var currentPhysicalOwner = refs.ExactReflectedOwner(spec.Name, spec.Args?.Length ?? 0);
+                    var currentPhysicalOwner = refs.ExactReflectedOwner(spec.Name, loweredDescriptorOwner.Args?.Length ?? 0);
                     // Reflection reports the MethodSemantics method's DECLARING interface. A Kotlin interface may
                     // redeclare a property while its CLR alias merely inherits that property (List.size over
                     // IReadOnlyList<T> -> IReadOnlyCollection<T>.Count). Such a spec owns no CLR slot; its reachable
                     // declaring supertype is visited separately and receives the one valid descriptor.
                     if (physicalOwner != currentPhysicalOwner) continue;
                     descriptorMember = externalAccessor;
-                    descriptorOwner = new TypeNode.Fqn(physicalOwner, spec.Args);
+                    descriptorOwner = new TypeNode.Fqn(physicalOwner, loweredDescriptorOwner.Args);
                 }
                 // A generated existential slot carries its source-property association only as metadata; its
                 // compiler-assigned `$star$...` name is already the physical declaration and bypasses this ordinary
@@ -961,7 +962,7 @@ static class KotlinOverrideSlotBridge
         ReferenceMetadataIndex refs, ValueTypeOracle isValue, bool returnPosition) =>
         erasedDeclaration.Equals(frontendFact)
         || BirTypeLowering.SamePhysicalSlotType(erasedDeclaration, frontendFact,
-            refs?.Aliases, isValue, refs?.PhysicalTypeNames, returnPosition)
+            refs?.Aliases, isValue, refs?.PhysicalTypeNames, returnPosition, nullableFrames: refs?.NullableTypeFrames)
         || ErasureAligned(erasedDeclaration, frontendFact);
 
     static JsonObject MethodShape(string name, TypeNode[] parameters, TypeNode ret, int methodArity,
@@ -1311,10 +1312,13 @@ static class KotlinOverrideSlotBridge
                             ps.Count, methodArity, implementationSignature, selectedArgs,
                             out var physicalOwner, out _, out var externalAccessor))
                     {
+                        var projectedOwner = (TypeNode.Fqn)BirTypeLowering.LowerPhysicalType(
+                            selectedSpec, refs.Aliases, isValue, refs.PhysicalTypeNames, typeArg: false,
+                            nullableFrames: refs.NullableTypeFrames);
                         var currentPhysicalOwner = refs.ExactReflectedOwner(
-                            selectedSpec.Name, selectedSpec.Args?.Length ?? 0);
+                            selectedSpec.Name, projectedOwner.Args?.Length ?? 0);
                         if (physicalOwner != currentPhysicalOwner) continue;
-                        descriptorOwner = new TypeNode.Fqn(physicalOwner, selectedSpec.Args);
+                        descriptorOwner = new TypeNode.Fqn(physicalOwner, projectedOwner.Args);
                         descriptorMember = externalAccessor;
                     }
                 }
@@ -1347,14 +1351,14 @@ static class KotlinOverrideSlotBridge
 
                     var loweredOwner = BirTypeLowering.LowerPhysicalType(
                         selectedDescriptorOwner, refs.Aliases, isValue, refs.PhysicalTypeNames,
-                        typeArg: false, localTypeNames: null) as TypeNode.Fqn;
+                        typeArg: false, localTypeNames: null, nullableFrames: refs.NullableTypeFrames) as TypeNode.Fqn;
                     if (loweredOwner != null
                         && refs.ResolveNetType(loweredOwner.Name, loweredOwner.Args?.Length ?? 0)
                             is { IsInterface: true })
                     {
                         var comparableParams = slotParams.Select(parameter => BirTypeLowering.LowerPhysicalType(
                             parameter, refs.Aliases, isValue, refs.PhysicalTypeNames,
-                            typeArg: false, localTypeNames: null)).ToArray();
+                            typeArg: false, localTypeNames: null, nullableFrames: refs.NullableTypeFrames)).ToArray();
                         if (!ClrMemberResolution.TryResolveAliasedInterfaceSlot(
                                 refs, loweredOwner, descriptorMember, methodArity, comparableParams,
                                 selectedSlotTypeParams, supArgs,
@@ -1440,7 +1444,7 @@ static class KotlinOverrideSlotBridge
     {
         if (declared.Equals(slot)
             || BirTypeLowering.SamePhysicalSlotType(slot, declared, refs?.Aliases, isValue,
-                refs?.PhysicalTypeNames, returnPosition)) return Fit.Same;
+                refs?.PhysicalTypeNames, returnPosition, nullableFrames: refs?.NullableTypeFrames)) return Fit.Same;
         // A plain CLR generic declaration's nullable annotation does not change its metadata signature: C# `T?`
         // on `I<T>.Put(T?)`, constructed as `I<int>`, is the BARE `int` slot. Its Kotlin projection is still the
         // truthful `Int?`, whose declaration lowers to `Nullable<int>`. This is a bridgeable outer seam just like
@@ -1464,7 +1468,7 @@ static class KotlinOverrideSlotBridge
         ValueTypeOracle isValue, bool returnPosition) =>
         declared is TypeNode.Nullable nullable
         && BirTypeLowering.SamePhysicalSlotType(slot, nullable.Of, refs?.Aliases, isValue,
-            refs?.PhysicalTypeNames, returnPosition);
+            refs?.PhysicalTypeNames, returnPosition, nullableFrames: refs?.NullableTypeFrames);
 
     static bool IsVoid(TypeNode type) =>
         type is TypeNode.Fqn { Name: "kotlin.Unit" or "void" or "System.Void", Args: null };
@@ -1686,7 +1690,8 @@ static class KotlinOverrideSlotBridge
         // arguments. Compare both physical projections, retaining exact construction and excluding the base chain.
         TypeNode Physical(TypeNode type) => ClrMemberResolution.MethodImplComparisonType(
             BirTypeLowering.LowerPhysicalType(
-                type, refs.Aliases, isValue, refs.PhysicalTypeNames, typeArg: false, localTypeNames));
+                type, refs.Aliases, isValue, refs.PhysicalTypeNames, typeArg: false, localTypeNames,
+                nullableFrames: refs.NullableTypeFrames));
         var physicalSlot = Physical(slotOwner);
         return SupertypeGraph.Reachable(new Def { Interfaces = cls.Interfaces }, defs, refs)
             .Any(edge => edge.isInterface && Equals(Physical(edge.spec), physicalSlot));

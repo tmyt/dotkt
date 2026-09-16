@@ -20,6 +20,21 @@ fun <T> identity(value: Box<T>): Box<T> = value
 fun <T> create(value: T?): Box<T?> = Box<T?>(value)
 fun <T> replace(box: Box<T?>, value: T?) { box.value = value }
 
+inline fun <A, B, T> inlineNullableTransform(box: Box<T?>, transform: (T?) -> T?): Box<T?> {
+    replace<T>(box, transform(box.value))
+    return box
+}
+
+fun <T> throughInlineNullableFrame(box: Box<T?>): Box<T?> =
+    inlineNullableTransform<String, Int, T>(box) { it }
+
+fun <T> clearNullableElement(array: Array<T?>) { array[0] = null }
+fun <T> nullableSupplier(seed: T?): () -> T? = { seed }
+
+class NullableOwnerBody<T> {
+    fun isAbsent(value: T?): Boolean = Box<T?>(value).value == null
+}
+
 fun <T> nullableBodyOnly(value: T?): Boolean {
     val box = Box<T?>(value)
     return box.value == null
@@ -30,6 +45,21 @@ interface NullableDefault {
     fun <T> defaultIdentity(value: Box<T?>): Box<T?> = value
 }
 class InheritedNullableDefault : NullableDefault
+
+interface NullableConstrainedDefault {
+    fun <T, U : Box<T?>> constrainedIdentity(value: U): U = value
+}
+class InheritedNullableConstrainedDefault : NullableConstrainedDefault
+
+abstract class NullableGenericParent {
+    abstract fun <T> echoNullable(value: Box<T?>): Box<T?>
+}
+interface NullableGenericSlot {
+    fun <T> echoNullable(value: Box<T?>): Box<T?>
+}
+class NullableGenericChild : NullableGenericParent(), NullableGenericSlot {
+    override fun <T> echoNullable(value: Box<T?>): Box<T?> = value
+}
 
 interface NullableBodySlot {
     fun <T> isAbsent(value: T?): Boolean

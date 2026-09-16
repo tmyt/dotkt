@@ -200,6 +200,12 @@ static class NullableRepresentationMaterialization
             var kind = Text(obj["k"]);
             var selectedMapping = kind == null ? null : declarationMapping(obj);
             JsonArray closedArguments = null;
+            // A closure's invoke return implements the delegate's return generic argument. It is not an
+            // ordinary scalar Kotlin return (where open T? erases to object). Preserve the source fact before
+            // the recursive walk maps the payload, then install the same representation as funcType.Ret.
+            var closureReturn = kind == "newClosure" && obj["synthClass"] is JsonObject closure
+                && !ClosureSynthesis.HasPreboundFrame(closure) && TypeJson.Read(closure["ret"]) is TypeNode returnType
+                    ? mapping.Argument(returnType) : null;
             if (kind is "newSam" or "newClosure" && obj["synthClass"] is JsonObject synthetic
                 && !ClosureSynthesis.HasPreboundFrame(synthetic)
                 && obj["typeArgs"] is JsonArray captureArguments && synthetic["typeParams"] is JsonArray captureParameters)
@@ -228,6 +234,9 @@ static class NullableRepresentationMaterialization
                     ?? throw new InvalidOperationException("Nullable-frame call has no source type arguments");
                 closedArguments = new JsonArray(mapping.CloseMethod(frame, arguments.Select(TypeJson.Read).ToArray())
                     .Select(TypeJson.Write).ToArray());
+                // Inline substitution consumes the physical payload frame captured after this pass. Its arity
+                // must include companions too, or the splice leaves their variables in the callee's frame.
+                if (kind == "callInline") obj["ga"] = frame.PhysicalArity;
             }
             // Determine ownership before mutating sty or ret; otherwise JSON property order changes the frame.
             var declarationKeys = kind == null ? new HashSet<string>() : obj.Select(p => p.Key)
@@ -257,6 +266,7 @@ static class NullableRepresentationMaterialization
                 else Rewrite(obj[key], mapping, methods, declarationMapping, childPosition);
             }
             if (closedArguments != null) obj["typeArgs"] = closedArguments;
+            if (closureReturn != null) obj["synthClass"]["ret"] = TypeJson.Write(closureReturn);
         }
     }
 
@@ -356,6 +366,11 @@ static class NullableRepresentationMaterialization
             },
         };
         ((JsonArray)root["methods"][0]["body"]).Add(rawSam);
+        var inlineCall = new JsonObject {
+            ["k"] = "callInline", ["declarationId"] = "pass", ["ga"] = 1,
+            ["typeArgs"] = new JsonArray(TypeJson.Write(new TypeNode.Tv("method", 0))),
+        };
+        ((JsonArray)root["methods"][0]["body"]).Add(inlineCall);
         var closedCalls = new List<JsonObject>();
         foreach (var stampFirst in new[] { true, false })
         {
@@ -377,6 +392,9 @@ static class NullableRepresentationMaterialization
             closedCalls.Add(closedCall);
         }
         Apply(new[] { root }, _ => false);
+        if ((int)inlineCall["ga"] != 2 || ((JsonArray)inlineCall["typeArgs"]).Count != 2
+            || TypeJson.Read(inlineCall["typeArgs"][1]) != new TypeNode.Tv("method", 1))
+            throw new InvalidOperationException("Inline substitution arity excludes the materialized companion frame");
         if (((JsonArray)rawSam["typeArgs"]).Count != 2
             || ((JsonArray)rawSam["synthClass"]["typeParams"]).Count != 2
             || TypeJson.Read(rawSam["typeArgs"][1]) != new TypeNode.Tv("method", 1)

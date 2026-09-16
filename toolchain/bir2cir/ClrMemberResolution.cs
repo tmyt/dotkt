@@ -999,7 +999,7 @@ static partial class ClrMemberResolution
         if (open == null) return false;
         TypeNode Physical(TypeNode type, bool typeArg) => BirTypeLowering.CanonicalPhysicalSlotType(
             BirTypeLowering.LowerPhysicalType(
-                type, refs.Aliases, refs.IsValueType, refs.PhysicalTypeNames, typeArg));
+                type, refs.Aliases, refs.IsValueType, refs.PhysicalTypeNames, typeArg, nullableFrames: refs.NullableTypeFrames));
         var argNodes = callSignature.Select(type => Physical(type, typeArg: false)).ToList();
         var ownerArgs = ownerFqn.Args?.Select(type => Physical(type, typeArg: true)).ToArray();
         var flags = BindingFlags.Public | BindingFlags.NonPublic

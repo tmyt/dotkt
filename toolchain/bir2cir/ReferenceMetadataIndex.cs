@@ -7005,6 +7005,42 @@ sealed partial class ReferenceMetadataIndex
 
     internal static void SelfTest()
     {
+        {
+            var aliasIndex = Build(Array.Empty<string>());
+            const string owner = "probe.Alias";
+            aliasIndex._ownerAlias[owner] = "probe.Native";
+            aliasIndex._ownerArity[owner] = 3;
+            aliasIndex._ownerNullableFrames[owner] = new NullableRepresentationFrame(
+                2, new[] { 0 }, new[] { 0, 2, 1 });
+            var first = new TypeNode.Tv("method", 2);
+            var companion = new TypeNode.Tv("method", 3);
+            var second = new TypeNode.Tv("method", 4);
+            var sourceOwner = new TypeNode.Fqn(owner, new TypeNode[] { first, companion, second });
+            if (MemberCallSubstitution.ClrOwnerType(aliasIndex, sourceOwner)
+                is not TypeNode.Fqn { Name: "probe.Native", Args: { } projected }
+                || !projected.SequenceEqual(new TypeNode[] { first, second }))
+                throw new InvalidOperationException("CLR alias lost its explicit source/physical argument correspondence");
+            if (!sourceOwner.Args.SequenceEqual(new TypeNode[] { first, companion, second }))
+                throw new InvalidOperationException("CLR alias projection mutated the implementation helper frame");
+            var lowered = BirTypeLowering.LowerPhysicalType(sourceOwner, aliasIndex.Aliases,
+                _ => false, null, typeArg: false, nullableFrames: aliasIndex.NullableTypeFrames);
+            if (lowered is not TypeNode.Fqn { Name: "probe.Native", Args: { } loweredArguments }
+                || !loweredArguments.SequenceEqual(new TypeNode[] { first, second }))
+                throw new InvalidOperationException("CLR type projection disagrees with alias member owner projection");
+            var reference = BirTypeLowering.LowerPhysicalType(sourceOwner, aliasIndex.Aliases,
+                _ => false, null, typeArg: false, refBuild: true, nullableFrames: aliasIndex.NullableTypeFrames);
+            if (reference is not TypeNode.Fqn { Name: owner, Args: { } referenceArguments }
+                || !referenceArguments.SequenceEqual(sourceOwner.Args))
+                throw new InvalidOperationException("Reference type projection discarded the Kotlin implementation frame");
+            aliasIndex._ownerAlias[owner] = "System.IComparable";
+            aliasIndex._ownerArity[owner] = 2;
+            aliasIndex._ownerNullableFrames[owner] = new NullableRepresentationFrame(1, new[] { 0 });
+            var deferredOwner = new TypeNode.Fqn(owner, new TypeNode[] { first, companion });
+            if (MemberCallSubstitution.ClrOwnerType(aliasIndex, deferredOwner)
+                is not TypeNode.Fqn { Name: owner, Args: { } deferredArguments }
+                || !deferredArguments.SequenceEqual(deferredOwner.Args))
+                throw new InvalidOperationException("Deferred CLR classifier lost its semantic argument frame");
+        }
         var nullableFrame = new NullableRepresentationFrame(1, new[] { 0 });
         var sourceReturn = new TypeNode.Nullable(new TypeNode.Tv("method", 0));
         var framePayload = new JsonObject {

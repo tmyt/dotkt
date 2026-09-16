@@ -255,6 +255,7 @@ static class BirTypeLowering
     // shadowed by a hardcoded map; they resolve here like any other alias. Single-threaded per bir2cir run, so a static
     // binding is sufficient.
     static IReadOnlyDictionary<string, string> _aliases = new Dictionary<string, string>(StringComparer.Ordinal);
+    static IReadOnlyDictionary<string, NullableRepresentationFrame> _nullableFrames;
 
     // The struct-ness ORACLE (#37/#48 nullability fold), set per top-level Lower() call. True for a VALUE type FQN
     // (a foundational primitive, a ref.dll struct/enum, or a LOCAL enum/struct in this compilation). Decides whether a
@@ -315,7 +316,8 @@ static class BirTypeLowering
     /// `collapseInvariant` is the caller's position judgement — a storage slot collapses, a head or method slot
     /// does not — because only the caller knows which of the two vocabularies its position came from.
     /// </remarks>
-    internal static TypeNode PhysicalHead(string kotlinFqn, string bcl, TypeNode[] loweredArgs, bool collapseInvariant)
+    internal static TypeNode PhysicalHead(string kotlinFqn, string bcl, TypeNode[] loweredArgs, bool collapseInvariant,
+        IReadOnlyDictionary<string, NullableRepresentationFrame> nullableFrames = null)
     {
         // `kotlin.Enum<E>` -> the NON-generic `System.Enum` (a Kotlin enum is a real CLR System.Enum, not the
         // generic stdlib class); drop the self-referential arg (`where T : Enum`).
@@ -326,6 +328,10 @@ static class BirTypeLowering
         // in-assembly names are unchanged, trusted external DotKt identities become their physical metadata names.
         if (loweredArgs == null) return new TypeNode.Fqn(bcl ?? PhysicalName(kotlinFqn));
         if (bcl == null) return new TypeNode.Fqn(PhysicalName(kotlinFqn), loweredArgs);
+        // Companions belong to the Kotlin declaration/implementation frame, not the aliased CLR TypeDef.
+        // The explicit correspondence also handles enclosing companions interleaved with ordinary parameters.
+        if (nullableFrames != null && nullableFrames.TryGetValue(kotlinFqn, out var frame))
+            loweredArgs = frame.OrdinaryArguments(loweredArgs);
         // `Comparable<*>` / `Comparable<Any?>` -> the NON-generic `System.IComparable` (contravariant; no value
         // type is IComparable<object>). A concrete arg keeps the generic form.
         if (bcl == "System.IComparable" && loweredArgs.Length == 1
@@ -486,7 +492,8 @@ static class BirTypeLowering
                         // build, which has no ref.dll to read.
                         if (force && KotlinAllToClr.TryGetValue(f.Name, out var clr)) return new TypeNode.Fqn(clr);
                     }
-                    return PhysicalHead(f.Name, AliasBcl(f.Name), loweredArgs, collapseInvariant: typeArg && !refBuild);
+                    return PhysicalHead(f.Name, AliasBcl(f.Name), loweredArgs, collapseInvariant: typeArg && !refBuild,
+                        _nullableFrames);
                 }
             case TypeNode.Tv:
                 return t;   // scope+i preserved; ilemit maps scope:"type"->!i / scope:"method"->!!i
@@ -540,13 +547,15 @@ static class BirTypeLowering
     internal static bool SamePhysicalSlotType(TypeNode left, TypeNode right,
         IReadOnlyDictionary<string, string> aliases, ValueTypeOracle isValueFqn,
         IReadOnlyDictionary<string, string> physicalTypeNames, bool returnPosition,
-        IReadOnlySet<string> localTypeNames = null)
+        IReadOnlySet<string> localTypeNames = null,
+        IReadOnlyDictionary<string, NullableRepresentationFrame> nullableFrames = null)
     {
         TypeNode LowerSlot(TypeNode type) => returnPosition
             && type is TypeNode.Fqn { Name: "kotlin.Unit" or "void" or "System.Void", Args: null }
                 ? VoidType
                 : CanonicalPhysicalSlotType(LowerPhysicalType(
-                    type, aliases, isValueFqn, physicalTypeNames, typeArg: false, localTypeNames));
+                    type, aliases, isValueFqn, physicalTypeNames, typeArg: false, localTypeNames,
+                    nullableFrames: nullableFrames));
         return LowerSlot(left).Equals(LowerSlot(right));
     }
 
@@ -557,18 +566,21 @@ static class BirTypeLowering
     internal static TypeNode LowerPhysicalType(TypeNode type,
         IReadOnlyDictionary<string, string> aliases, ValueTypeOracle isValueFqn,
         IReadOnlyDictionary<string, string> physicalTypeNames, bool typeArg,
-        IReadOnlySet<string> localTypeNames = null, bool refBuild = false)
+        IReadOnlySet<string> localTypeNames = null, bool refBuild = false,
+        IReadOnlyDictionary<string, NullableRepresentationFrame> nullableFrames = null)
     {
         var savedAliases = _aliases;
         var savedIsValue = _isValueFqn;
         var savedPhysicalNames = _physicalTypeNames;
         var savedLocalNames = _localTypeNames;
+        var savedNullableFrames = _nullableFrames;
         try
         {
             _aliases = aliases ?? new Dictionary<string, string>(StringComparer.Ordinal);
             _isValueFqn = isValueFqn ?? (_ => false);
             _physicalTypeNames = physicalTypeNames ?? new Dictionary<string, string>(StringComparer.Ordinal);
             _localTypeNames = localTypeNames ?? new HashSet<string>(StringComparer.Ordinal);
+            _nullableFrames = nullableFrames;
             return LowerType(type, refBuild, force: false, typeArg);
         }
         finally
@@ -577,6 +589,7 @@ static class BirTypeLowering
             _isValueFqn = savedIsValue;
             _physicalTypeNames = savedPhysicalNames;
             _localTypeNames = savedLocalNames;
+            _nullableFrames = savedNullableFrames;
         }
     }
 
@@ -714,13 +727,15 @@ static class BirTypeLowering
     public static JsonNode Lower(JsonNode root, bool refBuild, IReadOnlyDictionary<string, string> aliases = null,
         ValueTypeOracle isValueFqn = null, string file = null,
         IReadOnlyDictionary<string, string> physicalTypeNames = null,
-        IReadOnlySet<string> localTypeNames = null)
+        IReadOnlySet<string> localTypeNames = null,
+        IReadOnlyDictionary<string, NullableRepresentationFrame> nullableFrames = null)
     {
         _aliases = aliases ?? new Dictionary<string, string>(StringComparer.Ordinal);
         _isValueFqn = isValueFqn ?? (_ => false);
         _file = string.IsNullOrEmpty(file) ? "<unknown>" : file;
         _physicalTypeNames = physicalTypeNames ?? new Dictionary<string, string>(StringComparer.Ordinal);
         _localTypeNames = localTypeNames ?? new HashSet<string>(StringComparer.Ordinal);
+        _nullableFrames = nullableFrames;
         return LowerNode(root, refBuild, force: false);
     }
 

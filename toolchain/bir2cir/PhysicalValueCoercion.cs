@@ -19,6 +19,7 @@ static class PhysicalValueCoercion
 {
     static bool NeedsConversion(TypeNode source, TypeNode target) =>
         source is TypeNode.Tv && target is TypeNode.Tv && !source.Equals(target)
+        || target is TypeNode.Tv && source is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" }
         || CollectionViewFaces.IsViewSeam(source, target);
     sealed record MethodShape(string Owner, string Name, int Arity, TypeNode[] Parameters, TypeNode Return);
 

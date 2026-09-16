@@ -1190,7 +1190,7 @@ sealed class Pipeline
             // wrappers on those arguments. The reference build must query its own representation as well.
             DeclNullableFlags.Apply(substituted, isValueFqn,
                 type => BirTypeLowering.LowerPhysicalType(type, refs.Aliases, isValueFqn,
-                    refs.PhysicalTypeNames, typeArg: false, emittedLocalTypes, _options.RefBuild)
+                    refs.PhysicalTypeNames, typeArg: false, emittedLocalTypes, _options.RefBuild, refs.NullableTypeFrames)
                     is TypeNode.Fqn { Args: not null });
             // COMPREHENSIVE reference-nullable strip (#37/#48): remove EVERY `{t:nullable,of:<reference>}` from the whole
             // tree — decl slots AND usage positions (owner generic type-args, argTypes/typeArgs, cast/expression types)
@@ -1240,9 +1240,9 @@ sealed class Pipeline
             var collisionProjection = substituted.DeepClone();
             declarationCollisionProjection.Add(BirTypeLowering.Lower(
                 collisionProjection, refBuild: false, declarationCollisionAliases, isValueFqn, outputName,
-                refs.PhysicalTypeNames, emittedLocalTypes));
+                refs.PhysicalTypeNames, emittedLocalTypes, refs.NullableTypeFrames));
             var lowered = BirTypeLowering.Lower(substituted, _options.RefBuild, refs.Aliases, isValueFqn, outputName,
-                refs.PhysicalTypeNames, emittedLocalTypes);
+                refs.PhysicalTypeNames, emittedLocalTypes, refs.NullableTypeFrames);
             // The erasure can collapse two Kotlin declarations onto ONE CLR signature, where only one of them can
             // ever be called and the other is unreachable. Checked HERE, on the lowered tree, because that is where
             // the physical signature is final: `T?` reaches `object` through this pass and `Any?` reaches it through
