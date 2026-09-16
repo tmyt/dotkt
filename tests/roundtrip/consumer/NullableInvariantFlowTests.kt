@@ -6,6 +6,11 @@ import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
 import roundtrip.nullableinvariantflow.*
 import kotlin.clr.byref
 
+private fun <T> inlineNullableEarlyExit(): Int {
+    InlineNullableBody().isAbsent<T>(null) { return 17 }
+    return -1
+}
+
 class NullableInvariantFlowTests {
     @TestAttribute
     fun separateProducerFilesSelectTheOriginalAbstractOverload() {
@@ -65,6 +70,22 @@ class NullableInvariantFlowTests {
     @TestAttribute
     fun genericFunctionsPreserveAliasesAndNullablePayloads() {
         val strings = Box<String?>(null)
+        val propertyChild = NullablePropertyChild<String>(strings)
+        val nextStrings = Box<String?>("next")
+        assertTrue(propertyChild.exchange(nextStrings) === strings)
+        assertTrue(propertyChild.exchange(strings) === nextStrings)
+        val initialInteger = Box<Int?>(null)
+        val integerPropertyChild = NullablePropertyChild<Int>(initialInteger)
+        val nextInteger = Box<Int?>(42)
+        assertTrue(integerPropertyChild.exchange(nextInteger) === initialInteger)
+        assertTrue(integerPropertyChild.exchange(initialInteger) === nextInteger)
+        val inlineBody = InlineNullableBody()
+        var observed = 0
+        assertTrue(inlineBody.isAbsent<String>(null) { observed++ })
+        assertTrue(!inlineBody.isAbsent<Int>(42) { observed++ })
+        assertEquals(2, observed)
+        assertEquals(17, inlineNullableEarlyExit<String>())
+        assertEquals(17, inlineNullableEarlyExit<Int>())
         val inheritedDefault = InheritedNullableDefault()
         val constrainedDefault = InheritedNullableConstrainedDefault()
         assertTrue(constrainedDefault.constrainedIdentity<String, Box<String?>>(strings) === strings)

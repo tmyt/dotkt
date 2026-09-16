@@ -4,7 +4,7 @@ using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 
-// Materializes signature frames and independently owned static implementation frames. Instance body-only
+// Materializes signature frames and independently owned nonvirtual implementation frames. Virtual body-only
 // specialization is separate: it must not grow a published virtual slot. Runs after the Kotlin declaration snapshot.
 static class NullableRepresentationMaterialization
 {

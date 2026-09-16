@@ -277,14 +277,15 @@ static partial class NullableTvErasureCallRealign
     }
 
     // A declaration synthesized after NullableGenericErasure carries its physical slot in `type`/`ret` and the
-    // exact pre-erasure Kotlin slot in the same carrier as an ordinary declaration. Prefer that explicit source
-    // fact when present. A malformed compiler-produced carrier is malformed current input and fails normally; it
-    // must not silently fall back to a different physical contract.
+    // exact pre-erasure Kotlin slot in the same carrier as an ordinary declaration. Only a scalar nullable variable
+    // establishes the object-erasure boundary owned here. Constructed slots already carry their materialized
+    // companion arguments; re-erasing their source metadata would incorrectly replace G<N(T)> with G<object>.
     static TypeNode ReadDeclaredSlot(JsonObject slot, string physicalKey, string carrierKey,
         bool preferCarrier)
     {
-        if (preferCarrier && Str(slot[carrierKey]) is string encoded)
-            return TypeNode.Parse(encoded);
+        if (preferCarrier && Str(slot[carrierKey]) is string encoded
+            && TypeNode.Parse(encoded) is TypeNode.Nullable { Of: TypeNode.Tv } scalarNullable)
+            return scalarNullable;
         return TypeJson.Read(slot[physicalKey]);
     }
 
@@ -1111,6 +1112,19 @@ static partial class NullableTvErasureCallRealign
 
     internal static void SelfTest()
     {
+        var companionReturn = new TypeNode.Fqn("Box", new TypeNode[] { new TypeNode.Tv("type", 1) });
+        var sourceReturn = new TypeNode.Fqn("Box", new TypeNode[] {
+            new TypeNode.Nullable(new TypeNode.Tv("type", 0)) });
+        var accessor = new JsonObject {
+            ["ret"] = TypeJson.Write(companionReturn), ["nullableGenericRet"] = TypeNode.ToJson(sourceReturn),
+        };
+        if (ReadDeclaredSlot(accessor, "ret", "nullableGenericRet", true) != companionReturn)
+            throw new InvalidOperationException("Late accessor re-erased its materialized nullable companion");
+        accessor["ret"] = TypeJson.Fqn("object");
+        var scalarReturn = new TypeNode.Nullable(new TypeNode.Tv("type", 0));
+        accessor["nullableGenericRet"] = TypeNode.ToJson(scalarReturn);
+        if (ReadDeclaredSlot(accessor, "ret", "nullableGenericRet", true) != scalarReturn)
+            throw new InvalidOperationException("Late accessor lost scalar nullable-erasure ownership");
         var typeArgs = new TypeNode[] { new TypeNode.Fqn("System.Int32") };
         var methodArgs = new TypeNode[] { new TypeNode.Fqn("System.String") };
 

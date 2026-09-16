@@ -85,6 +85,7 @@ static partial class NullableRepresentationDemand
         var caller = Method("caller", TypeJson.Fqn("kotlin.Unit"), new JsonArray(new JsonObject {
             ["k"] = "callStatic", [DeclarationIdentityBinding.Key] = "callee", ["typeArgs"] = new JsonArray(Tv("method")),
         }));
+        caller["virtual"] = true;
         var arrayBody = Method("arrayBody", TypeJson.Fqn("kotlin.Unit"), new JsonArray(new JsonObject {
             ["k"] = "newArraySized", ["elem"] = NullableTv("method"),
         }));
@@ -146,6 +147,11 @@ static partial class NullableRepresentationDemand
         var fixedDemand = freeDemands.Single(m => ReferenceEquals(m.Declaration, fixedCaller));
         Check(fixedDemand.Frame.PhysicalArity == 1 && fixedDemand.Body.Method.SetEquals(new[] { 0 }),
             "static body-only propagation must not grow an instance dispatch slot");
+        freeCaller["static"] = false;
+        var instanceDemand = Collect(new[] { freeCaller.Parent.Parent }).Single().Methods
+            .Single(m => ReferenceEquals(m.Declaration, freeCaller));
+        Check(instanceDemand.Frame.PhysicalArity == 2,
+            "independent instance body owns its frame without a private dispatch helper");
 
         var importedUse = Owner("ImportedUse", Applied("ForeignProducer", Tv()));
         var imported = Collect(new[] { importedUse }, new Dictionary<string, NullableRepresentationFrame> {

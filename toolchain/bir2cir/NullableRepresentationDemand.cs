@@ -26,10 +26,10 @@ static partial class NullableRepresentationDemand
     {
         public JsonObject Implementation => ImplementationKey == null ? null : (JsonObject)Declaration[ImplementationKey];
         public JsonArray TypeParameters => (Implementation ?? Declaration)["typeParams"] as JsonArray;
-        // A static implementation owns its generic MethodDef frame. It has no inherited dispatch slot whose
-        // arity must remain fixed; the explicit metadata frame restores its unchanged Kotlin source arity.
-        // Instance dispatch still needs a separate implementation entry for body-only demand.
-        public bool CanExtendBodyFrame => ImplementationKey == null && Flag(Declaration["static"])
+        // An independent nonvirtual implementation owns its generic MethodDef frame, whether static or instance.
+        // Only dispatch slots must keep a separate body entry. In particular, an inline instance body must retain
+        // its lambda uses instead of exporting a call to a private out-of-line helper.
+        public bool CanExtendBodyFrame => ImplementationKey == null
             && !Flag(Declaration["virtual"]) && !Flag(Declaration["override"]) && !Flag(Declaration["abstract"])
             && (Declaration["overrides"] as JsonArray)?.Count is not > 0;
 

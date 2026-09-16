@@ -61,6 +61,24 @@ class NullableGenericChild : NullableGenericParent(), NullableGenericSlot {
     override fun <T> echoNullable(value: Box<T?>): Box<T?> = value
 }
 
+open class NullablePropertyParent<T>(initial: Box<T?>) {
+    protected var current: Box<T?> = initial
+}
+class NullablePropertyChild<T>(initial: Box<T?>) : NullablePropertyParent<T>(initial) {
+    fun exchange(next: Box<T?>): Box<T?> {
+        val previous = current
+        current = next
+        return previous
+    }
+}
+
+class InlineNullableBody {
+    inline fun <T> isAbsent(value: T?, observe: () -> Unit): Boolean {
+        observe()
+        return Box<T?>(value).value == null
+    }
+}
+
 interface NullableBodySlot {
     fun <T> isAbsent(value: T?): Boolean
     fun <A, B> bothAbsent(first: A?, second: B?): Boolean

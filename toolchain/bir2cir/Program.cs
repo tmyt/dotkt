@@ -122,6 +122,12 @@ sealed class Pipeline
         switch (node)
         {
             case JsonObject o:
+                // Selecting the fixed CharSequence bridge consumes the source declaration binding as well as
+                // its owner. The generated bridge owns these slots; the original Kotlin MethodDef identity must
+                // not be looked up on that different physical declaration by later access/binding passes.
+                if ((o["k"] as JsonValue)?.GetValue<string>() == "callInstance"
+                    && TypeJson.OwnerName(o["ownerType"]) == "kotlin.CharSequence")
+                    o.Remove(DeclarationIdentityBinding.Key);
                 if ((o["t"] as JsonValue)?.GetValue<string>() == "fqn"
                     && (o["name"] as JsonValue)?.GetValue<string>() == "kotlin.CharSequence")
                     o["name"] = SharedSyntheticSynthesis.CharSeq;
