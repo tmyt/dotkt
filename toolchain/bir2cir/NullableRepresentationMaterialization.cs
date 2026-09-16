@@ -171,10 +171,13 @@ static class NullableRepresentationMaterialization
                 closedArguments = new JsonArray(mapping.CloseMethod(frame, arguments.Select(TypeJson.Read).ToArray())
                     .Select(TypeJson.Write).ToArray());
             }
+            // Determine ownership before mutating sty or ret; otherwise JSON property order changes the frame.
+            var declarationKeys = kind == null ? new HashSet<string>() : obj.Select(p => p.Key)
+                .Where(key => NullableRepresentationTypes.IsDeclarationFrameKey(key, kind, obj)).ToHashSet();
             foreach (var key in obj.Select(p => p.Key).ToArray())
             {
                 if (key is "attrs" or "overrides" || key == "typeArgs" && closedArguments != null) continue;
-                if (kind != null && NullableRepresentationTypes.IsDeclarationFrameKey(key, kind, obj))
+                if (declarationKeys.Contains(key))
                 {
                     RewriteDescriptor(obj, key, selectedMapping, mapping);
                     continue;
@@ -248,7 +251,31 @@ static class NullableRepresentationMaterialization
         genericCall["memberReturnType"] = root["methods"][0]["ret"].DeepClone();
         genericCall["argTypes"] = genericCall["memberSignature"].DeepClone();
         genericCall["ret"] = genericCall["memberReturnType"].DeepClone();
+        var closedCalls = new List<JsonObject>();
+        foreach (var stampFirst in new[] { true, false })
+        {
+            var callerResult = TypeJson.Write(new TypeNode.Fqn("Box", new TypeNode[] {
+                new TypeNode.Nullable(new TypeNode.Tv("method", 1)) }));
+            var closedCall = new JsonObject();
+            if (stampFirst) closedCall["sty"] = callerResult.DeepClone();
+            closedCall["k"] = "callStatic";
+            closedCall["ownerType"] = TypeJson.Fqn("FrameTest");
+            closedCall["declarationId"] = "pass";
+            closedCall["typeArgs"] = new JsonArray(TypeJson.Write(new TypeNode.Tv("method", 1)));
+            closedCall["ret"] = callerResult.DeepClone();
+            if (!stampFirst) closedCall["sty"] = callerResult.DeepClone();
+            ((JsonArray)root["methods"]).Add(new JsonObject {
+                ["name"] = "closedCaller" + stampFirst, ["static"] = true,
+                ["typeParams"] = new JsonArray("A", "B"), ["params"] = new JsonArray(),
+                ["ret"] = callerResult.DeepClone(), ["body"] = new JsonArray(closedCall),
+            });
+            closedCalls.Add(closedCall);
+        }
         Apply(new[] { root }, _ => false);
+        foreach (var closedCall in closedCalls)
+            if (TypeJson.Read(closedCall["ret"]) != new TypeNode.Fqn("Box", new TypeNode[] { new TypeNode.Tv("method", 2) })
+                || TypeJson.Read(closedCall["ret"]) != TypeJson.Read(closedCall["sty"]))
+                throw new InvalidOperationException("Caller result ownership depends on callee frame or property order");
         var method = root["methods"][0];
         var store = root["types"][1];
         if (((JsonArray)method["typeParams"]).Count != 2

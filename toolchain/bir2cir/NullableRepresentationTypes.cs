@@ -22,9 +22,11 @@ sealed class NullableRepresentationTypes
         or "memberOwnerTypeParams" or "memberMethodTypeParams"
         or "memberReturnType" or "memberSignature" or "memberType"
         || key == "argTypes" && kind != null && kind != "new"
-        // The CLR projection dialect carries ownerType + its open declaration ret. A Kotlin static call's
-        // owner/calleeOwner dialect instead stamps its already-substituted result in the caller's frame.
-        || key == "ret" && kind is "callStatic" or "callInstance" && expression["ownerType"] != null;
+        // BIR's exact result-stamp contract (spec §2.7): a result equal to sty is already caller-relative,
+        // even on a constructed member/property call. Owner presence does not establish result ownership.
+        || key == "ret" && kind is "callStatic" or "callInstance"
+            && !(TypeJson.Read(expression["sty"]) is TypeNode stamp
+                && stamp.Equals(TypeJson.Read(expression["ret"])));
 
     public NullableRepresentationTypes(NullableRepresentationFrame owner, NullableRepresentationFrame method,
         IReadOnlyDictionary<string, NullableRepresentationFrame> types, ValueTypeOracle isValue)
