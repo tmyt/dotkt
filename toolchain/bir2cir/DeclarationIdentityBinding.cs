@@ -582,6 +582,7 @@ static class DeclarationIdentityBinding
             // synthetic key before round-trip metadata is stamped.
             if (id.Contains(PhysicalOnlySuffix, StringComparison.Ordinal))
             {
+                declaration.Remove(NullableRepresentationTypes.MethodFrameKey);
                 declaration.Remove(Key);
                 declaration.Remove(SemanticSignatureKey);
                 declaration.Remove("declarationSourceName");

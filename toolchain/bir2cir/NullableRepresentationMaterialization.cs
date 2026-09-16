@@ -36,7 +36,8 @@ static class NullableRepresentationMaterialization
             {
                 var methodName = ownerName + "." + Text(method.Declaration["name"]);
                 RequireCovered(method.Body.Type, owner.Frame, methodName + " (type)");
-                RequireCovered(method.Body.Method, method.Frame, methodName + " (method)");
+                if (method.Declaration["body"] is not JsonArray)
+                    RequireCovered(method.Body.Method, method.Frame, methodName + " (method)");
             }
         }
         var types = references == null ? new Dictionary<string, NullableRepresentationFrame>(StringComparer.Ordinal)
@@ -78,11 +79,21 @@ static class NullableRepresentationMaterialization
             foreach (var method in owner.Methods)
             {
                 var methodFrame = method.Frame;
+                var splitBody = method.Body.Method.Except(methodFrame.NullableIndices).Any();
+                var source = splitBody ? (JsonObject)method.Declaration.DeepClone() : null;
+                if (splitBody) method.Declaration["body"] = new JsonArray();
                 var methodMapping = new NullableRepresentationTypes(frame, methodFrame, types, isValue);
                 Rewrite(method.Declaration, methodMapping, methods, DeclarationMapping);
                 AppendParameters(method.Declaration, methodFrame);
                 if (methodFrame.NullableIndices.Count != 0)
                     method.Declaration[NullableRepresentationTypes.MethodFrameKey] = methodFrame.ToJson().ToJsonString();
+                if (splitBody)
+                    NullableBodyDispatch.Build(owner.Declaration, source, method.Declaration, frame, methodFrame,
+                        method.Body.Method, (helper, helperFrame) => {
+                            Rewrite(helper, new NullableRepresentationTypes(frame, helperFrame, types, isValue), methods, DeclarationMapping);
+                            AppendParameters(helper, helperFrame);
+                            helper[NullableRepresentationTypes.MethodFrameKey] = helperFrame.ToJson().ToJsonString();
+                        });
             }
             AppendParameters(owner.Declaration, frame);
             if (frame.NullableIndices.Count != 0)
@@ -124,6 +135,23 @@ static class NullableRepresentationMaterialization
         Func<JsonObject, NullableRepresentationTypes> declarationMapping,
         NullableGenericErasure.Pos position = NullableGenericErasure.Pos.Slot)
     {
+        try { RewriteCore(node, mapping, methods, declarationMapping, position); }
+        catch (InvalidOperationException error) when (node is JsonObject method
+            && method["k"] == null && method["params"] is JsonArray && Text(method["name"]) != null)
+        {
+            throw new InvalidOperationException($"Nullable frame rewrite of {Text(method["name"])}: {error.Message}", error);
+        }
+        catch (InvalidOperationException error) when (node is JsonObject expression && Text(expression["k"]) != null)
+        {
+            throw new InvalidOperationException($"{Text(expression["k"])} {Text(expression["method"])}: {error.Message}", error);
+        }
+    }
+
+    static void RewriteCore(JsonNode node, NullableRepresentationTypes mapping,
+        IReadOnlyDictionary<string, NullableRepresentationFrame> methods,
+        Func<JsonObject, NullableRepresentationTypes> declarationMapping,
+        NullableGenericErasure.Pos position)
+    {
         if (node is JsonArray array)
         {
             for (var i = 0; i < array.Count; i++)
@@ -146,7 +174,7 @@ static class NullableRepresentationMaterialization
             foreach (var key in obj.Select(p => p.Key).ToArray())
             {
                 if (key is "attrs" or "overrides" || key == "typeArgs" && closedArguments != null) continue;
-                if (kind != null && NullableRepresentationTypes.IsDeclarationFrameKey(key, kind))
+                if (kind != null && NullableRepresentationTypes.IsDeclarationFrameKey(key, kind, obj))
                 {
                     RewriteDescriptor(obj, key, selectedMapping, mapping);
                     continue;
@@ -215,6 +243,7 @@ static class NullableRepresentationMaterialization
         ((JsonArray)root["methods"][1]["body"]).Add(construction);
         var genericCall = (JsonObject)root["methods"][1]["body"][0];
         genericCall["memberMethodTypeParams"] = new JsonArray("T");
+        genericCall["ownerType"] = TypeJson.Fqn("FrameTest");
         genericCall["memberSignature"] = new JsonArray(root["methods"][0]["params"][0]["type"].DeepClone());
         genericCall["memberReturnType"] = root["methods"][0]["ret"].DeepClone();
         genericCall["argTypes"] = genericCall["memberSignature"].DeepClone();
@@ -240,16 +269,16 @@ static class NullableRepresentationMaterialization
             || Text(method["nullableGenericRet"]) == null)
             throw new InvalidOperationException("Nullable frame materialization self-test failed");
         var bodyOnly = JsonNode.Parse("""
-        {"fileClass":"FixedEntry","methods":[{"name":"entry","typeParams":["T"],
+        {"kind":"class","name":"FixedEntry","methods":[{"name":"entry","static":false,"virtual":true,"typeParams":["T"],
          "params":[],"ret":{"t":"fqn","name":"kotlin.Unit"},
          "body":[{"k":"newArraySized","elem":{"t":"nullable","of":{"t":"tv","scope":"method","i":0}}}]}]}
         """);
-        var before = bodyOnly.ToJsonString();
-        var deferred = false;
-        try { Apply(new[] { bodyOnly }, _ => false); }
-        catch (InvalidOperationException) { deferred = true; }
-        if (!deferred || bodyOnly.ToJsonString() != before)
-            throw new InvalidOperationException("Body-only specialization must precede signature-frame materialization");
+        Apply(new[] { bodyOnly }, _ => false);
+        if (((JsonArray)bodyOnly["methods"]).Count != 2
+            || ((JsonArray)bodyOnly["methods"][0]["typeParams"]).Count != 1
+            || ((JsonArray)bodyOnly["methods"][1]["typeParams"]).Count != 2
+            || Text(bodyOnly["methods"][0]["body"][0]["value"]["k"]) != "cond")
+            throw new InvalidOperationException("Body-only specialization changed the fixed entry frame");
         Console.WriteLine("[nullable frame materialization] self-test OK (declarations, calls, exact values, metadata)");
     }
 }

@@ -32,7 +32,8 @@ internal sealed class NullableRepresentationFrame
         for (var index = 0; index < NullableIndices.Count; index++)
             if (NullableIndices[index] == source.I)
                 return new TypeNode.Tv(source.Scope, SourceArity + index);
-        throw new InvalidOperationException("Nullable representation was not demanded by this declaration");
+        throw new InvalidOperationException($"Nullable representation {source.Scope}[{source.I}] was not demanded by frame "
+            + $"(source arity {SourceArity}, nullable indices [{string.Join(",", NullableIndices)}])");
     }
 
     // Both mappings receive the SOURCE argument. Applying the nullable mapping to an already-erased argument

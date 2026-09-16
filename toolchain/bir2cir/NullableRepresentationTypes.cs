@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json.Nodes;
 using DotKt.Bir;
 
 // The type operation used when materializing a declaration's explicit nullable frame. This does not choose
@@ -16,12 +17,14 @@ sealed class NullableRepresentationTypes
     internal NullableRepresentationFrame MethodFrame => _method;
 
     // These facts are expressed in the selected declaration's frame, not the lexical caller's frame.
-    internal static bool IsDeclarationFrameKey(string key, string kind) => key is
+    internal static bool IsDeclarationFrameKey(string key, string kind, JsonObject expression) => key is
         "sig" or "shapeTypes" or "paramSig" or "delegationSig"
         or "memberOwnerTypeParams" or "memberMethodTypeParams"
         or "memberReturnType" or "memberSignature" or "memberType"
         || key == "argTypes" && kind != null && kind != "new"
-        || key == "ret" && kind is "callStatic" or "callInstance";
+        // The CLR projection dialect carries ownerType + its open declaration ret. A Kotlin static call's
+        // owner/calleeOwner dialect instead stamps its already-substituted result in the caller's frame.
+        || key == "ret" && kind is "callStatic" or "callInstance" && expression["ownerType"] != null;
 
     public NullableRepresentationTypes(NullableRepresentationFrame owner, NullableRepresentationFrame method,
         IReadOnlyDictionary<string, NullableRepresentationFrame> types, ValueTypeOracle isValue)

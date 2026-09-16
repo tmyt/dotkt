@@ -4,6 +4,7 @@ import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
 import roundtrip.nullableinvariantflow.*
+import kotlin.clr.byref
 
 class NullableInvariantFlowTests {
     @TestAttribute
@@ -43,6 +44,7 @@ class NullableInvariantFlowTests {
         val box = Box<String?>(null)
         val direct = StringExchange()
         val throughInterface: Exchange<String> = direct
+        assertTrue(exchangeThroughExtraFrame<Int, Boolean, String>(throughInterface) === direct)
         assertTrue(direct.exchange(box) === box)
         assertTrue(throughInterface.exchange(box) === box)
         assertTrue(sameModule(box) === box)
@@ -71,6 +73,20 @@ class NullableInvariantFlowTests {
         assertTrue(!nullableBodyOnly<String>("present"))
         assertTrue(forwardNullableBodyOnly<Int>(null))
         assertTrue(!forwardNullableBodyOnly<Int>(42))
+        val throughSlot: NullableBodySlot = NullableBodyImplementation()
+        assertTrue(throughSlot.isAbsent<String>(null))
+        assertTrue(!throughSlot.isAbsent<String>("present"))
+        assertTrue(throughSlot.isAbsent<Int>(null))
+        assertTrue(!throughSlot.isAbsent<Int>(42))
+        assertTrue(throughSlot.bothAbsent<String, Int>(null, null))
+        assertTrue(!throughSlot.bothAbsent<String, Int>(null, 42))
+        assertTrue(!throughSlot.bothAbsent<Int, String>(42, null))
+        var integer = 1
+        assertTrue(throughSlot.writeAndObserve(42, byref(integer), byref(integer)))
+        assertEquals(42, integer)
+        var text = "before"
+        assertTrue(throughSlot.writeAndObserve("after", byref(text), byref(text)))
+        assertEquals("after", text)
     }
 
     @TestAttribute
