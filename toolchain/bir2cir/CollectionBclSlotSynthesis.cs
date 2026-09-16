@@ -26,7 +26,7 @@ static class CollectionBclSlotSynthesis
     const string IList = "System.Collections.Generic.IList";
     const string IteratorBridge = "kotlin.collections.ClrIteratorBridgeKt";
 
-    public static void Apply(JsonNode root)
+    public static void Apply(JsonNode root, ReferenceMetadataIndex refs)
     {
         if (root is not JsonObject o || o["types"] is not JsonArray types) return;
         foreach (var t in types)
@@ -68,7 +68,7 @@ static class CollectionBclSlotSynthesis
             // ICollection<E> face: Contains / CopyTo / get_IsReadOnly.
             if (!Has("Contains")) methods.Add(SelfForward("Contains", elem, "System.Boolean", "contains", selfOwner));
             if (!Has("get_IsReadOnly")) methods.Add(ConstBoolGetter("get_IsReadOnly"));
-            if (!Has("CopyTo")) methods.Add(CopyTo(elem));
+            if (!Has("CopyTo")) methods.Add(CopyTo(elem, refs));
             // IList<E> face additionally needs IndexOf.
             if (listElem != null && !Has("IndexOf"))
                 methods.Add(SelfForward("IndexOf", listElem, "System.Int32", "indexOf", selfOwner));
@@ -140,16 +140,15 @@ static class CollectionBclSlotSynthesis
     // `CopyTo(array: E[], arrayIndex: Int)` = `var it = iteratorOverEnumerable(this); var i = arrayIndex;
     // while (it.hasNext()) { array[i] = it.next(); i = i + 1 }`. iteratorOverEnumerable is the stdlib's own IEnumerable->
     // Kotlin-iterator bridge (a static resolvable from any assembly, unlike a virtual iterator() this class may inherit).
-    // It returns the BASE kotlin.collections.Iterator<T> (NOT MutableIterator) — typing the local as the exact return keeps
-    // the `stloc` verifiable; hasNext()/next() are Iterator's own members (remove() is never used).
-    static JsonObject CopyTo(JsonNode elem)
+    // The local and both member calls use the allocated Iterator carrier; next's erased value is converted to E.
+    static JsonObject CopyTo(JsonNode elem, ReferenceMetadataIndex refs)
     {
-        JsonObject IterType() => new() { ["t"] = "fqn", ["name"] = "kotlin.collections.Iterator", ["args"] = new JsonArray(Clone(elem)) };
+        var element = TypeJson.Read(elem);
         var body = new JsonArray
         {
             new JsonObject
             {
-                ["k"] = "var", ["name"] = "it", ["type"] = IterType(),
+                ["k"] = "var", ["name"] = "it", ["type"] = TypeJson.Write(KotlinIteratorPhysicalProtocol.Carrier(refs)),
                 ["init"] = new JsonObject
                 {
                     ["k"] = "callStatic", ["owner"] = TypeJson.Fqn(IteratorBridge), ["method"] = "iteratorOverEnumerable",
@@ -162,11 +161,7 @@ static class CollectionBclSlotSynthesis
             new JsonObject
             {
                 ["k"] = "while",
-                ["cond"] = new JsonObject
-                {
-                    ["k"] = "callInstance", ["ownerType"] = IterType(), ["virtual"] = true,
-                    ["recv"] = Local("it"), ["method"] = "hasNext", ["sig"] = new JsonArray(), ["ret"] = TypeJson.Fqn("System.Boolean"), ["args"] = new JsonArray(),
-                },
+                ["cond"] = KotlinIteratorPhysicalProtocol.Call(refs, Local("it"), "hasNext", element, new TypeNode.Fqn("System.Boolean")),
                 ["body"] = new JsonArray
                 {
                     new JsonObject
@@ -175,11 +170,7 @@ static class CollectionBclSlotSynthesis
                         ["expr"] = new JsonObject
                         {
                             ["k"] = "arraySet", ["array"] = Local("array"), ["index"] = Local("i"), ["elem"] = Clone(elem),
-                            ["value"] = new JsonObject
-                            {
-                                ["k"] = "callInstance", ["ownerType"] = IterType(), ["virtual"] = true,
-                                ["recv"] = Local("it"), ["method"] = "next", ["sig"] = new JsonArray(), ["ret"] = Clone(elem), ["args"] = new JsonArray(),
-                            },
+                            ["value"] = KotlinIteratorPhysicalProtocol.Call(refs, Local("it"), "next", element, element),
                         },
                     },
                     new JsonObject

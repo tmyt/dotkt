@@ -475,4 +475,6 @@ if grep -q '"_resolvedMethodTypeParams"' "$OUT/cir/consumer.cir.json"; then
 	die "bir2cir leaked its resolved-method constraint carrier into CIR"
 fi
 
+bash "$ROOT/tests/special/dll2klib-e2e/verify-ir.sh" "$OUT"
+
 info "PASS  CLR ref.dll -> standard KLIB (types, nested types, members incl. inherited instance/static properties, generic constraints, public-only interface supertypes, generics, NRT, local/cross-assembly delegates, indexers, events, extensions, operators, byref, unmanaged pointers) -> kotc -> bir2cir -> ilemit -> run (524)"

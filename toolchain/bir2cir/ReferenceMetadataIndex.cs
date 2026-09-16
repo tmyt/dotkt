@@ -1318,7 +1318,7 @@ sealed partial class ReferenceMetadataIndex
     // Exact declared Kotlin-source method on a referenced owner, with its physical MethodDef name retained. A
     // compiler-assigned/explicit CLR spelling can differ from the source member selected by Kotlin; callers that
     // synthesize a call need both identities and must not reconstruct one from the other.
-    public IEnumerable<(string PhysicalName, TypeNode[] Parameters, TypeNode Return, bool IsVirtual, bool IsAbstract)>
+    public IEnumerable<(string PhysicalName, TypeNode[] Parameters, TypeNode Return, TypeNode SemanticReturn, bool IsVirtual, bool IsAbstract)>
         AccessibleDeclaredKotlinInstanceMethods(TypeNode.Fqn ownerSpec, string sourceMethodName, int methodArity)
     {
         if (ownerSpec == null || string.IsNullOrEmpty(sourceMethodName)) yield break;
@@ -1335,6 +1335,7 @@ sealed partial class ReferenceMetadataIndex
                 member.Name,
                 member.ParamTypeNodes.Select(type => SupertypeGraph.SubstOwnerTvs(type, args)).ToArray(),
                 SupertypeGraph.SubstOwnerTvs(member.ReturnTypeNode, args),
+                SupertypeGraph.SubstOwnerTvs(member.KotlinReturnType ?? member.ReturnTypeNode, args),
                 member.IsVirtual,
                 member.IsAbstract);
         }

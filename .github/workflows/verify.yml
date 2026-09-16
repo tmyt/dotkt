@@ -5,7 +5,7 @@
 #   make verify-test-corpus : NUnit (+ ILVerify), then schema/sanity over the BIR/CIR it just emitted.
 #   make verify-compile-fail: the isolated negative-compilation diagnostic lane.
 #   make verify-lowering    : synthetic BIR -> CIR lowering contract tests.
-#   make verify-integration : stateful MSBuild, target-universe, C# ABI, and XFAIL-policy gates.
+#   make verify-integration : MSBuild, target-universe, C# ABI, P/Invoke, DLL-to-KLIB E2E, and policy gates.
 #   make verify-packaged-sdk : the ONLY gate that restores + consumes the 5 real .nupkgs from a feed
 #                            (exe / library / cross-module async coroutine / mpp / template scenarios). Two releases
 #                            shipped broken on packaging-only defects this gate catches — so it is a DISTINCT,

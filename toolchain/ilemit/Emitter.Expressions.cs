@@ -759,7 +759,7 @@ sealed partial class Emitter
                     : mb;
                 _il.Emit(OpCodes.Ldnull);
                 EmitMethod(_il, OpCodes.Ldftn, target);
-                EmitDelegateCtor(_il, ft, e);
+                EmitDelegateCtor(_il, e);
                 return ft;
             }
             case "newBoundDelegate":
@@ -792,7 +792,7 @@ sealed partial class Emitter
                 if (NeedsBoxToRef(recvT)) _il.Emit(OpCodes.Box, recvT);
                 if (IsVirtual(e)) { _il.Emit(OpCodes.Dup); EmitMethod(_il, OpCodes.Ldvirtftn, boundTarget); }
                 else EmitMethod(_il, OpCodes.Ldftn, boundTarget);
-                EmitDelegateCtor(_il, ft, e);
+                EmitDelegateCtor(_il, e);
                 return ft;
             }
             case "newBoundClrDelegate":
@@ -814,7 +814,7 @@ sealed partial class Emitter
                 if (NeedsBoxToRef(recvTc)) _il.Emit(OpCodes.Box, recvTc);
                 if (IsVirtual(e)) { _il.Emit(OpCodes.Dup); EmitMethod(_il, OpCodes.Ldvirtftn, mi); }
                 else EmitMethod(_il, OpCodes.Ldftn, mi);
-                EmitDelegateCtor(_il, ft, e);
+                EmitDelegateCtor(_il, e);
                 return ft;
             }
             case "newClrStaticDelegate":
@@ -828,7 +828,7 @@ sealed partial class Emitter
                         clrStaticTypeArgs.EnumerateArray().Select(x => MapType(x)).ToArray());
                 _il.Emit(OpCodes.Ldnull);
                 EmitMethod(_il, OpCodes.Ldftn, mi);
-                EmitDelegateCtor(_il, ft, e);
+                EmitDelegateCtor(_il, e);
                 return ft;
             }
             case "delegateInvoke":
@@ -869,7 +869,7 @@ sealed partial class Emitter
                 EmitConstructor(_il, OpCodes.Newobj, ctor);  // closure instance is the delegate target
                 EmitMethod(_il, OpCodes.Ldftn, invoke);
                 var ft = MapType(e.GetProperty("funcType"));
-                EmitDelegateCtor(_il, ft, e);
+                EmitDelegateCtor(_il, e);
                 return ft;
             }
             case "newSam":

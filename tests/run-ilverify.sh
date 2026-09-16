@@ -4,7 +4,7 @@
 # scopes only (the shared framework + the assembly's own output dir, which already holds NUnit/stdlib/producer).
 # Whole-assembly verification replaces the former per-case, per-dll shell invocations.
 #
-# Green (exit 0) iff every ilverify finding matches one of the two narrow baselines below:
+# Green (exit 0) requires a completed verifier run, and every finding must match a narrow baseline below:
 #
 #   * ILVERIFY_XFAIL — a real, runtime-safe compiler defect awaiting a fix.
 #   * ILVERIFY_UNVERIFIABLE — intentionally unverifiable ECMA-335 IL whose runtime behavior is separately tested.
@@ -71,6 +71,8 @@ FINDING_CLASS=""
 classify_finding() { # <finding line> -> 0 if classified, setting FINDING_CLASS and recording its key
 	local line="$1" key
 	FINDING_CLASS=""
+	# Metadata errors are never covered by method-level IL allowances.
+	[[ "$line" == '[IL]: Error ['* ]] || return 1
 	if [[ "$line" == *"Error [UnmanagedPointer]"* ]]; then
 		for key in "${!ALLOWED_UNMANAGED_POINTER[@]}"; do
 			[[ "$line" == *"$key"* ]] || continue
@@ -97,12 +99,32 @@ classify_finding() { # <finding line> -> 0 if classified, setting FINDING_CLASS 
 }
 
 rc=0
+verification_incomplete=0
 for dll in "${DLLS[@]}"; do
-	[[ -f "$dll" ]] || { echo "ilverify: MISSING $dll"; rc=1; continue; }
+	[[ -f "$dll" ]] || { echo "ilverify: MISSING $dll"; rc=1; verification_incomplete=1; continue; }
 	bindir="$(dirname "$dll")"
-	out="$(dotnet "$ILV" "$dll" -r "$RTDIR/*.dll" -r "$bindir/*.dll" 2>&1 || true)"
-	# Finding lines look like:  [IL]: Error [Kind]: [<asm> : Fixture::method()][offset ...] <msg>
-	mapfile -t findings < <(grep -E '\[IL\]: Error|Error \[' <<<"$out" || true)
+	# Use an absolute input so the completion footer identifies precisely this assembly.
+	dll="$(cd "$bindir" && pwd)/$(basename "$dll")"
+	verifier_status=0
+	out="$(dotnet "$ILV" "$dll" -r "$RTDIR/*.dll" -r "$bindir/*.dll" 2>&1)" || verifier_status=$?
+	mapfile -t findings < <(grep -E '^(\[(IL|MD)\]: Error|Error \[)' <<<"$out" || true)
+	# ILVerify returns 2 for a completed run with findings, 0 for a clean run. Exceptions and
+	# invocation failures must not become baseline allowances, even after some findings were printed.
+	# The footer is emitted only after both method and type verification. Matching its count also
+	# prevents an unrecognized diagnostic format from silently disappearing from classification.
+	completed=0
+	if (( verifier_status == 0 && ${#findings[@]} == 0 )); then
+		if grep -Fxq "All Classes and Methods in $dll Verified." <<<"$out"; then completed=1; fi
+	elif (( verifier_status == 2 && ${#findings[@]} > 0 )); then
+		if grep -Fxq "${#findings[@]} Error(s) Verifying $dll" <<<"$out"; then completed=1; fi
+	fi
+	if (( ! completed )); then
+		echo "VERIFY FAIL  $(basename "$dll") — incomplete or inconsistent verifier result (exit $verifier_status):"
+		printf '%s\n' "$out"
+		rc=1
+		verification_incomplete=1
+		continue
+	fi
 	declare -a newfails=() xfailed=() unverifiable=() unmanaged_pointer=()
 	for f in "${findings[@]}"; do
 		if classify_finding "$f"; then
@@ -138,6 +160,10 @@ for dll in "${DLLS[@]}"; do
 	fi
 	unset newfails xfailed unverifiable unmanaged_pointer
 done
+
+# Missing evidence cannot establish that an allowance is stale. Keep the failed verdict without
+# advising baseline removal when any assembly's verification did not finish.
+if (( verification_incomplete )); then exit "$rc"; fi
 
 # An invocation-local pointer allowance is an assertion that the named unsafe method exists and produces exactly the
 # expected ILVerify classification. If it matched nothing, the focused exception is stale or misspelled and must not

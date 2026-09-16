@@ -15,7 +15,6 @@ sealed partial class Emitter
     TypeBuilder _delegateInvokeAdapterTB;
 
     readonly Dictionary<string, MethodBuilder> _delegateInvokeAdapters = new();
-    readonly Dictionary<string, MethodBuilder> _delegateCtorAdapters = new();
 
     TypeBuilder DelegateInvokeAdapterHolder()
     {
@@ -83,57 +82,16 @@ sealed partial class Emitter
         else EmitMethod(il, OpCodes.Callvirt, AnchorOn(ft, openInvoke));
     }
 
-    // The same PersistedAssemblyBuilder limitation applies to the delegate `.ctor`: it cannot map
-    // `Func<E[]>::.ctor` when E is an enclosing TypeBuilder parameter. As with Invoke, keep the CIR-selected
-    // System.Func/Action identity and move the composite instantiation into a MethodSpec:
-    //
-    //   static Func<TResult> NewFunc<TResult>(object target, IntPtr method) =>
-    //       new Func<TResult>(target, method);
-    //
-    // The helper definition mentions only its own direct generic parameters, which Reflection.Emit can encode;
-    // the call site supplies E[]/List<E>/etc. This is strictly an encoding adapter, not delegate selection.
-    // The adapter is shared per arity, and so is the OPEN constructor it needs: `Func`N..ctor(object, native int)`
-    // does not vary with the instantiation. The call site has the node, so the reference reaches here rather than
-    // being fetched by signature inside a body that belongs to no node.
-    MethodInfo DelegateCtorAdapter(Type ft, ConstructorInfo openCtor)
-    {
-        var def = ft.GetGenericTypeDefinition();
-        var actual = ft.GetGenericArguments();
-        bool returnsValue = def.FullName.StartsWith("System.Func`", StringComparison.Ordinal);
-        string key = (returnsValue ? "F" : "A") + actual.Length;
-        if (!_delegateCtorAdapters.TryGetValue(key, out var mb))
-        {
-            mb = DelegateInvokeAdapterHolder().DefineMethod(
-                (returnsValue ? "NewFunc" : "NewAction") + actual.Length,
-                MethodAttributes.Public | MethodAttributes.Static | MethodAttributes.HideBySig);
-            // delegate-frame-residual: the ENCODING workaround's own frame — the constructor twin of the Invoke helper above,
-            // for the same PersistedAssemblyBuilder limitation. It stands for no CIR declaration and decides nothing.
-            var gps = mb.DefineGenericParameters(Enumerable.Range(1, actual.Length)
-                .Select(i => returnsValue && i == actual.Length ? "TResult" : "T" + i).ToArray());
-            var delegateType = ConstructedType(def, gps);
-            mb.SetReturnType(delegateType);
-            mb.SetParameters(Bcl("System.Object"), Bcl("System.IntPtr"));
-            var il = mb.GetILGenerator();
-            il.Emit(OpCodes.Ldarg_0);
-            il.Emit(OpCodes.Ldarg_1);
-            // The declaration came from the node's resolved delegateCtorRef. Re-anchoring that declaration onto
-            // the helper's generic delegate view is mechanical; looking the constructor up again would discard
-            // the very identity the carrier supplied.
-            EmitConstructor(il, OpCodes.Newobj, Sanction(AnchorOn(delegateType, openCtor)));
-            il.Emit(OpCodes.Ret);
-            _delegateCtorAdapters[key] = mb;
-        }
-        return mb.MakeGenericMethod(actual);
-    }
-
     // The delegate a construction builds is the one its node names: bir2cir decided which delegate the construction
     // physically is (its natural one, or the slot's — including authoring a void-to-value adapter when no method
     // pointer could be compatible at all), and stated it as `funcType` + `delegateCtorRef`. Nothing is chosen here.
-    void EmitDelegateCtor(ILGenerator il, Type ft, JsonElement node)
+    void EmitDelegateCtor(ILGenerator il, JsonElement node)
     {
         var ctor = RequiredRef<ConstructorInfo>(node, "delegateCtorRef", "a delegate construction");
-        if (NeedsDelegateInvokeAdapter(ft)) EmitMethod(il, OpCodes.Call, DelegateCtorAdapter(ft, ctor));
-        else EmitConstructor(il, OpCodes.Newobj, ctor);
+        // PersistableConstructor already encodes composite open owners without changing their identity.
+        // Keep ldftn/ldvirtftn and newobj in this body: passing the method pointer through an IntPtr
+        // helper parameter loses the target-method information needed to verify delegate construction.
+        EmitConstructor(il, OpCodes.Newobj, ctor);
     }
 
     // Runtime members of delegate TypeBuilders declared by CIR. Reflection.Emit cannot reflect members from an

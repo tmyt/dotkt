@@ -13,7 +13,7 @@ using DotKt.Bir;
 // job, so BOTH halves of the answer are authored here as ordinary declarations, bodies and MethodImpl descriptors:
 //
 //   * `dotkt$EnumeratorOverKotlinIterator<T>` — a sealed, module-internal, compiler-owned adapter class that wraps a
-//     Kotlin `Iterator<T>` as a BCL `IEnumerator<T>`. Kotlin source cannot express it: `IEnumerator<T>` and the
+//     Kotlin iterator's existential carrier as a BCL `IEnumerator<T>`. Kotlin source cannot express it: `IEnumerator<T>` and the
 //     non-generic `IEnumerator` each declare a `Current` slot and the two differ only in return type, which is not a
 //     Kotlin overload. It is emitted ONCE PER MODULE rather than shared from the runtime stdlib, because its CLR
 //     identity never appears in a signature — every use of an instance is already behind `IEnumerator<E>` — so a
@@ -33,7 +33,6 @@ static class ReverseEnumeratorBridgeSynthesis
 {
     // #68: `dotkt$…` uses Kotlin's own unspeakable `$`, so a compiler-owned name can never collide with source.
     public const string AdapterName = "dotkt$EnumeratorOverKotlinIterator";
-    public const string NarrowingAdapterName = "dotkt$EnumeratorOverNarrowedKotlinIterator";
     const string NonGenericBridgeName = "dotkt$NonGenericGetEnumerator";
     const string GetEnumeratorName = "GetEnumerator";
     // The collision-free physical spelling of the generic bridge, for the class that already declares a nullary
@@ -72,24 +71,19 @@ static class ReverseEnumeratorBridgeSynthesis
     {
         var defs = SupertypeGraph.Collect(roots);
         JsonArray adapterHost = null;
-        var needsAdapter = false;
-        var needsNarrowingAdapter = false;
         foreach (var root in roots)
         {
             if (root is not JsonObject file || file["types"] is not JsonArray types) continue;
             foreach (var type in Declared(types))
             {
-                if (!Bridge(type, defs, refs, out var narrows)) continue;
+                if (!Bridge(type, defs, refs)) continue;
                 // The adapter lives in the first file that owes a bridge; every other file's uses name it by the
                 // same module-wide identity, exactly like any other type declared next door.
                 adapterHost ??= types;
-                if (narrows) needsNarrowingAdapter = true;
-                else needsAdapter = true;
             }
         }
         if (adapterHost == null) return false;
-        if (needsAdapter) adapterHost.Add(Adapter(AdapterName, narrows: false));
-        if (needsNarrowingAdapter) adapterHost.Add(Adapter(NarrowingAdapterName, narrows: true));
+        adapterHost.Add(Adapter(AdapterName, refs));
         return true;
     }
 
@@ -106,18 +100,14 @@ static class ReverseEnumeratorBridgeSynthesis
 
     // Author both GetEnumerator halves on one class. False when the class is owed none.
     static bool Bridge(JsonObject type, IReadOnlyDictionary<string, SupertypeGraph.Def> defs,
-        ReferenceMetadataIndex refs, out bool narrows)
+        ReferenceMetadataIndex refs)
     {
-        narrows = false;
         if (Str(type["kind"]) != "class") return false;                    // interfaces carry no bodies
         if (Str(type["name"]) is not string owner || owner.Length == 0) return false;
         if (type["methods"] is not JsonArray methods) return false;
         if (!defs.TryGetValue(owner, out var def)) return false;
         if (FindIteratorProvider(def, defs, refs) is not { } iterator) return false;
-        if (Element(def, defs, refs, iterator.Return) is not { } element) return false;
-        var iteratorElement = IteratorElement(iterator.Return, defs, refs);
-        if (iteratorElement == null) return false;
-        narrows = SupertypeGraph.TypeKey(iteratorElement) != SupertypeGraph.TypeKey(element);
+        if (Element(def, defs, refs, iterator.SemanticReturn) is not { } element) return false;
 
         // The physical MethodDef `GetEnumerator()` may already be occupied by a Kotlin declaration of exactly that
         // CLR signature — the allocated signature is name plus generic arity plus the parameter vector, so a second
@@ -142,7 +132,9 @@ static class ReverseEnumeratorBridgeSynthesis
             ["ret"] = TypeJson.Write(iterator.Return),
             ["args"] = new JsonArray(),
         };
-        // `IEnumerator<E> GetEnumerator() => new dotkt$EnumeratorOverKotlinIterator<E>(this.iterator())`.
+        // The adapter stores the common iterator carrier and casts its object result directly to the CLR
+        // enumerable element. A second source-element generic argument would reify a Kotlin metadata type here,
+        // after physical lowering has finished, and is unnecessary for an erased iterator slot.
         var genericBody = new JsonArray
         {
             new JsonObject
@@ -151,10 +143,8 @@ static class ReverseEnumeratorBridgeSynthesis
                 ["value"] = new JsonObject
                 {
                     ["k"] = "new",
-                    ["type"] = TypeJson.Write(narrows
-                        ? Constructed(NarrowingAdapterName, iteratorElement, element)
-                        : Constructed(AdapterName, element)),
-                    ["argTypes"] = new JsonArray(TypeJson.Write(Constructed(KotlinIterator, iteratorElement))),
+                    ["type"] = TypeJson.Write(Constructed(AdapterName, element)),
+                    ["argTypes"] = new JsonArray(TypeJson.Write(KotlinIteratorPhysicalProtocol.Carrier(refs))),
                     ["args"] = new JsonArray(iteratorCall),
                     // The adapter declares exactly one constructor and this pass authored it; naming its index is
                     // the same explicit local-declaration link every other CIR construction carries.
@@ -209,7 +199,7 @@ static class ReverseEnumeratorBridgeSynthesis
         && !Bool(method["static"])
         && (method["params"] as JsonArray)?.Count == 0
         && Arity(method) == 0
-        && TypeJson.Read(method["ret"]) is TypeNode.Fqn ret
+        && SemanticReturn(method) is TypeNode.Fqn ret
         && IteratorElement(ret, defs, refs) != null;
 
     // DeclarationIdentityBinding may already have allocated a collision-free CLR MethodDef name. Its retained
@@ -219,7 +209,12 @@ static class ReverseEnumeratorBridgeSynthesis
         ?? Str(method[DeclarationRename.SourceMemberKey])
         ?? Str(method["name"]);
 
-    sealed record IteratorProvider(TypeNode.Fqn Owner, string Name, TypeNode Return, bool Abstract);
+    // The preserved declaration fact chooses the Kotlin iteration protocol; the emitted return selects the call
+    // descriptor. Neither can be reconstructed from the other after existential representation lowering.
+    static TypeNode SemanticReturn(JsonObject method) =>
+        Str(method["retKotlinType"]) is string original ? TypeNode.Parse(original) : TypeJson.Read(method["ret"]);
+
+    sealed record IteratorProvider(TypeNode.Fqn Owner, string Name, TypeNode Return, TypeNode SemanticReturn, bool Abstract);
 
     // Resolve the declaration that supplies `iterator()` in the receiver's own type-parameter frame. Class members
     // win before interface defaults, exactly as CLR dispatch does. For interfaces, retain only the most-specific
@@ -282,7 +277,8 @@ static class ReverseEnumeratorBridgeSynthesis
             .Where(method => (!inherited || Str(method["vis"]) != "private")
                 && IsIteratorDeclaration(method, defs, refs))
             .Select(method => new IteratorProvider(owner, Str(method["name"]),
-                SupertypeGraph.SubstOwnerTvs(TypeJson.Read(method["ret"]), args), Bool(method["abstract"])))
+                SupertypeGraph.SubstOwnerTvs(TypeJson.Read(method["ret"]), args),
+                SupertypeGraph.SubstOwnerTvs(SemanticReturn(method), args), Bool(method["abstract"])))
             .ToList();
         return candidates.Count == 1 ? candidates[0] : null;
     }
@@ -292,9 +288,9 @@ static class ReverseEnumeratorBridgeSynthesis
         if (refs == null) return null;
         var candidates = refs.AccessibleDeclaredKotlinInstanceMethods(owner, IteratorMember, 0)
             .Where(method => method.Parameters.Length == 0
-                && method.Return is TypeNode.Fqn ret
+                && method.SemanticReturn is TypeNode.Fqn ret
                 && IteratorElement(ret, new Dictionary<string, SupertypeGraph.Def>(), refs) != null)
-            .Select(method => new IteratorProvider(owner, method.PhysicalName, method.Return, method.IsAbstract))
+            .Select(method => new IteratorProvider(owner, method.PhysicalName, method.Return, method.SemanticReturn, method.IsAbstract))
             .ToList();
         return candidates.Count == 1 ? candidates[0] : null;
     }
@@ -352,16 +348,22 @@ static class ReverseEnumeratorBridgeSynthesis
     static TypeNode Element(SupertypeGraph.Def def, IReadOnlyDictionary<string, SupertypeGraph.Def> defs,
         ReferenceMetadataIndex refs, TypeNode iteratorReturn)
     {
-        var iteratorElement = IteratorElement(iteratorReturn, defs, refs);
+        var localNames = defs.Keys.ToHashSet(StringComparer.Ordinal);
+        TypeNode PhysicalElement(TypeNode type) => type == null ? null
+            : BirTypeLowering.LowerPhysicalType(type, refs.Aliases, refs.IsValueType,
+                refs.PhysicalTypeNames, typeArg: true, localTypeNames: localNames);
+        var iteratorElement = PhysicalElement(IteratorElement(iteratorReturn, defs, refs));
         TypeNode first = null;
         foreach (var (spec, isInterface) in SupertypeGraph.Reachable(def, defs, refs))
         {
             if (!isInterface || spec.Args is not { Length: 1 } args) continue;
             // Bare names: a face stated by this unit carries no arity, one reached through a reference assembly does.
             if (Array.IndexOf(EnumerableFaces, Bare(spec.Name)) < 0) continue;
-            if (iteratorElement != null && SupertypeGraph.TypeKey(args[0]) == SupertypeGraph.TypeKey(iteratorElement))
-                return args[0];
-            first ??= args[0];
+            // Referenced supertype metadata retains Kotlin arguments even though this pass authors CLR CIR.
+            var physicalElement = PhysicalElement(args[0]);
+            if (iteratorElement != null && SupertypeGraph.TypeKey(physicalElement) == SupertypeGraph.TypeKey(iteratorElement))
+                return physicalElement;
+            first ??= physicalElement;
         }
         return first;
     }
@@ -411,35 +413,17 @@ static class ReverseEnumeratorBridgeSynthesis
     // ---- the adapter -----------------------------------------------------------------------------------------
 
     static TypeNode Tv0 => new TypeNode.Tv("type", 0);
-    static TypeNode Tv1 => new TypeNode.Tv("type", 1);
 
-    static JsonObject Adapter(string name, bool narrows)
+    static JsonObject Adapter(string name, ReferenceMetadataIndex refs)
     {
         var sourceElement = Tv0;
-        var targetElement = narrows ? Tv1 : Tv0;
-        var wrapped = Constructed(KotlinIterator, sourceElement);
-        var self = SelfNode(name, narrows);
+        var targetElement = Tv0;
+        var wrapped = KotlinIteratorPhysicalProtocol.Carrier(refs);
+        var self = TypeJson.Write(Constructed(name, Tv0));
         var it = new JsonObject { ["k"] = "field", ["ownerType"] = self.DeepClone(), ["recv"] = This(), ["name"] = "_it" };
 
-        JsonObject Wrapped(string member, TypeNode ret) => new()
-        {
-            ["k"] = "callInstance",
-            ["ownerType"] = TypeJson.Write(wrapped),
-            ["virtual"] = true,
-            ["recv"] = it.DeepClone(),
-            ["method"] = member,
-            ["sig"] = new JsonArray(),
-            ["ret"] = TypeJson.Write(ret),
-            ["args"] = new JsonArray(),
-        };
-
-        JsonObject NextValue()
-        {
-            var next = Wrapped("next", sourceElement);
-            return narrows
-                ? new JsonObject { ["k"] = "cast", ["type"] = TypeJson.Write(targetElement), ["e"] = next }
-                : next;
-        }
+        JsonObject Wrapped(string member, TypeNode ret) =>
+            KotlinIteratorPhysicalProtocol.Call(refs, it.DeepClone().AsObject(), member, sourceElement, ret);
 
         // `bool MoveNext() { if (_it.hasNext()) { _cur = (TTarget)_it.next(); return true } return false }`.
         // The cast is explicit CIR because adapting an iterator's element to the enumerable slot is bir2cir-owned
@@ -460,7 +444,7 @@ static class ReverseEnumeratorBridgeSynthesis
                             ["ownerType"] = self.DeepClone(),
                             ["recv"] = This(),
                             ["name"] = "_cur",
-                            ["value"] = NextValue(),
+                            ["value"] = Wrapped("next", targetElement),
                         },
                         Return(Const("System.Boolean", true)),
                     },
@@ -521,7 +505,7 @@ static class ReverseEnumeratorBridgeSynthesis
             ["beforeFieldInit"] = true,
             // Module-private: nothing outside this assembly can name the type, because no signature mentions it.
             ["vis"] = "internal",
-            ["typeParams"] = narrows ? new JsonArray("TSource", "TTarget") : new JsonArray("T"),
+            ["typeParams"] = new JsonArray("T"),
             ["base"] = null,
             ["interfaces"] = new JsonArray(
                 TypeJson.Write(Constructed(IEnumeratorT, targetElement)),
@@ -551,8 +535,6 @@ static class ReverseEnumeratorBridgeSynthesis
 
     const string NonGenericCurrentName = "dotkt$NonGenericCurrent";
 
-    static JsonNode SelfNode(string name, bool narrows) => TypeJson.Write(
-        narrows ? Constructed(name, Tv0, Tv1) : Constructed(name, Tv0));
     static JsonObject This() => new() { ["k"] = "this" };
     static JsonObject Cur(JsonNode self) => new()
         { ["k"] = "field", ["ownerType"] = self.DeepClone(), ["recv"] = This(), ["name"] = "_cur" };

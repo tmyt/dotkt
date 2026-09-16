@@ -102,29 +102,18 @@ static class IteratorConsumerNormalization
                     obj["type"] = TypeJson.Write(new TypeNode.Fqn(head, new[] { elem2 }));
                 }
             }
-            // A hasNext/next `callInstance` on a Kotlin-iterator owner -> a `clrInstance` on the REAL referenced generic
-            // `kotlin.collections.Iterator<elem>`, where BOTH members are DECLARED. This is required for the real
-            // `kotlin.collections.MutableIterator<elem>` — hasNext/next are INHERITED from Iterator, so a
-            // callInstance on MutableIterator resolves nowhere (reflection does not walk interface bases) ->
-            // EntryPointNotFound. Every `for (x in aMutableList)` and `class C : MutableIterable` hits this.
-            // callInstance routes through the emitted-type lookup, which has no referenced generic owner; the CLR-bound
-            // member path is `clrInstance` (EmitClrCall), exactly how the substituted
-            // IReadOnlyList's get_Item/get_Count resolve. next() returns the element, hasNext() Boolean; argTypes empty.
-            // The element comes from the owner's own type arg.
-            // `type`/`ret` stay in the source vocabulary — the later type-lowering pass lowers them.
+            // Both members are declared by Iterator, including when reached through MutableIterator. Keep the
+            // call in Kotlin vocabulary: existential member binding must select the physical carrier slot before
+            // CLR binding. Converting it to clrInstance here would freeze the source member name while later type
+            // rewriting independently changes its owner to the non-generic carrier.
             else if (k == "callInstance" && (Str(obj["method"]) is "hasNext" or "next")
                 && IteratorDispatchElem(TypeJson.Read(obj["ownerType"])) is TypeNode e)
             {
                 var method = Str(obj["method"]);
-                obj["k"] = "clrInstance";
-                obj.Remove("ownerType");
-                obj.Remove("virtual");
-                // The iterator representation selects the physical slot below. Its source declaration
-                // identity has been consumed and must not survive on that CLR-bound call.
-                obj.Remove(DeclarationIdentityBinding.Key);
-                obj["type"] = IterType(e);
+                obj["ownerType"] = IterType(e);
+                obj["virtual"] = true;
                 obj["method"] = method;
-                obj["argTypes"] = new JsonArray();
+                obj["sig"] = new JsonArray();
                 obj["ret"] = method == "next" ? TypeJson.Write(e) : TypeJson.Fqn("kotlin.Boolean");
                 // Spec §2.7 — this rewrote the node's result. `IteratorDispatchElem` answers `object` for an element
                 // token it cannot parse or that is already erased, so a `for ((k, v) in map)` over a `Map<String,Int>`
