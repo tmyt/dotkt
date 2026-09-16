@@ -1,7 +1,7 @@
 # bir2cir authors the concrete element face; the erased source cast must not survive into CIR.
-+"k":"new","type":{"t":"fqn","name":"kotlin.sequences.ClrSequenceElementAdapter","args":[{"t":"tv","scope":"method","i":0}]},"argTypes":[{"t":"fqn","name":"System.Collections.Generic.IEnumerable","args":[{"t":"fqn","name":"System.Object"}]}],"args":[{"k":"local","name":"source"}],"localCtorIndex":0
-+"k":"new","type":{"t":"fqn","name":"kotlin.sequences.ClrSequenceElementAdapter","args":[{"t":"tv","scope":"method","i":0}]},"argTypes":[{"t":"fqn","name":"System.Collections.Generic.IEnumerable","args":[{"t":"fqn","name":"System.Object"}]}],"args":[{"k":"local","name":"sourceNullable"}],"localCtorIndex":0
-+"k":"new","type":{"t":"fqn","name":"kotlin.sequences.ClrSequenceElementAdapter","args":[{"t":"tv","scope":"method","i":0}]},"argTypes":[{"t":"fqn","name":"System.Collections.Generic.IEnumerable","args":[{"t":"fqn","name":"System.Object"}]}],"args":[{"k":"local","name":"sourceConcrete"}],"localCtorIndex":0
--"memberRef":{"kind":"ctor","assembly":"DotKt.Stdlib","declaringType":{"t":"fqn","name":"kotlin.sequences.ClrSequenceElementAdapter\u00601"
++"k":"new","type":{"t":"fqn","name":"kotlin.sequences.ClrSequenceElementAdapter","args":[{"t":"fqn","name":"System.Object"},{"t":"tv","scope":"method","i":0}]},"argTypes":[{"t":"fqn","name":"System.Collections.Generic.IEnumerable","args":[{"t":"fqn","name":"System.Object"}]}],"args":[{"k":"local","name":"source"}],"localCtorIndex":0
++"k":"new","type":{"t":"fqn","name":"kotlin.sequences.ClrSequenceElementAdapter","args":[{"t":"tv","scope":"method","i":1},{"t":"tv","scope":"method","i":0}]},"argTypes":[{"t":"fqn","name":"System.Collections.Generic.IEnumerable","args":[{"t":"tv","scope":"method","i":1}]}],"args":[{"k":"local","name":"sourceNullable"}],"localCtorIndex":0
++"k":"new","type":{"t":"fqn","name":"kotlin.sequences.ClrSequenceElementAdapter","args":[{"t":"fqn","name":"object"},{"t":"tv","scope":"method","i":0}]},"argTypes":[{"t":"fqn","name":"System.Collections.Generic.IEnumerable","args":[{"t":"fqn","name":"object"}]}],"args":[{"k":"local","name":"sourceConcrete"}],"localCtorIndex":0
+-"memberRef":{"kind":"ctor","assembly":"DotKt.Stdlib","declaringType":{"t":"fqn","name":"kotlin.sequences.ClrSequenceElementAdapter\u00602"
 -"k":"cast"
 -"ClrFilteringNotNullSequence"

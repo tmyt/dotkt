@@ -160,7 +160,7 @@ sealed class Pipeline
         ValueTypeOracle isValueFqn = type => refs.IsValueType(type) || localValueTypeFqns.Contains(type.Name);
         RoundtripMetadata.FreezeSuspendResults(birRoots);
         NullableRepresentationMaterialization.Apply(birRoots, isValueFqn, refs);
-        if (!_options.RefBuild) SequenceElementAdapterLowering.Apply(birRoots, isValueFqn);
+        if (!_options.RefBuild) SequenceElementAdapterLowering.Apply(birRoots);
         var companionRepresentations = CompanionRepresentationLowering.Apply(birRoots);
         // CLR multiplies static storage and .cctors on a generic TypeDef per constructed type. Kotlin companion-block
         // statics are one declaration independent of the owner's T, so materialize their non-generic carrier before

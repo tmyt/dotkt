@@ -8,7 +8,7 @@
       "kind": "class",
       "abstract": false,
       "vis": "internal",
-      "typeParams": ["T"],
+      "typeParams": ["S", "T"],
       "base": null,
       "interfaces": [],
       "fields": [],
@@ -20,7 +20,7 @@
               "type": {
                 "t": "fqn",
                 "name": "kotlin.sequences.Sequence",
-                "args": [{ "t": "nullable", "of": { "t": "fqn", "name": "kotlin.Any" } }]
+                "args": [{ "t": "tv", "scope": "type", "i": 0 }]
               }
             }
           ],
@@ -87,6 +87,7 @@
     },
     {
       "name": "adaptNullable",
+      "declarationId": "sequence-element-adapter-nullable",
       "static": true,
       "vis": "public",
       "typeParams": ["T"],

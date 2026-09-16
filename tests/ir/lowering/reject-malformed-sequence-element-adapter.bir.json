@@ -40,7 +40,7 @@
               "name": "source",
               "sty": {
                 "t": "fqn",
-                "name": "kotlin.sequences.Sequence",
+                "name": "kotlin.collections.List",
                 "args": [{ "t": "fqn", "name": "kotlin.String" }]
               }
             }
