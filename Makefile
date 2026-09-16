@@ -122,6 +122,7 @@ verify-tests: ## canonical compiler behavior gate (categorized NUnit suites + IL
 	+$(MAKE) verify-compile-fail
 
 verify-nunit: pack ## categorized NUnit suites + ILVerify; emits the fresh corpus consumed by schema/sanity
+	python3 tests/ilverify/test_harness.py
 	bash tests/run-nunit-tests.sh
 
 verify-compile-fail: toolchain stdlib ## isolated negative-compilation diagnostic lane
