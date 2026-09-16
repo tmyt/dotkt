@@ -768,6 +768,12 @@ binding, including branch joins, constructor delegation, storage, arguments, ret
 The resulting `castclass` is always verifiable — it targets a closed interface — and succeeds because stdlib
 collection values implement every face.
 
+Array elements use the same reified storage projection as generic arguments: `Array<List<String>>` is
+`IList<string>[]`, matching `Array<T>` instantiated with `T = List<String>`. Array declarations, allocations,
+reads and writes agree on that element representation; passing the array through a generic method does not
+copy it or replace its identity. Reading an element into a head-position read-only collection slot uses the
+same explicit view conversion described above.
+
 Known deliberate gaps (all **verify-only / run-correct** for stdlib-backed values, tracked as follow-ups):
 - A **user class implementing ONLY the read-only face** (`class X : List<T>` with no mutable sibling) cannot be
   stored into a nested collapsed `IList` slot — the `castclass` throws at runtime. stdlib/BCL collections

@@ -45,6 +45,10 @@ fun <T> throughInlineNullableFrame(box: Box<T?>): Box<T?> =
     inlineNullableTransform<String, Int, T>(box) { it }
 
 fun <T> clearNullableElement(array: Array<T?>) { array[0] = null }
+fun <T> storageArrayIdentity(array: Array<T>): Array<T> = array
+fun <T> nullableStorageArrayIdentity(array: Array<T?>): Array<T?> = array
+fun <T> storageArrayRead(array: Array<T>): T = array[0]
+fun <T> storageArrayWrite(array: Array<T>, value: T) { array[0] = value }
 fun <T> nullableSupplier(seed: T?): () -> T? = { seed }
 
 class NullableOwnerBody<T> {

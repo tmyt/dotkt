@@ -443,10 +443,9 @@ static class BirTypeLowering
         _localTypeNames.Contains(semanticName) ? semanticName
         : _physicalTypeNames.TryGetValue(semanticName, out var physical) ? physical : semanticName;
 
-    // typeArg = "this type sits in a generic type-ARGUMENT position": a primitive there stays BOXED
-    // (kotlin.Int / the JVM-boxing dual-representation — Comparable<kotlin.Int>, IReadOnlyList<kotlin.Int>);
-    // a bare/value primitive lowers to the CLR shorthand. Only Fqn.args propagate typeArg=true; array/byref/
-    // nullable/fn element+param+return positions are value positions (typeArg=false).
+    // Generic arguments and array elements are reified storage positions. They must use the same projection:
+    // closing Array<T> with List<String> must name the same array as a concrete Array<List<String>> declaration.
+    // Byref and function parameter/return slots remain method-slot positions.
     public static TypeNode LowerType(TypeNode t, bool refBuild, bool force, bool typeArg)
     {
         switch (t)
@@ -538,7 +537,7 @@ static class BirTypeLowering
                     return IsValueNullableInner(n.Of) ? new TypeNode.Nullable(lowered) : lowered;
                 }
             case TypeNode.Array a:
-                return new TypeNode.Array(LowerType(a.Elem, refBuild, force, typeArg: false));
+                return new TypeNode.Array(LowerType(a.Elem, refBuild, force, typeArg: true));
             case TypeNode.ByRef b:
                 return new TypeNode.ByRef(LowerType(b.Of, refBuild, force, typeArg: false));
             case TypeNode.Oblivious ob:
@@ -765,15 +764,14 @@ static class BirTypeLowering
             var here = force || IsAttributeClass(obj);
             // ROOT-V DEPTH: a collection-CONSTRUCTION node's element/value type key is a generic type-argument of the
             // built collection (depth >= 1), so it collapses like a `typeArgs` element — the literal `listOf(listOf(…))`
-            // must build a `List<IList<..>>` so it inhabits the collapsed consumer slot (pairnest). newArray's `elem` is
-            // NOT collapsed — arrays are held uncollapsed on BOTH sides (the `Array` type case + newArray here) so they
-            // stay mutually consistent. (This is NOT array covariance: `IList<int>[]` is in fact NOT assignable to
-            // `IReadOnlyList<int>[]` — the element interfaces are unrelated; a concrete-element store into a readonly
-            // element array works only by the runtime value implementing that element interface.)
+            // must build a `List<IList<..>>` so it inhabits the collapsed consumer slot (pairnest). Array operations
+            // likewise use the array's reified element representation, including when that element is a collection.
             var nodeK = (obj["k"] as JsonValue)?.GetValue<string>();
             if (nodeK == "new") ValidateCurrentNew(obj);
             if (nodeK == "conv") ValidateCurrentConv(obj);
             var collCtor = nodeK is "newList" or "newSet" or "newMap";
+            var arrayStorage = nodeK is "newArray" or "newArrayInit" or "newArraySized" or "spreadConcat"
+                or "arrayGet" or "arraySet" or "forArray";
             var copy = new JsonObject();
             foreach (var kv in obj)
             {
@@ -814,7 +812,8 @@ static class BirTypeLowering
                     copy[kv.Key] = LowerFuncTypeValued(kv.Value, refBuild, here);  // delegate slot -> keep sfunc as func:
                 else if ((kv.Key == "ownerType" || kv.Key == "owner") && IsTypeObject(kv.Value))
                     copy[kv.Key] = LowerOwnerValued(kv.Value, refBuild, here);   // primitive-array owner stays kotlin.IntArray
-                else if (kv.Key == "typeArgs" || (collCtor && kv.Key is "elem" or "keyType" or "valType"))
+                else if (kv.Key == "typeArgs" || (collCtor && kv.Key is "elem" or "keyType" or "valType")
+                    || (arrayStorage && kv.Key == "elem"))
                     copy[kv.Key] = LowerTypeValued(kv.Value, refBuild, here, typeArg: true);   // Root V: depth>=1 positions collapse
                 // `to` is intentionally shared by two node kinds. Its role belongs to the parent discriminator:
                 // a conversion names a Type, while a range loop names an expression. Do not classify the value by

@@ -273,6 +273,22 @@ class NullableInvariantFlowTests {
 
     @TestAttribute
     fun nestedGenericAndArrayStorageKeepTheSameValues() {
+        val lists = arrayOf<List<String>?>(listOf("first"), null)
+        assertTrue(storageArrayIdentity(lists) === lists)
+        assertTrue(nullableStorageArrayIdentity<List<String>>(lists) === lists)
+        assertEquals("first", storageArrayRead(lists)!![0])
+        val next = listOf("next")
+        storageArrayWrite(lists, next)
+        assertTrue(lists[0] === next)
+        clearNullableElement<List<String>>(lists)
+        assertTrue(lists[0] == null)
+        val initialized = Array(2) { listOf("item$it") }
+        assertTrue(storageArrayIdentity(initialized) === initialized)
+        assertEquals("item1", initialized[1][0])
+        val collections = arrayOf<Collection<String>>(listOf("collection"))
+        assertTrue(storageArrayRead(collections) === collections[0])
+        val sets = arrayOf<Set<String>>(setOf("set"))
+        assertTrue(storageArrayRead(sets) === sets[0])
         val inner = create<String>("before")
         val outer = Box(inner)
         val array = arrayOf(outer)
