@@ -1445,14 +1445,18 @@ static class FBoundStarProjectionErasure
                 // A non-public method cannot implicitly fill a public CLR interface slot. Give it the same
                 // deterministic forwarding bridge as an owner-T-dependent signature. The bridge is declared on the
                 // original owner, so it can invoke a private implementation without changing source visibility.
-                var dependent = ContainsOwnerTvInSignature(method) || !IsPublic(method);
-                var slot = InterfaceSlot(method, dependent ? StarMethodName(owner, method) : null,
+                // An explicitly named source member also owns a separate name allocation. Keep the generated
+                // interface slot in its own naming domain rather than making the source member virtual and
+                // requiring its eventual allocated name to be propagated across an implicit interface match.
+                var requiresBridge = ContainsOwnerTvInSignature(method) || !IsPublic(method)
+                    || method[DeclarationIdentityBinding.ExplicitNameKey] != null;
+                var slot = InterfaceSlot(method, requiresBridge ? StarMethodName(owner, method) : null,
                     owner.Name, owners, refs);
                 owner.MemberNames[method] = Str(slot["name"]);
                 var key = MethodKey(slot);
                 if (key == null || !seen.Add(key)) continue;
                 methods.Add(slot);
-                if (dependent)
+                if (requiresBridge)
                 {
                     var bridge = BridgeMethod(owner, method, owners, refs,
                         slotTypeParams: slot["typeParams"] as JsonArray);

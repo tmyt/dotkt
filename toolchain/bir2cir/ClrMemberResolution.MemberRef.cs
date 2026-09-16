@@ -260,7 +260,7 @@ static partial class ClrMemberResolution
             : lowered;
     }
 
-    static TypeNode DeclaringTypeRef(MemberInfo member, Type openOwner, TypeNode[] ownerArgs,
+    internal static TypeNode DeclaringTypeRef(MemberInfo member, Type openOwner, TypeNode[] ownerArgs,
         bool? ownerArgumentsAreMethodSlots = null)
     {
         var declaring = DeclaringDefOf(member);

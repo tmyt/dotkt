@@ -2558,9 +2558,16 @@ internal fun BirEmitter.paramsJsonList(params: List<org.jetbrains.kotlin.ir.decl
  *  here used to make the descriptor one arity short and let the old emitter's name fallback emit a short argument list
  *  (invalid IL); the resolved-CIR contract now rejects such an incomplete identity. */
 internal fun BirEmitter.overloadSigField(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): String {
-	val ext = extensionReceiverParam(fn)?.let { birType(it.type) }
-	val vals = fn.parameters.filter { isValueParameter(it) }.map { birValueParameterType(it) }
-	return ""","sig":[${(listOfNotNull(ext) + vals).joinToString(",") { it.toJson() }}]"""
+	fun signature(): String {
+		val ext = extensionReceiverParam(fn)?.let { birType(it.type) }
+		val vals = fn.parameters.filter { isValueParameter(it) }.map { birValueParameterType(it) }
+		return ""","sig":[${(listOfNotNull(ext) + vals).joinToString(",") { it.toJson() }}]"""
+	}
+	// Local functions carry their separately authored dense capture frame until hoisting.
+	return if (fn.parent is org.jetbrains.kotlin.ir.declarations.IrClass ||
+		fn.parent is org.jetbrains.kotlin.ir.declarations.IrPackageFragment)
+		inMemberDeclarationFrame(fn) { signature() }
+	else signature()
 }
 
 /** True iff `fn` is an override of one of kotlin.Any's three universal methods (the CLR System.Object slots) —

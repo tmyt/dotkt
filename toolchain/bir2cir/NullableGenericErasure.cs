@@ -285,6 +285,9 @@ static class NullableGenericErasure
     static void RecordNullableGenericSlot(JsonObject decl, string typeKey, string factKey, string flagsKey,
         ValueTypeOracle isValue)
     {
+        // A preceding representation pass may already have captured the source slot before expanding its frame.
+        // Its physical companion arguments are not another Kotlin declaration and must not replace that record.
+        if (decl[factKey] != null) return;
         if (TypeJson.Read(decl[typeKey]) is not TypeNode t || !HasRestorableNullableTv(t, isValue)) return;
         decl[factKey] = TypeNode.ToJson(t);
         // THE NRT BYTE OF AN OBJECT-ERASED HEAD IS COMPUTED HERE, FROM THE PRE-ERASURE TYPE (#86). dll2klib splits

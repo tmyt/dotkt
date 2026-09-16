@@ -71,6 +71,26 @@ static class ExistentialReceiverBinding
         VisitDeclarations(root, index, refs);
     }
 
+    internal static void SelfTest()
+    {
+        var index = new Index();
+        var any = new TypeNode.Fqn("kotlin.Any");
+        index.SemanticOwnerByPhysical["ProbeCarrier"] = "ProbeSource";
+        index.Members["ProbeCarrier"] = new List<Member> {
+            new("physicalSlot", "sourceMember", null, new TypeNode[] { any }, any, 0),
+        };
+        var call = (JsonObject)JsonNode.Parse("""
+        {"k":"callInstance","ownerType":{"t":"fqn","name":"ProbeCarrier"},"method":"sourceMember",
+         "declarationId":"source-id","memberRef":{},"sig":[{"t":"fqn","name":"kotlin.Any"}],
+         "recv":{"k":"local","name":"receiver"},"args":[{"k":"local","name":"value"}]}
+        """);
+        BindCall(call, new Dictionary<string, TypeNode>(), index, ReferenceMetadataIndex.Build(Array.Empty<string>()), null);
+        if (Str(call["method"]) != "physicalSlot" || call[DeclarationIdentityBinding.Key] != null
+            || call["memberRef"] != null)
+            throw new InvalidOperationException("Existential slot retained the generic source declaration binding");
+        Console.WriteLine("[existential receiver] self-test OK (selected slot consumes source identity)");
+    }
+
     static void VisitDeclarations(JsonNode node, Index index, ReferenceMetadataIndex refs)
     {
         if (node is not JsonObject obj) return;
@@ -221,6 +241,10 @@ static class ExistentialReceiverBinding
         }
 
         if (physicalMethod == null) return; // ambiguous or absent: never guess a physical slot
+        // This exact existential slot replaces the selected generic source declaration. Keeping the source
+        // identity (or an earlier descriptor) would let final reference binding retarget it to G<T> again.
+        call.Remove(DeclarationIdentityBinding.Key);
+        call.Remove("memberRef");
         call["ownerType"] = TypeJson.Write(receiverType);
         call["method"] = physicalMethod;
         if (propertyCall)

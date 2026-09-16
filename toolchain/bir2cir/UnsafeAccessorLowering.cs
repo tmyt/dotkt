@@ -225,6 +225,11 @@ static class UnsafeAccessorLowering
                     && (method["params"] is JsonArray parameters ? parameters.Count : 0) == signature.Count
                     && (method["typeParams"] is JsonArray ownParams ? ownParams.Count : 0) == methodArity))
                 .ToArray();
+            // The receiver's concrete owner need not declare the selected inherited public member. This pass
+            // owns visibility crossings, not inherited-member binding; leave unrestricted non-local identities
+            // for the exact declaration binder instead of demanding a MethodDef on the receiver's TypeDef.
+            if (targetDeclarationId != null && candidates.Length == 0
+                && frontendVisibility is not ("private" or "protected")) return;
             if (targetDeclarationId != null && candidates.Length != 1)
                 throw new InvalidOperationException(
                     $"UnsafeAccessor target '{ownerType.Name}.{targetName}' has no unique local MethodDef for " +

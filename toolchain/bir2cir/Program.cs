@@ -26,6 +26,8 @@ static class Bir2Cir
                 AliasConstructorDelegationExpansion.SelfTest();
                 StdlibBindingOverlay.SelfTest();
                 DeclarationIdentityBinding.SelfTest();
+                LexicalDeclarationIds.SelfTest();
+                ExistentialReceiverBinding.SelfTest();
                 MaterializedBirPayload.SelfTest();
                 MaterializedExecutable.SelfTest();
                 NullableWitnessDemand.SelfTest();
@@ -679,11 +681,18 @@ sealed class Pipeline
             // This is representation-independent and therefore applies to reference builds too.
             InheritedDefaultFakeOverrideElision.Apply(bir.Root);
             var hoisted = _options.RefBuild ? bir.Root : AliasHelperHoist.Apply(bir.Root, refs);
+            // Consume class-literal property semantics before reference identity binding replaces Kotlin
+            // accessor names/roles with MethodDef names. Its System.Type representation owns this call,
+            // not the reference surface's abstract KClass accessor.
+            if (!_options.RefBuild) hoisted = KClassMemberBinding.Apply(hoisted);
             // CLR override allocation: ordinary functions carrying @ClrIntrinsic receive the external slot name;
             // Kotlin property accessors keep their dedicated name and receive an explicit interface/base MethodImpl
             // binding instead. Derived from the frontend's `overrides` closure plus reference metadata. Runs before
             // MemberCallSubstitution so CLR-bound calls can still be shaped from the exact external identity. Never in
             // ref builds, whose declarations remain a pure Kotlin surface.
+            // Bind the selected reference declaration before mapping its inherited CLR slot. Rebinding a
+            // reference-stub name after DeclarationRename would undo that physical override decision.
+            DeclarationIdentityBinding.BindReferenced(hoisted, refs, localDeclarationIds, deferUnknown: true);
             if (!_options.RefBuild) DeclarationRename.Apply(hoisted, refs);
             // STAR-PROJECTION COLLECTION CLASSIFIERS: use faithful non-generic BCL faces where one exists; otherwise
             // author the Collection/Set/MutableSet composite classifier plus the following smart-cast member access.
@@ -723,25 +732,12 @@ sealed class Pipeline
             // a type-level `clrEventDecl`. It also binds `clrEventRaise` to a `raise_<E>` call. App/rt only (no .NET events
             // in the ref/rt stdlib self-build).
             if (!_options.RefBuild) hoisted = ClrEventImplBinding.BindImplementations(hoisted, refs);
-            // KCLASS MEMBER BINDING: kotc emits `T::class.simpleName`/`.qualifiedName` as the PLAIN Kotlin property read
-            // `callInstance(kotlin.reflect.KClass.get_simpleName/get_qualifiedName, recv = <a System.Type value>)`. This
-            // pass owns the Kotlin<->CLR NAME reversal (#138): where the receiver's Kotlin type is statically known — an
-            // UNBOUND `Int::class`/`Foo::class`, or a BOUND `1::class`/`"x"::class` on a known-final builtin — it CONST-
-            // FOLDS the accessor to the Kotlin name string ("Int"/"kotlin.Int") off the still-Kotlin FQN token (runs
-            // BEFORE BirTypeLowering), not the .NET reflection name. A genuinely-dynamic `x::class` (open/interface
-            // static type) keeps the faithful `System.Type.Name`/`.FullName` read (the CLR->Kotlin run-time helper is a
-            // sequenced stdlib follow-up, §5g). The System.Type/BCL knowledge lives HERE, never in the kotc frontend
-            // (layer purity, mirrors the exception-map / annotation-base migrations). Non-ref only: ref keeps KClass pure.
-            if (!_options.RefBuild) hoisted = KClassMemberBinding.Apply(hoisted);
             // Consume CharSequence property semantics while calls still carry the explicit Kotlin property name and
             // accessor role. MemberCallSubstitution is the physical binding boundary for those calls; no later pass may
             // recover `length` from the allocated MethodRef spelling.
             CharSeqStringLowering.CharSeqRetLambdas charSeqRetLambdas = null;
             if (!_options.RefBuild && attributeTopLevelOwner && !hasUserCharSeqImpl)
                 hoisted = CharSeqStringLowering.Apply(hoisted, localTopLevelFns, out charSeqRetLambdas);
-            // #395: bind an externally selected FIR declaration before MemberCallSubstitution can consult the erased
-            // receiver/signature overload set. Local identities remain untouched for the module-wide allocator below.
-            DeclarationIdentityBinding.BindReferenced(hoisted, refs, localDeclarationIds, deferUnknown: true);
             var substituted = _options.RefBuild ? hoisted : MemberCallSubstitution.Apply(hoisted, refs,
                 localTopLevelFns, attributeTopLevelOwner, isValueFqn, localPropertyDeclarations);
             // Reified-nullability witnesses were prepared while declaration identities and Kotlin type arguments were

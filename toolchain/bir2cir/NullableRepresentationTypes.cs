@@ -20,7 +20,7 @@ sealed class NullableRepresentationTypes
     internal static bool IsDeclarationFrameKey(string key, string kind, JsonObject expression) => key is
         "sig" or "shapeTypes" or "paramSig" or "delegationSig"
         or "memberOwnerTypeParams" or "memberMethodTypeParams"
-        or "memberReturnType" or "memberSignature" or "memberType"
+        or "memberReturnType" or "memberSignature" or "memberType" or "awaitResult"
         || key == "retType" && kind == "callInline"
         || key == "argTypes" && kind != null && kind != "new"
         // BIR's exact result-stamp contract (spec §2.7): a result equal to sty is already caller-relative,
@@ -54,8 +54,10 @@ sealed class NullableRepresentationTypes
     public TypeNode Rewrite(TypeNode type, NullableGenericErasure.Pos position)
     {
         // Another CLR declaration owns this complete signature; its variables are not this lexical frame.
+        // Preserve it until exact member binding has captured the foreign declaration (including NRT T?).
+        // NullableGenericErasure owns the later physical projection; doing it here destroys member identity.
         if (position == NullableGenericErasure.Pos.Bound)
-            return NullableGenericErasure.EraseBound(type, _isValue);
+            return type;
         if (type is TypeNode.Fqn { Name: BirTypeLowering.PointerIntrinsicFqn }) return type;
         if (type is TypeNode.Nullable { Of: TypeNode.Tv variable })
         {
@@ -130,6 +132,8 @@ sealed class NullableRepresentationTypes
         Equal(closed[1], new TypeNode.Nullable(integer), "method nullable argument before concrete erasure");
         var foreign = new TypeNode.Fqn("Foreign", new TypeNode[] { new TypeNode.Nullable(integer) });
         Equal(mapping.Rewrite(foreign, NullableGenericErasure.Pos.Bound), foreign, "foreign fixed nullable construction");
+        Equal(mapping.Rewrite(new TypeNode.Nullable(tv), NullableGenericErasure.Pos.Bound),
+            new TypeNode.Nullable(tv), "foreign nullable variable declaration before exact binding");
         var function = new TypeNode.Fn(false, Box(new TypeNode.Nullable(mv)), new[] { new TypeNode.Nullable(integer) },
             text, "delegate.family", new[] { text });
         Equal(mapping.Slot(function), new TypeNode.Fn(false, Box(mn), function.Params, text, "delegate.family", function.Ctx),

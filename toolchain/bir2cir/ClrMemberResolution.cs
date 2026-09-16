@@ -509,7 +509,9 @@ static partial class ClrMemberResolution
             var childContext = DeclarationContext(obj, context);
             foreach (var kv in obj.ToList())
                 if (kv.Value != null) WalkReferencedStaticCalls(kv.Value, childContext);
-            if ((obj["k"] as JsonValue)?.GetValue<string>() is "callStatic" or "callInstance" or "newDelegate" or "newBoundDelegate")
+            if ((obj["k"] as JsonValue)?.GetValue<string>() is "callStatic" or "callInstance" or "newDelegate" or "newBoundDelegate"
+                || (obj["k"] as JsonValue)?.GetValue<string>() == "constrainedCall"
+                    && obj[DeclarationIdentityBinding.Key] != null)
                 ResolveReferencedStaticCall(obj, context);
         }
         else if (node is JsonArray arr)
@@ -538,7 +540,8 @@ static partial class ClrMemberResolution
     {
         // An instance call states its owner as `ownerType`; a static one as `owner`, or `calleeOwner` when a
         // lowering rebuilt the node. All three name the same thing — the type that declares the member.
-        var ownerNode = node["owner"] is JsonNode owner && owner.GetValueKind() != System.Text.Json.JsonValueKind.Null
+        var ownerNode = (node["k"] as JsonValue)?.GetValue<string>() == "constrainedCall" ? node["iface"]
+            : node["owner"] is JsonNode owner && owner.GetValueKind() != System.Text.Json.JsonValueKind.Null
             ? owner
             : node["calleeOwner"] ?? node["ownerType"];
         if (ReadOwnerNode(ownerNode) is not TypeNode.Fqn ownerFqn
@@ -599,17 +602,29 @@ static partial class ClrMemberResolution
         if (!propertyAccessorResolved
             && (node[DeclarationIdentityBinding.Key] as JsonValue)?.TryGetValue<string>(out var declarationId) == true)
         {
+            var callOwner = ResolveOwnerType(ownerFqn)
+                ?? throw new InvalidOperationException($"bir2cir: selected call owner '{ownerFqn.Name}' does not resolve");
             if (!_refs.TryDeclarationIdentityMethod(
-                    declarationId, methodArity, isStatic, callSig, out var selectedSignature,
+                    declarationId, methodArity, isStatic, callSig, callOwner, ownerFqn.Args, out var selectedSignature,
                     out var selectedDeclaration, out var selectedOwner, out var failure))
                 throw new InvalidOperationException(
                     $"bir2cir: {context} [{node["k"]?.GetValue<string>()} {ownerFqn.Name}.{name}]: "
                     + $"frontend declaration identity '{declarationId}' {failure}");
             node["sig"] = new JsonArray(selectedSignature.Select(TypeJson.Write).ToArray());
-            node["memberRef"] = MemberRefJson(selectedDeclaration, MemberRefNode.Kinds.Method,
-                selectedOwner, ownerFqn.Args);
+            // Identity selects the MethodDef, not the receiver's instantiation of its declaring type.
+            // Project through the actual call owner (Leaf : Middle<String>, for example), rather than
+            // applying Leaf's empty argument vector directly to Middle<T>.
+            var selectedReference = MemberRefOf(selectedDeclaration, MemberRefNode.Kinds.Method,
+                callOwner, ownerFqn.Args);
+            node["memberRef"] = selectedReference.Write();
             StampResolvedMethodTypeParameters(node, selectedDeclaration);
-            StampDelegateArgumentTargets(node, selectedDeclaration, ownerFqn.Args ?? Array.Empty<TypeNode>());
+            if ((node["k"] as JsonValue)?.GetValue<string>() == "constrainedCall")
+                StampResolvedMemberReturn(node, selectedDeclaration.ReturnType);
+            StampDelegateArgumentTargets(node, selectedDeclaration,
+                (selectedReference.DeclaringType as TypeNode.Fqn)?.Args ?? Array.Empty<TypeNode>());
+            // The source descriptor has served selection. The exact physical signature/memberRef now owns
+            // the call; retaining argTypes would send an unmaterialized source frame into CLR type lowering.
+            node.Remove("argTypes");
             node.Remove(DeclarationIdentityBinding.Key);
             return;
         }
@@ -627,6 +642,7 @@ static partial class ClrMemberResolution
         node["memberRef"] = MemberRefJson(declaration, MemberRefNode.Kinds.Method, declaringOwner, ownerFqn.Args);
         StampResolvedMethodTypeParameters(node, declaration);
         StampDelegateArgumentTargets(node, declaration, ownerFqn.Args ?? Array.Empty<TypeNode>());
+        node.Remove("argTypes");
     }
 
     static void DropKotlinSigSnapshots(JsonNode node)

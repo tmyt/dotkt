@@ -14,6 +14,7 @@ static class LocalFunctionLowering
     sealed record Binding(string Name, string Owner, int[] OwnerArgPositions, int[] SemanticOwnerArgOrder)
     {
         public int[] ByRefCaptureSlots { get; init; } = Array.Empty<int>();
+        public JsonArray ParameterTypes { get; init; }
     }
 
     static string Str(JsonNode node) => (node as JsonValue)?.GetValue<string>();
@@ -69,6 +70,9 @@ static class LocalFunctionLowering
                     binding = binding with { ByRefCaptureSlots = byRefCaptures };
                     binding = binding with { SemanticOwnerArgOrder = SemanticOwnerArgOrder(ownerType) };
                     binding = binding with { Name = physicalName, Owner = physicalOwner };
+                    binding = binding with { ParameterTypes = new JsonArray(
+                        ((JsonArray)declaration["params"]).OfType<JsonObject>()
+                            .Select(parameter => parameter["type"]?.DeepClone()).ToArray()) };
                     if (!bindings.TryAdd(id, binding))
                         throw new InvalidOperationException($"duplicate BIR local function declaration id '{id}'");
                     // The declaration is registered before its body is visited so recursion is an ordinary id edge.
@@ -381,6 +385,7 @@ static class LocalFunctionLowering
             ? new TypeNode.Fqn(binding.Owner)
             : new TypeNode.Fqn(binding.Owner, semanticOwnerArgs));
         use["method"] = binding.Name;
+        use["sig"] = binding.ParameterTypes.DeepClone();
         use.Remove("id");
 
         if (callTypeArgs != null)

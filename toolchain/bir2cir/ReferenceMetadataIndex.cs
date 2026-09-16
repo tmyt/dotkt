@@ -294,6 +294,8 @@ sealed partial class ReferenceMetadataIndex
         int methodArity,
         bool isStatic,
         IReadOnlyList<TypeNode> callSignature,
+        Type callOwner,
+        TypeNode[] ownerArguments,
         out TypeNode[] declarationSignature,
         out MethodInfo declaration,
         out Type declaringOwner,
@@ -371,6 +373,13 @@ sealed partial class ReferenceMetadataIndex
         var physicalMatches = selectedSignature.All(type => type != null)
             && selectedSignature.Select((type, index) =>
                 DeclarationDescribesCall(type, completedCallSignature[index])).All(matchesCall => matchesCall);
+        // A super call can carry the selected declaration's constructed signature rather than its open
+        // descriptor. Validate that exact instantiation through the same inheritance projection used by the
+        // emitted memberRef; a type variable is not a wildcard and must not select another overload.
+        if (!physicalMatches && selectedSignature.All(type => type != null)
+            && ClrMemberResolution.DeclaringTypeRef(selected, callOwner, ownerArguments) is TypeNode.Fqn constructed)
+            physicalMatches = ConstructedDeclarationDescribesCall(selectedSignature, completedCallSignature,
+                constructed.Args ?? Array.Empty<TypeNode>());
         // Reified declarations may have compiler-owned physical parameters that are intentionally absent from the
         // Kotlin semantic signature. Such a carrier can still identify the declaration, but it is not a complete
         // validator for this physical call shape.
@@ -394,6 +403,10 @@ sealed partial class ReferenceMetadataIndex
         declaringOwner = owner;
         return true;
     }
+    static bool ConstructedDeclarationDescribesCall(IReadOnlyList<TypeNode> declaration,
+        IReadOnlyList<TypeNode> call, TypeNode[] ownerArguments) => declaration.Count == call.Count
+        && declaration.Select((type, index) => DeclarationDescribesCall(
+            SupertypeGraph.SubstOwnerTvs(type, ownerArguments), call[index])).All(matches => matches);
     public int[] NullableWitnessTypeParameterIndices(string id) =>
         id != null && _declarationById.TryGetValue(id, out var binding)
             ? binding.NullableWitnessTypeParameterIndices
@@ -2473,11 +2486,14 @@ sealed partial class ReferenceMetadataIndex
         var declarationParameters = declarations[0].DeclarationSemanticParams
             ?? declarations[0].KotlinParameterTypes
             ?? declarations[0].ParamTypeNodes;
+        if (declarations[0].DeclarationSemanticParams == null && declarationParameters != null)
+            declarationParameters = declarationParameters.Select((parameter, index) =>
+                declarations[0].NullableGenericParams?[index] ?? parameter).ToArray();
         bool DescribesSelectedDeclaration(MemberBinding candidate) => declarationParameters == null
             || (candidate.KotlinParameterTypes ?? candidate.ParamTypeNodes) is { } candidateParameters
                 && candidateParameters.Length == declarationParameters.Length
-                && candidateParameters.Select((p, i) => DeclarationDescribesCall(
-                    declarationParameters[i], p)).All(x => x);
+                && candidateParameters.Select((p, i) => SourceDeclarationDescribesCall(
+                    declarationParameters[i], candidate.NullableGenericParams?[i] ?? p)).All(x => x);
         bool DescribesSelectedPhysicalDeclaration(MemberBinding candidate) => declarations[0].ParamTypeNodes is { } declarationPhysical
             && candidate.ParamTypeNodes is { } candidatePhysical
             && candidatePhysical.Length == declarationPhysical.Length
@@ -3326,36 +3342,46 @@ sealed partial class ReferenceMetadataIndex
     // BIR's resolved Kotlin descriptor can retain semantic nullability that the metadata-only ref declaration has
     // already erased (`T?` parameter -> !!T, function return T? -> object). Compare only those ABI-equivalent seams;
     // nominal/function shape and Tv scope/index remain exact so sibling overloads cannot collapse.
-    static bool DeclarationDescribesCall(TypeNode declaration, TypeNode call)
+    static bool DeclarationDescribesCall(TypeNode declaration, TypeNode call) =>
+        DeclarationDescribesCallCore(declaration, call, true);
+
+    // Selecting a generated slot compares source declarations, not a known declaration with its erasure.
+    // In particular Any? and T? must not select the same slot merely because both can become object.
+    static bool SourceDeclarationDescribesCall(TypeNode declaration, TypeNode candidate) =>
+        DeclarationDescribesCallCore(declaration, candidate, false)
+        || DeclarationDescribesCallCore(candidate, declaration, false);
+
+    static bool DeclarationDescribesCallCore(TypeNode declaration, TypeNode call, bool allowVariableErasure)
     {
+        bool Describes(TypeNode left, TypeNode right) => DeclarationDescribesCallCore(left, right, allowVariableErasure);
         if (declaration == call) return true;
         // A star projection states no bound, so it describes whatever the declaration says — the erasure the
         // reference twin shows as `object` is one such answer, not a different type. Without this a
         // Comparable<*> selector could not meet compareBy's Comparable<object> parameter.
-        if (call is TypeNode.Star) return true;
+        if (call is TypeNode.Star) return allowVariableErasure;
         if (declaration is TypeNode.Projection dp)
-            return DeclarationDescribesCall(dp.Of, call);
+            return Describes(dp.Of, call);
         if (call is TypeNode.Projection cp)
-            return DeclarationDescribesCall(declaration, cp.Of);
+            return Describes(declaration, cp.Of);
         if (declaration is TypeNode.Oblivious dOb)
-            return DeclarationDescribesCall(dOb.Of, call);
+            return Describes(dOb.Of, call);
         if (call is TypeNode.Oblivious cOb)
-            return DeclarationDescribesCall(declaration, cOb.Of);
+            return Describes(declaration, cOb.Of);
         // Reflection's declaration vocabulary can retain Nullable<T> as an ordinary constructed FQN while the
         // frontend descriptor uses BIR's structural nullable wrapper. They are one CLR value-type slot. Normalize
         // this seam before the reference-nullability rules below; otherwise a derived same-arity overload can become
         // the sole fallback candidate even though the frontend selected an inherited declaration.
         if (declaration is TypeNode.Fqn { Name: "System.Nullable", Args.Length: 1 } physicalNullable
             && call is TypeNode.Nullable callNullable)
-            return DeclarationDescribesCall(physicalNullable.Args[0], callNullable.Of);
+            return Describes(physicalNullable.Args[0], callNullable.Of);
         if (declaration is TypeNode.Nullable declarationNullable
             && call is TypeNode.Fqn { Name: "System.Nullable", Args.Length: 1 } physicalCallNullable)
-            return DeclarationDescribesCall(declarationNullable.Of, physicalCallNullable.Args[0]);
+            return Describes(declarationNullable.Of, physicalCallNullable.Args[0]);
         // A method variable may already be erased to object in the reflected MethodDef, at the head or recursively
         // inside another physical type (Result<object> versus the selected Kotlin Result<T>, for example). Recognize
         // that stated physical boundary before nullable recursion. Identity has already selected this MethodDef, so
         // this validates its erasure rather than admitting the object slot as an overload-selection wildcard.
-        if (declaration is TypeNode.Fqn { Args: null } tvErasure
+        if (allowVariableErasure && declaration is TypeNode.Fqn { Args: null } tvErasure
             && ParamKey(tvErasure).Kind == TypeKeyKind.Object
             && call is TypeNode.Tv or TypeNode.Nullable { Of: TypeNode.Tv })
             return true;
@@ -3367,7 +3393,7 @@ sealed partial class ReferenceMetadataIndex
             // the historical erasure seam (`T?` may be reflected as T), and arrays are reference types even when their
             // element is a value type.
             if (declaration is not TypeNode.Nullable && !IsValueKey(ParamKey(cNull.Of)))
-                return DeclarationDescribesCall(declaration, cNull.Of);
+                return Describes(declaration, cNull.Of);
         }
         // A Kotlin primitive-array CLASS and the CLR array it IS are one type under two spellings, and which one
         // arrives here depends only on how far the call has been lowered — a call still stating kotlin.IntArray
@@ -3380,16 +3406,16 @@ sealed partial class ReferenceMetadataIndex
             if (ParamKey(dfqn) != ParamKey(cfqn)) return false;
             if (dfqn.Args == null || cfqn.Args == null) return dfqn.Args == null && cfqn.Args == null;
             return dfqn.Args.Length == cfqn.Args.Length
-                && dfqn.Args.Select((p, i) => DeclarationDescribesCall(p, cfqn.Args[i])).All(x => x);
+                && dfqn.Args.Select((p, i) => Describes(p, cfqn.Args[i])).All(x => x);
         }
         if (declaration is TypeNode.Nullable dn && call is TypeNode.Nullable cn)
-            return DeclarationDescribesCall(dn.Of, cn.Of);
+            return Describes(dn.Of, cn.Of);
         if (declaration is TypeNode.Array da && call is TypeNode.Array ca)
-            return DeclarationDescribesCall(da.Elem, ca.Elem);
+            return Describes(da.Elem, ca.Elem);
         if (declaration is TypeNode.ByRef db && call is TypeNode.ByRef cb)
-            return DeclarationDescribesCall(db.Of, cb.Of);
+            return Describes(db.Of, cb.Of);
         if (declaration is TypeNode.Fn dfn && call is TypeNode.Fn cfn)
-            return FunctionDeclarationDescribesCall(dfn, cfn, DeclarationDescribesCall);
+            return FunctionDeclarationDescribesCall(dfn, cfn, Describes);
         return false;
     }
 
@@ -3415,7 +3441,7 @@ sealed partial class ReferenceMetadataIndex
     // except for a function type's receiver/parameter partition: both spellings denote the same CLR delegate ABI and
     // dll2klib may restore either one. Apply that normalization recursively so nested generic/function slots validate
     // without turning the validation into a second overload-selection pass.
-    static bool SemanticDeclarationDescribesCall(TypeNode declaration, TypeNode call)
+    bool SemanticDeclarationDescribesCall(TypeNode declaration, TypeNode call)
     {
         if (declaration == call) return true;
         // Either side may already have crossed a representation pass (for example kotlin.CharSequence versus its
@@ -3429,10 +3455,21 @@ sealed partial class ReferenceMetadataIndex
         if (call is TypeNode.Projection callProjectionOnly)
             return SemanticDeclarationDescribesCall(declaration, callProjectionOnly.Of);
         if (declaration is TypeNode.Fqn df && call is TypeNode.Fqn cf)
-            return df.Name == cf.Name && df.Args != null && cf.Args != null
-                && df.Args.Length == cf.Args.Length
+        {
+            var sameOwner = df.Name == cf.Name || _physicalTypeBySemanticName.TryGetValue(df.Name, out var physical)
+                && physical == cf.Name;
+            if (!sameOwner || df.Args == null || cf.Args == null) return false;
+            // The selected declaration's Kotlin carrier has source arguments; a materialized use carries the
+            // producer's physical companion frame. Compare its authored ordinary positions, never infer them
+            // from a backtick arity or assume companions form a suffix (nested owners can interleave them).
+            var callArguments = cf.Args;
+            if (_ownerNullableFrames.TryGetValue(cf.Name, out var frame)
+                && df.Args.Length == frame.SourceArity && callArguments.Length == frame.PhysicalArity)
+                callArguments = frame.OrdinaryArguments(callArguments);
+            return df.Args.Length == callArguments.Length
                 && df.Args.Select((type, index) =>
-                    SemanticDeclarationDescribesCall(type, cf.Args[index])).All(matches => matches);
+                    SemanticDeclarationDescribesCall(type, callArguments[index])).All(matches => matches);
+        }
         if (declaration is TypeNode.Nullable dn && call is TypeNode.Nullable cn)
             return SemanticDeclarationDescribesCall(dn.Of, cn.Of);
         if (declaration is TypeNode.Oblivious dob && call is TypeNode.Oblivious cob)
@@ -7009,6 +7046,18 @@ sealed partial class ReferenceMetadataIndex
 
     internal static void SelfTest()
     {
+        var ownerSlot = new TypeNode.Tv("type", 0);
+        var stringSlot = new TypeNode.Fqn("System.String");
+        var intSlot = new TypeNode.Fqn("System.Int32");
+        if (!ConstructedDeclarationDescribesCall(new[] { ownerSlot }, new TypeNode[] { stringSlot }, new TypeNode[] { stringSlot })
+            || ConstructedDeclarationDescribesCall(new[] { ownerSlot }, new TypeNode[] { intSlot }, new TypeNode[] { stringSlot }))
+            throw new InvalidOperationException("Constructed declaration validation lost exact owner substitution");
+        var nullableSourceVariable = new TypeNode.Nullable(new TypeNode.Tv("type", 0));
+        var nullableSourceAny = new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"));
+        if (SourceDeclarationDescribesCall(nullableSourceVariable, new TypeNode.Fqn("object"))
+            || SourceDeclarationDescribesCall(nullableSourceAny, nullableSourceVariable)
+            || !SourceDeclarationDescribesCall(nullableSourceAny, new TypeNode.Fqn("System.Object")))
+            throw new InvalidOperationException("Source declaration slot selection admitted type-variable erasure");
         {
             var aliasIndex = Build(Array.Empty<string>());
             const string owner = "probe.Alias";
@@ -7020,6 +7069,16 @@ sealed partial class ReferenceMetadataIndex
             var companion = new TypeNode.Tv("method", 3);
             var second = new TypeNode.Tv("method", 4);
             var sourceOwner = new TypeNode.Fqn(owner, new TypeNode[] { first, companion, second });
+            aliasIndex._physicalTypeBySemanticName[owner] = "probe.Alias`3";
+            aliasIndex._ownerNullableFrames["probe.Alias`3"] = aliasIndex._ownerNullableFrames[owner];
+            var semanticOwner = new TypeNode.Fqn(owner, new TypeNode[] { first, second });
+            var physicalOwner = new TypeNode.Fqn("probe.Alias`3", sourceOwner.Args);
+            if (!aliasIndex.SemanticDeclarationDescribesCall(semanticOwner, physicalOwner)
+                || aliasIndex.SemanticDeclarationDescribesCall(semanticOwner,
+                    new TypeNode.Fqn("probe.Alias`3", new TypeNode[] { second, companion, first }))
+                || aliasIndex.SemanticDeclarationDescribesCall(semanticOwner,
+                    new TypeNode.Fqn("probe.Other`3", sourceOwner.Args)))
+                throw new InvalidOperationException("Declaration signature lost exact owner/frame correspondence");
             if (MemberCallSubstitution.ClrOwnerType(aliasIndex, sourceOwner)
                 is not TypeNode.Fqn { Name: "probe.Native", Args: { } projected }
                 || !projected.SequenceEqual(new TypeNode[] { first, second }))

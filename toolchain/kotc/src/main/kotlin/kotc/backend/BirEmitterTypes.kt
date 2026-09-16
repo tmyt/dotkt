@@ -526,7 +526,11 @@ internal fun BirEmitter.ownerSpec(klass: IrClass?, recvType: IrType?): TypeNode 
 	}
 	// Kotlin's constructed type for an inner classifier carries [own..., outer...]. Preserve it verbatim in BIR;
 	// inventing enclosing `tv`s below is only the open/current-owner fallback. bir2cir owns physical reordering.
-	val recvArgs = projectedArgs(recvType)
+	// A selected base/interface declaration uses its corresponding Kotlin supertype arguments, not the
+	// receiver classifier's argument list (Derived<A,B> : Base<B> must name Base<B>, never Base<A,B>).
+	val selectedRecvType = recvType?.takeIf { it.classifierOrNull?.owner === klass }
+		?: recvType?.let { correspondingSupertypeInstantiation(it, klass, allowCapturedArguments = true) }
+	val recvArgs = projectedArgs(selectedRecvType)
 	if (klass.isInner && recvArgs != null && recvArgs.size >= enclArgs.size + klass.typeParameters.size) {
 		val semanticArity = klass.typeParameters.size + enclArgs.size
 		val all = if (liftedCaps.isEmpty()) recvArgs else recvArgs.take(semanticArity) + liftedCaps

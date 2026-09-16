@@ -22,7 +22,7 @@ static partial class NullableRepresentationDemand
     }
 
     internal sealed record MethodDemand(JsonObject Declaration, Variables Signature, Variables Body,
-        string ImplementationKey = null)
+        string ImplementationKey = null, bool IsLocal = false)
     {
         public JsonObject Implementation => ImplementationKey == null ? null : (JsonObject)Declaration[ImplementationKey];
         public JsonArray TypeParameters => (Implementation ?? Declaration)["typeParams"] as JsonArray;
@@ -77,6 +77,8 @@ static partial class NullableRepresentationDemand
         IReadOnlyDictionary<string, NullableRepresentationFrame> referencedTypes = null,
         IReadOnlyDictionary<string, NullableRepresentationFrame> referencedMethods = null)
     {
+        var rootList = roots.ToArray();
+        var localBindings = BindLocalFunctions(rootList);
         var owners = new List<OwnerDemand>();
         void Discover(JsonObject declaration, bool isRefCell = false)
         {
@@ -86,13 +88,26 @@ static partial class NullableRepresentationDemand
                 foreach (var fact in (declaration[key] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
                     methods.Add(new MethodDemand(fact, new Variables(), new Variables(),
                         key == "inheritedClassMethods" ? "inheritedImplementation" : "implementation"));
+            void DiscoverLocals(JsonNode node)
+            {
+                if (node is JsonObject obj)
+                {
+                    if (Text(obj["k"]) == "localFun" && obj["decl"] is JsonObject local)
+                        methods.Add(new MethodDemand(local, new Variables(), new Variables(), IsLocal: true));
+                    foreach (var (key, child) in obj)
+                        if (key is not ("types" or "refTypes" or "attrs")) DiscoverLocals(child);
+                }
+                else if (node is JsonArray array)
+                    foreach (var child in array) DiscoverLocals(child);
+            }
+            DiscoverLocals(declaration);
             owners.Add(new OwnerDemand(declaration, new Variables(), new Variables(), methods, isRefCell));
             foreach (var nested in (declaration["types"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
                 Discover(nested);
             foreach (var cell in (declaration["refTypes"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
                 Discover(cell, true);
         }
-        foreach (var root in roots.OfType<JsonObject>()) Discover(root);
+        foreach (var root in rootList.OfType<JsonObject>()) Discover(root);
 
         var declarations = owners.Where(owner => owner.IsTypeDeclaration)
             .ToDictionary(owner => Text(owner.Declaration["name"]), StringComparer.Ordinal);
@@ -133,40 +148,43 @@ static partial class NullableRepresentationDemand
                     if (Text(method.Declaration[DeclarationIdentityBinding.Key]) is string id)
                         methodFrames[id] = method.Frame;
             }
+            var localDeclarations = owners.SelectMany(owner => owner.Methods).Where(method => method.IsLocal)
+                .ToDictionary(method => method.Declaration, method => method.Frame);
+            var localFrames = localBindings.ToDictionary(pair => pair.Key, pair => localDeclarations[pair.Value]);
             var before = Count(owners);
             foreach (var owner in owners)
             {
                 foreach (var key in new[] { "base", "interfaces", "typeParams" })
-                    Scan(owner.Declaration[key], owner.Signature, typeFrames, methodFrames);
-                if (owner.IsRefCell) Scan(owner.Declaration["elem"], owner.Signature, typeFrames, methodFrames);
+                    Scan(owner.Declaration[key], owner.Signature, typeFrames, methodFrames, localFrames);
+                if (owner.IsRefCell) Scan(owner.Declaration["elem"], owner.Signature, typeFrames, methodFrames, localFrames);
                 foreach (var key in new[] { "fields", "properties" })
                     foreach (var slot in (owner.Declaration[key] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
                     {
-                        Scan(slot["type"], owner.Signature, typeFrames, methodFrames);
-                        Scan(slot["init"], owner.Body, typeFrames, methodFrames);
+                        Scan(slot["type"], owner.Signature, typeFrames, methodFrames, localFrames);
+                        Scan(slot["init"], owner.Body, typeFrames, methodFrames, localFrames);
                     }
                 foreach (var ctor in (owner.Declaration["ctors"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
                 {
-                    Scan(ctor["params"], owner.Signature, typeFrames, methodFrames);
-                    Scan(ctor["body"], owner.Body, typeFrames, methodFrames);
+                    Scan(ctor["params"], owner.Signature, typeFrames, methodFrames, localFrames);
+                    Scan(ctor["body"], owner.Body, typeFrames, methodFrames, localFrames);
                 }
                 foreach (var method in owner.Methods)
                 {
                     foreach (var key in new[] { "params", "ret" })
-                        Scan(method.Declaration[key], method.Signature, typeFrames, methodFrames);
+                        Scan(method.Declaration[key], method.Signature, typeFrames, methodFrames, localFrames);
                     // Implementation constraints are declaration-owned; only ordinary declarations' constraints
                     // refer to this owner's variables. An inherited fact's instantiated params/ret are above.
                     if (method.ImplementationKey == null)
-                        Scan(method.TypeParameters, method.Signature, typeFrames, methodFrames);
+                        Scan(method.TypeParameters, method.Signature, typeFrames, methodFrames, localFrames);
                     else
                     {
                         var implementationConstraints = new Variables();
-                        Scan(method.TypeParameters, implementationConstraints, typeFrames, methodFrames);
+                        Scan(method.TypeParameters, implementationConstraints, typeFrames, methodFrames, localFrames);
                         // The method frame is shared by this inherited fact and its selected implementation.
                         // Owner variables in those same constraints still belong to the implementation owner.
                         method.Signature.Method.UnionWith(implementationConstraints.Method);
                     }
-                    Scan(method.Declaration["body"], method.Body, typeFrames, methodFrames);
+                    Scan(method.Declaration["body"], method.Body, typeFrames, methodFrames, localFrames);
                 }
             }
             changed = Count(owners) != before;
@@ -180,13 +198,44 @@ static partial class NullableRepresentationDemand
         "inheritedClassMethods",
     };
 
+    internal static IReadOnlyDictionary<JsonObject, JsonObject> BindLocalFunctions(IEnumerable<JsonNode> roots)
+    {
+        var result = new Dictionary<JsonObject, JsonObject>();
+        foreach (var root in roots)
+        {
+            var declarations = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
+            var uses = new List<JsonObject>();
+            void Walk(JsonNode node)
+            {
+                if (node is JsonObject obj)
+                {
+                    if (Text(obj["k"]) is "localFun" or "callLocal" or "localFunRef")
+                    {
+                        var id = Text(obj["id"]) ?? throw new InvalidOperationException("Local function edge has no lexical identity");
+                        uses.Add(obj);
+                        if (Text(obj["k"]) == "localFun" && obj["decl"] is JsonObject declaration
+                            && !declarations.TryAdd(id, declaration))
+                            throw new InvalidOperationException("Duplicate local function identity: " + id);
+                    }
+                    foreach (var (key, child) in obj) if (key != "attrs") Walk(child);
+                }
+                else if (node is JsonArray array) foreach (var child in array) Walk(child);
+            }
+            Walk(root);
+            foreach (var use in uses)
+                result.Add(use, declarations[Text(use["id"])]);
+        }
+        return result;
+    }
+
     static int Count(IEnumerable<OwnerDemand> owners) => owners.Sum(owner =>
         owner.Signature.Type.Count + owner.Signature.Method.Count + owner.Body.Type.Count + owner.Body.Method.Count + owner.Methods.Sum(method =>
             method.Signature.Type.Count + method.Signature.Method.Count + method.Body.Type.Count + method.Body.Method.Count));
 
     static void Scan(JsonNode node, Variables result,
         IReadOnlyDictionary<string, NullableRepresentationFrame> types,
-        IReadOnlyDictionary<string, NullableRepresentationFrame> methods, bool argument = false)
+        IReadOnlyDictionary<string, NullableRepresentationFrame> methods,
+        IReadOnlyDictionary<JsonObject, NullableRepresentationFrame> localFrames, bool argument = false)
     {
         if (node == null) return;
         if (TypeJson.Read(node) is TypeNode type)
@@ -196,10 +245,29 @@ static partial class NullableRepresentationDemand
         }
         if (node is JsonArray array)
         {
-            foreach (var item in array) Scan(item, result, types, methods, argument);
+            foreach (var item in array) Scan(item, result, types, methods, localFrames, argument);
         }
         else if (node is JsonObject obj)
         {
+            if (localFrames.TryGetValue(obj, out var localFrame))
+            {
+                var arguments = Text(obj["k"]) == "localFun"
+                    ? obj["decl"]?["_syntheticTypeArgs"] as JsonArray : obj["typeArgs"] as JsonArray;
+                if (localFrame.NullableIndices.Count != 0)
+                {
+                    if (arguments?.Count != localFrame.SourceArity)
+                        throw new InvalidOperationException("Local function arguments do not match their declaration frame");
+                    foreach (var index in localFrame.NullableIndices)
+                    {
+                        var origin = TypeJson.Read(arguments[index]);
+                        // Method origins also include the local function's own parameters; only actual call
+                        // arguments relate those variables to an enclosing method. Owner origins are lexical.
+                        if (Text(obj["k"]) != "localFun" || origin is TypeNode.Tv { Scope: "type" })
+                            RequireNullable(origin, result);
+                    }
+                }
+                if (Text(obj["k"]) == "localFun") return;
+            }
             if (Text(obj["k"]) != null && Text(obj[DeclarationIdentityBinding.Key]) is string id
                 && methods.TryGetValue(id, out var frame) && frame.NullableIndices.Count != 0)
             {
@@ -214,7 +282,7 @@ static partial class NullableRepresentationDemand
                     if (Text(obj["k"]) != null && (NullableRepresentationTypes.IsDeclarationFrameKey(key, Text(obj["k"]), obj)
                         || key == "resolvedMemberParams" || key == ClrMemberResolution.ResolvedMemberReturnKey
                         || key == "argTypes" && ClrBoundNode.IsAny(Text(obj["k"])))) continue;
-                    Scan(value, result, types, methods, key == "typeArgs"
+                    Scan(value, result, types, methods, localFrames, key == "typeArgs"
                         || key == "elem" && NullableGenericErasure.IsArgumentElementKind(Text(obj["k"])));
                 }
         }
@@ -251,7 +319,8 @@ static partial class NullableRepresentationDemand
                 if (frames.TryGetValue(named.Name, out var frame))
                 {
                     if (arguments.Length != frame.SourceArity)
-                        throw new InvalidOperationException("Constructed type does not match its declared nullable frame");
+                        throw new InvalidOperationException($"Constructed type '{named.Name}' has {arguments.Length} arguments, "
+                            + $"but its declared nullable frame has source arity {frame.SourceArity}");
                     foreach (var index in frame.NullableIndices) RequireNullable(arguments[index], result);
                 }
                 break;

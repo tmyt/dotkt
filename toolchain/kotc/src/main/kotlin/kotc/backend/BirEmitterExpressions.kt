@@ -133,33 +133,64 @@ internal fun BirEmitter.memberVisibilityStamped(
 	if (!restricted && !preserveDeclaration) return s
 	if (!(s.startsWith("{\"k\":\"callInstance\"") || s.startsWith("{\"k\":\"callStatic\"") ||
 			s.startsWith("{\"k\":\"new\"") || s.startsWith("{\"k\":\"newBoundDelegate\""))) return s
-	val ownerTypeParams = memberOwnerTypeParamsJson(target)
-	val methodTypeParams = (target as? org.jetbrains.kotlin.ir.declarations.IrFunction)?.let {
-		typeParamsJson(it.typeParameters)
-			.replaceFirst(",\"typeParams\":", ",\"memberMethodTypeParams\":")
-	}.orEmpty()
-	val declarationFact = when (target) {
-		is org.jetbrains.kotlin.ir.declarations.IrConstructor -> {
-			// Ordinary same-unit construction already carries the COMPLETE declaration vector, including synthetic
-			// enclosing/capture slots, from the IrConstructorCall arm below.  Do not overwrite it with the source-only
-			// regular vector when visibility stamping is also required.
-			if (s.contains("\"memberSignature\"")) "" else {
-			val signature = target.parameters
-				.filter { it.kind == org.jetbrains.kotlin.ir.declarations.IrParameterKind.Regular }
-				.joinToString(",") { birType(it.type).toJson() }
-			",\"memberSignature\":[${signature}]"
+	val (ownerTypeParams, methodTypeParams, declarationFact) = inMemberDeclarationFrame(target) {
+		val ownerTypeParams = memberOwnerTypeParamsJson(target)
+		val methodTypeParams = (target as? org.jetbrains.kotlin.ir.declarations.IrFunction)?.let {
+			typeParamsJson(it.typeParameters)
+				.replaceFirst(",\"typeParams\":", ",\"memberMethodTypeParams\":")
+		}.orEmpty()
+		val declarationFact = when (target) {
+			is org.jetbrains.kotlin.ir.declarations.IrConstructor -> {
+				// Ordinary same-unit construction already carries the COMPLETE declaration vector, including synthetic
+				// enclosing/capture slots, from the IrConstructorCall arm below. Do not overwrite it with the source-only
+				// regular vector when visibility stamping is also required.
+				if (s.contains("\"memberSignature\"")) "" else {
+					val signature = target.parameters
+						.filter { it.kind == org.jetbrains.kotlin.ir.declarations.IrParameterKind.Regular }
+						.joinToString(",") { birType(it.type).toJson() }
+					",\"memberSignature\":[${signature}]"
+				}
 			}
+			is org.jetbrains.kotlin.ir.declarations.IrFunction -> {
+				val signature = overloadSigField(target)
+					.replaceFirst(",\"sig\":", ",\"memberSignature\":")
+				signature + ",\"memberReturnType\":" + birType(target.returnType).toJson()
+			}
+			else -> ""
 		}
-		is org.jetbrains.kotlin.ir.declarations.IrFunction -> {
-			val signature = overloadSigField(target)
-				.replaceFirst(",\"sig\":", ",\"memberSignature\":")
-			signature + ",\"memberReturnType\":" + birType(target.returnType).toJson()
-		}
-		else -> ""
+		Triple(ownerTypeParams, methodTypeParams, declarationFact)
 	}
 	val visibilityFact = if (restricted) ",\"memberVisibility\":" + str(visibility) else ""
 	return s.dropLast(1) + visibilityFact + ownerTypeParams + methodTypeParams +
 		declarationFact + "}"
+}
+
+/** A selected declaration's descriptor never uses substitutions active while rendering its caller. */
+internal fun <T> BirEmitter.inMemberDeclarationFrame(
+	target: org.jetbrains.kotlin.ir.declarations.IrDeclarationWithVisibility,
+	block: () -> T,
+): T {
+	val saved = typeArgSubst.toMap()
+	val savedLifted = liftedTypeArgSubst.toMap()
+	try {
+		typeArgSubst.clear()
+		liftedTypeArgSubst.clear()
+		val owner = target.parent as? org.jetbrains.kotlin.ir.declarations.IrClass
+		if (owner != null) {
+			val parameters = (innerEnclosingTypeParams(owner) + owner.typeParameters +
+				liftedTypeArgParams[owner].orEmpty()).distinct()
+			parameters.forEachIndexed { index, parameter -> typeArgSubst[parameter] = TypeNode.Tv("type", index) }
+		}
+		(target as? org.jetbrains.kotlin.ir.declarations.IrFunction)?.typeParameters?.forEachIndexed { index, parameter ->
+			typeArgSubst[parameter] = TypeNode.Tv("method", index)
+		}
+		return block()
+	} finally {
+		typeArgSubst.clear()
+		typeArgSubst.putAll(saved)
+		liftedTypeArgSubst.clear()
+		liftedTypeArgSubst.putAll(savedLifted)
+	}
 }
 
 /**
@@ -170,7 +201,7 @@ private fun BirEmitter.memberOwnerTypeParamsJson(
 	target: org.jetbrains.kotlin.ir.declarations.IrDeclarationWithVisibility,
 ): String {
 	val owner = target.parent as? org.jetbrains.kotlin.ir.declarations.IrClass ?: return ""
-	val params = innerEnclosingTypeParams(owner) + owner.typeParameters
+	val params = (innerEnclosingTypeParams(owner) + owner.typeParameters + liftedTypeArgParams[owner].orEmpty()).distinct()
 	return typeParamsJson(params).replaceFirst(",\"typeParams\":", ",\"memberOwnerTypeParams\":")
 }
 
@@ -184,8 +215,10 @@ internal fun BirEmitter.memberFieldVisibilityStamped(
 	if (!(s.startsWith("{\"k\":\"field\"") || s.startsWith("{\"k\":\"lateinitGet\"") ||
 			s.startsWith("{\"k\":\"staticField\"") || s.startsWith("{\"k\":\"setField\"") ||
 			s.startsWith("{\"k\":\"setFieldExpr\"") || s.startsWith("{\"k\":\"staticFieldSet\""))) return s
-	return s.dropLast(1) + ",\"memberVisibility\":" + str(visibility) + memberOwnerTypeParamsJson(field) +
-		",\"memberType\":" + birType(field.type).toJson() + "}"
+	val descriptor = inMemberDeclarationFrame(field) {
+		memberOwnerTypeParamsJson(field) + ",\"memberType\":" + birType(field.type).toJson()
+	}
+	return s.dropLast(1) + ",\"memberVisibility\":" + str(visibility) + descriptor + "}"
 }
 
 /** #122's `sty` stamp on the value-node kinds bir2cir's StaticType reads a type from (see the note above). */
