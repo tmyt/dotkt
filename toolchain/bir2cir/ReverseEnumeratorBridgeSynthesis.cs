@@ -29,6 +29,8 @@ using DotKt.Bir;
 // every pass that can still add such a face — in particular `ReadOnlyCollectionViewInterfaces`, which states the
 // read-only sibling of a mutable face. Non-ref builds only: the reference surface keeps the Kotlin faces, so no type
 // in it implements a BCL enumerable interface and nothing there is owed a `GetEnumerator`.
+// General override allocation queries this protocol's slot ownership earlier, using the same provider/element
+// rule and physical interface identities, so it cannot install a competing foreign-base forwarding bridge.
 static class ReverseEnumeratorBridgeSynthesis
 {
     // #68: `dotkt$…` uses Kotlin's own unspeakable `$`, so a compiler-owned name can never collide with source.
@@ -62,6 +64,48 @@ static class ReverseEnumeratorBridgeSynthesis
         CollectionViewFaces.ICollection,
         CollectionViewFaces.ISet,
     };
+
+    // Reserve exactly the slots this pass will materialize. Earlier override allocation must not map a
+    // foreign base's enumeration onto them when Kotlin's selected iterator owns the iteration protocol.
+    // The comparison uses constructed physical signatures, not generated bridge names or method names alone.
+    public sealed record SlotReservation(TypeNode Element)
+    {
+        public bool Owns(TypeNode.Fqn owner, string member, int arity, TypeNode[] parameters,
+            TypeNode result, Func<TypeNode, TypeNode> physical, ReferenceMetadataIndex refs)
+        {
+            if (member != GetEnumeratorName || arity != 0 || parameters.Length != 0
+                || physical(owner) is not TypeNode.Fqn face || physical(result) is not TypeNode.Fqn ret)
+                return false;
+            // A referenced Kotlin interface can inherit the CLR slot without declaring it. Resolve the exact
+            // physical owner for this ownership query only; do not replace the general override pass's Kotlin
+            // signature facts (notably a logical suspend result) with reflected physical return types.
+            if (Bare(face.Name) is not (IEnumerable or IEnumerableT))
+            {
+                if (!ClrMemberResolution.TryResolveAliasedInterfaceSlot(refs, face, member, arity,
+                        Array.Empty<TypeNode>(), null, face.Args ?? Array.Empty<TypeNode>(),
+                        out var declarationOwner, out _, out _, out _, wantedReturn: ret)) return false;
+                face = declarationOwner;
+            }
+            if (Bare(face.Name) == IEnumerable && face.Args is not { Length: > 0 })
+                return Bare(ret.Name) == IEnumerator && ret.Args is not { Length: > 0 };
+            return Bare(face.Name) == IEnumerableT && face.Args is { Length: 1 } args
+                && Bare(ret.Name) == IEnumeratorT && ret.Args is { Length: 1 } retArgs
+                && ClrMemberResolution.SameInterfaceSlotType(args[0], Element)
+                && ClrMemberResolution.SameInterfaceSlotType(retArgs[0], Element);
+        }
+    }
+
+    public static SlotReservation ReserveSlots(SupertypeGraph.Def def,
+        IReadOnlyDictionary<string, SupertypeGraph.Def> defs, ReferenceMetadataIndex refs)
+        => Plan(def, defs, refs) is { } plan ? new SlotReservation(plan.Element) : null;
+
+    static (IteratorProvider Iterator, TypeNode Element)? Plan(SupertypeGraph.Def def,
+        IReadOnlyDictionary<string, SupertypeGraph.Def> defs, ReferenceMetadataIndex refs)
+    {
+        if (def.Kind != "class" || FindIteratorProvider(def, defs, refs) is not { } iterator
+            || Element(def, defs, refs, iterator.SemanticReturn) is not { } element) return null;
+        return (iterator, element);
+    }
 
     /// <summary>
     /// Author the reverse bridge across the whole compilation. Returns true when the adapter TypeDef was injected,
@@ -106,8 +150,8 @@ static class ReverseEnumeratorBridgeSynthesis
         if (Str(type["name"]) is not string owner || owner.Length == 0) return false;
         if (type["methods"] is not JsonArray methods) return false;
         if (!defs.TryGetValue(owner, out var def)) return false;
-        if (FindIteratorProvider(def, defs, refs) is not { } iterator) return false;
-        if (Element(def, defs, refs, iterator.SemanticReturn) is not { } element) return false;
+        if (Plan(def, defs, refs) is not { } plan) return false;
+        var (iterator, element) = plan;
 
         // The physical MethodDef `GetEnumerator()` may already be occupied by a Kotlin declaration of exactly that
         // CLR signature — the allocated signature is name plus generic arity plus the parameter vector, so a second
@@ -356,9 +400,12 @@ static class ReverseEnumeratorBridgeSynthesis
         TypeNode first = null;
         foreach (var (spec, isInterface) in SupertypeGraph.Reachable(def, defs, refs))
         {
-            if (!isInterface || spec.Args is not { Length: 1 } args) continue;
+            if (!isInterface) continue;
+            var physicalFace = BirTypeLowering.LowerPhysicalType(spec, refs.Aliases, refs.IsValueType,
+                refs.PhysicalTypeNames, typeArg: false, localTypeNames: localNames) as TypeNode.Fqn;
+            if (physicalFace?.Args is not { Length: 1 } args) continue;
             // Bare names: a face stated by this unit carries no arity, one reached through a reference assembly does.
-            if (Array.IndexOf(EnumerableFaces, Bare(spec.Name)) < 0) continue;
+            if (Array.IndexOf(EnumerableFaces, Bare(physicalFace.Name)) < 0) continue;
             // Referenced supertype metadata retains Kotlin arguments even though this pass authors CLR CIR.
             var physicalElement = PhysicalElement(args[0]);
             if (iteratorElement != null && SupertypeGraph.TypeKey(physicalElement) == SupertypeGraph.TypeKey(iteratorElement))

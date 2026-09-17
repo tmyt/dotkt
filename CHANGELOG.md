@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Imported Iterable interfaces keep one enumeration slot owner (#775).** Kotlin iterator implementations
+  retain their generic and non-generic CLR enumeration slots when an imported interface and a foreign collection
+  base meet, without a competing bridge to the base collection's enumerator.
+
 - **Iterable classifiers retain Kotlin mutability (#770).** Read-only Kotlin Iterable implementations no longer
   satisfy MutableIterable merely because both use CLR IEnumerable. Direct and reified tests/casts preserve the
   distinction across DLL boundaries without hiding collection capabilities inherited from foreign CLR bases.

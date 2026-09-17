@@ -124,7 +124,7 @@ static partial class ClrMemberResolution
         JsonArray wantedTypeParams, TypeNode[] wantedOwnerArgs,
         out TypeNode.Fqn declarationOwner, out string declarationMember,
         out TypeNode[] declarationParams, out TypeNode declarationReturn,
-        TypeNode[] selectionOwnerArgs = null)
+        TypeNode[] selectionOwnerArgs = null, TypeNode wantedReturn = null)
     {
         declarationOwner = null;
         declarationMember = null;
@@ -152,6 +152,8 @@ static partial class ClrMemberResolution
             var declaringArgs = (reference.DeclaringType as TypeNode.Fqn)?.Args ?? Array.Empty<TypeNode>();
             var parameters = reference.ParameterTypes
                 .Select(parameter => SupertypeGraph.SubstOwnerTvs(parameter, declaringArgs)).ToArray();
+            var returnType = SupertypeGraph.SubstOwnerTvs(reference.ReturnType, declaringArgs);
+            if (wantedReturn != null && !SameInterfaceSlotType(returnType, wantedReturn)) continue;
             // Select the declaration in the binding's ordinary frame, then instantiate that SAME
             // MethodDef in the physical storage frame. Comparing the latter to Kotlin scalar
             // parameters would lose Add(E) when the interface is ICollection<S(E)>.
@@ -173,8 +175,7 @@ static partial class ClrMemberResolution
                         wantedOwnerArgs ?? Array.Empty<TypeNode>()))
                     continue;
             }
-            candidates.Add((method, reference, parameters,
-                SupertypeGraph.SubstOwnerTvs(reference.ReturnType, declaringArgs), declaringArgs));
+            candidates.Add((method, reference, parameters, returnType, declaringArgs));
         }
         var distinct = MostDerived(candidates
             .GroupBy(candidate => (candidate.Method.Module, candidate.Method.MetadataToken))
@@ -679,7 +680,7 @@ static partial class ClrMemberResolution
         }
     }
 
-    static bool SameInterfaceSlotType(TypeNode metadata, TypeNode descriptor) =>
+    internal static bool SameInterfaceSlotType(TypeNode metadata, TypeNode descriptor) =>
         CanonicalInterfaceSlotType(metadata).Equals(CanonicalInterfaceSlotType(descriptor));
 
     static TypeNode CanonicalInterfaceSlotType(TypeNode type) =>

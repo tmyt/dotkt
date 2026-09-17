@@ -130,7 +130,7 @@ static class KotlinOverrideSlotBridge
                         is string sourceAssociation)
                     exactBridgeSources[method] = sourceAssociation;
         foreach (var cls in defs.Values.Where(d => d.Kind is "class" or "interface").ToList())
-            ApplyClass(cls, defs, isValue, refs, phase, exactBridgeSources, localTypeNames,
+            ApplyClass(cls, defs, isValue, refs, phase, refBuild, exactBridgeSources, localTypeNames,
                 covariantBridgedSlots, AnnotationArguments, SourceMapping(cls));
         // A class-level inherited-DIM bridge consumes the exact MethodImpl descriptor synthesized on its interface.
         // Declarations may appear in either order and in different input files, so first finish every interface/class's
@@ -156,7 +156,7 @@ static class KotlinOverrideSlotBridge
         physical ? type : NullableGenericErasure.EraseNullableTv(type, isValue);
 
     static void ApplyClass(Def cls, IReadOnlyDictionary<string, Def> defs, ValueTypeOracle isValue,
-        ReferenceMetadataIndex refs, Phase phase, IDictionary<JsonObject, string> exactBridgeSources,
+        ReferenceMetadataIndex refs, Phase phase, bool refBuild, IDictionary<JsonObject, string> exactBridgeSources,
         IReadOnlySet<string> localTypeNames,
         IReadOnlySet<CovariantInterfaceReturnBridge.BridgedSlot> covariantBridgedSlots,
         Func<TypeNode.Fqn, TypeNode[]> annotationArguments, NullableRepresentationTypes sourceMapping)
@@ -168,6 +168,11 @@ static class KotlinOverrideSlotBridge
         var ordinal = 0;
         var candidates = methods.OfType<JsonObject>().ToList();
         var inheritedOwners = new Dictionary<JsonObject, TypeNode.Fqn>(ReferenceEqualityComparer.Instance);
+        var enumerationSlots = !refBuild && phase == Phase.PhysicalBridges
+            ? ReverseEnumeratorBridgeSynthesis.ReserveSlots(cls, defs, refs) : null;
+        TypeNode PhysicalSlotType(TypeNode type) => BirTypeLowering.LowerPhysicalType(
+            type, refs.Aliases, isValue, refs.PhysicalTypeNames, typeArg: false,
+            localTypeNames, nullableFrames: refs.NullableTypeFrames);
         if (emitBridges)
             CollectInheritedClassMethods(cls, defs, refs, isValue, candidates, inheritedOwners,
                 phase == Phase.SuspendValueBridges);
@@ -187,6 +192,9 @@ static class KotlinOverrideSlotBridge
             TypeNode[] slotParams, TypeNode slotRet, JsonObject impl, JsonArray slotTypeParams = null,
             bool unitValueReturn = false)
         {
+            if (supIsInterface && enumerationSlots?.Owns(descriptorSpec, descriptorMember,
+                    (impl["typeParams"] as JsonArray)?.Count ?? 0, slotParams, slotRet, PhysicalSlotType, refs) == true)
+                return;
             inheritedOwners.TryGetValue(impl, out var inheritedOwner);
             if (inheritedOwner != null && !supIsInterface) return;
             if (!emitBridges)
