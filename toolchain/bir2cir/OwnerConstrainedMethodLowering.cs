@@ -35,6 +35,12 @@ static class OwnerConstrainedMethodLowering
         var nominal = bound;
         while (nominal is TypeNode.Nullable or TypeNode.Oblivious)
             nominal = nominal is TypeNode.Nullable nullable ? nullable.Of : ((TypeNode.Oblivious)nominal).Of;
+        // A binding that discards the entire generic application has no physical argument dependency.
+        // In particular, representation companions must not turn its source self-bound into a
+        // dependent bound and discard the non-generic CLR constraint that remains after lowering.
+        if (nominal is TypeNode.Fqn erased
+            && BirTypeLowering.ErasesGenericApplicationToNonGenericClassifier(erased.Name))
+            return false;
         if (nominal is TypeNode.Fqn named
             && References.ResolveForeignProjectionType(named.Name, named.Args) is { IsGenericTypeDefinition: true } foreign
             && foreign.GetGenericArguments().All(parameter =>
@@ -47,6 +53,25 @@ static class OwnerConstrainedMethodLowering
             return tv;
         });
         return changed;
+    }
+
+    internal static void SelfTest()
+    {
+        var bound = new TypeNode.Fqn("kotlin.Enum", new TypeNode[] {
+            new TypeNode.Tv("method", 0), new TypeNode.Tv("method", 1),
+        });
+        if (HasConstructedDependency(bound, "method", 0)
+            || HasConstructedDependency(new TypeNode.Nullable(bound), "method", 0))
+            throw new InvalidOperationException("Non-generic physical bound acquired a companion dependency");
+        if (!HasConstructedDependency(new TypeNode.Array(new TypeNode.Tv("method", 1)), "method", 0))
+            throw new InvalidOperationException("Constructed bound lost its physical argument dependency");
+        var parameter = new JsonObject { ["name"] = "T", ["constraints"] = new JsonArray(TypeJson.Write(bound)) };
+        var parameters = new JsonArray(parameter, JsonValue.Create("$storage0"));
+        RewriteConstraints(new JsonObject(), new JsonObject(), parameters, _ => false, type => type);
+        if (parameter["constraints"].AsArray().Count != 1
+            || TypeJson.Read(parameter["constraints"][0]) != bound)
+            throw new InvalidOperationException("Non-generic physical bound was removed from its method parameter");
+        Console.WriteLine("[method bound dependencies] self-test OK (non-generic binding, storage companion, retained constraint)");
     }
 
     static TypeNode MapVariables(TypeNode type, Func<TypeNode.Tv, TypeNode> map) => type switch
