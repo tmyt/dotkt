@@ -63,6 +63,38 @@ static class ReverseEnumeratorBridgeSynthesis
         CollectionViewFaces.ISet,
     };
 
+    // Reserve exactly the slots this pass will materialize. Earlier override allocation must not map a
+    // foreign base's enumeration onto them when Kotlin's selected iterator owns the iteration protocol.
+    // The comparison uses constructed physical signatures, not generated bridge names or method names alone.
+    public sealed record SlotReservation(TypeNode Element)
+    {
+        public bool Owns(TypeNode.Fqn owner, string member, int arity, TypeNode[] parameters,
+            TypeNode result, Func<TypeNode, TypeNode> physical)
+        {
+            if (member != GetEnumeratorName || arity != 0 || parameters.Length != 0
+                || physical(owner) is not TypeNode.Fqn face || physical(result) is not TypeNode.Fqn ret)
+                return false;
+            if (Bare(face.Name) == IEnumerable && face.Args is not { Length: > 0 })
+                return Bare(ret.Name) == IEnumerator && ret.Args is not { Length: > 0 };
+            return Bare(face.Name) == IEnumerableT && face.Args is { Length: 1 } args
+                && Bare(ret.Name) == IEnumeratorT && ret.Args is { Length: 1 } retArgs
+                && SupertypeGraph.TypeKey(args[0]) == SupertypeGraph.TypeKey(Element)
+                && SupertypeGraph.TypeKey(retArgs[0]) == SupertypeGraph.TypeKey(Element);
+        }
+    }
+
+    public static SlotReservation ReserveSlots(SupertypeGraph.Def def,
+        IReadOnlyDictionary<string, SupertypeGraph.Def> defs, ReferenceMetadataIndex refs)
+        => Plan(def, defs, refs) is { } plan ? new SlotReservation(plan.Element) : null;
+
+    static (IteratorProvider Iterator, TypeNode Element)? Plan(SupertypeGraph.Def def,
+        IReadOnlyDictionary<string, SupertypeGraph.Def> defs, ReferenceMetadataIndex refs)
+    {
+        if (def.Kind != "class" || FindIteratorProvider(def, defs, refs) is not { } iterator
+            || Element(def, defs, refs, iterator.SemanticReturn) is not { } element) return null;
+        return (iterator, element);
+    }
+
     /// <summary>
     /// Author the reverse bridge across the whole compilation. Returns true when the adapter TypeDef was injected,
     /// so the caller can record it in the emission unit's local-type set.
@@ -106,8 +138,8 @@ static class ReverseEnumeratorBridgeSynthesis
         if (Str(type["name"]) is not string owner || owner.Length == 0) return false;
         if (type["methods"] is not JsonArray methods) return false;
         if (!defs.TryGetValue(owner, out var def)) return false;
-        if (FindIteratorProvider(def, defs, refs) is not { } iterator) return false;
-        if (Element(def, defs, refs, iterator.SemanticReturn) is not { } element) return false;
+        if (Plan(def, defs, refs) is not { } plan) return false;
+        var (iterator, element) = plan;
 
         // The physical MethodDef `GetEnumerator()` may already be occupied by a Kotlin declaration of exactly that
         // CLR signature — the allocated signature is name plus generic arity plus the parameter vector, so a second
@@ -356,9 +388,12 @@ static class ReverseEnumeratorBridgeSynthesis
         TypeNode first = null;
         foreach (var (spec, isInterface) in SupertypeGraph.Reachable(def, defs, refs))
         {
-            if (!isInterface || spec.Args is not { Length: 1 } args) continue;
+            if (!isInterface) continue;
+            var physicalFace = BirTypeLowering.LowerPhysicalType(spec, refs.Aliases, refs.IsValueType,
+                refs.PhysicalTypeNames, typeArg: false, localTypeNames: localNames) as TypeNode.Fqn;
+            if (physicalFace?.Args is not { Length: 1 } args) continue;
             // Bare names: a face stated by this unit carries no arity, one reached through a reference assembly does.
-            if (Array.IndexOf(EnumerableFaces, Bare(spec.Name)) < 0) continue;
+            if (Array.IndexOf(EnumerableFaces, Bare(physicalFace.Name)) < 0) continue;
             // Referenced supertype metadata retains Kotlin arguments even though this pass authors CLR CIR.
             var physicalElement = PhysicalElement(args[0]);
             if (iteratorElement != null && SupertypeGraph.TypeKey(physicalElement) == SupertypeGraph.TypeKey(iteratorElement))
