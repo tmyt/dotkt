@@ -163,6 +163,14 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   so reference identity and the existing BCL member ABI are preserved. Explicit standalone `as/as?` existential
   storage remains separate from this classifier contract. Pinned by
   `CollectionsTests.starProjectedSetIdentity`.
+- **Iterable identity is distinct from its CLR enumeration face.** Kotlin implementations carry nominal
+  `Iterable`/`MutableIterable` identities: implementing `Collection` plus `MutableIterable` does not imply
+  `MutableCollection`. The classifier guard is independent of the physical type test, including reified star
+  projections whose CLR type argument is `object`; it preserves nullability and evaluates the operand once.
+  Referenced Kotlin bases retain their inherited identities. Genuine foreign CLR supertypes contribute their
+  collection capabilities under the same classifier rules used for foreign values, so adding a Kotlin Iterable
+  interface does not hide capabilities inherited from a CLR base. Operational interfaces synthesized for Kotlin
+  implementations are not reinterpreted as additional Kotlin mutability.
 - **`x is T` preserves a nullable reified instantiation.** `m<String?>` and `m<String>` are the same CLR generic
   instantiation, so the hidden witness supplies the otherwise-missing distinction on the null path. It is forwarded
   dynamically through calls such as `inline fun <reified U> f(x: Any?) = m<U>(x)`, including lifted object, closure,

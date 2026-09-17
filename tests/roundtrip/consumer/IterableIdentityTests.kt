@@ -5,8 +5,30 @@ import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
 import roundtrip.iterableidentity.*
 
 private class ImportedIterableChild<T>(value: T) : ReadOnlyIterable<T>(value)
+private class ImportedForeignCollectionChild : ForeignCollectionWithIterable<Int>()
+private interface LocalTaggedIterable<T> : Iterable<T>
+private class LocalForeignCollection : System.Collections.ObjectModel.Collection<Int>(), LocalTaggedIterable<Int> {
+    override fun iterator(): Iterator<Int> = emptyList<Int>().iterator()
+}
 
 class IterableIdentityTests {
+    @TestAttribute
+    fun foreignBaseCollectionFacesSurviveKotlinIterableIdentity() {
+        val values = arrayOf<Any>(System.Collections.ObjectModel.Collection<Int>(),
+            LocalForeignCollection(), ForeignCollectionWithIterable<Int>(), ImportedForeignCollectionChild())
+        for (value in values) {
+            assertTrue(value is Iterable<*> && value is MutableIterable<*>)
+            assertTrue(value is Collection<*> && value is MutableCollection<*>)
+            assertTrue(value is List<*> && value is MutableList<*>)
+            assertTrue(value as? MutableList<*> === value)
+            assertTrue(value as MutableCollection<*> === value)
+            assertTrue(iterableIs<MutableIterable<*>>(value))
+            assertTrue(iterableIs<MutableList<*>>(value))
+            assertTrue(iterableSafeCast<MutableIterable<*>>(value) === value)
+            assertTrue(iterableCheckedCast<MutableList<*>>(value) === value)
+        }
+    }
+
     @TestAttribute
     fun readOnlyIterableRejectsMutableClassifiersAndCasts() {
         val value: Any = ReadOnlyIterable("value")

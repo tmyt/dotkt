@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Iterable classifiers retain Kotlin mutability (#770).** Read-only Kotlin Iterable implementations no longer
+  satisfy MutableIterable merely because both use CLR IEnumerable. Direct and reified tests/casts preserve the
+  distinction across DLL boundaries without hiding collection capabilities inherited from foreign CLR bases.
+
 - **Kotlin interface variance preserves value-type conversions (#759, #760).** Ordinary generic calls and projected
   array callbacks use the interface's nominal carrier, preserving Kotlin covariance and contravariance across
   primitive and reference instantiations without changing exact interface implementation edges.

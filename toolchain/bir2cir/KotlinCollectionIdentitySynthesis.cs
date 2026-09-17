@@ -10,7 +10,8 @@ using DotKt.Bir;
 // same ICollection<E> face. Those aliases are useful operational ABIs, but cannot answer the Kotlin classifier
 // question: a user `Collection` and a user `Set` become indistinguishable. Attach an empty compiler-owned identity
 // interface to every emitted Kotlin implementation while the Kotlin supertype graph is still available. BCL-backed
-// values cannot be modified, so StarProjectionLowering recognizes their existing generic CLR faces separately.
+// Iterable/MutableIterable likewise share IEnumerable. Foreign supertypes contribute their actual CLR classifier
+// faces; referenced Kotlin types instead inherit their declaration-owned markers, never reinterpreting storage faces.
 //
 // The identities form the Kotlin relation themselves. A MutableSet identity is also a Set and Collection identity;
 // a Set identity is also a Collection identity. Set membership and Collection mutability are independent:
@@ -42,11 +43,11 @@ static class KotlinCollectionIdentitySynthesis
         public TypeNode.Fqn[] Interfaces = Array.Empty<TypeNode.Fqn>();
     }
 
-    public static void ApplyAll(IEnumerable<JsonNode> roots)
+    public static void ApplyAll(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs)
     {
         var defs = new Dictionary<string, Def>(StringComparer.Ordinal);
         foreach (var root in roots) Collect(root, defs);
-        foreach (var def in defs.Values) Apply(def, defs);
+        foreach (var def in defs.Values) Apply(def, defs, refs);
     }
 
     static void Collect(JsonNode root, Dictionary<string, Def> defs)
@@ -66,9 +67,9 @@ static class KotlinCollectionIdentitySynthesis
         }
     }
 
-    static void Apply(Def def, IReadOnlyDictionary<string, Def> defs)
+    static void Apply(Def def, IReadOnlyDictionary<string, Def> defs, ReferenceMetadataIndex refs)
     {
-        var names = SupertypeNames(def, defs);
+        var names = SupertypeNames(def, defs, refs);
         var identities = new List<string>();
         if (names.Contains(MutableSet)) identities.Add(MutableSetIdentity);
         else if (names.Contains(Set)) identities.Add(SetIdentity);
@@ -93,7 +94,8 @@ static class KotlinCollectionIdentitySynthesis
                 interfaces.Add(TypeJson.Fqn(identity));
     }
 
-    static HashSet<string> SupertypeNames(Def start, IReadOnlyDictionary<string, Def> defs)
+    static HashSet<string> SupertypeNames(Def start, IReadOnlyDictionary<string, Def> defs,
+        ReferenceMetadataIndex refs)
     {
         var names = new HashSet<string>(StringComparer.Ordinal);
         var pending = new Queue<TypeNode.Fqn>();
@@ -102,11 +104,49 @@ static class KotlinCollectionIdentitySynthesis
         while (pending.Count != 0)
         {
             var face = pending.Dequeue();
-            if (!names.Add(face.Name) || !defs.TryGetValue(face.Name, out var local)) continue;
-            if (local.Base != null) pending.Enqueue(local.Base);
-            foreach (var inherited in local.Interfaces) pending.Enqueue(inherited);
+            if (!names.Add(face.Name)) continue;
+            if (defs.TryGetValue(face.Name, out var local))
+            {
+                if (local.Base != null) pending.Enqueue(local.Base);
+                foreach (var inherited in local.Interfaces) pending.Enqueue(inherited);
+            }
+            else if (!refs.HasDotKtOwner(face.Name))
+                AddForeignClassifiers(face, names, refs);
         }
         return names;
+    }
+
+    static void AddForeignClassifiers(TypeNode.Fqn owner, HashSet<string> names, ReferenceMetadataIndex refs)
+    {
+        var faces = new HashSet<(string Name, int Arity)>();
+        var pending = new Queue<TypeNode.Fqn>();
+        pending.Enqueue(owner);
+        while (pending.Count != 0)
+        {
+            var face = pending.Dequeue();
+            if (!faces.Add((face.Name, face.Args?.Length ?? 0))) continue;
+            foreach (var (spec, _) in refs.ReferencedSupertypes(face)) pending.Enqueue(spec);
+        }
+        bool Has(string name, int arity = 0) => faces.Contains((name, arity));
+        // A foreign subclass of a Kotlin implementation inherits that implementation's nominal facts too.
+        // Its manufactured BCL storage faces must not acquire a second, more permissive interpretation.
+        if (Has(IterableIdentity)) return;
+
+        // Match the foreign-value classifier policy used by StarProjectionLowering and its runtime helpers.
+        // These are CLR interface contracts, not special cases for particular concrete BCL classes.
+        var dictionary = Has("System.Collections.IDictionary")
+            || Has("System.Collections.Generic.IDictionary", 2)
+            || Has("System.Collections.Generic.IReadOnlyDictionary", 2);
+        if (!dictionary)
+        {
+            if (Has("System.Collections.Generic.IReadOnlyCollection", 1)
+                || Has("System.Collections.Generic.ICollection", 1)) names.Add(Collection);
+            if (Has("System.Collections.ICollection")) names.Add(MutableCollection);
+            if (Has("System.Collections.IList")) names.Add(MutableList);
+        }
+        if (Has("System.Collections.Generic.IReadOnlySet", 1)) names.Add(Set);
+        if (Has("System.Collections.Generic.ISet", 1)) names.Add(MutableSet);
+        if (Has("System.Collections.IEnumerable")) names.Add(MutableIterable);
     }
 
     static string Str(JsonNode node) =>

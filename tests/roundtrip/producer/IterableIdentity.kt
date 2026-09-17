@@ -1,5 +1,11 @@
 package roundtrip.iterableidentity
 
+interface TaggedIterable<T> : Iterable<T>
+
+open class ForeignCollectionWithIterable<T> : System.Collections.ObjectModel.Collection<T>(), TaggedIterable<T> {
+    override fun iterator(): Iterator<T> = emptyList<T>().iterator()
+}
+
 open class ReadOnlyIterable<T>(private val value: T) : Iterable<T> {
     override fun iterator(): Iterator<T> = listOf(value).iterator()
 }
