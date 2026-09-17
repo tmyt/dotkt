@@ -1,7 +1,7 @@
 @kotlin.clr.ClrName("samePhysicalName")
-private fun Map<Int, Int>.left(): Int = 1
+private fun Collection<Int>.left(): Int = 1
 
 @kotlin.clr.ClrName("samePhysicalName")
-private fun MutableMap<Int, Int>.right(): Int = 2
+private fun Set<Int>.right(): Int = 2
 
-fun main() = println(mapOf(1 to 1).left())
+fun main() = println(listOf(1).left())
