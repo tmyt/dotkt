@@ -60,6 +60,7 @@
   "methods": [
     {
       "name": "pick",
+      "declarationId": "nullable-tv-probe-pick",
       "typeParams": [{ "name": "T" }],
       "params": [
         { "name": "x", "type": { "t": "nullable", "of": { "t": "tv", "scope": "method", "i": 0 } } },
@@ -73,7 +74,7 @@
           "k": "var",
           "name": "acc",
           "type": { "t": "nullable", "of": { "t": "tv", "scope": "method", "i": 0 } },
-          "init": { "k": "const", "type": { "t": "fqn", "name": "void" }, "value": null }
+          "init": { "k": "const", "type": { "t": "nullable", "of": { "t": "tv", "scope": "method", "i": 0 } }, "value": null }
         },
         {
           "k": "setLocal",

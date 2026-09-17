@@ -443,9 +443,17 @@ static class TypeOwnershipLowering
             {
                 foreach (var key in obj.Select(kv => kv.Key).ToList())
                 {
+                    // These facts still use source generic frames; their consumers close the recorded frame.
+                    if (key is "overrides" or DeclarationIdentityBinding.SemanticSignatureKey) continue;
                     var value = obj[key];
                     if (value == null) continue;
-                    if (TypeJson.IsType(value)) obj[key] = TypeJson.Write(Project(TypeJson.Read(value)));
+                    if (TypeJson.IsType(value))
+                    {
+                        try { obj[key] = TypeJson.Write(Project(TypeJson.Read(value))); }
+                        catch (InvalidOperationException error) {
+                            throw new InvalidOperationException($"{error.Message} at {value.GetPath()}", error);
+                        }
+                    }
                     else Rewrite(value);
                 }
             }

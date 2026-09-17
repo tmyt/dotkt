@@ -1,3 +1,2 @@
-suspend-lambda lowering
-carries 1 construction type argument(s)
-for 0 state-machine type parameter(s)
+newSuspendLambda
+Synthetic capture arguments do not match their declarations

@@ -153,7 +153,7 @@ static partial class ClrMemberResolution
         while (shape is TypeNode.Nullable nullable) shape = nullable.Of;
         while (shape is TypeNode.Oblivious oblivious) shape = oblivious.Of;
         var physical = BirTypeLowering.LowerPhysicalType(shape, refs.Aliases, refs.IsValueType,
-            refs.PhysicalTypeNames, typeArg: false, localTypes ?? new HashSet<string>());
+            refs.PhysicalTypeNames, typeArg: false, localTypes ?? new HashSet<string>(), nullableFrames: refs.NullableTypeFrames);
         if (physical is TypeNode.Fn fn) physical = BirTypeLowering.DelegateFqnOf(fn);
         if (physical is not TypeNode.Fqn named) return null;
         var open = ResolveOwnerType(named, refs);
@@ -287,8 +287,63 @@ static partial class ClrMemberResolution
             && SlotInvokeReturn(slot) is TypeNode slotReturn
             && slotReturn is not TypeNode.Fqn { Args: null, Name: "void" or "System.Void" })
             AdaptVoidConstruction(construction, naturalFn, slot, slotReturn);
+        else if (PhysicalFunctionShape(slot) is TypeNode.Fn slotFn
+            && HasBoxedSlotSeam(naturalFn, slotFn))
+            AdaptBoxedSlots(construction, naturalFn, slot, slotFn);
         else
             Retarget(construction, slot);
+    }
+
+    static bool HasBoxedSlotSeam(TypeNode.Fn natural, TypeNode.Fn target)
+    {
+        static bool IsObject(TypeNode type) => type is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" };
+        static bool Seam(TypeNode left, TypeNode right) => !SameDelegate(left, right)
+            && (IsObject(left) || IsObject(right));
+        if (natural.DelegateParams.Length != target.DelegateParams.Length)
+            throw new InvalidOperationException("Delegate slot parameter count differs from its construction");
+        return natural.DelegateParams.Zip(target.DelegateParams, Seam).Any(seam => seam)
+            || Seam(natural.Ret, target.Ret);
+    }
+
+    // Capture the natural delegate once. The adapter's Invoke owns the destination signature, and its body
+    // crosses each representation seam explicitly. Generic parameters stand for complete slot types rather
+    // than borrowing the enclosing method's frame or reproducing its constraints.
+    static void AdaptBoxedSlots(JsonObject construction, TypeNode.Fn natural, TypeNode.Fqn slot, TypeNode.Fn target)
+    {
+        var sourceParameters = natural.DelegateParams;
+        var targetParameters = target.DelegateParams;
+        var arity = sourceParameters.Length;
+        var producesUnit = natural.Ret is TypeNode.Fqn { Args: null, Name: "void" or "System.Void" }
+            && target.Ret is not TypeNode.Fqn { Args: null, Name: "void" or "System.Void" };
+        if (producesUnit && target.Ret is not TypeNode.Fqn { Args: null, Name: "kotlin.Unit" or "object" or "System.Object" })
+            throw new InvalidOperationException("Delegate return slot cannot receive the Unit singleton");
+        var arguments = new List<TypeNode>();
+        TypeNode Lift(TypeNode type)
+        {
+            // Void is a return-slot shape, not a CLR generic argument or a value to box.
+            if (type is TypeNode.Fqn { Args: null, Name: "void" or "System.Void" }) return type;
+            // A managed reference is a slot shape, never a generic argument. Equal slots share a variable,
+            // preserving byref identity and avoiding box/unbox on unchanged (possibly byref-like) values.
+            if (type is TypeNode.ByRef byRef) return new TypeNode.ByRef(Lift(byRef.Of));
+            var index = arguments.FindIndex(argument => SameDelegate(argument, type));
+            if (index < 0) { index = arguments.Count; arguments.Add(type); }
+            return new TypeNode.Tv("type", index);
+        }
+        var sourceFrame = new TypeNode.Fn(false, Lift(natural.Ret),
+            sourceParameters.Select(Lift).ToArray(), null, natural.Clr);
+        var targetFrame = targetParameters.Select(Lift).ToArray();
+        var targetReturn = producesUnit ? target.Ret : Lift(target.Ret);
+        var adapter = AdapterClass(sourceFrame, arity, targetReturn, targetFrame, arguments.Count);
+        var captured = (JsonObject)construction.DeepClone();
+        construction.Clear();
+        if (captured["pos"] is JsonNode position) construction["pos"] = position.DeepClone();
+        construction["k"] = "newClosure";
+        construction["closureType"] = TypeJson.Write(new TypeNode.Fqn(adapter));
+        construction["method"] = "invoke";
+        construction["captures"] = new JsonArray { captured };
+        construction["funcType"] = TypeJson.Write(slot);
+        construction["typeArgs"] = new JsonArray(arguments.Select(TypeJson.Write).ToArray());
+        ResolveDelegateCtor(construction, slot);
     }
 
     // ONE delegate, TWO vocabularies. The natural side is spelled as the document spells a type — an arity-free
@@ -364,6 +419,11 @@ static partial class ClrMemberResolution
     static void AdaptVoidConstruction(JsonObject construction, TypeNode.Fn naturalFn,
         TypeNode.Fqn slot, TypeNode slotReturn)
     {
+        if (PhysicalFunctionShape(slot) is TypeNode.Fn target && HasBoxedSlotSeam(naturalFn, target))
+        {
+            AdaptBoxedSlots(construction, naturalFn, slot, target);
+            return;
+        }
         // The value the adapter returns is the `Unit` singleton, so the slot's Invoke must be able to receive it.
         // Kotlin resolution only fills such a slot from a `Unit` lambda, so anything else is a producer defect
         // rather than a program this rule has to accept.
@@ -396,16 +456,19 @@ static partial class ClrMemberResolution
 
     // One adapter class per (natural delegate family, arity, produced return) in a file — the shape depends on
     // nothing else, because its parameters ARE the delegate's.
-    static string AdapterClass(TypeNode.Fn frame, int arity, TypeNode slotReturn)
+    static string AdapterClass(TypeNode.Fn frame, int arity, TypeNode slotReturn,
+        TypeNode[] slotParameters = null, int? genericArity = null)
     {
-        var key = $"{frame.Clr}|{arity}|{TypeNode.ToJson(slotReturn)}";
+        var key = $"{TypeNode.ToJson(frame)}|{arity}|{genericArity}|{TypeNode.ToJson(slotReturn)}|"
+            + (slotParameters == null ? "unit" : string.Join(";", slotParameters.Select(TypeNode.ToJson)));
         if (_adapters.TryGetValue(key, out var existing)) return existing;
 
         var name = $"dotkt${_adapterScope}$UnitDelegateAdapter{_nextAdapter++}";
         var frameJson = TypeJson.Write(frame);
         var self = new JsonObject { ["t"] = "fqn", ["name"] = name };
 
-        var invokeBody = new JsonArray
+        JsonArray invokeBody;
+        if (slotParameters == null) invokeBody = new JsonArray
         {
             new JsonObject
             {
@@ -418,6 +481,30 @@ static partial class ClrMemberResolution
                 ["value"] = UnitSingletonRead(),
             },
         };
+        else
+        {
+            var call = DelegateInvokeCall(self, frameJson, arity);
+            var arguments = (JsonArray)call["args"];
+            for (var i = 0; i < arity; i++)
+                if (!frame.DelegateParams[i].Equals(slotParameters[i]))
+                arguments[i] = new JsonObject {
+                    ["k"] = "cast", ["type"] = TypeJson.Write(frame.DelegateParams[i]),
+                    ["e"] = arguments[i].DeepClone(),
+                };
+            if (slotReturn is TypeNode.Fqn { Args: null, Name: "void" or "System.Void" })
+                invokeBody = new JsonArray(new JsonObject { ["k"] = "exprStmt", ["expr"] = call },
+                    new JsonObject { ["k"] = "return" });
+            else if (frame.Ret is TypeNode.Fqn { Args: null, Name: "void" or "System.Void" })
+                invokeBody = new JsonArray(new JsonObject { ["k"] = "exprStmt", ["expr"] = call },
+                    new JsonObject { ["k"] = "return", ["value"] = UnitSingletonRead() });
+            else
+            {
+                var result = frame.Ret.Equals(slotReturn) ? (JsonNode)call : new JsonObject {
+                    ["k"] = "cast", ["type"] = TypeJson.Write(slotReturn), ["e"] = call,
+                };
+                invokeBody = new JsonArray(new JsonObject { ["k"] = "return", ["value"] = result });
+            }
+        }
         var invoke = new JsonObject
         {
             ["name"] = "invoke",
@@ -427,7 +514,7 @@ static partial class ClrMemberResolution
             ["params"] = new JsonArray(Enumerable.Range(0, arity).Select(i => (JsonNode)new JsonObject
             {
                 ["name"] = "p" + i,
-                ["type"] = TypeJson.Write(new TypeNode.Tv("type", i)),
+                ["type"] = TypeJson.Write(slotParameters?[i] ?? new TypeNode.Tv("type", i)),
             }).ToArray()),
             ["ret"] = TypeJson.Write(slotReturn),
             ["body"] = invokeBody,
@@ -459,9 +546,10 @@ static partial class ClrMemberResolution
             ["kind"] = "class",
             ["generated"] = true,
         };
-        if (arity > 0)
+        var typeArity = genericArity ?? arity;
+        if (typeArity > 0)
             declaration["typeParams"] = new JsonArray(
-                Enumerable.Range(0, arity).Select(i => (JsonNode)new JsonObject
+                Enumerable.Range(0, typeArity).Select(i => (JsonNode)new JsonObject
                 {
                     ["name"] = "T" + i,
                     // The adapter's parameter STANDS FOR the delegate's own parameter, so it must admit every

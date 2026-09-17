@@ -253,14 +253,14 @@ static partial class ClrMemberResolution
     static TypeNode PhysicalOwnerArg(TypeNode arg, bool typeArg)
     {
         var lowered = BirTypeLowering.LowerPhysicalType(arg, _refs.Aliases, _refs.IsValueType,
-            _refs.PhysicalTypeNames, typeArg, _localTypes);
+            _refs.PhysicalTypeNames, typeArg, _localTypes, nullableFrames: _refs.NullableTypeFrames);
         return lowered is TypeNode.Fn fn
             ? BirTypeLowering.DelegateFqnOf(fn)
                 ?? throw new InvalidOperationException("bir2cir: a lowered owner function argument has no CLR delegate family")
             : lowered;
     }
 
-    static TypeNode DeclaringTypeRef(MemberInfo member, Type openOwner, TypeNode[] ownerArgs,
+    internal static TypeNode DeclaringTypeRef(MemberInfo member, Type openOwner, TypeNode[] ownerArgs,
         bool? ownerArgumentsAreMethodSlots = null)
     {
         var declaring = DeclaringDefOf(member);
@@ -405,7 +405,8 @@ static partial class ClrMemberResolution
         // the declaration being named. Reproducing it here instead reproduced part of it: the arg-position
         // collapse but not the generic-classifier erasure, and not the contravariant `Comparable<Any?>` collapse.
         var head = BirTypeLowering.PhysicalHead(kotlinName,
-            _refs.Aliases.TryGetValue(kotlinName, out var bcl) ? bcl : null, loweredArgs, collapseInvariant: typeArg);
+            _refs.Aliases.TryGetValue(kotlinName, out var bcl) ? bcl : null, loweredArgs,
+            _refs.NullableTypeFrames);
         return MetadataSpelling(head, def, kotlinName);
     }
 

@@ -46,6 +46,9 @@ static class FBoundStarProjectionErasure
     {
         OwnerConstrainedMethodLowering.Reset(refs);
         var rootList = roots.OfType<JsonObject>().ToList();
+        // A type-variable receiver's bound still names its constructed Kotlin owner here. Close that owner before
+        // value projection replaces the bound with a non-generic carrier and loses the original application.
+        ConstrainedTypeParameterReceiverBinding.CloseOpenOwners(rootList);
         var owners = new Dictionary<string, Owner>(StringComparer.Ordinal);
         var defs = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
         foreach (var root in rootList) Collect(root, root, owners, defs);
@@ -711,7 +714,7 @@ static class FBoundStarProjectionErasure
 
     static bool ContainsUseSiteProjection(TypeNode type) => type switch
     {
-        TypeNode.Projection => true,
+        TypeNode.Projection or TypeNode.Star => true,
         TypeNode.Fqn { Args: { } args } => args.Any(ContainsUseSiteProjection),
         TypeNode.Nullable nullable => ContainsUseSiteProjection(nullable.Of),
         TypeNode.Oblivious oblivious => ContainsUseSiteProjection(oblivious.Of),
@@ -727,12 +730,25 @@ static class FBoundStarProjectionErasure
         _ => false,
     };
 
+    internal static void ProjectionConstraintSelfTest()
+    {
+        var variable = new TypeNode.Tv("method", 0);
+        var exact = new TypeNode.Fqn("Bound", new TypeNode[] { variable });
+        var star = new TypeNode.Fqn("Bound", new TypeNode[] { new TypeNode.Star() });
+        var projected = new TypeNode.Fqn("Bound", new TypeNode[] { new TypeNode.Projection("out", variable) });
+        if (ContainsUseSiteProjection(exact) || !ContainsUseSiteProjection(star)
+            || !ContainsUseSiteProjection(new TypeNode.Nullable(star)) || !ContainsUseSiteProjection(projected))
+            throw new InvalidOperationException("Constraint projection classification lost star/exact argument distinction");
+        Console.WriteLine("[constraint projections] self-test OK (star, variance, annotation, exact bound)");
+    }
+
     static void RecordProjectionSlot(JsonObject declaration, string slot, string fact,
         IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs)
     {
         if (declaration[fact] != null || TypeJson.Read(declaration[slot]) is not TypeNode type
             || (!ContainsExistentialProjection(type)
                 && !ContainsWritableVariantArray(type, owners, refs)
+                && !ContainsGenericAlias(type, refs)
                 && !ContainsKotlinVariantType(type, owners, refs)))
             return;
         // An earlier representation pass may already have replaced nullable generic arguments with object.
@@ -741,10 +757,32 @@ static class FBoundStarProjectionErasure
             ?? TypeNode.ToJson(type);
     }
 
+    // Aliases are not a reversible source-type encoding: ArrayList<T> and a CLR List<T> declaration can have
+    // the same physical signature without the same Kotlin classifier. Preserve declaration truth even when the
+    // alias needs no nullable/existential companion; reverse projection must not guess a source owner.
+    static bool ContainsGenericAlias(TypeNode type, ReferenceMetadataIndex refs) => type switch
+    {
+        TypeNode.Fqn { Args: { } args } f => refs.Aliases.ContainsKey(f.Name)
+            || args.Any(argument => ContainsGenericAlias(argument, refs)),
+        TypeNode.Nullable nullable => ContainsGenericAlias(nullable.Of, refs),
+        TypeNode.Oblivious oblivious => ContainsGenericAlias(oblivious.Of, refs),
+        TypeNode.Projection projection => ContainsGenericAlias(projection.Of, refs),
+        TypeNode.Array array => ContainsGenericAlias(array.Elem, refs),
+        TypeNode.ByRef byRef => ContainsGenericAlias(byRef.Of, refs),
+        TypeNode.Ptr pointer => ContainsGenericAlias(pointer.Of, refs),
+        TypeNode.Mod modifier => ContainsGenericAlias(modifier.M, refs) || ContainsGenericAlias(modifier.Of, refs),
+        TypeNode.Fn function => ContainsGenericAlias(function.Ret, refs)
+            || function.Params.Any(parameter => ContainsGenericAlias(parameter, refs))
+            || function.Recv != null && ContainsGenericAlias(function.Recv, refs)
+            || function.Ctx?.Any(context => ContainsGenericAlias(context, refs)) == true,
+        _ => false,
+    };
+
     static bool ContainsKotlinVariantType(TypeNode type,
         IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs) => type switch
     {
         TypeNode.Fqn f => RequiresKotlinVariantCarrier(f, owners, refs)
+            || RequiresOpaqueVariantAlias(f, owners, refs)
             || f.Args?.Any(argument => ContainsKotlinVariantType(argument, owners, refs)) == true,
         TypeNode.Nullable nullable => ContainsKotlinVariantType(nullable.Of, owners, refs),
         TypeNode.Oblivious oblivious => ContainsKotlinVariantType(oblivious.Of, owners, refs),
@@ -1335,6 +1373,18 @@ static class FBoundStarProjectionErasure
         return HasKotlinVariantParameter(application, refs.OwnerTypeParamDeclarations(application.Name));
     }
 
+    // A foreign alias cannot be retrofitted with a nominal carrier. Its binding's incompatible variance requires
+    // an opaque reference slot instead; the exact source application still travels in KotlinType metadata.
+    static bool RequiresOpaqueVariantAlias(TypeNode.Fqn application,
+        IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs,
+        IReadOnlyDictionary<string, string> localClrAliases = null)
+    {
+        var parameters = owners.TryGetValue(application.Name, out var local)
+            ? local.Def?["typeParams"] as JsonArray : null;
+        return AliasVarianceRepresentation.RequiresErasure(application, refs, parameters,
+            localClrAliases?.GetValueOrDefault(application.Name));
+    }
+
     // CLR variance does not relate value-type instantiations, even for an interface. Kotlin permits those same
     // subtype conversions for both classes and interfaces. Every closed construction implements the declaration's
     // non-generic existential interface, so use that interface as the physical value-slot contract while retaining the
@@ -1436,7 +1486,7 @@ static class FBoundStarProjectionErasure
         var localNames = defs.Keys.ToHashSet(StringComparer.Ordinal);
         string PhysicalKey(JsonNode node) => TypeJson.Write(BirTypeLowering.CanonicalPhysicalSlotType(
             BirTypeLowering.LowerPhysicalType(TypeJson.Read(node), aliases, refs.IsValueType,
-                refs.PhysicalTypeNames, typeArg: false, localTypeNames: localNames))).ToJsonString();
+                refs.PhysicalTypeNames, typeArg: false, localTypeNames: localNames, nullableFrames: refs.NullableTypeFrames))).ToJsonString();
         // Local Kotlin and reflected CLR spellings can denote the same InterfaceImpl. ilemit emits this set 1:1.
         inherited = new JsonArray(inherited.GroupBy(PhysicalKey, StringComparer.Ordinal)
             .Select(group => group.First().DeepClone()).ToArray());
@@ -1452,15 +1502,19 @@ static class FBoundStarProjectionErasure
                 // A non-public method cannot implicitly fill a public CLR interface slot. Give it the same
                 // deterministic forwarding bridge as an owner-T-dependent signature. The bridge is declared on the
                 // original owner, so it can invoke a private implementation without changing source visibility.
-                var dependent = ContainsOwnerTvInSignature(method) || !IsPublic(method);
-                var slot = InterfaceSlot(method, dependent ? StarMethodName(owner, method) : null,
+                // An explicitly named source member also owns a separate name allocation. Keep the generated
+                // interface slot in its own naming domain rather than making the source member virtual and
+                // requiring its eventual allocated name to be propagated across an implicit interface match.
+                var requiresBridge = ContainsOwnerTvInSignature(method) || !IsPublic(method)
+                    || method[DeclarationIdentityBinding.ExplicitNameKey] != null;
+                var slot = InterfaceSlot(method, requiresBridge ? StarMethodName(owner, method) : null,
                     owner.Name, owners, refs);
                 owner.Slots[method] = (slot, (method["params"] as JsonArray)?.OfType<JsonObject>()
                     .Select(parameter => TypeJson.Read(parameter["type"])).ToArray() ?? Array.Empty<TypeNode>());
                 var key = MethodKey(slot);
                 if (key == null || !seen.Add(key)) continue;
                 methods.Add(slot);
-                if (dependent)
+                if (requiresBridge)
                 {
                     var bridge = BridgeMethod(owner, method, owners, refs,
                         slotTypeParams: slot["typeParams"] as JsonArray);
@@ -2771,7 +2825,7 @@ static class FBoundStarProjectionErasure
         while (argument is TypeNode.Oblivious oblivious) argument = oblivious.Of;
         if (ContainsExistentialProjection(argument)) argument = new TypeNode.Fqn("kotlin.Any");
         var physical = BirTypeLowering.LowerPhysicalType(argument, refs.Aliases, refs.IsValueType,
-            refs.PhysicalTypeNames, typeArg: true, localTypeNames: localNames);
+            refs.PhysicalTypeNames, typeArg: true, localTypeNames: localNames, nullableFrames: refs.NullableTypeFrames);
         return physical is TypeNode.Fn function
             ? BirTypeLowering.DelegateFqnOf(function)
                 ?? throw new InvalidOperationException("projected constructor fallback has no CLR delegate family")
@@ -2783,7 +2837,7 @@ static class FBoundStarProjectionErasure
     {
         while (type is TypeNode.Projection projection) type = projection.Of;
         var physical = BirTypeLowering.LowerPhysicalType(type, refs.Aliases, refs.IsValueType,
-            refs.PhysicalTypeNames, typeArg: false, localTypeNames: localNames);
+            refs.PhysicalTypeNames, typeArg: false, localTypeNames: localNames, nullableFrames: refs.NullableTypeFrames);
         if (physical is TypeNode.Fn function)
             physical = BirTypeLowering.DelegateFqnOf(function)
                 ?? throw new InvalidOperationException("projected constructor parameter has no CLR delegate family");
@@ -3966,7 +4020,7 @@ static class FBoundStarProjectionErasure
         _ => type,
     };
 
-    static TypeNode SubstituteDeclarationTypeArguments(TypeNode type,
+    internal static TypeNode SubstituteDeclarationTypeArguments(TypeNode type,
         IReadOnlyList<TypeNode> ownerArguments, IReadOnlyList<TypeNode> methodArguments) => type switch
     {
         TypeNode.Tv { Scope: "type" } tv when tv.I >= 0 && tv.I < ownerArguments.Count
@@ -4261,6 +4315,9 @@ static class FBoundStarProjectionErasure
                     argument, owners, refs, boundDeclaration, localClrAliases)).ToArray());
             case TypeNode.Fqn preserved when preserveConstructedHead:
                 return preserved;
+            case TypeNode.Fqn f when !boundDeclaration
+                && RequiresOpaqueVariantAlias(f, owners, refs, localClrAliases):
+                return new TypeNode.Fqn("kotlin.Any");
             case TypeNode.Fqn f when !boundDeclaration
                 && RequiresKotlinVariantCarrier(f, owners, refs)
                 && TryExistentialCarrier(f.Name, owners, refs, out var variantCarrier):

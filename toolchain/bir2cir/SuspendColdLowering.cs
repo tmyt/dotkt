@@ -3954,6 +3954,8 @@ static partial class SuspendColdLowering
         {
             if (_m[NullableGenericErasure.MethodTypeParameterBoundsPre] is JsonNode bounds)
                 method[NullableGenericErasure.MethodTypeParameterBoundsPre] = bounds.DeepClone();
+            if (_m[NullableRepresentationTypes.MethodFrameKey] is JsonNode nullableFrame)
+                method[NullableRepresentationTypes.MethodFrameKey] = nullableFrame.DeepClone();
             // The existential slot's source identity belongs to its public Task projection too. Without it,
             // a separately compiled consumer cannot select this slot from the original Kotlin declaration.
             if (Str(_m[FBoundStarProjectionErasure.SourceMemberKey]) is string sourceMember)
@@ -4397,8 +4399,8 @@ static partial class SuspendColdLowering
                 result = new TypeNode.Nullable(result);
             return NullableFlags.Compute(new TypeNode.Fqn(taskReturn.Name, new[] { result }),
                 _isValueFqn, NullableFlags.Convention.ClrSignature,
-                type => BirTypeLowering.LowerPhysicalType(type, _refs.Aliases, _isValueFqn,
-                    _refs.PhysicalTypeNames, typeArg: true, _localTypeFqns) is TypeNode.Fqn { Args: not null });
+                type => BirTypeLowering.AnnotationArguments(type, _refs.Aliases, _isValueFqn,
+                    _refs.PhysicalTypeNames, _localTypeFqns, nullableFrames: _refs.NullableTypeFrames));
         }
 
         // The bridge's cold-entry call: forward the bridge params + the RootContinuation (cast to the erased

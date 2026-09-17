@@ -1696,6 +1696,7 @@ internal sealed class AssemblyScanner : IDisposable
                 _md, names, _attrs, _arityNames, _delegateCatalog, _companionCatalog, _innerCatalog,
                 _signatureSeeds,
                 _externalSignatureDecoders,
+                _publicTypeCatalog,
                 SemanticCompanionTypeNames(names));
             var projectedBySemanticName = new Dictionary<string, Class>(StringComparer.Ordinal);
 
@@ -2126,12 +2127,18 @@ internal sealed class AssemblyScanner : IDisposable
 
         var typeParameterIds = new Dictionary<GenericParameterHandle, int>();
         var retainedTypeParameters = new Dictionary<GenericParameterHandle, TypeParameter>();
+        var nullableTypeFrame = NullableFrameMetadata.TypeFrame(_md, _attrs, handle);
+        var capturedSourceIndices = Enumerable.Range(0, capturedOuterTypeParameters.GetValueOrDefault())
+            .Select(index => nullableTypeFrame is null ? (int?)index : nullableTypeFrame.SourceIndex(index))
+            .Where(index => index.HasValue).Select(index => index!.Value).ToHashSet();
         foreach (var gpHandle in def.GetGenericParameters())
         {
             var gp = _md.GetGenericParameter(gpHandle);
-            var id = gp.Index;
+            var sourceIndex = nullableTypeFrame?.SourceIndex(gp.Index);
+            if (nullableTypeFrame is not null && sourceIndex is null) continue;
+            var id = sourceIndex ?? gp.Index;
             typeParameterIds[gpHandle] = id;
-            if (id < capturedOuterTypeParameters.GetValueOrDefault()) continue;
+            if (capturedSourceIndices.Contains(id)) continue;
             var parameter = new TypeParameter
             {
                 Id = id,
@@ -3047,15 +3054,16 @@ internal sealed class AssemblyScanner : IDisposable
             string? definitionPath)
         {
             if (!surface.IsInterface) return;
+            // A compiler-owned operational carrier and its physical parents are not Kotlin supertypes,
+            // regardless of the carrier's CLR visibility.
+            if (signatures.IsCompilerOwnedSlotCarrier(type)) return;
             var typeKey = TypeKey(type);
             if (surface.IsPublic)
             {
                 projected.TryAdd(typeKey, type);
-                // Compiler-owned slot carriers are deliberately absent from Kotlin's supertype graph together with
-                // their physical inheritance. Ordinary public interfaces continue through the walk so metadata that
+                // Ordinary public interfaces continue through the walk so metadata that
                 // omits redundant public ancestor rows still contributes the complete accessible CLR relation and
                 // MethodImpl declaration-key set.
-                if (signatures.IsCompilerOwnedSlotCarrier(type)) return;
                 // A public interface's own KLIB carries its public parent graph. Flattening that physical CLR closure
                 // onto every implementer can invent extra Kotlin obligations (for example the non-generic
                 // System.Collections.IEnumerable ancestor of Iterable<T>). Only MethodImpl declaration matching needs
@@ -3368,7 +3376,8 @@ internal sealed class AssemblyScanner : IDisposable
             _companionCatalog,
             _innerCatalog,
             source.Seeds,
-            _externalSignatureDecoders);
+            _externalSignatureDecoders,
+            _publicTypeCatalog);
     }
 
     public void Dispose() => _externalSignatureDecoders.Dispose();
@@ -3600,9 +3609,11 @@ internal sealed class AssemblyScanner : IDisposable
         GenericContext context,
         ImmutableArray<KType> interfaceArguments)
     {
+        var nullableFrame = NullableFrameMetadata.MethodFrame(reader, signatures.Attributes, methodHandle);
         foreach (var parameterHandle in method.GetGenericParameters())
         {
             var parameter = reader.GetGenericParameter(parameterHandle);
+            if (nullableFrame is not null && parameter.Index >= nullableFrame.SourceArity) continue;
             var projected = new TypeParameter
             {
                 Id = 10000 + parameter.Index,
@@ -3684,7 +3695,7 @@ internal sealed class AssemblyScanner : IDisposable
         GenericContext context,
         IReadOnlySet<int>? semanticReified)
     {
-        foreach (var gpHandle in method.GetGenericParameters())
+        foreach (var gpHandle in SourceMethodParameters(methodHandle))
         {
             var gp = _md.GetGenericParameter(gpHandle);
             var parameter = new TypeParameter
@@ -4539,7 +4550,7 @@ internal sealed class AssemblyScanner : IDisposable
             };
             PromoteContextParameters(method, function);
             PromoteReceiver(methodHandle, method, function);
-            foreach (var gpHandle in method.GetGenericParameters())
+            foreach (var gpHandle in SourceMethodParameters(methodHandle))
             {
                 var gp = _md.GetGenericParameter(gpHandle);
                 var tp = new TypeParameter
@@ -4800,7 +4811,7 @@ internal sealed class AssemblyScanner : IDisposable
         GenericContext context,
         IReadOnlySet<int>? semanticReified)
     {
-        foreach (var gpHandle in method.GetGenericParameters())
+        foreach (var gpHandle in SourceMethodParameters(methodHandle))
         {
             var gp = _md.GetGenericParameter(gpHandle);
             var parameter = new TypeParameter
@@ -4991,7 +5002,7 @@ internal sealed class AssemblyScanner : IDisposable
                 function.ReceiverType = companion.Receiver;
             }
             else PromoteReceiver(methodHandle, method, function);
-            foreach (var gpHandle in method.GetGenericParameters())
+            foreach (var gpHandle in SourceMethodParameters(methodHandle))
             {
                 var gp = _md.GetGenericParameter(gpHandle);
                 var tp = new TypeParameter
@@ -5585,7 +5596,16 @@ internal sealed class AssemblyScanner : IDisposable
         IReadOnlyList<TypeNode>? Parameters,
         TypeNode? ReturnType,
         IReadOnlySet<int> SemanticReifiedTypeParameterIndices,
-        IReadOnlySet<int> NullableWitnessTypeParameterIndices);
+        IReadOnlySet<int> NullableWitnessTypeParameterIndices,
+        NullableRepresentationFrame? NullableFrame);
+
+    private IEnumerable<GenericParameterHandle> SourceMethodParameters(MethodDefinitionHandle methodHandle)
+    {
+        var frame = NullableFrameMetadata.MethodFrame(_md, _attrs, methodHandle);
+        foreach (var parameter in _md.GetMethodDefinition(methodHandle).GetGenericParameters())
+            if (frame is null || _md.GetGenericParameter(parameter).Index < frame.SourceArity)
+                yield return parameter;
+    }
 
     private DeclarationIdentityCarrier? KotlinDeclarationIdentityCarrier(MethodDefinitionHandle methodHandle)
     {
@@ -5594,11 +5614,11 @@ internal sealed class AssemblyScanner : IDisposable
         if (document is null) return null;
         var root = document.RootElement;
         var propertyCount = root.ValueKind == JsonValueKind.Object ? root.EnumerateObject().Count() : 0;
-        if (propertyCount is < 2 or > 5 ||
+        if (propertyCount is < 2 or > 6 ||
             !root.TryGetProperty("id", out var idNode) || idNode.ValueKind != JsonValueKind.String ||
             !root.TryGetProperty("name", out var nameNode) || nameNode.ValueKind != JsonValueKind.String ||
             root.EnumerateObject().Any(property => property.Name is not (
-                "id" or "name" or "signature" or "reified" or "nullableWitness")) ||
+                "id" or "name" or "signature" or "reified" or "nullableWitness" or NullableRepresentationFrame.MetadataKey)) ||
             root.TryGetProperty("signature", out var signatureNode) && signatureNode.ValueKind != JsonValueKind.Object ||
             root.TryGetProperty("reified", out var reifiedNode) && reifiedNode.ValueKind != JsonValueKind.Array ||
             root.TryGetProperty("nullableWitness", out var witnessNode)
@@ -5608,6 +5628,14 @@ internal sealed class AssemblyScanner : IDisposable
         var name = nameNode.GetString();
         if (string.IsNullOrEmpty(id) || string.IsNullOrEmpty(name))
             throw new InvalidDataException("empty [KotlinDeclarationIdentity] payload");
+        NullableRepresentationFrame? nullableFrame = null;
+        if (root.TryGetProperty(NullableRepresentationFrame.MetadataKey, out var frameNode))
+        {
+            nullableFrame = NullableRepresentationFrame.Read(System.Text.Json.Nodes.JsonNode.Parse(frameNode.GetRawText())!);
+            if (nullableFrame.PhysicalArity != _md.GetMethodDefinition(methodHandle).GetGenericParameters().Count)
+                throw new InvalidDataException("Nullable representation frame disagrees with MethodDef generic arity");
+        }
+        var sourceArity = nullableFrame?.SourceArity ?? _md.GetMethodDefinition(methodHandle).GetGenericParameters().Count;
         var reified = root.TryGetProperty("reified", out reifiedNode)
             ? reifiedNode.EnumerateArray().Select(index => index.ValueKind == JsonValueKind.Number
                 && index.TryGetInt32(out var value) && value >= 0
@@ -5615,7 +5643,7 @@ internal sealed class AssemblyScanner : IDisposable
                 : throw new InvalidDataException("malformed [KotlinDeclarationIdentity] reified index"))
                 .ToHashSet()
             : new HashSet<int>();
-        if (reified.Any(index => index >= _md.GetMethodDefinition(methodHandle).GetGenericParameters().Count))
+        if (reified.Any(index => index >= sourceArity))
             throw new InvalidDataException("[KotlinDeclarationIdentity] reified index exceeds method generic arity");
         var nullableWitness = root.TryGetProperty("nullableWitness", out witnessNode)
             ? witnessNode.EnumerateArray().Select(index => index.ValueKind == JsonValueKind.Number
@@ -5626,15 +5654,15 @@ internal sealed class AssemblyScanner : IDisposable
                 .ToHashSet()
             : new HashSet<int>();
         if (nullableWitness.Any(index =>
-            index >= _md.GetMethodDefinition(methodHandle).GetGenericParameters().Count))
+            index >= sourceArity))
             throw new InvalidDataException(
                 "[KotlinDeclarationIdentity] nullable-witness index exceeds method generic arity");
         if (!root.TryGetProperty("signature", out signatureNode))
         {
-            if (nullableWitness.Count != 0)
+            if (nullableWitness.Count != 0 || nullableFrame is not null)
                 throw new InvalidDataException(
                     "[KotlinDeclarationIdentity] nullable-witness indices require a semantic signature");
-            return new DeclarationIdentityCarrier(id, name, null, null, reified, nullableWitness);
+            return new DeclarationIdentityCarrier(id, name, null, null, reified, nullableWitness, nullableFrame);
         }
         if (signatureNode.EnumerateObject().Count() != 2 ||
             !signatureNode.TryGetProperty("params", out var paramsNode) || paramsNode.ValueKind != JsonValueKind.Array ||
@@ -5643,7 +5671,7 @@ internal sealed class AssemblyScanner : IDisposable
         var parameters = paramsNode.EnumerateArray().Select(parameter =>
             TypeNode.Read(parameter) ?? throw new InvalidDataException(
                 "malformed [KotlinDeclarationIdentity] semantic parameter type")).ToArray();
-        return new DeclarationIdentityCarrier(id, name, parameters, returnType, reified, nullableWitness);
+        return new DeclarationIdentityCarrier(id, name, parameters, returnType, reified, nullableWitness, nullableFrame);
     }
 
     /// `isStatic` is the caller's, because the two call sites read it from different places: a CLASS member accessor
@@ -5731,7 +5759,7 @@ internal sealed class AssemblyScanner : IDisposable
                         propertyPhysical[i].Handle, propertySignature.ParameterTypes[i], owner, names, signatures, context),
             });
         }
-        foreach (var gpHandle in representative.GetGenericParameters())
+        foreach (var gpHandle in SourceMethodParameters(representativeHandle))
         {
             var gp = _md.GetGenericParameter(gpHandle);
             var parameter = new TypeParameter
@@ -7335,6 +7363,7 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
     private readonly CompanionReferenceCatalog _companionCatalog;
     private readonly InnerReferenceCatalog _innerCatalog;
     private readonly ExternalSignatureDecoderCache _externalSignatureDecoders;
+    private readonly PublicTypeCatalog _publicTypeCatalog;
     private readonly IReadOnlyDictionary<TypeDefinitionHandle, int> _semanticTypeNames;
     private readonly bool _restoreKotlinCollections;
     private readonly IReadOnlyDictionary<string, TypeDefinitionHandle> _delegateDefinitions;
@@ -7348,6 +7377,7 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
     // A trusted DotKt inner TypeDef re-declares its enclosing CLR generic slots as a leading physical prefix. They are
     // not Kotlin type arguments of the inner classifier; consume that prefix when a signature constructs the type.
     private readonly Dictionary<KType, int[]> _semanticInnerTypes = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<KType, NullableRepresentationFrame> _nullableTypeFrames = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<string, KType> _externalDelegateShapes = new(StringComparer.Ordinal);
     // The struct-ness oracle for the NRT byte walk, keyed by the PROJECTED name a KType carries. An ECMA signature
     // states value-ness at every occurrence (`ELEMENT_TYPE_VALUETYPE` vs `ELEMENT_TYPE_CLASS`, the `rawTypeKind` the
@@ -7367,6 +7397,7 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
         InnerReferenceCatalog innerCatalog,
         SignatureDecoderSeeds seeds,
         ExternalSignatureDecoderCache externalSignatureDecoders,
+        PublicTypeCatalog publicTypeCatalog,
         IReadOnlyDictionary<TypeDefinitionHandle, int>? semanticTypeNames = null)
     {
         _md = md;
@@ -7377,6 +7408,7 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
         _companionCatalog = companionCatalog;
         _innerCatalog = innerCatalog;
         _externalSignatureDecoders = externalSignatureDecoders;
+        _publicTypeCatalog = publicTypeCatalog;
         _delegateDefinitions = seeds.DelegateDefinitions;
         _seedValueTypeNames = seeds.ValueTypeNames;
         _semanticTypeNames = semanticTypeNames ?? new Dictionary<TypeDefinitionHandle, int>();
@@ -7440,6 +7472,13 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
             return ConstructDelegate(genericName, typeArguments);
         // CLR nested TypeSpecs flatten an inner class as [outer capture..., own...]. Kotlin metadata flattens the
         // same classifier as [own..., outer...]; preserve every argument and rotate at this representation boundary.
+        if (_nullableTypeFrames.TryGetValue(genericType, out var nullableFrame))
+        {
+            if (typeArguments.Length != nullableFrame.PhysicalArity)
+                throw new InvalidDataException("Constructed type disagrees with nullable representation frame");
+            typeArguments = Enumerable.Range(0, nullableFrame.SourceArity)
+                .Select(nullableFrame.SourcePosition).Select(index => typeArguments[index]).ToImmutableArray();
+        }
         IEnumerable<KType> semanticTypeArguments = typeArguments;
         if (_semanticInnerTypes.TryGetValue(genericType, out var semanticArgumentOrder))
         {
@@ -7463,8 +7502,18 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
             }));
         return copy;
     }
-    public KType GetGenericMethodParameter(GenericContext genericContext, int index) => new() { TypeParameter = 10000 + index };
-    public KType GetGenericTypeParameter(GenericContext genericContext, int index) => new() { TypeParameter = index };
+    public KType GetGenericMethodParameter(GenericContext genericContext, int index)
+    {
+        var variable = new TypeNode.Tv("method", index);
+        var frame = NullableFrameMetadata.MethodFrame(_md, _attrs, genericContext.Method);
+        return FromTypeNode(frame?.SemanticVariable(variable) ?? variable);
+    }
+    public KType GetGenericTypeParameter(GenericContext genericContext, int index)
+    {
+        var variable = new TypeNode.Tv("type", index);
+        var frame = NullableFrameMetadata.TypeFrame(_md, _attrs, genericContext.Type);
+        return FromTypeNode(frame?.SemanticVariable(variable) ?? variable);
+    }
     public KType GetModifiedType(KType modifier, KType unmodifiedType, bool isRequired) => unmodifiedType;
     public KType GetPinnedType(KType elementType) => elementType;
     public KType GetPointerType(KType elementType)
@@ -7595,8 +7644,12 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
         var result = rawTypeKind == (byte)SignatureTypeKind.Class
             ? Platform(className)
             : MarkValueTypeIfStated(rawTypeKind, Named(className));
-        if (_attrs.Int32(handle, MetadataAttributes.DotKtNs + "KotlinInnerAttribute") is not null)
-            _semanticInnerTypes[result] = InnerReferenceCatalog.SemanticArgumentOrder(reader, handle);
+        var nullableFrame = NullableFrameMetadata.TypeFrame(reader, _attrs, handle);
+        if (nullableFrame is not null) _nullableTypeFrames[result] = nullableFrame;
+        if (_attrs.Int32(handle, MetadataAttributes.DotKtNs + "KotlinInnerAttribute") is int capturedOuter)
+            _semanticInnerTypes[result] = nullableFrame is null
+                ? InnerReferenceCatalog.SemanticArgumentOrder(reader, handle)
+                : SemanticInnerArgumentOrder(nullableFrame, capturedOuter);
         return result;
     }
     public KType GetTypeFromReference(MetadataReader reader, TypeReferenceHandle handle, byte rawTypeKind)
@@ -7636,6 +7689,7 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
                 ? Platform(className)
                 : MarkValueTypeIfStated(rawTypeKind, Named(className));
             _semanticInnerTypes[marker] = externalInner.SemanticArgumentOrder;
+            RememberExternalNullableFrame(reader, handle, marker);
             return marker;
         }
         if (_restoreKotlinCollections && KotlinCollection(full) is string collection)
@@ -7648,13 +7702,33 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
         // would merely be appended to the wrong Function0 constructor.
         if (full == "System.Action" && !metadataName.Contains('`'))
             return KnownDelegate(full, ImmutableArray<KType>.Empty);
-        return full switch
+        var result = full switch
         {
             "System.String" => Platform("kotlin.String"),
             "System.Object" => Platform("kotlin.Any"),
             _ => rawTypeKind == (byte)SignatureTypeKind.Class ? Platform(className) : MarkValueTypeIfStated(rawTypeKind, Named(className)),
         };
+        RememberExternalNullableFrame(reader, handle, result);
+        return result;
     }
+
+    private void RememberExternalNullableFrame(MetadataReader reader, TypeReferenceHandle handle, KType type)
+    {
+        if (!_publicTypeCatalog.TryResolveDefinition(reader, handle, out var definition)) return;
+        if (definition.DefinitionPath is null)
+            throw new InvalidDataException("Resolved external type requires its definition path");
+        var source = _externalSignatureDecoders.Get(definition.DefinitionPath, definition.Reader);
+        var frame = NullableFrameMetadata.TypeFrame(source.Reader, source.Attributes, definition.Handle);
+        if (frame is null) return;
+        _nullableTypeFrames[type] = frame;
+        if (source.Attributes.Int32(definition.Handle, MetadataAttributes.DotKtNs + "KotlinInnerAttribute") is int capturedOuter)
+            _semanticInnerTypes[type] = SemanticInnerArgumentOrder(frame, capturedOuter);
+    }
+
+    private static int[] SemanticInnerArgumentOrder(NullableRepresentationFrame frame, int capturedOuter)
+        => Enumerable.Range(capturedOuter, frame.PhysicalArity - capturedOuter)
+            .Concat(Enumerable.Range(0, capturedOuter)).Select(frame.SourceIndex)
+            .Where(index => index.HasValue).Select(index => index!.Value).ToArray();
     public KType GetTypeFromSpecification(MetadataReader reader, GenericContext genericContext, TypeSpecificationHandle handle, byte rawTypeKind) =>
         reader.GetTypeSpecification(handle).DecodeSignature(this, genericContext);
 
@@ -8207,7 +8281,8 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
             _companionCatalog,
             _innerCatalog,
             source.Seeds,
-            _externalSignatureDecoders);
+            _externalSignatureDecoders,
+            _publicTypeCatalog);
         var shape = decoder.DecodeDelegate(handle);
         _externalDelegateShapes[key] = shape;
         return shape.Clone();

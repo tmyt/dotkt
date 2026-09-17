@@ -14,6 +14,7 @@
     <!-- Shared single-source Type read/write helper of the BIR/CIR freeze (#37). Linked (not a project ref)
          so all three C# tools compile the SAME contract with no build-order dependency. -->
     <Compile Include="../bir-common/TypeNode.cs" Link="TypeNode.cs" />
+    <Compile Include="../bir-common/NullableRepresentationFrame.cs" Link="NullableRepresentationFrame.cs" />
     <!-- Shared #370 scalar member reference: the ONE fully resolved external-member identity bir2cir authors and
          ilemit looks up exactly. Linked for the same reason as TypeNode — one compiled contract, no build order. -->
     <Compile Include="../bir-common/MemberRefNode.cs" Link="MemberRefNode.cs" />

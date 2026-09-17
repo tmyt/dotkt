@@ -19,6 +19,7 @@ static class PhysicalValueCoercion
 {
     static bool NeedsConversion(TypeNode source, TypeNode target) =>
         source is TypeNode.Tv && target is TypeNode.Tv && !source.Equals(target)
+        || target is TypeNode.Tv && source is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" }
         || CollectionViewFaces.IsViewSeam(source, target);
     sealed record MethodShape(string Owner, string Name, int Arity, TypeNode[] Parameters, TypeNode Return);
 
@@ -319,6 +320,11 @@ static class PhysicalValueCoercion
                 CoerceSlot(node, "else", result, scope, index);
                 break;
         }
+        // The receiver is an input slot too. An array element or generic result may expose the storage
+        // collection face while the selected member belongs to its read-only face. Use the exact resolved
+        // owner, just as argument coercion uses the exact selected parameter vector.
+        if (node["recv"] != null && ResolvedMember(node) is JsonObject selected)
+            CoerceSlot(node, "recv", TypeJson.Read(selected["declaringType"]), scope, index);
     }
 
     static void CoerceArguments(JsonObject node, TypeNode[] targets, Scope scope, Index index)

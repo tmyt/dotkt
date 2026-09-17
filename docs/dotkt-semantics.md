@@ -33,7 +33,7 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
 | [4](#4-suspend-fun--an-async-taskt-function-hot-not-cold) | `suspend fun` = an async `Task<T>` function; **hot, not cold** |
 | [5](#5-primitive-stringification-is-clr-native-not-kotlinjvm-cosmetics) | CLR-native stringification; `String.format` = .NET composite format |
 | [5b](#5b-charsequence-is-string-on-the-clr--an-immutable-snapshot-not-a-live-view) | **`CharSequence` is `string`** — snapshot, not live view |
-| [5c](#5c-mapmutablemap-both-erase-to-idictionarykv--read-only-ness-is-frontend-enforced) | `Map`/`MutableMap` → `IDictionary<K,V>` |
+| [5c](#5c-map-values-preserve-kotlin-covariance-across-invariant-clr-dictionaries) | Covariant `Map` values and exact CLR dictionary declarations |
 | [5d](#5d-appendable-is-systemtextstringbuilder) | `Appendable` is `System.Text.StringBuilder` |
 | [5e](#5e-enum-classes-have-two-clr-shapes) | Enum classes: basic/`@ClrEnum` → real CLR `enum`, rich → singleton class |
 | [5f](#5f-value-class-is-a-real-wrapper-class-never-erased) | `value class` = a real class (never erased) |
@@ -68,15 +68,21 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   can't pass a non-reified type parameter to a reified one.
 - **DotKt:** the CLR has **real reified generics**. `inline fun <reified T> foo()` is emitted as an ordinary generic
   method `foo<T>()`; the body's `T::class` / `is T` / `as? T` use the real runtime type. CLR generic arguments do not,
-  however, distinguish `String` from `String?`. `bir2cir` therefore derives nullable-witness demand from operations
-  such as `is T` and propagates it structurally through exact calls and lifted frames. Only demanded method type
-  parameters receive a hidden Boolean; a `reified T` used only by `T::class`, for example, receives none. Calls pass
+  however, distinguish `String` from `String?`, and invariant collection storage does not encode Kotlin's nominal
+  read-only/mutable classifier. `bir2cir` therefore derives type-witness demand from operations such as `is T`
+  and checked reified casts, and propagates it structurally through exact calls and lifted frames. Only demanded
+  method type parameters receive a hidden integer carrying nullability and the collection classifier;
+  a `reified T` used only by `T::class`, for example, receives none. Calls pass
   a constant for a concrete type and forward the witness when the argument is another reified parameter. The facts
   are separate compiler-internal ABI: `[KotlinDeclarationIdentity]` carries semantic `reified` indices and physical
   witness indices across a DLL boundary; `dll2klib` restores the former and hides the latter. If the
   lexical body moves into a closure, SAM shim, suspend-lambda state machine, or lifted object, that body captures the
   same witness in its generated representation; the explicit lifted type-argument correspondence selects the source
   method/type slot, so a dense synthetic index is never mistaken for an enclosing declaration index.
+  kotc records the reified type operand on explicit/safe casts; an unchecked cast to an ordinary source type
+  parameter does not acquire a Kotlin classifier check merely because CLR generics retain physical type arguments.
+  bir2cir resolves the nominal guard and the Boolean null-match expression; ilemit emits those resolved operations
+  without reconstructing Kotlin collection semantics from a CLR interface.
 - Kotlin's source rule remains authoritative: passing a **non-reified** method type parameter to a reified one
   (`fun <U> bar() = foo<U>()`) is rejected with `TYPE_PARAMETER_AS_REIFIED`, including through DLL→KLIB consumption.
 - **A Kotlin star projection is never represented as `G<object>`.** CLR generics are reified and invariant, so
@@ -148,7 +154,7 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   `is` and compiler-generated smart cast to the non-generic `System.Collections.IDictionary`/`IList`/`ICollection`/
   `IEnumerable` where that face is faithful; `println` of such an erased value renders via
   the runtime-detecting `clrElemToString`. (A `<*>` value can only be used non-generically anyway.) This is the same
-  invariance that forces §5c (`Map`/`MutableMap` both → `IDictionary<K,V>`). #60.
+  invariance that requires §5c's separation of opaque `Map` values from exact dictionary constructions. #60.
   **`List<*>` and `Map<*,*>` are exact** through their non-generic `IList`/`IDictionary` twins. `Collection<*>`,
   `Set<*>`, and `MutableSet<*>` instead use a composite `is` classifier because their operational BCL aliases overlap: emitted
   Kotlin implementations carry compiler-owned nominal identity interfaces, while BCL-backed values are recognized
@@ -647,18 +653,25 @@ program needing literal matching uses `Regex.escape`).
   disagree with the CLR world around it — the *less* consistent, harder-to-explain behavior. The deviation is
   consistent (mscorlib-general), documented (here), and convincingly explainable — it passes the test.
 
-## 5c. `Map`/`MutableMap` BOTH erase to `IDictionary<K,V>` — read-only-ness is frontend-enforced
+## 5c. `Map` values preserve Kotlin covariance across invariant CLR dictionaries
 
-Kotlin's `MutableMap : Map` subtype relation does **not** exist between the BCL's dictionary interfaces
-(`IDictionary<K,V>` does not extend `IReadOnlyDictionary<K,V>`), so the List-style split alias
-(`Map→IReadOnlyDictionary` + `MutableMap→IDictionary`) would make every `MutableMap`-value-into-`Map`-slot store
-formally unverifiable — on the hot path (`Map.get` on a mutable receiver, `associateTo`'s `M : MutableMap`). DotKt
-therefore aliases **BOTH `Map` and `MutableMap` to `System.Collections.Generic.IDictionary`** — exactly Kotlin/JVM's
-own model (both erase to `java.util.Map`), and the in-repo precedent of `Iterable`/`MutableIterable` → `IEnumerable`.
-Consequences (deliberate, declared):
+Kotlin declares `Map<K, out V>`, while CLR `IDictionary<K,V>` is invariant. A dictionary containing strings
+therefore cannot satisfy `IDictionary<K,object>`, and a dictionary containing mutable lists cannot satisfy
+`IDictionary<K,IReadOnlyList<V>>`. Neither an unchecked return nor an interface cast makes those constructions
+compatible.
 
-- **A Kotlin `Map` surfaces to C# as a mutable `IDictionary<K,V>`** (concrete values are `Dictionary<K,V>`); Kotlin's
-  read-only-ness is enforced by the Kotlin FRONTEND only, not the CLR type. `emptyMap()` returns a fresh
+bir2cir separates a Kotlin value slot from an exact CLR declaration. When a trusted alias's Kotlin declaration
+variance is absent from its CLR target, the value slot is opaque (`object`), with the full Kotlin application
+retained in metadata. This applies recursively in fields, method slots and generic containers. The original
+reference is retained: widening a Map does not copy or wrap it, so identity and subsequent updates are preserved.
+Constructors, physical inheritance edges and selected CLR member declarations retain their exact reified types.
+`MutableMap<K,V>` is invariant and keeps its exact dictionary face unless an explicit projection requires erasure.
+Classifier tests and casts still check the dictionary classifier; an opaque slot does not mean every object is a Map.
+
+Consequences and remaining implementation limitations:
+
+- **A Kotlin `Map` value slot surfaces to C# as `object`**, with Kotlin metadata restoring `Map<K,V>` for Kotlin
+  consumers. Concrete dictionaries and mutable dictionary declarations remain reified. `emptyMap()` returns a fresh
   Dictionary-backed map (the pure-Kotlin `EmptyMap` singleton cannot satisfy the IDictionary surface).
 - **`Map.get` is null-on-missing** (Kotlin semantics), synthesized as `ContainsKey` + `get_Item` in
   `kotlin.collections.ClrMapDefaults` (`IDictionary`'s raw indexer throws); `put`/`remove` return the previous value
@@ -668,8 +681,7 @@ Consequences (deliberate, declared):
   BCL List. Entry VALUES are live (`entry.value`/`setValue` read/write through the backing map), but a key
   added/removed after taking the view is not reflected in it. `MutableMap.keys` is a live identity-bearing Kotlin view:
   remove/clear write through and add is unsupported. `MutableMap.values` still binds directly to `IDictionary.Values`.
-- **`Map.iterator()` and `MutableMap.iterator()` retain their Kotlin-selected declarations** even though both
-  receivers lower to the same `IDictionary<K,V>` CLR type. The frontend declaration identity selects distinct,
+- **`Map.iterator()` and `MutableMap.iterator()` retain their Kotlin-selected declarations**. The frontend declaration identity selects distinct,
   stable physical MethodDef names after erasure; neither declaration order nor an emitter-local `$dupN` repair
   chooses the call target. Destructuring `for ((k,v) in m)` therefore follows the overload selected by Kotlin for
   the receiver's static type.
@@ -752,63 +764,37 @@ Two consequences worth stating:
   a concurrent-modification error out of an invalidated BCL enumerator. (A Kotlin implementer that OVERRIDES one of
   the members defines its own behavior for these forms, exactly as on any other platform.)
 
-## 5c-bis. Nested collection type-arguments collapse to their INVARIANT CLR sibling (`List`→`IList` at depth ≥ 1)
+## 5c-bis. Read-only collection arguments retain their canonical CLR face
 
-§5c's head-position Map collapse has a general cause: CLR generics are **invariant**, and the read-only
-interface does not derive from its mutable sibling (`IList<T>` does **not** inherit `IReadOnlyList<T>`;
-`ICollection<T>` not `IReadOnlyCollection<T>`). At the top level (**head**) DotKt keeps the covariant read-only
-alias — so `val xs: List<Number> = listOfInts` stays verifiable via CLR interface covariance. But **inside a
-generic type argument** the covariance is unusable: `groupBy` returns a concrete `Dictionary<K, List<V>>` (a
-*mutable* list in the value slot), which inhabits no instantiation of a `Map<K, List<V>>` slot lowered with the
-read-only sibling in the value position (invariant `IDictionary<K, IReadOnlyList<V>>`). So bir2cir **collapses
-each read-only collection FQN to its invariant sibling whenever it appears at generic-argument depth ≥ 1**:
-`List`→`IList`, `Collection`/`Set`→`ICollection` inside any type argument (and in `newList`/`newMap`/`newSet`
-element keys and call/ctor type-args); the head keeps the covariant alias. Then `Map<K, List<V>>` lowers to
-`IDictionary<K, IList<V>>` and the concrete `Dictionary` inhabits it. Where a head-position read-only value then
-meets a collapsed mutable slot (or vice-versa), bir2cir materializes a runtime-checked CIR `cast` after final member
-binding, including branch joins, constructor delegation, storage, arguments, returns, and resolved member results.
-The resulting `castclass` is always verifiable — it targets a closed interface — and succeeds because stdlib
-collection values implement every face.
+Generic nesting does not turn a read-only collection into a mutable collection. `List<T>` keeps its
+`IReadOnlyList<T>` face, and `Collection<T>` keeps `IReadOnlyCollection<T>`, including inside arrays and generic
+containers. A read-only-only Kotlin or foreign implementation must not be cast to `IList<T>`/`ICollection<T>`
+merely because it is stored in another collection.
 
-Known deliberate gaps (all **verify-only / run-correct** for stdlib-backed values, tracked as follow-ups):
-- A **user class implementing ONLY the read-only face** (`class X : List<T>` with no mutable sibling) cannot be
-  stored into a nested collapsed `IList` slot — the `castclass` throws at runtime. stdlib/BCL collections
-  implement all faces, so this bites only hand-rolled read-only-only user collections.
-- A **foreign C#-supplied `IList`-only collection** flowing into a read-only slot likewise throws at the
-  reconciling `castclass` (interop collections are outside the current stdlib-value assumption).
-- A **nested covariant upcast** (`val b: List<List<Any>> = a` where `a: List<List<String>>`) is verify-only
-  dirty — the collapse trades the (previously CLR-granted, rarely-used) nested covariance for the far more
-  common concrete-into-slot verifiability. It runs correctly.
+The current compiler also emits `ICollection<T>`/`IList<T>` storage faces on its own read-only collection
+implementations, with unsupported mutators throwing `NotSupportedException`. These are an additional CLR-facing
+surface, not evidence of Kotlin mutable-collection membership and not a requirement imposed on foreign read-only
+implementations. Kotlin classifier checks retain that distinction.
 
-## 5c-ter. Residual covariance and physical view seams after the Root-V collapse
+`Array<List<String>>` therefore uses `IReadOnlyList<string>[]`, consistently with a generic `Array<T>` whose
+ordinary type argument is `List<String>`. Allocation, element access and generic calls use that same representation;
+they do not copy the array or its elements. Nullable generic representations remain a separate declaration-owned
+contract. Map's invariant outer construction is handled by §5c, not by changing the type of its contained lists.
 
-The #75/#100 Root-V collapse (§5c-bis) closed nested **value**-covariance for `List`/`Collection`/`Set`. It leaves
-one durable source-level covariance limitation (task #102), plus a family of physical sibling-view conversions that
-bir2cir must state explicitly after it has resolved each value-flow edge.
+## 5c-ter. Physical collection conversions must preserve source semantics
 
-- **`Map<out K, V>` key-covariance (the "Root-K" seam).** `Map` is declared `Map<K, out V>`: values are
-  declaration-site covariant (and collapse via §5c-bis), but **keys are invariant**, exactly as CLR
-  `IDictionary<K,V>` (§5c) is. A *use-site key projection* `Map<out K, V>` therefore appears in the stdlib's
-  copy/merge signatures — `MutableMap.putAll(from: Map<out K, V>)`, `Map<K,V> + Map<out K, V>`,
-  `HashMap(src)` — and lets a source map with a **narrower key type** feed a wider-`K` destination. On the CLR that
-  is `IDictionary<Dog,V>` flowing into an `IDictionary<Animal,V>` slot, which the invariant generic cannot express.
-  bir2cir's `MapVarianceRealign` already **undoes the frontend's `in`/`out` → `kotlin.Any` over-approximation**
-  (restoring the concrete type inside inlined stdlib bodies, and the star-projected `Map<*,*>` `get`/`containsKey`
-  route to the non-generic `IDictionary` facade — §5c) so the *common* case (identical key type, or value widening)
-  is verifiable and run-correct. What stays open is only the case where a user **genuinely widens the KEY type**
-  across a `putAll`/`plus`/copy-ctor boundary. Reachability: uncommon but not exotic — you hit it only by merging a
-  `Map<Sub, V>` into a `Map<Super, V>`-typed target; same-key merges (the overwhelming majority) never touch it.
-  **Disposition: documented, not fixed** — key invariance matches CLR `IDictionary`, so there is no covariant
-  sibling to collapse to; use a target-key-typed source map when merging.
-- **The internal `IList`↔`IReadOnlyList` view seams inside the shipped runtime stdlib (`DotKt.Stdlib.dll`).**
-  These are the head-vs-nested face mismatches (§5c-bis) as they occur **inside stdlib bodies** — a head-position
-  read-only value meeting a collapsed mutable slot, or its exact transpose. After final member binding, bir2cir
-  materializes each resolved seam as an explicit CIR `cast`; ilemit emits that physical instruction one-to-one and
-  has no Kotlin collection-family or stdlib-ABI inference. Every stdlib/BCL-backed collection implements all faces,
-  so the closed-interface cast succeeds. The only way to surface an `InvalidCastException` is the already-documented
-  §5c-bis edge — a hand-rolled **read-only-only** user collection or a foreign **`IList`-only** C# collection crossing
-  such a slot. **Disposition: internal + explicitly reconciled** — they are body-level physical conversions, not an
-  exported ABI shape.
+CLR `IList<T>` and `IReadOnlyList<T>` do not inherit from one another. bir2cir must resolve the physical conversion
+required by a Kotlin value-flow edge and state it explicitly in CIR; ilemit does not invent a collection ABI.
+The compiler cannot assume an arbitrary foreign mutable interface implementation also implements a read-only
+sibling, nor can it use a cast between unrelated invariant generic constructions as a covariance implementation.
+
+Kotlin declaration-site variance and use-site projections remain distinct source facts. Exact CLR constructors and
+member descriptors must not be weakened merely because their inputs passed through a projected Kotlin value slot.
+For example, a projected map copy uses the trusted collection-construction contract to copy entries into the exact
+destination; it does not cast the source to a differently constructed `IDictionary<K,V>`.
+
+A runtime test passing despite an ILVerify type mismatch is a compiler defect, not a supported "run-correct" ABI.
+The roundtrip Map variance and collection/array identity fixtures validate both execution and emitted IL.
 
 ## 5c-quater. Cross-module collection surfacing: DotKt `kotlin.collections.*` restores; genuine C# BCL stays BCL (#27)
 
@@ -1090,9 +1076,9 @@ Deep dive: `docs/design-kotlin-metadata-attributes.md`.
 ### Frontend-selected overloads remain authoritative after CLR erasure
 
 Kotlin may distinguish two callable declarations that the CLR cannot distinguish by signature. This includes
-top-level extensions and independent final, non-overriding members. For example, `Map<String, String>` and
-`MutableMap<String, String>` both project to the same `IDictionary<String, String>` parameter; `String` and
-`String?` both project to `System.String`. FIR nevertheless selects one exact Kotlin declaration at every call,
+top-level extensions and independent final, non-overriding members. For example, distinct `Map<K,V>` value
+applications project to `object`, while `String` and `String?` both project to `System.String`.
+FIR nevertheless selects one exact Kotlin declaration at every call,
 property access, and callable reference.
 
 `kotc` writes that selected declaration identity into BIR. `bir2cir` lowers an isolated signature projection to find
@@ -1966,33 +1952,39 @@ Consequences:
   8-bit storage; on the CLR the two arrays are already the same bytes). Mutations through one view are visible through
   the other. The scalar `UByte.toByte()` / `Byte.toUByte()` remain bit-reinterprets of a single 8-bit value as before.
 
-## 9c-bis. CARRIER-ARGUMENT ERASURE: `X?` is `System.Object` in every reified argument (#86)
+## 9c-bis. Nullable carrier arguments and explicit representation frames
 
 `Int?` is `System.Nullable<int32>` and `String?` is a bare `string` plus an NRT byte (§9). Neither shape can express
 `T?` for an **unconstrained** type variable: `Nullable<T>` requires `T : struct`, and a bare `!T` slot collapses a
 null to `default(T)` — at `T = Int` a `null` written through it reads back as `0`, and `ldnull` into an `int32` slot
-does not even pass JIT verification. And a CLR reified generic is **invariant**, so if an open `G<T?>` is `G<object>`
-while a concrete `G<Int?>` is `G<Nullable<int32>>`, the two are unrelated types that can never meet. The
-representation is therefore decided by POSITION, not by whether a type variable is still open:
+does not even pass JIT verification. A CLR generic construction is also invariant unless its declaration says
+otherwise: `Box<object>` is not a substitute for an existing `Box<string>`. Representation must therefore agree
+between an open declaration and each closed use, without copying the object or changing its identity.
 
-> **A direct concrete `V?` slot remains `System.Nullable<V>`. When `X?` is used as an ARRAY ELEMENT or as an ACTUAL
-> ARGUMENT to a CLR-reified construction — type, method, or delegate — and `X` may be a value type, its physical form
-> is `System.Object`. References keep their normal CLR representation. The original Kotlin type is preserved in
-> `[KotlinNullableGeneric]` metadata.**
+> **A direct concrete value-type `V?` slot remains `System.Nullable<V>`; a direct unconstrained `T?` slot is
+> `object`. In a reified argument position, a concrete nullable value type uses `object`, a reference type keeps
+> its reference representation, and an open `T?` uses an explicit companion generic parameter `N(T)`.**
 
-One position does not yet obey it: a delegate PARAMETER keeps a concrete `V?` (`(Int?) -> String` is
-`Func<Nullable<int32>, string>`), because a delegate's target may be a member the author declared and moving that
+For example, the ordinary parameter `T` and its nullable companion close to `string, string` for `T = String`,
+and to `int32, object` for `T = Int`. Thus an open `Box<T?>` is `Box<N(T)>`: both an existing `Box<String?>` and
+an existing `Box<Int?>` reach the matching construction unchanged. Passing an open type variable forwards its
+companion from the caller's frame. The rule applies to constructed arguments, array elements and delegate return
+arguments; it does not replace ordinary `Box<T>` values with existential interfaces.
+
+Delegate parameter slots follow their target method's convention: a concrete `V?` (`(Int?) -> String`) is
+`Func<Nullable<int32>, string>`, because a delegate's target may be a member the author declared and moving that
 member's own slot is not the compiler's to do. The exception, its cost and what closes it are recorded below.
 
-`X` "may be a value type" means **any** type variable, or a concrete value type (a constructed `KeyValuePair<K,V>`
-counts, exactly as `Int` does). Concretely:
+Constructed value types such as `KeyValuePair<K,V>` follow the same concrete nullable-value rule as `Int`.
+Concretely:
 
 | Kotlin | CLR |
 |---|---|
 | `fun f(x: Int?)`, `fun f(): Int?`, `val x: Int?` | `Nullable<int32>` — the direct slot is unchanged |
 | `fun <T> f(x: T?)` | `object` — no CLR slot expresses an unconstrained `T?` |
+| Open `Box<T?>`, `Array<T?>` | `Box<N(T)>`, `N(T)[]` in the declaration's explicit frame |
 | `List<Int?>` / `MutableList<Int?>` | `IReadOnlyList<object>` / `IList<object>` |
-| `Map<String, Int?>`, `Pair<Int?, String>`, `Box<Int?>` | `IDictionary<string, object>`, `Pair<object, string>`, `Box<object>` |
+| `Map<String, Int?>`, `Pair<Int?, String>`, `Box<Int?>` | `object`, `Pair<object, string>`, `Box<object>` |
 | `Array<Int?>` | `object[]` |
 | `(Int) -> Int?` | `Func<int32, object>` |
 | `(Int?) -> String` | `Func<Nullable<int32>, string>` — a delegate PARAMETER is the one exception, below |
@@ -2008,28 +2000,35 @@ CLR's own boxed form of a nullable value: boxing an empty `Nullable<V>` produces
 instruction and **null stays distinct from `0`**. A bare `T` stays monomorphized and unboxed and `List<Int>` keeps
 `int32` storage — only the `?` moves anything.
 
-Every type variable qualifies, whatever its bound: `fun <T : CharSequence> f(xs: List<T?>)` erases too, although no
-instantiation of it can be a struct. That is uniformity chosen deliberately over consulting the bound — one physical
-form per declaration, decided without resolving where each bound leads. The alternative is a slot whose
-representation depends on a bound the reader has to chase, and two `List<T?>` declarations that cannot meet because
-one is bounded and one is not.
+Frame demand is structural, not inferred by chasing upper bounds. A nullable argument can require a companion even
+when its source variable has a reference-only bound. Ordinary source parameters retain their constraints. Companions
+are implementation parameters, not new Kotlin parameters or a requirement that users add a `reified` modifier.
+
+Each frame records its source arity, the source indices requiring nullable companions and the physical slot order.
+Nested types preserve the entire enclosing CLR parameter prefix using that explicit correspondence. Owned TypeDefs
+and independent nonvirtual methods may include body-only demands. A virtual method's body-only demand must not grow
+its dispatch slot: private implementation entries select reference/value representations without changing the
+published slot. Independent inline methods retain their body and lambda operations in their own expanded frame.
 
 The formula holds recursively and everywhere the slot's type is written — method return, method parameter,
 constructor parameter, field, property, body local, nested type argument, array element, delegate component,
 supertype edge, generic constraint, and the signature a call is resolved by. A **use** of a slot `s` is typed
-`Subst(Erase(declared), typeArgs)` and never `Erase(Subst(...))`; a generic is INSTANTIATED at the erased argument
-from the start rather than instantiated wrongly and cast, because no cast joins two instantiations of one invariant
-generic.
+`Subst(Materialize(declared, declarationFrame), closedPhysicalArguments)`. Declaration-owned descriptors use that
+declaration's frame; supplied arguments and expression results use the caller's frame. No cast between unrelated
+invariant constructions is introduced to repair a disagreement. A CLR alias retains only its ordinary arguments;
+the extra implementation parameters do not alter the native CLR TypeDef's arity.
 
-The Kotlin surface survives on three channels, which a re-consuming DotKt reader recombines:
+The Kotlin surface survives through explicit metadata, which a re-consuming DotKt reader recombines:
 `[KotlinNullableGeneric]` carries the pre-erasure type node of a declaration SLOT, the ordinary `[Nullable(2)]` NRT
 byte carries the outer `?`, and `[KotlinSupertypes]` carries the type's pre-erasure supertype EDGES and the upper
 bounds of the type's OWN type parameters — the erased positions with no slot to hang a per-slot carrier on. Without
 that third one a consumer re-imports `class E : Sink<Int?>` as `Sink<Any?>` and `val s: Sink<Int?> = E()` stops
 compiling, and `class Box<T : Sink<Int?>>` re-imports with the erased physical bound unless the carrier restores it,
-so `Box<BadSink>` can fail at the wrong layer. Both are Kotlin source breaks rather than internal ones. A METHOD's
-type-parameter bound is not on that carrier (it is type-level) and re-imports as the physical `Sink<object>`. A CLASS
-type parameter's ordinary CLR constraint rows are projected directly, however: an unmoved
+so `Box<BadSink>` can fail at the wrong layer. Both are Kotlin source breaks rather than internal ones. Method
+type-parameter bounds are preserved separately in `[KotlinTypeParameterBounds]`. Type frames travel in
+`[KotlinSupertypes]`, while method frames and original signatures travel in `[KotlinDeclarationIdentity]`.
+`dll2klib` consumes those facts to hide companions and restore source variables, rather than deriving a frame from
+parameter names or CLR arity. A class type parameter's ordinary CLR constraint rows are projected directly: an unmoved
 `class Box<T : Sink<String>>` retains that bound, while the carrier replaces only bounds whose Kotlin type arguments
 were erased. The physical-only roots and flags cannot be represented as Kotlin nominal upper bounds: a type or member
 parameter's `System.ValueType`/`System.Enum` rows, including the modified `ValueType` row used by `unmanaged`, are
@@ -2042,12 +2041,11 @@ This test is against the emitted CLR shape, not Kotlin call syntax: a rich enum 
 does not satisfy a CLR `System.Enum` row, while a constructor whose arguments are all defaulted is still not a CLR
 parameterless constructor unless the emitted metadata contains a public zero-parameter `.ctor`.
 
-**Restoring the surface is only half of consuming it.** A consumer that re-imports `unwrapSlot(slot: Slot<T?>)` writes
-`unwrapSlot(Slot<Int?>(5))`, and `Slot<Nullable<int32>>` is not the `Slot<object>` the producer's slot actually is —
-those are unrelated invariant reified generics that no cast reconciles. So the same carrier is read a second time, by
-`bir2cir`, to type the consumer's *use* as `Subst(Erase(declared), typeArgs)`: the construction is built as
-`Slot<object>` instead of being built wrongly and converted afterwards. The rule is the one above with no
-cross-module exception — a slot's physical type is a function of its declaration, wherever that declaration lives.
+**Restoring the surface is only half of consuming it.** Consuming `unwrapSlot(slot: Slot<T?>)` also closes the
+producer's physical frame: `T = String` selects `Slot<string>` and `T = Int` selects `Slot<object>`. Existing values,
+fields, managed references and constructor signatures must agree with those exact constructions. Metadata is trusted
+compiler input; older generated artifacts are unsupported and missing frame facts are not reconstructed from names,
+layout or bodies. This representation is internal ABI, not a compatibility promise to older compiler versions.
 
 What this is observable as:
 
@@ -2066,7 +2064,7 @@ What this is observable as:
 - **A C# consumer sees `object`.** `fun <T> firstOr(x: T?, d: T): T` surfaces as
   `static T firstOr<T>(object x, T d)`, so a C# caller passes `null` or a boxed value rather than a `T?`.
 
-### `Array<X?>` is `object[]` — where the erasure is most visible
+### Nullable arrays: concrete value elements use `object[]`
 
 An array element is the position where the erasure is hardest to miss, because `object[]` and `Nullable<int32>[]` are
 **unrelated** CLR types: array compatibility requires reference-compatible elements (ECMA-335 I.8.7.1), and no cast
@@ -2091,16 +2089,12 @@ What this is observable as, beyond the boxing already listed above:
   only instantiation whose `T[]` parameter the receiver inhabits, and for the collection because that is what
   `List<Int?>` is. The two agree by construction, which is what lets an `Array<T>` extension over an `Array<Int?>`
   hand its `List<object>` result to a declared `List<Int?>` slot.
-- **`copyOf(newSize)` decides at runtime.** Its generic body has no `T : struct` constraint and no reified `T`, so it
-  reads the receiver's own element type: a value element allocates `object[]`, a reference element allocates
-  `elem[]`. Both inhabit the erased `object[]` the declaration states — the reference one by array covariance.
-- **A concrete reference array keeps its runtime element type through an open `Array<T?>` slot.** A `string[]` can
-  enter the declaration's `object[]` slot by CLR array covariance, so compiler-created argument arrays are not rebuilt
-  as `object[]`. When the open result is consumed again as `Array<String?>`, bir2cir states the inverse checked
-  `object[]`-to-`string[]` projection explicitly. This preserves the typed CLR surface without changing the open ABI;
-  an unchecked cast that launders a genuine `object[]` into the Kotlin type fails at that checked use boundary.
+- **An open `Array<T?>` uses its companion element.** `N(String)[]` is `string[]` and `N(Int)[]` is `object[]`.
+  Forwarding an existing reference array therefore preserves its exact element type, without rebuilding the array
+  or relying on an invariant generic conversion. Array allocation and resize operations must obey the same frame.
 - **The `arrayOfNulls<T>(n) … as Array<T>` idiom no longer works.** `arrayOfNulls` honestly returns `Array<T?>`, which
-  is `object[]`, and `object[]` is not castable to `int32[]`. Allocate the real thing instead: the array constructor
+  has boxed nullable elements at a value-type instantiation, and `object[]` is not castable to `int32[]`.
+  Allocate the real thing instead: the array constructor
   `Array(n) { … }` for a concrete or reified element when an initializer is available, or
   `System.Array.CreateInstance(T::class, n)` when a zero-filled array is required.
 
@@ -2304,7 +2298,7 @@ Current deliberate limits are:
 - `suspend fun` has no Continuation parameter — it returns `Task<T>`, and it starts **hot** (like C# `async`), not cold. §4.
 - A `Span`/`ref struct` value is fine inside a `suspend fun` — until it has to survive a suspension, or be captured by a (non-inline) lambda; both are compile-time errors, mirroring C# CS4007/CS4012/CS8352. §4d.
 - A `CharSequence` parameter surfaces to C# as `string`; a `StringBuilder` passed as `CharSequence` is **snapshotted** by an implicit `.toString()` — no live view. §5b.
-- A Kotlin `Map` surfaces to C# as a *mutable* `IDictionary<K,V>`; `keys`/`values`/`entries` are snapshots. §5c.
+- A Kotlin `Map` value slot surfaces to C# as `object`, preserving Kotlin covariance; `MutableMap` retains its exact dictionary face. `Map.keys`/`values`/`entries` are snapshots. §5c.
 - A function type of 17..22 parameters is not `System.Func`/`Action` (they stop at 16) but the stdlib's canonical
   `KFunc`/`KAction` — one definition for the whole platform. An extension receiver counts toward the arity, and
   23 and above has no CLR delegate at all and is refused — the frontend accepts it, the representation cannot.

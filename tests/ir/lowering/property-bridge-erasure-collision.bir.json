@@ -23,8 +23,7 @@
           "virtual": true,
           "abstract": true,
           "params": [],
-          "ret": { "t": "fqn", "name": "kotlin.collections.Map", "args": [
-            { "t": "fqn", "name": "kotlin.Int" },
+          "ret": { "t": "fqn", "name": "kotlin.collections.Collection", "args": [
             { "t": "fqn", "name": "kotlin.Int" }
           ] },
           "body": [],
@@ -34,8 +33,7 @@
       "properties": [
         {
           "name": "map",
-          "type": { "t": "fqn", "name": "kotlin.collections.Map", "args": [
-            { "t": "fqn", "name": "kotlin.Int" },
+          "type": { "t": "fqn", "name": "kotlin.collections.Collection", "args": [
             { "t": "fqn", "name": "kotlin.Int" }
           ] },
           "kotlinAccessors": ["get"],
@@ -63,8 +61,7 @@
           "abstract": false,
           "vis": "public",
           "params": [],
-          "ret": { "t": "fqn", "name": "kotlin.collections.MutableMap", "args": [
-            { "t": "fqn", "name": "kotlin.Int" },
+          "ret": { "t": "fqn", "name": "kotlin.collections.Set", "args": [
             { "t": "fqn", "name": "kotlin.Int" }
           ] },
           "overrides": [
@@ -77,8 +74,7 @@
       "properties": [
         {
           "name": "map",
-          "type": { "t": "fqn", "name": "kotlin.collections.MutableMap", "args": [
-            { "t": "fqn", "name": "kotlin.Int" },
+          "type": { "t": "fqn", "name": "kotlin.collections.Set", "args": [
             { "t": "fqn", "name": "kotlin.Int" }
           ] },
           "kotlinAccessors": ["get"],

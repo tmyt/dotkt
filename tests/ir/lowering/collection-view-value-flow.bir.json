@@ -405,7 +405,7 @@
             "args": [
               {
                 "t": "fqn",
-                "name": "kotlin.collections.List",
+                "name": "kotlin.collections.MutableList",
                 "args": [{ "t": "fqn", "name": "kotlin.Int" }]
               }
             ]
@@ -538,7 +538,7 @@
               "args": [
                 {
                   "t": "fqn",
-                  "name": "kotlin.collections.List",
+                  "name": "kotlin.collections.MutableList",
                   "args": [{ "t": "fqn", "name": "kotlin.Int" }]
                 }
               ]
@@ -558,7 +558,7 @@
               "args": [
                 {
                   "t": "fqn",
-                  "name": "kotlin.collections.List",
+                  "name": "kotlin.collections.MutableList",
                   "args": [{ "t": "fqn", "name": "kotlin.Int" }]
                 }
               ]

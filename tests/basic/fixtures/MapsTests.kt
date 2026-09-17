@@ -29,6 +29,14 @@ import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
 import NUnit.Framework.Legacy.ClassicAssert.IsFalse as assertFalse
 import NUnit.Framework.Legacy.ClassicAssert.IsNull as assertNull
 
+private fun <K, V> mergeThroughGenericFrame(map: MutableMap<K, V>, key: K, value: V,
+    remap: (V, V) -> V?): V? = map.merge(key, value, remap)
+
+private class GenericMapMerger<V> {
+    fun <K> merge(map: MutableMap<K, V>, key: K, value: V, remap: (V, V) -> V?): V? =
+        map.merge(key, value, remap)
+}
+
 // ---- il-mapdes : spread `*array` into a vararg ----------------------------------------------------------------
 fun varargSum(vararg xs: Int): Int { var s = 0; for (x in xs) s += x; return s }
 
@@ -209,6 +217,10 @@ class MapsTests {
         val s = mutableMapOf("x" to "a")
         assertEquals("ab", s.merge("x", "b") { o, n -> o + n }) // ab
         assertEquals("z", s.merge("y", "z") { o, n -> o + n })  // z
+        assertEquals(12, mergeThroughGenericFrame(m, 2, 5) { old, next -> old + next })
+        assertNull(GenericMapMerger<Int>().merge(m, 2, 0) { _, _ -> null })
+        assertFalse(m.containsKey(2))
+        assertEquals("abc", GenericMapMerger<String>().merge(s, "x", "c") { old, next -> old + next })
     }
 
     // #86 — the VALUE-typed value axis of the two nullable-generic map idioms. `getOrPut`'s `val value = get(key)`

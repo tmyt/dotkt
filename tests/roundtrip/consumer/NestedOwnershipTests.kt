@@ -5,6 +5,7 @@ import roundtrip.ownership.OwnedRichEnum
 import roundtrip.ownership.OwnedRichEnumContract
 import roundtrip.ownership.OwnedRichLambdaEnum
 import roundtrip.ownership.SparseGenericSuspendOwner
+import roundtrip.ownership.SparseCapturedBound
 import roundtrip.ownership.sparseGenericSuspend
 import roundtrip.ownership.sparseGenericLocalFunction
 import roundtrip.ownership.nestedGenericLocalFunction
@@ -86,7 +87,7 @@ class NestedOwnershipRoundtripTests {
         ClassicAssert.AreEqual("123:7", owner.localFunctionInsideGenericLocal())
         ClassicAssert.AreEqual("123", owner.localGenericOwnArgumentMatchesCapture())
         ClassicAssert.AreEqual("shadow", owner.shadowedGenericClosure("shadow")())
-        ClassicAssert.AreEqual(42, runCrossModuleSuspend(SparseGenericSuspendOwner<String, Int>(42).make()))
+        ClassicAssert.AreEqual(42, runCrossModuleSuspend(SparseGenericSuspendOwner<SparseCapturedBound, Int>(42).make()))
         ClassicAssert.AreEqual(43, runCrossModuleSuspend(sparseGenericSuspend<String, Int>(43)))
         ClassicAssert.AreEqual(44, sparseGenericLocalFunction<String, Int>(44))
         ClassicAssert.AreEqual("nested:47", nestedGenericLocalFunction("nested"))

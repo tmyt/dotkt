@@ -35,7 +35,7 @@ Only Kotlin facts that plain .NET metadata cannot express or cannot express with
 | imported CLR event endpoint (`CLREvent<T>`) | real CLR event metadata + add/remove accessors | yes for the event itself; Kotlin endpoint syntax must be synthesized | plain CLR event metadata, no DotKt attribute by default |
 | `final`/`open`/`abstract` (modality) | non-virtual / virtual / abstract | **yes** — rides .NET virtual-ness | (none) |
 | visibility | public/assembly/family | **yes** | (none) |
-| generics, including `reified` | real CLR generic method `<T>`; nullable-sensitive open parameters add hidden Boolean witnesses | runtime type: yes; Kotlin nullability/reified indices: no | `[KotlinDeclarationIdentity]` separately carries semantic `reified` indices and physical nullable-witness indices |
+| generics, including `reified` | real CLR generic method `<T>`; Kotlin classifier/nullability-sensitive open parameters add hidden integer witnesses | runtime type: yes; Kotlin nullability/classifier/reified indices: no | `[KotlinDeclarationIdentity]` separately carries semantic `reified` indices and physical witness indices |
 
 The attributes are **compiler-EMBEDDED per-assembly** as internal `DotKt.Runtime.CompilerServices.*` types (like csc's
 own `NullableAttribute`/`IsReadOnlyAttribute`) — there is **no referenced `DotKt.Runtime` DLL** (that runtime is
@@ -154,7 +154,7 @@ TYPE-LEVEL carrier:
 
 | carrier | rides | payload |
 |---|---|---|
-| `[KotlinSupertypes(version, bytes)]` | the type's `attrs` | `{base?, interfaces?, bounds?}` of pre-erasure TypeNodes |
+| `[KotlinSupertypes(version, bytes)]` | the type's `attrs` | `{base?, interfaces?, bounds?, nullableFrame?}`; source TypeNodes plus declaration-owned generic representation correspondence |
 
 The payload is the same opaque TypeNode encoding every other carrier uses, so no new format is introduced; `bounds`
 maps a TYPE parameter's index to the pre-erasure list of that parameter's upper bounds, which erase for the same
@@ -178,12 +178,33 @@ The validation follows metadata rather than Kotlin callability: a rich Kotlin en
 representation and therefore is not a CLR enum, and default arguments do not make a nonzero-parameter constructor
 satisfy `new()` unless a public zero-parameter `.ctor` is actually emitted.
 
-The channel has two independent producers. Nullable-generic erasure records every edge or bound its positional
-`Erase` rule moves. Collection-identity recording does the same when Root-V lowering collapses a nested read-only
-`List`/`Set`/`Collection` onto its invariant CLR sibling. They merge by edge head and type-parameter index before
+The channel has independent producers. Nullable-generic erasure records every edge or bound its positional
+`Erase` rule moves. Projection recording retains source classifier identity when physical representation loses it;
+read-only collection applications retain their canonical read-only CLR heads, including when nested.
+The records merge by edge head and type-parameter index before
 the attribute is authored: when both transforms touch one edge, the earlier producer's less-erased TypeNode wins;
 unrelated moved edges and bounds are appended. Thus `class B : Box<List<String>>` re-imports with that Kotlin edge,
-not the physical `Box<IList<string>>`, without teaching dll2klib which transform produced the correction.
+not a reconstructed CLR classifier, without teaching dll2klib which transform produced the correction.
+
+### Declaration-owned generic representation frames
+
+`nullableFrame` records the source/physical generic correspondence on a type's `KotlinSupertypes` payload
+or a method's `KotlinDeclarationIdentity` payload. Its current fields are `sourceArity`, `nullable`, `storage`,
+`nullableStorage`, and `order`. The three companion arrays contain sorted, distinct source indices. Canonical
+slots are ordinary source parameters followed by nullable, storage, and nullable-storage companions; `order`
+maps physical positions to those canonical slots. This makes an enclosing type's complete physical prefix
+explicit even when the child's source parameters precede its captured enclosing parameters.
+
+Current representation demand does not allocate storage or nullable-storage companions: their arrays are empty
+on ordinary producer-generated frames. The frame machinery can represent those roles, but they are not the
+current collection ABI and do not imply positional conversion to mutable CLR collection heads.
+
+Each role is closed from the original source argument independently. A storage companion is not a new Kotlin
+type parameter, and nullable-storage is not reconstructed from an already-erased nullable argument. Source
+constraints remain on ordinary parameters: a different representation does not automatically satisfy those
+constraints. `dll2klib` restores source arity and variable identity from the recorded correspondence, not from
+parameter names or a physical-prefix assumption. The frame describes representations; deciding which positions
+need them, and preserving exact foreign virtual ABIs, remains `bir2cir`'s responsibility.
 
 Collection-bearing type edges are captured at the last all-Kotlin boundary, before inner applications rotate to CLR
 argument order, F-bound stars become existential views, or reference nullability is stripped. Their classifier names
@@ -259,7 +280,8 @@ From the **consumer surface**, an imported inline body and a reified type parame
 - **CLR generics carry the runtime type**, so a Kotlin `inline fun <reified T>` remains an ordinary CLR generic
   method `M<T>()`. CLR does not carry Kotlin's nullable-instantiation bit, so `bir2cir` computes a module-wide
   structural demand set from nullable-sensitive operations and exact call/lift correspondences, then appends hidden
-  Boolean parameters only for demanded positions. `[KotlinDeclarationIdentity]` records semantic `reified` indices
+  integer witnesses only for demanded positions. Bit zero carries nullability; the remaining classifier code
+  preserves Kotlin collection identity when CLR storage interfaces overlap. `[KotlinDeclarationIdentity]` records semantic `reified` indices
   and physical nullable-witness indices separately; `dll2klib` restores the former and hides the latter, while
   consumer `bir2cir` uses the trusted physical indices to pass or forward each witness. Consequently the ordinary
   Kotlin `TYPE_PARAMETER_AS_REIFIED` rule remains in force across DLL→KLIB boundaries. A body

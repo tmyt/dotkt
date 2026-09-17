@@ -82,8 +82,7 @@ static class NullableGenericErasure
         // `object`, which dll2klib cannot infer back. Keep the pre-erasure TypeNode opaque until it is CONSUMED —
         // a ref/app build mints it into [KotlinNullableGeneric] on that exact CLR declaration slot, and the
         // runtime build, which mints nothing, carries it to ForeignNullableGenericCrossing instead.
-        RecordNullableGenericSlots(o, isValue);
-        RecordSuspendFnShapes(o);
+        PreserveSourceFacts(o, isValue);
         ApplyRec(o, isValue);
         // The blanket type-slot sweep: every REMAINING position the rule rewrites, anywhere in the tree — a
         // `Nullable(Tv)` in a standalone param/field/local slot or a call `sig` element, and a possibly-value `X?`
@@ -91,6 +90,12 @@ static class NullableGenericErasure
         // or a call's own `typeArgs`. `Nullable(Tv)` lowers to `Nullable<T>`, which is not even expressible for an
         // unconstrained (reference-allowed) `T`, so ilemit must NEVER see one; this sweep is what makes that true.
         EraseNullableGpAllStrings(o, isValue);
+    }
+
+    internal static void PreserveSourceFacts(JsonObject root, ValueTypeOracle isValue)
+    {
+        RecordNullableGenericSlots(root, isValue);
+        RecordSuspendFnShapes(root);
     }
 
     // Record the PRE-erasure TypeNode on every declaration slot carrying a `Nullable(Tv)`, at the head or nested.
@@ -128,6 +133,9 @@ static class NullableGenericErasure
 
     static void RecordMethodTypeParameterBounds(JsonObject method, ValueTypeOracle isValue)
     {
+        // This is Kotlin declaration truth captured before nullable-frame expansion. A later erasure pass
+        // sees physical companion indices and must not replace that source snapshot with its own input.
+        if (method[MethodTypeParameterBoundsPre] != null) return;
         if (method["typeParams"] is not JsonArray typeParameters) return;
         var bounds = new JsonObject();
         for (var i = 0; i < typeParameters.Count; i++)
@@ -135,10 +143,9 @@ static class NullableGenericErasure
             if (typeParameters[i] is not JsonObject parameter
                 || parameter["constraints"] is not JsonArray constraints
                 || constraints.Count == 0) continue;
-            if (!constraints.Any(constraint => TypeJson.Read(constraint) is TypeNode bound
-                && !Erase(bound, Pos.Slot, isValue).Equals(bound))) continue;
-            // A constraint list is one Kotlin declaration fact. If any bound moves, preserve the whole list so the
-            // consumer replaces the CLR approximation instead of retaining a false stronger sibling.
+            // Preserve source bounds before frame expansion, even when this pass does not erase them.
+            // A later alias/projection pass may change their representation; its expanded companion arguments
+            // are not source-level bounds and must never become the round-trip declaration snapshot.
             bounds[i.ToString()] = constraints.DeepClone();
         }
         if (bounds.Count > 0)
@@ -280,6 +287,9 @@ static class NullableGenericErasure
     static void RecordNullableGenericSlot(JsonObject decl, string typeKey, string factKey, string flagsKey,
         ValueTypeOracle isValue)
     {
+        // A preceding representation pass may already have captured the source slot before expanding its frame.
+        // Its physical companion arguments are not another Kotlin declaration and must not replace that record.
+        if (decl[factKey] != null) return;
         if (TypeJson.Read(decl[typeKey]) is not TypeNode t || !HasRestorableNullableTv(t, isValue)) return;
         decl[factKey] = TypeNode.ToJson(t);
         // THE NRT BYTE OF AN OBJECT-ERASED HEAD IS COMPUTED HERE, FROM THE PRE-ERASURE TYPE (#86). dll2klib splits
@@ -482,7 +492,7 @@ static class NullableGenericErasure
             case JsonObject obj:
                 var retSlotErased = false;
                 var k = Str(obj["k"]);
-                var elemPos = ArgumentElemKinds.Contains(k) ? Pos.Argument : Pos.Slot;
+                var elemPos = IsArgumentElementKind(k) ? Pos.Argument : Pos.Slot;
                 foreach (var key in obj.Select(kv => kv.Key).ToList())
                 {
                     var child = obj[key];
@@ -540,6 +550,8 @@ static class NullableGenericErasure
     // argument too and is absent for one reason: MemberCallSubstitution BUILDS those nodes long after this sweep,
     // from the call's own `typeArgs` — which this sweep has already canonicalized — so they arrive at `object`
     // rather than being erased into it. Adding them here would be listing a kind this pass never sees.
+    internal static bool IsArgumentElementKind(string kind) => ArgumentElemKinds.Contains(kind);
+
     static readonly HashSet<string> ArgumentElemKinds = new(StringComparer.Ordinal)
     {
         "newArray", "newArraySized", "newArrayInit", "arrayGet", "arraySet", "forArray",

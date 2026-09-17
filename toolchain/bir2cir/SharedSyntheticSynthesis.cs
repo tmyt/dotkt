@@ -50,7 +50,7 @@ static class SharedSyntheticSynthesis
             foreach (var e in refTypes)
                 if (e is JsonObject eo && Str(eo["name"]) is string name && eo["elem"] is JsonNode elem)
                 {
-                    var spec = new RefCellSpec(name, elem);
+                    var spec = new RefCellSpec(name, elem, eo[KotlinSupertypesRecord.PreKey]);
                     spec.Bind(eo["typeParams"].AsArray());
                     specs.Add(name, spec);
                 }
@@ -78,6 +78,8 @@ static class SharedSyntheticSynthesis
                 if (present.Add(spec.Name))
                 {
                     var cell = BuildRefCell(spec);
+                    if (spec.KotlinFacts is JsonNode frameFacts)
+                        cell[KotlinSupertypesRecord.PreKey] = frameFacts.DeepClone();
                     ClosureSynthesis.RecordCaptureLegality(cell, file, refs);
                     types.Add(cell);
                 }
@@ -139,19 +141,32 @@ static class SharedSyntheticSynthesis
     {
         public string Name { get; }
         public JsonNode Elem { get; }
+        public JsonNode KotlinFacts { get; }
         public List<TvKey> Free { get; } = new();
         public Dictionary<TvKey, JsonNode> Descriptors { get; } = new();
 
-        public RefCellSpec(string name, JsonNode elem)
+        public RefCellSpec(string name, JsonNode elem, JsonNode kotlinFacts = null)
         {
             Name = name;
             Elem = elem.DeepClone();
+            KotlinFacts = kotlinFacts?.DeepClone();
             AddFreeTvs(Elem, Free);
             SortFree();
         }
 
         public void Bind(JsonArray typeParams)
         {
+            // A materialized frame is an explicit declaration/use correspondence; pruning an unused ordinary
+            // source slot would invalidate both its companion positions and every already-closed application.
+            if (KotlinFacts is JsonValue facts && facts.TryGetValue<string>(out var json)
+                && JsonNode.Parse(json)?[NullableRepresentationFrame.MetadataKey] is JsonNode frameNode)
+            {
+                var frame = NullableRepresentationFrame.Read(frameNode);
+                if (frame.PhysicalArity != typeParams.Count)
+                    throw new InvalidOperationException("Ref-cell frame does not match its physical parameters");
+                for (var i = 0; i < typeParams.Count; i++)
+                    if (!Free.Contains(new TvKey("type", i))) Free.Add(new TvKey("type", i));
+            }
             // A bound may itself mention another TV (`S : Segment<S>` or `T : Pair<T,U>`). Those variables are part
             // of the generated cell's signature too, even when they do not occur directly in the element type.
             for (var i = 0; i < Free.Count; i++)

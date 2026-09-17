@@ -98,6 +98,7 @@ static class UncheckedGenericCastReturnErasure
             case JsonObject obj:
                 if (Str(obj["k"]) == "return" && obj["value"] is JsonObject value
                     && Str(value["k"]) == "cast"
+                    && !KotlinTypeWitness.NeedsWitness(value)
                     && TypeJson.Read(value["type"]) is TypeNode.Tv cast && cast == ret
                     && value["e"] is JsonObject source && IsNullableOrObjectSource(source))
                     return true;
@@ -396,6 +397,7 @@ static class UncheckedGenericCastReturnErasure
             case JsonObject obj:
                 if (Str(obj["k"]) == "return" && obj["value"] is JsonObject value
                     && Str(value["k"]) == "cast"
+                    && !KotlinTypeWitness.NeedsWitness(value)
                     && TypeJson.Read(value["type"]) is TypeNode.Tv cast && cast == ret
                     && value["e"] is JsonObject source && IsNullableOrObjectSource(source))
                     value["type"] = TypeJson.Fqn("object");

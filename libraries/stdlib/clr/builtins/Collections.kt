@@ -97,14 +97,11 @@ public actual interface MutableSet<E> : Set<E>, MutableCollection<E> {
     actual override fun clear(): Unit
 }
 
-// Map AND MutableMap BOTH alias System.Collections.Generic.IDictionary — deliberately NOT the
-// IReadOnlyDictionary/IDictionary split that would mirror List/MutableList: BCL IDictionary does NOT extend
-// IReadOnlyDictionary, so a split pair breaks Kotlin's `MutableMap : Map` subtyping at the IL level (a MutableMap-typed
-// value in a Map-typed slot is formally unverifiable — the same latent hole the IList->IReadOnlyList pair already has,
-// but here it would sit on the HOT path: every inherited Map member called on a MutableMap receiver). Collapsing both
-// onto IDictionary keeps every store/param-pass verifier-clean, keeps `M : MutableMap<K,V>` constraints satisfiable by
-// the concrete Dictionary (mapOf/mutableMapOf/associateTo), and mirrors Kotlin/JVM, where both erase to java.util.Map —
-// read-only-ness is Kotlin-frontend-enforced. In-repo precedent: Iterable/MutableIterable both alias IEnumerable.
+// Map and MutableMap share IDictionary as their operational CLR alias. This does not make their value-slot ABI
+// identical: Map's Kotlin covariance is incompatible with invariant IDictionary<K,V>, so bir2cir carries Map
+// values as object with Kotlin type metadata. MutableMap retains its exact invariant dictionary face.
+// Constructors, inheritance and selected CLR declarations keep their exact physical types; widening Map values
+// preserves the original reference without casting between unrelated IDictionary constructions.
 // Members with a direct IDictionary equivalent carry @ClrIntrinsic; the rest (null-on-missing `get`, the keys/values/
 // entries VIEWS, putAll/getOrDefault/...) route through kotlin.collections.ClrMapDefaults (bir2cir Rule 5).
 @kotlin.clr.ClrTypeAlias("System.Collections.Generic.IDictionary")

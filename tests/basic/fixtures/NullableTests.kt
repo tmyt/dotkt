@@ -60,8 +60,8 @@ class NgCell<T>(private val slot: T?) {             // `T?` CTOR PARAM + backing
 open class NgBase<T>(val held: T?)                  // a ctor DELEGATION target whose param is erased
 class NgDerived(y: Int?) : NgBase<Int>(y)           // `Base<Int>(y)` hands a Nullable<int32> to an `object` slot
 // The inherited protected-property use axis is resolved only after bir2cir binds the call from the derived receiver
-// to its declaring generic base. The declaration `Array<T?>` is physically `object[]` under #86, while this concrete
-// reference instantiation observes the original `String[]`; CIR must state the checked projection between them.
+// to its declaring generic base. The declaration `Array<T?>` uses the base's nullable companion; this concrete
+// reference instantiation closes that companion to String and retains the original String[] identity.
 open class NgProtectedArrayBase<T>(protected val values: Array<T?>?)
 class NgProtectedArrayText(values: Array<String?>) : NgProtectedArrayBase<String>(values) {
     private fun invoke(block: () -> Unit) = block()
@@ -226,6 +226,13 @@ fun ngNestedCount(xss: List<List<Int?>>): Int {
 }
 // A delegate PARAMETER component, a delegate RETURN component, and the reference control for each.
 fun ngApplyQ(x: Int?, f: (Int?) -> String): String = f(x)
+fun ngApplyQUnit(x: Int?, f: (Int?) -> Unit) { f(x) }
+var ngRecordedQ = ""
+fun ngRecordQ(x: Int?) { ngRecordedQ = x?.toString() ?: "none" }
+class NgUnitRefOwner {
+    var value = ""
+    fun member(x: Int?) { value = x?.toString() ?: "none" }
+}
 fun ngApplyQRef(x: String?, f: (String?) -> String): String = f(x)
 fun ngApplyToQ(x: Int, f: (Int) -> Int?): Int? = f(x)
 // The targets of a CALLABLE REFERENCE into a `(Int?) -> String` slot. Their declared `Int?` parameter is the Kotlin
@@ -240,6 +247,7 @@ fun <T> ngCountIterable(xs: Iterable<T?>): Int {
     for (x in xs) if (x != null) n++
     return n
 }
+fun <T> ngCountThroughGenericIterable(xs: Iterable<T>): Int = ngCountIterable<T>(xs)
 // A generic METHOD whose instantiation is itself `Int?`: it must be emitted at `object` from the start, because
 // `List<object>` is the only argument its `IReadOnlyList<!!0>` parameter accepts.
 fun <T> ngFirstOr(xs: List<T>, d: T): T {
@@ -425,7 +433,7 @@ class NullableTests {
         assertEquals(4, NgDerived(4).held)               // 4
         val strings = arrayOf<String?>("a", null)
         val snapshot = NgProtectedArrayText(strings).snapshot()
-        assertTrue(snapshot === strings)                 // inherited protected `object[]` slot projects to String[]
+        assertTrue(snapshot === strings)                 // inherited protected owner closes its nullable companion
         assertEquals("a", snapshot[0])
         assertNull(snapshot[1])
         val capturedSnapshot = NgProtectedArrayText(strings).capturedSnapshot()
@@ -433,7 +441,7 @@ class NullableTests {
         assertEquals("a", capturedSnapshot[0])
         assertNull(capturedSnapshot[1])
         val methodSnapshot = NgProtectedMethodText().capturedSnapshot(strings)
-        assertTrue(methodSnapshot === strings)           // method-generic erasure on a non-generic protected owner
+        assertTrue(methodSnapshot === strings)           // method-owned companion on a non-generic protected owner
         assertEquals("a", methodSnapshot[0])
         assertNull(methodSnapshot[1])
         val si: NgSink<Int> = NgIntSink()
@@ -609,12 +617,26 @@ class NullableTests {
         val viaBound: (Int?) -> String = NgRefOwner()::member
         assertEquals("m4", viaBound(4))                                  // m4
         assertEquals("mnone", viaBound(null))                            // mnone
+        ngApplyQUnit(5, ::ngRecordQ)
+        assertEquals("5", ngRecordedQ)
+        ngApplyQUnit(null, ::ngRecordQ)
+        assertEquals("none", ngRecordedQ)
+        val unitOwner = NgUnitRefOwner()
+        ngApplyQUnit(6, unitOwner::member)
+        assertEquals("6", unitOwner.value)
+        ngApplyQUnit(null, unitOwner::member)
+        assertEquals("none", unitOwner.value)
         // KOTLIN COVARIANCE OVER A VALUE ELEMENT: `List<Int>` IS an `Iterable<Int?>`, while an
         // `IReadOnlyList<int32>` is not the `IEnumerable<object>` that slot erases to. The conversion is the
         // callee's to receive, and without it the iteration finds no `GetEnumerator` at all.
         assertEquals(3, ngCountIterable(listOf(1, 2, 3)))                // 3   non-nullable value element
         assertEquals(2, ngCountIterable(listOf<Int?>(1, null, 3)))       // 2   the nullable twin, already object
         assertEquals(2, ngCountIterable(listOf("a", "b")))               // 2   reference control
+        val valueElements: Iterable<Int> = listOf(4, 5)
+        assertEquals(2, ngCountIterable(valueElements))
+        assertEquals(2, ngCountThroughGenericIterable(valueElements))
+        assertEquals(2, ngCountThroughGenericIterable(listOf("a", "b")))
+        assertEquals(1, ngCountThroughGenericIterable(listOf<Int?>(null, 2)))
 
         // A generic METHOD instantiated at `Int?` must be instantiated at `object` from the start.
         assertEquals(2, ngFirstOr(listOf<Int?>(null, 2), 9) ?: 0)  // 2

@@ -24,13 +24,13 @@ static class ReferenceExistentialAbiBinding
             case JsonObject call:
                 var kind = Str(call["k"]);
                 if (kind is "callInstance" or "callStatic"
-                    && Owner(call, kind) is string owner
+                    && Owner(call, kind) is TypeNode.Fqn owner
                     && Str(call["method"]) is string method)
                 {
                     var parameters = call["args"] as JsonArray;
                     var paramCount = parameters?.Count ?? -1;
                     var methodArity = (call["typeArgs"] as JsonArray)?.Count ?? 0;
-                    if (paramCount >= 0 && refs.TryExistentialAbiMember(owner, method,
+                    if (paramCount >= 0 && refs.TryExistentialAbiMember(owner.Name, method,
                         kind == "callStatic", methodArity, paramCount, out var physicalParams, out var physicalResult))
                     {
                         var currentSignature = call["sig"] as JsonArray;
@@ -44,20 +44,22 @@ static class ReferenceExistentialAbiBinding
                         // replacing that with the declaration reader's open frame would either lose arguments or put
                         // the callee's method-TV indexes into the caller's frame. Only a physically existential result
                         // needs this ABI projection.
-                        if (ContainsPhysicalExistential(physicalResult, refs))
-                            call["ret"] = TypeJson.Write(physicalResult);
+                        var hasPhysicalResult = ContainsPhysicalExistential(physicalResult, refs);
+                        var closedResult = CloseResult(physicalResult, owner.Args ?? Array.Empty<TypeNode>(),
+                            (call["typeArgs"] as JsonArray)?.Select(TypeJson.Read).ToArray() ?? Array.Empty<TypeNode>());
+                        if (hasPhysicalResult)
+                            call["ret"] = TypeJson.Write(closedResult);
                         // Spec §2.7: a pass that changes a node's RESULT TYPE rewrites or deletes its `sty`. Binding
                         // the referenced DLL's PHYSICAL result is such a change — the existential erasure can make it
                         // a type unrelated to the frontend's INSTANTIATED stamp, and that stamp is read FIRST by every
                         // deriver, so a slot declared from it would name a type the value does not have. The
-                        // instantiation cannot be recovered from the physical signature, so the stamp is DROPPED (the
-                        // other thing §2.7 permits) where the binding invalidated it, and kept where it did not.
+                        // declaration's physical signature is instantiated with the call's owner/method arguments.
+                        // Drop the old stamp where this physical projection invalidated it, and keep it otherwise.
                         //
                         // Gated on THIS pass having actually changed the result: §2.7 is an obligation on the pass
                         // that retypes, and a pass that silently laundered another pass's stale stamp would remove the
                         // evidence the chokepoint exists to surface.
-                        if (ContainsPhysicalExistential(physicalResult, refs)
-                            && !physicalResult.Equals(previousResult)) NodeType.DropStampIfStale(call);
+                        if (hasPhysicalResult && !closedResult.Equals(previousResult)) NodeType.DropStampIfStale(call);
                     }
                 }
                 foreach (var value in call.Select(kv => kv.Value).ToList())
@@ -89,13 +91,33 @@ static class ReferenceExistentialAbiBinding
         _ => false,
     };
 
-    static string Owner(JsonObject call, string kind)
+    static TypeNode.Fqn Owner(JsonObject call, string kind)
     {
         if (kind == "callInstance")
-            return (TypeJson.Read(call["ownerType"]) as TypeNode.Fqn)?.Name;
-        return (TypeJson.Read(call["owner"]) as TypeNode.Fqn)?.Name
-            ?? (TypeJson.Read(call["ownerType"]) as TypeNode.Fqn)?.Name
-            ?? (TypeJson.Read(call["calleeOwner"]) as TypeNode.Fqn)?.Name;
+            return TypeJson.Read(call["ownerType"]) as TypeNode.Fqn;
+        return TypeJson.Read(call["owner"]) as TypeNode.Fqn
+            ?? TypeJson.Read(call["ownerType"]) as TypeNode.Fqn
+            ?? TypeJson.Read(call["calleeOwner"]) as TypeNode.Fqn;
+    }
+
+    static TypeNode CloseResult(TypeNode declaration, TypeNode[] ownerArguments, TypeNode[] methodArguments) =>
+        FBoundStarProjectionErasure.SubstituteDeclarationTypeArguments(declaration, ownerArguments, methodArguments);
+
+    internal static void SelfTest()
+    {
+        var owner = new TypeNode.Tv("type", 0);
+        var companion = new TypeNode.Tv("method", 1);
+        var callerMethod = new TypeNode.Tv("method", 1);
+        var callerOwner = new TypeNode.Tv("type", 0);
+        var result = new TypeNode.Fn(false, new TypeNode.Fqn("IteratorCarrier"),
+            new TypeNode[] { new TypeNode.Fqn("System.Collections.Generic.IEnumerable", new TypeNode[] { companion }) },
+            owner, "System.Func", new TypeNode[] { owner });
+        var closed = (TypeNode.Fn)CloseResult(result, new TypeNode[] { callerMethod },
+            new TypeNode[] { new TypeNode.Fqn("System.String"), callerOwner });
+        if (closed.Recv != callerMethod || closed.Ctx[0] != callerMethod || closed.Clr != result.Clr
+            || ((TypeNode.Fqn)closed.Params[0]).Args[0] != callerOwner)
+            throw new InvalidOperationException("Existential result retained a callee variable or substituted a caller variable twice");
+        Console.WriteLine("[existential result frame] self-test OK (nested delegate, owner/method arguments, simultaneous substitution)");
     }
 
     static void AlignLocals(JsonNode node, ReferenceMetadataIndex refs)

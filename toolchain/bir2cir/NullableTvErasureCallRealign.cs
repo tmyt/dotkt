@@ -277,14 +277,15 @@ static partial class NullableTvErasureCallRealign
     }
 
     // A declaration synthesized after NullableGenericErasure carries its physical slot in `type`/`ret` and the
-    // exact pre-erasure Kotlin slot in the same carrier as an ordinary declaration. Prefer that explicit source
-    // fact when present. A malformed compiler-produced carrier is malformed current input and fails normally; it
-    // must not silently fall back to a different physical contract.
+    // exact pre-erasure Kotlin slot in the same carrier as an ordinary declaration. Only a scalar nullable variable
+    // establishes the object-erasure boundary owned here. Constructed slots already carry their materialized
+    // companion arguments; re-erasing their source metadata would incorrectly replace G<N(T)> with G<object>.
     static TypeNode ReadDeclaredSlot(JsonObject slot, string physicalKey, string carrierKey,
         bool preferCarrier)
     {
-        if (preferCarrier && Str(slot[carrierKey]) is string encoded)
-            return TypeNode.Parse(encoded);
+        if (preferCarrier && Str(slot[carrierKey]) is string encoded
+            && TypeNode.Parse(encoded) is TypeNode.Nullable { Of: TypeNode.Tv } scalarNullable)
+            return scalarNullable;
         return TypeJson.Read(slot[physicalKey]);
     }
 
@@ -401,7 +402,7 @@ static partial class NullableTvErasureCallRealign
     static void ApplyRec(JsonNode root, DeclIndex idx)
     {
         if (root is not JsonObject o) return;
-        ProcessMethods(o["methods"], idx);
+        ProcessMethods(o["methods"], idx, OwnerNullableFrame(o));
         if (o["types"] is JsonArray types)
             foreach (var t in types)
                 if (t is JsonObject to)
@@ -425,7 +426,7 @@ static partial class NullableTvErasureCallRealign
         foreach (var c in ctors)
         {
             if (c is not JsonObject co) continue;
-            var ctx = new Ctx { Idx = idx };
+            var ctx = new Ctx { Idx = idx, OwnerNullableFrame = OwnerNullableFrame(to) };
             if (co["params"] is JsonArray ps)
                 foreach (var p in ps)
                     if (p is JsonObject po && Str(po["name"]) is string pn && TypeJson.Read(po["type"]) is TypeNode pt)
@@ -466,15 +467,32 @@ static partial class NullableTvErasureCallRealign
         public readonly Dictionary<string, TypeNode> Env = new(StringComparer.Ordinal);
         public DeclIndex Idx;
         public TypeNode Ret;
+        public NullableRepresentationFrame OwnerNullableFrame;
+        public NullableRepresentationFrame MethodNullableFrame;
+
+        public bool IsNullableCompanion(TypeNode type)
+        {
+            if (type is not TypeNode.Tv variable) return false;
+            var frame = variable.Scope == "type" ? OwnerNullableFrame : MethodNullableFrame;
+            return frame != null && variable.I >= 0 && variable.I < frame.PhysicalArity
+                && frame.SourceIndex(variable.I) == null;
+        }
     }
 
-    static void ProcessMethods(JsonNode methods, DeclIndex idx)
+    static NullableRepresentationFrame OwnerNullableFrame(JsonObject owner)
+        => Str(owner[KotlinSupertypesRecord.PreKey]) is string encoded
+            && JsonNode.Parse(encoded)?[NullableRepresentationFrame.MetadataKey] is JsonNode frame
+                ? NullableRepresentationFrame.Read(frame) : null;
+
+    static void ProcessMethods(JsonNode methods, DeclIndex idx, NullableRepresentationFrame ownerFrame)
     {
         if (methods is not JsonArray arr) return;
         foreach (var m in arr)
             if (m is JsonObject mo)
             {
-                var ctx = new Ctx { Idx = idx, Ret = TypeJson.Read(mo["ret"]) };
+                var ctx = new Ctx { Idx = idx, Ret = TypeJson.Read(mo["ret"]), OwnerNullableFrame = ownerFrame,
+                    MethodNullableFrame = Str(mo[NullableRepresentationTypes.MethodFrameKey]) is string encoded
+                        ? NullableRepresentationFrame.Read(JsonNode.Parse(encoded)) : null };
                 if (mo["params"] is JsonArray ps)
                     foreach (var p in ps)
                         if (p is JsonObject po && Str(po["name"]) is string pn && TypeJson.Read(po["type"]) is TypeNode pt)
@@ -725,7 +743,7 @@ static partial class NullableTvErasureCallRealign
         var erasedRet = NullableGenericErasure.EraseNullableTv(decl.Ret, _isValue);
         var derived = Subst(erasedRet, owner.Args, methodArgs);
         return ApplyDerivedRet(obj, derived, stampedRet, !erasedRet.Equals(decl.Ret),
-            decl.NullableErasureOwnershipKnown);
+            decl.NullableErasureOwnershipKnown, ctx.IsNullableCompanion(derived));
     }
 
     static TypeNode EvalCallStatic(JsonObject obj, Ctx ctx)
@@ -771,7 +789,7 @@ static partial class NullableTvErasureCallRealign
         var erasedRet = NullableGenericErasure.EraseNullableTv(decl.Ret, _isValue);
         var derived = Subst(erasedRet, ownerArgs, methodArgs);
         return ApplyDerivedRet(obj, derived, stampedRet, !erasedRet.Equals(decl.Ret),
-            decl.NullableErasureOwnershipKnown);
+            decl.NullableErasureOwnershipKnown, ctx.IsNullableCompanion(derived));
     }
 
     // What the CALL SITE says its result is: the explicit `ret`/`dynRet` it carries.
@@ -802,9 +820,19 @@ static partial class NullableTvErasureCallRealign
     // none stood: `erasureApplied` is false wherever `Erase` left the declared return alone, so an ordinary generic
     // call keeps stating nothing and ilemit keeps inferring it from the member exactly as before.
     static TypeNode ApplyDerivedRet(JsonObject obj, TypeNode derived, TypeNode stampedRet, bool erasureApplied,
-        bool nullableErasureOwnershipKnown = false)
+        bool nullableErasureOwnershipKnown = false, bool nullableCompanionResult = false)
     {
         if (derived == null) return stampedRet;
+        // Substitution through a materialized frame can return its companion directly (Box<N>.value). That is
+        // a real generic stack slot, not the object-erased source T? stamp. Keep the physical result explicit so
+        // consumers such as equality emit the required generic boxing instead of treating an unboxed N as object.
+        if (nullableCompanionResult)
+        {
+            obj["ret"] = TypeJson.Write(derived);
+            if (obj["dynRet"] != null) obj["dynRet"] = TypeJson.Write(derived);
+            RestampSty(obj, derived);
+            return derived;
+        }
         if (stampedRet == null)
         {
             if (!erasureApplied) return null;
@@ -812,7 +840,14 @@ static partial class NullableTvErasureCallRealign
             RestampSty(obj, derived);
             return derived;
         }
-        if (derived.Equals(stampedRet) || !IsObjectErasureOf(derived, stampedRet)) return stampedRet;
+        if (derived.Equals(stampedRet))
+        {
+            // The exact imported descriptor can already state the erased return while the frontend stamp
+            // still states the closed Kotlin result. Proven scalar erasure owns both claims about this node.
+            if (erasureApplied) RestampSty(obj, derived);
+            return stampedRet;
+        }
+        if (!IsObjectErasureOf(derived, stampedRet)) return stampedRet;
 
         // This pass owns only nullable-generic erasure. A late generated declaration can legitimately return object
         // for another ABI (notably deferred unchecked `Any? as T`) while its call retains a concrete use-site stamp.
@@ -1084,6 +1119,25 @@ static partial class NullableTvErasureCallRealign
 
     internal static void SelfTest()
     {
+        var companionReturn = new TypeNode.Fqn("Box", new TypeNode[] { new TypeNode.Tv("type", 1) });
+        var sourceReturn = new TypeNode.Fqn("Box", new TypeNode[] {
+            new TypeNode.Nullable(new TypeNode.Tv("type", 0)) });
+        var accessor = new JsonObject {
+            ["ret"] = TypeJson.Write(companionReturn), ["nullableGenericRet"] = TypeNode.ToJson(sourceReturn),
+        };
+        if (ReadDeclaredSlot(accessor, "ret", "nullableGenericRet", true) != companionReturn)
+            throw new InvalidOperationException("Late accessor re-erased its materialized nullable companion");
+        accessor["ret"] = TypeJson.Fqn("object");
+        var scalarReturn = new TypeNode.Nullable(new TypeNode.Tv("type", 0));
+        accessor["nullableGenericRet"] = TypeNode.ToJson(scalarReturn);
+        if (ReadDeclaredSlot(accessor, "ret", "nullableGenericRet", true) != scalarReturn)
+            throw new InvalidOperationException("Late accessor lost scalar nullable-erasure ownership");
+        var scalarCall = new JsonObject {
+            ["ret"] = TypeJson.Fqn("object"), ["sty"] = TypeJson.Fqn("kotlin.String"),
+        };
+        ApplyDerivedRet(scalarCall, new TypeNode.Fqn("object"), new TypeNode.Fqn("object"), true);
+        if (TypeJson.Read(scalarCall["sty"]) != TypeJson.Read(scalarCall["ret"]))
+            throw new InvalidOperationException("An already-erased scalar descriptor kept its semantic result stamp");
         var typeArgs = new TypeNode[] { new TypeNode.Fqn("System.Int32") };
         var methodArgs = new TypeNode[] { new TypeNode.Fqn("System.String") };
 

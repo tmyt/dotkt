@@ -53,7 +53,7 @@ static class BirTypeLowering
         };
         var lowered = arguments.Select(argument =>
             LowerType(Bound(argument), refBuild: false, force: true, typeArg: true)).ToArray();
-        return PhysicalHead(kotlinFqn, bcl, lowered, collapseInvariant: false)
+        return PhysicalHead(kotlinFqn, bcl, lowered)
             is TypeNode.Fqn { Args: not null };
     }
 
@@ -255,6 +255,7 @@ static class BirTypeLowering
     // shadowed by a hardcoded map; they resolve here like any other alias. Single-threaded per bir2cir run, so a static
     // binding is sufficient.
     static IReadOnlyDictionary<string, string> _aliases = new Dictionary<string, string>(StringComparer.Ordinal);
+    static IReadOnlyDictionary<string, NullableRepresentationFrame> _nullableFrames;
 
     // The struct-ness ORACLE (#37/#48 nullability fold), set per top-level Lower() call. True for a VALUE type FQN
     // (a foundational primitive, a ref.dll struct/enum, or a LOCAL enum/struct in this compilation). Decides whether a
@@ -264,19 +265,8 @@ static class BirTypeLowering
 
     static string AliasBcl(string fqn) => _aliases.TryGetValue(fqn, out var bcl) ? bcl : null;
 
-    // ARG-POSITION VARIANCE COLLAPSE (Root V): the INVARIANT BCL sibling of each covariant readonly collection interface,
-    // used ONLY at generic-arg depth >= 1 (see LowerType) where the covariant alias is unrescuable against a concrete
-    // invariant value — `IList<T>` does NOT inherit `IReadOnlyList<T>`, so `Dictionary<K,IList<V>>` inhabits no
-    // `IDictionary<K,IReadOnlyList<V>>` (invariant). The concrete BCL type inhabits these exactly: List<T>/HashSet<T>
-    // implement IList<T>/ICollection<T>. (Iterable->IEnumerable is covariant, no collapse; Map/MutableMap already
-    // collapse to IDictionary at head.) HEAD-position seams (a head IList<T> value into a readonly IReadOnlyList<T>
-    // slot) are materialized as explicit CIR casts by PhysicalValueCoercion after final member binding.
-    static readonly IReadOnlyDictionary<string, string> InvariantSibling = new Dictionary<string, string>(StringComparer.Ordinal)
-    {
-        ["kotlin.collections.List"] = "System.Collections.Generic.IList",
-        ["kotlin.collections.Collection"] = "System.Collections.Generic.ICollection",
-        ["kotlin.collections.Set"] = "System.Collections.Generic.ICollection",
-    };
+    internal static bool UsesReadOnlyCollectionFace(string name) =>
+        name is "kotlin.collections.List" or "kotlin.collections.Collection" or "kotlin.collections.Set";
 
     // KProperty's generic parameters are not collection-storage slots: each one is substituted directly into a CLR
     // interface method parameter/return (`KProperty1<T,V>.get(T):V`, `KMutableProperty1.set(T,V)`, etc.). Lowering a
@@ -307,15 +297,14 @@ static class BirTypeLowering
     /// lowers; the member-reference serializer applies it to a signature read back out of the reference twin,
     /// which speaks the Kotlin surface while the member being named lives in the runtime twin, which speaks
     /// this. Those two must agree at EVERY branch — the erasure of a generic classifier, the contravariant
-    /// `Comparable<Any?>` collapse, the arg-position variance collapse, the plain alias — and the only way to
+    /// `Comparable<Any?>` collapse, the plain alias — and the only way to
     /// guarantee they do is for there to be one branch each. A serializer that reproduced "the same rule"
     /// reproduced two of the four, and named members that exist in neither twin.
     ///
     /// `bcl` is the type's @ClrTypeAlias target, or null when it has none; `loweredArgs` is null for a leaf.
-    /// `collapseInvariant` is the caller's position judgement — a storage slot collapses, a head or method slot
-    /// does not — because only the caller knows which of the two vocabularies its position came from.
     /// </remarks>
-    internal static TypeNode PhysicalHead(string kotlinFqn, string bcl, TypeNode[] loweredArgs, bool collapseInvariant)
+    internal static TypeNode PhysicalHead(string kotlinFqn, string bcl, TypeNode[] loweredArgs,
+        IReadOnlyDictionary<string, NullableRepresentationFrame> nullableFrames = null)
     {
         // `kotlin.Enum<E>` -> the NON-generic `System.Enum` (a Kotlin enum is a real CLR System.Enum, not the
         // generic stdlib class); drop the self-referential arg (`where T : Enum`).
@@ -326,16 +315,19 @@ static class BirTypeLowering
         // in-assembly names are unchanged, trusted external DotKt identities become their physical metadata names.
         if (loweredArgs == null) return new TypeNode.Fqn(bcl ?? PhysicalName(kotlinFqn));
         if (bcl == null) return new TypeNode.Fqn(PhysicalName(kotlinFqn), loweredArgs);
+        // Companions belong to the Kotlin declaration/implementation frame, not the aliased CLR TypeDef.
+        // The explicit correspondence also handles enclosing companions interleaved with ordinary parameters.
+        if (nullableFrames != null && nullableFrames.TryGetValue(kotlinFqn, out var frame))
+        {
+            if (loweredArgs.Length != frame.PhysicalArity)
+                throw new InvalidOperationException($"Alias '{kotlinFqn}' application has {loweredArgs.Length} physical arguments; its declaration frame requires {frame.PhysicalArity}");
+            loweredArgs = frame.OrdinaryArguments(loweredArgs);
+        }
         // `Comparable<*>` / `Comparable<Any?>` -> the NON-generic `System.IComparable` (contravariant; no value
         // type is IComparable<object>). A concrete arg keeps the generic form.
         if (bcl == "System.IComparable" && loweredArgs.Length == 1
             && ComparableApplicationCollapses(loweredArgs[0]))
             return new TypeNode.Fqn("System.IComparable");
-        // ARG-POSITION VARIANCE COLLAPSE (Root V): in a storage slot a covariant readonly collection interface ->
-        // its INVARIANT sibling, so a concrete invariant value inhabits the nested slot EXACTLY. The head keeps the
-        // covariant alias; PhysicalValueCoercion materializes any resulting value-flow seam as a CIR cast.
-        if (collapseInvariant && InvariantSibling.TryGetValue(kotlinFqn, out var inv))
-            return new TypeNode.Fqn(inv, loweredArgs);
         // A generic application: a @ClrTypeAlias GENERIC owner -> the BCL generic (ilemit arity-constructs).
         return new TypeNode.Fqn(bcl, loweredArgs);
     }
@@ -366,6 +358,22 @@ static class BirTypeLowering
 
     internal static bool IsMethodSlotCarrier(string kotlinFqn) =>
         InterfaceMethodSlotCarriers.Contains(kotlinFqn);
+
+    // Select the surviving arguments without lowering their annotation wrappers. The NRT byte walk must use
+    // the same physical head/frame as the signature, but still read nullability from the semantic arguments.
+    internal static TypeNode[] AnnotationArguments(TypeNode.Fqn type,
+        IReadOnlyDictionary<string, string> aliases, ValueTypeOracle isValue,
+        IReadOnlyDictionary<string, string> physicalNames = null, IReadOnlySet<string> localTypes = null,
+        bool refBuild = false, IReadOnlyDictionary<string, NullableRepresentationFrame> nullableFrames = null)
+    {
+        if (LowerPhysicalType(type, aliases, isValue, physicalNames, typeArg: false,
+                localTypes, refBuild, nullableFrames) is not TypeNode.Fqn { Args: not null })
+            return null;
+        if (!refBuild && aliases.ContainsKey(type.Name)
+            && nullableFrames != null && nullableFrames.TryGetValue(type.Name, out var frame))
+            return frame.OrdinaryArguments(type.Args);
+        return type.Args;
+    }
 
     // A synthesized result slot sometimes has to be named before this lowering pass runs (the suspend
     // TaskCompletionSource<R>/RootContinuation<R> drive is the canonical case). Its public Task<R> must retain the
@@ -421,10 +429,9 @@ static class BirTypeLowering
         _localTypeNames.Contains(semanticName) ? semanticName
         : _physicalTypeNames.TryGetValue(semanticName, out var physical) ? physical : semanticName;
 
-    // typeArg = "this type sits in a generic type-ARGUMENT position": a primitive there stays BOXED
-    // (kotlin.Int / the JVM-boxing dual-representation — Comparable<kotlin.Int>, IReadOnlyList<kotlin.Int>);
-    // a bare/value primitive lowers to the CLR shorthand. Only Fqn.args propagate typeArg=true; array/byref/
-    // nullable/fn element+param+return positions are value positions (typeArg=false).
+    // Generic arguments and array elements are reified storage positions. They must use the same projection:
+    // closing Array<T> with List<String> must name the same array as a concrete Array<List<String>> declaration.
+    // Byref and function parameter/return slots remain method-slot positions.
     public static TypeNode LowerType(TypeNode t, bool refBuild, bool force, bool typeArg)
     {
         switch (t)
@@ -486,7 +493,8 @@ static class BirTypeLowering
                         // build, which has no ref.dll to read.
                         if (force && KotlinAllToClr.TryGetValue(f.Name, out var clr)) return new TypeNode.Fqn(clr);
                     }
-                    return PhysicalHead(f.Name, AliasBcl(f.Name), loweredArgs, collapseInvariant: typeArg && !refBuild);
+                    return PhysicalHead(f.Name, AliasBcl(f.Name), loweredArgs,
+                        _nullableFrames);
                 }
             case TypeNode.Tv:
                 return t;   // scope+i preserved; ilemit maps scope:"type"->!i / scope:"method"->!!i
@@ -537,17 +545,35 @@ static class BirTypeLowering
     // Some representation passes run before the full-tree lowering but must compare a Kotlin declaration with an
     // exact CLR slot read from metadata. Use the one canonical lowering rule under the reference facts for that
     // comparison; do not duplicate a partial primitive/@ClrTypeAlias table in the caller.
+    // A referenced value-returning slot's physical kotlin.Unit is a class, not Kotlin's Unit-as-void return.
     internal static bool SamePhysicalSlotType(TypeNode left, TypeNode right,
         IReadOnlyDictionary<string, string> aliases, ValueTypeOracle isValueFqn,
         IReadOnlyDictionary<string, string> physicalTypeNames, bool returnPosition,
-        IReadOnlySet<string> localTypeNames = null)
+        IReadOnlySet<string> localTypeNames = null,
+        IReadOnlyDictionary<string, NullableRepresentationFrame> nullableFrames = null,
+        bool leftReturnsValue = false)
     {
-        TypeNode LowerSlot(TypeNode type) => returnPosition
+        TypeNode LowerSlot(TypeNode type, bool returnsValue = false) => returnPosition && !returnsValue
             && type is TypeNode.Fqn { Name: "kotlin.Unit" or "void" or "System.Void", Args: null }
                 ? VoidType
                 : CanonicalPhysicalSlotType(LowerPhysicalType(
-                    type, aliases, isValueFqn, physicalTypeNames, typeArg: false, localTypeNames));
-        return LowerSlot(left).Equals(LowerSlot(right));
+                    type, aliases, isValueFqn, physicalTypeNames, typeArg: false, localTypeNames,
+                    nullableFrames: nullableFrames));
+        return LowerSlot(left, leftReturnsValue).Equals(LowerSlot(right));
+    }
+
+    internal static void SelfTestSlotReturns()
+    {
+        var aliases = new Dictionary<string, string>();
+        var unit = new TypeNode.Fqn("kotlin.Unit");
+        var nullableUnit = new TypeNode.Nullable(unit);
+        bool Equal(TypeNode left, TypeNode right, bool value = false) => SamePhysicalSlotType(
+            left, right, aliases, _ => false, null, returnPosition: true, leftReturnsValue: value);
+        if (!Equal(unit, VoidType) || Equal(unit, nullableUnit)
+            || !Equal(unit, nullableUnit, value: true) || Equal(unit, unit, value: true)
+            || Equal(unit, VoidType, value: true))
+            throw new InvalidOperationException("Slot comparison lost the distinction between Unit values and void returns");
+        Console.WriteLine("[slot returns] self-test OK (source Unit, nullable Unit, physical Unit value)");
     }
 
     // A representation pass that runs before the full-tree lowering may already have to author a PHYSICAL type
@@ -557,18 +583,21 @@ static class BirTypeLowering
     internal static TypeNode LowerPhysicalType(TypeNode type,
         IReadOnlyDictionary<string, string> aliases, ValueTypeOracle isValueFqn,
         IReadOnlyDictionary<string, string> physicalTypeNames, bool typeArg,
-        IReadOnlySet<string> localTypeNames = null, bool refBuild = false)
+        IReadOnlySet<string> localTypeNames = null, bool refBuild = false,
+        IReadOnlyDictionary<string, NullableRepresentationFrame> nullableFrames = null)
     {
         var savedAliases = _aliases;
         var savedIsValue = _isValueFqn;
         var savedPhysicalNames = _physicalTypeNames;
         var savedLocalNames = _localTypeNames;
+        var savedNullableFrames = _nullableFrames;
         try
         {
             _aliases = aliases ?? new Dictionary<string, string>(StringComparer.Ordinal);
             _isValueFqn = isValueFqn ?? (_ => false);
             _physicalTypeNames = physicalTypeNames ?? new Dictionary<string, string>(StringComparer.Ordinal);
             _localTypeNames = localTypeNames ?? new HashSet<string>(StringComparer.Ordinal);
+            _nullableFrames = nullableFrames;
             return LowerType(type, refBuild, force: false, typeArg);
         }
         finally
@@ -577,6 +606,7 @@ static class BirTypeLowering
             _isValueFqn = savedIsValue;
             _physicalTypeNames = savedPhysicalNames;
             _localTypeNames = savedLocalNames;
+            _nullableFrames = savedNullableFrames;
         }
     }
 
@@ -697,7 +727,13 @@ static class BirTypeLowering
     static JsonNode LowerTypeObject(JsonNode node, bool refBuild, bool force, bool typeArg)
     {
         var tn = TypeNode.Parse(node.ToJsonString());
-        return TypeNode.Write(LowerType(tn, refBuild, force, typeArg));
+        try { return TypeNode.Write(LowerType(tn, refBuild, force, typeArg)); }
+        catch (Exception error) when (error is InvalidOperationException or ArgumentException)
+        {
+            var call = node.Parent is JsonArray ? node.Parent.Parent as JsonObject : node.Parent as JsonObject;
+            throw new InvalidOperationException(
+                $"{_file}: {node.GetPath()} ({call?["k"]} {call?["method"]}): {error.Message}", error);
+        }
     }
 
     // True iff a JSON value is a structured Type node (has a `t` discriminator) rather than a k-tagged sub-node.
@@ -714,13 +750,15 @@ static class BirTypeLowering
     public static JsonNode Lower(JsonNode root, bool refBuild, IReadOnlyDictionary<string, string> aliases = null,
         ValueTypeOracle isValueFqn = null, string file = null,
         IReadOnlyDictionary<string, string> physicalTypeNames = null,
-        IReadOnlySet<string> localTypeNames = null)
+        IReadOnlySet<string> localTypeNames = null,
+        IReadOnlyDictionary<string, NullableRepresentationFrame> nullableFrames = null)
     {
         _aliases = aliases ?? new Dictionary<string, string>(StringComparer.Ordinal);
         _isValueFqn = isValueFqn ?? (_ => false);
         _file = string.IsNullOrEmpty(file) ? "<unknown>" : file;
         _physicalTypeNames = physicalTypeNames ?? new Dictionary<string, string>(StringComparer.Ordinal);
         _localTypeNames = localTypeNames ?? new HashSet<string>(StringComparer.Ordinal);
+        _nullableFrames = nullableFrames;
         return LowerNode(root, refBuild, force: false);
     }
 
@@ -734,15 +772,14 @@ static class BirTypeLowering
             var here = force || IsAttributeClass(obj);
             // ROOT-V DEPTH: a collection-CONSTRUCTION node's element/value type key is a generic type-argument of the
             // built collection (depth >= 1), so it collapses like a `typeArgs` element — the literal `listOf(listOf(…))`
-            // must build a `List<IList<..>>` so it inhabits the collapsed consumer slot (pairnest). newArray's `elem` is
-            // NOT collapsed — arrays are held uncollapsed on BOTH sides (the `Array` type case + newArray here) so they
-            // stay mutually consistent. (This is NOT array covariance: `IList<int>[]` is in fact NOT assignable to
-            // `IReadOnlyList<int>[]` — the element interfaces are unrelated; a concrete-element store into a readonly
-            // element array works only by the runtime value implementing that element interface.)
+            // must build a `List<IList<..>>` so it inhabits the collapsed consumer slot (pairnest). Native arrays
+            // use their ordinary element form, matching the declaration-owned ordinary generic parameter.
             var nodeK = (obj["k"] as JsonValue)?.GetValue<string>();
             if (nodeK == "new") ValidateCurrentNew(obj);
             if (nodeK == "conv") ValidateCurrentConv(obj);
             var collCtor = nodeK is "newList" or "newSet" or "newMap";
+            var arrayStorage = nodeK is "newArray" or "newArrayInit" or "newArraySized" or "spreadConcat"
+                or "arrayGet" or "arraySet" or "forArray";
             var copy = new JsonObject();
             foreach (var kv in obj)
             {
@@ -783,6 +820,8 @@ static class BirTypeLowering
                     copy[kv.Key] = LowerFuncTypeValued(kv.Value, refBuild, here);  // delegate slot -> keep sfunc as func:
                 else if ((kv.Key == "ownerType" || kv.Key == "owner") && IsTypeObject(kv.Value))
                     copy[kv.Key] = LowerOwnerValued(kv.Value, refBuild, here);   // primitive-array owner stays kotlin.IntArray
+                else if (arrayStorage && kv.Key == "elem")
+                    copy[kv.Key] = LowerTypeValued(kv.Value, refBuild, here, typeArg: false);
                 else if (kv.Key == "typeArgs" || (collCtor && kv.Key is "elem" or "keyType" or "valType"))
                     copy[kv.Key] = LowerTypeValued(kv.Value, refBuild, here, typeArg: true);   // Root V: depth>=1 positions collapse
                 // `to` is intentionally shared by two node kinds. Its role belongs to the parent discriminator:

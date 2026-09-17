@@ -69,7 +69,9 @@ class ShadowOwner<T : Comparable<T>>(private val outer: T) {
 
 // Only B is referenced by the lambda. Its nested state-machine carrier must still re-declare the complete A,B owner
 // prefix, or the captured field keeps `!1` while the carrier declares only one generic slot.
-class SparseGenericSuspendOwner<A : Comparable<A>, B>(private val value: B) {
+// Use an ordinary interface bound: Comparable's Kotlin bound is intentionally not a CLR constraint.
+interface SparseCapturedBound
+class SparseGenericSuspendOwner<A : SparseCapturedBound, B>(private val value: B) {
     fun make(): suspend () -> B = { value }
 }
 

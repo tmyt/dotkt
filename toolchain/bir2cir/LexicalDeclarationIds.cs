@@ -13,11 +13,20 @@ static class LexicalDeclarationIds
     {
         var cloneId = System.Threading.Interlocked.Increment(ref _cloneCounter);
         var map = new Dictionary<string, string>(StringComparer.Ordinal);
+        var generated = new Dictionary<string, string>(StringComparer.Ordinal);
 
         void Collect(JsonNode node)
         {
             if (node is JsonObject obj)
             {
+                if (obj["generated"] is JsonValue marker && marker.TryGetValue<bool>(out var isGenerated)
+                    && isGenerated && obj["params"] is JsonArray && obj["body"] is JsonArray
+                    && Str(obj[DeclarationIdentityBinding.Key]) is string declarationId)
+                {
+                    if (!generated.TryAdd(declarationId,
+                        DeclarationIdentityBinding.PhysicalOnlyId(declarationId, "clone:" + cloneId)))
+                        throw new InvalidOperationException("duplicate generated declaration identity in cloned BIR payload");
+                }
                 if (Str(obj["k"]) == "localFun" && Str(obj["id"]) is string id)
                 {
                     if (!map.TryAdd(id, id + "$clone" + cloneId))
@@ -35,6 +44,9 @@ static class LexicalDeclarationIds
             if (node is JsonObject obj)
             {
                 var kind = Str(obj["k"]);
+                if (Str(obj[DeclarationIdentityBinding.Key]) is string declarationId
+                    && generated.TryGetValue(declarationId, out var newDeclarationId))
+                    obj[DeclarationIdentityBinding.Key] = newDeclarationId;
                 if (kind is "localFun" or "callLocal" or "localFunRef"
                     && Str(obj["id"]) is string id && map.TryGetValue(id, out var fresh))
                     obj["id"] = fresh;
@@ -45,9 +57,31 @@ static class LexicalDeclarationIds
         }
 
         foreach (var root in roots) if (root != null) Collect(root);
-        if (map.Count == 0) return;
+        if (map.Count == 0 && generated.Count == 0) return;
         foreach (var root in roots) if (root != null) Apply(root);
     }
 
     static string Str(JsonNode node) => (node as JsonValue)?.GetValue<string>();
+
+    internal static void SelfTest()
+    {
+        var original = JsonNode.Parse("""
+            [{"generated":true,"name":"lambda","declarationId":"lifted:1","params":[],"body":[
+                {"k":"callStatic","declarationId":"lifted:1"},
+                {"k":"callStatic","declarationId":"external:1"}]},
+             {"k":"newDelegate","declarationId":"lifted:1"}]
+            """);
+        var first = original.DeepClone();
+        var second = original.DeepClone();
+        Freshen(first);
+        Freshen(second);
+        var firstId = Str(first[0][DeclarationIdentityBinding.Key]);
+        if (firstId == "lifted:1" || firstId == Str(second[0][DeclarationIdentityBinding.Key])
+            || firstId != Str(first[0]["body"][0][DeclarationIdentityBinding.Key])
+            || firstId != Str(first[1][DeclarationIdentityBinding.Key])
+            || Str(first[0]["body"][1][DeclarationIdentityBinding.Key]) != "external:1"
+            || Str(original[0][DeclarationIdentityBinding.Key]) != "lifted:1")
+            throw new InvalidOperationException("Cloned generated declaration identities lost their exact graph edges");
+        Console.WriteLine("[lexical declaration ids] self-test OK (generated clones, recursion, external references)");
+    }
 }

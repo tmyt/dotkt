@@ -314,8 +314,10 @@ class GenericMetadataRoundtripTests {
         val invoked = invokeNullable { value: String? -> value ?: "fn-null" }
         ClassicAssert.AreEqual("fn-null", invoked)
         ClassicAssert.AreEqual("top=7", invokeNullableValue<Int>(7, ::renderNullableInt))
+        ClassicAssert.AreEqual("top=-1", invokeNullableValue<Int>(null, ::renderNullableInt))
         val nullableRenderer = NullableIntRenderer("bound")
         ClassicAssert.AreEqual("bound=8", invokeNullableValue<Int>(8, nullableRenderer::render))
+        ClassicAssert.AreEqual("bound=-1", invokeNullableValue<Int>(null, nullableRenderer::render))
         val overridingRenderer: NullableIntRenderer = OverridingNullableIntRenderer()
         ClassicAssert.AreEqual("override=9", invokeNullableValue<Int>(9, overridingRenderer::render))
         val interfaceRenderer: NullableIntRenderContract = NullableIntRenderImplementation()

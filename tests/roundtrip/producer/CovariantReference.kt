@@ -4,6 +4,11 @@ open class ReferencedCovariantValue(val value: Int)
 
 class ReferencedNarrowCovariantValue(value: Int) : ReferencedCovariantValue(value)
 
+interface ReferencedCompanionCovariantSlot<T> {
+    fun storage(): Array<T?>
+    fun make(): ReferencedCovariantValue
+}
+
 interface ReferencedCovariantRoot<T> {
     val item: T
     fun make(): T

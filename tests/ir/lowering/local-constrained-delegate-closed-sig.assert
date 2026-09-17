@@ -2,7 +2,10 @@
 # argument must read the DECLARATION's open parameter vector and substitute the call site's owner arguments into
 # it, without replacing that call-site identity.
 +"iface":{"t":"fqn","name":"LocalClosedCallback","args":[{"t":"fqn","name":"System.Int32"}]},"method":"Apply","sig":[{"t":"fqn","name":"System.Int32"},{"t":"fn","suspend":false,"ret":{"t":"fqn","name":"System.Object"},"params":[{"t":"fqn","name":"System.Int32"}],"clr":"System.Func"}]
-# The lambda's natural delegate returns String while the declared slot returns Any, so the construction states the
-# SLOT's delegate — closed over the owner argument (Int32), never over the declaration's open `!0`.
-+"k":"newDelegate","method":"lambda","calleeOwner":{"t":"fqn","name":"LocalConstrainedDelegateClosedSigProbeKt"},"sig":[{"t":"fqn","name":"System.Int32"}],"funcType":{"t":"fqn","name":"System.Func","args":[{"t":"fqn","name":"System.Int32"},{"t":"fqn","name":"System.Object"}]}
+# Preserve the lambda's natural String-returning delegate. The explicit adapter supplies the slot's
+# Int32 -> Object delegate, with both constructions closed over Int32 rather than declaration !0.
++"k":"newDelegate","method":"lambda","calleeOwner":{"t":"fqn","name":"LocalConstrainedDelegateClosedSigProbeKt"},"sig":[{"t":"fqn","name":"System.Int32"}],"funcType":{"t":"fn","suspend":false,"ret":{"t":"fqn","name":"System.String"},"params":[{"t":"fqn","name":"System.Int32"}],"clr":"System.Func"}
++"funcType":{"t":"fqn","name":"System.Func","args":[{"t":"fqn","name":"System.Int32"},{"t":"fqn","name":"System.Object"}]},"typeArgs":[{"t":"fqn","name":"System.String"},{"t":"fqn","name":"System.Int32"},{"t":"fqn","name":"System.Object"}]
++"declaringType":{"t":"fqn","name":"System.Func\u00602","args":[{"t":"fqn","name":"System.Int32"},{"t":"fqn","name":"System.String"}]}
++"declaringType":{"t":"fqn","name":"System.Func\u00602","args":[{"t":"fqn","name":"System.Int32"},{"t":"fqn","name":"System.Object"}]}
 -"iface":{"t":"fqn","name":"LocalClosedCallback","args":[{"t":"fqn","name":"System.Int32"}]},"method":"Apply","sig":[{"t":"tv","scope":"type","i":0}

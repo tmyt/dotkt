@@ -22,8 +22,20 @@ static class KotlinSupertypesRecord
         MergeInterfaces(merged, additions);
         MergeBounds(merged, additions);
         MergeVariances(merged, additions);
+        if (additions[NullableRepresentationFrame.MetadataKey] is JsonNode frameNode)
+        {
+            var frame = NullableRepresentationFrame.Read(frameNode).ToJson();
+            if (merged[NullableRepresentationFrame.MetadataKey] is JsonNode prior
+                && !JsonNode.DeepEquals(prior, frame))
+                throw new InvalidOperationException("Conflicting declaration-owned nullable representation frames");
+            merged[NullableRepresentationFrame.MetadataKey] = frame;
+        }
         declaration[PreKey] = merged.ToJsonString();
     }
+
+    internal static NullableRepresentationFrame ReadNullableFrame(JsonObject declaration) =>
+        Read(declaration)?[NullableRepresentationFrame.MetadataKey] is JsonNode frame
+            ? NullableRepresentationFrame.Read(frame) : null;
 
     static JsonObject Read(JsonObject declaration)
     {

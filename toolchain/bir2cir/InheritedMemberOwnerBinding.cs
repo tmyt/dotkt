@@ -49,6 +49,15 @@ static class InheritedMemberOwnerBinding
         foreach (var root in rootList) Walk(root, types, localDeclarations, refs, null);
     }
 
+    // Frame materialization must see use-site owner arguments, not the variables of an inherited
+    // declaration. This early phase only constructs that owner; member selection remains in ApplyAll.
+    public static void ProjectOwners(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs)
+    {
+        var rootList = roots.ToList();
+        var types = CollectTypes(rootList);
+        foreach (var root in rootList) Walk(root, types, null, refs, null, projectOnly: true);
+    }
+
     static Dictionary<string, LocalDeclaration> CollectLocalDeclarations(Dictionary<string, TypeDef> types)
     {
         var candidates = new Dictionary<string, List<LocalDeclaration>>(StringComparer.Ordinal);
@@ -95,7 +104,7 @@ static class InheritedMemberOwnerBinding
 
     static void Walk(JsonNode node, Dictionary<string, TypeDef> types,
         IReadOnlyDictionary<string, LocalDeclaration> localDeclarations, ReferenceMetadataIndex refs,
-        TypeNode.Fqn enclosingOwner)
+        TypeNode.Fqn enclosingOwner, bool projectOnly = false)
     {
         switch (node)
         {
@@ -111,15 +120,15 @@ static class InheritedMemberOwnerBinding
                         ownerArgs.Length == 0 ? null : ownerArgs);
                 }
                 var ownerBefore = DeclaringOwner(obj)?.DeepClone();
-                Bind(obj, types, localDeclarations, refs, enclosingOwner);
+                Bind(obj, types, localDeclarations, refs, enclosingOwner, projectOnly);
                 if (!JsonNode.DeepEquals(ownerBefore, DeclaringOwner(obj)))
                     ConstructedMemberReturnSubstitution.ApplyCall(obj);
                 foreach (var kv in obj)
-                    if (kv.Value != null) Walk(kv.Value, types, localDeclarations, refs, enclosingOwner);
+                    if (kv.Value != null) Walk(kv.Value, types, localDeclarations, refs, enclosingOwner, projectOnly);
                 break;
             case JsonArray arr:
                 foreach (var item in arr)
-                    if (item != null) Walk(item, types, localDeclarations, refs, enclosingOwner);
+                    if (item != null) Walk(item, types, localDeclarations, refs, enclosingOwner, projectOnly);
                 break;
         }
     }
@@ -134,7 +143,7 @@ static class InheritedMemberOwnerBinding
 
     static void Bind(JsonObject call, Dictionary<string, TypeDef> types,
         IReadOnlyDictionary<string, LocalDeclaration> localDeclarations, ReferenceMetadataIndex refs,
-        TypeNode.Fqn enclosingOwner)
+        TypeNode.Fqn enclosingOwner, bool projectOnly)
     {
         var kind = Str(call["k"]);
         if (kind is not ("callInstance" or "newBoundDelegate" or "newBoundClrDelegate"
@@ -182,6 +191,7 @@ static class InheritedMemberOwnerBinding
                 if (kind == "newBoundDelegate") call["calleeOwner"] = TypeJson.Write(owner);
             }
         }
+        if (projectOnly) return;
         // The CLR-shaped nodes have already crossed MemberCallSubstitution. Their declaration descriptor and member
         // kind are resolved later by ClrMemberResolution; this pass owns only the constructed declaring owner.
         if (kind is "newBoundClrDelegate" or "clrInstance" or "clrPropGet" or "clrPropSet"

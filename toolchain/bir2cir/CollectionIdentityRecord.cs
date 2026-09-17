@@ -132,11 +132,8 @@ static class CollectionIdentityRecord
     }
 
     // True iff a read-only List/Set/Collection appears where BirTypeLowering's Root-V collapse would REWRITE it — i.e.
-    // reached with `typeArg == true`, which becomes true ONLY inside a Fqn's Args (BirTypeLowering line 209, sticky
-    // across nested Args) and RESETS to false through an Array elem / ByRef / Nullable / Fn position (those recurse
-    // with typeArg:false). This mirrors the collapse condition exactly, so a slot is stamped iff at least one nested
-    // read-only collection genuinely collapses (a TOP-LEVEL / array-elem read-only collection stays the covariant
-    // IReadOnlyList alias — dll2klib restores it without a stamp — and is deliberately NOT recorded).
+    // reached with `typeArg == true`. Native array elements, like direct value slots, retain the readonly head;
+    // constructed storage inside that element can still need a source-identity record.
     static bool NestsCollapsingReadonly(TypeNode t) => Scan(t, typeArg: false);
 
     static bool Scan(TypeNode t, bool typeArg) => t switch

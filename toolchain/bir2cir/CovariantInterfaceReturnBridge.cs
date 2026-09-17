@@ -26,7 +26,7 @@ static class CovariantInterfaceReturnBridge
     }
 
     public static IReadOnlySet<BridgedSlot> ApplyAll(IEnumerable<JsonNode> roots,
-        ReferenceMetadataIndex refs, ValueTypeOracle isValue)
+        ReferenceMetadataIndex refs, ValueTypeOracle isValue, GenericRepresentationPolicy representations)
     {
         var defs = Collect(roots);
         var bridgedSlots = new HashSet<BridgedSlot>();
@@ -34,7 +34,7 @@ static class CovariantInterfaceReturnBridge
         // covariant return differs from the base-interface slot. Treat interfaces and classes uniformly here: the
         // frontend override edge selects the declaration, and this pass only materializes its CLR representation.
         foreach (var cls in defs.Values.Where(d => d.Kind is "class" or "interface"))
-            ApplyClass(cls, defs, refs, isValue, bridgedSlots);
+            ApplyClass(cls, defs, refs, isValue, representations, bridgedSlots);
         return bridgedSlots;
     }
 
@@ -66,7 +66,8 @@ static class CovariantInterfaceReturnBridge
     }
 
     static void ApplyClass(Def cls, IReadOnlyDictionary<string, Def> defs,
-        ReferenceMetadataIndex refs, ValueTypeOracle isValue, ISet<BridgedSlot> bridgedSlots)
+        ReferenceMetadataIndex refs, ValueTypeOracle isValue, GenericRepresentationPolicy representations,
+        ISet<BridgedSlot> bridgedSlots)
     {
         if (cls.Node["methods"] is not JsonArray methods) return;
         var bridges = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
@@ -124,7 +125,9 @@ static class CovariantInterfaceReturnBridge
 
                 // Method generic arity is part of the CLI slot identity. An arity-0 and arity-1 accessor can otherwise
                 // share one bridge even though no MethodImpl body can implement both declarations.
-                var key = name + "`" + methodArity + "<"
+                // Distinct interface slots may have different allocated names but forward to the same source
+                // implementation with the same signature. Share that body, not a second Property getter.
+                var key = Str(implementation["name"]) + "`" + methodArity + "<"
                           + KotlinOverrideSlotBridge.MethodTypeParameterShapeKey(
                               slot["typeParams"] as JsonArray, ifaceArgs)
                           + ">(" + string.Join(",", slotParams.Select(type =>
@@ -160,7 +163,7 @@ static class CovariantInterfaceReturnBridge
             }
         }
 
-        ApplyReferencedInterfaces(cls, defs, refs, isValue, methods, bridges,
+        ApplyReferencedInterfaces(cls, defs, refs, isValue, representations, methods, bridges,
             bridgedSlots, ref bridgeOrdinal);
     }
 
@@ -169,12 +172,18 @@ static class CovariantInterfaceReturnBridge
     // declaration's physical MethodDef identity and signature. Join those two authoritative facts here; neither
     // ilemit nor a different semantic pass should infer covariance from names or physical layout.
     static void ApplyReferencedInterfaces(Def cls, IReadOnlyDictionary<string, Def> defs,
-        ReferenceMetadataIndex refs, ValueTypeOracle isValue, JsonArray methods,
+        ReferenceMetadataIndex refs, ValueTypeOracle isValue, GenericRepresentationPolicy representations, JsonArray methods,
         Dictionary<string, JsonObject> bridges, ISet<BridgedSlot> bridgedSlots,
         ref int bridgeOrdinal)
     {
         if (refs == null) return;
         var ownArgs = ClassOwnArgs(cls);
+        var frames = refs.NullableTypeFrames.ToDictionary(entry => entry.Key, entry => entry.Value);
+        foreach (var definition in defs.Values)
+            if (KotlinSupertypesRecord.ReadNullableFrame(definition.Node) is { } frame)
+                frames[definition.Name] = frame;
+        var callerMapping = new NullableRepresentationTypes(
+            KotlinSupertypesRecord.ReadNullableFrame(cls.Node), null, frames, isValue, policy: representations);
         foreach (var implementation in methods.OfType<JsonObject>().ToList())
         {
             if (Bool(implementation["static"])
@@ -196,12 +205,17 @@ static class CovariantInterfaceReturnBridge
             {
                 if (TypeJson.Read(edge["owner"]) is not TypeNode.Fqn semanticOwner
                     || defs.ContainsKey(semanticOwner.Name)
-                    || Str(edge["member"]) is not string sourceMember
-                    || !refs.TryReferenceTypeShape(semanticOwner, out var ownerArity, out var ownerKind,
-                        out _, out _) || ownerKind != "interface")
+                    || Str(edge["member"]) is not string sourceMember)
                     continue;
                 var ownerArgs = semanticOwner.Args ?? Array.Empty<TypeNode>();
-                if (ownerArity != ownerArgs.Length) continue;
+                // The override edge is Kotlin vocabulary; the referenced TypeDef and its descriptors use
+                // the expanded CLR frame. Close that frame once, without replacing the source selection args.
+                var projectedOwner = BirTypeLowering.LowerPhysicalType(callerMapping.Slot(semanticOwner), refs.Aliases, isValue,
+                    refs.PhysicalTypeNames, typeArg: false, nullableFrames: refs.NullableTypeFrames) as TypeNode.Fqn;
+                if (projectedOwner == null || !refs.TryReferenceTypeShape(projectedOwner,
+                        out var ownerArity, out var ownerKind, out _, out _) || ownerKind != "interface") continue;
+                var physicalOwnerArgs = projectedOwner.Args ?? Array.Empty<TypeNode>();
+                if (ownerArity != physicalOwnerArgs.Length) continue;
                 var accessorKind = Str(edge["kind"]) switch
                 {
                     "getter" => "get",
@@ -215,36 +229,71 @@ static class CovariantInterfaceReturnBridge
                         selectedSuspend: IsSuspend(implementation), out var declaration))
                     continue;
 
-                var slotParams = declaration.Parameters
-                    .Select(type => SupertypeGraph.SubstOwnerTvs(
-                        NullableGenericErasure.EraseNullableTv(type, isValue), ownerArgs))
+                var slotParams = declaration.PhysicalParameters
+                    .Select(type => SupertypeGraph.SubstOwnerTvs(type, physicalOwnerArgs))
                     .ToArray();
+                var declarationMapping = new NullableRepresentationTypes(
+                    refs.NullableTypeFrames.GetValueOrDefault(semanticOwner.Name), declaration.NullableFrame,
+                    refs.NullableTypeFrames, isValue, policy: representations);
                 var slotRet = SupertypeGraph.SubstOwnerTvs(
-                    NullableGenericErasure.EraseNullableTv(declaration.Return, isValue), ownerArgs);
+                    IsSuspend(implementation)
+                        ? NullableGenericErasure.EraseNullableTv(declarationMapping.Slot(declaration.Return), isValue)
+                        : declaration.PhysicalReturn, physicalOwnerArgs);
                 var logicalSuspendResult = IsSuspend(implementation)
                     ? SupertypeGraph.SubstOwnerTvs(declaration.Return, ownerArgs)
                     : null;
+                var physicalOwner = refs.ExactReflectedOwner(semanticOwner.Name, ownerArity);
+                if (physicalOwner == null) continue;
+                var descriptorOwner = new TypeNode.Fqn(physicalOwner,
+                    physicalOwnerArgs.Length == 0 ? null : physicalOwnerArgs);
+                var descriptorMember = declaration.PhysicalMember;
+                if (refs.TryResolveClrOwner(semanticOwner.Name, out _, out _))
+                {
+                    // A reference-surface MethodDef on an alias is not a MethodDef on its CLR face.
+                    // Resolve the selected binding against the actual interface before synthesizing a row.
+                    // Kotlin-only members handled by a dedicated ABI lowering contribute no such slot.
+                    if (accessorKind != null)
+                    {
+                        if (!refs.TryExternalPropertyAccessor(semanticOwner.Name, sourceMember, accessorKind,
+                                implementationParams.Length, methodArity, implementationParams, ownerArgs,
+                                out _, out _, out descriptorMember)) continue;
+                    }
+                    else if (refs.TryExactMemberIntrinsic(semanticOwner.Name, sourceMember, methodArity,
+                                 implementationParams, ownerArgs, out var intrinsic))
+                        descriptorMember = intrinsic;
+                    var comparableParams = slotParams.Select(type => BirTypeLowering.LowerPhysicalType(
+                        type, refs.Aliases, isValue, refs.PhysicalTypeNames,
+                        typeArg: false, nullableFrames: refs.NullableTypeFrames)).ToArray();
+                    if (!ClrMemberResolution.TryResolveAliasedInterfaceSlot(refs, descriptorOwner,
+                            descriptorMember, methodArity, comparableParams, declaration.TypeParams,
+                            physicalOwnerArgs, out descriptorOwner, out descriptorMember,
+                            out slotParams, out slotRet)) continue;
+                    // An alias can change the return ABI (for example Boolean to void). That is not
+                    // Kotlin return covariance; its binding/override lowering owns the adaptation.
+                    var referenceReturn = SupertypeGraph.SubstOwnerTvs(declaration.PhysicalReturn, physicalOwnerArgs);
+                    if (!BirTypeLowering.SamePhysicalSlotType(referenceReturn, slotRet,
+                            refs.Aliases, isValue, refs.PhysicalTypeNames, returnPosition: true,
+                            nullableFrames: refs.NullableTypeFrames)) continue;
+                }
                 if (slotParams.Any(type => type == null) || slotRet == null
                     || !ParamsPhysicallyEqual(implementation, slotParams, ownArgs, refs, isValue))
                     continue;
                 var implementationRet = SubstOwnerTvs(implementationRet0, ownArgs);
                 if (implementationRet == slotRet
                     || BirTypeLowering.SamePhysicalSlotType(slotRet, implementationRet,
-                        refs.Aliases, isValue, refs.PhysicalTypeNames, returnPosition: true)
+                        refs.Aliases, isValue, refs.PhysicalTypeNames, returnPosition: true,
+                        nullableFrames: refs.NullableTypeFrames,
+                        leftReturnsValue: !IsSuspend(implementation) && declaration.ReturnsValue)
                     || KotlinOverrideSlotBridge.IsErasureDivergence(slotRet, implementationRet))
                     continue;
 
-                var physicalOwner = refs.ExactReflectedOwner(semanticOwner.Name, ownerArity);
-                if (physicalOwner == null) continue;
-                var descriptorOwner = new TypeNode.Fqn(physicalOwner,
-                    ownerArgs.Length == 0 ? null : ownerArgs);
                 // Two referenced interfaces can redeclare the same physical slot with equivalent Kotlin surface
                 // spellings (`T` substituted through an oblivious edge versus the concrete type directly). One CLR
                 // body can implement both MethodImpl declarations, so key the body by the canonical physical
                 // signature while retaining each declaration's own descriptor below.
-                var key = declaration.PhysicalMember + "`" + methodArity + "<"
+                var key = implementationName + "`" + methodArity + "<"
                           + KotlinOverrideSlotBridge.MethodTypeParameterShapeKey(
-                              declaration.TypeParams, ownerArgs)
+                              declaration.TypeParams, physicalOwnerArgs)
                           + ">(" + string.Join(",", slotParams.Select(type =>
                               ReferencedPhysicalTypeKey(type, refs, isValue))) + ")->"
                           + ReferencedPhysicalTypeKey(slotRet, refs, isValue);
@@ -265,16 +314,16 @@ static class CovariantInterfaceReturnBridge
                                 accessorKind, sourceAssociation, slotParams, slotRet);
                     }
                 }
-                var descriptor = ImplDescriptor(descriptorOwner, declaration.PhysicalMember, methodArity,
+                var descriptor = ImplDescriptor(descriptorOwner, descriptorMember, methodArity,
                     slotParams, slotRet,
                     KotlinOverrideSlotBridge.SubstituteOwnerTypeParameterConstraints(
-                        declaration.TypeParams, ownerArgs));
+                        declaration.TypeParams, physicalOwnerArgs));
                 var encoded = descriptor.ToJsonString();
                 if (!((JsonArray)bridge["clrInterfaceImpls"])
                     .Any(existing => existing?.ToJsonString() == encoded))
                     ((JsonArray)bridge["clrInterfaceImpls"]).Add(descriptor);
                 bridgedSlots.Add(BridgedSlotKey(implementation, descriptorOwner,
-                    declaration.PhysicalMember, methodArity, slotParams, slotRet, refs, isValue));
+                    descriptorMember, methodArity, slotParams, slotRet, refs, isValue));
             }
         }
     }
@@ -297,7 +346,7 @@ static class CovariantInterfaceReturnBridge
 
     static string ReferencedPhysicalTypeKey(TypeNode type, ReferenceMetadataIndex refs, ValueTypeOracle isValue) =>
         TypeKey(BirTypeLowering.LowerPhysicalType(type, refs.Aliases, isValue,
-            refs.PhysicalTypeNames, typeArg: false));
+            refs.PhysicalTypeNames, typeArg: false, nullableFrames: refs.NullableTypeFrames));
 
     static JsonObject BuildBridge(Def cls, JsonObject implementation, TypeNode[] slotParams, TypeNode slotRet,
         TypeNode logicalSuspendResult, string bridgeName)
@@ -431,7 +480,7 @@ static class CovariantInterfaceReturnBridge
             var implementation = SubstOwnerTvs(parameter, ownerArgs);
             if (implementation != slotParams[i]
                 && !BirTypeLowering.SamePhysicalSlotType(slotParams[i], implementation,
-                    refs.Aliases, isValue, refs.PhysicalTypeNames, returnPosition: false))
+                    refs.Aliases, isValue, refs.PhysicalTypeNames, returnPosition: false, nullableFrames: refs.NullableTypeFrames))
                 return false;
         }
         return true;

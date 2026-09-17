@@ -1,5 +1,6 @@
 # The source override has no independent declaration identity; it keeps the ordinary Property name. The explicit
 # MethodImpl bridge is a bir2cir physical declaration and receives a stable suffix from its bridge association.
-+"name":"map","type":{"t":"fqn","name":"System.Collections.Generic.IDictionary"
-+"name":"map$bridge$9ca46becc1babf26"
+# Collection<Int> and Set<Int> both lower to IReadOnlyCollection<int>, so the PropertyDef identities collide.
++"name":"map","type":{"t":"fqn","name":"System.Collections.Generic.IReadOnlyCollection","args":[{"t":"fqn","name":"System.Int32"}]},"get":"prop_get\u003Cmap\u003E"
++"name":"map$bridge$5f5d603d197fa295","type":{"t":"fqn","name":"System.Collections.Generic.IReadOnlyCollection","args":[{"t":"fqn","name":"System.Int32"}]},"get":"dotkt$covar$prop_get_map_$0"
 +"name":"dotkt$covar$prop_get_map_$0"
