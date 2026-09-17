@@ -37,3 +37,39 @@ public class ReadOnlyDictionary : IReadOnlyDictionary<string, int>
     public IEnumerator<KeyValuePair<string, int>> GetEnumerator() => items.GetEnumerator();
     IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 }
+
+public class MultipleReadOnlyDictionaries : ReadOnlyDictionary, IReadOnlyDictionary<long, int>
+{
+    int IReadOnlyDictionary<long, int>.this[long key] => 0;
+    IEnumerable<long> IReadOnlyDictionary<long, int>.Keys => System.Array.Empty<long>();
+    IEnumerable<int> IReadOnlyDictionary<long, int>.Values => System.Array.Empty<int>();
+    int IReadOnlyCollection<KeyValuePair<long, int>>.Count => 0;
+    bool IReadOnlyDictionary<long, int>.ContainsKey(long key) => false;
+    bool IReadOnlyDictionary<long, int>.TryGetValue(long key, out int value) { value = 0; return false; }
+    IEnumerator<KeyValuePair<long, int>> IEnumerable<KeyValuePair<long, int>>.GetEnumerator() =>
+        ((IEnumerable<KeyValuePair<long, int>>)System.Array.Empty<KeyValuePair<long, int>>()).GetEnumerator();
+}
+
+public class SetAndDictionary : HashSet<int>, IReadOnlyDictionary<string, int>
+{
+    int IReadOnlyDictionary<string, int>.this[string key] => 0;
+    IEnumerable<string> IReadOnlyDictionary<string, int>.Keys => System.Array.Empty<string>();
+    IEnumerable<int> IReadOnlyDictionary<string, int>.Values => System.Array.Empty<int>();
+    int IReadOnlyCollection<KeyValuePair<string, int>>.Count => 0;
+    bool IReadOnlyDictionary<string, int>.ContainsKey(string key) => false;
+    bool IReadOnlyDictionary<string, int>.TryGetValue(string key, out int value) { value = 0; return false; }
+    IEnumerator<KeyValuePair<string, int>> IEnumerable<KeyValuePair<string, int>>.GetEnumerator() =>
+        ((IEnumerable<KeyValuePair<string, int>>)System.Array.Empty<KeyValuePair<string, int>>()).GetEnumerator();
+}
+
+public class ListAndDictionary : List<int>, IReadOnlyDictionary<string, int>
+{
+    int IReadOnlyDictionary<string, int>.this[string key] => 0;
+    IEnumerable<string> IReadOnlyDictionary<string, int>.Keys => System.Array.Empty<string>();
+    IEnumerable<int> IReadOnlyDictionary<string, int>.Values => System.Array.Empty<int>();
+    int IReadOnlyCollection<KeyValuePair<string, int>>.Count => 0;
+    bool IReadOnlyDictionary<string, int>.ContainsKey(string key) => false;
+    bool IReadOnlyDictionary<string, int>.TryGetValue(string key, out int value) { value = 0; return false; }
+    IEnumerator<KeyValuePair<string, int>> IEnumerable<KeyValuePair<string, int>>.GetEnumerator() =>
+        ((IEnumerable<KeyValuePair<string, int>>)System.Array.Empty<KeyValuePair<string, int>>()).GetEnumerator();
+}

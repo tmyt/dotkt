@@ -197,28 +197,30 @@ internal fun starProjectionCast(value: Any?, openGenericType: StarProjectionType
 internal fun starProjectionSafeCast(value: Any?, openGenericType: StarProjectionType): Any? =
     if (value != null && starProjectionClosedView(value.starProjectionRuntimeType(), openGenericType) != null) value else null
 
-// Operational storage faces do not grant Kotlin mutability. This predicate is separate from the physical type
-// test: an erased reified target may be object, which would accept even an ineligible sentinel object.
-@kotlin.clr.ClrTypeAlias("System.Collections.Generic.IDictionary")
-internal interface StarProjectionDictionary<K, V>
-
-@kotlin.clr.ClrTypeAlias("System.Collections.Generic.IReadOnlyDictionary")
-internal interface StarProjectionReadOnlyDictionary<K, V>
-
 // String, arrays and dictionary storage have CLR enumerators without Kotlin Iterable membership.
 // Declaration-owned Kotlin identities are checked before this foreign-storage policy, so a map that
 // explicitly implements Kotlin Iterable still has its declared identity.
-private fun foreignKotlinIterable(value: Any?): Boolean = value == null ||
-    (value is kotlin.collections.ClrRawEnumerable && value !is String
-        && !value.starProjectionRuntimeType().isArray
-        && value !is kotlin.collections.ClrRawDictionary
-        && value !is StarProjectionDictionary<*, *>
-        && value !is StarProjectionReadOnlyDictionary<*, *>)
+private fun foreignKotlinIterable(value: Any?, dictionary: StarProjectionType, readOnlyDictionary: StarProjectionType,
+    set: StarProjectionType, readOnlySet: StarProjectionType, list: StarProjectionType): Boolean {
+    if (value == null) return true
+    if (value !is kotlin.collections.ClrRawEnumerable || value is String) return false
+    val type = value.starProjectionRuntimeType()
+    if (type.isArray) return false
+    // Independent List/Set contracts still grant iteration when the object also implements a dictionary.
+    if (starProjectionHasView(type, list) || starProjectionHasView(type, set)
+        || starProjectionHasView(type, readOnlySet)) return true
+    return value !is kotlin.collections.ClrRawDictionary
+        && !starProjectionHasView(type, dictionary) && !starProjectionHasView(type, readOnlyDictionary)
+}
 
+// Operational storage faces do not grant Kotlin mutability. This predicate is separate from the physical type
+// test: an erased reified target may be object, which would accept even an ineligible sentinel object.
 @PublishedApi
-internal fun kotlinCollectionMatches(value: Any?, witness: Int): Boolean {
+internal fun kotlinCollectionMatches(value: Any?, witness: Int, dictionary: StarProjectionType,
+    readOnlyDictionary: StarProjectionType, set: StarProjectionType, readOnlySet: StarProjectionType,
+    list: StarProjectionType): Boolean {
     if (value !is KotlinIterableClassifier) return when (witness and -2) {
-        14, 16 -> foreignKotlinIterable(value)
+        14, 16 -> foreignKotlinIterable(value, dictionary, readOnlyDictionary, set, readOnlySet, list)
         else -> true
     }
     // bir2cir supplies KotlinTypeWitness: low bit is nullability; the remaining code is nominal identity.
@@ -236,8 +238,10 @@ internal fun kotlinCollectionMatches(value: Any?, witness: Int): Boolean {
 }
 
 @PublishedApi
-internal fun kotlinCollectionCastCandidate(value: Any?, witness: Int): Any? {
-    if (!kotlinCollectionMatches(value, witness))
+internal fun kotlinCollectionCastCandidate(value: Any?, witness: Int, dictionary: StarProjectionType,
+    readOnlyDictionary: StarProjectionType, set: StarProjectionType, readOnlySet: StarProjectionType,
+    list: StarProjectionType): Any? {
+    if (!kotlinCollectionMatches(value, witness, dictionary, readOnlyDictionary, set, readOnlySet, list))
         throw ClassCastException("Value is not an instance of the requested Kotlin collection classifier")
     return value
 }
@@ -1009,6 +1013,7 @@ private fun starProjectionFirstView(
         current = current.baseType
     }
     for (candidate in runtimeType.getInterfaces())
-        if (candidate.isGenericType && candidate.getGenericTypeDefinition() == openGenericType) return candidate
+        if (candidate == openGenericType
+            || candidate.isGenericType && candidate.getGenericTypeDefinition() == openGenericType) return candidate
     return null
 }

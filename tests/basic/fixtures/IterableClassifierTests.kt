@@ -46,7 +46,9 @@ class IterableClassifierTests {
     }
 
     @TestAttribute fun explicitIterableIdentityWinsOverDictionaryStorage() {
-        val value: Any = IterableClassifierExplicitDictionary()
+        val dictionary = IterableClassifierExplicitDictionary()
+        dictionary.Add("base", 1)
+        val value: Any = dictionary
         check(value is Iterable<*>)
         check(matches<Iterable<*>>(value))
         check(value !is MutableIterable<*>)
