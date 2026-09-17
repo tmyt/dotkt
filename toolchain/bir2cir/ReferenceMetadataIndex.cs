@@ -1263,7 +1263,9 @@ sealed partial class ReferenceMetadataIndex
     public string ExactReflectedOwner(string ownerToken, int typeArgumentCount)
     {
         var candidate = TryResolveClrOwner(ownerToken, out var aliasOwner, out _)
-            ? aliasOwner : ReflectedOwnerFqn(ownerToken);
+            ? aliasOwner
+            : !IsLocalEmittedType(ownerToken) && _physicalTypeBySemanticName.TryGetValue(ownerToken, out var recordedOwner)
+                ? recordedOwner : ReflectedOwnerFqn(ownerToken);
         var type = ResolveNetType(candidate, typeArgumentCount);
         if (type == null) return candidate;
         var definition = type.IsGenericType && !type.IsGenericTypeDefinition
@@ -7099,6 +7101,10 @@ sealed partial class ReferenceMetadataIndex
             var second = new TypeNode.Tv("method", 4);
             var sourceOwner = new TypeNode.Fqn(owner, new TypeNode[] { first, companion, second });
             aliasIndex._physicalTypeBySemanticName[owner] = "probe.Alias`3";
+            aliasIndex._physicalTypeBySemanticName["probe.Export"] = "probe.Export`1";
+            if (aliasIndex.ExactReflectedOwner("probe.Export", 1) != "probe.Export`1"
+                || aliasIndex.ExactReflectedOwner(owner, 3) != "probe.Native")
+                throw new InvalidOperationException("Exact reflected owner lost recorded identity or CLR alias precedence");
             aliasIndex._ownerNullableFrames["probe.Alias`3"] = aliasIndex._ownerNullableFrames[owner];
             var semanticOwner = new TypeNode.Fqn(owner, new TypeNode[] { first, second });
             var physicalOwner = new TypeNode.Fqn("probe.Alias`3", sourceOwner.Args);

@@ -128,7 +128,7 @@ static class SupertypeGraph
         {
             var spec = queue.Dequeue();
             if (!seen.Add(TypeKey(spec))) continue;
-            if (exactConstruction ? TypeKey(spec) == ownerKey : SameDeclaration(spec, owner)) return true;
+            if (exactConstruction ? TypeKey(spec) == ownerKey : SameDeclaration(spec, owner, refs?.PhysicalTypeNames)) return true;
             if (defs.TryGetValue(spec.Name, out var def))
             {
                 var args = EffectiveArgs(spec, def.Arity);
@@ -149,12 +149,34 @@ static class SupertypeGraph
         return false;
     }
 
-    static bool SameDeclaration(TypeNode.Fqn left, TypeNode.Fqn right) =>
-        left.Name == right.Name && DeclarationArity(left) == DeclarationArity(right);
+    static bool SameDeclaration(TypeNode.Fqn left, TypeNode.Fqn right,
+        IReadOnlyDictionary<string, string> physicalNames)
+    {
+        // Source metadata and projected override edges can name the same declaration in different vocabularies.
+        // Only the recorded declaration-to-TypeDef map establishes that identity; CLR aliases are not identity
+        // mappings (two distinct Kotlin classifiers may share one CLR representation).
+        string Identity(string name) => physicalNames != null && physicalNames.TryGetValue(name, out var physical)
+            ? physical : name;
+        return Identity(left.Name) == Identity(right.Name) && DeclarationArity(left) == DeclarationArity(right);
+    }
 
     static int DeclarationArity(TypeNode.Fqn type) => type.Name.Contains('`')
         ? MemberRefNode.ArityOfName(type.Name)
         : type.Args?.Length ?? 0;
+
+    internal static void SelfTestDeclarationIdentity()
+    {
+        var argument = new TypeNode.Fqn("kotlin.Unit");
+        var source = new TypeNode.Fqn("probe.Source", new TypeNode[] { argument });
+        var physical = new TypeNode.Fqn("probe.Source`1", new TypeNode[] { argument });
+        var names = new Dictionary<string, string> { [source.Name] = physical.Name };
+        if (!SameDeclaration(source, physical, names) || !SameDeclaration(physical, source, names)
+            || SameDeclaration(source, physical, null)
+            || SameDeclaration(source, new TypeNode.Fqn("probe.Other`1", physical.Args), names)
+            || SameDeclaration(source, new TypeNode.Fqn(source.Name), names))
+            throw new InvalidOperationException("Supertype declaration matching lost recorded identity or arity");
+        Console.WriteLine("[supertype declarations] self-test OK (recorded identity, arity, unrelated declarations)");
+    }
 
     public static TypeNode[] EffectiveArgs(TypeNode.Fqn spec, int arity)
     {

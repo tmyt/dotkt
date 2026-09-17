@@ -238,21 +238,19 @@ static class KotlinOverrideSlotBridge
             }
             // A parameter difference this erasure did not create belongs to whatever pass did create it.
             if (fit == null || fit.Contains(Fit.Foreign)) return;
+            // The covariant pass already owns this exact obligation even if later representation lowering
+            // changes its divergence category (for example Nothing becomes object). Do not bridge it again.
+            if (covariantBridgedSlots?.Contains(CovariantInterfaceReturnBridge.BridgedSlotKey(
+                    impl, descriptorSpec, descriptorMember,
+                    (impl["typeParams"] as JsonArray)?.Count ?? 0,
+                    slotParams, slotRet, refs, isValue)) == true)
+                return;
             var retFit = unitValueReturn && IsVoid(declRet) && !Bool(impl[BirTypeLowering.ValueReturnKey])
                 ? Fit.Bridge
                 : Classify(slotRet, SupertypeGraph.SubstOwnerTvs(declRet, ownArgs), refs, isValue,
                     returnPosition: true);
             if (retFit == Fit.Foreign)
             {
-                // The covariant pass now resolves referenced Kotlin declarations too. Its explicit hand-off says
-                // exactly which slot obligation already owns that foreign return divergence; do not allocate the same
-                // MethodImpl a second time here. Other foreign property/Nothing shapes retain this pass's
-                // existing referenced-slot handling (not every physical-vocabulary difference is Kotlin covariance).
-                if (covariantBridgedSlots?.Contains(CovariantInterfaceReturnBridge.BridgedSlotKey(
-                        impl, descriptorSpec, descriptorMember,
-                        (impl["typeParams"] as JsonArray)?.Count ?? 0,
-                        slotParams, slotRet, refs, isValue)) == true)
-                    return;
                 if (referencedSlot && NodeType.IsNothing(declRet)) retFit = Fit.Bridge;
                 else
                 {
@@ -356,7 +354,12 @@ static class KotlinOverrideSlotBridge
             // reached through several supertypes of the same shape — still collapses to one.
             var body = string.Join(",", (impl["params"] as JsonArray ?? new JsonArray())
                 .OfType<JsonObject>().Select(pn => TypeJson.Read(pn["type"]) is TypeNode t ? SupertypeGraph.TypeKey(t) : "?"));
-            var key = identityName + "`" + arity + "(" + string.Join(",", slotParams.Select(SupertypeGraph.TypeKey)) + ")->" + SupertypeGraph.TypeKey(slotRet)
+            string PhysicalSlotKey(TypeNode type) => SupertypeGraph.TypeKey(BirTypeLowering.LowerPhysicalType(
+                type, refs.Aliases, isValue, refs.PhysicalTypeNames, typeArg: false,
+                localTypeNames, nullableFrames: refs.NullableTypeFrames));
+            // The same CLR obligation may be reached through both a source-metadata edge and a projected
+            // reference edge. Bridge identity uses its physical slot, not the spelling of either path.
+            var key = identityName + "`" + arity + "(" + string.Join(",", slotParams.Select(PhysicalSlotKey)) + ")->" + PhysicalSlotKey(slotRet)
                       + "{" + Str(impl["name"]) + "<"
                       + MethodTypeParameterShapeKey(impl["typeParams"] as JsonArray, ownArgs)
                       + ">(" + body + ")}";
@@ -565,7 +568,7 @@ static class KotlinOverrideSlotBridge
                 Fill(spec, descriptorOwner, supIsInterface, false, slotHasDefault,
                     semanticName, descriptorMember, accessorKind,
                     slotParams, slotRet, impl, slot["typeParams"] as JsonArray,
-                    slotReturnsValue && IsUnit(slotRet));
+                    slotReturnsValue && IsUnitValueSlot(slotRet));
             }
         }
 
@@ -661,7 +664,7 @@ static class KotlinOverrideSlotBridge
                     candidateMods.Remove("suspend");
                 for (var i = 0; i < sourceParams.Length; i++)
                     ((JsonObject)((JsonArray)candidate["params"])[i])["type"] = TypeJson.Write(sourceParams[i]);
-                if (returnsValue && IsUnit(sourceRet)) candidate[BirTypeLowering.ValueReturnKey] = true;
+                if (returnsValue && IsUnitValueSlot(sourceRet)) candidate[BirTypeLowering.ValueReturnKey] = true;
                 candidates.Add(candidate);
                 inheritedOwners.Add(candidate, callOwner);
             }
@@ -1406,7 +1409,7 @@ static class KotlinOverrideSlotBridge
                     descriptorOwner.Name, descriptorMember, methodArity, slotParams, slotRet);
                 fill(selectedSpec, descriptorOwner, descriptorIsInterface, true, accessorKind != null ? member : sourceIdentity,
                     descriptorMember, accessorKind, slotParams, slotRet, impl, selectedSlotTypeParams,
-                    slotHasDefault, slotReturnsValue && IsUnit(slotRet));
+                    slotHasDefault, slotReturnsValue && IsUnitValueSlot(slotRet));
                 // Flattened property override facts can name several distinct CLR obligations (a redeclared Kotlin
                 // accessor and its aliased BCL ancestor). Let each exact owner contribute its descriptor; the common
                 // Fill/AddImplDescriptor path deduplicates genuinely identical rows. Ordinary methods retain their
@@ -1536,6 +1539,16 @@ static class KotlinOverrideSlotBridge
         type is TypeNode.Fqn { Name: "kotlin.Unit" or "void" or "System.Void", Args: null };
 
     static bool IsUnit(TypeNode type) => type is TypeNode.Fqn { Name: "kotlin.Unit", Args: null };
+
+    // Nullable and oblivious Unit still occupy the same CLR reference-valued slot. A void Kotlin body
+    // implementing either slot must supply the Unit value just as it does for a closed generic Unit slot.
+    // Keep this distinct from IsUnit: a source Unit? declaration must never be classified as a void body.
+    static bool IsUnitValueSlot(TypeNode type) => type switch
+    {
+        TypeNode.Nullable nullable => IsUnitValueSlot(nullable.Of),
+        TypeNode.Oblivious oblivious => IsUnitValueSlot(oblivious.Of),
+        _ => IsUnit(type),
+    };
 
     // WHICH PASS OWNS A DIVERGENT SLOT. `CovariantInterfaceReturnBridge` bridges a return the override narrowed, and
     // it runs first; this erasure narrows returns too, so without a boundary both fire on one slot and emit two
