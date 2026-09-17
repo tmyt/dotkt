@@ -29,6 +29,8 @@ using DotKt.Bir;
 // every pass that can still add such a face — in particular `ReadOnlyCollectionViewInterfaces`, which states the
 // read-only sibling of a mutable face. Non-ref builds only: the reference surface keeps the Kotlin faces, so no type
 // in it implements a BCL enumerable interface and nothing there is owed a `GetEnumerator`.
+// General override allocation queries this protocol's slot ownership earlier, using the same provider/element
+// rule and physical interface identities, so it cannot install a competing foreign-base forwarding bridge.
 static class ReverseEnumeratorBridgeSynthesis
 {
     // #68: `dotkt$…` uses Kotlin's own unspeakable `$`, so a compiler-owned name can never collide with source.
