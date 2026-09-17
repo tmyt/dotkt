@@ -6,6 +6,12 @@ import roundtrip.comparabledispatch.*
 
 class ComparableDispatchTests {
     @TestAttribute
+    fun comparableBoundDoesNotHideAnotherNullableBound() {
+        val box = ComparisonBoundBox<Int?>(null)
+        assertTrue(keepMixedBounds(1, box) === box)
+    }
+
+    @TestAttribute
     fun importedGenericComparisonAcceptsNativeEnums() {
         assertTrue(compareImported(ComparisonOrder.FIRST, ComparisonOrder.SECOND) < 0)
         assertTrue(compareImported(ComparisonOrder.SECOND, ComparisonOrder.FIRST) > 0)

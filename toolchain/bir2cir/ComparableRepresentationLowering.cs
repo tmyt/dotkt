@@ -112,15 +112,21 @@ static class ComparableRepresentationLowering
         if (declaration["k"] == null && declaration["typeParams"] is JsonArray parameters)
         {
             var bounds = new JsonObject();
+            var changed = false;
             for (var index = 0; index < parameters.Count; index++)
                 if (parameters[index] is JsonObject parameter && parameter["constraints"] is JsonArray constraints
-                    && constraints.Any(bound => TypeJson.Read(bound) is TypeNode.Fqn { Name: "kotlin.Comparable" }))
+                    && constraints.Count > 0)
                 {
+                    // This carrier freezes the method's source bounds before companion-frame expansion.
+                    // A partial snapshot would make later passes mistake unrelated bounds for already-saved facts.
                     bounds[index.ToString()] = constraints.DeepClone();
+                    if (!constraints.Any(bound => TypeJson.Read(bound) is TypeNode.Fqn { Name: "kotlin.Comparable" }))
+                        continue;
+                    changed = true;
                     parameter["constraints"] = new JsonArray(constraints.Where(bound =>
                         TypeJson.Read(bound) is not TypeNode.Fqn { Name: "kotlin.Comparable" }).Select(bound => bound.DeepClone()).ToArray());
                 }
-            if (bounds.Count > 0)
+            if (changed)
             {
                 if (declaration["kind"] != null)
                     KotlinSupertypesRecord.Merge(declaration, new JsonObject { ["bounds"] = bounds });
@@ -145,7 +151,9 @@ static class ComparableRepresentationLowering
         var first = JsonNode.Parse("""
         {"fileClass":"Comparisons","methods":[{"name":"first","static":true,
          "typeParams":[{"name":"T","constraints":[{"t":"fqn","name":"kotlin.Comparable",
-          "args":[{"t":"tv","scope":"method","i":0}]}]}],
+          "args":[{"t":"tv","scope":"method","i":0}]}]},
+          {"name":"U","constraints":[{"t":"fqn","name":"Box","args":[
+           {"t":"nullable","of":{"t":"fqn","name":"kotlin.Int"}}]}]}],
          "params":[],"ret":{"t":"fqn","name":"kotlin.Int"},"body":[{"k":"return","value":{
           "k":"callInstance","ownerType":{"t":"fqn","name":"kotlin.Comparable",
            "args":[{"t":"tv","scope":"method","i":0}]},"method":"compareTo",
@@ -155,6 +163,7 @@ static class ComparableRepresentationLowering
         var second = first.DeepClone().AsObject();
         second["methods"][0]["name"] = "second";
         var sourceBounds = first["methods"][0]["typeParams"][0]["constraints"].DeepClone();
+        var otherBounds = first["methods"][0]["typeParams"][1]["constraints"].DeepClone();
         Apply(new JsonNode[] { first, second }, referenceBuild: false);
         var helpers = new[] { first, second }.SelectMany(root => root["methods"].AsArray().OfType<JsonObject>())
             .Where(method => Text(method["name"]).StartsWith("$comparableDispatch$", StringComparison.Ordinal)).ToArray();
@@ -169,7 +178,8 @@ static class ComparableRepresentationLowering
                 || Text(call["args"][0]["e"]["method"]) != "ReadLeft"
                 || Text(call["args"][1]["method"]) != "ReadRight"
                 || method["typeParams"][0]["constraints"].AsArray().Count != 0
-                || !JsonNode.DeepEquals(bounds["bounds"]["0"], sourceBounds))
+                || !JsonNode.DeepEquals(bounds["bounds"]["0"], sourceBounds)
+                || !JsonNode.DeepEquals(bounds["bounds"]["1"], otherBounds))
                 throw new InvalidOperationException("Comparable dispatch lost evaluation or source bound metadata");
         }
         var branch = helpers[0]["body"][0]["value"];

@@ -2,6 +2,9 @@ package roundtrip.comparabledispatch
 
 enum class ComparisonOrder { FIRST, SECOND }
 
+class ComparisonBoundBox<T>(val value: T)
+fun <T : Comparable<T>, U : ComparisonBoundBox<Int?>> keepMixedBounds(value: T, box: U): U = box
+
 fun <T : Comparable<T>> compareImported(left: T, right: T): Int = left.compareTo(right)
 
 inline fun <T : Comparable<T>> compareInlineImported(left: T, right: T): Int = left.compareTo(right)
