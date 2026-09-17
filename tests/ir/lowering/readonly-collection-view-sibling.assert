@@ -19,7 +19,8 @@
 # A dll2klib-projected .NET `ISet<T>` reaches bir2cir as the BCL face directly, with no Kotlin alias in front of it.
 # It is the third row of the relation and the one no Kotlin collection type produces, since `MutableSet` aliases
 # ICollection: without this document the ISet arm would be unreachable and could be deleted unnoticed.
-+"interfaces":[{"t":"fqn","name":"System.Collections.Generic.ISet\u00601","args":[{"t":"fqn","name":"System.Int64"}]},{"t":"fqn","name":"System.Collections.Generic.IReadOnlyCollection\u00601","args":[{"t":"fqn","name":"System.Int64"}]}]
+# The genuine foreign ISet contract also contributes its nominal mutable-set identity before sibling expansion.
++"interfaces":[{"t":"fqn","name":"System.Collections.Generic.ISet\u00601","args":[{"t":"fqn","name":"System.Int64"}]},{"t":"fqn","name":"DotKt.Runtime.CompilerServices.KotlinMutableSetClassifier"},{"t":"fqn","name":"System.Collections.Generic.IReadOnlyCollection\u00601","args":[{"t":"fqn","name":"System.Int64"}]}]
 # The element type is carried through unchanged, including a type VARIABLE — the sibling of `IList<!0>` is
 # `IReadOnlyList<!0>`, not a sibling over some erased element. The existential view stated between them also shows
 # the siblings are appended after every stated face rather than beside the face that obliged them.
