@@ -19,14 +19,10 @@ sealed class GenericRepresentationPolicy
 
     public bool IsStorageElement(string kind, string key) => false;
 
-    public TypeNode ProjectArgumentHead(TypeNode.Fqn source, bool storage, NullableRepresentationFrame frame)
-    {
-        if (!_aliases.TryGetValue(source.Name, out var ordinaryHead)
-            || !BirTypeLowering.UsesReadOnlyCollectionFace(source.Name)) return source;
-        var arguments = source.Args;
-        if (frame != null && arguments != null) arguments = frame.OrdinaryArguments(arguments);
-        return new TypeNode.Fqn(ordinaryHead, arguments);
-    }
+    // Frame expansion must retain the source owner until declaration matching is complete. Lowering only a
+    // call's type arguments here would compare CLR IReadOnlyList<T> with a selected Kotlin List<T> descriptor.
+    // BirTypeLowering owns the eventual alias substitution for both positions.
+    public TypeNode ProjectArgumentHead(TypeNode.Fqn source, bool storage, NullableRepresentationFrame frame) => source;
 
     public static void SelfTest()
     {
@@ -56,8 +52,8 @@ sealed class GenericRepresentationPolicy
             || mapArguments[1] != new TypeNode.Tv("method", 0))
             throw new InvalidOperationException("Binding policy changed a native array or map element's canonical representation");
         var arguments = ((JsonArray)root["methods"][1]["body"][0]["typeArgs"]).Select(TypeJson.Read).ToArray();
-        if (arguments.Length != 1 || arguments[0] is not TypeNode.Fqn { Name: "System.Collections.Generic.IReadOnlyCollection" })
-            throw new InvalidOperationException("Binding policy did not preserve a readonly collection argument's canonical head");
+        if (arguments.Length != 1 || arguments[0] is not TypeNode.Fqn { Name: "kotlin.collections.Collection" })
+            throw new InvalidOperationException("Frame expansion changed a collection's source declaration identity");
 
         var sourceOverride = TypeJson.Write(new TypeNode.Fqn("Outer.Inner", new TypeNode[] { new TypeNode.Tv("type", 0) }));
         var innerRoot = new JsonObject { ["fileClass"] = "InnerRoles", ["types"] = new JsonArray(new JsonObject {

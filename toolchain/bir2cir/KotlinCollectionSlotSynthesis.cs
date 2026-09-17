@@ -544,9 +544,14 @@ static class KotlinCollectionSlotSynthesis
         var concrete = CloseCollectionViewArguments(
             new TypeNode.Fqn(Collection, new TypeNode[] { new TypeNode.Fqn("kotlin.String") }),
             helperFrame, mapping, inheritedOwnerArguments);
-        if (concrete[0] is not TypeNode.Fqn { Name: "System.Collections.Generic.IReadOnlyCollection", Args.Length: 1 }
-            || concrete[1] is not TypeNode.Fqn { Name: "System.Collections.Generic.IReadOnlyCollection", Args.Length: 1 })
-            throw new InvalidOperationException("Collection slot helper changed a concrete readonly argument's canonical head");
+        if (concrete[0] is not TypeNode.Fqn { Name: Collection, Args.Length: 2 }
+            || concrete[1] is not TypeNode.Fqn { Name: Collection, Args.Length: 2 })
+            throw new InvalidOperationException("Collection slot helper discarded a readonly argument's source identity");
+        if (concrete.Select(argument => BirTypeLowering.LowerPhysicalType(argument, aliases,
+                _ => false, null, typeArg: true,
+                nullableFrames: new Dictionary<string, NullableRepresentationFrame> { [Collection] = helperFrame })).Any(argument =>
+                argument is not TypeNode.Fqn { Name: "System.Collections.Generic.IReadOnlyCollection", Args.Length: 1 }))
+            throw new InvalidOperationException("Final collection alias lowering changed its canonical readonly face");
         Console.WriteLine("[collection slot frames] self-test OK (source element, inherited physical permutation, concrete roles)");
     }
 
