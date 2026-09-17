@@ -146,7 +146,7 @@ static class KotlinCollectionIdentitySynthesis
         }
         if (Has("System.Collections.Generic.IReadOnlySet", 1)) names.Add(Set);
         if (Has("System.Collections.Generic.ISet", 1)) names.Add(MutableSet);
-        if (Has("System.Collections.IEnumerable")) names.Add(MutableIterable);
+        if (!dictionary && Has("System.Collections.IEnumerable")) names.Add(MutableIterable);
     }
 
     static string Str(JsonNode node) =>

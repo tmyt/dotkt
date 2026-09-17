@@ -199,10 +199,26 @@ internal fun starProjectionSafeCast(value: Any?, openGenericType: StarProjection
 
 // Operational storage faces do not grant Kotlin mutability. This predicate is separate from the physical type
 // test: an erased reified target may be object, which would accept even an ineligible sentinel object.
+@kotlin.clr.ClrTypeAlias("System.Collections.Generic.IDictionary")
+internal interface StarProjectionDictionary<K, V>
+
+@kotlin.clr.ClrTypeAlias("System.Collections.Generic.IReadOnlyDictionary")
+internal interface StarProjectionReadOnlyDictionary<K, V>
+
+// String, arrays and dictionary storage have CLR enumerators without Kotlin Iterable membership.
+// Declaration-owned Kotlin identities are checked before this foreign-storage policy, so a map that
+// explicitly implements Kotlin Iterable still has its declared identity.
+private fun foreignKotlinIterable(value: Any?): Boolean = value == null ||
+    (value is kotlin.collections.ClrRawEnumerable && value !is String
+        && !value.starProjectionRuntimeType().isArray
+        && value !is kotlin.collections.ClrRawDictionary
+        && value !is StarProjectionDictionary<*, *>
+        && value !is StarProjectionReadOnlyDictionary<*, *>)
+
 @PublishedApi
 internal fun kotlinCollectionMatches(value: Any?, witness: Int): Boolean {
     if (value !is KotlinIterableClassifier) return when (witness and -2) {
-        14, 16 -> value == null || value is kotlin.collections.ClrRawEnumerable
+        14, 16 -> foreignKotlinIterable(value)
         else -> true
     }
     // bir2cir supplies KotlinTypeWitness: low bit is nullability; the remaining code is nominal identity.

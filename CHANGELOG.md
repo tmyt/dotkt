@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Iterable tests distinguish Kotlin identity from CLR enumeration (#774).** Strings, arrays and dictionaries
+  no longer satisfy Iterable solely through their CLR storage interfaces. Explicit Kotlin Iterable implementations
+  and foreign enumerable collections retain their membership across direct and reified tests and casts.
+
 - **Imported Iterable interfaces keep one enumeration slot owner (#775).** Kotlin iterator implementations
   retain their generic and non-generic CLR enumeration slots when an imported interface and a foreign collection
   base meet, without a competing bridge to the base collection's enumerator.

@@ -171,6 +171,9 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   collection capabilities under the same classifier rules used for foreign values, so adding a Kotlin Iterable
   interface does not hide capabilities inherited from a CLR base. Operational interfaces synthesized for Kotlin
   implementations are not reinterpreted as additional Kotlin mutability.
+  Strings, arrays, and dictionary storage do not acquire Kotlin `Iterable` identity merely by exposing CLR
+  enumeration. A class that explicitly implements Kotlin `Iterable` retains that declaration-owned identity,
+  including when it also inherits a foreign dictionary implementation.
 - **`x is T` preserves a nullable reified instantiation.** `m<String?>` and `m<String>` are the same CLR generic
   instantiation, so the hidden witness supplies the otherwise-missing distinction on the null path. It is forwarded
   dynamically through calls such as `inline fun <reified U> f(x: Any?) = m<U>(x)`, including lifted object, closure,
