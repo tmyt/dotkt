@@ -545,19 +545,35 @@ static class BirTypeLowering
     // Some representation passes run before the full-tree lowering but must compare a Kotlin declaration with an
     // exact CLR slot read from metadata. Use the one canonical lowering rule under the reference facts for that
     // comparison; do not duplicate a partial primitive/@ClrTypeAlias table in the caller.
+    // A referenced value-returning slot's physical kotlin.Unit is a class, not Kotlin's Unit-as-void return.
     internal static bool SamePhysicalSlotType(TypeNode left, TypeNode right,
         IReadOnlyDictionary<string, string> aliases, ValueTypeOracle isValueFqn,
         IReadOnlyDictionary<string, string> physicalTypeNames, bool returnPosition,
         IReadOnlySet<string> localTypeNames = null,
-        IReadOnlyDictionary<string, NullableRepresentationFrame> nullableFrames = null)
+        IReadOnlyDictionary<string, NullableRepresentationFrame> nullableFrames = null,
+        bool leftReturnsValue = false)
     {
-        TypeNode LowerSlot(TypeNode type) => returnPosition
+        TypeNode LowerSlot(TypeNode type, bool returnsValue = false) => returnPosition && !returnsValue
             && type is TypeNode.Fqn { Name: "kotlin.Unit" or "void" or "System.Void", Args: null }
                 ? VoidType
                 : CanonicalPhysicalSlotType(LowerPhysicalType(
                     type, aliases, isValueFqn, physicalTypeNames, typeArg: false, localTypeNames,
                     nullableFrames: nullableFrames));
-        return LowerSlot(left).Equals(LowerSlot(right));
+        return LowerSlot(left, leftReturnsValue).Equals(LowerSlot(right));
+    }
+
+    internal static void SelfTestSlotReturns()
+    {
+        var aliases = new Dictionary<string, string>();
+        var unit = new TypeNode.Fqn("kotlin.Unit");
+        var nullableUnit = new TypeNode.Nullable(unit);
+        bool Equal(TypeNode left, TypeNode right, bool value = false) => SamePhysicalSlotType(
+            left, right, aliases, _ => false, null, returnPosition: true, leftReturnsValue: value);
+        if (!Equal(unit, VoidType) || Equal(unit, nullableUnit)
+            || !Equal(unit, nullableUnit, value: true) || Equal(unit, unit, value: true)
+            || Equal(unit, VoidType, value: true))
+            throw new InvalidOperationException("Slot comparison lost the distinction between Unit values and void returns");
+        Console.WriteLine("[slot returns] self-test OK (source Unit, nullable Unit, physical Unit value)");
     }
 
     // A representation pass that runs before the full-tree lowering may already have to author a PHYSICAL type

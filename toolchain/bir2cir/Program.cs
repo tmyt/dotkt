@@ -36,6 +36,7 @@ static class Bir2Cir
                 NullableRepresentationTypes.SelfTest();
                 NullableRepresentationMaterialization.SelfTest();
                 GenericRepresentationPolicy.SelfTest();
+                BirTypeLowering.SelfTestSlotReturns();
                 CollectionHelperBinding.SelfTest();
                 IntrinsicExtensionRepresentation.SelfTest();
                 ReferenceExistentialAbiBinding.SelfTest();

@@ -281,7 +281,9 @@ static class CovariantInterfaceReturnBridge
                 var implementationRet = SubstOwnerTvs(implementationRet0, ownArgs);
                 if (implementationRet == slotRet
                     || BirTypeLowering.SamePhysicalSlotType(slotRet, implementationRet,
-                        refs.Aliases, isValue, refs.PhysicalTypeNames, returnPosition: true, nullableFrames: refs.NullableTypeFrames)
+                        refs.Aliases, isValue, refs.PhysicalTypeNames, returnPosition: true,
+                        nullableFrames: refs.NullableTypeFrames,
+                        leftReturnsValue: !IsSuspend(implementation) && declaration.ReturnsValue)
                     || KotlinOverrideSlotBridge.IsErasureDivergence(slotRet, implementationRet))
                     continue;
 
