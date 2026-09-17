@@ -748,6 +748,7 @@ static class FBoundStarProjectionErasure
         if (declaration[fact] != null || TypeJson.Read(declaration[slot]) is not TypeNode type
             || (!ContainsExistentialProjection(type)
                 && !ContainsWritableVariantArray(type, owners, refs)
+                && !ContainsGenericAlias(type, refs)
                 && !ContainsKotlinVariantType(type, owners, refs)))
             return;
         // An earlier representation pass may already have replaced nullable generic arguments with object.
@@ -756,10 +757,32 @@ static class FBoundStarProjectionErasure
             ?? TypeNode.ToJson(type);
     }
 
+    // Aliases are not a reversible source-type encoding: ArrayList<T> and a CLR List<T> declaration can have
+    // the same physical signature without the same Kotlin classifier. Preserve declaration truth even when the
+    // alias needs no nullable/existential companion; reverse projection must not guess a source owner.
+    static bool ContainsGenericAlias(TypeNode type, ReferenceMetadataIndex refs) => type switch
+    {
+        TypeNode.Fqn { Args: { } args } f => refs.Aliases.ContainsKey(f.Name)
+            || args.Any(argument => ContainsGenericAlias(argument, refs)),
+        TypeNode.Nullable nullable => ContainsGenericAlias(nullable.Of, refs),
+        TypeNode.Oblivious oblivious => ContainsGenericAlias(oblivious.Of, refs),
+        TypeNode.Projection projection => ContainsGenericAlias(projection.Of, refs),
+        TypeNode.Array array => ContainsGenericAlias(array.Elem, refs),
+        TypeNode.ByRef byRef => ContainsGenericAlias(byRef.Of, refs),
+        TypeNode.Ptr pointer => ContainsGenericAlias(pointer.Of, refs),
+        TypeNode.Mod modifier => ContainsGenericAlias(modifier.M, refs) || ContainsGenericAlias(modifier.Of, refs),
+        TypeNode.Fn function => ContainsGenericAlias(function.Ret, refs)
+            || function.Params.Any(parameter => ContainsGenericAlias(parameter, refs))
+            || function.Recv != null && ContainsGenericAlias(function.Recv, refs)
+            || function.Ctx?.Any(context => ContainsGenericAlias(context, refs)) == true,
+        _ => false,
+    };
+
     static bool ContainsKotlinVariantType(TypeNode type,
         IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs) => type switch
     {
         TypeNode.Fqn f => RequiresKotlinVariantCarrier(f, owners, refs)
+            || RequiresOpaqueVariantAlias(f, owners, refs)
             || f.Args?.Any(argument => ContainsKotlinVariantType(argument, owners, refs)) == true,
         TypeNode.Nullable nullable => ContainsKotlinVariantType(nullable.Of, owners, refs),
         TypeNode.Oblivious oblivious => ContainsKotlinVariantType(oblivious.Of, owners, refs),
@@ -1348,6 +1371,18 @@ static class FBoundStarProjectionErasure
         if (owners.TryGetValue(application.Name, out var local) && local.Def != null)
             return HasKotlinVariantParameter(application, local.Def["typeParams"] as JsonArray);
         return HasKotlinVariantParameter(application, refs.OwnerTypeParamDeclarations(application.Name));
+    }
+
+    // A foreign alias cannot be retrofitted with a nominal carrier. Its binding's incompatible variance requires
+    // an opaque reference slot instead; the exact source application still travels in KotlinType metadata.
+    static bool RequiresOpaqueVariantAlias(TypeNode.Fqn application,
+        IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs,
+        IReadOnlyDictionary<string, string> localClrAliases = null)
+    {
+        var parameters = owners.TryGetValue(application.Name, out var local)
+            ? local.Def?["typeParams"] as JsonArray : null;
+        return AliasVarianceRepresentation.RequiresErasure(application, refs, parameters,
+            localClrAliases?.GetValueOrDefault(application.Name));
     }
 
     // CLR variance does not relate value-type instantiations, even for an interface. Kotlin permits those same
@@ -4280,6 +4315,9 @@ static class FBoundStarProjectionErasure
                     argument, owners, refs, boundDeclaration, localClrAliases)).ToArray());
             case TypeNode.Fqn preserved when preserveConstructedHead:
                 return preserved;
+            case TypeNode.Fqn f when !boundDeclaration
+                && RequiresOpaqueVariantAlias(f, owners, refs, localClrAliases):
+                return new TypeNode.Fqn("kotlin.Any");
             case TypeNode.Fqn f when !boundDeclaration
                 && RequiresKotlinVariantCarrier(f, owners, refs)
                 && TryExistentialCarrier(f.Name, owners, refs, out var variantCarrier):

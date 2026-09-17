@@ -405,7 +405,7 @@ static partial class ClrMemberResolution
         // the declaration being named. Reproducing it here instead reproduced part of it: the arg-position
         // collapse but not the generic-classifier erasure, and not the contravariant `Comparable<Any?>` collapse.
         var head = BirTypeLowering.PhysicalHead(kotlinName,
-            _refs.Aliases.TryGetValue(kotlinName, out var bcl) ? bcl : null, loweredArgs, collapseInvariant: typeArg,
+            _refs.Aliases.TryGetValue(kotlinName, out var bcl) ? bcl : null, loweredArgs,
             _refs.NullableTypeFrames);
         return MetadataSpelling(head, def, kotlinName);
     }

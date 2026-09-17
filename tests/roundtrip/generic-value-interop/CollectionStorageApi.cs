@@ -14,6 +14,6 @@ public static class CollectionStorageApi
 
     public static bool Contains<T>(object value, T element) => ((ICollection<T>)value).Contains(element);
     public static bool ContainsStoredCollection<T>(object value, object element) =>
-        ((ICollection<ICollection<T>>)value).Contains((ICollection<T>)element);
+        ((ICollection<IReadOnlyCollection<T>>)value).Contains((IReadOnlyCollection<T>)element);
     public static int IndexOf<T>(object value, T element) => ((IList<T>)value).IndexOf(element);
 }

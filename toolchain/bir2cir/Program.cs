@@ -46,6 +46,7 @@ static class Bir2Cir
                 StdlibSubstituteTypeParams.SelfTest();
                 FBoundStarProjectionErasure.ProjectionConstraintSelfTest();
                 ComparableRepresentationLowering.SelfTest();
+                AliasVarianceRepresentation.SelfTest();
                 ReferenceMetadataIndex.SelfTest();
                 NullableTvErasureCallRealign.SelfTest();
                 DriverOptions.SelfTest();

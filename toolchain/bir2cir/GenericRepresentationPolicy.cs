@@ -5,7 +5,7 @@ using System.Text.Json.Nodes;
 using DotKt.Bir;
 
 // One binding-owned policy for both demand analysis and type materialization. Compiler-owned generic
-// applications use their declared frame; a trusted CLR alias uses the binding's invariant argument form.
+// applications use their declared frame; readonly aliases retain the same face in ordinary and nested slots.
 sealed class GenericRepresentationPolicy
 {
     readonly IReadOnlyDictionary<string, string> _aliases;
@@ -22,7 +22,7 @@ sealed class GenericRepresentationPolicy
     public TypeNode ProjectArgumentHead(TypeNode.Fqn source, bool storage, NullableRepresentationFrame frame)
     {
         if (!_aliases.TryGetValue(source.Name, out var ordinaryHead)
-            || !BirTypeLowering.TryInvariantSibling(source.Name, out var storageHead)) return source;
+            || !BirTypeLowering.UsesReadOnlyCollectionFace(source.Name)) return source;
         var arguments = source.Args;
         if (frame != null && arguments != null) arguments = frame.OrdinaryArguments(arguments);
         return new TypeNode.Fqn(ordinaryHead, arguments);

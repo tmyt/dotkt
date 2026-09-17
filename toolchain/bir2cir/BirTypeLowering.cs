@@ -53,7 +53,7 @@ static class BirTypeLowering
         };
         var lowered = arguments.Select(argument =>
             LowerType(Bound(argument), refBuild: false, force: true, typeArg: true)).ToArray();
-        return PhysicalHead(kotlinFqn, bcl, lowered, collapseInvariant: false)
+        return PhysicalHead(kotlinFqn, bcl, lowered)
             is TypeNode.Fqn { Args: not null };
     }
 
@@ -265,21 +265,8 @@ static class BirTypeLowering
 
     static string AliasBcl(string fqn) => _aliases.TryGetValue(fqn, out var bcl) ? bcl : null;
 
-    // ARG-POSITION VARIANCE COLLAPSE (Root V): the INVARIANT BCL sibling of each covariant readonly collection interface,
-    // used ONLY at generic-arg depth >= 1 (see LowerType) where the covariant alias is unrescuable against a concrete
-    // invariant value — `IList<T>` does NOT inherit `IReadOnlyList<T>`, so `Dictionary<K,IList<V>>` inhabits no
-    // `IDictionary<K,IReadOnlyList<V>>` (invariant). The concrete BCL type inhabits these exactly: List<T>/HashSet<T>
-    // implement IList<T>/ICollection<T>. (Iterable->IEnumerable is covariant, no collapse; Map/MutableMap already
-    // collapse to IDictionary at head.) HEAD-position seams (a head IList<T> value into a readonly IReadOnlyList<T>
-    // slot) are materialized as explicit CIR casts by PhysicalValueCoercion after final member binding.
-    static readonly IReadOnlyDictionary<string, string> InvariantSibling = new Dictionary<string, string>(StringComparer.Ordinal)
-    {
-        ["kotlin.collections.List"] = "System.Collections.Generic.IList",
-        ["kotlin.collections.Collection"] = "System.Collections.Generic.ICollection",
-        ["kotlin.collections.Set"] = "System.Collections.Generic.ICollection",
-    };
-
-    internal static bool TryInvariantSibling(string name, out string sibling) => InvariantSibling.TryGetValue(name, out sibling);
+    internal static bool UsesReadOnlyCollectionFace(string name) =>
+        name is "kotlin.collections.List" or "kotlin.collections.Collection" or "kotlin.collections.Set";
 
     // KProperty's generic parameters are not collection-storage slots: each one is substituted directly into a CLR
     // interface method parameter/return (`KProperty1<T,V>.get(T):V`, `KMutableProperty1.set(T,V)`, etc.). Lowering a
@@ -310,15 +297,13 @@ static class BirTypeLowering
     /// lowers; the member-reference serializer applies it to a signature read back out of the reference twin,
     /// which speaks the Kotlin surface while the member being named lives in the runtime twin, which speaks
     /// this. Those two must agree at EVERY branch — the erasure of a generic classifier, the contravariant
-    /// `Comparable<Any?>` collapse, the arg-position variance collapse, the plain alias — and the only way to
+    /// `Comparable<Any?>` collapse, the plain alias — and the only way to
     /// guarantee they do is for there to be one branch each. A serializer that reproduced "the same rule"
     /// reproduced two of the four, and named members that exist in neither twin.
     ///
     /// `bcl` is the type's @ClrTypeAlias target, or null when it has none; `loweredArgs` is null for a leaf.
-    /// `collapseInvariant` is the caller's position judgement — a storage slot collapses, a head or method slot
-    /// does not — because only the caller knows which of the two vocabularies its position came from.
     /// </remarks>
-    internal static TypeNode PhysicalHead(string kotlinFqn, string bcl, TypeNode[] loweredArgs, bool collapseInvariant,
+    internal static TypeNode PhysicalHead(string kotlinFqn, string bcl, TypeNode[] loweredArgs,
         IReadOnlyDictionary<string, NullableRepresentationFrame> nullableFrames = null)
     {
         // `kotlin.Enum<E>` -> the NON-generic `System.Enum` (a Kotlin enum is a real CLR System.Enum, not the
@@ -343,9 +328,6 @@ static class BirTypeLowering
         if (bcl == "System.IComparable" && loweredArgs.Length == 1
             && ComparableApplicationCollapses(loweredArgs[0]))
             return new TypeNode.Fqn("System.IComparable");
-        // ARG-POSITION VARIANCE COLLAPSE (Root V): in a storage slot a covariant readonly collection interface ->
-        // its INVARIANT sibling, so a concrete invariant value inhabits the nested slot EXACTLY. The head keeps the
-        // covariant alias; PhysicalValueCoercion materializes any resulting value-flow seam as a CIR cast.
         // A generic application: a @ClrTypeAlias GENERIC owner -> the BCL generic (ilemit arity-constructs).
         return new TypeNode.Fqn(bcl, loweredArgs);
     }
@@ -511,7 +493,7 @@ static class BirTypeLowering
                         // build, which has no ref.dll to read.
                         if (force && KotlinAllToClr.TryGetValue(f.Name, out var clr)) return new TypeNode.Fqn(clr);
                     }
-                    return PhysicalHead(f.Name, AliasBcl(f.Name), loweredArgs, collapseInvariant: typeArg && !refBuild,
+                    return PhysicalHead(f.Name, AliasBcl(f.Name), loweredArgs,
                         _nullableFrames);
                 }
             case TypeNode.Tv:

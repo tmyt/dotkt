@@ -33,7 +33,7 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
 | [4](#4-suspend-fun--an-async-taskt-function-hot-not-cold) | `suspend fun` = an async `Task<T>` function; **hot, not cold** |
 | [5](#5-primitive-stringification-is-clr-native-not-kotlinjvm-cosmetics) | CLR-native stringification; `String.format` = .NET composite format |
 | [5b](#5b-charsequence-is-string-on-the-clr--an-immutable-snapshot-not-a-live-view) | **`CharSequence` is `string`** — snapshot, not live view |
-| [5c](#5c-mapmutablemap-both-erase-to-idictionarykv--read-only-ness-is-frontend-enforced) | `Map`/`MutableMap` → `IDictionary<K,V>` |
+| [5c](#5c-map-values-preserve-kotlin-covariance-across-invariant-clr-dictionaries) | Covariant `Map` values and exact CLR dictionary declarations |
 | [5d](#5d-appendable-is-systemtextstringbuilder) | `Appendable` is `System.Text.StringBuilder` |
 | [5e](#5e-enum-classes-have-two-clr-shapes) | Enum classes: basic/`@ClrEnum` → real CLR `enum`, rich → singleton class |
 | [5f](#5f-value-class-is-a-real-wrapper-class-never-erased) | `value class` = a real class (never erased) |
@@ -653,18 +653,25 @@ program needing literal matching uses `Regex.escape`).
   disagree with the CLR world around it — the *less* consistent, harder-to-explain behavior. The deviation is
   consistent (mscorlib-general), documented (here), and convincingly explainable — it passes the test.
 
-## 5c. `Map`/`MutableMap` BOTH erase to `IDictionary<K,V>` — read-only-ness is frontend-enforced
+## 5c. `Map` values preserve Kotlin covariance across invariant CLR dictionaries
 
-Kotlin's `MutableMap : Map` subtype relation does **not** exist between the BCL's dictionary interfaces
-(`IDictionary<K,V>` does not extend `IReadOnlyDictionary<K,V>`), so the List-style split alias
-(`Map→IReadOnlyDictionary` + `MutableMap→IDictionary`) would make every `MutableMap`-value-into-`Map`-slot store
-formally unverifiable — on the hot path (`Map.get` on a mutable receiver, `associateTo`'s `M : MutableMap`). DotKt
-therefore aliases **BOTH `Map` and `MutableMap` to `System.Collections.Generic.IDictionary`** — exactly Kotlin/JVM's
-own model (both erase to `java.util.Map`), and the in-repo precedent of `Iterable`/`MutableIterable` → `IEnumerable`.
-Consequences (deliberate, declared):
+Kotlin declares `Map<K, out V>`, while CLR `IDictionary<K,V>` is invariant. A dictionary containing strings
+therefore cannot satisfy `IDictionary<K,object>`, and a dictionary containing mutable lists cannot satisfy
+`IDictionary<K,IReadOnlyList<V>>`. Neither an unchecked return nor an interface cast makes those constructions
+compatible.
 
-- **A Kotlin `Map` surfaces to C# as a mutable `IDictionary<K,V>`** (concrete values are `Dictionary<K,V>`); Kotlin's
-  read-only-ness is enforced by the Kotlin FRONTEND only, not the CLR type. `emptyMap()` returns a fresh
+bir2cir separates a Kotlin value slot from an exact CLR declaration. When a trusted alias's Kotlin declaration
+variance is absent from its CLR target, the value slot is opaque (`object`), with the full Kotlin application
+retained in metadata. This applies recursively in fields, method slots and generic containers. The original
+reference is retained: widening a Map does not copy or wrap it, so identity and subsequent updates are preserved.
+Constructors, physical inheritance edges and selected CLR member declarations retain their exact reified types.
+`MutableMap<K,V>` is invariant and keeps its exact dictionary face unless an explicit projection requires erasure.
+Classifier tests and casts still check the dictionary classifier; an opaque slot does not mean every object is a Map.
+
+Consequences and remaining implementation limitations:
+
+- **A Kotlin `Map` value slot surfaces to C# as `object`**, with Kotlin metadata restoring `Map<K,V>` for Kotlin
+  consumers. Concrete dictionaries and mutable dictionary declarations remain reified. `emptyMap()` returns a fresh
   Dictionary-backed map (the pure-Kotlin `EmptyMap` singleton cannot satisfy the IDictionary surface).
 - **`Map.get` is null-on-missing** (Kotlin semantics), synthesized as `ContainsKey` + `get_Item` in
   `kotlin.collections.ClrMapDefaults` (`IDictionary`'s raw indexer throws); `put`/`remove` return the previous value
@@ -674,8 +681,7 @@ Consequences (deliberate, declared):
   BCL List. Entry VALUES are live (`entry.value`/`setValue` read/write through the backing map), but a key
   added/removed after taking the view is not reflected in it. `MutableMap.keys` is a live identity-bearing Kotlin view:
   remove/clear write through and add is unsupported. `MutableMap.values` still binds directly to `IDictionary.Values`.
-- **`Map.iterator()` and `MutableMap.iterator()` retain their Kotlin-selected declarations** even though both
-  receivers lower to the same `IDictionary<K,V>` CLR type. The frontend declaration identity selects distinct,
+- **`Map.iterator()` and `MutableMap.iterator()` retain their Kotlin-selected declarations**. The frontend declaration identity selects distinct,
   stable physical MethodDef names after erasure; neither declaration order nor an emitter-local `$dupN` repair
   chooses the call target. Destructuring `for ((k,v) in m)` therefore follows the overload selected by Kotlin for
   the receiver's static type.
@@ -758,69 +764,32 @@ Two consequences worth stating:
   a concurrent-modification error out of an invalidated BCL enumerator. (A Kotlin implementer that OVERRIDES one of
   the members defines its own behavior for these forms, exactly as on any other platform.)
 
-## 5c-bis. Nested collection type-arguments collapse to their INVARIANT CLR sibling (`List`→`IList` at depth ≥ 1)
+## 5c-bis. Read-only collection arguments retain their canonical CLR face
 
-§5c's head-position Map collapse has a general cause: CLR generics are **invariant**, and the read-only
-interface does not derive from its mutable sibling (`IList<T>` does **not** inherit `IReadOnlyList<T>`;
-`ICollection<T>` not `IReadOnlyCollection<T>`). At the top level (**head**) DotKt keeps the covariant read-only
-alias — so `val xs: List<Number> = listOfInts` stays verifiable via CLR interface covariance. But **inside a
-generic type argument** the covariance is unusable: `groupBy` returns a concrete `Dictionary<K, List<V>>` (a
-*mutable* list in the value slot), which inhabits no instantiation of a `Map<K, List<V>>` slot lowered with the
-read-only sibling in the value position (invariant `IDictionary<K, IReadOnlyList<V>>`). So bir2cir **collapses
-each read-only collection FQN to its invariant sibling whenever it appears at generic-argument depth ≥ 1**:
-`List`→`IList`, `Collection`/`Set`→`ICollection` inside any type argument (and in `newList`/`newMap`/`newSet`
-element keys and call/ctor type-args); the head keeps the covariant alias. Then `Map<K, List<V>>` lowers to
-`IDictionary<K, IList<V>>` and the concrete `Dictionary` inhabits it. Where a head-position read-only value then
-meets a collapsed mutable slot (or vice-versa), bir2cir materializes a runtime-checked CIR `cast` after final member
-binding, including branch joins, constructor delegation, storage, arguments, returns, and resolved member results.
-The resulting `castclass` is always verifiable — it targets a closed interface — and succeeds because stdlib
-collection values implement every face.
+Generic nesting does not turn a read-only collection into a mutable collection. `List<T>` keeps its
+`IReadOnlyList<T>` face, and `Collection<T>` keeps `IReadOnlyCollection<T>`, including inside arrays and generic
+containers. A read-only-only Kotlin or foreign implementation must not be cast to `IList<T>`/`ICollection<T>`
+merely because it is stored in another collection.
 
-Array elements use the same reified storage projection as generic arguments: `Array<List<String>>` is
-`IList<string>[]`, matching `Array<T>` instantiated with `T = List<String>`. Array declarations, allocations,
-reads and writes agree on that element representation; passing the array through a generic method does not
-copy it or replace its identity. Reading an element into a head-position read-only collection slot uses the
-same explicit view conversion described above.
+`Array<List<String>>` therefore uses `IReadOnlyList<string>[]`, consistently with a generic `Array<T>` whose
+ordinary type argument is `List<String>`. Allocation, element access and generic calls use that same representation;
+they do not copy the array or its elements. Nullable generic representations remain a separate declaration-owned
+contract. Map's invariant outer construction is handled by §5c, not by changing the type of its contained lists.
 
-Known deliberate gaps (all **verify-only / run-correct** for stdlib-backed values, tracked as follow-ups):
-- A **user class implementing ONLY the read-only face** (`class X : List<T>` with no mutable sibling) cannot be
-  stored into a nested collapsed `IList` slot — the `castclass` throws at runtime. stdlib/BCL collections
-  implement all faces, so this bites only hand-rolled read-only-only user collections.
-- A **foreign C#-supplied `IList`-only collection** flowing into a read-only slot likewise throws at the
-  reconciling `castclass` (interop collections are outside the current stdlib-value assumption).
-- A **nested covariant upcast** (`val b: List<List<Any>> = a` where `a: List<List<String>>`) is verify-only
-  dirty — the collapse trades the (previously CLR-granted, rarely-used) nested covariance for the far more
-  common concrete-into-slot verifiability. It runs correctly.
+## 5c-ter. Physical collection conversions must preserve source semantics
 
-## 5c-ter. Residual covariance and physical view seams after the Root-V collapse
+CLR `IList<T>` and `IReadOnlyList<T>` do not inherit from one another. bir2cir must resolve the physical conversion
+required by a Kotlin value-flow edge and state it explicitly in CIR; ilemit does not invent a collection ABI.
+The compiler cannot assume an arbitrary foreign mutable interface implementation also implements a read-only
+sibling, nor can it use a cast between unrelated invariant generic constructions as a covariance implementation.
 
-The #75/#100 Root-V collapse (§5c-bis) closed nested **value**-covariance for `List`/`Collection`/`Set`. It leaves
-one durable source-level covariance limitation (task #102), plus a family of physical sibling-view conversions that
-bir2cir must state explicitly after it has resolved each value-flow edge.
+Kotlin declaration-site variance and use-site projections remain distinct source facts. Exact CLR constructors and
+member descriptors must not be weakened merely because their inputs passed through a projected Kotlin value slot.
+For example, a projected map copy uses the trusted collection-construction contract to copy entries into the exact
+destination; it does not cast the source to a differently constructed `IDictionary<K,V>`.
 
-- **`Map<out K, V>` key-covariance (the "Root-K" seam).** `Map` is declared `Map<K, out V>`: values are
-  declaration-site covariant (and collapse via §5c-bis), but **keys are invariant**, exactly as CLR
-  `IDictionary<K,V>` (§5c) is. A *use-site key projection* `Map<out K, V>` therefore appears in the stdlib's
-  copy/merge signatures — `MutableMap.putAll(from: Map<out K, V>)`, `Map<K,V> + Map<out K, V>`,
-  `HashMap(src)` — and lets a source map with a **narrower key type** feed a wider-`K` destination. On the CLR that
-  is `IDictionary<Dog,V>` flowing into an `IDictionary<Animal,V>` slot, which the invariant generic cannot express.
-  bir2cir's `MapVarianceRealign` already **undoes the frontend's `in`/`out` → `kotlin.Any` over-approximation**
-  (restoring the concrete type inside inlined stdlib bodies, and the star-projected `Map<*,*>` `get`/`containsKey`
-  route to the non-generic `IDictionary` facade — §5c) so the *common* case (identical key type, or value widening)
-  is verifiable and run-correct. What stays open is only the case where a user **genuinely widens the KEY type**
-  across a `putAll`/`plus`/copy-ctor boundary. Reachability: uncommon but not exotic — you hit it only by merging a
-  `Map<Sub, V>` into a `Map<Super, V>`-typed target; same-key merges (the overwhelming majority) never touch it.
-  **Disposition: documented, not fixed** — key invariance matches CLR `IDictionary`, so there is no covariant
-  sibling to collapse to; use a target-key-typed source map when merging.
-- **The internal `IList`↔`IReadOnlyList` view seams inside the shipped runtime stdlib (`DotKt.Stdlib.dll`).**
-  These are the head-vs-nested face mismatches (§5c-bis) as they occur **inside stdlib bodies** — a head-position
-  read-only value meeting a collapsed mutable slot, or its exact transpose. After final member binding, bir2cir
-  materializes each resolved seam as an explicit CIR `cast`; ilemit emits that physical instruction one-to-one and
-  has no Kotlin collection-family or stdlib-ABI inference. Every stdlib/BCL-backed collection implements all faces,
-  so the closed-interface cast succeeds. The only way to surface an `InvalidCastException` is the already-documented
-  §5c-bis edge — a hand-rolled **read-only-only** user collection or a foreign **`IList`-only** C# collection crossing
-  such a slot. **Disposition: internal + explicitly reconciled** — they are body-level physical conversions, not an
-  exported ABI shape.
+A runtime test passing despite an ILVerify type mismatch is a compiler defect, not a supported "run-correct" ABI.
+The roundtrip Map variance and collection/array identity fixtures validate both execution and emitted IL.
 
 ## 5c-quater. Cross-module collection surfacing: DotKt `kotlin.collections.*` restores; genuine C# BCL stays BCL (#27)
 
