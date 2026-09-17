@@ -1,0 +1,4 @@
+# The synthesized guard owns its nullable reference result, even without an input sty stamp.
++"k":"cond","type":{"t":"fqn","name":"System.Collections.Generic.IEnumerable","args":[{"t":"fqn","name":"System.String"}]},"cond":
++"method":"kotlinCollectionMatches"
++"k":"isInstRef"

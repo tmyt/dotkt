@@ -10,9 +10,13 @@ package DotKt.Runtime.CompilerServices
 // The BCL-backed implementations cannot carry these interfaces and are recognized from their real CLR collection
 // faces by StarProjectionRuntime instead.
 @PublishedApi
-internal interface KotlinCollectionClassifier
+internal interface KotlinIterableClassifier
 @PublishedApi
-internal interface KotlinMutableCollectionClassifier : KotlinCollectionClassifier
+internal interface KotlinMutableIterableClassifier : KotlinIterableClassifier
+@PublishedApi
+internal interface KotlinCollectionClassifier : KotlinIterableClassifier
+@PublishedApi
+internal interface KotlinMutableCollectionClassifier : KotlinCollectionClassifier, KotlinMutableIterableClassifier
 @PublishedApi
 internal interface KotlinListClassifier : KotlinCollectionClassifier
 @PublishedApi

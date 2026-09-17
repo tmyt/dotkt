@@ -197,29 +197,31 @@ internal fun starProjectionCast(value: Any?, openGenericType: StarProjectionType
 internal fun starProjectionSafeCast(value: Any?, openGenericType: StarProjectionType): Any? =
     if (value != null && starProjectionClosedView(value.starProjectionRuntimeType(), openGenericType) != null) value else null
 
-private object NonCollectionCandidate
-
-// Operational storage faces do not grant Kotlin mutability. Preserve null (including nullable casts/tests) and
-// identity on success; an ineligible non-null value stays non-null but cannot match any collection interface.
+// Operational storage faces do not grant Kotlin mutability. This predicate is separate from the physical type
+// test: an erased reified target may be object, which would accept even an ineligible sentinel object.
 @PublishedApi
-internal fun kotlinCollectionCandidate(value: Any?, witness: Int): Any? {
-    if (value !is KotlinCollectionClassifier) return value
+internal fun kotlinCollectionMatches(value: Any?, witness: Int): Boolean {
+    if (value !is KotlinIterableClassifier) return when (witness and -2) {
+        14, 16 -> value == null || value is kotlin.collections.ClrRawEnumerable
+        else -> true
+    }
     // bir2cir supplies KotlinTypeWitness: low bit is nullability; the remaining code is nominal identity.
-    val matches = when (witness and -2) {
-        2 -> true
+    return when (witness and -2) {
+        2 -> value is KotlinCollectionClassifier
         4 -> value is KotlinMutableCollectionClassifier
         6 -> value is KotlinListClassifier
         8 -> value is KotlinMutableListClassifier
         10 -> value is KotlinSetClassifier
         12 -> value is KotlinMutableSetClassifier
+        14 -> true
+        16 -> value is KotlinMutableIterableClassifier
         else -> true
     }
-    return if (matches) value else NonCollectionCandidate
 }
 
 @PublishedApi
 internal fun kotlinCollectionCastCandidate(value: Any?, witness: Int): Any? {
-    if (kotlinCollectionCandidate(value, witness) === NonCollectionCandidate)
+    if (!kotlinCollectionMatches(value, witness))
         throw ClassCastException("Value is not an instance of the requested Kotlin collection classifier")
     return value
 }

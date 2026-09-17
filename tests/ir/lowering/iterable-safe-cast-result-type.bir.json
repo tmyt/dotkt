@@ -1,0 +1,15 @@
+{
+  "fileClass": "IterableSafeCastResultTypeKt",
+  "hasMain": false,
+  "fields": [], "types": [], "refTypes": [],
+  "methods": [{
+    "name": "safeIterable", "static": true, "vis": "public",
+    "params": [{"name": "value", "type": {"t": "nullable", "of": {"t": "fqn", "name": "kotlin.Any"}}}],
+    "ret": {"t": "nullable", "of": {"t": "fqn", "name": "kotlin.collections.Iterable", "args": [{"t": "fqn", "name": "kotlin.String"}]}},
+    "body": [{"k": "return", "value": {
+      "k": "isInstRef",
+      "type": {"t": "fqn", "name": "kotlin.collections.Iterable", "args": [{"t": "fqn", "name": "kotlin.String"}]},
+      "e": {"k": "local", "name": "value"}
+    }}]
+  }]
+}

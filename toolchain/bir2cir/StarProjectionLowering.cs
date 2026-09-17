@@ -27,8 +27,9 @@ using DotKt.Bir;
 // any out-of-range access", so widen each such clause into TWO consecutive clauses (same body + var) covering both .NET
 // types. Emits `clr:` tokens that pass through type-lowering unchanged. Keyed on the pure-Kotlin type name (runs before
 // type lowering), so it is independent of whichever single .NET type the alias picks.
-// STAR-PROJECTION COLLECTION CLASSIFIERS. List/Map/Iterable and MutableCollection have faithful non-generic BCL
-// faces, so their `is` test and compiler-generated smart cast use those directly. Collection/Set/MutableSet do not:
+// STAR-PROJECTION COLLECTION CLASSIFIERS. List/Map/Iterable and MutableCollection use non-generic BCL
+// faces for their physical tests, after KotlinCollectionClassifierLowering's independent nominal guard preserves
+// Kotlin classifier identity and mutability. Collection/Set/MutableSet need additional physical discrimination:
 // their operational aliases overlap, HashSet<T> has no non-generic collection face, and Dictionary/arrays expose CLR
 // collection faces without being Kotlin Collections. Their `is` test is therefore a bir2cir-authored composite:
 // compiler-owned nominal classifiers for emitted Kotlin implementations plus the actual generic BCL faces for BCL

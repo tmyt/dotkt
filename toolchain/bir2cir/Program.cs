@@ -903,7 +903,7 @@ sealed class Pipeline
         // edge while the Kotlin supertype graph is still present. BCL-backed values are handled by their real generic
         // collection faces in StarProjectionLowering's runtime classifier.
         if (!_options.RefBuild)
-            KotlinCollectionIdentitySynthesis.ApplyAll(staged.Select(s => s.Root).ToList());
+            KotlinCollectionIdentitySynthesis.ApplyAll(staged.Select(s => s.Root).ToList(), refs);
 
         // CONSTRUCTED MEMBER RESULT SUBSTITUTION (early): suspend lowering copies a call's result type into
         // state-machine fields/locals. Close every already-constructed receiver-relative return BEFORE that copy
