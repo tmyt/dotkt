@@ -41,6 +41,7 @@ static class Bir2Cir
                 ReferenceExistentialAbiBinding.SelfTest();
                 KotlinCollectionSlotSynthesis.SelfTest();
                 KotlinOverrideSlotBridge.SelfTest();
+                ClrMemberResolution.InheritedGenericResultSelfTest();
                 ReferenceMetadataIndex.SelfTest();
                 NullableTvErasureCallRealign.SelfTest();
                 DriverOptions.SelfTest();

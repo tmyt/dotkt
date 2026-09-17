@@ -333,6 +333,57 @@ static partial class ClrMemberResolution
         var chosen = answers[0];
         StampResolvedMethodTypeParameters(call, chosen.Declaration);
         StampDelegateArgumentTargets(call, chosen.Declaration, chosen.OwnerArgs);
+        AdaptInheritedGenericResult(call);
+    }
+
+    // dynRet is an already-instantiated caller fact; the MemberRef return belongs to the
+    // selected CLR declaration. An inherited alias slot can return S(E) where Kotlin observes
+    // E. State that scalar conversion in CIR instead of asking ilemit to treat the two TVs as
+    // the same stack type. Constructed-type differences are not licensed by this scalar rule.
+    internal static void AdaptInheritedGenericResult(JsonObject call)
+    {
+        if (TypeJson.Read(call["dynRet"]) is not TypeNode.Tv logical
+            || call["memberRef"] is not JsonObject reference
+            || TypeJson.Read(reference["declaringType"]) is not TypeNode.Fqn declaringOwner
+            || TypeJson.Read(reference["returnType"]) is not TypeNode declaredReturn) return;
+        var physical = FBoundStarProjectionErasure.SubstituteDeclarationTypeArguments(declaredReturn,
+            declaringOwner.Args ?? Array.Empty<TypeNode>(),
+            (call["typeArgs"] as JsonArray)?.Select(TypeJson.Read).ToArray() ?? Array.Empty<TypeNode>());
+        if (physical is not TypeNode.Tv || physical == logical) return;
+        var inner = call.DeepClone().AsObject();
+        inner["ret"] = TypeJson.Write(physical);
+        inner["dynRet"] = TypeJson.Write(physical);
+        if (inner["sty"] != null) inner["sty"] = TypeJson.Write(physical);
+        var position = call["pos"]?.DeepClone();
+        call.Clear();
+        call["k"] = "cast";
+        call["type"] = TypeJson.Write(logical);
+        call["e"] = inner;
+        if (position != null) call["pos"] = position;
+    }
+
+    internal static void InheritedGenericResultSelfTest()
+    {
+        var ordinary = new TypeNode.Tv("method", 0);
+        var storage = new TypeNode.Tv("method", 2);
+        var call = new JsonObject {
+            ["k"] = "callInstance", ["dynRet"] = TypeJson.Write(ordinary),
+            ["recv"] = new JsonObject { ["k"] = "callStatic", ["method"] = "EvaluateOnce" },
+            ["memberRef"] = new JsonObject {
+                ["declaringType"] = TypeJson.Write(new TypeNode.Fqn("Face", new TypeNode[] { storage })),
+                ["returnType"] = TypeJson.Write(new TypeNode.Tv("type", 0)),
+            },
+        };
+        AdaptInheritedGenericResult(call);
+        if (TypeJson.Read(call["type"]) != ordinary || TypeJson.Read(call["e"]["ret"]) != storage
+            || TypeJson.Read(call["e"]["dynRet"]) != storage
+            || call["e"]["recv"]["method"].GetValue<string>() != "EvaluateOnce")
+            throw new InvalidOperationException("Inherited generic result did not preserve its caller/CLR frames");
+        var unchanged = call["e"].DeepClone().AsObject();
+        AdaptInheritedGenericResult(unchanged);
+        if (unchanged["k"].GetValue<string>() != "callInstance")
+            throw new InvalidOperationException("Inherited generic result duplicated an unchanged conversion");
+        Console.WriteLine("[inherited generic result] self-test OK (closed CLR return, caller type, single evaluation)");
     }
 
     static bool LocalDeclares(SupertypeGraph.Def def, TypeNode[] ownerArgs, string name, int methodArity,

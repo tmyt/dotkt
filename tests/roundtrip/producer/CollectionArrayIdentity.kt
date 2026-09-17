@@ -15,6 +15,13 @@ class MutableElements<T>(private val values: MutableList<T>) : AbstractMutableCo
     override fun contains(element: T): Boolean = values.contains(element)
     fun contains(element: String): Boolean = element.isEmpty()
 }
+class MutableListElements<T>(private val values: MutableList<T>) : AbstractMutableList<T>() {
+    override val size: Int get() = values.size
+    override fun get(index: Int): T = values[index]
+    override fun set(index: Int, element: T): T = values.set(index, element)
+    override fun add(index: Int, element: T) { values.add(index, element) }
+    override fun removeAt(index: Int): T = values.removeAt(index)
+}
 
 open class ArraySink<T> {
     protected fun accept(values: Array<T?>): Int = values.size
