@@ -55,6 +55,16 @@ sealed class AliasConstructorDelegationExpansion
         RewriteConstructions(root);
     }
 
+    internal string CollectionCopyConstructorKind(string owner, TypeNode[] signature, TypeNode[] arguments)
+    {
+        owner = ReferenceMetadataIndex.BareOwnerFqn(owner);
+        signature = signature.Select(type => SupertypeGraph.SubstOwnerTvs(type, arguments)).ToArray();
+        if (!_aliasTypes.TryGetValue(owner, out var alias))
+            return _refs?.CollectionCopyConstructorKind(owner, signature, arguments);
+        var selected = SelectConstructor(owner, alias, signature, arguments);
+        return Expand(owner, alias, selected.Index, new HashSet<(string Owner, int Index)>()).CollectionFactoryKind;
+    }
+
     JsonNode RewriteConstructions(JsonNode node)
     {
         if (node is JsonObject obj)

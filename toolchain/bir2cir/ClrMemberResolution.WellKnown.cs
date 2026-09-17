@@ -123,7 +123,8 @@ static partial class ClrMemberResolution
         TypeNode.Fqn physicalOwner, string member, int methodArity, TypeNode[] wantedParams,
         JsonArray wantedTypeParams, TypeNode[] wantedOwnerArgs,
         out TypeNode.Fqn declarationOwner, out string declarationMember,
-        out TypeNode[] declarationParams, out TypeNode declarationReturn)
+        out TypeNode[] declarationParams, out TypeNode declarationReturn,
+        TypeNode[] selectionOwnerArgs = null)
     {
         declarationOwner = null;
         declarationMember = null;
@@ -151,13 +152,24 @@ static partial class ClrMemberResolution
             var declaringArgs = (reference.DeclaringType as TypeNode.Fqn)?.Args ?? Array.Empty<TypeNode>();
             var parameters = reference.ParameterTypes
                 .Select(parameter => SupertypeGraph.SubstOwnerTvs(parameter, declaringArgs)).ToArray();
-            if (!parameters.SequenceEqual(wantedParams, InterfaceSlotTypeComparer.Instance)) continue;
+            // Select the declaration in the binding's ordinary frame, then instantiate that SAME
+            // MethodDef in the physical storage frame. Comparing the latter to Kotlin scalar
+            // parameters would lose Add(E) when the interface is ICollection<S(E)>.
+            var selectionArgs = declaringArgs;
+            if (selectionOwnerArgs != null)
+            {
+                var selectionOwner = DeclaringTypeRef(method, open, selectionOwnerArgs) as TypeNode.Fqn;
+                selectionArgs = selectionOwner?.Args ?? Array.Empty<TypeNode>();
+            }
+            var selectionParameters = reference.ParameterTypes
+                .Select(parameter => SupertypeGraph.SubstOwnerTvs(parameter, selectionArgs)).ToArray();
+            if (!selectionParameters.SequenceEqual(wantedParams, InterfaceSlotTypeComparer.Instance)) continue;
             if (wantedTypeParams != null)
             {
                 var declaredTypeParams = new JsonArray(method.GetGenericArguments()
                     .Select(ReferenceMetadataIndex.GenericParamDeclaration).ToArray());
                 if (!KotlinOverrideSlotBridge.SameMethodTypeParameterShape(
-                        declaredTypeParams, wantedTypeParams, declaringArgs,
+                        declaredTypeParams, wantedTypeParams, selectionArgs,
                         wantedOwnerArgs ?? Array.Empty<TypeNode>()))
                     continue;
             }

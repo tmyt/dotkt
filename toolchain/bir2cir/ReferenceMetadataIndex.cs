@@ -203,6 +203,10 @@ sealed partial class ReferenceMetadataIndex
         DeclarationFamilyOf(MemberBinding binding) =>
         (binding.Owner, binding.DeclarationSourceName, binding.MethodArity, binding.IsStatic, binding.ParamCount);
 
+    internal TypeNode[] DeclarationSourceParameters(string id) =>
+        id != null && _declarationById.TryGetValue(id, out var binding)
+            ? binding.DeclarationSemanticParams : null;
+
     public bool TryDeclarationIdentity(
         string id,
         out string physicalName,
@@ -324,7 +328,7 @@ sealed partial class ReferenceMetadataIndex
             return false;
         }
         var completedCallSignature = completesWithNullableWitnesses
-            ? callSignature.Concat(Enumerable.Repeat<TypeNode>(new TypeNode.Fqn("kotlin.Boolean"),
+            ? callSignature.Concat(Enumerable.Repeat<TypeNode>(new TypeNode.Fqn("kotlin.Int"),
                 missingNullableWitnesses)).ToArray()
             : callSignature.ToArray();
         var physicalOwner = binding.DeclarationPhysicalOwner ?? binding.Owner;
@@ -1123,7 +1127,10 @@ sealed partial class ReferenceMetadataIndex
 
     static bool SameFrame(NullableRepresentationFrame a, NullableRepresentationFrame b) =>
         ReferenceEquals(a, b) || a != null && b != null && a.SourceArity == b.SourceArity
-            && a.NullableIndices.SequenceEqual(b.NullableIndices) && a.PhysicalOrder.SequenceEqual(b.PhysicalOrder);
+            && a.NullableIndices.SequenceEqual(b.NullableIndices)
+            && a.StorageIndices.SequenceEqual(b.StorageIndices)
+            && a.NullableStorageIndices.SequenceEqual(b.NullableStorageIndices)
+            && a.PhysicalOrder.SequenceEqual(b.PhysicalOrder);
 
     static bool Same<T>(T[] a, T[] b) where T : IEquatable<T> =>
         ReferenceEquals(a, b) || a != null && b != null && a.SequenceEqual(b);
@@ -3369,7 +3376,7 @@ sealed partial class ReferenceMetadataIndex
 
     // Selecting a generated slot compares source declarations, not a known declaration with its erasure.
     // In particular Any? and T? must not select the same slot merely because both can become object.
-    static bool SourceDeclarationDescribesCall(TypeNode declaration, TypeNode candidate) =>
+    internal static bool SourceDeclarationDescribesCall(TypeNode declaration, TypeNode candidate) =>
         DeclarationDescribesCallCore(declaration, candidate, false)
         || DeclarationDescribesCallCore(candidate, declaration, false);
 
@@ -7173,6 +7180,16 @@ sealed partial class ReferenceMetadataIndex
         MustRejectFrame(() => ParseDeclarationIdentityPayload(noSignature, 2));
         if (!SameFrame(ReadNullableFrame(nullableFrame.ToJson(), 2), nullableFrame))
             throw new InvalidOperationException("Type frame metadata reader lost explicit correspondence");
+        var storageFrame = new NullableRepresentationFrame(1, new[] { 0 }, storageIndices: new[] { 0 },
+            nullableStorageIndices: new[] { 0 });
+        var storagePayload = (JsonObject)framePayload.DeepClone();
+        storagePayload[NullableRepresentationFrame.MetadataKey] = storageFrame.ToJson();
+        if (!SameFrame(ParseDeclarationIdentityPayload(storagePayload, 4).NullableFrame, storageFrame)
+            || !SameFrame(ReadNullableFrame(storageFrame.ToJson(), 4), storageFrame))
+            throw new InvalidOperationException("Reference metadata reader lost storage representation correspondence");
+        if (SameFrame(new NullableRepresentationFrame(2, Array.Empty<int>(), storageIndices: new[] { 0 }),
+            new NullableRepresentationFrame(2, Array.Empty<int>(), storageIndices: new[] { 1 })))
+            throw new InvalidOperationException("Different storage frame demands compared equal");
         var reflectedTypeParameter = typeof(List<>).GetGenericArguments()[0];
         var reflectedArrays = new[]
         {

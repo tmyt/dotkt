@@ -3973,7 +3973,7 @@ static class FBoundStarProjectionErasure
         _ => type,
     };
 
-    static TypeNode SubstituteDeclarationTypeArguments(TypeNode type,
+    internal static TypeNode SubstituteDeclarationTypeArguments(TypeNode type,
         IReadOnlyList<TypeNode> ownerArguments, IReadOnlyList<TypeNode> methodArguments) => type switch
     {
         TypeNode.Tv { Scope: "type" } tv when tv.I >= 0 && tv.I < ownerArguments.Count

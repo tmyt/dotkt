@@ -263,8 +263,16 @@ static class MapVarianceRealign
                 declArgs[j] = inst;
             }
             if (skip) continue;
-            var closedArgs = factoryFrame == null ? declArgs
-                : factoryFrame.Close(declArgs, argument => argument, nullableArgument);
+            TypeNode[] closedArgs;
+            try
+            {
+                closedArgs = factoryFrame == null ? declArgs
+                    : factoryFrame.Close(declArgs, argument => argument, nullableArgument);
+            }
+            catch (ArgumentException ex)
+            {
+                throw new InvalidOperationException($"Collection factory {call["method"]} frame closure failed: {ex.Message}", ex);
+            }
             call["typeArgs"] = new JsonArray(closedArgs.Select(TypeJson.Write).ToArray());
         }
     }

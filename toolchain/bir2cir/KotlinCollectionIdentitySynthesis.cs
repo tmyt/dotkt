@@ -13,7 +13,8 @@ using DotKt.Bir;
 // values cannot be modified, so StarProjectionLowering recognizes their existing generic CLR faces separately.
 //
 // The identities form the Kotlin relation themselves. A MutableSet identity is also a Set and Collection identity;
-// a Set identity is also a Collection identity. The most-specific single edge is therefore sufficient.
+// a Set identity is also a Collection identity. Set membership and Collection mutability are independent:
+// implementing Set and MutableCollection does not imply implementing MutableSet.
 static class KotlinCollectionIdentitySynthesis
 {
     const string Collection = "kotlin.collections.Collection";
@@ -24,6 +25,9 @@ static class KotlinCollectionIdentitySynthesis
     const string MutableSet = "kotlin.collections.MutableSet";
 
     const string CollectionIdentity = "DotKt.Runtime.CompilerServices.KotlinCollectionClassifier";
+    const string MutableCollectionIdentity = "DotKt.Runtime.CompilerServices.KotlinMutableCollectionClassifier";
+    const string ListIdentity = "DotKt.Runtime.CompilerServices.KotlinListClassifier";
+    const string MutableListIdentity = "DotKt.Runtime.CompilerServices.KotlinMutableListClassifier";
     const string SetIdentity = "DotKt.Runtime.CompilerServices.KotlinSetClassifier";
     const string MutableSetIdentity = "DotKt.Runtime.CompilerServices.KotlinMutableSetClassifier";
 
@@ -61,19 +65,24 @@ static class KotlinCollectionIdentitySynthesis
     static void Apply(Def def, IReadOnlyDictionary<string, Def> defs)
     {
         var names = SupertypeNames(def, defs);
-        var identity = names.Contains(MutableSet) ? MutableSetIdentity
-            : names.Contains(Set) ? SetIdentity
-            : names.Overlaps(new[] { Collection, MutableCollection, List, MutableList }) ? CollectionIdentity
-            : null;
-        if (identity == null) return;
+        var identities = new List<string>();
+        if (names.Contains(MutableSet)) identities.Add(MutableSetIdentity);
+        else if (names.Contains(Set)) identities.Add(SetIdentity);
+        if (names.Contains(MutableList)) identities.Add(MutableListIdentity);
+        else if (names.Contains(List)) identities.Add(ListIdentity);
+        if (names.Contains(MutableCollection) && !names.Overlaps(new[] { MutableSet, MutableList }))
+            identities.Add(MutableCollectionIdentity);
+        if (identities.Count == 0 && names.Contains(Collection)) identities.Add(CollectionIdentity);
+        if (identities.Count == 0) return;
 
         if (def.Node["interfaces"] is not JsonArray interfaces)
         {
             interfaces = new JsonArray();
             def.Node["interfaces"] = interfaces;
         }
-        if (!interfaces.Any(i => TypeJson.Read(i) is TypeNode.Fqn f && f.Name == identity))
-            interfaces.Add(TypeJson.Fqn(identity));
+        foreach (var identity in identities)
+            if (!interfaces.Any(i => TypeJson.Read(i) is TypeNode.Fqn f && f.Name == identity))
+                interfaces.Add(TypeJson.Fqn(identity));
     }
 
     static HashSet<string> SupertypeNames(Def start, IReadOnlyDictionary<string, Def> defs)

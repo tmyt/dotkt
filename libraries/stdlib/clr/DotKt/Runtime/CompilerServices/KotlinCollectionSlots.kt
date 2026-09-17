@@ -12,9 +12,15 @@ package DotKt.Runtime.CompilerServices
 @PublishedApi
 internal interface KotlinCollectionClassifier
 @PublishedApi
+internal interface KotlinMutableCollectionClassifier : KotlinCollectionClassifier
+@PublishedApi
+internal interface KotlinListClassifier : KotlinCollectionClassifier
+@PublishedApi
+internal interface KotlinMutableListClassifier : KotlinListClassifier, KotlinMutableCollectionClassifier
+@PublishedApi
 internal interface KotlinSetClassifier : KotlinCollectionClassifier
 @PublishedApi
-internal interface KotlinMutableSetClassifier : KotlinSetClassifier
+internal interface KotlinMutableSetClassifier : KotlinSetClassifier, KotlinMutableCollectionClassifier
 
 // SUPPLEMENTAL KOTLIN SLOTS FOR @ClrTypeAlias'd COLLECTION INTERFACES.
 //

@@ -3,22 +3,30 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using RepresentationRole = DotKt.Bir.NullableRepresentationFrame.Role;
 
 // Analysis only: source declarations and bodies are not rewritten here. A body-only demand must not change an
 // independently declared virtual slot. Frame materialization and metadata publication consume these facts separately.
 static partial class NullableRepresentationDemand
 {
+    static readonly RepresentationRole[] CompanionRoles = {
+        RepresentationRole.Nullable, RepresentationRole.Storage, RepresentationRole.NullableStorage,
+    };
+
     internal sealed class Variables
     {
-        public HashSet<int> Type { get; } = new();
-        public HashSet<int> Method { get; } = new();
+        readonly Dictionary<(string Scope, RepresentationRole Role), HashSet<int>> _indices = CompanionRoles
+            .SelectMany(role => new[] { ("type", role), ("method", role) })
+            .ToDictionary(key => key, _ => new HashSet<int>());
+        public HashSet<int> Type => For("type", RepresentationRole.Nullable);
+        public HashSet<int> Method => For("method", RepresentationRole.Nullable);
+        public int Count => _indices.Values.Sum(indices => indices.Count);
 
-        public void Add(TypeNode.Tv variable)
-        {
-            if (variable.Scope == "type") Type.Add(variable.I);
-            else if (variable.Scope == "method") Method.Add(variable.I);
-            else throw new InvalidOperationException("Unknown generic parameter scope");
-        }
+        public HashSet<int> For(string scope, RepresentationRole role) => _indices.TryGetValue((scope, role), out var indices)
+            ? indices : throw new InvalidOperationException("Unknown representation demand scope or role");
+
+        public void Add(TypeNode.Tv variable, RepresentationRole role = RepresentationRole.Nullable) =>
+            For(variable.Scope, role).Add(variable.I);
     }
 
     internal sealed record MethodDemand(JsonObject Declaration, Variables Signature, Variables Body,
@@ -33,9 +41,12 @@ static partial class NullableRepresentationDemand
             && !Flag(Declaration["virtual"]) && !Flag(Declaration["override"]) && !Flag(Declaration["abstract"])
             && (Declaration["overrides"] as JsonArray)?.Count is not > 0;
 
-        public NullableRepresentationFrame Frame => new(
-            TypeParameters?.Count ?? 0,
-            Signature.Method.Concat(CanExtendBodyFrame ? Body.Method : Enumerable.Empty<int>()).Distinct().OrderBy(i => i));
+        IEnumerable<int> Indices(RepresentationRole role) => Signature.For("method", role)
+            .Concat(CanExtendBodyFrame ? Body.For("method", role) : Enumerable.Empty<int>()).Distinct().OrderBy(i => i);
+
+        public NullableRepresentationFrame Frame => new(TypeParameters?.Count ?? 0,
+            Indices(RepresentationRole.Nullable), storageIndices: Indices(RepresentationRole.Storage),
+            nullableStorageIndices: Indices(RepresentationRole.NullableStorage));
     }
 
     static bool Flag(JsonNode node) => (node as JsonValue)?.TryGetValue<bool>(out var value) == true && value;
@@ -55,27 +66,26 @@ static partial class NullableRepresentationDemand
                 var enclosing = CapturedOwner?.Frame;
                 // A compiler-owned TypeDef can carry its implementation's nullable owner arguments too.
                 // Unlike a virtual method's generic arity, this frame is closed at every constructed-type use.
-                var indices = Signature.Type.Concat(Body.Type)
-                    .Concat(Methods.SelectMany(method => method.Signature.Type.Concat(method.Body.Type)))
-                    .Concat(enclosing?.NullableIndices.Select(index => CaptureOffset + index) ?? Enumerable.Empty<int>())
+                IEnumerable<int> Indices(RepresentationRole role) => Signature.For("type", role).Concat(Body.For("type", role))
+                    .Concat(Methods.SelectMany(method => method.Signature.For("type", role).Concat(method.Body.For("type", role))))
+                    .Concat(enclosing?.Companions.Where(slot => slot.Representation == role)
+                        .Select(slot => CaptureOffset + slot.SourceIndex) ?? Enumerable.Empty<int>())
                     .Distinct().OrderBy(i => i).ToArray();
-                if (enclosing == null) return new NullableRepresentationFrame(arity, indices);
+                var frame = new NullableRepresentationFrame(arity, Indices(RepresentationRole.Nullable),
+                    storageIndices: Indices(RepresentationRole.Storage),
+                    nullableStorageIndices: Indices(RepresentationRole.NullableStorage));
+                if (enclosing == null) return frame;
                 // Source capture segments can occur after the child's own variables. CLR requires the entire
                 // enclosing physical frame first, including its companions, in exactly the enclosing order.
-                var prefix = enclosing.PhysicalOrder.Select(slot => slot < enclosing.SourceArity
-                    ? CaptureOffset + slot
-                    : arity + Array.IndexOf(indices, CaptureOffset + enclosing.NullableIndices[slot - enclosing.SourceArity]))
-                    .ToArray();
-                var captured = prefix.ToHashSet();
-                return new NullableRepresentationFrame(arity, indices,
-                    prefix.Concat(Enumerable.Range(0, arity + indices.Length).Where(slot => !captured.Contains(slot))));
+                return frame.WithEnclosingPrefix(enclosing, CaptureOffset);
             }
         }
     }
 
     public static IReadOnlyList<OwnerDemand> Collect(IEnumerable<JsonNode> roots,
         IReadOnlyDictionary<string, NullableRepresentationFrame> referencedTypes = null,
-        IReadOnlyDictionary<string, NullableRepresentationFrame> referencedMethods = null)
+        IReadOnlyDictionary<string, NullableRepresentationFrame> referencedMethods = null,
+        GenericRepresentationPolicy policy = null)
     {
         var rootList = roots.ToArray();
         var localBindings = BindLocalFunctions(rootList);
@@ -155,36 +165,37 @@ static partial class NullableRepresentationDemand
             foreach (var owner in owners)
             {
                 foreach (var key in new[] { "base", "interfaces", "typeParams" })
-                    Scan(owner.Declaration[key], owner.Signature, typeFrames, methodFrames, localFrames);
-                if (owner.IsRefCell) Scan(owner.Declaration["elem"], owner.Signature, typeFrames, methodFrames, localFrames);
+                    Scan(owner.Declaration[key], owner.Signature, typeFrames, methodFrames, localFrames, policy: policy);
+                if (owner.IsRefCell) Scan(owner.Declaration["elem"], owner.Signature, typeFrames, methodFrames, localFrames, policy: policy);
                 foreach (var key in new[] { "fields", "properties" })
                     foreach (var slot in (owner.Declaration[key] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
                     {
-                        Scan(slot["type"], owner.Signature, typeFrames, methodFrames, localFrames);
-                        Scan(slot["init"], owner.Body, typeFrames, methodFrames, localFrames);
+                        Scan(slot["type"], owner.Signature, typeFrames, methodFrames, localFrames, policy: policy);
+                        Scan(slot["init"], owner.Body, typeFrames, methodFrames, localFrames, policy: policy);
                     }
                 foreach (var ctor in (owner.Declaration["ctors"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
                 {
-                    Scan(ctor["params"], owner.Signature, typeFrames, methodFrames, localFrames);
-                    Scan(ctor["body"], owner.Body, typeFrames, methodFrames, localFrames);
+                    Scan(ctor["params"], owner.Signature, typeFrames, methodFrames, localFrames, policy: policy);
+                    Scan(ctor["body"], owner.Body, typeFrames, methodFrames, localFrames, policy: policy);
                 }
                 foreach (var method in owner.Methods)
                 {
                     foreach (var key in new[] { "params", "ret" })
-                        Scan(method.Declaration[key], method.Signature, typeFrames, methodFrames, localFrames);
+                        Scan(method.Declaration[key], method.Signature, typeFrames, methodFrames, localFrames, policy: policy);
                     // Implementation constraints are declaration-owned; only ordinary declarations' constraints
                     // refer to this owner's variables. An inherited fact's instantiated params/ret are above.
                     if (method.ImplementationKey == null)
-                        Scan(method.TypeParameters, method.Signature, typeFrames, methodFrames, localFrames);
+                        Scan(method.TypeParameters, method.Signature, typeFrames, methodFrames, localFrames, policy: policy);
                     else
                     {
                         var implementationConstraints = new Variables();
-                        Scan(method.TypeParameters, implementationConstraints, typeFrames, methodFrames, localFrames);
+                        Scan(method.TypeParameters, implementationConstraints, typeFrames, methodFrames, localFrames, policy: policy);
                         // The method frame is shared by this inherited fact and its selected implementation.
                         // Owner variables in those same constraints still belong to the implementation owner.
-                        method.Signature.Method.UnionWith(implementationConstraints.Method);
+                        foreach (var role in CompanionRoles)
+                            method.Signature.For("method", role).UnionWith(implementationConstraints.For("method", role));
                     }
-                    Scan(method.Declaration["body"], method.Body, typeFrames, methodFrames, localFrames);
+                    Scan(method.Declaration["body"], method.Body, typeFrames, methodFrames, localFrames, policy: policy);
                 }
             }
             changed = Count(owners) != before;
@@ -229,23 +240,23 @@ static partial class NullableRepresentationDemand
     }
 
     static int Count(IEnumerable<OwnerDemand> owners) => owners.Sum(owner =>
-        owner.Signature.Type.Count + owner.Signature.Method.Count + owner.Body.Type.Count + owner.Body.Method.Count + owner.Methods.Sum(method =>
-            method.Signature.Type.Count + method.Signature.Method.Count + method.Body.Type.Count + method.Body.Method.Count));
+        owner.Signature.Count + owner.Body.Count + owner.Methods.Sum(method => method.Signature.Count + method.Body.Count));
 
     static void Scan(JsonNode node, Variables result,
         IReadOnlyDictionary<string, NullableRepresentationFrame> types,
         IReadOnlyDictionary<string, NullableRepresentationFrame> methods,
-        IReadOnlyDictionary<JsonObject, NullableRepresentationFrame> localFrames, bool argument = false)
+        IReadOnlyDictionary<JsonObject, NullableRepresentationFrame> localFrames, bool argument = false,
+        GenericRepresentationPolicy policy = null, bool storage = false)
     {
         if (node == null) return;
         if (TypeJson.Read(node) is TypeNode type)
         {
-            Visit(type, argument, result, types);
+            Visit(type, argument, result, types, policy, storage);
             return;
         }
         if (node is JsonArray array)
         {
-            foreach (var item in array) Scan(item, result, types, methods, localFrames, argument);
+            foreach (var item in array) Scan(item, result, types, methods, localFrames, argument, policy, storage);
         }
         else if (node is JsonObject obj)
         {
@@ -253,28 +264,28 @@ static partial class NullableRepresentationDemand
             {
                 var arguments = Text(obj["k"]) == "localFun"
                     ? obj["decl"]?["_syntheticTypeArgs"] as JsonArray : obj["typeArgs"] as JsonArray;
-                if (localFrame.NullableIndices.Count != 0)
+                if (localFrame.RequiresMetadata)
                 {
                     if (arguments?.Count != localFrame.SourceArity)
                         throw new InvalidOperationException("Local function arguments do not match their declaration frame");
-                    foreach (var index in localFrame.NullableIndices)
+                    foreach (var slot in localFrame.Companions)
                     {
-                        var origin = TypeJson.Read(arguments[index]);
+                        var origin = TypeJson.Read(arguments[slot.SourceIndex]);
                         // Method origins also include the local function's own parameters; only actual call
                         // arguments relate those variables to an enclosing method. Owner origins are lexical.
                         if (Text(obj["k"]) != "localFun" || origin is TypeNode.Tv { Scope: "type" })
-                            RequireNullable(origin, result);
+                            RequireRepresentation(origin, slot.Representation, result);
                     }
                 }
                 if (Text(obj["k"]) == "localFun") return;
             }
             if (Text(obj["k"]) != null && Text(obj[DeclarationIdentityBinding.Key]) is string id
-                && methods.TryGetValue(id, out var frame) && frame.NullableIndices.Count != 0)
+                && methods.TryGetValue(id, out var frame) && frame.RequiresMetadata)
             {
                 if (obj["typeArgs"] is not JsonArray arguments || arguments.Count != frame.SourceArity)
                     throw new InvalidOperationException("Generic call does not match its declared nullable frame");
-                foreach (var index in frame.NullableIndices)
-                    RequireNullable(TypeJson.Read(arguments[index]), result);
+                foreach (var slot in frame.Companions)
+                    RequireRepresentation(TypeJson.Read(arguments[slot.SourceIndex]), slot.Representation, result);
             }
             foreach (var (key, value) in obj)
                 if (key is not ("attrs" or "overrides" or "inheritedImplementation"))
@@ -282,58 +293,69 @@ static partial class NullableRepresentationDemand
                     if (Text(obj["k"]) != null && (NullableRepresentationTypes.IsDeclarationFrameKey(key, Text(obj["k"]), obj)
                         || key == "resolvedMemberParams" || key == ClrMemberResolution.ResolvedMemberReturnKey
                         || key == "argTypes" && ClrBoundNode.IsAny(Text(obj["k"])))) continue;
-                    Scan(value, result, types, methods, localFrames, key == "typeArgs"
-                        || key == "elem" && NullableGenericErasure.IsArgumentElementKind(Text(obj["k"])));
+                    var storageElement = policy?.IsStorageElement(Text(obj["k"]), key) == true;
+                    Scan(value, result, types, methods, localFrames, key == "typeArgs" || storageElement
+                        || key == "elem" && NullableGenericErasure.IsArgumentElementKind(Text(obj["k"])), policy, storageElement);
                 }
         }
     }
 
-    static void RequireNullable(TypeNode type, Variables result)
+    static void RequireRepresentation(TypeNode type, RepresentationRole role, Variables result)
     {
-        if (type is TypeNode.Tv variable) result.Add(variable);
-        else if (type is TypeNode.Nullable nullable) RequireNullable(nullable.Of, result);
-        else if (type is TypeNode.Oblivious oblivious) RequireNullable(oblivious.Of, result);
+        if (type is TypeNode.Tv variable) result.Add(variable, role);
+        else if (type is TypeNode.Nullable nullable)
+            RequireRepresentation(nullable.Of, role == RepresentationRole.Storage ? RepresentationRole.NullableStorage : role, result);
+        else if (type is TypeNode.Oblivious oblivious) RequireRepresentation(oblivious.Of, role, result);
+        else if (type is TypeNode.Projection projection) RequireRepresentation(projection.Of, role, result);
     }
 
     static void Visit(TypeNode type, bool argument, Variables result,
-        IReadOnlyDictionary<string, NullableRepresentationFrame> frames)
+        IReadOnlyDictionary<string, NullableRepresentationFrame> frames, GenericRepresentationPolicy policy, bool storage = false)
     {
         switch (type)
         {
             case TypeNode.Nullable { Of: TypeNode.Tv variable } when argument:
-                result.Add(variable);
+                result.Add(variable, storage ? RepresentationRole.NullableStorage : RepresentationRole.Nullable);
+                break;
+            case TypeNode.Tv variable when argument && storage:
+                result.Add(variable, RepresentationRole.Storage);
                 break;
             case TypeNode.Nullable nullable:
-                Visit(nullable.Of, false, result, frames);
+                if (argument) RequireRepresentation(nullable.Of,
+                    storage ? RepresentationRole.NullableStorage : RepresentationRole.Nullable, result);
+                Visit(nullable.Of, false, result, frames, policy);
                 break;
             case TypeNode.Oblivious oblivious:
-                Visit(oblivious.Of, argument, result, frames);
+                Visit(oblivious.Of, argument, result, frames, policy, storage);
                 break;
             case TypeNode.Projection projection:
-                Visit(projection.Of, argument, result, frames);
+                Visit(projection.Of, argument, result, frames, policy, storage);
                 break;
             case TypeNode.Fqn { Name: BirTypeLowering.PointerIntrinsicFqn }:
                 break;
             case TypeNode.Fqn { Args: { } arguments } named:
-                foreach (var item in arguments) Visit(item, true, result, frames);
+                foreach (var item in arguments) Visit(item, true, result, frames, policy,
+                    policy?.UsesStorageArguments(named.Name) == true);
                 if (frames.TryGetValue(named.Name, out var frame))
                 {
                     if (arguments.Length != frame.SourceArity)
                         throw new InvalidOperationException($"Constructed type '{named.Name}' has {arguments.Length} arguments, "
                             + $"but its declared nullable frame has source arity {frame.SourceArity}");
-                    foreach (var index in frame.NullableIndices) RequireNullable(arguments[index], result);
+                    foreach (var slot in frame.Companions)
+                        RequireRepresentation(arguments[slot.SourceIndex],
+                            policy?.ApplicationRole(named.Name, slot.Representation) ?? slot.Representation, result);
                 }
                 break;
             case TypeNode.Array array:
-                Visit(array.Elem, true, result, frames);
+                Visit(array.Elem, true, result, frames, policy);
                 break;
             case TypeNode.ByRef byRef:
-                Visit(byRef.Of, false, result, frames);
+                Visit(byRef.Of, false, result, frames, policy);
                 break;
             case TypeNode.Fn function:
-                Visit(function.Ret, true, result, frames);
-                foreach (var parameter in function.DelegateParams) Visit(parameter, false, result, frames);
-                foreach (var context in function.Ctx ?? Array.Empty<TypeNode>()) Visit(context, false, result, frames);
+                Visit(function.Ret, true, result, frames, policy);
+                foreach (var parameter in function.DelegateParams) Visit(parameter, false, result, frames, policy);
+                foreach (var context in function.Ctx ?? Array.Empty<TypeNode>()) Visit(context, false, result, frames, policy);
                 break;
         }
     }

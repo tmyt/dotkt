@@ -3054,15 +3054,16 @@ internal sealed class AssemblyScanner : IDisposable
             string? definitionPath)
         {
             if (!surface.IsInterface) return;
+            // A compiler-owned operational carrier and its physical parents are not Kotlin supertypes,
+            // regardless of the carrier's CLR visibility.
+            if (signatures.IsCompilerOwnedSlotCarrier(type)) return;
             var typeKey = TypeKey(type);
             if (surface.IsPublic)
             {
                 projected.TryAdd(typeKey, type);
-                // Compiler-owned slot carriers are deliberately absent from Kotlin's supertype graph together with
-                // their physical inheritance. Ordinary public interfaces continue through the walk so metadata that
+                // Ordinary public interfaces continue through the walk so metadata that
                 // omits redundant public ancestor rows still contributes the complete accessible CLR relation and
                 // MethodImpl declaration-key set.
-                if (signatures.IsCompilerOwnedSlotCarrier(type)) return;
                 // A public interface's own KLIB carries its public parent graph. Flattening that physical CLR closure
                 // onto every implementer can invent extra Kotlin obligations (for example the non-generic
                 // System.Collections.IEnumerable ancestor of Iterable<T>). Only MethodImpl declaration matching needs

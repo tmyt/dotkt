@@ -248,15 +248,10 @@ static class LocalFunctionLowering
                 : new NullableRepresentationFrame(origins.Count, Array.Empty<int>());
             var retainedSources = Enumerable.Range(0, priorFrame.SourceArity)
                 .Where(index => keep.Contains(priorFrame.SourcePosition(index))).ToArray();
-            var nullableSources = priorFrame.NullableIndices.Where(retainedSources.Contains).ToArray();
-            var order = keep.Select(position => {
-                var canonical = priorFrame.PhysicalOrder[position];
-                return canonical < priorFrame.SourceArity ? Array.IndexOf(retainedSources, canonical)
-                    : retainedSources.Length + Array.IndexOf(nullableSources,
-                        priorFrame.NullableIndices[canonical - priorFrame.SourceArity]);
-            }).ToArray();
-            var newFrame = new NullableRepresentationFrame(retainedSources.Length,
-                nullableSources.Select(index => Array.IndexOf(retainedSources, index)), order);
+            var newFrame = priorFrame.RetainSources(retainedSources);
+            if (!keep.SequenceEqual(Enumerable.Range(0, priorFrame.PhysicalArity)
+                .Where(index => retainedSources.Contains(priorFrame.PhysicalSlot(index).SourceIndex))))
+                throw new InvalidOperationException("Local function capture split a source parameter's representation frame");
             if (method[NullableRepresentationTypes.MethodFrameKey] != null)
                 method[NullableRepresentationTypes.MethodFrameKey] = newFrame.ToJson().ToJsonString();
             var ownerFrame = Str(ownerType?[KotlinSupertypesRecord.PreKey]) is string ownerFacts

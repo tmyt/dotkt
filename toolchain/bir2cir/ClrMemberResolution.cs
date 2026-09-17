@@ -344,7 +344,16 @@ static partial class ClrMemberResolution
         if (node is JsonObject obj)
         {
             foreach (var kv in obj.ToList()) if (kv.Value != null) Walk(kv.Value);
-            Resolve(obj);
+            try { Resolve(obj); }
+            catch (InvalidOperationException error)
+            {
+                var context = new List<string>();
+                for (JsonNode owner = obj; owner != null; owner = owner.Parent)
+                    if (owner is JsonObject declaration && declaration["params"] is JsonArray
+                        && declaration["name"] is JsonValue name && name.TryGetValue<string>(out var text))
+                        context.Add(text);
+                throw new InvalidOperationException($"{string.Join(" / ", context)} {obj.GetPath()}: {error.Message}", error);
+            }
         }
         else if (node is JsonArray arr)
         {

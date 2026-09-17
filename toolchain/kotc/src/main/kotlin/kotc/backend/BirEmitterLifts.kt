@@ -532,10 +532,10 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 				val argTypesJson = ps.joinToString(",") { birType(it.type).toJson() }
 				val liftedRet = birType(ctor.returnType)
 				val newE = """{"k":"new","type":${ownerSpec(klass, ctor.returnType).toJson()},"argTypes":[$argTypesJson],"args":[$argsJson]}"""
-				"""{"name":${str(lname)},"generated":true,"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${liftedRet.toJson()},"body":[{"k":"return","value":$newE}]}"""
+				"""{"name":${str(lname)}${liftedDeclarationIdentityField(lname)},"generated":true,"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${liftedRet.toJson()},"body":[{"k":"return","value":$newE}]}"""
 			}
 			liftedMethods.add(declaration)
-			return """{"k":"newDelegate","method":${str(lname)},"funcType":${TypeNode.Fn(false, retT, ps.map { birTypeDeleg(it.type) }).toJson()}$typeArgs${localCalleeOwnerTag()}}"""
+			return """{"k":"newDelegate","method":${str(lname)}${liftedDeclarationIdentityField(lname)},"funcType":${TypeNode.Fn(false, retT, ps.map { birTypeDeleg(it.type) }).toJson()}$typeArgs${localCalleeOwnerTag()}}"""
 		}
 		// `::NetType` — a lifted factory `__ctorref(args) = new NetType(args)`, bound as a delegate. kotc emits a
 		// plain `new` carrying the .NET-FQN identity; bir2cir TransformNew reshapes it to `newClr` off the refs.
@@ -550,10 +550,10 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 				val argsJson = ps.joinToString(",") { """{"k":"local","name":${str(it.name.asString())}}""" }
 				val liftedRet = birType(ctor.returnType)
 				val newE = """{"k":"new","type":${fqnJson(clrName(klass)!!)},"argTypes":[${ps.joinToString(",") { birType(it.type).toJson() }}],"args":[$argsJson]}"""
-				"""{"name":${str(lname)},"generated":true,"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${liftedRet.toJson()},"body":[{"k":"return","value":$newE}]}"""
+				"""{"name":${str(lname)}${liftedDeclarationIdentityField(lname)},"generated":true,"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${liftedRet.toJson()},"body":[{"k":"return","value":$newE}]}"""
 			}
 			liftedMethods.add(declaration)
-			return """{"k":"newDelegate","method":${str(lname)},"funcType":${TypeNode.Fn(false, retT, ps.map { birTypeDeleg(it.type) }).toJson()}$typeArgs${localCalleeOwnerTag()}}"""
+			return """{"k":"newDelegate","method":${str(lname)}${liftedDeclarationIdentityField(lname)},"funcType":${TypeNode.Fn(false, retT, ps.map { birTypeDeleg(it.type) }).toJson()}$typeArgs${localCalleeOwnerTag()}}"""
 		}
 		return unsupported(node, "this constructor reference", "the constructor's class could not be resolved")
 	}
@@ -672,10 +672,10 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 			val callE = """{"k":"callStatic","ownerType":${fqnJson(clrOwner)},"method":${str(fn.name.asString())}${overloadSigField(fn)}$liftedReferenceTypeArgs,"argTypes":[$argTypes],"ret":${liftedFuncType.ret.toJson()},"args":[$argsJson]$anySlotTag$memberDeclarationIdentityTag}"""
 			val body = if (fn.returnType.isUnit()) """{"k":"exprStmt","expr":$callE}"""
 				else """{"k":"return","value":$callE}"""
-			"""{"name":${str(lname)},"generated":true,"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${liftedFuncType.ret.toJson()},"body":[$body]}"""
+			"""{"name":${str(lname)}${liftedDeclarationIdentityField(lname)},"generated":true,"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${liftedFuncType.ret.toJson()},"body":[$body]}"""
 		}
 		liftedMethods.add(declaration)
-		return """{"k":"newDelegate","method":${str(lname)},"funcType":${resolvedFuncType.toJson()}$adapterTypeArgs${localCalleeOwnerTag()}}"""
+		return """{"k":"newDelegate","method":${str(lname)}${liftedDeclarationIdentityField(lname)},"funcType":${resolvedFuncType.toJson()}$adapterTypeArgs${localCalleeOwnerTag()}}"""
 	}
 	if (dispatchIdx < 0 && !hasExt) {
 		val targetName = fn.name.asString()
@@ -711,10 +711,10 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 				val call = """{"k":"callStatic","owner":null,"method":${str(targetName)}${overloadSigField(fn)}$liftedRefTa,"args":[$argsJson],"ret":${liftedFuncType.ret.toJson()}${calleeOwnerTag(fn)}$companionExtensionTag$declarationIdentityTag}"""
 				val body = if (liftedFuncType.ret == TypeNode.Fqn("kotlin.Unit")) """{"k":"exprStmt","expr":$call}"""
 					else """{"k":"return","value":$call}"""
-				"""{"name":${str(lname)},"generated":true,"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$paramsJson],"ret":${liftedFuncType.ret.toJson()},"body":[$body]}"""
+				"""{"name":${str(lname)}${liftedDeclarationIdentityField(lname)},"generated":true,"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$paramsJson],"ret":${liftedFuncType.ret.toJson()},"body":[$body]}"""
 			}
 			liftedMethods.add(declaration)
-			return """{"k":"newDelegate","method":${str(lname)},"funcType":${refFuncType.toJson()}$adapterTypeArgs${localCalleeOwnerTag()}}"""
+			return """{"k":"newDelegate","method":${str(lname)}${liftedDeclarationIdentityField(lname)},"funcType":${refFuncType.toJson()}$adapterTypeArgs${localCalleeOwnerTag()}}"""
 		}
 		return """{"k":"newDelegate","method":${str(targetName)}${overloadSigField(fn)},"funcType":${refFuncType.toJson()}${calleeOwnerTag(fn)}$companionExtensionTag$declarationIdentityTag}"""
 	}
@@ -775,10 +775,10 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 			val retVoid = retT == TypeNode.Fqn("kotlin.Unit") // the SUBSTITUTED return (fn's own T may resolve to Unit)
 			val callE = extensionReferenceCall(node, fn, retT, callArgs)
 			val body = if (retVoid) """{"k":"exprStmt","expr":$callE}""" else """{"k":"return","value":$callE}"""
-			"""{"name":${str(lname)},"generated":true,"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${retT.toJson()},"body":[$body]}"""
+			"""{"name":${str(lname)}${liftedDeclarationIdentityField(lname)},"generated":true,"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${retT.toJson()},"body":[$body]}"""
 		}
 		liftedMethods.add(declaration)
-		return """{"k":"newDelegate","method":${str(lname)},"funcType":${fnType.toJson()}$typeArgs${localCalleeOwnerTag()}}"""
+		return """{"k":"newDelegate","method":${str(lname)}${liftedDeclarationIdentityField(lname)},"funcType":${fnType.toJson()}$typeArgs${localCalleeOwnerTag()}}"""
 	}
 	// `obj::method` captures its eagerly evaluated receiver in a compiler-owned closure. If this reference later
 	// enters an open nullable function slot, bir2cir can move the generated `invoke` slots with the delegate without
@@ -816,10 +816,10 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 				val call = memberVisibilityStamped(fn, rawCall)
 				val body = if (liftedFuncType.ret == TypeNode.Fqn("kotlin.Unit")) """{"k":"exprStmt","expr":$call}"""
 					else """{"k":"return","value":$call}"""
-				"""{"name":${str(lname)},"generated":true,"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$paramsJson],"ret":${liftedFuncType.ret.toJson()},"body":[$body]}"""
+				"""{"name":${str(lname)}${liftedDeclarationIdentityField(lname)},"generated":true,"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$paramsJson],"ret":${liftedFuncType.ret.toJson()},"body":[$body]}"""
 			}
 			liftedMethods.add(declaration)
-			val delegate = """{"k":"newDelegate","method":${str(lname)},"funcType":${resolvedFuncType.toJson()}$adapterTypeArgs${localCalleeOwnerTag()}}"""
+			val delegate = """{"k":"newDelegate","method":${str(lname)}${liftedDeclarationIdentityField(lname)},"funcType":${resolvedFuncType.toJson()}$adapterTypeArgs${localCalleeOwnerTag()}}"""
 			// A direct `Companion::member` receiver is already the pure singleton-value fact. Keep the delegate at the
 			// expression root so a surrounding open function slot can align its physical signature.
 			if (boundRecv is IrGetObjectValue) return delegate
@@ -902,10 +902,10 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 			val retT = liftedFnType.ret
 			val body = if (fn.returnType.isUnit()) """{"k":"exprStmt","expr":$identityCallE}"""
 				else """{"k":"return","value":$identityCallE}"""
-			"""{"name":${str(lname)},"generated":true,"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${str(retT)},"body":[$body]}"""
+			"""{"name":${str(lname)}${liftedDeclarationIdentityField(lname)},"generated":true,"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${str(retT)},"body":[$body]}"""
 		}
 		liftedMethods.add(declaration)
-		return """{"k":"newDelegate","method":${str(lname)},"funcType":${resolvedFuncType.toJson()}$typeArgs${localCalleeOwnerTag()}}"""
+		return """{"k":"newDelegate","method":${str(lname)}${liftedDeclarationIdentityField(lname)},"funcType":${resolvedFuncType.toJson()}$typeArgs${localCalleeOwnerTag()}}"""
 	}
 	// A .NET method reference. Bound `obj::m` -> a NEUTRAL `newBoundDelegate` carrying the owner identity; bir2cir
 	// shapes it to the CLR bound delegate. Unbound `NetType::m` -> a lifted static `__mref(self, args) = self.m(args)`.
@@ -938,10 +938,10 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 					else callE.dropLast(1) + memberDeclarationIdentityTag + "}"
 				val body = if (fn.returnType.isUnit()) """{"k":"exprStmt","expr":$identityCallE}"""
 					else """{"k":"return","value":$identityCallE}"""
-				"""{"name":${str(lname)},"generated":true,"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${liftedFuncType.ret.toJson()},"body":[$body]}"""
+				"""{"name":${str(lname)}${liftedDeclarationIdentityField(lname)},"generated":true,"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${liftedFuncType.ret.toJson()},"body":[$body]}"""
 			}
 			liftedMethods.add(declaration)
-			return """{"k":"newDelegate","method":${str(lname)},"funcType":${resolvedFuncType.toJson()}$typeArgs${localCalleeOwnerTag()}}"""
+			return """{"k":"newDelegate","method":${str(lname)}${liftedDeclarationIdentityField(lname)},"funcType":${resolvedFuncType.toJson()}$typeArgs${localCalleeOwnerTag()}}"""
 		}
 		if (boundRecv != null) {
 			val companionCallTag = if (ownerClass.isCompanion) ""","companionCall":true""" else ""
@@ -980,10 +980,10 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 					else callE.dropLast(1) + effectiveIdentityTag + "}"
 				val body = if (fn.returnType.isUnit()) """{"k":"exprStmt","expr":$identityCallE}"""
 					else """{"k":"return","value":$identityCallE}"""
-				"""{"name":${str(lname)},"generated":true,"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${liftedFuncType.ret.toJson()},"body":[$body]}"""
+				"""{"name":${str(lname)}${liftedDeclarationIdentityField(lname)},"generated":true,"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${liftedFuncType.ret.toJson()},"body":[$body]}"""
 			}
 			liftedMethods.add(declaration)
-			return """{"k":"newDelegate","method":${str(lname)},"funcType":${resolvedFuncType.toJson()}$typeArgs${localCalleeOwnerTag()}}"""
+			return """{"k":"newDelegate","method":${str(lname)}${liftedDeclarationIdentityField(lname)},"funcType":${resolvedFuncType.toJson()}$typeArgs${localCalleeOwnerTag()}}"""
 		}
 	}
 	return unsupported(node, "a method reference to a .NET method (`::${fn.name}`)",
@@ -1287,10 +1287,10 @@ internal fun BirEmitter.adapterRef(node: IrFunctionReference, fn: IrSimpleFuncti
 			val body = withFreshLambdaLocalFunctionIds(fn) {
 				(fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
 			}
-			"""{"name":${str(lname)},"generated":true,"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$liftedParams],"ret":${liftedFnType.ret.toJson()},"body":[$body]}"""
+			"""{"name":${str(lname)}${liftedDeclarationIdentityField(lname)},"generated":true,"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$liftedParams],"ret":${liftedFnType.ret.toJson()},"body":[$body]}"""
 		}
 		liftedMethods.add(declaration)
-		return """{"k":"newDelegate","method":${str(lname)},"funcType":${str(fnType)}$typeArgs${localCalleeOwnerTag()}}"""
+		return """{"k":"newDelegate","method":${str(lname)}${liftedDeclarationIdentityField(lname)},"funcType":${str(fnType)}$typeArgs${localCalleeOwnerTag()}}"""
 	}
 	// Bound receiver(s) -> a capture-class closure (mirrors `lambda()`'s capturing branch); the bound value(s) are the
 	// capture exprs, and the adapter body's receiver-param reads rewrite to the capture fields via `captureSubst`.

@@ -62,6 +62,63 @@ static partial class NullableRepresentationDemand
             stringType, new TypeNode.Fqn("kotlin.Int") }), "nested source arguments are not a physical prefix");
         Malformed(() => new NullableRepresentationFrame(2, new[] { 0 }, new[] { 0, 2, 2 }));
 
+        // Root and invariant-storage applications of one source parameter are independent closures. In
+        // particular, nullable-storage must not receive an already erased ordinary or nullable argument.
+        var roles = new NullableRepresentationFrame(2, new[] { 0 }, storageIndices: new[] { 0, 1 },
+            nullableStorageIndices: new[] { 0 });
+        var roleFrame = NullableRepresentationFrame.Read(roles.ToJson());
+        Check(roleFrame.PhysicalArity == 6 && roleFrame.StorageIndices.SequenceEqual(new[] { 0, 1 })
+            && roleFrame.NullableStorageIndices.SequenceEqual(new[] { 0 }), "representation roles survive metadata");
+        var roleArguments = roleFrame.Close(new TypeNode[] { stringType, nullableString },
+            source => new TypeNode.Fqn("Root", new[] { source }),
+            source => new TypeNode.Fqn("NullableRoot", new[] { source }),
+            source => new TypeNode.Fqn("Storage", new[] { source }),
+            source => new TypeNode.Fqn("NullableStorage", new[] { source }));
+        Check(roleArguments[3] == new TypeNode.Fqn("Storage", new[] { stringType })
+            && roleArguments[4] == new TypeNode.Fqn("Storage", new TypeNode[] { nullableString })
+            && roleArguments[5] == new TypeNode.Fqn("NullableStorage", new[] { stringType }),
+            "all representation closures receive source arguments");
+        Check(roleFrame.Variable(new TypeNode.Tv("method", 0), NullableRepresentationFrame.Role.Storage)
+            == new TypeNode.Tv("method", 3), "storage variable has declaration scope");
+        Check(roleFrame.SemanticVariable(new TypeNode.Tv("method", 3)) == new TypeNode.Tv("method", 0)
+            && roleFrame.SemanticVariable(new TypeNode.Tv("type", 5))
+                == new TypeNode.Nullable(new TypeNode.Tv("type", 0)), "storage companions restore source vocabulary");
+        Check(roleFrame.OrdinaryArguments(roleArguments).SequenceEqual(roleArguments.Take(2)),
+            "storage companions do not become source arguments");
+        Malformed(() => roleFrame.Close(new TypeNode[] { stringType, stringType }, source => source, source => source));
+        Malformed(() => new NullableRepresentationFrame(1, Array.Empty<int>(), storageIndices: new[] { 1 }));
+        Malformed(() => new NullableRepresentationFrame(1, Array.Empty<int>(), nullableStorageIndices: new[] { 0, 0 }));
+        var malformedRoles = roleFrame.ToJson();
+        malformedRoles["storage"] = new JsonArray("invalid");
+        Malformed(() => NullableRepresentationFrame.Read(malformedRoles));
+
+        var outerRoles = new NullableRepresentationFrame(1, new[] { 0 }, storageIndices: new[] { 0 },
+            nullableStorageIndices: new[] { 0 });
+        // The child's own U precedes captured T in SOURCE order. CLR still needs all four outer slots first.
+        var capturedRoles = new NullableRepresentationFrame(2, new[] { 1 }, storageIndices: new[] { 1 },
+            nullableStorageIndices: new[] { 1 }).WithEnclosingPrefix(outerRoles, 1);
+        Check(capturedRoles.PhysicalOrder.SequenceEqual(new[] { 1, 2, 3, 4, 0 }),
+            "enclosing prefix includes each representation of captured T before U");
+        Check(capturedRoles.SourcePosition(0) == 4 && capturedRoles.SourcePosition(1) == 0
+            && capturedRoles.SourceIndex(2) == null, "captured source identity is independent of physical role");
+        Check(capturedRoles.Variable(new TypeNode.Tv("type", 1), NullableRepresentationFrame.Role.NullableStorage)
+            == new TypeNode.Tv("type", 3), "captured nullable-storage position");
+        Malformed(() => frame.WithEnclosingPrefix(outerRoles, 0));
+        Malformed(() => capturedRoles.WithEnclosingPrefix(outerRoles, 2));
+        var retainedOuter = capturedRoles.RetainSources(new[] { 1 });
+        Check(retainedOuter.PhysicalArity == 4 && retainedOuter.StorageIndices.SequenceEqual(new[] { 0 })
+            && retainedOuter.NullableStorageIndices.SequenceEqual(new[] { 0 })
+            && retainedOuter.PhysicalOrder.SequenceEqual(Enumerable.Range(0, 4)),
+            "capture pruning retains all roles of a source variable");
+        var retainedOwn = capturedRoles.RetainSources(new[] { 0 });
+        Check(retainedOwn.PhysicalArity == 1 && retainedOwn.SourcePosition(0) == 0,
+            "capture pruning removes complete companion groups");
+        var reordered = roles.RetainSources(new[] { 1, 0 });
+        Check(reordered.PhysicalOrder.SequenceEqual(new[] { 1, 0, 2, 4, 3, 5 })
+            && reordered.NullableIndices.SequenceEqual(new[] { 1 })
+            && reordered.NullableStorageIndices.SequenceEqual(new[] { 1 }), "source renumbering preserves physical order");
+        Malformed(() => roles.RetainSources(new[] { 0, 0 }));
+
         static JsonNode Tv(string scope = "type", int index = 0) => TypeJson.Write(new TypeNode.Tv(scope, index));
         static JsonNode NullableTv(string scope = "type") => new JsonObject { ["t"] = "nullable", ["of"] = Tv(scope) };
         static JsonNode Applied(string name, JsonNode argument) => new JsonObject {
@@ -171,8 +228,95 @@ static partial class NullableRepresentationDemand
         Check(constrainedDemand.Methods.Single().Frame.NullableIndices.SequenceEqual(new[] { 0 })
             && constrainedDemand.Frame.PhysicalArity == 0,
             "inherited implementation constraints contribute method demand without importing the foreign owner's frame");
+        StorageDemandSelfTest();
         MetadataSelfTest();
         Console.WriteLine("[nullable representation frame] self-test OK (source correspondence, scopes, declaration/body demand, fixed point)");
+    }
+
+    static void StorageDemandSelfTest()
+    {
+        static void Check(bool condition, string message)
+        {
+            if (!condition) throw new InvalidOperationException("Storage representation demand self-test: " + message);
+        }
+        var importedFrame = new NullableRepresentationFrame(1, Array.Empty<int>(), storageIndices: new[] { 0 },
+            nullableStorageIndices: new[] { 0 });
+        var types = new Dictionary<string, NullableRepresentationFrame> { ["StorageSource"] = importedFrame };
+        var methods = new Dictionary<string, NullableRepresentationFrame> { ["storage-source"] = importedFrame };
+        var root = JsonNode.Parse("""
+        {"fileClass":"StorageCalls","methods":[
+          {"name":"virtualUse","declarationId":"virtual-use","virtual":true,"typeParams":["T"],"params":[],
+           "ret":{"t":"fqn","name":"kotlin.Unit"},"body":[
+            {"k":"callStatic","declarationId":"forward","typeArgs":[{"t":"tv","scope":"method","i":0}]}]},
+          {"name":"forward","declarationId":"forward","typeParams":["T"],"params":[],
+           "ret":{"t":"fqn","name":"kotlin.Unit"},"body":[
+            {"k":"callStatic","declarationId":"leaf","typeArgs":[{"t":"tv","scope":"method","i":0}]}]},
+          {"name":"leaf","declarationId":"leaf","typeParams":["T"],"params":[],
+           "ret":{"t":"fqn","name":"kotlin.Unit"},"body":[
+            {"k":"callStatic","declarationId":"storage-source","typeArgs":[{"t":"tv","scope":"method","i":0}]}]},
+          {"name":"nullableForward","typeParams":["T"],"params":[],
+           "ret":{"t":"fqn","name":"kotlin.Unit"},"body":[
+            {"k":"callStatic","declarationId":"storage-source","typeArgs":[
+              {"t":"nullable","of":{"t":"tv","scope":"method","i":0}}]}]}],
+         "types":[
+          {"kind":"class","name":"StorageOuter","typeParams":["T"],"fields":[
+            {"name":"value","type":{"t":"fqn","name":"StorageSource","args":[{"t":"tv","scope":"type","i":0}]}}],
+           "types":[{"kind":"class","name":"StorageNested","typeParams":["U","T"],
+             "semanticOwner":"StorageOuter","outerTypeParamCount":1,"outerTypeParamOffset":1}]},
+          {"kind":"class","name":"StorageIndirect","typeParams":["T"],"fields":[
+            {"name":"value","type":{"t":"fqn","name":"StorageOuter","args":[{"t":"tv","scope":"type","i":0}]}}]},
+          {"kind":"class","name":"StorageScope","typeParams":["T"],"methods":[
+            {"name":"both","typeParams":["T"],"params":[{"name":"owner","type":
+              {"t":"fqn","name":"StorageSource","args":[{"t":"tv","scope":"type","i":0}]}}],
+             "ret":{"t":"fqn","name":"StorageSource","args":[{"t":"tv","scope":"method","i":0}]},"body":[]}]}]}
+        """)!.AsObject();
+        var original = root.ToJsonString();
+        var demands = Collect(new[] { root }, types, methods);
+        var calls = demands.Single(owner => ReferenceEquals(owner.Declaration, root)).Methods;
+        foreach (var name in new[] { "leaf", "forward" })
+        {
+            var method = calls.Single(method => Text(method.Declaration["name"]) == name);
+            Check(method.Frame.StorageIndices.SequenceEqual(new[] { 0 })
+                && method.Frame.NullableStorageIndices.SequenceEqual(new[] { 0 }) && method.Frame.PhysicalArity == 3,
+                "body-only role demand reaches nonvirtual callers: " + name);
+        }
+        var virtualUse = calls.Single(method => Text(method.Declaration["name"]) == "virtualUse");
+        Check(virtualUse.Frame.PhysicalArity == 1
+            && virtualUse.Body.For("method", NullableRepresentationFrame.Role.Storage).SetEquals(new[] { 0 })
+            && virtualUse.Body.For("method", NullableRepresentationFrame.Role.NullableStorage).SetEquals(new[] { 0 }),
+            "virtual body storage demand does not change its dispatch ABI");
+        var nullableUse = calls.Single(method => Text(method.Declaration["name"]) == "nullableForward");
+        Check(nullableUse.Frame.StorageIndices.Count == 0
+            && nullableUse.Frame.NullableStorageIndices.SequenceEqual(new[] { 0 })
+            && nullableUse.Frame.NullableIndices.SequenceEqual(new[] { 0 }),
+            "storage of a nullable argument demands nullable-storage alongside its ordinary nullable form");
+        var indirect = demands.Single(owner => Text(owner.Declaration["name"]) == "StorageIndirect");
+        Check(indirect.Frame.StorageIndices.SequenceEqual(new[] { 0 })
+            && indirect.Frame.NullableStorageIndices.SequenceEqual(new[] { 0 }), "type application fixed point retains roles");
+        var nested = demands.Single(owner => Text(owner.Declaration["name"]) == "StorageNested");
+        Check(nested.Frame.PhysicalOrder.SequenceEqual(new[] { 1, 2, 3, 0 })
+            && nested.Frame.StorageIndices.SequenceEqual(new[] { 1 })
+            && nested.Frame.NullableStorageIndices.SequenceEqual(new[] { 1 }), "enclosing captures retain storage role groups");
+        var scoped = demands.Single(owner => Text(owner.Declaration["name"]) == "StorageScope");
+        Check(scoped.Frame.PhysicalArity == 3 && scoped.Methods.Single().Frame.PhysicalArity == 3,
+            "method and owner source index zero remain independent");
+        Check(root.ToJsonString() == original, "role analysis does not rewrite declarations");
+        var localRoot = JsonNode.Parse("""
+        {"fileClass":"LocalStorage","methods":[{"name":"entry","typeParams":["U"],"params":[],
+          "ret":{"t":"fqn","name":"kotlin.Unit"},"body":[
+            {"k":"localFun","id":"local-storage","decl":{"name":"local","typeParams":["T"],
+              "_syntheticTypeArgs":[{"t":"tv","scope":"method","i":0}],"params":[],
+              "ret":{"t":"fqn","name":"StorageSource","args":[{"t":"tv","scope":"method","i":0}]},"body":[]}},
+            {"k":"callLocal","id":"local-storage","typeArgs":[{"t":"tv","scope":"method","i":0}],"args":[]}]}]}
+        """)!.AsObject();
+        var locals = Collect(new[] { localRoot }, types, methods).Single().Methods;
+        Check(locals.Single(method => Text(method.Declaration["name"]) == "entry").Frame.PhysicalArity == 3,
+            "local call explicitly relates its storage demand to the lexical method frame");
+        ((JsonArray)localRoot["methods"][0]["body"]).RemoveAt(1);
+        locals = Collect(new[] { localRoot }, types, methods).Single().Methods;
+        Check(locals.Single(method => Text(method.Declaration["name"]) == "entry").Frame.PhysicalArity == 1
+            && locals.Single(method => method.IsLocal).Frame.PhysicalArity == 3,
+            "a local function's own method index is not an implicit lexical capture");
     }
 
     static void MetadataSelfTest()

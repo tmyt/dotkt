@@ -24,7 +24,8 @@ static class NullableBodyDispatch
         foreach (var index in missing)
         {
             indices.Add(index);
-            var frame = new NullableRepresentationFrame(entryFrame.SourceArity, indices.OrderBy(i => i));
+            var frame = new NullableRepresentationFrame(entryFrame.SourceArity, indices.OrderBy(i => i),
+                storageIndices: entryFrame.StorageIndices, nullableStorageIndices: entryFrame.NullableStorageIndices);
             var suffix = 0;
             string name;
             do { name = "$nullableBody$" + suffix++; } while (!names.Add(name));
@@ -50,10 +51,13 @@ static class NullableBodyDispatch
             var index = missing[step];
             JsonObject Call(TypeNode chosen)
             {
-                var arguments = Enumerable.Range(0, entryFrame.SourceArity)
-                    .Select(i => (TypeNode)new TypeNode.Tv("method", i))
-                    .Concat(targetFrame.NullableIndices.Select(i => i == index ? chosen
-                        : currentFrame.NullableVariable(new TypeNode.Tv("method", i)))).ToArray();
+                var sources = Enumerable.Range(0, entryFrame.SourceArity)
+                    .Select(i => (TypeNode)new TypeNode.Tv("method", i)).ToArray();
+                var arguments = targetFrame.Close(sources,
+                    type => currentFrame.Variable((TypeNode.Tv)type, NullableRepresentationFrame.Role.Ordinary),
+                    type => ((TypeNode.Tv)type).I == index ? chosen : currentFrame.NullableVariable((TypeNode.Tv)type),
+                    type => currentFrame.Variable((TypeNode.Tv)type, NullableRepresentationFrame.Role.Storage),
+                    type => currentFrame.Variable((TypeNode.Tv)type, NullableRepresentationFrame.Role.NullableStorage));
                 var call = new JsonObject {
                     ["k"] = "callInstance", ["ownerType"] = TypeJson.Write(ownerType), ["virtual"] = false,
                     ["recv"] = new JsonObject { ["k"] = "this" }, ["method"] = Text(target["name"]),
@@ -75,10 +79,11 @@ static class NullableBodyDispatch
                     ["cond"] = new JsonObject {
                         ["k"] = "clrPropGet", ["type"] = TypeJson.Fqn("System.Type"),
                         ["name"] = "IsValueType", ["static"] = false, ["ret"] = TypeJson.Fqn("kotlin.Boolean"),
-                        ["recv"] = new JsonObject { ["k"] = "classRef", ["type"] = TypeJson.Write(new TypeNode.Tv("method", index)) },
+                        ["recv"] = new JsonObject { ["k"] = "classRef", ["type"] = TypeJson.Write(
+                            currentFrame.Variable(new TypeNode.Tv("method", index), NullableRepresentationFrame.Role.Ordinary)) },
                     },
                     ["then"] = Call(new TypeNode.Fqn("object")),
-                    ["else"] = Call(new TypeNode.Tv("method", index)),
+                    ["else"] = Call(currentFrame.Variable(new TypeNode.Tv("method", index), NullableRepresentationFrame.Role.Ordinary)),
                 },
             });
         }

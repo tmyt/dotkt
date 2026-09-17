@@ -24,6 +24,7 @@ static class Bir2Cir
                 TypeNodeSelfTest.Run();
                 MemberRefNodeSelfTest.Run();
                 AliasConstructorDelegationExpansion.SelfTest();
+                AliasHelperHoist.SelfTest();
                 StdlibBindingOverlay.SelfTest();
                 DeclarationIdentityBinding.SelfTest();
                 LexicalDeclarationIds.SelfTest();
@@ -34,6 +35,12 @@ static class Bir2Cir
                 NullableRepresentationDemand.SelfTest();
                 NullableRepresentationTypes.SelfTest();
                 NullableRepresentationMaterialization.SelfTest();
+                GenericRepresentationPolicy.SelfTest();
+                CollectionHelperBinding.SelfTest();
+                IntrinsicExtensionRepresentation.SelfTest();
+                ReferenceExistentialAbiBinding.SelfTest();
+                KotlinCollectionSlotSynthesis.SelfTest();
+                KotlinOverrideSlotBridge.SelfTest();
                 ReferenceMetadataIndex.SelfTest();
                 NullableTvErasureCallRealign.SelfTest();
                 DriverOptions.SelfTest();
@@ -155,6 +162,31 @@ sealed class Pipeline
         // These are new CLR slot bodies for frontend-selected inherited implementations, not source declarations.
         // Materialize before downstream indexing/freezing so references and local bases use the same suspend ABI.
         InheritedClassInterfaceBridge.MaterializeSuspendDeclarations(birRoots, refs);
+        var representationAliases = DeclarationIdentityBinding.CollisionAliases(birRoots, refs.Aliases);
+        var localValueTypeFqns = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var b in birFiles) CollectLocalValueTypes(b.Root, localValueTypeFqns);
+        ValueTypeOracle isValueFqn = type => refs.IsValueType(type) || localValueTypeFqns.Contains(type.Name);
+        // Constructor adapters carry Kotlin expressions and signatures. Expand them before collecting
+        // representation demands, and preserve that source vocabulary in the reference carrier as well.
+        var aliasConstructorDelegations = AliasConstructorDelegationExpansion.Collect(
+            birRoots, refs, isValueFqn, carryForReference: _options.RefBuild);
+        if (!_options.RefBuild)
+            foreach (var root in birRoots) aliasConstructorDelegations.Apply(root);
+        // Semantic operations can require generic stdlib helpers. Author those calls while their operand types
+        // are still source vocabulary, before helper demands and physical argument frames are fixed.
+        var sourceTopLevelFns = birRoots.OfType<JsonObject>()
+            .SelectMany(root => (root["methods"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
+            .Select(method => method["name"]?.GetValue<string>()).Where(name => name != null).ToHashSet(StringComparer.Ordinal);
+        CollectionHelperBinding.Apply(birRoots, refs, representationAliases, bind =>
+            FaithfulHints.WithHelperBinding(bind, () =>
+            {
+                foreach (var root in birRoots)
+                {
+                    ObjectSlotRename.Apply(root);
+                    PrimitiveOperatorLowering.Apply(root, refs);
+                    FaithfulHintRecognition.Apply(root, refs, sourceTopLevelFns);
+                }
+            }), constructors: aliasConstructorDelegations);
         // Kotlin `reified` is a declaration fact; the hidden nullable-instantiation Boolean is a distinct CLR ABI
         // demand. Derive the latter from nullable-sensitive operations and exact call/lift correspondences as one
         // module-wide fixed point before per-file materialization starts.
@@ -163,13 +195,13 @@ sealed class Pipeline
         // input file. The Sequence element-view boundary asks the nullable-generic rule whether its source element will
         // be object-reified, so it shares this oracle instead of restating today's two stdlib source spellings. The
         // declaration/use-axis nullable-generic passes below retain the same oracle.
-        var localValueTypeFqns = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var b in birFiles) CollectLocalValueTypes(b.Root, localValueTypeFqns);
-        ValueTypeOracle isValueFqn = type => refs.IsValueType(type) || localValueTypeFqns.Contains(type.Name);
         RoundtripMetadata.FreezeSuspendResults(birRoots);
         InheritedMemberOwnerBinding.ProjectOwners(birRoots, refs);
-        NullableRepresentationMaterialization.Apply(birRoots, isValueFqn, refs);
+        // The adapter authors source-generic applications. Include those applications in demand collection
+        // so their complete physical frames are materialized with the declaration and its callers.
         if (!_options.RefBuild) SequenceElementAdapterLowering.Apply(birRoots);
+        var genericRepresentations = new GenericRepresentationPolicy(representationAliases);
+        NullableRepresentationMaterialization.Apply(birRoots, isValueFqn, refs, policy: genericRepresentations);
         var companionRepresentations = CompanionRepresentationLowering.Apply(birRoots);
         // CLR multiplies static storage and .cctors on a generic TypeDef per constructed type. Kotlin companion-block
         // statics are one declaration independent of the owner's T, so materialize their non-generic carrier before
@@ -277,7 +309,7 @@ sealed class Pipeline
         // BEFORE the declaration snapshot below: a call reached through the DERIVED type is typed against that
         // declaration, so a snapshot taken first would type it against the slot the override no longer has. The
         // top-level `object` seam is bridged instead, beside the other bridge synthesizers.
-        KotlinOverrideSlotBridge.PropagateErasedSlots(birFiles.Select(f => f.Root), isValueFqn, refs, _options.RefBuild);
+        KotlinOverrideSlotBridge.PropagateErasedSlots(birFiles.Select(f => f.Root), isValueFqn, refs, _options.RefBuild, genericRepresentations);
 
         // Snapshot every LOCAL generic type's declared member returns BEFORE the per-file DEF-side EraseNullableTv
         // (NullableGenericErasure runs inside the transform loop, mutating declarations in place). Feeds
@@ -343,13 +375,6 @@ sealed class Pipeline
         InlineBirStash.Reset();
         foreach (var b in birFiles) InlineBirStash.Stash(b.Root);
 
-        // An @ClrTypeAlias constructor may be a Kotlin adapter whose physical target has a different signature.
-        // Capture the module-wide declaration graph before AliasHelperHoist drops those TypeDefs.  A consumer expands
-        // it at the head of phase 1 so every expression copied out of an alias constructor flows through the same
-        // semantic/representation lowerings as an expression authored directly in that consumer.
-        var aliasConstructorDelegations = AliasConstructorDelegationExpansion.Collect(
-            birFiles.Select(file => file.Root), refs, isValueFqn, carryForReference: _options.RefBuild);
-
         // PHASE 1: per-file transforms up through the CharSequence bridge. Collect the staged roots so the
         // suspend cold lowering can run GLOBALLY (a same-assembly cross-file suspend call keeps `owner:null`,
         // so its cold-entry callee may live in another file — the suspend-member registry spans all files).
@@ -357,7 +382,6 @@ sealed class Pipeline
         foreach (var bir in birFiles)
         {
             var outputName = OutputNameFor(bir.Path);
-            if (!_options.RefBuild) aliasConstructorDelegations.Apply(bir.Root);
             // SYNTHETIC CLR-REPRESENTATION TYPES (#52 kotc-purity): kotc emits only the FACTS — a capturing lambda's
             // `newClosure` carries a transient `synthClass` ingredient bag; a CharSequence use references the generated
             // bridge identity; a heap ref-cell rides the `refTypes` registry. After raw payload splicing and witness
@@ -682,7 +706,7 @@ sealed class Pipeline
             // implementation fact instead of rediscovering a DIM from hierarchy bodies or reference metadata.
             // This is representation-independent and therefore applies to reference builds too.
             InheritedDefaultFakeOverrideElision.Apply(bir.Root);
-            var hoisted = _options.RefBuild ? bir.Root : AliasHelperHoist.Apply(bir.Root, refs);
+            var hoisted = _options.RefBuild ? bir.Root : AliasHelperHoist.Apply(bir.Root, refs, genericRepresentations);
             // Consume class-literal property semantics before reference identity binding replaces Kotlin
             // accessor names/roles with MethodDef names. Its System.Type representation owns this call,
             // not the reference surface's abstract KClass accessor.
@@ -699,6 +723,7 @@ sealed class Pipeline
             // STAR-PROJECTION COLLECTION CLASSIFIERS: use faithful non-generic BCL faces where one exists; otherwise
             // author the Collection/Set/MutableSet composite classifier plus the following smart-cast member access.
             // App build only, before MemberCallSubstitution while the Kotlin owner is still visible.
+            if (!_options.RefBuild) KotlinCollectionClassifierLowering.Apply(hoisted);
             if (attributeTopLevelOwner) StarProjectionLowering.Apply(hoisted, refs);
             // .NET EVENT `subscribe` BINDING: kotc surfaces a .NET event as a `kotlin.clr.ClrEvent<T>` property and emits
             // `w.Changed.subscribe(h)` as the PLAIN call `callInstance(kotlin.clr.ClrEvent.subscribe,
@@ -741,7 +766,7 @@ sealed class Pipeline
             if (!_options.RefBuild && attributeTopLevelOwner && !hasUserCharSeqImpl)
                 hoisted = CharSeqStringLowering.Apply(hoisted, localTopLevelFns, out charSeqRetLambdas);
             var substituted = _options.RefBuild ? hoisted : MemberCallSubstitution.Apply(hoisted, refs,
-                localTopLevelFns, attributeTopLevelOwner, isValueFqn, localPropertyDeclarations);
+                localTopLevelFns, attributeTopLevelOwner, isValueFqn, localPropertyDeclarations, genericRepresentations);
             // Reified-nullability witnesses were prepared while declaration identities and Kotlin type arguments were
             // still authoritative. Materialize them only after semantic calls (enum/array/collection intrinsics) have
             // either been replaced or deliberately retained, so a physical hidden ABI argument cannot interfere with
@@ -844,13 +869,13 @@ sealed class Pipeline
         InheritedClassInterfaceBridge.ApplyAll(staged.Select(s => s.Root).ToList());
 
         KotlinOverrideSlotBridge.PrepareSuspendValueBridges(
-            staged.Select(s => s.Root).ToList(), isValueFqn, refs, localTypeFqns, _options.RefBuild);
+            staged.Select(s => s.Root).ToList(), isValueFqn, refs, localTypeFqns, _options.RefBuild, genericRepresentations);
 
         // KOTLIN COVARIANT OVERRIDE -> EXACT CLR METHODIMPL: preserve the Kotlin declaration's narrow return and add a
         // private forwarding bridge with the interface slot's exact return. The bridge carries a resolved
         // `clrInterfaceImpls` instruction; ilemit only consumes that instruction and does not infer covariance.
         var covariantBridgedSlots = CovariantInterfaceReturnBridge.ApplyAll(
-            staged.Select(s => s.Root).ToList(), refs, isValueFqn);
+            staged.Select(s => s.Root).ToList(), refs, isValueFqn, genericRepresentations);
 
         // KOTLIN-ONLY COLLECTION SLOTS -> EXACT CLR METHODIMPL: the BCL operational faces carry neither Kotlin's
         // remove-capable `MutableIterable.iterator()` return nor `MutableCollection.removeAll`/`retainAll`/
@@ -861,7 +886,7 @@ sealed class Pipeline
         // the Kotlin-vocabulary phase, because the pass keys on the frontend `overrides` identity — which does not
         // survive to CIR — and on Kotlin's own supertype graph. Non-ref builds only.
         if (!_options.RefBuild)
-            KotlinCollectionSlotSynthesis.ApplyAll(staged.Select(s => s.Root).ToList());
+            KotlinCollectionSlotSynthesis.ApplyAll(staged.Select(s => s.Root).ToList(), refs, isValueFqn, genericRepresentations);
 
         // NOMINAL COLLECTION CLASSIFIER IDENTITIES: the operational aliases intentionally share BCL faces
         // (Collection/Set -> IReadOnlyCollection, MutableCollection/MutableSet -> ICollection), which otherwise makes
@@ -937,7 +962,7 @@ sealed class Pipeline
         // Ref builds skip suspend lowering and normalize their logical declaration here; app and rt builds normalize
         // the final Task/cold shapes. Star views already exist, and all types are still in the Kotlin vocabulary.
         KotlinOverrideSlotBridge.ApplyAll(
-            staged.Select(s => s.Root).ToList(), isValueFqn, refs, localTypeFqns, _options.RefBuild,
+            staged.Select(s => s.Root).ToList(), isValueFqn, refs, localTypeFqns, _options.RefBuild, genericRepresentations,
             covariantBridgedSlots);
 
         // The final override bridge deliberately runs after the main F-bound/star rewrite because suspend lowering
@@ -1319,6 +1344,11 @@ sealed class Pipeline
             // Kotlin-faced) simply never has.
             ReadOnlyCollectionViewInterfaces.Apply(lowered);
         }
+
+        if (!_options.RefBuild)
+            foreach (var carrier in ReadOnlyCollectionStorageSynthesis.ApplyAll(
+                         loweredRoots.Select(s => s.Root).ToList(), refs))
+                emittedLocalTypes.Add(carrier);
 
         // THE REVERSE ENUMERATOR BRIDGE (#139/#400): a class whose supertype graph reaches a BCL enumerable face owes
         // `IEnumerator<E> GetEnumerator()` and has only Kotlin's `iterator(): Iterator<E>`. Author the compiler-owned

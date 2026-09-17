@@ -197,6 +197,33 @@ internal fun starProjectionCast(value: Any?, openGenericType: StarProjectionType
 internal fun starProjectionSafeCast(value: Any?, openGenericType: StarProjectionType): Any? =
     if (value != null && starProjectionClosedView(value.starProjectionRuntimeType(), openGenericType) != null) value else null
 
+private object NonCollectionCandidate
+
+// Operational storage faces do not grant Kotlin mutability. Preserve null (including nullable casts/tests) and
+// identity on success; an ineligible non-null value stays non-null but cannot match any collection interface.
+@PublishedApi
+internal fun kotlinCollectionCandidate(value: Any?, witness: Int): Any? {
+    if (value !is KotlinCollectionClassifier) return value
+    // bir2cir supplies KotlinTypeWitness: low bit is nullability; the remaining code is nominal identity.
+    val matches = when (witness and -2) {
+        2 -> true
+        4 -> value is KotlinMutableCollectionClassifier
+        6 -> value is KotlinListClassifier
+        8 -> value is KotlinMutableListClassifier
+        10 -> value is KotlinSetClassifier
+        12 -> value is KotlinMutableSetClassifier
+        else -> true
+    }
+    return if (matches) value else NonCollectionCandidate
+}
+
+@PublishedApi
+internal fun kotlinCollectionCastCandidate(value: Any?, witness: Int): Any? {
+    if (kotlinCollectionCandidate(value, witness) === NonCollectionCandidate)
+        throw ClassCastException("Value is not an instance of the requested Kotlin collection classifier")
+    return value
+}
+
 // Collection/Set use overlapping BCL faces for member dispatch, so their Kotlin classifier is a composite physical
 // fact. Emitted Kotlin implementations carry the nominal identities above; unmodifiable BCL-backed implementations
 // are recognized by the generic faces they actually implement. Dictionary and array shapes are deliberately excluded

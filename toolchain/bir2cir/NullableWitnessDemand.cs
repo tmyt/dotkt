@@ -110,9 +110,25 @@ sealed class NullableWitnessDemand
             ["k"] = "return",
             ["value"] = new JsonObject { ["k"] = "const", ["value"] = true },
         });
+        var safe = Method("safe", "selftest:safe", new JsonObject {
+            ["k"] = "return", ["value"] = new JsonObject {
+                ["k"] = "isInstRef", ["type"] = Tv(0), ["reifiedTypeOperand"] = true,
+                ["e"] = new JsonObject { ["k"] = "const", ["value"] = null },
+            },
+        });
+        safe["ret"] = TypeJson.Write(new TypeNode.Nullable(new TypeNode.Tv("method", 0)));
+        var uncheckedCast = (JsonObject)safe.DeepClone();
+        uncheckedCast[DeclarationIdentityBinding.Key] = "selftest:unchecked";
+        uncheckedCast["name"] = "unchecked";
+        uncheckedCast["body"][0]["value"]["reifiedTypeOperand"] = false;
+        var nullableForward = (JsonObject)forward.DeepClone();
+        nullableForward[DeclarationIdentityBinding.Key] = "selftest:nullable-forward";
+        nullableForward["name"] = "nullableForward";
+        nullableForward["body"][0]["value"]["typeArgs"] = new JsonArray(
+            TypeJson.Write(new TypeNode.Nullable(new TypeNode.Tv("method", 0))));
         var root = new JsonObject {
             ["fileClass"] = "WitnessSelfTest",
-            ["methods"] = new JsonArray(direct, forward, unused),
+            ["methods"] = new JsonArray(direct, forward, unused, safe, uncheckedCast, nullableForward),
             ["types"] = new JsonArray(),
         };
 
@@ -123,6 +139,9 @@ sealed class NullableWitnessDemand
         if (!withMarkers[directId].SequenceEqual(new[] { 0 })
             || !withMarkers[forwardId].SequenceEqual(new[] { 0 })
             || withMarkers[unusedId].Length != 0
+            || !withMarkers["selftest:safe"].SequenceEqual(new[] { 0 })
+            || withMarkers["selftest:unchecked"].Length != 0
+            || !withMarkers["selftest:nullable-forward"].SequenceEqual(new[] { 0 })
             || withMarkers.Any(entry => !entry.Value.SequenceEqual(withoutMarkers[entry.Key])))
             throw new InvalidOperationException(
                 "nullable-witness demand self-test failed: demand depends on Kotlin reified markers or call propagation");
@@ -255,7 +274,7 @@ sealed class NullableWitnessDemand
                 if (index < 0 || index >= typeArguments.Count)
                     throw new InvalidOperationException(
                         $"bir2cir: {context} has no type argument at demanded nullable-witness position {index}");
-                if (TypeJson.Read(typeArguments[index]) is TypeNode.Tv tv)
+                if (KotlinTypeWitness.Variable(TypeJson.Read(typeArguments[index])) is TypeNode.Tv tv)
                     required.Add(new TypeVariable(tv.Scope, tv.I));
             }
         }
@@ -263,7 +282,7 @@ sealed class NullableWitnessDemand
         void MapFrame(IEnumerable<TypeVariable> variables, JsonArray typeArguments, string context, bool dense = false)
         {
             foreach (var position in ResolveFramePositions(variables, typeArguments, context, dense))
-                if (TypeJson.Read(typeArguments[position]) is TypeNode.Tv tv)
+                if (KotlinTypeWitness.Variable(TypeJson.Read(typeArguments[position])) is TypeNode.Tv tv)
                     required.Add(new TypeVariable(tv.Scope, tv.I));
         }
 
@@ -350,7 +369,8 @@ sealed class NullableWitnessDemand
                     }
 
                     WalkOperands(obj, "typeArgs");
-                    if (kind == "isInst" && TypeJson.Read(obj["type"]) is TypeNode.Tv tested)
+                    if (KotlinTypeWitness.NeedsWitness(obj)
+                        && KotlinTypeWitness.Variable(TypeJson.Read(obj["type"])) is TypeNode.Tv tested)
                         required.Add(new TypeVariable(tested.Scope, tested.I));
                     if (kind is "callStatic" or "callInstance" or "constrainedCall" or "callInline"
                         && Str(obj[DeclarationIdentityBinding.Key]) is string id)

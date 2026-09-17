@@ -132,9 +132,8 @@ static class CollectionIdentityRecord
     }
 
     // True iff a read-only List/Set/Collection appears where BirTypeLowering's Root-V collapse would REWRITE it — i.e.
-    // reached with `typeArg == true`: constructed generic arguments and array elements both use the reified
-    // storage projection. ByRef / Nullable / Fn positions reset it to false. Preserve array and vararg element
-    // identity just like other invariant storage; only a top-level read-only collection needs no such record.
+    // reached with `typeArg == true`. Native array elements, like direct value slots, retain the readonly head;
+    // constructed storage inside that element can still need a source-identity record.
     static bool NestsCollapsingReadonly(TypeNode t) => Scan(t, typeArg: false);
 
     static bool Scan(TypeNode t, bool typeArg) => t switch
@@ -142,7 +141,7 @@ static class CollectionIdentityRecord
         TypeNode.Fqn f =>
             (typeArg && CollapsingReadonly.Contains(f.Name))
             || (f.Args?.Any(a => Scan(a, typeArg: true)) ?? false),
-        TypeNode.Array a => Scan(a.Elem, typeArg: true),
+        TypeNode.Array a => Scan(a.Elem, typeArg: false),
         TypeNode.ByRef b => Scan(b.Of, typeArg: false),
         TypeNode.Nullable n => Scan(n.Of, typeArg: false),
         // Oblivious (`T!`) is a pure nullability annotation — BirTypeLowering lowers its inner with THIS node's incoming

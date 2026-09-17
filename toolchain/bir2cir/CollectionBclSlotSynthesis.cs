@@ -14,17 +14,16 @@ using DotKt.Bir;
 // — mutableListOf → List<T>, mutableMapOf → Dictionary<K,V> — never the Kotlin class.)
 //
 // Fill each missing slot with an ordinary public forwarding member, keyed on the DIRECTLY-listed alias. An IList face
-// needs only IndexOf here; the ICollection face comes from a base or the direct ICollection listing. Contains→`contains`
-// / IndexOf→`indexOf` self-forward (the alias mandates the class declare
-// them). CopyTo iterates via ClrIteratorBridgeKt.iteratorOverEnumerable(this) — a static resolvable regardless of whether
-// THIS class declares iterator() (AbstractMutableSet inherits it). IsReadOnly returns false. The return-DROPPING slots
+// needs only IndexOf here; the ICollection face comes from a base or the direct ICollection listing. Contains and
+// IndexOf dispatch through the already-resolved Kotlin query slots, which own the ordinary/storage argument
+// boundary and the selected implementation (including renamed overrides). CopyTo consumes the exact CLR IEnumerable<E> face.
+// IsReadOnly returns false. The return-DROPPING slots
 // (Add/set_Item/RemoveAt) join the common late KotlinOverrideSlotBridge allocation. Non-ref builds only (the ref surface
 // stays pure Kotlin). Modeled on ComparableBridgeSynthesis.
 static class CollectionBclSlotSynthesis
 {
     const string ICollection = "System.Collections.Generic.ICollection";
     const string IList = "System.Collections.Generic.IList";
-    const string IteratorBridge = "kotlin.collections.ClrIteratorBridgeKt";
 
     public static void Apply(JsonNode root, ReferenceMetadataIndex refs)
     {
@@ -59,30 +58,16 @@ static class CollectionBclSlotSynthesis
             if (listElem != null && !ifaces.Any(i => TypeJson.Read(i) is TypeNode.Fqn { Name: ICollection }))
                 ifaces.Add(new JsonObject { ["t"] = "fqn", ["name"] = ICollection, ["args"] = new JsonArray(Clone(elem)) });
 
-            // The `this.<contains/indexOf>()` self-forward target must reference the CONSTRUCTED self `Owner<!0,…>`, not
-            // the OPEN `Owner`1`: this pass runs AFTER GenericSelfInstantiation (which would otherwise construct a bare
-            // self ownerType), so a generic self-forward carrying only the bare name resolves the callee on the open def
-            // and mismatches the constructed `this` (ilverify StackUnexpected [found Owner<T0>][expected Owner`1]).
-            var selfOwner = SelfOwnerType(owner, TypeParameterFrame.Count(to));
-
             // ICollection<E> face: Contains / CopyTo / get_IsReadOnly.
-            if (!Has("Contains")) methods.Add(SelfForward("Contains", elem, "System.Boolean", "contains", selfOwner));
+            if (!Has("Contains")) methods.Add(QuerySlotForward("Contains", elem, "System.Boolean",
+                "KotlinCollectionDefaultSlots", "dotktContains"));
             if (!Has("get_IsReadOnly")) methods.Add(ConstBoolGetter("get_IsReadOnly"));
-            if (!Has("CopyTo")) methods.Add(CopyTo(elem, refs));
+            if (!Has("CopyTo")) methods.Add(CopyTo(elem));
             // IList<E> face additionally needs IndexOf.
             if (listElem != null && !Has("IndexOf"))
-                methods.Add(SelfForward("IndexOf", listElem, "System.Int32", "indexOf", selfOwner));
+                methods.Add(QuerySlotForward("IndexOf", listElem, "System.Int32",
+                    "KotlinListDefaultSlots", "dotktIndexOf"));
         }
-    }
-
-    // The constructed self owner `Owner<!0,…,!n-1>` (the type-scope generic params by position) for a generic class,
-    // else the bare `Owner` node for a non-generic one — mirrors GenericSelfInstantiation's constructed-self derivation.
-    static JsonNode SelfOwnerType(string owner, int n)
-    {
-        if (n == 0) return TypeJson.Fqn(owner);
-        var args = new JsonArray();
-        for (var i = 0; i < n; i++) args.Add(new JsonObject { ["t"] = "tv", ["scope"] = "type", ["i"] = i });
-        return new JsonObject { ["t"] = "fqn", ["name"] = owner, ["args"] = args };
     }
 
     // The interface node's first type-arg, cloned as a fresh JsonNode (so it can be attached under several slots).
@@ -108,8 +93,9 @@ static class CollectionBclSlotSynthesis
     static JsonObject This() => new() { ["k"] = "this" };
     static JsonObject Local(string name) => new() { ["k"] = "local", ["name"] = name };
 
-    // `return this.<target>(element)` — Contains→contains, IndexOf→indexOf. Virtual dispatch covers a base impl.
-    static JsonObject SelfForward(string name, JsonNode elem, string ret, string target, JsonNode ownerType) =>
+    // The semantic slot accepts object and already carries the selected Kotlin override and its type-safe barrier.
+    // Do not reconstruct a target by lowercase name or use the incoming storage type as its ordinary signature.
+    static JsonObject QuerySlotForward(string name, JsonNode elem, string ret, string slotOwner, string target) =>
         Method(name,
             new JsonArray(new JsonObject { ["name"] = "element", ["type"] = Clone(elem) }),
             TypeJson.Fqn(ret),
@@ -119,13 +105,15 @@ static class CollectionBclSlotSynthesis
                 ["value"] = new JsonObject
                 {
                     ["k"] = "callInstance",
-                    ["ownerType"] = Clone(ownerType),
+                    ["ownerType"] = TypeJson.Fqn("DotKt.Runtime.CompilerServices." + slotOwner),
                     ["virtual"] = true,
                     ["recv"] = This(),
                     ["method"] = target,
-                    ["sig"] = new JsonArray(Clone(elem)),
+                    ["sig"] = new JsonArray(TypeJson.Fqn("System.Object")),
                     ["ret"] = TypeJson.Fqn(ret),
-                    ["args"] = new JsonArray(Local("element")),
+                    ["args"] = new JsonArray(new JsonObject {
+                        ["k"] = "cast", ["type"] = TypeJson.Fqn("System.Object"), ["e"] = Local("element"),
+                    }),
                 },
             }));
 
@@ -137,31 +125,30 @@ static class CollectionBclSlotSynthesis
                 ["value"] = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("System.Boolean"), ["value"] = false },
             }));
 
-    // `CopyTo(array: E[], arrayIndex: Int)` = `var it = iteratorOverEnumerable(this); var i = arrayIndex;
-    // while (it.hasNext()) { array[i] = it.next(); i = i + 1 }`. iteratorOverEnumerable is the stdlib's own IEnumerable->
-    // Kotlin-iterator bridge (a static resolvable from any assembly, unlike a virtual iterator() this class may inherit).
-    // The local and both member calls use the allocated Iterator carrier; next's erased value is converted to E.
-    static JsonObject CopyTo(JsonNode elem, ReferenceMetadataIndex refs)
+    // This slot is synthesized after type lowering: E is an exact CLR element, not a Kotlin type argument.
+    // Enumerate that physical face directly and dispose even when an array write throws.
+    internal static JsonObject CopyTo(JsonNode elem)
     {
         var element = TypeJson.Read(elem);
+        var iterator = new TypeNode.Fqn("System.Collections.Generic.IEnumerator", new[] { element });
+        JsonObject Call(TypeNode owner, string method, JsonNode receiver, TypeNode result) => new() {
+            ["k"] = "callInstance", ["ownerType"] = TypeJson.Write(owner), ["method"] = method,
+            ["virtual"] = true,
+            ["recv"] = receiver, ["sig"] = new JsonArray(), ["args"] = new JsonArray(), ["ret"] = TypeJson.Write(result),
+        };
         var body = new JsonArray
         {
             new JsonObject
             {
-                ["k"] = "var", ["name"] = "it", ["type"] = TypeJson.Write(KotlinIteratorPhysicalProtocol.Carrier(refs)),
-                ["init"] = new JsonObject
-                {
-                    ["k"] = "callStatic", ["owner"] = TypeJson.Fqn(IteratorBridge), ["method"] = "iteratorOverEnumerable",
-                    ["sig"] = new JsonArray { TypeJson.Write(new TypeNode.Fqn("System.Collections.Generic.IEnumerable",
-                        new TypeNode[] { new TypeNode.Tv("method", 0) })) },
-                    ["args"] = new JsonArray(This()), ["typeArgs"] = new JsonArray(Clone(elem)),
-                },
+                ["k"] = "var", ["name"] = "it", ["type"] = TypeJson.Write(iterator),
+                ["init"] = Call(new TypeNode.Fqn("System.Collections.Generic.IEnumerable", new[] { element }),
+                    "GetEnumerator", This(), iterator),
             },
             new JsonObject { ["k"] = "var", ["name"] = "i", ["type"] = TypeJson.Fqn("System.Int32"), ["init"] = Local("arrayIndex") },
             new JsonObject
             {
                 ["k"] = "while",
-                ["cond"] = KotlinIteratorPhysicalProtocol.Call(refs, Local("it"), "hasNext", element, new TypeNode.Fqn("System.Boolean")),
+                ["cond"] = Call(new TypeNode.Fqn("System.Collections.IEnumerator"), "MoveNext", Local("it"), new TypeNode.Fqn("System.Boolean")),
                 ["body"] = new JsonArray
                 {
                     new JsonObject
@@ -170,7 +157,7 @@ static class CollectionBclSlotSynthesis
                         ["expr"] = new JsonObject
                         {
                             ["k"] = "arraySet", ["array"] = Local("array"), ["index"] = Local("i"), ["elem"] = Clone(elem),
-                            ["value"] = KotlinIteratorPhysicalProtocol.Call(refs, Local("it"), "next", element, element),
+                            ["value"] = Call(iterator, "get_Current", Local("it"), element),
                         },
                     },
                     new JsonObject
@@ -185,6 +172,13 @@ static class CollectionBclSlotSynthesis
                 },
             },
         };
+        var loop = body[2];
+        body.RemoveAt(2);
+        body.Add(new JsonObject {
+            ["k"] = "try", ["body"] = new JsonArray(loop), ["catches"] = new JsonArray(),
+            ["finally"] = new JsonArray(new JsonObject { ["k"] = "exprStmt",
+                ["expr"] = Call(new TypeNode.Fqn("System.IDisposable"), "Dispose", Local("it"), new TypeNode.Fqn("void")) }),
+        });
         return Method("CopyTo",
             new JsonArray(
                 new JsonObject { ["name"] = "array", ["type"] = new JsonObject { ["t"] = "array", ["elem"] = Clone(elem) } },

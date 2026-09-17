@@ -8,7 +8,9 @@ using DotKt.Bir;
 // specialization is separate: it must not grow a published virtual slot. Runs after the Kotlin declaration snapshot.
 static class NullableRepresentationMaterialization
 {
-    public static void Apply(IEnumerable<JsonNode> inputs, ValueTypeOracle isValue, ReferenceMetadataIndex references = null)
+    public static void Apply(IEnumerable<JsonNode> inputs, ValueTypeOracle isValue, ReferenceMetadataIndex references = null,
+        Func<TypeNode.Fqn, bool, NullableRepresentationFrame, TypeNode> argumentHead = null,
+        GenericRepresentationPolicy policy = null)
     {
         var roots = inputs.ToArray();
         var importedMethods = new Dictionary<string, NullableRepresentationFrame>(StringComparer.Ordinal);
@@ -25,7 +27,7 @@ static class NullableRepresentationMaterialization
                 foreach (var item in array) FindReferencedCalls(item);
         }
         foreach (var root in roots) FindReferencedCalls(root);
-        var demands = NullableRepresentationDemand.Collect(roots, references?.NullableTypeFrames, importedMethods);
+        var demands = NullableRepresentationDemand.Collect(roots, references?.NullableTypeFrames, importedMethods, policy);
         var localBindings = NullableRepresentationDemand.BindLocalFunctions(roots);
         // Frames refer to immutable source arities. Snapshot before any declaration's parameters are expanded.
         var ownerFrames = demands.ToDictionary(owner => owner.Declaration, owner => owner.Frame);
@@ -54,17 +56,19 @@ static class NullableRepresentationMaterialization
             if (Text(method.Declaration[DeclarationIdentityBinding.Key]) is string id) methods[id] = method.Frame;
         foreach (var root in roots.OfType<JsonObject>()) NullableGenericErasure.PreserveSourceFacts(root, isValue);
         var empty = new NullableRepresentationFrame(0, Array.Empty<int>());
+        NullableRepresentationTypes Mapping(NullableRepresentationFrame owner, NullableRepresentationFrame method) =>
+            new(owner, method, types, isValue, argumentHead, policy);
         var declarations = demands.SelectMany(owner => owner.Methods.Select(method => (owner, method)))
             .Where(pair => Text(pair.method.Declaration[DeclarationIdentityBinding.Key]) != null)
             .ToDictionary(pair => Text(pair.method.Declaration[DeclarationIdentityBinding.Key]),
-                pair => new NullableRepresentationTypes(pair.owner.Frame, pair.method.Frame, types, isValue), StringComparer.Ordinal);
+                pair => Mapping(pair.owner.Frame, pair.method.Frame), StringComparer.Ordinal);
         var localDeclarations = demands.SelectMany(owner => owner.Methods.Where(method => method.IsLocal)
                 .Select(method => (owner, method)))
             .ToDictionary(pair => pair.method.Declaration,
-                pair => new NullableRepresentationTypes(pair.owner.Frame, pair.method.Frame, types, isValue));
+                pair => Mapping(pair.owner.Frame, pair.method.Frame));
         foreach (var (id, frame) in importedMethods)
             if (!declarations.ContainsKey(id) && references.TryDeclarationIdentity(id, out _, out var owner, out _, out _))
-                declarations[id] = new NullableRepresentationTypes(types.GetValueOrDefault(owner) ?? empty, frame, types, isValue);
+                declarations[id] = Mapping(types.GetValueOrDefault(owner) ?? empty, frame);
         // Constructor delegation descriptors belong to the selected base/this declaration, not to the
         // subclass's lexical frame. Snapshot this relation before rewriting any owner's base type.
         var constructorMappings = new Dictionary<JsonObject, NullableRepresentationTypes>();
@@ -76,34 +80,43 @@ static class NullableRepresentationMaterialization
                         : TypeJson.Read(owner.Declaration["base"]) is TypeNode.Fqn baseType
                             ? types.GetValueOrDefault(baseType.Name) : null;
                     constructorMappings[constructor] = targetFrame == null ? null
-                        : new NullableRepresentationTypes(targetFrame, empty, types, isValue);
+                        : Mapping(targetFrame, empty);
                 }
         NullableRepresentationTypes DeclarationMapping(JsonObject use)
         {
             if (localBindings.TryGetValue(use, out var localDeclaration)) return localDeclarations[localDeclaration];
             if (constructorMappings.TryGetValue(use, out var constructorMapping)) return constructorMapping;
             if (Text(use[DeclarationIdentityBinding.Key]) is string id && declarations.TryGetValue(id, out var selected))
+            {
+                // A fake override preserves the implementing declaration's ID, but its explicit member
+                // descriptors are written by kotc in the accessed owner's frame. The receiver/declaration
+                // relation is already stated in ownerType; the ID must not substitute the base owner's arity.
+                var descriptorOwner = Text(use["k"]) == "new" ? use["type"] : use["ownerType"] ?? use["owner"];
+                if (use["memberOwnerTypeParams"] is JsonArray
+                    && TypeJson.Read(descriptorOwner) is TypeNode.Fqn descriptorType
+                    && types.TryGetValue(descriptorType.Name, out var descriptorFrame))
+                    return Mapping(descriptorFrame, selected.MethodFrame);
                 return selected;
+            }
             // A Kotlin declaration may have no generic parameters of its own while its signature contains
             // constructed Kotlin types that require companions. Its identity establishes source vocabulary;
             // absence of a method frame does not make the signature a foreign CLR descriptor.
             if (Text(use[DeclarationIdentityBinding.Key]) is string referencedId
                 && references != null
                 && references.TryDeclarationIdentity(referencedId, out _, out var referencedOwner, out _, out _))
-                return new NullableRepresentationTypes(types.GetValueOrDefault(referencedOwner),
-                    references.NullableMethodFrame(referencedId), types, isValue);
+                return Mapping(types.GetValueOrDefault(referencedOwner), references.NullableMethodFrame(referencedId));
             var ownerType = Text(use["k"]) == "new" ? use["type"] : use["ownerType"] ?? use["owner"];
             return TypeJson.Read(ownerType) is TypeNode.Fqn owner && types.TryGetValue(owner.Name, out var frame)
                 // Knowing the owner does not establish a zero-arity method frame. Unbound method variables in
                 // its declaration signature must not be interpreted as variables of a fictitious empty method.
-                ? new NullableRepresentationTypes(frame, null, types, isValue) : null;
+                ? Mapping(frame, null) : null;
         }
         foreach (var owner in demands)
         {
             try
             {
                 var frame = ownerFrames[owner.Declaration];
-                var mapping = new NullableRepresentationTypes(frame, empty, types, isValue);
+                var mapping = Mapping(frame, empty);
                 PreserveEdges(owner.Declaration, mapping);
                 if (owner.Declaration["fields"] is JsonArray fields)
                     foreach (var field in fields.OfType<JsonObject>())
@@ -123,7 +136,7 @@ static class NullableRepresentationMaterialization
                             ?? owner.Methods.FirstOrDefault(method => association != null
                                 && Text(method.Declaration["propertyAssociation"]) == association);
                         var propertyMapping = accessor == null ? mapping
-                            : new NullableRepresentationTypes(frame, methodFrames[accessor.Declaration], types, isValue);
+                            : Mapping(frame, methodFrames[accessor.Declaration]);
                         PreserveSlot(property, "type", "nullableGeneric", propertyMapping);
                         Rewrite(property, propertyMapping, methods, DeclarationMapping);
                     }
@@ -138,12 +151,12 @@ static class NullableRepresentationMaterialization
                 foreach (var method in owner.Methods)
                 {
                     var methodFrame = methodFrames[method.Declaration];
-                    var methodMapping = new NullableRepresentationTypes(frame, methodFrame, types, isValue);
+                    var methodMapping = Mapping(frame, methodFrame);
                     PreserveParameters(method.Declaration, methodMapping);
                     PreserveSlot(method.Declaration, "ret", "nullableGenericRet", methodMapping);
                     if (method.ImplementationKey != null)
                     {
-                        var inheritedMapping = new NullableRepresentationTypes(frame, methodFrame, types, isValue);
+                        var inheritedMapping = Mapping(frame, methodFrame);
                         foreach (var key in new[] { "params", "ret" })
                         {
                             if (TypeJson.Read(method.Declaration[key]) is TypeNode type)
@@ -152,8 +165,8 @@ static class NullableRepresentationMaterialization
                         }
                         var implementationMapping = DeclarationMapping(method.Implementation);
                         RewriteImplementation(method.Implementation,
-                            implementationMapping == null ? null : new NullableRepresentationTypes(
-                                implementationMapping.OwnerFrame, methodFrame, types, isValue), inheritedMapping);
+                            implementationMapping == null ? null : Mapping(
+                                implementationMapping.OwnerFrame, methodFrame), inheritedMapping);
                         AppendParameters(method.Implementation, methodFrame);
                         method.Implementation["arity"] = methodFrame.PhysicalArity;
                         continue;
@@ -163,12 +176,12 @@ static class NullableRepresentationMaterialization
                     if (splitBody) method.Declaration["body"] = new JsonArray();
                     Rewrite(method.Declaration, methodMapping, methods, DeclarationMapping);
                     AppendParameters(method.Declaration, methodFrame);
-                    if (methodFrame.NullableIndices.Count != 0)
+                    if (methodFrame.RequiresMetadata)
                         method.Declaration[NullableRepresentationTypes.MethodFrameKey] = methodFrame.ToJson().ToJsonString();
                     if (splitBody)
                         NullableBodyDispatch.Build(owner.Declaration, source, method.Declaration, frame, methodFrame,
                             method.Body.Method, (helper, helperFrame) => {
-                                Rewrite(helper, new NullableRepresentationTypes(frame, helperFrame, types, isValue), methods, DeclarationMapping);
+                                Rewrite(helper, Mapping(frame, helperFrame), methods, DeclarationMapping);
                                 AppendParameters(helper, helperFrame);
                                 helper[NullableRepresentationTypes.MethodFrameKey] = helperFrame.ToJson().ToJsonString();
                             });
@@ -179,7 +192,7 @@ static class NullableRepresentationMaterialization
                     owner.Declaration["outerTypeParamCount"] = ownerFrames[owner.CapturedOwner.Declaration].PhysicalArity;
                     owner.Declaration.Remove("outerTypeParamOffset");
                 }
-                if (frame.NullableIndices.Count != 0 || frame.PhysicalOrder.Where((slot, index) => slot != index).Any())
+                if (frame.RequiresMetadata)
                     KotlinSupertypesRecord.Merge(owner.Declaration,
                         new JsonObject { [NullableRepresentationFrame.MetadataKey] = frame.ToJson() });
             }
@@ -215,9 +228,20 @@ static class NullableRepresentationMaterialization
     static void AppendParameters(JsonObject declaration, NullableRepresentationFrame frame)
     {
         if (frame.PhysicalArity == 0) return;
-        var parameters = (JsonArray)declaration["typeParams"];
-        foreach (var index in frame.NullableIndices) parameters.Add("$nullable" + index);
-        declaration["typeParams"] = new JsonArray(frame.PhysicalOrder.Select(index => parameters[index]?.DeepClone()).ToArray());
+        declaration["typeParams"] = ExpandParameters((JsonArray)declaration["typeParams"], frame);
+    }
+
+    static JsonArray ExpandParameters(JsonArray source, NullableRepresentationFrame frame)
+    {
+        if (source.Count != frame.SourceArity)
+            throw new InvalidOperationException("Generic parameter declarations do not match their source frame");
+        return new JsonArray(Enumerable.Range(0, frame.PhysicalArity).Select(index => {
+            var slot = frame.PhysicalSlot(index);
+            // Source bounds apply to the ordinary/root parameter. A companion's CLR representation does not
+            // necessarily implement the source bound, so do not copy those constraints onto it.
+            return slot.Representation == NullableRepresentationFrame.Role.Ordinary ? source[slot.SourceIndex]?.DeepClone()
+                : JsonValue.Create("$" + slot.Representation.ToString().ToLowerInvariant() + slot.SourceIndex);
+        }).ToArray());
     }
 
     static void PreserveEdges(JsonObject owner, NullableRepresentationTypes mapping)
@@ -281,16 +305,19 @@ static class NullableRepresentationMaterialization
                     var source = origins.Select(TypeJson.Read).ToArray();
                     if (source.Length != localFrame.SourceArity)
                         throw new InvalidOperationException("Local function capture origins do not match its source frame");
-                    var ordinary = source.Select(origin => origin is TypeNode.Tv { Scope: "type" }
-                        ? mapping.Argument(origin) : origin);
-                    var companions = localFrame.NullableIndices.Select(index => source[index] is TypeNode.Tv { Scope: "type" }
-                        ? mapping.NullableArgument(source[index]) : localFrame.NullableVariable(new TypeNode.Tv("method", index)));
-                    local["_syntheticTypeArgs"] = new JsonArray(ordinary.Concat(companions).Select(TypeJson.Write).ToArray());
+                    local["_syntheticTypeArgs"] = new JsonArray(Enumerable.Range(0, localFrame.PhysicalArity).Select(index => {
+                        var slot = localFrame.PhysicalSlot(index);
+                        var origin = source[slot.SourceIndex];
+                        return TypeJson.Write(origin is TypeNode.Tv { Scope: "type" }
+                            ? mapping.ArgumentForRole(origin, slot.Representation)
+                            : slot.Representation == NullableRepresentationFrame.Role.Ordinary ? origin
+                                : localFrame.Variable(new TypeNode.Tv("method", slot.SourceIndex), slot.Representation));
+                    }).ToArray());
                 }
                 // Its independent signature/body are visited once through the discovered local MethodDemand.
                 return;
             }
-            if (kind is "callLocal" or "localFunRef" && selectedMapping.MethodFrame.NullableIndices.Count != 0)
+            if (kind is "callLocal" or "localFunRef" && selectedMapping.MethodFrame.RequiresMetadata)
             {
                 var arguments = (JsonArray)obj["typeArgs"];
                 closedArguments = new JsonArray(mapping.CloseMethod(selectedMapping.MethodFrame,
@@ -314,16 +341,14 @@ static class NullableRepresentationMaterialization
                 var captures = captureArguments.Select(TypeJson.Read).ToArray();
                 if (captures.Length != captureParameters.Count)
                     throw new InvalidOperationException("Synthetic capture arguments do not match their declarations");
-                var nullableCaptures = captures.OfType<TypeNode.Tv>().Where(variable =>
-                    (variable.Scope == "type" ? mapping.OwnerFrame : mapping.MethodFrame)?.NullableIndices.Contains(variable.I) == true)
-                    .Distinct().ToArray();
-                if (nullableCaptures.Length != 0)
+                var captureFrame = CaptureFrame(captures, mapping);
+                if (captureFrame.RequiresMetadata)
                 {
-                    closedArguments = new JsonArray(captures.Select(mapping.Argument)
-                        .Concat(nullableCaptures.Select(mapping.NullableArgument)).Select(TypeJson.Write).ToArray());
-                    foreach (var variable in nullableCaptures)
+                    closedArguments = new JsonArray(mapping.CloseMethod(captureFrame, captures).Select(TypeJson.Write).ToArray());
+                    foreach (var slot in captureFrame.Companions)
                     {
-                        var name = "$nullableCapture" + variable.Scope + variable.I;
+                        var variable = (TypeNode.Tv)captures[slot.SourceIndex];
+                        var name = "$" + slot.Representation.ToString().ToLowerInvariant() + "Capture" + variable.Scope + variable.I;
                         captureParameters.Add(name);
                         if (kind == "newSuspendLambda" && obj["typeParamDecls"] is JsonArray declarations)
                             declarations.Add(name);
@@ -333,8 +358,6 @@ static class NullableRepresentationMaterialization
                         // The payload's untouched override edges remain source vocabulary. Record the same
                         // capture-to-companion correspondence that constructs the synthetic CLR owner, so later
                         // slot resolution can translate those edges without reconstructing it from field names.
-                        var captureFrame = new NullableRepresentationFrame(captures.Length,
-                            nullableCaptures.Select(variable => Array.IndexOf(captures, variable)).ToArray());
                         KotlinSupertypesRecord.Merge(synthetic, new JsonObject {
                             [NullableRepresentationFrame.MetadataKey] = captureFrame.ToJson(),
                         });
@@ -342,7 +365,7 @@ static class NullableRepresentationMaterialization
                 }
             }
             if (kind != null && Text(obj[DeclarationIdentityBinding.Key]) is string id
-                && methods.TryGetValue(id, out var frame) && frame.NullableIndices.Count != 0)
+                && methods.TryGetValue(id, out var frame) && frame.RequiresMetadata)
             {
                 var arguments = obj["typeArgs"] as JsonArray
                     ?? throw new InvalidOperationException("Nullable-frame call has no source type arguments");
@@ -380,6 +403,11 @@ static class NullableRepresentationMaterialization
                     RewriteDescriptor(obj, key, selectedMapping, mapping);
                     continue;
                 }
+                if (mapping.IsStorageElement(kind, key) && TypeJson.Read(obj[key]) is TypeNode storageElement)
+                {
+                    obj[key] = TypeJson.Write(mapping.StorageArgument(storageElement));
+                    continue;
+                }
                 var childPosition = key switch {
                     "typeArgs" => NullableGenericErasure.Pos.Argument,
                     "elem" when NullableGenericErasure.IsArgumentElementKind(kind) => NullableGenericErasure.Pos.Argument,
@@ -394,6 +422,20 @@ static class NullableRepresentationMaterialization
             if (closedArguments != null) obj["typeArgs"] = closedArguments;
             if (closureReturn != null) obj["synthClass"]["ret"] = TypeJson.Write(closureReturn);
         }
+    }
+
+    static NullableRepresentationFrame CaptureFrame(TypeNode[] captures, NullableRepresentationTypes mapping)
+    {
+        var companions = captures.OfType<TypeNode.Tv>().Distinct().SelectMany(variable =>
+            (variable.Scope == "type" ? mapping.OwnerFrame : mapping.MethodFrame)?.Companions
+                .Where(slot => slot.SourceIndex == variable.I)
+                .Select(slot => new NullableRepresentationFrame.Slot(Array.IndexOf(captures, variable), slot.Representation))
+                ?? Enumerable.Empty<NullableRepresentationFrame.Slot>()).ToArray();
+        IEnumerable<int> Indices(NullableRepresentationFrame.Role role) => companions.Where(slot => slot.Representation == role)
+            .Select(slot => slot.SourceIndex).OrderBy(index => index);
+        return new NullableRepresentationFrame(captures.Length, Indices(NullableRepresentationFrame.Role.Nullable),
+            storageIndices: Indices(NullableRepresentationFrame.Role.Storage),
+            nullableStorageIndices: Indices(NullableRepresentationFrame.Role.NullableStorage));
     }
 
     static void RewriteImplementation(JsonObject implementation, NullableRepresentationTypes declaration,
@@ -424,19 +466,79 @@ static class NullableRepresentationMaterialization
         var frame = key == "memberOwnerTypeParams" ? declaration?.OwnerFrame
             : key == "memberMethodTypeParams" ? declaration?.MethodFrame : null;
         if (frame != null && node[key] is JsonArray parameters)
-        {
-            foreach (var index in frame.NullableIndices) parameters.Add("$nullable" + index);
-            node[key] = new JsonArray(frame.PhysicalOrder.Select(index => parameters[index]?.DeepClone()).ToArray());
-        }
+            node[key] = ExpandParameters(parameters, frame);
     }
 
     static string Text(JsonNode node) => (node as JsonValue)?.TryGetValue<string>(out var text) == true ? text : null;
 
     public static void SelfTest()
     {
+        var roleFrame = new NullableRepresentationFrame(1, new[] { 0 }, storageIndices: new[] { 0 },
+            nullableStorageIndices: new[] { 0 });
+        var boundedSource = JsonNode.Parse("""[{"name":"T","constraints":[{"t":"fqn","name":"Bound"}]}]""")!.AsArray();
+        var physicalParameters = ExpandParameters(boundedSource, roleFrame);
+        if (physicalParameters.Count != 4 || physicalParameters[0]?.ToJsonString() != boundedSource[0]?.ToJsonString()
+            || physicalParameters.Skip(1).Any(parameter => parameter is not JsonValue))
+            throw new InvalidOperationException("Representation companion inherited unsupported source constraints");
+        var captureMapping = new NullableRepresentationTypes(roleFrame, roleFrame,
+            new Dictionary<string, NullableRepresentationFrame>(), _ => false);
+        var captureArguments = new TypeNode[] { new TypeNode.Tv("method", 0), new TypeNode.Tv("type", 0) };
+        var captureFrame = CaptureFrame(captureArguments, captureMapping);
+        var closedCaptures = captureMapping.CloseMethod(captureFrame, captureArguments);
+        if (captureFrame.PhysicalArity != 8 || !closedCaptures.SequenceEqual(new TypeNode[] {
+            new TypeNode.Tv("method", 0), new TypeNode.Tv("type", 0),
+            new TypeNode.Tv("method", 1), new TypeNode.Tv("type", 1),
+            new TypeNode.Tv("method", 2), new TypeNode.Tv("type", 2),
+            new TypeNode.Tv("method", 3), new TypeNode.Tv("type", 3),
+        })) throw new InvalidOperationException("Synthetic capture lost scoped representation roles or their physical order");
+        var dispatchFrame = new NullableRepresentationFrame(1, Array.Empty<int>(), new[] { 1, 0 }, storageIndices: new[] { 0 });
+        var dispatchSource = JsonNode.Parse("""
+        {"name":"run","declarationId":"storage-dispatch","typeParams":["T"],"params":[],
+         "ret":{"t":"fqn","name":"kotlin.Unit"},"body":[],"virtual":true}
+        """)!.AsObject();
+        var dispatchEntry = (JsonObject)dispatchSource.DeepClone();
+        AppendParameters(dispatchEntry, dispatchFrame);
+        var dispatchOwner = new JsonObject { ["name"] = "RoleDispatcher", ["methods"] = new JsonArray(dispatchEntry) };
+        NullableBodyDispatch.Build(dispatchOwner, dispatchSource, dispatchEntry,
+            new NullableRepresentationFrame(0, Array.Empty<int>()), dispatchFrame, new[] { 0 }, AppendParameters);
+        var roleDispatch = dispatchEntry["body"][0]["value"];
+        var dispatchThen = ((JsonArray)roleDispatch["then"]["typeArgs"]).Select(TypeJson.Read).ToArray();
+        var dispatchElse = ((JsonArray)roleDispatch["else"]["typeArgs"]).Select(TypeJson.Read).ToArray();
+        if (!dispatchThen.SequenceEqual(new TypeNode[] {
+                new TypeNode.Tv("method", 1), new TypeNode.Fqn("object"), new TypeNode.Tv("method", 0),
+            }) || !dispatchElse.SequenceEqual(new TypeNode[] {
+                new TypeNode.Tv("method", 1), new TypeNode.Tv("method", 1), new TypeNode.Tv("method", 0),
+            }) || TypeJson.Read(roleDispatch["cond"]["recv"]["type"]) != new TypeNode.Tv("method", 1)
+            || ((JsonArray)dispatchEntry["typeParams"]).Count != 2)
+            throw new InvalidOperationException("Nullable body dispatch lost an existing storage role or changed the entry frame");
         var descriptorTypes = new Dictionary<string, NullableRepresentationFrame> {
             ["ImportedStore"] = new NullableRepresentationFrame(1, new[] { 0 }),
         };
+        var inheritedDescriptor = JsonNode.Parse("""
+        {"fileClass":"InheritedDescriptor","types":[
+          {"kind":"class","name":"DescriptorBox","typeParams":["T"]},
+          {"kind":"class","name":"DescriptorBase","typeParams":["T"],"methods":[
+            {"name":"accept","declarationId":"descriptor-base-accept","params":[{"name":"value","type":
+              {"t":"fqn","name":"DescriptorBox","args":[{"t":"nullable","of":{"t":"tv","scope":"type","i":0}}]}}],
+             "ret":{"t":"fqn","name":"kotlin.Unit"},"body":[]}]},
+          {"kind":"class","name":"DescriptorDerived","typeParams":["U","V"],
+           "base":{"t":"fqn","name":"DescriptorBase","args":[{"t":"tv","scope":"type","i":1}]},
+           "methods":[{"name":"forward","params":[{"name":"value","type":
+             {"t":"fqn","name":"DescriptorBox","args":[{"t":"nullable","of":{"t":"tv","scope":"type","i":1}}]}}],
+             "ret":{"t":"fqn","name":"kotlin.Unit"},"body":[
+              {"k":"callInstance","method":"accept","declarationId":"descriptor-base-accept",
+               "ownerType":{"t":"fqn","name":"DescriptorDerived","args":[
+                 {"t":"tv","scope":"type","i":0},{"t":"tv","scope":"type","i":1}]},
+               "memberOwnerTypeParams":["U","V"],"memberSignature":[
+                 {"t":"fqn","name":"DescriptorBox","args":[{"t":"nullable","of":{"t":"tv","scope":"type","i":1}}]}],
+               "recv":{"k":"this"},"args":[{"k":"local","name":"value"}],"ret":{"t":"fqn","name":"kotlin.Unit"}}]}]}]}
+        """)!.AsObject();
+        Apply(new[] { inheritedDescriptor }, _ => false);
+        var rewrittenDescriptor = inheritedDescriptor["types"][2]["methods"][0]["body"][0];
+        if (rewrittenDescriptor["memberOwnerTypeParams"] is not JsonArray { Count: 3 }
+            || TypeJson.Read(rewrittenDescriptor["memberSignature"][0]) is not TypeNode.Fqn { Args: { } descriptorArguments }
+            || descriptorArguments[0] != new TypeNode.Tv("type", 2))
+            throw new InvalidOperationException("Inherited declaration identity replaced the explicit accessed-owner frame");
         var nongenericSource = new NullableRepresentationTypes(null, null, descriptorTypes, _ => false);
         var sourceSignature = JsonNode.Parse("""
         {"sig":[{"t":"fqn","name":"ImportedStore","args":[{"t":"fqn","name":"kotlin.String"}]}]}

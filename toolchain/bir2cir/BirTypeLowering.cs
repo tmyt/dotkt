@@ -279,6 +279,8 @@ static class BirTypeLowering
         ["kotlin.collections.Set"] = "System.Collections.Generic.ICollection",
     };
 
+    internal static bool TryInvariantSibling(string name, out string sibling) => InvariantSibling.TryGetValue(name, out sibling);
+
     // KProperty's generic parameters are not collection-storage slots: each one is substituted directly into a CLR
     // interface method parameter/return (`KProperty1<T,V>.get(T):V`, `KMutableProperty1.set(T,V)`, etc.). Lowering a
     // concrete `List<X>` argument through Root-V here would produce `KProperty1<IList<X>,V>` while the implementing
@@ -331,7 +333,11 @@ static class BirTypeLowering
         // Companions belong to the Kotlin declaration/implementation frame, not the aliased CLR TypeDef.
         // The explicit correspondence also handles enclosing companions interleaved with ordinary parameters.
         if (nullableFrames != null && nullableFrames.TryGetValue(kotlinFqn, out var frame))
+        {
+            if (loweredArgs.Length != frame.PhysicalArity)
+                throw new InvalidOperationException($"Alias '{kotlinFqn}' application has {loweredArgs.Length} physical arguments; its declaration frame requires {frame.PhysicalArity}");
             loweredArgs = frame.OrdinaryArguments(loweredArgs);
+        }
         // `Comparable<*>` / `Comparable<Any?>` -> the NON-generic `System.IComparable` (contravariant; no value
         // type is IComparable<object>). A concrete arg keeps the generic form.
         if (bcl == "System.IComparable" && loweredArgs.Length == 1
@@ -537,7 +543,7 @@ static class BirTypeLowering
                     return IsValueNullableInner(n.Of) ? new TypeNode.Nullable(lowered) : lowered;
                 }
             case TypeNode.Array a:
-                return new TypeNode.Array(LowerType(a.Elem, refBuild, force, typeArg: true));
+                return new TypeNode.Array(LowerType(a.Elem, refBuild, force, typeArg: false));
             case TypeNode.ByRef b:
                 return new TypeNode.ByRef(LowerType(b.Of, refBuild, force, typeArg: false));
             case TypeNode.Oblivious ob:
@@ -725,7 +731,13 @@ static class BirTypeLowering
     static JsonNode LowerTypeObject(JsonNode node, bool refBuild, bool force, bool typeArg)
     {
         var tn = TypeNode.Parse(node.ToJsonString());
-        return TypeNode.Write(LowerType(tn, refBuild, force, typeArg));
+        try { return TypeNode.Write(LowerType(tn, refBuild, force, typeArg)); }
+        catch (Exception error) when (error is InvalidOperationException or ArgumentException)
+        {
+            var call = node.Parent is JsonArray ? node.Parent.Parent as JsonObject : node.Parent as JsonObject;
+            throw new InvalidOperationException(
+                $"{_file}: {node.GetPath()} ({call?["k"]} {call?["method"]}): {error.Message}", error);
+        }
     }
 
     // True iff a JSON value is a structured Type node (has a `t` discriminator) rather than a k-tagged sub-node.
@@ -764,8 +776,8 @@ static class BirTypeLowering
             var here = force || IsAttributeClass(obj);
             // ROOT-V DEPTH: a collection-CONSTRUCTION node's element/value type key is a generic type-argument of the
             // built collection (depth >= 1), so it collapses like a `typeArgs` element — the literal `listOf(listOf(…))`
-            // must build a `List<IList<..>>` so it inhabits the collapsed consumer slot (pairnest). Array operations
-            // likewise use the array's reified element representation, including when that element is a collection.
+            // must build a `List<IList<..>>` so it inhabits the collapsed consumer slot (pairnest). Native arrays
+            // use their ordinary element form, matching the declaration-owned ordinary generic parameter.
             var nodeK = (obj["k"] as JsonValue)?.GetValue<string>();
             if (nodeK == "new") ValidateCurrentNew(obj);
             if (nodeK == "conv") ValidateCurrentConv(obj);
@@ -812,8 +824,9 @@ static class BirTypeLowering
                     copy[kv.Key] = LowerFuncTypeValued(kv.Value, refBuild, here);  // delegate slot -> keep sfunc as func:
                 else if ((kv.Key == "ownerType" || kv.Key == "owner") && IsTypeObject(kv.Value))
                     copy[kv.Key] = LowerOwnerValued(kv.Value, refBuild, here);   // primitive-array owner stays kotlin.IntArray
-                else if (kv.Key == "typeArgs" || (collCtor && kv.Key is "elem" or "keyType" or "valType")
-                    || (arrayStorage && kv.Key == "elem"))
+                else if (arrayStorage && kv.Key == "elem")
+                    copy[kv.Key] = LowerTypeValued(kv.Value, refBuild, here, typeArg: false);
+                else if (kv.Key == "typeArgs" || (collCtor && kv.Key is "elem" or "keyType" or "valType"))
                     copy[kv.Key] = LowerTypeValued(kv.Value, refBuild, here, typeArg: true);   // Root V: depth>=1 positions collapse
                 // `to` is intentionally shared by two node kinds. Its role belongs to the parent discriminator:
                 // a conversion names a Type, while a range loop names an expression. Do not classify the value by

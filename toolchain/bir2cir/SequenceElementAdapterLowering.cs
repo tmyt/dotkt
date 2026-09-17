@@ -37,11 +37,9 @@ static class SequenceElementAdapterLowering
         var typeParams = method["typeParams"] as JsonArray;
         var parameters = method["params"] as JsonArray;
         var body = method["body"] as JsonArray;
-        var frame = Str(method[NullableRepresentationTypes.MethodFrameKey]) is string encoded
-            ? NullableRepresentationFrame.Read(JsonNode.Parse(encoded)) : null;
-        var resultVariable = new TypeNode.Tv("method", frame?.SourceArity == 1 ? frame.SourcePosition(0) : 0);
+        var resultVariable = new TypeNode.Tv("method", 0);
         if (method["static"]?.GetValue<bool>() != true
-            || (frame?.SourceArity ?? typeParams?.Count) != 1
+            || typeParams?.Count != 1
             || parameters is not { Count: 1 }
             || parameters[0] is not JsonObject parameter
             || TypeJson.Read(parameter["type"]) is not TypeNode.Fqn { Name: Sequence, Args: { Length: 1 } }

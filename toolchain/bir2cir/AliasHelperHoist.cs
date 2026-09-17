@@ -17,7 +17,7 @@ using DotKt.Bir;
 // of rule-3 helper synthesis. Runs only in substitute/app builds (never ref).
 static class AliasHelperHoist
 {
-    public static JsonNode Apply(JsonNode root, ReferenceMetadataIndex refs)
+    public static JsonNode Apply(JsonNode root, ReferenceMetadataIndex refs, GenericRepresentationPolicy representations)
     {
         if (root is not JsonObject obj || obj["types"] is not JsonArray types) return root;
         RehomeGeneratedMethods(obj, types, refs);
@@ -33,7 +33,7 @@ static class AliasHelperHoist
                 // value field; no ordinary alias member/backing state survives. Without the shell, the child cannot
                 // preserve its semantic owner in CLR metadata.
                 if (BuildOwnershipHost(td, types) is { } host) rebuilt.Add(host);
-                var helper = BuildHelper(td, fqn, refs);
+                var helper = BuildHelper(td, fqn, refs, representations);
                 if (helper != null) rebuilt.Add(helper);         // null = no rule-3 members (e.g. kotlin.Any) -> just dropped
             }
             else rebuilt.Add(t?.DeepClone());
@@ -264,7 +264,8 @@ static class AliasHelperHoist
         return host;
     }
 
-    static JsonObject BuildHelper(JsonObject td, string fqn, ReferenceMetadataIndex refs)
+    static JsonObject BuildHelper(JsonObject td, string fqn, ReferenceMetadataIndex refs,
+        GenericRepresentationPolicy representations)
     {
         // ONLY a CLASS alias gets a rule-3 helper. kotc now emits @ClrTypeAlias INTERFACES (Comparable/Iterable/
         // Collection/List/…) too (it no longer strips them); those are dropped here with NO helper — an interface's
@@ -274,6 +275,9 @@ static class AliasHelperHoist
         if ((td["kind"] as JsonValue)?.GetValue<string>() != "class") return null;
         var classTps = td["typeParams"] as JsonArray;
         var aliasToken = (td["name"] as JsonValue)!.GetValue<string>();   // kotlin FQN; lowered to its BCL form downstream
+        var frame = KotlinSupertypesRecord.ReadNullableFrame(td)
+            ?? new NullableRepresentationFrame(classTps?.Count ?? 0, Array.Empty<int>());
+        var receiverType = ReceiverType(aliasToken, frame, representations);
         // An @JvmInline value-class alias (UInt/UByte/ULong/UShort -> System.UInt32/Byte/...) erases to its backing
         // primitive; its Object-method overrides (Equals/GetHashCode/ToString) operate on the boxed Kotlin value and
         // read the now-erased `.data` field, so hoisting them produces a `<self>.data` access on the value-type
@@ -296,7 +300,7 @@ static class AliasHelperHoist
                 && BodyReadsBackingField(mbody)) continue;
             if (isInlineValue && (mo["objectOverride"] as JsonValue)?.GetValue<bool>() == true) continue;  // see note above
             if (!refs.IsRule3Member(fqn, mn)) continue;   // ref.dll: concrete + intrinsic-less (matches the rule-3 call routing)
-            methods.Add(HoistMethod(mo, aliasToken, classTps));
+            methods.Add(HoistMethod(mo, classTps, receiverType));
         }
         if (methods.Count == 0) return null;
         return new JsonObject
@@ -318,18 +322,11 @@ static class AliasHelperHoist
     // An instance member -> a static helper method: prepend a `__self` param typed as the alias owner, rewrite the
     // dispatch `this` to that `__self`, and declare the class type params ahead of the method's own (a generic alias's
     // helper needs them for `__self`). Produces the helper shape ilemit expects (a static method with a `__self` first param).
-    static JsonObject HoistMethod(JsonObject m, string aliasToken, JsonArray classTps)
+    static JsonObject HoistMethod(JsonObject m, JsonArray classTps, TypeNode receiverType)
     {
-        // A GENERIC alias owner (ArrayList<E>, HashMap<K,V>) must type `__self` as the CONSTRUCTED generic
-        // `kotlin.collections.ArrayList[gp:E]` — BirTypeLowering then lowers it to `clrg:System...List[gp:E]` (with
-        // arity). A bare `kotlin.collections.ArrayList` token would lower to a non-generic `clr:System...List` that
-        // ilemit cannot resolve. The class type params (bare-string entries like "E") become the `gp:` args; they are
-        // declared on the method via MergeTypeParams below, so `gp:E` is in the helper's method scope.
-        // The class type params are declared on the static helper as its OWN (method-scope) params AHEAD of the
-        // method's own (MergeTypeParams), so `__self`'s generic args are METHOD-scope tv by flattened position.
-        TypeNode selfType = classTps is { Count: > 0 }
-            ? new TypeNode.Fqn(aliasToken, Enumerable.Range(0, classTps.Count).Select(i => (TypeNode)new TypeNode.Tv("method", i)).ToArray())
-            : new TypeNode.Fqn(aliasToken);
+        // The binding has already selected the receiver's application roles. Rehome those exact
+        // physical variables together with the body; identity arguments would incorrectly make
+        // __self List<T> while the body accesses List<S(T)>.
         var classArity = classTps?.Count ?? 0;
         TypeNode Rebind(TypeNode type) => RewriteType(type, tv => tv.Scope switch
         {
@@ -342,7 +339,7 @@ static class AliasHelperHoist
         var rewrittenClassTps = classTps?.DeepClone() as JsonArray;
         if (rewrittenClassTps != null) RewriteLexicalTypes(rewrittenClassTps, Rebind);
 
-        var ps = new JsonArray { new JsonObject { ["name"] = "__self", ["type"] = TypeJson.Write(selfType) } };
+        var ps = new JsonArray { new JsonObject { ["name"] = "__self", ["type"] = TypeJson.Write(Rebind(receiverType)) } };
         foreach (var p in rewritten["params"] as JsonArray ?? new JsonArray()) ps.Add(p?.DeepClone());
         var outM = new JsonObject
         {
@@ -360,6 +357,41 @@ static class AliasHelperHoist
         outM["ret"] = rewritten["ret"]?.DeepClone();
         outM["body"] = RewriteThis(rewritten["body"]);
         return outM;
+    }
+
+    // Shared by helper declarations and call descriptors. The current declaration frame, not
+    // a physical arity or parameter name, identifies each ordinary/storage counterpart.
+    internal static TypeNode ReceiverType(string owner, NullableRepresentationFrame frame,
+        GenericRepresentationPolicy representations)
+    {
+        if (frame.SourceArity == 0) return new TypeNode.Fqn(owner);
+        var source = Enumerable.Range(0, frame.SourceArity).Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray();
+        TypeNode Argument(TypeNode type, NullableRepresentationFrame.Role role) =>
+            frame.Variable((TypeNode.Tv)type, representations.ApplicationRole(owner, role));
+        return new TypeNode.Fqn(owner, frame.Close(source,
+            type => Argument(type, NullableRepresentationFrame.Role.Ordinary),
+            type => Argument(type, NullableRepresentationFrame.Role.Nullable),
+            type => Argument(type, NullableRepresentationFrame.Role.Storage),
+            type => Argument(type, NullableRepresentationFrame.Role.NullableStorage)));
+    }
+
+    internal static void SelfTest()
+    {
+        var frame = new NullableRepresentationFrame(2, new[] { 0 }, new[] { 3, 0, 4, 1, 2, 5 },
+            storageIndices: new[] { 0, 1 }, nullableStorageIndices: new[] { 0 });
+        var policy = new GenericRepresentationPolicy(new Dictionary<string, string> { ["Alias"] = "Native" });
+        var receiver = (TypeNode.Fqn)ReceiverType("Alias", frame, policy);
+        var arguments = receiver.Args.Cast<TypeNode.Tv>().Select(type => type.I);
+        if (!arguments.SequenceEqual(new[] { 0, 0, 2, 2, 5, 5 }))
+            throw new InvalidOperationException("Hoisted alias receiver lost its binding roles or physical permutation");
+        var method = new JsonObject { ["name"] = "Read", ["params"] = new JsonArray(),
+            ["ret"] = TypeJson.Write(new TypeNode.Tv("type", 1)), ["body"] = new JsonArray() };
+        var hoisted = HoistMethod(method, new JsonArray("S0", "T0", "S1", "T1", "N0", "NS0"), receiver);
+        if (TypeJson.Read(hoisted["params"][0]["type"]) is not TypeNode.Fqn { Args: { } hoistedArgs }
+            || hoistedArgs.Any(type => type is not TypeNode.Tv { Scope: "method" })
+            || TypeJson.Read(hoisted["ret"]) != new TypeNode.Tv("method", 1))
+            throw new InvalidOperationException("Hoisted alias receiver and body disagree on the method frame");
+        Console.WriteLine("[alias helper receiver] self-test OK (binding roles, permutation, scope transfer)");
     }
 
     // True if the accessor body reads (or writes) a raw backing field — a `{"k":"field"}` / `{"k":"setFieldExpr"}` node.

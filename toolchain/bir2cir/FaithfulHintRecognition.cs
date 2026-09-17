@@ -21,6 +21,15 @@ using DotKt.Bir;
 // Shared recognition primitives used by BOTH this pass and PrimitiveOperatorLowering's EQEQ arm.
 static class FaithfulHints
 {
+    static Action<JsonObject> _bindHelper;
+
+    internal static void WithHelperBinding(Action<JsonObject> bind, Action lower)
+    {
+        var previous = _bindHelper;
+        _bindHelper = bind;
+        try { lower(); }
+        finally { _bindHelper = previous; }
+    }
     // Owner FQNs of the (unchanged) stdlib helpers.
     const string CollDefaults = "kotlin.collections.ClrCollectionDefaultsKt";
     const string MapDefaults = "kotlin.collections.ClrMapDefaultsKt";
@@ -179,6 +188,7 @@ static class FaithfulHints
             ["args"] = args,
         };
         if (typeArgs != null) o["typeArgs"] = typeArgs;
+        _bindHelper?.Invoke(o);
         return o;
     }
 

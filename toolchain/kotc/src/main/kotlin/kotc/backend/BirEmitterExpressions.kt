@@ -66,6 +66,7 @@ import org.jetbrains.kotlin.ir.symbols.UnsafeDuringIrConstructionAPI
 import org.jetbrains.kotlin.ir.types.IrType
 import org.jetbrains.kotlin.ir.types.classFqName
 import org.jetbrains.kotlin.ir.types.classifierOrNull
+import org.jetbrains.kotlin.ir.symbols.IrTypeParameterSymbol
 import org.jetbrains.kotlin.ir.types.isNothing
 import org.jetbrains.kotlin.ir.types.isUnit
 import org.jetbrains.kotlin.ir.types.isMarkedNullable
@@ -466,7 +467,7 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 		IrTypeOperator.CAST, IrTypeOperator.IMPLICIT_CAST ->
 			nullableValueUnwrapElem(node.argument.type, node.typeOperand)?.let { elem ->
 				"""{"k":"nullableValue","elem":${elem.toJson()},"e":${expr(node.argument)}}"""
-			} ?: """{"k":"cast","type":${birType(node.typeOperand).toJson()},"e":${expr(node.argument)}}"""
+			} ?: """{"k":"cast","type":${birType(node.typeOperand).toJson()},"reifiedTypeOperand":${node.operator == IrTypeOperator.CAST && (node.typeOperand.classifierOrNull as? IrTypeParameterSymbol)?.owner?.isReified == true},"e":${expr(node.argument)}}"""
 		// `x as? T` -> null on mismatch. Reference T: `isinst T` (null or ref). Value T: `T?` (Nullable<T>).
 		IrTypeOperator.SAFE_CAST -> {
 			// A value primitive OR an unsigned inline-class (`UInt`/…, #126) `T` -> the value-type nullable path
@@ -474,7 +475,7 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 			// `Nullable<uint>`, not a boxed reference via `isInstRef` (same #118 class as `!!`/smart-cast).
 			val velem = node.typeOperand.takeIf { it.isPrimitiveOrUnsigned() }?.classFqName?.asString()?.let { TypeNode.Fqn(it) }
 			if (velem != null) """{"k":"safeCastValue","elem":${velem.toJson()},"e":${expr(node.argument)}}"""
-			else """{"k":"isInstRef","type":${birType(node.typeOperand).toJson()},"e":${expr(node.argument)}}"""
+			else """{"k":"isInstRef","type":${birType(node.typeOperand).toJson()},"reifiedTypeOperand":${(node.typeOperand.classifierOrNull as? IrTypeParameterSymbol)?.owner?.isReified == true},"e":${expr(node.argument)}}"""
 		}
 		// A fun-interface SAM conversion (`Comparator { a, b -> … }`) -> a synthetic class implementing the interface
 		// (the SAM method = the lambda body), NOT a Func delegate -- a delegate has no `compare` so a call site that

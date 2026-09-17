@@ -26,7 +26,7 @@ static class CovariantInterfaceReturnBridge
     }
 
     public static IReadOnlySet<BridgedSlot> ApplyAll(IEnumerable<JsonNode> roots,
-        ReferenceMetadataIndex refs, ValueTypeOracle isValue)
+        ReferenceMetadataIndex refs, ValueTypeOracle isValue, GenericRepresentationPolicy representations)
     {
         var defs = Collect(roots);
         var bridgedSlots = new HashSet<BridgedSlot>();
@@ -34,7 +34,7 @@ static class CovariantInterfaceReturnBridge
         // covariant return differs from the base-interface slot. Treat interfaces and classes uniformly here: the
         // frontend override edge selects the declaration, and this pass only materializes its CLR representation.
         foreach (var cls in defs.Values.Where(d => d.Kind is "class" or "interface"))
-            ApplyClass(cls, defs, refs, isValue, bridgedSlots);
+            ApplyClass(cls, defs, refs, isValue, representations, bridgedSlots);
         return bridgedSlots;
     }
 
@@ -66,7 +66,8 @@ static class CovariantInterfaceReturnBridge
     }
 
     static void ApplyClass(Def cls, IReadOnlyDictionary<string, Def> defs,
-        ReferenceMetadataIndex refs, ValueTypeOracle isValue, ISet<BridgedSlot> bridgedSlots)
+        ReferenceMetadataIndex refs, ValueTypeOracle isValue, GenericRepresentationPolicy representations,
+        ISet<BridgedSlot> bridgedSlots)
     {
         if (cls.Node["methods"] is not JsonArray methods) return;
         var bridges = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
@@ -162,7 +163,7 @@ static class CovariantInterfaceReturnBridge
             }
         }
 
-        ApplyReferencedInterfaces(cls, defs, refs, isValue, methods, bridges,
+        ApplyReferencedInterfaces(cls, defs, refs, isValue, representations, methods, bridges,
             bridgedSlots, ref bridgeOrdinal);
     }
 
@@ -171,7 +172,7 @@ static class CovariantInterfaceReturnBridge
     // declaration's physical MethodDef identity and signature. Join those two authoritative facts here; neither
     // ilemit nor a different semantic pass should infer covariance from names or physical layout.
     static void ApplyReferencedInterfaces(Def cls, IReadOnlyDictionary<string, Def> defs,
-        ReferenceMetadataIndex refs, ValueTypeOracle isValue, JsonArray methods,
+        ReferenceMetadataIndex refs, ValueTypeOracle isValue, GenericRepresentationPolicy representations, JsonArray methods,
         Dictionary<string, JsonObject> bridges, ISet<BridgedSlot> bridgedSlots,
         ref int bridgeOrdinal)
     {
@@ -182,7 +183,7 @@ static class CovariantInterfaceReturnBridge
             if (KotlinSupertypesRecord.ReadNullableFrame(definition.Node) is { } frame)
                 frames[definition.Name] = frame;
         var callerMapping = new NullableRepresentationTypes(
-            KotlinSupertypesRecord.ReadNullableFrame(cls.Node), null, frames, isValue);
+            KotlinSupertypesRecord.ReadNullableFrame(cls.Node), null, frames, isValue, policy: representations);
         foreach (var implementation in methods.OfType<JsonObject>().ToList())
         {
             if (Bool(implementation["static"])
@@ -233,7 +234,7 @@ static class CovariantInterfaceReturnBridge
                     .ToArray();
                 var declarationMapping = new NullableRepresentationTypes(
                     refs.NullableTypeFrames.GetValueOrDefault(semanticOwner.Name), declaration.NullableFrame,
-                    refs.NullableTypeFrames, isValue);
+                    refs.NullableTypeFrames, isValue, policy: representations);
                 var slotRet = SupertypeGraph.SubstOwnerTvs(
                     IsSuspend(implementation)
                         ? NullableGenericErasure.EraseNullableTv(declarationMapping.Slot(declaration.Return), isValue)
