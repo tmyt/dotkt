@@ -152,8 +152,12 @@ static class StarProjectionLowering
                 if (obj["args"] is JsonArray ra) foreach (var a in ra) if (a != null) Apply(a, refs);
                 return;
             }
-            // Standalone star-projection `is`-test -> the non-generic interface (always safe: a boolean shape test).
-            if (Str(obj["k"]) == "isInst" && IsStarCollection(obj["type"], out var ng))
+            // Iterable safe casts use the same erased enumeration protocol as their tests. They need no
+            // unique constructed view: an object may expose several IEnumerable<T> faces. Other collection
+            // safe casts keep their existing generic view (e.g. generic-only dictionaries have no raw IDictionary).
+            if (IsStarCollection(obj["type"], out var ng)
+                && (Str(obj["k"]) == "isInst"
+                    || Str(obj["k"]) == "isInstRef" && ng == "System.Collections.IEnumerable"))
                 obj["type"] = TypeJson.Fqn(ng);
             // Standalone star-projection `cast` (a smart-cast value flowing on, e.g. into `println(Any?)`, or an
             // explicit `as Map<*,*>`) -> the non-generic interface. Its generic form (`IDictionary<object,object>`) is

@@ -142,11 +142,12 @@ static class KotlinCollectionIdentitySynthesis
             if (Has("System.Collections.Generic.IReadOnlyCollection", 1)
                 || Has("System.Collections.Generic.ICollection", 1)) names.Add(Collection);
             if (Has("System.Collections.ICollection")) names.Add(MutableCollection);
-            if (Has("System.Collections.IList")) names.Add(MutableList);
         }
+        // Independent list/set contracts survive a dictionary face on the same foreign type.
+        if (Has("System.Collections.IList")) names.Add(MutableList);
         if (Has("System.Collections.Generic.IReadOnlySet", 1)) names.Add(Set);
         if (Has("System.Collections.Generic.ISet", 1)) names.Add(MutableSet);
-        if (Has("System.Collections.IEnumerable")) names.Add(MutableIterable);
+        if (!dictionary && Has("System.Collections.IEnumerable")) names.Add(MutableIterable);
     }
 
     static string Str(JsonNode node) =>

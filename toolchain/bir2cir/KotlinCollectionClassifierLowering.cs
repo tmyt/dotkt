@@ -40,11 +40,18 @@ static class KotlinCollectionClassifierLowering
             witness = KotlinTypeWitness.Constant(flags);
         }
         var nullableObject = new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"));
+        var runtimeType = new TypeNode.Fqn("DotKt.Runtime.CompilerServices.StarProjectionType");
+        JsonObject ClassRef(string name) => new() { ["k"] = "classRef", ["type"] = TypeJson.Fqn(name) };
         JsonObject Call(string helper, TypeNode result, JsonNode value) => new() {
             ["k"] = "callStatic", ["owner"] = TypeJson.Fqn(RuntimeOwner), ["method"] = helper,
-            ["sig"] = new JsonArray(TypeJson.Write(nullableObject), TypeJson.Fqn("kotlin.Int")),
+            ["sig"] = new JsonArray(TypeJson.Write(nullableObject), TypeJson.Fqn("kotlin.Int"),
+                TypeJson.Write(runtimeType), TypeJson.Write(runtimeType), TypeJson.Write(runtimeType),
+                TypeJson.Write(runtimeType), TypeJson.Write(runtimeType)),
             ["ret"] = TypeJson.Write(result),
-            ["args"] = new JsonArray(value.DeepClone(), witness.DeepClone()),
+            ["args"] = new JsonArray(value.DeepClone(), witness.DeepClone(),
+                ClassRef("System.Collections.Generic.IDictionary`2"), ClassRef("System.Collections.Generic.IReadOnlyDictionary`2"),
+                ClassRef("System.Collections.Generic.ISet`1"), ClassRef("System.Collections.Generic.IReadOnlySet`1"),
+                ClassRef("System.Collections.IList")),
         };
         if (Text(obj["k"]) == "cast")
         {
