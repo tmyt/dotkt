@@ -709,7 +709,8 @@ class PackageAndInlineRoundtripTests {
         ClassicAssert.AreEqual("generic-private-default",
             NonConstantGenericPrivateDefaultOwner("generic-private-default").reveal())
         ClassicAssert.AreEqual("constrained-private-default",
-            NonConstantConstrainedPrivateDefaultOwner("constrained-private-default").reveal())
+            NonConstantConstrainedPrivateDefaultOwner(
+                roundtrip.nc.PrivateDefaultValue("constrained-private-default")).reveal().text)
         ClassicAssert.AreEqual("generic-private-method-default",
             NonConstantGenericPrivateMethodDefaultOwner("generic-private-method-default").reveal())
         ClassicAssert.AreEqual("nested-generic-private-default",
@@ -718,7 +719,8 @@ class PackageAndInlineRoundtripTests {
         ClassicAssert.AreEqual("top-level-private-default", nonConstantPrivateTopLevelDefault())
         ClassicAssert.AreEqual("private-callable-default", NonConstantPrivateCallableDefaultOwner().reveal())
         ClassicAssert.AreEqual("generic-private-callable-default",
-            NonConstantGenericPrivateCallableDefaultOwner("generic-private-callable-default").reveal())
+            NonConstantGenericPrivateCallableDefaultOwner(
+                roundtrip.nc.PrivateDefaultValue("generic-private-callable-default")).reveal().text)
         ClassicAssert.AreEqual("generic-closure-private-default",
             NonConstantGenericClosurePrivateDefaultOwner("generic-closure-private-default").reveal())
         ClassicAssert.AreEqual("nested-generic-caller",

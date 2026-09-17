@@ -31,7 +31,7 @@ constructed_box = {
     "args": [
         {
             "t": "fqn",
-            "name": "System.Collections.Generic.IList",
+            "name": "System.Collections.Generic.IReadOnlyList",
             "args": [owner_t],
         }
     ],
@@ -42,7 +42,7 @@ mixed_box = {
     "args": [
         {
             "t": "fqn",
-            "name": "System.Collections.Generic.IList",
+            "name": "System.Collections.Generic.IReadOnlyList",
             "args": [owner_t],
         },
         owner_t,

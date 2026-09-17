@@ -38,7 +38,9 @@ class PrivateDefaultOwner(private val secret: String) {
 class GenericPrivateDefaultOwner<T>(private val secret: T) {
     fun reveal(value: T = secret): T = value
 }
-class ConstrainedPrivateDefaultOwner<T : Comparable<T>>(private val secret: T) {
+interface PrivateDefaultBound { val text: String }
+class PrivateDefaultValue(override val text: String) : PrivateDefaultBound
+class ConstrainedPrivateDefaultOwner<T : PrivateDefaultBound>(private val secret: T) {
     fun reveal(value: T = secret): T = value
 }
 class GenericPrivateMethodDefaultOwner<T>(private val secret: T) {
@@ -58,7 +60,7 @@ class PrivateCallableDefaultOwner {
     fun reveal(callback: () -> String = this::secret): String = callback()
 }
 
-class GenericPrivateCallableDefaultOwner<T : Comparable<T>>(private val secret: T) {
+class GenericPrivateCallableDefaultOwner<T : PrivateDefaultBound>(private val secret: T) {
     private fun secretValue(): T = secret
     fun reveal(callback: () -> T = this::secretValue): T = callback()
 }

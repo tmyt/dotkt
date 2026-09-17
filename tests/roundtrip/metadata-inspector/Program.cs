@@ -920,8 +920,10 @@ static void VerifyOwnershipDll(string path)
     var sparseSuspendParams = md.GetTypeDefinition(sparseSuspendSm).GetGenericParameters().ToArray();
     Require(sparseSuspendParams.Length == 2,
         "generic-owner suspend lambda did not capture the complete owner parameter prefix");
-    Require(md.GetGenericParameter(sparseSuspendParams[0]).GetConstraints().Count > 0,
-        "generic-owner suspend lambda dropped the captured owner constraint");
+    var sparseCapturedBounds = md.GetGenericParameter(sparseSuspendParams[0]).GetConstraints()
+        .Select(handle => TypeName(md, md.GetGenericParameterConstraint(handle).Type)).ToArray();
+    Require(sparseCapturedBounds.SequenceEqual(new[] { "roundtrip.ownership.SparseCapturedBound" }),
+        "generic-owner suspend lambda did not retain its exact captured owner constraint");
 
     var ownershipFacade = md.TypeDefinitions.Single(h =>
         StripArities(DefinitionName(md, h)) == "roundtrip.ownership.NestedOwnershipKt");
@@ -1021,8 +1023,9 @@ static void VerifyUnsafeAccessorDll(string path)
     Require(secretAccessors.Count(pair => md.GetTypeDefinition(pair.TypeHandle).GetGenericParameters().Count == 1) == 5,
         "generic owner slots were not preserved on generic UnsafeAccessor holder types");
     Require(secretAccessors.Any(pair => md.GetTypeDefinition(pair.TypeHandle).GetGenericParameters().Any(handle =>
-            md.GetGenericParameter(handle).GetConstraints().Count > 0)),
-        "constrained owner UnsafeAccessor lost its generic constraint");
+            md.GetGenericParameter(handle).GetConstraints().Any(constraint =>
+                TypeName(md, md.GetGenericParameterConstraint(constraint).Type) == "roundtrip.nc.PrivateDefaultBound"))),
+        "constrained owner UnsafeAccessor lost its exact generic interface constraint");
     var identityAccessor = accessors.Single(pair =>
         md.GetString(pair.Definition.Name).Contains("$identity", StringComparison.Ordinal));
     Require(md.GetTypeDefinition(identityAccessor.TypeHandle).GetGenericParameters().Count == 1 &&
@@ -1034,8 +1037,9 @@ static void VerifyUnsafeAccessorDll(string path)
     var genericCallableAccessor = accessors.Single(pair =>
         md.GetString(pair.Definition.Name).Contains("$secretValue", StringComparison.Ordinal));
     Require(md.GetTypeDefinition(genericCallableAccessor.TypeHandle).GetGenericParameters().Any(handle =>
-            md.GetGenericParameter(handle).GetConstraints().Count > 0),
-        "generic callable-reference UnsafeAccessor lost its owner constraint");
+            md.GetGenericParameter(handle).GetConstraints().Any(constraint =>
+                TypeName(md, md.GetGenericParameterConstraint(constraint).Type) == "roundtrip.nc.PrivateDefaultBound")),
+        "generic callable-reference UnsafeAccessor lost its exact owner interface constraint");
 
     var wrappers = md.TypeDefinitions
         .Where(handle => DefinitionName(md, handle).StartsWith("dotkt$unsafe$holder$", StringComparison.Ordinal))
