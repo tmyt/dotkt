@@ -62,6 +62,8 @@ static class KotlinCollectionClassifierLowering
         var physicalTest = (JsonObject)obj.DeepClone();
         physicalTest["e"] = local.DeepClone();
         var matches = Call(Matches, new TypeNode.Fqn("kotlin.Boolean"), local);
+        var target = TypeJson.Read(physicalTest["type"]);
+        var safeCastResult = target is TypeNode.Nullable ? target : new TypeNode.Nullable(target);
         JsonObject result = Text(obj["k"]) == "isInst"
             ? new JsonObject {
                 ["k"] = "cond", ["cond"] = matches, ["then"] = physicalTest,
@@ -70,7 +72,8 @@ static class KotlinCollectionClassifierLowering
                 },
             }
             : new JsonObject {
-                ["k"] = "cond", ["cond"] = matches, ["then"] = physicalTest,
+                ["k"] = "cond", ["type"] = TypeJson.Write(safeCastResult),
+                ["cond"] = matches, ["then"] = physicalTest,
                 ["else"] = new JsonObject {
                     ["k"] = "const", ["type"] = TypeJson.Write(nullableObject), ["value"] = null,
                 },
