@@ -382,7 +382,7 @@ static class AliasHelperHoist
         var policy = new GenericRepresentationPolicy(new Dictionary<string, string> { ["Alias"] = "Native" });
         var receiver = (TypeNode.Fqn)ReceiverType("Alias", frame, policy);
         var arguments = receiver.Args.Cast<TypeNode.Tv>().Select(type => type.I);
-        if (!arguments.SequenceEqual(new[] { 0, 0, 2, 2, 5, 5 }))
+        if (!arguments.SequenceEqual(new[] { 0, 1, 2, 3, 4, 5 }))
             throw new InvalidOperationException("Hoisted alias receiver lost its binding roles or physical permutation");
         var method = new JsonObject { ["name"] = "Read", ["params"] = new JsonArray(),
             ["ret"] = TypeJson.Write(new TypeNode.Tv("type", 1)), ["body"] = new JsonArray() };

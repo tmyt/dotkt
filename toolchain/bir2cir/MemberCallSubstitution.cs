@@ -737,15 +737,15 @@ static class MemberCallSubstitution
             JsonNode RepresentationArgument(int index, NullableRepresentationFrame.Role role)
             {
                 if (typeArgs == null) return null;
-                var frame = refs.NullableMethodFrame(Str(node[DeclarationIdentityBinding.Key]))
-                    ?? throw new InvalidOperationException("Collection factory has no declaration-owned representation frame");
-                var slot = frame.Variable(new TypeNode.Tv("method", index), role);
-                return typeArgs[slot.I];
+                var frame = refs.NullableMethodFrame(Str(node[DeclarationIdentityBinding.Key]));
+                // Current declarations without companions have an identity frame. Factory elements
+                // use the same ordinary argument as their native vararg wrapper.
+                return typeArgs[frame?.SourcePosition(index) ?? index];
             }
             if (collKind == "map")
             {
-                var kt = RepresentationArgument(0, NullableRepresentationFrame.Role.Storage);
-                var vt = RepresentationArgument(1, NullableRepresentationFrame.Role.Storage);
+                var kt = RepresentationArgument(0, NullableRepresentationFrame.Role.Ordinary);
+                var vt = RepresentationArgument(1, NullableRepresentationFrame.Role.Ordinary);
                 if (kt == null || vt == null) return null;                       // can't reconstruct K,V -> plain call
                 var entries = new JsonArray();
                 // The vararg wrapper newArray's elem is `kotlin.Pair<K,V>` (never K), so a lone newArray arg IS the
@@ -769,7 +769,7 @@ static class MemberCallSubstitution
                     ["k"] = "newMap", ["keyType"] = kt.DeepClone(), ["valType"] = vt.DeepClone(), ["entries"] = entries,
                 });
             }
-            var elemT = RepresentationArgument(0, NullableRepresentationFrame.Role.Storage);
+            var elemT = RepresentationArgument(0, NullableRepresentationFrame.Role.Ordinary);
             if (elemT == null) return null;                                     // can't reconstruct elem -> plain call
             var elems = new JsonArray();
             // The vararg array is a Kotlin native array of ordinary T. Its wrapper must be

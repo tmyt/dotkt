@@ -175,12 +175,11 @@ static class CollectionHelperBinding
             throw new InvalidOperationException("Map helper binding lost the selected source argument");
         NullableRepresentationMaterialization.Apply(new[] { root }, _ => false,
             policy: new GenericRepresentationPolicy(aliases));
-        var frame = NullableRepresentationFrame.Read(JsonNode.Parse(
-            root["methods"][1][NullableRepresentationTypes.MethodFrameKey].GetValue<string>()));
-        if (((JsonArray)call["typeArgs"]).Count != 3 || !frame.StorageIndices.SequenceEqual(new[] { 1 })
-            || TypeJson.Read(call["typeArgs"][2]) != frame.Variable(new TypeNode.Tv("method", 1), NullableRepresentationFrame.Role.Storage))
-            throw new InvalidOperationException("Source-bound map helper did not propagate and close its storage demand");
-        Console.WriteLine("[map default binding] self-test OK (source selection, projected argument, storage demand)");
+        if (((JsonArray)call["typeArgs"]).Count != 2
+            || root["methods"][1][NullableRepresentationTypes.MethodFrameKey] != null
+            || TypeJson.Read(call["typeArgs"][0]) != new TypeNode.Tv("method", 1))
+            throw new InvalidOperationException("Source-bound map helper did not retain its canonical source argument");
+        Console.WriteLine("[map default binding] self-test OK (source selection, projected argument, canonical representation)");
         CollectionSelectionSelfTest();
         SemanticHelperSelfTest();
         MapCopySelfTest();
@@ -212,11 +211,11 @@ static class CollectionHelperBinding
             throw new InvalidOperationException("Map copy lost source binding or source evaluation");
         NullableRepresentationMaterialization.Apply(new[] { root }, _ => false,
             policy: new GenericRepresentationPolicy(aliases));
-        if (((JsonArray)call["typeArgs"]).Count != 4
-            || TypeJson.Read(call["typeArgs"][2]) != new TypeNode.Tv("method", 2)
-            || TypeJson.Read(call["typeArgs"][3]) != new TypeNode.Tv("method", 3))
-            throw new InvalidOperationException("Map copy helper bypassed storage frame materialization");
-        Console.WriteLine("[map copy binding] self-test OK (source evaluation, exact helper, storage frame)");
+        if (((JsonArray)call["typeArgs"]).Count != 2
+            || TypeJson.Read(call["typeArgs"][0]) != key
+            || TypeJson.Read(call["typeArgs"][1]) != value)
+            throw new InvalidOperationException("Map copy helper changed its canonical key/value arguments");
+        Console.WriteLine("[map copy binding] self-test OK (source evaluation, exact helper, canonical arguments)");
     }
 
     static void SemanticHelperSelfTest()
@@ -255,12 +254,12 @@ static class CollectionHelperBinding
             throw new InvalidOperationException("Semantic helper source binding escaped its lowering scope");
         NullableRepresentationMaterialization.Apply(new[] { root }, _ => false,
             policy: new GenericRepresentationPolicy(aliases));
-        if (((JsonArray)body[0]["typeArgs"]).Count != 2
-            || ((JsonArray)body[1]["parts"][0]["typeArgs"]).Count != 2
-            || ((JsonArray)body[2]["typeArgs"]).Count != 2
-            || TypeJson.Read(body[0]["typeArgs"][1]) != new TypeNode.Tv("method", 1))
-            throw new InvalidOperationException("Semantic helper did not propagate its storage argument demand");
-        Console.WriteLine("[semantic helper binding] self-test OK (source identity, scoped binding, storage demand)");
+        if (((JsonArray)body[0]["typeArgs"]).Count != 1
+            || ((JsonArray)body[1]["parts"][0]["typeArgs"]).Count != 1
+            || ((JsonArray)body[2]["typeArgs"]).Count != 1
+            || TypeJson.Read(body[0]["typeArgs"][0]) != variable)
+            throw new InvalidOperationException("Semantic helper changed its canonical argument");
+        Console.WriteLine("[semantic helper binding] self-test OK (source identity, scoped binding, canonical argument)");
     }
 
     static void CollectionSelectionSelfTest()
@@ -323,10 +322,10 @@ static class CollectionHelperBinding
             throw new InvalidOperationException("Source collection helper selection changed projection, default index or exact-owner routing");
         NullableRepresentationMaterialization.Apply(new[] { root }, _ => false,
             policy: new GenericRepresentationPolicy(aliases));
-        if (((JsonArray)body[0]["typeArgs"]).Count != 2
-            || TypeJson.Read(body[0]["typeArgs"][1]) != new TypeNode.Tv("method", 1))
-            throw new InvalidOperationException("Source collection helper bypassed storage argument materialization");
-        Console.WriteLine("[collection helper binding] self-test OK (invariant/projected, mutation, default index, exact owner, storage frame)");
+        if (((JsonArray)body[0]["typeArgs"]).Count != 1
+            || TypeJson.Read(body[0]["typeArgs"][0]) != variable)
+            throw new InvalidOperationException("Source collection helper changed its canonical argument");
+        Console.WriteLine("[collection helper binding] self-test OK (invariant/projected, mutation, default index, exact owner, canonical argument)");
     }
 
     static string Text(JsonNode node) => (node as JsonValue)?.TryGetValue<string>(out var text) == true ? text : null;

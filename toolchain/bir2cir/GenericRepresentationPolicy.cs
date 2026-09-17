@@ -12,20 +12,12 @@ sealed class GenericRepresentationPolicy
 
     public GenericRepresentationPolicy(IReadOnlyDictionary<string, string> aliases) => _aliases = aliases;
 
-    public bool UsesStorageArguments(string owner) => _aliases.ContainsKey(owner);
+    public bool UsesStorageArguments(string owner) => false;
 
     public NullableRepresentationFrame.Role ApplicationRole(string owner, NullableRepresentationFrame.Role role) =>
-        UsesStorageArguments(owner) ? role switch {
-            NullableRepresentationFrame.Role.Ordinary => NullableRepresentationFrame.Role.Storage,
-            NullableRepresentationFrame.Role.Nullable => NullableRepresentationFrame.Role.NullableStorage,
-            _ => role,
-        } : role;
+        role;
 
-    public bool IsStorageElement(string kind, string key) => kind switch {
-        "newList" or "newSet" => key == "elem",
-        "newMap" => key is "keyType" or "valType",
-        _ => false,
-    };
+    public bool IsStorageElement(string kind, string key) => false;
 
     public TypeNode ProjectArgumentHead(TypeNode.Fqn source, bool storage, NullableRepresentationFrame frame)
     {
@@ -33,7 +25,7 @@ sealed class GenericRepresentationPolicy
             || !BirTypeLowering.TryInvariantSibling(source.Name, out var storageHead)) return source;
         var arguments = source.Args;
         if (frame != null && arguments != null) arguments = frame.OrdinaryArguments(arguments);
-        return new TypeNode.Fqn(storage ? storageHead : ordinaryHead, arguments);
+        return new TypeNode.Fqn(ordinaryHead, arguments);
     }
 
     public static void SelfTest()
@@ -57,16 +49,15 @@ sealed class GenericRepresentationPolicy
         """)!.AsObject();
         NullableRepresentationMaterialization.Apply(new[] { root }, _ => false, policy: policy);
         var choose = root["methods"][0];
-        var frame = NullableRepresentationFrame.Read(JsonNode.Parse(choose[NullableRepresentationTypes.MethodFrameKey].GetValue<string>()));
-        if (!frame.StorageIndices.SequenceEqual(new[] { 0 }) || frame.PhysicalArity != 2
+        if (choose[NullableRepresentationTypes.MethodFrameKey] != null
+            || ((JsonArray)choose["typeParams"]).Count != 1
             || TypeJson.Read(choose["params"][0]["type"]) != new TypeNode.Array(new TypeNode.Tv("method", 0))
             || TypeJson.Read(choose["params"][1]["type"]) is not TypeNode.Fqn { Args: { } mapArguments }
-            || mapArguments[1] != new TypeNode.Tv("method", 1))
-            throw new InvalidOperationException("Binding policy did not separate native array and invariant map argument roles");
+            || mapArguments[1] != new TypeNode.Tv("method", 0))
+            throw new InvalidOperationException("Binding policy changed a native array or map element's canonical representation");
         var arguments = ((JsonArray)root["methods"][1]["body"][0]["typeArgs"]).Select(TypeJson.Read).ToArray();
-        if (arguments.Length != 2 || arguments[0] is not TypeNode.Fqn { Name: "System.Collections.Generic.IReadOnlyCollection" }
-            || arguments[1] is not TypeNode.Fqn { Name: "System.Collections.Generic.ICollection" })
-            throw new InvalidOperationException("Binding policy did not close ordinary and storage call arguments separately");
+        if (arguments.Length != 1 || arguments[0] is not TypeNode.Fqn { Name: "System.Collections.Generic.IReadOnlyCollection" })
+            throw new InvalidOperationException("Binding policy did not preserve a readonly collection argument's canonical head");
 
         var sourceOverride = TypeJson.Write(new TypeNode.Fqn("Outer.Inner", new TypeNode[] { new TypeNode.Tv("type", 0) }));
         var innerRoot = new JsonObject { ["fileClass"] = "InnerRoles", ["types"] = new JsonArray(new JsonObject {

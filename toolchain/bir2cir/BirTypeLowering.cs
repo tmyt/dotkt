@@ -346,8 +346,6 @@ static class BirTypeLowering
         // ARG-POSITION VARIANCE COLLAPSE (Root V): in a storage slot a covariant readonly collection interface ->
         // its INVARIANT sibling, so a concrete invariant value inhabits the nested slot EXACTLY. The head keeps the
         // covariant alias; PhysicalValueCoercion materializes any resulting value-flow seam as a CIR cast.
-        if (collapseInvariant && InvariantSibling.TryGetValue(kotlinFqn, out var inv))
-            return new TypeNode.Fqn(inv, loweredArgs);
         // A generic application: a @ClrTypeAlias GENERIC owner -> the BCL generic (ilemit arity-constructs).
         return new TypeNode.Fqn(bcl, loweredArgs);
     }

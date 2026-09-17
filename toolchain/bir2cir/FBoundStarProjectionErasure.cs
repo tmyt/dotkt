@@ -714,7 +714,7 @@ static class FBoundStarProjectionErasure
 
     static bool ContainsUseSiteProjection(TypeNode type) => type switch
     {
-        TypeNode.Projection => true,
+        TypeNode.Projection or TypeNode.Star => true,
         TypeNode.Fqn { Args: { } args } => args.Any(ContainsUseSiteProjection),
         TypeNode.Nullable nullable => ContainsUseSiteProjection(nullable.Of),
         TypeNode.Oblivious oblivious => ContainsUseSiteProjection(oblivious.Of),
@@ -729,6 +729,18 @@ static class FBoundStarProjectionErasure
             || function.Ctx?.Any(ContainsUseSiteProjection) == true,
         _ => false,
     };
+
+    internal static void ProjectionConstraintSelfTest()
+    {
+        var variable = new TypeNode.Tv("method", 0);
+        var exact = new TypeNode.Fqn("Bound", new TypeNode[] { variable });
+        var star = new TypeNode.Fqn("Bound", new TypeNode[] { new TypeNode.Star() });
+        var projected = new TypeNode.Fqn("Bound", new TypeNode[] { new TypeNode.Projection("out", variable) });
+        if (ContainsUseSiteProjection(exact) || !ContainsUseSiteProjection(star)
+            || !ContainsUseSiteProjection(new TypeNode.Nullable(star)) || !ContainsUseSiteProjection(projected))
+            throw new InvalidOperationException("Constraint projection classification lost star/exact argument distinction");
+        Console.WriteLine("[constraint projections] self-test OK (star, variance, annotation, exact bound)");
+    }
 
     static void RecordProjectionSlot(JsonObject declaration, string slot, string fact,
         IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs)

@@ -545,8 +545,8 @@ static class KotlinCollectionSlotSynthesis
             new TypeNode.Fqn(Collection, new TypeNode[] { new TypeNode.Fqn("kotlin.String") }),
             helperFrame, mapping, inheritedOwnerArguments);
         if (concrete[0] is not TypeNode.Fqn { Name: "System.Collections.Generic.IReadOnlyCollection", Args.Length: 1 }
-            || concrete[1] is not TypeNode.Fqn { Name: "System.Collections.Generic.ICollection", Args.Length: 1 })
-            throw new InvalidOperationException("Collection slot helper collapsed a concrete root/storage pair");
+            || concrete[1] is not TypeNode.Fqn { Name: "System.Collections.Generic.IReadOnlyCollection", Args.Length: 1 })
+            throw new InvalidOperationException("Collection slot helper changed a concrete readonly argument's canonical head");
         Console.WriteLine("[collection slot frames] self-test OK (source element, inherited physical permutation, concrete roles)");
     }
 
