@@ -71,17 +71,27 @@ static class ReverseEnumeratorBridgeSynthesis
     public sealed record SlotReservation(TypeNode Element)
     {
         public bool Owns(TypeNode.Fqn owner, string member, int arity, TypeNode[] parameters,
-            TypeNode result, Func<TypeNode, TypeNode> physical)
+            TypeNode result, Func<TypeNode, TypeNode> physical, ReferenceMetadataIndex refs)
         {
             if (member != GetEnumeratorName || arity != 0 || parameters.Length != 0
                 || physical(owner) is not TypeNode.Fqn face || physical(result) is not TypeNode.Fqn ret)
                 return false;
+            // A referenced Kotlin interface can inherit the CLR slot without declaring it. Resolve the exact
+            // physical owner for this ownership query only; do not replace the general override pass's Kotlin
+            // signature facts (notably a logical suspend result) with reflected physical return types.
+            if (Bare(face.Name) is not (IEnumerable or IEnumerableT))
+            {
+                if (!ClrMemberResolution.TryResolveAliasedInterfaceSlot(refs, face, member, arity,
+                        Array.Empty<TypeNode>(), null, face.Args ?? Array.Empty<TypeNode>(),
+                        out var declarationOwner, out _, out _, out _, wantedReturn: ret)) return false;
+                face = declarationOwner;
+            }
             if (Bare(face.Name) == IEnumerable && face.Args is not { Length: > 0 })
                 return Bare(ret.Name) == IEnumerator && ret.Args is not { Length: > 0 };
             return Bare(face.Name) == IEnumerableT && face.Args is { Length: 1 } args
                 && Bare(ret.Name) == IEnumeratorT && ret.Args is { Length: 1 } retArgs
-                && SupertypeGraph.TypeKey(args[0]) == SupertypeGraph.TypeKey(Element)
-                && SupertypeGraph.TypeKey(retArgs[0]) == SupertypeGraph.TypeKey(Element);
+                && ClrMemberResolution.SameInterfaceSlotType(args[0], Element)
+                && ClrMemberResolution.SameInterfaceSlotType(retArgs[0], Element);
         }
     }
 

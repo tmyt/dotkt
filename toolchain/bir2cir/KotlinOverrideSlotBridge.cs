@@ -193,7 +193,7 @@ static class KotlinOverrideSlotBridge
             bool unitValueReturn = false)
         {
             if (supIsInterface && enumerationSlots?.Owns(descriptorSpec, descriptorMember,
-                    (impl["typeParams"] as JsonArray)?.Count ?? 0, slotParams, slotRet, PhysicalSlotType) == true)
+                    (impl["typeParams"] as JsonArray)?.Count ?? 0, slotParams, slotRet, PhysicalSlotType, refs) == true)
                 return;
             inheritedOwners.TryGetValue(impl, out var inheritedOwner);
             if (inheritedOwner != null && !supIsInterface) return;
@@ -1380,9 +1380,8 @@ static class KotlinOverrideSlotBridge
                         selectedDescriptorOwner, refs.Aliases, isValue, refs.PhysicalTypeNames,
                         typeArg: false, localTypeNames: null, nullableFrames: refs.NullableTypeFrames) as TypeNode.Fqn;
                     if (loweredOwner != null
-                        // This is physical MethodImpl allocation, including referenced Kotlin declarations.
-                        // ResolveNetType intentionally excludes DotKt owners for source call binding.
-                        && ClrMemberResolution.ResolveOwnerType(loweredOwner, refs) is { IsInterface: true })
+                        && refs.ResolveNetType(loweredOwner.Name, loweredOwner.Args?.Length ?? 0)
+                            is { IsInterface: true })
                     {
                         var usesSelectionFrame = selectionOwnerArgs != null
                             && selectionOwnerArgs.Length == (loweredOwner.Args?.Length ?? 0);
