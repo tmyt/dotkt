@@ -3,9 +3,12 @@
 # explicit CIR cast, in both directions, and the expression-result cases retain the exact physical return on the
 # inner call so ilemit cannot mistake the enclosing cast for an identity conversion.
 
-# Return edges.
-+"name":"returnReadonly","static":true,"params":[{"name":"value","type":{"t":"fqn","name":"System.Collections.Generic.IList","args":[{"t":"fqn","name":"System.Int32"}]}}],"ret":{"t":"fqn","name":"System.Collections.Generic.IReadOnlyList","args":[{"t":"fqn","name":"System.Int32"}]},"body":[{"k":"return","value":{"k":"cast","type":{"t":"fqn","name":"System.Collections.Generic.IReadOnlyList","args":[{"t":"fqn","name":"System.Int32"}]},"e":{"k":"local","name":"value"}}}]}
-+"name":"returnMutable","static":true,"params":[{"name":"value","type":{"t":"fqn","name":"System.Collections.Generic.IReadOnlyList","args":[{"t":"fqn","name":"System.Int32"}]}}],"ret":{"t":"fqn","name":"System.Collections.Generic.IList","args":[{"t":"fqn","name":"System.Int32"}]},"body":[{"k":"return","value":{"k":"cast","type":{"t":"fqn","name":"System.Collections.Generic.IList","args":[{"t":"fqn","name":"System.Int32"}]},"e":{"k":"local","name":"value"}}}]}
+# Return edges. Check the parameter and return/body separately because Kotlin type metadata may appear between
+# them; both directional casts and the complete parameter type remain asserted.
++"name":"returnReadonly","static":true,"params":[{"name":"value","type":{"t":"fqn","name":"System.Collections.Generic.IList","args":[{"t":"fqn","name":"System.Int32"}]}
++"ret":{"t":"fqn","name":"System.Collections.Generic.IReadOnlyList","args":[{"t":"fqn","name":"System.Int32"}]},"body":[{"k":"return","value":{"k":"cast","type":{"t":"fqn","name":"System.Collections.Generic.IReadOnlyList","args":[{"t":"fqn","name":"System.Int32"}]},"e":{"k":"local","name":"value"}}}]
++"name":"returnMutable","static":true,"params":[{"name":"value","type":{"t":"fqn","name":"System.Collections.Generic.IReadOnlyList","args":[{"t":"fqn","name":"System.Int32"}]}
++"ret":{"t":"fqn","name":"System.Collections.Generic.IList","args":[{"t":"fqn","name":"System.Int32"}]},"body":[{"k":"return","value":{"k":"cast","type":{"t":"fqn","name":"System.Collections.Generic.IList","args":[{"t":"fqn","name":"System.Int32"}]},"e":{"k":"local","name":"value"}}}]
 
 # Initializer and later local-store edges.
 +"k":"var","name":"readonlyLocal","type":{"t":"fqn","name":"System.Collections.Generic.IReadOnlyList","args":[{"t":"fqn","name":"System.Int32"}]},"init":{"k":"cast","type":{"t":"fqn","name":"System.Collections.Generic.IReadOnlyList","args":[{"t":"fqn","name":"System.Int32"}]},"e":{"k":"local","name":"mutable"}}
