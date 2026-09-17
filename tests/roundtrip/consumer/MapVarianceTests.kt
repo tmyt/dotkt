@@ -6,6 +6,15 @@ import roundtrip.mapvariance.*
 
 class MapVarianceTests {
     @TestAttribute
+    fun importedMutableMapBoundRetainsSourceArityAndMutation() {
+        val values = mutableMapOf("original" to 1)
+        val result = fillBoundMap(values)
+        assertTrue(result === values)
+        assertTrue(result.remove("filled") == 23)
+        assertTrue(values.size == 1)
+    }
+
+    @TestAttribute
     fun importedCovariantMapPreservesIdentityAndLiveUpdates() {
         val source = mutableMapOf("a" to "first")
         val widened = widenMap(source)

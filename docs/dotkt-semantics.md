@@ -154,7 +154,7 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   `is` and compiler-generated smart cast to the non-generic `System.Collections.IDictionary`/`IList`/`ICollection`/
   `IEnumerable` where that face is faithful; `println` of such an erased value renders via
   the runtime-detecting `clrElemToString`. (A `<*>` value can only be used non-generically anyway.) This is the same
-  invariance that forces §5c (`Map`/`MutableMap` both → `IDictionary<K,V>`). #60.
+  invariance that requires §5c's separation of opaque `Map` values from exact dictionary constructions. #60.
   **`List<*>` and `Map<*,*>` are exact** through their non-generic `IList`/`IDictionary` twins. `Collection<*>`,
   `Set<*>`, and `MutableSet<*>` instead use a composite `is` classifier because their operational BCL aliases overlap: emitted
   Kotlin implementations carry compiler-owned nominal identity interfaces, while BCL-backed values are recognized
@@ -771,6 +771,11 @@ Generic nesting does not turn a read-only collection into a mutable collection. 
 containers. A read-only-only Kotlin or foreign implementation must not be cast to `IList<T>`/`ICollection<T>`
 merely because it is stored in another collection.
 
+The current compiler also emits `ICollection<T>`/`IList<T>` storage faces on its own read-only collection
+implementations, with unsupported mutators throwing `NotSupportedException`. These are an additional CLR-facing
+surface, not evidence of Kotlin mutable-collection membership and not a requirement imposed on foreign read-only
+implementations. Kotlin classifier checks retain that distinction.
+
 `Array<List<String>>` therefore uses `IReadOnlyList<string>[]`, consistently with a generic `Array<T>` whose
 ordinary type argument is `List<String>`. Allocation, element access and generic calls use that same representation;
 they do not copy the array or its elements. Nullable generic representations remain a separate declaration-owned
@@ -1071,9 +1076,9 @@ Deep dive: `docs/design-kotlin-metadata-attributes.md`.
 ### Frontend-selected overloads remain authoritative after CLR erasure
 
 Kotlin may distinguish two callable declarations that the CLR cannot distinguish by signature. This includes
-top-level extensions and independent final, non-overriding members. For example, `Map<String, String>` and
-`MutableMap<String, String>` both project to the same `IDictionary<String, String>` parameter; `String` and
-`String?` both project to `System.String`. FIR nevertheless selects one exact Kotlin declaration at every call,
+top-level extensions and independent final, non-overriding members. For example, distinct `Map<K,V>` value
+applications project to `object`, while `String` and `String?` both project to `System.String`.
+FIR nevertheless selects one exact Kotlin declaration at every call,
 property access, and callable reference.
 
 `kotc` writes that selected declaration identity into BIR. `bir2cir` lowers an isolated signature projection to find
@@ -1979,7 +1984,7 @@ Concretely:
 | `fun <T> f(x: T?)` | `object` — no CLR slot expresses an unconstrained `T?` |
 | Open `Box<T?>`, `Array<T?>` | `Box<N(T)>`, `N(T)[]` in the declaration's explicit frame |
 | `List<Int?>` / `MutableList<Int?>` | `IReadOnlyList<object>` / `IList<object>` |
-| `Map<String, Int?>`, `Pair<Int?, String>`, `Box<Int?>` | `IDictionary<string, object>`, `Pair<object, string>`, `Box<object>` |
+| `Map<String, Int?>`, `Pair<Int?, String>`, `Box<Int?>` | `object`, `Pair<object, string>`, `Box<object>` |
 | `Array<Int?>` | `object[]` |
 | `(Int) -> Int?` | `Func<int32, object>` |
 | `(Int?) -> String` | `Func<Nullable<int32>, string>` — a delegate PARAMETER is the one exception, below |
@@ -2293,7 +2298,7 @@ Current deliberate limits are:
 - `suspend fun` has no Continuation parameter — it returns `Task<T>`, and it starts **hot** (like C# `async`), not cold. §4.
 - A `Span`/`ref struct` value is fine inside a `suspend fun` — until it has to survive a suspension, or be captured by a (non-inline) lambda; both are compile-time errors, mirroring C# CS4007/CS4012/CS8352. §4d.
 - A `CharSequence` parameter surfaces to C# as `string`; a `StringBuilder` passed as `CharSequence` is **snapshotted** by an implicit `.toString()` — no live view. §5b.
-- A Kotlin `Map` surfaces to C# as a *mutable* `IDictionary<K,V>`; `keys`/`values`/`entries` are snapshots. §5c.
+- A Kotlin `Map` value slot surfaces to C# as `object`, preserving Kotlin covariance; `MutableMap` retains its exact dictionary face. `Map.keys`/`values`/`entries` are snapshots. §5c.
 - A function type of 17..22 parameters is not `System.Func`/`Action` (they stop at 16) but the stdlib's canonical
   `KFunc`/`KAction` — one definition for the whole platform. An extension receiver counts toward the arity, and
   23 and above has no CLR delegate at all and is refused — the frontend accepts it, the representation cannot.

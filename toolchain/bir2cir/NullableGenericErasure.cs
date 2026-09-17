@@ -143,10 +143,9 @@ static class NullableGenericErasure
             if (typeParameters[i] is not JsonObject parameter
                 || parameter["constraints"] is not JsonArray constraints
                 || constraints.Count == 0) continue;
-            if (!constraints.Any(constraint => TypeJson.Read(constraint) is TypeNode bound
-                && !Erase(bound, Pos.Slot, isValue).Equals(bound))) continue;
-            // A constraint list is one Kotlin declaration fact. If any bound moves, preserve the whole list so the
-            // consumer replaces the CLR approximation instead of retaining a false stronger sibling.
+            // Preserve source bounds before frame expansion, even when this pass does not erase them.
+            // A later alias/projection pass may change their representation; its expanded companion arguments
+            // are not source-level bounds and must never become the round-trip declaration snapshot.
             bounds[i.ToString()] = constraints.DeepClone();
         }
         if (bounds.Count > 0)

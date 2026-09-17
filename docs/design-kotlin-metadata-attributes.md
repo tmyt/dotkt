@@ -178,12 +178,13 @@ The validation follows metadata rather than Kotlin callability: a rich Kotlin en
 representation and therefore is not a CLR enum, and default arguments do not make a nonzero-parameter constructor
 satisfy `new()` unless a public zero-parameter `.ctor` is actually emitted.
 
-The channel has two independent producers. Nullable-generic erasure records every edge or bound its positional
-`Erase` rule moves. Collection-identity recording does the same when Root-V lowering collapses a nested read-only
-`List`/`Set`/`Collection` onto its invariant CLR sibling. They merge by edge head and type-parameter index before
+The channel has independent producers. Nullable-generic erasure records every edge or bound its positional
+`Erase` rule moves. Projection recording retains source classifier identity when physical representation loses it;
+read-only collection applications retain their canonical read-only CLR heads, including when nested.
+The records merge by edge head and type-parameter index before
 the attribute is authored: when both transforms touch one edge, the earlier producer's less-erased TypeNode wins;
 unrelated moved edges and bounds are appended. Thus `class B : Box<List<String>>` re-imports with that Kotlin edge,
-not the physical `Box<IList<string>>`, without teaching dll2klib which transform produced the correction.
+not a reconstructed CLR classifier, without teaching dll2klib which transform produced the correction.
 
 ### Declaration-owned generic representation frames
 
@@ -193,6 +194,10 @@ or a method's `KotlinDeclarationIdentity` payload. Its current fields are `sourc
 slots are ordinary source parameters followed by nullable, storage, and nullable-storage companions; `order`
 maps physical positions to those canonical slots. This makes an enclosing type's complete physical prefix
 explicit even when the child's source parameters precede its captured enclosing parameters.
+
+Current representation demand does not allocate storage or nullable-storage companions: their arrays are empty
+on ordinary producer-generated frames. The frame machinery can represent those roles, but they are not the
+current collection ABI and do not imply positional conversion to mutable CLR collection heads.
 
 Each role is closed from the original source argument independently. A storage companion is not a new Kotlin
 type parameter, and nullable-storage is not reconstructed from an already-erased nullable argument. Source
