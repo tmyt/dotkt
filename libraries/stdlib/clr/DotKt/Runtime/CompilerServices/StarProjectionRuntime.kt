@@ -220,7 +220,9 @@ internal fun kotlinCollectionMatches(value: Any?, witness: Int, dictionary: Star
     readOnlyDictionary: StarProjectionType, set: StarProjectionType, readOnlySet: StarProjectionType,
     list: StarProjectionType): Boolean {
     if (value !is KotlinIterableClassifier) return when (witness and -2) {
-        14, 16 -> foreignKotlinIterable(value, dictionary, readOnlyDictionary, set, readOnlySet, list)
+        // Collection/List membership also requires Kotlin iteration eligibility. Their physical classifier
+        // still selects the narrower collection face; CLR array/dictionary storage alone cannot grant it.
+        2, 4, 6, 8, 14, 16 -> foreignKotlinIterable(value, dictionary, readOnlyDictionary, set, readOnlySet, list)
         else -> true
     }
     // bir2cir supplies KotlinTypeWitness: low bit is nullability; the remaining code is nominal identity.
