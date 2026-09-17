@@ -21,6 +21,8 @@ private class DerivedCollection : ForeignCollectionWithIterable<Int>() {
     override fun iterator(): Iterator<Int> = listOf(42).iterator()
 }
 
+private class InheritedCollection : ForeignCollectionWithIterable<Int>()
+
 class ImportedIterableSlotTests {
     @TestAttribute
     fun importedInterfaceUsesKotlinIteratorForValueAndReferenceElements() {
@@ -37,6 +39,15 @@ class ImportedIterableSlotTests {
         assertEquals("iterator", taggedWords.iterator().next())
         val iterableWords: Iterable<String> = words
         assertEquals("iterator", iterableWords.iterator().next())
+
+        val nullable = ImportedCollection<Int?>(null)
+        nullable.Add(7)
+        val nullableView: TaggedIterable<Int?> = nullable
+        assertTrue(nullableView.iterator().next() == null)
+        val nested = ImportedCollection<List<String>>(listOf("iterator"))
+        nested.Add(listOf("base"))
+        val nestedView: Iterable<List<String>> = nested
+        assertEquals("iterator", nestedView.iterator().next()[0])
     }
 
     @TestAttribute
@@ -53,6 +64,12 @@ class ImportedIterableSlotTests {
         assertTrue(wordCursor.MoveNext())
         assertEquals("iterator", wordCursor.Current as String)
         assertTrue(!wordCursor.MoveNext())
+        val nullable = ImportedCollection<Int?>(null)
+        nullable.Add(7)
+        val nullableCursor = (nullable as Any as RawEnumerable).GetEnumerator()
+        assertTrue(nullableCursor.MoveNext())
+        assertTrue(nullableCursor.Current == null)
+        assertTrue(!nullableCursor.MoveNext())
     }
 
     @TestAttribute
@@ -65,6 +82,11 @@ class ImportedIterableSlotTests {
         derived.Add(7)
         val derivedView: Iterable<Int> = derived
         assertEquals(42, derivedView.iterator().next())
+        val inherited = InheritedCollection()
+        inherited.Add(7)
+        val inheritedView: Iterable<Int> = inherited
+        assertTrue(!inheritedView.iterator().hasNext())
+        assertTrue(!(inherited as Any as RawEnumerable).GetEnumerator().MoveNext())
     }
 
     @TestAttribute
