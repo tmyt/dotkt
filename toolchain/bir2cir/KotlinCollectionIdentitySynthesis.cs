@@ -17,6 +17,8 @@ using DotKt.Bir;
 // implementing Set and MutableCollection does not imply implementing MutableSet.
 static class KotlinCollectionIdentitySynthesis
 {
+    const string Iterable = "kotlin.collections.Iterable";
+    const string MutableIterable = "kotlin.collections.MutableIterable";
     const string Collection = "kotlin.collections.Collection";
     const string MutableCollection = "kotlin.collections.MutableCollection";
     const string List = "kotlin.collections.List";
@@ -30,6 +32,8 @@ static class KotlinCollectionIdentitySynthesis
     const string MutableListIdentity = "DotKt.Runtime.CompilerServices.KotlinMutableListClassifier";
     const string SetIdentity = "DotKt.Runtime.CompilerServices.KotlinSetClassifier";
     const string MutableSetIdentity = "DotKt.Runtime.CompilerServices.KotlinMutableSetClassifier";
+    const string IterableIdentity = "DotKt.Runtime.CompilerServices.KotlinIterableClassifier";
+    const string MutableIterableIdentity = "DotKt.Runtime.CompilerServices.KotlinMutableIterableClassifier";
 
     sealed class Def
     {
@@ -73,6 +77,10 @@ static class KotlinCollectionIdentitySynthesis
         if (names.Contains(MutableCollection) && !names.Overlaps(new[] { MutableSet, MutableList }))
             identities.Add(MutableCollectionIdentity);
         if (identities.Count == 0 && names.Contains(Collection)) identities.Add(CollectionIdentity);
+        // Mutable iteration is independent of collection mutation (e.g. Collection + MutableIterable).
+        if (names.Contains(MutableIterable) && !names.Overlaps(new[] { MutableCollection, MutableSet, MutableList }))
+            identities.Add(MutableIterableIdentity);
+        if (identities.Count == 0 && names.Contains(Iterable)) identities.Add(IterableIdentity);
         if (identities.Count == 0) return;
 
         if (def.Node["interfaces"] is not JsonArray interfaces)

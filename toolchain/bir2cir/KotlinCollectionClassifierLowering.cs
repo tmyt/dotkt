@@ -1,3 +1,5 @@
+using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
@@ -7,18 +9,26 @@ using DotKt.Bir;
 static class KotlinCollectionClassifierLowering
 {
     const string RuntimeOwner = "DotKt.Runtime.CompilerServices.StarProjectionRuntimeKt";
-    const string Candidate = "kotlinCollectionCandidate";
+    const string Matches = "kotlinCollectionMatches";
     const string CastCandidate = "kotlinCollectionCastCandidate";
 
     public static void Apply(JsonNode node)
     {
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        CollectNames(node, names);
+        var next = 0;
+        Rewrite(node, names, ref next);
+    }
+
+    static void Rewrite(JsonNode node, HashSet<string> names, ref int next)
+    {
         if (node is JsonArray array)
         {
-            foreach (var child in array) Apply(child);
+            foreach (var child in array) Rewrite(child, names, ref next);
             return;
         }
         if (node is not JsonObject obj) return;
-        foreach (var child in obj.Select(pair => pair.Value).ToArray()) Apply(child);
+        foreach (var child in obj.Select(pair => pair.Value).ToArray()) Rewrite(child, names, ref next);
         if (Text(obj["k"]) is not ("isInst" or "isInstRef" or "cast") || obj["e"] is not JsonObject operand) return;
         obj.Remove("reifiedTypeOperand");
         var witness = obj[KotlinTypeWitness.OperandKey]?.DeepClone();
@@ -29,16 +39,61 @@ static class KotlinCollectionClassifierLowering
             if ((flags & ~1) == 0) return;
             witness = KotlinTypeWitness.Constant(flags);
         }
-        var helper = Text(obj["k"]) == "cast" ? CastCandidate : Candidate;
-        if (Text(operand["k"]) == "callStatic" && Text(operand["method"]) == helper
-            && TypeJson.OwnerName(operand["owner"]) == RuntimeOwner) return;
         var nullableObject = new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"));
-        obj["e"] = new JsonObject {
+        JsonObject Call(string helper, TypeNode result, JsonNode value) => new() {
             ["k"] = "callStatic", ["owner"] = TypeJson.Fqn(RuntimeOwner), ["method"] = helper,
             ["sig"] = new JsonArray(TypeJson.Write(nullableObject), TypeJson.Fqn("kotlin.Int")),
-            ["ret"] = TypeJson.Write(nullableObject),
-            ["args"] = new JsonArray(operand.DeepClone(), witness),
+            ["ret"] = TypeJson.Write(result),
+            ["args"] = new JsonArray(value.DeepClone(), witness.DeepClone()),
         };
+        if (Text(obj["k"]) == "cast")
+        {
+            if (Text(operand["k"]) == "callStatic" && Text(operand["method"]) == CastCandidate
+                && TypeJson.OwnerName(operand["owner"]) == RuntimeOwner) return;
+            obj["e"] = Call(CastCandidate, nullableObject, operand);
+            return;
+        }
+
+        // A sentinel object would still satisfy an erased reified T=object. Membership must guard the
+        // physical test independently, including nullable tests. Evaluate arbitrary operands exactly once.
+        string temp;
+        do temp = "dotkt$collectionClassifier$value$" + next++; while (!names.Add(temp));
+        var local = new JsonObject { ["k"] = "local", ["name"] = temp };
+        var physicalTest = (JsonObject)obj.DeepClone();
+        physicalTest["e"] = local.DeepClone();
+        var matches = Call(Matches, new TypeNode.Fqn("kotlin.Boolean"), local);
+        JsonObject result = Text(obj["k"]) == "isInst"
+            ? new JsonObject {
+                ["k"] = "cond", ["cond"] = matches, ["then"] = physicalTest,
+                ["else"] = new JsonObject {
+                    ["k"] = "const", ["type"] = TypeJson.Fqn("kotlin.Boolean"), ["value"] = false,
+                },
+            }
+            : new JsonObject {
+                ["k"] = "cond", ["cond"] = matches, ["then"] = physicalTest,
+                ["else"] = new JsonObject {
+                    ["k"] = "const", ["type"] = TypeJson.Write(nullableObject), ["value"] = null,
+                },
+            };
+        var statements = new JsonArray(new JsonObject {
+            ["k"] = "var", ["name"] = temp, ["type"] = TypeJson.Write(nullableObject),
+            ["init"] = operand.DeepClone(),
+        });
+        obj.Clear();
+        obj["k"] = "valueBlock";
+        obj["stmts"] = statements;
+        obj["result"] = result;
+    }
+
+    static void CollectNames(JsonNode node, HashSet<string> names)
+    {
+        if (node is JsonObject obj)
+        {
+            if (Text(obj["name"]) is string name) names.Add(name);
+            foreach (var child in obj.Select(pair => pair.Value)) CollectNames(child, names);
+        }
+        else if (node is JsonArray array)
+            foreach (var child in array) CollectNames(child, names);
     }
 
     static string Text(JsonNode node) => node is JsonValue value && value.TryGetValue<string>(out var text) ? text : null;

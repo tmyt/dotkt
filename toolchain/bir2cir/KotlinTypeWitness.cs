@@ -3,7 +3,7 @@ using DotKt.Bir;
 
 // Facts erased by CLR type projection, transported in the declaration-owned generic frame.
 // Bit zero is nullability; the remaining value is the nominal collection classifier. These
-// codes are consumed by the trusted stdlib kotlinCollectionCandidate helper, not by ilemit.
+// codes are consumed by the trusted stdlib kotlinCollectionMatches helper, not by ilemit.
 static class KotlinTypeWitness
 {
     internal const string OperandKey = "kotlinTypeWitness";
@@ -32,6 +32,8 @@ static class KotlinTypeWitness
             "kotlin.collections.MutableList" => 8,
             "kotlin.collections.Set" => 10,
             "kotlin.collections.MutableSet" => 12,
+            "kotlin.collections.Iterable" => 14,
+            "kotlin.collections.MutableIterable" => 16,
             _ => 0,
         },
         _ => 0,
