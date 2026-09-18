@@ -304,7 +304,10 @@ internal fun kotlinCollectionCastCandidate(value: Any?, witness: Int, dictionary
 }
 
 @kotlin.clr.ClrTypeAlias("System.Collections.IList")
-private interface StarProjectionRawList
+private interface StarProjectionRawList {
+    @property:kotlin.clr.ClrProperty(kotlin.clr.READ, "Count") val count: Int
+    @kotlin.clr.ClrIntrinsic("get_Item") fun get(index: Int): Any?
+}
 
 // Collection/Set/List use overlapping BCL faces for member dispatch, so their Kotlin classifier is a composite physical
 // fact. KotlinCollectionClassifierLowering supplies the eligibility guard before this physical test,
@@ -887,8 +890,31 @@ internal fun projectedCollectionCountErased(receiver: Any): Int = try {
 }
 
 @PublishedApi
+internal fun projectedListCountErased(receiver: Any): Int = try {
+    if (receiver is StarProjectionRawList) receiver.count else {
+        val list = erasedProjectedView(receiver,
+            "System.Collections.Generic.IReadOnlyList`1", "System.Collections.Generic.IList`1")
+        val collectionName = if (list.getGenericTypeDefinition().fullName == "System.Collections.Generic.IReadOnlyList`1")
+            "System.Collections.Generic.IReadOnlyCollection`1" else "System.Collections.Generic.ICollection`1"
+        var getter: StarProjectionMethod? = null
+        for (parent in list.getInterfaces()) {
+            if (!parent.isGenericType || parent.getGenericTypeDefinition().fullName != collectionName) continue
+            for (method in parent.getMethods()) {
+                if (method.name != "get_Count" || method.getParameters().size != 0) continue
+                if (getter != null) throw IllegalStateException("Ambiguous List Count slot")
+                getter = method
+            }
+        }
+        val selected = getter ?: throw IllegalStateException("Missing List Count slot")
+        selected.invoke(receiver, arrayOfNulls<Any?>(0)) as Int
+    }
+} catch (failure: StarProjectionInvocationException) {
+    throw (failure.innerException ?: failure)
+}
+
+@PublishedApi
 internal fun projectedListGetErased(receiver: Any, index: Int): Any? = try {
-    erasedProjectedMethod(
+    if (receiver is StarProjectionRawList) receiver.get(index) else erasedProjectedMethod(
         receiver,
         "System.Collections.Generic.IReadOnlyList`1",
         "System.Collections.Generic.IList`1",

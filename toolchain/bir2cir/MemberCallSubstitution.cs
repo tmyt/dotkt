@@ -1910,7 +1910,7 @@ static class MemberCallSubstitution
         var receiverType = RecvStaticType(receiver, ctx, allowExprShapes: true);
         if (receiverType == null) return false;
         // A star-projection smart cast has already been lowered to its faithful non-generic CLR facade before
-        // member substitution (`List<*>` -> IList, `Iterable<*>` -> IEnumerable, and so on). The source projection
+        // member substitution (`Iterable<*>` -> IEnumerable, for example). The source projection
         // is no longer present in that token, but the non-generic facade itself is an exact representation fact:
         // it cannot name any closed element type and therefore must enter an erased collection helper.
         if (StarProjectionLowering.IsNonGenericCollectionFacade(receiverType))

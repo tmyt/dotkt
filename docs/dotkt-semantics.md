@@ -151,7 +151,7 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   `x as Map<*,*>` erase to a raw `Map`, so a `Dictionary<int,int>` passes trivially. On the CLR the star projection
   erases to `Map<Any?,Any?>` = the generic `IDictionary<object,object>`, which a `Dictionary<int,int>` does **not**
   implement (no value-type covariance) — a naive `castclass`/`isinst` to it fails. So DotKt lowers a star-projected
-  `is` and compiler-generated smart cast to the non-generic `System.Collections.IDictionary`/`IList`/`ICollection`/
+  `is` and compiler-generated smart cast to the non-generic `System.Collections.IDictionary`/`ICollection`/
   `IEnumerable` where that face is faithful; `println` of such an erased value renders via
   the runtime-detecting `clrElemToString`. (A `<*>` value can only be used non-generically anyway.) This is the same
   invariance that requires §5c's separation of opaque `Map` values from exact dictionary constructions. #60.

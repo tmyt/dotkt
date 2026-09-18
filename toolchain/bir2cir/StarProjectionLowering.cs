@@ -125,6 +125,16 @@ static class StarProjectionLowering
         if (node is JsonObject obj)
         {
             AdaptProjectedCollectionArguments(obj);
+            if (Str(obj["k"]) == "callInstance"
+                && IsIdentityCollection(obj["ownerType"], out var listKind, out _)
+                && listKind is 3 or 4
+                && LowerListMember(obj) is JsonObject listMember)
+            {
+                UsedRuntimeFallback = true;
+                Replace(obj, listMember);
+                foreach (var child in obj.Select(kv => kv.Value).Where(v => v != null).ToList()) Apply(child, refs);
+                return;
+            }
             // The overlapping Collection/Set classifiers use their compiler-owned nominal identity for emitted Kotlin
             // values and the BCL's real generic faces for BCL-backed values. The checked value remains the original
             // object; member access below projects only the operation it needs.
@@ -307,7 +317,9 @@ static class StarProjectionLowering
         var checkedReceiver = LowerIdentityClassifier("cast", cast["e"], classifierKind, nullable: false, cast["type"]);
         var member = Str(call["method"]);
         var propertyAccess = Str(call["prop"]);
-        JsonObject Count() => ExactCount(checkedReceiver.DeepClone(), refs);
+        JsonObject Count() => classifierKind is 3 or 4
+            ? Call("projectedListCountErased", new TypeNode[] { Any }, Int, checkedReceiver.DeepClone())
+            : ExactCount(checkedReceiver.DeepClone(), refs);
         switch (member)
         {
             case "size" when propertyAccess == "get":
@@ -341,6 +353,26 @@ static class StarProjectionLowering
             default:
                 return null;
         }
+    }
+
+    // An existential List can have only a raw IList or only a generic mutable list face. Count/Get
+    // must follow that List face, not assume that every accepted value has IReadOnlyCollection<T>.
+    static JsonObject LowerListMember(JsonObject call)
+    {
+        var member = Str(call["method"]);
+        var count = member == "size" && Str(call["prop"]) == "get";
+        var args = call["args"] as JsonArray;
+        if (!count && !((member is "get" or "get_Item") && args?.Count == 1)) return null;
+        var receiver = call["recv"];
+        if (receiver == null) return null;
+        var checkedReceiver = receiver is JsonObject cast && Str(cast["k"]) == "cast"
+            && IsIdentityCollection(cast["type"], out var kind, out _)
+            ? LowerIdentityClassifier("cast", cast["e"], kind, nullable: false, cast["type"])
+            : receiver.DeepClone();
+        return count
+            ? Call("projectedListCountErased", new TypeNode[] { Any }, Int, checkedReceiver)
+            : Call("projectedListGetErased", new TypeNode[] { Any, Int }, AnyN,
+                checkedReceiver, args[0].DeepClone());
     }
 
     // The Kotlin `size` slot physically lives on IReadOnlyCollection<T>. Supply that exact BCL declaration identity to
@@ -434,7 +466,7 @@ static class StarProjectionLowering
         while (read is TypeNode.Nullable n) read = n.Of;
         while (read is TypeNode.Oblivious o) read = o.Of;
         return read is TypeNode.Fqn f && f.Name is "kotlin.collections.MutableIterable"
-            or "kotlin.collections.MutableCollection" or "kotlin.collections.MutableList";
+            or "kotlin.collections.MutableCollection";
     }
 
     static JsonObject LowerMember(JsonObject call, JsonObject cast, string iface, bool mutable)
@@ -447,7 +479,7 @@ static class StarProjectionLowering
         switch (member)
         {
             case "size" when propertyAccess == "get":
-                // `.size` -> ICollection/IList/IDictionary.Count.
+                // `.size` -> ICollection/IDictionary.Count.
                 return new JsonObject { ["k"] = "clrPropGet", ["type"] = TypeJson.Fqn(iface), ["name"] = "Count", ["ret"] = TypeJson.Fqn("System.Int32"), ["static"] = false, ["recv"] = CastTo(iface) };
             case "isEmpty":
                 // The non-generic facade has no IsEmpty slot, but a Kotlin implementer may override it. Preserve the
@@ -456,8 +488,7 @@ static class StarProjectionLowering
             case "iterator":
                 if (mutable)
                     // Keep the original star cast observable before entering the erased helper. Passing recvInner
-                    // directly would let e.g. `(aSet as MutableList<*>).iterator()` succeed merely because the set
-                    // is enumerable, even though the explicit MutableList cast must fail.
+                    // directly could make a rejected collection cast succeed merely because the value is enumerable.
                     return new JsonObject { ["k"] = "callStatic", ["owner"] = TypeJson.Fqn("kotlin.collections.ClrCollectionDefaultsKt"), ["method"] = "clrMutableIteratorErased", ["sig"] = new JsonArray(TypeJson.Write(Any)), ["args"] = new JsonArray { CastTo(iface) }, ["ret"] = TypeJson.Write(new TypeNode.Fqn("kotlin.collections.MutableIterator", new TypeNode[] { new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any")) })) };
                 // `.iterator()` -> the rt bridge `ClrIteratorBridgeKt.iteratorOverRawEnumerable` (#74b(ii)), NOT a raw
                 // `IEnumerable.GetEnumerator()` clrInstance: the consumer var this call initializes stays declared
@@ -471,19 +502,11 @@ static class StarProjectionLowering
                 return new JsonObject { ["k"] = "callStatic", ["owner"] = TypeJson.Fqn("kotlin.collections.ClrIteratorBridgeKt"), ["method"] = "iteratorOverRawEnumerable", ["sig"] = new JsonArray(TypeJson.Write(Any)), ["args"] = new JsonArray { CastTo("System.Collections.IEnumerable") }, ["ret"] = TypeJson.Write(new TypeNode.Fqn("kotlin.collections.Iterator", new TypeNode[] { new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any")) })) };
             case "get":
             case "get_Item":
-                // `list[i]` -> IList.get_Item(int) (returns object == Any); `map[key]` -> IDictionary.get_Item(object)
-                // (#74a — null-on-missing, matching Kotlin `Map.get`'s null-on-missing exactly; both are returned
-                // object == Any(?)).
+                // `map[key]` -> IDictionary.get_Item(object), preserving Kotlin's null-on-missing result.
                 if (args == null || args.Count < 1) return null;
-                if (iface == "System.Collections.IList")
-                    return new JsonObject { ["k"] = "clrInstance", ["type"] = TypeJson.Fqn("System.Collections.IList"), ["method"] = "get_Item", ["argTypes"] = new JsonArray { TypeJson.Fqn("System.Int32") }, ["ret"] = TypeJson.Fqn("System.Object"), ["recv"] = CastTo("System.Collections.IList"), ["args"] = new JsonArray { args[0].DeepClone() } };
                 if (iface == "System.Collections.IDictionary")
                     return new JsonObject { ["k"] = "clrInstance", ["type"] = TypeJson.Fqn("System.Collections.IDictionary"), ["method"] = "get_Item", ["argTypes"] = new JsonArray { TypeJson.Fqn("System.Object") }, ["ret"] = TypeJson.Fqn("System.Object"), ["recv"] = CastTo("System.Collections.IDictionary"), ["args"] = new JsonArray { args[0].DeepClone() } };
                 return null;
-            case "contains":
-                // `list.contains(e)` -> IList.Contains(object) (only the non-generic IList carries a Contains).
-                if (args == null || args.Count < 1 || iface != "System.Collections.IList") return null;
-                return new JsonObject { ["k"] = "clrInstance", ["type"] = TypeJson.Fqn("System.Collections.IList"), ["method"] = "Contains", ["argTypes"] = new JsonArray { TypeJson.Fqn("System.Object") }, ["ret"] = TypeJson.Fqn("System.Boolean"), ["recv"] = CastTo("System.Collections.IList"), ["args"] = new JsonArray { args[0].DeepClone() } };
             case "containsKey":
                 // `map.containsKey(k)` -> IDictionary.Contains(object) (#74a).
                 if (args == null || args.Count < 1 || iface != "System.Collections.IDictionary") return null;

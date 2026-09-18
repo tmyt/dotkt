@@ -129,7 +129,7 @@ class NominalListClassifierTests {
     }
 
     @TestAttribute fun classifierOperandsAreEvaluatedOnce() {
-        val value: Any = CollUserList<Int>()
+        val value: Any = CollUserList<Int>(mutableListOf(7, 9))
         val source = NominalEvaluation(value)
         check(source.next() is List<*>)
         check(source.count == 1)
@@ -143,5 +143,9 @@ class NominalListClassifierTests {
         check(source.count == 5)
         check(nominalChecked<MutableList<*>>(source.next()) === value)
         check(source.count == 6)
+        check((source.next() as List<*>).size == 2)
+        check(source.count == 7)
+        check((source.next() as MutableList<*>)[0] == 7)
+        check(source.count == 8)
     }
 }
