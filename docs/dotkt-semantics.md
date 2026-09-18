@@ -160,7 +160,7 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   Kotlin implementations carry compiler-owned nominal identity interfaces, while BCL-backed values are recognized
   through the generic `IReadOnlyCollection<>`/`ICollection<>`, `IReadOnlySet<>`/`ISet<>`, and
   `IReadOnlyList<>`/`IList<>` faces they actually implement; a raw `IList` is also a foreign list face.
-  MutableCollection also retains its foreign raw `ICollection` alternative. Kotlin implementations need not
+  Collection and MutableCollection also retain the foreign raw `ICollection` alternative. Kotlin implementations need not
   implement raw collection interfaces. Reified witnesses retain each narrower Collection/List/Set family and
   mutability condition even when the physical target is erased: enumeration alone cannot grant Collection
   identity, and an unrelated value cannot gain Set identity from an erased object test.

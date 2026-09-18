@@ -148,7 +148,7 @@ static class StarProjectionLowering
                 && IsIdentityCollection(obj["ownerType"], out _, out _)
                 && obj["recv"] is JsonObject identityRecv && Str(identityRecv["k"]) == "cast"
                 && IsIdentityCollection(identityRecv["type"], out var identityKind, out _)
-                && (identityKind is not (3 or 4) || !HasConcreteTypeArguments(identityRecv["type"]))
+                && (identityKind is not (3 or 4 or 5) || !HasConcreteTypeArguments(identityRecv["type"]))
                 && LowerIdentityMember(obj, identityRecv, identityKind, refs) is JsonObject identityMember)
             {
                 UsedRuntimeFallback = true;
@@ -330,6 +330,7 @@ static class StarProjectionLowering
         var member = Str(call["method"]);
         var propertyAccess = Str(call["prop"]);
         JsonObject Count() => classifierKind switch {
+            0 => Call("projectedReadOnlyCollectionCountErased", new TypeNode[] { Any }, Int, checkedReceiver.DeepClone()),
             3 or 4 => Call("projectedListCountErased", new TypeNode[] { Any }, Int, checkedReceiver.DeepClone()),
             5 => Call("projectedMutableCollectionCountErased", new TypeNode[] { Any }, Int, checkedReceiver.DeepClone()),
             _ => ExactCount(checkedReceiver.DeepClone(), refs),

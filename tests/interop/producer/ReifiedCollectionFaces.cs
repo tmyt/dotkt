@@ -10,12 +10,35 @@ public static class ReifiedCollectionFaces
     public static object ReadOnlyCollection() => new ReadOnlyCollectionOnly();
     public static object Set() => new HashSet<int> { 7, 9 };
     public static object ReadOnlySet() => new ReadOnlySetOnly();
+    public static object RawCollection() => new Queue(new[] { 7, 9 });
+    public static object ExactViews() => new ExactCollectionViews();
 }
 
 public class BareEnumerable : IEnumerable<int>
 {
     public IEnumerator<int> GetEnumerator() { yield return 7; yield return 9; }
     IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+}
+
+public class ExactCollectionViews : ICollection<object>, ICollection<string>
+{
+    int ICollection<object>.Count => 1;
+    int ICollection<string>.Count => 2;
+    bool ICollection<object>.IsReadOnly => false;
+    bool ICollection<string>.IsReadOnly => false;
+    void ICollection<object>.Add(object value) { }
+    void ICollection<string>.Add(string value) { }
+    void ICollection<object>.Clear() { }
+    void ICollection<string>.Clear() { }
+    bool ICollection<object>.Contains(object value) => true;
+    bool ICollection<string>.Contains(string value) => true;
+    void ICollection<object>.CopyTo(object[] values, int index) { }
+    void ICollection<string>.CopyTo(string[] values, int index) { }
+    bool ICollection<object>.Remove(object value) => true;
+    bool ICollection<string>.Remove(string value) => true;
+    IEnumerator<object> IEnumerable<object>.GetEnumerator() { yield return new object(); }
+    IEnumerator<string> IEnumerable<string>.GetEnumerator() { yield return "a"; yield return "b"; }
+    IEnumerator IEnumerable.GetEnumerator() => ((IEnumerable<object>)this).GetEnumerator();
 }
 
 public class ReadOnlyCollectionOnly : IReadOnlyCollection<int>

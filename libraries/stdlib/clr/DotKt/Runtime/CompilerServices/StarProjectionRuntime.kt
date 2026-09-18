@@ -340,7 +340,7 @@ internal fun starProjectionKotlinCollectionIsInstance(
     if (kind == 3 && value is KotlinListClassifier) return true
     if (kind == 4 && value is KotlinMutableListClassifier) return true
     if (kind == 5 && value is KotlinMutableCollectionClassifier) return true
-    if (kind == 5 && value is StarProjectionRawCollection) return true
+    if ((kind == 0 || kind == 5) && value is StarProjectionRawCollection) return true
     if ((kind == 3 || kind == 4) && value is StarProjectionRawList) return true
     val runtimeType = value.starProjectionRuntimeType()
     return starProjectionHasView(runtimeType, firstOpenType) || starProjectionHasView(runtimeType, secondOpenType)
@@ -938,6 +938,10 @@ internal fun projectedListGetErased(receiver: Any, index: Int): Any? = try {
 } catch (failure: StarProjectionInvocationException) {
     throw (failure.innerException ?: failure)
 }
+
+@PublishedApi
+internal fun projectedReadOnlyCollectionCountErased(receiver: Any): Int =
+    if (receiver is StarProjectionRawCollection) receiver.count else projectedCollectionCountErased(receiver)
 
 @PublishedApi
 internal fun projectedMutableCollectionCountErased(receiver: Any): Int =
