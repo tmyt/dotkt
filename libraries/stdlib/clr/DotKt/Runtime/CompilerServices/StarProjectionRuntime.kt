@@ -265,14 +265,20 @@ internal fun kotlinCollectionStorageCastCandidate(value: Any?, witness: Int, sto
 @PublishedApi
 internal fun kotlinCollectionMatches(value: Any?, witness: Int, dictionary: StarProjectionType,
     readOnlyDictionary: StarProjectionType, set: StarProjectionType, readOnlySet: StarProjectionType,
-    list: StarProjectionType, genericList: StarProjectionType, readOnlyList: StarProjectionType): Boolean {
+    list: StarProjectionType, genericList: StarProjectionType, readOnlyList: StarProjectionType,
+    collection: StarProjectionType, readOnlyCollection: StarProjectionType): Boolean {
     if (value !is KotlinIterableClassifier) return when (witness and -2) {
-        // Collection membership also requires Kotlin iteration eligibility. Its physical classifier
-        // still selects the narrower collection face; CLR array/dictionary storage alone cannot grant it.
-        2, 4, 14, 16 -> foreignKotlinIterable(value, dictionary, readOnlyDictionary, set, readOnlySet,
+        14, 16 -> foreignKotlinIterable(value, dictionary, readOnlyDictionary, set, readOnlySet,
             list, genericList, readOnlyList)
-        // A reified star target may have become object by the physical test. Its witness must retain
-        // the List contract, not merely iteration eligibility (which would also accept a Set).
+        // A reified star target may have become object by the physical test. The witness must
+        // retain the actual family, not merely iteration eligibility or an erased object test.
+        2, 4 -> value == null || (foreignKotlinIterable(value, dictionary, readOnlyDictionary, set, readOnlySet,
+            list, genericList, readOnlyList) && starProjectionKotlinCollectionIsInstance(value,
+                if ((witness and -2) == 2) 0 else 5,
+                if ((witness and -2) == 2) readOnlyCollection else collection, collection))
+        10, 12 -> value == null || starProjectionKotlinCollectionIsInstance(value,
+            if ((witness and -2) == 10) 1 else 2,
+            if ((witness and -2) == 10) readOnlySet else set, set)
         6, 8 -> value == null || (foreignKotlinIterable(value, dictionary, readOnlyDictionary, set, readOnlySet,
             list, genericList, readOnlyList) && starProjectionKotlinCollectionIsInstance(value,
                 if ((witness and -2) == 6) 3 else 4,
@@ -296,9 +302,10 @@ internal fun kotlinCollectionMatches(value: Any?, witness: Int, dictionary: Star
 @PublishedApi
 internal fun kotlinCollectionCastCandidate(value: Any?, witness: Int, dictionary: StarProjectionType,
     readOnlyDictionary: StarProjectionType, set: StarProjectionType, readOnlySet: StarProjectionType,
-    list: StarProjectionType, genericList: StarProjectionType, readOnlyList: StarProjectionType): Any? {
+    list: StarProjectionType, genericList: StarProjectionType, readOnlyList: StarProjectionType,
+    collection: StarProjectionType, readOnlyCollection: StarProjectionType): Any? {
     if (!kotlinCollectionMatches(value, witness, dictionary, readOnlyDictionary, set, readOnlySet,
-            list, genericList, readOnlyList))
+            list, genericList, readOnlyList, collection, readOnlyCollection))
         throw ClassCastException("Value is not an instance of the requested Kotlin collection classifier")
     return value
 }
@@ -307,6 +314,11 @@ internal fun kotlinCollectionCastCandidate(value: Any?, witness: Int, dictionary
 private interface StarProjectionRawList {
     @property:kotlin.clr.ClrProperty(kotlin.clr.READ, "Count") val count: Int
     @kotlin.clr.ClrIntrinsic("get_Item") fun get(index: Int): Any?
+}
+
+@kotlin.clr.ClrTypeAlias("System.Collections.ICollection")
+private interface StarProjectionRawCollection {
+    @property:kotlin.clr.ClrProperty(kotlin.clr.READ, "Count") val count: Int
 }
 
 // Collection/Set/List use overlapping BCL faces for member dispatch, so their Kotlin classifier is a composite physical
@@ -327,6 +339,8 @@ internal fun starProjectionKotlinCollectionIsInstance(
     if (kind == 0 && value is KotlinCollectionClassifier) return true
     if (kind == 3 && value is KotlinListClassifier) return true
     if (kind == 4 && value is KotlinMutableListClassifier) return true
+    if (kind == 5 && value is KotlinMutableCollectionClassifier) return true
+    if (kind == 5 && value is StarProjectionRawCollection) return true
     if ((kind == 3 || kind == 4) && value is StarProjectionRawList) return true
     val runtimeType = value.starProjectionRuntimeType()
     return starProjectionHasView(runtimeType, firstOpenType) || starProjectionHasView(runtimeType, secondOpenType)
@@ -924,6 +938,10 @@ internal fun projectedListGetErased(receiver: Any, index: Int): Any? = try {
 } catch (failure: StarProjectionInvocationException) {
     throw (failure.innerException ?: failure)
 }
+
+@PublishedApi
+internal fun projectedMutableCollectionCountErased(receiver: Any): Int =
+    if (receiver is StarProjectionRawCollection) receiver.count else mutableCollectionCountErased(receiver)
 
 @PublishedApi
 internal fun mutableCollectionCountErased(receiver: Any): Int = try {

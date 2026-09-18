@@ -27,7 +27,7 @@ using DotKt.Bir;
 // any out-of-range access", so widen each such clause into TWO consecutive clauses (same body + var) covering both .NET
 // types. Emits `clr:` tokens that pass through type-lowering unchanged. Keyed on the pure-Kotlin type name (runs before
 // type lowering), so it is independent of whichever single .NET type the alias picks.
-// STAR-PROJECTION COLLECTION CLASSIFIERS. Map/Iterable and MutableCollection use non-generic BCL
+// STAR-PROJECTION COLLECTION CLASSIFIERS. Map/Iterable use non-generic BCL
 // faces for their physical tests, after KotlinCollectionClassifierLowering's independent nominal guard preserves
 // Kotlin classifier identity and mutability. Collection/Set/List need additional physical discrimination:
 // their operational aliases overlap, HashSet<T> has no non-generic collection face, and Dictionary/arrays expose CLR
@@ -55,7 +55,6 @@ static class StarProjectionLowering
     // Kotlin generic aliases with a faithful non-generic BCL classifier, regardless of element type.
     static readonly Dictionary<string, string> NonGenericIface = new(StringComparer.Ordinal)
     {
-        ["kotlin.collections.MutableCollection"] = "System.Collections.ICollection",
         ["kotlin.collections.Iterable"] = "System.Collections.IEnumerable",
         ["kotlin.collections.MutableIterable"] = "System.Collections.IEnumerable",
         ["kotlin.collections.Map"] = "System.Collections.IDictionary",
@@ -66,7 +65,6 @@ static class StarProjectionLowering
         type is TypeNode.Fqn { Args: null } fqn && NonGenericIface.Values.Contains(fqn.Name);
 
     // Classifiers that need nominal or multiple physical faces rather than one raw CLR interface.
-    // MutableCollection keeps its established non-generic ICollection classifier.
     static readonly Dictionary<string, int> IdentityKind = new(StringComparer.Ordinal)
     {
         ["kotlin.collections.Collection"] = 0,
@@ -74,6 +72,7 @@ static class StarProjectionLowering
         ["kotlin.collections.MutableSet"] = 2,
         ["kotlin.collections.List"] = 3,
         ["kotlin.collections.MutableList"] = 4,
+        ["kotlin.collections.MutableCollection"] = 5,
     };
 
     static string Str(JsonNode n) => (n as JsonValue)?.GetValue<string>();
@@ -303,11 +302,12 @@ static class StarProjectionLowering
             2 => "System.Collections.Generic.ISet`1",
             3 => "System.Collections.Generic.IReadOnlyList`1",
             4 => "System.Collections.Generic.IList`1",
+            5 => "System.Collections.Generic.ICollection`1",
             _ => throw new InvalidOperationException("Unknown collection classifier"),
         };
         var second = classifierKind switch
         {
-            0 => "System.Collections.Generic.ICollection`1",
+            0 or 5 => "System.Collections.Generic.ICollection`1",
             3 or 4 => "System.Collections.Generic.IList`1",
             _ => "System.Collections.Generic.ISet`1",
         };
@@ -329,9 +329,11 @@ static class StarProjectionLowering
         var checkedReceiver = LowerIdentityClassifier("cast", cast["e"], classifierKind, nullable: false, cast["type"]);
         var member = Str(call["method"]);
         var propertyAccess = Str(call["prop"]);
-        JsonObject Count() => classifierKind is 3 or 4
-            ? Call("projectedListCountErased", new TypeNode[] { Any }, Int, checkedReceiver.DeepClone())
-            : ExactCount(checkedReceiver.DeepClone(), refs);
+        JsonObject Count() => classifierKind switch {
+            3 or 4 => Call("projectedListCountErased", new TypeNode[] { Any }, Int, checkedReceiver.DeepClone()),
+            5 => Call("projectedMutableCollectionCountErased", new TypeNode[] { Any }, Int, checkedReceiver.DeepClone()),
+            _ => ExactCount(checkedReceiver.DeepClone(), refs),
+        };
         switch (member)
         {
             case "size" when propertyAccess == "get":
@@ -339,7 +341,7 @@ static class StarProjectionLowering
             case "isEmpty":
                 return CollectionHelper("clrProjectedCollIsEmpty", Bool, checkedReceiver);
             case "iterator":
-                if (classifierKind is 2 or 4)
+                if (classifierKind is 2 or 4 or 5)
                     return new JsonObject
                     {
                         ["k"] = "callStatic", ["owner"] = TypeJson.Fqn("kotlin.collections.ClrCollectionDefaultsKt"),
@@ -486,8 +488,7 @@ static class StarProjectionLowering
         var read = TypeJson.Read(slot);
         while (read is TypeNode.Nullable n) read = n.Of;
         while (read is TypeNode.Oblivious o) read = o.Of;
-        return read is TypeNode.Fqn f && f.Name is "kotlin.collections.MutableIterable"
-            or "kotlin.collections.MutableCollection";
+        return read is TypeNode.Fqn f && f.Name == "kotlin.collections.MutableIterable";
     }
 
     static JsonObject LowerMember(JsonObject call, JsonObject cast, string iface, bool mutable)
@@ -500,7 +501,7 @@ static class StarProjectionLowering
         switch (member)
         {
             case "size" when propertyAccess == "get":
-                // `.size` -> ICollection/IDictionary.Count.
+                // `.size` -> IDictionary.Count.
                 return new JsonObject { ["k"] = "clrPropGet", ["type"] = TypeJson.Fqn(iface), ["name"] = "Count", ["ret"] = TypeJson.Fqn("System.Int32"), ["static"] = false, ["recv"] = CastTo(iface) };
             case "isEmpty":
                 // The non-generic facade has no IsEmpty slot, but a Kotlin implementer may override it. Preserve the
