@@ -163,6 +163,8 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   List/Set contracts. The checked value is not wrapped, so reference identity is preserved. Classifier existence does
   not require choosing one element closure; member access still needs its exact declaring view. Pinned by
   `CollectionsTests.starProjectedSetIdentity` and `MixedCollectionClassifierTests`.
+  Concrete `Any`/`Any?` element arguments are not stars: value-producing casts retain their original typed
+  CLR interface check after the composite guard, including safe-cast failure behavior and typed return edges.
 - **Iterable identity is distinct from its CLR enumeration face.** Kotlin implementations carry nominal
   `Iterable`/`MutableIterable` identities: implementing `Collection` plus `MutableIterable` does not imply
   `MutableCollection`. The classifier guard is independent of the physical type test, including reified star

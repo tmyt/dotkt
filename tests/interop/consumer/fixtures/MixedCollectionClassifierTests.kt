@@ -7,6 +7,8 @@ class MixedCollectionClassifierTests {
     private fun values(): Array<Any> = arrayOf(
         IterableClassifierStorage.ListAndDictionary(),
         IterableClassifierStorage.SetAndDictionary(),
+        MixedCollectionContracts.ListWithMutableDictionary(),
+        MixedCollectionContracts.ListWithRawDictionary(),
     )
     private fun matches(value: Any?): Boolean = value is Collection<*>
     private fun nullableMatches(value: Any?): Boolean = value is Collection<*>?
@@ -77,5 +79,38 @@ class MixedCollectionClassifierTests {
 
     @TestAttribute fun smartCastIterationKeepsTheEligibleReceiver() {
         for (value in values()) checkIteration(value)
+    }
+
+    private fun safeSet(value: Any?): Set<*>? = value as? Set<*>
+    private fun checkedSet(value: Any): Set<*> = value as Set<*>
+    private fun nullableSet(value: Any?): Set<*>? = value as Set<*>?
+    private fun safeMutableSet(value: Any?): MutableSet<*>? = value as? MutableSet<*>
+    private fun checkedMutableSet(value: Any): MutableSet<*> = value as MutableSet<*>
+    private fun nullableMutableSet(value: Any?): MutableSet<*>? = value as MutableSet<*>?
+
+    @TestAttribute fun existentialSetCastsPreserveIdentityAndNullability() {
+        for (value in arrayOf<Any>(mutableSetOf(1), IterableClassifierStorage.SetAndDictionary(), MixedCollectionSet())) {
+            check(safeSet(value) === value)
+            check(checkedSet(value) === value)
+            check(nullableSet(value) === value)
+            check(safeMutableSet(value) === value)
+            check(checkedMutableSet(value) === value)
+            check(nullableMutableSet(value) === value)
+        }
+        check(nullableSet(null) == null)
+        check(nullableMutableSet(null) == null)
+        check(safeSet(Any()) == null)
+        check(safeMutableSet(Any()) == null)
+    }
+
+    private fun clearThroughSmartCast(value: Any) {
+        check(value is MutableSet<*>)
+        value.clear()
+        check(!value.iterator().hasNext())
+    }
+
+    @TestAttribute fun projectedMutableSetReceiverSurvivesOrdinaryMemberLowering() {
+        clearThroughSmartCast(mutableSetOf(1))
+        clearThroughSmartCast(IterableClassifierStorage.SetAndDictionary())
     }
 }

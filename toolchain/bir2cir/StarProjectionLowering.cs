@@ -77,8 +77,8 @@ static class StarProjectionLowering
 
     static string Str(JsonNode n) => (n as JsonValue)?.GetValue<string>();
 
-    // True for a star-projected (or `object`-erased) generic collection type: owner is a known collection alias and
-    // every type arg is `object`/`Any` (Kotlin allows only `<*>` in an is/as of these, so the args are always erased).
+    // Recognize star-projected and object-element collection applications. Any/Any? arguments can
+    // also be concrete source types; value-producing casts must retain their physical result type.
     // A NULLABLE slot (`x is Collection<*>?`, `x as Map<*,*>?`) names the same classifier — the `?` is carried by the
     // node's own `nullMatches` (is) or by CLR reference nullability (cast), and dropping it here is what lets the
     // non-generic rewrite below reach a nullable star test at all. Unwrap it before the classifier check.
@@ -181,7 +181,7 @@ static class StarProjectionLowering
             {
                 UsedRuntimeFallback = true;
                 Replace(obj, LowerIdentityClassifier(kind, operand, classifierKind,
-                    nullable || Flag(obj["nullMatches"])));
+                    nullable || Flag(obj["nullMatches"]), obj["type"]));
             }
             foreach (var kv in obj) if (kv.Value != null) Apply(kv.Value, refs);
         }
@@ -261,7 +261,8 @@ static class StarProjectionLowering
         _ => false,
     };
 
-    static JsonObject LowerIdentityClassifier(string nodeKind, JsonNode operand, int classifierKind, bool nullable)
+    static JsonObject LowerIdentityClassifier(string nodeKind, JsonNode operand, int classifierKind, bool nullable,
+        JsonNode target)
     {
         var method = nodeKind switch
         {
@@ -283,6 +284,11 @@ static class StarProjectionLowering
         var call = Call(method,
             new TypeNode[] { AnyN, Int, Type, Type }, result,
             operand.DeepClone(), ConstInt(classifierKind), ClassRef(first), ClassRef(second));
+        // Any is a concrete CLR type argument, not a star. Its typed interface result still needs
+        // the original physical cast after the Kotlin classifier guard (safe casts stay safe).
+        if (nodeKind != "isInst" && StripOuterWrappers(TypeJson.Read(target)) is TypeNode.Fqn { Args.Length: > 0 } type
+            && !ContainsProjection(type))
+            return new JsonObject { ["k"] = nodeKind, ["type"] = target.DeepClone(), ["e"] = call };
         if (nodeKind != "isInst") call[ProjectedCollectionMarker] = true;
         return call;
     }
@@ -290,7 +296,7 @@ static class StarProjectionLowering
     static JsonObject LowerIdentityMember(JsonObject call, JsonObject cast, int classifierKind,
         ReferenceMetadataIndex refs)
     {
-        var checkedReceiver = LowerIdentityClassifier("cast", cast["e"], classifierKind, nullable: false);
+        var checkedReceiver = LowerIdentityClassifier("cast", cast["e"], classifierKind, nullable: false, cast["type"]);
         var member = Str(call["method"]);
         var propertyAccess = Str(call["prop"]);
         JsonObject Count() => ExactCount(checkedReceiver.DeepClone(), refs);
