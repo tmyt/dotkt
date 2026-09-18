@@ -201,16 +201,63 @@ internal fun starProjectionSafeCast(value: Any?, openGenericType: StarProjection
 // Declaration-owned Kotlin identities are checked before this foreign-storage policy, so a map that
 // explicitly implements Kotlin Iterable still has its declared identity.
 private fun foreignKotlinIterable(value: Any?, dictionary: StarProjectionType, readOnlyDictionary: StarProjectionType,
-    set: StarProjectionType, readOnlySet: StarProjectionType, list: StarProjectionType): Boolean {
+    set: StarProjectionType, readOnlySet: StarProjectionType, list: StarProjectionType,
+    genericList: StarProjectionType, readOnlyList: StarProjectionType): Boolean {
     if (value == null) return true
     if (value !is kotlin.collections.ClrRawEnumerable || value is String) return false
     val type = value.starProjectionRuntimeType()
     if (type.isArray) return false
     // Independent List/Set contracts still grant iteration when the object also implements a dictionary.
-    if (starProjectionHasView(type, list) || starProjectionHasView(type, set)
+    if (starProjectionHasView(type, list) || starProjectionHasView(type, genericList)
+        || starProjectionHasView(type, readOnlyList) || starProjectionHasView(type, set)
         || starProjectionHasView(type, readOnlySet)) return true
     return value !is kotlin.collections.ClrRawDictionary
         && !starProjectionHasView(type, dictionary) && !starProjectionHasView(type, readOnlyDictionary)
+}
+
+// bir2cir supplies a trusted Kotlin map-only class alias's exact storage definition. Interfaces
+// inherited from that storage remain operational faces, while a foreign subtype can introduce a
+// genuinely additional closed List/Set contract. Element-type guesses cannot make this distinction.
+@PublishedApi
+internal fun kotlinCollectionStorageMatches(value: Any?, witness: Int, storage: StarProjectionType,
+    list: StarProjectionType, genericList: StarProjectionType, readOnlyList: StarProjectionType,
+    set: StarProjectionType, readOnlySet: StarProjectionType): Boolean {
+    if (value == null || value is KotlinIterableClassifier) return true
+    when (witness and -2) {
+        2, 4, 6, 8, 14, 16 -> {}
+        else -> return true
+    }
+    val type = value.starProjectionRuntimeType()
+    val storageView = starProjectionClosedView(type, storage) ?: return true
+    if (type == storageView) return false
+    val storageFaces = storageView.getInterfaces()
+    for (face in type.getInterfaces()) {
+        val definition = if (face.isGenericType) face.getGenericTypeDefinition() else face
+        val mutableList = definition == list || definition == genericList
+        val readableList = mutableList || definition == readOnlyList
+        val eligible = when (witness and -2) {
+            6 -> readableList
+            8 -> mutableList
+            4 -> mutableList || definition == set
+            else -> readableList || definition == set || definition == readOnlySet
+        }
+        if (!eligible) continue
+        var inherited = false
+        for (storageFace in storageFaces) {
+            if (face == storageFace) { inherited = true; break }
+        }
+        if (!inherited) return true
+    }
+    return false
+}
+
+@PublishedApi
+internal fun kotlinCollectionStorageCastCandidate(value: Any?, witness: Int, storage: StarProjectionType,
+    list: StarProjectionType, genericList: StarProjectionType, readOnlyList: StarProjectionType,
+    set: StarProjectionType, readOnlySet: StarProjectionType): Any? {
+    if (!kotlinCollectionStorageMatches(value, witness, storage, list, genericList, readOnlyList, set, readOnlySet))
+        throw ClassCastException("Value is not an instance of the requested Kotlin collection classifier")
+    return value
 }
 
 // Operational storage faces do not grant Kotlin mutability. This predicate is separate from the physical type
@@ -218,9 +265,12 @@ private fun foreignKotlinIterable(value: Any?, dictionary: StarProjectionType, r
 @PublishedApi
 internal fun kotlinCollectionMatches(value: Any?, witness: Int, dictionary: StarProjectionType,
     readOnlyDictionary: StarProjectionType, set: StarProjectionType, readOnlySet: StarProjectionType,
-    list: StarProjectionType): Boolean {
+    list: StarProjectionType, genericList: StarProjectionType, readOnlyList: StarProjectionType): Boolean {
     if (value !is KotlinIterableClassifier) return when (witness and -2) {
-        14, 16 -> foreignKotlinIterable(value, dictionary, readOnlyDictionary, set, readOnlySet, list)
+        // Collection/List membership also requires Kotlin iteration eligibility. Their physical classifier
+        // still selects the narrower collection face; CLR array/dictionary storage alone cannot grant it.
+        2, 4, 6, 8, 14, 16 -> foreignKotlinIterable(value, dictionary, readOnlyDictionary, set, readOnlySet,
+            list, genericList, readOnlyList)
         else -> true
     }
     // bir2cir supplies KotlinTypeWitness: low bit is nullability; the remaining code is nominal identity.
@@ -240,8 +290,9 @@ internal fun kotlinCollectionMatches(value: Any?, witness: Int, dictionary: Star
 @PublishedApi
 internal fun kotlinCollectionCastCandidate(value: Any?, witness: Int, dictionary: StarProjectionType,
     readOnlyDictionary: StarProjectionType, set: StarProjectionType, readOnlySet: StarProjectionType,
-    list: StarProjectionType): Any? {
-    if (!kotlinCollectionMatches(value, witness, dictionary, readOnlyDictionary, set, readOnlySet, list))
+    list: StarProjectionType, genericList: StarProjectionType, readOnlyList: StarProjectionType): Any? {
+    if (!kotlinCollectionMatches(value, witness, dictionary, readOnlyDictionary, set, readOnlySet,
+            list, genericList, readOnlyList))
         throw ClassCastException("Value is not an instance of the requested Kotlin collection classifier")
     return value
 }
