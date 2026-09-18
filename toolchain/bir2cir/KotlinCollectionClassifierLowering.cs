@@ -12,23 +12,23 @@ static class KotlinCollectionClassifierLowering
     const string Matches = "kotlinCollectionMatches";
     const string CastCandidate = "kotlinCollectionCastCandidate";
 
-    public static void Apply(JsonNode node)
+    public static void Apply(JsonNode node, ReferenceMetadataIndex refs)
     {
         var names = new HashSet<string>(StringComparer.Ordinal);
         CollectNames(node, names);
         var next = 0;
-        Rewrite(node, names, ref next);
+        Rewrite(node, names, refs.KotlinMapStorageDefinitions(), ref next);
     }
 
-    static void Rewrite(JsonNode node, HashSet<string> names, ref int next)
+    static void Rewrite(JsonNode node, HashSet<string> names, IReadOnlyList<string> mapStorage, ref int next)
     {
         if (node is JsonArray array)
         {
-            foreach (var child in array) Rewrite(child, names, ref next);
+            foreach (var child in array) Rewrite(child, names, mapStorage, ref next);
             return;
         }
         if (node is not JsonObject obj) return;
-        foreach (var child in obj.Select(pair => pair.Value).ToArray()) Rewrite(child, names, ref next);
+        foreach (var child in obj.Select(pair => pair.Value).ToArray()) Rewrite(child, names, mapStorage, ref next);
         if (Text(obj["k"]) is not ("isInst" or "isInstRef" or "cast") || obj["e"] is not JsonObject operand) return;
         obj.Remove("reifiedTypeOperand");
         var witness = obj[KotlinTypeWitness.OperandKey]?.DeepClone();
@@ -46,18 +46,34 @@ static class KotlinCollectionClassifierLowering
             ["k"] = "callStatic", ["owner"] = TypeJson.Fqn(RuntimeOwner), ["method"] = helper,
             ["sig"] = new JsonArray(TypeJson.Write(nullableObject), TypeJson.Fqn("kotlin.Int"),
                 TypeJson.Write(runtimeType), TypeJson.Write(runtimeType), TypeJson.Write(runtimeType),
+                TypeJson.Write(runtimeType), TypeJson.Write(runtimeType),
                 TypeJson.Write(runtimeType), TypeJson.Write(runtimeType)),
             ["ret"] = TypeJson.Write(result),
             ["args"] = new JsonArray(value.DeepClone(), witness.DeepClone(),
                 ClassRef("System.Collections.Generic.IDictionary`2"), ClassRef("System.Collections.Generic.IReadOnlyDictionary`2"),
                 ClassRef("System.Collections.Generic.ISet`1"), ClassRef("System.Collections.Generic.IReadOnlySet`1"),
-                ClassRef("System.Collections.IList")),
+                ClassRef("System.Collections.IList"), ClassRef("System.Collections.Generic.IList`1"),
+                ClassRef("System.Collections.Generic.IReadOnlyList`1")),
+        };
+        JsonObject StorageCall(string helper, TypeNode result, JsonNode value, string storage) => new() {
+            ["k"] = "callStatic", ["owner"] = TypeJson.Fqn(RuntimeOwner), ["method"] = helper,
+            ["sig"] = new JsonArray(TypeJson.Write(nullableObject), TypeJson.Fqn("kotlin.Int"),
+                TypeJson.Write(runtimeType), TypeJson.Write(runtimeType), TypeJson.Write(runtimeType),
+                TypeJson.Write(runtimeType), TypeJson.Write(runtimeType), TypeJson.Write(runtimeType)),
+            ["ret"] = TypeJson.Write(result),
+            ["args"] = new JsonArray(value.DeepClone(), witness.DeepClone(), ClassRef(storage),
+                ClassRef("System.Collections.IList"), ClassRef("System.Collections.Generic.IList`1"),
+                ClassRef("System.Collections.Generic.IReadOnlyList`1"),
+                ClassRef("System.Collections.Generic.ISet`1"), ClassRef("System.Collections.Generic.IReadOnlySet`1")),
         };
         if (Text(obj["k"]) == "cast")
         {
             if (Text(operand["k"]) == "callStatic" && Text(operand["method"]) == CastCandidate
                 && TypeJson.OwnerName(operand["owner"]) == RuntimeOwner) return;
-            obj["e"] = Call(CastCandidate, nullableObject, operand);
+            JsonNode candidate = operand;
+            foreach (var storage in mapStorage)
+                candidate = StorageCall("kotlinCollectionStorageCastCandidate", nullableObject, candidate, storage);
+            obj["e"] = Call(CastCandidate, nullableObject, candidate);
             return;
         }
 
@@ -69,6 +85,13 @@ static class KotlinCollectionClassifierLowering
         var physicalTest = (JsonObject)obj.DeepClone();
         physicalTest["e"] = local.DeepClone();
         var matches = Call(Matches, new TypeNode.Fqn("kotlin.Boolean"), local);
+        foreach (var storage in mapStorage)
+            matches = new JsonObject {
+                ["k"] = "cond",
+                ["cond"] = StorageCall("kotlinCollectionStorageMatches", new TypeNode.Fqn("kotlin.Boolean"), local, storage),
+                ["then"] = matches,
+                ["else"] = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("kotlin.Boolean"), ["value"] = false },
+            };
         var target = TypeJson.Read(physicalTest["type"]);
         var safeCastResult = target is TypeNode.Nullable ? target : new TypeNode.Nullable(target);
         JsonObject result = Text(obj["k"]) == "isInst"

@@ -1220,6 +1220,56 @@ sealed partial class ReferenceMetadataIndex
     // stripped FQN (no generic-arity backtick), matching a BIR type token's bare owner.
     public IReadOnlyDictionary<string, string> Aliases => _ownerAlias;
 
+    // A trusted class alias declares Kotlin meaning even when the physical class has additional
+    // operational interfaces. Derive map-only storage from that declaration, not concrete CLR names
+    // or an assumed KeyValuePair element type. Interface aliases describe contracts, not storage.
+    IReadOnlyList<string> _kotlinMapStorageDefinitions;
+
+    public IReadOnlyList<string> KotlinMapStorageDefinitions()
+    {
+        if (_kotlinMapStorageDefinitions != null) return _kotlinMapStorageDefinitions;
+        var result = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var (identity, shape) in _referenceTypeShapes)
+        {
+            if (!_ownerAlias.ContainsKey(identity.Name) || shape.Kind != "class") continue;
+            var names = new HashSet<string>(StringComparer.Ordinal);
+            var pending = new Queue<TypeNode.Fqn>();
+            foreach (var face in shape.Interfaces ?? Array.Empty<TypeNode.Fqn>()) pending.Enqueue(face);
+            if (shape.Base != null) pending.Enqueue(shape.Base);
+            while (pending.TryDequeue(out var face))
+            {
+                if (!names.Add(face.Name)) continue;
+                foreach (var (parent, _) in ReferencedSupertypes(face)) pending.Enqueue(parent);
+            }
+            if (names.Overlaps(new[] { "kotlin.collections.Map", "kotlin.collections.MutableMap" })
+                && !names.Contains("kotlin.collections.Iterable"))
+                result.Add(ExactReflectedOwner(identity.Name, identity.Arity));
+        }
+        return _kotlinMapStorageDefinitions = result.OrderBy(name => name, StringComparer.Ordinal).ToArray();
+    }
+
+    // The static counterpart of kotlinCollectionStorageMatches. Reflection supplies the exact
+    // constructed interface identities, including substitutions through foreign base classes.
+    // A Kotlin subclass must not turn an inherited alias's storage into a permanent nominal marker.
+    public bool HasIndependentForeignCollectionFace(TypeNode.Fqn owner, string name, int arity = 0)
+    {
+        var type = ResolveNetType(ReflectedOwnerFqn(owner.Name), owner.Args?.Length ?? 0)
+            ?? throw new InvalidOperationException($"missing reflected foreign collection owner '{owner.Name}'");
+        var storageDefinitions = KotlinMapStorageDefinitions();
+        var storageFaces = new HashSet<Type>();
+        for (var current = type; current != null; current = current.BaseType)
+        {
+            var definition = current.IsGenericType ? current.GetGenericTypeDefinition() : current;
+            if (!storageDefinitions.Contains(ExactPhysicalMetadataName(definition))) continue;
+            storageFaces.UnionWith(current.GetInterfaces());
+            break;
+        }
+        return type.GetInterfaces().Append(type).Any(face =>
+            BareOwnerFqn(ExactPhysicalMetadataName(face.IsGenericType ? face.GetGenericTypeDefinition() : face)) == name
+            && (face.IsGenericType ? face.GetGenericArguments().Length : 0) == arity
+            && !storageFaces.Contains(face));
+    }
+
     // ---- Call-substitution lookups (consumed by MemberCallSubstitution) ----
 
     // The open identity of a current structured Fqn's name. Generic arguments live in Fqn.Args; the name may carry

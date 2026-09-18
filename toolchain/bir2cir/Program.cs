@@ -732,7 +732,7 @@ sealed class Pipeline
             // STAR-PROJECTION COLLECTION CLASSIFIERS: use faithful non-generic BCL faces where one exists; otherwise
             // author the Collection/Set/MutableSet composite classifier plus the following smart-cast member access.
             // App build only, before MemberCallSubstitution while the Kotlin owner is still visible.
-            if (!_options.RefBuild) KotlinCollectionClassifierLowering.Apply(hoisted);
+            if (!_options.RefBuild) KotlinCollectionClassifierLowering.Apply(hoisted, refs);
             if (attributeTopLevelOwner) StarProjectionLowering.Apply(hoisted, refs);
             // .NET EVENT `subscribe` BINDING: kotc surfaces a .NET event as a `kotlin.clr.ClrEvent<T>` property and emits
             // `w.Changed.subscribe(h)` as the PLAIN call `callInstance(kotlin.clr.ClrEvent.subscribe,

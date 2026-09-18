@@ -144,9 +144,13 @@ static class KotlinCollectionIdentitySynthesis
             if (Has("System.Collections.ICollection")) names.Add(MutableCollection);
         }
         // Independent list/set contracts survive a dictionary face on the same foreign type.
-        if (Has("System.Collections.IList")) names.Add(MutableList);
-        if (Has("System.Collections.Generic.IReadOnlySet", 1)) names.Add(Set);
-        if (Has("System.Collections.Generic.ISet", 1)) names.Add(MutableSet);
+        bool Independent(string name, int arity = 0) => Has(name, arity)
+            && refs.HasIndependentForeignCollectionFace(owner, name, arity);
+        if (Independent("System.Collections.IList") || Independent("System.Collections.Generic.IList", 1))
+            names.Add(MutableList);
+        else if (Independent("System.Collections.Generic.IReadOnlyList", 1)) names.Add(List);
+        if (Independent("System.Collections.Generic.IReadOnlySet", 1)) names.Add(Set);
+        if (Independent("System.Collections.Generic.ISet", 1)) names.Add(MutableSet);
         if (!dictionary && Has("System.Collections.IEnumerable")) names.Add(MutableIterable);
     }
 

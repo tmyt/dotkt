@@ -19,6 +19,7 @@ class CollectionStorageClassifierTests {
         check(value !is List<*>)
         check(value !is MutableList<*>)
         check(value as? List<*> == null)
+        check(value as? Collection<*> == null)
         check(value as? MutableList<*> == null)
         check(value as? MutableCollection<*> == null)
         rejects<Collection<*>>(value)
@@ -28,6 +29,10 @@ class CollectionStorageClassifierTests {
         rejects<Collection<*>?>(value)
         rejects<MutableCollection<*>?>(value)
         rejects<List<*>?>(value)
+        rejects<MutableList<*>?>(value)
+        var failed = false
+        try { value as List<*> } catch (_: ClassCastException) { failed = true }
+        check(failed)
     }
 
     @TestAttribute fun arraysDoNotAcquireCollectionClassifiers() {
@@ -40,6 +45,13 @@ class CollectionStorageClassifierTests {
     @TestAttribute fun dictionaryStorageDoesNotAcquireCollectionClassifiers() {
         rejectsStorage(mapOf("a" to 1))
         rejectsStorage(System.Collections.Generic.Dictionary<String, Int>())
+    }
+
+    @TestAttribute fun orderedDictionaryStorageDoesNotAcquireCollectionClassifiers() {
+        rejectsStorage(mutableMapOf("a" to 1))
+        rejectsStorage(linkedMapOf("a" to 1))
+        rejectsStorage(LinkedHashMap<String, Int>())
+        rejectsStorage(buildMap { put("a", 1) })
     }
 
     @TestAttribute fun realListsRetainCollectionClassifiers() {

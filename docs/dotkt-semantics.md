@@ -179,6 +179,12 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   The same storage eligibility guard applies to Collection/List classifiers and their mutable variants:
   an array's CLR IList or a dictionary's CLR ICollection does not confer the corresponding Kotlin identity.
   Declaration-owned Kotlin identities take precedence over this foreign-storage guard.
+  A trusted class alias whose Kotlin declaration is map-only also identifies its CLR class's List/Set
+  interfaces as storage. bir2cir derives this set from declaration metadata rather than CLR class names
+  or dictionary entry element types. Foreign subclasses retain additional closed List/Set contracts,
+  but merely inheriting the storage interfaces does not grant a classifier. The same distinction applies
+  when synthesizing nominal identities for Kotlin subclasses; an added read-only List does not grant
+  MutableList membership through a map's inherited mutable storage.
 - **`x is T` preserves a nullable reified instantiation.** `m<String?>` and `m<String>` are the same CLR generic
   instantiation, so the hidden witness supplies the otherwise-missing distinction on the null path. It is forwarded
   dynamically through calls such as `inline fun <reified U> f(x: Any?) = m<U>(x)`, including lifted object, closure,
