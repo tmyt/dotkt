@@ -411,7 +411,7 @@ class CollectionsTests {
         assertTrue(userMutableSet is MutableSet<*>)
 
         // A successful compiler-generated smart cast must keep every star-usable Collection member valid for a
-        // value-element HashSet. The explicit `as/as? Set<*>` existential representation is a separate contract.
+        // value-element HashSet. Explicit existential casts use the same composite classifier.
         assertEquals(2, if (setInt is Set<*>) setInt.size else -1)
         assertFalse(if (setInt is Collection<*>) setInt.isEmpty() else true)
         assertEquals(1, if (mutSetStr is MutableSet<*>) mutSetStr.size else -1)

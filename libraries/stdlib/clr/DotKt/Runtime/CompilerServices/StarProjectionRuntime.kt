@@ -298,26 +298,22 @@ internal fun kotlinCollectionCastCandidate(value: Any?, witness: Int, dictionary
 }
 
 // Collection/Set use overlapping BCL faces for member dispatch, so their Kotlin classifier is a composite physical
-// fact. Emitted Kotlin implementations carry the nominal identities above; unmodifiable BCL-backed implementations
-// are recognized by the generic faces they actually implement. Dictionary and array shapes are deliberately excluded
-// from Collection: both implement collection-shaped CLR interfaces but neither is a Kotlin Collection.
+// fact. KotlinCollectionClassifierLowering supplies the eligibility guard before this physical test,
+// including on the cast operand consumed by smart-cast member lowering. Do not repeat a dictionary
+// exclusion here: a dictionary can have an independent List/Set contract that grants Collection.
+// Emitted Kotlin identities and the actual generic CLR faces select the narrower physical classifier.
 @PublishedApi
 internal fun starProjectionKotlinCollectionIsInstance(
     value: Any?,
     kind: Int,
     firstOpenType: StarProjectionType,
     secondOpenType: StarProjectionType,
-    dictionaryOpenType: StarProjectionType,
-    readOnlyDictionaryOpenType: StarProjectionType,
 ): Boolean {
     if (value == null) return false
     if (kind == 2 && value is KotlinMutableSetClassifier) return true
     if (kind == 1 && value is KotlinSetClassifier) return true
     if (kind == 0 && value is KotlinCollectionClassifier) return true
     val runtimeType = value.starProjectionRuntimeType()
-    if (kind == 0 && (runtimeType.isArray
-            || starProjectionHasView(runtimeType, dictionaryOpenType)
-            || starProjectionHasView(runtimeType, readOnlyDictionaryOpenType))) return false
     return starProjectionHasView(runtimeType, firstOpenType) || starProjectionHasView(runtimeType, secondOpenType)
 }
 
@@ -327,10 +323,7 @@ internal fun starProjectionKotlinNullableCollectionIsInstance(
     kind: Int,
     firstOpenType: StarProjectionType,
     secondOpenType: StarProjectionType,
-    dictionaryOpenType: StarProjectionType,
-    readOnlyDictionaryOpenType: StarProjectionType,
-): Boolean = value == null || starProjectionKotlinCollectionIsInstance(value, kind, firstOpenType, secondOpenType,
-    dictionaryOpenType, readOnlyDictionaryOpenType)
+): Boolean = value == null || starProjectionKotlinCollectionIsInstance(value, kind, firstOpenType, secondOpenType)
 
 @PublishedApi
 internal fun starProjectionKotlinCollectionCast(
@@ -338,13 +331,26 @@ internal fun starProjectionKotlinCollectionCast(
     kind: Int,
     firstOpenType: StarProjectionType,
     secondOpenType: StarProjectionType,
-    dictionaryOpenType: StarProjectionType,
-    readOnlyDictionaryOpenType: StarProjectionType,
 ): Any {
-    if (starProjectionKotlinCollectionIsInstance(value, kind, firstOpenType, secondOpenType,
-            dictionaryOpenType, readOnlyDictionaryOpenType)) return value!!
+    if (starProjectionKotlinCollectionIsInstance(value, kind, firstOpenType, secondOpenType)) return value!!
     throw ClassCastException("Value is not an instance of the requested Kotlin collection classifier")
 }
+
+@PublishedApi
+internal fun starProjectionKotlinCollectionSafeCast(
+    value: Any?,
+    kind: Int,
+    firstOpenType: StarProjectionType,
+    secondOpenType: StarProjectionType,
+): Any? = if (starProjectionKotlinCollectionIsInstance(value, kind, firstOpenType, secondOpenType)) value else null
+
+@PublishedApi
+internal fun starProjectionKotlinNullableCollectionCast(
+    value: Any?,
+    kind: Int,
+    firstOpenType: StarProjectionType,
+    secondOpenType: StarProjectionType,
+): Any? = if (value == null) null else starProjectionKotlinCollectionCast(value, kind, firstOpenType, secondOpenType)
 
 @PublishedApi
 internal fun starProjectionCloneValue(value: Any): Any = starProjectionCloneValueIntrinsic(value)
