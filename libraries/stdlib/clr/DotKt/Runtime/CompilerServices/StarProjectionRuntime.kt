@@ -267,10 +267,16 @@ internal fun kotlinCollectionMatches(value: Any?, witness: Int, dictionary: Star
     readOnlyDictionary: StarProjectionType, set: StarProjectionType, readOnlySet: StarProjectionType,
     list: StarProjectionType, genericList: StarProjectionType, readOnlyList: StarProjectionType): Boolean {
     if (value !is KotlinIterableClassifier) return when (witness and -2) {
-        // Collection/List membership also requires Kotlin iteration eligibility. Their physical classifier
+        // Collection membership also requires Kotlin iteration eligibility. Its physical classifier
         // still selects the narrower collection face; CLR array/dictionary storage alone cannot grant it.
-        2, 4, 6, 8, 14, 16 -> foreignKotlinIterable(value, dictionary, readOnlyDictionary, set, readOnlySet,
+        2, 4, 14, 16 -> foreignKotlinIterable(value, dictionary, readOnlyDictionary, set, readOnlySet,
             list, genericList, readOnlyList)
+        // A reified star target may have become object by the physical test. Its witness must retain
+        // the List contract, not merely iteration eligibility (which would also accept a Set).
+        6, 8 -> value == null || (foreignKotlinIterable(value, dictionary, readOnlyDictionary, set, readOnlySet,
+            list, genericList, readOnlyList) && starProjectionKotlinCollectionIsInstance(value,
+                if ((witness and -2) == 6) 3 else 4,
+                if ((witness and -2) == 6) readOnlyList else genericList, genericList))
         else -> true
     }
     // bir2cir supplies KotlinTypeWitness: low bit is nullability; the remaining code is nominal identity.
@@ -297,7 +303,10 @@ internal fun kotlinCollectionCastCandidate(value: Any?, witness: Int, dictionary
     return value
 }
 
-// Collection/Set use overlapping BCL faces for member dispatch, so their Kotlin classifier is a composite physical
+@kotlin.clr.ClrTypeAlias("System.Collections.IList")
+private interface StarProjectionRawList
+
+// Collection/Set/List use overlapping BCL faces for member dispatch, so their Kotlin classifier is a composite physical
 // fact. KotlinCollectionClassifierLowering supplies the eligibility guard before this physical test,
 // including on the cast operand consumed by smart-cast member lowering. Do not repeat a dictionary
 // exclusion here: a dictionary can have an independent List/Set contract that grants Collection.
@@ -313,6 +322,9 @@ internal fun starProjectionKotlinCollectionIsInstance(
     if (kind == 2 && value is KotlinMutableSetClassifier) return true
     if (kind == 1 && value is KotlinSetClassifier) return true
     if (kind == 0 && value is KotlinCollectionClassifier) return true
+    if (kind == 3 && value is KotlinListClassifier) return true
+    if (kind == 4 && value is KotlinMutableListClassifier) return true
+    if ((kind == 3 || kind == 4) && value is StarProjectionRawList) return true
     val runtimeType = value.starProjectionRuntimeType()
     return starProjectionHasView(runtimeType, firstOpenType) || starProjectionHasView(runtimeType, secondOpenType)
 }

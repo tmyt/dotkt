@@ -155,14 +155,18 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   `IEnumerable` where that face is faithful; `println` of such an erased value renders via
   the runtime-detecting `clrElemToString`. (A `<*>` value can only be used non-generically anyway.) This is the same
   invariance that requires §5c's separation of opaque `Map` values from exact dictionary constructions. #60.
-  **`List<*>` and `Map<*,*>` are exact** through their non-generic `IList`/`IDictionary` twins. `Collection<*>`,
-  `Set<*>`, and `MutableSet<*>` instead use a shared composite `is`/`as?`/`as` classifier because their operational BCL aliases overlap: emitted
+  `Map<*,*>` retains its non-generic `IDictionary` path. `Collection<*>`, `List<*>`, `MutableList<*>`,
+  `Set<*>`, and `MutableSet<*>` use a shared composite `is`/`as?`/`as` classifier because one raw BCL face is insufficient: emitted
   Kotlin implementations carry compiler-owned nominal identity interfaces, while BCL-backed values are recognized
-  through the generic `IReadOnlyCollection<>`/`ICollection<>` and `IReadOnlySet<>`/`ISet<>` faces they actually
-  implement. The common eligibility guard excludes unrelated dictionary and array storage while retaining independent
+  through the generic `IReadOnlyCollection<>`/`ICollection<>`, `IReadOnlySet<>`/`ISet<>`, and
+  `IReadOnlyList<>`/`IList<>` faces they actually implement; a raw `IList` is also a foreign list face.
+  Kotlin List implementations need not implement raw `IList`. Reified List witnesses retain the narrower
+  List/MutableList condition even when the physical target is erased, so iteration alone cannot grant List identity.
+  The common eligibility guard excludes unrelated dictionary and array storage while retaining independent
   List/Set contracts. The checked value is not wrapped, so reference identity is preserved. Classifier existence does
   not require choosing one element closure; member access still needs its exact declaring view. Pinned by
-  `CollectionsTests.starProjectedSetIdentity` and `MixedCollectionClassifierTests`.
+  `CollectionsTests.starProjectedSetIdentity`, `MixedCollectionClassifierTests`, `NominalListClassifierTests`,
+  and `NominalListIdentityTests`.
   Concrete `Any`/`Any?` element arguments are not stars: value-producing casts retain their original typed
   CLR interface check after the composite guard, including safe-cast failure behavior and typed return edges.
 - **Iterable identity is distinct from its CLR enumeration face.** Kotlin implementations carry nominal

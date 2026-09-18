@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Kotlin List implementations retain their runtime identity (#781).** Star-projected List/MutableList
+  checks and casts no longer require a non-generic CLR IList face. Direct and reified operations preserve
+  identity and mutability across DLL boundaries; reified List casts do not accept unrelated Set storage.
+
 - **Mixed foreign collection contracts retain their Kotlin hierarchy (#780).** Independent List/Set
   contracts keep Collection membership when the same CLR object also implements a dictionary contract;
   existential Collection/Set casts share the classifier without selecting a unique element closure.
