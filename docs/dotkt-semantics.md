@@ -170,6 +170,11 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   `CollectionsTests.starProjectedSetIdentity`, `MixedCollectionClassifierTests`, `NominalListClassifierTests`,
   `NominalListIdentityTests`, `ReifiedCollectionClassifierTests`, `ReifiedCollectionFacesTests`,
   and `ReifiedCollectionIdentityTests`.
+  Projected `isEmpty()` first honors the Kotlin-owned override slot. Its foreign default uses the actual
+  collection Count, including raw `ICollection.Count`, without requiring a generic collection face or enumerating
+  the receiver. For this projected `isEmpty` default, an existing generic Count view retains precedence; raw Count
+  is used only when no generic Collection face exists, not to mask an ambiguous view or a failing getter. Pinned by `RawCollectionIsEmptyTests`,
+  `ProjectedIsEmptyOverrideTests`, and `ProjectedEmptinessTests`.
   Concrete `Any`/`Any?` element arguments are not stars: value-producing casts retain their original typed
   CLR interface check after the composite guard, including safe-cast failure behavior and typed return edges.
 - **Iterable identity is distinct from its CLR enumeration face.** Kotlin implementations carry nominal
