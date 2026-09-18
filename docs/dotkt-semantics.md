@@ -156,13 +156,13 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   the runtime-detecting `clrElemToString`. (A `<*>` value can only be used non-generically anyway.) This is the same
   invariance that requires §5c's separation of opaque `Map` values from exact dictionary constructions. #60.
   **`List<*>` and `Map<*,*>` are exact** through their non-generic `IList`/`IDictionary` twins. `Collection<*>`,
-  `Set<*>`, and `MutableSet<*>` instead use a composite `is` classifier because their operational BCL aliases overlap: emitted
+  `Set<*>`, and `MutableSet<*>` instead use a shared composite `is`/`as?`/`as` classifier because their operational BCL aliases overlap: emitted
   Kotlin implementations carry compiler-owned nominal identity interfaces, while BCL-backed values are recognized
   through the generic `IReadOnlyCollection<>`/`ICollection<>` and `IReadOnlySet<>`/`ISet<>` faces they actually
-  implement. Dictionary and array shapes are explicitly excluded from `Collection`. The checked value is not wrapped,
-  so reference identity and the existing BCL member ABI are preserved. Explicit standalone `as/as?` existential
-  storage remains separate from this classifier contract. Pinned by
-  `CollectionsTests.starProjectedSetIdentity`.
+  implement. The common eligibility guard excludes unrelated dictionary and array storage while retaining independent
+  List/Set contracts. The checked value is not wrapped, so reference identity is preserved. Classifier existence does
+  not require choosing one element closure; member access still needs its exact declaring view. Pinned by
+  `CollectionsTests.starProjectedSetIdentity` and `MixedCollectionClassifierTests`.
 - **Iterable identity is distinct from its CLR enumeration face.** Kotlin implementations carry nominal
   `Iterable`/`MutableIterable` identities: implementing `Collection` plus `MutableIterable` does not imply
   `MutableCollection`. The classifier guard is independent of the physical type test, including reified star
@@ -179,6 +179,9 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   The same storage eligibility guard applies to Collection/List classifiers and their mutable variants:
   an array's CLR IList or a dictionary's CLR ICollection does not confer the corresponding Kotlin identity.
   Declaration-owned Kotlin identities take precedence over this foreign-storage guard.
+  Collection's composite physical test consumes that eligibility decision rather than applying a second
+  blanket dictionary exclusion: an independently implemented List or Set remains a Collection even when
+  the object also implements a dictionary contract.
   A trusted class alias whose Kotlin declaration is map-only also identifies its CLR class's List/Set
   interfaces as storage. bir2cir derives this set from declaration metadata rather than CLR class names
   or dictionary entry element types. Foreign subclasses retain additional closed List/Set contracts,

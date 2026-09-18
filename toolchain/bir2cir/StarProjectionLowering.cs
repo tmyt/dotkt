@@ -33,9 +33,11 @@ using DotKt.Bir;
 // their operational aliases overlap, HashSet<T> has no non-generic collection face, and Dictionary/arrays expose CLR
 // collection faces without being Kotlin Collections. Their `is` test is therefore a bir2cir-authored composite:
 // compiler-owned nominal classifiers for emitted Kotlin implementations plus the actual generic BCL faces for BCL
-// values, with dictionary/array exclusions. The following smart-cast's size/isEmpty/iterator remains on the original
-// object; size dispatch uses the existing exact-token reflection runtime. Explicit standalone `as/as?` existential
-// storage is not widened here. App build only, before MemberCallSubstitution while the Kotlin owner is still visible.
+// values. The common eligibility guard owns storage exclusions; this physical test must not discard independent
+// List/Set contracts merely because a dictionary interface is also present. The following smart-cast's size/isEmpty/iterator remains on the original
+// object; size dispatch uses the existing exact-token reflection runtime. Collection/Set `is/as?/as` share this
+// classifier, without selecting one element closure from an existential collection. App build only, before
+// MemberCallSubstitution while the Kotlin owner is still visible.
 static class StarProjectionLowering
 {
     internal const string ProjectedCollectionMarker = "dotktProjectedCollection";
@@ -173,7 +175,7 @@ static class StarProjectionLowering
                 obj[ProjectedCollectionMarker] = true;
             }
             var kind = Str(obj["k"]);
-            if (kind == "isInst"
+            if (kind is ("isInst" or "isInstRef" or "cast")
                 && obj["e"] is JsonNode operand
                 && IsIdentityCollection(obj["type"], out var classifierKind, out var nullable))
             {
@@ -265,9 +267,11 @@ static class StarProjectionLowering
         {
             "isInst" when nullable => "starProjectionKotlinNullableCollectionIsInstance",
             "isInst" => "starProjectionKotlinCollectionIsInstance",
+            "isInstRef" => "starProjectionKotlinCollectionSafeCast",
+            "cast" when nullable => "starProjectionKotlinNullableCollectionCast",
             _ => "starProjectionKotlinCollectionCast",
         };
-        var result = nodeKind == "isInst" ? Bool : Any;
+        var result = nodeKind == "isInst" ? Bool : nodeKind == "isInstRef" || nullable ? AnyN : Any;
         var first = classifierKind == 0
             ? "System.Collections.Generic.IReadOnlyCollection`1"
             : classifierKind == 1
@@ -276,11 +280,11 @@ static class StarProjectionLowering
         var second = classifierKind == 0
             ? "System.Collections.Generic.ICollection`1"
             : "System.Collections.Generic.ISet`1";
-        return Call(method,
-            new TypeNode[] { AnyN, Int, Type, Type, Type, Type }, result,
-            operand.DeepClone(), ConstInt(classifierKind), ClassRef(first), ClassRef(second),
-            ClassRef("System.Collections.Generic.IDictionary`2"),
-            ClassRef("System.Collections.Generic.IReadOnlyDictionary`2"));
+        var call = Call(method,
+            new TypeNode[] { AnyN, Int, Type, Type }, result,
+            operand.DeepClone(), ConstInt(classifierKind), ClassRef(first), ClassRef(second));
+        if (nodeKind != "isInst") call[ProjectedCollectionMarker] = true;
+        return call;
     }
 
     static JsonObject LowerIdentityMember(JsonObject call, JsonObject cast, int classifierKind,

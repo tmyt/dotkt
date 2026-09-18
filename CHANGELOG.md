@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Mixed foreign collection contracts retain their Kotlin hierarchy (#780).** Independent List/Set
+  contracts keep Collection membership when the same CLR object also implements a dictionary contract;
+  existential Collection/Set casts share the classifier without selecting a unique element closure.
+
 - **Collection classifiers reject unrelated CLR storage (#778).** Arrays and dictionaries no longer acquire
   Kotlin List or MutableCollection identity solely through their CLR storage interfaces, including reified casts.
 
