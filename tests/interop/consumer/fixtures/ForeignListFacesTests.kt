@@ -63,4 +63,14 @@ class ForeignListFacesTests {
             check(foreignReadOnlyGet(value) == "list")
         }
     }
+
+    @TestAttribute fun concreteAndProjectedViewsKeepTheirSelectedInterface() {
+        val value = ForeignListFaces.ExactViews()
+        check((value as List<Any>)[0] == "object-view")
+        check((value as List<Any>).size == 1)
+        val stringView: List<*> = value as List<String>
+        check(stringView[0] == "string-view" && stringView.size == 2)
+        val objectView: List<*> = value as List<Any>
+        check(objectView[0] == "object-view" && objectView.size == 1)
+    }
 }

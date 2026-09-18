@@ -8,6 +8,7 @@ public static class ForeignListFaces
     public static object Raw() => new ArrayList { 7, 9 };
     public static object Generic() => new GenericOnlyList();
     public static object ReadOnly() => new ReadOnlyOnlyList();
+    public static object ExactViews() => new ExactObjectListViews();
 }
 
 public class GenericOnlyList : IList<int>
@@ -35,4 +36,15 @@ public class ReadOnlyOnlyList : IReadOnlyList<int>
     public int Count => items.Count;
     public IEnumerator<int> GetEnumerator() => items.GetEnumerator();
     IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+}
+
+public class ExactObjectListViews : IReadOnlyList<object>, IReadOnlyList<string>
+{
+    object IReadOnlyList<object>.this[int index] => "object-view";
+    string IReadOnlyList<string>.this[int index] => index == 0 ? "string-view" : "second";
+    int IReadOnlyCollection<object>.Count => 1;
+    int IReadOnlyCollection<string>.Count => 2;
+    IEnumerator<object> IEnumerable<object>.GetEnumerator() { yield return "object-view"; }
+    IEnumerator<string> IEnumerable<string>.GetEnumerator() { yield return "string-view"; yield return "second"; }
+    IEnumerator IEnumerable.GetEnumerator() => ((IEnumerable<object>)this).GetEnumerator();
 }

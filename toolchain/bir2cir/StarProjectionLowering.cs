@@ -122,17 +122,24 @@ static class StarProjectionLowering
 
     public static void Apply(JsonNode node, ReferenceMetadataIndex refs)
     {
+        var closedViews = ForeignStarProjectionBinding.CollectClosedViewHints(new[] { node }, refs);
+        Apply(node, refs, closedViews);
+    }
+
+    static void Apply(JsonNode node, ReferenceMetadataIndex refs,
+        IReadOnlyDictionary<string, TypeNode.Fqn> closedViews)
+    {
         if (node is JsonObject obj)
         {
             AdaptProjectedCollectionArguments(obj);
             if (Str(obj["k"]) == "callInstance"
                 && IsIdentityCollection(obj["ownerType"], out var listKind, out _)
                 && listKind is 3 or 4
-                && LowerListMember(obj) is JsonObject listMember)
+                && LowerListMember(obj, closedViews) is JsonObject listMember)
             {
                 UsedRuntimeFallback = true;
                 Replace(obj, listMember);
-                foreach (var child in obj.Select(kv => kv.Value).Where(v => v != null).ToList()) Apply(child, refs);
+                foreach (var child in obj.Select(kv => kv.Value).Where(v => v != null).ToList()) Apply(child, refs, closedViews);
                 return;
             }
             // The overlapping Collection/Set classifiers use their compiler-owned nominal identity for emitted Kotlin
@@ -142,11 +149,12 @@ static class StarProjectionLowering
                 && IsIdentityCollection(obj["ownerType"], out _, out _)
                 && obj["recv"] is JsonObject identityRecv && Str(identityRecv["k"]) == "cast"
                 && IsIdentityCollection(identityRecv["type"], out var identityKind, out _)
+                && (identityKind is not (3 or 4) || !HasConcreteTypeArguments(identityRecv["type"]))
                 && LowerIdentityMember(obj, identityRecv, identityKind, refs) is JsonObject identityMember)
             {
                 UsedRuntimeFallback = true;
                 Replace(obj, identityMember);
-                foreach (var child in obj.Select(kv => kv.Value).Where(v => v != null).ToList()) Apply(child, refs);
+                foreach (var child in obj.Select(kv => kv.Value).Where(v => v != null).ToList()) Apply(child, refs, closedViews);
                 return;
             }
             // Smart-cast member access: `callInstance` on a star-collection alias whose receiver is a `cast` to that
@@ -161,8 +169,8 @@ static class StarProjectionLowering
                 foreach (var stale in obj.Select(kv => kv.Key).Where(k => !rewritten.ContainsKey(k)).ToList())
                     obj.Remove(stale);
                 // The rewritten node's recv/args are already final; recurse only into them (not the stale members).
-                if (obj["recv"] != null) Apply(obj["recv"], refs);
-                if (obj["args"] is JsonArray ra) foreach (var a in ra) if (a != null) Apply(a, refs);
+                if (obj["recv"] != null) Apply(obj["recv"], refs, closedViews);
+                if (obj["args"] is JsonArray ra) foreach (var a in ra) if (a != null) Apply(a, refs, closedViews);
                 return;
             }
             // Iterable safe casts use the same erased enumeration protocol as their tests. They need no
@@ -194,10 +202,10 @@ static class StarProjectionLowering
                 Replace(obj, LowerIdentityClassifier(kind, operand, classifierKind,
                     nullable || Flag(obj["nullMatches"]), obj["type"]));
             }
-            foreach (var kv in obj) if (kv.Value != null) Apply(kv.Value, refs);
+            foreach (var kv in obj) if (kv.Value != null) Apply(kv.Value, refs, closedViews);
         }
         else if (node is JsonArray arr)
-            foreach (var it in arr) if (it != null) Apply(it, refs);
+            foreach (var it in arr) if (it != null) Apply(it, refs, closedViews);
     }
 
     // Kotlin collection covariance permits a star-projected value to fill a Collection<T> parameter selected by
@@ -271,6 +279,10 @@ static class StarProjectionLowering
         TypeNode.Array array => ContainsProjection(array.Elem),
         _ => false,
     };
+
+    static bool HasConcreteTypeArguments(JsonNode slot) =>
+        StripOuterWrappers(TypeJson.Read(slot)) is TypeNode.Fqn { Args.Length: > 0 } type
+        && !ContainsProjection(type);
 
     static JsonObject LowerIdentityClassifier(string nodeKind, JsonNode operand, int classifierKind, bool nullable,
         JsonNode target)
@@ -357,7 +369,7 @@ static class StarProjectionLowering
 
     // An existential List can have only a raw IList or only a generic mutable list face. Count/Get
     // must follow that List face, not assume that every accepted value has IReadOnlyCollection<T>.
-    static JsonObject LowerListMember(JsonObject call)
+    static JsonObject LowerListMember(JsonObject call, IReadOnlyDictionary<string, TypeNode.Fqn> closedViews)
     {
         var member = Str(call["method"]);
         var count = member == "size" && Str(call["prop"]) == "get";
@@ -365,6 +377,15 @@ static class StarProjectionLowering
         if (!count && !((member is "get" or "get_Item") && args?.Count == 1)) return null;
         var receiver = call["recv"];
         if (receiver == null) return null;
+        // Concrete Any is a real closed interface, not an existential. Preserve its exact
+        // selected CLR member rather than searching the receiver's unrelated generic views.
+        if (HasConcreteTypeArguments(call["ownerType"])
+            || receiver is JsonObject concreteCast && Str(concreteCast["k"]) == "cast"
+                && HasConcreteTypeArguments(concreteCast["type"])) return null;
+        // An immutable star local can retain a source-authored exact generic view. Leave that
+        // member to the exact foreign binder; a runtime-only List helper would discard the view.
+        if (receiver is JsonObject local && Str(local["k"]) == "local"
+            && Str(local["name"]) is string name && closedViews.ContainsKey(name)) return null;
         var checkedReceiver = receiver is JsonObject cast && Str(cast["k"]) == "cast"
             && IsIdentityCollection(cast["type"], out var kind, out _)
             ? LowerIdentityClassifier("cast", cast["e"], kind, nullable: false, cast["type"])
