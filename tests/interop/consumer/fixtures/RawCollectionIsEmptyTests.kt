@@ -13,6 +13,31 @@ private class EmptyReceiverEvaluation(private val value: Any) {
 }
 
 class RawCollectionIsEmptyTests {
+    @TestAttribute fun genericGetterFailureDoesNotFallThroughToRawCount() {
+        val value = RawCollectionEmptiness.GenericFailure()
+        var caught: Any? = null
+        try { rawListIsEmpty(value) } catch (failure: System.Exception) { caught = failure }
+        check(caught === value.Failure)
+        check(value.GenericReads == 1 && value.RawReads == 0)
+    }
+
+    @TestAttribute fun rawReadOnlyListIteratorsAndSubListsUseTheAvailableCount() {
+        val value = RawCollectionEmptiness.List(false)
+        val list = value as List<*>
+        val iterator = list.listIterator()
+        check(iterator.next() == 7 && iterator.next() == 9 && !iterator.hasNext())
+        check(iterator.previous() == 9)
+        val slice = list.subList(1, 2)
+        check(slice.size == 1 && slice[0] == 9 && !slice.isEmpty())
+    }
+
+    @TestAttribute fun rawMapEmptinessUsesTheSharedCountCapability() {
+        for (empty in arrayOf(false, true)) {
+            val value = RawCollectionEmptiness.Map(empty)
+            check((value as Map<*, *>).isEmpty() == empty)
+        }
+    }
+
     @TestAttribute fun genericReadOnlyCountIsNotReplacedByUnrelatedRawCount() {
         val value = RawCollectionEmptiness.MixedCount()
         check((value as List<*>).size == 2)
