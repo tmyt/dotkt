@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Projected raw collections use their actual Count for isEmpty (#786).** Non-generic CLR List/Collection
+  views no longer require a generic collection interface for emptiness checks. Kotlin-authored overrides
+  remain authoritative; foreign Count access preserves single evaluation and the original exception.
+
 - **Reified Collection and Set classifiers preserve their families (#785).** Tests and casts reject unrelated
   values even when the physical target is erased. Direct MutableCollection classifiers also recognize nominal
   and generic-only implementations without requiring a raw CLR ICollection interface.

@@ -854,7 +854,7 @@ private fun erasedMutableListMethod(receiver: Any, name: String, parameterCount:
 // Read-only projected lists need their IReadOnlyCollection/IReadOnlyList faces. Do not assume an IList face merely
 // because the standard BCL List happens to provide both: a Kotlin implementation of List<E> is allowed to be truly
 // read-only. Prefer the read-only face and fall back to the mutable one only for foreign types exposing IList alone.
-private fun erasedProjectedView(receiver: Any, preferred: String, fallback: String): StarProjectionType {
+private fun findErasedProjectedView(receiver: Any, preferred: String, fallback: String): StarProjectionType? {
     var preferredMatch: StarProjectionType? = null
     var fallbackMatch: StarProjectionType? = null
     for (candidate in receiver.starProjectionRuntimeType().getInterfaces()) {
@@ -871,8 +871,11 @@ private fun erasedProjectedView(receiver: Any, preferred: String, fallback: Stri
         }
     }
     return preferredMatch ?: fallbackMatch
-        ?: throw UnsupportedOperationException("Projected receiver has no " + preferred + " or " + fallback + " surface")
 }
+
+private fun erasedProjectedView(receiver: Any, preferred: String, fallback: String): StarProjectionType =
+    findErasedProjectedView(receiver, preferred, fallback)
+        ?: throw UnsupportedOperationException("Projected receiver has no " + preferred + " or " + fallback + " surface")
 
 private fun erasedProjectedMethod(
     receiver: Any,
@@ -880,9 +883,11 @@ private fun erasedProjectedMethod(
     fallback: String,
     name: String,
     parameterCount: Int,
-): StarProjectionMethod {
+): StarProjectionMethod = erasedProjectedMethod(erasedProjectedView(receiver, preferred, fallback), name, parameterCount)
+
+private fun erasedProjectedMethod(view: StarProjectionType, name: String, parameterCount: Int): StarProjectionMethod {
     var match: StarProjectionMethod? = null
-    for (candidate in erasedProjectedView(receiver, preferred, fallback).getMethods()) {
+    for (candidate in view.getMethods()) {
         if (candidate.name != name || candidate.getParameters().size != parameterCount) continue
         if (match != null) throw IllegalStateException("Ambiguous projected member " + name)
         match = candidate
@@ -891,16 +896,20 @@ private fun erasedProjectedMethod(
 }
 
 @PublishedApi
-internal fun projectedCollectionCountErased(receiver: Any): Int = try {
-    erasedProjectedMethod(
-        receiver,
-        "System.Collections.Generic.IReadOnlyCollection`1",
-        "System.Collections.Generic.ICollection`1",
-        "get_Count",
-        0,
-    ).invoke(receiver, arrayOfNulls<Any?>(0)) as Int
-} catch (failure: StarProjectionInvocationException) {
-    throw (failure.innerException ?: failure)
+internal fun projectedCollectionCountErased(receiver: Any): Int {
+    val preferred = "System.Collections.Generic.IReadOnlyCollection`1"
+    val fallback = "System.Collections.Generic.ICollection`1"
+    val view = findErasedProjectedView(receiver, preferred, fallback)
+    // Preserve an existing generic view (and ambiguity errors). Raw Count supplies a capability only when
+    // neither generic collection face exists. Native getter exceptions must not be unwrapped as reflection failures.
+    if (view == null && receiver is StarProjectionRawCollection) return receiver.count
+    val selected = view
+        ?: throw UnsupportedOperationException("Projected receiver has no " + preferred + " or " + fallback + " surface")
+    return try {
+        erasedProjectedMethod(selected, "get_Count", 0).invoke(receiver, arrayOfNulls<Any?>(0)) as Int
+    } catch (failure: StarProjectionInvocationException) {
+        throw (failure.innerException ?: failure)
+    }
 }
 
 @PublishedApi
