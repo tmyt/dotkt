@@ -810,7 +810,7 @@ static class ForeignStarProjectionBinding
     // is initialized from one exact CLR closure, carry that frontend-authored view separately to reflection dispatch;
     // this distinguishes `I<X>` and `I<Y>` implemented by the same CLR object without wrapping the value. Mutable
     // locals are deliberately excluded: a compile-time hint would become stale after an assignment.
-    static Dictionary<string, TypeNode.Fqn> CollectClosedViewHints(IReadOnlyList<JsonNode> roots,
+    internal static Dictionary<string, TypeNode.Fqn> CollectClosedViewHints(IReadOnlyList<JsonNode> roots,
         ReferenceMetadataIndex refs)
     {
         var assigned = new HashSet<string>(StringComparer.Ordinal);
