@@ -7,6 +7,12 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Reified Collection and Set classifiers preserve their families (#785).** Tests and casts reject unrelated
+  values even when the physical target is erased. Direct MutableCollection classifiers also recognize nominal
+  and generic-only implementations without requiring a raw CLR ICollection interface.
+  Raw collections retain Collection membership, while concrete MutableCollection<Any/Any?> casts require their
+  actual typed CLR interface rather than treating the concrete element type as a star projection.
+
 - **Kotlin List implementations retain their runtime identity (#781).** Star-projected List/MutableList
   checks and casts no longer require a non-generic CLR IList face. Direct and reified operations preserve
   identity and mutability across DLL boundaries; reified List casts do not accept unrelated Set storage.

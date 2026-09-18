@@ -47,13 +47,15 @@ static class KotlinCollectionClassifierLowering
             ["sig"] = new JsonArray(TypeJson.Write(nullableObject), TypeJson.Fqn("kotlin.Int"),
                 TypeJson.Write(runtimeType), TypeJson.Write(runtimeType), TypeJson.Write(runtimeType),
                 TypeJson.Write(runtimeType), TypeJson.Write(runtimeType),
+                TypeJson.Write(runtimeType), TypeJson.Write(runtimeType),
                 TypeJson.Write(runtimeType), TypeJson.Write(runtimeType)),
             ["ret"] = TypeJson.Write(result),
             ["args"] = new JsonArray(value.DeepClone(), witness.DeepClone(),
                 ClassRef("System.Collections.Generic.IDictionary`2"), ClassRef("System.Collections.Generic.IReadOnlyDictionary`2"),
                 ClassRef("System.Collections.Generic.ISet`1"), ClassRef("System.Collections.Generic.IReadOnlySet`1"),
                 ClassRef("System.Collections.IList"), ClassRef("System.Collections.Generic.IList`1"),
-                ClassRef("System.Collections.Generic.IReadOnlyList`1")),
+                ClassRef("System.Collections.Generic.IReadOnlyList`1"),
+                ClassRef("System.Collections.Generic.ICollection`1"), ClassRef("System.Collections.Generic.IReadOnlyCollection`1")),
         };
         JsonObject StorageCall(string helper, TypeNode result, JsonNode value, string storage) => new() {
             ["k"] = "callStatic", ["owner"] = TypeJson.Fqn(RuntimeOwner), ["method"] = helper,
