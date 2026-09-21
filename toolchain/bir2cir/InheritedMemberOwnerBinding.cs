@@ -170,20 +170,16 @@ static class InheritedMemberOwnerBinding
         // class-only lookup below can identify the exact CLR MethodDef. Interface-qualified `super<I>` retains that
         // projected interface owner and is returned unchanged by the dedicated guard below.
         var projectionRoot = TypeJson.Read(call["recv"]?["sty"]) as TypeNode.Fqn;
-        // `this` has no expression `sty`. For a super call, its constructed receiver is instead the enclosing class
-        // declaration frame. This is essential for a downstream `Derived : Base<String>` whose imported BIR member
-        // fact names the open declaration Base<T> (or even Base without arguments): the current hierarchy, not the
+        // `this` has no expression `sty`; its constructed receiver is the enclosing class declaration frame,
+        // both for ordinary inherited calls and for super calls. A downstream `Derived : Base<String>` may have a BIR
+        // member fact naming the open declaration Base<T> (or even Base without arguments): the current hierarchy, not the
         // argument expression, is the authoritative construction.
-        if (projectionRoot == null && Bool(call["super"])) projectionRoot = enclosingOwner;
+        if (projectionRoot == null && (Bool(call["super"]) || Str(call["recv"]?["k"]) == "this"))
+            projectionRoot = enclosingOwner;
         if (projectionRoot != null
             && (projectionRoot.Name != owner.Name || owner.Args == null && projectionRoot.Args != null))
         {
-            var projectedOwners = ReachableTypes(projectionRoot, types, refs)
-                .Where(candidate => candidate.Type.Name == owner.Name)
-                .Select(candidate => candidate.Type)
-                .GroupBy(SupertypeGraph.TypeKey, StringComparer.Ordinal)
-                .Select(group => group.First())
-                .ToList();
+            var projectedOwners = ConstructedOwners(projectionRoot, owner.Name, types, refs);
             if (projectedOwners.Count == 1)
             {
                 owner = projectedOwners[0];
@@ -224,12 +220,7 @@ static class InheritedMemberOwnerBinding
                 declarationId, out _, out selectedPhysicalOwner, out _, out _);
             if (hasSelectedOwner)
             {
-                var selectedOwners = ReachableTypes(owner, types, refs)
-                    .Where(candidate => candidate.Type.Name == selectedPhysicalOwner)
-                    .Select(candidate => candidate.Type)
-                    .GroupBy(SupertypeGraph.TypeKey, StringComparer.Ordinal)
-                    .Select(group => group.First())
-                    .ToList();
+                var selectedOwners = ConstructedOwners(owner, selectedPhysicalOwner, types, refs);
                 if (selectedOwners.Count == 1)
                 {
                     owner = selectedOwners[0];
@@ -328,9 +319,7 @@ static class InheritedMemberOwnerBinding
             // kotc's implementation fact identifies the declaration, not its use-site instantiation. Project that
             // identity through the already-constructed receiver hierarchy so `Local<T> : External<T>` becomes
             // `External<T>`, rather than throwing away T by copying the carrier's open declaration owner.
-            var projectedOwners = ReachableTypes(owner, types, refs)
-                .Where(candidate => candidate.Type.Name == implementationOwner.Name)
-                .Select(candidate => candidate.Type).Distinct().ToList();
+            var projectedOwners = ConstructedOwners(owner, implementationOwner.Name, types, refs);
             if (projectedOwners.Count != 1) return;
             var projectedOwner = projectedOwners[0];
             call["ownerType"] = TypeJson.Write(projectedOwner);
@@ -403,6 +392,21 @@ static class InheritedMemberOwnerBinding
         if (IsInterface(nearest[0], types, refs)) call["virtual"] = true;
         if (kind == "newBoundDelegate") call["calleeOwner"] = TypeJson.Write(nearest[0]);
     }
+
+    // Reference hierarchy edges can use the index's semantic spelling while the selected declaration names
+    // an exact CLR TypeDef. Match only through the recorded arity-aware identity map, never by stripping names
+    // or borrowing argument types. Keep the selected owner spelling and the hierarchy's constructed arguments.
+    static List<TypeNode.Fqn> ConstructedOwners(TypeNode.Fqn start, string selectedOwner,
+        Dictionary<string, TypeDef> types, ReferenceMetadataIndex refs) =>
+        ReachableTypes(start, types, refs)
+            .Where(candidate => candidate.Type.Name == selectedOwner
+                || !types.ContainsKey(candidate.Type.Name) && !types.ContainsKey(selectedOwner)
+                    && refs.TryExactPhysicalTypeName(candidate.Type.Name, candidate.Type.Args?.Length ?? 0,
+                        out var physicalOwner) && physicalOwner == selectedOwner)
+            .Select(candidate => new TypeNode.Fqn(selectedOwner, candidate.Type.Args))
+            .GroupBy(SupertypeGraph.TypeKey, StringComparer.Ordinal)
+            .Select(group => group.First())
+            .ToList();
 
     static IEnumerable<Reachable> ReachableTypes(TypeNode.Fqn start, Dictionary<string, TypeDef> types,
         ReferenceMetadataIndex refs)
