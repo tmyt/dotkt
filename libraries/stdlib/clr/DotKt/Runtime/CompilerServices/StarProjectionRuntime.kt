@@ -978,19 +978,52 @@ internal fun projectedListCountErased(receiver: Any): Int {
         "System.Collections.Generic.IReadOnlyList`1", "System.Collections.Generic.IList`1")
     if (view == null && receiver is StarProjectionRawList && !rawListIsMapStorage(receiver)) return receiver.count
     val list = view ?: throw UnsupportedOperationException("Projected receiver has no CLR List surface")
+    val collectionName = if (list.getGenericTypeDefinition().fullName == "System.Collections.Generic.IReadOnlyList`1")
+        "System.Collections.Generic.IReadOnlyCollection`1" else "System.Collections.Generic.ICollection`1"
+    return projectedParentCollectionCount(receiver, list, collectionName)
+}
+
+@PublishedApi
+internal fun projectedSetCountErased(receiver: Any): Int {
+    val set = findErasedProjectedView(receiver,
+        "System.Collections.Generic.IReadOnlySet`1", "System.Collections.Generic.ISet`1")
+        ?: throw UnsupportedOperationException("Projected receiver has no CLR Set surface")
+    val collectionName = if (set.getGenericTypeDefinition().fullName == "System.Collections.Generic.IReadOnlySet`1")
+        "System.Collections.Generic.IReadOnlyCollection`1" else "System.Collections.Generic.ICollection`1"
+    return projectedParentCollectionCount(receiver, set, collectionName)
+}
+
+@PublishedApi
+internal fun projectedMutableListCountErased(receiver: Any): Int {
+    val view = findErasedProjectedView(receiver,
+        "System.Collections.Generic.IList`1", "System.Collections.Generic.IList`1")
+    if (view == null && receiver is StarProjectionRawList && !rawListIsMapStorage(receiver)) return receiver.count
+    val list = view ?: throw UnsupportedOperationException("Projected receiver has no mutable CLR List surface")
+    return projectedParentCollectionCount(receiver, list, "System.Collections.Generic.ICollection`1")
+}
+
+@PublishedApi
+internal fun projectedMutableSetCountErased(receiver: Any): Int {
+    val set = findErasedProjectedView(receiver,
+        "System.Collections.Generic.ISet`1", "System.Collections.Generic.ISet`1")
+        ?: throw UnsupportedOperationException("Projected receiver has no mutable CLR Set surface")
+    return projectedParentCollectionCount(receiver, set, "System.Collections.Generic.ICollection`1")
+}
+
+// Follow the selected family to its actual parent Count declaration. Unrelated Collection
+// implementations on the original receiver cannot change that family's size.
+private fun projectedParentCollectionCount(receiver: Any, view: StarProjectionType, collectionName: String): Int {
     return try {
-        val collectionName = if (list.getGenericTypeDefinition().fullName == "System.Collections.Generic.IReadOnlyList`1")
-            "System.Collections.Generic.IReadOnlyCollection`1" else "System.Collections.Generic.ICollection`1"
         var getter: StarProjectionMethod? = null
-        for (parent in list.getInterfaces()) {
+        for (parent in view.getInterfaces()) {
             if (!parent.isGenericType || parent.getGenericTypeDefinition().fullName != collectionName) continue
             for (method in parent.getMethods()) {
                 if (method.name != "get_Count" || method.getParameters().size != 0) continue
-                if (getter != null) throw IllegalStateException("Ambiguous List Count slot")
+                if (getter != null) throw IllegalStateException("Ambiguous parent Count slot")
                 getter = method
             }
         }
-        val selected = getter ?: throw IllegalStateException("Missing List Count slot")
+        val selected = getter ?: throw IllegalStateException("Missing parent Count slot")
         selected.invoke(receiver, arrayOfNulls<Any?>(0)) as Int
     } catch (failure: StarProjectionInvocationException) {
         throw (failure.innerException ?: failure)

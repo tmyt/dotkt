@@ -4,6 +4,22 @@ import NUnit.Framework.TestAttribute
 import roundtrip.emptiness.*
 
 class ProjectedEmptinessTests {
+    @TestAttribute fun importedListOperationsKeepTheirFamily() {
+        val value: Any = CollectionStorageInterop.ListAndIndependentCollection()
+        val list = value as List<*>
+        check(!importedListIsEmpty(value))
+        check(!importedProjectedIsEmpty(list))
+        val range = importedListRange(list)
+        check(range.size == 2 && range.listIterator(1).next() == 1)
+    }
+
+    @TestAttribute fun importedSetOperationsKeepTheirFamily() {
+        val value: Any = CollectionStorageInterop.MutableSetAndReadOnlyList()
+        val set = value as Set<*>
+        check(importedSetCount(set) == 3)
+        check(!importedSetIsEmpty(set))
+    }
+
     @TestAttribute fun importedCollectionCountAcceptsRawAndGenericCollections() {
         val raw = System.Collections.ArrayList()
         raw.Add(7)

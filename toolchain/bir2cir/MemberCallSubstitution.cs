@@ -2232,7 +2232,7 @@ static class MemberCallSubstitution
             else if (projected)
                 helperMethod = helperMethod switch
                 {
-                    "clrCollIsEmpty" => "clrProjectedCollIsEmpty",
+                    "clrCollIsEmpty" => ProjectedIsEmptyHelper(ownerFqn),
                     "clrCollContains" => "clrProjectedCollContains",
                     "clrCollContainsAll" => "clrProjectedCollContainsAll",
                     "clrListIndexOf" => "clrProjectedListIndexOf",
@@ -2244,6 +2244,15 @@ static class MemberCallSubstitution
         }
         return null;
     }
+
+    internal static string ProjectedIsEmptyHelper(string owner) => owner switch
+    {
+        "kotlin.collections.List" or "kotlin.collections.MutableList" => "clrProjectedListIsEmpty",
+        "kotlin.collections.Set" => "clrProjectedSetIsEmpty",
+        "kotlin.collections.MutableSet" => "clrProjectedMutableSetIsEmpty",
+        "kotlin.collections.MutableCollection" => "clrProjectedMutableCollIsEmpty",
+        _ => "clrProjectedCollIsEmpty",
+    };
 
     internal static JsonArray CollectionHelperSig(string owner, string method)
     {
@@ -2268,7 +2277,9 @@ static class MemberCallSubstitution
             (_, "clrProjectedCollContains") => new TypeNode[] { new TypeNode.Fqn("kotlin.Any"), tv },
             (_, "clrProjectedCollContainsAll") => new TypeNode[]
                 { new TypeNode.Fqn("kotlin.Any"), Gen("kotlin.collections.Collection") },
-            (_, "clrProjectedCollIsEmpty") => new[] { new TypeNode.Fqn("kotlin.Any") },
+            (_, "clrProjectedCollIsEmpty" or "clrProjectedListIsEmpty" or "clrProjectedSetIsEmpty"
+                or "clrProjectedMutableSetIsEmpty" or "clrProjectedMutableCollIsEmpty") =>
+                new[] { new TypeNode.Fqn("kotlin.Any") },
             (_, "clrListSet") => new TypeNode[] { Gen("kotlin.collections.MutableList"), new TypeNode.Fqn("kotlin.Int"), tv },
             (_, "clrListRemoveAt") => new TypeNode[] { Gen("kotlin.collections.MutableList"), new TypeNode.Fqn("kotlin.Int") },
             (_, "clrProjectedListSet") => new TypeNode[]

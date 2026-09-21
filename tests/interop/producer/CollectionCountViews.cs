@@ -61,6 +61,27 @@ public sealed class ListAndIndependentCollection : IReadOnlyList<int>, IReadOnly
     IEnumerator IEnumerable.GetEnumerator() => throw new System.NotSupportedException();
 }
 
+public sealed class MutableSetAndReadOnlyList : HashSet<string>, IReadOnlyList<int>
+{
+    public MutableSetAndReadOnlyList() { Add("a"); Add("b"); Add("c"); }
+    int IReadOnlyCollection<int>.Count => 2;
+    int IReadOnlyList<int>.this[int index] => index;
+    IEnumerator<int> IEnumerable<int>.GetEnumerator() => throw new System.NotSupportedException();
+}
+
+public sealed class MutableListAndMutableCollection : List<int>, ICollection<string>
+{
+    public MutableListAndMutableCollection() { Add(7); Add(9); }
+    int ICollection<string>.Count => 3;
+    bool ICollection<string>.IsReadOnly => false;
+    void ICollection<string>.Add(string value) => throw new System.NotSupportedException();
+    void ICollection<string>.Clear() => throw new System.NotSupportedException();
+    bool ICollection<string>.Contains(string value) => false;
+    void ICollection<string>.CopyTo(string[] array, int index) => throw new System.NotSupportedException();
+    bool ICollection<string>.Remove(string value) => false;
+    IEnumerator<string> IEnumerable<string>.GetEnumerator() => throw new System.NotSupportedException();
+}
+
 public sealed class RawListAndDictionary : ArrayList, IReadOnlyDictionary<string, int>
 {
     public RawListAndDictionary() { Add(7); Add(9); }

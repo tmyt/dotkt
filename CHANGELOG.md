@@ -7,6 +7,11 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Projected List and Set operations retain their collection family (#791).** Count and foreign
+  default emptiness select the parent of the requested List/Set view, not an unrelated Collection
+  implemented by the same object. List iterators and sublist bounds use that same family;
+  Kotlin emptiness overrides and genuinely ambiguous collection views remain authoritative.
+
 - **Inherited foreign generic methods retain their constructed owner (#790).** Calls through Kotlin subclasses,
   including `this`, bound references and cross-DLL consumers, match the reference hierarchy through recorded
   declaration identity without losing generic or nested-owner arguments. Declaration signatures and constructed
