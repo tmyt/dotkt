@@ -1999,6 +1999,10 @@ Consequences:
   `UByte`/`UByteArray` round-trip faithfully through a DotKt emit → re-consume cycle.
 - `UByteArray` is represented at runtime as a native `System.Byte[]` (like `ByteArray` is `System.SByte[]`); its
   `ubyteArrayOf`/indexing/`size`/iteration are native array operations, not calls on a wrapper object.
+- Native arrays cannot host Kotlin instance method bodies. `bir2cir` places those bodies in static helpers with an
+  explicit native-array receiver, for generic, primitive, and unsigned arrays alike. `iterator()` keeps its Kotlin
+  implementation and live array storage; unsigned iterators produce unsigned elements rather than borrowing the
+  signed array's iterator. The frontend retains these declarations, and `ilemit` consumes the exact helper calls.
 - **Escape hatch for signed-byte consumers:** `UByteArray.toByteArray()` and `ByteArray.toUByteArray()` reinterpret
   between the two. On the CLR `System.Byte[]` and `System.SByte[]` share identical storage and are freely
   interchangeable at runtime (ECMA reduced-type array compatibility), so these lower to a **reinterpret cast — a VIEW,

@@ -209,14 +209,18 @@ static class AliasHelperHoist
                 if (value != null) RewriteDelegateOwner(value, oldOwner, newOwner, method);
     }
 
-    // A top-level type def whose FQN is a @ClrTypeAlias owner in the ref.dll (the same index the type-token lowering and
-    // member-call substitution use). Only such a def is dropped/hoisted, so a non-alias plain type can never be lost.
+    // Native arrays also replace their semantic owner with CLR storage that cannot host Kotlin instance bodies.
+    // Share this representation classification with call routing; ordinary user classes retain their TypeDef.
+    internal static bool IsNativeArrayOwner(string owner) =>
+        owner == "kotlin.Array" || BirTypeLowering.PrimArrayElem.ContainsKey(owner);
+
+    // Only a representation-bound declaration is dropped/hoisted. Nested ownership shells remain when needed.
     static bool IsAliasTypeDef(JsonObject td, ReferenceMetadataIndex refs, out string fqn)
     {
         fqn = null;
         if ((td["name"] as JsonValue)?.GetValue<string>() is not string name) return false;
         var bare = ReferenceMetadataIndex.BareOwnerFqn(name);
-        if (!refs.Aliases.ContainsKey(bare)) return false;
+        if (!refs.Aliases.ContainsKey(bare) && !IsNativeArrayOwner(bare)) return false;
         fqn = bare;
         return true;
     }
@@ -233,6 +237,12 @@ static class AliasHelperHoist
                 (t["semanticOwner"] as JsonValue)?.GetValue<string>() == ownerName)
             .ToArray();
         if (ownedTypes.Length == 0) return null;
+        // The owner's executable bodies now live in a sibling static helper, not the ownership shell.
+        // Private nested implementation types must therefore be assembly-accessible to those bodies.
+        // The reference declaration keeps its Kotlin visibility; this is only the physical runtime boundary.
+        foreach (var owned in ownedTypes)
+            if ((owned["vis"] as JsonValue)?.GetValue<string>() == "private")
+                owned["vis"] = "internal";
         var carrierNames = ownedTypes
             .Where(t => t["companionCarrier"] is JsonObject)
             .Select(t => (t["name"] as JsonValue)?.GetValue<string>())
@@ -284,7 +294,7 @@ static class AliasHelperHoist
         // shorthand (`ubyte`) that ilemit cannot resolve. They must NOT be hoisted — a call `u.toString()` defers to
         // the BCL primitive's ToString via member-call substitution. (A non-value alias like Boolean DOES hoist its
         // Equals/GetHashCode/ToString — those carry real Kotlin bodies and no erased field.)
-        var isInlineValue = refs.IsInlineValueClass(fqn);
+        var isInlineValue = (td["mods"]?["value"] as JsonValue)?.GetValue<bool>() == true;
         var methods = new JsonArray();
         foreach (var m in td["methods"] as JsonArray ?? new JsonArray())
         {
@@ -364,6 +374,10 @@ static class AliasHelperHoist
     internal static TypeNode ReceiverType(string owner, NullableRepresentationFrame frame,
         GenericRepresentationPolicy representations)
     {
+        // kotc represents Array<E> structurally in type positions; unlike specialized array classifiers,
+        // an FQN named kotlin.Array is the declaration owner, not an array storage type.
+        if (owner == "kotlin.Array")
+            return new TypeNode.Array(new TypeNode.Tv("type", 0));
         if (frame.SourceArity == 0) return new TypeNode.Fqn(owner);
         var source = Enumerable.Range(0, frame.SourceArity).Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray();
         TypeNode Argument(TypeNode type, NullableRepresentationFrame.Role role) =>

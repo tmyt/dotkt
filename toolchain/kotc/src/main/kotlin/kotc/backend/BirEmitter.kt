@@ -1014,16 +1014,12 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 		// stdlib types are origin DEFINED in the stdlib build and thus kept; in an app build they come from the -classpath
 		// jar and are not re-declared here at all.)
 		val userDefined: (IrClass) -> Boolean = { it.origin.toString() == "DEFINED" }
-		// The 4 unsigned specialized array value classes (`UByteArray`/`UShortArray`/`UIntArray`/`ULongArray`) live in
-		// the stdlib source (libraries/stdlib/unsigned/src), so unlike the signed `IntArray` builtins they reach kotc —
-		// but as of #76 they are a native CLR array family EXACTLY like `IntArray` (kotc emits the faithful FQN, bir2cir
-		// decomposes to `Array(elem)`). A native array is NEVER emitted as a type, so filter their class definitions out
-		// in ALL builds (read the IR predicate off the class's defaultType, not an FQN set).
+		// Keep native-array declarations and their Kotlin member bodies. Whether their receivers become CLR arrays
+		// and how those bodies are represented are bir2cir decisions, just like the alias-class bodies above.
 		val classes = file.declarations.filterIsInstance<IrClass>().filter {
 			it.kind == ClassKind.CLASS &&
 				userDefined(it) &&
-				it.fqNameWhenAvailable?.asString() !in CLR_COMPILE_TIME_INTRINSIC_CLASSES &&
-				!it.defaultType.isUnsignedArray()
+				it.fqNameWhenAvailable?.asString() !in CLR_COMPILE_TIME_INTRINSIC_CLASSES
 		}
 		// `object Foo { ... }` (non-companion) -> a singleton class with a static `INSTANCE` field; `IrGetObjectValue`
 		// loads it. The shared-state-via-`object` case (feedback item 10). Companion/anonymous objects are handled

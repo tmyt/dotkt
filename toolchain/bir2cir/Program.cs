@@ -1210,6 +1210,10 @@ sealed class Pipeline
             // `System.Collections.IEnumerable`/`IEnumerator` + an element cast. Non-ref; before type lowering (the src's
             // `kotlin.sequences.Sequence` FQN is still in the source vocabulary).
             if (!_options.RefBuild) SequenceForEachLowering.Apply(substituted);
+            // All declaration shaping and captured Kotlin body metadata are complete. A reference assembly has
+            // no executable implementation: remove its bodies before binding physical calls that will never be
+            // emitted. Signatures, constraints, constructor delegation, inline/default payloads and attributes stay.
+            if (_options.RefBuild) RefBodySquash.Squash(substituted);
             // Resolve an attributed callStatic to the referenced declaration while its Kotlin descriptor still
             // distinguishes shapes that share one CLR erasure (`T?` vs object, function-return `T?` vs object).
             // The selected declaration then follows the ordinary nullable/alias/type transform into physical CIR.
@@ -1392,17 +1396,12 @@ sealed class Pipeline
         // PHASE 3B — metadata, exact external identities, and validation over the now-stable module graph.
         foreach (var (lowered, outputName) in loweredRoots)
         {
-            // REFERENCE build only: squash every declaration body to `throw NotImplementedException()` so the ref
-            // assembly is metadata-only. Keeps ALL metadata (signatures/types/supertypes/generics/attrs) intact —
-            // only the body STATEMENTS change. This is what makes it safe for a bare-value kotlin.* primitive kept
-            // verbatim in the ref to appear in a signature without any real body ever emitting arithmetic/box/conv IL.
-            if (_options.RefBuild) RefBodySquash.Squash(lowered);
             // ROUNDTRIP METADATA (#71 S2): GENERATE every [Kotlin*]/[Nullable]/[NullableContext] attribute as ordinary
             // CIR `attrs`/`retAttrs` entries (ilemit then only STAMPS them via its generic BuildCab path — no Kotlin
             // knowledge left in ilemit). Runs on the fully-lowered decls so the materialized facts (nullableFlags,
             // suspendFnType, inlineBir, mods, suspendBridge, readOnly) are all present. SKIPPED in the runtime build
             // (`!SubstituteStdlibBuild`) — the gate that REPLACES ilemit's deleted `_stripMetadata`. Placed after
-            // RefBodySquash so the squash (bodies only) does not disturb the stamped attrs. The attribute-class DEFS
+            // the earlier reference-body squash, which preserves all captured metadata. The attribute-class DEFS
             // are emitted ONCE below (SynthDefsFile), not per-file.
             if (!_options.SubstituteStdlibBuild) RoundtripMetadata.Stamp(lowered);
             // RUNTIME build: strip every applied user annotation (kotc's kotlin.Deprecated/SinceKotlin/InlineOnly/…) —
