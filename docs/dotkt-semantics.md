@@ -179,6 +179,10 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   supplied by that storage; the runtime receives physical type tokens rather than reconstructing Kotlin metadata.
   Unrelated standalone Collection contracts remain eligible, even when a List or Set is present. Reflection order
   never selects a winner. A source-authored concrete generic view keeps its exact binding.
+  Distinct element closures remain ambiguous even when split between read-only and mutable CLR definitions;
+  read-only preference applies only when both represent the same element closure. MutableCollection Count selects
+  its eligible mutable Collection contract, not an unrelated read-only one. Existential List Count and indexed access
+  prefer an eligible generic List view over raw IList storage.
   An existing generic Count view retains precedence; raw Count
   is used only when no eligible generic Collection face exists, not to mask an ambiguous view or a failing getter. Pinned by `RawCollectionIsEmptyTests`,
   `ProjectedIsEmptyOverrideTests`, `CollectionCountViewTests`, and `ProjectedEmptinessTests`.

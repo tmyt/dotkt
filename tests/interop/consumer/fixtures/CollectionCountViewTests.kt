@@ -3,6 +3,7 @@ import CollectionStorageInterop.RawCollectionEmptiness
 
 private fun collectionViewCount(value: Collection<*>): Int = value.size
 private fun collectionViewEmpty(value: Collection<*>): Boolean = value.isEmpty()
+private fun mutableCollectionViewCount(value: MutableCollection<*>): Int = value.size
 private fun listUpcastCount(value: Any): Int {
     check(value is MutableList<*>)
     val collection: Collection<*> = value
@@ -17,6 +18,49 @@ private class KotlinListWithDictionary : IterableClassifierStorage.ListAndDictio
 private class KotlinSetWithDictionary : IterableClassifierStorage.SetAndDictionary()
 
 class CollectionCountViewTests {
+    @TestAttribute fun mutableCollectionUsesOnlyItsMutableClosure() {
+        val value: Any = CollectionStorageInterop.MutableListAndReadOnlyCollection()
+        check((value as MutableCollection<*>).size == 2)
+        check(mutableCollectionViewCount(value as MutableCollection<*>) == 2)
+    }
+
+    @TestAttribute fun unrelatedReadOnlyAndMutableClosuresRemainAmbiguous() {
+        val value: Any = CollectionStorageInterop.MutableListAndReadOnlyCollection()
+        var caught = false
+        try { collectionViewCount(value as Collection<*>) } catch (failure: System.InvalidOperationException) {
+            caught = true
+        }
+        check(caught)
+    }
+
+    @TestAttribute fun listAndCollectionUseTheSameGenericCountBeforeRawStorage() {
+        val value: Any = CollectionStorageInterop.RawAndGenericList()
+        val list = value as List<*>
+        check(list.size == 2)
+        check(list[0] == 7)
+        check(!list.isEmpty())
+        val collection: Collection<*> = list
+        check(collection.size == 2)
+        check(collectionViewCount(collection) == 2)
+    }
+
+    @TestAttribute fun rawListCountPreservesNativeInvocationException() {
+        val raw = RawCollectionEmptiness.InvocationFailure()
+        raw.ThrowOnCount = true
+        val value: Any = raw
+        var caught: Any? = null
+        try { (value as List<*>).size } catch (failure: System.Exception) { caught = failure }
+        check(caught === raw.Failure)
+        check(raw.Reads == 1)
+    }
+
+    @TestAttribute fun explicitObjectCollectionCastAndLocalKeepTheExactSlot() {
+        val value: Any = CollectionStorageInterop.ObjectCollectionAndIntList()
+        check((value as Collection<Any>).size == 3)
+        val collection = value as Collection<Any>
+        check(collection.size == 3)
+    }
+
     @TestAttribute fun independentCollectionClosureIsNotDiscardedByAList() {
         val value: Any = CollectionStorageInterop.ListAndIndependentCollection()
         var caught = false

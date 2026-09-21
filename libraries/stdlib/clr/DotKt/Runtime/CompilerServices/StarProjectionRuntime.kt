@@ -926,6 +926,11 @@ private fun findErasedProjectedView(receiver: Any, preferred: String, fallback: 
             fallbackMatch = candidate
         }
     }
+    // Preference chooses between two representations of the same element closure, not between
+    // unrelated contracts. Distinct element types remain ambiguous across the two definitions too.
+    if (preferredMatch != null && fallbackMatch != null
+        && preferredMatch.getGenericArguments()[0] != fallbackMatch.getGenericArguments()[0])
+        throw IllegalStateException("Ambiguous projected view " + preferred + " or " + fallback)
     return preferredMatch ?: fallbackMatch
 }
 
@@ -939,18 +944,6 @@ private fun isIndependentCollectionView(view: StarProjectionType): Boolean {
         else -> false
     }
 }
-
-private fun erasedProjectedView(receiver: Any, preferred: String, fallback: String): StarProjectionType =
-    findErasedProjectedView(receiver, preferred, fallback)
-        ?: throw UnsupportedOperationException("Projected receiver has no " + preferred + " or " + fallback + " surface")
-
-private fun erasedProjectedMethod(
-    receiver: Any,
-    preferred: String,
-    fallback: String,
-    name: String,
-    parameterCount: Int,
-): StarProjectionMethod = erasedProjectedMethod(erasedProjectedView(receiver, preferred, fallback), name, parameterCount)
 
 private fun erasedProjectedMethod(view: StarProjectionType, name: String, parameterCount: Int): StarProjectionMethod {
     var match: StarProjectionMethod? = null
@@ -980,10 +973,12 @@ internal fun projectedCollectionCountErased(receiver: Any): Int {
 }
 
 @PublishedApi
-internal fun projectedListCountErased(receiver: Any): Int = try {
-    if (receiver is StarProjectionRawList && !rawListIsMapStorage(receiver)) receiver.count else {
-        val list = erasedProjectedView(receiver,
-            "System.Collections.Generic.IReadOnlyList`1", "System.Collections.Generic.IList`1")
+internal fun projectedListCountErased(receiver: Any): Int {
+    val view = findErasedProjectedView(receiver,
+        "System.Collections.Generic.IReadOnlyList`1", "System.Collections.Generic.IList`1")
+    if (view == null && receiver is StarProjectionRawList && !rawListIsMapStorage(receiver)) return receiver.count
+    val list = view ?: throw UnsupportedOperationException("Projected receiver has no CLR List surface")
+    return try {
         val collectionName = if (list.getGenericTypeDefinition().fullName == "System.Collections.Generic.IReadOnlyList`1")
             "System.Collections.Generic.IReadOnlyCollection`1" else "System.Collections.Generic.ICollection`1"
         var getter: StarProjectionMethod? = null
@@ -997,22 +992,22 @@ internal fun projectedListCountErased(receiver: Any): Int = try {
         }
         val selected = getter ?: throw IllegalStateException("Missing List Count slot")
         selected.invoke(receiver, arrayOfNulls<Any?>(0)) as Int
+    } catch (failure: StarProjectionInvocationException) {
+        throw (failure.innerException ?: failure)
     }
-} catch (failure: StarProjectionInvocationException) {
-    throw (failure.innerException ?: failure)
 }
 
 @PublishedApi
-internal fun projectedListGetErased(receiver: Any, index: Int): Any? = try {
-    if (receiver is StarProjectionRawList && !rawListIsMapStorage(receiver)) receiver.get(index) else erasedProjectedMethod(
-        receiver,
-        "System.Collections.Generic.IReadOnlyList`1",
-        "System.Collections.Generic.IList`1",
-        "get_Item",
-        1,
-    ).invoke(receiver, arrayOf(index))
-} catch (failure: StarProjectionInvocationException) {
-    throw (failure.innerException ?: failure)
+internal fun projectedListGetErased(receiver: Any, index: Int): Any? {
+    val view = findErasedProjectedView(receiver,
+        "System.Collections.Generic.IReadOnlyList`1", "System.Collections.Generic.IList`1")
+    if (view == null && receiver is StarProjectionRawList && !rawListIsMapStorage(receiver)) return receiver.get(index)
+    val list = view ?: throw UnsupportedOperationException("Projected receiver has no CLR List surface")
+    return try {
+        erasedProjectedMethod(list, "get_Item", 1).invoke(receiver, arrayOf(index))
+    } catch (failure: StarProjectionInvocationException) {
+        throw (failure.innerException ?: failure)
+    }
 }
 
 @PublishedApi
@@ -1020,8 +1015,17 @@ internal fun projectedReadOnlyCollectionCountErased(receiver: Any): Int =
     projectedCollectionCountErased(receiver)
 
 @PublishedApi
-internal fun projectedMutableCollectionCountErased(receiver: Any): Int =
-    if (receiver is StarProjectionRawCollection) receiver.count else mutableCollectionCountErased(receiver)
+internal fun projectedMutableCollectionCountErased(receiver: Any): Int {
+    val name = "System.Collections.Generic.ICollection`1"
+    val view = findErasedProjectedView(receiver, name, name, excludeDictionaryStorage = true)
+    if (view == null && receiver is StarProjectionRawCollection) return receiver.count
+    val selected = view ?: throw UnsupportedOperationException("Projected receiver has no mutable CLR Collection surface")
+    return try {
+        erasedProjectedMethod(selected, "get_Count", 0).invoke(receiver, arrayOfNulls<Any?>(0)) as Int
+    } catch (failure: StarProjectionInvocationException) {
+        throw (failure.innerException ?: failure)
+    }
+}
 
 @PublishedApi
 internal fun mutableCollectionCountErased(receiver: Any): Int = try {

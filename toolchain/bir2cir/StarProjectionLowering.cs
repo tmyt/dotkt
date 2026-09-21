@@ -135,7 +135,7 @@ static class StarProjectionLowering
                 && IsIdentityCollection(obj["ownerType"], out var collectionKind, out _)
                 && collectionKind is 0 or 1 or 2 or 5
                 && Str(obj["method"]) == "size" && Str(obj["prop"]) == "get"
-                && LowerCollectionCount(obj, closedViews) is JsonObject collectionCount)
+                && LowerCollectionCount(obj, collectionKind, closedViews) is JsonObject collectionCount)
             {
                 UsedRuntimeFallback = true;
                 Replace(obj, collectionCount);
@@ -159,7 +159,7 @@ static class StarProjectionLowering
                 && IsIdentityCollection(obj["ownerType"], out _, out _)
                 && obj["recv"] is JsonObject identityRecv && Str(identityRecv["k"]) == "cast"
                 && IsIdentityCollection(identityRecv["type"], out var identityKind, out _)
-                && (identityKind is not (3 or 4 or 5) || !HasConcreteTypeArguments(identityRecv["type"]))
+                && !HasConcreteTypeArguments(identityRecv["type"])
                 && LowerIdentityMember(obj, identityRecv, identityKind, refs) is JsonObject identityMember)
             {
                 UsedRuntimeFallback = true;
@@ -383,7 +383,8 @@ static class StarProjectionLowering
 
     // Existential Collection locals/parameters need the same selected physical Count contract as
     // direct casts. A concrete source-authored closure remains owned by the exact foreign binder.
-    static JsonObject LowerCollectionCount(JsonObject call, IReadOnlyDictionary<string, TypeNode.Fqn> closedViews)
+    static JsonObject LowerCollectionCount(JsonObject call, int kind,
+        IReadOnlyDictionary<string, TypeNode.Fqn> closedViews)
     {
         var receiver = call["recv"];
         if (receiver == null || HasConcreteTypeArguments(call["ownerType"])
@@ -391,7 +392,8 @@ static class StarProjectionLowering
                 && HasConcreteTypeArguments(concreteCast["type"])) return null;
         if (receiver is JsonObject local && Str(local["k"]) == "local"
             && Str(local["name"]) is string name && closedViews.ContainsKey(name)) return null;
-        return Call("projectedCollectionCountErased", new TypeNode[] { Any }, Int, receiver.DeepClone());
+        return Call(kind == 5 ? "projectedMutableCollectionCountErased" : "projectedCollectionCountErased",
+            new TypeNode[] { Any }, Int, receiver.DeepClone());
     }
 
     // An existential List can have only a raw IList or only a generic mutable list face. Count/Get
