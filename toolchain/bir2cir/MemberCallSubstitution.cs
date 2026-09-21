@@ -929,6 +929,20 @@ static class MemberCallSubstitution
         return args;
     }
 
+    // Trusted stdlib runtime vocabulary: publish the same declaration-derived storage facts used by
+    // classifier lowering. The runtime consumes closed CLR interfaces; it does not reinterpret Kotlin
+    // metadata or guess storage ownership from a concrete BCL class or its element type.
+    static JsonNode CompilerMetadataIntrinsic(string intrinsic, ReferenceMetadataIndex refs)
+    {
+        if (intrinsic != "dotkt.collectionMapStorageTypes") return null;
+        return new JsonObject {
+            ["k"] = "newArray", ["elem"] = TypeJson.Fqn("System.Type"),
+            ["elems"] = new JsonArray(refs.KotlinMapStorageDefinitions().Select(name => (JsonNode)new JsonObject {
+                ["k"] = "classRef", ["type"] = TypeJson.Fqn(name),
+            }).ToArray()),
+        };
+    }
+
     static JsonNode TransformCall(JsonObject node, ReferenceMetadataIndex refs, bool instance, SubstCtx ctx = null)
     {
         var ownerFqnNode = TypeJson.Read(node[instance ? "ownerType" : "owner"]) as TypeNode.Fqn;
@@ -1018,6 +1032,7 @@ static class MemberCallSubstitution
                     || string.IsNullOrEmpty(selectedIntrinsic))
                     throw new InvalidOperationException(
                         $"bir2cir: selected referenced declaration identity '{selectedId}' lost its intrinsic binding");
+                if (CompilerMetadataIntrinsic(selectedIntrinsic, refs) is JsonNode metadata) return metadata;
                 if (selectedIntrinsic.LastIndexOf('.') is var selectedDot && selectedDot > 0)
                     return ClrCallNode(node,
                         new TypeNode.Fqn(selectedIntrinsic[..selectedDot]),
@@ -1096,7 +1111,8 @@ static class MemberCallSubstitution
                     || (!refs.IsAmbiguousTopLevelIntrinsic(fn) && !refs.HasNonIntrinsicTopLevel(fn)
                         && refs.TryTopLevelIntrinsic(fn, out fq)))
                 && fq.LastIndexOf('.') is var dot && dot > 0)
-                return ClrCallNode(node, new TypeNode.Fqn(fq[..dot]), fq[(dot + 1)..], fq[(dot + 1)..], args0, refs, instance: false, refs.TopLevelByrefPositions(fn));
+                return CompilerMetadataIntrinsic(fq, refs)
+                    ?? ClrCallNode(node, new TypeNode.Fqn(fq[..dot]), fq[(dot + 1)..], fq[(dot + 1)..], args0, refs, instance: false, refs.TopLevelByrefPositions(fn));
             // bare-intrinsic extension: resolve by the call's FULL ParamKey signature (receiver-first) so it binds the
             // EXACT @ClrIntrinsic overload — `substring(Int)` never captures the same-arity non-intrinsic `substring(IntRange)`
             // (#46 same-name collapse: the IntRange overload has a Kotlin body and must fall through to the top-level path).

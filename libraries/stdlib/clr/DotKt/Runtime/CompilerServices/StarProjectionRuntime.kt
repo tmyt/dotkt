@@ -851,15 +851,71 @@ private fun erasedMutableListMethod(receiver: Any, name: String, parameterCount:
     return match ?: throw IllegalStateException("Missing IList member " + name)
 }
 
-// Read-only projected lists need their IReadOnlyCollection/IReadOnlyList faces. Do not assume an IList face merely
-// because the standard BCL List happens to provide both: a Kotlin implementation of List<E> is allowed to be truly
-// read-only. Prefer the read-only face and fall back to the mutable one only for foreign types exposing IList alone.
-private fun findErasedProjectedView(receiver: Any, preferred: String, fallback: String): StarProjectionType? {
+// bir2cir supplies trusted map-only class-alias storage definitions, exactly as for collection classifiers.
+// Cache those physical type tokens; do not infer Kotlin storage meaning from runtime CLR class names.
+@kotlin.clr.ClrIntrinsic("dotkt.collectionMapStorageTypes")
+@PublishedApi
+internal fun collectionMapStorageTypes(): Array<StarProjectionType> =
+    throw UnsupportedOperationException("compiler intrinsic")
+
+private val collectionMapStorageDefinitions = collectionMapStorageTypes()
+
+private fun collectionMapStorageFaces(type: StarProjectionType): Array<StarProjectionType> {
+    var faces = emptyArray<StarProjectionType>()
+    for (storage in collectionMapStorageDefinitions) {
+        val view = starProjectionClosedView(type, storage) ?: continue
+        faces += view.getInterfaces()
+    }
+    return faces
+}
+
+private fun hasExactFace(faces: Array<StarProjectionType>, face: StarProjectionType): Boolean {
+    for (candidate in faces) if (candidate == face) return true
+    return false
+}
+
+private fun rawListIsMapStorage(receiver: Any): Boolean {
+    for (face in collectionMapStorageFaces(receiver.starProjectionRuntimeType())) {
+        if (face.fullName == "System.Collections.IList") return true
+    }
+    return false
+}
+
+// Prefer the read-only contract and fall back to its mutable counterpart. A List's parent Collection
+// closure can be independent even when the same object also exposes dictionary entry storage.
+private fun findErasedProjectedView(receiver: Any, preferred: String, fallback: String,
+    excludeDictionaryStorage: Boolean = false): StarProjectionType? {
+    val runtimeType = receiver.starProjectionRuntimeType()
+    val interfaces = runtimeType.getInterfaces()
+    val listView = preferred == "System.Collections.Generic.IReadOnlyList`1"
+    val storageFaces = if (excludeDictionaryStorage || listView) collectionMapStorageFaces(runtimeType)
+        else emptyArray<StarProjectionType>()
     var preferredMatch: StarProjectionType? = null
     var fallbackMatch: StarProjectionType? = null
-    for (candidate in receiver.starProjectionRuntimeType().getInterfaces()) {
+    for (candidate in interfaces) {
         if (!candidate.isGenericType) continue
         val definition = candidate.getGenericTypeDefinition().fullName
+        if (definition != preferred && definition != fallback) continue
+        if (listView && hasExactFace(storageFaces, candidate)) continue
+        if (excludeDictionaryStorage) {
+            var dictionaryParent = hasExactFace(storageFaces, candidate)
+            var independentParent = false
+            for (root in interfaces) {
+                if (!root.isGenericType) continue
+                val rootName = root.getGenericTypeDefinition().fullName
+                val dictionary = rootName == "System.Collections.Generic.IDictionary`2"
+                    || rootName == "System.Collections.Generic.IReadOnlyDictionary`2"
+                val independent = isIndependentCollectionView(root) && !hasExactFace(storageFaces, root)
+                if (!dictionary && !independent) continue
+                for (parent in root.getInterfaces()) {
+                    if (parent == candidate) {
+                        if (dictionary) dictionaryParent = true
+                        if (independent) independentParent = true
+                    }
+                }
+            }
+            if (dictionaryParent && !independentParent) continue
+        }
         if (definition == preferred) {
             if (preferredMatch != null && preferredMatch != candidate)
                 throw IllegalStateException("Ambiguous projected view " + preferred)
@@ -870,20 +926,24 @@ private fun findErasedProjectedView(receiver: Any, preferred: String, fallback: 
             fallbackMatch = candidate
         }
     }
+    // Preference chooses between two representations of the same element closure, not between
+    // unrelated contracts. Distinct element types remain ambiguous across the two definitions too.
+    if (preferredMatch != null && fallbackMatch != null
+        && preferredMatch.getGenericArguments()[0] != fallbackMatch.getGenericArguments()[0])
+        throw IllegalStateException("Ambiguous projected view " + preferred + " or " + fallback)
     return preferredMatch ?: fallbackMatch
 }
 
-private fun erasedProjectedView(receiver: Any, preferred: String, fallback: String): StarProjectionType =
-    findErasedProjectedView(receiver, preferred, fallback)
-        ?: throw UnsupportedOperationException("Projected receiver has no " + preferred + " or " + fallback + " surface")
-
-private fun erasedProjectedMethod(
-    receiver: Any,
-    preferred: String,
-    fallback: String,
-    name: String,
-    parameterCount: Int,
-): StarProjectionMethod = erasedProjectedMethod(erasedProjectedView(receiver, preferred, fallback), name, parameterCount)
+// List/Set contribute Kotlin Collection contracts independently of dictionary storage. Select their
+// actual closed parent interfaces, not a guessed element type or the first reflection result.
+private fun isIndependentCollectionView(view: StarProjectionType): Boolean {
+    if (!view.isGenericType) return false
+    return when (view.getGenericTypeDefinition().fullName) {
+        "System.Collections.Generic.IReadOnlyList`1", "System.Collections.Generic.IList`1",
+        "System.Collections.Generic.IReadOnlySet`1", "System.Collections.Generic.ISet`1" -> true
+        else -> false
+    }
+}
 
 private fun erasedProjectedMethod(view: StarProjectionType, name: String, parameterCount: Int): StarProjectionMethod {
     var match: StarProjectionMethod? = null
@@ -899,7 +959,7 @@ private fun erasedProjectedMethod(view: StarProjectionType, name: String, parame
 internal fun projectedCollectionCountErased(receiver: Any): Int {
     val preferred = "System.Collections.Generic.IReadOnlyCollection`1"
     val fallback = "System.Collections.Generic.ICollection`1"
-    val view = findErasedProjectedView(receiver, preferred, fallback)
+    val view = findErasedProjectedView(receiver, preferred, fallback, excludeDictionaryStorage = true)
     // Preserve an existing generic view (and ambiguity errors). Raw Count supplies a capability only when
     // neither generic collection face exists. Native getter exceptions must not be unwrapped as reflection failures.
     if (view == null && receiver is StarProjectionRawCollection) return receiver.count
@@ -913,10 +973,12 @@ internal fun projectedCollectionCountErased(receiver: Any): Int {
 }
 
 @PublishedApi
-internal fun projectedListCountErased(receiver: Any): Int = try {
-    if (receiver is StarProjectionRawList) receiver.count else {
-        val list = erasedProjectedView(receiver,
-            "System.Collections.Generic.IReadOnlyList`1", "System.Collections.Generic.IList`1")
+internal fun projectedListCountErased(receiver: Any): Int {
+    val view = findErasedProjectedView(receiver,
+        "System.Collections.Generic.IReadOnlyList`1", "System.Collections.Generic.IList`1")
+    if (view == null && receiver is StarProjectionRawList && !rawListIsMapStorage(receiver)) return receiver.count
+    val list = view ?: throw UnsupportedOperationException("Projected receiver has no CLR List surface")
+    return try {
         val collectionName = if (list.getGenericTypeDefinition().fullName == "System.Collections.Generic.IReadOnlyList`1")
             "System.Collections.Generic.IReadOnlyCollection`1" else "System.Collections.Generic.ICollection`1"
         var getter: StarProjectionMethod? = null
@@ -930,31 +992,40 @@ internal fun projectedListCountErased(receiver: Any): Int = try {
         }
         val selected = getter ?: throw IllegalStateException("Missing List Count slot")
         selected.invoke(receiver, arrayOfNulls<Any?>(0)) as Int
+    } catch (failure: StarProjectionInvocationException) {
+        throw (failure.innerException ?: failure)
     }
-} catch (failure: StarProjectionInvocationException) {
-    throw (failure.innerException ?: failure)
 }
 
 @PublishedApi
-internal fun projectedListGetErased(receiver: Any, index: Int): Any? = try {
-    if (receiver is StarProjectionRawList) receiver.get(index) else erasedProjectedMethod(
-        receiver,
-        "System.Collections.Generic.IReadOnlyList`1",
-        "System.Collections.Generic.IList`1",
-        "get_Item",
-        1,
-    ).invoke(receiver, arrayOf(index))
-} catch (failure: StarProjectionInvocationException) {
-    throw (failure.innerException ?: failure)
+internal fun projectedListGetErased(receiver: Any, index: Int): Any? {
+    val view = findErasedProjectedView(receiver,
+        "System.Collections.Generic.IReadOnlyList`1", "System.Collections.Generic.IList`1")
+    if (view == null && receiver is StarProjectionRawList && !rawListIsMapStorage(receiver)) return receiver.get(index)
+    val list = view ?: throw UnsupportedOperationException("Projected receiver has no CLR List surface")
+    return try {
+        erasedProjectedMethod(list, "get_Item", 1).invoke(receiver, arrayOf(index))
+    } catch (failure: StarProjectionInvocationException) {
+        throw (failure.innerException ?: failure)
+    }
 }
 
 @PublishedApi
 internal fun projectedReadOnlyCollectionCountErased(receiver: Any): Int =
-    if (receiver is StarProjectionRawCollection) receiver.count else projectedCollectionCountErased(receiver)
+    projectedCollectionCountErased(receiver)
 
 @PublishedApi
-internal fun projectedMutableCollectionCountErased(receiver: Any): Int =
-    if (receiver is StarProjectionRawCollection) receiver.count else mutableCollectionCountErased(receiver)
+internal fun projectedMutableCollectionCountErased(receiver: Any): Int {
+    val name = "System.Collections.Generic.ICollection`1"
+    val view = findErasedProjectedView(receiver, name, name, excludeDictionaryStorage = true)
+    if (view == null && receiver is StarProjectionRawCollection) return receiver.count
+    val selected = view ?: throw UnsupportedOperationException("Projected receiver has no mutable CLR Collection surface")
+    return try {
+        erasedProjectedMethod(selected, "get_Count", 0).invoke(receiver, arrayOfNulls<Any?>(0)) as Int
+    } catch (failure: StarProjectionInvocationException) {
+        throw (failure.innerException ?: failure)
+    }
+}
 
 @PublishedApi
 internal fun mutableCollectionCountErased(receiver: Any): Int = try {

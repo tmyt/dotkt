@@ -172,9 +172,20 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   and `ReifiedCollectionIdentityTests`.
   Projected `isEmpty()` first honors the Kotlin-owned override slot. Its foreign default uses the actual
   collection Count, including raw `ICollection.Count`, without requiring a generic collection face or enumerating
-  the receiver. For this projected `isEmpty` default, an existing generic Count view retains precedence; raw Count
-  is used only when no generic Collection face exists, not to mask an ambiguous view or a failing getter. Pinned by `RawCollectionIsEmptyTests`,
-  `ProjectedIsEmptyOverrideTests`, and `ProjectedEmptinessTests`.
+  the receiver. Existential Collection `size` and this projected `isEmpty` default share the selected Count view.
+  Independent List/Set contracts select their actual closed Collection parent interfaces, so dictionary entry
+  storage is not a competing view. Multiple independent eligible closures remain ambiguous; reflection order
+  never establishes independence. Compiler-derived map-only storage definitions also exclude List interfaces
+  supplied by that storage; the runtime receives physical type tokens rather than reconstructing Kotlin metadata.
+  Unrelated standalone Collection contracts remain eligible, even when a List or Set is present. Reflection order
+  never selects a winner. A source-authored concrete generic view keeps its exact binding.
+  Distinct element closures remain ambiguous even when split between read-only and mutable CLR definitions;
+  read-only preference applies only when both represent the same element closure. MutableCollection Count selects
+  its eligible mutable Collection contract, not an unrelated read-only one. Existential List Count and indexed access
+  prefer an eligible generic List view over raw IList storage.
+  An existing generic Count view retains precedence; raw Count
+  is used only when no eligible generic Collection face exists, not to mask an ambiguous view or a failing getter. Pinned by `RawCollectionIsEmptyTests`,
+  `ProjectedIsEmptyOverrideTests`, `CollectionCountViewTests`, and `ProjectedEmptinessTests`.
   Concrete `Any`/`Any?` element arguments are not stars: value-producing casts retain their original typed
   CLR interface check after the composite guard, including safe-cast failure behavior and typed return edges.
 - **Iterable identity is distinct from its CLR enumeration face.** Kotlin implementations carry nominal
