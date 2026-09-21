@@ -7,6 +7,11 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Inherited public properties remain visible beside explicit interface slots (#793).** DLL-to-KLIB
+  projection retains the inherited property's constructed signature instead of letting the hidden
+  interface-completion member hide it. Class access and interface dispatch remain separate through
+  Kotlin subclasses, generic base chains, and DLL boundaries.
+
 - **Projected List and Set operations retain their collection family (#791).** Count and foreign
   default emptiness select the parent of the requested List/Set view, not an unrelated Collection
   implemented by the same object. List iterators and sublist bounds use that same family;

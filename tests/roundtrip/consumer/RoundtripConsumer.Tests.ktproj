@@ -20,6 +20,7 @@
     <ProjectReference Include="../generic-value-interop/GenericValueInterop.csproj" />
     <ProjectReference Include="../default-property-slot-producer/RoundtripDefaultPropertySlot.ktproj" />
     <ProjectReference Include="../property-slot-producer/RoundtripPropertySlot.csproj" />
+    <ProjectReference Include="../property-metadata-producer/PropertyMetadata.csproj" />
     <!-- The MULTIPLATFORM producer (Sdk="DotKt.Sdk.Mpp"): the migrated ktproj-mpp + ktproj-genov-common cases need
          the common/(expect) vs clr/(actual) source-set split, a project-level flag the single-platform
          RoundtripProducer cannot carry — so they live in a SECOND producer, consumed cross-module here alongside
