@@ -2723,6 +2723,15 @@ internal sealed class AssemblyScanner : IDisposable
             if (!groupIsExplicit && propertyNames.Contains(propertyName)) continue;
             if (groupIsExplicit)
             {
+                // A hidden explicit slot must not hide a separately inherited class property.
+                // Retain that declaration's constructed signature alongside the slot-completion fact,
+                // just as when the visible property is declared directly on this class.
+                if (!propertyNames.Contains(propertyName) &&
+                    InheritedVisibleProperty(def, propertyName, names, signatures, typeContext) is { } inheritedProperty)
+                {
+                    result.Property.Add(inheritedProperty);
+                    propertyNames.Add(propertyName);
+                }
                 // Kotlin has no explicit-interface-implementation declaration syntax. When a CLR class owns both a
                 // final public member and a private MethodImpl for the same source signature, the ordinary member must
                 // participate in frontend override resolution so `class D : C(), I` can name I's reimplementation.
@@ -3354,6 +3363,75 @@ internal sealed class AssemblyScanner : IDisposable
         if (candidates.Count != 1) return false;
         declarationHandle = candidates[0];
         return true;
+    }
+
+    private Property? InheritedVisibleProperty(
+        TypeDefinition definition,
+        string name,
+        NameTable names,
+        SignatureDecoder signatures,
+        GenericContext context)
+    {
+        var reader = _md;
+        var decoder = signatures;
+        string? definitionPath = _definitionPath;
+        ImmutableArray<KType> arguments = [];
+        var visited = new HashSet<string>(StringComparer.Ordinal);
+        while (!definition.BaseType.IsNil)
+        {
+            var baseEntity = definition.BaseType;
+            if (!_publicTypeCatalog.TryResolveDefinition(reader, baseEntity, out var resolved, definitionPath))
+                return null;
+            var constructed = SubstituteTypeParameters(
+                decoder.DecodeEntity(baseEntity, context, platform: false), arguments);
+            var key = AssemblySimpleName(resolved.Reader) + ":" + MetadataTokens.GetRowNumber(resolved.Handle);
+            if (!visited.Add(key)) return null;
+            arguments = constructed.Argument.Select(argument => argument.Type).ToImmutableArray();
+            reader = resolved.Reader;
+            definitionPath = resolved.DefinitionPath;
+            decoder = DecoderFor(reader, names, signatures, definitionPath);
+            definition = reader.GetTypeDefinition(resolved.Handle);
+            context = new GenericContext(resolved.Handle, default,
+                definition.GetGenericParameters().ToDictionary(handle => handle,
+                    handle => reader.GetGenericParameter(handle).Index));
+            foreach (var propertyHandle in definition.GetProperties())
+            {
+                var property = reader.GetPropertyDefinition(propertyHandle);
+                var accessors = property.GetAccessors();
+                if (KotlinPropertySourceName(reader, decoder.Attributes, property, accessors) != name) continue;
+                var representativeHandle = accessors.Getter.IsNil ? accessors.Setter : accessors.Getter;
+                if (representativeHandle.IsNil) continue;
+                var representative = reader.GetMethodDefinition(representativeHandle);
+                if (!IsPublicOrProtected(representative.Attributes) ||
+                    (representative.Attributes & MethodAttributes.Static) != 0) continue;
+                var signature = property.DecodeSignature(decoder, context with { Method = representativeHandle });
+                if (signature.ParameterTypes.Length != 0) continue;
+                var physicalType = SubstituteTypeParameters(signature.ReturnType, arguments);
+                var propertyType = !accessors.Getter.IsNil
+                    ? ProjectInheritedReturn(reader, representativeHandle, representative, physicalType, decoder)
+                    : ProjectInheritedType(reader,
+                        representative.GetParameters().FirstOrDefault(parameter =>
+                            reader.GetParameter(parameter).SequenceNumber == 1),
+                        physicalType, representativeHandle, decoder);
+                var canWrite = !accessors.Setter.IsNil &&
+                    IsPublicOrProtected(reader.GetMethodDefinition(accessors.Setter).Attributes);
+                var projected = new Property
+                {
+                    Name = names.String(name),
+                    ReturnType = propertyType,
+                    Flags = Flags.Property(representative.Attributes, canWrite, isStatic: false),
+                    SetterValueParameter = canWrite
+                        ? new ValueParameter { Name = names.String("value"), Type = propertyType.Clone() }
+                        : null,
+                };
+                if (!accessors.Getter.IsNil)
+                    projected.GetterFlags = Flags.Accessor(reader.GetMethodDefinition(accessors.Getter).Attributes);
+                if (canWrite)
+                    projected.SetterFlags = Flags.Accessor(reader.GetMethodDefinition(accessors.Setter).Attributes);
+                return projected;
+            }
+        }
+        return null;
     }
 
     private SignatureDecoder DecoderFor(
@@ -5531,9 +5609,12 @@ internal sealed class AssemblyScanner : IDisposable
     }
 
     private (string Name, int Kind, string Association, string? SourceAssociation)? KotlinPropertyAccessorCarrier(
-        MethodDefinitionHandle methodHandle)
+        MethodDefinitionHandle methodHandle) => KotlinPropertyAccessorCarrier(_attrs, methodHandle);
+
+    private static (string Name, int Kind, string Association, string? SourceAssociation)? KotlinPropertyAccessorCarrier(
+        MetadataAttributes attributes, MethodDefinitionHandle methodHandle)
     {
-        using var document = _attrs.CarrierDocument(
+        using var document = attributes.CarrierDocument(
             methodHandle, MetadataAttributes.DotKtNs + "KotlinPropertyAccessorAttribute");
         if (document is null) return null;
         var root = document.RootElement;
@@ -5563,18 +5644,22 @@ internal sealed class AssemblyScanner : IDisposable
         return (name, kind, association, hasSourceAssociation ? sourceAssociationNode.GetString() : null);
     }
 
-    private string KotlinPropertySourceName(PropertyDefinition property, PropertyAccessors accessors)
+    private string KotlinPropertySourceName(PropertyDefinition property, PropertyAccessors accessors) =>
+        KotlinPropertySourceName(_md, _attrs, property, accessors);
+
+    private static string KotlinPropertySourceName(MetadataReader reader, MetadataAttributes attributes,
+        PropertyDefinition property, PropertyAccessors accessors)
     {
         var carriedNames = new[] { accessors.Getter, accessors.Setter }
             .Where(handle => !handle.IsNil)
-            .Select(KotlinPropertyAccessorCarrier)
+            .Select(handle => KotlinPropertyAccessorCarrier(attributes, handle))
             .Where(carrier => carrier is not null)
             .Select(carrier => carrier!.Value.Name)
             .Distinct(StringComparer.Ordinal)
             .ToArray();
         if (carriedNames.Length > 1)
             throw new InvalidDataException("Property accessors carry inconsistent Kotlin source names");
-        return carriedNames.Length == 1 ? carriedNames[0] : _md.GetString(property.Name);
+        return carriedNames.Length == 1 ? carriedNames[0] : reader.GetString(property.Name);
     }
 
     private string? KotlinSourceMethodName(MethodDefinitionHandle methodHandle)
