@@ -1783,7 +1783,7 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 		val argsJson = regularArgs(call).joinToString(",") { expr(it) }
 		// kotc emits the PLAIN Kotlin return type; a `suspend` callee is marked by `suspendTag` only (the Task/await
 		// lowering is a deferred downstream layer). No coroutine ABI (Task<T>) is baked here.
-		val ret = birType(call.type).toJson()
+		val ret = inMemberDeclarationFrame(callee) { birType(callee.returnType).toJson() }
 		val suspendTag = suspendCallTag(callee)
 		// A .NET operator (`Vec2 + Vec2` -> op_Addition) is emitted here as the PLAIN Kotlin operator identity
 		// (`callInstance method="plus" recv:<a> args:[<b>]`); bir2cir's NetInteropBinding resolves the owner off

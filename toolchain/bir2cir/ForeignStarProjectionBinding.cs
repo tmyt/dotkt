@@ -227,6 +227,19 @@ static class ForeignStarProjectionBinding
         {
             var receiverType = NodeType.Of(receiver);
             if (!TryForeignStarOwner(receiverType, refs, out owner, out _)) return false;
+            // A projected receiver can select a fully known base construction. Its descriptor is in that
+            // authored base's frame, not the receiver's unrelated generic frame. Recover the stated nominal
+            // view from the opaque receiver and let ordinary member binding consume the selected descriptor.
+            if (!ContainsExistential(authoredOwner)
+                && refs.ResolveForeignProjectionType(authoredOwner.Name, authoredOwner.Args) is { } nominalOwner
+                && nominalOwner.GetGenericArguments().Length == (authoredOwner.Args?.Length ?? 0))
+            {
+                obj["recv"] = new JsonObject
+                {
+                    ["k"] = "cast", ["type"] = TypeJson.Write(authoredOwner), ["e"] = receiver.DeepClone(),
+                };
+                return false;
+            }
         }
         if (refs.IsByRefLikeFqn(owner))
             throw new NotSupportedException(
