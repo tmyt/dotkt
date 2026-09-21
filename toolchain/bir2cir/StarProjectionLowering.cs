@@ -241,6 +241,16 @@ static class StarProjectionLowering
             var core = StripOuterWrappers(closed);
             if (core is not TypeNode.Fqn collection || collection.Args is not { Length: 1 } elementArgs
                 || ContainsProjection(elementArgs[0])) continue;
+            var sourceSet = new[] { argument["type"], argument["sty"] }
+                .Select(TypeJson.Read).Where(type => type != null).Select(StripOuterWrappers)
+                .OfType<TypeNode.Fqn>().FirstOrDefault(type =>
+                    type.Name is "kotlin.collections.Set" or "kotlin.collections.MutableSet");
+            var setArgument = collection.Name == "kotlin.collections.Set"
+                || sourceSet != null && collection.Name is "kotlin.collections.Collection" or "kotlin.collections.Iterable";
+            // Keep a concrete witness when its storage already supplies the requested family. MutableSet uses
+            // ICollection<T>, which supplies IEnumerable<T> but need not supply readonly Collection storage.
+            if (setArgument && sourceSet?.Args is { Length: > 0 } && !ContainsProjection(sourceSet)
+                && (sourceSet.Name == "kotlin.collections.Set" || collection.Name == "kotlin.collections.Iterable")) continue;
             var helper = collection.Name switch
             {
                 "kotlin.collections.Iterable" => "clrProjectedIterableView",
@@ -251,15 +261,25 @@ static class StarProjectionLowering
                 _ => null,
             };
             if (helper == null) continue;
+            var helperReturn = closed;
             var helperSignature = new JsonArray(TypeJson.Write(Any));
             var helperArguments = new JsonArray(argument.DeepClone());
-            if (helper == "clrProjectedSetView")
+            if (setArgument)
             {
+                var nullable = closed is TypeNode.Nullable or TypeNode.Oblivious;
+                var iterable = collection.Name == "kotlin.collections.Iterable";
+                helper = iterable
+                    ? nullable ? "clrProjectedNullableSetIterableView" : "clrProjectedSetIterableView"
+                    : nullable ? "clrProjectedNullableSetView" : "clrProjectedSetView";
+                helperReturn = new TypeNode.Fqn(iterable ? "kotlin.collections.Iterable" : "kotlin.collections.Set", elementArgs);
+                if (nullable) helperReturn = new TypeNode.Nullable(helperReturn);
+                helperSignature[0] = TypeJson.Write(nullable ? AnyN : Any);
                 helperSignature.Add(TypeJson.Write(Any));
                 helperArguments.Add(new JsonObject
                 {
                     ["k"] = "classRef",
-                    ["type"] = TypeJson.Write(new TypeNode.Fqn("kotlin.collections.Collection", elementArgs)),
+                    ["type"] = TypeJson.Write(new TypeNode.Fqn(
+                        iterable ? "kotlin.collections.Iterable" : "kotlin.collections.Collection", elementArgs)),
                 });
             }
             arguments[index] = new JsonObject
@@ -269,7 +289,7 @@ static class StarProjectionLowering
                 ["method"] = helper,
                 ["sig"] = helperSignature,
                 ["typeArgs"] = new JsonArray(TypeJson.Write(elementArgs[0])),
-                ["ret"] = TypeJson.Write(closed),
+                ["ret"] = TypeJson.Write(helperReturn),
                 ["args"] = helperArguments,
             };
         }

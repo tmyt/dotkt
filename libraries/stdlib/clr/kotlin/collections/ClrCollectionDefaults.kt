@@ -119,6 +119,16 @@ public fun <T> clrProjectedSetView(source: Any, targetType: Any): Set<T> =
     if (projectedSetStorageIsFaithful(source, targetType)) source as Set<T>
     else ClrProjectedSetView(source)
 
+public fun <T> clrProjectedNullableSetView(source: Any?, targetType: Any): Set<T>? =
+    if (source == null) null else clrProjectedSetView(source, targetType)
+
+public fun <T> clrProjectedSetIterableView(source: Any, targetType: Any): Iterable<T> =
+    if (projectedSetStorageIsFaithful(source, targetType)) source as Iterable<T>
+    else ClrProjectedSetView(source)
+
+public fun <T> clrProjectedNullableSetIterableView(source: Any?, targetType: Any): Iterable<T>? =
+    if (source == null) null else clrProjectedSetIterableView(source, targetType)
+
 public fun <T> clrCollIsEmpty(c: Collection<T>): Boolean = c.size == 0
 
 /** Raw ICollection Add — VOID on the BCL (the Kotlin changed-Boolean wrapper is [clrCollAdd]). */
