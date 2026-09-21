@@ -20,3 +20,12 @@ public class Nested<T>
 }
 
 public class NestedBridge : Nested<string>.Base<int> { }
+
+public class PairBase<X, Y>
+{
+    public X First(X value) => value;
+    public Y Second(Y value) => value;
+    public R Convert<R>(X first, Y second, R result) => result;
+}
+
+public class SwappedBridge<A, B> : PairBase<B, A> { }

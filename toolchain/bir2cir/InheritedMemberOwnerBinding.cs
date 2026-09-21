@@ -170,7 +170,7 @@ static class InheritedMemberOwnerBinding
         // class-only lookup below can identify the exact CLR MethodDef. Interface-qualified `super<I>` retains that
         // projected interface owner and is returned unchanged by the dedicated guard below.
         var projectionRoot = TypeJson.Read(call["recv"]?["sty"]) as TypeNode.Fqn;
-        // `this` has no expression `sty`; its constructed receiver is the enclosing class declaration frame,
+        // A bare `this` without expression `sty` uses the enclosing class declaration frame as its receiver,
         // both for ordinary inherited calls and for super calls. A downstream `Derived : Base<String>` may have a BIR
         // member fact naming the open declaration Base<T> (or even Base without arguments): the current hierarchy, not the
         // argument expression, is the authoritative construction.

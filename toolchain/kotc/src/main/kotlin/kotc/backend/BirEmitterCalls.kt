@@ -1611,6 +1611,10 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 		?: declaringClass?.takeIf { it.isCompanion }?.let { it.parent as? IrClass }?.let { clrName(it) }
 	val clrType = clrTypeName?.let { TypeNode.Fqn(it) }
 	if (clrType != null) {
+		// A fake override's parameter types are substituted into its inheriting class.
+		// The selected declaration's owner and descriptor must use the same frame.
+		val callCallee = callee
+		val callee = if (callee.isFakeOverride) callee.resolveFakeOverride() ?: callee else callee
 		val recv = dispatchReceiver(call)
 		// A restored external Kotlin companion is an instance singleton: keep its IrGetObjectValue receiver in BIR
 		// (`Owner.INSTANCE`) and
@@ -1626,15 +1630,16 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 		// exactly like the plain Kotlin member-call path: virtual unless FINAL and not an override. Without it ilemit
 		// would default to a non-virtual `call`, mis-dispatching an `open`/`override` member (#139).
 		val clrCallVirtual = isVirtualInstanceCall(call, callee)
-		// Address the member on the CONSTRUCTED .NET type (`clrg:Collection[int]`) so a member of a generic
-		// instantiation resolves. Two cases: (1) the receiver's own type IS the .NET type; (2) the member is
-		// INHERITED from a .NET base (receiver is a Kotlin subclass) -> use the subclass's .NET supertype,
-		// which carries the concrete type args (`class C : Collection<Int>`).
+		// Project the selected declaration's semantic owner through the receiver's Kotlin supertypes.
+		// Its construction and the declaration signature share one frame, including reordered arguments.
 		val recvClass = recv?.type?.classifierOrNull?.owner as? IrClass
 		// The REAL .NET declaring type (resolve the fake override; `declaringClass` would be the subclass).
-		val declClass = (callee.takeIf { it.isFakeOverride }?.resolveFakeOverride()?.parent as? IrClass) ?: declaringClass
+		val declClass = callee.parent as? IrClass
 		val memberType = when {
 			isStatic -> clrType
+			declClass != null && isExternalNetType(declClass) -> correspondingSupertypeInstantiation(
+				recv!!.type, declClass, allowCapturedArguments = true,
+			)?.let { birType(it) } ?: error("No selected member owner for ${callee.name} on ${recv.type}")
 			recvClass != null && isExternalNetType(recvClass) -> birType(recv.type)
 			// A type-PARAM receiver (`destination: C` where `C : MutableCollection<T>`, e.g. filterTo's body) has no
 			// recvClass -> use the type param's @Clr-bound BOUND with its args (clrg:ICollection[T]), not the raw
@@ -1660,10 +1665,12 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 				// A generic MEMBER extension (`class C { fun <R> T.f() }`): the `__self` receiver is the .NET method's
 				// first param -> prepend its value + declaration type so the descriptor and call operands line up.
 				val gExt = if (!isStatic) extensionReceiver(call) else null
-				val shapeParams = (if (gExt != null) listOf(gExt.type) else emptyList()) + regularParams(callee).map { it.type }
+				val shapeParams = (if (gExt != null) listOf(extensionReceiverParam(callee)!!.type) else emptyList()) + regularParams(callee).map { it.type }
 				// kotc emits the DECLARED parameter types as PURE-KOTLIN `birType` identities (`shapeTypes`); bir2cir
 				// hands them to bir2cir as `shapeTypes`; bir2cir alone resolves the physical scalar memberRef. No CLR-shape knowledge here.
-				val shapeTypes = shapeParams.joinToString(",") { birType(it).toJson() }
+				val shapeTypes = inMemberDeclarationFrame(callee) {
+					shapeParams.joinToString(",") { birType(it).toJson() }
+				}
 				// Positional filling, like every other .NET/restored-member call path: building `args` from the
 				// expressions that happen to be present DELETES an omitted default's slot, so a later provided
 				// argument slides into it (`g.pick(b = 3)` bound `3` to `a` and left the required `b` zero-filled)
@@ -1776,7 +1783,7 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 		val argsJson = regularArgs(call).joinToString(",") { expr(it) }
 		// kotc emits the PLAIN Kotlin return type; a `suspend` callee is marked by `suspendTag` only (the Task/await
 		// lowering is a deferred downstream layer). No coroutine ABI (Task<T>) is baked here.
-		val ret = birType(callee.returnType).toJson()
+		val ret = birType(call.type).toJson()
 		val suspendTag = suspendCallTag(callee)
 		// A .NET operator (`Vec2 + Vec2` -> op_Addition) is emitted here as the PLAIN Kotlin operator identity
 		// (`callInstance method="plus" recv:<a> args:[<b>]`); bir2cir's NetInteropBinding resolves the owner off
@@ -1786,18 +1793,18 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 		// object: it's a STATIC call whose first argument is the extension receiver.
 		val extRecv = extensionReceiver(call)
 		if (isStatic && extRecv != null) {
-			val (allArgs, allArgTypes) = clrCallArgsWithRecv(call, callee, extRecv)
+			val (allArgs, allArgTypes) = clrCallArgsWithRecv(call, callCallee, extRecv)
 			return """{"k":"callStatic","ownerType":${clrType!!.toJson()},"method":${str(member)}${overloadSigField(callee)},"argTypes":[$allArgTypes],"ret":$ret,"args":[$allArgs]$suspendTag$anySlotTag$companionCallTag}"""
 		}
 		// A restored MEMBER extension function (`class C { fun T.f() }`): an INSTANCE method on the dispatch receiver
 		// (C) whose first .NET param `__self` is the extension receiver -> dispatch on `recv`, prepend the receiver.
 		if (!isStatic && extRecv != null && recv != null) {
-			val (allArgs, allArgTypes) = clrCallArgsWithRecv(call, callee, extRecv)
+			val (allArgs, allArgTypes) = clrCallArgsWithRecv(call, callCallee, extRecv)
 			return """{"k":"callInstance","virtual":$clrCallVirtual,"ownerType":${memberType!!.toJson()},"method":${str(member)}${overloadSigField(callee)},"argTypes":[$allArgTypes],"ret":$ret,"recv":${expr(recv)},"args":[$allArgs]$suspendTag$anySlotTag${superTag(call)}$companionCallTag}"""
 		}
 		// A2 (#61): a PLAIN static/instance call by the .NET owner's FQN identity; bir2cir's NetInteropBinding
 		// resolves the owner off the .NET refs and shapes it (clrStatic/clrInstance). No .NET-shape decision here.
-		val (cArgs, cArgTypes) = clrCallArgs(call, callee)
+		val (cArgs, cArgTypes) = clrCallArgs(call, callCallee)
 		return if (isStatic)
 			"""{"k":"callStatic","ownerType":${clrType!!.toJson()},"method":${str(member)}${overloadSigField(callee)},"argTypes":[$cArgTypes],"ret":$ret,"args":[$cArgs]$suspendTag$anySlotTag$companionCallTag}"""
 		else

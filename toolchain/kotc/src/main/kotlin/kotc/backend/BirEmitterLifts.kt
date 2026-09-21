@@ -851,8 +851,19 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 		}
 		val argsJson = regs.joinToString(",") { """{"k":"local","name":${str(it.name.asString())}}""" }
 		val recv = """{"k":"field","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":"__recv"}"""
+		val declaration = if (fn.isFakeOverride) fn.resolveFakeOverride() ?: fn else fn
+		val declarationOwner = declaration.parent as? IrClass
+		val externalDeclaration = declarationOwner?.let { isExternalNetType(it) } == true
+		val signature = overloadSigField(if (externalDeclaration) declaration else fn)
+		val callOwner = if (externalDeclaration) {
+			val constructed = correspondingSupertypeInstantiation(
+				boundRecv.type, declarationOwner!!, allowCapturedArguments = true,
+			) ?: error("No selected reference owner for ${declaration.name} on ${boundRecv.type}")
+			birType(constructed).toJson()
+		} else owner
+		val resultType = resolvedFuncType.ret.toJson()
 		val rawCall = if (!isExternalNetType(ownerClass) || memberDeclarationIdentityTag.isNotEmpty())
-			"""{"k":"callInstance","ownerType":$owner,"virtual":$virtual,"recv":$recv,"method":${str(fn.name.asString())}${overloadSigField(fn)}$referenceTypeArgs,"args":[$argsJson]${if (isAnySlotMethod(fn)) ""","anySlot":true""" else ""}$memberDeclarationIdentityTag$flagsOperationTag}"""
+			"""{"k":"callInstance","ownerType":$callOwner,"virtual":$virtual,"recv":$recv,"method":${str(fn.name.asString())}$signature$referenceTypeArgs,"ret":$resultType,"sty":$resultType,"args":[$argsJson]${if (isAnySlotMethod(fn)) ""","anySlot":true""" else ""}$memberDeclarationIdentityTag$flagsOperationTag}"""
 		else {
 			// A projected CLR member without a DotKt declaration identity still needs the adapter. Emit the same neutral
 			// external-call facts as an ordinary invocation; bir2cir resolves their physical member representation.
@@ -861,7 +872,8 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 				?: error("validated external bound reference lost its physical owner")
 			val physicalOwner = (selfT as? TypeNode.Fqn)?.let { TypeNode.Fqn(physicalName, it.args) }
 				?: TypeNode.Fqn(physicalName)
-			"""{"k":"callInstance","ownerType":${physicalOwner.toJson()},"virtual":$virtual,"recv":$recv,"method":${str(fn.name.asString())}${overloadSigField(fn)}$referenceTypeArgs,"argTypes":[$argTypes],"ret":${birType(fn.returnType).toJson()},"args":[$argsJson]${if (isAnySlotMethod(fn)) ""","anySlot":true""" else ""}$flagsOperationTag}"""
+			val selectedOwner = if (externalDeclaration) callOwner else physicalOwner.toJson()
+			"""{"k":"callInstance","ownerType":$selectedOwner,"virtual":$virtual,"recv":$recv,"method":${str(fn.name.asString())}$signature$referenceTypeArgs,"argTypes":[$argTypes],"ret":$resultType,"sty":$resultType,"args":[$argsJson]${if (isAnySlotMethod(fn)) ""","anySlot":true""" else ""}$flagsOperationTag}"""
 		}
 		val call = memberVisibilityStamped(fn, rawCall)
 		val body = if (resolvedFuncType.ret == TypeNode.Fqn("kotlin.Unit")) """{"k":"exprStmt","expr":$call}"""
@@ -894,9 +906,19 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 			val virtual = fn.modality != Modality.FINAL || fn.overriddenSymbols.isNotEmpty()
 			val liftedReferenceTypeArgs = functionReferenceTypeArgs(node, fn)
 				?: error("validated function reference lost its type arguments while entering its lifted method frame")
-			// The receiver parameter is the exact constructed owner in this forwarder's method frame. Retaining only the
-			// declaration's bare FQN would address the MethodDef on an open generic type at runtime.
-			val callE = """{"k":"callInstance","ownerType":${selfT.toJson()},"virtual":$virtual,"recv":{"k":"local","name":"__self"},"method":${str(fn.name.asString())}${overloadSigField(fn)}$liftedReferenceTypeArgs,"args":[$argsJson]${if (isAnySlotMethod(fn)) ""","anySlot":true""" else ""}}"""
+			val target = if (fn.isFakeOverride) fn.resolveFakeOverride() ?: fn else fn
+			val targetOwner = target.parent as? IrClass
+			val externalTarget = targetOwner?.let { isExternalNetType(it) } == true
+			val selectedOwner = if (externalTarget) {
+				val receiverType = ((node.type as IrSimpleType).arguments.first() as IrTypeProjection).type
+				val constructed = correspondingSupertypeInstantiation(
+					receiverType, targetOwner!!, allowCapturedArguments = true,
+				) ?: error("No selected reference owner for ${target.name} on $receiverType")
+				birType(constructed)
+			} else selfT
+			val signature = overloadSigField(if (externalTarget) target else fn)
+			val resultType = liftedFnType.ret.toJson()
+			val callE = """{"k":"callInstance","ownerType":${selectedOwner.toJson()},"virtual":$virtual,"recv":{"k":"local","name":"__self"},"method":${str(fn.name.asString())}$signature$liftedReferenceTypeArgs,"ret":$resultType,"sty":$resultType,"args":[$argsJson]${if (isAnySlotMethod(fn)) ""","anySlot":true""" else ""}}"""
 			val identityCallE = if (effectiveIdentityTag.isEmpty()) callE
 				else callE.dropLast(1) + effectiveIdentityTag + "}"
 			val retT = liftedFnType.ret
