@@ -60,6 +60,8 @@ class MutableListFamilyTests {
         val list = source as MutableList<*>
         check(mutableSize(list) == 2 && !mutableEmpty(list))
         check(mutableFirst(list) == 7 && list[1] == 9)
+        check(list.listIterator().next() == 7)
+        check(list.subList(1, 2)[0] == 9)
     }
 
     @TestAttribute fun dictionaryStorageDoesNotJoinTheMutableFamily() {

@@ -893,7 +893,6 @@ private fun findErasedProjectedView(receiver: Any, preferred: String, fallback: 
     val interfaces = runtimeType.getInterfaces()
     val listView = preferred == "System.Collections.Generic.IReadOnlyList`1"
         || preferred == "System.Collections.Generic.IList`1"
-        || preferred == "System.Collections.Generic.IList`1"
     val storageFaces = if (excludeDictionaryStorage || listView) collectionMapStorageFaces(runtimeType)
         else emptyArray<StarProjectionType>()
     var preferredMatch: StarProjectionType? = null
