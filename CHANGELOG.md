@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Existential MutableList operations keep their mutable interface family (#796).** Size, indexed reads,
+  and emptiness no longer select unrelated readonly List interfaces. Raw IList fallback, exact witnesses,
+  Kotlin overrides, and native getter exceptions remain intact.
+
 - **Projected Set arguments retain their Set contract (#795).** Widening an existential Set
   selects its own Count and enumeration instead of an unrelated Collection face. A live Set view
   preserves Kotlin overrides when an adapter is needed; faithful CLR covariance retains identity.

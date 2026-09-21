@@ -2247,7 +2247,8 @@ static class MemberCallSubstitution
 
     internal static string ProjectedIsEmptyHelper(string owner) => owner switch
     {
-        "kotlin.collections.List" or "kotlin.collections.MutableList" => "clrProjectedListIsEmpty",
+        "kotlin.collections.List" => "clrProjectedListIsEmpty",
+        "kotlin.collections.MutableList" => "clrProjectedMutableListIsEmpty",
         "kotlin.collections.Set" => "clrProjectedSetIsEmpty",
         "kotlin.collections.MutableSet" => "clrProjectedMutableSetIsEmpty",
         "kotlin.collections.MutableCollection" => "clrProjectedMutableCollIsEmpty",
@@ -2277,7 +2278,7 @@ static class MemberCallSubstitution
             (_, "clrProjectedCollContains") => new TypeNode[] { new TypeNode.Fqn("kotlin.Any"), tv },
             (_, "clrProjectedCollContainsAll") => new TypeNode[]
                 { new TypeNode.Fqn("kotlin.Any"), Gen("kotlin.collections.Collection") },
-            (_, "clrProjectedCollIsEmpty" or "clrProjectedListIsEmpty" or "clrProjectedSetIsEmpty"
+            (_, "clrProjectedCollIsEmpty" or "clrProjectedListIsEmpty" or "clrProjectedMutableListIsEmpty" or "clrProjectedSetIsEmpty"
                 or "clrProjectedMutableSetIsEmpty" or "clrProjectedMutableCollIsEmpty") =>
                 new[] { new TypeNode.Fqn("kotlin.Any") },
             (_, "clrListSet") => new TypeNode[] { Gen("kotlin.collections.MutableList"), new TypeNode.Fqn("kotlin.Int"), tv },

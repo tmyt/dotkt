@@ -893,6 +893,7 @@ private fun findErasedProjectedView(receiver: Any, preferred: String, fallback: 
     val interfaces = runtimeType.getInterfaces()
     val listView = preferred == "System.Collections.Generic.IReadOnlyList`1"
         || preferred == "System.Collections.Generic.IList`1"
+        || preferred == "System.Collections.Generic.IList`1"
     val storageFaces = if (excludeDictionaryStorage || listView) collectionMapStorageFaces(runtimeType)
         else emptyArray<StarProjectionType>()
     var preferredMatch: StarProjectionType? = null
@@ -1191,10 +1192,16 @@ internal fun mutableCollectionReplaceErased(receiver: Any, elements: Array<Any?>
 }
 
 @PublishedApi
-internal fun mutableListGetErased(receiver: Any, index: Int): Any? = try {
-    erasedMutableListMethod(receiver, "get_Item", 1).invoke(receiver, arrayOf(index))
-} catch (failure: StarProjectionInvocationException) {
-    throw (failure.innerException ?: failure)
+internal fun mutableListGetErased(receiver: Any, index: Int): Any? {
+    val view = findErasedProjectedView(receiver,
+        "System.Collections.Generic.IList`1", "System.Collections.Generic.IList`1")
+    if (view == null && receiver is StarProjectionRawList && !rawListIsMapStorage(receiver)) return receiver.get(index)
+    val list = view ?: throw UnsupportedOperationException("Projected receiver has no mutable CLR List surface")
+    return try {
+        erasedProjectedMethod(list, "get_Item", 1).invoke(receiver, arrayOf(index))
+    } catch (failure: StarProjectionInvocationException) {
+        throw (failure.innerException ?: failure)
+    }
 }
 
 @PublishedApi
