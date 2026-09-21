@@ -36,6 +36,9 @@ import DotKt.Runtime.CompilerServices.projectedCollectionCountErased
 import DotKt.Runtime.CompilerServices.projectedListCountErased
 import DotKt.Runtime.CompilerServices.projectedMutableListCountErased
 import DotKt.Runtime.CompilerServices.projectedSetCountErased
+import DotKt.Runtime.CompilerServices.projectedSetViewCount
+import DotKt.Runtime.CompilerServices.projectedSetStorageIsFaithful
+import DotKt.Runtime.CompilerServices.projectedSetEnumeratorErased
 import DotKt.Runtime.CompilerServices.projectedMutableSetCountErased
 import DotKt.Runtime.CompilerServices.projectedMutableCollectionCountErased
 import DotKt.Runtime.CompilerServices.projectedListGetErased
@@ -91,6 +94,44 @@ private class ClrProjectedCollectionView<T>(private val source: Any) : Collectio
 
 public fun <T> clrProjectedCollectionView(source: Any): Collection<T> =
     (source as? Collection<T>) ?: ClrProjectedCollectionView(source)
+
+private class ClrProjectedSetView<T>(private val source: Any, private val sourceWitness: Any?) : AbstractSet<T>() {
+    override val size: Int get() = projectedSetViewCount(source, sourceWitness)
+    override fun isEmpty(): Boolean {
+        val slots = source as? KotlinCollectionDefaultSlots
+        return slots?.dotktIsEmpty() ?: (size == 0)
+    }
+    override fun iterator(): Iterator<T> = ClrProjectedIterator(
+        KotlinIteratorOverRawEnumerator(projectedSetEnumeratorErased(source, sourceWitness) as ClrRawEnumerator))
+
+    override fun contains(element: T): Boolean {
+        val slots = source as? KotlinCollectionDefaultSlots
+        if (slots != null) return slots.dotktContains(element)
+        for (value in this) if (value == element) return true
+        return false
+    }
+
+    override fun containsAll(elements: Collection<T>): Boolean {
+        val slots = source as? KotlinCollectionDefaultSlots
+        if (slots != null) return slots.dotktContainsAll(elements)
+        for (element in elements) if (!contains(element)) return false
+        return true
+    }
+}
+
+public fun <T> clrProjectedSetView(source: Any, targetType: Any, sourceWitness: Any?): Set<T> =
+    if (projectedSetStorageIsFaithful(source, targetType, sourceWitness)) source as Set<T>
+    else ClrProjectedSetView(source, sourceWitness)
+
+public fun <T> clrProjectedNullableSetView(source: Any?, targetType: Any, sourceWitness: Any?): Set<T>? =
+    if (source == null) null else clrProjectedSetView(source, targetType, sourceWitness)
+
+public fun <T> clrProjectedSetIterableView(source: Any, targetType: Any, sourceWitness: Any?): Iterable<T> =
+    if (projectedSetStorageIsFaithful(source, targetType, sourceWitness)) source as Iterable<T>
+    else ClrProjectedSetView(source, sourceWitness)
+
+public fun <T> clrProjectedNullableSetIterableView(source: Any?, targetType: Any, sourceWitness: Any?): Iterable<T>? =
+    if (source == null) null else clrProjectedSetIterableView(source, targetType, sourceWitness)
 
 public fun <T> clrCollIsEmpty(c: Collection<T>): Boolean = c.size == 0
 

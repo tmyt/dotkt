@@ -11,12 +11,32 @@ Status: implemented design record. This document records the collection identiti
 | `MutableCollection<T>` | `ICollection<T>` |
 | `List<T>` | `IReadOnlyList<T>` |
 | `MutableList<T>` | `IList<T>` |
-| `Set<T>` | `IReadOnlySet<T>` |
-| `MutableSet<T>` | `ISet<T>` |
+| `Set<T>` | `IReadOnlyCollection<T>` plus Kotlin Set identity |
+| `MutableSet<T>` | `ICollection<T>` plus Kotlin MutableSet identity |
 | `Map<K,V>` | `IReadOnlyDictionary<K,V>` |
 | `MutableMap<K,V>` | `IDictionary<K,V>` |
 
 Factories such as `listOf`, `mutableListOf`, and `mapOf` return ordinary BCL implementations through these interface views. The mapping is declared by stdlib `@ClrTypeAlias` and `@ClrIntrinsic` metadata and applied by bir2cir; kotc does not hard-code it.
+
+Emitted Kotlin Set implementations carry the nominal Kotlin Set classifier; foreign Sets are recognized through
+their actual `IReadOnlySet<T>` / `ISet<T>` interfaces. A shared Collection storage interface alone does not identify
+a Set, and an unrelated List implemented by the same object does not supply that Set's Count or enumeration.
+
+### Projected Set arguments
+
+When a `Set<*>` crosses a closed Set, Collection, or Iterable argument boundary, bir2cir preserves the source
+family and supplies the requested physical interface type to the runtime adapter. A pre-existing concrete source
+witness is not reopened as an ambiguous existential. Nullable boundaries pass null through without constructing a view.
+When a concrete MutableSet needs readonly adaptation, bir2cir also supplies its exact source storage type;
+the adapter retains that element witness instead of reopening unrelated Set closures on the same object.
+
+The runtime keeps the original object when the selected Set's actual parents faithfully satisfy the requested
+interface and its generic operational parents. Exact interface slots are authoritative; covariant conversion is
+used only when no unrelated compatible closed interface can compete. Otherwise a live Set view selects Count
+and enumeration through the Set family and preserves Kotlin default-member overrides. An Iterable-only boundary
+does not require the source to implement an additional readonly Collection interface just to retain identity.
+Dictionary entry storage is excluded from the nominal Kotlin Set family. Merely transporting an ambiguous
+existential does not resolve its elements: the live view reports ambiguity only when an operation needs that family.
 
 ## Why Kotlin `Iterator<T>` is not simply `IEnumerator<T>`
 
