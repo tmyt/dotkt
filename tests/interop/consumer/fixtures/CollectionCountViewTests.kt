@@ -17,6 +17,30 @@ private class KotlinListWithDictionary : IterableClassifierStorage.ListAndDictio
 private class KotlinSetWithDictionary : IterableClassifierStorage.SetAndDictionary()
 
 class CollectionCountViewTests {
+    @TestAttribute fun independentCollectionClosureIsNotDiscardedByAList() {
+        val value: Any = CollectionStorageInterop.ListAndIndependentCollection()
+        var caught = false
+        try { collectionViewCount(value as Collection<*>) } catch (failure: System.InvalidOperationException) {
+            caught = true
+        }
+        check(caught)
+    }
+
+    @TestAttribute fun orderedDictionaryStorageDoesNotCompeteWithIndependentList() {
+        val value: Any = CollectionStorageInterop.OrderedDictionaryWithList()
+        check(collectionViewCount(value as Collection<*>) == 1)
+        check(!collectionViewEmpty(value as Collection<*>))
+        check((value as List<*>).size == 1)
+        check((value as List<*>)[0] == "list")
+    }
+
+    @TestAttribute fun rawIndependentListDoesNotUseDictionaryCount() {
+        val value: Any = CollectionStorageInterop.RawListAndDictionary()
+        check((value as Collection<*>).size == 2)
+        check(collectionViewCount(value as Collection<*>) == 2)
+        check(!collectionViewEmpty(value as Collection<*>))
+    }
+
     @TestAttribute fun multipleIndependentCollectionClosuresRemainAmbiguous() {
         val value: Any = CollectionStorageInterop.AmbiguousCollectionCounts()
         var caught = false

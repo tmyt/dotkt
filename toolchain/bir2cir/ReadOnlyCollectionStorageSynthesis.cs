@@ -29,7 +29,24 @@ static class ReadOnlyCollectionStorageSynthesis
         {
             if (definition.Kind != "class") continue;
             var reached = SupertypeGraph.Reachable(definition, definitions, refs).Select(edge => edge.spec).ToArray();
+            var mapStorage = refs.KotlinMapStorageDefinitions();
+            var storageRoots = reached.Where(type =>
+                ReferenceMetadataIndex.BareOwnerFqn(type.Name) is "System.Collections.Generic.IDictionary"
+                    or "System.Collections.Generic.IReadOnlyDictionary"
+                || mapStorage.Any(name => type.Name == name
+                    || type.Name + "`" + (type.Args?.Length ?? 0) == name)).ToArray();
+            bool StorageOwns(TypeNode.Fqn face) => storageRoots.Any(root =>
+                SupertypeGraph.Reaches(root, face, definitions, refs));
+            var independentRoots = reached.Where(type =>
+                (IsFace(type, CollectionViewFaces.IReadOnlyList) || IsFace(type, CollectionViewFaces.IList)
+                    || IsFace(type, "System.Collections.Generic.IReadOnlySet")
+                    || IsFace(type, "System.Collections.Generic.ISet")) && !StorageOwns(type)).ToArray();
+            bool StorageOnly(TypeNode.Fqn face) => StorageOwns(face)
+                && !independentRoots.Any(root => SupertypeGraph.Reaches(root, face, definitions, refs));
+            // Dictionary entry storage is not an authored Kotlin Collection. Giving it a mutable
+            // storage carrier invents a second Count closure on an otherwise valid Kotlin subclass.
             var lists = reached.Where(type => IsFace(type, CollectionViewFaces.IReadOnlyList)
+                && !StorageOnly(type)
                 && !reached.Any(other => IsFace(other, CollectionViewFaces.IList)
                     && other.Args[0] == type.Args[0])).ToArray();
             foreach (var list in lists)
@@ -39,6 +56,7 @@ static class ReadOnlyCollectionStorageSynthesis
             }
             foreach (var readOnly in reached.Where(type => IsFace(type, CollectionViewFaces.IReadOnlyCollection)))
             {
+                if (StorageOnly(readOnly)) continue;
                 var element = readOnly.Args[0];
                 if (lists.Any(list => list.Args[0] == element)) continue;
                 if (reached.Any(type => IsFace(type, CollectionViewFaces.ICollection)
