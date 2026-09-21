@@ -143,7 +143,7 @@ static class StarProjectionLowering
             if (Str(obj["k"]) == "callInstance"
                 && IsIdentityCollection(obj["ownerType"], out var listKind, out _)
                 && listKind is 3 or 4
-                && LowerListMember(obj, closedViews) is JsonObject listMember)
+                && LowerListMember(obj, listKind, closedViews) is JsonObject listMember)
             {
                 UsedRuntimeFallback = true;
                 Replace(obj, listMember);
@@ -375,7 +375,8 @@ static class StarProjectionLowering
         var propertyAccess = Str(call["prop"]);
         JsonObject Count() => classifierKind switch {
             0 => Call("projectedReadOnlyCollectionCountErased", new TypeNode[] { Any }, Int, checkedReceiver.DeepClone()),
-            3 or 4 => Call("projectedListCountErased", new TypeNode[] { Any }, Int, checkedReceiver.DeepClone()),
+            3 => Call("projectedListCountErased", new TypeNode[] { Any }, Int, checkedReceiver.DeepClone()),
+            4 => Call("projectedMutableListCountErased", new TypeNode[] { Any }, Int, checkedReceiver.DeepClone()),
             5 => Call("projectedMutableCollectionCountErased", new TypeNode[] { Any }, Int, checkedReceiver.DeepClone()),
             1 => Call("projectedSetCountErased", new TypeNode[] { Any }, Int, checkedReceiver.DeepClone()),
             2 => Call("projectedMutableSetCountErased", new TypeNode[] { Any }, Int, checkedReceiver.DeepClone()),
@@ -441,7 +442,8 @@ static class StarProjectionLowering
 
     // An existential List can have only a raw IList or only a generic mutable list face. Count/Get
     // must follow that List face, not assume that every accepted value has IReadOnlyCollection<T>.
-    static JsonObject LowerListMember(JsonObject call, IReadOnlyDictionary<string, TypeNode.Fqn> closedViews)
+    static JsonObject LowerListMember(JsonObject call, int listKind,
+        IReadOnlyDictionary<string, TypeNode.Fqn> closedViews)
     {
         var member = Str(call["method"]);
         var count = member == "size" && Str(call["prop"]) == "get";
@@ -463,8 +465,9 @@ static class StarProjectionLowering
             ? LowerIdentityClassifier("cast", cast["e"], kind, nullable: false, cast["type"])
             : receiver.DeepClone();
         return count
-            ? Call("projectedListCountErased", new TypeNode[] { Any }, Int, checkedReceiver)
-            : Call("projectedListGetErased", new TypeNode[] { Any, Int }, AnyN,
+            ? Call(listKind == 4 ? "projectedMutableListCountErased" : "projectedListCountErased",
+                new TypeNode[] { Any }, Int, checkedReceiver)
+            : Call(listKind == 4 ? "mutableListGetErased" : "projectedListGetErased", new TypeNode[] { Any, Int }, AnyN,
                 checkedReceiver, args[0].DeepClone());
     }
 

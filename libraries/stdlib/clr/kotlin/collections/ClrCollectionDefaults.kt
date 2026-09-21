@@ -170,6 +170,11 @@ public fun <T> clrProjectedListIsEmpty(c: Any): Boolean {
     return slots?.dotktIsEmpty() ?: (projectedListCountErased(c) == 0)
 }
 
+public fun <T> clrProjectedMutableListIsEmpty(c: Any): Boolean {
+    val slots = c as? KotlinCollectionDefaultSlots
+    return slots?.dotktIsEmpty() ?: (projectedMutableListCountErased(c) == 0)
+}
+
 public fun <T> clrProjectedSetIsEmpty(c: Any): Boolean {
     val slots = c as? KotlinCollectionDefaultSlots
     return slots?.dotktIsEmpty() ?: (projectedSetCountErased(c) == 0)

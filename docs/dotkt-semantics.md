@@ -183,9 +183,13 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   read-only preference applies only when both represent the same element closure. MutableCollection Count selects
   its eligible mutable Collection contract, not an unrelated read-only one. Existential List Count and indexed access
   prefer an eligible generic List view over raw IList storage.
+  Existential MutableList Count, indexed reads, and default emptiness instead select its eligible mutable
+  `IList<T>` contract and that interface's `ICollection<T>` parent. Readonly List faces do not participate,
+  even for the same element type. Raw `IList` is used only when no eligible generic mutable List view exists;
+  it cannot hide mutable-view ambiguity or a native getter exception. Kotlin emptiness overrides still win.
   An existing generic Count view retains precedence; raw Count
   is used only when no eligible generic Collection face exists, not to mask an ambiguous view or a failing getter. Pinned by `RawCollectionIsEmptyTests`,
-  `ProjectedIsEmptyOverrideTests`, `CollectionCountViewTests`, and `ProjectedEmptinessTests`.
+  `ProjectedIsEmptyOverrideTests`, `CollectionCountViewTests`, `MutableListFamilyTests`, and `ProjectedEmptinessTests`.
   Concrete `Any`/`Any?` element arguments are not stars: value-producing casts retain their original typed
   CLR interface check after the composite guard, including safe-cast failure behavior and typed return edges.
 - **Iterable identity is distinct from its CLR enumeration face.** Kotlin implementations carry nominal

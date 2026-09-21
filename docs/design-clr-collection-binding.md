@@ -64,6 +64,13 @@ bir2cir authors both halves as ordinary CIR — the adapter's TypeDef, fields, c
 
 Members with direct BCL equivalents are substituted from stdlib metadata, for example `size` to `Count` and indexed access to the CLR indexer. Members without a one-to-one BCL operation retain real Kotlin bodies that use bound primitive members. This keeps stdlib policy in the stdlib rather than adding symbol recognition to the compiler.
 
+Existential `MutableList` Count, indexed reads, and the default `isEmpty` use the eligible `IList<T>` family
+and its actual `ICollection<T>` parent. An unrelated readonly List is not a candidate for these mutable-view
+operations, even when it uses the same element type. Ordinary `List` operations retain their readonly preference.
+Raw `IList` remains a fallback only when no eligible generic mutable List exists; it must not hide genuine
+generic ambiguity or a getter exception. Map-owned List storage is excluded, and source-authored exact
+interface witnesses and Kotlin emptiness overrides remain authoritative.
+
 For-loops over BCL-bound collections lower to the CLR enumeration protocol. An explicit Kotlin `iterator()` call still receives the Kotlin adapter, because its caller expects `hasNext()` and `next()`.
 
 ## Layer ownership
