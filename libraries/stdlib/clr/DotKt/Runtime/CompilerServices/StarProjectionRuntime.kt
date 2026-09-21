@@ -887,7 +887,8 @@ private fun rawListIsMapStorage(receiver: Any): Boolean {
 // Prefer the read-only contract and fall back to its mutable counterpart. A List's parent Collection
 // closure can be independent even when the same object also exposes dictionary entry storage.
 private fun findErasedProjectedView(receiver: Any, preferred: String, fallback: String,
-    excludeDictionaryStorage: Boolean = false): StarProjectionType? {
+    excludeDictionaryStorage: Boolean = false, elementWitness: StarProjectionType? = null,
+    failOnAmbiguity: Boolean = true): StarProjectionType? {
     val runtimeType = receiver.starProjectionRuntimeType()
     val interfaces = runtimeType.getInterfaces()
     val listView = preferred == "System.Collections.Generic.IReadOnlyList`1"
@@ -900,6 +901,7 @@ private fun findErasedProjectedView(receiver: Any, preferred: String, fallback: 
         if (!candidate.isGenericType) continue
         val definition = candidate.getGenericTypeDefinition().fullName
         if (definition != preferred && definition != fallback) continue
+        if (elementWitness != null && candidate.getGenericArguments()[0] != elementWitness) continue
         if (listView && hasExactFace(storageFaces, candidate)) continue
         if (excludeDictionaryStorage) {
             var dictionaryParent = hasExactFace(storageFaces, candidate)
@@ -921,20 +923,26 @@ private fun findErasedProjectedView(receiver: Any, preferred: String, fallback: 
             if (dictionaryParent && !independentParent) continue
         }
         if (definition == preferred) {
-            if (preferredMatch != null && preferredMatch != candidate)
+            if (preferredMatch != null && preferredMatch != candidate) {
+                if (!failOnAmbiguity) return null
                 throw IllegalStateException("Ambiguous projected view " + preferred)
+            }
             preferredMatch = candidate
         } else if (definition == fallback) {
-            if (fallbackMatch != null && fallbackMatch != candidate)
+            if (fallbackMatch != null && fallbackMatch != candidate) {
+                if (!failOnAmbiguity) return null
                 throw IllegalStateException("Ambiguous projected view " + fallback)
+            }
             fallbackMatch = candidate
         }
     }
     // Preference chooses between two representations of the same element closure, not between
     // unrelated contracts. Distinct element types remain ambiguous across the two definitions too.
     if (preferredMatch != null && fallbackMatch != null
-        && preferredMatch.getGenericArguments()[0] != fallbackMatch.getGenericArguments()[0])
+        && preferredMatch.getGenericArguments()[0] != fallbackMatch.getGenericArguments()[0]) {
+        if (!failOnAmbiguity) return null
         throw IllegalStateException("Ambiguous projected view " + preferred + " or " + fallback)
+    }
     return preferredMatch ?: fallbackMatch
 }
 
@@ -988,32 +996,41 @@ internal fun projectedListCountErased(receiver: Any): Int {
 }
 
 @PublishedApi
-internal fun projectedSetCountErased(receiver: Any): Int {
+internal fun projectedSetCountErased(receiver: Any): Int = projectedSetViewCount(receiver, null)
+
+@PublishedApi
+internal fun projectedSetViewCount(receiver: Any, sourceWitness: Any?): Int {
     // Kotlin Set uses the Collection ABI plus a nominal classifier; only foreign Sets
     // use CLR Set interfaces. Keep the authored Kotlin Count contract authoritative.
-    if (receiver is KotlinSetClassifier) return projectedCollectionCountErased(receiver)
-    val set = findErasedProjectedView(receiver,
-        "System.Collections.Generic.IReadOnlySet`1", "System.Collections.Generic.ISet`1")
+    val set = projectedSetFamily(receiver, sourceWitness)
         ?: throw UnsupportedOperationException("Projected receiver has no CLR Set surface")
-    val collectionName = if (set.getGenericTypeDefinition().fullName == "System.Collections.Generic.IReadOnlySet`1")
+    val definition = set.getGenericTypeDefinition().fullName
+    val collectionName = if (definition == "System.Collections.Generic.IReadOnlySet`1"
+        || definition == "System.Collections.Generic.IReadOnlyCollection`1")
         "System.Collections.Generic.IReadOnlyCollection`1" else "System.Collections.Generic.ICollection`1"
     return projectedParentCollectionCount(receiver, set, collectionName)
 }
 
-private fun projectedSetFamily(receiver: Any): StarProjectionType =
-    if (receiver is KotlinSetClassifier)
+private fun projectedSetFamily(receiver: Any, sourceWitness: Any?,
+    failOnAmbiguity: Boolean = true): StarProjectionType? {
+    // bir2cir supplies the exact constructed source storage for a concrete MutableSet witness.
+    // Its element is retained across readonly adaptation instead of reopening the receiver's other Set closures.
+    val element = if (sourceWitness == null) null else (sourceWitness as StarProjectionType).getGenericArguments()[0]
+    return if (receiver is KotlinSetClassifier)
         findErasedProjectedView(receiver,
-            "System.Collections.Generic.IReadOnlyCollection`1", "System.Collections.Generic.ICollection`1")
-            ?: throw UnsupportedOperationException("Kotlin Set has no CLR Collection surface")
+            "System.Collections.Generic.IReadOnlyCollection`1", "System.Collections.Generic.ICollection`1",
+            excludeDictionaryStorage = true, elementWitness = element, failOnAmbiguity = failOnAmbiguity)
     else findErasedProjectedView(receiver,
-        "System.Collections.Generic.IReadOnlySet`1", "System.Collections.Generic.ISet`1")
-        ?: throw UnsupportedOperationException("Projected receiver has no CLR Set surface")
+        "System.Collections.Generic.IReadOnlySet`1", "System.Collections.Generic.ISet`1",
+        elementWitness = element, failOnAmbiguity = failOnAmbiguity)
+}
 
 // Returning the original object is safe only when every operational parent selects this Set's slot.
 // A compatible Collection<T> cast alone can silently select an unrelated covariant List on the same object.
 @PublishedApi
-internal fun projectedSetStorageIsFaithful(receiver: Any, targetType: Any): Boolean {
-    val family = projectedSetFamily(receiver)
+internal fun projectedSetStorageIsFaithful(receiver: Any, targetType: Any, sourceWitness: Any?): Boolean {
+    // Transporting an existential is not an operation on it. Defer genuine ambiguity to the live view's use.
+    val family = projectedSetFamily(receiver, sourceWitness, failOnAmbiguity = false) ?: return false
     val target = targetType as StarProjectionType
     val actual = receiver.starProjectionRuntimeType()
     if (!faithfulProjectedParent(actual, family, target)) return false
@@ -1045,8 +1062,9 @@ private fun faithfulProjectedParent(actual: StarProjectionType, family: StarProj
 }
 
 @PublishedApi
-internal fun projectedSetEnumeratorErased(receiver: Any): Any {
-    val family = projectedSetFamily(receiver)
+internal fun projectedSetEnumeratorErased(receiver: Any, sourceWitness: Any?): Any {
+    val family = projectedSetFamily(receiver, sourceWitness)
+        ?: throw UnsupportedOperationException("Projected receiver has no CLR Set surface")
     var enumerable: StarProjectionType? = null
     for (parent in family.getInterfaces()) {
         if (!parent.isGenericType
@@ -1086,7 +1104,9 @@ internal fun projectedMutableSetCountErased(receiver: Any): Int {
 // implementations on the original receiver cannot change that family's size.
 private fun projectedParentCollectionCount(receiver: Any, view: StarProjectionType, collectionName: String): Int {
     return try {
-        var getter: StarProjectionMethod? = null
+        var getter: StarProjectionMethod? = if (view.isGenericType
+            && view.getGenericTypeDefinition().fullName == collectionName)
+            erasedProjectedMethod(view, "get_Count", 0) else null
         for (parent in view.getInterfaces()) {
             if (!parent.isGenericType || parent.getGenericTypeDefinition().fullName != collectionName) continue
             for (method in parent.getMethods()) {

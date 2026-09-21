@@ -5,6 +5,14 @@ import SetArgumentInterop.IntSetAndList
 import roundtrip.setarguments.*
 
 class ProjectedSetArgumentTests {
+    @TestAttribute fun nominalSetDoesNotAcquireItsDictionaryStorageFamily() {
+        val source: Any = SetArgumentRoundtrip.SetAndDictionary()
+        val view = forwardImportedSet(source as Set<*>)
+        check(view.size == 1)
+        check(view.iterator().next() == 7L)
+        check(view.contains(7L))
+    }
+
     @TestAttribute fun importedSetParameterKeepsItsFamily() {
         val source: Any = IntSetAndList<String>()
         check(importedSetSize(source as Set<*>) == 3)

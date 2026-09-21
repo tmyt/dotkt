@@ -61,6 +61,36 @@ public sealed class ObjectSetOnly : MutableOnlySet<object>
     public ObjectSetOnly() : base(new object[] { "a", "b" }) { }
 }
 
+public sealed class ObjectMutableSetAndIntSet : MutableOnlySet<object>, IReadOnlySet<int>
+{
+    public ObjectMutableSetAndIntSet() : base(new object[] { "a", "b" }) { }
+    int IReadOnlyCollection<int>.Count => 3;
+    IEnumerator<int> IEnumerable<int>.GetEnumerator() =>
+        ((IEnumerable<int>)new[] { 7, 9, 11 }).GetEnumerator();
+    bool IReadOnlySet<int>.Contains(int value) => value == 7 || value == 9 || value == 11;
+    bool IReadOnlySet<int>.IsProperSubsetOf(IEnumerable<int> other) => false;
+    bool IReadOnlySet<int>.IsProperSupersetOf(IEnumerable<int> other) => false;
+    bool IReadOnlySet<int>.IsSubsetOf(IEnumerable<int> other) => false;
+    bool IReadOnlySet<int>.IsSupersetOf(IEnumerable<int> other) => false;
+    bool IReadOnlySet<int>.Overlaps(IEnumerable<int> other) => false;
+    bool IReadOnlySet<int>.SetEquals(IEnumerable<int> other) => false;
+}
+
+public sealed class ObjectSetAndIntReadonlySet : HashSet<object>, IReadOnlySet<int>
+{
+    public ObjectSetAndIntReadonlySet() { Add("a"); Add("b"); }
+    int IReadOnlyCollection<int>.Count => 3;
+    IEnumerator<int> IEnumerable<int>.GetEnumerator() =>
+        ((IEnumerable<int>)new[] { 7, 9, 11 }).GetEnumerator();
+    bool IReadOnlySet<int>.Contains(int value) => value == 7 || value == 9 || value == 11;
+    bool IReadOnlySet<int>.IsProperSubsetOf(IEnumerable<int> other) => false;
+    bool IReadOnlySet<int>.IsProperSupersetOf(IEnumerable<int> other) => false;
+    bool IReadOnlySet<int>.IsSubsetOf(IEnumerable<int> other) => false;
+    bool IReadOnlySet<int>.IsSupersetOf(IEnumerable<int> other) => false;
+    bool IReadOnlySet<int>.Overlaps(IEnumerable<int> other) => false;
+    bool IReadOnlySet<int>.SetEquals(IEnumerable<int> other) => false;
+}
+
 public sealed class ObjectAndIntSet : HashSet<int>, IReadOnlySet<object>
 {
     public ObjectAndIntSet() { Add(7); Add(9); Add(11); }

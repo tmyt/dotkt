@@ -10,6 +10,9 @@ private fun forwardView(value: Set<*>): Set<Any?> = widenedView(value)
 private fun nullableSize(value: Set<Any?>?): Int = value?.size ?: -1
 private fun forwardNullable(value: Set<*>?): Int = nullableSize(value)
 private fun collectionSize(value: Collection<Any?>): Int = value.size
+private fun ignoreCollection(value: Collection<Any?>): Int = 7
+private fun ignoreSet(value: Set<Any?>): Int = 9
+private fun ignoreIterable(value: Iterable<Any?>): Int = 11
 private fun iterableView(value: Iterable<Any?>): Iterable<Any?> = value
 private fun nullableIterableView(value: Iterable<Any?>?): Iterable<Any?>? = value
 private fun forwardNullableIterable(value: Set<*>?): Iterable<Any?>? = nullableIterableView(value)
@@ -39,6 +42,44 @@ private class AuthoredArgumentSet : AbstractSet<Int>() {
 }
 
 class ProjectedSetArgumentTests {
+    @TestAttribute fun ambiguousSetsCanBePassedWithoutOpeningTheirElementFamily() {
+        val source: Any = ObjectAndIntSet()
+        val set = source as Set<*>
+        check(ignoreCollection(set) == 7)
+        check(ignoreSet(set) == 9)
+        check(ignoreIterable(set) == 11)
+        val view = forwardView(set)
+        var caught = false
+        try { view.iterator() }
+        catch (_: IllegalStateException) { caught = true }
+        check(caught)
+    }
+
+    @TestAttribute fun exactMutableWitnessKeepsFaithfulReadonlyIdentity() {
+        val source: Any = ObjectSetAndIntReadonlySet()
+        val exact = source as MutableSet<Any?>
+        check(widenedSize(exact) == 2)
+        check(widenedView(exact) === source)
+    }
+
+    @TestAttribute fun exactMutableWitnessSurvivesRequiredReadonlyAdaptation() {
+        val source: Any = ObjectMutableSetAndIntSet()
+        val exact = source as MutableSet<Any?>
+        val view = widenedView(exact)
+        check(view !== source)
+        check(view.size == 2)
+        check(view.contains("a") && !view.contains(7))
+        val iterator = view.iterator()
+        var count = 0
+        while (iterator.hasNext()) {
+            check(iterator.next() is String)
+            count++
+        }
+        check(count == 2)
+        exact.add("c")
+        check(view.size == 3 && view.contains("c"))
+    }
+
     @TestAttribute fun unrelatedValueListDoesNotMakeTheSetAmbiguous() {
         val source: Any = IntSetAndList<Long>()
         check(forwardSize(source as Set<*>) == 3)

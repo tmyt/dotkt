@@ -281,6 +281,10 @@ static class StarProjectionLowering
                     ["type"] = TypeJson.Write(new TypeNode.Fqn(
                         iterable ? "kotlin.collections.Iterable" : "kotlin.collections.Collection", elementArgs)),
                 });
+                helperSignature.Add(TypeJson.Write(AnyN));
+                helperArguments.Add(sourceSet?.Args is { Length: > 0 } && !ContainsProjection(sourceSet)
+                    ? new JsonObject { ["k"] = "classRef", ["type"] = TypeJson.Write(sourceSet) }
+                    : new JsonObject { ["k"] = "const", ["type"] = TypeJson.Write(AnyN), ["value"] = null });
             }
             arguments[index] = new JsonObject
             {
