@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Projected Set arguments retain their Set contract (#795).** Widening an existential Set
+  selects its own Count and enumeration instead of an unrelated Collection face. A live Set view
+  preserves Kotlin overrides when an adapter is needed; faithful CLR covariance retains identity.
+
 - **Inherited public properties remain visible beside explicit interface slots (#793).** DLL-to-KLIB
   projection retains the inherited property's constructed signature instead of letting the hidden
   interface-completion member hide it. Class access and interface dispatch remain separate through

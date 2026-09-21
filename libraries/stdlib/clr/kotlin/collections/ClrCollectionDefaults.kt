@@ -36,6 +36,8 @@ import DotKt.Runtime.CompilerServices.projectedCollectionCountErased
 import DotKt.Runtime.CompilerServices.projectedListCountErased
 import DotKt.Runtime.CompilerServices.projectedMutableListCountErased
 import DotKt.Runtime.CompilerServices.projectedSetCountErased
+import DotKt.Runtime.CompilerServices.projectedSetStorageIsFaithful
+import DotKt.Runtime.CompilerServices.projectedSetEnumeratorErased
 import DotKt.Runtime.CompilerServices.projectedMutableSetCountErased
 import DotKt.Runtime.CompilerServices.projectedMutableCollectionCountErased
 import DotKt.Runtime.CompilerServices.projectedListGetErased
@@ -91,6 +93,31 @@ private class ClrProjectedCollectionView<T>(private val source: Any) : Collectio
 
 public fun <T> clrProjectedCollectionView(source: Any): Collection<T> =
     (source as? Collection<T>) ?: ClrProjectedCollectionView(source)
+
+private class ClrProjectedSetView<T>(private val source: Any) : AbstractSet<T>() {
+    override val size: Int get() = projectedSetCountErased(source)
+    override fun isEmpty(): Boolean = clrProjectedSetIsEmpty<Any?>(source)
+    override fun iterator(): Iterator<T> = ClrProjectedIterator(
+        KotlinIteratorOverRawEnumerator(projectedSetEnumeratorErased(source) as ClrRawEnumerator))
+
+    override fun contains(element: T): Boolean {
+        val slots = source as? KotlinCollectionDefaultSlots
+        if (slots != null) return slots.dotktContains(element)
+        for (value in this) if (value == element) return true
+        return false
+    }
+
+    override fun containsAll(elements: Collection<T>): Boolean {
+        val slots = source as? KotlinCollectionDefaultSlots
+        if (slots != null) return slots.dotktContainsAll(elements)
+        for (element in elements) if (!contains(element)) return false
+        return true
+    }
+}
+
+public fun <T> clrProjectedSetView(source: Any, targetType: Any): Set<T> =
+    if (projectedSetStorageIsFaithful(source, targetType)) source as Set<T>
+    else ClrProjectedSetView(source)
 
 public fun <T> clrCollIsEmpty(c: Collection<T>): Boolean = c.size == 0
 

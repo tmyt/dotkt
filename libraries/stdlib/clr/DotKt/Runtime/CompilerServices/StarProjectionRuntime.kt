@@ -156,6 +156,9 @@ internal interface StarProjectionType {
 
     @kotlin.clr.ClrIntrinsic("GetInterfaces")
     fun getInterfaces(): Array<StarProjectionType>
+
+    @kotlin.clr.ClrIntrinsic("IsAssignableFrom")
+    fun isAssignableFrom(other: StarProjectionType): Boolean
 }
 
 @PublishedApi
@@ -995,6 +998,70 @@ internal fun projectedSetCountErased(receiver: Any): Int {
     val collectionName = if (set.getGenericTypeDefinition().fullName == "System.Collections.Generic.IReadOnlySet`1")
         "System.Collections.Generic.IReadOnlyCollection`1" else "System.Collections.Generic.ICollection`1"
     return projectedParentCollectionCount(receiver, set, collectionName)
+}
+
+private fun projectedSetFamily(receiver: Any): StarProjectionType =
+    if (receiver is KotlinSetClassifier)
+        findErasedProjectedView(receiver,
+            "System.Collections.Generic.IReadOnlyCollection`1", "System.Collections.Generic.ICollection`1")
+            ?: throw UnsupportedOperationException("Kotlin Set has no CLR Collection surface")
+    else findErasedProjectedView(receiver,
+        "System.Collections.Generic.IReadOnlySet`1", "System.Collections.Generic.ISet`1")
+        ?: throw UnsupportedOperationException("Projected receiver has no CLR Set surface")
+
+// Returning the original object is safe only when every operational parent selects this Set's slot.
+// A compatible Collection<T> cast alone can silently select an unrelated covariant List on the same object.
+@PublishedApi
+internal fun projectedSetStorageIsFaithful(receiver: Any, targetType: Any): Boolean {
+    val family = projectedSetFamily(receiver)
+    val target = targetType as StarProjectionType
+    val actual = receiver.starProjectionRuntimeType()
+    if (!faithfulProjectedParent(actual, family, target)) return false
+    for (parent in target.getInterfaces()) {
+        if (parent.isGenericType && !faithfulProjectedParent(actual, family, parent)) return false
+    }
+    return true
+}
+
+private fun faithfulProjectedParent(actual: StarProjectionType, family: StarProjectionType,
+    target: StarProjectionType): Boolean {
+    val definition = target.getGenericTypeDefinition()
+    var selected: StarProjectionType? = null
+    if (family.isGenericType && family.getGenericTypeDefinition() == definition
+        && target.isAssignableFrom(family)) selected = family
+    for (parent in family.getInterfaces()) {
+        if (!parent.isGenericType || parent.getGenericTypeDefinition() != definition
+            || !target.isAssignableFrom(parent)) continue
+        if (selected != null && selected != parent) return false
+        selected = parent
+    }
+    val slot = selected ?: return false
+    if (slot == target) return true
+    for (candidate in actual.getInterfaces()) {
+        if (candidate.isGenericType && candidate.getGenericTypeDefinition() == definition
+            && candidate != slot && target.isAssignableFrom(candidate)) return false
+    }
+    return true
+}
+
+@PublishedApi
+internal fun projectedSetEnumeratorErased(receiver: Any): Any {
+    val family = projectedSetFamily(receiver)
+    var enumerable: StarProjectionType? = null
+    for (parent in family.getInterfaces()) {
+        if (!parent.isGenericType
+            || parent.getGenericTypeDefinition().fullName != "System.Collections.Generic.IEnumerable`1") continue
+        if (enumerable != null && enumerable != parent)
+            throw IllegalStateException("Ambiguous Set enumerable parent")
+        enumerable = parent
+    }
+    val selected = enumerable ?: throw UnsupportedOperationException("Set has no generic enumerable parent")
+    return try {
+        erasedProjectedMethod(selected, "GetEnumerator", 0).invoke(receiver, arrayOfNulls<Any?>(0))
+            ?: throw IllegalStateException("Set GetEnumerator returned null")
+    } catch (failure: StarProjectionInvocationException) {
+        throw (failure.innerException ?: failure)
+    }
 }
 
 @PublishedApi

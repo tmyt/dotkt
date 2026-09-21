@@ -245,20 +245,32 @@ static class StarProjectionLowering
             {
                 "kotlin.collections.Iterable" => "clrProjectedIterableView",
                 "kotlin.collections.MutableIterable" => "clrProjectedMutableIterableView",
-                "kotlin.collections.Collection" or "kotlin.collections.Set" => "clrProjectedCollectionView",
+                "kotlin.collections.Collection" => "clrProjectedCollectionView",
+                "kotlin.collections.Set" => "clrProjectedSetView",
                 "kotlin.collections.List" => "clrProjectedListView",
                 _ => null,
             };
             if (helper == null) continue;
+            var helperSignature = new JsonArray(TypeJson.Write(Any));
+            var helperArguments = new JsonArray(argument.DeepClone());
+            if (helper == "clrProjectedSetView")
+            {
+                helperSignature.Add(TypeJson.Write(Any));
+                helperArguments.Add(new JsonObject
+                {
+                    ["k"] = "classRef",
+                    ["type"] = TypeJson.Write(new TypeNode.Fqn("kotlin.collections.Collection", elementArgs)),
+                });
+            }
             arguments[index] = new JsonObject
             {
                 ["k"] = "callStatic",
                 ["owner"] = TypeJson.Fqn("kotlin.collections.ClrCollectionDefaultsKt"),
                 ["method"] = helper,
-                ["sig"] = new JsonArray(TypeJson.Write(Any)),
+                ["sig"] = helperSignature,
                 ["typeArgs"] = new JsonArray(TypeJson.Write(elementArgs[0])),
                 ["ret"] = TypeJson.Write(closed),
-                ["args"] = new JsonArray(argument.DeepClone()),
+                ["args"] = helperArguments,
             };
         }
     }
