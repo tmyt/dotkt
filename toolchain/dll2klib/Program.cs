@@ -3386,14 +3386,19 @@ internal sealed class AssemblyScanner : IDisposable
                 decoder.DecodeEntity(baseEntity, context, platform: false), arguments);
             var key = AssemblySimpleName(resolved.Reader) + ":" + MetadataTokens.GetRowNumber(resolved.Handle);
             if (!visited.Add(key)) return null;
-            arguments = constructed.Argument.Select(argument => argument.Type).ToImmutableArray();
             reader = resolved.Reader;
             definitionPath = resolved.DefinitionPath;
             decoder = DecoderFor(reader, names, signatures, definitionPath);
+            arguments = decoder.DeclarationArguments(resolved.Handle, constructed);
             definition = reader.GetTypeDefinition(resolved.Handle);
             context = new GenericContext(resolved.Handle, default,
                 definition.GetGenericParameters().ToDictionary(handle => handle,
                     handle => reader.GetGenericParameter(handle).Index));
+            // A nearer projected field owns this source name; do not manufacture a farther property over it.
+            if (definition.GetFields().Any(handle =>
+                IsPublicOrProtected(reader.GetFieldDefinition(handle).Attributes) &&
+                reader.GetString(reader.GetFieldDefinition(handle).Name) == name))
+                return null;
             foreach (var propertyHandle in definition.GetProperties())
             {
                 var property = reader.GetPropertyDefinition(propertyHandle);
@@ -3406,13 +3411,14 @@ internal sealed class AssemblyScanner : IDisposable
                     (representative.Attributes & MethodAttributes.Static) != 0) continue;
                 var signature = property.DecodeSignature(decoder, context with { Method = representativeHandle });
                 if (signature.ParameterTypes.Length != 0) continue;
-                var physicalType = SubstituteTypeParameters(signature.ReturnType, arguments);
                 var propertyType = !accessors.Getter.IsNil
-                    ? ProjectInheritedReturn(reader, representativeHandle, representative, physicalType, decoder)
+                    ? ProjectInheritedReturn(reader, representativeHandle, representative, signature.ReturnType, decoder)
                     : ProjectInheritedType(reader,
                         representative.GetParameters().FirstOrDefault(parameter =>
                             reader.GetParameter(parameter).SequenceNumber == 1),
-                        physicalType, representativeHandle, decoder);
+                        signature.ReturnType, representativeHandle, decoder);
+                // Carriers and NRT describe the declaration's type tree, before owner arguments expand it.
+                propertyType = SubstituteTypeParameters(propertyType, arguments);
                 var canWrite = !accessors.Setter.IsNil &&
                     IsPublicOrProtected(reader.GetMethodDefinition(accessors.Setter).Attributes);
                 var projected = new Property
@@ -3752,6 +3758,14 @@ internal sealed class AssemblyScanner : IDisposable
             // owner argument remains nullable; returning the argument verbatim weakened restored method bounds such
             // as `E : T?` to `E : String` on inherited interface declarations.
             if (source.Nullable) replacement.Nullable = true;
+            if (source.FlexibleUpperBound is { } sourceUpper)
+            {
+                replacement.Nullable = source.Nullable || replacement.Nullable;
+                replacement.FlexibleTypeCapabilitiesId = source.FlexibleTypeCapabilitiesId;
+                replacement.FlexibleUpperBound = SubstituteTypeParameters(sourceUpper, arguments);
+                replacement.FlexibleUpperBound.ClearFlexibleTypeCapabilitiesId();
+                replacement.FlexibleUpperBound.FlexibleUpperBound = null;
+            }
             return replacement;
         }
         var copy = source.Clone();
@@ -7814,6 +7828,23 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
         => Enumerable.Range(capturedOuter, frame.PhysicalArity - capturedOuter)
             .Concat(Enumerable.Range(0, capturedOuter)).Select(frame.SourceIndex)
             .Where(index => index.HasValue).Select(index => index!.Value).ToArray();
+
+    public ImmutableArray<KType> DeclarationArguments(TypeDefinitionHandle owner, KType constructed)
+    {
+        var arguments = constructed.Argument.Select(argument => argument.Type).ToArray();
+        if (_attrs.Int32(owner, MetadataAttributes.DotKtNs + "KotlinInnerAttribute") is not int capturedOuter)
+            return arguments.ToImmutableArray();
+        var frame = NullableFrameMetadata.TypeFrame(_md, _attrs, owner);
+        var order = frame is null
+            ? InnerReferenceCatalog.SemanticArgumentOrder(_md, owner)
+            : SemanticInnerArgumentOrder(frame, capturedOuter);
+        if (order.Length != arguments.Length)
+            throw new InvalidDataException("constructed inner type arguments do not match its declaration frame");
+        // KLIB presents inner arguments own-first, while declaration type-variable IDs are outer-first.
+        var declarationArguments = new KType[arguments.Length];
+        for (var i = 0; i < order.Length; i++) declarationArguments[order[i]] = arguments[i];
+        return declarationArguments.ToImmutableArray();
+    }
     public KType GetTypeFromSpecification(MetadataReader reader, GenericContext genericContext, TypeSpecificationHandle handle, byte rawTypeKind) =>
         reader.GetTypeSpecification(handle).DecodeSignature(this, genericContext);
 
