@@ -7,6 +7,11 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Existential Collection Count follows its independent collection contract (#782).** List/Set views
+  composed with dictionary storage select their actual Collection parent slot, including through locals,
+  parameters and imported calls. Projected size and default isEmpty share generic Count precedence;
+  Kotlin isEmpty overrides and source-authored concrete generic views remain authoritative.
+
 - **Projected raw collections use their actual Count for isEmpty (#786).** Non-generic CLR List/Collection
   views no longer require a generic collection interface for emptiness checks. Kotlin-authored overrides
   remain authoritative; foreign Count access preserves single evaluation and the original exception.

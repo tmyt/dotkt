@@ -854,12 +854,31 @@ private fun erasedMutableListMethod(receiver: Any, name: String, parameterCount:
 // Read-only projected lists need their IReadOnlyCollection/IReadOnlyList faces. Do not assume an IList face merely
 // because the standard BCL List happens to provide both: a Kotlin implementation of List<E> is allowed to be truly
 // read-only. Prefer the read-only face and fall back to the mutable one only for foreign types exposing IList alone.
-private fun findErasedProjectedView(receiver: Any, preferred: String, fallback: String): StarProjectionType? {
+private fun findErasedProjectedView(receiver: Any, preferred: String, fallback: String,
+    collectionParentsOnly: Boolean = false): StarProjectionType? {
+    val interfaces = receiver.starProjectionRuntimeType().getInterfaces()
+    var hasIndependentCollection = false
+    if (collectionParentsOnly) {
+        for (candidate in interfaces) {
+            if (isIndependentCollectionView(candidate)) hasIndependentCollection = true
+        }
+    }
     var preferredMatch: StarProjectionType? = null
     var fallbackMatch: StarProjectionType? = null
-    for (candidate in receiver.starProjectionRuntimeType().getInterfaces()) {
+    for (candidate in interfaces) {
         if (!candidate.isGenericType) continue
         val definition = candidate.getGenericTypeDefinition().fullName
+        if (definition != preferred && definition != fallback) continue
+        if (hasIndependentCollection) {
+            var inherited = false
+            for (root in interfaces) {
+                if (!isIndependentCollectionView(root)) continue
+                for (parent in root.getInterfaces()) {
+                    if (parent == candidate) inherited = true
+                }
+            }
+            if (!inherited) continue
+        }
         if (definition == preferred) {
             if (preferredMatch != null && preferredMatch != candidate)
                 throw IllegalStateException("Ambiguous projected view " + preferred)
@@ -871,6 +890,17 @@ private fun findErasedProjectedView(receiver: Any, preferred: String, fallback: 
         }
     }
     return preferredMatch ?: fallbackMatch
+}
+
+// List/Set contribute Kotlin Collection contracts independently of dictionary storage. Select their
+// actual closed parent interfaces, not a guessed element type or the first reflection result.
+private fun isIndependentCollectionView(view: StarProjectionType): Boolean {
+    if (!view.isGenericType) return false
+    return when (view.getGenericTypeDefinition().fullName) {
+        "System.Collections.Generic.IReadOnlyList`1", "System.Collections.Generic.IList`1",
+        "System.Collections.Generic.IReadOnlySet`1", "System.Collections.Generic.ISet`1" -> true
+        else -> false
+    }
 }
 
 private fun erasedProjectedView(receiver: Any, preferred: String, fallback: String): StarProjectionType =
@@ -899,7 +929,7 @@ private fun erasedProjectedMethod(view: StarProjectionType, name: String, parame
 internal fun projectedCollectionCountErased(receiver: Any): Int {
     val preferred = "System.Collections.Generic.IReadOnlyCollection`1"
     val fallback = "System.Collections.Generic.ICollection`1"
-    val view = findErasedProjectedView(receiver, preferred, fallback)
+    val view = findErasedProjectedView(receiver, preferred, fallback, collectionParentsOnly = true)
     // Preserve an existing generic view (and ambiguity errors). Raw Count supplies a capability only when
     // neither generic collection face exists. Native getter exceptions must not be unwrapped as reflection failures.
     if (view == null && receiver is StarProjectionRawCollection) return receiver.count
@@ -950,7 +980,7 @@ internal fun projectedListGetErased(receiver: Any, index: Int): Any? = try {
 
 @PublishedApi
 internal fun projectedReadOnlyCollectionCountErased(receiver: Any): Int =
-    if (receiver is StarProjectionRawCollection) receiver.count else projectedCollectionCountErased(receiver)
+    projectedCollectionCountErased(receiver)
 
 @PublishedApi
 internal fun projectedMutableCollectionCountErased(receiver: Any): Int =
