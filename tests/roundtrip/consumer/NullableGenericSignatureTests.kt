@@ -23,6 +23,12 @@ class NullableGenericSignatureTests {
         val owner = SegmentEcho<String>()
         assertTrue(owner.echo(null) == null)
         assertEquals(1, owner.echo(ArraySegment<String>(arrayOf("owner")))!!.Count)
+        val bound = owner::echo
+        assertTrue(bound(null) == null)
+        assertEquals(1, bound(ArraySegment<String>(arrayOf("bound")))!!.Count)
+        val unbound = SegmentEcho<String>::echo
+        assertTrue(unbound(owner, null) == null)
+        assertEquals(1, unbound(owner, ArraySegment<String>(arrayOf("unbound")))!!.Count)
         assertTrue(owner.other<Int>(null) == null)
         assertEquals(2, owner.other<Int>(ArraySegment<Int>(arrayOf(3, 4)))!!.Count)
     }

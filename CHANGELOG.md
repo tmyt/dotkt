@@ -7,6 +7,12 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Inherited foreign generic methods retain their constructed owner (#790).** Calls through Kotlin subclasses,
+  including `this`, bound references and cross-DLL consumers, match the reference hierarchy through recorded
+  declaration identity without losing generic or nested-owner arguments. Declaration signatures and constructed
+  owners use the same type-parameter frame even when an intermediate base reorders its arguments; direct calls,
+  bound references and unbound references retain their call-site result types.
+
 - **Existential Collection Count follows its independent collection contract (#782).** List/Set views
   composed with dictionary storage select their actual Collection parent slot, including through locals,
   parameters and imported calls. Existential Collection size and its foreign default isEmpty share generic Count precedence;
