@@ -3,4 +3,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
   </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../interop/producer/CollectionCountViews.cs" Link="CollectionCountViews.cs" />
+  </ItemGroup>
 </Project>

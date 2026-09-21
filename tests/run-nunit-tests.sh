@@ -52,9 +52,9 @@ PROJECTS=(
 declare -A EXPECTED_DISCOVERED=(
 	["tests/basic"]=627
 	["tests/coroutines"]=221
-	["tests/roundtrip/consumer"]=227
+	["tests/roundtrip/consumer"]=229
 	["tests/roundtrip/bidirectional/consumer"]=37
-	["tests/interop/consumer"]=255
+	["tests/interop/consumer"]=268
 )
 
 # Validate the baseline map before doing any expensive work. A new/renamed suite without a reviewed count is a

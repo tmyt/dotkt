@@ -47,9 +47,7 @@ static class StarProjectionLowering
     static readonly TypeNode AnyN = new TypeNode.Nullable(Any);
     static readonly TypeNode Bool = new TypeNode.Fqn("kotlin.Boolean");
     static readonly TypeNode Int = new TypeNode.Fqn("kotlin.Int");
-    static readonly TypeNode String = new TypeNode.Fqn("kotlin.String");
     static readonly TypeNode Type = new TypeNode.Fqn("System.Type");
-    static readonly TypeNode TypeN = new TypeNode.Nullable(Type);
     public static bool UsedRuntimeFallback { get; private set; }
 
     // Kotlin generic aliases with a faithful non-generic BCL classifier, regardless of element type.
@@ -160,7 +158,7 @@ static class StarProjectionLowering
                 && obj["recv"] is JsonObject identityRecv && Str(identityRecv["k"]) == "cast"
                 && IsIdentityCollection(identityRecv["type"], out var identityKind, out _)
                 && !HasConcreteTypeArguments(identityRecv["type"])
-                && LowerIdentityMember(obj, identityRecv, identityKind, refs) is JsonObject identityMember)
+                && LowerIdentityMember(obj, identityRecv, identityKind) is JsonObject identityMember)
             {
                 UsedRuntimeFallback = true;
                 Replace(obj, identityMember);
@@ -334,8 +332,7 @@ static class StarProjectionLowering
         return call;
     }
 
-    static JsonObject LowerIdentityMember(JsonObject call, JsonObject cast, int classifierKind,
-        ReferenceMetadataIndex refs)
+    static JsonObject LowerIdentityMember(JsonObject call, JsonObject cast, int classifierKind)
     {
         var checkedReceiver = LowerIdentityClassifier("cast", cast["e"], classifierKind, nullable: false, cast["type"]);
         var member = Str(call["method"]);
@@ -344,14 +341,17 @@ static class StarProjectionLowering
             0 => Call("projectedReadOnlyCollectionCountErased", new TypeNode[] { Any }, Int, checkedReceiver.DeepClone()),
             3 or 4 => Call("projectedListCountErased", new TypeNode[] { Any }, Int, checkedReceiver.DeepClone()),
             5 => Call("projectedMutableCollectionCountErased", new TypeNode[] { Any }, Int, checkedReceiver.DeepClone()),
-            _ => ExactCount(checkedReceiver.DeepClone(), refs),
+            1 => Call("projectedSetCountErased", new TypeNode[] { Any }, Int, checkedReceiver.DeepClone()),
+            2 => Call("projectedMutableSetCountErased", new TypeNode[] { Any }, Int, checkedReceiver.DeepClone()),
+            _ => throw new InvalidOperationException("Unknown collection classifier"),
         };
         switch (member)
         {
             case "size" when propertyAccess == "get":
                 return Count();
             case "isEmpty":
-                return CollectionHelper("clrProjectedCollIsEmpty", Bool, checkedReceiver);
+                return CollectionHelper(MemberCallSubstitution.ProjectedIsEmptyHelper(
+                    IdentityKind.Single(pair => pair.Value == classifierKind).Key), Bool, checkedReceiver);
             case "iterator":
                 if (classifierKind is 2 or 4 or 5)
                     return new JsonObject
@@ -392,7 +392,14 @@ static class StarProjectionLowering
                 && HasConcreteTypeArguments(concreteCast["type"])) return null;
         if (receiver is JsonObject local && Str(local["k"]) == "local"
             && Str(local["name"]) is string name && closedViews.ContainsKey(name)) return null;
-        return Call(kind == 5 ? "projectedMutableCollectionCountErased" : "projectedCollectionCountErased",
+        var helper = kind switch
+        {
+            1 => "projectedSetCountErased",
+            2 => "projectedMutableSetCountErased",
+            5 => "projectedMutableCollectionCountErased",
+            _ => "projectedCollectionCountErased",
+        };
+        return Call(helper,
             new TypeNode[] { Any }, Int, receiver.DeepClone());
     }
 
@@ -425,32 +432,6 @@ static class StarProjectionLowering
                 checkedReceiver, args[0].DeepClone());
     }
 
-    // The Kotlin `size` slot physically lives on IReadOnlyCollection<T>. Supply that exact BCL declaration identity to
-    // the existing star dispatcher, which maps it onto the receiver's unique closed view, unwraps getter exceptions,
-    // and refuses multiple constructed witnesses instead of choosing reflection order.
-    static JsonObject ExactCount(JsonNode receiver, ReferenceMetadataIndex refs)
-    {
-        const string ownerName = "System.Collections.Generic.IReadOnlyCollection";
-        var open = refs.ResolveNetType(ownerName, 1)
-            ?? throw new InvalidOperationException("bir2cir: cannot resolve IReadOnlyCollection<> for collection size");
-        if (open.IsConstructedGenericType) open = open.GetGenericTypeDefinition();
-        var getters = open.GetMethods().Where(m => m.Name == "get_Count" && m.GetParameters().Length == 0).ToList();
-        if (getters.Count != 1)
-            throw new InvalidOperationException($"bir2cir: expected one IReadOnlyCollection<>.get_Count, got {getters.Count}");
-        var getter = getters[0];
-        var emptyStrings = NewArray(String);
-        var emptyTypes = NewArray(Type);
-        var emptyArgs = NewArray(AnyN);
-        var invoke = Call("starProjectionInvoke",
-            new TypeNode[] { Any, Type, TypeN, Int, String, Int, new TypeNode.Array(String),
-                new TypeNode.Array(Type), new TypeNode.Array(AnyN) },
-            AnyN,
-            receiver, ClassRef("System.Collections.Generic.IReadOnlyCollection`1"), Null(TypeN),
-            ConstInt(getter.MetadataToken), ConstString("get_Count"), ConstInt(0),
-            emptyStrings, emptyTypes, emptyArgs);
-        return new JsonObject { ["k"] = "cast", ["type"] = TypeJson.Write(Int), ["e"] = invoke };
-    }
-
     static JsonObject Call(string method, IReadOnlyList<TypeNode> signature, TypeNode result,
         params JsonNode[] args) => new()
     {
@@ -478,21 +459,6 @@ static class StarProjectionLowering
     static JsonObject ConstInt(int value) => new()
     {
         ["k"] = "const", ["type"] = TypeJson.Write(Int), ["value"] = value,
-    };
-
-    static JsonObject ConstString(string value) => new()
-    {
-        ["k"] = "const", ["type"] = TypeJson.Write(String), ["value"] = value,
-    };
-
-    static JsonObject Null(TypeNode type) => new()
-    {
-        ["k"] = "const", ["type"] = TypeJson.Write(type), ["value"] = null,
-    };
-
-    static JsonObject NewArray(TypeNode element) => new()
-    {
-        ["k"] = "newArray", ["elem"] = TypeJson.Write(element), ["elems"] = new JsonArray(),
     };
 
     static bool Flag(JsonNode node) =>
