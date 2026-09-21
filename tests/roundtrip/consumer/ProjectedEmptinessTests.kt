@@ -18,6 +18,8 @@ class ProjectedEmptinessTests {
         val set = value as Set<*>
         check(importedSetCount(set) == 3)
         check(!importedSetIsEmpty(set))
+        check(importedSetCount(setOf(7, 9)) == 2)
+        check(importedSetCount(emptySet<Int>()) == 0)
     }
 
     @TestAttribute fun importedCollectionCountAcceptsRawAndGenericCollections() {

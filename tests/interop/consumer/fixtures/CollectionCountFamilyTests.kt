@@ -9,8 +9,28 @@ private class FamilyEmptyOverride : List<Int> by listOf(7, 9) {
     var calls = 0
     override fun isEmpty(): Boolean { calls++; return true }
 }
+private class FamilyOwnedSet : Set<Int> by setOf(7, 9)
+private class FamilyOwnedMutableSet : MutableSet<Int> by mutableSetOf(7, 9)
 
 class CollectionCountFamilyTests {
+    @TestAttribute fun kotlinSetImplementationsKeepTheirCollectionAbi() {
+        for (set in arrayOf<Set<*>>(setOf(7, 9), emptySet<Int>(), FamilyOwnedSet())) {
+            check(familySetSize(set) == if (set.isEmpty()) 0 else 2)
+        }
+        val value: Any = FamilyOwnedSet()
+        check((value as Set<*>).size == 2)
+    }
+
+    @TestAttribute fun kotlinMutableSetsAndMapViewsKeepTheirCollectionAbi() {
+        val owned = FamilyOwnedMutableSet()
+        check(familyMutableSetSize(owned) == 2)
+        check(familyMutableSetSize(mutableSetOf(7, 9)) == 2)
+        val map = mutableMapOf(7 to "a", 9 to "b")
+        check(familySetSize(map.keys) == 2)
+        check(familyMutableSetSize(map.keys) == 2)
+        check(familySetSize(map.entries) == 2)
+    }
+
     @TestAttribute fun listEmptinessKeepsTheListFamily() {
         val value: Any = CollectionStorageInterop.ListAndIndependentCollection()
         val list = value as List<*>
@@ -77,6 +97,14 @@ class CollectionCountFamilyTests {
         check(sub.size == 1 && sub[0] == 7)
         check(sub.removeAt(0) == 7)
         check(list.size == 1 && list[0] == 9)
+    }
+
+    @TestAttribute fun mutableListSizingExcludesDictionaryStorage() {
+        val value: Any = CollectionStorageInterop.MutableListWithDictionaryStorage()
+        val list = value as MutableList<*>
+        check(list.size == 2)
+        check(list.listIterator().hasNext())
+        check(list.subList(0, 1).size == 1)
     }
 
     @TestAttribute fun collectionWideningStillReportsUnrelatedClosures() {

@@ -82,6 +82,23 @@ public sealed class MutableListAndMutableCollection : List<int>, ICollection<str
     IEnumerator<string> IEnumerable<string>.GetEnumerator() => throw new System.NotSupportedException();
 }
 
+public sealed class MutableListWithDictionaryStorage : OrderedDictionary<string, int>, IList<string>
+{
+    private readonly List<string> values = new() { "x", "y" };
+    int ICollection<string>.Count => values.Count;
+    bool ICollection<string>.IsReadOnly => false;
+    string IList<string>.this[int index] { get => values[index]; set => values[index] = value; }
+    void ICollection<string>.Add(string value) => values.Add(value);
+    void ICollection<string>.Clear() => values.Clear();
+    bool ICollection<string>.Contains(string value) => values.Contains(value);
+    void ICollection<string>.CopyTo(string[] array, int index) => values.CopyTo(array, index);
+    bool ICollection<string>.Remove(string value) => values.Remove(value);
+    int IList<string>.IndexOf(string value) => values.IndexOf(value);
+    void IList<string>.Insert(int index, string value) => values.Insert(index, value);
+    void IList<string>.RemoveAt(int index) => values.RemoveAt(index);
+    IEnumerator<string> IEnumerable<string>.GetEnumerator() => values.GetEnumerator();
+}
+
 public sealed class RawListAndDictionary : ArrayList, IReadOnlyDictionary<string, int>
 {
     public RawListAndDictionary() { Add(7); Add(9); }

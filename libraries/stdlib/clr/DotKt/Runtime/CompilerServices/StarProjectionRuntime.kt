@@ -888,6 +888,7 @@ private fun findErasedProjectedView(receiver: Any, preferred: String, fallback: 
     val runtimeType = receiver.starProjectionRuntimeType()
     val interfaces = runtimeType.getInterfaces()
     val listView = preferred == "System.Collections.Generic.IReadOnlyList`1"
+        || preferred == "System.Collections.Generic.IList`1"
     val storageFaces = if (excludeDictionaryStorage || listView) collectionMapStorageFaces(runtimeType)
         else emptyArray<StarProjectionType>()
     var preferredMatch: StarProjectionType? = null
@@ -985,6 +986,9 @@ internal fun projectedListCountErased(receiver: Any): Int {
 
 @PublishedApi
 internal fun projectedSetCountErased(receiver: Any): Int {
+    // Kotlin Set uses the Collection ABI plus a nominal classifier; only foreign Sets
+    // use CLR Set interfaces. Keep the authored Kotlin Count contract authoritative.
+    if (receiver is KotlinSetClassifier) return projectedCollectionCountErased(receiver)
     val set = findErasedProjectedView(receiver,
         "System.Collections.Generic.IReadOnlySet`1", "System.Collections.Generic.ISet`1")
         ?: throw UnsupportedOperationException("Projected receiver has no CLR Set surface")
@@ -1004,6 +1008,7 @@ internal fun projectedMutableListCountErased(receiver: Any): Int {
 
 @PublishedApi
 internal fun projectedMutableSetCountErased(receiver: Any): Int {
+    if (receiver is KotlinMutableSetClassifier) return projectedMutableCollectionCountErased(receiver)
     val set = findErasedProjectedView(receiver,
         "System.Collections.Generic.ISet`1", "System.Collections.Generic.ISet`1")
         ?: throw UnsupportedOperationException("Projected receiver has no mutable CLR Set surface")
