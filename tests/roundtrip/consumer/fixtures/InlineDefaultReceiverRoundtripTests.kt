@@ -4,6 +4,18 @@ import inlinedefaults.receiverLength
 private class InlineDefaultDerived : inlinedefaults.Base()
 
 class InlineDefaultReceiverRoundtripTests {
+    @TestAttribute fun inlineAndDefaultExpansionCrossThreeAssemblies() {
+        val receiver = inlinedefaults.Receiver()
+        check(inlinedefaultbridge.forwarded(receiver) { it + 10 } == 12)
+        check(receiver.field == 2)
+        check(inlinedefaultbridge.outer(receiver) == 3)
+        check(receiver.field == 3)
+        check(inlinedefaultbridge.lifted() == 2)
+        var calls = 0
+        check(inlinedefaultbridge.forwardedCapture { calls += 1 } == 257)
+        check(calls == 1)
+    }
+
     @TestAttribute fun importedInlineDefaultsKeepReceiverAndFreshBindings() {
         val receiver = inlinedefaults.Receiver()
         check(receiver.next() == 2)
@@ -36,5 +48,7 @@ class InlineDefaultReceiverRoundtripTests {
         check(inlinedefaults.callback() == 41)
         check(inlinedefaults.Base().value == 42)
         check(InlineDefaultDerived().value == 42)
+        check(inlinedefaults.CaptureDefault().read() == 257)
+        check(inlinedefaults.CaptureDefault().read() == 257)
     }
 }

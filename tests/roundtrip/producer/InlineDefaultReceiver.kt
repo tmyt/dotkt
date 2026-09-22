@@ -22,3 +22,12 @@ class GenericReceiver<T>(var field: T) {
 fun callback(block: () -> Int = { run { 41 } }): Int = block()
 fun String.receiverLength(value: Int = run { length }): Int = value
 open class Base(val value: Int = run { 42 })
+
+inline fun capture(value: Int, before: () -> Unit): () -> Int {
+    before()
+    return { value }
+}
+
+class CaptureDefault {
+    fun read(value: () -> Int = capture(257) {}): Int = value()
+}

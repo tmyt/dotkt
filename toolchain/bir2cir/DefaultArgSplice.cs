@@ -485,6 +485,9 @@ static class DefaultArgSplice
     {
         if (node is JsonObject obj)
         {
+            // Nested expansion sites can create implementation types later. Transfer their use-site owner
+            // together with already present classifiers, before either kind of payload is expanded again.
+            if (Str(obj["k"]) is "callInline" or "callEval") obj["semanticOwner"] = semanticOwner;
             if (obj["synthClass"] is JsonObject synth)
             {
                 synth["semanticOwner"] = semanticOwner;

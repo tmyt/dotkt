@@ -2935,10 +2935,10 @@ static class InlineSplice
     {
         if (node is JsonObject o)
         {
-            // A nested inline call is cloned into the same consumer lexical scope. Keep its authored use-site fact in
+            // A nested inline/default call is cloned into the same consumer lexical scope. Keep its use-site fact in
             // lockstep so a later fixpoint splice transfers any newly materialized implementation types to this owner,
             // rather than back to the producer declaration recorded in the payload.
-            if (Str(o["k"]) == "callInline") o["semanticOwner"] = consumerSemanticOwner;
+            if (Str(o["k"]) is "callInline" or "callEval") o["semanticOwner"] = consumerSemanticOwner;
             if ((Str(o["k"]) == "newSam" || Str(o["k"]) == "newClosure") && o["synthClass"] is JsonObject sc)
             {
                 // The payload declaration's source owner is not the cloned declaration's owner. The callInline node
