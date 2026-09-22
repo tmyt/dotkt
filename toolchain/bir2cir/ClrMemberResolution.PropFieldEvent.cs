@@ -98,10 +98,17 @@ static partial class ClrMemberResolution
             catch { return null; }
         }
 
-        // PropertyInfo/MethodSemantics is authoritative. Reflection does not inherit PropertyInfo across interface
-        // edges, so walk those edges explicitly while retaining the exact associated accessor MethodInfo.
-        var own = Accessor(open, declaredOnly: false);
-        if (own != null) return own;
+        // Kotlin sees projected fields and CLR properties in the same member namespace. Resolve each class level
+        // before advancing to its base: a visible field hides an inherited property (and an explicit interface
+        // property), just as a nearer property hides a base field. An inaccessible backing field is not a candidate.
+        for (var current = open; current != null; current = current.BaseType)
+        {
+            var own = Accessor(current, declaredOnly: true);
+            if (own != null) return own;
+            if (FindFieldMember(current, name, flags | BindingFlags.DeclaredOnly) != null) return null;
+        }
+        // Reflection does not inherit PropertyInfo across interface edges. Only use those slots after exhausting
+        // the visible class declarations, retaining the exact MethodSemantics accessor rather than its spelling.
         if ((flags & BindingFlags.Instance) == 0) return null;
         try
         {

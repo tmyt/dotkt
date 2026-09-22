@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Projected CLR fields respect nearer declarations (#799).** Field/property reads and writes resolve the
+  nearest visible class member before inherited properties or interface slots. Hidden base members no longer
+  change a projected static member into an instance access.
+
 - **Collection factories inside generic constructors retain the caller's type frame (#798).** Contextual
   List, Set and Map construction no longer applies the constructor owner's type arguments twice, preventing
   invalid IL and runtime failures when generic properties and methods build nested collection values across DLLs.

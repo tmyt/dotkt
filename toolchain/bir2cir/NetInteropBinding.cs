@@ -782,37 +782,39 @@ static class NetInteropBinding
         return false;
     }
 
-    // The static/instance declaration bit for a property/field surfaced through Kotlin companion syntax. Refuse
-    // ambiguous hierarchy collisions instead of choosing a first reflection result.
+    // The static/instance bit belongs to the nearest visible class declaration, not every same-named member in
+    // its hierarchy. A hidden base property must not turn a static field into an instance access.
     static bool MemberIsStaticPropertyOrField(Type type, string name)
     {
         const BindingFlags Flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance
             | BindingFlags.Static | BindingFlags.DeclaredOnly;
-        var matches = new List<bool>();
-        var seen = new HashSet<Type>();
-        var stack = new Stack<Type>();
-        stack.Push(type);
-        while (stack.Count > 0)
+        List<bool> Declared(Type current)
         {
-            var cur = stack.Pop();
-            if (cur == null || !seen.Add(cur)) continue;
+            var matches = new List<bool>();
             try
             {
-                foreach (var p in cur.GetProperties(Flags))
+                foreach (var p in current.GetProperties(Flags))
                 {
                     if (p.Name != name || p.GetIndexParameters().Length != 0) continue;
                     var accessor = p.GetMethod ?? p.SetMethod;
-                    if (accessor != null) matches.Add(accessor.IsStatic);
+                    if (accessor != null && (accessor.IsPublic || accessor.IsFamily || accessor.IsFamilyOrAssembly))
+                        matches.Add(accessor.IsStatic);
                 }
-                foreach (var field in cur.GetFields(Flags))
-                    if (field.Name == name) matches.Add(field.IsStatic);
+                foreach (var field in current.GetFields(Flags))
+                    if (field.Name == name && (field.IsPublic || field.IsFamily || field.IsFamilyOrAssembly))
+                        matches.Add(field.IsStatic);
             }
             catch { /* metadata-load edge — ambiguity/failure remains false */ }
-            Type baseType = null; try { baseType = cur.BaseType; } catch { }
-            if (baseType != null) stack.Push(baseType);
-            try { foreach (var i in cur.GetInterfaces()) stack.Push(i); } catch { }
+            return matches;
         }
-        return matches.Count == 1 && matches[0];
+        for (var current = type; current != null; current = current.BaseType)
+        {
+            var matches = Declared(current);
+            if (matches.Count != 0) return matches.Count == 1 && matches[0];
+        }
+        var inherited = new List<bool>();
+        try { foreach (var iface in type.GetInterfaces()) inherited.AddRange(Declared(iface)); } catch { }
+        return inherited.Count == 1 && inherited[0];
     }
 
     // True iff the .NET type (or a base/interface) declares a method of this name (any arity), public OR protected —
