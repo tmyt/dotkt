@@ -16,6 +16,25 @@ using DotKt.Bir;
 // dispatch. ilemit consumes those facts one-to-one — zero member-kind derivation, zero first-pick.
 static partial class ClrMemberResolution
 {
+    // UnsafeAccessor binds a field on its declaring TypeDef, unlike ordinary inherited
+    // field lookup. Reuse the exact MemberRef projection, including constructed bases.
+    internal static MemberRefNode ResolveFieldForUnsafeAccessor(ReferenceMetadataIndex refs,
+        TypeNode.Fqn owner, string name, bool isStatic, out JsonArray ownerParameters)
+    {
+        _refs = refs;
+        ownerParameters = null;
+        var open = ResolveOwnerType(owner);
+        if (open == null) return null;
+        var flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.FlattenHierarchy
+            | (isStatic ? BindingFlags.Static : BindingFlags.Instance);
+        var field = open.GetField(name, flags)
+            ?? throw new InvalidOperationException($"UnsafeAccessor field '{owner.Name}.{name}' has no referenced FieldDef");
+        var declaration = OpenFieldDeclarationOf(field);
+        ownerParameters = new JsonArray(declaration.DeclaringType.GetGenericArguments()
+            .Select(ReferenceMetadataIndex.GenericParamDeclaration).ToArray());
+        return FieldRefOf(field, open, owner.Args);
+    }
+
     // ---- property get / set --------------------------------------------------------------------
 
     // A clrPropGet/clrPropSet on a .NET (or referenced-DotKt) owner. Resolve the owner's OPEN def off the ref.dll and

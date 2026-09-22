@@ -877,6 +877,23 @@ static class UnsafeAccessorLowering
         else if (frontendVisibility is not ("private" or "protected"))
             return;
 
+        var targetStatic = kind is "staticField" or "staticFieldSet"
+            || (target != null && Bool(target["static"]));
+        if (target == null && refs != null
+            && ClrMemberResolution.ResolveFieldForUnsafeAccessor(refs, ownerType, targetName, targetStatic,
+                out var referencedOwnerParameters) is MemberRefNode referencedField)
+        {
+            ownerType = referencedField.DeclaringType as TypeNode.Fqn
+                ?? throw new InvalidOperationException("UnsafeAccessor field has no exact declaring owner");
+            ownerNode = TypeJson.Write(ownerType);
+            // Field signature modifiers belong to storage, not the accessor's
+            // value type. VolatileFieldLowering already carries access ordering.
+            var valueType = referencedField.ReturnType;
+            while (valueType is TypeNode.Mod modifier) valueType = modifier.Of;
+            frontendFieldType = TypeJson.Write(valueType);
+            ownerTypeParams = referencedOwnerParameters;
+        }
+
         var fieldTypeNode = target?["type"]?.DeepClone() ?? frontendFieldType
             ?? access["ret"]?.DeepClone() ?? access["sty"]?.DeepClone();
         if (TypeJson.Read(fieldTypeNode) is not TypeNode fieldType) return;
@@ -886,8 +903,6 @@ static class UnsafeAccessorLowering
         var fieldTypeJson = TypeJson.Write(actualFieldType);
         var declaredByRefType = TypeJson.Write(new TypeNode.ByRef(fieldType));
         var callByRefType = TypeJson.Write(new TypeNode.ByRef(actualFieldType));
-        var targetStatic = kind is "staticField" or "staticFieldSet"
-            || (target != null && Bool(target["static"]));
 
         var key = $"{caller.Name}|field|{ownerType.Name}|{targetName}|{targetStatic}|{TypeKey(declaredFieldTypeJson)}";
         JsonNode nullableGenericByRef = null;

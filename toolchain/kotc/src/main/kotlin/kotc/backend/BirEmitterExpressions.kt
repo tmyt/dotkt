@@ -129,33 +129,56 @@ internal fun BirEmitter.memberVisibilityStamped(
 	s: String,
 	preserveDeclaration: Boolean = false,
 ): String {
-	val visibility = visOf(target)
+	// External-member and field emission select the inherited declaration. Ordinary
+	// Kotlin calls retain the accessed owner, whose substituted descriptor frame must
+	// stay paired with that owner. Use the same frontend origin/storage facts here.
+	val member = (target as? IrSimpleFunction)?.let {
+		val declaration = if (it.isFakeOverride) it.resolveFakeOverride() ?: it else it
+		val owner = declaration.parent as? IrClass
+		val field = declaration.correspondingPropertySymbol?.owner?.let(::isClrField) == true
+		if (field || owner?.let(::isExternalNetType) == true) declaration else it
+	} ?: target
+	val visibility = visOf(member)
 	val restricted = visibility == "private" || visibility == "protected"
 	if (!restricted && !preserveDeclaration) return s
+	// Projected CLR fields are Kotlin property accesses, not IrGetField/IrSetField.
+	// Their emitted storage edge needs the same declaration facts as a native field,
+	// including when a default or inline body moves the access into another caller.
+	val accessor = member as? IrSimpleFunction
+	val property = accessor?.correspondingPropertySymbol?.owner
+	val fieldAccess = listOf("field", "staticField", "lateinitGet", "setField", "setFieldExpr", "staticFieldSet")
+		.any { s.startsWith("{\"k\":\"$it\"") }
+	if (restricted && fieldAccess && property != null && isClrField(property)) {
+		val fieldType = property.getter?.returnType ?: return s
+		val descriptor = inMemberDeclarationFrame(member) {
+			memberOwnerTypeParamsJson(member) + ",\"memberType\":" + birType(fieldType).toJson()
+		}
+		return s.dropLast(1) + ",\"memberVisibility\":" + str(visibility) + descriptor + "}"
+	}
 	if (!(s.startsWith("{\"k\":\"callInstance\"") || s.startsWith("{\"k\":\"callStatic\"") ||
 			s.startsWith("{\"k\":\"new\"") || s.startsWith("{\"k\":\"newBoundDelegate\""))) return s
-	val (ownerTypeParams, methodTypeParams, declarationFact) = inMemberDeclarationFrame(target) {
-		val ownerTypeParams = memberOwnerTypeParamsJson(target)
-		val methodTypeParams = (target as? org.jetbrains.kotlin.ir.declarations.IrFunction)?.let {
+	val (ownerTypeParams, methodTypeParams, declarationFact) = inMemberDeclarationFrame(member) {
+		val ownerTypeParams = memberOwnerTypeParamsJson(member)
+		val methodTypeParams = (member as? org.jetbrains.kotlin.ir.declarations.IrFunction)?.let {
 			typeParamsJson(it.typeParameters)
 				.replaceFirst(",\"typeParams\":", ",\"memberMethodTypeParams\":")
 		}.orEmpty()
-		val declarationFact = when (target) {
+		val declarationFact = when (member) {
 			is org.jetbrains.kotlin.ir.declarations.IrConstructor -> {
 				// Ordinary same-unit construction already carries the COMPLETE declaration vector, including synthetic
 				// enclosing/capture slots, from the IrConstructorCall arm below. Do not overwrite it with the source-only
 				// regular vector when visibility stamping is also required.
 				if (s.contains("\"memberSignature\"")) "" else {
-					val signature = target.parameters
+					val signature = member.parameters
 						.filter { it.kind == org.jetbrains.kotlin.ir.declarations.IrParameterKind.Regular }
 						.joinToString(",") { birType(it.type).toJson() }
 					",\"memberSignature\":[${signature}]"
 				}
 			}
 			is org.jetbrains.kotlin.ir.declarations.IrFunction -> {
-				val signature = overloadSigField(target)
+				val signature = overloadSigField(member)
 					.replaceFirst(",\"sig\":", ",\"memberSignature\":")
-				signature + ",\"memberReturnType\":" + birType(target.returnType).toJson()
+				signature + ",\"memberReturnType\":" + birType(member.returnType).toJson()
 			}
 			else -> ""
 		}
