@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Default arguments preserve protected CLR access (#819).** Field, property and method defaults remain
+  valid when realized in an unrelated caller, including Kotlin DLL reimport and constructed generic field owners.
+  Visibility facts survive until the backend selects the final physical access without widening declarations.
+
 - **Protected class statics honor family access (#817).** Derived classes can use protected CLR fields,
   properties and methods without an instance-receiver restriction. Static hiding respects visibility and
   applicability; callable-reference adapters preserve their lexical owner, including static initializers.

@@ -196,6 +196,13 @@ static class NetInteropBinding
             || (k == "callInstance" && netType.IsAbstract && netType.IsSealed)
             || (k == "callInstance" && propertyKind is "get" or "set"
                 && MemberIsStaticPropertyOrField(netType, method)));
+        // Restricted edges must retain their declaration facts until physical ownership is final.
+        // UnsafeAccessorLowering selects legal access after defaults, closures and suspend bodies move.
+        if (Str(node["memberVisibility"]) is "private" or "protected")
+        {
+            if (isStatic) node["ownerType"] = CloseStaticOwner(ownerJson, netType);
+            return;
+        }
         var hasTypeArgs = node["typeArgs"] is JsonArray ta && ta.Count > 0;
 
         // A declaration loaded from a standard reference KLIB surfaces a CLR event as an ordinary read-only
@@ -458,6 +465,12 @@ static class NetInteropBinding
         }
         var name = Str(node["name"]);
         if (name == null || !MemberIsPropertyOrField(netType, name)) return;
+        if (Str(node["memberVisibility"]) is "private" or "protected")
+        {
+            if (companionStatic == true || MemberIsStaticPropertyOrField(netType, name))
+                node["ownerType"] = CloseStaticOwner(ownerJson, netType);
+            return;
+        }
         var v = new Dictionary<string, JsonNode>(StringComparer.Ordinal);
         foreach (var key in node.Select(kv => kv.Key).ToList()) { var val = node[key]; node.Remove(key); v[key] = val; }
         JsonNode Take(string key) => v.TryGetValue(key, out var x) ? x : null;

@@ -132,6 +132,22 @@ internal fun BirEmitter.memberVisibilityStamped(
 	val visibility = visOf(target)
 	val restricted = visibility == "private" || visibility == "protected"
 	if (!restricted && !preserveDeclaration) return s
+	// Projected CLR fields are Kotlin property accesses, not IrGetField/IrSetField.
+	// Their emitted storage edge needs the same declaration facts as a native field,
+	// including when a default or inline body moves the access into another caller.
+	val accessor = target as? IrSimpleFunction
+	val property = accessor?.correspondingPropertySymbol?.owner
+	val fieldAccess = listOf("field", "staticField", "lateinitGet", "setField", "setFieldExpr", "staticFieldSet")
+		.any { s.startsWith("{\"k\":\"$it\"") }
+	if (restricted && fieldAccess && property != null && isClrField(property)) {
+		val declaration = (if (accessor.isFakeOverride) accessor.resolveFakeOverride() else accessor) ?: accessor
+		val declarationProperty = declaration.correspondingPropertySymbol?.owner ?: property
+		val fieldType = declarationProperty.getter?.returnType ?: return s
+		val descriptor = inMemberDeclarationFrame(declaration) {
+			memberOwnerTypeParamsJson(declaration) + ",\"memberType\":" + birType(fieldType).toJson()
+		}
+		return s.dropLast(1) + ",\"memberVisibility\":" + str(visibility) + descriptor + "}"
+	}
 	if (!(s.startsWith("{\"k\":\"callInstance\"") || s.startsWith("{\"k\":\"callStatic\"") ||
 			s.startsWith("{\"k\":\"new\"") || s.startsWith("{\"k\":\"newBoundDelegate\""))) return s
 	val (ownerTypeParams, methodTypeParams, declarationFact) = inMemberDeclarationFrame(target) {
