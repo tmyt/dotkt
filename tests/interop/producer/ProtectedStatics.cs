@@ -26,7 +26,15 @@ public class GenericBase<T>
     protected static T Value;
     protected static T Store(T value) { Value = value; return value; }
     public static T Read() => Value;
+    public static int Visible = 173;
+    public static int Tag(T value) => 181;
 }
+public class GenericMiddle<T> : GenericBase<T>
+{
+    protected new static int Visible = 179;
+    protected new static int Tag(T value) => 191;
+}
+public class GenericStringLeaf : GenericMiddle<string> { }
 public class StringLeaf : GenericBase<string> { }
 public static class Reader
 {
@@ -35,4 +43,7 @@ public static class Reader
     public static int Method(int value) => Leaf.VisibleMethod(value);
     public static int OptionalCall() => Leaf.Pick();
     public static int NamedCall() => Leaf.Pick(value: 5);
+    public static int IntValue() => GenericBase<int>.Read();
+    public static int GenericField() => GenericStringLeaf.Visible;
+    public static int GenericMethod() => GenericStringLeaf.Tag("C#");
 }

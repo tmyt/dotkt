@@ -44,6 +44,12 @@ private class ProtectedStaticStringChild : StringLeaf() {
     }
 }
 private class ProtectedStaticObjectChild : GenericBase<Any>()
+private class ProtectedStaticGenericMiddleChild : GenericStringLeaf() {
+    fun exercise() {
+        check(ProtectedStaticGenericMiddleChild.Visible == 179)
+        check(ProtectedStaticGenericMiddleChild.Tag("Kotlin") == 191)
+    }
+}
 private class ProtectedStaticGenericChild<T> : GenericBase<T>() {
     fun roundtrip(value: T): T {
         val store: (T) -> T = ProtectedStaticGenericChild<T>::Store
@@ -61,7 +67,10 @@ class ProtectedStaticTests {
     @TestAttribute fun genericProtectedStaticsKeepConstructedOwner() {
         ProtectedStaticStringChild().exercise()
         check(ProtectedStaticGenericChild<String>().roundtrip("generic reference") == "generic reference")
+        check(StringLeaf.Read() == "generic reference")
         check(ProtectedStaticGenericChild<Int>().roundtrip(151) == 151)
+        check(Reader.IntValue() == 151 && StringLeaf.Read() == "generic reference")
+        check(ProtectedStaticObjectChild.Read() == null)
     }
     @TestAttribute fun staticHidingUsesAccessSiteVisibility() {
         check(Leaf.Visible == 101 && Reader.Field() == 101)
@@ -71,5 +80,8 @@ class ProtectedStaticTests {
         check(Leaf.Pick() == 157 && Reader.OptionalCall() == 157)
         check(Leaf.Pick(value = 5) == 162 && Reader.NamedCall() == 162)
         check(Leaf.Pick(5) == 168)
+        check(GenericStringLeaf.Visible == 173 && Reader.GenericField() == 173)
+        check(GenericStringLeaf.Tag("Kotlin") == 181 && Reader.GenericMethod() == 181)
+        ProtectedStaticGenericMiddleChild().exercise()
     }
 }

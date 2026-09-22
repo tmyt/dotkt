@@ -739,7 +739,7 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 	internal fun semanticUseSiteOwnerJson(): String =
 		""","semanticOwner":${str(activeSemanticOwner ?: fileClass)}"""
 
-	/** Exact Kotlin owner application for a compiler-generated method emitted at the current use site. */
+	/** Exact Kotlin owner application, using the active declaration frame unless an explicit declaration is supplied. */
 	internal fun semanticUseSiteOwnerSpec(declaration: IrDeclaration? = activeSemanticOwnerDeclaration): TypeNode {
 		val semanticName = activeSemanticOwner ?: fileClass
 		var parent: Any? = if (declaration is IrClass) declaration else declaration?.parent

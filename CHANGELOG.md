@@ -7,6 +7,11 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Protected class statics honor family access (#817).** Derived classes can use protected CLR fields,
+  properties and methods without an instance-receiver restriction. Static hiding respects visibility and
+  applicability; callable-reference adapters preserve their lexical owner, including static initializers.
+  Kotlin companion-block visibility survives DLL reimport.
+
 - **Inherited static members preserve their declaring owner (#814).** Imported CLR and Kotlin subclass
   qualifiers expose base-class statics without duplicating storage. Constructed generic owners remain exact
   through calls, assignments, callable references and default arguments; inherited method overloads remain available.

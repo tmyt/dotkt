@@ -1,4 +1,3 @@
-cannot access
-Field
-Method
-Property
+cannot access 'companion var Field:
+cannot access 'companion fun Method(
+cannot access 'Property':

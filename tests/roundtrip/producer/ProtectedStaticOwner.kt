@@ -20,3 +20,12 @@ class KotlinProtectedStaticLocalChild : KotlinProtectedStaticBase() {
         check(reference() == 13)
     }
 }
+
+class KotlinInlineStaticReferenceHolder {
+    companion { fun target(value: Int): Int = value + 1 }
+    inline fun invoke(block: ((Int) -> Int) -> Int): Int = block(KotlinInlineStaticReferenceHolder::target)
+    inline fun deferred(crossinline block: ((Int) -> Int) -> Int): () -> Int =
+        { block(KotlinInlineStaticReferenceHolder::target) }
+    inline fun suspended(crossinline block: suspend ((Int) -> Int) -> Int): suspend () -> Int =
+        { block(KotlinInlineStaticReferenceHolder::target) }
+}
