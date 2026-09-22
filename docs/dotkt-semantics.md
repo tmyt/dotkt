@@ -1465,6 +1465,10 @@ The extension is imported from the namespace, not from a synthetic package named
 same physical method from appearing twice in completion under one qualified name. The rule is identical for the
 global CLR namespace, whose extension view belongs to Kotlin's root package.
 
+Projected fields and non-indexed properties share a source member name. Their physical binding selects the
+nearest visible class declaration before searching farther base classes or interface slots; a nearer field
+does not lose to a farther property. Reads, writes, and the static/instance bit follow that selected declaration.
+
 A Kotlin class that EXTENDS such a type does not re-declare its statics. The frontend materializes one on the
 subclass so that `Sub.Shared` resolves, but the CLR does not inherit statics into a derived TypeDef, so `Sub.Shared`
 IS `Base.Shared` — one member, one storage location — and the subclass emits nothing for it.
