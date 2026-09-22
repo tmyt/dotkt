@@ -411,6 +411,13 @@ for proj in "${PROJECTS[@]}"; do
 	if [[ "$proj" == "tests/interop/consumer" ]]; then
 		interop_dll="$dir/bin/$CONFIGURATION/net10.0/InteropConsumer.Tests.dll"
 		interop_klib="$dir/obj/$CONFIGURATION/net10.0/klib/InteropProducer.klib"
+		if dotnet "$METADATA_INSPECTOR_DLL" --klib-explicit-field-slots "$interop_klib" \
+			>"$ROOT/build/nunit-$name.explicit-field-slots.log" 2>&1; then
+			echo "  visible fields retain their types and visibility beside hidden interface slots"
+		else
+			echo "  EXPLICIT FIELD SLOT KLIB FAIL — see build/nunit-$name.explicit-field-slots.log"
+			tail -25 "$ROOT/build/nunit-$name.explicit-field-slots.log"; rc=1
+		fi
 		flags_bir="$dir/obj/$CONFIGURATION/net10.0/bir/ClrFlagsEnumTests.bir.json"
 		flags_cir="$dir/obj/$CONFIGURATION/net10.0/cir/ClrFlagsEnumTests.cir.json"
 		if dotnet "$METADATA_INSPECTOR_DLL" \

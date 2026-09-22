@@ -30,6 +30,13 @@ if (args.Length >= 4 && args[0] == "--volatile-consumer")
     return;
 }
 
+if (args.Length == 2 && args[0] == "--klib-explicit-field-slots")
+{
+    VerifyExplicitFieldSlots(args[1]);
+    Console.WriteLine("KLIB visible fields and hidden interface slots: OK");
+    return;
+}
+
 if (args.Length == 4 && args[0] == "--klib-class-properties")
 {
     VerifyKlibClassProperties(args[1], args[2], args[3].Split(',', StringSplitOptions.RemoveEmptyEntries));
@@ -241,6 +248,62 @@ static void VerifyKlibClassFunctionNullability(
         return;
     }
     throw new InvalidDataException($"KLIB class '{className}' not found");
+}
+
+static void VerifyExplicitFieldSlots(string path)
+{
+    var expected = new Dictionary<string, (string Type, bool Nullable, bool Writable, bool Protected, bool Static)>
+    {
+        ["DirectField"] = ("kotlin.String", false, true, false, false),
+        ["InheritedField"] = ("kotlin.String", false, true, false, false),
+        ["SameTypeField"] = ("kotlin.Int", false, true, false, false),
+        ["GenericField"] = ("", false, true, false, false),
+        ["NullableField"] = ("kotlin.String", true, true, false, false),
+        ["ReadonlyField"] = ("kotlin.String", false, false, false, false),
+        ["DirectReadonlyField"] = ("kotlin.String", false, false, false, false),
+        ["ProtectedField"] = ("kotlin.String", false, true, true, false),
+        ["StaticField"] = ("kotlin.String", false, true, false, true),
+    };
+    var seen = new HashSet<string>(StringComparer.Ordinal);
+    using var archive = ZipFile.OpenRead(path);
+    foreach (var entry in archive.Entries.Where(entry => entry.FullName.EndsWith(".knm", StringComparison.Ordinal)))
+    {
+        using var stream = entry.Open();
+        var fragment = PackageFragment.Parser.ParseFrom(stream);
+        foreach (var declaration in fragment.Class)
+        {
+            var name = QualifiedName(fragment, declaration.FqName);
+            const string prefix = "ExplicitFieldSlots.";
+            if (!name.StartsWith(prefix, StringComparison.Ordinal) || !expected.TryGetValue(name[prefix.Length..], out var contract)) continue;
+            Require(seen.Add(name[prefix.Length..]), $"duplicate class {name}");
+            var values = declaration.Property.Where(property => String(fragment, property.Name) == "Value").ToArray();
+            Require(values.Length == 2, $"{name} must retain one visible field and one hidden slot");
+            var field = values.Single(property => property.PropertyAnnotation.Any(annotation =>
+                QualifiedName(fragment, annotation.Id) == "kotlin.clr.ClrField"));
+            var slot = values.Single(property => !ReferenceEquals(property, field));
+            Require(!field.PropertyAnnotation.Any(annotation => QualifiedName(fragment, annotation.Id) == "kotlin.Deprecated"),
+                $"{name} field must not inherit the hidden-slot annotation");
+            Require(slot.PropertyAnnotation.Any(annotation => QualifiedName(fragment, annotation.Id) == "kotlin.Deprecated" &&
+                annotation.Argument.Any(argument => String(fragment, argument.NameId) == "level" &&
+                    QualifiedName(fragment, argument.Value.ClassId) == "kotlin.DeprecationLevel" &&
+                    String(fragment, argument.Value.EnumValueId) == "HIDDEN")), $"{name} interface slot must stay hidden");
+            Require(((field.Flags >> 6) & 3) == 0 && ((slot.Flags >> 6) & 3) == 1,
+                $"{name} field declaration and fake-override completion kinds were conflated");
+            Require((field.SetterValueParameter is not null) == contract.Writable &&
+                    ((field.Flags & (1 << 8)) != 0) == contract.Writable,
+                $"{name} field mutability changed");
+            Require((field.Flags & 0xE) == (contract.Protected ? 4 : 6) &&
+                    ((field.Flags & (1 << 19)) != 0) == contract.Static,
+                $"{name} field visibility or static declaration changed");
+            if (contract.Type.Length != 0)
+                Require(field.ReturnType.HasClassName && QualifiedName(fragment, field.ReturnType.ClassName) == contract.Type &&
+                        field.ReturnType.Nullable == contract.Nullable, $"{name} field type/nullability changed");
+            else
+                Require(field.ReturnType.HasTypeParameter && field.ReturnType.TypeParameter == declaration.TypeParameter[0].Id,
+                    $"{name} field must use A after the ExternalFieldBase<B,A> substitution");
+        }
+    }
+    Require(seen.SetEquals(expected.Keys), "missing explicit-field-slot fixture declarations");
 }
 
 static void VerifyKlibClassProperties(string path, string className, IReadOnlyList<string> expectedNames)
