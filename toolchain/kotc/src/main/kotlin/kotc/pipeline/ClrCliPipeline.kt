@@ -130,6 +130,9 @@ object ClrCommonFir2IrPipelinePhase : PipelinePhase<MetadataFrontendPipelineArti
 			specialAnnotationsProvider = org.jetbrains.kotlin.backend.jvm.JvmIrSpecialAnnotationSymbolProvider,
 			extraActualDeclarationExtractorsInitializer = { emptyList() },
 		)
+		kotc.frontend.ClrStaticOwners.convertTypes { type ->
+			with(fir2IrResult.components.typeConverter) { type.toIrType() }
+		}
 		return ClrFir2IrPipelineArtifact(fir2IrResult, input.configuration)
 	}
 }

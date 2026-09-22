@@ -1306,12 +1306,14 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 			val argTypes = accessorArgs.joinToString(",") { birType(it.type).toJson() }
 			val args = accessorArgs.joinToString(",") { expr(it) }
 			val propKind = if (isSetter) "set" else "get"
+			val selectedOwner = kotc.frontend.ClrStaticOwners.at(sourcePathOf(call), call.endOffset,
+				staticProperty.name.asString(), propKind)?.let(::birType)?.toJson() ?: fqnJson(typeName(staticOwner))
 			val ret = if (isSetter) "" else ""","ret":${birType(call.type).toJson()}"""
 			// A property whose storage IS its user-visible member — `const`, `lateinit var`, `@ClrField` — emits no
 			// accessor at all (the declaration side gates on the same [fieldRoutedProperty] rule), so its access is
 			// the storage itself. Emitting an accessor call here named a `get_`/`set_` slot that does not exist.
 			if (!fieldRoutedProperty(staticProperty)) {
-				val fieldOwner = fqnJson(typeName(staticOwner))
+				val fieldOwner = selectedOwner
 				val fieldName = str(staticProperty.name.asString())
 				return if (isSetter)
 					"""{"k":"staticFieldSet","ownerType":$fieldOwner,"name":$fieldName,"value":${accessorArgs.first().let { expr(it) }}}"""
@@ -1319,7 +1321,7 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 					"""{"k":"lateinitGet","ownerType":$fieldOwner,"static":true,"name":$fieldName}"""
 				else """{"k":"staticField","ownerType":$fieldOwner,"name":$fieldName}"""
 			}
-			return """{"k":"callStatic","ownerType":${fqnJson(typeName(staticOwner))},"method":${str(staticProperty.name.asString())},"prop":"$propKind"${overloadSigField(propertyAccessorDeclaration)},"argTypes":[$argTypes]$ret,"args":[$args]}"""
+			return """{"k":"callStatic","ownerType":$selectedOwner,"method":${str(staticProperty.name.asString())},"prop":"$propKind"${overloadSigField(propertyAccessorDeclaration)},"argTypes":[$argTypes]$ret,"args":[$args]}"""
 		}
 	}
 
@@ -1609,7 +1611,9 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 		?: (callee.takeIf { it.isFakeOverride }?.resolveFakeOverride()?.parent as? IrClass)?.let { clrName(it) }
 		// A restored external Kotlin companion may carry a CLR owner annotation; keep that exact owner identity.
 		?: declaringClass?.takeIf { it.isCompanion }?.let { it.parent as? IrClass }?.let { clrName(it) }
-	val clrType = clrTypeName?.let { TypeNode.Fqn(it) }
+	val selectedStaticOwner = if (dispatchReceiver(call) == null)
+		kotc.frontend.ClrStaticOwners.at(sourcePathOf(call), call.endOffset, name, "call") else null
+	val clrType = clrTypeName?.let { selectedStaticOwner?.let(::birType) ?: TypeNode.Fqn(it) }
 	if (clrType != null) {
 		// A fake override's parameter types are substituted into its inheriting class.
 		// The selected declaration's owner and descriptor must use the same frame.
@@ -2237,7 +2241,9 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 	// remains NetInteropBinding's decision in bir2cir.
 	if (recv == null && callee.isStaticMethodOfClass) {
 		val staticOwner = callee.parent as IrClass
-		return """{"k":"callStatic","ownerType":${fqnJson(typeName(staticOwner))},"method":${str(name)}${overloadSigField(callee)}$ta${retHintStr(ta.isNotEmpty(), effRet)},"args":[$args]${suspendCallTag(callee)}}"""
+		val selectedOwner = kotc.frontend.ClrStaticOwners.at(sourcePathOf(call), call.endOffset, name, "call")
+		val ownerType = selectedOwner?.let(::birType)?.toJson() ?: fqnJson(typeName(staticOwner))
+		return """{"k":"callStatic","ownerType":$ownerType,"method":${str(name)}${overloadSigField(callee)}$ta${retHintStr(ta.isNotEmpty() || selectedOwner != null, effRet)},"args":[$args]${suspendCallTag(callee)}}"""
 	}
 	// #199 DESIGN B — TWO-AXIS top-level call encoding. `owner:null` is LOAD-BEARING BIR vocabulary meaning "this is
 	// a top-level call": ~12 bir2cir recognizers key on it (@ClrIntrinsic/@ClrCollectionFactory/@ClrArrayFactory
