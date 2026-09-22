@@ -143,7 +143,16 @@ internal fun BirEmitter.staticPropertyFields(klass: IrClass): List<String> =
 		.filter { hasStaticPropertyStorage(klass, it) }
 		.mapNotNull { p ->
 			val bf = p.backingField ?: return@mapNotNull null
-			val init = (bf.initializer as? IrExpressionBody)?.expression?.let { expr(it) } ?: "null"
+			val savedSemanticOwner = activeSemanticOwner
+			val savedSemanticDeclaration = activeSemanticOwnerDeclaration
+			activeSemanticOwner = semanticOwnerName(p)
+			activeSemanticOwnerDeclaration = p
+			val init = try {
+				(bf.initializer as? IrExpressionBody)?.expression?.let { expr(it) } ?: "null"
+			} finally {
+				activeSemanticOwner = savedSemanticOwner
+				activeSemanticOwnerDeclaration = savedSemanticDeclaration
+			}
 			val routed = p.getter != null && !p.isConst && !p.isLateinit && !isClrField(p)
 			val v = if (routed) "private" else visOf(p)
 			val visJson = if (v != "public") ""","vis":${str(v)}""" else ""

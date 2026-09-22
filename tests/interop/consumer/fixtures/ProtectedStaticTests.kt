@@ -2,6 +2,9 @@ import NUnit.Framework.TestAttribute
 import ProtectedStatics.*
 
 private class ProtectedStaticChild : Base() {
+    companion {
+        val staticReference: (Int) -> Int = Base::Method
+    }
     fun exercise() {
         Base.Field = 73
         ProtectedStaticChild.Property = 79
@@ -53,6 +56,7 @@ class ProtectedStaticTests {
     @TestAttribute fun protectedStaticsInReferencesLambdasAndNestedClasses() {
         ProtectedStaticChild().referencesAndLambda()
         check(ProtectedStaticChild.Nested().read() == 149)
+        check(ProtectedStaticChild.staticReference(165) == 167)
     }
     @TestAttribute fun genericProtectedStaticsKeepConstructedOwner() {
         ProtectedStaticStringChild().exercise()
@@ -64,5 +68,8 @@ class ProtectedStaticTests {
         check(Leaf.VisibleProperty == 107 && Reader.Property() == 107)
         check(Leaf.VisibleMethod(3) == 112 && Reader.Method(3) == 112)
         ProtectedStaticMiddleChild().exercise()
+        check(Leaf.Pick() == 157 && Reader.OptionalCall() == 157)
+        check(Leaf.Pick(value = 5) == 162 && Reader.NamedCall() == 162)
+        check(Leaf.Pick(5) == 168)
     }
 }

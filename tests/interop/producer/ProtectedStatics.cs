@@ -11,12 +11,14 @@ public class Base
     public static int Visible = 101;
     public static int VisibleProperty => 107;
     public static int VisibleMethod(int value) => value + 109;
+    public static int Pick(int value = 0) => value + 157;
 }
 public class Middle : Base
 {
     protected new static int Visible = 103;
     protected new static int VisibleProperty => 113;
     protected new static int VisibleMethod(int value) => value + 127;
+    public new static int Pick(int renamed) => renamed + 163;
 }
 public class Leaf : Middle { }
 public class GenericBase<T>
@@ -31,4 +33,6 @@ public static class Reader
     public static int Field() => Leaf.Visible;
     public static int Property() => Leaf.VisibleProperty;
     public static int Method(int value) => Leaf.VisibleMethod(value);
+    public static int OptionalCall() => Leaf.Pick();
+    public static int NamedCall() => Leaf.Pick(value: 5);
 }
