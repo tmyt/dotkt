@@ -15,7 +15,7 @@ using DotKt.Bir;
 // on. Squashing every body to a throw guarantees no such IL is ever produced — the signature carries `kotlin.Int`
 // purely as metadata.
 //
-// Mutates the (already deep-cloned) lowered tree in place. Only the declaration hierarchy that ilemit emits as IL
+// Mutates the declaration tree after semantic metadata capture and before physical call binding. Only the hierarchy that ilemit emits as IL
 // bodies is touched: file-level methods, and per-type methods + constructors, recursively through nested types.
 // Property accessors are already represented as methods, so they are covered by the method pass.
 static class RefBodySquash

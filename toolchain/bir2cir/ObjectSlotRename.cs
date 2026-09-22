@@ -33,13 +33,18 @@ static class ObjectSlotRename
     {
         if (node is JsonObject obj)
         {
-            // A CALL carrying the `anySlot` fact (its callee is a kotlin.Any override) — rename `method`, strip the flag.
+            // A CALL carrying the `anySlot` fact (its callee is a kotlin.Any override) — rename `method`.
             // Keyed on the flag, NOT the node kind, so it covers callInstance/callStatic AND the (M4.4) bound-delegate
             // nodes uniformly and survives any node-kind change.
             if ((obj["anySlot"] as JsonValue)?.GetValue<bool>() == true)
             {
                 RenameField(obj, "method");
-                obj.Remove("anySlot");
+                // Native-array calls still need this semantic fact at the helper-allocation boundary:
+                // Object slots use native storage, not a hoisted value-class body. MemberCallSubstitution
+                // consumes it when producing objMethod; reference-build bodies are squashed instead.
+                if ((obj["k"] as JsonValue)?.GetValue<string>() != "callInstance"
+                    || !AliasHelperHoist.UsesNativeArrayObjectSlot(TypeJson.OwnerName(obj["ownerType"]), true))
+                    obj.Remove("anySlot");
             }
             // An `objMethod` node is UNAMBIGUOUSLY a System.Object virtual call — rename its `method` by bare name.
             else if ((obj["k"] as JsonValue)?.GetValue<string>() == "objMethod")

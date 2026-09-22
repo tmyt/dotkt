@@ -50,47 +50,6 @@ static class MemberCallSubstitution
         ["kotlin.ULongArray"] = "kotlin.Long",
     };
 
-    // #139 site-2: an unsigned specialized array is the SAME native N-bit-integer array as its same-width SIGNED
-    // counterpart (UByte=Byte, UShort=Short, UInt=Int, ULong=Long per #53/#54), so a member call on an unsigned-array
-    // owner resolves against the emitted signed-array class — the identical native-array method-holder. bir2cir OWNS
-    // this Kotlin<->CLR array identity, so it rewrites the call `ownerType` to the signed-array FQN here (the ownerType
-    // survives only in the rt self-build; consumer CIR is fully lowered). This RETIRES ilemit's NativeArrayOwner alias
-    // (Emitter.Types.cs / Resolve.cs FindMethod) — the layer-purity fix: ilemit must not re-resolve a Kotlin
-    // equivalence. Sig/args are unchanged; only the CIR owner now names the physical signed-array MethodDef directly.
-    static readonly IReadOnlyDictionary<string, string> UnsignedArraySignedOwner = new Dictionary<string, string>(StringComparer.Ordinal)
-    {
-        ["kotlin.UByteArray"] = "kotlin.ByteArray",
-        ["kotlin.UShortArray"] = "kotlin.ShortArray",
-        ["kotlin.UIntArray"] = "kotlin.IntArray",
-        ["kotlin.ULongArray"] = "kotlin.LongArray",
-    };
-
-    // Rewrite a member-resolving node's unsigned-array owner to the same-width signed-array FQN. A no-op for a node
-    // TransformCall already substituted (a clrInstance/clrStatic/clrPropGet BCL call has no unsigned owner) or whose
-    // owner is not an unsigned specialized array. Covers EVERY node kind that reaches ilemit's FindMethod — the exact
-    // set the retired NativeArrayOwner alias covered: a member call / property accessor (`callInstance`), a static call
-    // (`callStatic`, owner in `owner`), and a bound method reference (`newBoundDelegate`/`newBoundClrDelegate`).
-    static JsonNode RewriteUnsignedArrayOwner(JsonNode node)
-    {
-        if (node is not JsonObject o) return node;
-        string field = (o["k"] as JsonValue)?.GetValue<string>() switch
-        {
-            "callInstance" or "newBoundDelegate" or "newBoundClrDelegate" => "ownerType",
-            "callStatic" => "owner",
-            _ => null,
-        };
-        if (field != null && TypeJson.Read(o[field]) is TypeNode.Fqn owner
-            && UnsignedArraySignedOwner.TryGetValue(owner.Name, out var signed))
-        {
-            var rewritten = TypeJson.Write(owner.Args != null ? new TypeNode.Fqn(signed, owner.Args) : new TypeNode.Fqn(signed));
-            o[field] = rewritten;
-            // Keep #204's bound-delegate dispatch identity in lockstep with the exact member owner.
-            if ((o["k"] as JsonValue)?.GetValue<string>() == "newBoundDelegate")
-                o["calleeOwner"] = rewritten.DeepClone();
-        }
-        return node;
-    }
-
     // A star-projection/erased type-arg token: `object`/`kotlin.Any`, possibly nullable/oblivious-wrapped (a star K/V
     // projects to `Any?`, i.e. `{t:nullable,of:kotlin.Any}` post-#48). Used by the Map<*,*> extension guard (#74a).
     static bool IsErasedAny(TypeNode t) => t switch
@@ -378,10 +337,7 @@ static class MemberCallSubstitution
             "field" => TransformStorageField(node) ?? node,
             _ => node,
         };
-        // #139 site-2: after any substitution, rewrite a surviving unsigned-array member owner to its signed-array FQN
-        // (all four FindMethod-reaching node kinds; a no-op when the node was substituted to a BCL call or is not a
-        // member-resolving kind). ilemit's NativeArrayOwner alias is retired, so this is the sole owner-alias site.
-        return RewriteUnsignedArrayOwner(result);
+        return result;
     }
 
     // A companion INSTANCE load on a CLR-bound owner (`String.Companion` as a value — e.g. the receiver arg of a
@@ -1407,6 +1363,27 @@ static class MemberCallSubstitution
                 _typesWithConcreteIterator.Contains(ReferenceMetadataIndex.BareOwnerFqn(ownerToken))
                     || refs.DeclaresConcreteIterator(ownerToken)) is { } iteratorCall)
             return iteratorCall;
+
+        // A CLR array cannot host the Kotlin declaration's instance body. Native-array declarations retain that
+        // body in reference metadata and use the same explicit-receiver helper representation as class aliases.
+        // Unsigned arrays keep their own bodies and result types, rather than borrowing a signed-array method.
+        if (instance && AliasHelperHoist.IsNativeArrayOwner(ownerFqnNode.Name))
+        {
+            var arrayArgs = node["args"] as JsonArray ?? new JsonArray();
+            if (AliasHelperHoist.UsesNativeArrayObjectSlot(ownerFqnNode.Name,
+                    (node["anySlot"] as JsonValue)?.GetValue<bool>() == true))
+            {
+                var objectCall = new JsonObject
+                {
+                    ["k"] = "objMethod", ["method"] = node["method"]?.DeepClone(),
+                    ["recv"] = node["recv"]?.DeepClone(),
+                };
+                if (arrayArgs.Count == 1) objectCall["arg"] = arrayArgs[0]?.DeepClone();
+                return objectCall;
+            }
+            if (refs.IsRule3Member(ownerFqnNode.Name, Str(node["method"])))
+                return Rule3HelperCall(node, refs, ownerFqnNode, Str(node["method"]), arrayArgs, instance: true);
+        }
 
         if (!refs.TryResolveClrOwner(ownerToken, out var bcl, out var kind))
         {

@@ -21,6 +21,10 @@ static class AliasHelperHoist
     {
         if (root is not JsonObject obj || obj["types"] is not JsonArray types) return root;
         RehomeGeneratedMethods(obj, types, refs);
+        var representationOwners = types.OfType<JsonObject>()
+            .Where(type => IsAliasTypeDef(type, refs, out _))
+            .Select(type => type["name"].GetValue<string>()).ToHashSet(StringComparer.Ordinal);
+        WidenPrivateOwnedTypes(types, representationOwners);
         var rebuilt = new JsonArray();
         var changed = false;
         foreach (var t in types)
@@ -209,14 +213,34 @@ static class AliasHelperHoist
                 if (value != null) RewriteDelegateOwner(value, oldOwner, newOwner, method);
     }
 
-    // A top-level type def whose FQN is a @ClrTypeAlias owner in the ref.dll (the same index the type-token lowering and
-    // member-call substitution use). Only such a def is dropped/hoisted, so a non-alias plain type can never be lost.
+    // Native arrays also replace their semantic owner with CLR storage that cannot host Kotlin instance bodies.
+    // Share this representation classification with call routing; ordinary user classes retain their TypeDef.
+    internal static bool IsNativeArrayOwner(string owner) =>
+        owner != null && (owner == "kotlin.Array" || BirTypeLowering.PrimArrayElem.ContainsKey(owner));
+
+    // A native array inherits its CLR Object slots. Neither declarations nor calls may allocate helpers for them.
+    internal static bool UsesNativeArrayObjectSlot(string owner, bool objectSlot) =>
+        objectSlot && IsNativeArrayOwner(owner);
+
+    static void WidenPrivateOwnedTypes(JsonArray types, IReadOnlySet<string> representationOwners)
+    {
+        // Hoisted bodies live outside their old ownership shell. Make private implementation types accessible
+        // within the runtime assembly before cloning any output types, regardless of declaration order.
+        // Reference declarations keep their original Kotlin visibility because this pass does not run there.
+        foreach (var type in types.OfType<JsonObject>())
+            if ((type["vis"] as JsonValue)?.GetValue<string>() == "private"
+                && ((type["nestedIn"] as JsonValue)?.GetValue<string>() is string nested && representationOwners.Contains(nested)
+                    || (type["semanticOwner"] as JsonValue)?.GetValue<string>() is string owner && representationOwners.Contains(owner)))
+                type["vis"] = "internal";
+    }
+
+    // Only a representation-bound declaration is dropped/hoisted. Nested ownership shells remain when needed.
     static bool IsAliasTypeDef(JsonObject td, ReferenceMetadataIndex refs, out string fqn)
     {
         fqn = null;
         if ((td["name"] as JsonValue)?.GetValue<string>() is not string name) return false;
         var bare = ReferenceMetadataIndex.BareOwnerFqn(name);
-        if (!refs.Aliases.ContainsKey(bare)) return false;
+        if (!refs.Aliases.ContainsKey(bare) && !IsNativeArrayOwner(bare)) return false;
         fqn = bare;
         return true;
     }
@@ -284,7 +308,7 @@ static class AliasHelperHoist
         // shorthand (`ubyte`) that ilemit cannot resolve. They must NOT be hoisted — a call `u.toString()` defers to
         // the BCL primitive's ToString via member-call substitution. (A non-value alias like Boolean DOES hoist its
         // Equals/GetHashCode/ToString — those carry real Kotlin bodies and no erased field.)
-        var isInlineValue = refs.IsInlineValueClass(fqn);
+        var isInlineValue = (td["mods"]?["value"] as JsonValue)?.GetValue<bool>() == true;
         var methods = new JsonArray();
         foreach (var m in td["methods"] as JsonArray ?? new JsonArray())
         {
@@ -298,7 +322,8 @@ static class AliasHelperHoist
             // no corresponding field on the BCL type and remains on the property path.
             if (KotlinPropertyAccessors.TryIdentity(mo, out _, out _)
                 && BodyReadsBackingField(mbody)) continue;
-            if (isInlineValue && (mo["objectOverride"] as JsonValue)?.GetValue<bool>() == true) continue;  // see note above
+            var objectSlot = (mo["objectOverride"] as JsonValue)?.GetValue<bool>() == true;
+            if (UsesNativeArrayObjectSlot(fqn, objectSlot) || isInlineValue && objectSlot) continue;
             if (!refs.IsRule3Member(fqn, mn)) continue;   // ref.dll: concrete + intrinsic-less (matches the rule-3 call routing)
             methods.Add(HoistMethod(mo, classTps, receiverType));
         }
@@ -364,6 +389,10 @@ static class AliasHelperHoist
     internal static TypeNode ReceiverType(string owner, NullableRepresentationFrame frame,
         GenericRepresentationPolicy representations)
     {
+        // kotc represents Array<E> structurally in type positions; unlike specialized array classifiers,
+        // an FQN named kotlin.Array is the declaration owner, not an array storage type.
+        if (owner == "kotlin.Array")
+            return new TypeNode.Array(new TypeNode.Tv("type", 0));
         if (frame.SourceArity == 0) return new TypeNode.Fqn(owner);
         var source = Enumerable.Range(0, frame.SourceArity).Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray();
         TypeNode Argument(TypeNode type, NullableRepresentationFrame.Role role) =>
@@ -377,6 +406,16 @@ static class AliasHelperHoist
 
     internal static void SelfTest()
     {
+        foreach (var reverse in new[] { false, true })
+        {
+            var owner = new JsonObject { ["name"] = "Owner" };
+            var child = new JsonObject { ["name"] = "Child", ["semanticOwner"] = "Owner", ["vis"] = "private" };
+            var unrelated = new JsonObject { ["name"] = "Unrelated", ["semanticOwner"] = "Other", ["vis"] = "private" };
+            var types = reverse ? new JsonArray(child, owner, unrelated) : new JsonArray(owner, child, unrelated);
+            WidenPrivateOwnedTypes(types, new HashSet<string> { "Owner" });
+            if (child["vis"].GetValue<string>() != "internal" || unrelated["vis"].GetValue<string>() != "private")
+                throw new InvalidOperationException("Hoisted implementation accessibility depends on declaration order");
+        }
         var frame = new NullableRepresentationFrame(2, new[] { 0 }, new[] { 3, 0, 4, 1, 2, 5 },
             storageIndices: new[] { 0, 1 }, nullableStorageIndices: new[] { 0 });
         var policy = new GenericRepresentationPolicy(new Dictionary<string, string> { ["Alias"] = "Native" });
