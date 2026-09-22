@@ -430,6 +430,7 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 	// their owner from the referenced target declaration. Declaration emitters scope this value while rendering bodies;
 	// top-level expressions fall back to the current file facade.
 	internal var activeSemanticOwner: String? = null
+	internal var activeSemanticOwnerDeclaration: IrDeclaration? = null
 	// True only while serializing the compiler-generated default of a data-class `copy` parameter, either directly at
 	// a call site or into its KotlinDefault carrier. The frontend has already proved the generated-copy declaration
 	// shape; the field renderer preserves that exact fact for a downstream existential-receiver representation change.
@@ -738,10 +739,10 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 	internal fun semanticUseSiteOwnerJson(): String =
 		""","semanticOwner":${str(activeSemanticOwner ?: fileClass)}"""
 
-	/** Exact Kotlin owner application for a compiler-generated method emitted at the current use site. */
-	internal fun semanticUseSiteOwnerSpec(declaration: IrDeclaration): TypeNode {
+	/** Exact Kotlin owner application, using the active declaration frame unless an explicit declaration is supplied. */
+	internal fun semanticUseSiteOwnerSpec(declaration: IrDeclaration? = activeSemanticOwnerDeclaration): TypeNode {
 		val semanticName = activeSemanticOwner ?: fileClass
-		var parent: Any? = declaration.parent
+		var parent: Any? = if (declaration is IrClass) declaration else declaration?.parent
 		while (parent != null) {
 			when (parent) {
 				is IrClass -> {

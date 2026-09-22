@@ -32,7 +32,6 @@ import org.jetbrains.kotlin.config.moduleName
 import org.jetbrains.kotlin.config.phaser.CompilerPhase
 import org.jetbrains.kotlin.fir.backend.Fir2IrConfiguration
 import org.jetbrains.kotlin.fir.backend.Fir2IrExtensions
-import org.jetbrains.kotlin.fir.backend.Fir2IrVisibilityConverter
 import org.jetbrains.kotlin.fir.pipeline.Fir2IrActualizedResult
 import org.jetbrains.kotlin.fir.pipeline.convertToIrAndActualize
 import org.jetbrains.kotlin.ir.backend.js.lower.serialization.ir.JsManglerIr
@@ -119,7 +118,7 @@ object ClrCommonFir2IrPipelinePhase : PipelinePhase<MetadataFrontendPipelineArti
 			Fir2IrConfiguration.forKlibCompilation(input.configuration, input.configuration.diagnosticsCollector),
 			irGeneratorExtensions = emptyList(),
 			irMangler = JsManglerIr,
-			visibilityConverter = Fir2IrVisibilityConverter.Default,
+			visibilityConverter = ClrFir2IrVisibilityConverter,
 			kotlinBuiltIns = DefaultBuiltIns.Instance,
 			typeSystemContextProvider = ::IrTypeSystemContextImpl,
 			// Install the special-annotations provider so Fir2Ir attaches the `@kotlin.internal.ir.FlexibleNullability`

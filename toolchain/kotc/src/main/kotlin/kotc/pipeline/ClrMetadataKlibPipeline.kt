@@ -17,7 +17,6 @@ import org.jetbrains.kotlin.config.KotlinCompilerVersion
 import org.jetbrains.kotlin.config.languageVersionSettings
 import org.jetbrains.kotlin.fir.backend.Fir2IrConfiguration
 import org.jetbrains.kotlin.fir.backend.Fir2IrExtensions
-import org.jetbrains.kotlin.fir.backend.Fir2IrVisibilityConverter
 import org.jetbrains.kotlin.fir.moduleData
 import org.jetbrains.kotlin.fir.pipeline.Fir2IrActualizedResult
 import org.jetbrains.kotlin.fir.pipeline.Fir2KlibMetadataSerializer
@@ -77,7 +76,7 @@ object ClrMetadataKlibFir2IrPhase : PipelinePhase<MetadataFrontendPipelineArtifa
 			Fir2IrConfiguration.forKlibCompilation(input.configuration, input.configuration.diagnosticsCollector),
 			irGeneratorExtensions = emptyList(),
 			irMangler = JsManglerIr,
-			visibilityConverter = Fir2IrVisibilityConverter.Default,
+			visibilityConverter = ClrFir2IrVisibilityConverter,
 			kotlinBuiltIns = DefaultBuiltIns.Instance,
 			typeSystemContextProvider = ::IrTypeSystemContextImpl,
 			specialAnnotationsProvider = null,

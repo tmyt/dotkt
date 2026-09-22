@@ -102,7 +102,7 @@ object ClrAppFrontendPipelinePhase : PipelinePhase<ConfigurationPipelineArtifact
 		)
 		val projectEnvironment = environment.toVfsBasedProjectEnvironment()
 		var librariesScope = projectEnvironment.getSearchScopeForProjectLibraries()
-		val extensionRegistrars = configuration.getCompilerExtensions(FirExtensionRegistrar)
+		val extensionRegistrars = configuration.getCompilerExtensions(FirExtensionRegistrar) + ClrStaticStatusRegistrar
 		val ktFiles = environment.getSourceFiles()
 		val sourceFiles = ktFiles.map { KtPsiSourceFile(it) }
 

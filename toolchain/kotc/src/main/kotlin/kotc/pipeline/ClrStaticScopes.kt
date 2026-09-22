@@ -38,7 +38,6 @@ import org.jetbrains.kotlin.fir.symbols.impl.FirRegularClassSymbol
 import org.jetbrains.kotlin.fir.visitors.FirDefaultVisitorVoid
 import org.jetbrains.kotlin.fir.types.resolvedType
 import org.jetbrains.kotlin.fir.scopes.impl.FirFakeOverrideGenerator
-import org.jetbrains.kotlin.fir.scopes.impl.FirStandardOverrideChecker
 import org.jetbrains.kotlin.fir.resolve.substitution.ConeSubstitutor
 import org.jetbrains.kotlin.fir.types.ConeClassLikeType
 import org.jetbrains.kotlin.fir.types.coneType
@@ -66,7 +65,7 @@ private class ClrStaticScopeProvider(private val delegate: FirScopeProvider) : F
 			val substitutor = baseType.substitutorForSuperType(useSiteSession, base)
 			scopes += StaticSubstitutionScope(declared, useSiteSession, baseType, substitutor)
 		}
-		return scopes.takeIf { it.isNotEmpty() }?.let { NearestStaticScope(it, useSiteSession) }
+		return scopes.takeIf { it.isNotEmpty() }?.let(::InheritedStaticScope)
 	}
 	override fun getStaticCallableMemberScopeForBackend(klass: FirClass, useSiteSession: FirSession, scopeSession: ScopeSession) =
 		delegate.getStaticCallableMemberScopeForBackend(klass, useSiteSession, scopeSession)
@@ -117,31 +116,18 @@ private class StaticSubstitutionScope(private val scope: FirContainingNamesAware
 		scope.withReplacedSessionOrNull(newSession, newScopeSession)?.let { StaticSubstitutionScope(it, newSession, owner, substitutor) }
 }
 
-private class NearestStaticScope(private val scopes: List<FirContainingNamesAwareScope>, session: FirSession) : FirContainingNamesAwareScope() {
-	private val overrideChecker = FirStandardOverrideChecker(session)
+/** Keep inherited candidates until use-site visibility is known; hiding is resolved after that check. */
+private class InheritedStaticScope(private val scopes: List<FirContainingNamesAwareScope>) : FirContainingNamesAwareScope() {
 	override fun getCallableNames() = scopes.flatMapTo(linkedSetOf()) { it.getCallableNames() }
 	override fun getClassifierNames() = emptySet<Name>()
 	@DelicateScopeAPI
 	override fun withReplacedSessionOrNull(newSession: FirSession, newScopeSession: ScopeSession) =
-		scopes.withReplacedSessionOrNull(newSession, newScopeSession)?.let { NearestStaticScope(it, newSession) }
+		scopes.withReplacedSessionOrNull(newSession, newScopeSession)?.let(::InheritedStaticScope)
 	override fun processFunctionsByName(name: Name, processor: (FirNamedFunctionSymbol) -> Unit) {
-		val selected = mutableListOf<FirNamedFunctionSymbol>()
-		for (scope in scopes) {
-			val found = mutableListOf<FirNamedFunctionSymbol>()
-			scope.processFunctionsByName(name, found::add)
-			val inherited = found.filter { candidate ->
-				selected.none { nearer -> overrideChecker.isOverriddenFunction(nearer.fir, candidate.fir) }
-			}
-			selected += inherited
-		}
-		selected.forEach(processor)
+		for (scope in scopes) scope.processFunctionsByName(name, processor)
 	}
 	override fun processPropertiesByName(name: Name, processor: (FirVariableSymbol<*>) -> Unit) {
-		for (scope in scopes) {
-			val found = mutableListOf<FirVariableSymbol<*>>()
-			scope.processPropertiesByName(name, found::add)
-			if (found.isNotEmpty()) { found.forEach(processor); return }
-		}
+		for (scope in scopes) scope.processPropertiesByName(name, processor)
 	}
 }
 
@@ -150,11 +136,15 @@ fun installClrStaticDeserialization(session: FirSession) {
 	session.register(FirDeserializationExtension::class, object : FirDeserializationExtension(session) {
 		override fun FirRegularClassBuilder.configureDeserializedClass(classId: ClassId) {
 			scopeProvider = ClrStaticScopeProvider(scopeProvider)
+			declarations.forEach { prepareClrStaticVisibility(it, symbol.toLookupTag()) }
 		}
 	})
 }
 
+@OptIn(SessionConfiguration::class)
 fun FirSession.buildClrFirFromKtFiles(files: Collection<KtFile>) = (firProvider as FirProviderImpl).let { provider ->
+	register(org.jetbrains.kotlin.fir.FirVisibilityChecker::class, ClrStaticVisibilityChecker)
+	register(org.jetbrains.kotlin.fir.resolve.calls.overloads.ConeCallConflictResolverFactory::class, ClrStaticConflictResolverFactory)
 	val builder = PsiRawFirBuilder(this, ClrStaticScopeProvider(provider.kotlinScopeProvider))
 	files.map { builder.buildFirFile(it).also(provider::recordFile) }
 }

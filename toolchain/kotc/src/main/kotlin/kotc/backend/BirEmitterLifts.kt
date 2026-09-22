@@ -645,9 +645,9 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 	}
 	// A STATIC member reference — `C::f` for a Kotlin 2.4 `companion { fun f() }`, or a direct static declaration
 	// loaded from a CLR reference KLIB. Neither has a dispatch receiver, and neither is a top-level file-facade
-	// function, so the plain `newDelegate` below would lose the declaring type entirely. Materialize a neutral local
-	// adapter instead: its body carries the declaring-owner identity and the static fact as an ordinary static call,
-	// which the owner-binding layer resolves, and the delegate gets a real local calleeOwner.
+	// function, so the plain `newDelegate` below would lose the declaring type entirely. Materialize an adapter
+	// owned by the current Kotlin declaration: protected access depends on that lexical family. Its body carries
+	// the target's declaring-owner identity and static fact; bir2cir selects both methods' physical owners.
 	if (dispatchIdx < 0 && !hasExt && ownerClass != null &&
 		(isExternalNetType(ownerClass) || isKotlinStaticFunction(fn))) {
 		val clrOwner = (if (isExternalNetType(ownerClass)) clrName(ownerClass) else typeName(ownerClass))
@@ -660,6 +660,8 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 		val anySlotTag = if (isAnySlotMethod(fn)) ""","anySlot":true""" else ""
 		val freeTps = freeTypeParams(listOf(node.type))
 		val adapterTypeArgs = liftedTypeArgsJson(freeTps)
+		val semanticOwner = semanticUseSiteOwnerJson()
+		val adapterOwner = semanticUseSiteOwnerSpec()
 		val declaration = withLiftedMethodFrame(freeTps) {
 			val liftedFuncType = birType(node.type) as TypeNode.Fn
 			val psJson = regs.zip(liftedFuncType.params).joinToString(",") { (p, t) ->
@@ -674,10 +676,10 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 			val callE = """{"k":"callStatic","ownerType":$ownerType,"method":${str(fn.name.asString())}${overloadSigField(fn)}$liftedReferenceTypeArgs,"argTypes":[$argTypes],"ret":${liftedFuncType.ret.toJson()},"args":[$argsJson]$anySlotTag$memberDeclarationIdentityTag}"""
 			val body = if (fn.returnType.isUnit()) """{"k":"exprStmt","expr":$callE}"""
 				else """{"k":"return","value":$callE}"""
-			"""{"name":${str(lname)}${liftedDeclarationIdentityField(lname)},"generated":true,"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${liftedFuncType.ret.toJson()},"body":[$body]}"""
+			"""{"name":${str(lname)}${liftedDeclarationIdentityField(lname)},"generated":true,"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${liftedFuncType.ret.toJson()},"body":[$body]$semanticOwner}"""
 		}
 		liftedMethods.add(declaration)
-		return """{"k":"newDelegate","method":${str(lname)}${liftedDeclarationIdentityField(lname)},"funcType":${resolvedFuncType.toJson()}$adapterTypeArgs${localCalleeOwnerTag()}}"""
+		return """{"k":"newDelegate","method":${str(lname)}${liftedDeclarationIdentityField(lname)},"funcType":${resolvedFuncType.toJson()}$adapterTypeArgs,"calleeOwner":${adapterOwner.toJson()}}"""
 	}
 	if (dispatchIdx < 0 && !hasExt) {
 		val targetName = fn.name.asString()
