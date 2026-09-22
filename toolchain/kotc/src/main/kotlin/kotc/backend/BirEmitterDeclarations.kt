@@ -388,6 +388,8 @@ internal fun BirEmitter.interfaceDef(iface: IrClass): String {
 	rejectClrEnumOnNonEnum(iface)
 	fun ifaceMethod(fn: IrSimpleFunction, prop: IrProperty? = fn.correspondingPropertySymbol?.owner): String {
 		val savedSemanticOwner = activeSemanticOwner
+		val savedSemanticDeclaration = activeSemanticOwnerDeclaration
+		activeSemanticOwnerDeclaration = fn
 		activeSemanticOwner = semanticOwnerName(fn)
 		// C3b reverse direction: a Kotlin interface extending a @Clr interface (Set : Collection->IReadOnlyCollection).
 		// kotc emits the source property identity plus accessor role for both ref and runtime builds. bir2cir owns both
@@ -417,6 +419,7 @@ internal fun BirEmitter.interfaceDef(iface: IrClass): String {
 			(preconditionChecks(fn) + listOfNotNull(stmts.takeIf { it.isNotEmpty() })).joinToString(",")
 		} else ""
 		activeSemanticOwner = savedSemanticOwner
+		activeSemanticOwnerDeclaration = savedSemanticDeclaration
 		if (extRecv != null) selfSubst.remove(extRecv)
 		val selfParam = extRecv?.let { """{"name":${str(extRecvName!!)},"type":${birType(it.type).toJson()},"mods":{"extensionReceiver":true}}""" }
 		val params = (listOfNotNull(selfParam) + paramsJsonList(fn.parameters, ownerFn = fn)).joinToString(",")
@@ -687,6 +690,8 @@ internal fun BirEmitter.isRichEnum(ec: IrClass): Boolean {
  */
 internal fun BirEmitter.richEnumDef(ec: IrClass): String {
 	val savedSemanticOwner = activeSemanticOwner
+	val savedSemanticDeclaration = activeSemanticOwnerDeclaration
+	activeSemanticOwnerDeclaration = ec
 	activeSemanticOwner = typeName(ec)
 	val name = typeName(ec)
 	val entries = ec.declarations.filterIsInstance<IrEnumEntry>()
@@ -929,6 +934,7 @@ internal fun BirEmitter.richEnumDef(ec: IrClass): String {
 	// Emit the base enum class first, then each per-entry subclass.
 	val result = (listOf(baseDef) + subDefs).joinToString(",")
 	activeSemanticOwner = savedSemanticOwner
+	activeSemanticOwnerDeclaration = savedSemanticDeclaration
 	return result
 }
 
@@ -1048,6 +1054,8 @@ internal fun BirEmitter.enumEntrySubclass(subName: String, baseName: String, cc:
 	}
 	val fields = instanceStorageFields(cc).joinToString(",")
 	val savedSemanticOwner = activeSemanticOwner
+	val savedSemanticDeclaration = activeSemanticOwnerDeclaration
+	activeSemanticOwnerDeclaration = cc
 	activeSemanticOwner = subName
 	val ctorBody = ArrayList<String>()
 	(cc.declarations.filterIsInstance<IrConstructor>().firstOrNull()?.body as? IrBlockBody)
@@ -1059,6 +1067,7 @@ internal fun BirEmitter.enumEntrySubclass(subName: String, baseName: String, cc:
 			}
 		}
 	activeSemanticOwner = savedSemanticOwner
+	activeSemanticOwnerDeclaration = savedSemanticDeclaration
 	val baseArgs = (listOf("""{"k":"local","name":"__name"}""", """{"k":"local","name":"__ordinal"}""") + userArgs).joinToString(",")
 	val delegationSig = (listOf(fqnJson("kotlin.String"), fqnJson("kotlin.Int")) +
 		baseParamTypes).joinToString(",")
@@ -1432,6 +1441,8 @@ internal fun BirEmitter.topLevelAccessorMethod(acc: IrSimpleFunction, propName: 
 
 internal fun BirEmitter.accessorMethod(acc: IrSimpleFunction, propName: String, isGetter: Boolean): String {
 	val savedSemanticOwner = activeSemanticOwner
+	val savedSemanticDeclaration = activeSemanticOwnerDeclaration
+	activeSemanticOwnerDeclaration = acc
 	activeSemanticOwner = semanticOwnerName(acc)
 	val kind = if (isGetter) "get" else "set"
 	// A MEMBER extension property (`class C { val T.p get() }`) has BOTH a dispatch and an extension receiver -> the
@@ -1468,6 +1479,7 @@ internal fun BirEmitter.accessorMethod(acc: IrSimpleFunction, propName: String, 
 		(preconditionChecks(acc) + listOfNotNull(bodyStmts.takeIf { it.isNotEmpty() })).joinToString(",")
 	activeDelegatedAccessor = savedDelegatedAccessor
 	activeSemanticOwner = savedSemanticOwner
+	activeSemanticOwnerDeclaration = savedSemanticDeclaration
 	if (extRecv != null) selfSubst.remove(extRecv)
 	val ret = if (isGetter) birType(acc.returnType) else TypeNode.Fqn("kotlin.Unit")
 	// An `override val/var` whose accessor overrides a base CLASS/ENUM_CLASS accessor must REUSE that base virtual
@@ -1847,6 +1859,8 @@ internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDecla
 
 internal fun BirEmitter.ctor(klass: IrClass, ctor: IrConstructor, captures: List<Pair<IrValueDeclaration, String>> = emptyList()): String {
 	val savedSemanticOwner = activeSemanticOwner
+	val savedSemanticDeclaration = activeSemanticOwnerDeclaration
+	activeSemanticOwnerDeclaration = klass
 	activeSemanticOwner = if (klass.isCompanion)
 		(klass.parent as? IrClass)?.let(::typeName) ?: fileClass
 	else typeName(klass)
@@ -1963,6 +1977,7 @@ internal fun BirEmitter.ctor(klass: IrClass, ctor: IrConstructor, captures: List
 	// accepted ordering deviation from JVM's before-super() insertion (docs/dotkt-semantics.md).
 	val ctorBody = (preconditionChecks(ctor) + stmts).joinToString(",")
 	activeSemanticOwner = savedSemanticOwner
+	activeSemanticOwnerDeclaration = savedSemanticDeclaration
 	val bindingsJson = delegationBindings?.let { ""","delegationBindings":$it""" } ?: ""
 	// Constructor annotations are declaration metadata just like method annotations. In particular, trusted CLR
 	// binding annotations on an alias constructor must reach bir2cir before the alias TypeDef is hoisted away; omitting
@@ -1973,6 +1988,8 @@ internal fun BirEmitter.ctor(klass: IrClass, ctor: IrConstructor, captures: List
 internal fun BirEmitter.method(fn: IrSimpleFunction, static: Boolean, semanticOwnerOverride: String? = null): String {
 	validatePInvokeDeclaration(fn, static)
 	val savedSemanticOwner = activeSemanticOwner
+	val savedSemanticDeclaration = activeSemanticOwnerDeclaration
+	activeSemanticOwnerDeclaration = fn
 	// A synthesized BIR declaration can have a different identity from the FIR class that supplied its members. Rich
 	// enum entry bodies are the concrete case: FIR calls the class `E.ENTRY`, while BIR explicitly declares the entry
 	// subclass as `<>E_ENTRY`. The body must own further declarations under the BIR declaration being emitted; this is
@@ -2041,6 +2058,7 @@ internal fun BirEmitter.method(fn: IrSimpleFunction, static: Boolean, semanticOw
 	val selfParam = extRecv?.let { """{"name":${str(extRecvName!!)},"type":${birType(it.type).toJson()},"mods":{"extensionReceiver":true}}""" }
 	val ps = (listOfNotNull(selfParam) + paramsJsonList(fn.parameters, ownerFn = fn)).joinToString(",")
 	activeSemanticOwner = savedSemanticOwner
+	activeSemanticOwnerDeclaration = savedSemanticDeclaration
 	// `override fun toString()/equals()/hashCode()` emits the KOTLIN name + `objectOverride:true` (a pure-Kotlin
 	// fact); bir2cir/ilemit map it onto the System.Object slot so CLR virtual dispatch (Console.WriteLine,
 	// structural `==`) finds the override.

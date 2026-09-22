@@ -1473,12 +1473,18 @@ field. Both declarations remain in the KLIB: class access uses the field, while 
 the interface property. Inherited fields retain their constructed type, nullability, mutability and visibility.
 
 A class qualifier exposes static declarations from its base-class chain, for both imported CLR subclasses and
-Kotlin subclasses. Lookup selects the nearest property declaration and the nearest declaration of each method
+Kotlin subclasses. Lookup selects the nearest visible property declaration and the nearest visible declaration of each method
 signature, retaining distinct inherited overloads; it does not copy a member into the subclass.
 `Sub.Shared` therefore references `Base.Shared` — one member, one storage location. For a constructed generic base,
 the selected owner retains its substituted type arguments: `StringSub.Shared` on a subclass of `Base<String>`
 uses `Base<String>` storage, not `Base<Any>` storage. This applies to fields, properties, and methods, including
 generic methods whose own type parameters are distinct from the declaring class's parameters.
+
+Protected statics are accessible inside their declaring class, derived classes, and their nested declarations;
+the class qualifier is not an instance receiver and imposes no protected-instance receiver restriction.
+Sharing a namespace/package does not grant access. A nearer protected static hides an inherited public static
+only where the nearer member is accessible. Accessors retain their own visibility, so a public getter does not
+make its protected setter public. These rules also apply to Kotlin companion-block statics after DLL reimport.
 
 This surface requires Kotlin's `CompanionBlocksAndExtensions` analysis feature. Kotlin/CLR enables it as a target
 capability for every `kotc` invocation; any other analysis host that consumes CLR reference KLIBs (including a future

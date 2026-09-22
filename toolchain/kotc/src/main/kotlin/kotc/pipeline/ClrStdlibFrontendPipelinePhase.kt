@@ -59,7 +59,7 @@ object ClrStdlibFrontendPipelinePhase : PipelinePhase<ConfigurationPipelineArtif
 		for (ktFile in ktFiles) {
 			AnalyzerWithCompilerReport.reportSyntaxErrors(ktFile, diagnosticsReporter)
 		}
-		val extensionRegistrars = configuration.getCompilerExtensions(FirExtensionRegistrar)
+		val extensionRegistrars = configuration.getCompilerExtensions(FirExtensionRegistrar) + ClrStaticStatusRegistrar
 		val sessionsWithSources = prepareNativeSessions(
 			ktFiles,
 			configuration,
