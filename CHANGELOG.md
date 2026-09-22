@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Inherited CLR indexers retain their selected declaration (#822).** Public and protected get/set calls
+  preserve the constructed declaring owner and generic signature; protected access targets the metadata's
+  actual accessor name, including custom `IndexerName` properties.
+
 - **Inline calls inside imported defaults retain their bindings (#821).** Default arguments and inline bodies
   expand together before evaluation lowering, including nested calls, carried helpers and constructor defaults.
   Receiver and argument evaluation order is preserved across Kotlin DLL reimport.

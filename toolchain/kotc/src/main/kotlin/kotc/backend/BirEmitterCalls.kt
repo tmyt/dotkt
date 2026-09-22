@@ -1567,21 +1567,25 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 		// call. The standard Item property resolves naturally to get_Item/set_Item, while this also handles a
 		// custom-named indexer. The receiver's type carries the element type arg (`Collection<Int>`), so the
 		// constructed `clrg:...[int]` resolves the substituted accessor.
-		val ixOwner = (callee.takeIf { it.isFakeOverride }?.resolveFakeOverride()?.parent as? IrClass) ?: declaringClass
+		val ixDeclaration = callee.takeIf { it.isFakeOverride }?.resolveFakeOverride() ?: callee
+		val ixOwner = ixDeclaration.parent as? IrClass
 		if (recv != null && ixOwner != null && isExternalNetType(ixOwner)) {
-			val mt = birType(recv.type); val a = regularArgs(call)
+			// Keep the selected declaration's constructed owner, not the receiver's subclass.
+			// The latter may be a Kotlin class with no referenced CLR indexer declaration.
+			val mt = correspondingSupertypeInstantiation(recv.type, ixOwner, allowCapturedArguments = true)
+				?.let { birType(it) } ?: error("No selected indexer owner for ${callee.name} on ${recv.type}")
+			val a = regularArgs(call)
+			val ixSignature = overloadSigField(ixDeclaration)
 			// The get accessor returning a generic param (`IList<T>.get` -> T) reports the SUBSTITUTED ret (gp:T):
 			// ilemit then hands back gp:T (matching the stack), so the value<->collection boundary box/unbox is
 			// correctly typed (else a value-type instantiation NullRefs/garbages). Needs ClrRef("gp:") -> MapType.
 			val retH = birType(call.type)
-			// `virtual` for the fallback where bir2cir cannot resolve the owner and the raw `method:"get"/"set"` node
-			// reaches ilemit (an open/override operator get/set must callvirt) — same rationale as the .NET-interop
-			// callInstance path below (#139). bir2cir drops it when it reshapes the indexer to a clrInstance accessor.
+			// Retain the frontend dispatch fact until bir2cir binds the selected indexer or Kotlin operator.
 			val ixVirtual = isVirtualInstanceCall(call, callee)
 			return if (name == "get")
-				"""{"k":"callInstance","virtual":$ixVirtual,"ownerType":${str(mt)},"method":"get","prop":"index-get","argTypes":[${birType(a[0].type).toJson()}],"ret":${str(retH)},"recv":${expr(recv)},"args":[${expr(a[0])}]${superTag(call)}}"""
+				"""{"k":"callInstance","virtual":$ixVirtual,"ownerType":${str(mt)},"method":"get","prop":"index-get"$ixSignature,"argTypes":[${birType(a[0].type).toJson()}],"ret":${str(retH)},"recv":${expr(recv)},"args":[${expr(a[0])}]${superTag(call)}}"""
 			else
-				"""{"k":"callInstance","virtual":$ixVirtual,"ownerType":${str(mt)},"method":"set","prop":"index-set","argTypes":[${birType(a[0].type).toJson()},${birType(a[1].type).toJson()}],"ret":${fqnJson("kotlin.Unit")},"recv":${expr(recv)},"args":[${expr(a[0])},${expr(a[1])}]${superTag(call)}}"""
+				"""{"k":"callInstance","virtual":$ixVirtual,"ownerType":${str(mt)},"method":"set","prop":"index-set"$ixSignature,"argTypes":[${birType(a[0].type).toJson()},${birType(a[1].type).toJson()}],"ret":${fqnJson("kotlin.Unit")},"recv":${expr(recv)},"args":[${expr(a[0])},${expr(a[1])}]${superTag(call)}}"""
 		}
 	}
 
