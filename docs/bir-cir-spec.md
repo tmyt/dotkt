@@ -510,6 +510,9 @@ physical frame, materializes any required representation conversion, retains the
 argument coercion, and replaces the declaration fact with scalar `localCtorIndex`. For an external constructor, the
 resolved `memberRef` carries the physical parameter vector and `argTypes` is consumed. Neither `memberSignature` nor
 a constructor candidate set reaches CIR.
+Collection-factory arguments contextualized by a constructor use this already-substituted `argTypes` vector
+directly. Applying the constructed owner's arguments to it again would rebind unrelated caller-frame variables;
+only the open declaration vector is eligible for that owner substitution.
 
 A carrier key holds ONE reference, never a list. A candidate set reaching a consumer is precisely the failure
 this shape removes: whoever received it would have to choose, and choosing is the producer's decision.

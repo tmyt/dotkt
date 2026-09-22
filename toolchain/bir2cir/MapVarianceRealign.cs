@@ -216,7 +216,7 @@ static class MapVarianceRealign
     // builds the literal's runtime `Dictionary<K,V>`/`List<E>`/`HashSet<E>` straight off those narrower typeArgs,
     // and the CLR's generic collection instantiations are INVARIANT: passing a `Dictionary<string,IComparable>`
     // where `IDictionary<string,object>` is expected is unverifiable (ilverify StackUnexpected — the ctor argument
-    // slot never reconciles the two). Realign the factory call's `typeArgs` to the constructor's declared
+    // slot never reconciles the two). Realign the factory call's `typeArgs` to the constructor's use-site
     // `argTypes` slot HERE, before MemberCallSubstitution builds the literal, so it is constructed at the WIDE
     // type Kotlin already type-checked the assignment against — the same "realign to the actually-intended type"
     // move as `Realign`/`OwnerVarianceRealign` above, just sourced from the ENCLOSING slot instead of a callee
@@ -224,14 +224,12 @@ static class MapVarianceRealign
     static void RealignFactoryCtorArgTypes(JsonObject newNode, ReferenceMetadataIndex refs,
         System.Func<TypeNode, TypeNode> nullableArgument)
     {
-        if (newNode["argTypes"] is not JsonArray declaredArgTypes) return;
+        if (newNode["argTypes"] is not JsonArray useSiteArgTypes) return;
         if (newNode["args"] is not JsonArray args) return;
-        // The `new` node's OWN type arguments = the instantiation binding for the constructed class's type
-        // params. A declared param type names those params in CLASS scope (`tv{scope:type,i}`); to compare it
-        // against the factory call's typeArgs (which live in THIS method's scope) it must first be instantiated
-        // through this binding — see InstantiateThroughNew.
-        var newBinding = (TypeJson.Read(newNode["type"]) as TypeNode.Fqn)?.Args;
-        var n = Math.Min(declaredArgTypes.Count, args.Count);
+        // `new.argTypes` is already substituted into the caller's frame. The open constructor declaration
+        // lives in memberSignature; substituting argTypes through the constructed owner a second time confuses
+        // an enclosing class's !0 with the constructor owner's !0 (Box<List<T>> would build List<List<T>>).
+        var n = Math.Min(useSiteArgTypes.Count, args.Count);
         for (var i = 0; i < n; i++)
         {
             if (args[i] is not JsonObject call || Str(call["k"]) != "callStatic") continue;
@@ -246,82 +244,22 @@ static class MapVarianceRealign
                 kind = Str(call["method"]) is string fn ? refs.CollectionFactoryKind(fn) : null;
             if (kind == null) continue;
             if (call["typeArgs"] is not JsonArray callTypeArgs || callTypeArgs.Count == 0) continue;
-            if (TypeJson.Read(declaredArgTypes[i]) is not TypeNode declared) continue;
-            if (UnwrapNullableOblivious(declared) is not TypeNode.Fqn { Args: { } rawDeclArgs }) continue;
+            if (TypeJson.Read(useSiteArgTypes[i]) is not TypeNode target) continue;
+            if (UnwrapNullableOblivious(target) is not TypeNode.Fqn { Args: { } targetArgs }) continue;
             var expected = kind == "map" ? 2 : 1;                       // map -> [K,V]; list/set -> [E]
             var factoryFrame = Str(call[DeclarationIdentityBinding.Key]) is string id ? refs.NullableMethodFrame(id) : null;
-            if (rawDeclArgs.Length != expected || (factoryFrame?.SourceArity ?? callTypeArgs.Count) != expected) continue;
-            // Instantiate every declared arg through the `new` binding. A class-scope `tv{type,i}` whose binding
-            // is unavailable (the `new` type has no/too-few Args, or nested index out of range) makes this SKIP
-            // the whole rewrite for this argument — stamping the unbound class-scope token is the #122 bug (it
-            // left the factory splat guard, keyed on scope, mismatched -> Add(T[]) instead of Add(T)).
-            var declArgs = new TypeNode[expected];
-            var skip = false;
-            for (var j = 0; j < expected; j++)
-            {
-                if (InstantiateThroughNew(rawDeclArgs[j], newBinding) is not TypeNode inst) { skip = true; break; }
-                declArgs[j] = inst;
-            }
-            if (skip) continue;
+            if (targetArgs.Length != expected || (factoryFrame?.SourceArity ?? callTypeArgs.Count) != expected) continue;
             TypeNode[] closedArgs;
             try
             {
-                closedArgs = factoryFrame == null ? declArgs
-                    : factoryFrame.Close(declArgs, argument => argument, nullableArgument);
+                closedArgs = factoryFrame == null ? targetArgs
+                    : factoryFrame.Close(targetArgs, argument => argument, nullableArgument);
             }
             catch (ArgumentException ex)
             {
                 throw new InvalidOperationException($"Collection factory {call["method"]} frame closure failed: {ex.Message}", ex);
             }
             call["typeArgs"] = new JsonArray(closedArgs.Select(TypeJson.Write).ToArray());
-        }
-    }
-
-    // Substitute a declared ctor-param type's CLASS-scope type variables (`tv{scope:type,i}`) with the `new`
-    // node's own type arguments (`binding[i]`), recursively through nested generics/nullable/array/byref — so
-    // e.g. `Holder<T>(list: MutableList<tv{type,0}>)` constructed as `Holder(...)` inside `mkHolder<T>` (whose
-    // `new` binds Holder with `tv{method,0}`) instantiates the declared `MutableList<tv{type,0}>` to
-    // `MutableList<tv{method,0}>`, matching the factory call's OWN scope. Method-scope tv / concrete Fqn / Fn
-    // pass through unchanged. Returns null when a class-scope tv has no binding (caller skips the rewrite).
-    static TypeNode InstantiateThroughNew(TypeNode t, TypeNode[] binding)
-    {
-        switch (t)
-        {
-            case TypeNode.Tv { Scope: "type" } tv:
-                return binding != null && tv.I >= 0 && tv.I < binding.Length ? binding[tv.I] : null;
-            case TypeNode.Fqn { Args: { } args } f:
-            {
-                var na = new TypeNode[args.Length];
-                for (var i = 0; i < args.Length; i++)
-                    if (InstantiateThroughNew(args[i], binding) is TypeNode s) na[i] = s; else return null;
-                return new TypeNode.Fqn(f.Name, na);
-            }
-            case TypeNode.Nullable nu:
-                return InstantiateThroughNew(nu.Of, binding) is TypeNode i0 ? new TypeNode.Nullable(i0) : null;
-            case TypeNode.Oblivious ob:
-                return InstantiateThroughNew(ob.Of, binding) is TypeNode i1 ? new TypeNode.Oblivious(i1) : null;
-            case TypeNode.Array ar:
-                return InstantiateThroughNew(ar.Elem, binding) is TypeNode i2 ? new TypeNode.Array(i2) : null;
-            case TypeNode.ByRef br:
-                return InstantiateThroughNew(br.Of, binding) is TypeNode i3 ? new TypeNode.ByRef(i3) : null;
-            case TypeNode.Fn fn:
-            {
-                // A function-typed element (`MutableList<(T)->Unit>`) can nest a class-scope tv in its ret/params/recv;
-                // recurse so it, too, instantiates to the method scope (else the same #122 splat-guard mismatch).
-                if (InstantiateThroughNew(fn.Ret, binding) is not TypeNode ret) return null;
-                var ps = new TypeNode[fn.Params.Length];
-                for (var i = 0; i < ps.Length; i++)
-                    if (InstantiateThroughNew(fn.Params[i], binding) is TypeNode s) ps[i] = s; else return null;
-                TypeNode recv = null;
-                if (fn.Recv != null)
-                {
-                    if (InstantiateThroughNew(fn.Recv, binding) is not TypeNode r) return null;
-                    recv = r;
-                }
-                return new TypeNode.Fn(fn.Suspend, ret, ps, recv);
-            }
-            default:
-                return t;
         }
     }
 
