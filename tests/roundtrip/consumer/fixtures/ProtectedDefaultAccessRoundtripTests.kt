@@ -7,6 +7,8 @@ class ProtectedDefaultAccessRoundtripTests {
         check(child.instanceDefault() == 191)
         check(child.propertyDefault() == 193)
         check(child.methodDefault() == 197)
+        check(child.readonlyDefault() == 241)
+        check(child.volatileDefault() == 251)
         check(child.staticDefault(229) == 229)
         check(child.instanceDefault(233) == 233)
     }
@@ -14,5 +16,9 @@ class ProtectedDefaultAccessRoundtripTests {
     @TestAttribute fun importedDefaultsKeepConstructedGenericFieldDeclaration() {
         check(protecteddefaults.GenericChild("imported").instanceDefault() == "imported")
         check(protecteddefaults.GenericChild(239).instanceDefault() == 239)
+        val child = protecteddefaults.StringChild("static imported")
+        check(child.echoDefault() == "default")
+        check(child.echoCall() == "direct")
+        check(child.staticDefault() == "static imported")
     }
 }
