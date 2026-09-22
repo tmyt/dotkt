@@ -19,6 +19,11 @@ private class LocalProtectedStringDefaultChild(value: String) : ProtectedDefault
     fun staticDefault(value: String = LocalProtectedStringDefaultChild.StaticValue): String = value
 }
 
+private class LocalMappedFieldChild<T>(value: T) : ProtectedDefaultAccess.MappedField<Int, T>(value) {
+    fun read(value: T = Value): T = value
+    fun write(value: T) { Value = value }
+}
+
 class ProtectedDefaultAccessTests {
     @TestAttribute fun defaultsKeepProtectedAccessFromUnrelatedCaller() {
         val child = LocalProtectedDefaultChild()
@@ -39,5 +44,10 @@ class ProtectedDefaultAccessTests {
         check(child.echoDefault() == "default")
         check(child.echoCall() == "direct")
         check(child.staticDefault() == "static local")
+        val mapped = LocalMappedFieldChild("mapped local")
+        check(mapped.read() == "mapped local")
+        mapped.write("written local")
+        check(mapped.read() == "written local")
+        check((mapped as ProtectedDefaultAccess.IExplicitValue).Value == 283)
     }
 }

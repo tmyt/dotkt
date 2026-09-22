@@ -17,3 +17,11 @@ public class GenericBase<T>
     protected T Echo(T value) => value;
     public GenericBase(T value) { Value = value; StaticValue = value; }
 }
+
+public interface IExplicitValue { int Value { get; } }
+
+public class MappedField<K, V> : GenericBase<V>, IExplicitValue
+{
+    public MappedField(V value) : base(value) { }
+    int IExplicitValue.Value => 283;
+}

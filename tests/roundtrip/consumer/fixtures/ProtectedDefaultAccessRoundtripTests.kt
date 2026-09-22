@@ -20,5 +20,10 @@ class ProtectedDefaultAccessRoundtripTests {
         check(child.echoDefault() == "default")
         check(child.echoCall() == "direct")
         check(child.staticDefault() == "static imported")
+        val mapped = protecteddefaults.MappedFieldChild("mapped imported")
+        check(mapped.read() == "mapped imported")
+        mapped.write("written imported")
+        check(mapped.read() == "written imported")
+        check((mapped as ProtectedDefaultAccess.IExplicitValue).Value == 283)
     }
 }

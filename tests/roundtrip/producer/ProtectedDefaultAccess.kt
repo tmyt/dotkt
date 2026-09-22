@@ -18,3 +18,8 @@ class StringChild(value: String) : ProtectedDefaultAccess.GenericBase<String>(va
     fun echoCall(): String = Echo("direct")
     fun staticDefault(value: String = StringChild.StaticValue): String = value
 }
+
+class MappedFieldChild<T>(value: T) : ProtectedDefaultAccess.MappedField<Int, T>(value) {
+    fun read(value: T = Value): T = value
+    fun write(value: T) { Value = value }
+}
