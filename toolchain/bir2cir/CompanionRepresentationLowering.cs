@@ -223,9 +223,12 @@ static class CompanionRepresentationLowering
                 }
                 // Physical carrier tokens restored by dll2klib use CIR's source-style spelling. Once the trusted
                 // association has been validated, replace every such TypeNode with the exact reflected TypeDef token.
-                // This includes declaration slots, not just member owners.
+                // This includes declaration slots, not just member owners. A materialized default may still carry
+                // the semantic companion identity in its evaluation-plan type while its value already binds to the
+                // physical singleton; resolve both through the same trusted association.
                 if (Str(obj["t"]) == "fqn" && Str(obj["name"]) is string physicalType &&
-                    refs.TryCompanionMetadataCarrier(physicalType, out var exactCarrier))
+                    (refs.TryCompanionMetadataCarrier(physicalType, out var exactCarrier) ||
+                     refs.TryCompanionPhysicalOwner(physicalType, out exactCarrier)))
                     obj["name"] = exactCarrier;
                 // A default/inline payload can share the outer call's already-evaluated companion receiver through a
                 // bindRef. In that shape there is no companionValue directly under the nested call for the ordinary

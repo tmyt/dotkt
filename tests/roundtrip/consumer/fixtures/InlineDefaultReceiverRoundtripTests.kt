@@ -50,5 +50,6 @@ class InlineDefaultReceiverRoundtripTests {
         check(InlineDefaultDerived().value == 42)
         check(inlinedefaults.CaptureDefault().read() == 257)
         check(inlinedefaults.CaptureDefault().read() == 257)
+        check(inlinedefaults.CompanionDefault().read() == 7)
     }
 }

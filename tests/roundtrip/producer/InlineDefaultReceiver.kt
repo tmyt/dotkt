@@ -31,3 +31,8 @@ inline fun capture(value: Int, before: () -> Unit): () -> Int {
 class CaptureDefault {
     fun read(value: () -> Int = capture(257) {}): Int = value()
 }
+
+class CompanionDefault {
+    companion object { inline fun <T> wrap(block: () -> T): T = block() }
+    fun read(value: Int = wrap { 7 }): Int = value
+}
