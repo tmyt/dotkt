@@ -2451,6 +2451,7 @@ internal sealed class AssemblyScanner : IDisposable
         // property; accessorPairs contains precisely those receiver-bearing declarations, so folding its names into this
         // set would erase the receiverless property during DLL -> KLIB projection.
         var propertyNames = new HashSet<string>(StringComparer.Ordinal);
+        var fieldNames = new HashSet<string>(StringComparer.Ordinal);
         foreach (var propertyHandle in def.GetProperties())
         {
             var property = _md.GetPropertyDefinition(propertyHandle);
@@ -2510,6 +2511,71 @@ internal sealed class AssemblyScanner : IDisposable
             ApplyAccessorFlags(projected, accessors.Getter, accessors.Setter);
             result.Property.Add(projected);
             propertyNames.Add(name);
+        }
+
+        foreach (var fieldHandle in def.GetFields())
+        {
+            // Suppress the exact ABI singleton slot validated from [KotlinCompanion], not a declaration selected by
+            // source name. A companion may legally declare `val INSTANCE: Int`; that property must survive beside
+            // the compiler-reserved self slot `$INSTANCE`.
+            if (_singletonInstanceFields.Contains(fieldHandle)) continue;
+            if (validatedRichEnum?.EntryNames.TryGetValue(fieldHandle, out var richEnumEntryName) == true)
+            {
+                result.EnumEntry.Add(new EnumEntry { Name = names.String(richEnumEntryName) });
+                continue;
+            }
+            if (validatedRichEnum?.SyntheticFields.Contains(fieldHandle) == true) continue;
+            var field = _md.GetFieldDefinition(fieldHandle);
+            if (!IsPublicOrProtected(field.Attributes)) continue;
+            var name = _md.GetString(field.Name);
+            if (name.StartsWith('<') || propertyNames.Contains(name)) continue;
+            if (isEnum && (field.Attributes & FieldAttributes.Literal) != 0 &&
+                (field.Attributes & FieldAttributes.Static) != 0)
+            {
+                if (basicEnumCarrier is null)
+                    result.EnumEntry.Add(new EnumEntry { Name = names.String(name) });
+                continue;
+            }
+            var fieldType = ProjectType(fieldHandle, field.DecodeSignature(signatures, typeContext), handle, names, signatures, typeContext);
+            var hasCustomAccessors = customFieldAccessors.TryGetValue(name, out var custom);
+            var canWrite = hasCustomAccessors && (custom.Access & 2) != 0 ||
+                (field.Attributes & (FieldAttributes.InitOnly | FieldAttributes.Literal)) == 0 &&
+                !_attrs.Has(fieldHandle, MetadataAttributes.DotKtNs + "KotlinReadOnlyAttribute");
+            var projected = new Property
+            {
+                Name = names.String(name),
+                ReturnType = fieldType,
+                Flags = Flags.Property(field.Attributes, canWrite),
+                SetterValueParameter = canWrite
+                    ? new ValueParameter { Name = names.String("value"), Type = fieldType.Clone() }
+                    : null,
+            };
+            // An object/companion-object const is physically a CLR static literal (Literal cannot be instance), but
+            // its Kotlin declaration is still an ordinary member of that singleton carrier. Do not turn it into a
+            // Kotlin 2.4 companion-block static merely because of the required CLR storage bit. [KotlinObject] is the
+            // exact producer-authored singleton fact; generic-static implementation carriers are a different set.
+            if (_attrs.Has(handle, MetadataAttributes.DotKtNs + "KotlinObjectAttribute"))
+                projected.Flags &= ~(1 << 19); // IS_STATIC
+            if ((field.Attributes & FieldAttributes.Literal) != 0 &&
+                CompileTimeValue(field, names) is { } constant)
+            {
+                projected.Flags |= (1 << 11) | (1 << 13); // IS_CONST + HAS_CONSTANT
+                projected.CompileTimeValue = constant;
+            }
+            var isLateinit = _attrs.Has(fieldHandle, MetadataAttributes.DotKtNs + "KotlinLateinitAttribute");
+            if (isLateinit)
+                projected.Flags |= 1 << 12; // IS_LATEINIT
+            if (hasCustomAccessors)
+                ApplyAccessorFlags(projected, custom.Handles);
+            else
+            {
+                projected.PropertyAnnotation.Add(ClrFieldAnnotation(names));
+                if (isLateinit) projected.PropertyAnnotation.Add(ClrLateinitFieldAnnotation(names));
+                projected.Flags |= 1;
+            }
+            result.Property.Add(projected);
+            propertyNames.Add(name);
+            fieldNames.Add(name);
         }
 
         // ECMA MethodImpl rows are the physical form of explicit interface
@@ -2720,17 +2786,25 @@ internal sealed class AssemblyScanner : IDisposable
                     setter.Declaration,
                     setter.Signatures);
             }
-            if (!groupIsExplicit && propertyNames.Contains(propertyName)) continue;
-            if (groupIsExplicit)
+            var inheritedVisibleMember = !propertyNames.Contains(propertyName)
+                ? InheritedVisibleClassMember(def, propertyName, names, signatures, typeContext)
+                : null;
+            var hasField = fieldNames.Contains(propertyName) || inheritedVisibleMember?.PropertyAnnotation
+                .Any(annotation => annotation.Id == names.Class("kotlin.clr.ClrField")) == true;
+            // Storage does not implement a property slot, even when a default interface body supplies that slot.
+            // A field collision therefore needs the same hidden completion as an explicit class MethodImpl.
+            var hiddenCompletion = groupIsExplicit || hasField;
+            if (!hiddenCompletion && propertyNames.Contains(propertyName)) continue;
+            if (hiddenCompletion)
             {
-                // A hidden explicit slot must not hide a separately inherited class property.
+                // A hidden explicit slot must not hide a separately inherited class property or field.
                 // Retain that declaration's constructed signature alongside the slot-completion fact,
                 // just as when the visible property is declared directly on this class.
-                if (!propertyNames.Contains(propertyName) &&
-                    InheritedVisibleProperty(def, propertyName, names, signatures, typeContext) is { } inheritedProperty)
+                if (inheritedVisibleMember is { } inheritedProperty)
                 {
                     result.Property.Add(inheritedProperty);
                     propertyNames.Add(propertyName);
+                    if (hasField) fieldNames.Add(propertyName);
                 }
                 // Kotlin has no explicit-interface-implementation declaration syntax. When a CLR class owns both a
                 // final public member and a private MethodImpl for the same source signature, the ordinary member must
@@ -2739,12 +2813,12 @@ internal sealed class AssemblyScanner : IDisposable
                 // CLR base member as a new slot rather than inventing a physical override.
                 foreach (var declared in result.Property.Where(property =>
                     names.StringValue(property.Name) == propertyName &&
-                    TypeKey(property.ReturnType) == TypeKey(propertyType) &&
+                    SameProjectedType(property.ReturnType, propertyType) &&
                     (property.SetterValueParameter is not null) == (pair.Setter is not null)))
                     declared.Flags = Flags.AsOpen(declared.Flags);
             }
             var propertyIsAbstract = pair.Getter?.IsAbstract == true || pair.Setter?.IsAbstract == true;
-            var propertyIsExplicit = pair.Getter?.IsExplicit == true || pair.Setter?.IsExplicit == true;
+            var propertyIsExplicit = hiddenCompletion;
             var projectedProperty = new Property
             {
                 Name = names.String(propertyName),
@@ -2803,8 +2877,20 @@ internal sealed class AssemblyScanner : IDisposable
             var inherited = eventGroup.First();
             var eventName = inherited.PropertyName!;
             var groupIsExplicit = eventGroup.Any(item => item.IsExplicit);
-            if (!groupIsExplicit && (propertyNames.Contains(eventName) || declaredEventNames.Contains(eventName)))
+            var inheritedVisibleMember = !propertyNames.Contains(eventName)
+                ? InheritedVisibleClassMember(def, eventName, names, signatures, typeContext)
+                : null;
+            var inheritedField = inheritedVisibleMember?.PropertyAnnotation
+                .Any(annotation => annotation.Id == names.Class("kotlin.clr.ClrField")) == true;
+            var hiddenCompletion = groupIsExplicit || fieldNames.Contains(eventName) || inheritedField;
+            if (!hiddenCompletion && (propertyNames.Contains(eventName) || declaredEventNames.Contains(eventName)))
                 continue;
+            if (inheritedField)
+            {
+                result.Property.Add(inheritedVisibleMember!);
+                propertyNames.Add(eventName);
+                fieldNames.Add(eventName);
+            }
             var reader = inherited.Reader;
             var declaration = reader.GetMethodDefinition(inherited.Declaration);
             var context = InheritedContext(reader, inherited.Declaration, declaration);
@@ -2833,16 +2919,16 @@ internal sealed class AssemblyScanner : IDisposable
                 Flags = Flags.Property(
                     MethodAttributes.Public |
                         (eventGroup.Any(item => item.IsAbstract) ? MethodAttributes.Abstract : 0) |
-                        (eventGroup.Any(item => item.IsExplicit && !item.IsAbstract)
+                        (hiddenCompletion && !eventGroup.Any(item => item.IsAbstract)
                             ? MethodAttributes.Virtual
                             : 0),
                     canWrite: false,
                     isStatic: false,
-                    memberKind: eventGroup.Any(item => item.IsExplicit)
+                    memberKind: hiddenCompletion
                         ? Flags.FakeOverride
                         : Flags.DeclarationMember),
             };
-            if (eventGroup.Any(item => item.IsExplicit))
+            if (hiddenCompletion)
             {
                 explicitEventShapes.Add(eventName + ":" + TypeKey(physicalHandler));
                 projectedEvent.PropertyAnnotation.Add(ExplicitSlotAnnotations(names));
@@ -2879,69 +2965,6 @@ internal sealed class AssemblyScanner : IDisposable
                     $"malformed [KotlinBasicEnum] carrier on '{MetadataTypeName(handle)}': entry map does not match literal fields");
             foreach (var entry in basicEnumCarrier.Entries)
                 result.EnumEntry.Add(new EnumEntry { Name = names.String(entry.Name) });
-        }
-
-        foreach (var fieldHandle in def.GetFields())
-        {
-            // Suppress the exact ABI singleton slot validated from [KotlinCompanion], not a declaration selected by
-            // source name. A companion may legally declare `val INSTANCE: Int`; that property must survive beside
-            // the compiler-reserved self slot `$INSTANCE`.
-            if (_singletonInstanceFields.Contains(fieldHandle)) continue;
-            if (validatedRichEnum?.EntryNames.TryGetValue(fieldHandle, out var richEnumEntryName) == true)
-            {
-                result.EnumEntry.Add(new EnumEntry { Name = names.String(richEnumEntryName) });
-                continue;
-            }
-            if (validatedRichEnum?.SyntheticFields.Contains(fieldHandle) == true) continue;
-            var field = _md.GetFieldDefinition(fieldHandle);
-            if (!IsPublicOrProtected(field.Attributes)) continue;
-            var name = _md.GetString(field.Name);
-            if (name.StartsWith('<') || propertyNames.Contains(name)) continue;
-            if (isEnum && (field.Attributes & FieldAttributes.Literal) != 0 &&
-                (field.Attributes & FieldAttributes.Static) != 0)
-            {
-                if (basicEnumCarrier is null)
-                    result.EnumEntry.Add(new EnumEntry { Name = names.String(name) });
-                continue;
-            }
-            var fieldType = ProjectType(fieldHandle, field.DecodeSignature(signatures, typeContext), handle, names, signatures, typeContext);
-            var hasCustomAccessors = customFieldAccessors.TryGetValue(name, out var custom);
-            var canWrite = hasCustomAccessors && (custom.Access & 2) != 0 ||
-                (field.Attributes & (FieldAttributes.InitOnly | FieldAttributes.Literal)) == 0 &&
-                !_attrs.Has(fieldHandle, MetadataAttributes.DotKtNs + "KotlinReadOnlyAttribute");
-            var projected = new Property
-            {
-                Name = names.String(name),
-                ReturnType = fieldType,
-                Flags = Flags.Property(field.Attributes, canWrite),
-                SetterValueParameter = canWrite
-                    ? new ValueParameter { Name = names.String("value"), Type = fieldType.Clone() }
-                    : null,
-            };
-            // An object/companion-object const is physically a CLR static literal (Literal cannot be instance), but
-            // its Kotlin declaration is still an ordinary member of that singleton carrier. Do not turn it into a
-            // Kotlin 2.4 companion-block static merely because of the required CLR storage bit. [KotlinObject] is the
-            // exact producer-authored singleton fact; generic-static implementation carriers are a different set.
-            if (_attrs.Has(handle, MetadataAttributes.DotKtNs + "KotlinObjectAttribute"))
-                projected.Flags &= ~(1 << 19); // IS_STATIC
-            if ((field.Attributes & FieldAttributes.Literal) != 0 &&
-                CompileTimeValue(field, names) is { } constant)
-            {
-                projected.Flags |= (1 << 11) | (1 << 13); // IS_CONST + HAS_CONSTANT
-                projected.CompileTimeValue = constant;
-            }
-            var isLateinit = _attrs.Has(fieldHandle, MetadataAttributes.DotKtNs + "KotlinLateinitAttribute");
-            if (isLateinit)
-                projected.Flags |= 1 << 12; // IS_LATEINIT
-            if (hasCustomAccessors)
-                ApplyAccessorFlags(projected, custom.Handles);
-            else
-            {
-                projected.PropertyAnnotation.Add(ClrFieldAnnotation(names));
-                if (isLateinit) projected.PropertyAnnotation.Add(ClrLateinitFieldAnnotation(names));
-                projected.Flags |= 1;
-            }
-            result.Property.Add(projected);
         }
 
         foreach (var (ev, accessorHandle) in declaredEvents)
@@ -3001,6 +3024,23 @@ internal sealed class AssemblyScanner : IDisposable
 
     private static string TypeKey(KType type) =>
         Convert.ToBase64String(type.ToByteArray());
+
+    // Optional protobuf scalar presence is not Kotlin type identity (for example, absent nullable == false).
+    // Classifier presence does matter: class index zero and type-parameter index zero are distinct types.
+    private static bool SameProjectedType(KType? left, KType? right)
+    {
+        if (left is null || right is null) return left is null && right is null;
+        return left.Flags == right.Flags && left.Nullable == right.Nullable &&
+            left.HasClassName == right.HasClassName && left.ClassName == right.ClassName &&
+            left.HasTypeParameter == right.HasTypeParameter && left.TypeParameter == right.TypeParameter &&
+            left.HasFlexibleTypeCapabilitiesId == right.HasFlexibleTypeCapabilitiesId &&
+            left.FlexibleTypeCapabilitiesId == right.FlexibleTypeCapabilitiesId &&
+            SameProjectedType(left.FlexibleUpperBound, right.FlexibleUpperBound) &&
+            left.TypeAnnotation.SequenceEqual(right.TypeAnnotation) &&
+            left.Argument.Count == right.Argument.Count &&
+            left.Argument.Zip(right.Argument).All(pair => pair.First.Projection == pair.Second.Projection &&
+                SameProjectedType(pair.First.Type, pair.Second.Type));
+    }
 
     private static string FunctionKey(Function function, NameTable names) =>
         names.StringValue(function.Name) + "`" + function.TypeParameter.Count + "(" +
@@ -3365,7 +3405,7 @@ internal sealed class AssemblyScanner : IDisposable
         return true;
     }
 
-    private Property? InheritedVisibleProperty(
+    private Property? InheritedVisibleClassMember(
         TypeDefinition definition,
         string name,
         NameTable names,
@@ -3394,11 +3434,6 @@ internal sealed class AssemblyScanner : IDisposable
             context = new GenericContext(resolved.Handle, default,
                 definition.GetGenericParameters().ToDictionary(handle => handle,
                     handle => reader.GetGenericParameter(handle).Index));
-            // A nearer projected field owns this source name; do not manufacture a farther property over it.
-            if (definition.GetFields().Any(handle =>
-                IsPublicOrProtected(reader.GetFieldDefinition(handle).Attributes) &&
-                reader.GetString(reader.GetFieldDefinition(handle).Name) == name))
-                return null;
             foreach (var propertyHandle in definition.GetProperties())
             {
                 var property = reader.GetPropertyDefinition(propertyHandle);
@@ -3434,6 +3469,36 @@ internal sealed class AssemblyScanner : IDisposable
                     projected.GetterFlags = Flags.Accessor(reader.GetMethodDefinition(accessors.Getter).Attributes);
                 if (canWrite)
                     projected.SetterFlags = Flags.Accessor(reader.GetMethodDefinition(accessors.Setter).Attributes);
+                return projected;
+            }
+            // Fields occupy the same source member namespace as properties, but do not fulfill interface slots.
+            // Keep the nearest field's own declaration alongside the hidden slot-completion property. Decode its
+            // carriers/NRT in the declaring frame before applying the constructed base arguments.
+            foreach (var fieldHandle in definition.GetFields())
+            {
+                var field = reader.GetFieldDefinition(fieldHandle);
+                if (reader.GetString(field.Name) != name || !IsPublicOrProtected(field.Attributes)) continue;
+                if ((field.Attributes & FieldAttributes.Static) != 0) return null;
+                var fieldType = ProjectInheritedType(reader, fieldHandle,
+                    field.DecodeSignature(decoder, context), resolved.Handle, decoder);
+                fieldType = SubstituteTypeParameters(fieldType, arguments);
+                var canWrite = (field.Attributes & (FieldAttributes.InitOnly | FieldAttributes.Literal)) == 0 &&
+                    !decoder.Attributes.Has(fieldHandle, MetadataAttributes.DotKtNs + "KotlinReadOnlyAttribute");
+                var projected = new Property
+                {
+                    Name = names.String(name),
+                    ReturnType = fieldType,
+                    Flags = Flags.Property(field.Attributes, canWrite) | 1,
+                    SetterValueParameter = canWrite
+                        ? new ValueParameter { Name = names.String("value"), Type = fieldType.Clone() }
+                        : null,
+                };
+                projected.PropertyAnnotation.Add(ClrFieldAnnotation(names));
+                if (decoder.Attributes.Has(fieldHandle, MetadataAttributes.DotKtNs + "KotlinLateinitAttribute"))
+                {
+                    projected.Flags |= 1 << 12;
+                    projected.PropertyAnnotation.Add(ClrLateinitFieldAnnotation(names));
+                }
                 return projected;
             }
         }
