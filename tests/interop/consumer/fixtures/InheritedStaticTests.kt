@@ -6,8 +6,37 @@ private class StaticKotlinDeepLeaf : Middle()
 private class StaticKotlinStringLeaf : GenericBase<String>()
 private class StaticKotlinIntLeaf : GenericBase<Int>()
 private class StaticKotlinPairLeaf : Swap<Int, String>()
+private typealias StaticAliasLeaf = StringLeaf
 
 class InheritedStaticTests {
+    @TestAttribute fun typealiasRetainsConstructedDeclarationOwner() {
+        StaticAliasLeaf.Field = "alias"
+        check(Storage.StringField() == "alias")
+        check(StaticAliasLeaf.Store("method") == "method" && Storage.StringField() == "method")
+        check(Leaf.Readonly == 59 && StaticKotlinLeaf.Readonly == 59)
+    }
+
+    @TestAttribute fun callableReferenceRetainsConstructedDeclarationOwner() {
+        val foreign: (String) -> String = StringLeaf::Store
+        val kotlin: (Int) -> Int = StaticKotlinIntLeaf::Store
+        check(foreign("reference") == "reference" && Storage.StringField() == "reference")
+        check(kotlin(67) == 67 && Storage.IntField() == 67)
+        check(Storage.ObjectUntouched())
+    }
+
+    @TestAttribute fun inheritedStaticEventUsesBaseSubscription() {
+        var total = 0
+        val token = Leaf.Changed.subscribe { value -> total += value }
+        try {
+            StaticKotlinLeaf.Raise(71)
+            check(total == 71)
+        } finally {
+            token.close()
+        }
+        Base.Raise(73)
+        check(total == 71)
+    }
+
     @TestAttribute fun foreignAndKotlinSubclassesShareBaseStorage() {
         Leaf.Field = "field"
         StaticKotlinLeaf.Property = "property"

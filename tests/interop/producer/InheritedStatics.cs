@@ -5,6 +5,9 @@ public class Base
     public static string Field = "base";
     public static string Property { get; set; } = "base property";
     public static string Method() => "base method";
+    public static readonly int Readonly = 59;
+    public static event System.Action<int> Changed;
+    public static void Raise(int value) => Changed?.Invoke(value);
 }
 public class Leaf : Base { }
 public class Middle : Base

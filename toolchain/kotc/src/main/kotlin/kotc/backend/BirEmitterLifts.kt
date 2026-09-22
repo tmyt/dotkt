@@ -669,7 +669,9 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 			val argTypes = regs.joinToString(",") { birType(it.type).toJson() }
 			val liftedReferenceTypeArgs = functionReferenceTypeArgs(node, fn)
 				?: error("validated static function reference lost its type arguments in its lifted method frame")
-			val callE = """{"k":"callStatic","ownerType":${fqnJson(clrOwner)},"method":${str(fn.name.asString())}${overloadSigField(fn)}$liftedReferenceTypeArgs,"argTypes":[$argTypes],"ret":${liftedFuncType.ret.toJson()},"args":[$argsJson]$anySlotTag$memberDeclarationIdentityTag}"""
+			val selectedOwner = kotc.frontend.ClrStaticOwners.at(sourcePathOf(node), node.endOffset, fn.name.asString(), "call")
+			val ownerType = selectedOwner?.let(::birType)?.toJson() ?: fqnJson(clrOwner)
+			val callE = """{"k":"callStatic","ownerType":$ownerType,"method":${str(fn.name.asString())}${overloadSigField(fn)}$liftedReferenceTypeArgs,"argTypes":[$argTypes],"ret":${liftedFuncType.ret.toJson()},"args":[$argsJson]$anySlotTag$memberDeclarationIdentityTag}"""
 			val body = if (fn.returnType.isUnit()) """{"k":"exprStmt","expr":$callE}"""
 				else """{"k":"return","value":$callE}"""
 			"""{"name":${str(lname)}${liftedDeclarationIdentityField(lname)},"generated":true,"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${liftedFuncType.ret.toJson()},"body":[$body]}"""

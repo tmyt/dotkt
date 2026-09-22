@@ -18,6 +18,7 @@ import org.jetbrains.kotlin.fir.deserialization.FirDeserializationExtension
 import org.jetbrains.kotlin.fir.resolve.ScopeSession
 import org.jetbrains.kotlin.fir.resolve.lookupSuperTypes
 import org.jetbrains.kotlin.fir.resolve.toRegularClassSymbol
+import org.jetbrains.kotlin.fir.declarations.fullyExpandedClass
 import org.jetbrains.kotlin.fir.resolve.providers.firProvider
 import org.jetbrains.kotlin.fir.resolve.providers.impl.FirProviderImpl
 import org.jetbrains.kotlin.fir.scopes.*
@@ -172,7 +173,7 @@ fun normalizeClrStaticReceivers(session: FirSession, files: List<FirFile>) {
 			val receiver = qualifiedAccessExpression.dispatchReceiver as? FirResolvedQualifier ?: return
 			val ownerId = callable.callableId?.classId ?: return
 			if (receiver.classId == ownerId) return
-			val receiverClass = receiver.symbol as? FirRegularClassSymbol ?: return
+			val receiverClass = receiver.symbol?.fullyExpandedClass(session) ?: return
 			val ownerType = lookupSuperTypes(receiverClass.fir, lookupInterfaces = false, deep = true,
 				useSiteSession = session, substituteTypes = true).single { it.lookupTag.classId == ownerId }
 			val path = file.sourceFile?.path
