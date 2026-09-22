@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Public CLR fields remain visible beside explicit interface properties (#812).** DLL-to-KLIB projection
+  retains declared and inherited fields independently of hidden interface-slot completion, including constructed
+  generic bases and nullable/readonly/protected fields. Nullable slot coercion follows the same selected member.
+
 - **Projected CLR fields respect nearer declarations (#799).** Field/property reads and writes resolve the
   nearest visible class member before inherited properties or interface slots. Hidden base members no longer
   change a projected static member into an instance access.

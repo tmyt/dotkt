@@ -1,7 +1,5 @@
 using System;
-using System.Collections.Generic;
 using System.Linq;
-using System.Reflection;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 
@@ -89,7 +87,8 @@ static class ValueSlotNullableWrite
         var name = (node["name"] as JsonValue)?.GetValue<string>();
         if (name == null) return;
         var src = StaticType.Surface(value, scope);
-        var slotType = MemberType(netType, name);
+        var slotType = ClrMemberResolution.PropertySlotType(netType, name, write: true,
+            isStatic: node["static"]?.GetValue<bool>() == true);
         // Literal null carries no concrete value Fqn from which ConcreteValueSlot can recover a reflected bare
         // slot's Kotlin spelling. Classify that physical CLR shape directly, before target inference: a concrete
         // value type (or a generic parameter closed by the owner to a bare value type) has no null representation.
@@ -112,7 +111,9 @@ static class ValueSlotNullableWrite
         var name = (node["name"] as JsonValue)?.GetValue<string>();
         if (netType == null || name == null) return;
         var surface = StaticType.Surface(node, scope);
-        var target = ConcreteValueSlot(MemberType(netType, name), ownerFqn.Args, surface);
+        var slotType = ClrMemberResolution.PropertySlotType(netType, name, write: false,
+            isStatic: node["static"]?.GetValue<bool>() == true);
+        var target = ConcreteValueSlot(slotType, ownerFqn.Args, surface);
         if (target == null) return;
         node["ret"] = TypeJson.Write(target);
         if (node["sty"] != null) node["sty"] = TypeJson.Write(target);
@@ -215,31 +216,4 @@ static class ValueSlotNullableWrite
             && o.ContainsKey("value") && o["value"] == null;
     }
 
-    // The .NET member type (PropertyType / FieldType) of a non-indexed property OR field named `name`, walking the type
-    // + its bases + interfaces — the two member kinds NetInteropBinding routes to clrPropSet. null when absent.
-    static Type MemberType(Type type, string name)
-    {
-        const BindingFlags Flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance
-            | BindingFlags.Static | BindingFlags.DeclaredOnly;
-        var seen = new HashSet<Type>();
-        var stack = new Stack<Type>();
-        stack.Push(type);
-        while (stack.Count > 0)
-        {
-            var cur = stack.Pop();
-            if (cur == null || !seen.Add(cur)) continue;
-            try
-            {
-                foreach (var p in cur.GetProperties(Flags))
-                    if (p.Name == name && p.GetIndexParameters().Length == 0) return p.PropertyType;
-                foreach (var fi in cur.GetFields(Flags))
-                    if (fi.Name == name) return fi.FieldType;
-            }
-            catch { /* metadata-load edge on a malformed member table — keep walking */ }
-            Type baseType = null; try { baseType = cur.BaseType; } catch { }
-            if (baseType != null) stack.Push(baseType);
-            try { foreach (var i in cur.GetInterfaces()) stack.Push(i); } catch { }
-        }
-        return null;
-    }
 }

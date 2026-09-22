@@ -77,6 +77,18 @@ static partial class ClrMemberResolution
         else if (node["e"] is JsonObject expression) MarkDelegateSlot(expression, slotType);
     }
 
+    // Early nullable-slot coercion must inspect the same declaration that final physical binding will select.
+    // In particular, interface slots cannot take precedence over a visible field in the class hierarchy.
+    internal static Type PropertySlotType(Type owner, string name, bool write, bool isStatic)
+    {
+        var flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.FlattenHierarchy |
+            (isStatic ? BindingFlags.Static : BindingFlags.Instance);
+        var accessor = FindPropAccessor(owner, name, write, flags);
+        if (accessor != null)
+            return write ? accessor.GetParameters()[^1].ParameterType : accessor.ReturnType;
+        return FindFieldMember(owner, name, flags)?.FieldType;
+    }
+
     // The property accessor MethodInfo for `name`: a real .NET PropertyDef's authoritative MethodSemantics accessor
     // (GetProperty walks base CLASSES for a class owner). Reflection does not expose an explicitly
     // implemented property on its class under the interface name, nor does interface GetProperty traverse base
