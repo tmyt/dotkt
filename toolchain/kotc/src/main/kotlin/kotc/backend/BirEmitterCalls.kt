@@ -6,6 +6,7 @@ import org.jetbrains.kotlin.descriptors.ClassKind
 import org.jetbrains.kotlin.descriptors.Modality
 import org.jetbrains.kotlin.descriptors.Visibilities
 import org.jetbrains.kotlin.ir.declarations.IrDeclarationWithVisibility
+import org.jetbrains.kotlin.ir.declarations.IrDeclaration
 import org.jetbrains.kotlin.ir.declarations.IrAnonymousInitializer
 import org.jetbrains.kotlin.ir.declarations.IrClass
 import org.jetbrains.kotlin.ir.declarations.IrConstructor
@@ -399,13 +400,13 @@ private fun BirEmitter.fillOmitted(
 				// non-generic caller left `G`'s `!0` as the owner of the `v` read (InvalidProgramException at load).
 				val savedCopyDefault = activeDataClassCopyDefault
 				activeDataClassCopyDefault = callee is IrSimpleFunction && isDataClassCopy(callee)
-				try { expr(def) }
+				try { withDefaultExpressionSource(callee) { expr(def) } }
 				finally {
 					activeDataClassCopyDefault = savedCopyDefault
 					saved.forEach { (d, prev) -> if (prev != null) captureSubst[d] = prev else captureSubst.remove(d) }
 				}
 			}
-			else -> { stableFill = isStableValue(def); argExpr(def, p) }   // constant / global — inline verbatim
+			else -> { stableFill = isStableValue(def); withDefaultExpressionSource(callee) { argExpr(def, p) } }
 		}
 		if (emitted == null) return null
 		// A filled default is a call-site VALUE like any other: under a plan it becomes a default-phase binding, so a
@@ -413,6 +414,15 @@ private fun BirEmitter.fillOmitted(
 		// (`a = bump(), b = a * 10` would otherwise run `bump()` twice).
 		return plan?.bind("default", "value", stableFill, birType(p.type).toJson(),
 			"default of parameter '${p.name.asString()}'", emitted) ?: emitted
+}
+
+/** Defaults retain their originating source facts even when rendered into a different caller file. */
+private inline fun <T> BirEmitter.withDefaultExpressionSource(callee: IrFunction, render: () -> T): T {
+	var owner = callee.parent
+	while (owner is IrDeclaration) owner = owner.parent
+	val saved = fileEntry
+	fileEntry = (owner as? IrFile)?.fileEntry ?: saved
+	return try { render() } finally { fileEntry = saved }
 }
 
 /** How a plan binding's ROLE names this callee to a reader: a constructor by its class, anything else by its name. */
@@ -1306,12 +1316,14 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 			val argTypes = accessorArgs.joinToString(",") { birType(it.type).toJson() }
 			val args = accessorArgs.joinToString(",") { expr(it) }
 			val propKind = if (isSetter) "set" else "get"
+			val selectedOwner = kotc.frontend.ClrStaticOwners.at(sourcePathOf(call), call.endOffset,
+				staticProperty.name.asString(), propKind)?.let(::birType)?.toJson() ?: fqnJson(typeName(staticOwner))
 			val ret = if (isSetter) "" else ""","ret":${birType(call.type).toJson()}"""
 			// A property whose storage IS its user-visible member — `const`, `lateinit var`, `@ClrField` — emits no
 			// accessor at all (the declaration side gates on the same [fieldRoutedProperty] rule), so its access is
 			// the storage itself. Emitting an accessor call here named a `get_`/`set_` slot that does not exist.
 			if (!fieldRoutedProperty(staticProperty)) {
-				val fieldOwner = fqnJson(typeName(staticOwner))
+				val fieldOwner = selectedOwner
 				val fieldName = str(staticProperty.name.asString())
 				return if (isSetter)
 					"""{"k":"staticFieldSet","ownerType":$fieldOwner,"name":$fieldName,"value":${accessorArgs.first().let { expr(it) }}}"""
@@ -1319,7 +1331,7 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 					"""{"k":"lateinitGet","ownerType":$fieldOwner,"static":true,"name":$fieldName}"""
 				else """{"k":"staticField","ownerType":$fieldOwner,"name":$fieldName}"""
 			}
-			return """{"k":"callStatic","ownerType":${fqnJson(typeName(staticOwner))},"method":${str(staticProperty.name.asString())},"prop":"$propKind"${overloadSigField(propertyAccessorDeclaration)},"argTypes":[$argTypes]$ret,"args":[$args]}"""
+			return """{"k":"callStatic","ownerType":$selectedOwner,"method":${str(staticProperty.name.asString())},"prop":"$propKind"${overloadSigField(propertyAccessorDeclaration)},"argTypes":[$argTypes]$ret,"args":[$args]}"""
 		}
 	}
 
@@ -1609,7 +1621,9 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 		?: (callee.takeIf { it.isFakeOverride }?.resolveFakeOverride()?.parent as? IrClass)?.let { clrName(it) }
 		// A restored external Kotlin companion may carry a CLR owner annotation; keep that exact owner identity.
 		?: declaringClass?.takeIf { it.isCompanion }?.let { it.parent as? IrClass }?.let { clrName(it) }
-	val clrType = clrTypeName?.let { TypeNode.Fqn(it) }
+	val selectedStaticOwner = if (dispatchReceiver(call) == null)
+		kotc.frontend.ClrStaticOwners.at(sourcePathOf(call), call.endOffset, name, "call") else null
+	val clrType = clrTypeName?.let { selectedStaticOwner?.let(::birType) ?: TypeNode.Fqn(it) }
 	if (clrType != null) {
 		// A fake override's parameter types are substituted into its inheriting class.
 		// The selected declaration's owner and descriptor must use the same frame.
@@ -2237,7 +2251,9 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 	// remains NetInteropBinding's decision in bir2cir.
 	if (recv == null && callee.isStaticMethodOfClass) {
 		val staticOwner = callee.parent as IrClass
-		return """{"k":"callStatic","ownerType":${fqnJson(typeName(staticOwner))},"method":${str(name)}${overloadSigField(callee)}$ta${retHintStr(ta.isNotEmpty(), effRet)},"args":[$args]${suspendCallTag(callee)}}"""
+		val selectedOwner = kotc.frontend.ClrStaticOwners.at(sourcePathOf(call), call.endOffset, name, "call")
+		val ownerType = selectedOwner?.let(::birType)?.toJson() ?: fqnJson(typeName(staticOwner))
+		return """{"k":"callStatic","ownerType":$ownerType,"method":${str(name)}${overloadSigField(callee)}$ta${retHintStr(ta.isNotEmpty() || selectedOwner != null, effRet)},"args":[$args]${suspendCallTag(callee)}}"""
 	}
 	// #199 DESIGN B — TWO-AXIS top-level call encoding. `owner:null` is LOAD-BEARING BIR vocabulary meaning "this is
 	// a top-level call": ~12 bir2cir recognizers key on it (@ClrIntrinsic/@ClrCollectionFactory/@ClrArrayFactory

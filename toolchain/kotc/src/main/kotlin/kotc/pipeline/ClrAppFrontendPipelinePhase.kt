@@ -36,7 +36,6 @@ import org.jetbrains.kotlin.config.targetPlatform
 import org.jetbrains.kotlin.fir.DependencyListForCliModule
 import org.jetbrains.kotlin.fir.extensions.FirExtensionRegistrar
 import org.jetbrains.kotlin.fir.pipeline.AllModulesFrontendOutput
-import org.jetbrains.kotlin.fir.pipeline.buildFirFromKtFiles
 import org.jetbrains.kotlin.fir.pipeline.resolveAndCheckFir
 import org.jetbrains.kotlin.fir.pipeline.runPlatformCheckers
 import org.jetbrains.kotlin.fir.session.AbstractFirMetadataSessionFactory
@@ -165,7 +164,7 @@ object ClrAppFrontendPipelinePhase : PipelinePhase<ConfigurationPipelineArtifact
 			createSharedLibrarySession = {
 				sessionFactory.createSharedLibrarySession(
 					rootModuleName, languageVersionSettings, extensionRegistrars, metadataContext,
-				)
+				).also(::installClrStaticDeserialization)
 			},
 			createLibrarySession = { sharedLibrarySession ->
 				sessionFactory.createLibrarySession(
@@ -178,7 +177,7 @@ object ClrAppFrontendPipelinePhase : PipelinePhase<ConfigurationPipelineArtifact
 					klibs,
 					languageVersionSettings,
 					metadataContext,
-				)
+				).also(::installClrStaticDeserialization)
 			},
 			createSourceSession = { _, moduleData, isForLeafHmppModule, sessionConfigurator ->
 				sessionFactory.createSourceSession(
@@ -197,12 +196,14 @@ object ClrAppFrontendPipelinePhase : PipelinePhase<ConfigurationPipelineArtifact
 		// One pipeline execution = one set of frontend-only facts. Both tables are objects, so their maps would
 		// otherwise outlive the compilation inside a HOSTED kotc and a later run could read a stale entry.
 		kotc.frontend.ClrContextFnTypes.reset()
+		kotc.frontend.ClrStaticOwners.reset()
 		kotc.frontend.ClrCompanionExtensions.reset()
 		kotc.frontend.ClrProjectedMemberExtensionProperties.reset()
 		val outputs = sessionsWithSources.map { (session, files) ->
 			installKotlinJvmDefaultImport(session)
-			val firFiles = session.buildFirFromKtFiles(files)
+			val firFiles = session.buildClrFirFromKtFiles(files)
 			resolveAndCheckFir(session, firFiles, diagnosticsReporter).also {
+				normalizeClrStaticReceivers(session, it.fir)
 				// Capture the CONTEXT-FUNCTION-TYPE arities while FIR still has them — fir2ir erases the
 				// `ContextFunctionTypeParams` cone attribute, and `context(A) B.(D) -> E` becomes indistinguishable
 				// from `B.(A, D) -> E` at IR level. See [kotc.frontend.ClrContextFnTypes].

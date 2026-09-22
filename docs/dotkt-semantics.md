@@ -1472,9 +1472,13 @@ An explicit interface implementation's hidden slot-completion declaration does n
 field. Both declarations remain in the KLIB: class access uses the field, while access through the interface uses
 the interface property. Inherited fields retain their constructed type, nullability, mutability and visibility.
 
-A Kotlin class that EXTENDS such a type does not re-declare its statics. The frontend materializes one on the
-subclass so that `Sub.Shared` resolves, but the CLR does not inherit statics into a derived TypeDef, so `Sub.Shared`
-IS `Base.Shared` — one member, one storage location — and the subclass emits nothing for it.
+A class qualifier exposes static declarations from its base-class chain, for both imported CLR subclasses and
+Kotlin subclasses. Lookup selects the nearest property declaration and the nearest declaration of each method
+signature, retaining distinct inherited overloads; it does not copy a member into the subclass.
+`Sub.Shared` therefore references `Base.Shared` — one member, one storage location. For a constructed generic base,
+the selected owner retains its substituted type arguments: `StringSub.Shared` on a subclass of `Base<String>`
+uses `Base<String>` storage, not `Base<Any>` storage. This applies to fields, properties, and methods, including
+generic methods whose own type parameters are distinct from the declaring class's parameters.
 
 This surface requires Kotlin's `CompanionBlocksAndExtensions` analysis feature. Kotlin/CLR enables it as a target
 capability for every `kotc` invocation; any other analysis host that consumes CLR reference KLIBs (including a future

@@ -29,7 +29,6 @@ import org.jetbrains.kotlin.config.moduleName
 import org.jetbrains.kotlin.fir.DependencyListForCliModule
 import org.jetbrains.kotlin.fir.extensions.FirExtensionRegistrar
 import org.jetbrains.kotlin.fir.pipeline.AllModulesFrontendOutput
-import org.jetbrains.kotlin.fir.pipeline.buildFirFromKtFiles
 import org.jetbrains.kotlin.fir.pipeline.resolveAndCheckFir
 import org.jetbrains.kotlin.fir.pipeline.runPlatformCheckers
 import org.jetbrains.kotlin.name.Name
@@ -79,11 +78,13 @@ object ClrStdlibFrontendPipelinePhase : PipelinePhase<ConfigurationPipelineArtif
 		// The COMPANION-EXTENSION receiver capture rides along for the same reason and with the same lifetime: fir2ir
 		// drops a `companion fun C.foo()`'s receiver parameter outright. See [ClrCompanionExtensions].
 		kotc.frontend.ClrContextFnTypes.reset()
+		kotc.frontend.ClrStaticOwners.reset()
 		kotc.frontend.ClrCompanionExtensions.reset()
 		kotc.frontend.ClrProjectedMemberExtensionProperties.reset()
 		val outputs = sessionsWithSources.map { (session, files) ->
 			installKotlinJvmDefaultImport(session)
-			resolveAndCheckFir(session, session.buildFirFromKtFiles(files), diagnosticsReporter).also {
+			resolveAndCheckFir(session, session.buildClrFirFromKtFiles(files), diagnosticsReporter).also {
+				normalizeClrStaticReceivers(session, it.fir)
 				kotc.frontend.ClrContextFnTypes.capture(it.fir)
 				kotc.frontend.ClrCompanionExtensions.capture(session, it.fir)
 				kotc.frontend.ClrProjectedMemberExtensionProperties.capture(session, it.fir)
