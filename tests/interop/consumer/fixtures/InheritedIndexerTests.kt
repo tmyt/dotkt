@@ -14,6 +14,7 @@ open class GenericIndexerMiddle<X, Y>(initial: X) : InheritedIndexers.GenericBas
 class GenericIndexerChild : GenericIndexerMiddle<String, Int>("initial") {
     fun read(): String = this[2]
     fun write(value: String) { this[2] = value }
+    fun captured(): () -> String = { this[2] }
 }
 class PublicGenericIndexerChild : InheritedIndexers.PublicGenericBase<Int, String>("initial")
 
@@ -39,8 +40,11 @@ class InheritedIndexerTests {
     fun constructedDeclarationFrame() {
         val protectedChild = GenericIndexerChild()
         assertEquals("initial", protectedChild.read())
+        val captured = protectedChild.captured()
+        assertEquals("initial", captured())
         protectedChild.write("changed")
         assertEquals("changed", protectedChild.read())
+        assertEquals("changed", captured())
         val publicChild = PublicGenericIndexerChild()
         assertEquals("initial", publicChild[3])
         publicChild[3] = "public"
