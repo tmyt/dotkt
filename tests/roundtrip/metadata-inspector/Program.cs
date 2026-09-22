@@ -258,6 +258,10 @@ static void VerifyExplicitFieldSlots(string path)
         ["InheritedField"] = ("kotlin.String", false, true, false, false),
         ["SameTypeField"] = ("kotlin.Int", false, true, false, false),
         ["GenericField"] = ("", false, true, false, false),
+        ["ReferenceField"] = ("", false, true, false, false),
+        ["DefaultDirectField"] = ("kotlin.String", false, true, false, false),
+        ["DefaultInheritedField"] = ("kotlin.String", false, true, false, false),
+        ["IStaticDefaultValue"] = ("kotlin.String", false, true, false, true),
         ["NullableField"] = ("kotlin.String", true, true, false, false),
         ["ReadonlyField"] = ("kotlin.String", false, false, false, false),
         ["DirectReadonlyField"] = ("kotlin.String", false, false, false, false),
@@ -289,6 +293,9 @@ static void VerifyExplicitFieldSlots(string path)
                     String(fragment, argument.Value.EnumValueId) == "HIDDEN")), $"{name} interface slot must stay hidden");
             Require(((field.Flags >> 6) & 3) == 0 && ((slot.Flags >> 6) & 3) == 1,
                 $"{name} field declaration and fake-override completion kinds were conflated");
+            var expectedOpen = name[prefix.Length..] is "SameTypeField" or "ReferenceField";
+            Require(((field.Flags >> 4) & 3) == (expectedOpen ? 1 : 0),
+                $"{name} field source-level override modality changed");
             Require((field.SetterValueParameter is not null) == contract.Writable &&
                     ((field.Flags & (1 << 8)) != 0) == contract.Writable,
                 $"{name} field mutability changed");

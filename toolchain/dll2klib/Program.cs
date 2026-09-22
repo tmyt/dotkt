@@ -2451,6 +2451,7 @@ internal sealed class AssemblyScanner : IDisposable
         // property; accessorPairs contains precisely those receiver-bearing declarations, so folding its names into this
         // set would erase the receiverless property during DLL -> KLIB projection.
         var propertyNames = new HashSet<string>(StringComparer.Ordinal);
+        var fieldNames = new HashSet<string>(StringComparer.Ordinal);
         foreach (var propertyHandle in def.GetProperties())
         {
             var property = _md.GetPropertyDefinition(propertyHandle);
@@ -2574,6 +2575,7 @@ internal sealed class AssemblyScanner : IDisposable
             }
             result.Property.Add(projected);
             propertyNames.Add(name);
+            fieldNames.Add(name);
         }
 
         // ECMA MethodImpl rows are the physical form of explicit interface
@@ -2784,17 +2786,25 @@ internal sealed class AssemblyScanner : IDisposable
                     setter.Declaration,
                     setter.Signatures);
             }
-            if (!groupIsExplicit && propertyNames.Contains(propertyName)) continue;
-            if (groupIsExplicit)
+            var inheritedVisibleMember = !propertyNames.Contains(propertyName)
+                ? InheritedVisibleClassMember(def, propertyName, names, signatures, typeContext)
+                : null;
+            var hasField = fieldNames.Contains(propertyName) || inheritedVisibleMember?.PropertyAnnotation
+                .Any(annotation => annotation.Id == names.Class("kotlin.clr.ClrField")) == true;
+            // Storage does not implement a property slot, even when a default interface body supplies that slot.
+            // A field collision therefore needs the same hidden completion as an explicit class MethodImpl.
+            var hiddenCompletion = groupIsExplicit || hasField;
+            if (!hiddenCompletion && propertyNames.Contains(propertyName)) continue;
+            if (hiddenCompletion)
             {
                 // A hidden explicit slot must not hide a separately inherited class property or field.
                 // Retain that declaration's constructed signature alongside the slot-completion fact,
                 // just as when the visible property is declared directly on this class.
-                if (!propertyNames.Contains(propertyName) &&
-                    InheritedVisibleClassMember(def, propertyName, names, signatures, typeContext) is { } inheritedProperty)
+                if (inheritedVisibleMember is { } inheritedProperty)
                 {
                     result.Property.Add(inheritedProperty);
                     propertyNames.Add(propertyName);
+                    if (hasField) fieldNames.Add(propertyName);
                 }
                 // Kotlin has no explicit-interface-implementation declaration syntax. When a CLR class owns both a
                 // final public member and a private MethodImpl for the same source signature, the ordinary member must
@@ -2803,12 +2813,12 @@ internal sealed class AssemblyScanner : IDisposable
                 // CLR base member as a new slot rather than inventing a physical override.
                 foreach (var declared in result.Property.Where(property =>
                     names.StringValue(property.Name) == propertyName &&
-                    TypeKey(property.ReturnType) == TypeKey(propertyType) &&
+                    SameProjectedType(property.ReturnType, propertyType) &&
                     (property.SetterValueParameter is not null) == (pair.Setter is not null)))
                     declared.Flags = Flags.AsOpen(declared.Flags);
             }
             var propertyIsAbstract = pair.Getter?.IsAbstract == true || pair.Setter?.IsAbstract == true;
-            var propertyIsExplicit = pair.Getter?.IsExplicit == true || pair.Setter?.IsExplicit == true;
+            var propertyIsExplicit = hiddenCompletion;
             var projectedProperty = new Property
             {
                 Name = names.String(propertyName),
@@ -2867,8 +2877,20 @@ internal sealed class AssemblyScanner : IDisposable
             var inherited = eventGroup.First();
             var eventName = inherited.PropertyName!;
             var groupIsExplicit = eventGroup.Any(item => item.IsExplicit);
-            if (!groupIsExplicit && (propertyNames.Contains(eventName) || declaredEventNames.Contains(eventName)))
+            var inheritedVisibleMember = !propertyNames.Contains(eventName)
+                ? InheritedVisibleClassMember(def, eventName, names, signatures, typeContext)
+                : null;
+            var inheritedField = inheritedVisibleMember?.PropertyAnnotation
+                .Any(annotation => annotation.Id == names.Class("kotlin.clr.ClrField")) == true;
+            var hiddenCompletion = groupIsExplicit || fieldNames.Contains(eventName) || inheritedField;
+            if (!hiddenCompletion && (propertyNames.Contains(eventName) || declaredEventNames.Contains(eventName)))
                 continue;
+            if (inheritedField)
+            {
+                result.Property.Add(inheritedVisibleMember!);
+                propertyNames.Add(eventName);
+                fieldNames.Add(eventName);
+            }
             var reader = inherited.Reader;
             var declaration = reader.GetMethodDefinition(inherited.Declaration);
             var context = InheritedContext(reader, inherited.Declaration, declaration);
@@ -2897,16 +2919,16 @@ internal sealed class AssemblyScanner : IDisposable
                 Flags = Flags.Property(
                     MethodAttributes.Public |
                         (eventGroup.Any(item => item.IsAbstract) ? MethodAttributes.Abstract : 0) |
-                        (eventGroup.Any(item => item.IsExplicit && !item.IsAbstract)
+                        (hiddenCompletion && !eventGroup.Any(item => item.IsAbstract)
                             ? MethodAttributes.Virtual
                             : 0),
                     canWrite: false,
                     isStatic: false,
-                    memberKind: eventGroup.Any(item => item.IsExplicit)
+                    memberKind: hiddenCompletion
                         ? Flags.FakeOverride
                         : Flags.DeclarationMember),
             };
-            if (eventGroup.Any(item => item.IsExplicit))
+            if (hiddenCompletion)
             {
                 explicitEventShapes.Add(eventName + ":" + TypeKey(physicalHandler));
                 projectedEvent.PropertyAnnotation.Add(ExplicitSlotAnnotations(names));
@@ -3002,6 +3024,23 @@ internal sealed class AssemblyScanner : IDisposable
 
     private static string TypeKey(KType type) =>
         Convert.ToBase64String(type.ToByteArray());
+
+    // Optional protobuf scalar presence is not Kotlin type identity (for example, absent nullable == false).
+    // Classifier presence does matter: class index zero and type-parameter index zero are distinct types.
+    private static bool SameProjectedType(KType? left, KType? right)
+    {
+        if (left is null || right is null) return left is null && right is null;
+        return left.Flags == right.Flags && left.Nullable == right.Nullable &&
+            left.HasClassName == right.HasClassName && left.ClassName == right.ClassName &&
+            left.HasTypeParameter == right.HasTypeParameter && left.TypeParameter == right.TypeParameter &&
+            left.HasFlexibleTypeCapabilitiesId == right.HasFlexibleTypeCapabilitiesId &&
+            left.FlexibleTypeCapabilitiesId == right.FlexibleTypeCapabilitiesId &&
+            SameProjectedType(left.FlexibleUpperBound, right.FlexibleUpperBound) &&
+            left.TypeAnnotation.SequenceEqual(right.TypeAnnotation) &&
+            left.Argument.Count == right.Argument.Count &&
+            left.Argument.Zip(right.Argument).All(pair => pair.First.Projection == pair.Second.Projection &&
+                SameProjectedType(pair.First.Type, pair.Second.Type));
+    }
 
     private static string FunctionKey(Function function, NameTable names) =>
         names.StringValue(function.Name) + "`" + function.TypeParameter.Count + "(" +

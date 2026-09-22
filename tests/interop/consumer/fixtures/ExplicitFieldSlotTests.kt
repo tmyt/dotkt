@@ -10,8 +10,62 @@ private class ProtectedFieldSlotSubclass : ProtectedField() {
 private class FieldSlotReimplementation : SameTypeField(), IMutableValue<Int> {
     override var Value: Int = 47
 }
+private class FieldSlotOverrideOnly : SameTypeField() { override var Value: Int = 73 }
+private class ReferenceFieldReimplementation : ReferenceField<String>(), IReferenceValue<String> {
+    override var Value: String = "override"
+}
+private class DefaultFieldChild : DefaultDirectField()
+private class DefaultInheritedFieldChild : DefaultInheritedField()
+private class StaticDefaultFieldChild : IStaticDefaultValue
+private class DefaultEventFieldChild : DefaultEventField()
+private class DefaultInheritedEventFieldChild : DefaultInheritedEventField()
 
 class ExplicitFieldSlotTests {
+    @TestAttribute fun genericFieldAllowsExplicitInterfaceReimplementation() {
+        val value = ReferenceFieldReimplementation()
+        val slot: IReferenceValue<String> = value
+        check(value.Value == "override" && slot.Value == "override")
+        slot.Value = "updated"
+        check(value.Value == "updated")
+        (value as ReferenceField<String>).Value = "base"
+        check(value.Value == "updated" && (value as ReferenceField<String>).Value == "base")
+    }
+
+    @TestAttribute fun overrideWithoutRelistingInterfaceKeepsBaseMapping() {
+        val value = FieldSlotOverrideOnly()
+        check(value.Value == 73 && (value as IMutableValue<Int>).Value == 19)
+        check((value as SameTypeField).Value == 17)
+    }
+
+    @TestAttribute fun fieldsDoNotSuppressDefaultInterfaceProperties() {
+        val direct = DefaultFieldChild()
+        val inherited = DefaultInheritedFieldChild()
+        check(direct.Value == "default direct" && inherited.Value == "base")
+        direct.Value = "written"
+        inherited.Value = "updated"
+        check(direct.Value == "written" && inherited.Value == "updated")
+        check((direct as IValue<Int>).Value == 61 && (inherited as IValue<Int>).Value == 61)
+        check((StaticDefaultFieldChild() as IValue<Int>).Value == 67)
+    }
+
+    @TestAttribute fun fieldsDoNotSuppressDefaultInterfaceEvents() {
+        val direct = DefaultEventFieldChild()
+        val inherited = DefaultInheritedEventFieldChild()
+        check(direct.Changed == "event field" && inherited.Changed == "inherited event field")
+        direct.Changed = "written"
+        inherited.Changed = "updated"
+        EventSlotCounters.Added = 0
+        EventSlotCounters.Removed = 0
+        var total = 0
+        val first = (direct as IChanged).Changed.subscribe { value -> total += value }
+        val second = (inherited as IChanged).Changed.subscribe { value -> total += value }
+        check(total == 142 && EventSlotCounters.Added == 2)
+        first.close()
+        second.close()
+        check(EventSlotCounters.Removed == 2)
+        check(direct.Changed == "written" && inherited.Changed == "updated")
+    }
+
     @TestAttribute fun declaredFieldAndExplicitPropertyKeepIndependentStorage() {
         val value = DirectField()
         check(value.Value == "direct")

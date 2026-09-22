@@ -3,6 +3,33 @@ namespace ExplicitFieldSlots;
 
 public interface IValue<T> { T Value { get; } }
 public interface IMutableValue<T> { T Value { get; set; } }
+public interface IReferenceValue<T> where T : class { T Value { get; set; } }
+public class ReferenceField<T> : ReferenceFieldBase<T>, IReferenceValue<T> where T : class
+{
+    T IReferenceValue<T>.Value { get; set; } = null!;
+}
+
+internal interface IHiddenDefaultValue : IValue<int> { int IValue<int>.Value => 61; }
+public class DefaultDirectField : IHiddenDefaultValue { public string Value = "default direct"; }
+public class DefaultInheritedField : FieldBase, IHiddenDefaultValue { }
+public interface IStaticDefaultValue : IValue<int>
+{
+    public new static string Value = "interface static";
+    int IValue<int>.Value => 67;
+}
+
+public interface IChanged { event System.Action<int> Changed; }
+public static class EventSlotCounters { public static int Added; public static int Removed; }
+internal interface IHiddenDefaultEvent : IChanged
+{
+    event System.Action<int> IChanged.Changed
+    {
+        add { EventSlotCounters.Added++; value(71); }
+        remove { EventSlotCounters.Removed++; }
+    }
+}
+public class DefaultEventField : IHiddenDefaultEvent { public string Changed = "event field"; }
+public class DefaultInheritedEventField : EventFieldBase, IHiddenDefaultEvent { }
 
 public class DirectField : IMutableValue<int>
 {
