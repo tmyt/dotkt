@@ -4,6 +4,16 @@ import NUnit.Framework.TestAttribute
 
 private fun <T> arrayIteratorFirst(array: Array<T>): T = array.iterator().next()
 private fun <T> nullableArrayIteratorFirst(array: Array<T?>): T? = array.iterator().next()
+private fun <T> boundArrayIteratorFirst(array: Array<T>): T {
+    val factory = array::iterator
+    return factory().next()
+}
+private fun <T> boundNullableArrayIteratorFirst(array: Array<T?>): T? {
+    val factory = array::iterator
+    return factory().next()
+}
+private fun <T> projectedArrayIteratorFirst(array: Array<out T>): T = array.iterator().next()
+private fun starArrayIteratorFirst(array: Array<*>): Any? = array.iterator().next()
 private class ArrayIteratorOwner<T>(private val values: Array<T>) {
     fun first(): T = values.iterator().next()
 }
@@ -45,6 +55,22 @@ class ArrayIteratorCarrierTests {
         check(ArrayIteratorOwner(arrayOf("a")).first() == "a")
     }
 
+    @TestAttribute fun boundReferencesRetainOpenAndNullableGenericFrames() {
+        check(boundArrayIteratorFirst(arrayOf(7)) == 7)
+        check(boundArrayIteratorFirst(arrayOf("a")) == "a")
+        check(boundNullableArrayIteratorFirst<Int>(arrayOf<Int?>(7)) == 7)
+        check(boundNullableArrayIteratorFirst<Int>(arrayOf<Int?>(null)) == null)
+        check(boundNullableArrayIteratorFirst<String>(arrayOf<String?>("a")) == "a")
+    }
+
+    @TestAttribute fun projectedReceiversRetainTheirAvailableStorageFrame() {
+        check(projectedArrayIteratorFirst(arrayOf(7)) == 7)
+        check(projectedArrayIteratorFirst(arrayOf("a")) == "a")
+        check(starArrayIteratorFirst(arrayOf("a")) == "a")
+        check(starArrayIteratorFirst(arrayOf<Int?>(7)) == 7)
+        check(starArrayIteratorFirst(arrayOf<Int?>(null)) == null)
+    }
+
     @TestAttribute fun primitiveArrayIteratorsRetainTheirSpecializedResults() {
         check(byteArrayOf(7.toByte()).iterator().nextByte() == 7.toByte())
         check(shortArrayOf(7.toShort()).iterator().nextShort() == 7.toShort())
@@ -61,6 +87,27 @@ class ArrayIteratorCarrierTests {
         check(ushortArrayOf(65535u.toUShort()).iterator().next() == 65535u.toUShort())
         check(uintArrayOf(UInt.MAX_VALUE).iterator().next() == UInt.MAX_VALUE)
         check(ulongArrayOf(ULong.MAX_VALUE).iterator().next() == ULong.MAX_VALUE)
+    }
+
+    @TestAttribute fun unsignedArrayObjectSlotsRemainOnNativeStorage() {
+        val bytes = ubyteArrayOf(255u.toUByte())
+        check(bytes.equals(bytes) && !bytes.equals(ubyteArrayOf(255u.toUByte())))
+        check(bytes.hashCode() == (bytes as Any).hashCode())
+        check(bytes.toString() == (bytes as Any).toString())
+        val shorts = ushortArrayOf(65535u.toUShort())
+        check(shorts.equals(shorts) && !shorts.equals(ushortArrayOf(65535u.toUShort())))
+        check(shorts.hashCode() == (shorts as Any).hashCode())
+        check(shorts.toString() == (shorts as Any).toString())
+        val ints = uintArrayOf(UInt.MAX_VALUE)
+        check(ints.equals(ints) && !ints.equals(uintArrayOf(UInt.MAX_VALUE)))
+        check(ints.hashCode() == (ints as Any).hashCode())
+        check(ints.toString() == (ints as Any).toString())
+        val describe = ints::toString
+        check(describe() == ints.toString())
+        val longs = ulongArrayOf(ULong.MAX_VALUE)
+        check(longs.equals(longs) && !longs.equals(ulongArrayOf(ULong.MAX_VALUE)))
+        check(longs.hashCode() == (longs as Any).hashCode())
+        check(longs.toString() == (longs as Any).toString())
     }
 
     @TestAttribute fun iteratorsRemainLiveAndHaveIndependentCursors() {

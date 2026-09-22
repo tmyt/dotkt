@@ -1367,10 +1367,23 @@ static class MemberCallSubstitution
         // A CLR array cannot host the Kotlin declaration's instance body. Native-array declarations retain that
         // body in reference metadata and use the same explicit-receiver helper representation as class aliases.
         // Unsigned arrays keep their own bodies and result types, rather than borrowing a signed-array method.
-        if (instance && AliasHelperHoist.IsNativeArrayOwner(ownerFqnNode.Name)
-            && refs.IsRule3Member(ownerFqnNode.Name, Str(node["method"])))
-            return Rule3HelperCall(node, refs, ownerFqnNode, Str(node["method"]),
-                node["args"] as JsonArray ?? new JsonArray(), instance: true);
+        if (instance && AliasHelperHoist.IsNativeArrayOwner(ownerFqnNode.Name))
+        {
+            var arrayArgs = node["args"] as JsonArray ?? new JsonArray();
+            if (AliasHelperHoist.UsesNativeArrayObjectSlot(ownerFqnNode.Name,
+                    (node["anySlot"] as JsonValue)?.GetValue<bool>() == true))
+            {
+                var objectCall = new JsonObject
+                {
+                    ["k"] = "objMethod", ["method"] = node["method"]?.DeepClone(),
+                    ["recv"] = node["recv"]?.DeepClone(),
+                };
+                if (arrayArgs.Count == 1) objectCall["arg"] = arrayArgs[0]?.DeepClone();
+                return objectCall;
+            }
+            if (refs.IsRule3Member(ownerFqnNode.Name, Str(node["method"])))
+                return Rule3HelperCall(node, refs, ownerFqnNode, Str(node["method"]), arrayArgs, instance: true);
+        }
 
         if (!refs.TryResolveClrOwner(ownerToken, out var bcl, out var kind))
         {

@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Array iterators use their native CLR array receiver (#802).** Generic, primitive, and unsigned array
+  members use explicit-receiver helpers instead of calling Kotlin facade instances. Generic/nullable storage,
+  unsigned element values, live iterators, and bound references retain their source behavior.
+
 - **Existential MutableList operations keep their mutable interface family (#796).** Size, indexed reads,
   and emptiness no longer select unrelated readonly List interfaces. Raw IList fallback, exact witnesses,
   Kotlin overrides, and native getter exceptions remain intact.

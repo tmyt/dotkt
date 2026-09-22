@@ -2003,6 +2003,8 @@ Consequences:
   explicit native-array receiver, for generic, primitive, and unsigned arrays alike. `iterator()` keeps its Kotlin
   implementation and live array storage; unsigned iterators produce unsigned elements rather than borrowing the
   signed array's iterator. The frontend retains these declarations, and `ilemit` consumes the exact helper calls.
+  Native-array `equals`, `hashCode` and `toString` use the CLR array's Object slots, including unsigned arrays;
+  the erased unsigned value-class wrapper does not supply separate Object-method bodies.
 - **Escape hatch for signed-byte consumers:** `UByteArray.toByteArray()` and `ByteArray.toUByteArray()` reinterpret
   between the two. On the CLR `System.Byte[]` and `System.SByte[]` share identical storage and are freely
   interchangeable at runtime (ECMA reduced-type array compatibility), so these lower to a **reinterpret cast — a VIEW,
