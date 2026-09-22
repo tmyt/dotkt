@@ -17,7 +17,9 @@ using DotKt.Bir;
 // declaration this pass reads the default value from the referenced DLL (`KotlinDefault` carrier first, ECMA-335
 // parameter constant otherwise) and materializes a complete physical argument vector for CIR.
 //
-// PHASE 1 (#146): runs immediately AFTER InlineSplice — before ClosureSynthesis/MemberCallSubstitution/BirTypeLowering.
+// PHASE 1: shares InlineSplice's recursive traversal, before join/closure/member/type lowering.
+// A default is materialized before visiting its children, so inline calls introduced by a default, and omitted
+// defaults introduced by an inline body, use the same expansion path. Lifted helper bodies share the hoist drain.
 // The shared materialization chokepoint first applies representation-entry normalization, then the payload re-lowers
 // IN THIS app's context (owner attribution for a payload's own
 // `callStatic owner:null`, @ClrIntrinsic binding, generic resolution), exactly like InlineSplice's body splice.
@@ -56,51 +58,43 @@ static class DefaultArgSplice
 {
     static int _counter;   // global unique id for fresh re-hoisted lifted-method names (per splice instance)
 
-    // `root` is the CIR file object (has `methods` = the file-class methods a carrier's lifted decls re-hoist into).
-    public static void Apply(JsonNode root, ReferenceMetadataIndex refs)
+    // Expand the current declaration/call before the shared inline/default walker visits its children.
+    // Return only newly materialized graphs so their use-site bindings are established at this boundary.
+    internal static IEnumerable<JsonNode> ExpandNode(JsonObject obj, ReferenceMetadataIndex refs,
+        JsonArray hoist, JsonNode localOwner, string context)
     {
-        var hoist = new JsonArray();
-        // Every `defaultArg` kotc emits is the `expr` of a reserved plan binding. One anywhere else means a value of
-        // that call has a second reader with no binding to hold it — the exact shape that duplicated an evaluation
-        // before the plan existed — so refuse it here rather than fill it into a call nothing bound.
-        AssertPlaceholdersPlanned(root, inBindingExpr: false);
-        var localOwner = root is JsonObject ro && Str(ro["fileClass"]) is string fc ? TypeJson.Fqn(fc) : null;
-        Walk(root, refs, hoist, localOwner, null);
-        // A constructor delegation's args are not a call node, so `Walk` never reaches them as one.
-        if (root is JsonObject rt) SpliceCtorDelegations(rt["types"], refs, hoist, localOwner);
-        if (hoist.Count > 0)
+        var pending = new List<JsonObject>();
+        var argumentVectors = new List<(JsonArray Args, int Count)>();
+        void RememberArguments(JsonNode args)
         {
-            // A carrier re-hoisted a lifted default lambda but this file has no file-class `methods` array to place it in
-            // (kotc ALWAYS emits `methods` on a file root, so this is an internal invariant break, never a silent drop).
-            if (root is not JsonObject fo || fo["methods"] is not JsonArray methods)
-                throw new InvalidOperationException("bir2cir: DefaultArgSplice re-hoisted a carried default lambda but the file root has no `methods` array");
-            foreach (var h in hoist.ToList()) { hoist.Remove(h); methods.Add(h); }
+            if (args is JsonArray array) argumentVectors.Add((array, array.Count));
         }
-        // CHOKEPOINT: kotc uses `defaultArg` only to preserve an omitted positional slot. CIR and ilemit require the
-        // complete physical argument vector, so a survivor is a bir2cir fill failure.
-        AssertNoPlaceholder(root, null);
-    }
-
-    static void Walk(JsonNode node, ReferenceMetadataIndex refs, JsonArray hoist, JsonNode localOwner,
-        string context = null)
-    {
-        if (node is JsonObject obj)
+        void Remember(JsonArray bindings)
         {
-            var here = DeclarationContext(obj, context);
-            foreach (var kv in obj.ToList()) if (kv.Value != null) Walk(kv.Value, refs, hoist, localOwner, here);
-            // A placeholder only ever lives in a plan binding, so the PLAN is the splice site: it names both the call
-            // whose callee identifies the carriers and the bindings the fill is written into and reads from.
-            if (Str(obj["k"]) == "callEval" && obj["expr"] is JsonObject call && obj["bindings"] is JsonArray bindings)
-                TrySplice(call, bindings, refs, hoist, localOwner, obj["semanticOwner"]);
-            // A genuine static class member restored with Kotlin's IS_STATIC_FUNCTION flag has no synthetic companion
-            // receiver and can expose an ECMA-335 optional parameter directly. The frontend accepts the omission but
-            // its IR stub carries no default expression, so kotc can only emit the shorter argument vector. Resolve the
-            // selected owner+declaration signature here and append only metadata-representable constants. Anything
-            // needing a receiver/earlier-parameter binding still requires the ordinary planned placeholder path.
-            TrySpliceTrailingConstants(obj, refs, here);
+            if (bindings != null)
+                pending.AddRange(bindings.OfType<JsonObject>().Where(b => IsPlaceholder(b["expr"])));
         }
-        else if (node is JsonArray arr)
-            foreach (var it in arr.ToList()) if (it != null) Walk(it, refs, hoist, localOwner, context);
+        var firstHoist = hoist.Count;
+        if (Str(obj["k"]) == "callEval" && obj["expr"] is JsonObject call && obj["bindings"] is JsonArray bindings)
+        {
+            Remember(bindings);
+            RememberArguments(call["args"]);
+            TrySplice(call, bindings, refs, hoist, localOwner, obj["semanticOwner"]);
+        }
+        if (obj["ctors"] is JsonArray ctors)
+        {
+            foreach (var ctor in ctors.OfType<JsonObject>())
+            {
+                Remember(ctor["delegationBindings"] as JsonArray);
+                RememberArguments(ctor["baseArgs"]);
+                RememberArguments(ctor["thisArgs"]);
+            }
+            SpliceCtorDelegations(obj, refs, hoist, localOwner);
+        }
+        TrySpliceTrailingConstants(obj, refs, context);
+        return pending.Select(binding => binding["expr"]).Where(expr => !IsPlaceholder(expr))
+            .Concat(argumentVectors.SelectMany(vector => vector.Args.Skip(vector.Count)))
+            .Concat(hoist.Skip(firstHoist)).ToArray();
     }
 
     static void TrySpliceTrailingConstants(JsonObject node, ReferenceMetadataIndex refs, string context)
@@ -201,7 +195,7 @@ static class DefaultArgSplice
 
     /// Refuse a `defaultArg` that is not the reserved `expr` of a plan binding (§2.7's standing invariant: any
     /// transform that gives a call value a second reader must go through a plan).
-    static void AssertPlaceholdersPlanned(JsonNode node, bool inBindingExpr)
+    internal static void AssertPlaceholdersPlanned(JsonNode node, bool inBindingExpr)
     {
         if (node is JsonObject o)
         {
@@ -387,7 +381,6 @@ static class DefaultArgSplice
             // local read; BIR spells both as `local`, so this refuses the kind outright. A "no" costs one local; a
             // wrong "yes" duplicates an evaluation. See bir-common/ValueStability.cs.
             binding["stable"] = ValueStability.IsReReadable(fill);
-            Walk(fill, refs, hoist, localOwner);
         }
         // Any purely-TRAILING omitted arg (the callee carries @KotlinDefault but kotc dropped the tail) is APPENDED as
         // a plain value: it has one reader, its own new slot, and it is evaluated last, which is where Kotlin
@@ -398,22 +391,20 @@ static class DefaultArgSplice
             if (!defaults.TryGetValue(pos, out var bir)) break;
             if (SpliceOne(bir, dispatchReceiver, extensionReceiver, enclosingReceiver, args, hoist, refs, label, pos,
                     localOwner, semanticOwner, methodTypeArgs, ownerTypeArgs) is JsonNode fill)
-            { args.Add(fill); Walk(fill, refs, hoist, localOwner); }
+            { args.Add(fill); }
             else break;
         }
     }
 
     /// A constructor DELEGATION (`: super(…)` / `: this(…)`) is an omitting call site like any other, but its arguments
-    /// ride the constructor DECLARATION — there is no call node for [Walk] to see, and the callee is named by the
+    /// ride the constructor DECLARATION — there is no call node, and the callee is named by the
     /// enclosing type's `base` (or the type itself). Its evaluation plan rides the declaration too, as
     /// `delegationBindings`; the fills go into those bindings exactly as at an expression call site, and
     /// CallEvalLowering turns them into the ctor's `preStmts`. Without this a `class Sub : RefBase(3)` against a
     /// referenced `RefBase(w: Int, h: Int = w * 2)` reaches the chokepoint with an unfilled placeholder.
     static void SpliceCtorDelegations(JsonNode node, ReferenceMetadataIndex refs, JsonArray hoist, JsonNode localOwner)
     {
-        if (node is JsonArray arr) { foreach (var it in arr) if (it != null) SpliceCtorDelegations(it, refs, hoist, localOwner); return; }
         if (node is not JsonObject type) return;
-        foreach (var kv in type) if (kv.Value != null && (kv.Key == "types" || kv.Key == "methods")) SpliceCtorDelegations(kv.Value, refs, hoist, localOwner);
         if (type["ctors"] is not JsonArray ctors) return;
         var selfName = Str(type["name"]);
         var baseName = TypeJson.OwnerName(type["base"]);
@@ -494,6 +485,9 @@ static class DefaultArgSplice
     {
         if (node is JsonObject obj)
         {
+            // Nested expansion sites can create implementation types later. Transfer their use-site owner
+            // together with already present classifiers, before either kind of payload is expanded again.
+            if (Str(obj["k"]) is "callInline" or "callEval") obj["semanticOwner"] = semanticOwner;
             if (obj["synthClass"] is JsonObject synth)
             {
                 synth["semanticOwner"] = semanticOwner;
@@ -531,6 +525,7 @@ static class DefaultArgSplice
     {
         JsonNode parsed; try { parsed = JsonNode.Parse(bir, documentOptions: BirJson.DocOptions); } catch { return null; }
         MaterializedBirPayload.Normalize(parsed);
+        AssertPlaceholdersPlanned(parsed, inBindingExpr: false);
         var lexicalIdsFreshened = false;
         if (parsed is JsonObject env)
         {
@@ -588,9 +583,7 @@ static class DefaultArgSplice
             // the consumer module. The file owner is explicit at this splice boundary, not recovered from its name.
 			c.Remove("semanticOwner");
             RehomeSynthClasses(c, owner, Interlocked.Increment(ref _counter));
-            // The carried lifted body may ITSELF contain a `defaultArg` placeholder (a default `= { crossModuleFn() }`
-            // whose call omits a non-const default) — fill it before the method is hoisted (the clone is unparented here).
-            Walk(c, refs, hoist, localOwner);
+            // The shared hoist drain expands both inline calls and omitted defaults in this carried body.
             hoist.Add(c);
         }
         return exprClone;
@@ -670,7 +663,7 @@ static class DefaultArgSplice
         return null;
     }
 
-    static void AssertNoPlaceholder(JsonNode node, string context)
+    internal static void AssertNoPlaceholder(JsonNode node, string context)
     {
         if (node is JsonObject obj)
         {
@@ -727,7 +720,7 @@ static class DefaultArgSplice
         else if (node is JsonArray arr) foreach (var it in arr) if (it != null) AssertNoPlaceholder(it, context);
     }
 
-    static string DeclarationContext(JsonObject node, string fallback)
+    internal static string DeclarationContext(JsonObject node, string fallback)
     {
         if ((node["body"] is not JsonArray && node["ctors"] is not JsonArray)
             || Str(node["name"]) is not string name) return fallback;

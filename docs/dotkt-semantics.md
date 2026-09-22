@@ -1180,8 +1180,8 @@ default-omission works **everywhere** — trailing, named-middle, reordered, and
   the dead method from the library dll). Capturing closures, SAMs and suspend lambdas need no lifted-declaration
   envelope: their construction nodes carry their capture descriptors, construction values and synthesis facts.
   For a CROSS-MODULE call kotc emits a POSITIONAL `{"k":"defaultArg"}` placeholder for each omitted arg of such a
-  callee (so a later provided arg keeps its slot), and `bir2cir.DefaultArgSplice` — run at **PHASE 1**
-  (right after `InlineSplice`, before owner attribution / the CharSequence bridge / type-lowering, so the spliced RAW
+  callee (so a later provided arg keeps its slot), and `bir2cir.DefaultArgSplice` — integrated into the recursive
+  **PHASE 1** inline/default traversal (before owner attribution / the CharSequence bridge / type-lowering, so the spliced RAW
   expression re-lowers in THIS app's context) — resolves the callee by the owner kotc already projected (a dll2klib call
   carries its file-facade `ownerType`; a `new` carries its `type`), falling back to method name + emitted arity only for a
   truly ownerless call, and replaces each placeholder in place by array index (matching the `@KotlinDefault` stamp

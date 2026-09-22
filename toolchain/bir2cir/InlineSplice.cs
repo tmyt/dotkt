@@ -5,7 +5,8 @@ using System.Threading;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 
-// INLINE SPLICE (#71/#75). Consumes kotc's `callInline` node.
+// INLINE/DEFAULT EXPANSION. Consumes kotc's `callInline` and delegates omitted arguments to DefaultArgSplice
+// in the same recursive traversal. Every newly materialized body completes both expansions before post-passes.
 //
 //      the GENERIC arm (#71/#75) — an inline fun taking a lambda, whose non-local `return` (or suspend) through the lambda
 //      strictly requires the body to live inline at the call site. kotc emits the bindings; we RESOLVE the callee's RAW BIR
@@ -56,14 +57,16 @@ static class InlineSplice
     static List<BoxRequest> _boxRequests;
     static Dictionary<JsonObject, HashSet<int>> _boxedLocalCallArgs;
     static CompanionExtensionBinding.LocalIndex _companionExtensions;
+    static bool _materializeDefaults;
 
     public static void Apply(JsonNode root, ReferenceMetadataIndex refs, IReadOnlyCollection<string> moduleWideAppLocalMethods,
         IReadOnlyDictionary<string, DispatchDef> dispatchDefs,
-        CompanionExtensionBinding.LocalIndex companionExtensions)
+        CompanionExtensionBinding.LocalIndex companionExtensions, bool materializeDefaults)
     {
         _refs = refs;
         _dispatchDefs = dispatchDefs;
         _companionExtensions = companionExtensions;
+        _materializeDefaults = materializeDefaults;
         _fileClassOwner = root is JsonObject ro && Str(ro["fileClass"]) is string fc ? TypeJson.Fqn(fc) : null;
         _nextLabelId = MaxLabelId(root) + 1;
         _hoist = new JsonArray();
@@ -75,6 +78,7 @@ static class InlineSplice
         _refCellNames = new Dictionary<string, string>(StringComparer.Ordinal);
         _boxRequests = new List<BoxRequest>();
         _boxedLocalCallArgs = new();
+        if (_materializeDefaults) DefaultArgSplice.AssertPlaceholdersPlanned(root, inBindingExpr: false);
         Walk(root, 0);
         // A closed carrier (`defaultCarrier`, or a cross-module [KotlinInline] payload) re-hoists its generated
         // delegate target into THIS file's file-class methods under a fresh name. Do it BEFORE the post-passes so they
@@ -114,6 +118,7 @@ static class InlineSplice
         // skipped by Rewrite at the `o.ContainsKey("pc")` gate) — would reach ilemit, which cannot emit a callInline
         // (it fails opaquely there). Fail loud HERE with the callee so the un-spliced site is identifiable.
         AssertNoUnsplicedInline(root);
+        if (_materializeDefaults) DefaultArgSplice.AssertNoPlaceholder(root, null);
     }
 
     // #43/#63: the FILE-CLASS method names a `newDelegate` target `ldftn`-resolves against — collected MODULE-WIDE across
@@ -159,35 +164,41 @@ static class InlineSplice
         }
     }
 
-    static void Walk(JsonNode node, int depth)
+    static void Walk(JsonNode node, int depth, string context = null)
     {
         if (node is JsonObject o)
         {
-            foreach (var kv in o) if (kv.Value != null) Walk(kv.Value, depth);
-            Rewrite(o, depth);
+            var here = DefaultArgSplice.DeclarationContext(o, context);
+            // Defaults can introduce inline calls, whose bodies can introduce further omitted defaults.
+            // Materialize at the current node before descending, sharing the same hoist drain and post-passes.
+            if (_materializeDefaults)
+                foreach (var payload in DefaultArgSplice.ExpandNode(o, _refs, _hoist, _fileClassOwner, here))
+                    CompanionExtensionBinding.BindMaterializedUses(payload, _companionExtensions, _refs);
+            foreach (var kv in o) if (kv.Value != null) Walk(kv.Value, depth, here);
+            Rewrite(o, depth, here);
         }
         else if (node is JsonArray a)
         {
             for (var i = 0; i < a.Count; i++)
                 if (a[i] is JsonNode c)
                 {
-                    Walk(c, depth);
-                    if (a[i] is JsonObject co) Rewrite(co, depth);
+                    Walk(c, depth, context);
+                    if (a[i] is JsonObject co) Rewrite(co, depth, context);
                 }
         }
     }
 
-    static void Rewrite(JsonObject o, int depth)
+    static void Rewrite(JsonObject o, int depth, string context)
     {
         // Every `callInline` kotc emits under splice-all carries `pc`/`ga`/`paramSig` (+ an `owner` that is a file-class
         // string for a reference-KLIB-projected user fn OR JSON-null for a stdlib scope-fn/@InlineOnly fn whose owner bir2cir
         // resolves). `kotlin.repeat` now splices through this same path (kotc no longer emits the specialized loop node).
-        if (Str(o["k"]) == "callInline" && o.ContainsKey("pc")) RewriteGeneric(o, depth);
+        if (Str(o["k"]) == "callInline" && o.ContainsKey("pc")) RewriteGeneric(o, depth, context);
     }
 
     // ---- (2) the generic cross-module splicer ---------------------------------------------------------------------
 
-    static void RewriteGeneric(JsonObject o, int depth)
+    static void RewriteGeneric(JsonObject o, int depth, string context)
     {
         // owner/callee are structured `{t:fqn}` identity nodes (#48; owner may be JSON-null for the owner-less
         // stdlib scope-fn arm) — read the bare FQN name off each. `callee` is the inline fn's Kotlin FQN identity
@@ -634,7 +645,7 @@ static class InlineSplice
         foreach (var kv in repl) o[kv.Key] = kv.Value?.DeepClone();
 
         // STEP 8 — fixpoint: the spliced body may itself contain a nested `callInline` (e.g. kotlin.repeat).
-        Walk(o, depth + 1);
+        Walk(o, depth + 1, context);
     }
 
     // §4.5 FAIL LOUD (#95 splice-all): kotc emits a callInline for EVERY inline call carrying a lambda arg, so this engine
@@ -2924,10 +2935,10 @@ static class InlineSplice
     {
         if (node is JsonObject o)
         {
-            // A nested inline call is cloned into the same consumer lexical scope. Keep its authored use-site fact in
+            // A nested inline/default call is cloned into the same consumer lexical scope. Keep its use-site fact in
             // lockstep so a later fixpoint splice transfers any newly materialized implementation types to this owner,
             // rather than back to the producer declaration recorded in the payload.
-            if (Str(o["k"]) == "callInline") o["semanticOwner"] = consumerSemanticOwner;
+            if (Str(o["k"]) is "callInline" or "callEval") o["semanticOwner"] = consumerSemanticOwner;
             if ((Str(o["k"]) == "newSam" || Str(o["k"]) == "newClosure") && o["synthClass"] is JsonObject sc)
             {
                 // The payload declaration's source owner is not the cloned declaration's owner. The callInline node
