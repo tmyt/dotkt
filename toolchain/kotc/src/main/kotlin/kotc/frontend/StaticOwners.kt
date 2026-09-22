@@ -15,7 +15,7 @@ object ClrStaticOwners {
 		check(previous == null || previous == owner) { "Conflicting static owner facts at $key" }
 	}
 	fun recordAssignment(file: String, propertyEnd: Int, assignmentEnd: Int, name: String) {
-		source[Key(file, propertyEnd, name, "set")]?.let { record(file, assignmentEnd, name, "set", it) }
+		source[Key(file, propertyEnd, name, "get")]?.let { record(file, assignmentEnd, name, "set", it) }
 	}
 	fun convertTypes(convert: (ConeKotlinType) -> IrType) {
 		for ((key, owner) in source) ir[key] = convert(owner)

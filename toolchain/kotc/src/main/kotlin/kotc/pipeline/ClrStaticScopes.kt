@@ -38,6 +38,7 @@ import org.jetbrains.kotlin.fir.symbols.impl.FirRegularClassSymbol
 import org.jetbrains.kotlin.fir.visitors.FirDefaultVisitorVoid
 import org.jetbrains.kotlin.fir.types.resolvedType
 import org.jetbrains.kotlin.fir.scopes.impl.FirFakeOverrideGenerator
+import org.jetbrains.kotlin.fir.scopes.impl.FirStandardOverrideChecker
 import org.jetbrains.kotlin.fir.resolve.substitution.ConeSubstitutor
 import org.jetbrains.kotlin.fir.types.ConeClassLikeType
 import org.jetbrains.kotlin.fir.types.coneType
@@ -65,7 +66,7 @@ private class ClrStaticScopeProvider(private val delegate: FirScopeProvider) : F
 			val substitutor = baseType.substitutorForSuperType(useSiteSession, base)
 			scopes += StaticSubstitutionScope(declared, useSiteSession, baseType, substitutor)
 		}
-		return scopes.takeIf { it.isNotEmpty() }?.let(::NearestStaticScope)
+		return scopes.takeIf { it.isNotEmpty() }?.let { NearestStaticScope(it, useSiteSession) }
 	}
 	override fun getStaticCallableMemberScopeForBackend(klass: FirClass, useSiteSession: FirSession, scopeSession: ScopeSession) =
 		delegate.getStaticCallableMemberScopeForBackend(klass, useSiteSession, scopeSession)
@@ -116,18 +117,24 @@ private class StaticSubstitutionScope(private val scope: FirContainingNamesAware
 		scope.withReplacedSessionOrNull(newSession, newScopeSession)?.let { StaticSubstitutionScope(it, newSession, owner, substitutor) }
 }
 
-private class NearestStaticScope(private val scopes: List<FirContainingNamesAwareScope>) : FirContainingNamesAwareScope() {
+private class NearestStaticScope(private val scopes: List<FirContainingNamesAwareScope>, session: FirSession) : FirContainingNamesAwareScope() {
+	private val overrideChecker = FirStandardOverrideChecker(session)
 	override fun getCallableNames() = scopes.flatMapTo(linkedSetOf()) { it.getCallableNames() }
 	override fun getClassifierNames() = emptySet<Name>()
 	@DelicateScopeAPI
 	override fun withReplacedSessionOrNull(newSession: FirSession, newScopeSession: ScopeSession) =
-		scopes.withReplacedSessionOrNull(newSession, newScopeSession)?.let(::NearestStaticScope)
+		scopes.withReplacedSessionOrNull(newSession, newScopeSession)?.let { NearestStaticScope(it, newSession) }
 	override fun processFunctionsByName(name: Name, processor: (FirNamedFunctionSymbol) -> Unit) {
+		val selected = mutableListOf<FirNamedFunctionSymbol>()
 		for (scope in scopes) {
 			val found = mutableListOf<FirNamedFunctionSymbol>()
 			scope.processFunctionsByName(name, found::add)
-			if (found.isNotEmpty()) { found.forEach(processor); return }
+			val inherited = found.filter { candidate ->
+				selected.none { nearer -> overrideChecker.isOverriddenFunction(nearer.fir, candidate.fir) }
+			}
+			selected += inherited
 		}
+		selected.forEach(processor)
 	}
 	override fun processPropertiesByName(name: Name, processor: (FirVariableSymbol<*>) -> Unit) {
 		for (scope in scopes) {
@@ -174,13 +181,14 @@ fun normalizeClrStaticReceivers(session: FirSession, files: List<FirFile>) {
 			val ownerId = callable.callableId?.classId ?: return
 			if (receiver.classId == ownerId) return
 			val receiverClass = receiver.symbol?.fullyExpandedClass(session) ?: return
+			if (receiverClass.classId == ownerId) return
 			val ownerType = lookupSuperTypes(receiverClass.fir, lookupInterfaces = false, deep = true,
 				useSiteSession = session, substituteTypes = true).single { it.lookupTag.classId == ownerId }
 			val path = file.sourceFile?.path
 			val callSource = qualifiedAccessExpression.source
 			if (path != null && callSource != null) {
-				val kinds = if (callable is FirPropertySymbol) listOf("get", "set") else listOf("call")
-				for (kind in kinds) kotc.frontend.ClrStaticOwners.record(path, callSource.endOffset,
+				val kind = if (callable is FirPropertySymbol) "get" else "call"
+				kotc.frontend.ClrStaticOwners.record(path, callSource.endOffset,
 					callable.name.asString(), kind, ownerType)
 			}
 			val owner = session.symbolProvider.getClassLikeSymbolByClassId(ownerId) ?: error("Missing static declaration owner $ownerId")

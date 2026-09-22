@@ -1473,7 +1473,8 @@ field. Both declarations remain in the KLIB: class access uses the field, while 
 the interface property. Inherited fields retain their constructed type, nullability, mutability and visibility.
 
 A class qualifier exposes static declarations from its base-class chain, for both imported CLR subclasses and
-Kotlin subclasses. Lookup selects the nearest declaration; it does not copy a member into the subclass.
+Kotlin subclasses. Lookup selects the nearest property declaration and the nearest declaration of each method
+signature, retaining distinct inherited overloads; it does not copy a member into the subclass.
 `Sub.Shared` therefore references `Base.Shared` — one member, one storage location. For a constructed generic base,
 the selected owner retains its substituted type arguments: `StringSub.Shared` on a subclass of `Base<String>`
 uses `Base<String>` storage, not `Base<Any>` storage. This applies to fields, properties, and methods, including

@@ -7,8 +7,49 @@ private class StaticKotlinStringLeaf : GenericBase<String>()
 private class StaticKotlinIntLeaf : GenericBase<Int>()
 private class StaticKotlinPairLeaf : Swap<Int, String>()
 private typealias StaticAliasLeaf = StringLeaf
+private typealias StaticAliasBase = Base
 
 class InheritedStaticTests {
+    @TestAttribute fun sameNameAssignmentsKeepLeftAndRightOwnersSeparate() {
+        StringLeaf.Property = "generic"
+        Base.Property = "base"
+        Base.Property = StringLeaf.Property
+        check(Base.Property == "generic" && Storage.StringProperty() == "generic")
+        Leaf.Property = "leaf"
+        StringLeaf.Property = Leaf.Property
+        check(Base.Property == "leaf" && Storage.StringProperty() == "leaf")
+        StringLeaf.Property = "second"
+        Leaf.Property = StringLeaf.Property
+        check(Base.Property == "second" && Storage.StringProperty() == "second")
+    }
+
+    @TestAttribute fun propertyAndFieldReferencesKeepConstructedOwners() {
+        val property = StringLeaf::Property
+        property.set("property reference")
+        check(property.get() == "property reference" && Storage.StringProperty() == "property reference")
+        val field = StaticKotlinIntLeaf::Field
+        field.set(79)
+        check(field.get() == 79 && Storage.IntField() == 79)
+        check(Storage.ObjectUntouched())
+    }
+
+    @TestAttribute fun defaultsKeepTheirDeclaringSourceFile() {
+        StringLeaf.Property = "property default"
+        check(inheritedStaticPropertyDefault() == "property default")
+        check(inheritedStaticMethodDefault() == "method default")
+        check(Storage.StringField() == "method default" && Storage.ObjectUntouched())
+    }
+
+    @TestAttribute fun typealiasCanNameTheDeclaringClassItself() {
+        StaticAliasBase.Field = "direct alias"
+        check(Base.Field == "direct alias" && StaticAliasBase.Method() == "base method")
+    }
+
+    @TestAttribute fun inheritedStaticOverloadsRemainAvailable() {
+        check(Leaf.Over(83) == "base overload")
+        check(Leaf.Over("text") == "leaf overload")
+    }
+
     @TestAttribute fun typealiasRetainsConstructedDeclarationOwner() {
         StaticAliasLeaf.Field = "alias"
         check(Storage.StringField() == "alias")

@@ -1486,7 +1486,8 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 		else -> """{"k":"this"}"""
 	}
 	val memberOwner: TypeNode = when {
-		staticProperty -> TypeNode.Fqn(staticPropertyOwner!!)
+		staticProperty -> kotc.frontend.ClrStaticOwners.at(sourcePathOf(node), node.endOffset, name, "get")
+			?.let(::birType) ?: TypeNode.Fqn(staticPropertyOwner!!)
 		fieldBacked && !hasExtRecv && (bound || unbound) -> {
 			val receiverType = if (bound) boundRecv!!.type else
 				((node.type as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type

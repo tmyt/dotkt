@@ -5,11 +5,12 @@ public class Base
     public static string Field = "base";
     public static string Property { get; set; } = "base property";
     public static string Method() => "base method";
+    public static string Over(int value) => "base overload";
     public static readonly int Readonly = 59;
     public static event System.Action<int> Changed;
     public static void Raise(int value) => Changed?.Invoke(value);
 }
-public class Leaf : Base { }
+public class Leaf : Base { public static string Over(string value) => "leaf overload"; }
 public class Middle : Base
 {
     public new static int Field = 41;

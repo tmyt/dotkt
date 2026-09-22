@@ -6,6 +6,7 @@ import org.jetbrains.kotlin.descriptors.ClassKind
 import org.jetbrains.kotlin.descriptors.Modality
 import org.jetbrains.kotlin.descriptors.Visibilities
 import org.jetbrains.kotlin.ir.declarations.IrDeclarationWithVisibility
+import org.jetbrains.kotlin.ir.declarations.IrDeclaration
 import org.jetbrains.kotlin.ir.declarations.IrAnonymousInitializer
 import org.jetbrains.kotlin.ir.declarations.IrClass
 import org.jetbrains.kotlin.ir.declarations.IrConstructor
@@ -399,13 +400,13 @@ private fun BirEmitter.fillOmitted(
 				// non-generic caller left `G`'s `!0` as the owner of the `v` read (InvalidProgramException at load).
 				val savedCopyDefault = activeDataClassCopyDefault
 				activeDataClassCopyDefault = callee is IrSimpleFunction && isDataClassCopy(callee)
-				try { expr(def) }
+				try { withDefaultExpressionSource(callee) { expr(def) } }
 				finally {
 					activeDataClassCopyDefault = savedCopyDefault
 					saved.forEach { (d, prev) -> if (prev != null) captureSubst[d] = prev else captureSubst.remove(d) }
 				}
 			}
-			else -> { stableFill = isStableValue(def); argExpr(def, p) }   // constant / global — inline verbatim
+			else -> { stableFill = isStableValue(def); withDefaultExpressionSource(callee) { argExpr(def, p) } }
 		}
 		if (emitted == null) return null
 		// A filled default is a call-site VALUE like any other: under a plan it becomes a default-phase binding, so a
@@ -413,6 +414,15 @@ private fun BirEmitter.fillOmitted(
 		// (`a = bump(), b = a * 10` would otherwise run `bump()` twice).
 		return plan?.bind("default", "value", stableFill, birType(p.type).toJson(),
 			"default of parameter '${p.name.asString()}'", emitted) ?: emitted
+}
+
+/** Defaults retain their originating source facts even when rendered into a different caller file. */
+private inline fun <T> BirEmitter.withDefaultExpressionSource(callee: IrFunction, render: () -> T): T {
+	var owner = callee.parent
+	while (owner is IrDeclaration) owner = owner.parent
+	val saved = fileEntry
+	fileEntry = (owner as? IrFile)?.fileEntry ?: saved
+	return try { render() } finally { fileEntry = saved }
 }
 
 /** How a plan binding's ROLE names this callee to a reader: a constructor by its class, anything else by its name. */

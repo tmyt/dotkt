@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Inherited static members preserve their declaring owner (#814).** Imported CLR and Kotlin subclass
+  qualifiers expose base-class statics without duplicating storage. Constructed generic owners remain exact
+  through calls, assignments, callable references and default arguments; inherited method overloads remain available.
+
 - **Public CLR fields remain visible beside explicit interface properties (#812).** DLL-to-KLIB projection
   retains declared and inherited fields independently of hidden interface-slot completion, including constructed
   generic bases and nullable/readonly/protected fields. Nullable slot coercion follows the same selected member.
