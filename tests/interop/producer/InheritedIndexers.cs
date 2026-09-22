@@ -14,6 +14,8 @@ public class ProtectedBase
 {
     private int value = 263;
     [System.Runtime.CompilerServices.IndexerName("Slot")]
+    protected int this[bool flag] => flag ? 101 : 103;
+    [System.Runtime.CompilerServices.IndexerName("Slot")]
     protected int this[int index]
     {
         get => value + index;

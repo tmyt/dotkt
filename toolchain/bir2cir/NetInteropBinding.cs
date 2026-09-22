@@ -757,6 +757,8 @@ static class NetInteropBinding
                 foreach (var p in cur.GetProperties(Flags))
                 {
                     if (p.GetIndexParameters().Length == 0) continue;   // not an indexer
+                    // Overloaded indexers need not expose both accessors on every overload.
+                    if ((isSet ? p.SetMethod : p.GetMethod) == null) continue;
                     if (defaultMember != null && p.Name == defaultMember) { chosen = p; break; }
                     chosen ??= p;
                 }
