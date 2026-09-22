@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Collection factories inside generic constructors retain the caller's type frame (#798).** Contextual
+  List, Set and Map construction no longer applies the constructor owner's type arguments twice, preventing
+  invalid IL and runtime failures when generic properties and methods build nested collection values across DLLs.
+
 - **Array iterators use their native CLR array receiver (#802).** Generic, primitive, and unsigned array
   members use explicit-receiver helpers instead of calling Kotlin facade instances. Generic/nullable storage,
   unsigned element values, live iterators, and bound references retain their source behavior.
