@@ -22,6 +22,15 @@ public class StaticPropertyBase { public static int Value => 7; }
 public class StaticFieldMiddle : StaticPropertyBase { public new static string Value = "static field"; }
 public class StaticFieldBase { public static string Value = "base static field"; }
 public class StaticPropertyMiddle : StaticFieldBase { public new static int Value { get; set; } = 9; }
+public class MixedStaticField : PropertyBase { public new static string Value = "mixed static field"; }
+public class MixedInstanceField : StaticPropertyBase { public new string Value = "mixed instance field"; }
+public class MixedStaticProperty : FieldBase { public new static int Value { get; set; } = 11; }
+public class MixedInstanceProperty : StaticFieldBase { public new int Value { get; set; } = 13; }
+public class PrivateStaticGetter
+{
+    public static int Value { private get; set; }
+    public static int Read() => Value;
+}
 
 public class ProtectedPropertyBase { protected int Value => 7; }
 public class ProtectedFieldMiddle : ProtectedPropertyBase { protected new string Value = "protected"; }

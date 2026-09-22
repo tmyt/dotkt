@@ -53,6 +53,23 @@ class NearestProjectedMemberTests {
         StaticPropertyMiddle.Value = 19
         check(StaticPropertyMiddle.Value == 19)
         check(StaticFieldBase.Value == "base static field")
+        PrivateStaticGetter.Value = 23
+        check(PrivateStaticGetter.Read() == 23)
+    }
+
+    @TestAttribute fun mixedStaticAndInstanceHidingUsesSelectedDeclaration() {
+        MixedStaticField.Value = "changed"
+        check(MixedStaticField.Value == "changed")
+        val field = MixedInstanceField()
+        check(field.Value == "mixed instance field")
+        field.Value = "written"
+        check(field.Value == "written")
+        MixedStaticProperty.Value = 17
+        check(MixedStaticProperty.Value == 17)
+        val property = MixedInstanceProperty()
+        check(property.Value == 13)
+        property.Value = 19
+        check(property.Value == 19)
     }
 
     @TestAttribute fun protectedFieldWinsInsideKotlinSubclass() {
