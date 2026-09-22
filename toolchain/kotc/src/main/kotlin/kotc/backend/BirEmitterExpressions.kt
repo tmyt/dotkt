@@ -129,10 +129,14 @@ internal fun BirEmitter.memberVisibilityStamped(
 	s: String,
 	preserveDeclaration: Boolean = false,
 ): String {
-	// Call emission selects the inherited declaration, so access descriptors must use
-	// that same declaration's frame rather than the substituted fake override's owner.
+	// External-member and field emission select the inherited declaration. Ordinary
+	// Kotlin calls retain the accessed owner, whose substituted descriptor frame must
+	// stay paired with that owner. Use the same frontend origin/storage facts here.
 	val member = (target as? IrSimpleFunction)?.let {
-		if (it.isFakeOverride) it.resolveFakeOverride() ?: it else it
+		val declaration = if (it.isFakeOverride) it.resolveFakeOverride() ?: it else it
+		val owner = declaration.parent as? IrClass
+		val field = declaration.correspondingPropertySymbol?.owner?.let(::isClrField) == true
+		if (field || owner?.let(::isExternalNetType) == true) declaration else it
 	} ?: target
 	val visibility = visOf(member)
 	val restricted = visibility == "private" || visibility == "protected"
