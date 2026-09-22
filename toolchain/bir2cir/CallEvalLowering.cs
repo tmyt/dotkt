@@ -10,8 +10,8 @@ using DotKt.Bir;
 // the receiver, the supplied arguments and the filled defaults, in Kotlin evaluation order, each a BINDING; every
 // reader — the call's own slot, a spliced default, a reconstructed `copy` field — is a `bindRef`, a pure READ.
 //
-// `Apply` runs once all splices have finished (right after DefaultArgSplice, which materialises the cross-module
-// fills into the bindings kotc reserved for them) and turns each plan into locals. `Materialise`, the decision itself,
+// `Apply` runs once the shared inline/default expansion has finished materializing cross-module fills into the
+// bindings kotc reserved for them, and turns each plan into locals. `Materialise`, the decision itself,
 // is also called directly by the two passes that AUTHOR a plan of their own and lower it on the spot (spec §2.7): the
 // suspend lowering's stage-0 operand plan, and MemberCallSubstitution's mapping of a constructor parameter the CLR has
 // no slot for. The rules below are the whole answer in every case:

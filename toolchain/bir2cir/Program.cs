@@ -427,7 +427,8 @@ sealed class Pipeline
             if (_options.StdlibMode == BuildStdlibMode.App)
                 CompanionRepresentationLowering.BindSpliceUses(bir.Root, refs);
             InlineSplice.Apply(
-                bir.Root, refs, appLocalFileClassMethods, inlineDispatchHierarchy, companionExtensionBindings);
+                bir.Root, refs, appLocalFileClassMethods, inlineDispatchHierarchy, companionExtensionBindings,
+                materializeDefaults: attributeTopLevelOwner);
             // VALUE-POSITION JOIN WIDENING (#86 §3): a `try`/`catch` or `if/when` join the frontend resolved to a
             // NON-nullable type while one branch yields a literal `null` — kotc records exactly that fact on the
             // declaration it mints for the join, and the physical consequence is decided HERE: a VALUE join widens to
@@ -436,25 +437,8 @@ sealed class Pipeline
             // that drops the `?` — are widened before anything downstream reads their type, and long before type
             // lowering, while the join type is still `kotlin.*`.
             ValueJoinNullWidening.Apply(bir.Root, isValueFqn);
-            // CROSS-MODULE DEFAULT-ARG SPLICE (#146): fill a call's OMITTED defaulted args (kotc's `defaultArg`
-            // placeholders) from the callee's `[kotlin.clr.KotlinDefault]` BIR on the referenced .dll. Runs HERE — phase 1,
-            // after InlineSplice/join widening and before payload renormalization, ClosureSynthesis,
-            // MemberCallSubstitution, and BirTypeLowering —
-            // so the spliced RAW default expression (a `newDelegate` re-hoisted app-local, a `callStatic owner:null`, a
-            // const) re-lowers IN THIS app's context, exactly like an inline-body splice. Ownerless (name|arity), because
-            // the owner is not yet attributed. APP builds only (user libraries build in App mode too — Metadata/Runtime are
-            // stdlib-self-build flags): a `defaultArg` placeholder is born ONLY on a reference-KLIB callee
-            // (the cross-module IrErrorExpression path), and the ref/rt stdlib self-builds reference no DotKt assembly, so no
-            // external callee — hence no placeholder — exists there. Running on a self-build would mutate its
-            // RefBodySquash/RoundtripMetadata declaration set without any default payload to consume.
-            if (attributeTopLevelOwner)
-            {
-                DefaultArgSplice.Apply(bir.Root, refs);
-                // A @KotlinDefault payload is opaque BIR during the module-wide companion-extension pass above.
-                // It has now become an ordinary use subtree, so consume its explicit receiver/name/role facts before
-                // any downstream name-keyed lowering sees it.
-                CompanionExtensionBinding.BindMaterializedUses(bir.Root, companionExtensionBindings, refs);
-            }
+            // Cross-module omitted defaults are materialized by the shared inline/default traversal above.
+            // Both directions of nesting and carried helper bodies finish before join/ownership/evaluation lowering.
             // Inline/default payloads are authored before their consumer lexical owner exists. The splice transfers
             // that exact semanticOwner fact above; now normalize any newly materialized synthClass generic prefix
             // before ClosureSynthesis turns it into a CLR class. The module-wide first pass normalized declarations;

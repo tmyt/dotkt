@@ -709,8 +709,11 @@ body's base call) has its arguments on the constructor DECLARATION, with no wrap
 declaration as `delegationBindings`, an array of the same bindings; `thisArgs`/`baseArgs` read them. An enum entry's
 `NAME(args)` needs nothing special — a static field initializer is an expression position.
 
-**Lowering contract.** bir2cir's `CallEvalLowering` runs immediately after `DefaultArgSplice` — i.e. once every splice
-that can add a reader has finished — and is the ONLY consumer of the vocabulary:
+**Lowering contract.** Inline bodies and imported defaults expand in one recursive traversal. An omitted default
+is materialized before visiting its children, so inline calls inside defaults and defaults inside inline bodies
+are both expanded; lifted helper bodies use the same traversal. Join and ownership normalization follow only
+after that expansion completes. `CallEvalLowering` then runs once every splice that can add a reader has finished,
+and is the ONLY consumer of the vocabulary:
 
 - a binding with exactly ONE reader is inlined back into that reader (the emitted CIR is what it would have been with
   no plan at all) — unless doing so would REORDER it: an inlined binding is evaluated at its reader's position, and

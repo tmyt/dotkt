@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Inline calls inside imported defaults retain their bindings (#821).** Default arguments and inline bodies
+  expand together before evaluation lowering, including nested calls, carried helpers and constructor defaults.
+  Receiver and argument evaluation order is preserved across Kotlin DLL reimport.
+
 - **Default arguments preserve protected CLR access (#819).** Field, property and method defaults remain
   valid when realized in an unrelated caller, including Kotlin DLL reimport and constructed generic field owners.
   Visibility facts survive until the backend selects the final physical access without widening declarations.
