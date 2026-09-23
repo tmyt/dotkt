@@ -2204,7 +2204,9 @@ internal fun BirEmitter.typeParamDeclarationsJson(tps: List<org.jetbrains.kotlin
 		// SUBSTITUTION CONSEQUENCE (a substituted BCL primitive has no kotlin.Comparable bound), so it belongs to
 		// bir2cir (StdlibSubstituteTypeParams, rt-build only), NOT here. `kotlin.Any` bounds are still dropped
 		// (a pure-Kotlin fact — Any is the implicit top). Other bounds (clr/clrg) are kept.
-		val bounds = tp.superTypes.filter { it.classFqName?.asString() != "kotlin.Any" }.map { birType(it) }
+		val bounds = withDefaultTypeFrame(defaultTypeFrame.boundsFrame(tp)) {
+			tp.superTypes.filter { it.classFqName?.asString() != "kotlin.Any" }.map { birType(it) }
+		}
 		// Declaration-site variance `out`/`in` -> CLR covariant/contravariant (ilemit applies it only on
 		// interfaces, where the CLR allows variance; on classes it's Kotlin-level only — dropped).
 		val variance = when (tp.variance) {

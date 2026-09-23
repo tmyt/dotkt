@@ -97,23 +97,26 @@ private fun BirEmitter.liftedDeclarationIdentityField(token: String): String =
 	""","declarationId":${str("dotkt-lifted-v1:$fileClass:$token")}"""
 
 /**
- * The enclosing type parameters a synthesized closure CLASS must be generic over: those referenced by its capture
- * field types (and its own parameter/return types). On the CLR generics are reified, so a closure that captures a
- * `T`-typed value (or a `List<T>` / `(T)->Unit`) becomes a SEPARATE class with a `gp:T` field — and `T` (an
- * enclosing *method* type parameter) is not in scope from inside that class. The closure class must therefore
- * declare `T` itself and be instantiated with the enclosing `T` at `newClosure`, or `MapType` fails to resolve it.
+ * Collect the lexical type parameters used by a lifted declaration's signatures, captures, and body operands.
+ * A same-module default is rendered in its caller's type scope: collect dependencies after that substitution,
+ * just as birType renders the body, so the declaration and its construction edge describe the same frame.
  */
 private fun BirEmitter.freeTypeParams(types: List<IrType>): List<org.jetbrains.kotlin.ir.declarations.IrTypeParameter> {
 	val acc = LinkedHashSet<org.jetbrains.kotlin.ir.declarations.IrTypeParameter>()
-	fun walk(t: IrType) {
-		(t.classifierOrNull as? IrTypeParameterSymbol)?.let {
-			// A param's own BOUND may name a FURTHER param (`<T, U> where T : Comparable<U>`). The lift re-declares the
-			// bound with the param, so it has to be generic over `U` as well or the re-declared constraint is unbound.
-			if (acc.add(it.owner)) it.owner.superTypes.forEach(::walk)
+	fun walk(type: IrType, frame: DefaultTypeFrame) {
+		fun walkClosed(t: IrType) {
+			(t.classifierOrNull as? IrTypeParameterSymbol)?.let {
+				// Bounds can introduce further dependencies, in the frame belonging to that declaration.
+				if (acc.add(it.owner)) {
+					val boundsFrame = frame.boundsFrame(it.owner)
+					it.owner.superTypes.forEach { bound -> walk(bound, boundsFrame) }
+				}
+			}
+			if (t is IrSimpleType) t.arguments.forEach { (it as? IrTypeProjection)?.type?.let(::walkClosed) }
 		}
-		if (t is IrSimpleType) t.arguments.forEach { (it as? IrTypeProjection)?.type?.let(::walk) }
+		walkClosed(frame.values?.invoke(type) ?: type)
 	}
-	types.forEach(::walk)
+	types.forEach { walk(it, defaultTypeFrame) }
 	return acc.toList()
 }
 

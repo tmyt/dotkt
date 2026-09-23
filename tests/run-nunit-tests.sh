@@ -51,7 +51,7 @@ PROJECTS=(
 # the same change, making otherwise-silent test proliferation or accidental deletion an explicit review event.
 declare -A EXPECTED_DISCOVERED=(
 	["tests/basic"]=646
-	["tests/coroutines"]=224
+	["tests/coroutines"]=229
 	["tests/roundtrip/consumer"]=280
 	["tests/roundtrip/bidirectional/consumer"]=38
 	["tests/interop/consumer"]=361
@@ -242,6 +242,16 @@ for proj in "${PROJECTS[@]}"; do
 		else
 			echo "  INHERITED PROTECTED CALLABLE FAIL — see build/nunit-$name.inherited-protected-callable.log"
 			tail -25 "$ROOT/build/nunit-$name.inherited-protected-callable.log"; rc=1
+		fi
+	fi
+	if [[ "$proj" == "tests/coroutines" ]]; then
+		if python3 "$ROOT/tests/coroutines/assert-default-frame-bir.py" \
+			"$dir/obj/$CONFIGURATION/net10.0/bir/LocalSuspendDefaultFrameTests.bir.json" \
+			>"$ROOT/build/nunit-$name.default-frame.log" 2>&1; then
+			echo "  default closures retain caller-owned generic bounds"
+		else
+			echo "  DEFAULT FRAME BIR FAIL — see build/nunit-$name.default-frame.log"
+			tail -25 "$ROOT/build/nunit-$name.default-frame.log"; rc=1
 		fi
 	fi
 	# The companion round-trip fixture has two independent metadata contracts in addition to execution: the producer

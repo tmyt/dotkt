@@ -567,12 +567,13 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 	// default of its own, and the inner frame closes against the OUTER's, which closes against the call site. Each
 	// level COMPOSES (inner applied first, then whatever was already installed), so at any depth every open type
 	// variable ends up closed against the outermost call site rather than against its immediate parent.
-	internal var defaultTypeSubst: ((IrType) -> IrType)? = null
+	internal var defaultTypeFrame = DefaultTypeFrame()
+	internal val defaultTypeSubst: ((IrType) -> IrType)? get() = defaultTypeFrame.values
 	// A captured/star owner argument has two faithful views while a default is spliced: as a VALUE type it erases to
 	// its upper bound, but as a TYPE ARGUMENT it remains Kotlin's existential `star`. Keep the second substitution and
 	// the captured source slots separately so birType can preserve that distinction without manufacturing an IR type.
-	internal var defaultTypeArgSubst: ((IrType) -> IrType)? = null
-	internal var defaultStarTypeParams: Set<org.jetbrains.kotlin.ir.symbols.IrTypeParameterSymbol> = emptySet()
+	internal val defaultTypeArgSubst: ((IrType) -> IrType)? get() = defaultTypeFrame.arguments
+	internal val defaultStarTypeParams: Set<org.jetbrains.kotlin.ir.symbols.IrTypeParameterSymbol> get() = defaultTypeFrame.stars
 	internal var defaultTypeArgumentDepth: Int = 0
 	// Function-local classes lifted to top-level synthetic types: the outer locals they capture (prepended to the
 	// ctor at construction sites). Keyed by the IrClass.

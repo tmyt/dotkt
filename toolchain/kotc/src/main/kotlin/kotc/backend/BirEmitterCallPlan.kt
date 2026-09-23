@@ -1,7 +1,32 @@
+@file:OptIn(org.jetbrains.kotlin.ir.symbols.UnsafeDuringIrConstructionAPI::class)
+
 package kotc.backend
 
+import org.jetbrains.kotlin.ir.declarations.IrTypeParameter
 import org.jetbrains.kotlin.ir.expressions.IrExpression
+import org.jetbrains.kotlin.ir.symbols.IrTypeParameterSymbol
+import org.jetbrains.kotlin.ir.types.IrSimpleType
 import org.jetbrains.kotlin.ir.types.IrType
+import org.jetbrains.kotlin.ir.types.IrTypeProjection
+import org.jetbrains.kotlin.ir.types.classifierOrNull
+
+// A default's source types close into its caller's frame. Parameters obtained from that caller retain the
+// frame of their own bounds; the callee substitution must not be applied to those bounds a second time.
+// A declaration authored inside the default instead has bounds in the current source frame.
+internal class DefaultTypeFrame(
+	val values: ((IrType) -> IrType)? = null,
+	val arguments: ((IrType) -> IrType)? = null,
+	val stars: Set<IrTypeParameterSymbol> = emptySet(),
+	val callerBounds: Map<IrTypeParameter, DefaultTypeFrame> = emptyMap(),
+) {
+	fun boundsFrame(parameter: IrTypeParameter): DefaultTypeFrame = callerBounds[parameter] ?: this
+}
+
+internal inline fun <T> BirEmitter.withDefaultTypeFrame(frame: DefaultTypeFrame, emit: () -> T): T {
+	val saved = defaultTypeFrame
+	defaultTypeFrame = frame
+	return try { emit() } finally { defaultTypeFrame = saved }
+}
 
 // THE CALL-EVALUATION PLAN (BIR `callEval` / `bindRef`; spec docs/bir-cir-spec.md §2.7).
 //
@@ -114,30 +139,41 @@ internal fun <T> BirEmitter.withDefaultTypeScope(
 	callee: org.jetbrains.kotlin.ir.declarations.IrFunction,
 	emit: () -> T,
 ): T {
-	val saved = defaultTypeSubst
-	val savedArgs = defaultTypeArgSubst
-	val savedStars = defaultStarTypeParams
+	val saved = defaultTypeFrame
 	val captured = linkedSetOf<org.jetbrains.kotlin.ir.symbols.IrTypeParameterSymbol>()
 	val here = callSiteSubstitutor(call, callee,
 		allowCapturedArguments = true, capturedTypeParameters = captured)
+		?: return emit()
 	val hereArgs = if (captured.isEmpty()) here else callSiteSubstitutor(call, callee,
 		allowCapturedArguments = true, preserveCapturedArguments = true)
-	defaultTypeSubst = when {
-		here == null -> saved
-		saved == null -> { t: IrType -> here.substitute(t) }
-		else -> { t: IrType -> saved(here.substitute(t)) }
+	val callerBounds = saved.callerBounds.toMutableMap()
+	val seen = HashSet<IrTypeParameter>()
+	fun rememberCallerType(type: IrType, frame: DefaultTypeFrame) {
+		fun walkClosed(closed: IrType) {
+			(closed.classifierOrNull as? IrTypeParameterSymbol)?.owner?.let { parameter ->
+				if (seen.add(parameter)) {
+					val boundsFrame = frame.boundsFrame(parameter)
+					callerBounds[parameter] = boundsFrame
+					parameter.superTypes.forEach { rememberCallerType(it, boundsFrame) }
+				}
+			}
+			if (closed is IrSimpleType) closed.arguments.forEach { (it as? IrTypeProjection)?.type?.let(::walkClosed) }
+		}
+		walkClosed(frame.values?.invoke(type) ?: type)
 	}
-	defaultTypeArgSubst = when {
-		hereArgs == null -> savedArgs
-		savedArgs == null -> { t: IrType -> hereArgs.substitute(t) }
-		else -> { t: IrType -> savedArgs(hereArgs.substitute(t)) }
+	// These are call-site IR types: only the enclosing default frame applies here, not the new callee mapping.
+	call.typeArguments.filterNotNull().forEach { rememberCallerType(it, saved) }
+	listOfNotNull(dispatchReceiver(call)?.type, extensionReceiver(call)?.type, call.type)
+		.forEach { rememberCallerType(it, saved) }
+	val values: (IrType) -> IrType = { type ->
+		val closed = here.substitute(type)
+		saved.values?.invoke(closed) ?: closed
 	}
-	defaultStarTypeParams = savedStars + captured
-	try { return emit() } finally {
-		defaultTypeSubst = saved
-		defaultTypeArgSubst = savedArgs
-		defaultStarTypeParams = savedStars
+	val arguments: (IrType) -> IrType = { type ->
+		val closed = hereArgs?.substitute(type) ?: type
+		saved.arguments?.invoke(closed) ?: closed
 	}
+	return withDefaultTypeFrame(DefaultTypeFrame(values, arguments, saved.stars + captured, callerBounds), emit)
 }
 
 /** The plan of the call currently being emitted. Every path that fills arguments runs inside a plan scope, so a

@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Same-module default lambdas retain their caller's generic frame (#847).** Lifted type dependencies
+  follow the default argument's type substitution, including reordered method type parameters.
+
 - **Omitted defaults contribute their nullable-witness requirements to callers (#845).** Generic forwarders
   preserve type-sensitive default behavior, while explicit arguments do not acquire unused witness parameters.
 
