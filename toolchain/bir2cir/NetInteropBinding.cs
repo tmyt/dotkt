@@ -732,7 +732,7 @@ static class NetInteropBinding
     // `get_Item`/`set_Item`; reflecting the type's `DefaultMemberAttribute` (which `[IndexerName("X")]` sets) honors a
     // custom-named indexer (e.g. `get_Chars`). Walks the type + bases + interfaces; prefers the indexed property whose
     // name matches the DefaultMember, else any indexed property. Returns the accessor MethodInfo.Name, or null if none.
-    static string DefaultIndexerAccessor(Type type, bool isSet)
+    internal static string DefaultIndexerAccessor(Type type, bool isSet)
     {
         const BindingFlags Flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance
             | BindingFlags.Static | BindingFlags.DeclaredOnly;

@@ -1000,12 +1000,12 @@ sealed partial class ReferenceMetadataIndex
     // when it has no representable defaults, so callers must not fall through to a different declaration search.
     public bool TryKotlinDefaultsForSelectedMethod(
         TypeNode.Fqn owner, string method, int methodArity, bool isStatic, IReadOnlyList<TypeNode> callSignature,
-        out Dictionary<int, string> defaults, out string[] parameterNames)
+        out Dictionary<int, string> defaults, out string[] parameterNames, string propertyKind = null)
     {
         defaults = null;
         parameterNames = null;
         if (!ClrMemberResolution.TryResolveExternalMethodForDefaults(
-                this, owner, method, methodArity, isStatic, callSignature, out var declaration))
+                this, owner, method, methodArity, isStatic, callSignature, out var declaration, propertyKind))
             return false;
         parameterNames = declaration.GetParameters()
             .Select(parameter => string.IsNullOrEmpty(parameter.Name) ? $"arg{parameter.Position}" : parameter.Name)

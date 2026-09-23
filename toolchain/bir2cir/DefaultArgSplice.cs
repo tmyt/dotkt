@@ -328,7 +328,8 @@ static class DefaultArgSplice
         {
             if (refs.TryKotlinDefaultsForSelectedMethod(
                     defaultOwnerType, method, (node["typeArgs"] as JsonArray)?.Count ?? 0,
-                    Str(node["k"]) == "callStatic", callSignature, out var inheritedDefaults, out parameterNames))
+                    Str(node["k"]) == "callStatic", callSignature, out var inheritedDefaults, out parameterNames,
+                    Str(node["prop"])))
                 return inheritedDefaults;
             var inheritedSigKey = ReferenceMetadataIndex.SignatureKeyOf(signature);
             var inheritedRelaxedSigKey = ReferenceMetadataIndex.SignatureKeyOf(signature, relaxed: true);
@@ -343,7 +344,7 @@ static class DefaultArgSplice
             && callSignature.All(type => type != null)
             && refs.TryKotlinDefaultsForSelectedMethod(
                 ownerType, method, (node["typeArgs"] as JsonArray)?.Count ?? 0, Str(node["k"]) == "callStatic",
-                callSignature, out var selectedDefaults, out parameterNames))
+                callSignature, out var selectedDefaults, out parameterNames, Str(node["prop"])))
             return selectedDefaults;
 
         var sigKey = ReferenceMetadataIndex.SignatureKeyOf(signature);
