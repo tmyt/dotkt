@@ -46,16 +46,73 @@ static class ContinuationErasure
 {
     const string Cont = "kotlin.coroutines.Continuation";
     const string ResultFqn = "kotlin.Result";
+    static readonly string[] MethodImplDescriptorKeys = { "clrInterfaceImpls", "clrBaseImpls" };
+    static IReadOnlySet<string> _continuationTypeNames = new HashSet<string>(StringComparer.Ordinal) { Cont };
     static IReadOnlySet<string> _resultTypeNames = new HashSet<string>(StringComparer.Ordinal) { ResultFqn };
 
-    public static void Apply(JsonNode root, ReferenceMetadataIndex refs)
+    public static void Apply(JsonNode root, ReferenceMetadataIndex refs) => Apply(root, refs.PhysicalTypeNames);
+
+    static void Apply(JsonNode root, IReadOnlyDictionary<string, string> physicalTypeNames)
     {
+        var continuationNames = new HashSet<string>(StringComparer.Ordinal) { Cont };
+        if (physicalTypeNames.TryGetValue(Cont, out var physicalContinuation))
+            continuationNames.Add(physicalContinuation);
+        _continuationTypeNames = continuationNames;
         var resultNames = new HashSet<string>(StringComparer.Ordinal) { ResultFqn };
-        if (refs.PhysicalTypeNames.TryGetValue(ResultFqn, out var physicalResult))
+        if (physicalTypeNames.TryGetValue(ResultFqn, out var physicalResult))
             resultNames.Add(physicalResult);
         _resultTypeNames = resultNames;
         RecordDeclarationSurfaces(root);
         Walk(root, inResumeWith: false);
+    }
+
+    internal static void SelfTest()
+    {
+        var names = new Dictionary<string, string>
+        {
+            [Cont] = "kotlin.coroutines.Continuation`1",
+            [ResultFqn] = "kotlin.Result`1",
+        };
+        var integer = new TypeNode.Fqn("kotlin.Int");
+        var any = new TypeNode.Fqn("kotlin.Any");
+        foreach (var sourceName in new[] { Cont, ResultFqn })
+        foreach (var typeName in new[] { sourceName, names[sourceName] })
+        {
+            TypeNode Nested(TypeNode argument) => new TypeNode.Fqn("probe.Container",
+                new TypeNode[] { new TypeNode.Fqn(typeName, new TypeNode[] { argument }) });
+            var original = Nested(integer);
+            var expected = Nested(any);
+            var root = new JsonObject
+            {
+                ["name"] = Cont,
+                ["interfaces"] = new JsonArray(TypeJson.Write(original)),
+                ["overrides"] = new JsonArray(new JsonObject { ["owner"] = TypeJson.Write(original) }),
+                ["call"] = new JsonObject { ["k"] = "callStatic", ["owner"] = TypeJson.Fqn(Cont) },
+            };
+            foreach (var key in MethodImplDescriptorKeys)
+                root[key] = new JsonArray(new JsonObject
+                {
+                    ["owner"] = TypeJson.Write(original),
+                    ["params"] = new JsonArray(TypeJson.Write(original)),
+                    ["ret"] = TypeJson.Write(original),
+                });
+            Apply(root, names);
+            void Equal(JsonNode actual, TypeNode wanted, string role)
+            {
+                if (!JsonNode.DeepEquals(actual, TypeJson.Write(wanted)))
+                    throw new InvalidOperationException($"ContinuationErasure self-test: {typeName} {role}");
+            }
+            Equal(root["interfaces"][0], expected, "implemented interface");
+            Equal(root["overrides"][0]["owner"], original, "semantic override owner");
+            Equal(root["call"]["owner"], new TypeNode.Fqn(Cont), "static declaration container");
+            foreach (var key in MethodImplDescriptorKeys)
+            {
+                var descriptor = root[key][0];
+                Equal(descriptor["owner"], expected, key + " owner");
+                Equal(descriptor["params"][0], expected, key + " parameter");
+                Equal(descriptor["ret"], expected, key + " return");
+            }
+        }
     }
 
     // The CLR coroutine ABI is deliberately monomorphic, but a referenced DLL must still re-expose the source-level
@@ -125,6 +182,13 @@ static class ContinuationErasure
                 // Result is monomorphic Result<object> globally — every `Result.success/failure<X>` construction
                 // must yield Result<object>, so its type-arg is erased at EVERY call site (not just resumeWith args).
                 EraseResultFactoryTypeArgs(obj);
+                // MethodImpl owners are constructed physical types, unlike semantic override edges or a
+                // static call's declaration container. Their instantiation must match the implemented supertype.
+                foreach (var descriptorsKey in MethodImplDescriptorKeys)
+                    if (obj[descriptorsKey] is JsonArray descriptors)
+                        foreach (var descriptor in descriptors.OfType<JsonObject>())
+                            if (TypeJson.Read(descriptor["owner"]) is TypeNode owner)
+                                descriptor["owner"] = TypeJson.Write(EraseType(owner));
                 foreach (var key in obj.Select(kv => kv.Key).ToList())
                 {
                     var val = obj[key];
@@ -238,7 +302,7 @@ static class ContinuationErasure
         switch (t)
         {
             case TypeNode.Fqn f:
-                if (f.Name == Cont) return new TypeNode.Fqn(Cont, AnyArg);              // bare or Continuation[X] -> [Any]
+                if (_continuationTypeNames.Contains(f.Name)) return new TypeNode.Fqn(f.Name, AnyArg);
                 // A trusted inline/default payload can already carry the referenced TypeDef's exact metadata name
                 // (`kotlin.Result`1`) while source-authored slots still use `kotlin.Result`. Both identities come from
                 // the explicit reference index; recognizing the physical twin here avoids splitting one monomorphic
