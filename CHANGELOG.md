@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **CLR indexers preserve every index and the assigned value (#826).** Calls with multiple indices no longer
+  truncate the argument vector; inherited and generic indexers retain source-order, exactly-once evaluation.
+
 - **Inherited CLR indexers retain their selected declaration (#822).** Public and protected get/set calls
   preserve the constructed declaring owner and generic signature; protected access targets the metadata's
   actual accessor name, including custom `IndexerName` properties.
