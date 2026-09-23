@@ -521,6 +521,8 @@ static class InlineSplice
                 if (p["default"] is JsonNode pdef)
                 {
                     argNode = pdef.DeepClone();
+                    ClosureSynthesis.PrebindSplicedFrames(argNode);
+                    SubstTvIn(argNode, typeArgs, ga, dispatchTypeArgs);
                     RewriteLocalRefs(argNode, subst, Pin);   // a default that references an EARLIER param -> its binding
                 }
                 else if (KotlinDefaultCarrier(p) is string carrierBir)
@@ -542,12 +544,15 @@ static class InlineSplice
                     // the default's self-carried implementation classifiers through the same authored call-site owner
                     // now; otherwise they retain a producer member owner absent from this consumer module.
                     DefaultArgSplice.RehomeSynthClasses(raw, consumerSemanticOwner, spliceCloneId);
+                    // Bind declaration frames before substituting their construction
+                    // arguments; caller-owned values are inserted only afterwards.
+                    ClosureSynthesis.PrebindSplicedFrames(raw);
+                    SubstTvIn(raw, typeArgs, ga, dispatchTypeArgs);
                     var extensionRecv = ext ? boundArgs.ElementAtOrDefault(0) : null;
                     argNode = DefaultArgSplice.SubstituteTokens(
                         raw, defaultDispatchRecv, extensionRecv, null, boundArgs);
                 }
                 else { FailLoud(o, owner, name, pc, ga, $"missing (non-defaulted) arg for param {pn}"); return; }
-                SubstTvIn(argNode, typeArgs, ga, dispatchTypeArgs);
                 // BATCH B (#75): a capturing newSuspendLambda built inside a param default binds to a temp whose init
                 // flows through the same joint-hygiene rewriters as the body — the former fail-loud guard is retired.
                 // Capturing/SAM/suspend-lambda defaults self-carry their synthesis facts and flow through the same path.
