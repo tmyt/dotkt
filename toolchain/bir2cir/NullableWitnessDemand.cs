@@ -23,7 +23,7 @@ sealed class NullableWitnessDemand
 
     public static NullableWitnessDemand Collect(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs)
     {
-        var rootList = roots.ToList();
+        var rootList = roots.Select(root => refs == null ? root : DefaultArgSplice.CreateDemandView(root, refs)).ToList();
         var methods = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
 
         void Owner(JsonObject owner)

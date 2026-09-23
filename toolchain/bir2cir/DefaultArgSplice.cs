@@ -58,6 +58,44 @@ static class DefaultArgSplice
 {
     static int _counter;   // global unique id for fresh re-hoisted lifted-method names (per splice instance)
 
+    // Demand collection precedes physical representation and executable splicing. Analyze an independent
+    // source-vocabulary graph with the same omitted-argument expansion, so a default's operations belong
+    // to the omitting caller rather than becoming an unconditional ABI requirement of the callee.
+    internal static JsonNode CreateDemandView(JsonNode source, ReferenceMetadataIndex refs)
+    {
+        var root = source.DeepClone();
+        if (root is not JsonObject file) return root;
+        var owner = Str(file["fileClass"]) is string fileClass ? TypeJson.Fqn(fileClass) : null;
+        var hoist = new JsonArray();
+        void Walk(JsonNode node)
+        {
+            if (node is JsonObject obj)
+            {
+                // Force enumeration: expansion captures the replaced binding expressions lazily.
+                _ = ExpandNode(obj, refs, hoist, owner, "nullable-witness demand").ToArray();
+                foreach (var pair in obj.ToList())
+                    if (pair.Value != null) Walk(pair.Value);
+            }
+            else if (node is JsonArray array)
+                foreach (var child in array.ToList())
+                    if (child != null) Walk(child);
+        }
+        Walk(root);
+        if (hoist.Count != 0)
+        {
+            var methods = file["methods"] as JsonArray
+                ?? throw new InvalidOperationException("default demand view has no file methods for carried helpers");
+            while (hoist.Count != 0)
+            {
+                var method = hoist[0];
+                hoist.RemoveAt(0);
+                Walk(method);
+                methods.Add(method);
+            }
+        }
+        return root;
+    }
+
     // Expand the current declaration/call before the shared inline/default walker visits its children.
     // Return only newly materialized graphs so their use-site bindings are established at this boundary.
     internal static IEnumerable<JsonNode> ExpandNode(JsonObject obj, ReferenceMetadataIndex refs,
