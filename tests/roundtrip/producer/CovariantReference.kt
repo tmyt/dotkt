@@ -1,5 +1,17 @@
 package roundtrip.covariantreference
 
+import kotlin.coroutines.Continuation
+import kotlin.coroutines.EmptyCoroutineContext
+
+open class ReferencedCovariantCompletion<T> : Continuation<T> {
+    override val context = EmptyCoroutineContext
+    override fun resumeWith(result: Result<T>) {}
+}
+
+class ReferencedDerivedCovariantCompletion : ReferencedCovariantCompletion<Int>() {
+    override val context = EmptyCoroutineContext
+}
+
 open class ReferencedCovariantValue(val value: Int)
 
 class ReferencedNarrowCovariantValue(value: Int) : ReferencedCovariantValue(value)

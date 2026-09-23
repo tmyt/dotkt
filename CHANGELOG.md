@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Covariant coroutine context overrides retain valid interface slots (#837).** MethodImpl owners use
+  the same erased coroutine representation as implemented interfaces, including referenced physical types.
+
 - **CLR indexer overrides occupy their accessor slots (#825).** Base-typed and interface calls dispatch to
   Kotlin implementations, including custom-named generic indexers; `super` calls remain nonvirtual.
   FIR-to-IR also retains override relations involving projected platform types, for indexers and other members.

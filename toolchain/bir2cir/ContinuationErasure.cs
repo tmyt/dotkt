@@ -46,10 +46,15 @@ static class ContinuationErasure
 {
     const string Cont = "kotlin.coroutines.Continuation";
     const string ResultFqn = "kotlin.Result";
+    static IReadOnlySet<string> _continuationTypeNames = new HashSet<string>(StringComparer.Ordinal) { Cont };
     static IReadOnlySet<string> _resultTypeNames = new HashSet<string>(StringComparer.Ordinal) { ResultFqn };
 
     public static void Apply(JsonNode root, ReferenceMetadataIndex refs)
     {
+        var continuationNames = new HashSet<string>(StringComparer.Ordinal) { Cont };
+        if (refs.PhysicalTypeNames.TryGetValue(Cont, out var physicalContinuation))
+            continuationNames.Add(physicalContinuation);
+        _continuationTypeNames = continuationNames;
         var resultNames = new HashSet<string>(StringComparer.Ordinal) { ResultFqn };
         if (refs.PhysicalTypeNames.TryGetValue(ResultFqn, out var physicalResult))
             resultNames.Add(physicalResult);
@@ -125,6 +130,13 @@ static class ContinuationErasure
                 // Result is monomorphic Result<object> globally — every `Result.success/failure<X>` construction
                 // must yield Result<object>, so its type-arg is erased at EVERY call site (not just resumeWith args).
                 EraseResultFactoryTypeArgs(obj);
+                // MethodImpl owners are constructed physical types, unlike semantic override edges or a
+                // static call's declaration container. Their instantiation must match the implemented supertype.
+                foreach (var descriptorsKey in new[] { "clrInterfaceImpls", "clrBaseImpls" })
+                    if (obj[descriptorsKey] is JsonArray descriptors)
+                        foreach (var descriptor in descriptors.OfType<JsonObject>())
+                            if (TypeJson.Read(descriptor["owner"]) is TypeNode owner)
+                                descriptor["owner"] = TypeJson.Write(EraseType(owner));
                 foreach (var key in obj.Select(kv => kv.Key).ToList())
                 {
                     var val = obj[key];
@@ -238,7 +250,7 @@ static class ContinuationErasure
         switch (t)
         {
             case TypeNode.Fqn f:
-                if (f.Name == Cont) return new TypeNode.Fqn(Cont, AnyArg);              // bare or Continuation[X] -> [Any]
+                if (_continuationTypeNames.Contains(f.Name)) return new TypeNode.Fqn(f.Name, AnyArg);
                 // A trusted inline/default payload can already carry the referenced TypeDef's exact metadata name
                 // (`kotlin.Result`1`) while source-authored slots still use `kotlin.Result`. Both identities come from
                 // the explicit reference index; recognizing the physical twin here avoids splitting one monomorphic
