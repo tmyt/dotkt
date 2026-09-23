@@ -86,14 +86,17 @@ static class DeclarationRename
                         if (!inIface)
                         {
                             if (obj.ContainsKey("override")) obj["override"] = true;
-                            if (obj.ContainsKey("vis")) obj["vis"] = "public";
+                            var clrBase = ResolveNetClassOwner(obj, ovs, refs, out var clrBaseReturn);
+                            // An interface implementation needs public visibility; overriding a class accessor
+                            // preserves the Kotlin declaration's accessibility, including protected indexers.
+                            if (clrBase == null && obj.ContainsKey("vis")) obj["vis"] = "public";
                             // #73 M4-c: an accessor overriding a reference-KLIB-projected .NET base CLASS virtual property
                             // needs the `pendingOverrideOwner` field so ilemit's DefineMethodOverride reuses the base slot (an
                             // INTERFACE member binds by name at type-load, so it needs no pendingOverrideOwner). kotc emits ONLY
                             // the plain override method + its `overrides` marker (its `clrAccessorMethod` producer was
                             // retired in #73 M4); this is the SOLE source of the pendingOverrideOwner field, derived off the refs.
                             // The guard is defensive (no kotc producer remains to double-stamp).
-                            if (ResolveNetClassOwner(obj, ovs, refs, out var clrBaseReturn) is TypeNode.Fqn clrBase)
+                            if (clrBase != null)
                             {
                                 obj["pendingOverrideOwner"] ??= TypeJson.Write(clrBase);
                                 obj["pendingOverrideReturn"] ??= TypeJson.Write(clrBaseReturn);

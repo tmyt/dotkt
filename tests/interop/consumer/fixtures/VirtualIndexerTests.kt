@@ -33,6 +33,19 @@ private class ObjectVirtualChild : VirtualIndexers.ObjectGrid() {
     override operator fun get(key: Int): String = "child"
 }
 
+private class ClosedVirtualGrid : VirtualIndexers.GenericGrid<String, Int>(17) {
+    private var stored = 31
+    override operator fun get(key: String, column: Int): Int = stored
+    override operator fun set(key: String, column: Int, value: Int) { stored = value }
+}
+
+private interface IntermediateVirtualGrid<T> : VirtualIndexers.IGrid<T>
+private class ClosedVirtualInterfaceGrid : IntermediateVirtualGrid<Int> {
+    private var stored = 19
+    override operator fun get(key: Int): Int = stored
+    override operator fun set(key: Int, value: Int) { stored = value }
+}
+
 class VirtualIndexerTests {
     @TestAttribute
     fun protectedAndCovariantAccessorsOccupyExactlyOneBaseSlot() {
@@ -64,6 +77,10 @@ class VirtualIndexerTests {
 
     @TestAttribute
     fun customNamedGenericSlotsUseTheConstructedAncestorFrame() {
+        val closed: VirtualIndexers.GenericGrid<String, Int> = ClosedVirtualGrid()
+        check(closed["row", 1] == 31)
+        closed["row", 1] = 61
+        check(closed["row", 1] == 61)
         val child = VirtualGenericChild("base", "child")
         val base: VirtualIndexers.GenericGrid<String, String> = child
         check(base["row", 2] == "child")
@@ -83,6 +100,10 @@ class VirtualIndexerTests {
 
     @TestAttribute
     fun interfaceIndexersBindBothAccessors() {
+        val closed: VirtualIndexers.IGrid<Int> = ClosedVirtualInterfaceGrid()
+        check(closed[1] == 19)
+        closed[1] = 43
+        check(closed[1] == 43)
         val strings: VirtualIndexers.IGrid<String> = VirtualInterfaceGrid("first")
         check(strings[1] == "first")
         strings[1] = "second"

@@ -41,6 +41,8 @@ holistically, do not patch the symptom. Do NOT trust the gate to find this indir
 
 ### 5. Fragile watch-points — verify empirically, never assume "unchanged"
 kotc pokes several **internal/unstable FIR surfaces**; a bump can silently break any of them:
+- Keep `JvmIrSpecialAnnotationSymbolProvider` and `JvmIrTypeSystemContext` paired: platform-nullability
+  annotations must participate in IR override matching, not be treated as rigid nullable upper bounds.
 - **CLR intrinsic declarations** (`libraries/stdlib/clr/kotlin/clr/CompilerIntrinsics.kt`) — verify that the frontend
   KLIB continues to expose the fixed `byref` / `stackBuffer` / `clrEvent` vocabulary without a compiler plugin.
   CLR reference declarations and their direct static members are loaded from reference KLIBs.

@@ -9,6 +9,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 - **CLR indexer overrides occupy their accessor slots (#825).** Base-typed and interface calls dispatch to
   Kotlin implementations, including custom-named generic indexers; `super` calls remain nonvirtual.
+  FIR-to-IR also retains override relations involving projected platform types, for indexers and other members.
 
 - **CLR indexers preserve omitted arguments (#828).** Optional indices retain their positions and use
   the selected accessor's defaults; omitted varargs supply empty arrays without losing setter values.
