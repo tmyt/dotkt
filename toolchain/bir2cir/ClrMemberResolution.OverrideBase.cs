@@ -18,11 +18,9 @@ using DotKt.Bir;
 // so ilemit LINKS the unique base slot (0 = hard ABI error, >1 = malformed) and never first-picks. Runs inside ClrMemberResolution's
 // Walk (last pass, fully-lowered tree) on every method DECLARATION node carrying `pendingOverrideOwner`.
 //
-// SCOPE: `pendingOverrideOwner` is stamped ONLY on PROPERTY-ACCESSOR overrides of a .NET base CLASS virtual (the external
-// Property/MethodSemantics slot on a non-generic BCL class such as System.Exception — a plain-method override binds
-// its base slot implicitly by CLR
-// name+sig matching, no DefineMethodOverride). The matcher below also handles a generic base def (positional-tv params
-// treated as substitution wildcards) for completeness, but the corpus exercises only the non-generic accessor case.
+// SCOPE: `pendingOverrideOwner` identifies property-accessor and projected-indexer overrides of a .NET base class.
+// Indexers also need an explicit base slot when their implementation narrows the return type. An erasure bridge
+// that takes ownership of the same slot removes the typed implementation's pending binding to avoid two MethodImpls.
 static partial class ClrMemberResolution
 {
     static void ResolveOverrideBase(JsonObject node)

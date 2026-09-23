@@ -20,7 +20,32 @@ private class VirtualInterfaceGrid<T>(private var stored: T) : VirtualIndexers.I
     override operator fun set(key: Int, value: T) { stored = value }
 }
 
+private class ProtectedVirtualChild<T>(initial: T, private var current: T) : VirtualIndexers.ProtectedGrid<T>(initial) {
+    protected override operator fun get(key: Int): T = current
+    protected override operator fun set(key: Int, value: T) { current = value }
+}
+
+private class NominalVirtualChild : VirtualIndexers.NominalGrid() {
+    override operator fun get(key: Int): VirtualIndexers.ResultDerived = VirtualIndexers.ResultDerived()
+}
+
+private class ObjectVirtualChild : VirtualIndexers.ObjectGrid() {
+    override operator fun get(key: Int): String = "child"
+}
+
 class VirtualIndexerTests {
+    @TestAttribute
+    fun protectedAndCovariantAccessorsOccupyExactlyOneBaseSlot() {
+        val protected = ProtectedVirtualChild(17, 31)
+        check(protected.Read(1) == 31)
+        protected.Write(1, 53)
+        check(protected.Read(1) == 53)
+        val nominal: VirtualIndexers.NominalGrid = NominalVirtualChild()
+        check(nominal[1] is VirtualIndexers.ResultDerived)
+        val objectBase: VirtualIndexers.ObjectGrid = ObjectVirtualChild()
+        check(objectBase[1] == "child")
+    }
+
     @TestAttribute
     fun overloadedAccessorsDispatchThroughBaseAndSuperStaysNonvirtual() {
         val child = VirtualGridChild()

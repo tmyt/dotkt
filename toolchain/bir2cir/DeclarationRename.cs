@@ -135,6 +135,11 @@ static class DeclarationRename
             var overrideKind = (oo["kind"] as JsonValue)?.GetValue<string>();
             var reflected = ReferenceMetadataIndex.ReflectedOwnerFqn(owner);
             if (refs.ResolveNetType(reflected, ownerSpec.Args?.Length ?? 0) is not Type nt || !nt.IsClass) continue;   // IsClass excludes interface + struct
+            if (overrideKind == "method"
+                && TryCallableSignature(declaration, out var indexSignature, out var indexMethodArity)
+                && refs.TryProjectedIndexerSlot(ownerSpec, member, indexMethodArity, indexSignature,
+                    out _, out slotReturn))
+                return new TypeNode.Fqn(reflected, ownerSpec.Args);
             if (!TryExactPropertySlot(declaration, refs, ownerSpec, member, overrideKind,
                     out _, out var physicalProperty, out _, out var exactReturn)
                 || !HasOverridableAccessor(nt, physicalProperty, overrideKind)) continue;
@@ -203,7 +208,7 @@ static class DeclarationRename
             }
             if (!TryCallableSignature(declaration, out var signature, out var methodArity)
                 || signature.Length != arity) continue;
-            if (refs.TryProjectedIndexerSlot(ownerSpec, member, methodArity, signature, out var indexerSlot))
+            if (refs.TryProjectedIndexerSlot(ownerSpec, member, methodArity, signature, out var indexerSlot, out _))
                 return indexerSlot;
             // A declaration's params live in the declaring type's frame, so close the referenced ancestor into that
             // frame through the override edge. A call's sig is the SELECTED CALLEE DECLARATION vector (§2.2), but the

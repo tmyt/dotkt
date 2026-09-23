@@ -419,6 +419,18 @@ static class KotlinOverrideSlotBridge
             var bridgeDescriptor = ImplDescriptor(descriptorSpec, descriptorMember, arity, slotParams, slotRet,
                 constructedSlotTypeParams, unitValueReturn);
             AddImplDescriptor(bridge, supIsInterface ? "clrInterfaceImpls" : "clrBaseImpls", bridgeDescriptor);
+            // The bridge, not its typed forwarding target, owns this exact class slot.
+            if (!supIsInterface
+                && TypeJson.Read(impl["pendingOverrideOwner"]) is TypeNode pendingOwner
+                && ReferenceMetadataIndex.SourceDeclarationDescribesCall(pendingOwner, descriptorSpec)
+                && (Str(impl["pendingOverrideMember"]) ?? Str(impl["name"])) == descriptorMember
+                && TypeJson.Read(impl["pendingOverrideReturn"]) is TypeNode pendingReturn
+                && ReferenceMetadataIndex.SourceDeclarationDescribesCall(pendingReturn, slotRet))
+            {
+                impl.Remove("pendingOverrideOwner");
+                impl.Remove("pendingOverrideMember");
+                impl.Remove("pendingOverrideReturn");
+            }
         }
 
         foreach (var (spec, supIsInterface) in SupertypeGraph.Reachable(cls, defs, refs))

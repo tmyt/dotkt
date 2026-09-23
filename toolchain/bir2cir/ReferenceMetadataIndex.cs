@@ -2976,9 +2976,10 @@ sealed partial class ReferenceMetadataIndex
     }
 
     internal bool TryProjectedIndexerSlot(TypeNode.Fqn owner, string sourceMember, int methodArity,
-        IReadOnlyList<TypeNode> signature, out string accessor)
+        IReadOnlyList<TypeNode> signature, out string accessor, out TypeNode slotReturn)
     {
         accessor = null;
+        slotReturn = null;
         if (sourceMember is not ("get" or "set") || methodArity != 0 || signature == null
             || ResolveNetType(ReflectedOwnerFqn(owner.Name), owner.Args?.Length ?? 0) == null
             || !TryMembersByBirOwner(owner.Name, out var members)) return false;
@@ -2995,6 +2996,8 @@ sealed partial class ReferenceMetadataIndex
             throw new InvalidDataException($"ambiguous projected indexer slot for {owner.Name}.{sourceMember}");
         if (matches.Count == 0) return false;
         accessor = matches[0].Name;
+        slotReturn = SupertypeGraph.SubstOwnerTvs(matches[0].ReturnTypeNode,
+            owner.Args ?? Array.Empty<TypeNode>());
         return true;
     }
 

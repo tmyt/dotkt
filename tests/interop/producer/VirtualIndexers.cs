@@ -24,3 +24,24 @@ public interface IGrid<T>
 {
     T this[int key] { get; set; }
 }
+
+public class ProtectedGrid<T>
+{
+    private T stored;
+    public ProtectedGrid(T initial) { stored = initial; }
+    [System.Runtime.CompilerServices.IndexerName("Entry")]
+    protected virtual T this[int key] { get => stored; set => stored = value; }
+    public T Read(int key) => this[key];
+    public void Write(int key, T value) => this[key] = value;
+}
+
+public class ResultBase { }
+public class ResultDerived : ResultBase { }
+public class NominalGrid
+{
+    public virtual ResultBase this[int key] => new ResultBase();
+}
+public class ObjectGrid
+{
+    public virtual object this[int key] => "base";
+}
