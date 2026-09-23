@@ -103,15 +103,20 @@ private fun BirEmitter.liftedDeclarationIdentityField(token: String): String =
  */
 private fun BirEmitter.freeTypeParams(types: List<IrType>): List<org.jetbrains.kotlin.ir.declarations.IrTypeParameter> {
 	val acc = LinkedHashSet<org.jetbrains.kotlin.ir.declarations.IrTypeParameter>()
-	fun walk(t: IrType) {
-		(t.classifierOrNull as? IrTypeParameterSymbol)?.let {
-			// A param's own BOUND may name a FURTHER param (`<T, U> where T : Comparable<U>`). The lift re-declares the
-			// bound with the param, so it has to be generic over `U` as well or the re-declared constraint is unbound.
-			if (acc.add(it.owner)) it.owner.superTypes.forEach(::walk)
+	fun walk(type: IrType, frame: DefaultTypeFrame) {
+		fun walkClosed(t: IrType) {
+			(t.classifierOrNull as? IrTypeParameterSymbol)?.let {
+				// Bounds can introduce further dependencies, in the frame belonging to that declaration.
+				if (acc.add(it.owner)) {
+					val boundsFrame = frame.boundsFrame(it.owner)
+					it.owner.superTypes.forEach { bound -> walk(bound, boundsFrame) }
+				}
+			}
+			if (t is IrSimpleType) t.arguments.forEach { (it as? IrTypeProjection)?.type?.let(::walkClosed) }
 		}
-		if (t is IrSimpleType) t.arguments.forEach { (it as? IrTypeProjection)?.type?.let(::walk) }
+		walkClosed(frame.values?.invoke(type) ?: type)
 	}
-	types.forEach { walk(defaultTypeSubst?.invoke(it) ?: it) }
+	types.forEach { walk(it, defaultTypeFrame) }
 	return acc.toList()
 }
 

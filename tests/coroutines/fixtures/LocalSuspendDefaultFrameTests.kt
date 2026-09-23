@@ -52,6 +52,17 @@ private suspend fun <X, T> localDefaultBoxForward(box: LocalDefaultBox<T>): T = 
 
 interface LocalDefaultBound<T> { fun value(): T }
 private class LocalDefaultStringBound : LocalDefaultBound<String> { override fun value(): String = "bound" }
+private class LocalDefaultIntBound : LocalDefaultBound<Int> { override fun value(): Int = 19 }
+private class LocalDefaultOwner<T> {
+    fun <U> pick(value: U, block: () -> U = { value }): U = block()
+    fun <R : LocalDefaultBound<T>> forward(other: LocalDefaultOwner<String>, value: R): R =
+        other.pick(value)
+}
+private fun <T> localDefaultChoose(value: T, block: () -> T = {
+    fun <U : T> identity(item: U): U = item
+    identity(value)
+}): T = block()
+private fun <X, T> localDefaultChooseForward(value: T): T = localDefaultChoose(value)
 private suspend fun <T, U : LocalDefaultBound<T>> localDefaultBound(
     value: U, block: suspend () -> T = { value.value() },
 ): T = block()
@@ -88,6 +99,16 @@ private fun expectCompleted(expected: Boolean, block: suspend () -> Boolean) {
 }
 
 class LocalSuspendDefaultFrameTests {
+    @TestAttribute
+    fun defaultLocalBoundsCloseButCallerBoundsStayInTheirOwnScope() {
+        check(localDefaultChoose("local") == "local")
+        check(localDefaultChoose(23) == 23)
+        check(localDefaultChooseForward<Int, String>("generic") == "generic")
+        check(localDefaultChooseForward<String, Int>(29) == 29)
+        val value = LocalDefaultIntBound()
+        check(LocalDefaultOwner<Int>().forward(LocalDefaultOwner<String>(), value) === value)
+    }
+
     @TestAttribute
     fun defaultLambdaUsesItsCallersReorderedFrame() {
         expectCompleted(true) { localDefaultForward<Int, String?>(null) }
