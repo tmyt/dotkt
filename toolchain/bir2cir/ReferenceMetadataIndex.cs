@@ -2981,11 +2981,17 @@ sealed partial class ReferenceMetadataIndex
         accessor = null;
         slotReturn = null;
         if (sourceMember is not ("get" or "set") || methodArity != 0 || signature == null
-            || ResolveNetType(ReflectedOwnerFqn(owner.Name), owner.Args?.Length ?? 0) == null
+            || ResolveNetType(ReflectedOwnerFqn(owner.Name), owner.Args?.Length ?? 0) is not Type reflectedOwner
             || !TryMembersByBirOwner(owner.Name, out var members)) return false;
+        var overridableTokens = reflectedOwner.GetMethods(BindingFlags.Public | BindingFlags.NonPublic
+                | BindingFlags.Instance | BindingFlags.DeclaredOnly)
+            .Where(method => method.IsVirtual && !method.IsFinal
+                && (method.IsPublic || method.IsFamily || method.IsFamilyOrAssembly))
+            .Select(method => method.MetadataToken).ToHashSet();
         // SourceMethodName comes from the indexed Property's MethodSemantics association, not its CLR spelling.
         // Close the declaration in the override owner's frame; type variables are identities, not wildcards.
         var matches = members.Where(member => !member.IsStatic && member.IsVirtual
+            && overridableTokens.Contains(member.MetadataToken)
             && member.AssociatedPropertyName != null && member.SourceMethodName == sourceMember
             && member.AccessorKind == sourceMember && member.MethodArity == methodArity
             && member.ParamTypeNodes is { } parameters && parameters.Length == signature.Count

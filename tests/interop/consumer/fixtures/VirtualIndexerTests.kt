@@ -40,6 +40,9 @@ private class ClosedVirtualGrid : VirtualIndexers.GenericGrid<String, Int>(17) {
 }
 
 private interface IntermediateVirtualGrid<T> : VirtualIndexers.IGrid<T>
+private class MixedVirtualChild : VirtualIndexers.MixedGrid() {
+    override operator fun get(key: Int): Int = 101
+}
 private class ClosedVirtualInterfaceGrid : IntermediateVirtualGrid<Int> {
     private var stored = 19
     override operator fun get(key: Int): Int = stored
@@ -49,6 +52,11 @@ private class ClosedVirtualInterfaceGrid : IntermediateVirtualGrid<Int> {
 class VirtualIndexerTests {
     @TestAttribute
     fun protectedAndCovariantAccessorsOccupyExactlyOneBaseSlot() {
+        val mixed = MixedVirtualChild()
+        val mixedBase: VirtualIndexers.MixedGrid = mixed
+        val mixedInterface: VirtualIndexers.IGrid<Int> = mixed
+        check(mixedBase[1] == 101)
+        check(mixedInterface[1] == 29)
         val protected = ProtectedVirtualChild(17, 31)
         check(protected.Read(1) == 31)
         protected.Write(1, 53)

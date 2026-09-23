@@ -45,3 +45,9 @@ public class ObjectGrid
 {
     public virtual object this[int key] => "base";
 }
+
+public class MixedGrid : IGrid<int>
+{
+    public virtual int this[int key] { get => 17; set { } }
+    int IGrid<int>.this[int key] { get => 29; set { } }
+}
