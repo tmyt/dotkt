@@ -1575,7 +1575,9 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 		// constructed `clrg:...[int]` resolves the substituted accessor.
 		val ixDeclaration = callee.takeIf { it.isFakeOverride }?.resolveFakeOverride() ?: callee
 		val ixOwner = ixDeclaration.parent as? IrClass
-		if (recv != null && ixOwner != null && isExternalNetType(ixOwner)) {
+		// Member extensions have both dispatch and extension receivers. Keep them
+		// on the ordinary extension-call path, which preserves both receiver roles.
+		if (recv != null && ixOwner != null && isExternalNetType(ixOwner) && extensionReceiverParam(ixDeclaration) == null) {
 			// Keep the selected declaration's constructed owner, not the receiver's subclass.
 			// The latter may be a Kotlin class with no referenced CLR indexer declaration.
 			val mt = correspondingSupertypeInstantiation(recv.type, ixOwner, allowCapturedArguments = true)
