@@ -2,6 +2,16 @@ package roundtrip.suspenddefaultframes
 
 import kotlin.coroutines.*
 
+suspend inline fun <reified T> firstSuspendDefault(
+    item: Any,
+    noinline block: suspend () -> T? = { if (item is T) item else null },
+): T? = block()
+
+suspend inline fun <T> wrapSuspendDefault(crossinline block: suspend () -> T): T {
+    val materialized: suspend () -> T = { block() }
+    return materialized()
+}
+
 class SuspendDefaultGate {
     private var pending: Continuation<Unit>? = null
     var entries = 0

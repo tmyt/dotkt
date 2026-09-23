@@ -2022,6 +2022,7 @@ static class InlineSplice
             bool nestedSm = Str(o["k"]) == "newSuspendLambda" && Str(o["typeFrame"]) == "dense";
             foreach (var kv in o)
                 if (kv.Value != null && !IsIndependentDeclarationFrameField(o, kv.Key) && kv.Key != "synthClass"
+                    && !SuspendLambdaLowering.IsSplicedDeclarationField(o, kv.Key)
                     && !(nestedSm && SuspendLambdaOwnFrame.Contains(kv.Key)))
                     CollectTvKeys(kv.Value, keys);
         }
@@ -2048,6 +2049,7 @@ static class InlineSplice
             bool nestedSm = Str(o["k"]) == "newSuspendLambda" && Str(o["typeFrame"]) == "dense";
             foreach (var kv in o)
                 if (kv.Value != null && !IsIndependentDeclarationFrameField(o, kv.Key) && kv.Key != "synthClass"
+                    && !SuspendLambdaLowering.IsSplicedDeclarationField(o, kv.Key)
                     && !(nestedSm && SuspendLambdaOwnFrame.Contains(kv.Key)))
                     RenumberTvs(kv.Value, remap, classFrame);
         }

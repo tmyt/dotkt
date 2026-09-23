@@ -39,6 +39,7 @@ private class FrameCaller<A : CharSequence, B>(val label: A, val value: B) {
     suspend fun <M> both(item: M): Pair<B, M> = SuspendDefaultOwner(value).both(item)
     suspend fun delayed(gate: SuspendDefaultGate): B = SuspendDefaultOwner(value).delayed(gate)
     suspend fun nested(): B = SuspendDefaultOwner(value).nested()
+    suspend fun wrapped(): B = wrapSuspendDefault { SuspendDefaultOwner(value).read() }
 }
 
 private suspend fun <B, M> combined(b: B, m: M): Pair<B, M> =
@@ -62,6 +63,8 @@ class SuspendDefaultFrameTests {
         completed("value") { strings.inlineRead() }
         val dependent = DependentFrameCaller<FrameBase, FrameDerived>(FrameDerived(59))
         completed(59) { dependent.read().value }
+        completed(17) { integers.wrapped() }
+        completed("value") { strings.wrapped() }
     }
 
     @TestAttribute
@@ -75,6 +78,11 @@ class SuspendDefaultFrameTests {
         completed(Pair(43, "top-level")) { combined(43, "top-level") }
         completed(Pair("reversed", 47)) { combined("reversed", 47) }
         completed(23) { caller.constructed()[0] }
+        completed("match") { firstSuspendDefault<String>("match") }
+        completed(7) { firstSuspendDefault<Int>(7) }
+        completed(null) { firstSuspendDefault<Int>("other") }
+        completed(61) { SuspendDefaultOwner<Int?>(61).read() }
+        completed(null) { SuspendDefaultOwner<Int?>(null).read() }
     }
 
     @TestAttribute

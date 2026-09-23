@@ -32,6 +32,11 @@ using DotKt.Bir;
 static class SuspendLambdaLowering
 {
     internal const string SplicedDeclarationFrameKey = "_suspendDeclarationTypeArgs";
+    // A spliced source lambda retains its donor declaration. These are the only fields evaluated in
+    // the importing caller's frame; generic rewrites must not cross into the declaration correspondence.
+    internal static bool IsSplicedDeclarationField(JsonObject node, string key) =>
+        Str(node["k"]) == "newSuspendLambda" && node[SplicedDeclarationFrameKey] != null
+        && key is not ("typeArgs" or "capValues" or "funcType" or "sty");
     readonly record struct CaptureSlot(string Name, TypeNode Type, bool Outer);
 
     static readonly TypeNode ContAnyTn = new TypeNode.Fqn("kotlin.coroutines.Continuation", new TypeNode[] { new TypeNode.Fqn("kotlin.Any") });
@@ -395,6 +400,7 @@ static class SuspendLambdaLowering
 	                {
 	                    var value = obj[key];
 	                    if (value == null) continue;
+                        if (IsSplicedDeclarationField(obj, key)) continue;
 	                    // Declaration descriptors are in the CALLEE's generic frame. Only lexical operands owned by
 	                    // the enclosing method move into the dense suspend-SM frame. A constructor has no method type
 	                    // parameters, so method TVs in `new.argTypes` necessarily belong to this lexical caller.
@@ -419,8 +425,10 @@ static class SuspendLambdaLowering
         // Rebinding those with the declaration would apply the donor-to-caller mapping a second time.
         var constructionValues = node["capValues"];
         var constructionFunctionType = node["funcType"];
+        var constructionStaticType = node["sty"];
         node.Remove("capValues");
         node.Remove("funcType");
+        node.Remove("sty");
         node.Remove("typeArgs");
         node.Remove(SplicedDeclarationFrameKey);
         node.Remove("typeFrame");
@@ -434,6 +442,7 @@ static class SuspendLambdaLowering
         node["typeArgs"] = args;
         if (constructionValues != null) node["capValues"] = constructionValues;
         if (constructionFunctionType != null) node["funcType"] = constructionFunctionType;
+        if (constructionStaticType != null) node["sty"] = constructionStaticType;
         return ownerParams.Count;
     }
 

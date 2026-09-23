@@ -2472,6 +2472,8 @@ static partial class SuspendColdLowering
                     foreach (var pair in obj)
                     {
                         if (pair.Value == null) copy[pair.Key] = null;
+                        else if (SuspendLambdaLowering.IsSplicedDeclarationField(obj, pair.Key))
+                            copy[pair.Key] = pair.Value.DeepClone();
                         else if (pair.Key is "sig" or "resolvedMemberParams" or "shapeTypes" or "paramSig"
                             or "delegationSig" or "memberOwnerTypeParams" or "memberMethodTypeParams"
                             or "memberReturnType" or "memberSignature" or "memberType"
