@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Imported inline operators preserve inline semantics (#829).** Indexing calls expand imported inline
+  bodies before ordinary operator binding, preserving non-local returns across Kotlin DLL boundaries.
+
 - **CLR indexers preserve every index and the assigned value (#826).** Calls with multiple indices no longer
   truncate the argument vector; inherited and generic indexers retain source-order, exactly-once evaluation.
 
