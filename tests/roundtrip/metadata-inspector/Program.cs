@@ -185,6 +185,11 @@ static void VerifyDefaultWitnessContract(string producerPath, string consumerPat
         ["secondForward"] = new[] { "item", "dotkt$nullableWitness$1" },
         ["explicitForward"] = new[] { "item" },
         ["nullForward"] = new[] { "dotkt$nullableWitness$0" },
+        ["inlineMixedForward"] = new[] { "dotkt$nullableWitness$0" },
+        ["inlineExplicitForward"] = Array.Empty<string>(),
+        ["inlineExtensionForward"] = new[] { "item", "dotkt$nullableWitness$0" },
+        ["inlineLiftedForward"] = new[] { "dotkt$nullableWitness$0" },
+        ["localInlineForward"] = new[] { "dotkt$nullableWitness$0" },
     });
 }
 

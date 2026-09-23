@@ -11,6 +11,15 @@ private suspend inline fun <reified T> nestedForward(item: Any?): Boolean = nest
 private inline fun <reified T> ordinaryForward(item: Any?): Boolean = ordinaryDefault<T>(item)
 private inline fun <reified T> transitiveForward(item: Any?): Boolean = ordinaryForward<T>(item)
 private inline fun <reified T> nullForward(): Boolean = nullDefault<T>()
+private inline fun <reified T> inlineMixedForward(): Boolean = inlineDefault<T>({})
+private inline fun <reified T> inlineExplicitForward(): Boolean = inlineDefault<T>({}, false)
+private inline fun <reified T> inlineExtensionForward(item: Any?): Boolean = item.inlineExtensionDefault<T>({})
+private inline fun <reified T> inlineLiftedForward(): Boolean = inlineLiftedDefault<T>({})
+private inline fun <reified T> localInlineDefault(action: () -> Unit, matches: Boolean = null is T): Boolean {
+    action()
+    return matches
+}
+private inline fun <reified T> localInlineForward(): Boolean = localInlineDefault<T>({})
 private suspend inline fun <reified T> explicitForward(item: Any?): Boolean = matchesDefault<T>(item) { true }
 private suspend inline fun <reified T> delayedForward(item: Any?, gate: SuspendDefaultGate): Boolean =
     delayedDefault<T>(item, gate)
@@ -63,6 +72,15 @@ class DefaultWitnessDemandTests {
         check(!transitiveForward<String>(null))
         check(nullForward<String?>())
         check(!nullForward<String>())
+        check(inlineMixedForward<String?>())
+        check(!inlineMixedForward<String>())
+        check(!inlineExplicitForward<String?>())
+        check(inlineExtensionForward<String?>(null))
+        check(!inlineExtensionForward<String>(null))
+        check(inlineLiftedForward<String?>())
+        check(!inlineLiftedForward<String>())
+        check(localInlineForward<String?>())
+        check(!localInlineForward<String>())
         completed(true) { explicitForward<String>(null) }
     }
 

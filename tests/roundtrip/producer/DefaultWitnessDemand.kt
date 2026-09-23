@@ -24,6 +24,27 @@ inline fun <reified T> ordinaryDefault(
 
 inline fun <reified T> nullDefault(noinline block: () -> Boolean = { null is T }): Boolean = block()
 
+inline fun <reified T> inlineDefault(action: () -> Unit, matches: Boolean = null is T): Boolean {
+    action()
+    return matches
+}
+
+inline fun <reified T> Any?.inlineExtensionDefault(
+    action: () -> Unit,
+    noinline matches: () -> Boolean = { this is T },
+): Boolean {
+    action()
+    return matches()
+}
+
+inline fun <reified T> inlineLiftedDefault(
+    action: () -> Unit,
+    noinline matches: () -> Boolean = { null is T },
+): Boolean {
+    action()
+    return matches()
+}
+
 suspend inline fun <reified T> delayedDefault(
     item: Any?,
     gate: SuspendDefaultGate,

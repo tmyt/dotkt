@@ -50,7 +50,7 @@ PROJECTS=(
 # Reviewed on the v0.9.8 main baseline at the start of #227. Updating a suite requires updating this number in
 # the same change, making otherwise-silent test proliferation or accidental deletion an explicit review event.
 declare -A EXPECTED_DISCOVERED=(
-	["tests/basic"]=645
+	["tests/basic"]=646
 	["tests/coroutines"]=224
 	["tests/roundtrip/consumer"]=280
 	["tests/roundtrip/bidirectional/consumer"]=38
@@ -315,7 +315,7 @@ for proj in "${PROJECTS[@]}"; do
 			tail -25 "$ROOT/build/nunit-$name.reified-witness-contract.log"; rc=1
 		fi
 		if dotnet "$METADATA_INSPECTOR_DLL" --default-witness-contract "$producer_dll" \
-			"$dir/bin/$CONFIGURATION/net10.0/RoundtripConsumer.Tests.dll" \
+			"$consumer_dll" \
 			>"$ROOT/build/nunit-$name.default-witness-contract.log" 2>&1; then
 			echo "  omitted defaults demand caller witnesses; explicit arguments do not"
 		else
