@@ -203,6 +203,8 @@ static class DeclarationRename
             }
             if (!TryCallableSignature(declaration, out var signature, out var methodArity)
                 || signature.Length != arity) continue;
+            if (refs.TryProjectedIndexerSlot(ownerSpec, member, methodArity, signature, out var indexerSlot))
+                return indexerSlot;
             // A declaration's params live in the declaring type's frame, so close the referenced ancestor into that
             // frame through the override edge. A call's sig is the SELECTED CALLEE DECLARATION vector (§2.2), but the
             // frontend can state an inherited slot either in its open declaration frame (!T) or already constructed

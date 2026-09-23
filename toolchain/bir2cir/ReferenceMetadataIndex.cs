@@ -2975,6 +2975,29 @@ sealed partial class ReferenceMetadataIndex
         return true;
     }
 
+    internal bool TryProjectedIndexerSlot(TypeNode.Fqn owner, string sourceMember, int methodArity,
+        IReadOnlyList<TypeNode> signature, out string accessor)
+    {
+        accessor = null;
+        if (sourceMember is not ("get" or "set") || methodArity != 0 || signature == null
+            || ResolveNetType(ReflectedOwnerFqn(owner.Name), owner.Args?.Length ?? 0) == null
+            || !TryMembersByBirOwner(owner.Name, out var members)) return false;
+        // SourceMethodName comes from the indexed Property's MethodSemantics association, not its CLR spelling.
+        // Close the declaration in the override owner's frame; type variables are identities, not wildcards.
+        var matches = members.Where(member => !member.IsStatic && member.IsVirtual
+            && member.AssociatedPropertyName != null && member.SourceMethodName == sourceMember
+            && member.AccessorKind == sourceMember && member.MethodArity == methodArity
+            && member.ParamTypeNodes is { } parameters && parameters.Length == signature.Count
+            && parameters.Select((type, index) => SourceDeclarationDescribesCall(
+                SupertypeGraph.SubstOwnerTvs(type, owner.Args ?? Array.Empty<TypeNode>()), signature[index]))
+                .All(match => match)).ToList();
+        if (matches.Count > 1)
+            throw new InvalidDataException($"ambiguous projected indexer slot for {owner.Name}.{sourceMember}");
+        if (matches.Count == 0) return false;
+        accessor = matches[0].Name;
+        return true;
+    }
+
     List<MemberBinding> ExactBoundMembers(string ownerFqn, string memberName, int methodArity,
         IReadOnlyList<TypeNode> signature, IReadOnlyList<TypeNode> ownerTypeArguments = null)
     {
