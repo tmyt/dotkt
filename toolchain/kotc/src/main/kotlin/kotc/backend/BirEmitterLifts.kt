@@ -97,11 +97,9 @@ private fun BirEmitter.liftedDeclarationIdentityField(token: String): String =
 	""","declarationId":${str("dotkt-lifted-v1:$fileClass:$token")}"""
 
 /**
- * The enclosing type parameters a synthesized closure CLASS must be generic over: those referenced by its capture
- * field types (and its own parameter/return types). On the CLR generics are reified, so a closure that captures a
- * `T`-typed value (or a `List<T>` / `(T)->Unit`) becomes a SEPARATE class with a `gp:T` field — and `T` (an
- * enclosing *method* type parameter) is not in scope from inside that class. The closure class must therefore
- * declare `T` itself and be instantiated with the enclosing `T` at `newClosure`, or `MapType` fails to resolve it.
+ * Collect the lexical type parameters used by a lifted declaration's signatures, captures, and body operands.
+ * A same-module default is rendered in its caller's type scope: collect dependencies after that substitution,
+ * just as birType renders the body, so the declaration and its construction edge describe the same frame.
  */
 private fun BirEmitter.freeTypeParams(types: List<IrType>): List<org.jetbrains.kotlin.ir.declarations.IrTypeParameter> {
 	val acc = LinkedHashSet<org.jetbrains.kotlin.ir.declarations.IrTypeParameter>()
@@ -113,7 +111,7 @@ private fun BirEmitter.freeTypeParams(types: List<IrType>): List<org.jetbrains.k
 		}
 		if (t is IrSimpleType) t.arguments.forEach { (it as? IrTypeProjection)?.type?.let(::walk) }
 	}
-	types.forEach(::walk)
+	types.forEach { walk(defaultTypeSubst?.invoke(it) ?: it) }
 	return acc.toList()
 }
 
