@@ -52,7 +52,7 @@ PROJECTS=(
 declare -A EXPECTED_DISCOVERED=(
 	["tests/basic"]=645
 	["tests/coroutines"]=224
-	["tests/roundtrip/consumer"]=277
+	["tests/roundtrip/consumer"]=280
 	["tests/roundtrip/bidirectional/consumer"]=38
 	["tests/interop/consumer"]=361
 )
@@ -313,6 +313,14 @@ for proj in "${PROJECTS[@]}"; do
 		else
 			echo "  REIFIED/WITNESS CONTRACT FAIL — see build/nunit-$name.reified-witness-contract.log"
 			tail -25 "$ROOT/build/nunit-$name.reified-witness-contract.log"; rc=1
+		fi
+		if dotnet "$METADATA_INSPECTOR_DLL" --default-witness-contract "$producer_dll" \
+			"$dir/bin/$CONFIGURATION/net10.0/RoundtripConsumer.Tests.dll" \
+			>"$ROOT/build/nunit-$name.default-witness-contract.log" 2>&1; then
+			echo "  omitted defaults demand caller witnesses; explicit arguments do not"
+		else
+			echo "  DEFAULT WITNESS CONTRACT FAIL — see build/nunit-$name.default-witness-contract.log"
+			tail -25 "$ROOT/build/nunit-$name.default-witness-contract.log"; rc=1
 		fi
 		if bash "$ROOT/tests/roundtrip/run-reified-import-negative.sh" "$producer_klib" \
 			>"$ROOT/build/nunit-$name.reified-import-negative.log" 2>&1; then

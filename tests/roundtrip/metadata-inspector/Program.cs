@@ -109,6 +109,13 @@ if (args.Length == 3 && args[0] == "--klib-no-flags-enum")
     return;
 }
 
+if (args.Length == 3 && args[0] == "--default-witness-contract")
+{
+    VerifyDefaultWitnessContract(args[1], args[2]);
+    Console.WriteLine("omitted defaults demand caller witnesses; explicit arguments do not: OK");
+    return;
+}
+
 if (args.Length == 4 && args[0] == "--reified-witness-contract")
 {
     VerifyReifiedWitnessContract(args[1], args[2], args[3]);
@@ -131,7 +138,8 @@ if (args.Length != 7)
         "  CompanionMetadataInspector --klib-csharp-extension-shape <file.klib> <package> <class> <function>\n" +
         "  CompanionMetadataInspector --klib-flags-enum <file.klib> <class> <file.bir.json> <file.cir.json>\n" +
         "  CompanionMetadataInspector --klib-no-flags-enum <file.klib> <class>\n" +
-        "  CompanionMetadataInspector --reified-witness-contract <producer.dll> <producer.klib> <package>");
+        "  CompanionMetadataInspector --reified-witness-contract <producer.dll> <producer.klib> <package>\n" +
+        "  CompanionMetadataInspector --default-witness-contract <producer.dll> <consumer.dll>");
 
 VerifyLayerBoundary(args[2], args[3]);
 VerifyOwnershipLayerBoundary(args[4], args[5]);
@@ -142,6 +150,43 @@ VerifyReverseEnumeratorBridge(args[0]);
 VerifyUnsafeAccessorDll(args[6]);
 VerifyKlib(args[1]);
 Console.WriteLine("companion + nested ownership semantic BIR / physical CIR / DLL / KLIB linkage: OK");
+
+static void VerifyDefaultWitnessContract(string producerPath, string consumerPath)
+{
+    static void Check(string path, string facade, Dictionary<string, string[]> expected)
+    {
+        using var stream = File.OpenRead(path);
+        using var pe = new PEReader(stream);
+        var md = pe.GetMetadataReader();
+        var type = md.TypeDefinitions.Single(handle => DefinitionName(md, handle) == facade);
+        foreach (var (name, parameters) in expected)
+        {
+            var handle = md.GetTypeDefinition(type).GetMethods().Single(candidate =>
+                md.GetString(md.GetMethodDefinition(candidate).Name) == name);
+            var actual = md.GetMethodDefinition(handle).GetParameters()
+                .Select(parameter => md.GetParameter(parameter))
+                .Where(parameter => parameter.SequenceNumber > 0)
+                .OrderBy(parameter => parameter.SequenceNumber)
+                .Select(parameter => md.GetString(parameter.Name)).ToArray();
+            Require(actual.SequenceEqual(parameters),
+                $"{facade}.{name} parameter contract [{string.Join(", ", actual)}] != [{string.Join(", ", parameters)}]");
+        }
+    }
+    Check(producerPath, "roundtrip.defaultwitness.DefaultWitnessDemandKt", new()
+    {
+        ["matchesDefault"] = new[] { "item", "block" },
+        ["ordinaryDefault"] = new[] { "item", "block" },
+        ["nullDefault"] = new[] { "block" },
+    });
+    Check(consumerPath, "roundtriptests.defaultwitness.DefaultWitnessDemandTestsKt", new()
+    {
+        ["ordinaryForward"] = new[] { "item", "dotkt$nullableWitness$0" },
+        ["transitiveForward"] = new[] { "item", "dotkt$nullableWitness$0" },
+        ["secondForward"] = new[] { "item", "dotkt$nullableWitness$1" },
+        ["explicitForward"] = new[] { "item" },
+        ["nullForward"] = new[] { "dotkt$nullableWitness$0" },
+    });
+}
 
 static void VerifyReifiedWitnessContract(string dllPath, string klibPath, string packageName)
 {

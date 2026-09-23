@@ -168,11 +168,9 @@ internal fun BirEmitter.localFunctionTypeArgs(
 	else typeArgSubst[parameter] ?: tvOf(parameter)
 }
 
-/** Type operands USED in a function body (e.g. `x is R` / `x as R` / `R::class`). A separately materialized body must
- *  be generic over these too: on the CLR generics are reified, so `is R` works once the physical method carries `R` —
- *  that is the
- *  deliberate CLR form, where the JVM would need `reified`+inlining. freeTypeParams over (params+return+captures)
- *  alone misses a body-only `R`.
+/** Type operands USED in a function body (e.g. `x is R` / `x as R` / `R::class` / `check<R>(x)`).
+ *  These are lexical type dependencies even when the body's parameters, return type and captured values do not
+ *  mention R. Preserve them on a lifted declaration; bir2cir chooses their physical generic representation.
  *
  *  NOT included: the declared type of a body-LOCAL. Making the lift generic over it is not enough on its own — the
  *  lift's body would still name every `tv` in the ENCLOSING frame, which strict ilemit resolution correctly rejects.
@@ -188,6 +186,7 @@ internal fun BirEmitter.bodyTypeOperands(fn: org.jetbrains.kotlin.ir.declaration
 			when (element) {
 				is IrTypeOperatorCall -> out.add(element.typeOperand)
 				is IrClassReference -> out.add(element.classType)
+				is IrFunctionAccessExpression -> out.addAll(element.typeArguments.filterNotNull())
 				else -> {}
 			}
 			element.acceptChildrenVoid(this)
