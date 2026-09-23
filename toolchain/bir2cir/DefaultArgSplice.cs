@@ -58,6 +58,81 @@ static class DefaultArgSplice
 {
     static int _counter;   // global unique id for fresh re-hoisted lifted-method names (per splice instance)
 
+    // Demand collection precedes physical representation and executable splicing. Analyze an independent
+    // source-vocabulary graph with the same omitted-argument expansion, so a default's operations belong
+    // to the omitting caller rather than becoming an unconditional ABI requirement of the callee.
+    internal static JsonNode CreateDemandView(JsonNode source, ReferenceMetadataIndex refs, InlineBirIndex inlineDeclarations)
+    {
+        var root = source.DeepClone();
+        if (root is not JsonObject file) return root;
+        var owner = Str(file["fileClass"]) is string fileClass ? TypeJson.Fqn(fileClass) : null;
+        var hoist = new JsonArray();
+        void Walk(JsonNode node)
+        {
+            if (node is JsonObject obj)
+            {
+                // Force enumeration: expansion captures the replaced binding expressions lazily.
+                _ = ExpandNode(obj, refs, hoist, owner, "nullable-witness demand").ToArray();
+                ExpandInlineDefaultsForDemand(obj, refs, inlineDeclarations, hoist, owner);
+                foreach (var pair in obj.ToList())
+                    if (pair.Value != null) Walk(pair.Value);
+            }
+            else if (node is JsonArray array)
+                foreach (var child in array.ToList())
+                    if (child != null) Walk(child);
+        }
+        Walk(root);
+        if (hoist.Count != 0)
+        {
+            var methods = file["methods"] as JsonArray
+                ?? throw new InvalidOperationException("default demand view has no file methods for carried helpers");
+            while (hoist.Count != 0)
+            {
+                var method = hoist[0];
+                hoist.RemoveAt(0);
+                Walk(method);
+                methods.Add(method);
+            }
+        }
+        return root;
+    }
+
+    // A callInline uses null argument slots instead of callEval's default bindings. Resolve the same declaration
+    // as executable splicing, but materialize only omitted values: a supplied argument must not inherit the
+    // unused default's witness demand. This graph is analysis-only and never becomes executable BIR.
+    static void ExpandInlineDefaultsForDemand(JsonObject call, ReferenceMetadataIndex refs,
+        InlineBirIndex declarations, JsonArray hoist, JsonNode owner)
+    {
+        if (Str(call["k"]) != "callInline" || call["args"] is not JsonArray args || args.All(arg => arg != null)) return;
+        var (payload, _, diagnostic) = InlineSplice.ResolvePayload(call, declarations, refs);
+        if (payload == null) throw new InvalidOperationException($"bir2cir: default witness demand: {diagnostic}");
+        var parameters = payload["params"] as JsonArray
+            ?? throw new InvalidOperationException("bir2cir: inline default demand has no declaration parameters");
+        var extension = Str(payload["recv"]) == "extensionParam";
+        var boundArguments = new JsonArray();
+        if (extension) boundArguments.Add(call["recvs"]?["extension"]?.DeepClone());
+        var typeArgs = call["typeArgs"] as JsonArray ?? new JsonArray();
+        var dispatchTypeArgs = call["recvs"]?["dispatchTypeArgs"] as JsonArray;
+        for (var i = 0; i < args.Count; i++)
+        {
+            var parameterIndex = i + (extension ? 1 : 0);
+            if (args[i] == null)
+            {
+                var parameter = (JsonObject)parameters[parameterIndex];
+                JsonNode expression;
+                if (parameter["default"] is JsonNode constant) expression = constant.DeepClone();
+                else if (InlineSplice.KotlinDefaultCarrier(parameter) is string carrier)
+                    expression = MaterializeDefault(carrier, hoist, refs, TypeJson.OwnerName(call["callee"]), parameterIndex, owner);
+                else throw new InvalidOperationException("bir2cir: omitted inline argument has no default carrier");
+                ClosureSynthesis.PrebindSplicedFrames(expression);
+                InlineSplice.SubstTvIn(expression, typeArgs, (payload["typeParams"] as JsonArray)?.Count ?? 0, dispatchTypeArgs);
+                args[i] = SubstituteTokens(expression, call["recvs"]?["dispatch"],
+                    extension ? boundArguments[0] : null, null, boundArguments);
+            }
+            boundArguments.Add(args[i]?.DeepClone());
+        }
+    }
+
     // Expand the current declaration/call before the shared inline/default walker visits its children.
     // Return only newly materialized graphs so their use-site bindings are established at this boundary.
     internal static IEnumerable<JsonNode> ExpandNode(JsonObject obj, ReferenceMetadataIndex refs,

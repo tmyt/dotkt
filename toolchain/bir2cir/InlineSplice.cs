@@ -221,44 +221,9 @@ static class InlineSplice
         //    kotlin.* host and let paramSig pick the winner, whose own `owner` names the host. In the stdlib SELF-BUILD the
         //    target is same-module (in the stash); in an app build it is cross-module (the ref.dll) — try the stash FIRST.
         //    `sameModule` gates the §4.6 newDelegate guard.
-        JsonObject payload;
-        bool sameModule;
-        if (declarationId != null)
-        {
-            var local = InlineBirStash.Declaration(declarationId);
-            if (local != null)
-            {
-                payload = (JsonObject)local.DeepClone();
-                sameModule = true;
-            }
-            else
-            {
-                var referenced = _refs?.InlineByDeclarationIdentity(declarationId);
-                if (referenced == null)
-                {
-                    FailLoud(o, owner, name, pc, ga,
-                        $"no [KotlinInline] payload for frontend declaration identity '{declarationId}'");
-                    return;
-                }
-                payload = referenced;
-                sameModule = false;
-            }
-            owner = Str(payload["owner"]);
-        }
-        else if (owner != null)
-        {
-            var r = ResolveInlinePayload(owner, name, pc, ga, paramSig);
-            if (r.payload == null) { FailLoud(o, owner, name, pc, ga, r.diag); return; }
-            payload = r.payload; sameModule = r.sameModule;
-        }
-        else
-        {
-            var (hit, sm, diag) = ResolveOwnerless(name, pc, ga, paramSig);
-            if (hit == null) { FailLoud(o, null, name, pc, ga, diag); return; }
-            payload = (JsonObject)hit.DeepClone();
-            owner = Str(payload["owner"]);   // the winner's own file-class host
-            sameModule = sm;
-        }
+        var (payload, sameModule, diagnostic) = ResolvePayload(o, InlineBirStash.Current, _refs);
+        if (payload == null) { FailLoud(o, owner, name, pc, ga, diagnostic); return; }
+        if (declarationId != null || owner == null) owner = Str(payload["owner"]);
 
         // The selected body is opaque frontend BIR, including for a same-module stash captured before phase 1. Enter
         // the shared materialization contract before payload-specific inspection, substitution, or re-hoisting. This
@@ -673,7 +638,7 @@ static class InlineSplice
 
     // #34: the TIER-2 default-value BIR string a param carries in its `@KotlinDefault(index, bir)` attr (kotc stamps it on
     // every non-const defaulted param of a qualifying fn — the SAME carrier DefaultArgSplice reads cross-module), or null.
-    static string KotlinDefaultCarrier(JsonObject p)
+    internal static string KotlinDefaultCarrier(JsonObject p)
     {
         if (p["attrs"] is not JsonArray attrs) return null;
         foreach (var a in attrs)
@@ -687,22 +652,44 @@ static class InlineSplice
 
     // §4.2 (#75 S4b) — RESOLVE the callee's raw-BIR payload by the overload key owner|name|pc|ga, disambiguating same-name
     // inline OVERLOADS by a STRUCTURAL match of each candidate's declared param types against the call's `paramSig`
-    // (InlineBirStash.SelectByParamSig — DeepEquals, exact because both sides are kotc-emitted decl type nodes). Same-module
+    // (InlineBirIndex.SelectByParamSig — DeepEquals, exact because both sides are kotc-emitted decl type nodes). Same-module
     // candidates come from the in-run stash; cross-module from the ref.dll [KotlinInline]. Returns the (cloned) unique
     // payload + whether it is same-module, or (null, false, diag) with a fail-loud reason (no match / ambiguous overloads).
-    static (JsonObject payload, bool sameModule, string diag) ResolveInlinePayload(string owner, string name, int pc, int ga, JsonArray paramSig)
+    internal static (JsonObject payload, bool sameModule, string diag) ResolvePayload(
+        JsonObject call, InlineBirIndex locals, ReferenceMetadataIndex refs)
     {
-        if (InlineBirStash.Index.TryGetValue($"{owner}|{name}|{pc}|{ga}", out var smCands) && smCands.Count > 0)
+        var owner = TypeJson.OwnerName(call["owner"]);
+        var callee = TypeJson.OwnerName(call["callee"]);
+        var name = callee != null && callee.Contains('.') ? callee[(callee.LastIndexOf('.') + 1)..] : callee;
+        if (Str(call[DeclarationIdentityBinding.Key]) is string id)
         {
-            var hit = InlineBirStash.SelectByParamSig(smCands, paramSig, out int mc);
+            if (locals.Declaration(id) is JsonObject local) return ((JsonObject)local.DeepClone(), true, null);
+            var referenced = refs?.InlineByDeclarationIdentity(id);
+            return referenced != null ? (referenced, false, null)
+                : (null, false, $"no [KotlinInline] payload for frontend declaration identity '{id}'");
+        }
+        var pc = Int(call["pc"]);
+        var ga = Int(call["ga"]);
+        var paramSig = call["paramSig"] as JsonArray;
+        if (owner != null) return ResolveInlinePayload(owner, name, pc, ga, paramSig, locals, refs);
+        var (hit, sameModule, diagnostic) = ResolveOwnerless(name, pc, ga, paramSig, locals, refs);
+        return ((JsonObject)hit?.DeepClone(), sameModule, diagnostic);
+    }
+
+    static (JsonObject payload, bool sameModule, string diag) ResolveInlinePayload(string owner, string name, int pc, int ga,
+        JsonArray paramSig, InlineBirIndex locals, ReferenceMetadataIndex refs)
+    {
+        if (locals.Index.TryGetValue($"{owner}|{name}|{pc}|{ga}", out var smCands) && smCands.Count > 0)
+        {
+            var hit = InlineBirIndex.SelectByParamSig(smCands, paramSig, out int mc);
             if (hit != null) return ((JsonObject)hit.DeepClone(), true, null);
             return (null, false, $"no unique same-module inline overload for the call's param signature "
                 + $"({smCands.Count} candidate(s), {mc} matched) — structurally-ambiguous inline overloads (e.g. differ only in generic bounds like ifEmpty)");
         }
-        var crossCands = _refs?.InlineCandidates(owner, name, pc, ga);
+        var crossCands = refs?.InlineCandidates(owner, name, pc, ga);
         if (crossCands != null && crossCands.Count > 0)
         {
-            var hit = InlineBirStash.SelectByParamSig(crossCands, paramSig, out int mc);
+            var hit = InlineBirIndex.SelectByParamSig(crossCands, paramSig, out int mc);
             if (hit != null) return ((JsonObject)hit.DeepClone(), false, null);
             return (null, false, $"no unique cross-module [KotlinInline] overload for the call's param signature "
                 + $"({crossCands.Count} candidate(s), {mc} matched) — structurally-ambiguous inline overloads (e.g. differ only in generic bounds like ifEmpty)");
@@ -714,20 +701,21 @@ static class InlineSplice
     // SAME-MODULE stash FIRST (stdlib self-build — the target is being compiled this run), then the ref.dll (app build).
     // Returns the unique paramSig-matched payload (NOT cloned) + whether it is same-module, or (null, false, diag). The
     // winner's own `owner` field names the host file class.
-    static (JsonObject hit, bool sameModule, string diag) ResolveOwnerless(string name, int pc, int ga, JsonArray paramSig)
+    static (JsonObject hit, bool sameModule, string diag) ResolveOwnerless(string name, int pc, int ga,
+        JsonArray paramSig, InlineBirIndex locals, ReferenceMetadataIndex refs)
     {
-        var smCands = InlineBirStash.OwnerlessCandidates(name, pc, ga);
+        var smCands = locals.OwnerlessCandidates(name, pc, ga);
         if (smCands != null)
         {
-            var hit = InlineBirStash.SelectByParamSig(smCands, paramSig, out int mc);
+            var hit = InlineBirIndex.SelectByParamSig(smCands, paramSig, out int mc);
             if (hit != null) return (hit, true, null);
             if (mc > 1) return (null, false, $"owner-less callInline: no unique same-module paramSig match among {smCands.Count} kotlin.* candidate(s) ({mc} matched) — structurally-ambiguous overloads (e.g. differ only in generic bounds like ifEmpty)");
             // 0 same-module matches -> fall through to the ref.dll (a same-name kotlin.* fn may live cross-module).
         }
-        var xCands = _refs?.OwnerlessInlineCandidates(name, pc, ga);
+        var xCands = refs?.OwnerlessInlineCandidates(name, pc, ga);
         if (xCands != null)
         {
-            var hit = InlineBirStash.SelectByParamSig(xCands, paramSig, out int mc);
+            var hit = InlineBirIndex.SelectByParamSig(xCands, paramSig, out int mc);
             if (hit != null) return (hit, false, null);
             return (null, false, $"owner-less callInline: no unique paramSig match among {xCands.Count} kotlin.* candidate(s) ({mc} matched) — structurally-ambiguous overloads (e.g. differ only in generic bounds like ifEmpty)");
         }
@@ -834,7 +822,7 @@ static class InlineSplice
         {
             var ownerName = TypeJson.OwnerName(o["ownerType"]);
             if (ownerName == null) return;
-            if (ResolveInlinePayload(ownerName, name, pc, ga, sig).payload is not JsonObject mp) return;
+            if (ResolveInlinePayload(ownerName, name, pc, ga, sig, InlineBirStash.Current, _refs).payload is not JsonObject mp) return;
             payload = mp;
             ownerOut = Str(payload["owner"]) ?? ownerName;
         }
@@ -845,12 +833,12 @@ static class InlineSplice
         // by name coincidence). So: owner-ful iff OwnerName is non-null.
         else if (TypeJson.OwnerName(o["owner"]) is string owner)   // owner-FUL callStatic
         {
-            if (ResolveInlinePayload(owner, name, pc, ga, sig).payload is not JsonObject op) return;
+            if (ResolveInlinePayload(owner, name, pc, ga, sig, InlineBirStash.Current, _refs).payload is not JsonObject op) return;
             payload = op; ownerOut = owner;
         }
         else   // owner-LESS callStatic (kotlin.* stdlib inline fn)
         {
-            if (ResolveOwnerless(name, pc, ga, sig).hit is not JsonObject lp) return;
+            if (ResolveOwnerless(name, pc, ga, sig, InlineBirStash.Current, _refs).hit is not JsonObject lp) return;
             payload = lp; ownerOut = null;
         }
         var recv = Str(payload["recv"]);
@@ -858,7 +846,7 @@ static class InlineSplice
 
         // #23: a member-EXTENSION callInstance carries BOTH a dispatch receiver (`o["recv"]`) and the extension receiver
         // (`args[0]`), but the stash classifies its payload `recv=="extensionParam"` (extension SHADOWS dispatch,
-        // InlineBirStash.StashMethod). For a REAL-INSTANCE member (!static) we CO-CARRY recvs.dispatch below, so
+        // InlineBirIndex.StashMethod). For a REAL-INSTANCE member (!static) we CO-CARRY recvs.dispatch below, so
         // RewriteGeneric §4.3 co-binds the payload `{k:this}` at STEP 8's fixpoint (nested forwarding keeps both receivers).
         // Companion lowering leaves the nested carrier non-static. Any static extension payload that still contains
         // `{k:this}` is an unbindable producer shape, so

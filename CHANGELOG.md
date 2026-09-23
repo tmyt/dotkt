@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Omitted defaults contribute their nullable-witness requirements to callers (#845).** Generic forwarders
+  preserve type-sensitive default behavior, while explicit arguments do not acquire unused witness parameters.
+
 - **Imported suspend defaults retain their generic declaration frame (#836).** Captured owners and method
   type parameters stay distinct from the consumer's construction frame, including nested suspend lambdas.
 

@@ -29,8 +29,17 @@ using DotKt.Bir;
 // (ReferenceMetadataIndex) keys + disambiguates identically.
 static class InlineBirStash
 {
+    internal static InlineBirIndex Current { get; private set; } = new();
+    public static void Reset() => Current = new();
+    public static void Stash(JsonNode root) => Current.Stash(root);
+}
+
+// Separate snapshots let source-level analyses use the same declaration selection as executable splicing
+// without replacing the representation-selected stash or mutating executable source graphs.
+sealed class InlineBirIndex
+{
     // owner|name|pc|ga -> candidate decl-fact payloads (one per overload sharing that key). Spans all files of ONE run.
-    public static readonly Dictionary<string, List<JsonObject>> Index = new(StringComparer.Ordinal);
+    public readonly Dictionary<string, List<JsonObject>> Index = new(StringComparer.Ordinal);
 
     // OWNER-LESS same-module index: "name|pc|ga" -> the `kotlin.*` candidate payloads across owners (the SAME-MODULE twin of
     // ReferenceMetadataIndex._ownerlessInlineCandidates). In the stdlib SELF-BUILD a `kotlin.*` scope-fn/@InlineOnly call
@@ -38,23 +47,21 @@ static class InlineBirStash
     // but its target is being compiled THIS run — so it is in the stash, NOT the ref.dll. InlineSplice consults this to
     // resolve/forward such a call same-module (the winner's own `owner` names the host). Restricted to `kotlin.*` (a user
     // owner-less inline fn cannot exist — kotc names user owners).
-    public static readonly Dictionary<string, List<JsonObject>> OwnerlessIndex = new(StringComparer.Ordinal);
+    public readonly Dictionary<string, List<JsonObject>> OwnerlessIndex = new(StringComparer.Ordinal);
 
     // #395: frontend-selected declaration identity is the authoritative overload key. The structural indexes remain
     // for CLR imports and untagged compiler intrinsics; a Kotlin call carrying an identity never re-resolves by shape.
-    public static readonly Dictionary<string, JsonObject> ByDeclarationId = new(StringComparer.Ordinal);
+    public readonly Dictionary<string, JsonObject> ByDeclarationId = new(StringComparer.Ordinal);
 
-    public static void Reset() { Index.Clear(); OwnerlessIndex.Clear(); ByDeclarationId.Clear(); }
-
-    public static JsonObject Declaration(string id) =>
+    public JsonObject Declaration(string id) =>
         id != null && ByDeclarationId.TryGetValue(id, out var payload) ? payload : null;
 
     // The same-module owner-less candidates for name|pc|ga (kotlin.* across owners), or null. InlineSplice selects the
     // unique paramSig match and reads the winner's `owner`.
-    public static List<JsonObject> OwnerlessCandidates(string name, int pc, int ga) =>
+    public List<JsonObject> OwnerlessCandidates(string name, int pc, int ga) =>
         name != null && OwnerlessIndex.TryGetValue($"{name}|{pc}|{ga}", out var lst) && lst.Count > 0 ? lst : null;
 
-    public static void Stash(JsonNode root)
+    public void Stash(JsonNode root)
     {
         if (root is not JsonObject o) return;
         var fileClass = Str(o["fileClass"]);
@@ -70,7 +77,7 @@ static class InlineBirStash
             foreach (var t in types) if (t is JsonObject to) StashType(to, fileClass, generatedMethods);
     }
 
-    static void StashType(JsonObject type, string fileClass, IReadOnlyDictionary<string, JsonObject> generatedMethods)
+    void StashType(JsonObject type, string fileClass, IReadOnlyDictionary<string, JsonObject> generatedMethods)
     {
         if (Str(type["name"]) is string owner && type["methods"] is JsonArray methods)
         {
@@ -86,7 +93,7 @@ static class InlineBirStash
             foreach (var t in nested) if (t is JsonObject to) StashType(to, fileClass, generatedMethods);
     }
 
-    static void StashMethod(string owner, JsonObject mo, string fileClass,
+    void StashMethod(string owner, JsonObject mo, string fileClass,
         IReadOnlyDictionary<string, JsonObject> generatedMethods, string lookupOwner = null)
     {
         if (mo["mods"] is not JsonObject mods || Bool(mods["inline"]) != true) return;

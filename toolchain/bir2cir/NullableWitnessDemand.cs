@@ -8,6 +8,8 @@ using DotKt.Bir;
 // this analysis: it is a source/declaration fact, whereas a witness is needed only when a nullable-sensitive operation
 // consumes a type variable.  Demand flows backwards through exact declaration identities and through the explicit
 // positional type-argument correspondence on every lifted/materialized frame.
+// Before the fixed point, private source-graph snapshots materialize actually omitted defaults, including
+// callInline slots. Those operations belong to their omitting callers, not unconditionally to their declarations.
 sealed class NullableWitnessDemand
 {
     readonly IReadOnlyDictionary<string, int[]> _localDeclarations;
@@ -24,6 +26,12 @@ sealed class NullableWitnessDemand
     public static NullableWitnessDemand Collect(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs)
     {
         var rootList = roots.ToList();
+        if (refs != null)
+        {
+            var inlineDeclarations = new InlineBirIndex();
+            foreach (var root in rootList) inlineDeclarations.Stash(root.DeepClone());
+            rootList = rootList.Select(root => DefaultArgSplice.CreateDemandView(root, refs, inlineDeclarations)).ToList();
+        }
         var methods = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
 
         void Owner(JsonObject owner)
