@@ -1015,13 +1015,17 @@ static partial class ClrMemberResolution
     // accessibility and overload ranking; a second approximation here can materialize a sibling's value irreversibly.
     internal static bool TryResolveExternalMethodForDefaults(ReferenceMetadataIndex refs, TypeNode.Fqn ownerFqn,
         string name, int methodArity, bool isStatic, IReadOnlyList<TypeNode> callSignature,
-        out MethodInfo declaration)
+        out MethodInfo declaration, string propertyKind = null)
     {
         declaration = null;
         if (refs == null || ownerFqn == null || name == null || callSignature == null) return false;
         _refs = refs;
         var open = ResolveOwnerType(ownerFqn);
         if (open == null) return false;
+        // Defaults belong to the same accessor MethodDef used by later interop
+        // binding, not to the Kotlin operator spelling of an indexed property.
+        if (propertyKind is "index-get" or "index-set")
+            name = NetInteropBinding.DefaultIndexerAccessor(open, propertyKind == "index-set") ?? name;
         TypeNode Physical(TypeNode type, bool typeArg) => BirTypeLowering.CanonicalPhysicalSlotType(
             BirTypeLowering.LowerPhysicalType(
                 type, refs.Aliases, refs.IsValueType, refs.PhysicalTypeNames, typeArg, nullableFrames: refs.NullableTypeFrames));
