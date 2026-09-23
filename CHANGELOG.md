@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Imported member-extension indexers retain both receivers (#832).** Calls to extension `get`/`set`
+  preserve their dispatch and extension operands, generic frames, evaluation order, and virtual dispatch.
+
 - **Imported default lambdas preserve their generic frame (#833).** Ordinary and inline default expansion
   bind closure declarations before substituting caller types, retaining exact delegate and receiver signatures.
 
