@@ -1282,6 +1282,10 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 	// path — each matching where emitOwnerfulInlineNode now keys the [KotlinInline] owner (the real declaring class).
 	val inlineDecl = callee.let { if (it.isFakeOverride) it.resolveFakeOverride() ?: it else it }
 	if (inlineDecl.body != null && callNeedsSplice(call)) return inlineSpliceCallSameModule(call)
+	// Imported inline members must retain splice semantics before any ordinary
+	// member or operator path can materialize their lambda arguments as delegates.
+	if (inlineDecl.body == null && callNeedsSplice(call) && dispatchReceiver(call) != null)
+		return emitOwnerfulInlineNode(call)
 
 	// A property restored from KLIB with Flags.IS_STATIC_PROPERTY is represented by FIR/IR as a static declaration,
 	// but a qualified access arrives here through a generated fake-override accessor in Kotlin 2.4. That wrapper has
@@ -1588,20 +1592,6 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 			return """{"k":"callInstance","virtual":$ixVirtual,"ownerType":${str(mt)},"method":${str(name)},"prop":"index-$name"$ixSignature,"argTypes":[$ixArgTypes],"ret":$ixRet,"recv":${expr(recv)},"args":[${a.joinToString(",") { expr(it) }}]${superTag(call)}}"""
 		}
 	}
-
-	// #60 (W1): a cross-module inline MEMBER (`body==null`, a DISPATCH receiver present) taking ANY lambda arg (AXIS ①)
-	// MUST be source-inlined — a dll2klib-projected DotKt member AND a KLIB stdlib member alike. kotc is body-BLIND here
-	// (the klib is metadata-only; the [KotlinInline] payload lives on the ref.dll), so it emits the owner-ful `callInline`
-	// UNCONDITIONALLY and bir2cir — which holds the payload — makes the splice-or-fail-loud eligibility decision (it
-	// resolves the payload off the ref.dll `InlineCandidates`, and its §4.3 rebinds the payload's `{k:this}` to the
-	// caller-provided `recvs.dispatch`). This MUST run BEFORE the CLR-interop member block below: that block fires for ANY
-	// projected .NET owner (`clrName(declaringClass) != null`) and would otherwise emit a plain `callInstance` + a REAL
-	// delegate for the block, whose non-local `return` returns from the DELEGATE, not the caller — a SILENT miscompile.
-	// The member-EXTENSION dual-receiver (#23) shape rides through too (both receivers carried): bir2cir splices the
-	// SOUND pure-extension idiom (body reads only the extension `this`) and FAILS LOUD on a body that reads the dispatch
-	// receiver (a `{k:this}`) — converting the old silent #23 gap to loud until W2 co-binds both receivers.
-	if (inlineDecl.body == null && callNeedsSplice(call) && dispatchReceiver(call) != null)
-		return emitOwnerfulInlineNode(call)
 
 	// NEUTRAL .NET-interop fact-carrier selector (A2/#61 — REALIZED; NOT a .NET call-SHAPE decision). This block
 	// decides NO CLR shape: it emits ONLY plain `callStatic`/`callInstance` nodes carrying frontend FACTS —
