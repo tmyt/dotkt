@@ -4,7 +4,7 @@
 // BCL get_Item/set_Item indexer). Consumed cross-module: `r[1]` / `r2[0] = x`.
 package roundtrip.genop
 
-class Arr<T>(val a: Array<T>) {
+open class Arr<T>(val a: Array<T>) {
     operator fun get(i: Int): T = a[i]
     operator fun set(i: Int, x: T) { a[i] = x }
 }

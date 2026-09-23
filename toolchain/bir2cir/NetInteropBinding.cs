@@ -200,6 +200,14 @@ static class NetInteropBinding
         // UnsafeAccessorLowering selects legal access after defaults, closures and suspend bodies move.
         if (Str(node["memberVisibility"]) is "private" or "protected")
         {
+            // Preserve the plain call and its declaration frame for access lowering, but bind
+            // the indexed-property role now: UnsafeAccessor names a CLR MethodDef, not Kotlin get/set.
+            if (propertyKind is "index-get" or "index-set"
+                && DefaultIndexerAccessor(netType, propertyKind == "index-set") is string accessor)
+            {
+                node["method"] = accessor;
+                node.Remove("prop");
+            }
             if (isStatic) node["ownerType"] = CloseStaticOwner(ownerJson, netType);
             return;
         }
@@ -749,6 +757,8 @@ static class NetInteropBinding
                 foreach (var p in cur.GetProperties(Flags))
                 {
                     if (p.GetIndexParameters().Length == 0) continue;   // not an indexer
+                    // Overloaded indexers need not expose both accessors on every overload.
+                    if ((isSet ? p.SetMethod : p.GetMethod) == null) continue;
                     if (defaultMember != null && p.Name == defaultMember) { chosen = p; break; }
                     chosen ??= p;
                 }
