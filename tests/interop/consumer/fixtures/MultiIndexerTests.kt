@@ -12,6 +12,11 @@ private fun <T> multiIndexMark(log: MutableList<String>, label: String, value: T
     return value
 }
 
+private fun multiIndexThrow(log: MutableList<String>): Int {
+    log.add("X")
+    throw IllegalStateException("index")
+}
+
 class MultiIndexerTests {
     @TestAttribute
     fun allIndicesAndAssignedValueKeepSourceOrder() {
@@ -36,6 +41,18 @@ class MultiIndexerTests {
         grid[1, 2, 3] = 300
         check(grid.Stored == 177)
         check(grid[1, 2, 3] == 300)
+        log.clear()
+        var failed = false
+        try {
+            multiIndexMark(log, "R", grid)[multiIndexThrow(log), multiIndexMark(log, "B", 3)] =
+                multiIndexMark(log, "V", 41)
+        } catch (e: IllegalStateException) {
+            failed = true
+            check(e.message == "index")
+        }
+        check(failed)
+        check(log.joinToString("") == "RX")
+        check(grid.Stored == 177)
     }
 
     @TestAttribute
@@ -52,5 +69,11 @@ class MultiIndexerTests {
         check(integers.read() == 19)
         integers.write(37)
         check(integers.captured()() == 37)
+        val nullable = ProtectedMultiGrid<String?>(null)
+        check(nullable.read() == null)
+        nullable.write("present")
+        check(nullable.captured()() == "present")
+        nullable.write(null)
+        check(nullable.read() == null)
     }
 }
