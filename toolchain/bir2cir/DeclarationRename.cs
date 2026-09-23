@@ -86,14 +86,17 @@ static class DeclarationRename
                         if (!inIface)
                         {
                             if (obj.ContainsKey("override")) obj["override"] = true;
-                            if (obj.ContainsKey("vis")) obj["vis"] = "public";
+                            var clrBase = ResolveNetClassOwner(obj, ovs, refs, out var clrBaseReturn);
+                            // An interface implementation needs public visibility; overriding a class accessor
+                            // preserves the Kotlin declaration's accessibility, including protected indexers.
+                            if (clrBase == null && obj.ContainsKey("vis")) obj["vis"] = "public";
                             // #73 M4-c: an accessor overriding a reference-KLIB-projected .NET base CLASS virtual property
                             // needs the `pendingOverrideOwner` field so ilemit's DefineMethodOverride reuses the base slot (an
                             // INTERFACE member binds by name at type-load, so it needs no pendingOverrideOwner). kotc emits ONLY
                             // the plain override method + its `overrides` marker (its `clrAccessorMethod` producer was
                             // retired in #73 M4); this is the SOLE source of the pendingOverrideOwner field, derived off the refs.
                             // The guard is defensive (no kotc producer remains to double-stamp).
-                            if (ResolveNetClassOwner(obj, ovs, refs, out var clrBaseReturn) is TypeNode.Fqn clrBase)
+                            if (clrBase != null)
                             {
                                 obj["pendingOverrideOwner"] ??= TypeJson.Write(clrBase);
                                 obj["pendingOverrideReturn"] ??= TypeJson.Write(clrBaseReturn);
@@ -135,6 +138,11 @@ static class DeclarationRename
             var overrideKind = (oo["kind"] as JsonValue)?.GetValue<string>();
             var reflected = ReferenceMetadataIndex.ReflectedOwnerFqn(owner);
             if (refs.ResolveNetType(reflected, ownerSpec.Args?.Length ?? 0) is not Type nt || !nt.IsClass) continue;   // IsClass excludes interface + struct
+            if (overrideKind == "method"
+                && TryCallableSignature(declaration, out var indexSignature, out var indexMethodArity)
+                && refs.TryProjectedIndexerSlot(ownerSpec, member, indexMethodArity, indexSignature,
+                    out _, out slotReturn))
+                return new TypeNode.Fqn(reflected, ownerSpec.Args);
             if (!TryExactPropertySlot(declaration, refs, ownerSpec, member, overrideKind,
                     out _, out var physicalProperty, out _, out var exactReturn)
                 || !HasOverridableAccessor(nt, physicalProperty, overrideKind)) continue;
@@ -203,6 +211,8 @@ static class DeclarationRename
             }
             if (!TryCallableSignature(declaration, out var signature, out var methodArity)
                 || signature.Length != arity) continue;
+            if (refs.TryProjectedIndexerSlot(ownerSpec, member, methodArity, signature, out var indexerSlot, out _))
+                return indexerSlot;
             // A declaration's params live in the declaring type's frame, so close the referenced ancestor into that
             // frame through the override edge. A call's sig is the SELECTED CALLEE DECLARATION vector (§2.2), but the
             // frontend can state an inherited slot either in its open declaration frame (!T) or already constructed

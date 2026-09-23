@@ -35,7 +35,7 @@ import org.jetbrains.kotlin.fir.backend.Fir2IrExtensions
 import org.jetbrains.kotlin.fir.pipeline.Fir2IrActualizedResult
 import org.jetbrains.kotlin.fir.pipeline.convertToIrAndActualize
 import org.jetbrains.kotlin.ir.backend.js.lower.serialization.ir.JsManglerIr
-import org.jetbrains.kotlin.ir.types.IrTypeSystemContextImpl
+import org.jetbrains.kotlin.backend.jvm.JvmIrTypeSystemContext
 import org.jetbrains.kotlin.metadata.deserialization.BinaryVersion
 import org.jetbrains.kotlin.metadata.deserialization.MetadataVersion
 import org.jetbrains.kotlin.metadata.jvm.deserialization.JvmProtoBufUtil
@@ -120,7 +120,9 @@ object ClrCommonFir2IrPipelinePhase : PipelinePhase<MetadataFrontendPipelineArti
 			irMangler = JsManglerIr,
 			visibilityConverter = ClrFir2IrVisibilityConverter,
 			kotlinBuiltIns = DefaultBuiltIns.Instance,
-			typeSystemContextProvider = ::IrTypeSystemContextImpl,
+			// Pair the flexible-type annotation producer below with its type-system reader. The common
+			// context treats the annotated upper bound as rigid and loses valid platform-type override edges.
+			typeSystemContextProvider = ::JvmIrTypeSystemContext,
 			// Install the special-annotations provider so Fir2Ir attaches the `@kotlin.internal.ir.FlexibleNullability`
 			// marker onto a platform/flexible IR type `T!` (`(T..T?)`). Without it the flexible upper bound collapses to
 			// a plain `T?` indistinguishable from a genuine user `Int?`, so a dll2klib-projected `[MaybeNull]` value-type
