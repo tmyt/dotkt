@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Spliced closures use their consumer's generic owner (#831).** Inline and default-argument expansion
+  no longer retain the producer's outer-parameter segment after moving a synthesized type to its caller.
+
 - **Imported inline operators preserve inline semantics (#829).** Indexing calls expand imported inline
   bodies before ordinary operator binding, preserving non-local returns across Kotlin DLL boundaries.
 

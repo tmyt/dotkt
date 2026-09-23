@@ -18,6 +18,16 @@ static class TypeOwnershipLowering
 
     static string Str(JsonNode node) => (node as JsonValue)?.GetValue<string>();
 
+    // A spliced declaration keeps its own generic frame, but its captured-owner
+    // segment belongs to the old lexical owner. Rebuild that segment from the
+    // consumer's explicit owner facts in PrepareSplicedOwnershipFacts.
+    internal static void TransferSyntheticOwner(JsonObject type, string owner)
+    {
+        type["semanticOwner"] = owner;
+        type.Remove("outerTypeParamCount");
+        type.Remove("outerTypeParamOffset");
+    }
+
     // Lifted local/anonymous implementation types keep Kotlin semantic generic order in BIR:
     // [own..., lexical-owner..., other captured...]. CLR nested TypeDefs require the lexical-owner segment first.
     // Project the declaration slots, every type-scope tv in the declaration, and every construction/application as
