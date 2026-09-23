@@ -2550,10 +2550,8 @@ static class InlineSplice
     // `scope:method` value stays (it resolves a frame up), and a `tv` entry in `dispatchTypeArgs` (same-class `this`
     // identity, or a caller method param) is likewise inserted verbatim, not re-substituted. `dispatchTypeArgs` is null/empty
     // when kotc carried none (no dispatch / non-generic owner / receiver-class != owner / tv-render / arity mismatch).
-    // TYPE-SCOPE BOUNDARY (hazard): a `synthClass` (closure/SAM class), a `{k:typeDef}` local class, and a
-    // `newSuspendLambda` encode their OWN class type params as `tv{scope:type,i}` — the OWNER-class dispatchTypeArgs must
-    // NOT reach them. `typeScope` flips off descending through those; METHOD-scope subst continues everywhere (a closure
-    // body legitimately references the enclosing `tv{scope:method,i}`).
+    // Declaration and construction frames are distinct. A source suspend lambda retains its declaration frame
+    // below while its application is substituted; synthetic classes and dense carriers have their own boundaries.
     internal static void SubstTvIn(JsonNode node, JsonArray typeArgs, int ga, JsonArray dispatchTypeArgs = null, bool typeScope = true)
     {
         if (node is JsonObject o)

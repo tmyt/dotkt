@@ -186,12 +186,12 @@ static class SuspendLambdaLowering
 
     static JsonNode BuildLambda(JsonObject node, string ctx, string owner, List<JsonNode> newTypes, int[] counter, bool baseIsLocal, string outerSelf)
     {
+        var ownerTypeParamCount = NormalizeOwnerCapturePrefix(node, owner);
         // Bottom-up: lower any nested suspend lambdas inside THIS lambda's body first (their SMs + `new`
         // replacements land before this lambda's SM is built over the already-lowered body).
         var body = node["body"] as JsonArray ?? new JsonArray();
         Walk(body, ctx, owner, newTypes, counter, baseIsLocal, outerSelf);
 
-        var ownerTypeParamCount = NormalizeOwnerCapturePrefix(node, owner);
         var arity = IntOf(node["arity"]);
         var captureSlots = ReadCaptureSlots(node["captures"]);
         var outerSlots = captureSlots.Where(capture => capture.Outer).ToList();
@@ -305,6 +305,8 @@ static class SuspendLambdaLowering
             ? declaredOwnerParams : new JsonArray();
 
         var oldArgs = node["typeArgs"] as JsonArray ?? new JsonArray();
+        // Splicing substitutes the application, not the lambda's declaration slots. Unspliced source lambdas
+        // still carry the original correspondence directly on their construction edge.
         var declarationArgs = node[SplicedDeclarationFrameKey] as JsonArray ?? oldArgs;
         var oldNames = node["typeParams"] as JsonArray ?? new JsonArray();
         var oldDecls = node["typeParamDecls"] as JsonArray;
@@ -413,7 +415,12 @@ static class SuspendLambdaLowering
                 }
         }
 
-        // Keep the construction channel in the enclosing frame; every other type occurrence moves with the SM body.
+        // Construction operands already belong to the enclosing caller (including cold-state-machine field reads).
+        // Rebinding those with the declaration would apply the donor-to-caller mapping a second time.
+        var constructionValues = node["capValues"];
+        var constructionFunctionType = node["funcType"];
+        node.Remove("capValues");
+        node.Remove("funcType");
         node.Remove("typeArgs");
         node.Remove(SplicedDeclarationFrameKey);
         node.Remove("typeFrame");
@@ -422,6 +429,8 @@ static class SuspendLambdaLowering
         node["typeParams"] = names;
         node["typeParamDecls"] = declarations;
         node["typeArgs"] = args;
+        if (constructionValues != null) node["capValues"] = constructionValues;
+        if (constructionFunctionType != null) node["funcType"] = constructionFunctionType;
         return ownerParams.Count;
     }
 
