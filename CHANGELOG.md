@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Imported default lambdas preserve their generic frame (#833).** Ordinary and inline default expansion
+  bind closure declarations before substituting caller types, retaining exact delegate and receiver signatures.
+
 - **Spliced closures use their consumer's generic owner (#831).** Inline and default-argument expansion
   no longer retain the producer's outer-parameter segment after moving a synthesized type to its caller.
 

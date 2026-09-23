@@ -464,6 +464,9 @@ static class DefaultArgSplice
             throw new InvalidOperationException(
                 $"default argument splice for {method} has no authored semantic use-site owner");
         RehomeSynthClasses(parsed, owner, Interlocked.Increment(ref _counter));
+        // Preserve each synthesized declaration's own frame before construction
+        // arguments are replaced by types from the caller's unrelated frame.
+        ClosureSynthesis.PrebindSplicedFrames(parsed);
         // CLOSE THE CARRIER'S OWN TYPE FRAME, before its tokens are bound. The carrier is the default as the CALLEE
         // wrote it, so a generic callee's type parameters ride it as positional `tv`s — `fun <T> f(xs: MutableList<T> =
         // mutableListOf())` carries `mutableListOf<tv{method,0}>()`. Nothing downstream resolves those in the
