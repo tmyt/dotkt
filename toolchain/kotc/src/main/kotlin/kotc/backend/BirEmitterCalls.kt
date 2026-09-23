@@ -1284,6 +1284,8 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 	if (inlineDecl.body != null && callNeedsSplice(call)) return inlineSpliceCallSameModule(call)
 	// Imported inline members must retain splice semantics before any ordinary
 	// member or operator path can materialize their lambda arguments as delegates.
+	// The KLIB has no body: emit the Kotlin call facts here, and let bir2cir
+	// resolve the carried inline payload and determine splice eligibility.
 	if (inlineDecl.body == null && callNeedsSplice(call) && dispatchReceiver(call) != null)
 		return emitOwnerfulInlineNode(call)
 

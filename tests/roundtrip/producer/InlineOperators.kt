@@ -11,3 +11,14 @@ open class InlineOperator<T>(val value: T) {
 
     inline operator fun get(noinline block: () -> T, marker: Boolean): T = block()
 }
+
+class InlineDefaultOperator {
+    inline operator fun get(block: () -> Int, marker: Int = 17): Int = marker + block()
+}
+
+class InlineCrossOperator {
+    inline operator fun get(crossinline block: () -> Int): Int {
+        val invoke = { block() }
+        return invoke()
+    }
+}
