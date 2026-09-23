@@ -2945,7 +2945,7 @@ static class InlineSplice
                 // carries kotc's exact semantic use-site owner, so replacement is an authored ownership transfer — no
                 // generated-name or body-shape inference in bir2cir. ClosureSynthesis preserves this fact until the
                 // single semanticOwner -> nestedIn representation boundary.
-                sc["semanticOwner"] = consumerSemanticOwner;
+                TypeOwnershipLowering.TransferSyntheticOwner(sc, consumerSemanticOwner);
                 if (Str(sc["name"]) is string old && !old.EndsWith("$sp" + id, StringComparison.Ordinal))
                     RenameFqnRefs(o, old, old + "$sp" + id);
             }

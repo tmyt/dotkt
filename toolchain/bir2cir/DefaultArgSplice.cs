@@ -490,7 +490,7 @@ static class DefaultArgSplice
             if (Str(obj["k"]) is "callInline" or "callEval") obj["semanticOwner"] = semanticOwner;
             if (obj["synthClass"] is JsonObject synth)
             {
-                synth["semanticOwner"] = semanticOwner;
+                TypeOwnershipLowering.TransferSyntheticOwner(synth, semanticOwner);
                 if (Str(synth["name"]) is string oldName)
                     RenameFqnRefs(obj, oldName, oldName + "$dflt" + cloneId);
             }
