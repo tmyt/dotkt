@@ -31,6 +31,7 @@ using DotKt.Bir;
 
 static class SuspendLambdaLowering
 {
+    internal const string SplicedDeclarationFrameKey = "_suspendDeclarationTypeArgs";
     readonly record struct CaptureSlot(string Name, TypeNode Type, bool Outer);
 
     static readonly TypeNode ContAnyTn = new TypeNode.Fqn("kotlin.coroutines.Continuation", new TypeNode[] { new TypeNode.Fqn("kotlin.Any") });
@@ -304,6 +305,7 @@ static class SuspendLambdaLowering
             ? declaredOwnerParams : new JsonArray();
 
         var oldArgs = node["typeArgs"] as JsonArray ?? new JsonArray();
+        var declarationArgs = node[SplicedDeclarationFrameKey] as JsonArray ?? oldArgs;
         var oldNames = node["typeParams"] as JsonArray ?? new JsonArray();
         var oldDecls = node["typeParamDecls"] as JsonArray;
         var denseFrame = Str(node["typeFrame"]) == "dense";
@@ -329,7 +331,7 @@ static class SuspendLambdaLowering
         var frameSlots = new Dictionary<(string Scope, int Index), TypeNode>();
         (string Scope, int Index)? FrameKey(int position)
         {
-            if (oldArgs[position] is not JsonObject tv || Str(tv["t"]) != "tv"
+            if (declarationArgs[position] is not JsonObject tv || Str(tv["t"]) != "tv"
                 || Str(tv["scope"]) is not string scope || tv["i"] is not JsonValue index
                 || !index.TryGetValue<int>(out var original)) return null;
             return (scope, denseFrame ? position : original);
@@ -413,6 +415,7 @@ static class SuspendLambdaLowering
 
         // Keep the construction channel in the enclosing frame; every other type occurrence moves with the SM body.
         node.Remove("typeArgs");
+        node.Remove(SplicedDeclarationFrameKey);
         node.Remove("typeFrame");
         RewriteTypes(node);
         RewriteTypes(declarations);

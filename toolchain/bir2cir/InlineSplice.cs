@@ -2558,6 +2558,17 @@ static class InlineSplice
     {
         if (node is JsonObject o)
         {
+            if (Str(o["k"]) == "newSuspendLambda" && Str(o["typeFrame"]) != "dense")
+            {
+                // Preserve the declaration-to-enclosing-frame correspondence before replacing its application.
+                // Captures/body/constraints still belong to that declaration, not the importing caller's slots.
+                if (o[SuspendLambdaLowering.SplicedDeclarationFrameKey] == null && o["typeArgs"] is JsonArray original)
+                    o[SuspendLambdaLowering.SplicedDeclarationFrameKey] = original.DeepClone();
+                foreach (var key in new[] { "typeArgs", "capValues", "funcType", "sty" })
+                    if (o[key] is JsonNode construction)
+                        SubstTvIn(construction, typeArgs, ga, dispatchTypeArgs, typeScope);
+                return;
+            }
             if (Str(o["t"]) == "tv")
             {
                 var scope = Str(o["scope"]);
