@@ -8,7 +8,29 @@ private class CovariantContextCompletion<T> : Continuation<T> {
     override fun resumeWith(result: Result<T>) {}
 }
 
+private interface CovariantContextSlot<T> { val context: CoroutineContext }
+private class NestedContinuationContext : CovariantContextSlot<List<Continuation<Int>>> {
+    override val context = EmptyCoroutineContext
+}
+private class NestedResultContext : CovariantContextSlot<List<Result<Int>>> {
+    override val context = EmptyCoroutineContext
+}
+private open class CovariantCompletionBase<T> { open fun completion(): T? = null }
+private class NarrowCompletionBase : CovariantCompletionBase<Continuation<Int>>() {
+    override fun completion(): Continuation<Int> = CovariantContextCompletion<Int>()
+}
+
 class CovariantContinuationContextTests {
+    @TestAttribute
+    fun constructedBaseAndNestedInterfaceOwnersUseTheSameRepresentation() {
+        val continuationSlot: CovariantContextSlot<List<Continuation<Int>>> = NestedContinuationContext()
+        val resultSlot: CovariantContextSlot<List<Result<Int>>> = NestedResultContext()
+        check(continuationSlot.context === EmptyCoroutineContext)
+        check(resultSlot.context === EmptyCoroutineContext)
+        val base: CovariantCompletionBase<Continuation<Int>> = NarrowCompletionBase()
+        check(base.completion()!!.context === EmptyCoroutineContext)
+    }
+
     @TestAttribute
     fun anonymousContextDispatchesThroughTheErasedInterface() {
         val integers = object : Continuation<Int> {

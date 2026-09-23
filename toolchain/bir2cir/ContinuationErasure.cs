@@ -46,6 +46,7 @@ static class ContinuationErasure
 {
     const string Cont = "kotlin.coroutines.Continuation";
     const string ResultFqn = "kotlin.Result";
+    static readonly string[] MethodImplDescriptorKeys = { "clrInterfaceImpls", "clrBaseImpls" };
     static IReadOnlySet<string> _continuationTypeNames = new HashSet<string>(StringComparer.Ordinal) { Cont };
     static IReadOnlySet<string> _resultTypeNames = new HashSet<string>(StringComparer.Ordinal) { ResultFqn };
 
@@ -132,7 +133,7 @@ static class ContinuationErasure
                 EraseResultFactoryTypeArgs(obj);
                 // MethodImpl owners are constructed physical types, unlike semantic override edges or a
                 // static call's declaration container. Their instantiation must match the implemented supertype.
-                foreach (var descriptorsKey in new[] { "clrInterfaceImpls", "clrBaseImpls" })
+                foreach (var descriptorsKey in MethodImplDescriptorKeys)
                     if (obj[descriptorsKey] is JsonArray descriptors)
                         foreach (var descriptor in descriptors.OfType<JsonObject>())
                             if (TypeJson.Read(descriptor["owner"]) is TypeNode owner)
