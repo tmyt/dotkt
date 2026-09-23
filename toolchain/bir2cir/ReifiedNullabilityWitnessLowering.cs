@@ -134,7 +134,8 @@ static class ReifiedNullabilityWitnessLowering
                         && Str(obj["typeFrame"]) != "dense"
                         && obj["typeArgs"] is JsonArray suspendTypeArgs
                         && demand.MaterializedFrameIndices(
-                            obj["body"] ?? new JsonArray(), suspendTypeArgs, generatedFrames,
+                            obj["body"] ?? new JsonArray(),
+                            obj[SuspendLambdaLowering.SplicedDeclarationFrameKey] as JsonArray ?? suspendTypeArgs, generatedFrames,
                             dense: false)
                             is { Length: > 0 } suspendIndices)
                     {
@@ -459,7 +460,8 @@ static class ReifiedNullabilityWitnessLowering
             captures.Add(new JsonObject { ["name"] = name, ["type"] = Fqn("kotlin.Int") });
             capValues.Add(WitnessFor(typeArgs[index], callerWitnesses));
             var local = new JsonObject { ["k"] = "local", ["name"] = name };
-            BindCorrespondingWitness(typeArgs[index], local, methodWitnesses, typeWitnesses);
+            var declarationArgs = node[SuspendLambdaLowering.SplicedDeclarationFrameKey] as JsonArray ?? typeArgs;
+            BindCorrespondingWitness(declarationArgs[index], local, methodWitnesses, typeWitnesses);
         }
         if (node["body"] is JsonNode body)
             walk(body, new WitnessFrame(methodWitnesses, typeWitnesses));

@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Imported suspend defaults retain their generic declaration frame (#836).** Captured owners and method
+  type parameters stay distinct from the consumer's construction frame, including nested suspend lambdas.
+
 - **Covariant coroutine context overrides retain valid interface slots (#837).** MethodImpl owners use
   the same erased coroutine representation as implemented interfaces, including referenced physical types.
 

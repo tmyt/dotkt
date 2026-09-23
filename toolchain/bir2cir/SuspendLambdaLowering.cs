@@ -31,6 +31,12 @@ using DotKt.Bir;
 
 static class SuspendLambdaLowering
 {
+    internal const string SplicedDeclarationFrameKey = "_suspendDeclarationTypeArgs";
+    // A spliced source lambda retains its donor declaration. These are the only fields evaluated in
+    // the importing caller's frame; generic rewrites must not cross into the declaration correspondence.
+    internal static bool IsSplicedDeclarationField(JsonObject node, string key) =>
+        Str(node["k"]) == "newSuspendLambda" && node[SplicedDeclarationFrameKey] != null
+        && key is not ("typeArgs" or "capValues" or "funcType" or "sty");
     readonly record struct CaptureSlot(string Name, TypeNode Type, bool Outer);
 
     static readonly TypeNode ContAnyTn = new TypeNode.Fqn("kotlin.coroutines.Continuation", new TypeNode[] { new TypeNode.Fqn("kotlin.Any") });
@@ -185,12 +191,12 @@ static class SuspendLambdaLowering
 
     static JsonNode BuildLambda(JsonObject node, string ctx, string owner, List<JsonNode> newTypes, int[] counter, bool baseIsLocal, string outerSelf)
     {
+        var ownerTypeParamCount = NormalizeOwnerCapturePrefix(node, owner);
         // Bottom-up: lower any nested suspend lambdas inside THIS lambda's body first (their SMs + `new`
         // replacements land before this lambda's SM is built over the already-lowered body).
         var body = node["body"] as JsonArray ?? new JsonArray();
         Walk(body, ctx, owner, newTypes, counter, baseIsLocal, outerSelf);
 
-        var ownerTypeParamCount = NormalizeOwnerCapturePrefix(node, owner);
         var arity = IntOf(node["arity"]);
         var captureSlots = ReadCaptureSlots(node["captures"]);
         var outerSlots = captureSlots.Where(capture => capture.Outer).ToList();
@@ -304,6 +310,9 @@ static class SuspendLambdaLowering
             ? declaredOwnerParams : new JsonArray();
 
         var oldArgs = node["typeArgs"] as JsonArray ?? new JsonArray();
+        // Splicing substitutes the application, not the lambda's declaration slots. Unspliced source lambdas
+        // still carry the original correspondence directly on their construction edge.
+        var declarationArgs = node[SplicedDeclarationFrameKey] as JsonArray ?? oldArgs;
         var oldNames = node["typeParams"] as JsonArray ?? new JsonArray();
         var oldDecls = node["typeParamDecls"] as JsonArray;
         var denseFrame = Str(node["typeFrame"]) == "dense";
@@ -329,7 +338,7 @@ static class SuspendLambdaLowering
         var frameSlots = new Dictionary<(string Scope, int Index), TypeNode>();
         (string Scope, int Index)? FrameKey(int position)
         {
-            if (oldArgs[position] is not JsonObject tv || Str(tv["t"]) != "tv"
+            if (declarationArgs[position] is not JsonObject tv || Str(tv["t"]) != "tv"
                 || Str(tv["scope"]) is not string scope || tv["i"] is not JsonValue index
                 || !index.TryGetValue<int>(out var original)) return null;
             return (scope, denseFrame ? position : original);
@@ -391,6 +400,7 @@ static class SuspendLambdaLowering
 	                {
 	                    var value = obj[key];
 	                    if (value == null) continue;
+                        if (IsSplicedDeclarationField(obj, key)) continue;
 	                    // Declaration descriptors are in the CALLEE's generic frame. Only lexical operands owned by
 	                    // the enclosing method move into the dense suspend-SM frame. A constructor has no method type
 	                    // parameters, so method TVs in `new.argTypes` necessarily belong to this lexical caller.
@@ -411,14 +421,28 @@ static class SuspendLambdaLowering
                 }
         }
 
-        // Keep the construction channel in the enclosing frame; every other type occurrence moves with the SM body.
+        // Construction operands already belong to the enclosing caller (including cold-state-machine field reads).
+        // Rebinding those with the declaration would apply the donor-to-caller mapping a second time.
+        var constructionValues = node["capValues"];
+        var constructionFunctionType = node["funcType"];
+        var constructionStaticType = node["sty"];
+        node.Remove("capValues");
+        node.Remove("funcType");
+        node.Remove("sty");
         node.Remove("typeArgs");
+        node.Remove(SplicedDeclarationFrameKey);
         node.Remove("typeFrame");
         RewriteTypes(node);
-        RewriteTypes(declarations);
+        // The complete owner prefix was copied from the caller and is already in that frame. Only the
+        // lambda-owned suffix constraints were authored in the donor declaration frame.
+        for (var index = ownerParams.Count; index < declarations.Count; index++)
+            RewriteTypes(declarations[index]);
         node["typeParams"] = names;
         node["typeParamDecls"] = declarations;
         node["typeArgs"] = args;
+        if (constructionValues != null) node["capValues"] = constructionValues;
+        if (constructionFunctionType != null) node["funcType"] = constructionFunctionType;
+        if (constructionStaticType != null) node["sty"] = constructionStaticType;
         return ownerParams.Count;
     }
 

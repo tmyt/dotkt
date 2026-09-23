@@ -2022,6 +2022,7 @@ static class InlineSplice
             bool nestedSm = Str(o["k"]) == "newSuspendLambda" && Str(o["typeFrame"]) == "dense";
             foreach (var kv in o)
                 if (kv.Value != null && !IsIndependentDeclarationFrameField(o, kv.Key) && kv.Key != "synthClass"
+                    && !SuspendLambdaLowering.IsSplicedDeclarationField(o, kv.Key)
                     && !(nestedSm && SuspendLambdaOwnFrame.Contains(kv.Key)))
                     CollectTvKeys(kv.Value, keys);
         }
@@ -2048,6 +2049,7 @@ static class InlineSplice
             bool nestedSm = Str(o["k"]) == "newSuspendLambda" && Str(o["typeFrame"]) == "dense";
             foreach (var kv in o)
                 if (kv.Value != null && !IsIndependentDeclarationFrameField(o, kv.Key) && kv.Key != "synthClass"
+                    && !SuspendLambdaLowering.IsSplicedDeclarationField(o, kv.Key)
                     && !(nestedSm && SuspendLambdaOwnFrame.Contains(kv.Key)))
                     RenumberTvs(kv.Value, remap, classFrame);
         }
@@ -2550,14 +2552,23 @@ static class InlineSplice
     // `scope:method` value stays (it resolves a frame up), and a `tv` entry in `dispatchTypeArgs` (same-class `this`
     // identity, or a caller method param) is likewise inserted verbatim, not re-substituted. `dispatchTypeArgs` is null/empty
     // when kotc carried none (no dispatch / non-generic owner / receiver-class != owner / tv-render / arity mismatch).
-    // TYPE-SCOPE BOUNDARY (hazard): a `synthClass` (closure/SAM class), a `{k:typeDef}` local class, and a
-    // `newSuspendLambda` encode their OWN class type params as `tv{scope:type,i}` — the OWNER-class dispatchTypeArgs must
-    // NOT reach them. `typeScope` flips off descending through those; METHOD-scope subst continues everywhere (a closure
-    // body legitimately references the enclosing `tv{scope:method,i}`).
+    // Declaration and construction frames are distinct. A source suspend lambda retains its declaration frame
+    // below while its application is substituted; synthetic classes and dense carriers have their own boundaries.
     internal static void SubstTvIn(JsonNode node, JsonArray typeArgs, int ga, JsonArray dispatchTypeArgs = null, bool typeScope = true)
     {
         if (node is JsonObject o)
         {
+            if (Str(o["k"]) == "newSuspendLambda" && Str(o["typeFrame"]) != "dense")
+            {
+                // Preserve the declaration-to-enclosing-frame correspondence before replacing its application.
+                // Captures/body/constraints still belong to that declaration, not the importing caller's slots.
+                if (o[SuspendLambdaLowering.SplicedDeclarationFrameKey] == null && o["typeArgs"] is JsonArray original)
+                    o[SuspendLambdaLowering.SplicedDeclarationFrameKey] = original.DeepClone();
+                foreach (var key in new[] { "typeArgs", "capValues", "funcType", "sty" })
+                    if (o[key] is JsonNode construction)
+                        SubstTvIn(construction, typeArgs, ga, dispatchTypeArgs, typeScope);
+                return;
+            }
             if (Str(o["t"]) == "tv")
             {
                 var scope = Str(o["scope"]);

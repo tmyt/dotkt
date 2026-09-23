@@ -279,9 +279,10 @@ sealed class NullableWitnessDemand
             }
         }
 
-        void MapFrame(IEnumerable<TypeVariable> variables, JsonArray typeArguments, string context, bool dense = false)
+        void MapFrame(IEnumerable<TypeVariable> variables, JsonArray typeArguments, string context, bool dense = false,
+            JsonArray declarationArguments = null)
         {
-            foreach (var position in ResolveFramePositions(variables, typeArguments, context, dense))
+            foreach (var position in ResolveFramePositions(variables, declarationArguments ?? typeArguments, context, dense))
                 if (KotlinTypeWitness.Variable(TypeJson.Read(typeArguments[position])) is TypeNode.Tv tv)
                     required.Add(new TypeVariable(tv.Scope, tv.I));
         }
@@ -337,13 +338,15 @@ sealed class NullableWitnessDemand
                     }
                     if (kind == "newSuspendLambda")
                     {
-                        WalkOperands(obj, "body", "typeArgs", "typeParams", "typeParamDecls", "funcType");
+                        WalkOperands(obj, "body", "typeArgs", "typeParams", "typeParamDecls", "funcType",
+                            SuspendLambdaLowering.SplicedDeclarationFrameKey);
                         var nested = Nested(obj["body"] ?? new JsonArray());
                         if (nested.Count == 0) return;
                         var typeArgs = obj["typeArgs"] as JsonArray
                             ?? throw new InvalidOperationException(
                                 "bir2cir: nullable-sensitive suspend lambda has no type arguments");
-                        MapFrame(nested, typeArgs, "suspend lambda", dense: Str(obj["typeFrame"]) == "dense");
+                        MapFrame(nested, typeArgs, "suspend lambda", dense: Str(obj["typeFrame"]) == "dense",
+                            declarationArguments: obj[SuspendLambdaLowering.SplicedDeclarationFrameKey] as JsonArray);
                         return;
                     }
                     if (kind == "newDelegate" && Str(obj["method"]) is string target)
