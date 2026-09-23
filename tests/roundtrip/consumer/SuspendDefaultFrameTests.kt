@@ -41,6 +41,16 @@ private class FrameCaller<A : CharSequence, B>(val label: A, val value: B) {
     suspend fun nested(): B = SuspendDefaultOwner(value).nested()
 }
 
+private suspend fun <B, M> combined(b: B, m: M): Pair<B, M> =
+    SuspendDefaultOwner(b).both(m)
+
+private class DependentFrameCaller<A : Any, B : A>(val value: B) {
+    suspend fun read(): B = SuspendDefaultOwner(value).read()
+}
+
+private open class FrameBase(val value: Int)
+private class FrameDerived(value: Int) : FrameBase(value)
+
 class SuspendDefaultFrameTests {
     @TestAttribute
     fun reorderedOwnerSlotsRetainValueAndReferenceTypes() {
@@ -50,6 +60,8 @@ class SuspendDefaultFrameTests {
         completed("value") { strings.read() }
         completed(17) { integers.inlineRead() }
         completed("value") { strings.inlineRead() }
+        val dependent = DependentFrameCaller<FrameBase, FrameDerived>(FrameDerived(59))
+        completed(59) { dependent.read().value }
     }
 
     @TestAttribute
@@ -60,6 +72,8 @@ class SuspendDefaultFrameTests {
         completed(37) { caller.reorderedMethod("method", 37) }
         completed("nested") { caller.reorderedMethod("method", listOf("nested"))[0] }
         completed(Pair(23, "both")) { caller.both("both") }
+        completed(Pair(43, "top-level")) { combined(43, "top-level") }
+        completed(Pair("reversed", 47)) { combined("reversed", 47) }
         completed(23) { caller.constructed()[0] }
     }
 

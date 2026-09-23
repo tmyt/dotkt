@@ -425,7 +425,10 @@ static class SuspendLambdaLowering
         node.Remove(SplicedDeclarationFrameKey);
         node.Remove("typeFrame");
         RewriteTypes(node);
-        RewriteTypes(declarations);
+        // The complete owner prefix was copied from the caller and is already in that frame. Only the
+        // lambda-owned suffix constraints were authored in the donor declaration frame.
+        for (var index = ownerParams.Count; index < declarations.Count; index++)
+            RewriteTypes(declarations[index]);
         node["typeParams"] = names;
         node["typeParamDecls"] = declarations;
         node["typeArgs"] = args;

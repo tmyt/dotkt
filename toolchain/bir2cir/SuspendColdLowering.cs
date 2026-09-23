@@ -1379,6 +1379,14 @@ static partial class SuspendColdLowering
                         return;
                     }
                     var kind = Str(o["k"]);
+                    if (kind == "newSuspendLambda" && o[SuspendLambdaLowering.SplicedDeclarationFrameKey] != null)
+                    {
+                        // The spliced declaration still belongs to its donor frame. Only its construction
+                        // expressions move with the caller from method scope into the state-machine type.
+                        foreach (var key in new[] { "typeArgs", "capValues", "funcType", "sty" })
+                            if (o[key] != null) RebindMethodTypeVariablesToSm(o[key], ownerArity);
+                        return;
+                    }
                     foreach (var kv in o)
                     {
                         // These arrays describe the CALLEE's generic signature (`!!i` belongs to the called method),
