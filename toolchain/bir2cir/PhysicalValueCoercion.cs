@@ -101,13 +101,15 @@ static class PhysicalValueCoercion
         internal readonly Dictionary<string, TypeNode> Locals;
         internal readonly TypeNode Return;
         internal readonly TypeNode Owner;
+        internal readonly Dictionary<string, TypeNode> TemporaryFields;
 
         internal Scope(TypeNode owner = null, TypeNode ret = null,
-            Dictionary<string, TypeNode> locals = null)
+            Dictionary<string, TypeNode> locals = null, Dictionary<string, TypeNode> temporaryFields = null)
         {
             Owner = owner;
             Return = ret;
             Locals = locals ?? new Dictionary<string, TypeNode>(StringComparer.Ordinal);
+            TemporaryFields = temporaryFields ?? new Dictionary<string, TypeNode>(StringComparer.Ordinal);
         }
 
         internal Scope Frame(JsonObject declaration, TypeNode owner, TypeNode ret)
@@ -117,10 +119,12 @@ static class PhysicalValueCoercion
                 foreach (var parameter in parameters.OfType<JsonObject>())
                     if (Str(parameter["name"]) is string name && TypeJson.Read(parameter["type"]) is TypeNode type)
                         locals[name] = type;
-            return new Scope(owner, ret, locals);
+            var temporaryFields = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
+            while (CollectTemporaryFields(declaration["body"], temporaryFields)) { }
+            return new Scope(owner, ret, locals, temporaryFields);
         }
 
-        internal Scope Copy() => new(Owner, Return, new Dictionary<string, TypeNode>(Locals, StringComparer.Ordinal));
+        internal Scope Copy() => new(Owner, Return, new Dictionary<string, TypeNode>(Locals, StringComparer.Ordinal), TemporaryFields);
     }
 
     public static void ApplyAll(IReadOnlyList<JsonNode> roots, Func<JsonObject> unitValue)
@@ -204,8 +208,19 @@ static class PhysicalValueCoercion
             if (!ReferenceEquals(rewritten, child.Value)) obj[child.Key] = rewritten;
         }
 
+        // Collection allocation nodes already state their exact reference-type constructor. A compiler-owned
+        // single-evaluation binding can retain that type even when its Kotlin surface is existential. Do not narrow
+        // user storage or declaration signatures: those can contain other instantiations, including value elements.
+        if (obj.Remove(CallEvalLowering.ValueTemporaryKey) && Str(obj["k"]) == "var"
+            && TypeJson.Read(obj["type"]) is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" }
+            && ConstructedReferenceType(obj["init"], scope.TemporaryFields) is TypeNode.Fqn constructed)
+            obj["type"] = TypeJson.Write(constructed);
         CoerceInputs(obj, scope, index);
         var result = CoerceDeclaredResult(obj, scope, index);
+        if (Str(obj["k"]) == "field" && TemporaryFieldKey(obj) is string fieldKey
+            && scope.TemporaryFields.TryGetValue(fieldKey, out var retained)
+            && ExprType(obj, scope, index) is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" })
+            return new JsonObject { ["k"] = "cast", ["type"] = TypeJson.Write(retained), ["e"] = obj.DeepClone() };
         if (resultUsed && Str(obj["k"]) == "const" && IsVoid(ExprType(result, scope, index)))
             return index.UnitValue();
         if (resultUsed && CanProduceVoidValue(Str(obj["k"])) && IsVoid(ExprType(result, scope, index)))
@@ -217,6 +232,44 @@ static class PhysicalValueCoercion
                 ["result"] = index.UnitValue(),
             };
         return result;
+    }
+
+    static TypeNode ConstructedReferenceType(JsonNode value, IReadOnlyDictionary<string, TypeNode> fields)
+    {
+        if (value is not JsonObject expression) return null;
+        if (Str(expression["k"]) == "valueBlock") return ConstructedReferenceType(expression["result"], fields);
+        if (Str(expression["k"]) == "field" && TemporaryFieldKey(expression) is string key
+            && fields.TryGetValue(key, out var retained)) return retained;
+        return Str(expression["k"]) is "newList" or "newSet" or "newMap"
+            && expression["ctorRef"] is JsonObject constructor
+            ? TypeJson.Read(constructor["declaringType"]) : null;
+    }
+
+    // Cold lowering may spill the same single-evaluation binding. Keep the field's layout unchanged and state an
+    // exact read conversion from its known allocation. The fact is method-frame-local, not inferred from a name.
+    static string TemporaryFieldKey(JsonObject node) =>
+        node["recv"] is JsonObject receiver && Str(receiver["k"]) == "this"
+        && TypeJson.Read(node["ownerType"]) is TypeNode owner && Str(node["name"]) is string name
+            ? owner.ToString() + "\u0000" + name : null;
+
+    static bool CollectTemporaryFields(JsonNode node, Dictionary<string, TypeNode> fields)
+    {
+        var changed = false;
+        if (node is JsonArray array)
+        {
+            foreach (var child in array) changed |= CollectTemporaryFields(child, fields);
+            return changed;
+        }
+        if (node is not JsonObject obj || obj["params"] is JsonArray && obj["body"] is JsonArray) return false;
+        if (Str(obj["k"]) == "setField" && obj[CallEvalLowering.ValueTemporaryKey]?.GetValue<bool>() == true
+            && TemporaryFieldKey(obj) is string key && !fields.ContainsKey(key)
+            && ConstructedReferenceType(obj["value"], fields) is TypeNode type)
+        {
+            fields[key] = type;
+            changed = true;
+        }
+        foreach (var child in obj) changed |= CollectTemporaryFields(child.Value, fields);
+        return changed;
     }
 
     static bool IsVoid(TypeNode type) => type is TypeNode.Fqn { Args: null, Name: "void" or "System.Void" };

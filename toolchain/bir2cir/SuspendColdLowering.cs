@@ -1740,13 +1740,18 @@ static partial class SuspendColdLowering
                 + $"`{Str(p["name"])}` carries no static type — an earlier lowering dropped it.");
 
         // A `{k:var}` that the storage gate left as a MoveNext LOCAL.
-        JsonObject LocalVar(JsonObject v, JsonNode init) => new()
+        JsonObject LocalVar(JsonObject v, JsonNode init)
         {
-            ["k"] = "var",
-            ["name"] = Str(v["name"]),
-            ["type"] = Tw(VarType(v)),
-            ["init"] = init,
-        };
+            var local = new JsonObject
+            {
+                ["k"] = "var",
+                ["name"] = Str(v["name"]),
+                ["type"] = Tw(VarType(v)),
+                ["init"] = init,
+            };
+            if (Bool(v[CallEvalLowering.ValueTemporaryKey])) local[CallEvalLowering.ValueTemporaryKey] = true;
+            return local;
+        }
 
         // ---- statement lowering ----
 
@@ -1764,7 +1769,12 @@ static partial class SuspendColdLowering
                         // NullConst(valueType) would emit a null Int32 (ilemit: "requires Number, target is Null").
                         var declared = VarType(o);
                         var val = init == null ? DefaultOf(declared) : Rewrite(init, outp, declared);
-                        if (_fields.Contains(nm)) outp.Add(SetField(nm, val));
+                        if (_fields.Contains(nm))
+                        {
+                            var store = SetField(nm, val);
+                            if (Bool(o[CallEvalLowering.ValueTemporaryKey])) store[CallEvalLowering.ValueTemporaryKey] = true;
+                            outp.Add(store);
+                        }
                         else outp.Add(LocalVar(o, val));
                         break;
                     }

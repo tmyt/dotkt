@@ -10,6 +10,7 @@ suspend inline fun listDefault(
 class ListDefaultGate {
     private var pending: Continuation<Unit>? = null
     suspend fun pause() { suspendCoroutine<Unit> { pending = it } }
+    suspend fun token(): Int { pause(); return 0 }
     fun release() { pending!!.resume(Unit) }
 }
 
@@ -19,11 +20,16 @@ suspend fun delayedListDefault(
     block: suspend () -> Any? = { gate.pause(); items.firstOrNull() },
 ): Any? = block()
 
+suspend fun listAfterToken(
+    items: List<Any>,
+    token: Int,
+    block: suspend () -> Any? = { items.firstOrNull() },
+): Any? = block()
+
 fun nestedLists(items: List<List<Comparable<*>>>): List<List<Comparable<*>>> = items
 
-fun readComparable(values: System.Collections.Generic.List<Comparable<*>>): Comparable<*> = values[0]
-fun compareProjectedString(values: System.Collections.Generic.List<Comparable<in String>>): Int =
-    values[0].compareTo("x")
-fun readEnum(values: System.Collections.Generic.List<Enum<*>?>): Enum<*>? = values[0]
-fun readComparableArray(values: System.Collections.Generic.List<Array<Comparable<*>>>): Array<Comparable<*>> = values[0]
-fun invokeComparable(values: System.Collections.Generic.List<() -> Comparable<*>>): Comparable<*> = values[0]()
+fun keepComparable(items: List<Comparable<*>>): Any = items
+fun mutateComparable(items: MutableList<Comparable<*>>): Int {
+    items.add(3)
+    return items.size
+}

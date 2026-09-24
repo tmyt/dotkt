@@ -57,36 +57,6 @@ static class BirTypeLowering
             is TypeNode.Fqn { Args: not null };
     }
 
-    // Projection syntax below a classifier whose physical head consumes its generic arguments does not
-    // make an enclosing construction existential. Ask the same head-selection rule used by final lowering.
-    internal static bool ContainsReifiedProjection(TypeNode type, ReferenceMetadataIndex refs,
-        IReadOnlyDictionary<string, string> localAliases = null)
-    {
-        bool Contains(TypeNode inner) => ContainsReifiedProjection(inner, refs, localAliases);
-        if (type is TypeNode.Fqn { Args: { } arguments } named)
-        {
-            if (ErasesGenericApplicationToNonGenericClassifier(named.Name)) return false;
-            var alias = localAliases?.GetValueOrDefault(named.Name)
-                ?? refs.Aliases.GetValueOrDefault(named.Name);
-            if (alias != null && GenericAliasHeadDependsOnLoweredArguments(alias)
-                && !ProjectedAliasHasReifiedGenericHead(named.Name, alias, arguments)) return false;
-            return arguments.Any(Contains);
-        }
-        return type switch
-        {
-            TypeNode.Star or TypeNode.Projection => true,
-            TypeNode.Nullable n => Contains(n.Of),
-            TypeNode.Oblivious o => Contains(o.Of),
-            TypeNode.Array a => Contains(a.Elem),
-            TypeNode.ByRef b => Contains(b.Of),
-            TypeNode.Ptr p => Contains(p.Of),
-            TypeNode.Mod m => Contains(m.M) || Contains(m.Of),
-            TypeNode.Fn fn => Contains(fn.Ret) || fn.Params.Any(Contains)
-                || fn.Recv != null && Contains(fn.Recv) || fn.Ctx?.Any(Contains) == true,
-            _ => false,
-        };
-    }
-
     // The `Span<T>` identity pair, in ONE place: kotc emits the faithful `kotlin.clr.Span` intrinsic name and this
     // pass owns the BCL substitution below. Passes that run BEFORE the lowering and must reason about the CLR type
     // (ReferenceMetadataIndex.IsByRefLikeFqn — `System.Span<T>` is a `ref struct`) canonicalize through these two

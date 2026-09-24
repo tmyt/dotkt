@@ -7,8 +7,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
-- **Nested projections retain reifiable physical types (#844).** A projection consumed by a non-generic CLR
-  classifier no longer erases its enclosing collection, including shared arguments captured by suspend defaults.
+- **Shared default arguments retain their constructed temporary type (#844).** Single-evaluation collection
+  temporaries keep their exact CLR construction across suspend lowering without narrowing projected declaration slots.
 
 - **Captured generic bounds follow the caller's physical frame (#850).** Inline receiver temporaries keep
   their actual type parameter, and suspend lambdas preserve erased-bound dispatch without imposing stale CLR constraints.
