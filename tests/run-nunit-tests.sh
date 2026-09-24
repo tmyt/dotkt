@@ -52,7 +52,7 @@ PROJECTS=(
 declare -A EXPECTED_DISCOVERED=(
 	["tests/basic"]=650
 	["tests/coroutines"]=236
-	["tests/roundtrip/consumer"]=313
+	["tests/roundtrip/consumer"]=315
 	["tests/roundtrip/bidirectional/consumer"]=38
 	["tests/interop/consumer"]=361
 )

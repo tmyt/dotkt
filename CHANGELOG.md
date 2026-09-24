@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Nullable suspend function values retain value invocation after null checks (#877).**
+  Non-null assertions and smart casts keep the cold function-value call path, including across DLLs.
+
 - **Function types retain source nullability across Kotlin DLL boundaries (#873).** Exact metadata
   preserves nested parameter and return annotations, including stored, extension and context function values.
 
