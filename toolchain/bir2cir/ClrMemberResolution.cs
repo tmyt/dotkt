@@ -295,6 +295,7 @@ static partial class ClrMemberResolution
                 // object/value seams; changing the delegate token alone cannot change the ldftn target.
                 if (HasBoxedSlotSeam(natural, desired))
                 {
+                    // An already selected destination slot outranks this construction's own requested shape.
                     if (!call.ContainsKey(DelegateSlotKey))
                         MarkDelegateSlot(call, desired, refs, owners.Keys.ToHashSet(StringComparer.Ordinal));
                     call["funcType"] = TypeJson.Write(natural);
