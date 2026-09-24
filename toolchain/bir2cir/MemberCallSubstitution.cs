@@ -64,15 +64,52 @@ static class MemberCallSubstitution
     static ValueTypeOracle _isValue = _ => false;
     static GenericRepresentationPolicy _representations;
 
+    internal sealed record LocalCollectionFactory(string Kind, int[] VarargPositions,
+        NullableRepresentationFrame Frame);
+    static IReadOnlyDictionary<string, LocalCollectionFactory> _localCollectionFactories;
+
+    public static IReadOnlyDictionary<string, LocalCollectionFactory> CollectLocalCollectionFactories(
+        IEnumerable<JsonNode> roots)
+    {
+        var result = new Dictionary<string, LocalCollectionFactory>(StringComparer.Ordinal);
+        void Walk(JsonObject owner)
+        {
+            if (owner["methods"] is JsonArray methods)
+                foreach (var method in methods.OfType<JsonObject>())
+                {
+                    if (Str(method[DeclarationIdentityBinding.Key]) is not string id
+                        || method["attrs"] is not JsonArray attributes) continue;
+                    foreach (var attribute in attributes.OfType<JsonObject>())
+                    {
+                        if (TypeJson.OwnerName(attribute["attr"]) != "kotlin.clr.ClrCollectionFactory") continue;
+                        var kind = Str(attribute["args"]?[0]?["value"]);
+                        var parameters = (JsonArray)method["params"];
+                        var varargs = parameters.Select((parameter, index) => (parameter, index))
+                            .Where(pair => pair.parameter?["mods"]?["vararg"]?.GetValue<bool>() == true)
+                            .Select(pair => pair.index).ToArray();
+                        var frame = Str(method[NullableRepresentationTypes.MethodFrameKey]) is string encoded
+                            ? NullableRepresentationFrame.Read(JsonNode.Parse(encoded)) : null;
+                        result.Add(id, new LocalCollectionFactory(kind, varargs, frame));
+                    }
+                }
+            if (owner["types"] is JsonArray types)
+                foreach (var type in types.OfType<JsonObject>()) Walk(type);
+        }
+        foreach (var root in roots.OfType<JsonObject>()) Walk(root);
+        return result;
+    }
+
     public static JsonNode Apply(JsonNode root, ReferenceMetadataIndex refs,
         IReadOnlySet<string> localTopLevelFns, bool attributeTopLevelOwner, ValueTypeOracle isValue,
         IReadOnlyDictionary<LocalPropertyAccessorKey, IReadOnlyList<LocalPropertyAccessor>> localPropertyAccessors,
-        GenericRepresentationPolicy representations)
+        GenericRepresentationPolicy representations,
+        IReadOnlyDictionary<string, LocalCollectionFactory> localCollectionFactories)
     {
         _localTopLevelFns = localTopLevelFns;
         _attributeTopLevelOwner = attributeTopLevelOwner;
         _isValue = isValue ?? (_ => false);
         _representations = representations;
+        _localCollectionFactories = localCollectionFactories;
         _localPropertyAccessors = localPropertyAccessors
             ?? new Dictionary<LocalPropertyAccessorKey, IReadOnlyList<LocalPropertyAccessor>>();
         _localPropertyOwners = _localPropertyAccessors.Keys.Select(key => key.Owner)
@@ -662,9 +699,9 @@ static class MemberCallSubstitution
     // null when the call is not a factory (or is a non-decomposable mapOf -> left as a plain call). The element/key/value
     // Collection TYPES come from the call's `typeArgs` (the canonical source for empty/single-element factories and
     // mapOf's [K,V]); an array factory additionally prefers its instantiated result stamp, which states the allocation
-    // element even when a spread input is narrower. ELEMENTS come from the vararg argument (a literal `newArray`, a
-    // forwarded array, or `spreadConcat`), the lone non-vararg element, or none. Mirrors the retired kotc factory
-    // recognition (BirEmitter.kt LIST/SET/MAP/ARRAY_FACTORY sites).
+    // element even when a spread input is narrower. Collection elements come from a declared literal vararg pack,
+    // a non-vararg element, or an empty argument vector; forwarded collection packs retain the ordinary call.
+    // Array factories additionally handle forwarded arrays and spreadConcat directly.
     static JsonNode TryFactorySubst(JsonObject node, ReferenceMetadataIndex refs, string fn, SubstCtx ctx)
     {
         var args = node["args"] as JsonArray ?? new JsonArray();
@@ -674,7 +711,15 @@ static class MemberCallSubstitution
         string collKind;
         string arrKind;
         string arrElemHint;
-        if (exactFactory)
+        var declarationId = Str(node[DeclarationIdentityBinding.Key]);
+        _localCollectionFactories.TryGetValue(declarationId ?? "", out var localFactory);
+        if (localFactory != null)
+        {
+            collKind = localFactory.Kind;
+            arrKind = null;
+            arrElemHint = null;
+        }
+        else if (exactFactory)
         {
             if (Str(node[DeclarationIdentityBinding.Key]) is not string selectedId
                 || !refs.TryDeclarationFactory(selectedId, out collKind, out arrKind, out arrElemHint))
@@ -694,12 +739,12 @@ static class MemberCallSubstitution
         if (collKind != null)
         {
             var factoryElements = FactoryElems(args,
-                refs.DeclarationFactoryVarargPositions(Str(node[DeclarationIdentityBinding.Key])));
+                localFactory?.VarargPositions ?? refs.DeclarationFactoryVarargPositions(declarationId));
             if (factoryElements == null) return null;
             JsonNode RepresentationArgument(int index, NullableRepresentationFrame.Role role)
             {
                 if (typeArgs == null) return null;
-                var frame = refs.NullableMethodFrame(Str(node[DeclarationIdentityBinding.Key]));
+                var frame = localFactory != null ? localFactory.Frame : refs.NullableMethodFrame(declarationId);
                 // Current declarations without companions have an identity frame. Factory elements
                 // use the same ordinary argument as their native vararg wrapper.
                 return typeArgs[frame?.SourcePosition(index) ?? index];

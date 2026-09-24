@@ -950,8 +950,8 @@ sealed partial class ReferenceMetadataIndex
         return list;
     }
 
-    // The @ClrCollectionFactory kind ("list"/"set"/"map") for a top-level fun NAME, or null when the fun is not a
-    // collection factory. MemberCallSubstitution consults this on a `callStatic owner=null` to re-emit newList/newSet/newMap.
+    // Name index used by MapVarianceRealign for calls without a declaration identity.
+    // Collection construction itself requires TryDeclarationFactory's exact selected binding.
     public string CollectionFactoryKind(string funName) => _collectionFactories.GetValueOrDefault(funName);
     // The @ClrArrayFactory kind ("vararg"/"sized") for a top-level fun NAME, or null when not an array factory.
     public string ArrayFactoryKind(string funName) => _arrayFactories.GetValueOrDefault(funName);
@@ -7629,9 +7629,8 @@ sealed class ReferenceDotKtMetadata
     public readonly Dictionary<string, List<(string Owner, string RecvKey, ReferenceMetadataIndex.TypeKey ParamKey)>> TopLevelStatics = new(StringComparer.Ordinal);
     // Collection/array FACTORY top-level funs, keyed by fun NAME -> the factory kind. A @kotlin.clr.ClrCollectionFactory
     // ("list"/"set"/"map") or @kotlin.clr.ClrArrayFactory ("vararg"/"sized") marker on a [KotlinFileClass] static.
-    // MemberCallSubstitution reads these on a `callStatic owner=null` (listOf/setOf/mapOf/arrayOf/intArrayOf/arrayOfNulls)
-    // and realizes the corresponding `{k:newList/newSet/newMap/newArray/newArraySized}` CIR construction. Keyed by name
-    // alone: every overload of a factory name shares the kind, so no receiver disambiguation is needed.
+    // These name indexes support the remaining name-based map realignment and array-factory paths.
+    // They do not establish a selected overload or its parameter packing; collection construction uses MemberBinding.
     public readonly Dictionary<string, string> CollectionFactories = new(StringComparer.Ordinal);
     public readonly Dictionary<string, string> ArrayFactories = new(StringComparer.Ordinal);
     public readonly Dictionary<string, string> ArrayFactoryElemHints = new(StringComparer.Ordinal); // concrete-primitive elem (spread call)
