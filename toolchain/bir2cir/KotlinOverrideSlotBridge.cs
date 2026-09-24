@@ -84,9 +84,9 @@ static class KotlinOverrideSlotBridge
         ReferenceMetadataIndex refs, bool refBuild, GenericRepresentationPolicy representations) =>
         ApplyAll(roots, isValue, refs, representations, Phase.DeclarationMoves, localTypeNames: null, refBuild: refBuild);
 
-    // Unit is a value in a constructed generic result slot even though a plain Unit suspend declaration exports
-    // non-generic Task. Build this adapter while calls are still suspend calls; cold lowering then drives a real
-    // Task<Unit> for the slot, rather than casting an arbitrary Task returned by the public declaration.
+    // Adapt differing suspend results before they become invariant Task<T> signatures. This includes Unit in a
+    // value slot and a covariant result supplied by an inherited implementation. Cold lowering drives a Task of the
+    // slot's result from the selected implementation's cold call; it must not cast the public Task result.
     public static void PrepareSuspendValueBridges(IEnumerable<JsonNode> roots, ValueTypeOracle isValue,
         ReferenceMetadataIndex refs, IReadOnlySet<string> localTypeNames, bool refBuild, GenericRepresentationPolicy representations) =>
         ApplyAll(roots, isValue, refs, representations, Phase.SuspendValueBridges, localTypeNames, refBuild: refBuild);
@@ -222,9 +222,16 @@ static class KotlinOverrideSlotBridge
             var declParams = impl["params"] as JsonArray;
             var declRet = TypeJson.Read(impl["ret"]);
             if (declParams == null || declRet == null || declParams.Count != slotParams.Length) return;
+            var inheritedSuspendResultBridge = inheritedOwner != null && supIsInterface
+                && IsSuspendMethod(impl)
+                && !BirTypeLowering.SamePhysicalSlotType(slotRet,
+                    SupertypeGraph.SubstOwnerTvs(declRet, ownArgs), refs.Aliases, isValue,
+                    refs.PhysicalTypeNames, returnPosition: true, localTypeNames,
+                    nullableFrames: refs.NullableTypeFrames);
             if (phase == Phase.SuspendValueBridges
-                && !(IsSuspendMethod(impl) && (unitValueReturn || !IsVoid(slotRet)) && IsUnit(declRet)
-                    && !Bool(impl[BirTypeLowering.ValueReturnKey]))) return;
+                && !(inheritedSuspendResultBridge
+                    || IsSuspendMethod(impl) && (unitValueReturn || !IsVoid(slotRet)) && IsUnit(declRet)
+                        && !Bool(impl[BirTypeLowering.ValueReturnKey]))) return;
             // The pre-cold adapter already owns this exact hot obligation, including its argument adaptations.
             // Do not create a second adapter from the public Task merely because an argument is also erased.
             if (phase == Phase.PhysicalBridges && HasPreparedTaskSlot(methods,

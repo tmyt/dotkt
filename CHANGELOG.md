@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Inherited covariant suspend methods fill interface slots (#857).** Result adapters are built before
+  suspend lowering so each CLR Task entry has the exact interface result while preserving base virtual dispatch.
+
 - **Shared default arguments retain their constructed temporary type (#844).** Single-evaluation collection
   temporaries keep their exact CLR construction across suspend lowering without narrowing projected declaration slots.
 
