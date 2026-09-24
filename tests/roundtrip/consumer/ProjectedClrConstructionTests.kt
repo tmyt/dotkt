@@ -31,5 +31,11 @@ class ProjectedClrConstructionTests {
         val projected = createProjectedMutable()
         assertEquals(1, projected.Count)
         assertEquals("nested", projected[0][0])
+        val integers = mutableListOf(7)
+        val strings = mutableListOf("argument")
+        check(nonNullProjectedArgument(integers) === integers)
+        check(nonNullProjectedArgument(strings) === strings)
+        check(obliviousProjectedArgument(integers) === integers)
+        check(obliviousProjectedArgument(strings) === strings)
     }
 }

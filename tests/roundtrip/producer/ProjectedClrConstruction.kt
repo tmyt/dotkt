@@ -22,6 +22,12 @@ fun createCovariant(): System.Collections.Generic.List<List<out String>> {
 fun consumeCovariant(values: System.Collections.Generic.List<List<String>>): String =
     values[0][0]
 
+fun nonNullProjectedArgument(value: MutableList<*>): MutableList<*> =
+    ProjectedConstructionInterop.NonNullBox<MutableList<*>>(value).Value
+
+fun obliviousProjectedArgument(value: MutableList<*>): MutableList<*> =
+    ProjectedConstructionInterop.ObliviousBox<MutableList<*>>(value).Value
+
 fun createStarred(): System.Collections.Generic.List<Comparable<*>> {
     val values = System.Collections.Generic.List<Comparable<*>>()
     values.Add(7)

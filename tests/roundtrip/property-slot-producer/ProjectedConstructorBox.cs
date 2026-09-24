@@ -1,0 +1,15 @@
+#nullable enable
+namespace ProjectedConstructionInterop;
+
+public sealed class NonNullBox<T> where T : class
+{
+    public T Value;
+    public NonNullBox(T value) { Value = value; }
+}
+
+#nullable disable
+public sealed class ObliviousBox<T>
+{
+    public T Value;
+    public ObliviousBox(T value) { Value = value; }
+}
