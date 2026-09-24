@@ -1061,6 +1061,8 @@ class V:
             # reached ilemit, which has no notion of one. `preStmts` is the CIR form of a delegation's plan and is
             # authored by that same pass, so it must not appear in kotc's BIR.
             if f.endswith(".cir.json"):
+                if o.get("k") == "binOp" and o.get("op") == "===":
+                    self.err(f, path, "identity comparison must have physical operands and lower to == before CIR")
                 if "samTarget" in o:
                     self.err(f, path, "samTarget is a BIR SAM-conversion fact and must be consumed before CIR")
                 if "dotktValueReturn" in o:

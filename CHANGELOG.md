@@ -10,6 +10,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 - **Array factories use selected declaration identity (#869).** User functions sharing a standard
   array factory's name retain their bodies; local stdlib factories use their explicit binding attributes.
 
+- **Heterogeneous referential comparisons emit explicit boxing (#865).** Identity comparisons retain
+  their intent through lowering, so distinct generic/reference/nullable-value slots produce valid CLR operands.
+
 - **Collection factories preserve selected vararg packing (#867).** Literal packs are expanded using
   declaration metadata, while forwarded packs and single array-valued elements retain their distinct semantics.
 

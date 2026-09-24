@@ -158,7 +158,7 @@ public static class NodeType
                 // A comparison or a short-circuit yields Boolean; every other operator yields its OPERANDS' type,
                 // which either side reports — so an `lhs` the caller's deriver cannot answer falls through to the
                 // `rhs` rather than to null.
-                return Str(o["op"]) is "==" or "!=" or "<" or ">" or "<=" or ">=" or "&&" or "||"
+                return Str(o["op"]) is "===" or "==" or "!=" or "<" or ">" or "<=" or ">=" or "&&" or "||"
                     ? BoolTn : recurse(o["lhs"]) ?? recurse(o["rhs"]);
             case "unaryOp":
                 return Str(o["op"]) == "!" ? BoolTn : recurse(o["e"]);

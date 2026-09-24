@@ -364,6 +364,16 @@ Reference KLIB declarations preserve the corresponding standard Kotlin modifier 
 lists only the freeze DECISIONS. The validator (§4) enforces the canonical set.)
 
 ### 2.5 Node-kind FORMAT stabilization — canonical field names + per-kind schema + validator
+
+`binOp` uses `op: "==="` for Kotlin identity comparison while bir2cir is still
+selecting operand representations, including in captured inline BIR. This is
+distinct from numeric `op: "=="`. After physical types are final, heterogeneous
+identity operands receive explicit object conversions and the operator becomes
+`==`. The semantic `===` operator must not survive into emitted CIR; ilemit does
+not choose boxing or infer identity semantics from operand types. Homogeneous
+comparisons retain the documented physical comparison contract (§5a-bis in
+`dotkt-semantics.md`).
+
 Node kinds are `{k}`-tagged objects but their FIELD names drifted (each wave's agent named fields ad-hoc).
 Audit-confirmed drift: the "a type" concept is spelled `type`/`retType`/`ret`/`elem`/`of`/`keyType`
 (`retType`≡`ret` are the SAME return type; `type`≡`of` overlap); a value/sub-expr is `value`/`val`/`init`/

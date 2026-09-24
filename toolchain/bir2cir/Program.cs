@@ -1074,11 +1074,6 @@ sealed class Pipeline
             foreach (var stagedFile in staged)
                 ReferenceExistentialAbiBinding.Apply(stagedFile.Root, refs);
 
-        // A spliced inline payload may retain raw identity `T === null` over a generic local. ECMA ceq cannot consume
-        // a generic-parameter stack value and null directly; author the boxed object-null comparison in CIR.
-        if (!_options.RefBuild)
-            foreach (var stagedFile in staged) GenericParameterNullComparison.Apply(stagedFile.Root);
-
         // Every structural synthesizer has now run. Allocate the complete declaration/property set before any pass
         // consumes physical Property descriptors: BackingFieldRename distinguishes receiverless storage ownership by
         // the exact getSig/setSig written here, including on late String/CharSequence adapters. This allocator is the
@@ -1460,10 +1455,9 @@ sealed class Pipeline
         // BirTypeLowering's mutable/read-only collection faces are sibling CLR interfaces. Materialize every cast
         // required by the final value-flow graph only now, after every synthetic declaration and exact memberRef is
         // stable. ilemit then emits those ordinary CIR casts without recognizing the collection ABI. A metadata/ref
-        // build keeps kotlin.collections.* verbatim and never creates these physical sibling faces.
-        if (!_options.RefBuild)
-            PhysicalValueCoercion.ApplyAll(loweredRoots.Select(file => file.Root).ToList(),
-                ClrMemberResolution.UnitSingletonRead);
+        // build retains declaration types and only consumes semantic comparisons in executable constructor remnants.
+        PhysicalValueCoercion.ApplyAll(loweredRoots.Select(file => file.Root).ToList(),
+            ClrMemberResolution.UnitSingletonRead, referenceBuild: _options.RefBuild);
 
         // Every representation synthesis is now complete. Validate the exact MethodDef table that CIR will describe;
         // do not defer a generated/user collision to ilemit and do not invent a late name after calls are bound.

@@ -1,0 +1,33 @@
+{
+  "fileClass": "ReferenceIdentityKt",
+  "hasMain": false,
+  "fields": [], "methods": [],
+  "types": [
+    {
+      "name": "ReferenceIdentityBase", "kind": "class", "base": null,
+      "interfaces": [], "fields": [], "methods": [], "properties": [], "attrs": [],
+      "ctors": [{
+        "params": [{"name":"same","type":{"t":"fqn","name":"kotlin.Boolean"}}],
+        "baseArgs": null, "thisArgs": null, "delegationSig": [],
+        "vis": "public", "body": [], "attrs": []
+      }]
+    },
+    {
+      "name": "ReferenceIdentityDerived", "kind": "class",
+      "base": {"t":"fqn","name":"ReferenceIdentityBase"},
+      "interfaces": [], "fields": [], "methods": [], "properties": [], "attrs": [],
+      "ctors": [{
+        "params": [
+          {"name":"a","type":{"t":"fqn","name":"kotlin.Any"}},
+          {"name":"b","type":{"t":"fqn","name":"kotlin.Any"}}
+        ],
+        "baseArgs": [{
+          "k":"callStatic", "owner":{"t":"fqn","name":"kotlin.internal.ir"},
+          "method":"EQEQEQ", "args":[{"k":"local","name":"a"},{"k":"local","name":"b"}]
+        }],
+        "thisArgs": null, "delegationSig": [{"t":"fqn","name":"kotlin.Boolean"}],
+        "vis": "public", "body": [], "attrs": []
+      }]
+    }
+  ]
+}
