@@ -31,6 +31,10 @@ class GenericReferenceEqualityTests {
         assertFalse(Holder<Int>(null, 7).same())
         assertFalse(Holder<Int>(null, 7).reversed())
         assertTrue(rawSame(1000, 1000))
+        assertFalse(localCondition<Int>(null, 7))
+        assertFalse(localCondition<Int>(7, 7))
+        assertFalse(callResults<Int>(null, 7))
+        assertFalse(callResults<Int>(7, 7))
     }
     @TestAttribute
     fun referenceComparisonDoesNotCallEquals() {
@@ -48,6 +52,10 @@ class GenericReferenceEqualityTests {
         assertFalse(throughSplice(first, second))
         assertTrue(Holder(first, first).same())
         assertFalse(Holder(first, second).reversed())
+        assertTrue(localCondition(first, first))
+        assertFalse(localCondition(first, second))
+        assertTrue(callResults(first, first))
+        assertFalse(callResults(first, second))
     }
     @TestAttribute
     fun nullAndExistingBoxReferencesRetainIdentity() {

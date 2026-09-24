@@ -599,9 +599,18 @@ structural `==`/`.equals()` helpers (§5a). When one physical operand is `object
 is a generic parameter (for example `T? === T`), bir2cir explicitly boxes the generic operand
 before comparing references. It does not unbox the object or call `Equals`; reference-valued
 instantiations retain their identity. Homogeneous generic/value comparisons keep the raw
-comparison described below. Because CLR generics are **reified** (§2) and a basic
-`enum class` is a real CLR value-type `enum` (`BirEmitter.kt:514-515`), that single `ceq` lowering
-produces three JVM-diverging outcomes:
+comparison described below.
+
+Here, homogeneous means that both physical operands retain the same generic slot,
+as in `fun <T> ident(a: T, b: T) = a === b`. This differs from
+`fun <T> nullableIdent(a: T?, b: T) = a === b`: on DotKt,
+`ident<Int>(1000, 1000)` is `true`, while `nullableIdent<Int>(1000, 1000)` is
+`false`, because the latter compares two separately boxed references. The nullable
+signature does not imply that a non-null argument uses the homogeneous value path.
+
+Because CLR generics are **reified** (§2) and a basic `enum class` is a real CLR
+value-type `enum` (`BirEmitter.kt:514-515`), that single `ceq` lowering produces
+three JVM-diverging outcomes:
 
 - **A generic type parameter instantiated over a primitive compares by VALUE, not identity.**
   `fun <T> ident(a: T, b: T) = a === b; ident(1000, 1000)` → **`true`** on DotKt. At the CLR the
