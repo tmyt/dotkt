@@ -29,6 +29,7 @@ static class PhysicalValueCoercion
         readonly Dictionary<string, TypeNode> _fields = new(StringComparer.Ordinal);
         readonly Func<JsonObject> _unitValue;
         internal JsonObject Document;
+        internal bool ReferenceBuild;
 
         Index(Func<JsonObject> unitValue) => _unitValue = unitValue;
         internal JsonObject UnitValue() => _unitValue();
@@ -132,9 +133,10 @@ static class PhysicalValueCoercion
         internal Scope Copy() => new(Owner, Return, new Dictionary<string, TypeNode>(Locals, StringComparer.Ordinal), TemporaryFields, TemporaryLocals);
     }
 
-    public static void ApplyAll(IReadOnlyList<JsonNode> roots, Func<JsonObject> unitValue)
+    public static void ApplyAll(IReadOnlyList<JsonNode> roots, Func<JsonObject> unitValue, bool referenceBuild = false)
     {
         var index = Index.Build(roots, unitValue);
+        index.ReferenceBuild = referenceBuild;
         foreach (var root in roots.OfType<JsonObject>()) RewriteDocument(root, index);
     }
 
@@ -163,7 +165,8 @@ static class PhysicalValueCoercion
                 if (field["init"] is JsonNode init && TypeJson.Read(field["type"]) is TypeNode target)
                 {
                     var fieldScope = new Scope(owner);
-                    var rewritten = Coerce(Rewrite(init, fieldScope, index), target, fieldScope, index);
+                    var rewritten = Rewrite(init, fieldScope, index);
+                    if (!index.ReferenceBuild) rewritten = Coerce(rewritten, target, fieldScope, index);
                     if (!ReferenceEquals(rewritten, init)) field["init"] = rewritten;
                 }
         if (container["ctors"] is JsonArray constructors)
@@ -177,7 +180,7 @@ static class PhysicalValueCoercion
                 if (arguments != null)
                 {
                     RewriteArray(arguments, scope, index);
-                    CoerceVector(arguments, ConstructorParameterTypes(constructor), scope, index);
+                    if (!index.ReferenceBuild) CoerceVector(arguments, ConstructorParameterTypes(constructor), scope, index);
                 }
                 if (constructor["body"] is JsonArray body) RewriteArray(body, scope, index);
             }
@@ -207,6 +210,18 @@ static class PhysicalValueCoercion
         foreach (var child in obj.ToList())
         {
             if (child.Value == null) continue;
+            if (child.Key == "catches" && Str(obj["k"]) is "try" or "tryExpr"
+                && child.Value is JsonArray catches)
+            {
+                foreach (var clause in catches.OfType<JsonObject>())
+                {
+                    var catchScope = scope.Copy();
+                    if (Str(clause["var"]) is string caught && TypeJson.Read(clause["excType"]) is TypeNode exceptionType)
+                        catchScope.Locals[caught] = exceptionType;
+                    Rewrite(clause, catchScope, index);
+                }
+                continue;
+            }
             var childScope = child.Key == "body" && loopScope != null ? loopScope : scope;
             var rewritten = Rewrite(child.Value, childScope, index,
                 ChildUsesValue(obj, child.Key, scope, resultUsed));
@@ -216,7 +231,7 @@ static class PhysicalValueCoercion
         // Collection allocation nodes already state their exact reference-type constructor. A compiler-owned
         // single-evaluation binding can retain that type even when its Kotlin surface is existential. Do not narrow
         // user storage or declaration signatures: those can contain other instantiations, including value elements.
-        if (obj.Remove(CallEvalLowering.ValueTemporaryKey) && Str(obj["k"]) == "var"
+        if (!index.ReferenceBuild && obj.Remove(CallEvalLowering.ValueTemporaryKey) && Str(obj["k"]) == "var"
             && TypeJson.Read(obj["type"]) is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" })
         {
             // The child walk may already have wrapped a spilled-field read in its explicit conversion. Use the
@@ -227,6 +242,9 @@ static class PhysicalValueCoercion
             if (constructed is TypeNode.Fqn) obj["type"] = TypeJson.Write(constructed);
         }
         CoerceInputs(obj, scope, index);
+        // Reference declarations retain Kotlin signature vocabulary. Only consume the
+        // executable identity operations left in constructor delegation after body squash.
+        if (index.ReferenceBuild) return obj;
         var result = CoerceDeclaredResult(obj, scope, index);
         if (Str(obj["k"]) == "field" && TemporaryFieldKey(obj) is string fieldKey
             && scope.TemporaryFields.TryGetValue(fieldKey, out var retained)
@@ -342,6 +360,7 @@ static class PhysicalValueCoercion
     static void CoerceInputs(JsonObject node, Scope scope, Index index)
     {
         var kind = Str(node["k"]);
+        if (index.ReferenceBuild && !(kind == "binOp" && Str(node["op"]) == "===")) return;
         switch (kind)
         {
             case "binOp" when Str(node["op"]) == "===":
@@ -360,17 +379,6 @@ static class PhysicalValueCoercion
                             ["e"] = node[operand]!.DeepClone(),
                         };
                 node["op"] = "==";
-                break;
-            case "binOp" when Str(node["op"]) is "==" or "!=":
-                // Nullable generic storage is object, while a non-null generic operand retains its CLR slot.
-                // A raw identity comparison across that seam needs boxing, not Object.Equals. Keep homogeneous
-                // generic/value comparisons unchanged: their value-type behavior is a documented CLR deviation.
-                var left = ExprType(node["lhs"], scope, index);
-                var right = ExprType(node["rhs"], scope, index);
-                if (left is TypeNode.Tv && right is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" })
-                    node["lhs"] = new JsonObject { ["k"] = "cast", ["type"] = TypeJson.Write(right), ["e"] = node["lhs"]!.DeepClone() };
-                if (right is TypeNode.Tv && left is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" })
-                    node["rhs"] = new JsonObject { ["k"] = "cast", ["type"] = TypeJson.Write(left), ["e"] = node["rhs"]!.DeepClone() };
                 break;
             case "var":
                 CoerceSlot(node, "init", TypeJson.Read(node["type"]), scope, index);
@@ -563,8 +571,9 @@ static class PhysicalValueCoercion
             return local;
         if (kind == "this") return scope.Owner;
         if (PhysicalResult(obj, scope, index) is TypeNode physical) return physical;
-        return NodeType.Of(obj, child => ExprType(child, scope, index),
+        var inferred = NodeType.Of(obj, child => ExprType(child, scope, index),
             name => BirTypeLowering.PrimArrayElem.TryGetValue(name, out var elem) ? elem : null);
+        return index.ReferenceBuild ? inferred : BirTypeLowering.CanonicalExpressionResult(inferred);
     }
 
     static TypeNode PhysicalResult(JsonObject expression, Scope scope, Index index)

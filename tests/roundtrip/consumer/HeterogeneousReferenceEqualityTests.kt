@@ -31,6 +31,8 @@ class HeterogeneousReferenceEqualityTests {
         check(!throughSplice<Node, Child>(first, second))
         check(PairHolder<Node, Child>(first, first).same())
         check(!PairHolder<Node, Child>(first, second).reversed())
+        check(caughtIdentity())
+        check(!genericNull(first) && !genericNullReversed(first))
     }
 
     @TestAttribute
@@ -46,6 +48,12 @@ class HeterogeneousReferenceEqualityTests {
         check(!pairSame<Int, Int>(1000, 1000))
         check(!pairReversed<Int, Int>(1000, 1000))
         check(homogeneous(1000, 1000))
+        check(computedBoolean(false, true) && computedBooleanReversed(false, true))
+        check(!computedBoolean(true, true) && !computedBooleanReversed(true, true))
+        check(genericNull<Int?>(null) && genericNullReversed<Int?>(null))
+        check(!genericNull(7) && !genericNullReversed(7))
+        check(ComparedDerived(null, null).same)
+        check(!ComparedDerived(null, 7).same)
         val one = 1
         val anotherOne = 1
         check(one == anotherOne)

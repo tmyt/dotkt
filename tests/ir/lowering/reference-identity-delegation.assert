@@ -1,0 +1,5 @@
+# Reference signatures remain Kotlin vocabulary; executable delegation consumes identity intent.
++"name":"kotlin.Any"
++"name":"kotlin.Boolean"
++"baseArgs":[{"k":"binOp","op":"=="
+-"op":"==="

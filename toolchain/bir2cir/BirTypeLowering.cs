@@ -614,6 +614,12 @@ static class BirTypeLowering
     // BCL FQN produced by @ClrTypeAlias lowering. ilemit maps each pair to the same System.Type, so an earlier
     // representation pass comparing physical slots must canonicalize the pair as well. Keep this recursive because
     // the spelling can occur beneath arrays, nullable value types, byrefs, function types, and constructed generics.
+    // Shared expression inference uses Kotlin names for computed primitive results.
+    // Reconcile those results with already-physical declaration slots without re-lowering aliases.
+    internal static TypeNode CanonicalExpressionResult(TypeNode type) =>
+        type is TypeNode.Fqn { Args: null } f && KotlinAllToClr.TryGetValue(f.Name, out var primitive)
+            ? CanonicalPhysicalSlotType(new TypeNode.Fqn(primitive)) : CanonicalPhysicalSlotType(type);
+
     internal static TypeNode CanonicalPhysicalSlotType(TypeNode type) => type switch
     {
         TypeNode.Fqn { Args: null } f => new TypeNode.Fqn(f.Name switch
