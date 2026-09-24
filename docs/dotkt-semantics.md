@@ -594,11 +594,23 @@ The **primitive** operators stay IEEE (matching Kotlin, and `il-nancmp`-green): 
 
 ## 5a-bis. Referential identity `===` on primitive/boxed/enum values deviates from Kotlin/JVM
 
-`===` (`EQEQEQ`) lowers **unconditionally** to `binOp ==` → IL `ceq`, with **no representation
-check** (`PrimitiveOperatorLowering.cs:221-223`) — unlike structural `==`/`.equals()` (§5a), which
-routes through type-classifying helpers. Because CLR generics are **reified** (§2) and a basic
-`enum class` is a real CLR value-type `enum` (`BirEmitter.kt:514-515`), that single `ceq` lowering
-produces three JVM-diverging outcomes:
+`===` (`EQEQEQ`) lowers to a reference/value `binOp ==` → IL `ceq`, rather than the
+structural `==`/`.equals()` helpers (§5a). When one physical operand is `object` and the other
+is a generic parameter (for example `T? === T`), bir2cir explicitly boxes the generic operand
+before comparing references. It does not unbox the object or call `Equals`; reference-valued
+instantiations retain their identity. Homogeneous generic/value comparisons keep the raw
+comparison described below.
+
+Here, homogeneous means that both physical operands retain the same generic slot,
+as in `fun <T> ident(a: T, b: T) = a === b`. This differs from
+`fun <T> nullableIdent(a: T?, b: T) = a === b`: on DotKt,
+`ident<Int>(1000, 1000)` is `true`, while `nullableIdent<Int>(1000, 1000)` is
+`false`, because the latter compares two separately boxed references. The nullable
+signature does not imply that a non-null argument uses the homogeneous value path.
+
+Because CLR generics are **reified** (§2) and a basic `enum class` is a real CLR
+value-type `enum` (`BirEmitterDeclarations.kt`, `BirEmitter.enumDef`), that single `ceq` lowering produces
+three JVM-diverging outcomes:
 
 - **A generic type parameter instantiated over a primitive compares by VALUE, not identity.**
   `fun <T> ident(a: T, b: T) = a === b; ident(1000, 1000)` → **`true`** on DotKt. At the CLR the
@@ -612,7 +624,7 @@ produces three JVM-diverging outcomes:
   observed result differs.
 - **A boxed enum loses its singleton identity — this one breaks a Kotlin guarantee, not just an
   unspecified boxing detail.** A basic `enum class` lowers to a real CLR value-type `enum`
-  (`BirEmitter.kt:514-515`); widening it to `Any` boxes a **fresh** object each time. `val e1: Any =
+  (`BirEmitterDeclarations.kt`, `BirEmitter.enumDef`); widening it to `Any` boxes a **fresh** object each time. `val e1: Any =
   Color.RED; val e2: Any = Color.RED; e1 === e2` → **`false`** on DotKt, whereas Kotlin/JVM enum
   entries are singletons and `===` is **always `true`**, boxed or not. A *directly*-typed compare
   (`Color.RED === Color.RED`, no widening to `Any`) stays a value-type `ceq` on the same constant and
