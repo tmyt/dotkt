@@ -27,4 +27,8 @@ fun verifyLocalArrayFactoryIdentity() {
     check(nullable[0] == 1 && nullable[1] == null)
     val sized = kotlin.arrayOfNulls<String>(2)
     check(sized.size == 2 && sized[0] == null)
+    val nullableValues = kotlin.arrayOfNulls<Int>(2)
+    check(nullableValues.size == 2 && nullableValues[0] == null)
+    nullableValues[1] = 42
+    check(nullableValues[1] == 42)
 }

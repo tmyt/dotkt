@@ -1013,7 +1013,7 @@ static class MemberCallSubstitution
             // the common forward allocator runs.
             var topLevelPropertyAccess = Str(node["prop"]);
             // Collection/array FACTORY (`listOf`/`setOf`/`mapOf`/`arrayOf`/`intArrayOf`/`arrayOfNulls`): a
-            // @ClrCollectionFactory/@ClrArrayFactory marker on the ref.dll top-level fun -> re-emit the
+            // @ClrCollectionFactory/@ClrArrayFactory marker on the selected local or referenced declaration -> re-emit the
             // newList/newSet/newMap/newArray/newArraySized CONSTRUCTION node (the recognition kotc used to do via its
             // LIST/SET/MAP/ARRAY_FACTORY tables). Handled first so a factory never falls through to the plain top-level
             // owner-attribution below. A non-decomposable form (`mapOf(pairVariable)` — not a `to`-Pair literal) returns
