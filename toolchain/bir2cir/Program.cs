@@ -214,7 +214,7 @@ sealed class Pipeline
         NullableRepresentationMaterialization.Apply(birRoots, isValueFqn, refs, policy: genericRepresentations);
         // Preserve selected local factory facts before per-file transformations. In a
         // stdlib self-build these declarations are local, not referenced MethodDefs.
-        var localCollectionFactories = MemberCallSubstitution.CollectLocalCollectionFactories(birRoots);
+        var localFactories = MemberCallSubstitution.CollectLocalFactories(birRoots);
         var companionRepresentations = CompanionRepresentationLowering.Apply(birRoots);
         // CLR multiplies static storage and .cctors on a generic TypeDef per constructed type. Kotlin companion-block
         // statics are one declaration independent of the owner's T, so materialize their non-generic carrier before
@@ -764,7 +764,7 @@ sealed class Pipeline
                 hoisted = CharSeqStringLowering.Apply(hoisted, localTopLevelFns, out charSeqRetLambdas);
             var substituted = _options.RefBuild ? hoisted : MemberCallSubstitution.Apply(hoisted, refs,
                 localTopLevelFns, attributeTopLevelOwner, isValueFqn, localPropertyDeclarations, genericRepresentations,
-                localCollectionFactories);
+                localFactories);
             // Reified-nullability witnesses were prepared while declaration identities and Kotlin type arguments were
             // still authoritative. Materialize them only after semantic calls (enum/array/collection intrinsics) have
             // either been replaced or deliberately retained, so a physical hidden ABI argument cannot interfere with
