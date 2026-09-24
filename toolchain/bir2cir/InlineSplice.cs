@@ -438,14 +438,18 @@ static class InlineSplice
             // Keep a type-variable receiver in its own frame. Its Kotlin upper bound can be erased from the
             // physical generic declaration later; widening the temporary now would leave an unproven CLR store.
             // Member binding still owns the selected constructed declaration and any required receiver conversion.
-            if (StaticType.Surface(disp, BirScope.Empty) is TypeNode.Tv receiverVariable)
-                thisType = TypeJson.Write(receiverVariable);
+            var receiverType = StaticType.Surface(disp, BirScope.Empty);
+            var receiverCore = receiverType;
+            while (receiverCore is TypeNode.Nullable or TypeNode.Oblivious)
+                receiverCore = receiverCore is TypeNode.Nullable nullable ? nullable.Of : ((TypeNode.Oblivious)receiverCore).Of;
+            if (receiverCore is TypeNode.Tv)
+                thisType = TypeJson.Write(receiverType);
             stmts.Add(new JsonObject
             {
                 ["k"] = "var", ["name"] = thisTemp, ["type"] = thisType.DeepClone(), ["init"] = disp.DeepClone(),
             });
-            RewriteThis(pBody, thisTemp);
-            RewriteThis(result, thisTemp);
+            RewriteThis(pBody, thisTemp, thisType);
+            RewriteThis(result, thisTemp, thisType);
         }
 
         // The payload's positional parameters (the extension receiver as param 0, then contexts, then regulars). A
@@ -731,14 +735,14 @@ static class InlineSplice
     // whole. A `newSuspendLambda`'s BODY is its own frame, but its positional `capValues` are construction expressions
     // evaluated in THIS payload frame, so rewrite only that channel and preserve the lambda body. A `newClosure`/`newSam`'s
     // SAM/invoke body lives in `synthClass`, so only that KEY is skipped while its outer-frame capture values are visited.
-    static void RewriteThis(JsonNode node, string thisTemp)
+    static void RewriteThis(JsonNode node, string thisTemp, JsonNode thisType)
     {
         if (node is JsonObject o)
         {
             if (Str(o["k"]) == "typeDef") return;
             if (Str(o["k"]) == "newSuspendLambda")
             {
-                if (o["capValues"] is JsonNode capValues) RewriteThis(capValues, thisTemp);
+                if (o["capValues"] is JsonNode capValues) RewriteThis(capValues, thisTemp, thisType);
                 return;
             }
             if (Str(o["k"]) == "this")
@@ -746,11 +750,35 @@ static class InlineSplice
                 foreach (var key in new List<string>(((IDictionary<string, JsonNode>)o).Keys)) o.Remove(key);
                 o["k"] = "local";
                 o["name"] = thisTemp;
+                o["sty"] = thisType.DeepClone();
                 return;
             }
-            foreach (var kv in o) if (kv.Value != null && kv.Key != "synthClass") RewriteThis(kv.Value, thisTemp);
+            foreach (var kv in o) if (kv.Value != null && kv.Key != "synthClass") RewriteThis(kv.Value, thisTemp, thisType);
+            if (Str(o["k"]) == "callEval" && o["bindings"] is JsonArray bindings)
+                foreach (var binding in bindings.OfType<JsonObject>())
+                    if (binding["expr"] is JsonObject read && Str(read["k"]) == "local"
+                        && Str(read["name"]) == thisTemp)
+                    {
+                        binding["type"] = thisType.DeepClone();
+                        StampBindingReads(o, Str(binding["id"]), thisType);
+                    }
         }
-        else if (node is JsonArray a) foreach (var c in a) if (c != null) RewriteThis(c, thisTemp);
+        else if (node is JsonArray a) foreach (var c in a) if (c != null) RewriteThis(c, thisTemp, thisType);
+    }
+
+    static void StampBindingReads(JsonNode node, string id, JsonNode type)
+    {
+        if (node is JsonObject obj)
+        {
+            if (Str(obj["k"]) == "bindRef" && Str(obj["id"]) == id)
+                obj["sty"] = type.DeepClone();
+            else
+                foreach (var pair in obj)
+                    if (pair.Value != null) StampBindingReads(pair.Value, id, type);
+        }
+        else if (node is JsonArray array)
+            foreach (var child in array)
+                if (child != null) StampBindingReads(child, id, type);
     }
 
     // §4.4(i) — FORWARDING: a lambda param passed BY NAME into a NESTED call that is itself a stdlib inline fn. stdlib

@@ -117,6 +117,33 @@ static class FBoundStarProjectionErasure
         }
         OwnerConstrainedMethodLowering.CloseOwners(rootList, ContainsOwnerTv,
             bound => ProjectOwnerMethodBound(bound, owners, refs, physical: false));
+        foreach (var root in rootList.OfType<JsonObject>()) CloseSuspendLambdaOwners(root, root);
+        void CloseSuspendLambdaOwners(JsonNode node, JsonObject owner)
+        {
+            if (node is JsonObject obj)
+            {
+                if (IsTypeDefinition(obj)) owner = obj;
+                if (Str(obj["k"]) == "newSuspendLambda")
+                {
+                    // These bodies have their own donor frame and are materialized after this pass.
+                    // Select their projected member owners now, while source constraints are intact.
+                    var declaration = new JsonObject
+                    {
+                        ["typeParams"] = obj["typeParamDecls"]?.DeepClone(),
+                        ["params"] = obj["params"]?.DeepClone(),
+                        ["body"] = obj["body"]?.DeepClone(),
+                    };
+                    OwnerConstrainedMethodLowering.CloseOwnerViews(declaration, owner, rootList,
+                        ContainsOwnerTv, bound => ProjectOwnerMethodBound(bound, owners, refs, physical: false));
+                    obj["body"] = declaration["body"]?.DeepClone();
+                }
+                foreach (var pair in obj)
+                    if (pair.Value != null) CloseSuspendLambdaOwners(pair.Value, owner);
+            }
+            else if (node is JsonArray array)
+                foreach (var child in array)
+                    if (child != null) CloseSuspendLambdaOwners(child, owner);
+        }
         ForeignStarProjectionBinding.ApplyAll(rootList,
             owners.Values.Where(owner => owner.Needed).ToDictionary(
                 owner => owner.Name, owner => owner.ErasedName, StringComparer.Ordinal), refs, localClrAliases);

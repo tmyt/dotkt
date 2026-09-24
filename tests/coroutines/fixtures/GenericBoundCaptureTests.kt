@@ -9,6 +9,7 @@ class Gate {
     fun resume() { val saved = pending!!; pending = null; saved.resume(Unit) }
 }
 open class Box<T>(val items: List<T?>) {
+    inline fun outer(block: () -> Unit) { visit { block() } }
     inline fun visit(block: () -> Unit) {
         check(items.size == 2)
         block()
@@ -21,8 +22,12 @@ private class Completion<T> : Continuation<T> {
 }
 private fun <T, U : Box<T>> capture(value: U): U {
     val current = value
-    value.visit { if (value.items.size == 2) return current }
+    value.outer { if (value.items.size == 2) return current }
     return current
+}
+private fun <T, U : Box<T>> nullableCapture(value: U?): U? {
+    value?.outer { check(value.items.size == 2) }
+    return value
 }
 private fun <T, U : Box<T>> suspended(value: U, gate: Gate): suspend () -> U = {
     check(value.items.size == 2)
@@ -49,11 +54,19 @@ private fun <T, U> retained(value: U, gate: Gate): suspend () -> U where U : Box
     check(value.label() == "retained")
     value
 }
-inline fun <T, U : Box<T>> spliced(value: U, gate: Gate): suspend () -> U = {
-    check(value.items.size == 2)
-    gate.pause()
-    value
+inline fun <T, U : Box<T>> spliced(value: U, gate: Gate, before: () -> Unit): suspend () -> U {
+    before()
+    return {
+        check(value.items.size == 2)
+        gate.pause()
+        value
+    }
 }
+inline fun <T> deferred(value: T, before: () -> Unit): suspend () -> T {
+    before()
+    return { value }
+}
+private fun <Unused, A, B : A> dependency(value: B): suspend () -> B = deferred(value) {}
 private class Host<X>(val marker: X) {
     fun <Unused, U : Box<X>> suspended(value: U, gate: Gate): suspend () -> U = {
         check(marker != null)
@@ -77,6 +90,8 @@ class GenericBoundCaptureTests {
         val integers = Box<Int>(listOf(null, 7))
         check(capture(strings) === strings)
         check(capture(integers) === integers)
+        check(nullableCapture(strings) === strings)
+        check(nullableCapture<Int, Box<Int>>(null) == null)
     }
 
     @TestAttribute
@@ -90,11 +105,14 @@ class GenericBoundCaptureTests {
         val third = Gate()
         complete(Host("owner").suspended<Any, Box<String>>(strings, third), third, strings)
         val fourth = Gate()
-        complete(spliced(integers, fourth), fourth, integers)
+        complete(spliced(integers, fourth) {}, fourth, integers)
         val fifth = Gate()
         complete(nested(strings, fifth), fifth, strings)
         val sixth = Gate()
         val named = NamedBox<Int>(listOf(null, 11))
         complete(retained(named, sixth), sixth, named)
+        val dependent = Completion<String>()
+        dependency<Unit, Any, String>("closed").startCoroutine(dependent)
+        check(dependent.outcome!!.getOrThrow() == "closed")
     }
 }

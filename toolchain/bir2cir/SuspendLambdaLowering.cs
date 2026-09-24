@@ -402,6 +402,36 @@ static class SuspendLambdaLowering
                 suffix++;
             }
 
+        // A donor may capture only B while the caller declares B : A. Copying B's physical
+        // declaration introduces A even though the donor never mentioned it. Close the new frame
+        // over those declaration dependencies before translating any caller-owned constraints.
+        static IEnumerable<int> MethodDependencies(JsonNode value)
+        {
+            if (value is JsonObject obj)
+            {
+                if (TypeJson.IsType(obj) && TypeJson.Read(obj) is TypeNode.Tv { Scope: "method" } tv)
+                    yield return tv.I;
+                else
+                    foreach (var pair in obj)
+                        foreach (var index in MethodDependencies(pair.Value)) yield return index;
+            }
+            else if (value is JsonArray array)
+                foreach (var child in array)
+                    foreach (var index in MethodDependencies(child)) yield return index;
+        }
+        for (var index = ownerParams.Count; index < declarations.Count; index++)
+            if (callerDeclarations.Contains(index))
+                foreach (var dependency in MethodDependencies(declarations[index]).Distinct().ToArray())
+                    if (!callerSlots.ContainsKey(("method", dependency)))
+                    {
+                        var parameter = methodParameters[dependency];
+                        names.Add(JsonValue.Create(ParamName(parameter)));
+                        callerDeclarations.Add(declarations.Count);
+                        declarations.Add(parameter.DeepClone());
+                        args.Add(TypeJson.Write(new TypeNode.Tv("method", dependency)));
+                        callerSlots[("method", dependency)] = new TypeNode.Tv("method", suffix++);
+                    }
+
         var selectedFrameSlots = frameSlots;
         TypeNode RemapFrameSlots(TypeNode type) => type switch
         {
@@ -459,8 +489,8 @@ static class SuspendLambdaLowering
         node.Remove(SplicedDeclarationFrameKey);
         node.Remove("typeFrame");
         RewriteTypes(node);
-        // The complete owner prefix was copied from the caller and is already in that frame. Only the
-        // lambda-owned suffix constraints were authored in the donor declaration frame.
+        // The complete owner prefix is already in its final frame. Suffix declarations may come
+        // from either the donor or the caller; translate each from its own declaration frame.
         for (var index = ownerParams.Count; index < declarations.Count; index++)
         {
             selectedFrameSlots = callerDeclarations.Contains(index) ? callerSlots : frameSlots;
