@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Delegate invocations convert arguments to their resolved slots (#754).** Primitive, nullable-value and
+  generic arguments passed to object parameters are explicitly boxed, including cross-DLL function values.
+
 - **Array factories use selected declaration identity (#869).** User functions sharing a standard
   array factory's name retain their bodies; local stdlib factories use their explicit binding attributes.
 
