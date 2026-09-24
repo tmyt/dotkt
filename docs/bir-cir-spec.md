@@ -806,7 +806,9 @@ references are resolved, bir2cir can retain an allocation's exact CLR type in su
 Kotlin projected surface. If suspension spills the binding, its field layout stays unchanged; reads use an explicit
 conversion backed by that same allocation fact, including local-to-local and local-to-field copies into further
 operand temporaries. Only bindings carrying the producer-authored fact participate in this propagation. These facts are
-local to the generated method frame and are consumed before CIR serialization. They do not narrow user storage or
+local to the generated method frame and are consumed before CIR serialization in runtime/application builds.
+Metadata-only reference builds skip this physical value-flow pass; their retained initializer IR may still carry
+the inert annotation, which has no emitter semantics. These facts do not narrow user storage or
 public declaration signatures, which may legally carry other generic instantiations, including value-type elements.
 
 **`defaultCarrier.lifted` is unchanged.** A carrier's lifted method declarations remain a RAW TOKEN payload parsed out
