@@ -50,8 +50,8 @@ PROJECTS=(
 # Reviewed on the v0.9.8 main baseline at the start of #227. Updating a suite requires updating this number in
 # the same change, making otherwise-silent test proliferation or accidental deletion an explicit review event.
 declare -A EXPECTED_DISCOVERED=(
-	["tests/basic"]=646
-	["tests/coroutines"]=232
+	["tests/basic"]=648
+	["tests/coroutines"]=234
 	["tests/roundtrip/consumer"]=280
 	["tests/roundtrip/bidirectional/consumer"]=38
 	["tests/interop/consumer"]=361
