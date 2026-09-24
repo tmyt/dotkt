@@ -792,18 +792,11 @@ static partial class NullableTvErasureCallRealign
             decl.NullableErasureOwnershipKnown, ctx.IsNullableCompanion(derived));
     }
 
-    // What the CALL SITE says its result is: the explicit `ret`/`dynRet` it carries.
-    //
-    // NOT the frontend `sty` stamp, and that is a MEASURED limit rather than an oversight. kotc writes an explicit
-    // `ret` for some generic calls and, for the rest, only `sty` — so a cross-module generic factory
-    // (`holderOf<String>(3)`, which says `Vault<String?>` in `sty` and nothing else) is outside this axis, and its
-    // erased `Vault<object>` return still meets the consumer's restored `Vault<string>` slot as a formal-only
-    // ilverify finding. Deriving from `sty` and WRITING the `ret` does close that one, and was tried: it then reaches
-    // the same call's function-type ARGUMENT, whose delegate the consumer cannot yet build at the erased shape (the
-    // parameter half of the func-slot erasure), turning one formal finding into two `DelegateCtor` ones. So the
-    // `sty`-only call shape lands with the func-slot parameter erasure, not before it.
+    // A current call can state its result only in the frontend's expression stamp. That is the same source-type
+    // claim as ret/dynRet, not an absent result. The declaration still supplies the physical type; the stamp only
+    // identifies the use that must be realigned against it, including an already-materialized nullable frame.
     static TypeNode StampedResult(JsonObject obj)
-        => TypeJson.Read(obj["dynRet"]) ?? TypeJson.Read(obj["ret"]);
+        => TypeJson.Read(obj["dynRet"]) ?? TypeJson.Read(obj["ret"]) ?? TypeJson.Read(obj["sty"]);
 
     // Take the derived result type, ONLY when it is the object-erasure of what the call site stamped — the exact
     // erasure boundary, never a genuine widen/narrow. A direct-write `Ref<Int?>` (derived == stamped) is untouched.
@@ -1119,6 +1112,15 @@ static partial class NullableTvErasureCallRealign
 
     internal static void SelfTest()
     {
+        var sourceFunction = new TypeNode.Fn(false, new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Int")),
+            new TypeNode[] { new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Int")) });
+        var physicalCallbackResult = new TypeNode.Fn(false, new TypeNode.Fqn("object"),
+            new TypeNode[] { new TypeNode.Fqn("object") }, null, "System.Func");
+        var stampedCall = new JsonObject { ["sty"] = TypeJson.Write(sourceFunction) };
+        if (ApplyDerivedRet(stampedCall, physicalCallbackResult, StampedResult(stampedCall), false) != physicalCallbackResult
+            || TypeJson.Read(stampedCall["ret"]) != physicalCallbackResult
+            || TypeJson.Read(stampedCall["sty"]) != physicalCallbackResult)
+            throw new InvalidOperationException("A sty-only function call lost its materialized physical result");
         var companionReturn = new TypeNode.Fqn("Box", new TypeNode[] { new TypeNode.Tv("type", 1) });
         var sourceReturn = new TypeNode.Fqn("Box", new TypeNode[] {
             new TypeNode.Nullable(new TypeNode.Tv("type", 0)) });
