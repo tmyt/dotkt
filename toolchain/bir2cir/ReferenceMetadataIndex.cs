@@ -452,6 +452,9 @@ sealed partial class ReferenceMetadataIndex
         arrayElementHint = binding.ArrayFactoryElementHint;
         return collectionKind != null || arrayKind != null;
     }
+
+    public int[] DeclarationFactoryVarargPositions(string id) =>
+        _declarationById[id].VarargPositions;
     // ownerFqn -> declared parameter count -> the ctor declarations of that arity (#86 D1). A list, because a
     // same-arity overload set must be REFUSED rather than resolved by arity alone.
     readonly Dictionary<string, Dictionary<int, List<CtorBinding>>> _ctorsByOwner = new(StringComparer.Ordinal);
@@ -947,8 +950,8 @@ sealed partial class ReferenceMetadataIndex
         return list;
     }
 
-    // The @ClrCollectionFactory kind ("list"/"set"/"map") for a top-level fun NAME, or null when the fun is not a
-    // collection factory. MemberCallSubstitution consults this on a `callStatic owner=null` to re-emit newList/newSet/newMap.
+    // Name index used by MapVarianceRealign for calls without a declaration identity.
+    // Collection construction itself requires TryDeclarationFactory's exact selected binding.
     public string CollectionFactoryKind(string funName) => _collectionFactories.GetValueOrDefault(funName);
     // The @ClrArrayFactory kind ("vararg"/"sized") for a top-level fun NAME, or null when not an array factory.
     public string ArrayFactoryKind(string funName) => _arrayFactories.GetValueOrDefault(funName);
@@ -1121,6 +1124,7 @@ sealed partial class ReferenceMetadataIndex
         && Same(a.DeclarationSemanticReturn, b.DeclarationSemanticReturn)
         && a.CollectionFactoryKind == b.CollectionFactoryKind && a.ArrayFactoryKind == b.ArrayFactoryKind
         && a.ArrayFactoryElementHint == b.ArrayFactoryElementHint
+        && Same(a.VarargPositions, b.VarargPositions)
         && Same(a.SemanticReifiedTypeParameterIndices, b.SemanticReifiedTypeParameterIndices)
         && Same(a.NullableWitnessTypeParameterIndices, b.NullableWitnessTypeParameterIndices)
         && SameFrame(a.NullableFrame, b.NullableFrame);
@@ -5058,7 +5062,13 @@ sealed partial class ReferenceMetadataIndex
                             innerConstructorFactory?.Inner,
                             innerConstructorFactory?.Parameters,
                             innerConstructorFactory?.TypeArguments,
-                            SemanticMethodTypeParameters(method, dotKtAuthored), declarationIdentity?.NullableFrame));
+                            SemanticMethodTypeParameters(method, dotKtAuthored), declarationIdentity?.NullableFrame)
+                        {
+                            VarargPositions = method.GetParameters()
+                                .Where(parameter => parameter.GetCustomAttributesData().Any(attribute =>
+                                    attribute.AttributeType.FullName == "System.ParamArrayAttribute"))
+                                .Select(parameter => parameter.Position).ToArray(),
+                        });
                         // [KotlinInline] raw-BIR carrier (#71/#75 S1): decode the versioned carrier now (the codec is
                         // BirCarrier, shared) and key it owner|name|pc|ga so InlineSplice can splice this external inline
                         // fn's body at a cross-module call site. This carrier is compiler-internal ABI: an older or
@@ -7619,9 +7629,8 @@ sealed class ReferenceDotKtMetadata
     public readonly Dictionary<string, List<(string Owner, string RecvKey, ReferenceMetadataIndex.TypeKey ParamKey)>> TopLevelStatics = new(StringComparer.Ordinal);
     // Collection/array FACTORY top-level funs, keyed by fun NAME -> the factory kind. A @kotlin.clr.ClrCollectionFactory
     // ("list"/"set"/"map") or @kotlin.clr.ClrArrayFactory ("vararg"/"sized") marker on a [KotlinFileClass] static.
-    // MemberCallSubstitution reads these on a `callStatic owner=null` (listOf/setOf/mapOf/arrayOf/intArrayOf/arrayOfNulls)
-    // and realizes the corresponding `{k:newList/newSet/newMap/newArray/newArraySized}` CIR construction. Keyed by name
-    // alone: every overload of a factory name shares the kind, so no receiver disambiguation is needed.
+    // These name indexes support the remaining name-based map realignment and array-factory paths.
+    // They do not establish a selected overload or its parameter packing; collection construction uses MemberBinding.
     public readonly Dictionary<string, string> CollectionFactories = new(StringComparer.Ordinal);
     public readonly Dictionary<string, string> ArrayFactories = new(StringComparer.Ordinal);
     public readonly Dictionary<string, string> ArrayFactoryElemHints = new(StringComparer.Ordinal); // concrete-primitive elem (spread call)
@@ -7666,7 +7675,10 @@ sealed record MethodSlotIdentity(string PhysicalMember, JsonArray TypeParams, bo
 // (DeclarationTypeNode), the same one `ParamTypeNodes` uses, which keeps generic parameters as `Tv` — a declaration
 // the caller substitutes. The two are not interchangeable: `Iterable<E>.iterator()` is `Iterator` in the first and
 // `Iterator<!0>` in the second, and only the second says what the call site's type argument completes.
-sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic, int PropertyAccess = 0, string PropertyName = null, int[] ByrefPositions = null, bool Suspend = false, bool Conv = false, TypeNode ConvTo = null, TypeNode ReturnType = null, int MethodArity = 0, TypeNode[] ParamTypeNodes = null, bool IsVirtual = false, TypeNode KotlinReturnType = null, TypeNode SuspendReturnType = null, TypeNode NullableGenericRet = null, TypeNode[] NullableGenericParams = null, TypeNode ReturnTypeNode = null, int MetadataToken = 0, string SourcePropertyName = null, string AccessorKind = null, string AssociatedPropertyName = null, bool IsPropertyBridge = false, bool IsPublic = false, string PropertyAssociation = null, string SourcePropertyAssociation = null, string SourceMethodName = null, JsonArray MethodTypeParams = null, string DeclarationId = null, string DeclarationSourceName = null, string DeclarationPhysicalOwner = null, TypeNode[] DeclarationSemanticParams = null, TypeNode DeclarationSemanticReturn = null, string CollectionFactoryKind = null, string ArrayFactoryKind = null, string ArrayFactoryElementHint = null, int CountStart = -1, int CountEnd = -1, int[] SemanticReifiedTypeParameterIndices = null, int[] NullableWitnessTypeParameterIndices = null, TypeNode[] KotlinParameterTypes = null, string InnerConstructorOwner = null, TypeNode[] InnerConstructorParameters = null, int[] InnerConstructorTypeArguments = null, JsonArray SemanticMethodTypeParams = null, NullableRepresentationFrame NullableFrame = null);
+sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic, int PropertyAccess = 0, string PropertyName = null, int[] ByrefPositions = null, bool Suspend = false, bool Conv = false, TypeNode ConvTo = null, TypeNode ReturnType = null, int MethodArity = 0, TypeNode[] ParamTypeNodes = null, bool IsVirtual = false, TypeNode KotlinReturnType = null, TypeNode SuspendReturnType = null, TypeNode NullableGenericRet = null, TypeNode[] NullableGenericParams = null, TypeNode ReturnTypeNode = null, int MetadataToken = 0, string SourcePropertyName = null, string AccessorKind = null, string AssociatedPropertyName = null, bool IsPropertyBridge = false, bool IsPublic = false, string PropertyAssociation = null, string SourcePropertyAssociation = null, string SourceMethodName = null, JsonArray MethodTypeParams = null, string DeclarationId = null, string DeclarationSourceName = null, string DeclarationPhysicalOwner = null, TypeNode[] DeclarationSemanticParams = null, TypeNode DeclarationSemanticReturn = null, string CollectionFactoryKind = null, string ArrayFactoryKind = null, string ArrayFactoryElementHint = null, int CountStart = -1, int CountEnd = -1, int[] SemanticReifiedTypeParameterIndices = null, int[] NullableWitnessTypeParameterIndices = null, TypeNode[] KotlinParameterTypes = null, string InnerConstructorOwner = null, TypeNode[] InnerConstructorParameters = null, int[] InnerConstructorTypeArguments = null, JsonArray SemanticMethodTypeParams = null, NullableRepresentationFrame NullableFrame = null)
+{
+    public int[] VarargPositions { get; init; } = Array.Empty<int>();
+}
 
 sealed record ReferencedMethodDeclaration(string PhysicalMember, TypeNode[] Parameters, TypeNode Return,
     JsonArray TypeParams, bool ReturnsValue, bool IsVirtual, TypeNode[] PhysicalParameters,

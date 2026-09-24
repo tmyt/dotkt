@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Collection factories preserve selected vararg packing (#867).** Literal packs are expanded using
+  declaration metadata, while forwarded packs and single array-valued elements retain their distinct semantics.
+
 - **Projected CLR constructions retain their concrete owner (#861).** Redundant use-site variance shares
   the declaration's physical representation, including nested constructor arguments and DLL boundaries.
 

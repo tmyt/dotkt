@@ -64,15 +64,52 @@ static class MemberCallSubstitution
     static ValueTypeOracle _isValue = _ => false;
     static GenericRepresentationPolicy _representations;
 
+    internal sealed record LocalCollectionFactory(string Kind, int[] VarargPositions,
+        NullableRepresentationFrame Frame);
+    static IReadOnlyDictionary<string, LocalCollectionFactory> _localCollectionFactories;
+
+    public static IReadOnlyDictionary<string, LocalCollectionFactory> CollectLocalCollectionFactories(
+        IEnumerable<JsonNode> roots)
+    {
+        var result = new Dictionary<string, LocalCollectionFactory>(StringComparer.Ordinal);
+        void Walk(JsonObject owner)
+        {
+            if (owner["methods"] is JsonArray methods)
+                foreach (var method in methods.OfType<JsonObject>())
+                {
+                    if (Str(method[DeclarationIdentityBinding.Key]) is not string id
+                        || method["attrs"] is not JsonArray attributes) continue;
+                    foreach (var attribute in attributes.OfType<JsonObject>())
+                    {
+                        if (TypeJson.OwnerName(attribute["attr"]) != "kotlin.clr.ClrCollectionFactory") continue;
+                        var kind = Str(attribute["args"]?[0]?["value"]);
+                        var parameters = (JsonArray)method["params"];
+                        var varargs = parameters.Select((parameter, index) => (parameter, index))
+                            .Where(pair => pair.parameter?["mods"]?["vararg"]?.GetValue<bool>() == true)
+                            .Select(pair => pair.index).ToArray();
+                        var frame = Str(method[NullableRepresentationTypes.MethodFrameKey]) is string encoded
+                            ? NullableRepresentationFrame.Read(JsonNode.Parse(encoded)) : null;
+                        result.Add(id, new LocalCollectionFactory(kind, varargs, frame));
+                    }
+                }
+            if (owner["types"] is JsonArray types)
+                foreach (var type in types.OfType<JsonObject>()) Walk(type);
+        }
+        foreach (var root in roots.OfType<JsonObject>()) Walk(root);
+        return result;
+    }
+
     public static JsonNode Apply(JsonNode root, ReferenceMetadataIndex refs,
         IReadOnlySet<string> localTopLevelFns, bool attributeTopLevelOwner, ValueTypeOracle isValue,
         IReadOnlyDictionary<LocalPropertyAccessorKey, IReadOnlyList<LocalPropertyAccessor>> localPropertyAccessors,
-        GenericRepresentationPolicy representations)
+        GenericRepresentationPolicy representations,
+        IReadOnlyDictionary<string, LocalCollectionFactory> localCollectionFactories)
     {
         _localTopLevelFns = localTopLevelFns;
         _attributeTopLevelOwner = attributeTopLevelOwner;
         _isValue = isValue ?? (_ => false);
         _representations = representations;
+        _localCollectionFactories = localCollectionFactories;
         _localPropertyAccessors = localPropertyAccessors
             ?? new Dictionary<LocalPropertyAccessorKey, IReadOnlyList<LocalPropertyAccessor>>();
         _localPropertyOwners = _localPropertyAccessors.Keys.Select(key => key.Owner)
@@ -662,9 +699,9 @@ static class MemberCallSubstitution
     // null when the call is not a factory (or is a non-decomposable mapOf -> left as a plain call). The element/key/value
     // Collection TYPES come from the call's `typeArgs` (the canonical source for empty/single-element factories and
     // mapOf's [K,V]); an array factory additionally prefers its instantiated result stamp, which states the allocation
-    // element even when a spread input is narrower. ELEMENTS come from the vararg argument (a literal `newArray`, a
-    // forwarded array, or `spreadConcat`), the lone non-vararg element, or none. Mirrors the retired kotc factory
-    // recognition (BirEmitter.kt LIST/SET/MAP/ARRAY_FACTORY sites).
+    // element even when a spread input is narrower. Collection elements come from a declared literal vararg pack,
+    // a non-vararg element, or an empty argument vector; forwarded collection packs retain the ordinary call.
+    // Array factories additionally handle forwarded arrays and spreadConcat directly.
     static JsonNode TryFactorySubst(JsonObject node, ReferenceMetadataIndex refs, string fn, SubstCtx ctx)
     {
         var args = node["args"] as JsonArray ?? new JsonArray();
@@ -674,7 +711,15 @@ static class MemberCallSubstitution
         string collKind;
         string arrKind;
         string arrElemHint;
-        if (exactFactory)
+        var declarationId = Str(node[DeclarationIdentityBinding.Key]);
+        _localCollectionFactories.TryGetValue(declarationId ?? "", out var localFactory);
+        if (localFactory != null)
+        {
+            collKind = localFactory.Kind;
+            arrKind = null;
+            arrElemHint = null;
+        }
+        else if (exactFactory)
         {
             if (Str(node[DeclarationIdentityBinding.Key]) is not string selectedId
                 || !refs.TryDeclarationFactory(selectedId, out collKind, out arrKind, out arrElemHint))
@@ -683,17 +728,23 @@ static class MemberCallSubstitution
         }
         else
         {
-            collKind = refs.CollectionFactoryKind(fn);
+            // Collection element packing belongs to the selected declaration, not its name
+            // or the post-substitution shape of an argument. Without that binding, retain
+            // the ordinary call rather than guessing which overload has a vararg slot.
+            collKind = null;
             arrKind = refs.ArrayFactoryKind(fn);
             arrElemHint = refs.ArrayFactoryElemHint(fn);
         }
 
         if (collKind != null)
         {
+            var factoryElements = FactoryElems(args,
+                localFactory?.VarargPositions ?? refs.DeclarationFactoryVarargPositions(declarationId));
+            if (factoryElements == null) return null;
             JsonNode RepresentationArgument(int index, NullableRepresentationFrame.Role role)
             {
                 if (typeArgs == null) return null;
-                var frame = refs.NullableMethodFrame(Str(node[DeclarationIdentityBinding.Key]));
+                var frame = localFactory != null ? localFactory.Frame : refs.NullableMethodFrame(declarationId);
                 // Current declarations without companions have an identity frame. Factory elements
                 // use the same ordinary argument as their native vararg wrapper.
                 return typeArgs[frame?.SourcePosition(index) ?? index];
@@ -704,8 +755,8 @@ static class MemberCallSubstitution
                 var vt = RepresentationArgument(1, NullableRepresentationFrame.Role.Ordinary);
                 if (kt == null || vt == null) return null;                       // can't reconstruct K,V -> plain call
                 var entries = new JsonArray();
-                // The vararg wrapper newArray's elem is `kotlin.Pair<K,V>` (never K), so a lone newArray arg IS the
-                // vararg (wrapperElemType=null). Each element must be an INLINE Pair construction to be split, in either
+                // The selected declaration distinguishes a vararg Pair pack from a single Pair.
+                // Each element must be an INLINE Pair construction to be split, in either
                 // of the two shapes kotc can now emit: a `new kotlin.Pair(k,v)` LITERAL, or a `callStatic .to(k,v)` — the
                 // `a to b` idiom (#52 Phase 3 stopped kotc synthesizing `new kotlin.Pair` for `to`; it emits the plain
                 // infix `to` call, whose body IS `Pair(this, that)`, so its two args ARE the key/value). Splitting both
@@ -713,7 +764,7 @@ static class MemberCallSubstitution
                 // generics when the elements are more-specifically-typed (`Pair<String,String>` into `Pair<String,Any>[]`).
                 // A non-inline Pair (`mapOf(pairVar)`) matches neither shape and aborts the substitution -> the real
                 // mapOf body runs (the single-element homogeneous case that does NOT hit the covariance mismatch).
-                foreach (var el in FactoryElems(args, null))
+                foreach (var el in factoryElements)
                 {
                     if (el is JsonObject eo && PairKV(eo) is JsonArray pa && pa.Count == 2)
                         entries.Add(new JsonObject { ["key"] = pa[0].DeepClone(), ["value"] = pa[1].DeepClone() });
@@ -728,10 +779,7 @@ static class MemberCallSubstitution
             var elemT = RepresentationArgument(0, NullableRepresentationFrame.Role.Ordinary);
             if (elemT == null) return null;                                     // can't reconstruct elem -> plain call
             var elems = new JsonArray();
-            // The vararg array is a Kotlin native array of ordinary T. Its wrapper must be
-            // recognized before the elements cross into the collection's S(T) storage slots.
-            var wrapperElement = RepresentationArgument(0, NullableRepresentationFrame.Role.Ordinary);
-            foreach (var el in FactoryElems(args, wrapperElement)) elems.Add(el.DeepClone());
+            foreach (var el in factoryElements) elems.Add(el.DeepClone());
             return CarryFactoryStaticType(node, new JsonObject
             {
                 ["k"] = collKind == "set" ? "newSet" : "newList", ["elem"] = elemT.DeepClone(), ["elems"] = elems,
@@ -874,15 +922,16 @@ static class MemberCallSubstitution
     // The i-th call type argument (a structured Type node), or null when absent. The canonical element/key/value source.
     static JsonNode TypeArgAt(JsonArray typeArgs, int i) => typeArgs != null && i < typeArgs.Count ? typeArgs[i] : null;
 
-    // The element nodes of a factory call: the single vararg argument's `elems` when args is one `newArray` that IS the
-    // vararg wrapper (its elem matches `wrapperElemType`; pass null to accept any lone newArray, for mapOf whose wrapper
-    // elem is `Pair<K,V>` not the map key), otherwise the args verbatim (the lone non-vararg element, or none for empty).
-    static IEnumerable<JsonNode> FactoryElems(JsonArray args, JsonNode wrapperElemType)
+    // A literal pack can be decomposed only because the selected declaration says it
+    // occupies the vararg slot. A non-vararg array is one element. Forwarded packs
+    // retain the selected factory call and its ordinary iteration semantics.
+    static IEnumerable<JsonNode> FactoryElems(JsonArray args, int[] varargPositions)
     {
-        if (args.Count == 1 && args[0] is JsonObject o && (o["k"] as JsonValue)?.GetValue<string>() == "newArray"
-            && (wrapperElemType == null || JsonNode.DeepEquals(o["elem"], wrapperElemType)))
+        if (varargPositions.Length == 0) return args;
+        if (varargPositions.Length == 1 && varargPositions[0] == 0 && args.Count == 1
+            && args[0] is JsonObject o && Str(o["k"]) == "newArray")
             return (o["elems"] as JsonArray ?? new JsonArray());
-        return args;
+        return null;
     }
 
     // Trusted stdlib runtime vocabulary: publish the same declaration-derived storage facts used by
