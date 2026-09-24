@@ -76,8 +76,8 @@ static class DeclNullableFlags
     }
 
     // Unit has no NRT byte, and function types carry only a head byte in the Kotlin NRT convention.
-    // Preserve the exact source subtree for these positions before physical lowering removes its annotations.
-    // Earlier representation passes may already own a more original source surface; never replace it.
+    // Preserve the remaining annotation-bearing subtree before reference-nullability stripping and final type
+    // lowering. Earlier representation passes preserve any changed source surface; never replace their carrier.
     static void PreserveExactSurface(JsonObject slot, string key, string carrier, string genericCarrier)
     {
         if (slot[carrier] != null || slot[genericCarrier] != null) return;

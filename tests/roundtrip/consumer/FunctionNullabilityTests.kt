@@ -26,6 +26,10 @@ class FunctionNullabilityTests {
         check(genericIdentity<Int>()(42) == 42)
         check(extension()(null, null) == null)
         check(extension()("receiver", null) == "receiver")
+        val receiverFunction: String?.(Any?) -> String? = extension()
+        check("receiver".receiverFunction(null) == "receiver")
+        val absentReceiver: String? = null
+        check(absentReceiver.receiverFunction(null) == null)
         with(Context(null)) { check(contextual()(null) == null) }
         with(Context("context")) { check(contextual()(null) == "context") }
         check(boxed().value(null) == null)
