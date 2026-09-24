@@ -609,7 +609,7 @@ as in `fun <T> ident(a: T, b: T) = a === b`. This differs from
 signature does not imply that a non-null argument uses the homogeneous value path.
 
 Because CLR generics are **reified** (§2) and a basic `enum class` is a real CLR
-value-type `enum` (`BirEmitter.kt:514-515`), that single `ceq` lowering produces
+value-type `enum` (`BirEmitterDeclarations.kt`, `BirEmitter.enumDef`), that single `ceq` lowering produces
 three JVM-diverging outcomes:
 
 - **A generic type parameter instantiated over a primitive compares by VALUE, not identity.**
@@ -624,7 +624,7 @@ three JVM-diverging outcomes:
   observed result differs.
 - **A boxed enum loses its singleton identity — this one breaks a Kotlin guarantee, not just an
   unspecified boxing detail.** A basic `enum class` lowers to a real CLR value-type `enum`
-  (`BirEmitter.kt:514-515`); widening it to `Any` boxes a **fresh** object each time. `val e1: Any =
+  (`BirEmitterDeclarations.kt`, `BirEmitter.enumDef`); widening it to `Any` boxes a **fresh** object each time. `val e1: Any =
   Color.RED; val e2: Any = Color.RED; e1 === e2` → **`false`** on DotKt, whereas Kotlin/JVM enum
   entries are singletons and `===` is **always `true`**, boxed or not. A *directly*-typed compare
   (`Color.RED === Color.RED`, no widening to `Any`) stays a value-type `ceq` on the same constant and
