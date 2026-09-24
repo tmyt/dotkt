@@ -616,8 +616,11 @@ static class BirTypeLowering
     // the spelling can occur beneath arrays, nullable value types, byrefs, function types, and constructed generics.
     // Shared expression inference uses Kotlin names for computed primitive results.
     // Reconcile those results with already-physical declaration slots without re-lowering aliases.
+    // Unit here denotes a value, not the attribute-blob map's void marker. In particular,
+    // a null constant with Unit's reference type must remain null rather than become a void expression.
     internal static TypeNode CanonicalExpressionResult(TypeNode type) =>
-        type is TypeNode.Fqn { Args: null } f && KotlinAllToClr.TryGetValue(f.Name, out var primitive)
+        type is TypeNode.Fqn { Args: null } f && f.Name != "kotlin.Unit"
+            && KotlinAllToClr.TryGetValue(f.Name, out var primitive)
             ? CanonicalPhysicalSlotType(new TypeNode.Fqn(primitive)) : CanonicalPhysicalSlotType(type);
 
     internal static TypeNode CanonicalPhysicalSlotType(TypeNode type) => type switch
