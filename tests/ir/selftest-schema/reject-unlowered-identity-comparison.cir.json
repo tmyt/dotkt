@@ -1,0 +1,15 @@
+{
+  "methods": [{
+    "name": "same",
+    "ret": { "t": "fqn", "name": "System.Boolean" },
+    "params": [],
+    "body": [{
+      "k": "return",
+      "value": {
+        "k": "binOp", "op": "===",
+        "lhs": { "k": "const", "type": { "t": "fqn", "name": "System.Object" }, "value": null },
+        "rhs": { "k": "const", "type": { "t": "fqn", "name": "System.Object" }, "value": null }
+      }
+    }]
+  }]
+}

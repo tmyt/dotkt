@@ -344,6 +344,23 @@ static class PhysicalValueCoercion
         var kind = Str(node["k"]);
         switch (kind)
         {
+            case "binOp" when Str(node["op"]) == "===":
+                var identityLeft = ExprType(node["lhs"], scope, index);
+                var identityRight = ExprType(node["rhs"], scope, index);
+                if (identityLeft == null || identityRight == null)
+                    throw new InvalidOperationException("bir2cir: identity comparison lacks a physical operand type");
+                // Only equal physical slots retain the documented homogeneous comparison.
+                // Distinct slots compare references: box generic/value operands explicitly,
+                // without calling Equals or narrowing one operand to the other's type.
+                if (!identityLeft.Equals(identityRight))
+                    foreach (var operand in new[] { "lhs", "rhs" })
+                        node[operand] = new JsonObject
+                        {
+                            ["k"] = "cast", ["type"] = TypeJson.Fqn("System.Object"),
+                            ["e"] = node[operand]!.DeepClone(),
+                        };
+                node["op"] = "==";
+                break;
             case "binOp" when Str(node["op"]) is "==" or "!=":
                 // Nullable generic storage is object, while a non-null generic operand retains its CLR slot.
                 // A raw identity comparison across that seam needs boxing, not Object.Equals. Keep homogeneous

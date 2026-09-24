@@ -249,9 +249,10 @@ static class PrimitiveOperatorLowering
             }
             return new JsonObject { ["k"] = "objEq", ["lhs"] = args[0]?.DeepClone(), ["rhs"] = args[1]?.DeepClone() };
         }
-        // `===` (EQEQEQ): always identity (`ceq` = `binOp ==`).
+        // Preserve identity intent until physical operand types are final. Numeric equality
+        // already uses == and must not acquire reference boxing from this operation.
         if (m == "EQEQEQ" && args.Count == 2)
-            return new JsonObject { ["k"] = "binOp", ["op"] = "==", ["lhs"] = args[0]?.DeepClone(), ["rhs"] = args[1]?.DeepClone() };
+            return new JsonObject { ["k"] = "binOp", ["op"] = "===", ["lhs"] = args[0]?.DeepClone(), ["rhs"] = args[1]?.DeepClone() };
         // `ieee754equals`: the ordered IEEE-754 float/double comparison (`-0.0 == 0.0`, `NaN != NaN`) -> raw CIL
         // `ceq` (`binOp ==`). For the NON-NULL direct `==` the operands already satisfy the raw CIR binOp contract. But
         // the frontend ALSO routes a DIRECT/mixed NULLABLE float `==`

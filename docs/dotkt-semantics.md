@@ -594,12 +594,13 @@ The **primitive** operators stay IEEE (matching Kotlin, and `il-nancmp`-green): 
 
 ## 5a-bis. Referential identity `===` on primitive/boxed/enum values deviates from Kotlin/JVM
 
-`===` (`EQEQEQ`) lowers to a reference/value `binOp ==` → IL `ceq`, rather than the
-structural `==`/`.equals()` helpers (§5a). When one physical operand is `object` and the other
-is a generic parameter (for example `T? === T`), bir2cir explicitly boxes the generic operand
-before comparing references. It does not unbox the object or call `Equals`; reference-valued
-instantiations retain their identity. Homogeneous generic/value comparisons keep the raw
-comparison described below.
+`===` (`EQEQEQ`) retains its identity-comparison intent until bir2cir knows both physical
+operand types, then lowers to `binOp ==` → IL `ceq`, rather than the structural
+`==`/`.equals()` helpers (§5a). Distinct physical operand types are explicitly converted
+to object references before comparison. This includes generic/object, distinct generic
+slots, generic/reference, and nullable-value/object pairs. It does not unbox an object
+to the other operand's type or call `Equals`; reference-valued instantiations retain
+their identity. Homogeneous generic/value comparisons keep the raw comparison below.
 
 Here, homogeneous means that both physical operands retain the same generic slot,
 as in `fun <T> ident(a: T, b: T) = a === b`. This differs from
