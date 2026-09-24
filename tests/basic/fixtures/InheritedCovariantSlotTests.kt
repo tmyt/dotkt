@@ -17,11 +17,15 @@ open class Value(val text: String)
 class Narrow(text: String) : Value(text)
 interface Factory {
     val item: Value
+    val optional: Value?
     fun make(): Value
+    fun <T> makeFrom(seed: T, text: String): Value
 }
 open class FactoryBase {
     open val item: Narrow get() = Narrow("base getter")
+    val optional: Narrow get() = Narrow("optional")
     open fun make(): Narrow = Narrow("base method")
+    fun <T> makeFrom(seed: T, text: String): Narrow = Narrow(text)
 }
 open class FactoryMiddle : FactoryBase(), Factory
 class FactoryLeaf : FactoryMiddle() {
@@ -37,6 +41,8 @@ class InheritedCovariantSlotTests {
         check(producer.channel === strings)
         producer.channel.send("after")
         check(strings.last == "after")
+        val star: Producer<*> = strings
+        check(star.channel === strings)
         val integers = Derived(1)
         val integerProducer: Producer<Int> = integers
         integerProducer.channel.send(2)
@@ -52,6 +58,9 @@ class InheritedCovariantSlotTests {
         val middle: Factory = FactoryMiddle()
         check(middle.item.text == "base getter")
         check(middle.make().text == "base method")
+        check(middle.optional?.text == "optional")
+        check(middle.makeFrom(1, "integer argument").text == "integer argument")
+        check(middle.makeFrom("seed", "string argument").text == "string argument")
         val leaf: Factory = FactoryLeaf()
         check(leaf.item.text == "leaf getter")
         check(leaf.make().text == "leaf method")

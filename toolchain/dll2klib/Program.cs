@@ -2601,6 +2601,14 @@ internal sealed class AssemblyScanner : IDisposable
                 continue;
             var bodyHandle = (MethodDefinitionHandle)implementation.MethodBody;
             var body = _md.GetMethodDefinition(bodyHandle);
+            // A DotKt-generated MethodImpl adapter fills a physical slot for an existing Kotlin declaration,
+            // possibly inherited from a base class. Re-projecting the interface signature here would introduce
+            // a second, wider source member and hide that inherited declaration. Apply the same provenance
+            // rule as the ordinary MethodDef projection; foreign explicit implementations still surface below.
+            if (_attrs.IsDotKtAssembly && _attrs.Has(bodyHandle,
+                    "System.Runtime.CompilerServices.CompilerGeneratedAttribute",
+                    requireTrust: false))
+                continue;
             // A trusted Kotlin accessor carrier says this MethodImpl body is a physical implementation of an
             // already-declared Kotlin property, not another declaration to surface. Public/protected accessor bodies
             // are projected through KotlinAccessorPairs; private compiler bridges forward to that same declaration.
