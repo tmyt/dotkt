@@ -5,8 +5,10 @@ import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
 import kotlin.coroutines.*
 import roundtrip.inheritedsuspendcovariance.*
+import GenericValueInterop.InheritedSuspendTaskApi
 
 open class Consumed(gate: Gate) : Body(gate), Factory
+class ConsumedGeneric(gate: Gate) : Body(gate), GenericFactory<Value>
 class ConsumedOverride(gate: Gate) : Consumed(gate) {
     override suspend fun make(): Narrow = Narrow(super.make().text + "?")
 }
@@ -26,6 +28,29 @@ private fun verify(gate: Gate, expected: String, action: suspend () -> Value) {
     assertEquals(expected, completion.outcome!!.getOrThrow().text)
 }
 class InheritedSuspendCovarianceTests {
+    @TestAttribute
+    fun constructedGenericInterfaceResumes() {
+        val first = Gate()
+        val produced: GenericFactory<Value> = ProducedGeneric(first)
+        verify(first, "value") { produced.make() }
+        val second = Gate()
+        val consumed: GenericFactory<Value> = ConsumedGeneric(second)
+        verify(second, "value") { consumed.make() }
+    }
+    @TestAttribute
+    fun publicTaskSlotsResumeThroughInterface() {
+        val first = Gate()
+        assertEquals("task!", InheritedSuspendTaskApi.ThroughInterface(ProducedOverride(first), first))
+        val second = Gate()
+        assertEquals("task?", InheritedSuspendTaskApi.ThroughInterface(ConsumedOverride(second), second))
+        val third = Gate()
+        assertEquals("task#", InheritedSuspendTaskApi.ThroughInterface(ImportedOverride(third), third))
+    }
+    @TestAttribute
+    fun publicTaskSlotPreservesBaseDispatch() {
+        val gate = Gate()
+        assertEquals("task#", InheritedSuspendTaskApi.ThroughBase(ImportedOverride(gate), gate))
+    }
     @TestAttribute
     fun producedAndConsumedSlotsResume() {
         val first = Gate()

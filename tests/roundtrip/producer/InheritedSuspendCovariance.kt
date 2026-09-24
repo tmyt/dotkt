@@ -10,10 +10,12 @@ class Gate {
     fun resume(value: Narrow) { pending!!.resume(value) }
 }
 interface Factory { suspend fun make(): Value }
+interface GenericFactory<T> { suspend fun make(): T }
 open class Body(val gate: Gate) {
     open suspend fun make(): Narrow = gate.await()
 }
 open class Produced(gate: Gate) : Body(gate), Factory
+class ProducedGeneric(gate: Gate) : Body(gate), GenericFactory<Value>
 class ProducedOverride(gate: Gate) : Produced(gate) {
     override suspend fun make(): Narrow = Narrow(super.make().text + "!")
 }
