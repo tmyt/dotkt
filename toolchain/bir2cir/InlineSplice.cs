@@ -435,6 +435,11 @@ static class InlineSplice
             var thisType = dispatchTypeArgs != null
                 ? new JsonObject { ["t"] = "fqn", ["name"] = owner, ["args"] = dispatchTypeArgs.DeepClone() }
                 : (JsonNode)TypeJson.Fqn(owner);
+            // Keep a type-variable receiver in its own frame. Its Kotlin upper bound can be erased from the
+            // physical generic declaration later; widening the temporary now would leave an unproven CLR store.
+            // Member binding still owns the selected constructed declaration and any required receiver conversion.
+            if (StaticType.Surface(disp, BirScope.Empty) is TypeNode.Tv receiverVariable)
+                thisType = TypeJson.Write(receiverVariable);
             stmts.Add(new JsonObject
             {
                 ["k"] = "var", ["name"] = thisTemp, ["type"] = thisType.DeepClone(), ["init"] = disp.DeepClone(),
