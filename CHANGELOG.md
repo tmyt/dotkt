@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Inherited covariant members fill new interface slots (#855).** A base-class implementation with a narrower
+  return type receives an exact interface forwarding bridge without changing the inherited declaration.
+
 - **Nullable shared cells retain their declared generic parameters (#852).** Erasing a captured
   nullable value to `object` no longer drops the cell's type parameters while its uses retain them.
 
