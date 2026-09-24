@@ -445,7 +445,7 @@ static class ConstrainedTypeParameterReceiverBinding
         return result;
     }
 
-    static JsonArray CloneTypeParametersWithErasedSourceBounds(JsonObject type)
+    internal static JsonArray CloneTypeParametersWithErasedSourceBounds(JsonObject type)
     {
         var result = TypeParameterFrame.CloneDeclarations(type);
         if (Str(type[OwnerConstrainedMethodLowering.DispatchBoundsKey]) is string dispatchBounds

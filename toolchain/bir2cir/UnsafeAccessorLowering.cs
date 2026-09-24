@@ -144,7 +144,8 @@ static class UnsafeAccessorLowering
             Rewrite(child, caller, hosts, accessors, refs);
 
         var kind = Str(obj["k"]);
-        if (kind is "callInstance" or "callStatic") RewriteMethod(obj, kind, caller, hosts, accessors, refs);
+        if (kind is "callInstance" or "callStatic" or "constrainedCall")
+            RewriteMethod(obj, kind, caller, hosts, accessors, refs);
         else if (kind == "newBoundDelegate") RewriteBoundDelegate(obj, caller, hosts, accessors, refs);
         else if (kind == "new") RewriteConstructor(obj, caller, hosts, accessors, refs);
         else if (kind is "field" or "setField" or "setFieldExpr" or "lateinitGet"
@@ -194,7 +195,8 @@ static class UnsafeAccessorLowering
         }
         // Top-level Kotlin calls deliberately keep `owner:null` for semantic substitutions and carry their exact
         // file-facade dispatch identity separately. That identity is also the UnsafeAccessor target owner.
-        var ownerNode = access["ownerType"] ?? access["owner"] ?? access["calleeOwner"];
+        var ownerNode = kind == "constrainedCall" ? access["iface"]
+            : access["ownerType"] ?? access["owner"] ?? access["calleeOwner"];
         if (TypeJson.Read(ownerNode) is not TypeNode.Fqn ownerType
             || Str(access["method"]) is not string targetName)
             return;

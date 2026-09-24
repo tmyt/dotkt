@@ -29,6 +29,13 @@ private fun <T, U : Box<T>> nullableCapture(value: U?): U? {
     value?.outer { check(value.items.size == 2) }
     return value
 }
+internal open class PrivateNode<N : PrivateNode<N>>(val previous: N?) {
+    private val count get() = 2
+    inline fun visit(block: () -> Unit) { check(count == 2); block() }
+}
+internal open class PrivateSegment<S : PrivateSegment<S>> : PrivateNode<S>(null)
+internal class PrivateConcrete : PrivateSegment<PrivateConcrete>()
+private fun <S : PrivateSegment<S>> privateCapture(value: S): S { value.visit {}; return value }
 private fun <T, U : Box<T>> suspended(value: U, gate: Gate): suspend () -> U = {
     check(value.items.size == 2)
     gate.pause()
@@ -92,6 +99,8 @@ class GenericBoundCaptureTests {
         check(capture(integers) === integers)
         check(nullableCapture(strings) === strings)
         check(nullableCapture<Int, Box<Int>>(null) == null)
+        val inherited = PrivateConcrete()
+        check(privateCapture(inherited) === inherited)
     }
 
     @TestAttribute

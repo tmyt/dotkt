@@ -127,13 +127,28 @@ static class FBoundStarProjectionErasure
                 {
                     // These bodies have their own donor frame and are materialized after this pass.
                     // Select their projected member owners now, while source constraints are intact.
+                    var methodFrame = new JsonArray();
+                    var typeFrame = TypeParameterFrame.CloneDeclarations(owner);
+                    var captures = obj["typeParamDecls"] as JsonArray;
+                    var frameArguments = obj[SuspendLambdaLowering.SplicedDeclarationFrameKey] as JsonArray
+                        ?? obj["typeArgs"] as JsonArray;
+                    var dense = Str(obj["typeFrame"]) == "dense";
+                    for (var index = 0; index < (captures?.Count ?? 0); index++)
+                        if (TypeJson.Read(frameArguments[index]) is TypeNode.Tv variable)
+                        {
+                            var frame = variable.Scope == "method" ? methodFrame : typeFrame;
+                            var slot = dense ? index : variable.I;
+                            while (frame.Count <= slot) frame.Add((JsonNode)null);
+                            frame[slot] = captures[index]?.DeepClone();
+                        }
                     var declaration = new JsonObject
                     {
-                        ["typeParams"] = obj["typeParamDecls"]?.DeepClone(),
+                        ["typeParams"] = methodFrame,
                         ["params"] = obj["params"]?.DeepClone(),
                         ["body"] = obj["body"]?.DeepClone(),
                     };
-                    OwnerConstrainedMethodLowering.CloseOwnerViews(declaration, owner, rootList,
+                    OwnerConstrainedMethodLowering.CloseOwnerViews(declaration,
+                        new JsonObject { ["typeParams"] = typeFrame }, rootList,
                         ContainsOwnerTv, bound => ProjectOwnerMethodBound(bound, owners, refs, physical: false));
                     obj["body"] = declaration["body"]?.DeepClone();
                 }

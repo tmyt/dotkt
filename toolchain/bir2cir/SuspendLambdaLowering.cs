@@ -66,7 +66,7 @@ static class SuspendLambdaLowering
             .Where(type => Str(type["name"]) != null)
             .GroupBy(type => Str(type["name"]), StringComparer.Ordinal)
             .ToDictionary(group => group.Key,
-                group => group.First()["typeParams"] as JsonArray ?? new JsonArray(),
+                group => ConstrainedTypeParameterReceiverBinding.CloneTypeParametersWithErasedSourceBounds(group.First()),
                 StringComparer.Ordinal);
         // In the app build the SuspendLambda base is a REFERENCED type (clr: base + pendingOverrideOwner linkage); in a
         // self-build that declares it, a LOCAL type (bare base + local slot override). Computed per-base because a
