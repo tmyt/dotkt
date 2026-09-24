@@ -156,16 +156,17 @@ static class SharedSyntheticSynthesis
 
         public void Bind(JsonArray typeParams)
         {
-            // A materialized frame is an explicit declaration/use correspondence; pruning an unused ordinary
-            // source slot would invalidate both its companion positions and every already-closed application.
+            // Every declared slot participates in the explicit declaration/use correspondence, including
+            // identity frames: erasing the element to object does not erase arguments from cell applications.
+            for (var i = 0; i < typeParams.Count; i++)
+                if (!Free.Contains(new TvKey("type", i))) Free.Add(new TvKey("type", i));
+
             if (KotlinFacts is JsonValue facts && facts.TryGetValue<string>(out var json)
                 && JsonNode.Parse(json)?[NullableRepresentationFrame.MetadataKey] is JsonNode frameNode)
             {
                 var frame = NullableRepresentationFrame.Read(frameNode);
                 if (frame.PhysicalArity != typeParams.Count)
                     throw new InvalidOperationException("Ref-cell frame does not match its physical parameters");
-                for (var i = 0; i < typeParams.Count; i++)
-                    if (!Free.Contains(new TvKey("type", i))) Free.Add(new TvKey("type", i));
             }
             // A bound may itself mention another TV (`S : Segment<S>` or `T : Pair<T,U>`). Those variables are part
             // of the generated cell's signature too, even when they do not occur directly in the element type.
@@ -249,8 +250,8 @@ static class SharedSyntheticSynthesis
         return clone;
     }
 
-    // A heap cell `class <name><T…>(var v: elem)` — a single field + its init ctor. Closed elements use the canonical
-    // monomorphic form; open elements become a constrained generic cell constructed at every lexical use.
+    // A heap cell `class <name><T…>(var v: elem)` — a single field + its init ctor. The declared captured frame
+    // determines its arity even when the physical element no longer mentions any of those parameters.
     static JsonObject BuildRefCell(RefCellSpec spec)
     {
         var positions = spec.Free.Select((key, index) => (key, index)).ToDictionary(x => x.key, x => x.index);
