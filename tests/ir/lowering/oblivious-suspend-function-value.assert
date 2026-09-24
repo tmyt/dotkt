@@ -1,0 +1,5 @@
+# Annotation classification must work both with a receiver stamp and with its lexical parameter type.
++startSuspendUninterceptedOrReturn
++typedReceiver
++lexicalReceiver
+-invoke$dotkt_suspend
