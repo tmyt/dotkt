@@ -28,6 +28,10 @@ fun nonNullProjectedArgument(value: MutableList<*>): MutableList<*> =
 fun obliviousProjectedArgument(value: MutableList<*>): MutableList<*> =
     ProjectedConstructionInterop.ObliviousBox<MutableList<*>>(value).Value
 
+fun constrainedProjectedArgument(value: ProjectedConstructionInterop.MarkerValue<*>):
+    ProjectedConstructionInterop.MarkerValue<*> =
+    ProjectedConstructionInterop.ConstrainedBox<ProjectedConstructionInterop.MarkerValue<*>>(value).Value
+
 fun createStarred(): System.Collections.Generic.List<Comparable<*>> {
     val values = System.Collections.Generic.List<Comparable<*>>()
     values.Add(7)

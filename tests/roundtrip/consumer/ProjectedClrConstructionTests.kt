@@ -37,5 +37,7 @@ class ProjectedClrConstructionTests {
         check(nonNullProjectedArgument(strings) === strings)
         check(obliviousProjectedArgument(integers) === integers)
         check(obliviousProjectedArgument(strings) === strings)
+        val marker = ProjectedConstructionInterop.MarkerValue<Int>()
+        check(constrainedProjectedArgument(marker) === marker)
     }
 }
