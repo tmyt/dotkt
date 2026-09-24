@@ -52,6 +52,7 @@ static class FBoundStarProjectionErasure
         var owners = new Dictionary<string, Owner>(StringComparer.Ordinal);
         var defs = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
         foreach (var root in rootList) Collect(root, root, owners, defs);
+        foreach (var root in rootList) NormalizeRedundantProjections(root, defs, refs);
         var localClrAliases = CollectLocalClrAliases(defs);
         var aliases = new Dictionary<string, string>(refs.Aliases, StringComparer.Ordinal);
         foreach (var alias in localClrAliases) aliases[alias.Key] = alias.Value;
@@ -330,7 +331,37 @@ static class FBoundStarProjectionErasure
         var localClrAliases = new Dictionary<string, string>(
             knownClrAliases ?? new Dictionary<string, string>(StringComparer.Ordinal), StringComparer.Ordinal);
         foreach (var alias in CollectLocalClrAliases(defs)) localClrAliases.TryAdd(alias.Key, alias.Value);
-        foreach (var root in rootList) RewriteTypesOnly(root, owners, defs, refs, localClrAliases);
+        foreach (var root in rootList)
+        {
+            NormalizeRedundantProjections(root, defs, refs);
+            RewriteTypesOnly(root, owners, defs, refs, localClrAliases);
+        }
+    }
+
+    // Repeating a declaration's variance does not introduce an existential capture. Normalize that spelling
+    // before choosing value carriers, including below a constructed CLR owner, so equivalent Kotlin types
+    // cannot acquire different invariant CLR generic arguments merely because one spells the projection.
+    static void NormalizeRedundantProjections(JsonNode node,
+        IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs)
+    {
+        if (node is JsonArray array)
+        {
+            foreach (var item in array.ToList()) NormalizeRedundantProjections(item, defs, refs);
+            return;
+        }
+        if (node is not JsonObject obj) return;
+        foreach (var child in obj.ToList()) NormalizeRedundantProjections(child.Value, defs, refs);
+        if (TypeJson.Read(obj) is not TypeNode.Fqn { Args: { Length: > 0 } } type
+            || obj["args"] is not JsonArray arguments) return;
+        var parameters = defs.TryGetValue(type.Name, out var local)
+            ? local["typeParams"] as JsonArray : refs.OwnerTypeParamDeclarations(type.Name);
+        if (parameters?.Count != arguments.Count) return;
+        for (var index = 0; index < arguments.Count; index++)
+            if (arguments[index] is JsonObject argument
+                && TypeJson.Read(argument) is TypeNode.Projection projection
+                && parameters[index] is JsonObject parameter
+                && Str(parameter["variance"]) == projection.Variance)
+                arguments[index] = argument["of"]!.DeepClone();
     }
 
     public static void RemoveTransientFacts(IEnumerable<JsonNode> roots)
@@ -417,7 +448,7 @@ static class FBoundStarProjectionErasure
                     if (TypeJson.Read(value) is TypeNode type)
                         obj[key] = TypeJson.Write(RewriteType(
                             type, owners, refs, childBoundDeclaration, localClrAliases,
-                            preserveConstructedHead: Str(obj["k"]) == "new" && key == "type"
+                            preserveConstructedHead: (Str(obj["k"]) is "new" or "newClr") && key == "type"
                                 || IsTypeDefinition(obj) && key == "base"
                                 || IsDeclarationOwnerDescriptor(obj) && key == "owner"));
                     else
@@ -2518,8 +2549,6 @@ static class FBoundStarProjectionErasure
                         or "spreadConcat" or "arrayGet" or "arraySet" or "forArray"
                     && TryWritableVariantArrayElement(writableVariantElement, owners, refs,
                         out writableSemanticElement, out writablePhysicalElement);
-                var projectedConstructorArgumentTargets = ProjectedConstructorArgumentTargets(
-                    obj, owners, refs, localClrAliases);
                 var childTypeParameters = existentialTypeParameters;
                 var childMethodParameters = existentialMethodParameters;
                 var childTypeParameterDeclarations = typeParameterDeclarations;
@@ -2660,7 +2689,7 @@ static class FBoundStarProjectionErasure
                     if (TypeJson.Read(value) is TypeNode type)
                         obj[key] = TypeJson.Write(RewriteType(
                             type, owners, refs, childBoundDeclaration, localClrAliases,
-                            preserveConstructedHead: Str(obj["k"]) == "new" && key == "type"
+                            preserveConstructedHead: (Str(obj["k"]) is "new" or "newClr") && key == "type"
                                 || IsTypeDefinition(obj) && key == "base"
                                 || IsDeclarationOwnerDescriptor(obj) && key == "owner"));
                     else
@@ -2671,7 +2700,6 @@ static class FBoundStarProjectionErasure
                 }
                 BindProjectedArrayRead(obj, owners, refs);
                 BindProjectedArrayGenericCall(obj, owners, refs);
-                ApplyProjectedConstructorArgumentCasts(obj, projectedConstructorArgumentTargets);
                 // A star-projected inner construction is replaced while visiting the receiver below this call.  Its
                 // result is the inner existential carrier, so bind the immediately-following member only after that
                 // receiver seam is visible.  The initial pass above is still required for ordinary star receivers.
@@ -2701,54 +2729,6 @@ static class FBoundStarProjectionErasure
                 }
                 break;
         }
-    }
-
-    // An opaque projected-alias value can still be passed to a constructor whose selected declaration consumes a
-    // reifiable closed face. The value slot is object, but `newobj` consumes that face; state the runtime-checked
-    // conversion explicitly rather than asking ilemit or the CLR verifier to accept object implicitly. The same
-    // CLOSED semantic argType is intentionally interpreted twice: as an ordinary value it erases to object, while at
-    // the selected declaration boundary its projection is resolved to the closed physical target. `memberSignature`
-    // is an OPEN declaration-frame identity and cannot author the cast TypeSpec at this use site. Capture these closed
-    // targets before the ordinary sweep erases argTypes.
-    static TypeNode[] ProjectedConstructorArgumentTargets(JsonObject construction,
-        IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs,
-        IReadOnlyDictionary<string, string> localClrAliases)
-    {
-        var kind = Str(construction["k"]);
-        if (kind is not ("new" or "newClr")
-            || TypeJson.Read(construction["type"]) is not TypeNode.Fqn owner
-            || (kind == "new" && !(refs.TryResolveClrOwner(owner.Name, out _, out _)
-                || localClrAliases?.ContainsKey(owner.Name) == true))
-            || construction["argTypes"] is not JsonArray arguments)
-            return null;
-
-        var targets = new TypeNode[arguments.Count];
-        for (var index = 0; index < arguments.Count; index++)
-        {
-            var source = TypeJson.Read(arguments[index]);
-            if (source == null || !ContainsExistentialProjection(source)) continue;
-            var physicalSource = RewriteType(source, owners, refs, localClrAliases: localClrAliases);
-            if (physicalSource is not TypeNode.Fqn { Name: "kotlin.Any", Args: null }) continue;
-            var physicalTarget = RewriteType(
-                source, owners, refs, boundDeclaration: true, localClrAliases: localClrAliases);
-            if (physicalTarget is TypeNode.Fqn { Name: "kotlin.Any", Args: null }) continue;
-            targets[index] = physicalTarget;
-        }
-        return targets.Any(target => target != null) ? targets : null;
-    }
-
-    static void ApplyProjectedConstructorArgumentCasts(JsonObject construction, TypeNode[] targets)
-    {
-        if (targets == null || construction["args"] is not JsonArray arguments
-            || arguments.Count != targets.Length) return;
-        for (var index = 0; index < targets.Length; index++)
-            if (targets[index] is TypeNode target && arguments[index] is JsonNode argument)
-                arguments[index] = new JsonObject
-                {
-                    ["k"] = "cast",
-                    ["type"] = TypeJson.Write(target),
-                    ["e"] = argument.DeepClone(),
-                };
     }
 
     // A captured construction such as Wrapper(source: Source<*>) denotes Wrapper<Capture>, not Wrapper<object>.

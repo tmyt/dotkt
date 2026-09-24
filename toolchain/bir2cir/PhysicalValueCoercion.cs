@@ -370,8 +370,10 @@ static class PhysicalValueCoercion
                 break;
             case "callStatic": case "callInstance": case "constrainedCall":
             case "clrStatic": case "clrInstance": case "clrGenericStatic": case "clrGenericInstance":
-            case "new": case "newClr":
                 CoerceArguments(node, ParameterTypes(node), scope, index);
+                break;
+            case "new": case "newClr":
+                CoerceConstructorArguments(node, scope, index);
                 break;
             case "delegateInvoke":
                 if (TypeJson.Read(node["funcType"]) is TypeNode.Fn fn)
@@ -416,6 +418,26 @@ static class PhysicalValueCoercion
     static void CoerceArguments(JsonObject node, TypeNode[] targets, Scope scope, Index index)
     {
         if (node["args"] is JsonArray args) CoerceVector(args, targets, scope, index);
+    }
+
+    static void CoerceConstructorArguments(JsonObject node, Scope scope, Index index)
+    {
+        var targets = ParameterTypes(node);
+        CoerceArguments(node, targets, scope, index);
+        // An erased value may cross into a closed constructor parameter, but that target belongs to the
+        // selected physical declaration, not to an independently closed source projection. In particular,
+        // Holder<MutableList<*>> constructs Holder<object>: its argument must not be cast to IList<object>.
+        if (node["memberRef"] is not JsonObject member || Str(member["kind"]) != "ctor"
+            || node["args"] is not JsonArray args || targets?.Length != args.Count) return;
+        for (var i = 0; i < args.Count; i++)
+            if (args[i] is JsonNode argument
+                && ExprType(argument, scope, index) is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" }
+                && targets[i] is TypeNode.Fqn or TypeNode.Array or TypeNode.Fn or TypeNode.Tv
+                && targets[i] is not TypeNode.Fqn { Args: null, Name: "object" or "System.Object" })
+                args[i] = new JsonObject
+                {
+                    ["k"] = "cast", ["type"] = TypeJson.Write(targets[i]), ["e"] = argument.DeepClone(),
+                };
     }
 
     static void CoerceVector(JsonArray args, TypeNode[] targets, Scope scope, Index index)
