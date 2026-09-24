@@ -30,6 +30,25 @@ private fun <T, U : Box<T>> suspended(value: U, gate: Gate): suspend () -> U = {
     check(value.items.size == 2)
     value
 }
+private fun <T, U : Box<T>> nested(value: U, gate: Gate): suspend () -> U = {
+    val inner: suspend () -> U = {
+        gate.pause()
+        check(value.items.size == 2)
+        value
+    }
+    inner()
+}
+private interface Named { fun label(): String }
+private class NamedBox<T>(items: List<T?>) : Box<T>(items), Named {
+    override fun label() = "retained"
+}
+private fun <T, U> retained(value: U, gate: Gate): suspend () -> U where U : Box<T>, U : Named = {
+    check(value.label() == "retained")
+    gate.pause()
+    check(value.items.size == 2)
+    check(value.label() == "retained")
+    value
+}
 inline fun <T, U : Box<T>> spliced(value: U, gate: Gate): suspend () -> U = {
     check(value.items.size == 2)
     gate.pause()
@@ -72,5 +91,10 @@ class GenericBoundCaptureTests {
         complete(Host("owner").suspended<Any, Box<String>>(strings, third), third, strings)
         val fourth = Gate()
         complete(spliced(integers, fourth), fourth, integers)
+        val fifth = Gate()
+        complete(nested(strings, fifth), fifth, strings)
+        val sixth = Gate()
+        val named = NamedBox<Int>(listOf(null, 11))
+        complete(retained(named, sixth), sixth, named)
     }
 }
