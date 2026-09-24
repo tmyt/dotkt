@@ -141,7 +141,7 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   referenced generic type/member metadata must be preserved; known BCL families with a faithful non-generic surface
   continue to use that surface directly.
 - **The same semantic-boundary rule applies to projected `@ClrTypeAlias` types.** A projection must not be lowered
-  mechanically as an invariant construction of its CLR alias. For example, `List<out T>` is carried as Kotlin
+  mechanically as an invariant construction of its CLR alias. For example, `MutableList<out T>` is carried as Kotlin
   declaration metadata over an opaque CLR slot, and member access binds to the exact closed interface implemented by
   the runtime object. A projection with a concrete CLR-representable head may retain that head when its variance is
   faithful: `Comparable<in Number>` lowers to `IComparable<Number>`, while `Comparable<*>` uses non-generic
