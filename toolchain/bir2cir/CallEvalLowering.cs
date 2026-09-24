@@ -34,6 +34,9 @@ using DotKt.Bir;
 // `delegationBindings`, and scripts/verify-schema.py enforces the same split structurally.
 static class CallEvalLowering
 {
+    // A compiler value binding (including a spliced lambda parameter) is initialized once; unlike a user variable
+    // it cannot subsequently acquire a wider value.
+    internal const string ValueTemporaryKey = "_callEvalTemporary";
     public static void Apply(JsonNode root, ValueTypeOracle isValue)
     {
         Walk(root, isValue ?? (_ => false));
@@ -302,7 +305,8 @@ static class CallEvalLowering
             // `@KotlinDefault` carrier — so two plans in one frame can carry the same id. The name is minted here, in
             // the frame that will hold it, which is the only counter that can promise uniqueness there.
             var name = FreshLocal();
-            var decl = new JsonObject { ["k"] = "var", ["name"] = name, ["type"] = type?.DeepClone(), ["init"] = expr };
+            var decl = new JsonObject { ["k"] = "var", ["name"] = name, ["type"] = type?.DeepClone(),
+                ["init"] = expr, [ValueTemporaryKey] = true };
             // The source ROLE travels with the local so a storage refusal names "the receiver of `copy`" rather than
             // the minted name (FieldLegality.SuspendMessage).
             if (roles[i] != null) decl["role"] = roles[i];
