@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Function types retain source nullability across Kotlin DLL boundaries (#873).** Exact metadata
+  preserves nested parameter and return annotations, including stored, extension and context function values.
+
 - **Generic nullable callbacks preserve physical delegate signatures (#874).** Calls with frontend-only
   result stamps follow the declaration's physical frame, and lifted callbacks explicitly adapt object/value seams.
 
