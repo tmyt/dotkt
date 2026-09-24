@@ -1,0 +1,36 @@
+{
+  "fileClass": "ObliviousSuspendValueKt",
+  "hasMain": false,
+  "fields": [],
+  "types": [],
+  "methods": [
+    {
+      "name": "typedReceiver", "static": true, "vis": "public", "mods": { "suspend": true },
+      "ret": { "t": "fqn", "name": "kotlin.Unit" },
+      "suspendRet": { "t": "fqn", "name": "kotlin.Unit" },
+      "params": [{ "name": "fn", "type": { "t": "oblivious", "of": {
+        "t": "fn", "suspend": true, "ret": { "t": "fqn", "name": "kotlin.Unit" }, "params": []
+      } } }],
+      "body": [{ "k": "return", "value": {
+        "k": "callInstance", "method": "invoke", "suspendCall": true,
+        "recv": { "k": "local", "name": "fn", "sty": { "t": "oblivious", "of": {
+          "t": "fn", "suspend": true, "ret": { "t": "fqn", "name": "kotlin.Unit" }, "params": []
+        } } },
+        "sig": [], "args": [], "ret": { "t": "fqn", "name": "kotlin.Unit" }
+      } }]
+    },
+    {
+      "name": "lexicalReceiver", "static": true, "vis": "public", "mods": { "suspend": true },
+      "ret": { "t": "fqn", "name": "kotlin.Unit" },
+      "suspendRet": { "t": "fqn", "name": "kotlin.Unit" },
+      "params": [{ "name": "fn", "type": { "t": "oblivious", "of": {
+        "t": "fn", "suspend": true, "ret": { "t": "fqn", "name": "kotlin.Unit" }, "params": []
+      } } }],
+      "body": [{ "k": "return", "value": {
+        "k": "callInstance", "method": "invoke", "suspendCall": true,
+        "recv": { "k": "local", "name": "fn" },
+        "sig": [], "args": [], "ret": { "t": "fqn", "name": "kotlin.Unit" }
+      } }]
+    }
+  ]
+}
