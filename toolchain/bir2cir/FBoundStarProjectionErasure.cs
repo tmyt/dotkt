@@ -52,6 +52,7 @@ static class FBoundStarProjectionErasure
         var owners = new Dictionary<string, Owner>(StringComparer.Ordinal);
         var defs = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
         foreach (var root in rootList) Collect(root, root, owners, defs);
+        foreach (var root in rootList) NormalizeRedundantProjections(root, defs, refs);
         var localClrAliases = CollectLocalClrAliases(defs);
         var aliases = new Dictionary<string, string>(refs.Aliases, StringComparer.Ordinal);
         foreach (var alias in localClrAliases) aliases[alias.Key] = alias.Value;
@@ -330,7 +331,37 @@ static class FBoundStarProjectionErasure
         var localClrAliases = new Dictionary<string, string>(
             knownClrAliases ?? new Dictionary<string, string>(StringComparer.Ordinal), StringComparer.Ordinal);
         foreach (var alias in CollectLocalClrAliases(defs)) localClrAliases.TryAdd(alias.Key, alias.Value);
-        foreach (var root in rootList) RewriteTypesOnly(root, owners, defs, refs, localClrAliases);
+        foreach (var root in rootList)
+        {
+            NormalizeRedundantProjections(root, defs, refs);
+            RewriteTypesOnly(root, owners, defs, refs, localClrAliases);
+        }
+    }
+
+    // Repeating a declaration's variance does not introduce an existential capture. Normalize that spelling
+    // before choosing value carriers, including below a constructed CLR owner, so equivalent Kotlin types
+    // cannot acquire different invariant CLR generic arguments merely because one spells the projection.
+    static void NormalizeRedundantProjections(JsonNode node,
+        IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs)
+    {
+        if (node is JsonArray array)
+        {
+            foreach (var item in array.ToList()) NormalizeRedundantProjections(item, defs, refs);
+            return;
+        }
+        if (node is not JsonObject obj) return;
+        foreach (var child in obj.ToList()) NormalizeRedundantProjections(child.Value, defs, refs);
+        if (TypeJson.Read(obj) is not TypeNode.Fqn { Args: { Length: > 0 } } type
+            || obj["args"] is not JsonArray arguments) return;
+        var parameters = defs.TryGetValue(type.Name, out var local)
+            ? local["typeParams"] as JsonArray : refs.OwnerTypeParamDeclarations(type.Name);
+        if (parameters?.Count != arguments.Count) return;
+        for (var index = 0; index < arguments.Count; index++)
+            if (arguments[index] is JsonObject argument
+                && TypeJson.Read(argument) is TypeNode.Projection projection
+                && parameters[index] is JsonObject parameter
+                && Str(parameter["variance"]) == projection.Variance)
+                arguments[index] = argument["of"]!.DeepClone();
     }
 
     public static void RemoveTransientFacts(IEnumerable<JsonNode> roots)
@@ -417,7 +448,7 @@ static class FBoundStarProjectionErasure
                     if (TypeJson.Read(value) is TypeNode type)
                         obj[key] = TypeJson.Write(RewriteType(
                             type, owners, refs, childBoundDeclaration, localClrAliases,
-                            preserveConstructedHead: Str(obj["k"]) == "new" && key == "type"
+                            preserveConstructedHead: (Str(obj["k"]) is "new" or "newClr") && key == "type"
                                 || IsTypeDefinition(obj) && key == "base"
                                 || IsDeclarationOwnerDescriptor(obj) && key == "owner"));
                     else
@@ -2660,7 +2691,7 @@ static class FBoundStarProjectionErasure
                     if (TypeJson.Read(value) is TypeNode type)
                         obj[key] = TypeJson.Write(RewriteType(
                             type, owners, refs, childBoundDeclaration, localClrAliases,
-                            preserveConstructedHead: Str(obj["k"]) == "new" && key == "type"
+                            preserveConstructedHead: (Str(obj["k"]) is "new" or "newClr") && key == "type"
                                 || IsTypeDefinition(obj) && key == "base"
                                 || IsDeclarationOwnerDescriptor(obj) && key == "owner"));
                     else

@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Projected CLR constructions retain their concrete owner (#861).** Redundant use-site variance shares
+  the declaration's physical representation, including nested constructor arguments and DLL boundaries.
+
 - **Mixed nullable generic identity comparisons emit valid IL (#859).** A generic value compared with
   an object-backed operand is explicitly boxed, preserving reference comparison rather than calling Equals.
 
