@@ -262,7 +262,11 @@ static class KotlinOverrideSlotBridge
                 if (referencedSlot && NodeType.IsNothing(declRet)) retFit = Fit.Bridge;
                 else
                 {
+                    // The covariance pass visits authored MethodDefs, not inherited implementation facts.
+                    // A frontend-selected inherited body therefore needs its exact interface adapter here,
+                    // including when only the return type differs. Keep the base declaration unchanged.
                     if (!fit.Any(f => f is Fit.Bridge or Fit.Rewrite)
+                        && !(supIsInterface && inheritedOwner != null)
                         && !(referencedSlot && supIsInterface && propertyAccessor == "get")) return;
                     retFit = Fit.Bridge;
                 }
