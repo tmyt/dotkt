@@ -10,6 +10,12 @@ private class EqualValue {
     override fun hashCode(): Int = 1
 }
 private fun <T> throughInline(a: T?, b: T): Boolean = inlineSame(a, b)
+private fun <T> throughSplice(a: T?, b: T): Boolean {
+    var calls = 0
+    val result = splicedSame(a, b) { calls++ }
+    assertTrue(calls == 1)
+    return result
+}
 
 class GenericReferenceEqualityTests {
     @TestAttribute
@@ -20,6 +26,8 @@ class GenericReferenceEqualityTests {
         assertFalse(nullableFirst<Int>(7, 7))
         assertFalse(nullableLast<Int>(7, 7))
         assertFalse(throughInline<Int>(null, 7))
+        assertFalse(throughSplice<Int>(null, 7))
+        assertFalse(throughSplice<Int>(7, 7))
         assertFalse(Holder<Int>(null, 7).same())
         assertFalse(Holder<Int>(null, 7).reversed())
         assertTrue(rawSame(1000, 1000))
@@ -36,6 +44,8 @@ class GenericReferenceEqualityTests {
         assertTrue(different(first, second))
         assertTrue(throughInline(first, first))
         assertFalse(throughInline(first, second))
+        assertTrue(throughSplice(first, first))
+        assertFalse(throughSplice(first, second))
         assertTrue(Holder(first, first).same())
         assertFalse(Holder(first, second).reversed())
     }
@@ -44,6 +54,7 @@ class GenericReferenceEqualityTests {
         assertTrue(nullableFirst<Int?>(null, null))
         assertTrue(nullableLast<Int?>(null, null))
         assertFalse(different<Int?>(null, null))
+        assertTrue(throughSplice<Int?>(null, null))
         val boxed: Any = 1000
         assertTrue(nullableFirst<Any>(boxed, boxed))
         assertTrue(nullableLast<Any>(boxed, boxed))
