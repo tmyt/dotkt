@@ -4365,10 +4365,12 @@ static class FBoundStarProjectionErasure
                 && TryExistentialCarrier(f.Name, owners, refs, out var variantCarrier):
                 return new TypeNode.Fqn(variantCarrier);
             case TypeNode.Fqn { Args: { } nestedArgs } nestedForeign
-                when !boundDeclaration && nestedArgs.Any(ContainsExistentialProjection)
+                when !boundDeclaration && nestedArgs.Any(argument =>
+                    BirTypeLowering.ContainsReifiedProjection(argument, refs, localClrAliases))
                     && IsOpaqueForeignProjection(nestedForeign, refs, localClrAliases):
-                // A star anywhere below a foreign invariant construction makes the whole construction
-                // non-reifiable on the CLR.  In particular Outer<Inner<*>> is not Outer<object> (nor
+                // A surviving CLR projection below a foreign invariant construction makes the whole construction
+                // non-reifiable. Projections consumed by a non-generic physical head do not survive here.
+                // In particular Outer<Inner<*>> is not Outer<object> (nor
                 // Outer<Inner<object>>); keep the original runtime value in one opaque object slot and let
                 // ForeignStarProjectionBinding route member access through the reflection ABI.
                 if (IsByRefLikeForeignProjection(nestedForeign, refs, localClrAliases))

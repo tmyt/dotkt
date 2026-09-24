@@ -691,7 +691,8 @@ static class ForeignStarProjectionBinding
         while (type is TypeNode.Oblivious o) type = o.Of;
         owner = type as TypeNode.Fqn;
         return owner?.Args is { Length: > 0 } args
-            && (args.Any(ContainsExistential) || AliasVarianceRepresentation.RequiresErasure(owner, refs))
+            && (args.Any(argument => BirTypeLowering.ContainsReifiedProjection(argument, refs))
+                || AliasVarianceRepresentation.RequiresErasure(owner, refs))
             && !refs.TryExistentialPhysicalOwner(owner.Name, out _)
             && refs.ResolveForeignProjectionType(owner.Name, args) != null;
     }
