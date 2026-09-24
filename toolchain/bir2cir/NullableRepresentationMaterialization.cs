@@ -84,6 +84,9 @@ static class NullableRepresentationMaterialization
                 }
         NullableRepresentationTypes DeclarationMapping(JsonObject use)
         {
+            if (use["sharedCellTypeParams"] is JsonArray
+                && TypeJson.Read(use["sharedCellType"]) is TypeNode.Fqn cell)
+                return Mapping(types[cell.Name], empty);
             if (localBindings.TryGetValue(use, out var localDeclaration)) return localDeclarations[localDeclaration];
             if (constructorMappings.TryGetValue(use, out var constructorMapping)) return constructorMapping;
             if (Text(use[DeclarationIdentityBinding.Key]) is string id && declarations.TryGetValue(id, out var selected))
@@ -289,7 +292,8 @@ static class NullableRepresentationMaterialization
         else if (node is JsonObject obj)
         {
             var kind = Text(obj["k"]);
-            var selectedMapping = kind == null && obj["delegationSig"] == null ? null : declarationMapping(obj);
+            var selectedMapping = kind == null && obj["delegationSig"] == null
+                && obj["sharedCellTypeParams"] == null ? null : declarationMapping(obj);
             JsonArray closedArguments = null;
             JsonArray closedDispatchArguments = null;
             if (kind == "callInline" && selectedMapping?.OwnerFrame is { } dispatchFrame
@@ -463,7 +467,7 @@ static class NullableRepresentationMaterialization
             return value?.DeepClone();
         }
         node[key] = Map(node[key]);
-        var frame = key == "memberOwnerTypeParams" ? declaration?.OwnerFrame
+        var frame = key is "memberOwnerTypeParams" or "sharedCellTypeParams" ? declaration?.OwnerFrame
             : key == "memberMethodTypeParams" ? declaration?.MethodFrame : null;
         if (frame != null && node[key] is JsonArray parameters)
             node[key] = ExpandParameters(parameters, frame);
@@ -703,7 +707,40 @@ static class NullableRepresentationMaterialization
             });
             closedCalls.Add(closedCall);
         }
+        var boundedCell = JsonNode.Parse("""
+        {"name":"BoundedCell","typeParams":["T",{"name":"U","constraints":[
+          {"t":"fqn","name":"Box","args":[{"t":"nullable","of":{"t":"tv","scope":"type","i":0}}]}]}],
+         "elem":{"t":"tv","scope":"type","i":1}}
+        """);
+        ((JsonArray)root["refTypes"]).Add(boundedCell);
+        var cellCaptures = new List<JsonObject>();
+        foreach (var descriptorFirst in new[] { false, true })
+        {
+            var capture = new JsonObject { ["name"] = "captured", ["type"] = TypeJson.Write(new TypeNode.Tv("method", 0)) };
+            if (descriptorFirst) capture["sharedCellTypeParams"] = boundedCell["typeParams"].DeepClone();
+            capture["sharedCellType"] = TypeJson.Write(new TypeNode.Fqn("BoundedCell", new TypeNode[] {
+                new TypeNode.Tv("method", 1), new TypeNode.Tv("method", 0) }));
+            if (!descriptorFirst) capture["sharedCellTypeParams"] = boundedCell["typeParams"].DeepClone();
+            ((JsonArray)root["methods"]).Add(new JsonObject {
+                ["name"] = "captureCell" + descriptorFirst, ["typeParams"] = new JsonArray("A", "B"),
+                ["params"] = new JsonArray(), ["ret"] = TypeJson.Fqn("kotlin.Unit"),
+                ["body"] = new JsonArray(new JsonObject {
+                    ["k"] = "inlineLambda", ["params"] = new JsonArray(),
+                    ["captures"] = new JsonArray(capture), ["body"] = new JsonArray(),
+                }),
+            });
+            cellCaptures.Add(capture);
+        }
         Apply(new[] { root }, _ => false);
+        foreach (var capture in cellCaptures)
+            if (!JsonNode.DeepEquals(capture["sharedCellTypeParams"], boundedCell["typeParams"])
+                || ((JsonArray)capture["sharedCellTypeParams"]).Count != 3
+                || !JsonNode.DeepEquals(capture["sharedCellType"]["args"], new JsonArray(
+                    TypeJson.Write(new TypeNode.Tv("method", 1)), TypeJson.Write(new TypeNode.Tv("method", 0)),
+                    TypeJson.Write(new TypeNode.Tv("method", 2))))
+                || TypeJson.Read(capture["sharedCellTypeParams"][1]["constraints"][0]) !=
+                    new TypeNode.Fqn("Box", new TypeNode[] { new TypeNode.Tv("type", 2) }))
+                throw new InvalidOperationException("Shared capture descriptor diverges from its cell's expanded declaration frame");
         if ((int)inlineCall["ga"] != 2 || ((JsonArray)inlineCall["typeArgs"]).Count != 2
             || TypeJson.Read(inlineCall["typeArgs"][1]) != new TypeNode.Tv("method", 1))
             throw new InvalidOperationException("Inline substitution arity excludes the materialized companion frame");

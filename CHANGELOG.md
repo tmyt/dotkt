@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Shared capture bounds retain their cell's generic frame (#849).** Inline callbacks capturing
+  mutable generic locals no longer attribute the cell's declaration constraints to the enclosing method.
+
 - **Same-module default lambdas retain their caller's generic frame (#847).** Lifted type dependencies
   follow the default argument's type substitution, including reordered method type parameters.
 
