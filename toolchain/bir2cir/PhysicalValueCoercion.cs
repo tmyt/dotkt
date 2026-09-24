@@ -401,8 +401,7 @@ static class PhysicalValueCoercion
                 CoerceConstructorArguments(node, scope, index);
                 break;
             case "delegateInvoke":
-                if (TypeJson.Read(node["funcType"]) is TypeNode.Fn fn)
-                    CoerceArguments(node, fn.DelegateParams, scope, index);
+                CoerceDelegateArguments(node, scope, index);
                 break;
             case "clrPropSet":
                 CoerceSlot(node, "value", FieldTarget(node, scope, index), scope, index);
@@ -438,6 +437,28 @@ static class PhysicalValueCoercion
         // owner, just as argument coercion uses the exact selected parameter vector.
         if (node["recv"] != null && ResolvedMember(node) is JsonObject selected)
             CoerceSlot(node, "recv", TypeJson.Read(selected["declaringType"]), scope, index);
+    }
+
+    static void CoerceDelegateArguments(JsonObject node, Scope scope, Index index)
+    {
+        // Invoke's resolved declaration owns its physical slots, including custom delegates and generic owners.
+        // Unlike a Kotlin function type, that declaration states exactly what the emitted call consumes.
+        if (node["invokeRef"] is not JsonObject invoke || node["args"] is not JsonArray args)
+            throw new InvalidOperationException("bir2cir: delegate invocation has no resolved argument contract");
+        var targets = ReadTypes(invoke["parameterTypes"] as JsonArray)
+            ?? throw new InvalidOperationException("bir2cir: delegate invocation has no parameter types");
+        if (targets.Length != args.Count)
+            throw new InvalidOperationException("bir2cir: delegate invocation argument count differs from its resolved contract");
+        targets = targets.Select(t => Close(t, OwnerArgs(invoke), Array.Empty<TypeNode>())).ToArray();
+        CoerceVector(args, targets, scope, index);
+        for (var i = 0; i < args.Count; i++)
+        {
+            if (args[i] is not JsonNode value || targets[i] is TypeNode.ByRef
+                || targets[i].Equals(ExprType(value, scope, index))) continue;
+            // State the argument conversion explicitly: a value-type argument to an object/interface slot
+            // requires boxing, even though the Kotlin source needs no explicit cast.
+            args[i] = new JsonObject { ["k"] = "cast", ["type"] = TypeJson.Write(targets[i]), ["e"] = value.DeepClone() };
+        }
     }
 
     static void CoerceArguments(JsonObject node, TypeNode[] targets, Scope scope, Index index)
