@@ -800,10 +800,12 @@ than normalized here; what is NOT tolerated is a `try` inside such a block reach
 asserts the split at its own exit, and `scripts/verify-schema.py` enforces it structurally on both documents. Stage 0's
 plans are made and lowered within one pass, so they too never appear in a serialized document.
 
-Materialized value bindings retain a transient single-initialization fact through cold lowering. Once constructor
+Materialized value bindings, including spliced lambda parameter bindings, retain a transient single-initialization
+fact through cold lowering. Once constructor
 references are resolved, bir2cir can retain an allocation's exact CLR type in such a local, rather than its broader
 Kotlin projected surface. If suspension spills the binding, its field layout stays unchanged; reads use an explicit
-conversion backed by that same allocation fact, including copies into further operand temporaries. These facts are
+conversion backed by that same allocation fact, including local-to-local and local-to-field copies into further
+operand temporaries. Only bindings carrying the producer-authored fact participate in this propagation. These facts are
 local to the generated method frame and are consumed before CIR serialization. They do not narrow user storage or
 public declaration signatures, which may legally carry other generic instantiations, including value-type elements.
 

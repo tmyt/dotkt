@@ -19,6 +19,7 @@ private fun start(block: suspend () -> Any?): Completion {
 private suspend fun invoke(block: suspend () -> Any?): Any? = block()
 private suspend fun nestedFirst(): Any? = invoke { listDefault(listOf(7, "x")) }
 private suspend fun directFirst(): Any? = listDefault(listOf(7, "x"))
+private inline fun <T> copyThrough(value: T, block: (T) -> T): T = block(value)
 
 class ProjectedListDefaultTests {
     @TestAttribute
@@ -49,6 +50,10 @@ class ProjectedListDefaultTests {
         }
         check(result.result!!.getOrThrow() == 7)
         check(evaluations == 1)
+        check(start { listDefault(copyThrough(listOf(7, "x")) { it }) }.result!!.getOrThrow() == 7)
+        check(start {
+            listDefault(copyThrough(copyThrough(listOf(9, "y")) { it }) { it })
+        }.result!!.getOrThrow() == 9)
         val rows = listOf(listOf(7, "x"))
         val returned = nestedLists(rows)
         check(returned === rows)
@@ -77,6 +82,21 @@ class ProjectedListDefaultTests {
         }
         check(afterArgument.result == null)
         check(evaluations == 2)
+
+        val copiedGate = ListDefaultGate()
+        val copied = start {
+            listAfterToken(copyThrough(listOf(17, "copy")) { it }, copiedGate.token())
+        }
+        check(copied.result == null)
+        copiedGate.release()
+        check(copied.result!!.getOrThrow() == 17)
+        val innerGate = ListDefaultGate()
+        val inner = start {
+            listDefault(copyThrough(listOf(19, "inner")) { innerGate.pause(); it })
+        }
+        check(inner.result == null)
+        innerGate.release()
+        check(inner.result!!.getOrThrow() == 19)
         argumentGate.release()
         check(afterArgument.result!!.getOrThrow() == 13)
         check(evaluations == 2)

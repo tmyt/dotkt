@@ -34,7 +34,8 @@ using DotKt.Bir;
 // `delegationBindings`, and scripts/verify-schema.py enforces the same split structurally.
 static class CallEvalLowering
 {
-    // A value binding is initialized once; unlike a user variable it cannot subsequently acquire a wider value.
+    // A compiler value binding (including a spliced lambda parameter) is initialized once; unlike a user variable
+    // it cannot subsequently acquire a wider value.
     internal const string ValueTemporaryKey = "_callEvalTemporary";
     public static void Apply(JsonNode root, ValueTypeOracle isValue)
     {

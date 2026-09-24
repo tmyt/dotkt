@@ -1144,6 +1144,7 @@ static class InlineSplice
                 ["k"] = "var",
                 ["name"] = temp,
                 ["type"] = lp["type"]?.DeepClone(),
+                [CallEvalLowering.ValueTemporaryKey] = true,
                 ["init"] = invokeArgs.ElementAtOrDefault(j)?.DeepClone()
                            ?? new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("kotlin.Unit"), ["value"] = null },
             });
