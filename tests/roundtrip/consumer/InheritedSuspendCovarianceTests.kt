@@ -9,6 +9,8 @@ import GenericValueInterop.InheritedSuspendTaskApi
 
 open class Consumed(gate: Gate) : Body(gate), Factory
 class ConsumedGeneric(gate: Gate) : Body(gate), GenericFactory<Value>
+class ConsumedNumeric(gate: IntGate) : NumericBody<Int>(1, gate), NumericFactory
+class ConsumedMethod : MethodBody(), MethodFactory
 class ConsumedOverride(gate: Gate) : Consumed(gate) {
     override suspend fun make(): Narrow = Narrow(super.make().text + "?")
 }
@@ -28,6 +30,39 @@ private fun verify(gate: Gate, expected: String, action: suspend () -> Value) {
     assertEquals(expected, completion.outcome!!.getOrThrow().text)
 }
 class InheritedSuspendCovarianceTests {
+    @TestAttribute
+    fun inheritedNumericResultBoxesAfterSuspension() {
+        val first = IntGate()
+        val produced: NumericFactory = ProducedNumeric(first)
+        val second = IntGate()
+        val consumed: NumericFactory = ConsumedNumeric(second)
+        fun verifyNumber(gate: IntGate, slot: NumericFactory) {
+            val completion = Completion<Any>()
+            val action: suspend () -> Any = { slot.make(2) }
+            action.startCoroutine(completion)
+            assertTrue(completion.outcome == null)
+            gate.resume(40)
+            assertEquals(42, completion.outcome!!.getOrThrow())
+        }
+        verifyNumber(first, produced)
+        verifyNumber(second, consumed)
+    }
+    @TestAttribute
+    fun inheritedMethodFrameAdaptsResult() {
+        fun verifyMethod(slot: MethodFactory) {
+            val completion = Completion<Any?>()
+            val action: suspend () -> Any? = {
+                assertEquals("text", slot.echo("text"))
+                assertEquals(7, slot.echo(7))
+                slot.echo<Int?>(null)
+            }
+            action.startCoroutine(completion)
+            assertTrue(completion.outcome != null)
+            assertEquals(null, completion.outcome!!.getOrThrow())
+        }
+        verifyMethod(ProducedMethod())
+        verifyMethod(ConsumedMethod())
+    }
     @TestAttribute
     fun constructedGenericInterfaceResumes() {
         val first = Gate()
