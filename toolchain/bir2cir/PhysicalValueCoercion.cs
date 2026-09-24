@@ -493,9 +493,15 @@ static class PhysicalValueCoercion
                 if (expression[key] != null) expression[key] = TypeJson.Write(actual);
             return expression;
         }
-        // ret can still be the callee's declaration-frame generic spelling. Generic conversions belong on the
-        // consuming edge, whose target is in the caller's frame, not between these two potentially different frames.
-        if (!CollectionViewFaces.IsViewSeam(actual, declared)) return expression;
+        // When the physical return itself is generic, ret can still use the callee's declaration frame.
+        // Conversions between those slots belong on the consuming edge, whose target is in the caller's frame.
+        // An object-returning Kotlin call can already carry a caller-facing generic projection in ret.
+        // Make that projection explicit before its consumer inspects the physical expression result;
+        // otherwise identity comparison would box its other operand while the call still unboxes to T.
+        var genericObjectProjection = declared is TypeNode.Tv
+            && actual is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" }
+            && Str(expression["k"]) is "callStatic" or "callInstance" or "constrainedCall";
+        if (!genericObjectProjection && !CollectionViewFaces.IsViewSeam(actual, declared)) return expression;
         var physical = expression.DeepClone().AsObject();
         // The inner expression leaves the exact member/declaration result on the CLR stack. Once the caller-facing
         // view moves to the explicit outer cast, every surviving inner result stamp must describe that physical value;

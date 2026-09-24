@@ -12,6 +12,7 @@ fun <T> localCondition(a: T?, b: T): Boolean {
 private fun <T> nullableResult(value: T?): T? = value
 private fun <T> valueResult(value: T): T = value
 fun <T> callResults(a: T?, b: T): Boolean = nullableResult<T>(a) === valueResult<T>(b)
+fun <T> projectedResult(a: Result<T>, b: T): Boolean = a.getOrThrow() === b
 inline fun <T> inlineSame(a: T?, b: T): Boolean = a === b
 inline fun <T> splicedSame(a: T?, b: T, hook: () -> Unit): Boolean {
     hook()

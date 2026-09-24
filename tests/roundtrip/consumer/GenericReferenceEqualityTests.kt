@@ -35,6 +35,7 @@ class GenericReferenceEqualityTests {
         assertFalse(localCondition<Int>(7, 7))
         assertFalse(callResults<Int>(null, 7))
         assertFalse(callResults<Int>(7, 7))
+        assertTrue(projectedResult(Result.success(1000), 1000))
     }
     @TestAttribute
     fun referenceComparisonDoesNotCallEquals() {
@@ -56,6 +57,8 @@ class GenericReferenceEqualityTests {
         assertFalse(localCondition(first, second))
         assertTrue(callResults(first, first))
         assertFalse(callResults(first, second))
+        assertTrue(projectedResult(Result.success(first), first))
+        assertFalse(projectedResult(Result.success(first), second))
     }
     @TestAttribute
     fun nullAndExistingBoxReferencesRetainIdentity() {
