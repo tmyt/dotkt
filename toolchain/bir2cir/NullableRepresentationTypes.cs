@@ -22,6 +22,7 @@ sealed class NullableRepresentationTypes
     internal static bool IsDeclarationFrameKey(string key, string kind, JsonObject expression) => key is
         "sig" or "shapeTypes" or "paramSig" or "delegationSig"
         or "memberOwnerTypeParams" or "memberMethodTypeParams"
+        or "sharedCellTypeParams"
         or "memberReturnType" or "memberSignature" or "memberType" or "awaitResult"
         || key == "retType" && kind == "callInline"
         || key == "argTypes" && kind != null && kind != "new"

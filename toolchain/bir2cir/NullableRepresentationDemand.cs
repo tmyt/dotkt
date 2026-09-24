@@ -290,9 +290,9 @@ static partial class NullableRepresentationDemand
             foreach (var (key, value) in obj)
                 if (key is not ("attrs" or "overrides" or "inheritedImplementation"))
                 {
-                    if (Text(obj["k"]) != null && (NullableRepresentationTypes.IsDeclarationFrameKey(key, Text(obj["k"]), obj)
+                    if (NullableRepresentationTypes.IsDeclarationFrameKey(key, Text(obj["k"]), obj)
                         || key == "resolvedMemberParams" || key == ClrMemberResolution.ResolvedMemberReturnKey
-                        || key == "argTypes" && ClrBoundNode.IsAny(Text(obj["k"])))) continue;
+                        || key == "argTypes" && ClrBoundNode.IsAny(Text(obj["k"]))) continue;
                     var storageElement = policy?.IsStorageElement(Text(obj["k"]), key) == true;
                     Scan(value, result, types, methods, localFrames, key == "typeArgs" || storageElement
                         || key == "elem" && NullableGenericErasure.IsArgumentElementKind(Text(obj["k"])), policy, storageElement);

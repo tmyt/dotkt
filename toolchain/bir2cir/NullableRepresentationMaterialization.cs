@@ -84,6 +84,9 @@ static class NullableRepresentationMaterialization
                 }
         NullableRepresentationTypes DeclarationMapping(JsonObject use)
         {
+            if (use["sharedCellTypeParams"] is JsonArray
+                && TypeJson.Read(use["sharedCellType"]) is TypeNode.Fqn cell)
+                return Mapping(types[cell.Name], empty);
             if (localBindings.TryGetValue(use, out var localDeclaration)) return localDeclarations[localDeclaration];
             if (constructorMappings.TryGetValue(use, out var constructorMapping)) return constructorMapping;
             if (Text(use[DeclarationIdentityBinding.Key]) is string id && declarations.TryGetValue(id, out var selected))
@@ -289,7 +292,8 @@ static class NullableRepresentationMaterialization
         else if (node is JsonObject obj)
         {
             var kind = Text(obj["k"]);
-            var selectedMapping = kind == null && obj["delegationSig"] == null ? null : declarationMapping(obj);
+            var selectedMapping = kind == null && obj["delegationSig"] == null
+                && obj["sharedCellTypeParams"] == null ? null : declarationMapping(obj);
             JsonArray closedArguments = null;
             JsonArray closedDispatchArguments = null;
             if (kind == "callInline" && selectedMapping?.OwnerFrame is { } dispatchFrame
@@ -463,7 +467,7 @@ static class NullableRepresentationMaterialization
             return value?.DeepClone();
         }
         node[key] = Map(node[key]);
-        var frame = key == "memberOwnerTypeParams" ? declaration?.OwnerFrame
+        var frame = key is "memberOwnerTypeParams" or "sharedCellTypeParams" ? declaration?.OwnerFrame
             : key == "memberMethodTypeParams" ? declaration?.MethodFrame : null;
         if (frame != null && node[key] is JsonArray parameters)
             node[key] = ExpandParameters(parameters, frame);
