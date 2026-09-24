@@ -441,7 +441,7 @@ static class PhysicalValueCoercion
 
     static void CoerceDelegateArguments(JsonObject node, Scope scope, Index index)
     {
-        // Invoke's resolved declaration owns its physical slots, including custom delegates and generic owners.
+        // Invoke's resolved declaration owns the constructed function delegate's physical slots.
         // Unlike a Kotlin function type, that declaration states exactly what the emitted call consumes.
         if (node["invokeRef"] is not JsonObject invoke || node["args"] is not JsonArray args)
             throw new InvalidOperationException("bir2cir: delegate invocation has no resolved argument contract");

@@ -836,23 +836,8 @@ sealed partial class Emitter
                 var ftNode = e.GetProperty("funcType");
                 var ft = MapType(ftNode);
                 EmitExpr(e.GetProperty("recv"));
-                // Coerce each invoke arg to the delegate param type declared in the funcType. The delegate's Invoke
-                // param is the FUNCTION type parameter (`Func<T,R>::Invoke(!0)`), so at a VALUE-type instantiation
-                // (`Func<int,object>`) it expects the raw `int` on the stack — but a `T?`-erased arg (a `nextItem:
-                // object` field read passed as `nextItem!!`) pushes a BOXED object. A reference-type instantiation
-                // tolerates the object (it IS a valid reference), which is why only value-typed elements crashed
-                // (generateSequence(1){…} -> InvalidProgramException in the GeneratorSequence iterator's calcNext).
-                // `unbox.any <param>` is the universal fix: unbox a value-type param, castclass a reference one.
-                var invArgSpecs = FuncArgTypes(ftNode);
-                var invArgs = e.GetProperty("args").EnumerateArray().ToArray();
-                for (int ia = 0; ia < invArgs.Length; ia++)
-                {
-                    var got = EmitExpr(invArgs[ia]);
-                    if (ia < invArgSpecs.Count && invArgSpecs[ia] is { } want && got != null
-                        && (IsValueType(want) || want.IsGenericParameter)
-                        && !IsValueType(got) && !got.IsGenericParameter && got != want)
-                        _il.Emit(OpCodes.Unbox_Any, want);
-                }
+                // bir2cir has made every argument conversion explicit against the resolved Invoke contract.
+                foreach (var argument in e.GetProperty("args").EnumerateArray()) EmitExpr(argument);
                 // The node names the DECLARATION it calls through; the delegate value on the stack is what it
                 // gets anchored onto. Emitting the declaration unanchored is emitting a member of the open
                 // definition, which the constructed type has no token for.
