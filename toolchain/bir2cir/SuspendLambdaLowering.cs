@@ -66,7 +66,7 @@ static class SuspendLambdaLowering
             .Where(type => Str(type["name"]) != null)
             .GroupBy(type => Str(type["name"]), StringComparer.Ordinal)
             .ToDictionary(group => group.Key,
-                group => group.First()["typeParams"] as JsonArray ?? new JsonArray(),
+                group => ConstrainedTypeParameterReceiverBinding.CloneTypeParametersWithErasedSourceBounds(group.First()),
                 StringComparer.Ordinal);
         // In the app build the SuspendLambda base is a REFERENCED type (clr: base + pendingOverrideOwner linkage); in a
         // self-build that declares it, a LOCAL type (bare base + local slot override). Computed per-base because a
@@ -139,7 +139,8 @@ static class SuspendLambdaLowering
     {
         var mn = Str(method["name"]) ?? "m";
         var outerSelf = ExtensionReceiverParamName(method);
-        if (method["body"] is JsonNode body) Walk(body, prefix + "_" + mn, prefix, newTypes, counter, baseIsLocal, outerSelf);
+        if (method["body"] is JsonNode body) Walk(body, prefix + "_" + mn, prefix, newTypes, counter, baseIsLocal, outerSelf,
+            ConstrainedTypeParameterReceiverBinding.CloneMethodParametersWithErasedSourceBounds(method));
     }
 
     // Lower a `newSuspendLambda` stored as a STATIC field's inline initializer (a top-level/object/companion
@@ -159,10 +160,12 @@ static class SuspendLambdaLowering
         var pn = Str(prop["name"]) ?? "p";
         foreach (var acc in new[] { "getter", "setter" })
             if (prop[acc] is JsonObject a && a["body"] is JsonNode b)
-                Walk(b, prefix + "_" + pn + "_" + acc, prefix, newTypes, counter, baseIsLocal, ExtensionReceiverParamName(a));
+                Walk(b, prefix + "_" + pn + "_" + acc, prefix, newTypes, counter, baseIsLocal, ExtensionReceiverParamName(a),
+                    ConstrainedTypeParameterReceiverBinding.CloneMethodParametersWithErasedSourceBounds(a));
     }
 
-    static void Walk(JsonNode node, string ctx, string owner, List<JsonNode> newTypes, int[] counter, bool baseIsLocal, string outerSelf)
+    static void Walk(JsonNode node, string ctx, string owner, List<JsonNode> newTypes, int[] counter, bool baseIsLocal, string outerSelf,
+        JsonArray methodParameters = null)
     {
         switch (node)
         {
@@ -171,9 +174,9 @@ static class SuspendLambdaLowering
                 {
                     var child = o[key];
                     if (child is JsonObject co && Str(co["k"]) == "newSuspendLambda")
-                        o[key] = BuildLambda(co, ctx, owner, newTypes, counter, baseIsLocal, outerSelf);
+                        o[key] = BuildLambda(co, ctx, owner, newTypes, counter, baseIsLocal, outerSelf, methodParameters);
                     else if (child != null)
-                        Walk(child, ctx, owner, newTypes, counter, baseIsLocal, outerSelf);
+                        Walk(child, ctx, owner, newTypes, counter, baseIsLocal, outerSelf, methodParameters);
                 }
                 break;
             case JsonArray a:
@@ -181,21 +184,24 @@ static class SuspendLambdaLowering
                 {
                     var child = a[i];
                     if (child is JsonObject co && Str(co["k"]) == "newSuspendLambda")
-                        a[i] = BuildLambda(co, ctx, owner, newTypes, counter, baseIsLocal, outerSelf);
+                        a[i] = BuildLambda(co, ctx, owner, newTypes, counter, baseIsLocal, outerSelf, methodParameters);
                     else if (child != null)
-                        Walk(child, ctx, owner, newTypes, counter, baseIsLocal, outerSelf);
+                        Walk(child, ctx, owner, newTypes, counter, baseIsLocal, outerSelf, methodParameters);
                 }
                 break;
         }
     }
 
-    static JsonNode BuildLambda(JsonObject node, string ctx, string owner, List<JsonNode> newTypes, int[] counter, bool baseIsLocal, string outerSelf)
+    static JsonNode BuildLambda(JsonObject node, string ctx, string owner, List<JsonNode> newTypes, int[] counter, bool baseIsLocal, string outerSelf,
+        JsonArray methodParameters = null)
     {
-        var ownerTypeParamCount = NormalizeOwnerCapturePrefix(node, owner);
+        var ownerTypeParamCount = NormalizeOwnerCapturePrefix(node, owner, methodParameters);
         // Bottom-up: lower any nested suspend lambdas inside THIS lambda's body first (their SMs + `new`
         // replacements land before this lambda's SM is built over the already-lowered body).
         var body = node["body"] as JsonArray ?? new JsonArray();
-        Walk(body, ctx, owner, newTypes, counter, baseIsLocal, outerSelf);
+        var lambdaParameters = node["typeParamDecls"] is JsonArray declarations
+            ? new JsonArray(declarations.Skip(ownerTypeParamCount).Select(p => p?.DeepClone()).ToArray()) : null;
+        Walk(body, ctx, owner, newTypes, counter, baseIsLocal, outerSelf, lambdaParameters);
 
         var arity = IntOf(node["arity"]);
         var captureSlots = ReadCaptureSlots(node["captures"]);
@@ -304,7 +310,7 @@ static class SuspendLambdaLowering
     // generic prefix. kotc's newSuspendLambda lists only free parameters, so `C<A,B> { { use(B) } }` otherwise declares
     // one SM slot while its fields still name the owner's `!1`. Complete and order the prefix here, preserving any
     // method/free parameters after it; FunGen then rebinds those dense method variables after the owner prefix.
-    static int NormalizeOwnerCapturePrefix(JsonObject node, string owner)
+    static int NormalizeOwnerCapturePrefix(JsonObject node, string owner, JsonArray methodParameters)
     {
         var ownerParams = _ownerTypeParams != null && _ownerTypeParams.TryGetValue(owner, out var declaredOwnerParams)
             ? declaredOwnerParams : new JsonArray();
@@ -336,6 +342,8 @@ static class SuspendLambdaLowering
         var declarations = new JsonArray();
         var args = new JsonArray();
         var frameSlots = new Dictionary<(string Scope, int Index), TypeNode>();
+        var callerSlots = new Dictionary<(string Scope, int Index), TypeNode>();
+        var callerDeclarations = new HashSet<int>();
         (string Scope, int Index)? FrameKey(int position)
         {
             if (declarationArgs[position] is not JsonObject tv || Str(tv["t"]) != "tv"
@@ -359,6 +367,7 @@ static class SuspendLambdaLowering
             names.Add(nameNode?.DeepClone());
             declarations.Add(declarationNode?.DeepClone());
             args.Add(TypeJson.Write(new TypeNode.Tv("type", slot)));
+            callerSlots[("type", slot)] = new TypeNode.Tv("type", slot);
             if (existing >= 0)
             {
                 consumed.Add(existing);
@@ -371,15 +380,62 @@ static class SuspendLambdaLowering
             if (!consumed.Contains(index))
             {
                 names.Add(oldNames[index]?.DeepClone());
-                declarations.Add((oldDecls?[index] ?? oldNames[index])?.DeepClone());
+                var declaration = (oldDecls?[index] ?? oldNames[index])?.DeepClone();
+                // This construction edge selects the caller's physical method parameter. The lambda's saved
+                // semantic declaration predates bound erasure and must not impose a stronger CLR constraint.
+                // Keep the erased dispatch facts too, for member uses inside the eventual state machine.
+                if (TypeJson.Read(oldArgs[index]) is TypeNode.Tv { Scope: "method" } methodVariable
+                    && methodParameters != null && methodVariable.I < methodParameters.Count)
+                {
+                    declaration = methodParameters[methodVariable.I]?.DeepClone();
+                    if (declaration is JsonObject declared)
+                        declared["name"] = ParamName(oldNames[index]);
+                    else
+                        declaration = oldNames[index]?.DeepClone();
+                    callerDeclarations.Add(declarations.Count);
+                }
+                declarations.Add(declaration);
                 args.Add(oldArgs[index]?.DeepClone());
                 if (FrameKey(index) is { } key) frameSlots[key] = new TypeNode.Tv("method", suffix);
+                if (TypeJson.Read(oldArgs[index]) is TypeNode.Tv callerVariable)
+                    callerSlots.TryAdd((callerVariable.Scope, callerVariable.I), new TypeNode.Tv("method", suffix));
                 suffix++;
             }
 
+        // A donor may capture only B while the caller declares B : A. Copying B's physical
+        // declaration introduces A even though the donor never mentioned it. Close the new frame
+        // over those declaration dependencies before translating any caller-owned constraints.
+        static IEnumerable<int> MethodDependencies(JsonNode value)
+        {
+            if (value is JsonObject obj)
+            {
+                if (TypeJson.IsType(obj) && TypeJson.Read(obj) is TypeNode.Tv { Scope: "method" } tv)
+                    yield return tv.I;
+                else
+                    foreach (var pair in obj)
+                        foreach (var index in MethodDependencies(pair.Value)) yield return index;
+            }
+            else if (value is JsonArray array)
+                foreach (var child in array)
+                    foreach (var index in MethodDependencies(child)) yield return index;
+        }
+        for (var index = ownerParams.Count; index < declarations.Count; index++)
+            if (callerDeclarations.Contains(index))
+                foreach (var dependency in MethodDependencies(declarations[index]).Distinct().ToArray())
+                    if (!callerSlots.ContainsKey(("method", dependency)))
+                    {
+                        var parameter = methodParameters[dependency];
+                        names.Add(JsonValue.Create(ParamName(parameter)));
+                        callerDeclarations.Add(declarations.Count);
+                        declarations.Add(parameter.DeepClone());
+                        args.Add(TypeJson.Write(new TypeNode.Tv("method", dependency)));
+                        callerSlots[("method", dependency)] = new TypeNode.Tv("method", suffix++);
+                    }
+
+        var selectedFrameSlots = frameSlots;
         TypeNode RemapFrameSlots(TypeNode type) => type switch
         {
-            TypeNode.Tv tv when frameSlots.TryGetValue((tv.Scope, tv.I), out var physical) => physical,
+            TypeNode.Tv tv when selectedFrameSlots.TryGetValue((tv.Scope, tv.I), out var physical) => physical,
             TypeNode.Fqn f => new TypeNode.Fqn(f.Name, f.Args?.Select(RemapFrameSlots).ToArray()),
             TypeNode.Nullable n => new TypeNode.Nullable(RemapFrameSlots(n.Of)),
             TypeNode.Oblivious o => new TypeNode.Oblivious(RemapFrameSlots(o.Of)),
@@ -433,10 +489,13 @@ static class SuspendLambdaLowering
         node.Remove(SplicedDeclarationFrameKey);
         node.Remove("typeFrame");
         RewriteTypes(node);
-        // The complete owner prefix was copied from the caller and is already in that frame. Only the
-        // lambda-owned suffix constraints were authored in the donor declaration frame.
+        // The complete owner prefix is already in its final frame. Suffix declarations may come
+        // from either the donor or the caller; translate each from its own declaration frame.
         for (var index = ownerParams.Count; index < declarations.Count; index++)
+        {
+            selectedFrameSlots = callerDeclarations.Contains(index) ? callerSlots : frameSlots;
             RewriteTypes(declarations[index]);
+        }
         node["typeParams"] = names;
         node["typeParamDecls"] = declarations;
         node["typeArgs"] = args;

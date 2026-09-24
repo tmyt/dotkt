@@ -117,6 +117,48 @@ static class FBoundStarProjectionErasure
         }
         OwnerConstrainedMethodLowering.CloseOwners(rootList, ContainsOwnerTv,
             bound => ProjectOwnerMethodBound(bound, owners, refs, physical: false));
+        foreach (var root in rootList.OfType<JsonObject>()) CloseSuspendLambdaOwners(root, root);
+        void CloseSuspendLambdaOwners(JsonNode node, JsonObject owner)
+        {
+            if (node is JsonObject obj)
+            {
+                if (IsTypeDefinition(obj)) owner = obj;
+                if (Str(obj["k"]) == "newSuspendLambda")
+                {
+                    // These bodies have their own donor frame and are materialized after this pass.
+                    // Select their projected member owners now, while source constraints are intact.
+                    var methodFrame = new JsonArray();
+                    var typeFrame = TypeParameterFrame.CloneDeclarations(owner);
+                    var captures = obj["typeParamDecls"] as JsonArray;
+                    var frameArguments = obj[SuspendLambdaLowering.SplicedDeclarationFrameKey] as JsonArray
+                        ?? obj["typeArgs"] as JsonArray;
+                    var dense = Str(obj["typeFrame"]) == "dense";
+                    for (var index = 0; index < (captures?.Count ?? 0); index++)
+                        if (TypeJson.Read(frameArguments[index]) is TypeNode.Tv variable)
+                        {
+                            var frame = variable.Scope == "method" ? methodFrame : typeFrame;
+                            var slot = dense ? index : variable.I;
+                            while (frame.Count <= slot) frame.Add((JsonNode)null);
+                            frame[slot] = captures[index]?.DeepClone();
+                        }
+                    var declaration = new JsonObject
+                    {
+                        ["typeParams"] = methodFrame,
+                        ["params"] = obj["params"]?.DeepClone(),
+                        ["body"] = obj["body"]?.DeepClone(),
+                    };
+                    OwnerConstrainedMethodLowering.CloseOwnerViews(declaration,
+                        new JsonObject { ["typeParams"] = typeFrame }, rootList,
+                        ContainsOwnerTv, bound => ProjectOwnerMethodBound(bound, owners, refs, physical: false));
+                    obj["body"] = declaration["body"]?.DeepClone();
+                }
+                foreach (var pair in obj)
+                    if (pair.Value != null) CloseSuspendLambdaOwners(pair.Value, owner);
+            }
+            else if (node is JsonArray array)
+                foreach (var child in array)
+                    if (child != null) CloseSuspendLambdaOwners(child, owner);
+        }
         ForeignStarProjectionBinding.ApplyAll(rootList,
             owners.Values.Where(owner => owner.Needed).ToDictionary(
                 owner => owner.Name, owner => owner.ErasedName, StringComparer.Ordinal), refs, localClrAliases);

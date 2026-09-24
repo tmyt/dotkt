@@ -58,10 +58,10 @@ static class ConstrainedTypeParameterReceiverBinding
     }
 
     internal static void CloseMethodOwners(JsonObject method, JsonObject owner, IEnumerable<JsonNode> roots,
-        JsonArray methodParameters)
+        JsonArray methodParameters, ReferenceMetadataIndex refs)
     {
         BindMethod(method, CloneTypeParametersWithErasedSourceBounds(owner), CollectTypeArity(roots),
-            close: true, isValue: null, resolvedPropertiesOnly: false, refs: null,
+            close: true, isValue: null, resolvedPropertiesOnly: false, refs: refs,
             methodParametersOverride: methodParameters);
     }
 
@@ -212,6 +212,13 @@ static class ConstrainedTypeParameterReceiverBinding
             {
                 case JsonObject call:
                     var kind = Str(call["k"]);
+                    // A suspend lambda's body belongs to its declaration frame, not this method's.
+                    // Only construction operands are evaluated in the enclosing lexical frame.
+                    if (kind == "newSuspendLambda")
+                    {
+                        if (call["capValues"] is JsonNode values) Bind(values);
+                        return;
+                    }
                     // A field has no constrained-call instruction. Its selected reference-type owner requires a
                     // reference value even when Kotlin proved that an otherwise erased generic receiver inherits it.
                     // Materialize that physical conversion here; keep value-type field receivers addressable.
@@ -325,8 +332,11 @@ static class ConstrainedTypeParameterReceiverBinding
                             // bound already spells out, so the inherited-owner walk that follows has a constructed
                             // type to substitute the declaring owner into. Also carry whether THAT selected bound was
                             // physically removed; phase 2 may see its inherited declaring owner instead of this head.
-                            if (ConstraintAt(
-                                    tv, owner.Name, typeParams, methodParams, out var erased) is TypeNode.Fqn bound)
+                            var erased = false;
+                            var selected = refs == null
+                                ? ConstraintAt(tv, owner.Name, typeParams, methodParams, out erased)
+                                : ConstraintAtPhysical(tv, owner.Name, typeParams, methodParams, refs, out erased);
+                            if (selected is TypeNode.Fqn bound)
                             {
                                 call[ErasedConstraintDispatchKey] = erased;
                                 if ((owner.Args == null || erased) && bound.Args != null)
@@ -435,7 +445,7 @@ static class ConstrainedTypeParameterReceiverBinding
         return result;
     }
 
-    static JsonArray CloneTypeParametersWithErasedSourceBounds(JsonObject type)
+    internal static JsonArray CloneTypeParametersWithErasedSourceBounds(JsonObject type)
     {
         var result = TypeParameterFrame.CloneDeclarations(type);
         if (Str(type[OwnerConstrainedMethodLowering.DispatchBoundsKey]) is string dispatchBounds
@@ -605,6 +615,10 @@ static class ConstrainedTypeParameterReceiverBinding
         var matches = ConstraintDeclarations(tv, typeParams, methodParams).Where(candidate =>
         {
             if (candidate.Constraint.Name == ownerName) return true;
+            // Imported inline bodies retain semantic owner tokens, while the consumer's bound
+            // may already name the referenced physical TypeDef. Compare their metadata identities.
+            if (refs.ExactReflectedOwner(candidate.Constraint.Name, refs.OwnerArity(candidate.Constraint.Name))
+                == refs.ExactReflectedOwner(ownerName, refs.OwnerArity(ownerName))) return true;
             return refs.TryResolveClrOwner(candidate.Constraint.Name, out var physical, out _)
                 && physical == ownerName;
         }).ToList();

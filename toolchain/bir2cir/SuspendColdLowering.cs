@@ -3648,6 +3648,8 @@ static partial class SuspendColdLowering
             if (_ownerTypeParams.Count > 0)
                 type["outerTypeParamCount"] = _ownerTypeParams.Count;
             RebindMethodTypeVariablesToSm(type, _ownerTypeParams.Count);
+            if (type["typeParams"] is JsonArray frameParameters)
+                OwnerConstrainedMethodLowering.PreserveDispatchBounds(type, frameParameters);
             return type;
         }
 
