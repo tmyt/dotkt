@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Array factories use selected declaration identity (#869).** User functions sharing a standard
+  array factory's name retain their bodies; local stdlib factories use their explicit binding attributes.
+
 - **Collection factories preserve selected vararg packing (#867).** Literal packs are expanded using
   declaration metadata, while forwarded packs and single array-valued elements retain their distinct semantics.
 

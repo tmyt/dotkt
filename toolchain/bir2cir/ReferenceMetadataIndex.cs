@@ -530,8 +530,6 @@ sealed partial class ReferenceMetadataIndex
     readonly Dictionary<string, (string Getter, string Conv)> _inlineBacking = new(StringComparer.Ordinal);
     readonly Dictionary<string, List<(string Owner, string RecvKey, TypeKey ParamKey)>> _topLevelStatics = new(StringComparer.Ordinal);
     readonly Dictionary<string, string> _collectionFactories = new(StringComparer.Ordinal); // @ClrCollectionFactory fun name -> "list"/"set"/"map"
-    readonly Dictionary<string, string> _arrayFactories = new(StringComparer.Ordinal);       // @ClrArrayFactory fun name -> "vararg"/"sized"
-    readonly Dictionary<string, string> _arrayFactoryElemHints = new(StringComparer.Ordinal);// array factory name -> concrete elem FQN (empty-call fallback)
     readonly Dictionary<DefaultKey, Dictionary<int, string>> _kotlinDefaults = new();
     readonly Dictionary<string, Dictionary<int, string>> _kotlinDefaultsByDeclarationId = new(StringComparer.Ordinal);
     // #146: OWNERLESS default-arg index "name|paramCount" -> defaults. DefaultArgSplice now runs at PHASE 1 (before
@@ -868,8 +866,6 @@ sealed partial class ReferenceMetadataIndex
                     && !SameDefaults(_kotlinDefaultsByDeclarationId[kv.Key], kv.Value))
                     throw new InvalidOperationException($"conflicting defaults for Kotlin declaration identity '{kv.Key}'");
             foreach (var kv in asm.DotKt.CollectionFactories) _collectionFactories.TryAdd(kv.Key, kv.Value);
-            foreach (var kv in asm.DotKt.ArrayFactories) _arrayFactories.TryAdd(kv.Key, kv.Value);
-            foreach (var kv in asm.DotKt.ArrayFactoryElemHints) _arrayFactoryElemHints.TryAdd(kv.Key, kv.Value);
             // §4.2 (#75 S4b): merge candidate lists across assemblies — every overload sharing owner|name|pc|ga is kept; the
             // call site disambiguates by paramSig. (No poisoning: structural selection replaces the recv0-key collision.)
             foreach (var kv in asm.DotKt.InlinePayloads)
@@ -953,11 +949,6 @@ sealed partial class ReferenceMetadataIndex
     // Name index used by MapVarianceRealign for calls without a declaration identity.
     // Collection construction itself requires TryDeclarationFactory's exact selected binding.
     public string CollectionFactoryKind(string funName) => _collectionFactories.GetValueOrDefault(funName);
-    // The @ClrArrayFactory kind ("vararg"/"sized") for a top-level fun NAME, or null when not an array factory.
-    public string ArrayFactoryKind(string funName) => _arrayFactories.GetValueOrDefault(funName);
-    // The concrete element FQN for an array factory (the fallback for a call whose vararg brought no `newArray`
-    // wrapper — a spread), or null.
-    public string ArrayFactoryElemHint(string funName) => _arrayFactoryElemHints.GetValueOrDefault(funName);
 
     /// The `method` component of a CONSTRUCTOR's @KotlinDefault key (#235). `.ctor` is the CLR's own constructor name and
     /// is unspeakable in Kotlin, so it can never collide with a real method a `new`'s owner declares.
@@ -5154,27 +5145,12 @@ sealed partial class ReferenceMetadataIndex
                                 metadata.TopLevelStatics[method.Name] = lst = new List<(string, string, TypeKey)>();
                             lst.Add((ownerFqn, rk, pk));
                         }
-                        // Collection/array FACTORY markers on a [KotlinFileClass] static (listOf/setOf/mapOf/arrayOf/…):
-                        // record name -> kind so MemberCallSubstitution re-emits the newList/newSet/newMap/newArray node
-                        // (the recognition kotc used to do via its LIST/SET/MAP/ARRAY_FACTORY tables). Every overload of a
-                        // factory name agrees on the kind, so a name key is enough.
+                        // Retain the collection name index for map realignment. Construction
+                        // lowering uses the selected declaration's MemberBinding instead.
                         if (isFileClass && method.IsStatic)
                         {
                             if (collectionFactoryKind is string cf)
                                 metadata.CollectionFactories[method.Name] = cf;
-                            if (arrayFactoryKind is string af)
-                            {
-                                metadata.ArrayFactories[method.Name] = af;
-                                // Element hint for a concrete primitive factory (`intArrayOf`), which carries NO type
-                                // argument of its own: it answers the call shapes whose vararg does not arrive as a
-                                // `newArray` wrapper for MemberCallSubstitution to read the element off — a lone
-                                // spread (`intArrayOf(*xs)`) or a mixed `spreadConcat`. An element LIST, empty or
-                                // not, brings its own wrapper. Captured from the factory's array return type
-                                // (`kotlin.IntArray` -> element `kotlin.Int`); null for the generic `arrayOf<T>`
-                                // (whose element is a type variable — typeArgs[0] covers it there).
-                                if (arrayFactoryElementHint is string ah)
-                                    metadata.ArrayFactoryElemHints[method.Name] = ah;
-                            }
                         }
                     }
                     // @KotlinDefault(index, bir) on a CONSTRUCTOR's params -> the splice source for a `new` that omits a
@@ -7627,13 +7603,9 @@ sealed class ReferenceDotKtMetadata
     // type when the name is defined across multiple file-classes (CollectionsKt vs ArraysKt vs MapsKt). NOT consulted in
     // a stdlib self-build (the fun is local there; owner=null + FindStatic finds the sibling).
     public readonly Dictionary<string, List<(string Owner, string RecvKey, ReferenceMetadataIndex.TypeKey ParamKey)>> TopLevelStatics = new(StringComparer.Ordinal);
-    // Collection/array FACTORY top-level funs, keyed by fun NAME -> the factory kind. A @kotlin.clr.ClrCollectionFactory
-    // ("list"/"set"/"map") or @kotlin.clr.ClrArrayFactory ("vararg"/"sized") marker on a [KotlinFileClass] static.
-    // These name indexes support the remaining name-based map realignment and array-factory paths.
-    // They do not establish a selected overload or its parameter packing; collection construction uses MemberBinding.
+    // Collection factory names used by map realignment, not construction lowering.
+    // Selected factory identity and parameter packing live in MemberBinding.
     public readonly Dictionary<string, string> CollectionFactories = new(StringComparer.Ordinal);
-    public readonly Dictionary<string, string> ArrayFactories = new(StringComparer.Ordinal);
-    public readonly Dictionary<string, string> ArrayFactoryElemHints = new(StringComparer.Ordinal); // concrete-primitive elem (spread call)
     // A defaulted parameter's default-value expression as BIR (from @KotlinDefault), for CROSS-MODULE splice of an
     // omitted argument. Keyed "ownerFqn|methodName|paramCount" -> (argPosition -> BIR-json string). The DefaultArgSplice
     // pass reads this to fill trailing omitted args BEFORE the CharSequence bridge + type lowering (so a String default
