@@ -15,6 +15,11 @@ class ProjectedClrConstructionTests {
         val closed: System.Collections.Generic.List<Comparable<String>> = imported
         assertEquals(1, closed.Count)
         assertEquals(2, closed[0].compareTo("ok"))
+        val covariant = createCovariant()
+        assertEquals("covariant", consumeCovariant(covariant))
+        val localCovariant = System.Collections.Generic.List<List<out String>>()
+        localCovariant.Add(listOf("local"))
+        assertEquals("local", consumeCovariant(localCovariant))
     }
 
     @TestAttribute
