@@ -594,9 +594,12 @@ The **primitive** operators stay IEEE (matching Kotlin, and `il-nancmp`-green): 
 
 ## 5a-bis. Referential identity `===` on primitive/boxed/enum values deviates from Kotlin/JVM
 
-`===` (`EQEQEQ`) lowers **unconditionally** to `binOp ==` → IL `ceq`, with **no representation
-check** (`PrimitiveOperatorLowering.cs:221-223`) — unlike structural `==`/`.equals()` (§5a), which
-routes through type-classifying helpers. Because CLR generics are **reified** (§2) and a basic
+`===` (`EQEQEQ`) lowers to a reference/value `binOp ==` → IL `ceq`, rather than the
+structural `==`/`.equals()` helpers (§5a). When one physical operand is `object` and the other
+is a generic parameter (for example `T? === T`), bir2cir explicitly boxes the generic operand
+before comparing references. It does not unbox the object or call `Equals`; reference-valued
+instantiations retain their identity. Homogeneous generic/value comparisons keep the raw
+comparison described below. Because CLR generics are **reified** (§2) and a basic
 `enum class` is a real CLR value-type `enum` (`BirEmitter.kt:514-515`), that single `ceq` lowering
 produces three JVM-diverging outcomes:
 

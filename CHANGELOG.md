@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Mixed nullable generic identity comparisons emit valid IL (#859).** A generic value compared with
+  an object-backed operand is explicitly boxed, preserving reference comparison rather than calling Equals.
+
 - **Inherited covariant suspend methods fill interface slots (#857).** Result adapters are built before
   suspend lowering so each CLR Task entry has the exact interface result while preserving base virtual dispatch.
 

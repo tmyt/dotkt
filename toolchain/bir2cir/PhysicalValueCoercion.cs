@@ -344,6 +344,17 @@ static class PhysicalValueCoercion
         var kind = Str(node["k"]);
         switch (kind)
         {
+            case "binOp" when Str(node["op"]) is "==" or "!=":
+                // Nullable generic storage is object, while a non-null generic operand retains its CLR slot.
+                // A raw identity comparison across that seam needs boxing, not Object.Equals. Keep homogeneous
+                // generic/value comparisons unchanged: their value-type behavior is a documented CLR deviation.
+                var left = ExprType(node["lhs"], scope, index);
+                var right = ExprType(node["rhs"], scope, index);
+                if (left is TypeNode.Tv && right is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" })
+                    node["lhs"] = new JsonObject { ["k"] = "cast", ["type"] = TypeJson.Write(right), ["e"] = node["lhs"]!.DeepClone() };
+                if (right is TypeNode.Tv && left is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" })
+                    node["rhs"] = new JsonObject { ["k"] = "cast", ["type"] = TypeJson.Write(left), ["e"] = node["rhs"]!.DeepClone() };
+                break;
             case "var":
                 CoerceSlot(node, "init", TypeJson.Read(node["type"]), scope, index);
                 break;
