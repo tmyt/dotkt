@@ -792,18 +792,11 @@ static partial class NullableTvErasureCallRealign
             decl.NullableErasureOwnershipKnown, ctx.IsNullableCompanion(derived));
     }
 
-    // What the CALL SITE says its result is: the explicit `ret`/`dynRet` it carries.
-    //
-    // NOT the frontend `sty` stamp, and that is a MEASURED limit rather than an oversight. kotc writes an explicit
-    // `ret` for some generic calls and, for the rest, only `sty` — so a cross-module generic factory
-    // (`holderOf<String>(3)`, which says `Vault<String?>` in `sty` and nothing else) is outside this axis, and its
-    // erased `Vault<object>` return still meets the consumer's restored `Vault<string>` slot as a formal-only
-    // ilverify finding. Deriving from `sty` and WRITING the `ret` does close that one, and was tried: it then reaches
-    // the same call's function-type ARGUMENT, whose delegate the consumer cannot yet build at the erased shape (the
-    // parameter half of the func-slot erasure), turning one formal finding into two `DelegateCtor` ones. So the
-    // `sty`-only call shape lands with the func-slot parameter erasure, not before it.
+    // A current call can state its result only in the frontend's expression stamp. That is the same source-type
+    // claim as ret/dynRet, not an absent result. The declaration still supplies the physical type; the stamp only
+    // identifies the use that must be realigned against it, including an already-materialized nullable frame.
     static TypeNode StampedResult(JsonObject obj)
-        => TypeJson.Read(obj["dynRet"]) ?? TypeJson.Read(obj["ret"]);
+        => TypeJson.Read(obj["dynRet"]) ?? TypeJson.Read(obj["ret"]) ?? TypeJson.Read(obj["sty"]);
 
     // Take the derived result type, ONLY when it is the object-erasure of what the call site stamped — the exact
     // erasure boundary, never a genuine widen/narrow. A direct-write `Ref<Int?>` (derived == stamped) is untouched.
@@ -814,11 +807,9 @@ static partial class NullableTvErasureCallRealign
     // that is what stops ilemit re-inferring the member's return from a call whose surrounding slots have moved, and
     // it is the same shape UncheckedGenericCastReturnErasure.ApplyReferenced uses at this boundary. `sty` moves with
     // it, per spec §2.7 — a stamp is a claim about the value produced, never a note about the node it used to be.
-    // A call with NO result stamp at all is still in the axis when the DECLARATION itself was erased — `firstTwo(xs):
-    // Array<T?>` states `object[]` whatever `T` is, and a caller binding it to an `Array<String?>` slot (`string[]`)
-    // has nothing to reconcile against unless the call says what it produces. Only that case writes a `ret` where
-    // none stood: `erasureApplied` is false wherever `Erase` left the declared return alone, so an ordinary generic
-    // call keeps stating nothing and ilemit keeps inferring it from the member exactly as before.
+    // If ret, dynRet and sty are ALL absent, record a result only when the declaration's return was erased.
+    // Otherwise this branch leaves the unstamped call alone. A present stamp instead participates in the
+    // reconciliation below, including an explicit result cast for a narrower reference-array projection.
     static TypeNode ApplyDerivedRet(JsonObject obj, TypeNode derived, TypeNode stampedRet, bool erasureApplied,
         bool nullableErasureOwnershipKnown = false, bool nullableCompanionResult = false)
     {
@@ -1119,6 +1110,15 @@ static partial class NullableTvErasureCallRealign
 
     internal static void SelfTest()
     {
+        var sourceFunction = new TypeNode.Fn(false, new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Int")),
+            new TypeNode[] { new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Int")) });
+        var physicalCallbackResult = new TypeNode.Fn(false, new TypeNode.Fqn("object"),
+            new TypeNode[] { new TypeNode.Fqn("object") }, null, "System.Func");
+        var stampedCall = new JsonObject { ["sty"] = TypeJson.Write(sourceFunction) };
+        if (ApplyDerivedRet(stampedCall, physicalCallbackResult, StampedResult(stampedCall), false) != physicalCallbackResult
+            || TypeJson.Read(stampedCall["ret"]) != physicalCallbackResult
+            || TypeJson.Read(stampedCall["sty"]) != physicalCallbackResult)
+            throw new InvalidOperationException("A sty-only function call lost its materialized physical result");
         var companionReturn = new TypeNode.Fqn("Box", new TypeNode[] { new TypeNode.Tv("type", 1) });
         var sourceReturn = new TypeNode.Fqn("Box", new TypeNode[] {
             new TypeNode.Nullable(new TypeNode.Tv("type", 0)) });
@@ -1197,6 +1197,23 @@ static partial class NullableTvErasureCallRealign
             throw new InvalidOperationException(
                 "NullableTvErasureCallRealign self-test misclassified physical facets during object erasure");
 
+        var receiverFunction = new TypeNode.Fn(false, new TypeNode.Fqn("object"),
+            Array.Empty<TypeNode>(), Recv: new TypeNode.Fqn("object"));
+        var flattenedFunction = new TypeNode.Fn(false, new TypeNode.Fqn("System.String"),
+            new TypeNode[] { new TypeNode.Nullable(new TypeNode.Fqn("System.Int32")) });
+        if (!IsObjectErasureOf(receiverFunction, flattenedFunction)
+            || IsObjectErasureOf(receiverFunction, flattenedFunction with { Params = Array.Empty<TypeNode>() }))
+            throw new InvalidOperationException(
+                "NullableTvErasureCallRealign self-test misaligned an extension receiver's physical slot");
+
+        var unitFunction = flattenedFunction with { Ret = new TypeNode.Fqn("kotlin.Unit") };
+        var actionFunction = receiverFunction with { Ret = new TypeNode.Fqn("System.Void"), Clr = "System.Action" };
+        if (!IsObjectErasureOf(actionFunction, unitFunction)
+            || IsObjectErasureOf(actionFunction, unitFunction with { Clr = "System.Func" })
+            || IsObjectErasureOf(actionFunction, unitFunction with { Ret = new TypeNode.Nullable(unitFunction.Ret) }))
+            throw new InvalidOperationException(
+                "NullableTvErasureCallRealign self-test confused void and value-bearing Unit delegate returns");
+
         Console.WriteLine("[nullable-generic substitution] self-test OK (general arrays + function facets)");
     }
 
@@ -1227,15 +1244,21 @@ static partial class NullableTvErasureCallRealign
                 => IsObjectErasureOf(c.Of, e.Of),
             (TypeNode.ByRef c, TypeNode.ByRef e) => IsObjectErasureOf(c.Of, e.Of),
             (TypeNode.Fn c, TypeNode.Fn e)
-                when c.Params.Length == e.Params.Length && c.Suspend == e.Suspend
-                    && (c.Recv == null) == (e.Recv == null)
+                // A function value's physical first parameter may be spelled as Recv in its declaration
+                // and as Params[0] at the invocation. Compare physical slots, retaining context and ABI checks.
+                when c.DelegateParams.Length == e.DelegateParams.Length && c.Suspend == e.Suspend
                     && (c.Clr == null || e.Clr == null || c.Clr == e.Clr)
                     && ContextIsObjectErasureOf(c.Ctx, e.Ctx)
-                => IsObjectErasureOf(c.Ret, e.Ret) && c.Params.Zip(e.Params, IsObjectErasureOf).All(x => x)
-                   && (c.Recv == null || IsObjectErasureOf(c.Recv, e.Recv)),
+                => IsObjectErasureOf(PhysicalDelegateReturn(c), PhysicalDelegateReturn(e))
+                   && c.DelegateParams.Zip(e.DelegateParams, IsObjectErasureOf).All(x => x),
             _ => false,
         };
     }
+
+    // Reflection names System.Void; Kotlin function-return lowering uses the equivalent void token.
+    static TypeNode PhysicalDelegateReturn(TypeNode.Fn fn)
+        => BirTypeLowering.DelegateReturnSlot(fn) is TypeNode.Fqn { Args: null, Name: "System.Void" }
+            ? new TypeNode.Fqn("void") : BirTypeLowering.DelegateReturnSlot(fn);
 
     static bool ContextIsObjectErasureOf(TypeNode[] candidate, TypeNode[] expected)
     {

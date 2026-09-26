@@ -284,6 +284,23 @@ static partial class ClrMemberResolution
             // variables in the caller's generic frame (notably for a constrained call through I<Int> from T : I<Int>).
             if (kind is "newDelegate" or "newBoundDelegate")
                 call["sig"] = new JsonArray(matches[0].Params.Select(TypeJson.Write).ToArray());
+            if (kind == "newDelegate" && TypeJson.Read(call["funcType"]) is TypeNode.Fn { Suspend: false } desired
+                && TypeJson.Read(matches[0].Method["ret"]) is TypeNode declaredReturn)
+            {
+                TypeNode Close(TypeNode type) => SubstMethodTvs(SupertypeGraph.SubstOwnerTvs(type, ownerArgs), methodArgs);
+                var natural = new TypeNode.Fn(false, Close(declaredReturn),
+                    matches[0].Params.Select(Close).ToArray(), null, desired.Clr);
+                // The function value and its lifted method can acquire different nullable representations.
+                // Preserve the selected method's actual signature and let the existing slot adapter cross
+                // object/value seams; changing the delegate token alone cannot change the ldftn target.
+                if (HasBoxedSlotSeam(natural, desired))
+                {
+                    // An already selected destination slot outranks this construction's own requested shape.
+                    if (!call.ContainsKey(DelegateSlotKey))
+                        MarkDelegateSlot(call, desired, refs, owners.Keys.ToHashSet(StringComparer.Ordinal));
+                    call["funcType"] = TypeJson.Write(natural);
+                }
+            }
             try { StampDelegateArgumentTargets(call, matches[0].Params, ownerArgs, methodArgs); }
             catch (Exception ex)
             {

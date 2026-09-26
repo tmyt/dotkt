@@ -580,7 +580,7 @@ static partial class NullableTvErasureCallRealign
             || (IsSemanticObject(src) && (IsBareObject(target) || IsSemanticObject(target)))) return null;
         if (Str(vo["k"]) is "throwExpr" or "throw") return null;
         if (target is TypeNode.Nullable { Of: TypeNode.Fqn targetElem }
-            && src.Equals(targetElem) && isValue(targetElem))
+            && SameNominalSlot(src, targetElem) && isValue(targetElem))
             return new JsonObject
             {
                 ["k"] = "nullableWrap",
@@ -588,7 +588,7 @@ static partial class NullableTvErasureCallRealign
                 ["e"] = vo.DeepClone(),
             };
         if (src is TypeNode.Nullable { Of: TypeNode.Fqn sourceElem }
-            && target.Equals(sourceElem) && isValue(sourceElem))
+            && SameNominalSlot(target, sourceElem) && isValue(sourceElem))
             return new JsonObject
             {
                 ["k"] = "nullableValue",
@@ -612,6 +612,17 @@ static partial class NullableTvErasureCallRealign
     }
 
     static TypeNode PhysicalTopLevel(TypeNode type) => type is TypeNode.Oblivious o ? o.Of : type;
+
+    // Exact imported TypeDef names and declaration carrier names can denote the same constructed value slot.
+    // Use reference-backed classifier identity, not spelling or assignability, before adding/removing Nullable<V>.
+    static bool SameNominalSlot(TypeNode left, TypeNode right)
+    {
+        if (left.Equals(right)) return true;
+        if (left is not TypeNode.Fqn l || right is not TypeNode.Fqn r || !SameClassifier(l, r)) return false;
+        var la = l.Args ?? Array.Empty<TypeNode>();
+        var ra = r.Args ?? Array.Empty<TypeNode>();
+        return la.Length == ra.Length && la.Zip(ra, SameNominalSlot).All(equal => equal);
+    }
 
     // The object-erasure conversion a value needs to inhabit `target`, or null when it needs none / none is
     // expressible.

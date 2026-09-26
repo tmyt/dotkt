@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Generic nullable callbacks preserve physical delegate signatures (#874).** Calls with frontend-only
+  result stamps follow the declaration's physical frame, and lifted callbacks explicitly adapt object/value seams.
+
 - **Delegate invocations convert arguments to their resolved slots (#754).** Primitive, nullable-value and
   generic arguments passed to object parameters are explicitly boxed, including cross-DLL function values.
 
