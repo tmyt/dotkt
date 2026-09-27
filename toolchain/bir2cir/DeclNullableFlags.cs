@@ -51,7 +51,7 @@ static class DeclNullableFlags
 
     static void ApplyToMethod(JsonObject mo, ValueTypeOracle isValue, Func<TypeNode.Fqn, TypeNode[]> annotationArguments)
     {
-        PreserveNullableUnitSurface(mo, "ret", "retKotlinType", "nullableGenericRet");
+        PreserveExactSurface(mo, "ret", "retKotlinType", "nullableGenericRet");
         if (!mo.ContainsKey("retNullableFlags")
             && TypeJson.Read(mo["ret"]) is TypeNode ret
             && NullableFlags.Compute(ret, isValue, annotationArguments: annotationArguments) is JsonArray rf)
@@ -67,7 +67,7 @@ static class DeclNullableFlags
         foreach (var d in a)
             if (d is JsonObject po)
             {
-                PreserveNullableUnitSurface(po, "type", "kotlinType", "nullableGeneric");
+                PreserveExactSurface(po, "type", "kotlinType", "nullableGeneric");
                 if (!po.ContainsKey("nullableFlags")
                 && TypeJson.Read(po["type"]) is TypeNode t
                 && NullableFlags.Compute(t, isValue, annotationArguments: annotationArguments) is JsonArray f)
@@ -75,27 +75,26 @@ static class DeclNullableFlags
             }
     }
 
-    // Unit has no NRT byte in the Kotlin projection (including nested generic positions). Its nullable
-    // source contract therefore uses the existing exact KotlinType carrier, not a guessed CLR signature.
-    // Earlier representation passes may already own a more original source surface; never replace it.
-    static void PreserveNullableUnitSurface(JsonObject slot, string key, string carrier, string genericCarrier)
+    // Unit has no NRT byte, and function types carry only a head byte in the Kotlin NRT convention.
+    // Preserve the remaining annotation-bearing subtree before reference-nullability stripping and final type
+    // lowering. Earlier representation passes preserve any changed source surface; never replace their carrier.
+    static void PreserveExactSurface(JsonObject slot, string key, string carrier, string genericCarrier)
     {
         if (slot[carrier] != null || slot[genericCarrier] != null) return;
-        if (TypeJson.Read(slot[key]) is TypeNode type && ContainsNullableUnit(type))
+        if (TypeJson.Read(slot[key]) is TypeNode type && RequiresExactSurface(type))
             slot[carrier] = TypeNode.ToJson(type);
     }
 
-    static bool ContainsNullableUnit(TypeNode type) => type switch
+    static bool RequiresExactSurface(TypeNode type) => type switch
     {
         TypeNode.Nullable { Of: TypeNode.Fqn { Name: "kotlin.Unit", Args: null } } => true,
-        TypeNode.Nullable n => ContainsNullableUnit(n.Of),
-        TypeNode.Oblivious o => ContainsNullableUnit(o.Of),
-        TypeNode.Projection p => ContainsNullableUnit(p.Of),
-        TypeNode.Fqn f => f.Args?.Any(ContainsNullableUnit) == true,
-        TypeNode.Array a => ContainsNullableUnit(a.Elem),
-        TypeNode.ByRef b => ContainsNullableUnit(b.Of),
-        TypeNode.Fn f => ContainsNullableUnit(f.Ret) || f.Params.Any(ContainsNullableUnit)
-            || (f.Recv != null && ContainsNullableUnit(f.Recv)) || f.Ctx?.Any(ContainsNullableUnit) == true,
+        TypeNode.Nullable n => RequiresExactSurface(n.Of),
+        TypeNode.Oblivious o => RequiresExactSurface(o.Of),
+        TypeNode.Projection p => RequiresExactSurface(p.Of),
+        TypeNode.Fqn f => f.Args?.Any(RequiresExactSurface) == true,
+        TypeNode.Array a => RequiresExactSurface(a.Elem),
+        TypeNode.ByRef b => RequiresExactSurface(b.Of),
+        TypeNode.Fn => true,
         _ => false,
     };
 }
