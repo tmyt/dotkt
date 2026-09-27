@@ -3974,6 +3974,16 @@ static partial class SuspendColdLowering
         // must not publish a second Kotlin declaration carrier.
         void CarryKotlinDeclarationMetadata(JsonObject method)
         {
+            // These source call-syntax modifiers belong to the public Kotlin
+            // declaration, not to the generated cold entry. Do not restore
+            // mods.suspend on an already lowered bridge.
+            foreach (var modifier in new[] { "operator", "infix" })
+                if (Mod(_m, modifier))
+                {
+                    if (method["mods"] is not JsonObject)
+                        method["mods"] = new JsonObject();
+                    ((JsonObject)method["mods"])[modifier] = true;
+                }
             if (_m[NullableGenericErasure.MethodTypeParameterBoundsPre] is JsonNode bounds)
                 method[NullableGenericErasure.MethodTypeParameterBoundsPre] = bounds.DeepClone();
             if (_m[NullableRepresentationTypes.MethodFrameKey] is JsonNode nullableFrame)

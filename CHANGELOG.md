@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Suspend declarations retain operator and infix modifiers across DLLs (#879).** Public suspend
+  bridges preserve source call syntax for concrete methods, abstract slots and extensions.
+
 - **Function types retain source nullability across Kotlin DLL boundaries (#873).** Exact metadata
   preserves nested parameter and return annotations, including stored, extension and context function values.
 
