@@ -4,6 +4,7 @@ class Cell<T>(var value: T)
 open class Base<T>(value: T?) { val cell = Cell<T?>(value) }
 class Derived<A, B>(val tag: A, value: B?) : Base<B>(value)
 class NullableDerived(value: Int?) : Base<Int?>(value)
+class NullableLayer<T>(value: T?) : Base<T?>(value)
 
 interface Contract<T> { val box: Cell<T?> }
 open class ContractBase<T>(value: T?) : Contract<T> {

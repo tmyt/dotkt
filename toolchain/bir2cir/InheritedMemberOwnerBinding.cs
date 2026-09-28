@@ -630,7 +630,10 @@ static class InheritedMemberOwnerBinding
     {
         TypeNode.Tv { Scope: "type" } tv when tv.I >= 0 && tv.I < args.Length => args[tv.I],
         TypeNode.Fqn f when f.Args is not null => new TypeNode.Fqn(f.Name, f.Args.Select(a => SubstOwnerTvs(a, args)).ToArray()),
-        TypeNode.Nullable n => new TypeNode.Nullable(SubstOwnerTvs(n.Of, args)),
+        TypeNode.Nullable n => SubstOwnerTvs(n.Of, args) switch {
+            TypeNode.Nullable nullable => nullable,
+            var inner => new TypeNode.Nullable(inner),
+        },
         TypeNode.Oblivious o => new TypeNode.Oblivious(SubstOwnerTvs(o.Of, args)),
         TypeNode.Array a => new TypeNode.Array(SubstOwnerTvs(a.Elem, args)),
         TypeNode.ByRef b => new TypeNode.ByRef(SubstOwnerTvs(b.Of, args)),

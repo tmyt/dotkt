@@ -12,6 +12,12 @@ class SourceInheritedOwnerTests {
         check(Derived<Int, String>(1, "value").cell.value == "value")
         check(NullableDerived(null).cell.value == null)
         check(NullableDerived(23).cell.value == 23)
+        val nullable = NullableLayer<Int?>(41)
+        val empty = NullableLayer<Int?>(null)
+        val reference = NullableLayer<String?>("nullable")
+        check(nullable.cell.value == 41)
+        check(empty.cell.value == null)
+        check(reference.cell.value == "nullable")
     }
 
     @TestAttribute
