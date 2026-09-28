@@ -8,6 +8,13 @@ private fun conditionalJoinChoose(flag: Boolean, left: ConditionalJoinLeft, righ
 private fun conditionalJoinRead(value: ConditionalJoinValue): Int = value.value()
 private fun conditionalJoinArgument(flag: Boolean): Int =
     conditionalJoinRead(if (flag) ConditionalJoinLeft() else ConditionalJoinRight())
+private fun conditionalJoinWhen(choice: Int): ConditionalJoinValue = when (choice) {
+    0 -> ConditionalJoinLeft()
+    1 -> ConditionalJoinRight()
+    else -> ConditionalJoinLeft()
+}
+private fun conditionalJoinElvis(left: ConditionalJoinLeft?): ConditionalJoinValue =
+    left ?: ConditionalJoinRight()
 
 private interface ConditionalJoinGeneric<T> { fun read(): T }
 private interface ConditionalJoinDerived<T> : ConditionalJoinGeneric<T>
@@ -63,6 +70,11 @@ class ConditionalJoinTests {
         check(conditionalJoinChoose(false, left, right) === right)
         check(conditionalJoinArgument(true) == 1)
         check(conditionalJoinArgument(false) == 2)
+        check(conditionalJoinWhen(0).value() == 1)
+        check(conditionalJoinWhen(1).value() == 2)
+        check(conditionalJoinWhen(2).value() == 1)
+        check(conditionalJoinElvis(left) === left)
+        check(conditionalJoinElvis(null).value() == 2)
     }
 
     @TestAttribute

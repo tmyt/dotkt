@@ -12,12 +12,10 @@ using DotKt.Bir;
 //
 //     val r: String = if (n >= 0) "kept" else boom()      // boom(): Nothing
 //
-// ilemit's `cond` is a stack merge — both arms leave one value at the join — so the arm that "produces" an `object`
-// meets the arm that produces a `string`, and the verifier rejects a merge the program never performs:
-// `ilverify: StackUnexpected [found ref 'object'][expected ref 'string']`. The same erased `object` lands wrong in
-// every other typed slot too (`fun f(): String = fail("x")` -> `ret` with `object` on the stack). Runtime-safe in
-// each case, because the arm always throws before the join — but formally dirty, which is what blocks the
-// ilverify-running test lanes.
+// A typed `cond` stores each arm in its declared result slot. An arm that "produces" an erased `object` cannot
+// satisfy a `string` slot, even though the call never returns. The same erased `object` lands wrong in every
+// other typed slot too (`fun f(): String = fail("x")` -> `ret` with `object` on the stack). Runtime-safe in
+// each case, because the arm always throws before the store — but formally dirty, which blocks the verifier.
 //
 // A cast would be the wrong fix: it keeps the fiction that the arm delivers a value. bir2cir owns the physical CLR
 // representation of Kotlin meaning, so it states the fact instead — a `Nothing`-typed value position is TERMINATED
@@ -25,8 +23,8 @@ using DotKt.Bir;
 //
 //     else boom()   ->   else throw boom()
 //
-// After that the arm has no fallthrough at all: ilemit's EmitCond leaves the join with the surviving arm's type as
-// its only predecessor, and the suspend lowering's `__cond$` machinery (SuspendColdLowering.EmitCondBranch) already
+// After that the arm has no fallthrough at all: EmitCond's following store is unreachable, so only a surviving arm
+// reaches its result store and join. The suspend lowering's `__cond$` machinery (SuspendColdLowering.EmitCondBranch)
 // recognizes a `throwExpr` arm and emits it as a statement with NO store to the result slot. One rule, both
 // lowerings — which is why this runs BEFORE the suspend transform.
 //
@@ -173,7 +171,7 @@ static class NothingValueTermination
     // The wrapper is deliberately bare — no `sty` stamp. `throwExpr` IS the "produces no value" kind (NodeType.Of
     // answers `kotlin.Nothing` for it structurally), so a stamp would only give BirTypeLowering another slot to erase
     // to `object`. Downstream this matters twice: ilemit emits `<expr>; throw`, which ends the basic block so the
-    // merge label takes its stack state from the surviving arm alone; and SuspendColdLowering's `EmitCondBranch`
+    // following result store is unreachable; and SuspendColdLowering's `EmitCondBranch`
     // recognizes the kind and emits the arm as a statement with NO store to the `__cond$` slot. DeepClone rather than
     // a detach dance: a terminated value position is rare, and this keeps the rewrite a pure construction.
     static JsonObject Terminate(JsonObject node) => new() { ["k"] = "throwExpr", ["value"] = node.DeepClone() };
