@@ -21,6 +21,16 @@ class InnerConstructorOuter(val outerValue: Int) {
         }
         inner class Derived : OuterBase(readOuter() + middleValue)
         inner class Inlined : InnerConstructorBase<Int>(run { readOuter() + middleValue })
+        inner class Defaults : InnerConstructorBase<Int> {
+            constructor(value: Int = readOuter()) : super(value + middleValue)
+            constructor(marker: String) : this()
+        }
+        inner class Deeper(val deeperValue: Int) {
+            inner class Leaf : InnerConstructorBase<Int>(readOuter() + middleValue + deeperValue)
+        }
+        inner class Anonymous : InnerConstructorBase<Int>(object {
+            fun value(): Int = readOuter() + middleValue
+        }.value())
     }
 }
 
@@ -51,6 +61,14 @@ class InnerConstructorDelegationTests {
         check(outer.reads == 3)
         check(middle.Inlined().baseValue == 23)
         check(outer.reads == 4)
+        check(middle.Defaults("delegated").baseValue == 23)
+        check(outer.reads == 5)
+        check(middle.Defaults().baseValue == 23)
+        check(outer.reads == 6)
+        check(middle.Deeper(2).Leaf().baseValue == 25)
+        check(outer.reads == 7)
+        check(middle.Anonymous().baseValue == 23)
+        check(outer.reads == 8)
     }
 
     @TestAttribute
