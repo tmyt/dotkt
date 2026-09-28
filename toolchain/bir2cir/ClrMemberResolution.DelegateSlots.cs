@@ -237,7 +237,7 @@ static partial class ClrMemberResolution
 
     /// <summary>
     /// Rewrite every marked delegate construction so it states the delegate it physically builds, authoring the
-    /// void-to-value adapter classes that requires.
+    /// representation adapter classes that requires.
     /// </summary>
     /// <remarks>
     /// Runs once per file, after every resolution pass: the mark is placed where the callee is known, and the

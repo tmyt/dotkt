@@ -25,6 +25,13 @@ class GenericUnitCallbackTests {
         check(tracked.calls == 1)
         check(deferred() == Unit)
         check(tracked.calls == 2)
+        val body = bodyCallback { calls++; Unit }
+        check(calls == 4)
+        check(body() == Unit)
+        check(calls == 5)
+        check(wideCallback({ calls++ }, Unit) == Unit)
+        check(calls == 6)
+        check(wideCallback({}, "wide") == "wide")
     }
 
     @TestAttribute

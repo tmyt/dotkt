@@ -1,5 +1,18 @@
 package roundtrip.unitcallback
 
+inline fun <R> bodyCallback(crossinline block: () -> R): () -> R = { block() }
+
+inline fun <R> wideCallback(
+    action: () -> Unit,
+    value: R,
+    noinline callback: (R, R, R, R, R, R, R, R, R, R, R, R, R, R, R, R, R) -> R =
+        { first, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _ -> first },
+): R {
+    action()
+    return callback(value, value, value, value, value, value, value, value, value,
+        value, value, value, value, value, value, value, value)
+}
+
 inline fun <R> selectedCallback(block: () -> R, absent: () -> R = { error("unused") }): R = block()
 
 inline fun <R> invokedCallback(action: () -> Unit, value: R, noinline callback: (R) -> R = { it }): R {

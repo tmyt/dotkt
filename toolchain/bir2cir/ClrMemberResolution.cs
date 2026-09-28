@@ -246,7 +246,7 @@ static partial class ClrMemberResolution
         void Bind(JsonObject call)
         {
             var kind = (call["k"] as JsonValue)?.GetValue<string>();
-            if (physicalDelegates && kind is not ("newDelegate" or "newClosure" or "newBoundDelegate")) return;
+            if (physicalDelegates && kind is not ("newDelegate" or "newClosure")) return;
             if (!physicalDelegates && kind == "newClosure") return;
             if (kind is not ("newDelegate" or "newClosure" or "newBoundDelegate" or "callStatic" or "callInstance" or "constrainedCall")) return;
             // A constrained call names its declaration owner in `iface`; its `recvType` is the type parameter whose
