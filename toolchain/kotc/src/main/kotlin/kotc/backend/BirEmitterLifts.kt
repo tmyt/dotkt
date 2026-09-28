@@ -414,7 +414,8 @@ internal fun BirEmitter.samConversion(node: IrTypeOperatorCall): String {
 		// how to obtain the callable target; this field says only which Kotlin fun-interface conversion surrounds it.
 		// bir2cir alone decides whether that projected classifier is physically a CLR delegate and consumes the field.
 		check(value.startsWith('{') && value.endsWith('}')) { "SAM conversion operand is not a BIR object" }
-		return value.dropLast(1) + ",\"samTarget\":" + str(birType(funIface)) + "}"
+		return value.dropLast(1) + ",\"samTarget\":" + str(birType(funIface)) +
+			",\"samSource\":" + str(birType(node.argument.type)) + "}"
 	}
 	val fn = lamExpr.function
 	val sam = ifaceClass.declarations.filterIsInstance<IrSimpleFunction>()

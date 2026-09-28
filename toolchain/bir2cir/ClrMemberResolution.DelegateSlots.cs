@@ -52,6 +52,24 @@ static partial class ClrMemberResolution
     // Transient: the delegate this construction's SLOT declares, as the resolved physical `fqn`. Consumed by
     // MaterializeDelegateSlots and never written to CIR.
     const string DelegateSlotKey = "dotktDelegateSlot";
+    const string DelegateValueKey = "dotktDelegateValue";
+
+    // An existing function value cannot be retargeted like a literal construction. Keep its call/field
+    // signature independent of the conversion until both source and destination representations are final.
+    internal static void MarkDelegateValueConversion(JsonObject value, TypeNode source, TypeNode.Fqn target)
+    {
+        if (source is not TypeNode.Fn)
+            throw new InvalidOperationException("CLR delegate SAM conversion requires a function operand type");
+        var operand = value.DeepClone();
+        value.Clear();
+        value["k"] = "valueBlock";
+        value["type"] = TypeJson.Write(target);
+        value["funcType"] = TypeJson.Write(source);
+        value["stmts"] = new JsonArray();
+        value["result"] = operand;
+        value[DelegateSlotKey] = TypeJson.Write(target);
+        value[DelegateValueKey] = true;
+    }
 
     /// <summary>
     /// Mark every delegate construction among <paramref name="call"/>'s arguments with the delegate its
@@ -221,11 +239,13 @@ static partial class ClrMemberResolution
 
     // Local function slots use Fn; exact imported CLR signatures use the equivalent named Func/Action.
     // Read the latter's physical Invoke and close its owner parameters, without folding the Unit class to void.
-    static TypeNode.Fn PhysicalFunctionShape(TypeNode type)
+    static TypeNode.Fn PhysicalFunctionShape(TypeNode type, bool includeNominal = false)
     {
         if (type is TypeNode.Fn fn) return fn;
         if (type is not TypeNode.Fqn named || ResolveOwnerType(named) is not Type owner
-            || DelegateFamily(owner) is not string family) return null;
+            || !IsDelegate(owner)) return null;
+        var family = DelegateFamily(owner);
+        if (family == null && !includeNominal) return null;
         var invoke = owner.GetMethod("Invoke");
         if (invoke == null) return null;
         var args = named.Args ?? Array.Empty<TypeNode>();
@@ -282,6 +302,16 @@ static partial class ClrMemberResolution
         construction.Remove(DelegateSlotKey);
         if (slot == null) return;
         var natural = TypeJson.Read(construction["funcType"]);
+        if (construction.Remove(DelegateValueKey))
+        {
+            if (natural is not TypeNode.Fn function || PhysicalFunctionShape(slot, includeNominal: true) is not TypeNode.Fn signature)
+                throw new InvalidOperationException("CLR delegate SAM conversion has no physical Invoke signature");
+            var operand = (JsonObject)construction["result"].DeepClone();
+            construction.Clear();
+            foreach (var pair in operand.ToList()) construction[pair.Key] = pair.Value?.DeepClone();
+            AdaptBoxedSlots(construction, function, slot, signature);
+            return;
+        }
         if (natural is not TypeNode.Fn naturalFn) return;   // already retargeted to a named delegate
         var naturalDelegate = BirTypeLowering.DelegateFqnOf(naturalFn);
         if (naturalDelegate == null || SameDelegate(naturalDelegate, slot)) return;

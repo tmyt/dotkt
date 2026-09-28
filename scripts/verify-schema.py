@@ -1065,6 +1065,8 @@ class V:
                     self.err(f, path, "identity comparison must have physical operands and lower to == before CIR")
                 if "samTarget" in o:
                     self.err(f, path, "samTarget is a BIR SAM-conversion fact and must be consumed before CIR")
+                if "samSource" in o:
+                    self.err(f, path, "samSource is a BIR SAM-conversion fact and must be consumed before CIR")
                 if "dotktValueReturn" in o:
                     self.err(f, path, "dotktValueReturn is an internal return-representation fact and must be consumed before CIR")
                 if o.get("k") in ("callEval", "bindRef"):

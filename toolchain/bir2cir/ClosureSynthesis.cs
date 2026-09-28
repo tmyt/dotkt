@@ -188,10 +188,15 @@ static class ClosureSynthesis
                 if (o["samTarget"] is JsonNode samTargetNode)
                 {
                     var samTarget = TypeJson.Read(samTargetNode);
-                    if (samTarget is TypeNode.Fqn delegateType && _refs?.IsClrDelegate(delegateType) == true)
-                        ClrMemberResolution.MarkDelegateSlot(
-                            o, delegateType, _refs, new HashSet<string>());
+                    var samSource = TypeJson.Read(o["samSource"]);
                     o.Remove("samTarget");
+                    o.Remove("samSource");
+                    if (samTarget is TypeNode.Fqn delegateType && _refs?.IsClrDelegate(delegateType) == true)
+                    {
+                        if (!ClrMemberResolution.MarkDelegateSlot(
+                            o, delegateType, _refs, new HashSet<string>()))
+                            ClrMemberResolution.MarkDelegateValueConversion(o, samSource, delegateType);
+                    }
                 }
                 if (Str(o["k"]) == "newClosure" && o["synthClass"] is JsonObject sc)
                 {
