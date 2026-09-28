@@ -1,0 +1,20 @@
+{
+  "methods": [
+    {
+      "name": "probe",
+      "params": [],
+      "ret": { "t": "fqn", "name": "void" },
+      "body": [
+        {
+          "k": "exprStmt",
+          "expr": {
+            "k": "samConvert",
+            "type": { "t": "fqn", "name": "External.Callback" },
+            "funcType": { "t": "fn", "suspend": false, "clr": "System.Action", "params": [], "ret": { "t": "fqn", "name": "void" } },
+            "e": { "k": "local", "name": "callback" }
+          }
+        }
+      ]
+    }
+  ]
+}

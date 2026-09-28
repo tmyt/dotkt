@@ -171,6 +171,10 @@ static class PropertyReferenceFunctionLowering
         if (kind == "callInstance" && RewriteFunctionSlotInvoke(obj, context)) kind = "delegateInvoke";
         switch (kind)
         {
+            case "samConvert":
+                if (TypeJson.Read(obj["funcType"]) is TypeNode functionType && obj["e"] is JsonObject operand)
+                    RewriteValue(operand, functionType, context);
+                break;
             case "var":
                 if (TypeJson.Read(obj["type"]) is TypeNode localType && obj["init"] is JsonObject init)
                     RewriteValue(init, localType, context);
@@ -234,6 +238,7 @@ static class PropertyReferenceFunctionLowering
             if (pair.Value == null || pair.Key is Marker or "synthClass") continue;
             var targetedChild = kind switch
             {
+                "samConvert" => pair.Key == "e",
                 "var" => pair.Key == "init",
                 "setLocal" or "setField" or "setFieldExpr" or "staticFieldSet" or "setStaticField"
                     or "setStaticFieldExpr" or "clrStaticFieldSet" or "arraySet"

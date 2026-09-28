@@ -221,11 +221,13 @@ static partial class ClrMemberResolution
 
     // Local function slots use Fn; exact imported CLR signatures use the equivalent named Func/Action.
     // Read the latter's physical Invoke and close its owner parameters, without folding the Unit class to void.
-    static TypeNode.Fn PhysicalFunctionShape(TypeNode type)
+    static TypeNode.Fn PhysicalFunctionShape(TypeNode type, bool includeNominal = false)
     {
         if (type is TypeNode.Fn fn) return fn;
         if (type is not TypeNode.Fqn named || ResolveOwnerType(named) is not Type owner
-            || DelegateFamily(owner) is not string family) return null;
+            || !IsDelegate(owner)) return null;
+        var family = DelegateFamily(owner);
+        if (family == null && !includeNominal) return null;
         var invoke = owner.GetMethod("Invoke");
         if (invoke == null) return null;
         var args = named.Args ?? Array.Empty<TypeNode>();
@@ -268,7 +270,7 @@ static partial class ClrMemberResolution
         {
             case JsonObject obj:
                 foreach (var kv in obj.ToList()) if (kv.Value != null) Collect(kv.Value, into);
-                if (obj.ContainsKey(DelegateSlotKey)) into.Add(obj);
+                if (obj.ContainsKey(DelegateSlotKey) || obj["k"]?.GetValue<string>() == "samConvert") into.Add(obj);
                 break;
             case JsonArray array:
                 foreach (var item in array.ToList()) if (item != null) Collect(item, into);
@@ -278,10 +280,27 @@ static partial class ClrMemberResolution
 
     static void Materialize(JsonObject construction)
     {
-        var slot = TypeJson.Read(construction[DelegateSlotKey]) as TypeNode.Fqn;
+        // Explicit conversions retain their own type slot through ordinary physical type lowering. A concrete
+        // Kotlin type argument must not survive here merely because it was stored in an opaque internal marker.
+        var isValueConversion = construction["k"]?.GetValue<string>() == "samConvert";
+        var slot = TypeJson.Read(construction[isValueConversion ? "type" : DelegateSlotKey]) as TypeNode.Fqn;
         construction.Remove(DelegateSlotKey);
         if (slot == null) return;
         var natural = TypeJson.Read(construction["funcType"]);
+        if (isValueConversion)
+        {
+            if (natural is not TypeNode.Fn function || PhysicalFunctionShape(slot, includeNominal: true) is not TypeNode.Fn signature)
+                throw new InvalidOperationException("CLR delegate SAM conversion has no physical Invoke signature");
+            var operand = (JsonObject)construction["e"].DeepClone();
+            construction.Clear();
+            // A function-bounded source TV is still a CLR generic value on the stack. Cross its declared
+            // function-view boundary explicitly so ordinary cast lowering boxes it before delegate storage.
+            construction["k"] = "cast";
+            construction["type"] = TypeJson.Write(function);
+            construction["e"] = operand;
+            AdaptBoxedSlots(construction, function, slot, signature);
+            return;
+        }
         if (natural is not TypeNode.Fn naturalFn) return;   // already retargeted to a named delegate
         var naturalDelegate = BirTypeLowering.DelegateFqnOf(naturalFn);
         if (naturalDelegate == null || SameDelegate(naturalDelegate, slot)) return;

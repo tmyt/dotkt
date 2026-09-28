@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Stored function values construct the requested CLR delegate during SAM conversion (#889).**
+  Conversion captures the function once rather than returning its Action/Func carrier as a different nominal
+  delegate, preserving argument and result representations.
+
 - **Inner constructor defaults retain every enclosing receiver across DLLs (#904).**
   Carried defaults start from the caller-supplied enclosing instance and retain private capture access facts,
   rather than referring to an instance that has not yet been constructed.

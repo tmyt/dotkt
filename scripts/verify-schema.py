@@ -322,7 +322,7 @@ KINDS = {
     # --- core expr/stmt (kotc emit) ---
     "local", "const", "this", "var", "setLocal", "field", "setField", "staticField",
     "callInstance", "callStatic", "callLocal", "localFunRef", "objMethod", "delegateInvoke",
-    "binOp", "unaryOp", "conv", "cast", "isInst", "isInstRef", "objEq", "concat", "cond",
+    "binOp", "unaryOp", "conv", "cast", "samConvert", "isInst", "isInstRef", "objEq", "concat", "cond",
     "new", "newArray", "newArraySized", "newArrayInit", "arrayGet", "arraySet", "arrayLen",
     "newList", "newSet", "newMap", "newClosure", "newDelegate", "newSam", "newSuspendLambda",
     "newBoundDelegate", "newBoundClrDelegate", "newClrStaticDelegate",
@@ -1063,8 +1063,8 @@ class V:
             if f.endswith(".cir.json"):
                 if o.get("k") == "binOp" and o.get("op") == "===":
                     self.err(f, path, "identity comparison must have physical operands and lower to == before CIR")
-                if "samTarget" in o:
-                    self.err(f, path, "samTarget is a BIR SAM-conversion fact and must be consumed before CIR")
+                if o.get("k") == "samConvert":
+                    self.err(f, path, "samConvert is a BIR operation and must be consumed before CIR")
                 if "dotktValueReturn" in o:
                     self.err(f, path, "dotktValueReturn is an internal return-representation fact and must be consumed before CIR")
                 if o.get("k") in ("callEval", "bindRef"):
