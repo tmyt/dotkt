@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Generic suspend receivers retain their constructed owner type (#910).**
+  State-machine field reads keep the captured instance's full generic frame, including super-call forwarders.
+
 - **Stored function values construct the requested CLR delegate during SAM conversion (#889).**
   Conversion captures the function once rather than returning its Action/Func carrier as a different nominal
   delegate, preserving argument and result representations.
