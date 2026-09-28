@@ -706,11 +706,14 @@ static partial class NullableTvErasureCallRealign
         if (Str(obj["method"]) is not string method) { RealignArgs(obj, null, null, null, null, ctx); return stampedRet; }
 
         var nodeOwner = TypeJson.Read(obj["ownerType"]);
-        // The corrected owner: prefer the receiver's flowed static type (it may be an erased `Ref<object>`), else the
-        // stamped ownerType. A receiver that erased to a BARE `object` names no member at all, so it is not an owner
-        // — it is a receiver needing narrowing (below), and the stamped ownerType stays authoritative.
+        // Flow can refine arguments of the selected classifier (Ref<T> -> Ref<object>), but a derived receiver
+        // does not replace the selected declaring owner. InheritedMemberOwnerBinding already supplied that owner's
+        // exact construction; looking up the same property on the receiver would discard the inheritance edge.
         var erasedRecv = recvType is TypeNode.Fqn { Name: "object", Args: null };
-        var owner = (erasedRecv ? null : recvType as TypeNode.Fqn) ?? nodeOwner as TypeNode.Fqn;
+        var flowedOwner = erasedRecv ? null : recvType as TypeNode.Fqn;
+        var declaredOwner = nodeOwner as TypeNode.Fqn;
+        var owner = flowedOwner != null && (declaredOwner == null || flowedOwner.Name == declaredOwner.Name)
+            ? flowedOwner : declaredOwner;
         if (owner == null) { RealignArgs(obj, null, null, null, null, ctx); return stampedRet; }
 
         // A value returned through an object-erased generic boundary carries the erased instantiation in the

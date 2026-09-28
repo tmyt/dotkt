@@ -18,17 +18,17 @@ sealed partial class ReferenceMetadataIndex
         var lookup = new TypeNode.Fqn(SourceHierarchyName(owner.Name), owner.Args);
         if (!TryReferenceTypeShapeValue(lookup, out var physical)) return false;
         var ownerFrame = SourceHierarchyFrame(lookup.Name);
-        // Without companion materialization, source carriers still use the declaration's
-        // enclosing-first TV indices. Type applications within those carriers are already
-        // source ordered, so translate variables independently from application arguments.
-        var sourceVariablesNeedCaptureProjection = ownerFrame != null
-            && !_ownerNullableFrames.ContainsKey(lookup.Name);
+        _ownerNullableFrames.TryGetValue(lookup.Name, out var declarationFrame);
+        // Carriers retain declaration-relative source TVs, whereas the caller supplies
+        // own-first Kotlin applications. Physical edges additionally need role restoration.
+        TypeNode RestoreVariable(TypeNode.Tv variable, bool source) => ownerFrame == null ? variable
+            : ownerFrame.SemanticVariable(source && declarationFrame != null
+                ? new TypeNode.Tv(variable.Scope, declarationFrame.SourcePosition(variable.I)) : variable);
         typeParamCount = ownerFrame?.SourceArity ?? physical.TypeParamCount;
         TypeNode Restore(TypeNode type, bool source) => type switch
         {
             null => null,
-            TypeNode.Tv { Scope: "type" } tv when ownerFrame != null
-                && (!source || sourceVariablesNeedCaptureProjection) => ownerFrame.SemanticVariable(tv),
+            TypeNode.Tv { Scope: "type" } tv => RestoreVariable(tv, source),
             TypeNode.Fqn named => RestoreNamed(named, source),
             TypeNode.Nullable nullable => new TypeNode.Nullable(Restore(nullable.Of, source)),
             TypeNode.Oblivious oblivious => new TypeNode.Oblivious(Restore(oblivious.Of, source)),
@@ -69,7 +69,9 @@ sealed partial class ReferenceMetadataIndex
     NullableRepresentationFrame SourceHierarchyFrame(string name)
     {
         name = SourceHierarchyName(name);
-        if (_ownerNullableFrames.TryGetValue(name, out var declared)) return declared;
+        if (_ownerNullableFrames.ContainsKey(name))
+            return new InnerApplicationFrames(Array.Empty<JsonNode>(), this)
+                .Project(_ownerNullableFrames, retainPhysicalOrder: true, selectedOwner: name)[name];
         if (!TryInnerCapturedCount(name, out var captured) || captured == 0) return null;
         if (!TryInnerSemanticOwner(name, out var outerName)
             || !TryReferenceTypeShapeValue(new TypeNode.Fqn(name), out var inner)

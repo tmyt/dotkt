@@ -425,10 +425,11 @@ static class InlineSplice
             string thisTemp = prefix + "this";
             // owner = the enclosing type name for a member payload (InlineBirStash keys members under the type), so it is
             // the dispatch receiver's declared type.
-            // F2B: type the dispatch temp at the CONCRETE `owner<dispatchTypeArgs>` when carried (else the bare owner) — so
-            // a `this.field: T` member read on it binds the precise instantiation instead of the erased owner.
+            // Payload TV substitution is declaration-physical, while this constructed type must retain the
+            // intermediate application order until inner projection. The materializer carries both explicitly.
             var thisType = dispatchTypeArgs != null
-                ? new JsonObject { ["t"] = "fqn", ["name"] = owner, ["args"] = dispatchTypeArgs.DeepClone() }
+                ? new JsonObject { ["t"] = "fqn", ["name"] = owner, ["args"] =
+                    (recvs["dispatchOwnerTypeArgs"] ?? throw new InvalidOperationException("Inline dispatch has no owner application frame")).DeepClone() }
                 : (JsonNode)TypeJson.Fqn(owner);
             // Keep a type-variable receiver in its own frame. Its Kotlin upper bound can be erased from the
             // physical generic declaration later; widening the temporary now would leave an unproven CLR store.
@@ -872,7 +873,10 @@ static class InlineSplice
             if ((StaticReceiverType(o["recv"]) ?? TypeJson.Read(o["ownerType"]) as TypeNode.Fqn) is TypeNode.Fqn receiverSpec
                 && ResolveConstructedSuper(receiverSpec, ownerOut) is TypeNode.Fqn ownerSpec
                 && ownerSpec.Args is { Length: > 0 })
+            {
                 recvs["dispatchTypeArgs"] = new JsonArray(ownerSpec.Args.Select(TypeJson.Write).ToArray());
+                recvs["dispatchOwnerTypeArgs"] = new JsonArray(ownerSpec.Args.Select(TypeJson.Write).ToArray());
+            }
         }
         for (int i = start; i < sargs.Count; i++)
         {

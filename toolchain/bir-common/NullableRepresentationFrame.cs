@@ -130,6 +130,30 @@ internal sealed class NullableRepresentationFrame
             result.StorageIndices, result.NullableStorageIndices);
     }
 
+    // An application can enumerate source arguments differently from its declaration's TVs.
+    // Preserve each representation's source identity while independently choosing the output slot order.
+    public NullableRepresentationFrame ForApplication(IReadOnlyList<int> applicationSources,
+        IReadOnlyList<int> applicationPhysicalSlots)
+    {
+        if (!applicationSources.OrderBy(index => index).SequenceEqual(Enumerable.Range(0, SourceArity))
+            || !applicationPhysicalSlots.OrderBy(index => index).SequenceEqual(Enumerable.Range(0, PhysicalArity)))
+            throw new ArgumentException("Invalid application frame permutation");
+        var declarationToApplication = new int[SourceArity];
+        for (var index = 0; index < SourceArity; index++)
+            declarationToApplication[applicationSources[index]] = index;
+        int[] Remap(IReadOnlyList<int> indices) => indices.Select(index => declarationToApplication[index])
+            .OrderBy(index => index).ToArray();
+        var canonical = new NullableRepresentationFrame(SourceArity, Remap(NullableIndices),
+            storageIndices: Remap(StorageIndices), nullableStorageIndices: Remap(NullableStorageIndices));
+        var order = applicationPhysicalSlots.Select(physical => {
+            var slot = PhysicalSlot(physical);
+            return canonical.Variable(new TypeNode.Tv("type", declarationToApplication[slot.SourceIndex]),
+                slot.Representation).I;
+        }).ToArray();
+        return new NullableRepresentationFrame(SourceArity, canonical.NullableIndices, order,
+            canonical.StorageIndices, canonical.NullableStorageIndices);
+    }
+
     public TypeNode SemanticVariable(TypeNode.Tv physical)
     {
         if (physical.Scope is not ("type" or "method") || physical.I < 0 || physical.I >= PhysicalArity)

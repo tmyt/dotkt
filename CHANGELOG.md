@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Nullable inner classes preserve generic representation correspondence (#900).**
+  Demand analysis, constructed applications and imported hierarchy projection distinguish declaration variables
+  from Kotlin's own-first inner arguments, keeping companion types attached to the correct source parameter.
+
 - **Imported inner classes preserve captured generic argument order for inherited members (#898).**
   Source owner projection follows declared enclosing ownership even without nullable companions.
 

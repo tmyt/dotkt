@@ -85,7 +85,7 @@ static partial class NullableRepresentationDemand
     public static IReadOnlyList<OwnerDemand> Collect(IEnumerable<JsonNode> roots,
         IReadOnlyDictionary<string, NullableRepresentationFrame> referencedTypes = null,
         IReadOnlyDictionary<string, NullableRepresentationFrame> referencedMethods = null,
-        GenericRepresentationPolicy policy = null)
+        GenericRepresentationPolicy policy = null, InnerApplicationFrames applicationFrames = null)
     {
         var rootList = roots.ToArray();
         var localBindings = BindLocalFunctions(rootList);
@@ -161,6 +161,7 @@ static partial class NullableRepresentationDemand
             var localDeclarations = owners.SelectMany(owner => owner.Methods).Where(method => method.IsLocal)
                 .ToDictionary(method => method.Declaration, method => method.Frame);
             var localFrames = localBindings.ToDictionary(pair => pair.Key, pair => localDeclarations[pair.Value]);
+            if (applicationFrames != null) typeFrames = applicationFrames.Project(typeFrames);
             var before = Count(owners);
             foreach (var owner in owners)
             {
