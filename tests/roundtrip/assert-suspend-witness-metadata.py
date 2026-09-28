@@ -30,7 +30,7 @@ for method in declarations(document):
         assert arguments[0]["value"] == "bir-json/1"
         identity = json.loads(base64.b64decode(arguments[1]["bytes"]))
         if identity["id"].endswith("|cold"):
-            assert "signature" not in identity, "Cold entries must not publish another source declaration"
+            assert set(identity) == {"id", "name"}, "Cold entries must not publish another source declaration"
             continue
         name = identity["name"]
         if name not in expected:
@@ -44,7 +44,42 @@ for method in declarations(document):
         assert len(method["params"]) == expected[name] + len(witnesses), (name, method["params"])
         if witnesses:
             assert method["params"][-1]["type"] == {"t": "fqn", "name": "System.Int32"}
-        assert method["ret"]["name"] == "System.Threading.Tasks.Task", method["ret"]
+        assert method["ret"] == {
+            "t": "fqn", "name": "System.Threading.Tasks.Task",
+            "args": [{"t": "fqn", "name": "System.Boolean"}],
+        }, method["ret"]
 
 assert seen == set(expected), (seen, expected)
+
+with open(sys.argv[2], encoding="utf-8") as source:
+    consumer = json.load(source)
+
+
+def objects(node):
+    if isinstance(node, dict):
+        yield node
+        for child in node.values():
+            yield from objects(child)
+    elif isinstance(node, list):
+        for child in node:
+            yield from objects(child)
+
+
+cold_names = {name + "$dotkt_suspend": name for name in expected}
+called = set()
+for call in objects(consumer):
+    name = cold_names.get(call.get("method"))
+    if name is None:
+        continue
+    called.add(name)
+    witness_count = 0 if name == "witnessFreeCheck" else 1
+    parameter_count = expected[name] + witness_count + 1
+    assert len(call["args"]) == parameter_count, (name, call)
+    target = call["memberRef"]
+    assert target["name"] == call["method"]
+    assert len(target["parameterTypes"]) == parameter_count, (name, target)
+    if witness_count:
+        assert target["parameterTypes"][-2] == {"t": "fqn", "name": "System.Int32"}
+    assert target["parameterTypes"][-1]["name"] == "kotlin.coroutines.Continuation$star"
+assert called == set(expected), (called, "Cross-DLL cold calls must actually be exercised")
 print("Suspend Task bridges retain source reified indices and hidden witness metadata")

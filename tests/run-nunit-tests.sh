@@ -302,6 +302,7 @@ for proj in "${PROJECTS[@]}"; do
 		fi
 		if python3 "$ROOT/tests/roundtrip/assert-suspend-witness-metadata.py" \
 			"$ROOT/tests/roundtrip/producer/obj/$CONFIGURATION/net10.0/cir/SuspendWitnessMetadata.cir.json" \
+			"$dir/obj/$CONFIGURATION/net10.0/cir/SuspendWitnessMetadataTests.cir.json" \
 			>"$ROOT/build/nunit-$name.suspend-witness-metadata.log" 2>&1; then
 			echo "  suspend bridges retain hidden witness declaration metadata"
 		else
