@@ -18,11 +18,17 @@ sealed partial class ReferenceMetadataIndex
         var lookup = new TypeNode.Fqn(SourceHierarchyName(owner.Name), owner.Args);
         if (!TryReferenceTypeShapeValue(lookup, out var physical)) return false;
         var ownerFrame = SourceHierarchyFrame(lookup.Name);
+        // Without companion materialization, source carriers still use the declaration's
+        // enclosing-first TV indices. Type applications within those carriers are already
+        // source ordered, so translate variables independently from application arguments.
+        var sourceVariablesNeedCaptureProjection = ownerFrame != null
+            && !_ownerNullableFrames.ContainsKey(lookup.Name);
         typeParamCount = ownerFrame?.SourceArity ?? physical.TypeParamCount;
         TypeNode Restore(TypeNode type, bool source) => type switch
         {
             null => null,
-            TypeNode.Tv { Scope: "type" } tv when !source && ownerFrame != null => ownerFrame.SemanticVariable(tv),
+            TypeNode.Tv { Scope: "type" } tv when ownerFrame != null
+                && (!source || sourceVariablesNeedCaptureProjection) => ownerFrame.SemanticVariable(tv),
             TypeNode.Fqn named => RestoreNamed(named, source),
             TypeNode.Nullable nullable => new TypeNode.Nullable(Restore(nullable.Of, source)),
             TypeNode.Oblivious oblivious => new TypeNode.Oblivious(Restore(oblivious.Of, source)),

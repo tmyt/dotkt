@@ -40,7 +40,7 @@ sealed partial class ReferenceMetadataIndex
                 out var restoredBase, out _) || arity != 3 || restoredBase != expectedBase)
             throw new InvalidOperationException("Source hierarchy lost nested constructed argument restoration");
         var sourceBase = new TypeNode.Fqn("probe.Holder`1", new TypeNode[] {
-            new TypeNode.Fqn("probe.Outer.Middle.Inner", variables),
+            new TypeNode.Fqn("probe.Outer.Middle.Inner", variables.Reverse().ToArray()),
         });
         index._referenceTypeShapesByPhysicalOwner[innerName] = new ReferenceTypeShape(
             3, "class", expectedBase, Array.Empty<TypeNode.Fqn>(),
