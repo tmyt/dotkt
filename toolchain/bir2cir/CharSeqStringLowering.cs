@@ -270,6 +270,11 @@ static class CharSeqStringLowering
             case null:   // a declaration node (method/lambda def, field): lower its own signature tokens
                 LowerDeclTypes(node);
                 return node;
+            case "newSuspendLambda":
+                // This carrier becomes a state-machine declaration after this pass. Its generic
+                // bounds must use the same physical representation as ordinary declarations.
+                LowerConstraints(node["typeParamDecls"] as JsonArray);
+                return node;
             case "var":
                 if (IsCharSeqSlot(node["type"]))
                 {
@@ -301,17 +306,22 @@ static class CharSeqStringLowering
     // String instantiation and whose body calls a String member on an unrelated !!T.
     static void LowerDeclTypes(JsonObject node)
     {
-        if (node["typeParams"] is JsonArray typeParams)
-            foreach (var typeParam in typeParams.OfType<JsonObject>())
-                if (typeParam["constraints"] is JsonArray constraints)
-                    for (var i = 0; i < constraints.Count; i++)
-                        if (IsCharSeqSlot(constraints[i])) constraints[i] = LowerSlot(constraints[i]);
+        LowerConstraints(node["typeParams"] as JsonArray);
         if (node["params"] is JsonArray ps)
             foreach (var p in ps)
                 if (p is JsonObject po && IsCharSeqSlot(po["type"])) po["type"] = LowerSlot(po["type"]);
         if (IsCharSeqSlot(node["ret"])) node["ret"] = LowerSlot(node["ret"]);
         if (node["k"] == null && IsCharSeqSlot(node["type"]) && node["name"] != null)
             node["type"] = LowerSlot(node["type"]);   // a field {name,type}
+    }
+
+    static void LowerConstraints(JsonArray typeParams)
+    {
+        if (typeParams == null) return;
+        foreach (var typeParam in typeParams.OfType<JsonObject>())
+            if (typeParam["constraints"] is JsonArray constraints)
+                for (var i = 0; i < constraints.Count; i++)
+                    if (IsCharSeqSlot(constraints[i])) constraints[i] = LowerSlot(constraints[i]);
     }
 
     // A LOCAL top-level call (owner null, method in this assembly): lower each CharSequence `sig` slot to kotlin.String

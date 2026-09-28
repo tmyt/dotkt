@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Suspend lambda bounds follow declaration representation (#887).** Materialized suspend defaults
+  retain the same physical generic constraints as their originating declarations.
+
 - **Suspend bridges preserve reified and hidden generic witness metadata (#886).** Kotlin consumers of
   separately compiled suspend functions no longer see compiler-owned witness parameters as required source arguments.
 
