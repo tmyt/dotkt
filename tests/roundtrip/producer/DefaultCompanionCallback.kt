@@ -18,6 +18,12 @@ class DefaultCompanionOwner<T>(val segment: Segment<T>) {
         result: R,
         noinline callback: (Segment<T>, T, R) -> R = { s, value, r -> s.value = value; r },
     ): R = callback(segment, item, result)
+
+    inline fun <R> invokeCaptured(
+        item: T,
+        result: R,
+        noinline callback: () -> R = { segment.value = item; result },
+    ): R = callback()
 }
 
 fun <T> sameModuleDefault(item: T): T = DefaultCompanionOwner(Segment<T>(null)).sameModule(item)

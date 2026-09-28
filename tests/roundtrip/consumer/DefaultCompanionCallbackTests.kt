@@ -32,5 +32,16 @@ class DefaultCompanionCallbackTests {
         val nullable = Segment<String?>("before")
         check(DefaultCompanionOwner(nullable).invokeDefault(null, 43) == 43)
         check(nullable.value == null)
+        var receiverCalls = 0
+        var itemCalls = 0
+        var resultCalls = 0
+        fun receiver(): DefaultCompanionOwner<Int> { receiverCalls += 1; return owner }
+        fun item(): Int { itemCalls += 1; return 47 }
+        fun result(): String { resultCalls += 1; return "captured" }
+        check(receiver().invokeCaptured(item(), result()) == "captured")
+        check(segment.value == 47)
+        check(receiverCalls == 1 && itemCalls == 1 && resultCalls == 1)
+        check(DefaultCompanionOwner(nullable).invokeCaptured(null, 53) == 53)
+        check(nullable.value == null)
     }
 }

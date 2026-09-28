@@ -61,20 +61,22 @@ static class DefaultArgSplice
     // Prepare omitted inline values while all call-site type arguments are still Kotlin vocabulary.
     // Receiver/earlier-argument tokens remain deferred: InlineSplice binds them to evaluated reads,
     // never to copies of caller expressions. Carried helpers participate in the ordinary frame pass.
-    internal static void PrepareInlineDefaults(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs)
+    internal static Action PrepareInlineDefaults(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs)
     {
+        var restore = new List<Action>();
         var files = roots.OfType<JsonObject>().ToArray();
         var declarations = new InlineBirIndex();
         foreach (var file in files) declarations.Stash(file.DeepClone());
         foreach (var file in files)
         {
             var hoist = new JsonArray();
+            var materialized = new List<JsonNode>();
             var owner = TypeJson.Fqn(Str(file["fileClass"]));
             void Walk(JsonNode node)
             {
                 if (node is JsonObject call)
                 {
-                    _ = ExpandNode(call, refs, hoist, owner, "source default preparation").ToArray();
+                    materialized.AddRange(ExpandNode(call, refs, hoist, owner, "source default preparation"));
                     if (Str(call["k"]) == "callInline" && call["args"] is JsonArray arguments
                         && arguments.Any(argument => argument == null) && call["preparedDefaults"] == null)
                     {
@@ -97,6 +99,7 @@ static class DefaultArgSplice
                                 (payload["typeParams"] as JsonArray)?.Count ?? 0,
                                 call["recvs"]?["dispatchTypeArgs"] as JsonArray);
                             prepared.Add(expression);
+                            materialized.Add(expression);
                         }
                         call["preparedDefaults"] = prepared;
                     }
@@ -112,7 +115,11 @@ static class DefaultArgSplice
                 Walk(helper);
                 ((JsonArray)file["methods"]).Add(helper);
             }
+            var closureFrames = PreparedClosureDefaultFrames.Stage(file, materialized, refs);
+            var suspendFrames = PreparedSuspendDefaultFrames.Stage(file, materialized.Concat(closureFrames.Types));
+            restore.Add(() => { suspendFrames(); closureFrames.Restore(); });
         }
+        return () => { foreach (var action in restore) action(); };
     }
 
     // Demand collection precedes physical representation and executable splicing. Analyze an independent

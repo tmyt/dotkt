@@ -296,6 +296,15 @@ static class NullableRepresentationMaterialization
                 && obj["sharedCellTypeParams"] == null ? null : declarationMapping(obj);
             JsonArray closedArguments = null;
             JsonArray closedDispatchArguments = null;
+            if (kind is "newClosure" or "newSam" && obj["synthClass"] == null
+                && obj["typeArgs"] is JsonArray syntheticArguments
+                && TypeJson.OwnerName(obj["closureType"] ?? obj["samType"]) is string syntheticOwner)
+            {
+                var application = mapping.Slot(new TypeNode.Fqn(syntheticOwner,
+                    syntheticArguments.Select(TypeJson.Read).ToArray()));
+                if (application is TypeNode.Fqn { Args: { } physicalArguments })
+                    closedArguments = new JsonArray(physicalArguments.Select(TypeJson.Write).ToArray());
+            }
             if (kind == "callInline" && selectedMapping?.OwnerFrame is { } dispatchFrame
                 && obj["recvs"] is JsonObject receivers && receivers["dispatchTypeArgs"] is JsonArray dispatchArguments)
                 closedDispatchArguments = new JsonArray(mapping.CloseMethod(dispatchFrame,

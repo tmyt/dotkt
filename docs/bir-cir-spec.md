@@ -719,6 +719,16 @@ body's base call) has its arguments on the constructor DECLARATION, with no wrap
 declaration as `delegationBindings`, an array of the same bindings; `thisArgs`/`baseArgs` read them. An enum entry's
 `NAME(args)` needs nothing special — a static field initializer is an expression position.
 
+**Default representation entry.** Imported default expressions are source-vocabulary graphs, even when their
+carrier is attached to an already-physical referenced declaration. Materialize omitted defaults before nullable
+generic representation selection. An inline call temporarily carries its materialized defaults in
+`preparedDefaults`, parallel to `args`; receiver and earlier-parameter tokens stay deferred until the inline
+splice has evaluated and bound those arguments. Representation selection must visit carried helper, closure,
+and suspend-lambda declarations in their own generic frames, separately from their construction applications.
+Temporary declaration staging is internal to bir2cir and is removed after representation selection; it neither
+changes the emitted API nor authorizes ilemit to reconstruct a missing frame. A prepared default is already in
+the caller's physical frame and must not undergo source type substitution again when its tokens are bound.
+
 **Lowering contract.** Inline bodies and imported defaults expand in one recursive traversal. An omitted default
 is materialized before visiting its children, so inline calls inside defaults and defaults inside inline bodies
 are both expanded; lifted helper bodies use the same traversal. Join and ownership normalization follow only
