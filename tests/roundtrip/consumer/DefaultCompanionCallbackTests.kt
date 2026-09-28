@@ -27,8 +27,10 @@ class DefaultCompanionCallbackTests {
 
     @TestAttribute
     fun invokedAndExplicitCallbacksKeepTheirGenericFrames() {
+        check(capturedDefaultFromSecondFile() == "second file")
         val segment = Segment<Int>(null)
         val owner = DefaultCompanionOwner(segment)
+        check(owner.inlineCaptured({}, 31, "inline captured") == "inline captured")
         check(owner.invokeDefault(31, "result") == "result")
         check(segment.value == 31)
         check(owner.select(37, { 41 }, { _, _ -> error("not used") }) == 41)

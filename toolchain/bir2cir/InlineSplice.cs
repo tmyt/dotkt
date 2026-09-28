@@ -57,16 +57,14 @@ static class InlineSplice
     static List<BoxRequest> _boxRequests;
     static Dictionary<JsonObject, HashSet<int>> _boxedLocalCallArgs;
     static CompanionExtensionBinding.LocalIndex _companionExtensions;
-    static bool _materializeDefaults;
 
     public static void Apply(JsonNode root, ReferenceMetadataIndex refs, IReadOnlyCollection<string> moduleWideAppLocalMethods,
         IReadOnlyDictionary<string, DispatchDef> dispatchDefs,
-        CompanionExtensionBinding.LocalIndex companionExtensions, bool materializeDefaults)
+        CompanionExtensionBinding.LocalIndex companionExtensions, bool requireCompleteDefaults)
     {
         _refs = refs;
         _dispatchDefs = dispatchDefs;
         _companionExtensions = companionExtensions;
-        _materializeDefaults = materializeDefaults;
         _fileClassOwner = root is JsonObject ro && Str(ro["fileClass"]) is string fc ? TypeJson.Fqn(fc) : null;
         _nextLabelId = MaxLabelId(root) + 1;
         _hoist = new JsonArray();
@@ -78,7 +76,7 @@ static class InlineSplice
         _refCellNames = new Dictionary<string, string>(StringComparer.Ordinal);
         _boxRequests = new List<BoxRequest>();
         _boxedLocalCallArgs = new();
-        if (_materializeDefaults) DefaultArgSplice.AssertPlaceholdersPlanned(root, inBindingExpr: false);
+        if (requireCompleteDefaults) DefaultArgSplice.AssertPlaceholdersPlanned(root, inBindingExpr: false);
         Walk(root, 0);
         // A closed carrier (`defaultCarrier`, or a cross-module [KotlinInline] payload) re-hoists its generated
         // delegate target into THIS file's file-class methods under a fresh name. Do it BEFORE the post-passes so they
@@ -118,7 +116,7 @@ static class InlineSplice
         // skipped by Rewrite at the `o.ContainsKey("pc")` gate) — would reach ilemit, which cannot emit a callInline
         // (it fails opaquely there). Fail loud HERE with the callee so the un-spliced site is identifiable.
         AssertNoUnsplicedInline(root);
-        if (_materializeDefaults) DefaultArgSplice.AssertNoPlaceholder(root, null);
+        if (requireCompleteDefaults) DefaultArgSplice.AssertNoPlaceholder(root, null);
     }
 
     // #43/#63: the FILE-CLASS method names a `newDelegate` target `ldftn`-resolves against — collected MODULE-WIDE across
@@ -169,11 +167,8 @@ static class InlineSplice
         if (node is JsonObject o)
         {
             var here = DefaultArgSplice.DeclarationContext(o, context);
-            // Defaults can introduce inline calls, whose bodies can introduce further omitted defaults.
-            // Materialize at the current node before descending, sharing the same hoist drain and post-passes.
-            if (_materializeDefaults)
-                foreach (var payload in DefaultArgSplice.ExpandNode(o, _refs, _hoist, _fileClassOwner, here))
-                    CompanionExtensionBinding.BindMaterializedUses(payload, _companionExtensions, _refs);
+            // Defaults entered representation selection before inline bodies were stashed. Expanding an
+            // inline body consumes that prepared graph, never source defaults in a physical caller frame.
             foreach (var kv in o) if (kv.Value != null) Walk(kv.Value, depth, here);
             Rewrite(o, depth, here);
         }
@@ -502,41 +497,7 @@ static class InlineSplice
                     argNode = DefaultArgSplice.SubstituteTokens(raw, defaultDispatchRecv,
                         ext ? boundArgs.ElementAtOrDefault(0) : null, null, boundArgs);
                 }
-                else if (p["default"] is JsonNode pdef)
-                {
-                    argNode = pdef.DeepClone();
-                    ClosureSynthesis.PrebindSplicedFrames(argNode);
-                    SubstTvIn(argNode, typeArgs, ga, dispatchTypeArgs);
-                    RewriteLocalRefs(argNode, subst, Pin);   // a default that references an EARLIER param -> its binding
-                }
-                else if (KotlinDefaultCarrier(p) is string carrierBir)
-                {
-                    // Parse the carrier, unwrap a `defaultCarrier` (re-hoisting any lifted generated method into this file via
-                    // `_hoist`), then bind its discriminated receiver tokens and `{defaultArgParam idx}` tokens to the
-                    // ALREADY-bound receiver/earlier-param values — the shared DefaultArgSplice machinery.
-                    var firstNewHoist = _hoist.Count;
-                    var raw = DefaultArgSplice.MaterializeDefault(carrierBir, _hoist, _refs, name, i, _fileClassOwner);
-                    if (raw == null) { FailLoud(o, owner, name, pc, ga, $"param '{pn}' default carrier BIR is unparseable"); return; }
-                    // The default carrier was serialized before companion-extension declarations received their physical
-                    // names. Consume those explicit receiver/name/role facts before STEP 8 recursively splices a nested
-                    // callInline. UnwrapCarrier may also have materialized lifted helpers from the same opaque graph; bind
-                    // every newly queued helper now, before Apply's hoist drain recursively walks it for inline calls.
-                    CompanionExtensionBinding.BindMaterializedUses(raw, _companionExtensions, _refs);
-                    for (var h = firstNewHoist; h < _hoist.Count; h++)
-                        CompanionExtensionBinding.BindMaterializedUses(_hoist[h], _companionExtensions, _refs);
-                    // STEP 2's body-wide ownership transfer ran before parameter defaults were materialized. Transfer
-                    // the default's self-carried implementation classifiers through the same authored call-site owner
-                    // now; otherwise they retain a producer member owner absent from this consumer module.
-                    DefaultArgSplice.RehomeSynthClasses(raw, consumerSemanticOwner, spliceCloneId);
-                    // Bind declaration frames before substituting their construction
-                    // arguments; caller-owned values are inserted only afterwards.
-                    ClosureSynthesis.PrebindSplicedFrames(raw);
-                    SubstTvIn(raw, typeArgs, ga, dispatchTypeArgs);
-                    var extensionRecv = ext ? boundArgs.ElementAtOrDefault(0) : null;
-                    argNode = DefaultArgSplice.SubstituteTokens(
-                        raw, defaultDispatchRecv, extensionRecv, null, boundArgs);
-                }
-                else { FailLoud(o, owner, name, pc, ga, $"missing (non-defaulted) arg for param {pn}"); return; }
+                else { FailLoud(o, owner, name, pc, ga, $"missing prepared default for param {pn}"); return; }
                 // BATCH B (#75): a capturing newSuspendLambda built inside a param default binds to a temp whose init
                 // flows through the same joint-hygiene rewriters as the body — the former fail-loud guard is retired.
                 // Capturing/SAM/suspend-lambda defaults self-carry their synthesis facts and flow through the same path.
@@ -2590,7 +2551,8 @@ static class InlineSplice
     {
         if (node is JsonObject o)
         {
-            if (Str(o["k"]) == "newSuspendLambda" && Str(o["typeFrame"]) != "dense")
+            if (Str(o["k"]) == "newSuspendLambda"
+                && (Str(o["typeFrame"]) != "dense" || o[SuspendLambdaLowering.SplicedDeclarationFrameKey] != null))
             {
                 // Preserve the declaration-to-enclosing-frame correspondence before replacing its application.
                 // Captures/body/constraints still belong to that declaration, not the importing caller's slots.

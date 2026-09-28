@@ -434,7 +434,7 @@ sealed class Pipeline
                 CompanionRepresentationLowering.BindSpliceUses(bir.Root, refs);
             InlineSplice.Apply(
                 bir.Root, refs, appLocalFileClassMethods, inlineDispatchHierarchy, companionExtensionBindings,
-                materializeDefaults: attributeTopLevelOwner);
+                requireCompleteDefaults: attributeTopLevelOwner);
             // VALUE-POSITION JOIN WIDENING (#86 §3): a `try`/`catch` or `if/when` join the frontend resolved to a
             // NON-nullable type while one branch yields a literal `null` — kotc records exactly that fact on the
             // declaration it mints for the join, and the physical consequence is decided HERE: a VALUE join widens to

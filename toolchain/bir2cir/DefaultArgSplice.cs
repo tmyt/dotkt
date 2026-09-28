@@ -94,6 +94,10 @@ static class DefaultArgSplice
                                 ?? MaterializeDefault(InlineSplice.KotlinDefaultCarrier(parameter)
                                     ?? throw new InvalidOperationException("Omitted inline argument has no default"),
                                     hoist, refs, TypeJson.OwnerName(call["callee"]), slot, owner);
+                            // These declarations enter a module-wide frame index before the eventual inline
+                            // splice. Give each materialization its own identity at this first declaration entry.
+                            RehomeSynthClasses(expression, Str(call["semanticOwner"]) ?? TypeJson.OwnerName(owner),
+                                Interlocked.Increment(ref _counter));
                             ClosureSynthesis.PrebindSplicedFrames(expression);
                             InlineSplice.SubstTvIn(expression, call["typeArgs"] as JsonArray ?? new JsonArray(),
                                 (payload["typeParams"] as JsonArray)?.Count ?? 0,

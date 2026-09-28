@@ -7,6 +7,13 @@ import roundtrip.suspenddefaultframes.SuspendDefaultGate
 
 private suspend inline fun <reified T> selectForward(item: Any): T? = selectDefault<T>(item)
 private suspend inline fun <reified X, reified T> secondForward(item: Any?): Boolean = matchesDefault<T>(item)
+private suspend inline fun <reified T> inlineMatchesDefault(
+    action: () -> Unit, item: Any?, noinline block: suspend () -> Boolean = { item is T },
+): Boolean { action(); return block() }
+private suspend inline fun <A, reified T> forwardedMatchesDefault(action: () -> Unit, unused: A, item: Any?): Boolean {
+    action()
+    return inlineMatchesDefault<T>({}, item)
+}
 private suspend inline fun <reified T> nestedForward(item: Any?): Boolean = nestedDefault<T>(item)
 private inline fun <reified T> ordinaryForward(item: Any?): Boolean = ordinaryDefault<T>(item)
 private inline fun <reified T> transitiveForward(item: Any?): Boolean = ordinaryForward<T>(item)
@@ -52,6 +59,10 @@ private fun completed(expected: Any?, block: suspend () -> Any?) {
 class DefaultWitnessDemandTests {
     @TestAttribute
     fun importedDefaultsContributeToTheirOmittingCallers() {
+        completed(true) { forwardedMatchesDefault<Int, String>({}, 0, "text") }
+        completed(false) { forwardedMatchesDefault<Int, String>({}, 0, 7) }
+        completed(true) { forwardedMatchesDefault<String, Int>({}, "unused", 7) }
+        completed(false) { forwardedMatchesDefault<String, Int>({}, "unused", "text") }
         completed(67) { selectForward<Int?>(67) }
         completed(71) { selectForward<Int>(71) }
         completed("value") { selectForward<String>("value") }
