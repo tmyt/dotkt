@@ -35,5 +35,8 @@ class InnerConstructorDefaultTests {
         val nullable = GenericInnerDefaultOuter<Int?>(null).Middle<String?>(null).Leaf()
         check(nullable.value == null && nullable.own == null)
         check(nullable.afterConstruction() == null && nullable.memberDefault() == null)
+        check(GenericInnerDefaultOuter("callback").Middle(7).Callback().read() == "callback")
+        check(GenericInnerDefaultOuter(23).Middle("callback").Callback().read() == 23)
+        check(GenericInnerDefaultOuter<Int?>(null).Middle("nullable").Callback().read() == null)
     }
 }

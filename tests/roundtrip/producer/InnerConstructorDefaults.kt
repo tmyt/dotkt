@@ -20,6 +20,7 @@ class InnerDefaultOuter(val seed: Int) {
 
 class GenericInnerDefaultOuter<T>(val seed: T) {
     inner class Middle<U>(val middle: U) {
+        inner class Callback(val read: () -> T = { seed })
         inner class Leaf(val value: T = seed, val own: U = middle) {
             fun afterConstruction(): T = seed
             fun memberDefault(value: T = this.value): T = value

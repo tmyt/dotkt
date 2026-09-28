@@ -54,6 +54,12 @@ sealed partial class ReferenceMetadataIndex
         if (!index.SourceHierarchyFrame("probe.Wide.Middle.Inner").PhysicalOrder
                 .SequenceEqual(new[] { 4, 5, 2, 3, 0, 1 }))
             throw new InvalidOperationException("Source hierarchy reversed parameters within an enclosing owner");
+        var wideArguments = Enumerable.Range(0, 6).Select(i => (TypeNode)new TypeNode.Fqn("Argument" + i)).ToArray();
+        var declarationArguments = index.SourceDeclarationArguments(TypeJson.Write(
+            new TypeNode.Fqn("probe.Wide.Middle.Inner", wideArguments)));
+        if (!declarationArguments.Select(TypeJson.Read).SequenceEqual(
+                new[] { 4, 5, 2, 3, 0, 1 }.Select(i => wideArguments[i])))
+            throw new InvalidOperationException("Default carrier lost declaration argument ordering within nested groups");
         Declare("probe.NullableOuter", "probe.NullableOuter`1", 1);
         Declare("probe.NullableOuter.Inner", "probe.NullableOuter`1+Inner`2", 3, "probe.NullableOuter", 1);
         const string nullableName = "probe.NullableOuter`1+Inner`2";
@@ -77,6 +83,19 @@ sealed partial class ReferenceMetadataIndex
         if (application.SemanticVariable(new TypeNode.Tv("type", 1)) != new TypeNode.Tv("type", 0)
             || application.SemanticVariable(new TypeNode.Tv("type", 2)) != new TypeNode.Nullable(new TypeNode.Tv("type", 0)))
             throw new InvalidOperationException("Source hierarchy lost explicit frame roles in application order");
+        if (!index.SourceDeclarationArguments(TypeJson.Write(sourceUse)).Select(TypeJson.Read)
+                .SequenceEqual(sourceUse.Args.Reverse()))
+            throw new InvalidOperationException("Default carrier treated nullable companions as source arguments");
+        const string storageName = "probe.StorageOuter`2+Inner`2";
+        Declare("probe.StorageOuter", "probe.StorageOuter`2", 2);
+        Declare("probe.StorageOuter.Inner", storageName, 4, "probe.StorageOuter", 1);
+        index._ownerNullableFrames["probe.StorageOuter`2"] =
+            new NullableRepresentationFrame(1, Array.Empty<int>(), storageIndices: new[] { 0 });
+        index._ownerNullableFrames[storageName] =
+            new NullableRepresentationFrame(2, new[] { 1 }, new[] { 0, 3, 1, 2 }, storageIndices: new[] { 0 });
+        if (!index.SourceDeclarationArguments(TypeJson.Write(new TypeNode.Fqn(storageName, sourceUse.Args)))
+                .Select(TypeJson.Read).SequenceEqual(sourceUse.Args.Reverse()))
+            throw new InvalidOperationException("Default carrier lost ordinary slots among reordered storage companions");
         var carrierBase = new TypeNode.Fqn("probe.Holder`1", new TypeNode[] {
             new TypeNode.Nullable(new TypeNode.Tv("type", 1)),
         });
