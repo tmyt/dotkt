@@ -7,3 +7,11 @@ inline fun <T> RemoteInlineSmartCastBox<T>.visitForever(action: (T) -> Unit): No
 inline fun <T> remoteVisitSmartCast(value: T, action: (T) -> Unit) {
     action(value)
 }
+
+inline fun <T> remoteForwardSmartCast(value: T, action: (T) -> Unit) {
+    remoteVisitSmartCast(value) { action(it) }
+}
+
+inline fun <T> remoteEvaluateSmartCast(value: () -> T, action: (T) -> Unit) {
+    action(value())
+}
