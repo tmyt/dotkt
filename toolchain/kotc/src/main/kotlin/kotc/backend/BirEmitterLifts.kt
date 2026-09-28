@@ -403,6 +403,26 @@ internal fun BirEmitter.lambda(node: IrFunctionExpression): String {
  * (EntryPointNotFound). This mirrors the closure-class build but implements the iface + names the method after the SAM
  * + override:true, and returns the instance itself (not a delegate). Reuses the working object:Comparator emission.
  */
+private fun BirEmitter.samOperandFunctionType(type: IrType): TypeNode.Fn {
+	val visited = HashSet<org.jetbrains.kotlin.ir.symbols.IrClassifierSymbol>()
+	fun find(current: IrType): TypeNode.Fn? {
+		(birType(current.makeNotNull()) as? TypeNode.Fn)?.let { return it }
+		val classifier = current.classifierOrNull ?: return null
+		if (!visited.add(classifier)) return null
+		return when (val declaration = classifier.owner) {
+			is IrTypeParameter -> declaration.superTypes.firstNotNullOfOrNull(::find)
+			is IrClass -> {
+				val actuals = (current as? IrSimpleType)?.arguments.orEmpty()
+				val substitution = org.jetbrains.kotlin.ir.types.IrTypeSubstitutor(
+					declaration.typeParameters.map { it.symbol }, actuals, true)
+				declaration.superTypes.firstNotNullOfOrNull { find(substitution.substitute(it)) }
+			}
+			else -> null
+		}
+	}
+	return find(type) ?: error("SAM operand has no Kotlin function supertype")
+}
+
 internal fun BirEmitter.samConversion(node: IrTypeOperatorCall): String {
 	val funIface = node.typeOperand
 	val ifaceClass = funIface.classifierOrNull?.owner as? IrClass ?: return expr(node.argument)
@@ -410,12 +430,9 @@ internal fun BirEmitter.samConversion(node: IrTypeOperatorCall): String {
 	if (lamExpr == null) {
 		val value = expr(node.argument)   // callable reference / existing implementation
 		if (!isExternalNetType(ifaceClass)) return value
-		// Preserve the frontend-resolved SAM target on callable-reference conversions too. The nested expression says
-		// how to obtain the callable target; this field says only which Kotlin fun-interface conversion surrounds it.
-		// bir2cir alone decides whether that projected classifier is physically a CLR delegate and consumes the field.
-		check(value.startsWith('{') && value.endsWith('}')) { "SAM conversion operand is not a BIR object" }
-		return value.dropLast(1) + ",\"samTarget\":" + str(birType(funIface)) +
-			",\"samSource\":" + str(birType(node.argument.type)) + "}"
+		// The conversion owns its operand: inline substitution and evaluation-plan lowering may replace the
+		// operand without replacing the surrounding Kotlin SAM operation. CLR realization belongs to bir2cir.
+		return """{"k":"samConvert","type":${str(birType(funIface))},"funcType":${str(samOperandFunctionType(node.argument.type))},"e":$value}"""
 	}
 	val fn = lamExpr.function
 	val sam = ifaceClass.declarations.filterIsInstance<IrSimpleFunction>()

@@ -108,11 +108,12 @@ Notes:
   a custom delegate has no `fn` spelling at all. `delegateInvoke`, whose reader needs the parameter/return vector,
   keeps the structured `fn`. A construction carries no `invokeRef`: it names the constructor it runs, and the
   Invoke its value is called through is stated by the CALL.
-  A non-literal SAM conversion additionally carries its frontend-selected interface and operand function type as
-  the transient BIR `samTarget` and `samSource` Type nodes. bir2cir consumes these facts when the selected interface
-  is physically a CLR delegate. Callable constructions may be retargeted; an existing function value is evaluated
-  once and captured by an adapter with the exact nominal delegate signature. Its body forwards arguments and
-  results across their physical representation boundary. Neither fact reaches CIR or ilemit.
+  A non-literal projected SAM conversion is a BIR `samConvert` expression with its frontend-selected interface
+  in `type`, operand function type in `funcType`, and the operand in `e`. The conversion is independent of operand
+  replacement during inline expansion, call evaluation and suspension lowering. bir2cir realizes it when the
+  selected interface is physically a CLR delegate. Callable constructions may be retargeted; an existing function
+  value is evaluated once and captured by an adapter with the exact nominal delegate signature. Its body forwards
+  arguments and results across their physical representation boundary. `samConvert` never reaches CIR or ilemit.
 - **Nullability is TRI-STATE, named with the CLR/Roslyn vocabulary** (`NullableAttribute` 1/2/0 =
   not-annotated / annotated / **oblivious**). A reference type is one of three states, each a COHERENT node
   naming its own CLR state (the representation must NOT collapse oblivious to nullable — that breaks overload

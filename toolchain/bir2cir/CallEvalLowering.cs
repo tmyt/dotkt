@@ -702,7 +702,7 @@ static class CallEvalLowering
         "callStatic", "callInstance", "callInline", "objMethod", "delegateInvoke", "new", "newClr",
         "newArray", "newArraySized", "newArrayInit",
         "field", "setField", "staticField", "setStaticField", "arrayGet", "arraySet", "arrayLen",
-        "binOp", "unaryOp", "conv", "cast", "isInst", "isInstRef", "objEq", "concat", "enumBits",
+        "binOp", "unaryOp", "conv", "cast", "samConvert", "isInst", "isInstRef", "objEq", "concat", "enumBits",
         "nullableWrap", "nullableValue", "nullableHasValue", "safeCastValue",
         "byrefOf", "byrefLoad", "stackGet", "enumName", "enumOrdinal", "lateinitGet", "exprStmt",
     };

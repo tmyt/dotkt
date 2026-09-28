@@ -181,21 +181,18 @@ static class ClosureSynthesis
         switch (node)
         {
             case JsonObject o:
-                // A callable-reference SAM conversion has no newSam shim: kotc emits the callable's ordinary
-                // construction and carries the frontend-selected fun-interface in samTarget. Consume that fact only
-                // when the exact referenced classifier is physically a CLR delegate; deciding the realization is
-                // bir2cir's responsibility. The mark survives this pass and is materialized after member resolution.
-                if (o["samTarget"] is JsonNode samTargetNode)
+                // An explicit conversion surrounds its operand, so replacing an inline call or resuming a
+                // suspended operand cannot erase the conversion. Literal constructions can still be retargeted.
+                if (Str(o["k"]) == "samConvert")
                 {
-                    var samTarget = TypeJson.Read(samTargetNode);
-                    var samSource = TypeJson.Read(o["samSource"]);
-                    o.Remove("samTarget");
-                    o.Remove("samSource");
-                    if (samTarget is TypeNode.Fqn delegateType && _refs?.IsClrDelegate(delegateType) == true)
+                    if (TypeJson.Read(o["type"]) is not TypeNode.Fqn delegateType
+                        || _refs?.IsClrDelegate(delegateType) != true || o["e"] is not JsonObject operand)
+                        throw new InvalidOperationException("SAM conversion has no projected CLR delegate target or operand");
+                    if (ClrMemberResolution.MarkDelegateSlot(operand, delegateType, _refs, new HashSet<string>()))
                     {
-                        if (!ClrMemberResolution.MarkDelegateSlot(
-                            o, delegateType, _refs, new HashSet<string>()))
-                            ClrMemberResolution.MarkDelegateValueConversion(o, samSource, delegateType);
+                        var replacement = (JsonObject)operand.DeepClone();
+                        o.Clear();
+                        foreach (var pair in replacement) o[pair.Key] = pair.Value?.DeepClone();
                     }
                 }
                 if (Str(o["k"]) == "newClosure" && o["synthClass"] is JsonObject sc)
