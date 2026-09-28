@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Typed conditional results retain their declared CLR join type (#912).**
+  Branches that select different implementations of an interface merge through the explicit CIR result slot.
+
 - **Generic suspend receivers retain their constructed owner type (#910).**
   State-machine field reads keep the captured instance's full generic frame, including super-call forwarders.
 

@@ -320,13 +320,21 @@ sealed partial class Emitter
 
     Type EmitCond(JsonElement e)
     {
-        // A value-type-nullable if/when (`Int?`) tags its result type so each branch's `T`/`null` coerces to Nullable<T>.
-        Type want = null;
-        if (e.TryGetProperty("type", out var tt)) { try { want = ClrRef(tt); } catch { } }
+        // Branch coercions and the result slot use the physical result type stated by CIR.
+        var want = e.TryGetProperty("type", out var tt) ? ClrRef(tt) : null;
+        // A stack join of two implementations need not retain their common interface. Materialize the
+        // result type already stated by CIR, rather than claiming that the merged stack has that type.
+        var result = want != null && want != Bcl("System.Void") ? _il.DeclareLocal(want) : null;
         var elseL = _il.DefineLabel(); var end = _il.DefineLabel();
         EmitExpr(e.GetProperty("cond")); _il.Emit(OpCodes.Brfalse, elseL);
-        var t = EmitBranchCoerced(e.GetProperty("then"), want); _il.Emit(OpCodes.Br, end);
-        _il.MarkLabel(elseL); EmitBranchCoerced(e.GetProperty("else"), want); _il.MarkLabel(end);
+        var t = EmitBranchCoerced(e.GetProperty("then"), want);
+        if (result != null) _il.Emit(OpCodes.Stloc, result);
+        _il.Emit(OpCodes.Br, end);
+        _il.MarkLabel(elseL);
+        EmitBranchCoerced(e.GetProperty("else"), want);
+        if (result != null) _il.Emit(OpCodes.Stloc, result);
+        _il.MarkLabel(end);
+        if (result != null) _il.Emit(OpCodes.Ldloc, result);
         return want ?? t;
     }
 
