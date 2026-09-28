@@ -51,8 +51,8 @@ PROJECTS=(
 # the same change, making otherwise-silent test proliferation or accidental deletion an explicit review event.
 declare -A EXPECTED_DISCOVERED=(
 	["tests/basic"]=650
-	["tests/coroutines"]=236
-	["tests/roundtrip/consumer"]=317
+	["tests/coroutines"]=240
+	["tests/roundtrip/consumer"]=321
 	["tests/roundtrip/bidirectional/consumer"]=38
 	["tests/interop/consumer"]=361
 )
