@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Imported inner classes preserve captured generic argument order for inherited members (#898).**
+  Source owner projection follows declared enclosing ownership even without nullable companions.
+
 - **Inherited members retain Kotlin generic arguments across DLL boundaries (#895).**
   Early owner projection uses source hierarchy facts rather than expanded CLR generic frames.
 

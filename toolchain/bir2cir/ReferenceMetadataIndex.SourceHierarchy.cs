@@ -17,12 +17,18 @@ sealed partial class ReferenceMetadataIndex
         if (owner == null || IsAliasedOwner(owner.Name)) return false;
         var lookup = new TypeNode.Fqn(SourceHierarchyName(owner.Name), owner.Args);
         if (!TryReferenceTypeShapeValue(lookup, out var physical)) return false;
-        var ownerFrame = _ownerNullableFrames.GetValueOrDefault(lookup.Name);
+        var ownerFrame = SourceHierarchyFrame(lookup.Name);
+        // Without companion materialization, source carriers still use the declaration's
+        // enclosing-first TV indices. Type applications within those carriers are already
+        // source ordered, so translate variables independently from application arguments.
+        var sourceVariablesNeedCaptureProjection = ownerFrame != null
+            && !_ownerNullableFrames.ContainsKey(lookup.Name);
         typeParamCount = ownerFrame?.SourceArity ?? physical.TypeParamCount;
         TypeNode Restore(TypeNode type, bool source) => type switch
         {
             null => null,
-            TypeNode.Tv { Scope: "type" } tv when !source && ownerFrame != null => ownerFrame.SemanticVariable(tv),
+            TypeNode.Tv { Scope: "type" } tv when ownerFrame != null
+                && (!source || sourceVariablesNeedCaptureProjection) => ownerFrame.SemanticVariable(tv),
             TypeNode.Fqn named => RestoreNamed(named, source),
             TypeNode.Nullable nullable => new TypeNode.Nullable(Restore(nullable.Of, source)),
             TypeNode.Oblivious oblivious => new TypeNode.Oblivious(Restore(oblivious.Of, source)),
@@ -39,7 +45,7 @@ sealed partial class ReferenceMetadataIndex
         TypeNode.Fqn RestoreNamed(TypeNode.Fqn named, bool source)
         {
             var args = named.Args;
-            if (!source && args != null && _ownerNullableFrames.TryGetValue(named.Name, out var frame))
+            if (!source && args != null && SourceHierarchyFrame(named.Name) is { } frame)
                 args = frame.OrdinaryArguments(args);
             return new TypeNode.Fqn(SourceHierarchyName(named.Name), args?.Select(arg => Restore(arg, source)).ToArray());
         }
@@ -59,4 +65,23 @@ sealed partial class ReferenceMetadataIndex
     }
 
     string SourceHierarchyName(string name) => _physicalTypeBySemanticName.GetValueOrDefault(name) ?? name;
+
+    NullableRepresentationFrame SourceHierarchyFrame(string name)
+    {
+        name = SourceHierarchyName(name);
+        if (_ownerNullableFrames.TryGetValue(name, out var declared)) return declared;
+        if (!TryInnerCapturedCount(name, out var captured) || captured == 0) return null;
+        if (!TryInnerSemanticOwner(name, out var outerName)
+            || !TryReferenceTypeShapeValue(new TypeNode.Fqn(name), out var inner)
+            || !TryReferenceTypeShapeValue(new TypeNode.Fqn(SourceHierarchyName(outerName)), out var outer))
+            throw new InvalidOperationException($"Referenced inner type '{name}' has no declaring owner shape");
+        // KotlinInner owns capture membership even when there are no representation companions.
+        // Recurse through its declared owner to preserve multi-level [own..., outer...] ordering.
+        var enclosing = SourceHierarchyFrame(outerName)
+            ?? new NullableRepresentationFrame(outer.TypeParamCount, Array.Empty<int>());
+        if (enclosing.SourceArity != captured)
+            throw new InvalidOperationException($"Referenced inner type '{name}' has an inconsistent captured frame");
+        return new NullableRepresentationFrame(inner.TypeParamCount, Array.Empty<int>())
+            .WithEnclosingPrefix(enclosing, inner.TypeParamCount - captured);
+    }
 }
