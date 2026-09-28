@@ -15,3 +15,7 @@ inline fun <T> remoteForwardSmartCast(value: T, action: (T) -> Unit) {
 inline fun <T> remoteEvaluateSmartCast(value: () -> T, action: (T) -> Unit) {
     action(value())
 }
+
+inline fun <T> remoteReceiverSmartCast(value: T, action: T.() -> Unit) {
+    value.action()
+}

@@ -48,6 +48,8 @@ class InlineSmartCastReturnTests {
         check(selectInlineSmartCast(null, fallback) === fallback)
         check(selectNestedSmartCast(original, fallback) === original)
         check(selectNestedSmartCast(null, fallback) === fallback)
+        check(selectReceiverSmartCast(original, fallback) === original)
+        check(selectReceiverSmartCast(null, fallback) === fallback)
         check(readNullableSmartCast<Int>(7) == 7)
         check(readNullableSmartCast<Int>(null) == null)
         check(readNullableSmartCast<String>("text") == "text")
@@ -71,4 +73,11 @@ private fun <T : Any> selectNestedSmartCast(
 private fun <T> readNullableSmartCast(value: T?): T? {
     remoteForwardSmartCast(value) { node -> return node }
     error("unreachable")
+}
+
+private fun <T : Any> selectReceiverSmartCast(
+    value: InlineSmartCastOwner<T>?, fallback: InlineSmartCastOwner<T>
+): InlineSmartCastOwner<T> {
+    remoteReceiverSmartCast(value) { if (this != null) return this }
+    return fallback
 }
