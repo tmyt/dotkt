@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Overloaded calls retain selected nullable argument slots (#919).**
+  Declaration identities preserve required conversions for local and referenced generic overloads.
+
 - **Inline lambda argument reads retain their declared types (#917).**
   Non-local smart-cast returns preserve constructed generic types, including across DLL boundaries.
 

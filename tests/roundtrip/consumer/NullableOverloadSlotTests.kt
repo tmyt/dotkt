@@ -1,0 +1,75 @@
+import NUnit.Framework.TestAttribute
+import kotlin.coroutines.*
+
+private fun <T> localOverloadSlot(marker: OverloadSlotMarker? = null): OverloadSlotResult<T> =
+    OverloadSlotResult(marker, "marker")
+private fun <T> localOverloadSlot(value: T): OverloadSlotResult<T> = OverloadSlotResult(null, "value")
+
+private class LocalOverloadSlotFactory<T>(val owner: T) {
+    fun <M> select(marker: OverloadSlotMarker?): OverloadSlotResult<T> = OverloadSlotResult(marker, "marker")
+    fun <M> select(value: M): OverloadSlotResult<T> = OverloadSlotResult(null, "value")
+}
+
+private suspend fun <T> suspendedOverloadSlot(context: CoroutineContext, remote: Boolean): OverloadSlotResult<T> {
+    val result = if (remote) remoteOverloadSlot<T>(context[OverloadSlotMarker])
+        else localOverloadSlot<T>(context[OverloadSlotMarker])
+    suspendCoroutine<Unit> { it.resume(Unit) }
+    return result
+}
+
+class NullableOverloadSlotTests {
+    @TestAttribute
+    fun localOverloadsUseSelectedParameterSlots() {
+        val marker = OverloadSlotElement()
+        val context: CoroutineContext = marker
+        val selected = localOverloadSlot<String>(context[OverloadSlotMarker])
+        check(selected.marker === marker)
+        check(selected.selected == "marker")
+        check(localOverloadSlot<Int>(EmptyCoroutineContext[OverloadSlotMarker]).marker == null)
+        check(localOverloadSlot<String>("text").selected == "value")
+        check(localOverloadSlot<Int>(23).selected == "value")
+    }
+
+    @TestAttribute
+    fun importedOverloadsKeepSelectionDespiteReverseDeclarationOrder() {
+        val marker = OverloadSlotElement()
+        val context: CoroutineContext = marker
+        val selected = remoteOverloadSlot<String>(context[OverloadSlotMarker])
+        check(selected.marker === marker)
+        check(selected.selected == "marker")
+        check(remoteOverloadSlot<Int>(EmptyCoroutineContext[OverloadSlotMarker]).marker == null)
+        check(remoteOverloadSlot<String>("text").selected == "value")
+        check(remoteOverloadSlot<Int>(23).selected == "value")
+    }
+
+    @TestAttribute
+    fun memberOverloadsPreserveOwnerAndMethodFrames() {
+        val marker = OverloadSlotElement()
+        val context: CoroutineContext = marker
+        val local = LocalOverloadSlotFactory(17)
+        val remote = RemoteOverloadSlotFactory("owner")
+        check(local.select<String>(context[OverloadSlotMarker]).marker === marker)
+        check(remote.select<Int>(context[OverloadSlotMarker]).marker === marker)
+        check(local.select<String>("value").selected == "value")
+        check(remote.select<Int>(23).selected == "value")
+        check(local.owner == 17)
+        check(remote.owner == "owner")
+    }
+
+    @TestAttribute
+    fun suspendedCallersProjectNullableGenericResultsBeforeArguments() {
+        val marker = OverloadSlotElement()
+        var completions = 0
+        val block: suspend () -> Unit = {
+            check(suspendedOverloadSlot<String>(marker, false).marker === marker)
+            check(suspendedOverloadSlot<Int>(marker, true).marker === marker)
+            check(suspendedOverloadSlot<String>(EmptyCoroutineContext, false).marker == null)
+            check(suspendedOverloadSlot<Int>(EmptyCoroutineContext, true).marker == null)
+        }
+        block.startCoroutine(object : Continuation<Unit> {
+            override val context: CoroutineContext = EmptyCoroutineContext
+            override fun resumeWith(result: Result<Unit>) { result.getOrThrow(); completions++ }
+        })
+        check(completions == 1)
+    }
+}
