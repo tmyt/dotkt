@@ -1,11 +1,12 @@
 import NUnit.Framework.TestAttribute
 
 open class InnerConstructorBase<T>(val baseValue: T)
+fun innerConstructorEvaluate(block: () -> Int): Int = block()
 
 class InnerConstructorOuter(val outerValue: Int) {
     var reads = 0
     fun readOuter(): Int { reads++; return outerValue }
-    open inner class OuterBase(val received: Int)
+    open inner class OuterBase(val received: Int = readOuter())
 
     inner class Middle(val middleValue: Int) {
         inner class Primary : InnerConstructorBase<Int>(readOuter() + middleValue) {
@@ -20,7 +21,9 @@ class InnerConstructorOuter(val outerValue: Int) {
             }
         }
         inner class Derived : OuterBase(readOuter() + middleValue)
+        inner class DerivedDefault : OuterBase()
         inner class Inlined : InnerConstructorBase<Int>(run { readOuter() + middleValue })
+        inner class NonInline : InnerConstructorBase<Int>(innerConstructorEvaluate { readOuter() + middleValue })
         inner class Defaults : InnerConstructorBase<Int> {
             constructor(value: Int = readOuter()) : super(value + middleValue)
             constructor(marker: String) : this()
@@ -69,6 +72,10 @@ class InnerConstructorDelegationTests {
         check(outer.reads == 7)
         check(middle.Anonymous().baseValue == 23)
         check(outer.reads == 8)
+        check(middle.DerivedDefault().received == 19)
+        check(outer.reads == 9)
+        check(middle.NonInline().baseValue == 23)
+        check(outer.reads == 10)
     }
 
     @TestAttribute
