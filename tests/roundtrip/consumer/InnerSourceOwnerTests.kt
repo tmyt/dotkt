@@ -3,6 +3,8 @@ package roundtrip.innerowner
 import NUnit.Framework.TestAttribute
 
 private fun <O, I> read(value: Outer<O>.Inner<I>): I = value.value
+private fun <O, I> readNullable(value: NullableOuter<O>.Inner<I>): I? = value.value
+private fun <O, M, L> readLeaf(value: NullableOuter<O>.Middle<M>.Leaf<L>): L? = value.value
 
 class InnerSourceOwnerTests {
     @TestAttribute
@@ -25,6 +27,7 @@ class InnerSourceOwnerTests {
         check(middleValue.value == "middle")
         val nullable = NullableOuter<Int>(7).Inner<String>("nullable")
         check(nullable.value == "nullable")
+        check(readNullable(nullable) == "nullable")
         check(nullable.captured == 7)
         val empty = NullableOuter<Int>(null).Inner<String>(null)
         check(empty.value == null)
@@ -33,5 +36,16 @@ class InnerSourceOwnerTests {
         check(ownValue.value == 31)
         val ownEmpty = NullableOwnOuter<String>().Inner<Int>(null)
         check(ownEmpty.value == null)
+        val nullableMiddle = NullableOuter<Int>(19).Middle<String>("middle")
+        val nullableLeaf = nullableMiddle.Leaf<Double>(2.5)
+        check(nullableLeaf.value == 2.5)
+        check(readLeaf(nullableLeaf) == 2.5)
+        check(nullableLeaf.capturedOuter == 19)
+        check(nullableLeaf.capturedMiddle == "middle")
+        check(nullableMiddle.Captured(19).value == 19)
+        val nullLeaf = NullableOuter<Int>(null).Middle<String>(null).Leaf<Double>(null)
+        check(readLeaf(nullLeaf) == null)
+        check(nullLeaf.capturedOuter == null)
+        check(nullLeaf.capturedMiddle == null)
     }
 }

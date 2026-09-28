@@ -195,6 +195,15 @@ slots are ordinary source parameters followed by nullable, storage, and nullable
 maps physical positions to those canonical slots. This makes an enclosing type's complete physical prefix
 explicit even when the child's source parameters precede its captured enclosing parameters.
 
+Declaration-relative source variables are distinct from the argument order of a Kotlin inner application.
+An application lists its own arguments before enclosing arguments, recursively. `bir2cir` derives an application
+view of the declared frame from explicit enclosing-owner facts for both demand analysis and materialization.
+Until the inner-application projection boundary, expanded arguments retain own-first groups, with each companion
+attached to its original source argument; that boundary then selects the CLR enclosing-first order. Published
+frames remain declaration-owned. Source hierarchy readers translate carried declaration variables and physical
+edge variables separately before substituting a Kotlin application; nullable companions are not independent
+source arguments.
+
 Current representation demand does not allocate storage or nullable-storage companions: their arrays are empty
 on ordinary producer-generated frames. The frame machinery can represent those roles, but they are not the
 current collection ABI and do not imply positional conversion to mutable CLR collection heads.

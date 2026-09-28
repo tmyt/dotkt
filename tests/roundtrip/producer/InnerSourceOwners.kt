@@ -3,6 +3,13 @@ package roundtrip.innerowner
 open class Base<T>(val value: T)
 class NullableOuter<O>(val outer: O?) {
     inner class Inner<I>(value: I?) : Base<I?>(value) { val captured = outer }
+    inner class Middle<M>(val middle: M?) {
+        inner class Leaf<L>(value: L?) : Base<L?>(value) {
+            val capturedOuter = outer
+            val capturedMiddle = middle
+        }
+        inner class Captured(value: O?) : Base<O?>(value)
+    }
 }
 class NullableOwnOuter<O> {
     inner class Inner<I>(value: I?) : Base<I?>(value)
