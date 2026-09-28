@@ -2895,6 +2895,12 @@ static class MemberCallSubstitution
         // return is the ERASED nullable-generic `object`, CoerceReturn would `unbox.any !!X` a possibly-null —
         // NullReferenceException for a value instantiation. The open representation of such a value stays `object`.
         if (RetToken(node) is JsonNode ret && !IsTvType(ret)) call["ret"] = ret;
+        if (instance && ForeignStarProjectionBinding.IsForeignStarType(ownerFqn, refs))
+        {
+            call["projectedHelperReceiver"] = 0;
+            call["ret"] = RetToken(node) ?? TypeJson.Write(NodeType.Of(node)
+                ?? throw new InvalidOperationException("Projected alias helper call has no declared result type"));
+        }
         return call;
     }
 
