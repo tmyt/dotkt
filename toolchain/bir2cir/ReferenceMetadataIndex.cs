@@ -1557,7 +1557,7 @@ sealed partial class ReferenceMetadataIndex
     // image. Reference assemblies are allowed to assign different tokens from their implementation twin, however.
     // Carry this structural declaration key as the exact fallback; the runtime compares the selected declaration's
     // name/arity/parameter TYPES and never chooses an overload from runtime argument values.
-    static string ForeignStarRuntimeTypeKey(Type type)
+    internal static string ForeignStarRuntimeTypeKey(Type type)
     {
         if (type.IsGenericParameter)
             return (type.DeclaringMethod == null ? "t" : "m") + type.GenericParameterPosition;

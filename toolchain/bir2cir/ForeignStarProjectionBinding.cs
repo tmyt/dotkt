@@ -49,6 +49,7 @@ static class ForeignStarProjectionBinding
         new Dictionary<string, string>(StringComparer.Ordinal);
     static int _nextTemp;
     static int _nextDelegateAdapter;
+    static bool _bindProjectedHelpers;
     public static bool UsedRuntimeFallback { get; private set; }
 
     internal static void RequireRuntimeFallback() => UsedRuntimeFallback = true;
@@ -74,6 +75,7 @@ static class ForeignStarProjectionBinding
         IReadOnlyDictionary<string, string> localExistentialOwners, ReferenceMetadataIndex refs, bool resetUsage)
     {
         var rootList = roots.ToList();
+        _bindProjectedHelpers = !resetUsage;
         if (resetUsage)
         {
             UsedRuntimeFallback = false;
@@ -121,7 +123,12 @@ static class ForeignStarProjectionBinding
                     obj["type"] = TypeJson.Write(initType);
                     _dependentLocalTypes[declaredName] = initType;
                 }
-                if (TryRewriteClassifier(obj, refs, out var classifier))
+                if (_bindProjectedHelpers && TryRewriteStaticHelper(obj, refs, out var helper))
+                {
+                    UsedRuntimeFallback = true;
+                    Replace(obj, helper);
+                }
+                else if (TryRewriteClassifier(obj, refs, out var classifier))
                 {
                     UsedRuntimeFallback = true;
                     Replace(obj, classifier);
@@ -138,6 +145,53 @@ static class ForeignStarProjectionBinding
                 foreach (var value in array.ToList()) if (value != null) Rewrite(value, refs);
                 break;
         }
+    }
+
+    static bool TryRewriteStaticHelper(JsonObject node, ReferenceMetadataIndex refs, out JsonObject rewritten)
+    {
+        rewritten = null;
+        if (node["projectedHelperReceiver"] is not JsonValue receiverFact) return false;
+        var receiverIndex = receiverFact.GetValue<int>();
+        var owner = TypeJson.OwnerName(node["owner"]);
+        var arguments = node["args"] as JsonArray;
+        var typeArguments = node["typeArgs"] as JsonArray;
+        var signature = (node["sig"] as JsonArray)?.Select(TypeJson.Read).ToArray();
+        if (Str(node["k"]) != "callStatic" || arguments == null || typeArguments == null
+            || receiverIndex < 0 || receiverIndex >= arguments.Count || signature == null
+            || !refs.TryResolveStaticMemberSignature(owner, Str(node["method"]), typeArguments.Count, true,
+                signature, null, out _, out var declaration, out var declaringOwner))
+            throw new InvalidOperationException("Projected alias helper has no exact static declaration");
+        var result = TypeJson.Read(node["ret"])
+            ?? throw new InvalidOperationException("Projected alias helper has no declared result");
+        if (declaration.ReturnType.IsByRef || signature.Any(type => type is TypeNode.ByRef)
+            || signature.Any(type => ContainsByRefLike(type, refs)))
+            throw new NotSupportedException("Projected helper reflection cannot preserve managed-reference arguments or results");
+        var keys = new JsonArray(declaration.GetParameters().Select(parameter => (JsonNode)new JsonObject
+        {
+            ["k"] = "const", ["type"] = TypeJson.Write(String),
+            ["value"] = ReferenceMetadataIndex.ForeignStarRuntimeTypeKey(parameter.ParameterType),
+        }).ToArray());
+        var methodTypes = new JsonArray(typeArguments.Select(type => (JsonNode)new JsonObject
+        {
+            ["k"] = "classRef", ["type"] = type.DeepClone(),
+        }).ToArray());
+        var returnsVoid = declaration.ReturnType.FullName == "System.Void";
+        var invocation = Call(returnsVoid ? "starProjectionInvokeStaticHelperUnit" : "starProjectionInvokeStaticHelper",
+            new TypeNode[] { Type, Int, String, new TypeNode.Array(String), new TypeNode.Array(Type),
+                Int, new TypeNode.Array(AnyN) },
+            returnsVoid ? new TypeNode.Fqn("kotlin.Unit") : AnyN,
+            ClassRef(declaringOwner.FullName),
+            new JsonObject { ["k"] = "const", ["type"] = TypeJson.Write(Int), ["value"] = declaration.MetadataToken },
+            new JsonObject { ["k"] = "const", ["type"] = TypeJson.Write(String), ["value"] = declaration.Name },
+            new JsonObject { ["k"] = "newArray", ["elem"] = TypeJson.Write(String), ["elems"] = keys },
+            new JsonObject { ["k"] = "newArray", ["elem"] = TypeJson.Write(Type), ["elems"] = methodTypes },
+            new JsonObject { ["k"] = "const", ["type"] = TypeJson.Write(Int), ["value"] = receiverIndex },
+            new JsonObject { ["k"] = "newArray", ["elem"] = TypeJson.Write(AnyN), ["elems"] = arguments.DeepClone() });
+        rewritten = returnsVoid || IsObjectish(result) ? invocation : new JsonObject
+        {
+            ["k"] = "cast", ["type"] = TypeJson.Write(result), ["e"] = invocation,
+        };
+        return true;
     }
 
     static bool ContainsSyntheticClass(JsonNode node) => node switch

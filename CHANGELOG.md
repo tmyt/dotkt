@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Projected alias instance helpers retain the receiver's actual CLR construction (#915).**
+  Static implementations close receiver-dependent generic slots from the selected declaration's CLR witness,
+  while existing foreign nested-star values retain their opaque representation.
+
 - **Typed conditional results retain their declared CLR join type (#912).**
   Branches that select different implementations of an interface merge through the explicit CIR result slot.
 

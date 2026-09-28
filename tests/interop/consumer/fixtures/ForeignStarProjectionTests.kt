@@ -24,9 +24,29 @@ private class ForeignProjectedCallableHolder<T> {
     fun callStruct(factory: CallableStruct<out T>): T = factory.Make().invoke()
 }
 
+private class ForeignNestedNominalKey<T>(val value: T)
+private fun foreignNestedNominalProjection(value: Any): Outer<ForeignNestedNominalKey<*>> =
+    value as Outer<ForeignNestedNominalKey<*>>
+
 class ForeignStarProjectionTests {
     @TestAttribute
     fun arbitraryClrGenericUsesRuntimeClassifierAndExactMember() {
+        val existing: Any = Outer(ForeignNestedNominalKey(17))
+        val nominal = foreignNestedNominalProjection(existing)
+        assertTrue(nominal === existing)
+        assertEquals(17, nominal.Value.value)
+        val key = ForeignNestedNominalKey(23)
+        val native = HashMap<ForeignNestedNominalKey<Int>, String>()
+        native[key] = "retained"
+        val opaque: Any = native
+        val projectedMap = opaque as HashMap<ForeignNestedNominalKey<*>, Any?>
+        assertTrue(projectedMap === opaque)
+        val additions: Map<ForeignNestedNominalKey<*>, Any?> =
+            mapOf((key as ForeignNestedNominalKey<*>) to "retained")
+        val unitResult: Any = projectedMap.putAll(additions)
+        assertTrue(unitResult === Unit)
+        assertEquals("retained", projectedMap.remove(key))
+        assertEquals(null, native.remove(key))
         val value: Any = Factory.StringBoxAsObject()
         assertTrue(value is Box<*>)
         assertFalse(("not a box" as Any) is Box<*>)
