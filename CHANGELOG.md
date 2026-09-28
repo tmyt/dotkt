@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Generic callbacks instantiated with Unit use valid CLR delegates (#885).** Lifted callbacks and
+  captured defaults adapt their value-returning targets to void delegate slots, including across DLLs.
+
 - **Default callbacks participate in generic frame materialization (#883).** Omitted callbacks and
   their carried helpers retain constructed generic argument frames across Kotlin DLL boundaries.
 

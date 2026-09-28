@@ -689,6 +689,13 @@ static class BirTypeLowering
         var ret = LowerType(DelegateReturnSlot(fn), refBuild, force, typeArg: false);
         var ps = fn.Params.Select(p => LowerType(p, refBuild, force, typeArg: false)).ToArray();
         var recv = fn.Recv == null ? null : LowerType(fn.Recv, refBuild, force, typeArg: false);
+        return PhysicalDelegate(ret, ps, recv, fn.Clr);
+    }
+
+    // These slots already describe a CLR method: a Unit value return is not Kotlin's void convention.
+    internal static TypeNode.Fn PhysicalDelegate(TypeNode ret, TypeNode[] ps,
+        TypeNode recv = null, string family = null)
+    {
         int arity = ps.Length + (recv == null ? 0 : 1);
         if (arity > CanonicalDelegateMaxArity)
             throw new InvalidOperationException(
@@ -698,7 +705,7 @@ static class BirTypeLowering
                 + "is a distinct pre-baked type in the stdlib and Kotlin's function types are unbounded. A receiver "
                 + "counts toward the arity. Group the parameters into a class, or pass them as a collection.");
         bool returnsVoid = ret is TypeNode.Fqn { Args: null, Name: "void" or "System.Void" };
-        string clr = fn.Clr ?? (returnsVoid
+        string clr = family ?? (returnsVoid
             ? arity <= MaxBclDelegateArity ? "System.Action" : "DotKt.Runtime.CompilerServices.KAction"
             : arity <= MaxBclDelegateArity ? "System.Func" : "DotKt.Runtime.CompilerServices.KFunc");
         return new TypeNode.Fn(false, ret, ps, recv, clr);

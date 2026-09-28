@@ -1302,6 +1302,10 @@ sealed class Pipeline
         // existing actionable collision diagnostic, rather than being intercepted as an ambiguous local lookup.
         // ilemit receives only the winning declaration index and never selects by name/arity/assignability.
         ClrMemberResolution.ResolveLocalConstructors(loweredRoots.Select(s => s.Root));
+        // Compare fully physical method returns: closing a generic R with Unit still returns a value,
+        // whereas a declared Kotlin Unit return has lowered to void. Adapt the delegate, not the method.
+        ClrMemberResolution.ResolveLocalDelegateTargets(loweredRoots.Select(s => s.Root), refs,
+            physicalDelegates: true);
         // A call may retain a local receiver owner while its declaration lives on an inherited referenced
         // interface.  Resolve that local/external boundary only after every physically-lowered local declaration
         // is visible, so a stale shipped copy of a local owner can never win.
