@@ -12,6 +12,9 @@ class InnerSourceOwnerTests {
         val inner = Outer<Int>().Inner<String>("inner")
         check(inner.value == "inner")
         check(read(inner) == "inner")
+        inner.visit { check(it == "inner") }
+        PlainInline(17).visit { check(it == 17) }
+        PlainInline("plain").visit { check(it == "plain") }
         val derived = Outer<Int>().Derived<String>("derived")
         check(derived.nested == "derived")
         val wrapped = Outer<Int>().Wrapped<String>(listOf("carrier"))

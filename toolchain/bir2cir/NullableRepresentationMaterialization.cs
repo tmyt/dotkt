@@ -14,12 +14,21 @@ static class NullableRepresentationMaterialization
     {
         var roots = inputs.ToArray();
         var importedMethods = new Dictionary<string, NullableRepresentationFrame>(StringComparer.Ordinal);
+        var importedTypes = references == null ? new Dictionary<string, NullableRepresentationFrame>(StringComparer.Ordinal)
+            : new Dictionary<string, NullableRepresentationFrame>(references.NullableTypeFrames, StringComparer.Ordinal);
         void FindReferencedCalls(JsonNode node)
         {
             if (node is JsonObject obj)
             {
                 if (Text(obj["k"]) != null && Text(obj[DeclarationIdentityBinding.Key]) is string id
-                    && references?.NullableMethodFrame(id) is { } frame) importedMethods[id] = frame;
+                    && references != null)
+                {
+                    if (references.NullableMethodFrame(id) is { } frame) importedMethods[id] = frame;
+                    if (references.TryDeclarationIdentity(id, out _, out var owner, out _, out _)
+                        && !importedTypes.ContainsKey(owner))
+                        // No companions means an identity declaration frame, not an absent owner correspondence.
+                        importedTypes[owner] = new NullableRepresentationFrame(references.OwnerArity(owner), Array.Empty<int>());
+                }
                 foreach (var (key, value) in obj)
                     if (key != "attrs") FindReferencedCalls(value);
             }
@@ -28,7 +37,7 @@ static class NullableRepresentationMaterialization
         }
         foreach (var root in roots) FindReferencedCalls(root);
         var applicationFrames = new InnerApplicationFrames(roots, references);
-        var demands = NullableRepresentationDemand.Collect(roots, references?.NullableTypeFrames, importedMethods, policy, applicationFrames);
+        var demands = NullableRepresentationDemand.Collect(roots, importedTypes, importedMethods, policy, applicationFrames);
         var localBindings = NullableRepresentationDemand.BindLocalFunctions(roots);
         // Frames refer to immutable source arities. Snapshot before any declaration's parameters are expanded.
         var ownerFrames = demands.ToDictionary(owner => owner.Declaration, owner => owner.Frame);
@@ -48,8 +57,7 @@ static class NullableRepresentationMaterialization
                     RequireCovered(method.Body.Method, method.Frame, methodName + " (method)");
             }
         }
-        var types = references == null ? new Dictionary<string, NullableRepresentationFrame>(StringComparer.Ordinal)
-            : new Dictionary<string, NullableRepresentationFrame>(references.NullableTypeFrames, StringComparer.Ordinal);
+        var types = new Dictionary<string, NullableRepresentationFrame>(importedTypes, StringComparer.Ordinal);
         foreach (var owner in demands.Where(d => d.IsTypeDeclaration))
             types[Text(owner.Declaration["name"])] = ownerFrames[owner.Declaration];
         var methods = new Dictionary<string, NullableRepresentationFrame>(importedMethods, StringComparer.Ordinal);

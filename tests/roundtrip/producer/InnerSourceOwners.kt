@@ -1,6 +1,9 @@
 package roundtrip.innerowner
 
 open class Base<T>(val value: T)
+class PlainInline<T>(val value: T) {
+    inline fun visit(block: (T) -> Unit) { block(value) }
+}
 class NullableOuter<O>(val outer: O?) {
     inner class Inner<I>(value: I?) : Base<I?>(value) { val captured = outer }
     inner class Middle<M>(val middle: M?) {
@@ -28,7 +31,9 @@ class Outer<O> {
     inner class Wrapped<I>(value: List<I>) : Base<List<I>>(value)
     open inner class NestedBase<I>(val nested: I)
     inner class Derived<I>(value: I) : NestedBase<I>(value)
-    inner class Inner<I>(value: I) : Base<I>(value)
+    inner class Inner<I>(value: I) : Base<I>(value) {
+        inline fun visit(block: (I) -> Unit) { block(value) }
+    }
     inner class Captured(value: O) : Base<O>(value)
     inner class Middle<M> {
         inner class Leaf<L>(value: L) : Base<L>(value)
