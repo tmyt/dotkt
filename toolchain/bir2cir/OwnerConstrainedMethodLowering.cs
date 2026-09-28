@@ -22,11 +22,21 @@ static class OwnerConstrainedMethodLowering
     internal static bool HasMethodDependentBounds(JsonObject method) =>
         method["typeParams"] is JsonArray parameters && parameters.Select((parameter, index) =>
             parameter is JsonObject declaration && declaration["constraints"] is JsonArray constraints
-                && constraints.Any(bound => HasConstructedDependency(TypeJson.Read(bound), "method", index))).Any(found => found);
+                && constraints.Any(bound => HasConstructedDependency(TypeJson.Read(bound), "method", index,
+                    ReadMethodFrame(method)))).Any(found => found);
+
+    internal static NullableRepresentationFrame ReadMethodFrame(JsonObject method) =>
+        method[NullableRepresentationTypes.MethodFrameKey] is JsonValue encoded
+            ? NullableRepresentationFrame.Read(JsonNode.Parse(encoded.GetValue<string>())) : null;
+
+    static bool SameSourceParameter(int first, int second, NullableRepresentationFrame frame) =>
+        frame == null ? first == second
+            : frame.PhysicalSlot(first).SourceIndex == frame.PhysicalSlot(second).SourceIndex;
 
     // A self F-bound keeps the exact same generic argument. A constructed bound depending on another parameter
     // can instead be satisfied through Kotlin variance without satisfying that exact closed CLR construction.
-    internal static bool HasConstructedDependency(TypeNode bound, string scope, int self)
+    internal static bool HasConstructedDependency(TypeNode bound, string scope, int self,
+        NullableRepresentationFrame frame = null)
     {
         if (bound is TypeNode.Tv) return false;
         // An invariant foreign construction is already an exact CLR contract. Unlike a Kotlin existential
@@ -49,7 +59,9 @@ static class OwnerConstrainedMethodLowering
             return false;
         var changed = false;
         MapVariables(bound, tv => {
-            if (tv.Scope == scope && tv.I != self) changed = true;
+            // Representation companions are views of the same source parameter, not
+            // independent Kotlin variables that make a self-bound variant-dependent.
+            if (tv.Scope == scope && !SameSourceParameter(tv.I, self, frame)) changed = true;
             return tv;
         });
         return changed;
@@ -65,6 +77,14 @@ static class OwnerConstrainedMethodLowering
             throw new InvalidOperationException("Non-generic physical bound acquired a companion dependency");
         if (!HasConstructedDependency(new TypeNode.Array(new TypeNode.Tv("method", 1)), "method", 0))
             throw new InvalidOperationException("Constructed bound lost its physical argument dependency");
+        var frame = new NullableRepresentationFrame(2, new[] { 0, 1 }, new[] { 2, 1, 0, 3, 4, 5 },
+            storageIndices: new[] { 0 }, nullableStorageIndices: new[] { 0 });
+        foreach (var companion in new[] { 0, 4, 5 })
+            if (HasConstructedDependency(new TypeNode.Array(new TypeNode.Tv("method", companion)), "method", 2, frame))
+                throw new InvalidOperationException("Self-bound companion became an independent source parameter");
+        foreach (var other in new[] { 1, 3 })
+            if (!HasConstructedDependency(new TypeNode.Array(new TypeNode.Tv("method", other)), "method", 2, frame))
+                throw new InvalidOperationException("Different source parameter lost its constructed dependency");
         var parameter = new JsonObject { ["name"] = "T", ["constraints"] = new JsonArray(TypeJson.Write(bound)) };
         var parameters = new JsonArray(parameter, JsonValue.Create("$storage0"));
         RewriteConstraints(new JsonObject(), new JsonObject(), parameters, _ => false, type => type);
@@ -92,8 +112,9 @@ static class OwnerConstrainedMethodLowering
         _ => type,
     };
 
-    static TypeNode ProjectMethodVariables(TypeNode bound, int self) =>
-        MapVariables(bound, tv => tv.Scope == "method" && tv.I != self ? new TypeNode.Star() : tv);
+    static TypeNode ProjectMethodVariables(TypeNode bound, int self, NullableRepresentationFrame frame) =>
+        MapVariables(bound, tv => tv.Scope == "method" && !SameSourceParameter(tv.I, self, frame)
+            ? new TypeNode.Star() : tv);
 
     // Called only after the Kotlin override resolver has selected the exact source slot. In particular,
     // substituting Base<T> with Base<Animal> must not hide that its method bound originally depended on T.
@@ -260,6 +281,7 @@ static class OwnerConstrainedMethodLowering
     static void RewriteConstraints(JsonObject method, JsonObject owner, JsonArray parameters, Func<TypeNode, bool> dependsOnOwner,
         Func<TypeNode, TypeNode> projectedBound)
     {
+        var frame = ReadMethodFrame(method);
         var inherited = method[OverrideBoundsKey] is JsonValue encoded
             ? JsonNode.Parse(encoded.GetValue<string>()).AsArray() : new JsonArray();
         for (var index = 0; index < parameters.Count; index++)
@@ -282,9 +304,9 @@ static class OwnerConstrainedMethodLowering
                         if (!retained.Any(row => JsonNode.DeepEquals(row, consequence)))
                             retained.Add(consequence.DeepClone());
                 }
-                else if (dependsOnOwner(bound) || HasConstructedDependency(bound, "method", index))
+                else if (dependsOnOwner(bound) || HasConstructedDependency(bound, "method", index, frame))
                 {
-                    removed.Add(TypeJson.Write(projectedBound(ProjectMethodVariables(bound, index))));
+                    removed.Add(TypeJson.Write(projectedBound(ProjectMethodVariables(bound, index, frame))));
                     foreach (var consequence in dependsOnOwner(bound)
                         ? IndependentBounds(bound, owner["typeParams"] as JsonArray) : Enumerable.Empty<TypeNode>())
                         if (!retained.Any(row => TypeJson.Read(row).Equals(consequence)))
