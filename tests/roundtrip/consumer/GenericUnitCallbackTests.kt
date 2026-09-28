@@ -18,6 +18,13 @@ class GenericUnitCallbackTests {
         check(capturedCallback({}, 17) == 17)
         check(capturedCallback<String?>({}, null) == null)
         check(invokedCallback<Unit?>({}, null) == null)
+        val tracked = CallbackValue(Unit)
+        val deferred = deferredCallback({ calls++ }, tracked)
+        check(calls == 4 && tracked.calls == 0)
+        check(deferred() == Unit)
+        check(tracked.calls == 1)
+        check(deferred() == Unit)
+        check(tracked.calls == 2)
     }
 
     @TestAttribute

@@ -12,6 +12,20 @@ inline fun <R> capturedCallback(action: () -> Unit, value: R, noinline callback:
     return callback()
 }
 
+class CallbackValue<R>(val value: R) {
+    var calls: Int = 0
+    fun read(): R { calls++; return value }
+}
+
+inline fun <R> deferredCallback(
+    action: () -> Unit,
+    value: CallbackValue<R>,
+    noinline callback: () -> R = { value.read() },
+): () -> R {
+    action()
+    return callback
+}
+
 fun sameModuleUnitCallbacks(): Int {
     var calls = 0
     selectedCallback({ calls++; Unit })
