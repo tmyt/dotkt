@@ -83,7 +83,7 @@ import java.io.File
 // generic args and nullability) at this single chokepoint. bir2cir's StaticType CONSUMES it — reading an operand's
 // Kotlin static type off `sty` — instead of RE-deriving a callee's return type by re-doing overload resolution
 // against the ref.dll (the no-re-resolution-downstream invariant). Stamped ONLY on the value-node kinds StaticType
-// reads a return/static type from (`local`, `callStatic`, `callInstance`, `field`, `lateinitGet`, `staticField`);
+// reads a return/static type from (`local`, `callLocal`, `callStatic`, `callInstance`, `field`, `lateinitGet`, `staticField`);
 // the STRUCTURAL kinds (cast/const/new/conv/arrayGet/…) already carry their own type slot, so they need no stamp.
 // A pass-through arm (e.g. coercion-to-Unit returning its already-stamped argument) begins with `{"sty":` — not a
 // bare `{"k":<kind>` — so the prefix guard skips it and there is no double-stamp.
@@ -259,6 +259,7 @@ internal fun BirEmitter.isStableValue(e: IrExpression): Boolean =
 	} == true
 
 private val styNodePrefixes = listOf(
+	"""{"k":"callLocal"""",
 	"""{"k":"local"""", """{"k":"callStatic"""", """{"k":"callInstance"""",
 	"""{"k":"field"""", """{"k":"lateinitGet"""", """{"k":"staticField"""",
 )
