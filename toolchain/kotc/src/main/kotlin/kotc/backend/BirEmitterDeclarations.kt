@@ -1179,6 +1179,22 @@ internal fun BirEmitter.innerSemanticEnclosingTypeParams(
 	return result
 }
 
+private fun BirEmitter.innerEnclosingReceivers(
+	inner: IrClass, immediateReceiver: String,
+): List<Pair<IrValueDeclaration, String>> {
+	var owner = inner.parent as? IrClass ?: return emptyList()
+	var receiver = immediateReceiver
+	val result = mutableListOf<Pair<IrValueDeclaration, String>>()
+	while (true) {
+		owner.thisReceiver?.let { result.add(it to receiver) }
+		if (!owner.isInner) break
+		val parent = owner.parent as? IrClass ?: break
+		receiver = """{"k":"field","ownerType":${fqnJson(typeName(owner))},"recv":$receiver,"name":"__outer","outer":true}"""
+		owner = parent
+	}
+	return result
+}
+
 internal fun BirEmitter.innerClassDef(inner: IrClass): String {
 	val outerThis = (inner.parent as? IrClass)?.thisReceiver
 		?: return typeDef(inner)   // not actually inner-of-class; emit plainly
@@ -1186,16 +1202,10 @@ internal fun BirEmitter.innerClassDef(inner: IrClass): String {
 	// chain while rendering the declaration: Leaf.this.__outer reaches Middle, and another __outer reaches Outer.
 	// Each edge is an explicit Kotlin inner relation; bir2cir later supplies the constructed CLR owner TypeSpecs.
 	val saved = java.util.IdentityHashMap<IrValueDeclaration, String?>()
-	var child = inner
-	var receiver = """{"k":"this"}"""
-	while (child.isInner) {
-		val parent = child.parent as? IrClass ?: break
-		receiver = """{"k":"field","ownerType":${fqnJson(typeName(child))},"recv":$receiver,"name":"__outer","outer":true}"""
-		parent.thisReceiver?.let {
-			saved[it] = captureSubst[it]
-			captureSubst[it] = receiver
-		}
-		child = parent
+	val immediate = """{"k":"field","ownerType":${fqnJson(typeName(inner))},"recv":{"k":"this"},"name":"__outer","outer":true}"""
+	for ((declaration, receiver) in innerEnclosingReceivers(inner, immediate)) {
+		saved[declaration] = captureSubst[declaration]
+		captureSubst[declaration] = receiver
 	}
 	return try {
 		typeDef(inner, listOf(outerThis to "__outer"))
@@ -1909,6 +1919,17 @@ internal fun BirEmitter.ctor(klass: IrClass, ctor: IrConstructor, captures: List
 		savedCapSubst[d] = captureSubst[d]
 		val outer = if (isExactOuterDeclaration(d)) ""","outer":true""" else ""
 		captureSubst[d] = """{"k":"local","name":${str(fname)}$outer}"""
+	}
+	if (klass.isInner) {
+		val outerThis = (klass.parent as? IrClass)?.thisReceiver
+		captures.firstOrNull { (declaration, _) -> declaration === outerThis }?.let { (declaration, _) ->
+			// Every farther enclosing receiver must share the parameter-rooted chain during delegation.
+			// Replacing only the immediate capture leaves the pre-rendered ancestor chains rooted at this.
+			for ((enclosing, receiver) in innerEnclosingReceivers(klass, captureSubst.getValue(declaration))) {
+				if (!savedCapSubst.containsKey(enclosing)) savedCapSubst[enclosing] = captureSubst[enclosing]
+				captureSubst[enclosing] = receiver
+			}
+		}
 	}
 	val capForwardArgs = if (klass.isInner) emptyList() else captures.map { (decl, f) ->
 		val outer = if (isExactOuterDeclaration(decl)) ""","outer":true""" else ""

@@ -719,6 +719,11 @@ body's base call) has its arguments on the constructor DECLARATION, with no wrap
 declaration as `delegationBindings`, an array of the same bindings; `thisArgs`/`baseArgs` read them. An enum entry's
 `NAME(args)` needs nothing special — a static field initializer is an expression position.
 
+During an inner constructor's delegation, enclosing-instance reads start from its supplied enclosing-instance
+parameter, not from the new object's still-uninitialized capture field. This applies to every enclosing receiver
+in a nested chain. After delegation, instance initializers and ordinary bodies use the field-rooted receiver chain.
+kotc authors these Kotlin receiver facts; later stages do not reconstruct initialization-phase semantics.
+
 **Default representation entry.** Imported default expressions are source-vocabulary graphs, even when their
 carrier is attached to an already-physical referenced declaration. Materialize omitted defaults before nullable
 generic representation selection. An inline call carries its materialized defaults in
