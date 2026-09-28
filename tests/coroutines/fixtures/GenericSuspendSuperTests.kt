@@ -58,6 +58,12 @@ private class GenericSuperPausedChild<T>(gate: GenericSuperGate<T>) : GenericSup
         trace += "before;"
         try {
             val value = super.read()
+            // This nested try has no suspension: its receiver takes RewriteNoSpill rather than Rewrite.
+            try {
+                trace += super.marker() + ";"
+            } finally {
+                trace += "plain;"
+            }
             trace += "after;"
             return value
         } finally {
@@ -101,6 +107,6 @@ class GenericSuspendSuperTests {
         check(child.trace == "before;")
         gate.finish(41)
         check(completions == 1)
-        check(child.trace == "before;after;base")
+        check(child.trace == "before;base;plain;after;base")
     }
 }
