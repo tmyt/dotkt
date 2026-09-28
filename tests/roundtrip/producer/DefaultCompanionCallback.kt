@@ -27,3 +27,8 @@ class DefaultCompanionOwner<T>(val segment: Segment<T>) {
 }
 
 fun <T> sameModuleDefault(item: T): T = DefaultCompanionOwner(Segment<T>(null)).sameModule(item)
+
+inline fun <T> nullableCapturedDefault(
+    value: T,
+    noinline callback: () -> T? = { value },
+): T? = callback()

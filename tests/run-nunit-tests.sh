@@ -292,6 +292,14 @@ for proj in "${PROJECTS[@]}"; do
 			echo "  REFERENCED GENERIC-OWNER UNSAFEACCESSOR FAIL — see build/nunit-$name.referenced-generic-owner-unsafe-accessor.log"
 			tail -25 "$ROOT/build/nunit-$name.referenced-generic-owner-unsafe-accessor.log"; rc=1
 		fi
+		if python3 "$ROOT/tests/roundtrip/assert-default-companion-frame-cir.py" \
+			"$dir/obj/$CONFIGURATION/net10.0/cir/DefaultCompanionCallbackTests.cir.json" \
+			>"$ROOT/build/nunit-$name.default-companion-frame.log" 2>&1; then
+			echo "  default closure representation metadata preserved"
+		else
+			echo "  DEFAULT COMPANION FRAME FAIL — see build/nunit-$name.default-companion-frame.log"
+			tail -25 "$ROOT/build/nunit-$name.default-companion-frame.log"; rc=1
+		fi
 		if bash "$ROOT/tests/roundtrip/run-flags-lookalike-negative.sh" \
 			>"$ROOT/build/nunit-$name.flags-lookalike.log" 2>&1; then
 			echo "  same-FQN System.Enum/FlagsAttribute lookalikes do not project flags operations"

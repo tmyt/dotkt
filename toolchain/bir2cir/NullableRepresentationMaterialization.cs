@@ -422,6 +422,8 @@ static class NullableRepresentationMaterialization
                     continue;
                 }
                 var childPosition = key switch {
+                    "ret" when obj[PreparedClosureDefaultFrames.ReturnArgumentKey]?.GetValue<bool>() == true
+                        => NullableGenericErasure.Pos.Argument,
                     "typeArgs" => NullableGenericErasure.Pos.Argument,
                     "elem" when NullableGenericErasure.IsArgumentElementKind(kind) => NullableGenericErasure.Pos.Argument,
                     "resolvedMemberParams" => NullableGenericErasure.Pos.Bound,

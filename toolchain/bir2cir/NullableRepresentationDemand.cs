@@ -181,7 +181,9 @@ static partial class NullableRepresentationDemand
                 foreach (var method in owner.Methods)
                 {
                     foreach (var key in new[] { "params", "ret" })
-                        Scan(method.Declaration[key], method.Signature, typeFrames, methodFrames, localFrames, policy: policy);
+                        Scan(method.Declaration[key], method.Signature, typeFrames, methodFrames, localFrames,
+                            argument: key == "ret" && method.Declaration[PreparedClosureDefaultFrames.ReturnArgumentKey]?.GetValue<bool>() == true,
+                            policy: policy);
                     // Implementation constraints are declaration-owned; only ordinary declarations' constraints
                     // refer to this owner's variables. An inherited fact's instantiated params/ret are above.
                     if (method.ImplementationKey == null)

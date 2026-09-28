@@ -2,6 +2,9 @@ import NUnit.Framework.TestAttribute
 import roundtrip.defaultcompanion.DefaultCompanionOwner
 import roundtrip.defaultcompanion.Segment
 import roundtrip.defaultcompanion.sameModuleDefault
+import roundtrip.defaultcompanion.nullableCapturedDefault
+
+private fun <T> importedNullableCapturedDefault(value: T): T? = nullableCapturedDefault(value)
 
 private fun <A, T> importedCompanionDefault(unused: A, item: T): T {
     val owner = DefaultCompanionOwner(Segment<T>(null))
@@ -35,13 +38,18 @@ class DefaultCompanionCallbackTests {
         var receiverCalls = 0
         var itemCalls = 0
         var resultCalls = 0
-        fun receiver(): DefaultCompanionOwner<Int> { receiverCalls += 1; return owner }
-        fun item(): Int { itemCalls += 1; return 47 }
-        fun result(): String { resultCalls += 1; return "captured" }
+        var order = ""
+        fun receiver(): DefaultCompanionOwner<Int> { order += "receiver;"; receiverCalls += 1; return owner }
+        fun item(): Int { order += "item;"; itemCalls += 1; return 47 }
+        fun result(): String { order += "result;"; resultCalls += 1; return "captured" }
         check(receiver().invokeCaptured(item(), result()) == "captured")
         check(segment.value == 47)
         check(receiverCalls == 1 && itemCalls == 1 && resultCalls == 1)
+        check(order == "receiver;item;result;")
         check(DefaultCompanionOwner(nullable).invokeCaptured(null, 53) == 53)
         check(nullable.value == null)
+        check(importedNullableCapturedDefault("nullable return") == "nullable return")
+        check(importedNullableCapturedDefault(59) == 59)
+        check(importedNullableCapturedDefault<String?>(null) == null)
     }
 }

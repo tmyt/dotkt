@@ -4,6 +4,7 @@ using System.Text.Json.Nodes;
 // the closure facts needed by the later inline and nullable-witness passes.
 static class PreparedClosureDefaultFrames
 {
+    internal const string ReturnArgumentKey = "_preparedDelegateReturnArgument";
     internal sealed record StageResult(IReadOnlyList<JsonNode> Types, Action Restore);
 
     public static StageResult Stage(JsonObject file, IEnumerable<JsonNode> inputs, ReferenceMetadataIndex refs)
@@ -23,6 +24,12 @@ static class PreparedClosureDefaultFrames
         }
         foreach (var root in roots) Find(root);
         var types = ClosureSynthesis.ApplyMaterialized(file, roots, refs);
+        var closureNames = sources.Keys.Where(expression => expression["k"]?.GetValue<string>() == "newClosure")
+            .Select(expression => TypeJson.OwnerName(expression["closureType"])).ToHashSet();
+        foreach (var declaration in types.OfType<JsonObject>())
+            if (closureNames.Contains(declaration["name"].GetValue<string>()))
+                ((JsonArray)declaration["methods"]).OfType<JsonObject>()
+                    .Single(method => method["name"]?.GetValue<string>() == "invoke")[ReturnArgumentKey] = true;
         return new StageResult(types, () => {
             var declarations = types.OfType<JsonObject>().ToDictionary(type => type["name"].GetValue<string>());
             var ingredients = new Dictionary<string, JsonObject>();
