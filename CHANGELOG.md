@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Nullable suspend function values retain value invocation after null checks (#877).**
+  Non-null assertions, smart casts and safe calls keep the cold function-value call path, including across DLLs.
+
 - **Suspend declarations retain operator and infix modifiers across DLLs (#879).** Public suspend
   bridges preserve source call syntax for concrete methods, abstract slots and extensions.
 

@@ -277,7 +277,17 @@ static partial class SuspendColdLowering
     // Inline materialization can replace a local receiver with a typed field/call expression; its equivalent fact
     // rides that node's ordinary result slot, which the deriver reads for it.
     static bool IsSuspendFunctionValue(JsonNode n)
-        => CallEvalLowering.StaticTypeOf(n) is TypeNode.Fn { Suspend: true };
+        => IsSuspendFunctionType(CallEvalLowering.StaticTypeOf(n));
+
+    // Null-check blocks and smart-cast locals may retain the declared nullable surface. Nullability does not
+    // change the function-value ABI; receiver evaluation still performs the source null check before invocation.
+    static bool IsSuspendFunctionType(TypeNode type) => type switch
+    {
+        TypeNode.Fn { Suspend: true } => true,
+        TypeNode.Nullable nullable => IsSuspendFunctionType(nullable.Of),
+        TypeNode.Oblivious oblivious => IsSuspendFunctionType(oblivious.Of),
+        _ => false,
+    };
     // #79 — the top-level `suspend inline val coroutineContext` read (Continuation.kt:157). Its getter is
     // intentionally `throw NotImplementedError("Implemented as intrinsic")`, so RESOLUTION can never make it work — a
     // real binding is required, and it lives HERE (the only layer that knows the current-continuation identity). kotc
@@ -3376,7 +3386,7 @@ static partial class SuspendColdLowering
             return call["recv"] is JsonObject recv
                 && Str(recv["k"]) == "local"
                 && Str(recv["name"]) is string local
-                && FieldType(local) is TypeNode.Fn { Suspend: true };
+                && IsSuspendFunctionType(FieldType(local));
         }
 
         // GAP 1 — the cold-invoke of a suspend functional VALUE. The value `fn` (`b()`'s receiver) is a cold,
