@@ -3968,12 +3968,21 @@ static partial class SuspendColdLowering
             method[KotlinPropertyAccessors.SuspendSourceRetKey] = _m["ret"]?.DeepClone();
         }
 
-        // NullableGenericErasure records the complete source constraint list on the declaration that suspend
-        // lowering replaces. The public Task MethodDef is still that Kotlin declaration's metadata owner, so move
-        // the opaque pre-erasure fact with it; the generated cold entry and state machine are physical details and
-        // must not publish a second Kotlin declaration carrier.
+        // The public Task MethodDef owns the original Kotlin declaration metadata: call-syntax modifiers,
+        // pre-erasure constraints and representation frames. The generated cold entry and state machine are
+        // physical details and must not publish a second Kotlin declaration carrier.
         void CarryKotlinDeclarationMetadata(JsonObject method)
         {
+            // These source call-syntax modifiers belong to the public Kotlin
+            // declaration, not to the generated cold entry. Do not restore
+            // mods.suspend on an already lowered bridge.
+            foreach (var modifier in new[] { "operator", "infix" })
+                if (Mod(_m, modifier))
+                {
+                    if (method["mods"] is not JsonObject)
+                        method["mods"] = new JsonObject();
+                    ((JsonObject)method["mods"])[modifier] = true;
+                }
             if (_m[NullableGenericErasure.MethodTypeParameterBoundsPre] is JsonNode bounds)
                 method[NullableGenericErasure.MethodTypeParameterBoundsPre] = bounds.DeepClone();
             if (_m[NullableRepresentationTypes.MethodFrameKey] is JsonNode nullableFrame)
