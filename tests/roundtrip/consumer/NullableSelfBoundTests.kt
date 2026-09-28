@@ -7,6 +7,7 @@ class NullableSelfBoundTests {
     fun importedMethodsAndClosuresPreserveSelfBoundCompanions() {
         val first = Concrete(null)
         val second = Concrete(first)
+        check(second.previous.value === first)
         check(wrap(first).value === first)
         check(wrapLater<String, Concrete>(second).value === second)
         check(deferred(second)().value === second)

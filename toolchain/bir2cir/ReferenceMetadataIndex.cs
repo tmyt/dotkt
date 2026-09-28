@@ -4800,11 +4800,13 @@ sealed partial class ReferenceMetadataIndex
                         metadata.ByRefLikeOwners.Add(typeDeclarationIdentity);
                         metadata.ByRefLikePhysicalOwners.Add(exactPhysicalOwner);
                     }
+                    var sourceFacts = dotKtAuthored
+                        ? CarrierJsonOf(type.GetCustomAttributesData(), asm, KotlinSupertypesAttr) as JsonObject : null;
                     var semanticTypeShape = new ReferenceTypeShape(
                         type.IsGenericType ? type.GetGenericArguments().Length : 0,
                         TypeKind(type),
                         DeclarationTypeNode(type.BaseType) as TypeNode.Fqn,
-                        type.GetInterfaces().Select(DeclarationTypeNode).OfType<TypeNode.Fqn>().ToArray());
+                        type.GetInterfaces().Select(DeclarationTypeNode).OfType<TypeNode.Fqn>().ToArray(), sourceFacts);
                     metadata.TypeShapes[typeDeclarationIdentity] = semanticTypeShape;
                     // Inheritance edges are declaration identities just like member owners. The exact index retains
                     // the reflected TypeDef spelling so current-format override markers traverse a physical graph
@@ -4814,13 +4816,11 @@ sealed partial class ReferenceMetadataIndex
                         semanticTypeShape.TypeParamCount,
                         semanticTypeShape.Kind,
                         ExactDeclaringView(type.BaseType),
-                        type.GetInterfaces().Select(ExactDeclaringView).OfType<TypeNode.Fqn>().ToArray());
+                        type.GetInterfaces().Select(ExactDeclaringView).OfType<TypeNode.Fqn>().ToArray(), sourceFacts);
                     if (type.IsGenericType)
                     {
                         var gargs = type.GetGenericArguments();
-                        if (dotKtAuthored && CarrierJsonOf(type.GetCustomAttributesData(), asm, KotlinSupertypesAttr)
-                                is JsonObject sourceFacts
-                            && sourceFacts[NullableRepresentationFrame.MetadataKey] is JsonNode frameNode)
+                        if (sourceFacts?[NullableRepresentationFrame.MetadataKey] is JsonNode frameNode)
                         {
                             var frame = ReadNullableFrame(frameNode, gargs.Length);
                             metadata.NullableFrames[ownerFqn] = frame;
@@ -7625,7 +7625,8 @@ sealed class ReferenceDotKtMetadata
 // (Suspend bit = 4) in the LIVE MetadataLoadContext scan. Populated for the Task-based coroutine bundle (bundle 6):
 // a cross-module call site must know "is this referenced callee suspend?" (its CLR shape is the Task<T> kickoff).
 // NO consumer reads it yet — bundle 6 wires it.
-sealed record ReferenceTypeShape(int TypeParamCount, string Kind, TypeNode.Fqn Base, TypeNode.Fqn[] Interfaces);
+sealed record ReferenceTypeShape(int TypeParamCount, string Kind, TypeNode.Fqn Base, TypeNode.Fqn[] Interfaces,
+    JsonObject SourceFacts = null);
 
 // The outcome of looking for one member at one owner (#86 D1). `NotDeclared` is the ONLY one that lets the search
 // continue to the supertypes: a member declared at this level is the declaration the call binds to whether or not it

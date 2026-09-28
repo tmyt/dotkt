@@ -179,7 +179,7 @@ static class InheritedMemberOwnerBinding
         if (projectionRoot != null
             && (projectionRoot.Name != owner.Name || owner.Args == null && projectionRoot.Args != null))
         {
-            var projectedOwners = ConstructedOwners(projectionRoot, owner.Name, types, refs);
+            var projectedOwners = ConstructedOwners(projectionRoot, owner.Name, types, refs, sourceFrames: projectOnly);
             if (projectedOwners.Count == 1)
             {
                 owner = projectedOwners[0];
@@ -397,8 +397,8 @@ static class InheritedMemberOwnerBinding
     // an exact CLR TypeDef. Match only through the recorded arity-aware identity map, never by stripping names
     // or borrowing argument types. Keep the selected owner spelling and the hierarchy's constructed arguments.
     static List<TypeNode.Fqn> ConstructedOwners(TypeNode.Fqn start, string selectedOwner,
-        Dictionary<string, TypeDef> types, ReferenceMetadataIndex refs) =>
-        ReachableTypes(start, types, refs)
+        Dictionary<string, TypeDef> types, ReferenceMetadataIndex refs, bool sourceFrames = false) =>
+        ReachableTypes(start, types, refs, sourceFrames)
             .Where(candidate => candidate.Type.Name == selectedOwner
                 || !types.ContainsKey(candidate.Type.Name) && !types.ContainsKey(selectedOwner)
                     && refs.TryExactPhysicalTypeName(candidate.Type.Name, candidate.Type.Args?.Length ?? 0,
@@ -409,7 +409,7 @@ static class InheritedMemberOwnerBinding
             .ToList();
 
     static IEnumerable<Reachable> ReachableTypes(TypeNode.Fqn start, Dictionary<string, TypeDef> types,
-        ReferenceMetadataIndex refs)
+        ReferenceMetadataIndex refs, bool sourceFrames = false)
     {
         var queue = new Queue<Reachable>();
         var seen = new HashSet<TypeNode.Fqn>();
@@ -428,7 +428,9 @@ static class InheritedMemberOwnerBinding
                 baseType = def.Base;
                 interfaces = def.Interfaces;
             }
-            else if (refs.TryReferenceTypeShape(current.Type, out typeParamCount, out _, out baseType,
+            else if (sourceFrames && refs.TryReferenceSourceTypeShape(current.Type, out typeParamCount, out baseType,
+                         out interfaces)) { }
+            else if (!sourceFrames && refs.TryReferenceTypeShape(current.Type, out typeParamCount, out _, out baseType,
                          out interfaces)) { }
             else continue;
             var args = EffectiveArgs(current.Type, typeParamCount);

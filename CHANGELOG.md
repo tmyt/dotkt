@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Inherited members retain Kotlin generic arguments across DLL boundaries (#895).**
+  Early owner projection uses source hierarchy facts rather than expanded CLR generic frames.
+
 - **Self-referential generic bounds retain their nullable representation companions (#635).**
   Physical representations of one Kotlin parameter no longer count as independent bound dependencies.
 
