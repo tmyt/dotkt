@@ -52,7 +52,7 @@ PROJECTS=(
 declare -A EXPECTED_DISCOVERED=(
 	["tests/basic"]=650
 	["tests/coroutines"]=240
-	["tests/roundtrip/consumer"]=323
+	["tests/roundtrip/consumer"]=325
 	["tests/roundtrip/bidirectional/consumer"]=38
 	["tests/interop/consumer"]=361
 )
@@ -299,6 +299,15 @@ for proj in "${PROJECTS[@]}"; do
 		else
 			echo "  DEFAULT COMPANION FRAME FAIL — see build/nunit-$name.default-companion-frame.log"
 			tail -25 "$ROOT/build/nunit-$name.default-companion-frame.log"; rc=1
+		fi
+		if python3 "$ROOT/tests/roundtrip/assert-suspend-witness-metadata.py" \
+			"$ROOT/tests/roundtrip/producer/obj/$CONFIGURATION/net10.0/cir/SuspendWitnessMetadata.cir.json" \
+			"$dir/obj/$CONFIGURATION/net10.0/cir/SuspendWitnessMetadataTests.cir.json" \
+			>"$ROOT/build/nunit-$name.suspend-witness-metadata.log" 2>&1; then
+			echo "  suspend bridges retain hidden witness declaration metadata"
+		else
+			echo "  SUSPEND WITNESS METADATA FAIL — see build/nunit-$name.suspend-witness-metadata.log"
+			tail -25 "$ROOT/build/nunit-$name.suspend-witness-metadata.log"; rc=1
 		fi
 		if bash "$ROOT/tests/roundtrip/run-flags-lookalike-negative.sh" \
 			>"$ROOT/build/nunit-$name.flags-lookalike.log" 2>&1; then
