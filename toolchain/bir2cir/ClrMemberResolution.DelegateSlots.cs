@@ -26,6 +26,8 @@ using DotKt.Bir;
 //     method pointer is delegate-compatible with that slot (a `void` return is assignable to nothing), so the
 //     value has to be produced. bir2cir authors an adapter CLASS holding the natural delegate, whose `invoke`
 //     calls it and returns the `Unit` singleton, and the construction becomes an ordinary `newClosure` over it.
+//   * DIFFERENT because the target method returns a VALUE and the slot returns VOID -> ADAPT: call the natural
+//     value-returning delegate once and discard its result. Binding its method directly to Action is invalid IL.
 //
 // The adapter class is generic in the delegate's PARAMETER TYPES, not in the enclosing frame's type variables:
 // `Adapter<T0..Tn-1>` holds an `Action<T0..Tn-1>` and declares `invoke(T0..Tn-1)`. The site instantiates it with
@@ -288,7 +290,7 @@ static partial class ClrMemberResolution
             && slotReturn is not TypeNode.Fqn { Args: null, Name: "void" or "System.Void" })
             AdaptVoidConstruction(construction, naturalFn, slot, slotReturn);
         else if (PhysicalFunctionShape(slot) is TypeNode.Fn slotFn
-            && HasBoxedSlotSeam(naturalFn, slotFn))
+            && NeedsSlotAdapter(naturalFn, slotFn))
             AdaptBoxedSlots(construction, naturalFn, slot, slotFn);
         else
             Retarget(construction, slot);
@@ -304,6 +306,11 @@ static partial class ClrMemberResolution
         return natural.DelegateParams.Zip(target.DelegateParams, Seam).Any(seam => seam)
             || Seam(natural.Ret, target.Ret);
     }
+
+    static bool NeedsSlotAdapter(TypeNode.Fn natural, TypeNode.Fn target) =>
+        HasBoxedSlotSeam(natural, target)
+        || ((natural.Ret is TypeNode.Fqn { Args: null, Name: "void" or "System.Void" })
+            != (target.Ret is TypeNode.Fqn { Args: null, Name: "void" or "System.Void" }));
 
     // Capture the natural delegate once. The adapter's Invoke owns the destination signature, and its body
     // crosses each representation seam explicitly. Generic parameters stand for complete slot types rather
