@@ -492,7 +492,17 @@ static class InlineSplice
             {
                 if (ext && i == 0) { FailLoud(o, owner, name, pc, ga, "extension receiver not carried"); return; }
                 what = $"default of parameter '{pn}'";
-                if (p["default"] is JsonNode pdef)
+                var argumentIndex = i - (ext ? 1 : 0);
+                if (argumentIndex >= 0 && o["preparedDefaults"] is JsonArray prepared
+                    && argumentIndex < prepared.Count && prepared[argumentIndex] is JsonNode readyDefault)
+                {
+                    var raw = readyDefault.DeepClone();
+                    DefaultArgSplice.RehomeSynthClasses(raw, consumerSemanticOwner, spliceCloneId);
+                    ClosureSynthesis.PrebindSplicedFrames(raw);
+                    argNode = DefaultArgSplice.SubstituteTokens(raw, defaultDispatchRecv,
+                        ext ? boundArgs.ElementAtOrDefault(0) : null, null, boundArgs);
+                }
+                else if (p["default"] is JsonNode pdef)
                 {
                     argNode = pdef.DeepClone();
                     ClosureSynthesis.PrebindSplicedFrames(argNode);

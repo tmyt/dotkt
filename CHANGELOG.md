@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Default callbacks participate in generic frame materialization (#883).** Omitted callbacks and
+  their carried helpers retain constructed generic argument frames across Kotlin DLL boundaries.
+
 - **Suspend declarations retain operator and infix modifiers across DLLs (#879).** Public suspend
   bridges preserve source call syntax for concrete methods, abstract slots and extensions.
 

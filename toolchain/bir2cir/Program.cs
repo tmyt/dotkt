@@ -211,6 +211,7 @@ sealed class Pipeline
         // so their complete physical frames are materialized with the declaration and its callers.
         if (!_options.RefBuild) SequenceElementAdapterLowering.Apply(birRoots);
         var genericRepresentations = new GenericRepresentationPolicy(representationAliases);
+        DefaultArgSplice.PrepareInlineDefaults(birRoots, refs);
         NullableRepresentationMaterialization.Apply(birRoots, isValueFqn, refs, policy: genericRepresentations);
         // Preserve selected local factory facts before per-file transformations. In a
         // stdlib self-build these declarations are local, not referenced MethodDefs.
