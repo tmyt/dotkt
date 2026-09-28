@@ -268,9 +268,9 @@ static class ClrEventSubscriptionBinding
             if (handler?.DeepClone() is JsonObject construction
                 && ClrMemberResolution.MarkDelegateSlot(construction, targetType, _refs, _localTypes))
                 return construction;
-            var sourceType = handler is JsonObject expression
-                ? TypeJson.Read(expression["sty"]) ?? TypeJson.Read(expression["funcType"])
-                : null;
+            // Read the produced value's type, not an internal operand signature. In particular a SAM
+            // conversion produces its nominal target even though funcType describes its source function.
+            var sourceType = NodeType.Of(handler);
             sourceType ??= targetType;
             if (SamePhysicalDelegate(sourceType, targetType)) return handler?.DeepClone();
             if (sourceType is not TypeNode.Fn sourceFunction)
