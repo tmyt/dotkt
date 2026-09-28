@@ -4349,10 +4349,11 @@ static class FBoundStarProjectionErasure
                 && TryExistentialCarrier(f.Name, owners, refs, out var variantCarrier):
                 return new TypeNode.Fqn(variantCarrier);
             case TypeNode.Fqn { Args: { } nestedArgs } nestedForeign
-                when !boundDeclaration && nestedArgs.Any(ContainsExistentialProjection)
+                when !boundDeclaration && nestedArgs.Any(argument =>
+                    ContainsUnreifiedProjection(argument, owners, refs))
                     && IsOpaqueForeignProjection(nestedForeign, refs, localClrAliases):
-                // A star anywhere below a foreign invariant construction makes the whole construction
-                // non-reifiable on the CLR.  In particular Outer<Inner<*>> is not Outer<object> (nor
+                // An unreified projection below a foreign invariant construction makes the whole construction
+                // opaque on the CLR. In particular foreign Outer<Inner<*>> is not Outer<object> (nor
                 // Outer<Inner<object>>); keep the original runtime value in one opaque object slot and let
                 // ForeignStarProjectionBinding route member access through the reflection ABI.
                 if (IsByRefLikeForeignProjection(nestedForeign, refs, localClrAliases))
@@ -4432,6 +4433,20 @@ static class FBoundStarProjectionErasure
                 || BirTypeLowering.ProjectedAliasHasReifiedGenericHead(type.Name, physical, type.Args);
         return ForeignStarProjectionBinding.IsForeignStarType(type, refs);
     }
+
+    // A compiler-owned existential has an actual nominal CLR carrier. A surrounding invariant construction can
+    // use that carrier as its exact argument; an existential inside a foreign generic still cannot be reified.
+    static bool ContainsUnreifiedProjection(TypeNode type, IReadOnlyDictionary<string, Owner> owners,
+        ReferenceMetadataIndex refs) => type switch
+    {
+        TypeNode.Fqn { Args: { } args } f when args.Any(IsExistentialArgument)
+            && TryExistentialCarrier(f.Name, owners, refs, out _) => false,
+        TypeNode.Fqn { Args: { } args } => args.Any(argument =>
+            ContainsUnreifiedProjection(argument, owners, refs)),
+        TypeNode.Nullable n => ContainsUnreifiedProjection(n.Of, owners, refs),
+        TypeNode.Oblivious o => ContainsUnreifiedProjection(o.Of, owners, refs),
+        _ => ContainsExistentialProjection(type),
+    };
 
     static bool IsByRefLikeForeignProjection(TypeNode.Fqn type, ReferenceMetadataIndex refs,
         IReadOnlyDictionary<string, string> localClrAliases)

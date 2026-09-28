@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Nested compiler-owned existential arguments keep their CLR container type (#915).**
+  Dictionary operations agree with storage whose key type has a nominal compiler-generated carrier.
+
 - **Typed conditional results retain their declared CLR join type (#912).**
   Branches that select different implementations of an interface merge through the explicit CIR result slot.
 
