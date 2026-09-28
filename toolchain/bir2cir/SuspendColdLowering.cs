@@ -3997,6 +3997,11 @@ static partial class SuspendColdLowering
                 method[NullableGenericErasure.MethodTypeParameterBoundsPre] = bounds.DeepClone();
             if (_m[NullableRepresentationTypes.MethodFrameKey] is JsonNode nullableFrame)
                 method[NullableRepresentationTypes.MethodFrameKey] = nullableFrame.DeepClone();
+            // The bridge keeps the physical witness parameters, so its declaration carrier must retain
+            // their source indices as well. Importers project only authored parameters from that carrier.
+            foreach (var key in new[] { ReifiedNullabilityWitnessLowering.SemanticIndicesKey,
+                ReifiedNullabilityWitnessLowering.WitnessIndicesKey })
+                if (_m[key] is JsonNode indices) method[key] = indices.DeepClone();
             // The existential slot's source identity belongs to its public Task projection too. Without it,
             // a separately compiled consumer cannot select this slot from the original Kotlin declaration.
             if (Str(_m[FBoundStarProjectionErasure.SourceMemberKey]) is string sourceMember)
