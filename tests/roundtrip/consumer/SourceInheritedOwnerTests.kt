@@ -24,6 +24,8 @@ class SourceInheritedOwnerTests {
     fun genericReceiversPreserveInheritedClassAndInterfaceArguments() {
         val leaf: Leaf = LeafImpl(43)
         check(leaf.item.value == 43)
+        val defaultLeaf: DefaultLeaf = DefaultLeafImpl()
+        check(defaultLeaf.answer == 47)
         check(readDerived(Derived<Int, String>(1, "generic")) == "generic")
         check(readDerived(Derived<Int, Int>(1, 31)) == 31)
         check(readContract(ContractDerived<Int, String>(1, "interface")) == "interface")

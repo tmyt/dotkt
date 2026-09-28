@@ -16,3 +16,8 @@ interface Root<T> { val item: Cell<T?> }
 interface Mid<T> : Root<T>
 interface Leaf : Mid<Int?>
 class LeafImpl(value: Int?) : Leaf { override val item = Cell<Int?>(value) }
+
+interface DefaultRoot<T> { val answer: Int get() = 47 }
+interface DefaultMid<T> : DefaultRoot<T>
+interface DefaultLeaf : DefaultMid<Int?>
+class DefaultLeafImpl : DefaultLeaf
