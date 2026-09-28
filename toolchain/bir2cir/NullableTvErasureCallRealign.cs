@@ -809,7 +809,8 @@ static partial class NullableTvErasureCallRealign
                 if (!KotlinPropertyAccessors.TryCallIdentity(obj, out _, out _) && decl == null)
                 {
                     decl = LookupDeclarationIdentity(obj, owner, ctx.Idx);
-                    if (decl == null) ctx.Idx.TopLevel.TryGetValue(method + "|" + argCount, out decl);
+                    if (decl == null && Str(obj[DeclarationIdentityBinding.Key]) == null)
+                        ctx.Idx.TopLevel.TryGetValue(method + "|" + argCount, out decl);
                 }
             }
         }
@@ -992,7 +993,12 @@ static partial class NullableTvErasureCallRealign
         DeclIndex idx, JsonObject call)
     {
         if (idx.ByOwner.TryGetValue(owner.Name, out var sigs))
+        {
+            // An inherited call can still carry the derived owner before owner binding runs. A missing exact
+            // identity there must not select a derived sibling; the later flow pass uses the bound base owner.
+            if (Str(call[DeclarationIdentityBinding.Key]) != null) return null;
             return sigs.TryGetValue(method + "|" + argCount, out var local) ? local : null;
+        }
         return LookupReferencedDecl(owner, method, argCount, methodArity, isStatic, call);
     }
 

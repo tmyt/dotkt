@@ -10,6 +10,22 @@ private class LocalOverloadSlotFactory<T>(val owner: T) {
     fun <M> select(value: M): OverloadSlotResult<T> = OverloadSlotResult(null, "value")
 }
 
+private open class LocalInheritedSlotBase<T>(val owner: T) {
+    fun select(marker: OverloadSlotMarker?): OverloadSlotResult<T> = OverloadSlotResult(marker, "marker")
+}
+private class LocalInheritedSlotDerived<T>(owner: T) : LocalInheritedSlotBase<T>(owner) {
+    fun select(value: String): String = value
+}
+private open class LocalInheritedOverloadBase<T>(val owner: T) {
+    fun <M> select(marker: OverloadSlotMarker?): OverloadSlotResult<T> = OverloadSlotResult(marker, "marker")
+    fun <M> select(value: M): OverloadSlotResult<T> = OverloadSlotResult(null, "value")
+}
+private class LocalInheritedOverloadDerived : LocalInheritedOverloadBase<Int>(29)
+
+private suspend fun <T> localSuspendingOverload(marker: OverloadSlotMarker?): OverloadSlotResult<T> =
+    OverloadSlotResult(marker, "marker")
+private suspend fun <T> localSuspendingOverload(value: T): OverloadSlotResult<T> = OverloadSlotResult(null, "value")
+
 private suspend fun <T> suspendedOverloadSlot(context: CoroutineContext, remote: Boolean): OverloadSlotResult<T> {
     val result = if (remote) remoteOverloadSlot<T>(context[OverloadSlotMarker])
         else localOverloadSlot<T>(context[OverloadSlotMarker])
@@ -54,6 +70,24 @@ class NullableOverloadSlotTests {
         check(remote.select<Int>(23).selected == "value")
         check(local.owner == 17)
         check(remote.owner == "owner")
+        val inheritedLocal = LocalInheritedSlotDerived(19)
+        val inheritedRemote = RemoteInheritedSlotDerived("remote")
+        check(inheritedLocal.select(context[OverloadSlotMarker]).marker === marker)
+        check(inheritedRemote.select(context[OverloadSlotMarker]).marker === marker)
+        check(inheritedLocal.select(EmptyCoroutineContext[OverloadSlotMarker]).marker == null)
+        check(inheritedRemote.select(EmptyCoroutineContext[OverloadSlotMarker]).marker == null)
+        check(inheritedLocal.select("local sibling") == "local sibling")
+        check(inheritedRemote.select("remote sibling") == "remote sibling")
+        check(inheritedLocal.owner == 19)
+        check(inheritedRemote.owner == "remote")
+        val overloadedLocal = LocalInheritedOverloadDerived()
+        val overloadedRemote = RemoteInheritedOverloadDerived()
+        check(overloadedLocal.select<String>(context[OverloadSlotMarker]).marker === marker)
+        check(overloadedRemote.select<String>(context[OverloadSlotMarker]).marker === marker)
+        check(overloadedLocal.select<String>("value").selected == "value")
+        check(overloadedRemote.select<Int>(7).selected == "value")
+        check(overloadedLocal.owner == 29)
+        check(overloadedRemote.owner == 31)
     }
 
     @TestAttribute
@@ -65,6 +99,12 @@ class NullableOverloadSlotTests {
             check(suspendedOverloadSlot<Int>(marker, true).marker === marker)
             check(suspendedOverloadSlot<String>(EmptyCoroutineContext, false).marker == null)
             check(suspendedOverloadSlot<Int>(EmptyCoroutineContext, true).marker == null)
+            check(localSuspendingOverload<String>(marker[OverloadSlotMarker]).marker === marker)
+            check(remoteSuspendingOverload<Int>(marker[OverloadSlotMarker]).marker === marker)
+            check(localSuspendingOverload<Int>(EmptyCoroutineContext[OverloadSlotMarker]).marker == null)
+            check(remoteSuspendingOverload<String>(EmptyCoroutineContext[OverloadSlotMarker]).marker == null)
+            check(localSuspendingOverload<Int>(7).selected == "value")
+            check(remoteSuspendingOverload<String>("value").selected == "value")
         }
         block.startCoroutine(object : Continuation<Unit> {
             override val context: CoroutineContext = EmptyCoroutineContext
