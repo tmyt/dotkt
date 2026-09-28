@@ -211,7 +211,9 @@ sealed class Pipeline
         // so their complete physical frames are materialized with the declaration and its callers.
         if (!_options.RefBuild) SequenceElementAdapterLowering.Apply(birRoots);
         var genericRepresentations = new GenericRepresentationPolicy(representationAliases);
+        var restoreDefaultFrames = DefaultArgSplice.PrepareInlineDefaults(birRoots, refs);
         NullableRepresentationMaterialization.Apply(birRoots, isValueFqn, refs, policy: genericRepresentations);
+        restoreDefaultFrames();
         // Preserve selected local factory facts before per-file transformations. In a
         // stdlib self-build these declarations are local, not referenced MethodDefs.
         var localFactories = MemberCallSubstitution.CollectLocalFactories(birRoots);
@@ -432,7 +434,7 @@ sealed class Pipeline
                 CompanionRepresentationLowering.BindSpliceUses(bir.Root, refs);
             InlineSplice.Apply(
                 bir.Root, refs, appLocalFileClassMethods, inlineDispatchHierarchy, companionExtensionBindings,
-                materializeDefaults: attributeTopLevelOwner);
+                requireCompleteDefaults: attributeTopLevelOwner);
             // VALUE-POSITION JOIN WIDENING (#86 §3): a `try`/`catch` or `if/when` join the frontend resolved to a
             // NON-nullable type while one branch yields a literal `null` — kotc records exactly that fact on the
             // declaration it mints for the join, and the physical consequence is decided HERE: a VALUE join widens to

@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Default callbacks participate in generic frame materialization (#883).** Omitted callbacks and
+  their carried helpers retain constructed generic argument frames across Kotlin DLL boundaries.
+
 - **Local function calls retain their instantiated result types (#880).** Captured local function
   results remain typed while later arguments suspend, preserving generic frames and evaluation order.
 

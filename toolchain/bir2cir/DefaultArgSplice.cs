@@ -58,6 +58,74 @@ static class DefaultArgSplice
 {
     static int _counter;   // global unique id for fresh re-hoisted lifted-method names (per splice instance)
 
+    // Prepare omitted inline values while all call-site type arguments are still Kotlin vocabulary.
+    // Receiver/earlier-argument tokens remain deferred: InlineSplice binds them to evaluated reads,
+    // never to copies of caller expressions. Carried helpers participate in the ordinary frame pass.
+    internal static Action PrepareInlineDefaults(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs)
+    {
+        var restore = new List<Action>();
+        var files = roots.OfType<JsonObject>().ToArray();
+        var declarations = new InlineBirIndex();
+        foreach (var file in files) declarations.Stash(file.DeepClone());
+        foreach (var file in files)
+        {
+            var hoist = new JsonArray();
+            var materialized = new List<JsonNode>();
+            var owner = TypeJson.Fqn(Str(file["fileClass"]));
+            void Walk(JsonNode node)
+            {
+                if (node is JsonObject call)
+                {
+                    materialized.AddRange(ExpandNode(call, refs, hoist, owner, "source default preparation"));
+                    if (Str(call["k"]) == "callInline" && call["args"] is JsonArray arguments
+                        && arguments.Any(argument => argument == null) && call["preparedDefaults"] == null)
+                    {
+                        var (payload, _, diagnostic) = InlineSplice.ResolvePayload(call, declarations, refs);
+                        if (payload == null) throw new InvalidOperationException("bir2cir: inline default preparation: " + diagnostic);
+                        var parameters = (JsonArray)payload["params"];
+                        var extension = Str(payload["recv"]) == "extensionParam";
+                        var prepared = new JsonArray();
+                        for (var i = 0; i < arguments.Count; i++)
+                        {
+                            if (arguments[i] != null) { prepared.Add((JsonNode)null); continue; }
+                            var slot = i + (extension ? 1 : 0);
+                            var parameter = (JsonObject)parameters[slot];
+                            var expression = parameter["default"]?.DeepClone()
+                                ?? MaterializeDefault(InlineSplice.KotlinDefaultCarrier(parameter)
+                                    ?? throw new InvalidOperationException("Omitted inline argument has no default"),
+                                    hoist, refs, TypeJson.OwnerName(call["callee"]), slot, owner);
+                            // These declarations enter a module-wide frame index before the eventual inline
+                            // splice. Give each materialization its own identity at this first declaration entry.
+                            RehomeSynthClasses(expression, Str(call["semanticOwner"]) ?? TypeJson.OwnerName(owner),
+                                Interlocked.Increment(ref _counter));
+                            ClosureSynthesis.PrebindSplicedFrames(expression);
+                            InlineSplice.SubstTvIn(expression, call["typeArgs"] as JsonArray ?? new JsonArray(),
+                                (payload["typeParams"] as JsonArray)?.Count ?? 0,
+                                call["recvs"]?["dispatchTypeArgs"] as JsonArray);
+                            prepared.Add(expression);
+                            materialized.Add(expression);
+                        }
+                        call["preparedDefaults"] = prepared;
+                    }
+                    foreach (var (key, child) in call.ToArray()) if (key != "attrs") Walk(child);
+                }
+                else if (node is JsonArray array)
+                    foreach (var child in array.ToArray()) Walk(child);
+            }
+            Walk(file);
+            while (hoist.Count != 0)
+            {
+                var helper = hoist[0]; hoist.RemoveAt(0);
+                Walk(helper);
+                ((JsonArray)file["methods"]).Add(helper);
+            }
+            var closureFrames = PreparedClosureDefaultFrames.Stage(file, materialized, refs);
+            var suspendFrames = PreparedSuspendDefaultFrames.Stage(file, materialized.Concat(closureFrames.Types));
+            restore.Add(() => { suspendFrames(); closureFrames.Restore(); });
+        }
+        return () => { foreach (var action in restore) action(); };
+    }
+
     // Demand collection precedes physical representation and executable splicing. Analyze an independent
     // source-vocabulary graph with the same omitted-argument expansion, so a default's operations belong
     // to the omitting caller rather than becoming an unconditional ABI requirement of the callee.

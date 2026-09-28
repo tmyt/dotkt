@@ -501,6 +501,8 @@ static class ClosureSynthesis
             cls["outerTypeParamCount"] = outerCount.DeepClone();
         if (sc["outerTypeParamOffset"] is JsonValue outerOffset)
             cls["outerTypeParamOffset"] = outerOffset.DeepClone();
+        if (sc[KotlinSupertypesRecord.PreKey] is JsonNode sourceFacts)
+            cls[KotlinSupertypesRecord.PreKey] = sourceFacts.DeepClone();
         cls["base"] = null;
         cls["interfaces"] = new JsonArray();
         cls["fields"] = fields.DeepClone();

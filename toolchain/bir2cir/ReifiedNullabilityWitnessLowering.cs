@@ -511,12 +511,14 @@ static class ReifiedNullabilityWitnessLowering
             if (index < 0 || index >= typeArguments.Count)
                 throw new InvalidOperationException(
                     $"bir2cir: dense suspend frame has no demanded type argument at index {index}");
-            if (!TryWitnessForExisting(typeArguments[index], callerWitnesses, out var value)) continue;
+            var value = WitnessFor(typeArguments[index], callerWitnesses);
             var name = Prefix + index;
             while (!usedNames.Add(name)) name += "$";
             captures.Add(new JsonObject { ["name"] = name, ["type"] = Fqn("kotlin.Int") });
             capValues.Add(value);
-            var destination = TypeJson.Read(typeArguments[index]) is TypeNode.Tv { Scope: "type" }
+            var declarationArguments = node[SuspendLambdaLowering.SplicedDeclarationFrameKey] as JsonArray;
+            var declarationScope = declarationArguments == null ? typeArguments[index] : declarationArguments[index];
+            var destination = TypeJson.Read(declarationScope) is TypeNode.Tv { Scope: "type" }
                 ? typeWitnesses : methodWitnesses;
             destination[index] = new JsonObject { ["k"] = "local", ["name"] = name };
         }
@@ -722,24 +724,6 @@ static class ReifiedNullabilityWitnessLowering
                 $"bir2cir: nullable-witness demand reached unbound {tv.Scope} type parameter {tv.I}"),
             var known => KotlinTypeWitness.Constant(KotlinTypeWitness.Flags(known)),
         };
-    }
-
-    static bool TryWitnessForExisting(JsonNode type, WitnessFrame callerWitnesses, out JsonNode witness)
-    {
-        switch (TypeJson.Read(type))
-        {
-            case TypeNode.Tv { Scope: "method" } tv when callerWitnesses?.Method != null
-                && callerWitnesses.Method.TryGetValue(tv.I, out var methodWitness):
-                witness = methodWitness.DeepClone();
-                return true;
-            case TypeNode.Tv { Scope: "type" } tv when callerWitnesses?.Type != null
-                && callerWitnesses.Type.TryGetValue(tv.I, out var typeWitness):
-                witness = typeWitness.DeepClone();
-                return true;
-            default:
-                witness = null;
-                return false;
-        }
     }
 
     static void AppendWitnessType(JsonObject call, string key)
