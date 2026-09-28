@@ -7145,6 +7145,7 @@ sealed partial class ReferenceMetadataIndex
 
     internal static void SelfTest()
     {
+        SelfTestSourceHierarchyFrames();
         var ownerSlot = new TypeNode.Tv("type", 0);
         var stringSlot = new TypeNode.Fqn("System.String");
         var intSlot = new TypeNode.Fqn("System.Int32");

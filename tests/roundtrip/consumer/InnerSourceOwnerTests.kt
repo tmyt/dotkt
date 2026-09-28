@@ -2,11 +2,16 @@ package roundtrip.innerowner
 
 import NUnit.Framework.TestAttribute
 
+private fun <O, I> read(value: Outer<O>.Inner<I>): I = value.value
+
 class InnerSourceOwnerTests {
     @TestAttribute
     fun inheritedOwnersKeepOwnAndCapturedArgumentsAcrossDlls() {
         val inner = Outer<Int>().Inner<String>("inner")
         check(inner.value == "inner")
+        check(read(inner) == "inner")
+        val derived = Outer<Int>().Derived<String>("derived")
+        check(derived.nested == "derived")
         val captured = Outer<Int>().Captured(17)
         check(captured.value == 17)
         val middle = Outer<Int>().Middle<String>()
