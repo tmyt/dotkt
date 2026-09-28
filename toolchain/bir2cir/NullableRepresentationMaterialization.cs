@@ -58,19 +58,23 @@ static class NullableRepresentationMaterialization
         foreach (var root in roots.OfType<JsonObject>()) NullableGenericErasure.PreserveSourceFacts(root, isValue);
         var empty = new NullableRepresentationFrame(0, Array.Empty<int>());
         var applicationTypes = applicationFrames.Project(types);
-        NullableRepresentationTypes Mapping(NullableRepresentationFrame owner, NullableRepresentationFrame method) =>
-            new(owner, method, applicationTypes, isValue, argumentHead, policy);
+        var dispatchTypes = applicationFrames.Project(types, retainPhysicalOrder: true);
+        NullableRepresentationTypes Mapping(NullableRepresentationFrame owner, NullableRepresentationFrame method,
+            string ownerName = null) => new(owner, method, applicationTypes, isValue, argumentHead, policy,
+                ownerName == null ? owner : dispatchTypes.GetValueOrDefault(ownerName) ?? owner,
+                ownerName == null ? owner : applicationTypes.GetValueOrDefault(ownerName) ?? owner);
         var declarations = demands.SelectMany(owner => owner.Methods.Select(method => (owner, method)))
             .Where(pair => Text(pair.method.Declaration[DeclarationIdentityBinding.Key]) != null)
             .ToDictionary(pair => Text(pair.method.Declaration[DeclarationIdentityBinding.Key]),
-                pair => Mapping(pair.owner.Frame, pair.method.Frame), StringComparer.Ordinal);
+                pair => Mapping(pair.owner.Frame, pair.method.Frame,
+                    Text(pair.owner.Declaration["name"]) ?? Text(pair.owner.Declaration["fileClass"])), StringComparer.Ordinal);
         var localDeclarations = demands.SelectMany(owner => owner.Methods.Where(method => method.IsLocal)
                 .Select(method => (owner, method)))
             .ToDictionary(pair => pair.method.Declaration,
                 pair => Mapping(pair.owner.Frame, pair.method.Frame));
         foreach (var (id, frame) in importedMethods)
             if (!declarations.ContainsKey(id) && references.TryDeclarationIdentity(id, out _, out var owner, out _, out _))
-                declarations[id] = Mapping(types.GetValueOrDefault(owner) ?? empty, frame);
+                declarations[id] = Mapping(types.GetValueOrDefault(owner) ?? empty, frame, owner);
         // Constructor delegation descriptors belong to the selected base/this declaration, not to the
         // subclass's lexical frame. Snapshot this relation before rewriting any owner's base type.
         var constructorMappings = new Dictionary<JsonObject, NullableRepresentationTypes>();
@@ -100,7 +104,7 @@ static class NullableRepresentationMaterialization
                 if (use["memberOwnerTypeParams"] is JsonArray
                     && TypeJson.Read(descriptorOwner) is TypeNode.Fqn descriptorType
                     && types.TryGetValue(descriptorType.Name, out var descriptorFrame))
-                    return Mapping(descriptorFrame, selected.MethodFrame);
+                    return Mapping(descriptorFrame, selected.MethodFrame, descriptorType.Name);
                 return selected;
             }
             // A Kotlin declaration may have no generic parameters of its own while its signature contains
@@ -109,12 +113,12 @@ static class NullableRepresentationMaterialization
             if (Text(use[DeclarationIdentityBinding.Key]) is string referencedId
                 && references != null
                 && references.TryDeclarationIdentity(referencedId, out _, out var referencedOwner, out _, out _))
-                return Mapping(types.GetValueOrDefault(referencedOwner), references.NullableMethodFrame(referencedId));
+                return Mapping(types.GetValueOrDefault(referencedOwner), references.NullableMethodFrame(referencedId), referencedOwner);
             var ownerType = Text(use["k"]) == "new" ? use["type"] : use["ownerType"] ?? use["owner"];
             return TypeJson.Read(ownerType) is TypeNode.Fqn owner && types.TryGetValue(owner.Name, out var frame)
                 // Knowing the owner does not establish a zero-arity method frame. Unbound method variables in
                 // its declaration signature must not be interpreted as variables of a fictitious empty method.
-                ? Mapping(frame, null) : null;
+                ? Mapping(frame, null, owner.Name) : null;
         }
         foreach (var owner in demands)
         {
@@ -311,6 +315,7 @@ static class NullableRepresentationMaterialization
                 && obj["sharedCellTypeParams"] == null ? null : declarationMapping(obj);
             JsonArray closedArguments = null;
             JsonArray closedDispatchArguments = null;
+            JsonArray closedDispatchOwnerArguments = null;
             if (kind is "newClosure" or "newSam" && obj["synthClass"] == null
                 && obj["typeArgs"] is JsonArray syntheticArguments
                 && TypeJson.OwnerName(obj["closureType"] ?? obj["samType"]) is string syntheticOwner)
@@ -320,10 +325,14 @@ static class NullableRepresentationMaterialization
                 if (application is TypeNode.Fqn { Args: { } physicalArguments })
                     closedArguments = new JsonArray(physicalArguments.Select(TypeJson.Write).ToArray());
             }
-            if (kind == "callInline" && selectedMapping?.OwnerFrame is { } dispatchFrame
+            if (kind == "callInline" && selectedMapping?.DispatchOwnerFrame is { } dispatchFrame
                 && obj["recvs"] is JsonObject receivers && receivers["dispatchTypeArgs"] is JsonArray dispatchArguments)
-                closedDispatchArguments = new JsonArray(mapping.CloseMethod(dispatchFrame,
-                    dispatchArguments.Select(TypeJson.Read).ToArray()).Select(TypeJson.Write).ToArray());
+            {
+                var arguments = dispatchArguments.Select(TypeJson.Read).ToArray();
+                closedDispatchArguments = new JsonArray(mapping.CloseMethod(dispatchFrame, arguments).Select(TypeJson.Write).ToArray());
+                closedDispatchOwnerArguments = new JsonArray(mapping.CloseMethod(selectedMapping.ApplicationOwnerFrame,
+                    arguments).Select(TypeJson.Write).ToArray());
+            }
             if (kind == "localFun")
             {
                 var local = (JsonObject)obj["decl"];
@@ -416,6 +425,7 @@ static class NullableRepresentationMaterialization
                     rewrittenReceivers.Remove("dispatchTypeArgs");
                     Rewrite(rewrittenReceivers, mapping, methods, declarationMapping, position);
                     rewrittenReceivers["dispatchTypeArgs"] = closedDispatchArguments;
+                    rewrittenReceivers["dispatchOwnerTypeArgs"] = closedDispatchOwnerArguments;
                     continue;
                 }
                 // The lexical ID already selects the declaration. LocalFunctionLowering supplies its final

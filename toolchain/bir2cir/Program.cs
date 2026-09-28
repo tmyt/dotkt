@@ -989,7 +989,7 @@ sealed class Pipeline
         TypeOwnershipLowering.ApplyAll(staged.Select(s => s.Root).ToList());
         // Opaque raw-BIR carriers cross the assembly boundary after the representation decision above. Bind any local
         // nested type tokens to this producer's exact metadata identity now; readers never reconstruct that relation.
-        OpaqueCarrierTypeBinding.ApplyAll(staged.Select(s => s.Root).ToList(), refs);
+        OpaqueCarrierTypeBinding.ApplyAll(staged.Select(s => s.Root).ToList(), refs, declarationSemanticSignatures);
         // A synthesized closure/SAM class holds each capture in an INSTANCE FIELD, which the CLR refuses for a
         // byref-like (`ref struct`) type. ClosureSynthesis recorded those refusals rather than throwing, because the
         // cold suspend lowering above reconstructs a `suspendCoroutine { … }` block inline and PRUNES the class it

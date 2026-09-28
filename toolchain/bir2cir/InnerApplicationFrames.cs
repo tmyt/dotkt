@@ -10,12 +10,10 @@ sealed class InnerApplicationFrames
 {
     readonly Dictionary<string, JsonObject> _locals = new(StringComparer.Ordinal);
     readonly ReferenceMetadataIndex _references;
-    readonly IReadOnlyDictionary<string, string> _physicalNames;
 
     public InnerApplicationFrames(IEnumerable<JsonNode> roots, ReferenceMetadataIndex references)
     {
         _references = references;
-        _physicalNames = references?.PhysicalTypeNames ?? new Dictionary<string, string>();
         void Discover(JsonObject owner)
         {
             if (Text(owner["name"]) is string name) _locals[name] = owner;
@@ -32,7 +30,7 @@ sealed class InnerApplicationFrames
         var visiting = new HashSet<string>(StringComparer.Ordinal);
         NullableRepresentationFrame Frame(string name)
         {
-            if (!_locals.ContainsKey(name)) name = _physicalNames.GetValueOrDefault(name) ?? name;
+            if (!_locals.ContainsKey(name)) name = _references?.RecordedPhysicalTypeName(name) ?? name;
             if (declarations.TryGetValue(name, out var frame)) return frame;
             if (_locals.TryGetValue(name, out var local))
                 return new NullableRepresentationFrame((local["typeParams"] as JsonArray)?.Count ?? 0, Array.Empty<int>());

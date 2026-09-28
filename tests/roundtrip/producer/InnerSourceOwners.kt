@@ -13,7 +13,17 @@ class NullableOuter<O>(val outer: O?) {
 }
 class NullableOwnOuter<O> {
     inner class Inner<I>(value: I?) : Base<I?>(value)
+    inner class Inline<I>(val items: List<I?>) {
+        inline fun visit(block: (I?) -> Unit) { block(items[0]) }
+    }
 }
+class CompanionOuter<O>(value: O?) : Base<O?>(value) {
+    inner class Middle<M>(value: M?) : Base<M?>(value) {
+        inner class Leaf<L>(value: L?) : Base<L?>(value)
+    }
+}
+fun <O, M, L> readCompanionLeaf(value: CompanionOuter<O>.Middle<M>.Leaf<L>): L? = value.value
+class NullableInnerHolder(value: NullableOuter<Int>.Inner<String>) : Base<NullableOuter<Int>.Inner<String>>(value)
 class Outer<O> {
     inner class Wrapped<I>(value: List<I>) : Base<List<I>>(value)
     open inner class NestedBase<I>(val nested: I)

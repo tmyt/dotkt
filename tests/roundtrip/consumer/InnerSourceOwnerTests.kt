@@ -29,6 +29,7 @@ class InnerSourceOwnerTests {
         check(nullable.value == "nullable")
         check(readNullable(nullable) == "nullable")
         check(nullable.captured == 7)
+        check(NullableInnerHolder(nullable).value.value == "nullable")
         val empty = NullableOuter<Int>(null).Inner<String>(null)
         check(empty.value == null)
         check(empty.captured == null)
@@ -47,5 +48,11 @@ class InnerSourceOwnerTests {
         check(readLeaf(nullLeaf) == null)
         check(nullLeaf.capturedOuter == null)
         check(nullLeaf.capturedMiddle == null)
+        val companionLeaf = CompanionOuter<Int>(11).Middle<String>("middle").Leaf<Double>(4.5)
+        check(readCompanionLeaf(companionLeaf) == 4.5)
+        val emptyCompanionLeaf = CompanionOuter<Int>(null).Middle<String>(null).Leaf<Double>(null)
+        check(readCompanionLeaf(emptyCompanionLeaf) == null)
+        NullableOwnOuter<String>().Inline<Int>(listOf(31)).visit { check(it == 31) }
+        NullableOwnOuter<String>().Inline<Int>(listOf(null)).visit { check(it == null) }
     }
 }

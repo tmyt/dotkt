@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
@@ -8,6 +9,7 @@ static class InnerRepresentationFrameTests
     public static void SelfTest()
     {
         ApplicationCorrespondence();
+        SourceCarrierIdentity();
         // Declarations use enclosing-first variables; Kotlin inner applications use own-first arguments.
         var root = JsonNode.Parse("""
         {"fileClass":"InnerFrameProbe","types":[
@@ -59,5 +61,26 @@ static class InnerRepresentationFrameTests
             new TypeNode.Array(new TypeNode.Nullable(inner)), outer, new TypeNode.Nullable(outer), new TypeNode.Array(outer) }))
             throw new InvalidOperationException("Application frame mixed enclosing and own representation roles");
         Console.WriteLine("[inner application correspondence] self-test OK (source identity and independent physical order)");
+    }
+
+    static void SourceCarrierIdentity()
+    {
+        var source = new TypeNode.Fqn("Sample.Outer.Inner", new TypeNode[] {
+            new TypeNode.Tv("method", 1), new TypeNode.Tv("method", 0),
+        });
+        var root = JsonNode.Parse("""
+        {"fileClass":"Sample.File","types":[
+          {"name":"Sample.Outer","typeParams":["O"]},
+          {"name":"Sample.Outer.Inner","nestedIn":"Sample.Outer","typeParams":["I","N"]}],
+          "fields":[{"name":"slot"}]}
+        """)!;
+        root["fields"]![0]!["nullableGeneric"] = TypeNode.ToJson(source);
+        var signature = new JsonObject { ["params"] = new JsonArray(TypeJson.Write(source)) };
+        OpaqueCarrierTypeBinding.ApplyAll(new[] { root }, ReferenceMetadataIndex.Build(Array.Empty<string>()),
+            new Dictionary<string, JsonObject> { ["declaration"] = signature });
+        var expected = new TypeNode.Fqn("Sample.Outer`1+Inner`2", source.Args);
+        var slot = TypeJson.Read(JsonNode.Parse(root["fields"]![0]!["nullableGeneric"]!.GetValue<string>()));
+        if (slot != expected || TypeJson.Read(signature["params"]![0]) != expected)
+            throw new InvalidOperationException("Source carriers lost nested identity or changed source argument order");
     }
 }

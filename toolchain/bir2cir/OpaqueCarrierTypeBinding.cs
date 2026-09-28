@@ -15,7 +15,8 @@ static class OpaqueCarrierTypeBinding
 
     static string Str(JsonNode node) => (node as JsonValue)?.GetValue<string>();
 
-    public static void ApplyAll(IReadOnlyList<JsonNode> roots, ReferenceMetadataIndex refs)
+    public static void ApplyAll(IReadOnlyList<JsonNode> roots, ReferenceMetadataIndex refs,
+        IReadOnlyDictionary<string, JsonObject> semanticSignatures = null)
     {
         var declarations = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
         var fileClasses = new HashSet<string>(StringComparer.Ordinal);
@@ -72,15 +73,18 @@ static class OpaqueCarrierTypeBinding
         foreach (var root in roots)
         {
             if (physicalBySemantic.Count > 0) RewriteCarrierSlots(root, physicalBySemantic);
-            BindSupertypeRecords(root, physicalBySemantic, refs);
+            BindSourceRecords(root, physicalBySemantic, refs);
         }
+        if (semanticSignatures != null)
+            foreach (var signature in semanticSignatures.Values)
+                BindSourcePayload(signature, physicalBySemantic, refs);
     }
 
-    // KotlinSupertypes is captured before ownership lowering so it retains source nullability, stars, Kotlin inner
+    // Source carriers are captured before ownership lowering so they retain source nullability, stars, Kotlin inner
     // argument order, and the flattened Kotlin type-parameter frame. Once ownership has selected exact local and
     // referenced TypeDefs, bind only classifier names inside that opaque snapshot. Arguments deliberately remain in
     // Kotlin metadata order; dll2klib consumes the exact '+' path as a nested classifier without rotating them again.
-    static void BindSupertypeRecords(JsonNode node, IReadOnlyDictionary<string, string> localPhysical,
+    static void BindSourceRecords(JsonNode node, IReadOnlyDictionary<string, string> localPhysical,
         ReferenceMetadataIndex refs)
     {
         if (node is JsonObject obj)
@@ -88,21 +92,26 @@ static class OpaqueCarrierTypeBinding
             foreach (var key in new[] {
                 KotlinSupertypesRecord.PreKey,
                 NullableGenericErasure.MethodTypeParameterBoundsPre,
+                "nullableGeneric", "nullableGenericRet",
             })
             {
                 if ((obj[key] as JsonValue)?.TryGetValue<string>(out var encoded) != true) continue;
                 var payload = JsonNode.Parse(encoded)
                     ?? throw new InvalidOperationException($"{key} pass-local payload decoded to null");
-                Rewrite(payload);
+                BindSourcePayload(payload, localPhysical, refs);
                 obj[key] = payload.ToJsonString();
             }
             foreach (var child in obj.Select(kv => kv.Value).Where(value => value != null).ToList())
-                BindSupertypeRecords(child, localPhysical, refs);
+                BindSourceRecords(child, localPhysical, refs);
         }
         else if (node is JsonArray array)
             foreach (var child in array.Where(value => value != null).ToList())
-                BindSupertypeRecords(child, localPhysical, refs);
+                BindSourceRecords(child, localPhysical, refs);
+    }
 
+    static void BindSourcePayload(JsonNode payload, IReadOnlyDictionary<string, string> localPhysical,
+        ReferenceMetadataIndex refs)
+    {
         void Rewrite(JsonNode current)
         {
             if (current is JsonObject type)
@@ -120,6 +129,7 @@ static class OpaqueCarrierTypeBinding
             else if (current is JsonArray array)
                 foreach (var child in array.Where(value => value != null).ToList()) Rewrite(child);
         }
+        Rewrite(payload);
     }
 
     static void RewriteCarrierSlots(JsonNode node, IReadOnlyDictionary<string, string> physicalBySemantic)

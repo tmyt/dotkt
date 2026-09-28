@@ -2287,6 +2287,9 @@ sealed partial class ReferenceMetadataIndex
             .Where(kv => !IsLocalEmittedType(kv.Key))
             .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.Ordinal);
 
+    internal string RecordedPhysicalTypeName(string sourceName) => !IsLocalEmittedType(sourceName)
+        && _physicalTypeBySemanticName.TryGetValue(sourceName, out var physical) ? physical : sourceName;
+
     // Kotlin inner applications arrive in BIR as [own..., outer...]. Trusted DotKt metadata supplies the number of
     // semantic outer slots for referenced declarations; TypeOwnershipLowering alone projects them to CLR's flattened
     // [outer..., own...] order. Accept both semantic dotted and exact physical nested spellings.

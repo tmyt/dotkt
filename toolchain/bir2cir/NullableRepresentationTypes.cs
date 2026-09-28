@@ -16,6 +16,8 @@ sealed class NullableRepresentationTypes
     readonly Func<TypeNode.Fqn, bool, NullableRepresentationFrame, TypeNode> _argumentHead;
     readonly GenericRepresentationPolicy _policy;
     internal NullableRepresentationFrame OwnerFrame => _owner;
+    internal NullableRepresentationFrame DispatchOwnerFrame { get; }
+    internal NullableRepresentationFrame ApplicationOwnerFrame { get; }
     internal NullableRepresentationFrame MethodFrame => _method;
 
     // These facts are expressed in the selected declaration's frame, not the lexical caller's frame.
@@ -35,9 +37,12 @@ sealed class NullableRepresentationTypes
     public NullableRepresentationTypes(NullableRepresentationFrame owner, NullableRepresentationFrame method,
         IReadOnlyDictionary<string, NullableRepresentationFrame> types, ValueTypeOracle isValue,
         Func<TypeNode.Fqn, bool, NullableRepresentationFrame, TypeNode> argumentHead = null,
-        GenericRepresentationPolicy policy = null)
+        GenericRepresentationPolicy policy = null, NullableRepresentationFrame dispatchOwnerFrame = null,
+        NullableRepresentationFrame applicationOwnerFrame = null)
     {
         _owner = owner;
+        DispatchOwnerFrame = dispatchOwnerFrame ?? owner;
+        ApplicationOwnerFrame = applicationOwnerFrame ?? owner;
         _method = method;
         _types = types;
         _isValue = isValue;

@@ -204,6 +204,11 @@ frames remain declaration-owned. Source hierarchy readers translate carried decl
 edge variables separately before substituting a Kotlin application; nullable companions are not independent
 source arguments.
 
+Inline receiver materialization carries two distinct correspondences: `dispatchTypeArgs` substitutes the payload's
+declaration-physical variables, while the pass-local `dispatchOwnerTypeArgs` types the receiver in intermediate
+application order. Source slot carriers and saved declaration signatures bind their nested classifier names to the
+producer's exact metadata identity without changing their source argument order.
+
 Current representation demand does not allocate storage or nullable-storage companions: their arrays are empty
 on ordinary producer-generated frames. The frame machinery can represent those roles, but they are not the
 current collection ABI and do not imply positional conversion to mutable CLR collection heads.
