@@ -94,7 +94,8 @@ static class FBoundStarProjectionErasure
                 var removed = new JsonArray();
                 foreach (var constraint in constraints)
                     if (ContainsOwnerPrefixTv(TypeJson.Read(constraint), prefix)
-                        || OwnerConstrainedMethodLowering.HasConstructedDependency(TypeJson.Read(constraint), "type", index))
+                        || OwnerConstrainedMethodLowering.HasConstructedDependency(TypeJson.Read(constraint), "type", index,
+                            KotlinSupertypesRecord.ReadNullableFrame(definition)))
                     {
                         removed.Add(TypeJson.Write(ProjectOwnerMethodBound(
                             TypeJson.Read(constraint), owners, refs, physical: false)));
@@ -1711,7 +1712,8 @@ static class FBoundStarProjectionErasure
         if (method["typeParams"] is JsonArray tps && tps.Count > 0)
             slot["typeParams"] = EraseOwnerTypeParamConstraints(tps, owners, refs,
                 owners.TryGetValue(semanticCarrierOwner, out var constraintOwner)
-                    ? constraintOwner.Def["typeParams"] as JsonArray : null);
+                    ? constraintOwner.Def["typeParams"] as JsonArray : null,
+                OwnerConstrainedMethodLowering.ReadMethodFrame(method));
         // An owner-independent existential slot is the same physical contract as the source MethodDef. Preserve an
         // explicit source allocation while it is still a stated BIR fact so the forwarding MethodImpl descriptor is
         // authored with that name before module-wide declaration allocation runs. A dependent slot has its own
@@ -2368,7 +2370,8 @@ static class FBoundStarProjectionErasure
             + "an earlier lowering dropped it.");
 
     static JsonArray EraseOwnerTypeParamConstraints(JsonArray typeParams,
-        IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs, JsonArray ownerParameters)
+        IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs, JsonArray ownerParameters,
+        NullableRepresentationFrame methodFrame)
     {
         var result = new JsonArray();
         foreach (var (typeParamNode, parameterIndex) in typeParams.Select((node, index) => (node, index)))
@@ -2394,7 +2397,8 @@ static class FBoundStarProjectionErasure
                     // No approximation of I<T> can constrain R on a carrier with hidden T. Kotlin metadata retains
                     // the original bound; only owner-independent constraints remain on the physical declarations.
                     if (ContainsOwnerTv(constraint)
-                        || OwnerConstrainedMethodLowering.HasConstructedDependency(constraint, "method", parameterIndex))
+                        || OwnerConstrainedMethodLowering.HasConstructedDependency(constraint, "method", parameterIndex,
+                            methodFrame))
                     {
                         foreach (var consequence in ContainsOwnerTv(constraint)
                             ? OwnerConstrainedMethodLowering.IndependentBounds(constraint, ownerParameters)

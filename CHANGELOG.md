@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Self-referential generic bounds retain their nullable representation companions (#635).**
+  Physical representations of one Kotlin parameter no longer count as independent bound dependencies.
+
 - **Suspend lambda bounds follow declaration representation (#887).** Materialized suspend defaults
   retain the same physical generic constraints as their originating declarations.
 
