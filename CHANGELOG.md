@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Inline lambda argument reads retain their declared types (#917).**
+  Non-local smart-cast returns preserve constructed generic types across DLL boundaries.
+
 - **Projected alias instance helpers retain the receiver's actual CLR construction (#915).**
   Static implementations close receiver-dependent generic slots from the selected declaration's CLR witness,
   while existing foreign nested-star values retain their opaque representation.
