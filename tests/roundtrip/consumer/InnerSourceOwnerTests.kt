@@ -23,5 +23,15 @@ class InnerSourceOwnerTests {
         check(leaf.value == 3.5)
         check(outerValue.value == 23)
         check(middleValue.value == "middle")
+        val nullable = NullableOuter<Int>(7).Inner<String>("nullable")
+        check(nullable.value == "nullable")
+        check(nullable.captured == 7)
+        val empty = NullableOuter<Int>(null).Inner<String>(null)
+        check(empty.value == null)
+        check(empty.captured == null)
+        val ownValue = NullableOwnOuter<String>().Inner<Int>(31)
+        check(ownValue.value == 31)
+        val ownEmpty = NullableOwnOuter<String>().Inner<Int>(null)
+        check(ownEmpty.value == null)
     }
 }

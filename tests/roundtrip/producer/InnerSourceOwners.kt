@@ -1,6 +1,12 @@
 package roundtrip.innerowner
 
 open class Base<T>(val value: T)
+class NullableOuter<O>(val outer: O?) {
+    inner class Inner<I>(value: I?) : Base<I?>(value) { val captured = outer }
+}
+class NullableOwnOuter<O> {
+    inner class Inner<I>(value: I?) : Base<I?>(value)
+}
 class Outer<O> {
     inner class Wrapped<I>(value: List<I>) : Base<List<I>>(value)
     open inner class NestedBase<I>(val nested: I)

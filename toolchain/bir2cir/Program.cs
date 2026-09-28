@@ -35,6 +35,7 @@ static class Bir2Cir
                 NullableRepresentationDemand.SelfTest();
                 NullableRepresentationTypes.SelfTest();
                 NullableRepresentationMaterialization.SelfTest();
+                InnerRepresentationFrameTests.SelfTest();
                 GenericRepresentationPolicy.SelfTest();
                 BirTypeLowering.SelfTestSlotReturns();
                 SupertypeGraph.SelfTestDeclarationIdentity();

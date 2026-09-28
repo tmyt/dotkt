@@ -27,7 +27,8 @@ static class NullableRepresentationMaterialization
                 foreach (var item in array) FindReferencedCalls(item);
         }
         foreach (var root in roots) FindReferencedCalls(root);
-        var demands = NullableRepresentationDemand.Collect(roots, references?.NullableTypeFrames, importedMethods, policy);
+        var applicationFrames = new InnerApplicationFrames(roots, references);
+        var demands = NullableRepresentationDemand.Collect(roots, references?.NullableTypeFrames, importedMethods, policy, applicationFrames);
         var localBindings = NullableRepresentationDemand.BindLocalFunctions(roots);
         // Frames refer to immutable source arities. Snapshot before any declaration's parameters are expanded.
         var ownerFrames = demands.ToDictionary(owner => owner.Declaration, owner => owner.Frame);
@@ -56,8 +57,9 @@ static class NullableRepresentationMaterialization
             if (Text(method.Declaration[DeclarationIdentityBinding.Key]) is string id) methods[id] = method.Frame;
         foreach (var root in roots.OfType<JsonObject>()) NullableGenericErasure.PreserveSourceFacts(root, isValue);
         var empty = new NullableRepresentationFrame(0, Array.Empty<int>());
+        var applicationTypes = applicationFrames.Project(types);
         NullableRepresentationTypes Mapping(NullableRepresentationFrame owner, NullableRepresentationFrame method) =>
-            new(owner, method, types, isValue, argumentHead, policy);
+            new(owner, method, applicationTypes, isValue, argumentHead, policy);
         var declarations = demands.SelectMany(owner => owner.Methods.Select(method => (owner, method)))
             .Where(pair => Text(pair.method.Declaration[DeclarationIdentityBinding.Key]) != null)
             .ToDictionary(pair => Text(pair.method.Declaration[DeclarationIdentityBinding.Key]),

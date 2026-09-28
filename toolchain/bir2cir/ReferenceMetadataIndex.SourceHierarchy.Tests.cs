@@ -54,9 +54,23 @@ sealed partial class ReferenceMetadataIndex
         if (!index.SourceHierarchyFrame("probe.Wide.Middle.Inner").PhysicalOrder
                 .SequenceEqual(new[] { 4, 5, 2, 3, 0, 1 }))
             throw new InvalidOperationException("Source hierarchy reversed parameters within an enclosing owner");
-        var companionFrame = new NullableRepresentationFrame(3, new[] { 0, 2 }, new[] { 2, 4, 1, 0, 3 });
-        index._ownerNullableFrames["probe.Outer`1+Middle`1+Inner`1"] = companionFrame;
-        if (!ReferenceEquals(companionFrame, index.SourceHierarchyFrame("probe.Outer.Middle.Inner")))
-            throw new InvalidOperationException("Source hierarchy replaced an explicit representation frame");
+        Declare("probe.NullableOuter", "probe.NullableOuter`1", 1);
+        Declare("probe.NullableOuter.Inner", "probe.NullableOuter`1+Inner`2", 3, "probe.NullableOuter", 1);
+        const string nullableName = "probe.NullableOuter`1+Inner`2";
+        index._ownerNullableFrames[nullableName] = new NullableRepresentationFrame(2, new[] { 1 });
+        var application = index.SourceHierarchyFrame(nullableName);
+        if (application.SemanticVariable(new TypeNode.Tv("type", 1)) != new TypeNode.Tv("type", 0)
+            || application.SemanticVariable(new TypeNode.Tv("type", 2)) != new TypeNode.Nullable(new TypeNode.Tv("type", 0)))
+            throw new InvalidOperationException("Source hierarchy lost explicit frame roles in application order");
+        var carrierBase = new TypeNode.Fqn("probe.Holder`1", new TypeNode[] {
+            new TypeNode.Nullable(new TypeNode.Tv("type", 1)),
+        });
+        index._referenceTypeShapesByPhysicalOwner[nullableName] = new ReferenceTypeShape(
+            3, "class", null, Array.Empty<TypeNode.Fqn>(), new JsonObject { ["base"] = TypeJson.Write(carrierBase) });
+        if (!index.TryReferenceSourceTypeShape(new TypeNode.Fqn(nullableName), out var sourceArity, out var nullableBase, out _)
+            || sourceArity != 2 || nullableBase != new TypeNode.Fqn("probe.Holder`1", new TypeNode[] {
+                new TypeNode.Nullable(new TypeNode.Tv("type", 0)),
+            }))
+            throw new InvalidOperationException("Source carrier retained declaration order instead of application order");
     }
 }
