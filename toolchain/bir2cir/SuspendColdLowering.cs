@@ -1943,7 +1943,7 @@ static partial class SuspendColdLowering
                         : LocalVar(o, o["init"] == null
                             ? DefaultOf(VarType(o)) : RewriteNoSpill(o["init"]));
                 if (_isMember && Str(o["k"]) == "this")
-                    return FieldOf(ThisField, new TypeNode.Fqn(_ownerClass));
+                    return FieldOf(ThisField, _selfType);
                 if (Str(o["k"]) == "this" && CapturedOuterField() is JsonNode of0)
                     return of0;
                 if (IsCoroutineContextRead(o))          // #79 — <cont>.get_context (the SM itself, in an SM subtree)
@@ -2004,7 +2004,7 @@ static partial class SuspendColdLowering
                         : LocalVar(o, o["init"] == null
                             ? DefaultOf(VarType(o)) : Rewrite(o["init"], outp, VarType(o)));
                 if (_isMember && k == "this")
-                    return FieldOf(ThisField, new TypeNode.Fqn(_ownerClass));
+                    return FieldOf(ThisField, _selfType);
                 if (k == "this" && CapturedOuterField() is JsonNode of1)
                     return of1;
                 // GAP 2 — a `newSuspendLambda` VALUE inside the cold SM is OPAQUE: its own body is the lambda's
