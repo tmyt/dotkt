@@ -1251,8 +1251,7 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 		// A lift changes only the declaration's location/parameter list; it does not stop being a Kotlin suspend
 		// call. Preserve the same call-site fact as every other suspend call so bir2cir can route it to the lowered
 		// continuation entry. kotc deliberately does not name that CLR entry here.
-		// Keep the instantiated Kotlin result type when this value must survive a later operand's suspension.
-		return """{"k":"callLocal","id":${str(local.id)},"sty":${birType(call.type).toJson()},"sig":[$localSig],"args":[${(capArgs + recvArgs + localRegArgs).joinToString(",")}]$typeArgs${suspendCallTag(callee)}}"""
+		return """{"k":"callLocal","id":${str(local.id)},"sig":[$localSig],"args":[${(capArgs + recvArgs + localRegArgs).joinToString(",")}]$typeArgs${suspendCallTag(callee)}}"""
 	}
 
 	// Inlining (lambda-param inline funs only; lambda-less inline = JIT's job — see [[clr-not-jvm-discard-jvmisms]]).

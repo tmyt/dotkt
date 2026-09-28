@@ -20,6 +20,47 @@ private class Completion : Continuation<Unit> {
 }
 
 private class Owner<A>(private val ownerValue: A) {
+    fun <T> verifyGenericSelector(value: T) {
+        val gate = Gate()
+        var trace = ""
+        fun <R> pick(item: R): suspend (T) -> Pair<R, T> {
+            trace += "pick;"
+            return { argument -> trace += "invoke;"; Pair(item, argument) }
+        }
+        suspend fun argument(): T { trace += "argument;"; gate.pause(); return value }
+        val completion = Completion()
+        val work: suspend () -> Unit = {
+            val result = pick(ownerValue)(argument())
+            check(result.first == ownerValue && result.second == value)
+            trace += "done;"
+        }
+        work.startCoroutine(completion)
+        check(!completion.done && trace == "pick;argument;")
+        gate.release()
+        completion.failure?.let { throw it }
+        check(completion.done && trace == "pick;argument;invoke;done;")
+    }
+
+    fun <T> verifySequentialResults(value: T) {
+        val gate = Gate()
+        var trace = ""
+        suspend fun <R> first(item: R): R { trace += "first;"; gate.pause(); return item }
+        suspend fun second(): T { trace += "second;"; gate.pause(); return value }
+        val completion = Completion()
+        val work: suspend () -> Unit = {
+            val result = Pair(first(ownerValue), second())
+            check(result.first == ownerValue && result.second == value)
+            trace += "done;"
+        }
+        work.startCoroutine(completion)
+        check(!completion.done && trace == "first;")
+        gate.release()
+        check(!completion.done && trace == "first;second;")
+        gate.release()
+        completion.failure?.let { throw it }
+        check(completion.done && trace == "first;second;done;")
+    }
+
     fun <T> verify(value: T, nullable: Boolean) {
         val gate = Gate()
         var trace = ""
@@ -47,6 +88,18 @@ private class Owner<A>(private val ownerValue: A) {
 }
 
 class LocalCallResultTypeTests {
+    @TestAttribute
+    fun localGenericSelectorUsesItsInstantiatedResult() {
+        Owner("owner").verifyGenericSelector(42)
+        Owner(7).verifyGenericSelector("value")
+    }
+
+    @TestAttribute
+    fun suspendedLocalResultSurvivesLaterSuspension() {
+        Owner("owner").verifySequentialResults(42)
+        Owner(7).verifySequentialResults("value")
+    }
+
     @TestAttribute
     fun nonNullReceiverRetainsOwnerAndMethodFramesAcrossSuspension() {
         Owner("owner").verify(42, false)
