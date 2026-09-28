@@ -1189,7 +1189,9 @@ private fun BirEmitter.innerEnclosingReceivers(
 		owner.thisReceiver?.let { result.add(it to receiver) }
 		if (!owner.isInner) break
 		val parent = owner.parent as? IrClass ?: break
-		receiver = """{"k":"field","ownerType":${fqnJson(typeName(owner))},"recv":$receiver,"name":"__outer","outer":true}"""
+		// This lexical capture is private storage. A carried default can move its read into another module;
+		// bir2cir then selects the access mechanism from this privilege and the referenced field declaration.
+		receiver = """{"k":"field","ownerType":${fqnJson(typeName(owner))},"recv":$receiver,"name":"__outer","outer":true,"memberVisibility":"private"}"""
 		owner = parent
 	}
 	return result
@@ -2522,7 +2524,7 @@ internal fun BirEmitter.paramsJsonList(params: List<org.jetbrains.kotlin.ir.decl
 	// An inner/member body reaches an OUTER `this` through an ambient captureSubst such as
 	// `field(recv=this,name=__outer)`. Rewrite only that ROOT `this` to the dispatch token while carrying the default;
 	// nested closure/SAM bodies keep their own ordinary `{k:this}` untouched. For an INNER constructor the immediate
-	// outer instance is already the hidden leading argument, so bind that declaration directly to `enclosing`.
+	// outer instance is already the hidden leading argument: root the whole enclosing chain at `enclosing`.
 	val savedCarrierSubst = java.util.IdentityHashMap<org.jetbrains.kotlin.ir.declarations.IrValueDeclaration, String?>()
 	fun installCarrierSubst(d: org.jetbrains.kotlin.ir.declarations.IrValueDeclaration, json: String) {
 		if (!savedCarrierSubst.containsKey(d)) savedCarrierSubst[d] = captureSubst[d]
@@ -2539,14 +2541,18 @@ internal fun BirEmitter.paramsJsonList(params: List<org.jetbrains.kotlin.ir.decl
 			installCarrierSubst(it, """{"k":"defaultArgReceiver","kind":"extension"}""")
 		}
 		val ownerClass = ownerFn.parent as? IrClass
-		val immediateOuter = ownerClass?.takeIf { it.isInner }?.parent as? IrClass
+		if (ownerFn is IrConstructor && ownerClass?.isInner == true) {
+			for ((declaration, receiver) in innerEnclosingReceivers(
+				ownerClass, """{"k":"defaultArgReceiver","kind":"enclosing"}""",
+			)) {
+				installCarrierSubst(declaration, receiver)
+			}
+		}
 		var p: IrClass? = ownerClass
 		while (p != null) {
 			p.thisReceiver?.let { recv ->
 				val prior = captureSubst[recv]
 				when {
-					ownerFn is IrConstructor && p === immediateOuter ->
-						installCarrierSubst(recv, """{"k":"defaultArgReceiver","kind":"enclosing"}""")
 					p === ownerClass && prior == null ->
 						installCarrierSubst(recv, """{"k":"defaultArgReceiver","kind":"dispatch"}""")
 					prior != null && prior.contains("""{"k":"this"}""") ->
