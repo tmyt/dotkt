@@ -1,5 +1,6 @@
 using System;
 using System.Linq;
+using System.Text.Json.Nodes;
 using DotKt.Bir;
 
 sealed partial class ReferenceMetadataIndex
@@ -28,6 +29,31 @@ sealed partial class ReferenceMetadataIndex
             || !inner.PhysicalOrder.SequenceEqual(new[] { 2, 1, 0 })
             || !index.SourceHierarchyFrame("probe.Outer.Captured").PhysicalOrder.SequenceEqual(new[] { 0 }))
             throw new InvalidOperationException("Source hierarchy lost declared inner capture ordering");
+        const string innerName = "probe.Outer`1+Middle`1+Inner`1";
+        var variables = Enumerable.Range(0, 3).Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray();
+        var expectedBase = new TypeNode.Fqn("probe.Holder`1", new TypeNode[] {
+            new TypeNode.Fqn(innerName, variables),
+        });
+        index._referenceTypeShapesByPhysicalOwner[innerName] = new ReferenceTypeShape(
+            3, "class", expectedBase, Array.Empty<TypeNode.Fqn>());
+        if (!index.TryReferenceSourceTypeShape(new TypeNode.Fqn(innerName), out var arity,
+                out var restoredBase, out _) || arity != 3 || restoredBase != expectedBase)
+            throw new InvalidOperationException("Source hierarchy lost nested constructed argument restoration");
+        var sourceBase = new TypeNode.Fqn("probe.Holder`1", new TypeNode[] {
+            new TypeNode.Fqn("probe.Outer.Middle.Inner", variables),
+        });
+        index._referenceTypeShapesByPhysicalOwner[innerName] = new ReferenceTypeShape(
+            3, "class", expectedBase, Array.Empty<TypeNode.Fqn>(),
+            new JsonObject { ["base"] = TypeJson.Write(sourceBase) });
+        if (!index.TryReferenceSourceTypeShape(new TypeNode.Fqn(innerName), out _, out restoredBase, out _)
+            || restoredBase != expectedBase)
+            throw new InvalidOperationException("Source hierarchy reordered an already-source carrier edge");
+        Declare("probe.Wide", "probe.Wide`2", 2);
+        Declare("probe.Wide.Middle", "probe.Wide`2+Middle`2", 4, "probe.Wide", 2);
+        Declare("probe.Wide.Middle.Inner", "probe.Wide`2+Middle`2+Inner`2", 6, "probe.Wide.Middle", 4);
+        if (!index.SourceHierarchyFrame("probe.Wide.Middle.Inner").PhysicalOrder
+                .SequenceEqual(new[] { 4, 5, 2, 3, 0, 1 }))
+            throw new InvalidOperationException("Source hierarchy reversed parameters within an enclosing owner");
         var companionFrame = new NullableRepresentationFrame(3, new[] { 0, 2 }, new[] { 2, 4, 1, 0, 3 });
         index._ownerNullableFrames["probe.Outer`1+Middle`1+Inner`1"] = companionFrame;
         if (!ReferenceEquals(companionFrame, index.SourceHierarchyFrame("probe.Outer.Middle.Inner")))
