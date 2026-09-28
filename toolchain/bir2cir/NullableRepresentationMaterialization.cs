@@ -250,6 +250,19 @@ static class NullableRepresentationMaterialization
     static void PreserveEdges(JsonObject owner, NullableRepresentationTypes mapping)
     {
         var facts = new JsonObject();
+        // Class bounds are Kotlin declaration facts too. Expanding a referenced owner's
+        // frame must not expose its physical companion arguments to a later Kotlin import.
+        if (owner["typeParams"] is JsonArray parameters)
+        {
+            var bounds = new JsonObject();
+            for (var i = 0; i < parameters.Count; i++)
+                if (parameters[i] is JsonObject parameter
+                    && parameter["constraints"] is JsonArray constraints
+                    && constraints.Any(bound => TypeJson.Read(bound) is TypeNode type
+                        && mapping.Slot(type) != type))
+                    bounds[i.ToString()] = constraints.DeepClone();
+            if (bounds.Count != 0) facts["bounds"] = bounds;
+        }
         if (TypeJson.Read(owner["base"]) is TypeNode baseType && mapping.Slot(baseType) != baseType)
             facts["base"] = owner["base"].DeepClone();
         if (owner["interfaces"] is JsonArray interfaces)
@@ -595,6 +608,21 @@ static class NullableRepresentationMaterialization
         var recordedBounds = JsonNode.Parse(Text(boundRoot["methods"][0][NullableGenericErasure.MethodTypeParameterBoundsPre]));
         if (!JsonNode.DeepEquals(recordedBounds["bounds"]["1"], sourceBounds))
             throw new InvalidOperationException("A physical companion index replaced a Kotlin method-bound carrier");
+        var classBoundRoot = JsonNode.Parse("""
+        {"types":[{"kind":"class","name":"Cell","typeParams":["T"]},
+         {"kind":"class","name":"Node","typeParams":[{"name":"N","constraints":[
+          {"t":"fqn","name":"Node","args":[{"t":"tv","scope":"type","i":0}]}]}],
+          "fields":[{"name":"previous","type":{"t":"fqn","name":"Cell","args":[
+           {"t":"nullable","of":{"t":"tv","scope":"type","i":0}}]}}]}]}
+        """)!.AsObject();
+        var sourceClassBounds = classBoundRoot["types"][1]["typeParams"][0]["constraints"].DeepClone();
+        Apply(new[] { classBoundRoot }, _ => false);
+        NullableGenericErasure.Apply(classBoundRoot, _ => false);
+        var classOwner = classBoundRoot["types"][1];
+        var classBounds = JsonNode.Parse(Text(classOwner[KotlinSupertypesRecord.PreKey]));
+        if (((JsonArray)classOwner["typeParams"]).Count != 2
+            || !JsonNode.DeepEquals(classBounds["bounds"]["0"], sourceClassBounds))
+            throw new InvalidOperationException("Physical companion arguments replaced a Kotlin class-bound carrier");
         var descriptorOwners = JsonNode.Parse("""
         {"fileClass":"DescriptorOwners","properties":[
           {"name":"extensionValue","propertyAssociation":"p","type":{"t":"fqn","name":"Box","args":[{"t":"nullable","of":{"t":"tv","scope":"method","i":0}}]}}],
