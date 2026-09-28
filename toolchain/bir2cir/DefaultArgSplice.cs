@@ -270,7 +270,7 @@ static class DefaultArgSplice
             // generic method can bind the caller's unrelated !!0 or remain unresolved in a non-generic caller.
             var methodTypeArgs = node["typeArgs"] as JsonArray;
             InlineSplice.SubstTvIn(parsed, methodTypeArgs ?? new JsonArray(), methodTypeArgs?.Count ?? 0,
-                TypeArgsOf(node["defaultOwnerType"]) ?? TypeArgsOf(ownerNode));
+                refs.SourceDeclarationArguments(node["defaultOwnerType"] ?? ownerNode));
             if (parsed is not JsonObject o || !IsMetadataConstant(o)) ThrowUnrepresentable(pos);
             fills.Add(parsed);
         }
@@ -431,8 +431,8 @@ static class DefaultArgSplice
         // The call site's TYPE arguments, for closing the carrier's own frame below: a generic callee's default is
         // carried as the callee wrote it, with its type parameters as positional `tv`s.
         var methodTypeArgs = node["typeArgs"] as JsonArray;
-        var ownerTypeArgs = TypeArgsOf(node["defaultOwnerType"])
-            ?? TypeArgsOf(isNew ? node["type"] : node["ownerType"]);
+        var ownerTypeArgs = refs.SourceDeclarationArguments(node["defaultOwnerType"]
+            ?? (isNew ? node["type"] : node["ownerType"]));
         // Receiver identity comes from the CALL SHAPE, never from an argument-position guess. A member extension has
         // both: dispatch is callInstance.recv, extension is physical arg[0]. A constructor has no dispatch receiver,
         // but an inner constructor's hidden enclosing instance is physical arg[0].
@@ -587,7 +587,7 @@ static class DefaultArgSplice
             // A constructor delegation has no dispatch/extension receiver. For an inner target its hidden leading
             // argument is the enclosing instance and is already part of this positional vector.
             Fill(args, slotBinding, args.Count, defaults, owner + " constructor", refs, hoist,
-                localOwner, JsonValue.Create(selfName), null, TypeArgsOf(type["base"]), null, null,
+                localOwner, JsonValue.Create(selfName), null, refs.SourceDeclarationArguments(type["base"]), null, null,
                 args.Count > 0 ? args[0] : null);
         }
     }

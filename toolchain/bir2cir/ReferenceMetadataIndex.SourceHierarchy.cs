@@ -5,6 +5,24 @@ using DotKt.Bir;
 
 sealed partial class ReferenceMetadataIndex
 {
+    // Source carriers use declaration-relative TVs; a Kotlin inner application is own-first.
+    // Close those TVs through the authored declaration/application correspondence, before representation lowering.
+    public JsonArray SourceDeclarationArguments(JsonNode ownerNode)
+    {
+        if (TypeJson.Read(ownerNode) is not TypeNode.Fqn { Args: { Length: > 0 } args } owner) return null;
+        var name = SourceHierarchyName(owner.Name);
+        var application = SourceHierarchyFrame(name);
+        if (application == null) return new JsonArray(args.Select(TypeJson.Write).ToArray());
+        if (args.Length != application.SourceArity)
+            throw new InvalidOperationException($"Source carrier owner '{name}' has an inconsistent argument frame");
+        _ownerNullableFrames.TryGetValue(name, out var declaration);
+        return new JsonArray(Enumerable.Range(0, application.SourceArity).Select(index => {
+            var physical = declaration?.SourcePosition(index) ?? index;
+            var source = (TypeNode.Tv)application.SemanticVariable(new TypeNode.Tv("type", physical));
+            return TypeJson.Write(args[source.I]);
+        }).ToArray());
+    }
+
     // Early owner projection consumes Kotlin applications; the late MemberRef binder still
     // uses TryReferenceTypeShape's physical graph. Frame roles and source edge carriers
     // are declaration facts, not hints to infer from generated names or argument counts.

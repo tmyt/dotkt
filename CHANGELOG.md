@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Inner constructor defaults retain every enclosing receiver across DLLs (#904).**
+  Carried defaults start from the caller-supplied enclosing instance and retain private capture access facts,
+  rather than referring to an instance that has not yet been constructed.
+
 - **Nested inner constructors use initialized enclosing receivers during delegation (#902).**
   Base and sibling constructor arguments follow the enclosing-instance parameter before the new object's capture
   fields are initialized, including generic and inline argument expressions.

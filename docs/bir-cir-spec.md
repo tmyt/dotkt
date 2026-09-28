@@ -845,6 +845,11 @@ consuming file class, and nothing about them is a call-site value. Only the carr
 its `{defaultArgReceiver kind}` / `{defaultArgParam n}` tokens resolve to the call's `bindRef`s. Receiver `kind`
 distinguishes `dispatch`, `extension` and an inner constructor's `enclosing` instance; an ordinary `{this}` nested
 inside a closure/SAM/suspend-lambda is that synthesized frame's own receiver and is not a carrier token.
+An inner constructor's farther enclosing receivers are chains rooted at its `enclosing` token, never at
+`dispatch`: the object being constructed does not exist at the omitted-argument evaluation site. Each lexical
+capture read retains its private-access fact so bir2cir can resolve the referenced declaration and select the
+cross-module access mechanism. Carrying defaults temporarily installs these bindings and restores ordinary
+receiver bindings before rendering the constructor body or subsequent members.
 
 ## 3. Labels & naming (conventions consumed as opaque strings)
 - SM / coroutine method names: `<name>$dotkt_suspend` (cold entry), `<name>$sm` (state machine class) —
