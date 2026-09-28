@@ -26,6 +26,8 @@ class CompanionOuter<O>(value: O?) : Base<O?>(value) {
     }
 }
 fun <O, M, L> readCompanionLeaf(value: CompanionOuter<O>.Middle<M>.Leaf<L>): L? = value.value
+fun <O, I> readOverloadedInner(value: NullableOuter<O>.Inner<I>): I? = value.value
+fun <O, I> readOverloadedInner(value: Base<I?>): I? = value.value
 class NullableInnerHolder(value: NullableOuter<Int>.Inner<String>) : Base<NullableOuter<Int>.Inner<String>>(value)
 class Outer<O> {
     inner class Wrapped<I>(value: List<I>) : Base<List<I>>(value)

@@ -4,9 +4,18 @@ import NUnit.Framework.TestAttribute
 
 private fun <O, I> read(value: Outer<O>.Inner<I>): I = value.value
 private fun <O, I> readNullable(value: NullableOuter<O>.Inner<I>): I? = value.value
+private fun <O, I> readOverloaded(value: NullableOuter<O>.Inner<I>): I? = readOverloadedInner(value)
 private fun <O, M, L> readLeaf(value: NullableOuter<O>.Middle<M>.Leaf<L>): L? = value.value
+private fun <K, V> addPair(target: MutableMap<in K, in V>, pair: Pair<K, V>) { target += pair }
 
 class InnerSourceOwnerTests {
+    @TestAttribute
+    fun sourceClassifierIdentityValidatesMaterializedGenericOverloads() {
+        val target = mutableMapOf<Int, String>()
+        addPair(target, Pair(1, "one"))
+        check(target[1] == "one")
+    }
+
     @TestAttribute
     fun inheritedOwnersKeepOwnAndCapturedArgumentsAcrossDlls() {
         val inner = Outer<Int>().Inner<String>("inner")
@@ -31,6 +40,7 @@ class InnerSourceOwnerTests {
         val nullable = NullableOuter<Int>(7).Inner<String>("nullable")
         check(nullable.value == "nullable")
         check(readNullable(nullable) == "nullable")
+        check(readOverloaded(nullable) == "nullable")
         check(nullable.captured == 7)
         check(NullableInnerHolder(nullable).value.value == "nullable")
         val empty = NullableOuter<Int>(null).Inner<String>(null)

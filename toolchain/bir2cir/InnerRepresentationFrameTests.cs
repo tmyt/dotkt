@@ -75,12 +75,15 @@ static class InnerRepresentationFrameTests
           "fields":[{"name":"slot"}]}
         """)!;
         root["fields"]![0]!["nullableGeneric"] = TypeNode.ToJson(source);
-        var signature = new JsonObject { ["params"] = new JsonArray(TypeJson.Write(source)) };
+        var outer = new TypeNode.Fqn("Sample.Outer", new TypeNode[] { new TypeNode.Tv("method", 0) });
+        var signature = new JsonObject { ["params"] = new JsonArray(TypeJson.Write(source), TypeJson.Write(outer)) };
         OpaqueCarrierTypeBinding.ApplyAll(new[] { root }, ReferenceMetadataIndex.Build(Array.Empty<string>()),
             new Dictionary<string, JsonObject> { ["declaration"] = signature });
         var expected = new TypeNode.Fqn("Sample.Outer`1+Inner`2", source.Args);
         var slot = TypeJson.Read(JsonNode.Parse(root["fields"]![0]!["nullableGeneric"]!.GetValue<string>()));
         if (slot != expected || TypeJson.Read(signature["params"]![0]) != expected)
             throw new InvalidOperationException("Source carriers lost nested identity or changed source argument order");
+        if (TypeJson.Read(signature["params"]![1]) != outer)
+            throw new InvalidOperationException("Source carriers unnecessarily changed a top-level classifier");
     }
 }

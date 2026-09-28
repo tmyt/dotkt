@@ -70,14 +70,18 @@ static class OpaqueCarrierTypeBinding
         foreach (var (name, declaration) in declarations)
             if (declaration["nestedIn"] != null) _ = Physical(name);
 
+        var nestedPhysical = physicalBySemantic
+            .Where(pair => declarations[pair.Key]["nestedIn"] != null)
+            .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
+
         foreach (var root in roots)
         {
             if (physicalBySemantic.Count > 0) RewriteCarrierSlots(root, physicalBySemantic);
-            BindSourceRecords(root, physicalBySemantic, refs);
+            BindSourceRecords(root, nestedPhysical, refs);
         }
         if (semanticSignatures != null)
             foreach (var signature in semanticSignatures.Values)
-                BindSourcePayload(signature, physicalBySemantic, refs);
+                BindSourcePayload(signature, nestedPhysical, refs);
     }
 
     // Source carriers are captured before ownership lowering so they retain source nullability, stars, Kotlin inner
@@ -120,7 +124,8 @@ static class OpaqueCarrierTypeBinding
                 {
                     var arity = type["args"] is JsonArray args ? args.Count : 0;
                     if (localPhysical.TryGetValue(name, out var local)) type["name"] = local;
-                    else if (refs.TryExactPhysicalTypeName(name, arity, out var exact) && exact != null)
+                    else if (refs.TryExactPhysicalTypeName(name, arity, out var exact)
+                        && exact != null && exact.Contains('+'))
                         type["name"] = exact;
                 }
                 foreach (var child in type.Select(kv => kv.Value).Where(value => value != null).ToList())

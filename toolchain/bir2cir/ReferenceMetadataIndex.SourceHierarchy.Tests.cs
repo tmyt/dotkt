@@ -59,6 +59,21 @@ sealed partial class ReferenceMetadataIndex
         const string nullableName = "probe.NullableOuter`1+Inner`2";
         index._ownerNullableFrames[nullableName] = new NullableRepresentationFrame(2, new[] { 1 });
         var application = index.SourceHierarchyFrame(nullableName);
+        var sourceUse = new TypeNode.Fqn(nullableName, new TypeNode[] {
+            new TypeNode.Tv("method", 1), new TypeNode.Tv("method", 0),
+        });
+        var physicalUse = new TypeNode.Fqn("probe.NullableOuter.Inner", new TypeNode[] {
+            new TypeNode.Tv("method", 0), new TypeNode.Tv("method", 1), new TypeNode.Tv("method", 2),
+        });
+        if (!index.SemanticDeclarationDescribesCall(sourceUse, physicalUse))
+            throw new InvalidOperationException("Declaration validation lost nested source/application correspondence");
+        if (!index.SemanticDeclarationDescribesCall(sourceUse,
+                new TypeNode.Fqn("probe.NullableOuter.Inner", sourceUse.Args))
+            || index.SemanticDeclarationDescribesCall(sourceUse,
+                new TypeNode.Fqn(physicalUse.Name, new TypeNode[] {
+                    new TypeNode.Tv("method", 0), new TypeNode.Tv("method", 3), new TypeNode.Tv("method", 2),
+                })))
+            throw new InvalidOperationException("Declaration validation confused a classifier spelling with a different argument");
         if (application.SemanticVariable(new TypeNode.Tv("type", 1)) != new TypeNode.Tv("type", 0)
             || application.SemanticVariable(new TypeNode.Tv("type", 2)) != new TypeNode.Nullable(new TypeNode.Tv("type", 0)))
             throw new InvalidOperationException("Source hierarchy lost explicit frame roles in application order");

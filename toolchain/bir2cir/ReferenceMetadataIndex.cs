@@ -3567,14 +3567,18 @@ sealed partial class ReferenceMetadataIndex
             return SemanticDeclarationDescribesCall(declaration, callProjectionOnly.Of);
         if (declaration is TypeNode.Fqn df && call is TypeNode.Fqn cf)
         {
-            var sameOwner = df.Name == cf.Name || _physicalTypeBySemanticName.TryGetValue(df.Name, out var physical)
-                && physical == cf.Name;
+            // Either signature can already carry the producer-bound metadata identity. Compare both through
+            // the recorded correspondence; physical declaration versus semantic use is equally legitimate.
+            var sameOwner = RecordedPhysicalTypeName(df.Name) == RecordedPhysicalTypeName(cf.Name);
             if (!sameOwner || df.Args == null || cf.Args == null) return false;
+            if (df.Args.Length == cf.Args.Length && df.Args.Select((type, index) =>
+                    SemanticDeclarationDescribesCall(type, cf.Args[index])).All(matches => matches))
+                return true;
             // The selected declaration's Kotlin carrier has source arguments; a materialized use carries the
             // producer's physical companion frame. Compare its authored ordinary positions, never infer them
             // from a backtick arity or assume companions form a suffix (nested owners can interleave them).
             var callArguments = cf.Args;
-            if (_ownerNullableFrames.TryGetValue(cf.Name, out var frame)
+            if (SourceHierarchyFrame(cf.Name) is { } frame
                 && df.Args.Length == frame.SourceArity && callArguments.Length == frame.PhysicalArity)
                 callArguments = frame.OrdinaryArguments(callArguments);
             return df.Args.Length == callArguments.Length
