@@ -29,6 +29,7 @@ class SuspendWitnessMetadataTests {
     @TestAttribute
     fun importedSuspendWitnessesAreNotSourceArguments() {
         checkWitness(true) { sameModuleWitnessChecks() }
+        checkWitness(true) { witnessFreeCheck<Int, String?>(0) }
         checkWitness(true) { importedTypeCheck<Int, String>(0, "text") }
         checkWitness(false) { importedTypeCheck<Int, String>(0, null) }
         checkWitness(true) { importedTypeCheck<Int, String?>(0, null) }

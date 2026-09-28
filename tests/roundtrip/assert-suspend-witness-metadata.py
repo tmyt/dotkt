@@ -11,6 +11,7 @@ expected = {
     "importedExtensionCheck": 2,
     "matches": 2,
     "delayedTypeCheck": 3,
+    "witnessFreeCheck": 1,
 }
 seen = set()
 
@@ -37,10 +38,12 @@ for method in declarations(document):
         assert name not in seen, (name, "Duplicate public declaration")
         seen.add(name)
         assert identity["reified"] == [1], (name, identity)
-        assert identity["nullableWitness"] == [1], (name, identity)
+        witnesses = [] if name == "witnessFreeCheck" else [1]
+        assert identity.get("nullableWitness", []) == witnesses, (name, identity)
         assert len(identity["signature"]["params"]) == expected[name], (name, identity)
-        assert len(method["params"]) == expected[name] + 1, (name, method["params"])
-        assert method["params"][-1]["type"] == {"t": "fqn", "name": "System.Int32"}
+        assert len(method["params"]) == expected[name] + len(witnesses), (name, method["params"])
+        if witnesses:
+            assert method["params"][-1]["type"] == {"t": "fqn", "name": "System.Int32"}
         assert method["ret"]["name"] == "System.Threading.Tasks.Task", method["ret"]
 
 assert seen == set(expected), (seen, expected)

@@ -4,6 +4,8 @@ import kotlin.coroutines.*
 
 suspend inline fun <A, reified T> importedTypeCheck(unused: A, item: Any?): Boolean = item is T
 
+suspend inline fun <A, reified T> witnessFreeCheck(unused: A): Boolean = true
+
 suspend inline fun <A, reified T> Any?.importedExtensionCheck(unused: A): Boolean = this is T
 
 class WitnessOwner<O>(val value: O) {
