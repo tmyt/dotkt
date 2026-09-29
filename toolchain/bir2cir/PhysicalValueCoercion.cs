@@ -480,6 +480,9 @@ static class PhysicalValueCoercion
         // Unlike a Kotlin function type, that declaration states exactly what the emitted call consumes.
         if (node["invokeRef"] is not JsonObject invoke || node["args"] is not JsonArray args)
             throw new InvalidOperationException("bir2cir: delegate invocation has no resolved argument contract");
+        // A function-bounded generic value still occupies a generic stack slot. Its selected
+        // Invoke consumes a delegate reference, so materialize that boxing edge in CIR too.
+        CoerceSlot(node, "recv", TypeJson.Read(invoke["declaringType"]), scope, index);
         var targets = ReadTypes(invoke["parameterTypes"] as JsonArray)
             ?? throw new InvalidOperationException("bir2cir: delegate invocation has no parameter types");
         if (targets.Length != args.Count)
