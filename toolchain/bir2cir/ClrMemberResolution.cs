@@ -750,8 +750,9 @@ static partial class ClrMemberResolution
         {
             if (!IsDelegateType(parameter) || function.Clr != DelegateFamily(parameter)) return false;
             var invoke = parameter.GetMethod("Invoke");
-            return invoke != null && function.Params.Length == invoke.GetParameters().Length
-                && function.Params.Select((p, i) => DeclaredConstructorSlotMatches(p, invoke.GetParameters()[i].ParameterType)).All(match => match)
+            var delegateParameters = function.DelegateParams;
+            return invoke != null && delegateParameters.Length == invoke.GetParameters().Length
+                && delegateParameters.Select((p, i) => DeclaredConstructorSlotMatches(p, invoke.GetParameters()[i].ParameterType)).All(match => match)
                 && DeclaredConstructorSlotMatches(function.Ret, invoke.ReturnType);
         }
         if (selected is not TypeNode.Fqn named) return false;

@@ -8,6 +8,18 @@ class SelectedConstructor<T> {
 
 class SelectionBox<T>(val value: T)
 
+class ReceiverSelectedConstructor(val block: String.() -> Int) {
+    fun run(value: String): Int = value.block()
+}
+
+class SelectionLocalHost<T>(val seed: T) {
+    fun checkLocalFrame() {
+        class Local<U>(val value: U) { val captured = seed }
+        val local = Local(89)
+        check(local.value == 89 && local.captured == seed)
+    }
+}
+
 class NestedSelectedConstructor<T> {
     val chosen: Int
     constructor(box: SelectionBox<T>) { chosen = 1 }
@@ -55,6 +67,8 @@ fun <T> checkGenericSelection(input: T) {
 }
 
 fun checkLocalConstructorSelection() {
+    SelectionLocalHost("owner").checkLocalFrame()
+    SelectionLocalHost(97).checkLocalFrame()
     check(SelectedConstructor<Int>(value = 3).chosen == 1)
     check(SelectedConstructor<Int>(marker = 5).chosen == 2)
     check(SelectedConstructor<String>(value = "text").chosen == 1)
