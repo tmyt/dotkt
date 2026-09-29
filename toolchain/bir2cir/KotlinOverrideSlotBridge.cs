@@ -153,7 +153,24 @@ static class KotlinOverrideSlotBridge
     }
 
     static TypeNode DeclaredSlot(TypeNode type, ValueTypeOracle isValue, bool physical) =>
-        physical ? type : NullableGenericErasure.EraseNullableTv(type, isValue);
+        physical ? DeclareFunctionSlots(type) : NullableGenericErasure.EraseNullableTv(type, isValue);
+
+    // Choose a declaration's delegate return contract before closing its owner variables.
+    // Substituting Unit for a value-returning T must not turn that Func slot into Action.
+    static TypeNode DeclareFunctionSlots(TypeNode type) => type switch
+    {
+        TypeNode.Fn { Suspend: false } fn => BirTypeLowering.PhysicalDelegate(
+            DeclareFunctionSlots(BirTypeLowering.DelegateReturnSlot(fn)),
+            fn.Params.Select(DeclareFunctionSlots).ToArray(),
+            fn.Recv == null ? null : DeclareFunctionSlots(fn.Recv), fn.Clr)
+            with { Ctx = fn.Ctx?.Select(DeclareFunctionSlots).ToArray() },
+        TypeNode.Fqn { Args: { } args } named => named with { Args = args.Select(DeclareFunctionSlots).ToArray() },
+        TypeNode.Array array => array with { Elem = DeclareFunctionSlots(array.Elem) },
+        TypeNode.Nullable nullable => nullable with { Of = DeclareFunctionSlots(nullable.Of) },
+        TypeNode.Oblivious oblivious => oblivious with { Of = DeclareFunctionSlots(oblivious.Of) },
+        TypeNode.ByRef byRef => byRef with { Of = DeclareFunctionSlots(byRef.Of) },
+        _ => type,
+    };
 
     static void ApplyClass(Def cls, IReadOnlyDictionary<string, Def> defs, ValueTypeOracle isValue,
         ReferenceMetadataIndex refs, Phase phase, bool refBuild, IDictionary<JsonObject, string> exactBridgeSources,

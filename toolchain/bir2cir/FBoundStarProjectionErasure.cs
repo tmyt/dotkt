@@ -840,6 +840,8 @@ static class FBoundStarProjectionErasure
 
     internal static void ProjectionConstraintSelfTest()
     {
+        FunctionRewriteTests.Check("F-bound rewrite", type => RewriteType(type,
+            new Dictionary<string, Owner>(), ReferenceMetadataIndex.Build(Array.Empty<string>())));
         var variable = new TypeNode.Tv("method", 0);
         var exact = new TypeNode.Fqn("Bound", new TypeNode[] { variable });
         var star = new TypeNode.Fqn("Bound", new TypeNode[] { new TypeNode.Star() });
@@ -4480,7 +4482,9 @@ static class FBoundStarProjectionErasure
                 fn.Params.Select(p => RewriteType(
                     p, owners, refs, boundDeclaration, localClrAliases)).ToArray(),
                 fn.Recv == null ? null : RewriteType(
-                    fn.Recv, owners, refs, boundDeclaration, localClrAliases));
+                    fn.Recv, owners, refs, boundDeclaration, localClrAliases), fn.Clr,
+                fn.Ctx?.Select(context => RewriteType(
+                    context, owners, refs, boundDeclaration, localClrAliases)).ToArray());
             default: return type;
         }
     }

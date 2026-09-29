@@ -45,6 +45,8 @@ static class Bir2Cir
                 KotlinCollectionSlotSynthesis.SelfTest();
                 KotlinOverrideSlotBridge.SelfTest();
                 ContinuationErasure.SelfTest();
+                ReferenceNullableStrip.FunctionSelfTest();
+                StarProjectionBoundLowering.FunctionSelfTest();
                 ClrMemberResolution.InheritedGenericResultSelfTest();
                 ClrMemberResolution.FunctionSlotComparisonSelfTest();
                 OwnerConstrainedMethodLowering.SelfTest();
