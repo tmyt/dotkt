@@ -2220,16 +2220,18 @@ internal fun BirEmitter.isInlineWithLambda(fn: IrSimpleFunction): Boolean =
 /**
  * `,"typeParams":[...]` for a generic class/interface/method (empty when non-generic). An unconstrained param
  * is a bare name string `"T"`; a bounded one (`<T : Comparable<T>>`) is `{"name":"T","constraints":[...]}`
- * (each constraint a BIR type, e.g. `clrg:System.IComparable[gp:T]`). `kotlin.Any` bounds are dropped.
+ * (each constraint a BIR type). Only the implicit nullable top bound `kotlin.Any?` is omitted.
  */
 internal fun BirEmitter.typeParamDeclarationsJson(tps: List<org.jetbrains.kotlin.ir.declarations.IrTypeParameter>): String {
 	val entries = tps.joinToString(",") { tp ->
 		// kotc emits the PURE-KOTLIN bound in EVERY build (#66): the `kotlin.Comparable` upper-bound DROP is a
 		// SUBSTITUTION CONSEQUENCE (a substituted BCL primitive has no kotlin.Comparable bound), so it belongs to
-		// bir2cir (StdlibSubstituteTypeParams, rt-build only), NOT here. `kotlin.Any` bounds are still dropped
-		// (a pure-Kotlin fact — Any is the implicit top). Other bounds (clr/clrg) are kept.
+		// bir2cir (StdlibSubstituteTypeParams, rt-build only), NOT here. Non-null Any is a real source
+		// restriction; only nullable Any is the implicit unconstrained upper bound.
 		val bounds = withDefaultTypeFrame(defaultTypeFrame.boundsFrame(tp)) {
-			tp.superTypes.filter { it.classFqName?.asString() != "kotlin.Any" }.map { birType(it) }
+			tp.superTypes.filterNot {
+				it.classFqName?.asString() == "kotlin.Any" && it.isMarkedNullable()
+			}.map { birType(it) }
 		}
 		// Declaration-site variance `out`/`in` -> CLR covariant/contravariant (ilemit applies it only on
 		// interfaces, where the CLR allows variance; on classes it's Kotlin-level only — dropped).

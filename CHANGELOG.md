@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Non-null generic upper bounds survive Kotlin-to-DLL roundtrips (#742).**
+  Explicit `T : Any` remains distinct from the unconstrained nullable top bound.
+
 - **Generic constraint emission preserves parameter bounds alongside class bounds (#943).**
   CIR constraint rows are retained for both type and method parameters, independent of their order.
 

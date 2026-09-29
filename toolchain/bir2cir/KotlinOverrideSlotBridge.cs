@@ -1713,9 +1713,9 @@ static class KotlinOverrideSlotBridge
     }
 
     internal static bool SameMethodTypeParameterShape(JsonArray slotTypeParams, JsonArray implementationTypeParams,
-        TypeNode[] slotOwnerArgs, TypeNode[] implementationOwnerArgs)
-        => MethodTypeParameterShapeKey(slotTypeParams, slotOwnerArgs)
-            == MethodTypeParameterShapeKey(implementationTypeParams, implementationOwnerArgs);
+        TypeNode[] slotOwnerArgs, TypeNode[] implementationOwnerArgs, Func<TypeNode, TypeNode> constraintType = null)
+        => MethodTypeParameterShapeKey(slotTypeParams, slotOwnerArgs, constraintType)
+            == MethodTypeParameterShapeKey(implementationTypeParams, implementationOwnerArgs, constraintType);
 
     // Selected implementations carry Kotlin constraints, not the CLR constraint rows after erasure.
     internal static JsonArray SemanticMethodTypeParameters(JsonObject method)
@@ -1735,7 +1735,8 @@ static class KotlinOverrideSlotBridge
         return parameters;
     }
 
-    internal static string MethodTypeParameterShapeKey(JsonArray typeParams, TypeNode[] ownerArgs)
+    internal static string MethodTypeParameterShapeKey(JsonArray typeParams, TypeNode[] ownerArgs,
+        Func<TypeNode, TypeNode> constraintType = null)
     {
         if (typeParams is not { Count: > 0 }) return "0";
         var shapes = new List<string>();
@@ -1744,8 +1745,8 @@ static class KotlinOverrideSlotBridge
             var declaration = parameter as JsonObject;
             var constraints = (declaration?["constraints"] as JsonArray)?.Select(TypeJson.Read)
                 .Where(constraint => constraint != null)
-                .Select(constraint => SupertypeGraph.TypeKey(
-                    SupertypeGraph.SubstOwnerTvs(constraint, ownerArgs ?? Array.Empty<TypeNode>())))
+                .Select(constraint => SupertypeGraph.SubstOwnerTvs(constraint, ownerArgs ?? Array.Empty<TypeNode>()))
+                .Select(constraint => SupertypeGraph.TypeKey(constraintType?.Invoke(constraint) ?? constraint))
                 .OrderBy(key => key, StringComparer.Ordinal) ?? Enumerable.Empty<string>();
             var specials = (declaration?["specialConstraints"] as JsonArray)?.Select(Str)
                 .Where(value => value != null).OrderBy(value => value, StringComparer.Ordinal)
