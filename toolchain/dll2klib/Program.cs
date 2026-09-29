@@ -8128,8 +8128,8 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
 
     private KType FromArrayNode(TypeNode element)
     {
-        if (element is not TypeNode.Projection && element is not TypeNode.Star)
-            return Array(FromTypeNode(element));
+        // A semantic carrier's array node is Kotlin Array, not a CLR signature to reverse-project.
+        // Specialized primitive arrays have their own FQN in Kotlin declaration metadata.
         var array = Named("kotlin.Array");
         array.Argument.Add(FromTypeArgument(element));
         return array;
