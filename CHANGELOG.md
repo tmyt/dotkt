@@ -10,6 +10,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 - **Generic constraint emission preserves parameter bounds alongside class bounds (#943).**
   CIR constraint rows are retained for both type and method parameters, independent of their order.
 
+- **Nullable suspend overrides preserve their physical Task result slots (#946).**
+  Cross-DLL callback signatures select their Kotlin declarations before Task result adaptation.
+
 - **Selected generic constructors remain distinct after instantiation (#934).**
   Local and imported calls retain the selected declaration even when its substituted parameter types match another overload.
 
