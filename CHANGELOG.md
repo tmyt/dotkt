@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Constructed method signature views preserve instantiated stack types (#936).**
+  Referenced generic methods on constructed owners apply both owner and method arguments when typing results and arguments.
+
 - **Bottom-typed inline calls terminate their physical continuation (#926).**
   Infinite dispatch loops with non-local returns no longer expose an object-typed result to a concrete return slot.
 
