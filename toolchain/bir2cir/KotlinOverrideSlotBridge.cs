@@ -168,13 +168,14 @@ static class KotlinOverrideSlotBridge
         var ordinal = 0;
         var candidates = methods.OfType<JsonObject>().ToList();
         var inheritedOwners = new Dictionary<JsonObject, TypeNode.Fqn>(ReferenceEqualityComparer.Instance);
+        var inheritedSignatures = new Dictionary<JsonObject, TypeNode[]>(ReferenceEqualityComparer.Instance);
         var enumerationSlots = !refBuild && phase == Phase.PhysicalBridges
             ? ReverseEnumeratorBridgeSynthesis.ReserveSlots(cls, defs, refs) : null;
         TypeNode PhysicalSlotType(TypeNode type) => BirTypeLowering.LowerPhysicalType(
             type, refs.Aliases, isValue, refs.PhysicalTypeNames, typeArg: false,
             localTypeNames, nullableFrames: refs.NullableTypeFrames);
         if (emitBridges)
-            CollectInheritedClassMethods(cls, defs, refs, isValue, candidates, inheritedOwners,
+            CollectInheritedClassMethods(cls, defs, refs, isValue, candidates, inheritedOwners, inheritedSignatures,
                 phase == Phase.SuspendValueBridges);
 
         // EVERY EARLY EXIT BELOW MEANS "THIS SUPERTYPE OR SLOT IS NOT ONE THIS ERASURE DIVERGED", never "give up on a
@@ -222,14 +223,13 @@ static class KotlinOverrideSlotBridge
             var declParams = impl["params"] as JsonArray;
             var declRet = TypeJson.Read(impl["ret"]);
             if (declParams == null || declRet == null || declParams.Count != slotParams.Length) return;
-            var inheritedSuspendResultBridge = inheritedOwner != null && supIsInterface
-                && IsSuspendMethod(impl)
+            var differingSuspendResult = IsSuspendMethod(impl)
                 && !BirTypeLowering.SamePhysicalSlotType(slotRet,
                     SupertypeGraph.SubstOwnerTvs(declRet, ownArgs), refs.Aliases, isValue,
                     refs.PhysicalTypeNames, returnPosition: true, localTypeNames,
                     nullableFrames: refs.NullableTypeFrames);
             if (phase == Phase.SuspendValueBridges
-                && !(inheritedSuspendResultBridge
+                && !(differingSuspendResult
                     || IsSuspendMethod(impl) && (unitValueReturn || !IsVoid(slotRet)) && IsUnit(declRet)
                         && !Bool(impl[BirTypeLowering.ValueReturnKey]))) return;
             // The pre-cold adapter already owns this exact hot obligation, including its argument adaptations.
@@ -455,7 +455,7 @@ static class KotlinOverrideSlotBridge
                             slotTypeParams, slotHasDefault, unitValueReturn) =>
                         Fill(semanticOwner, owner, isInterface, referenced, slotHasDefault, identity, member, accessor,
                             parameters, ret, implementation, slotTypeParams, unitValueReturn),
-                    suspendValues: phase == Phase.SuspendValueBridges);
+                    suspendValues: phase == Phase.SuspendValueBridges, inheritedSignatures: inheritedSignatures);
                 continue;
             }
             var supArgs = SupertypeGraph.EffectiveArgs(spec, sup.Arity);
@@ -498,7 +498,8 @@ static class KotlinOverrideSlotBridge
                     methodArity, slotParams, slot["typeParams"] as JsonArray, supArgs, ownArgs)
                     ?? Implementer(cls, defs, candidates.Where(inheritedOwners.ContainsKey), spec.Name, name, semanticName,
                         Str(slot[DeclarationIdentityBinding.Key]), propertyName, accessorKind,
-                        methodArity, slotParams, slot["typeParams"] as JsonArray, supArgs, ownArgs);
+                        methodArity, slotParams, slot["typeParams"] as JsonArray, supArgs, ownArgs,
+                        phase == Phase.SuspendValueBridges ? inheritedSignatures : null);
                 if (impl == null) continue;
                 // A locally-emitted Kotlin interface may itself be @ClrTypeAlias-bound to a referenced CLR
                 // interface. Its Kotlin accessor keeps the dedicated property name, while the MethodImpl descriptor
@@ -607,7 +608,8 @@ static class KotlinOverrideSlotBridge
 
     static void CollectInheritedClassMethods(Def cls, IReadOnlyDictionary<string, Def> defs,
         ReferenceMetadataIndex refs, ValueTypeOracle isValue, List<JsonObject> candidates,
-        Dictionary<JsonObject, TypeNode.Fqn> inheritedOwners, bool suspendValues)
+        Dictionary<JsonObject, TypeNode.Fqn> inheritedOwners,
+        Dictionary<JsonObject, TypeNode[]> inheritedSignatures, bool suspendValues)
     {
         if (cls.Node["inheritedClassMethods"] is not JsonArray facts) return;
         var bases = SupertypeGraph.Reachable(cls, defs, refs).Where(edge => !edge.isInterface).ToList();
@@ -698,6 +700,9 @@ static class KotlinOverrideSlotBridge
                 if (returnsValue && IsUnitValueSlot(sourceRet)) candidate[BirTypeLowering.ValueReturnKey] = true;
                 candidates.Add(candidate);
                 inheritedOwners.Add(candidate, callOwner);
+                // Selection consumes the frontend's source signature; the forwarding body separately consumes
+                // sourceParams, the selected implementation's physical declaration slots.
+                inheritedSignatures.Add(candidate, factParams);
             }
         }
     }
@@ -1233,10 +1238,11 @@ static class KotlinOverrideSlotBridge
         bool supIsInterface, IEnumerable<JsonObject> methods, TypeNode[] ownArgs, ValueTypeOracle isValue,
         ReferenceMetadataIndex refs, Phase phase, NullableRepresentationTypes sourceMapping,
         Action<TypeNode.Fqn, TypeNode.Fqn, bool, bool, string, string, string, TypeNode[], TypeNode, JsonObject, JsonArray, bool, bool> fill,
-        bool suspendValues = false)
+        bool suspendValues = false, IReadOnlyDictionary<JsonObject, TypeNode[]> inheritedSignatures = null)
     {
         if (refs == null) return;
         var supArgs = spec.Args ?? Array.Empty<TypeNode>();
+        var ownedSlots = new HashSet<string>(StringComparer.Ordinal);
         foreach (var impl in methods.OfType<JsonObject>().ToList())
         {
             if (suspendValues && !IsSuspendMethod(impl)) continue;
@@ -1284,6 +1290,9 @@ static class KotlinOverrideSlotBridge
                     .ToArray();
                 if (implementationSignature.Length != ps.Count || implementationSignature.Any(type => type == null))
                     continue;
+                if (suspendValues && inheritedSignatures != null
+                    && inheritedSignatures.TryGetValue(impl, out var inheritedSignature))
+                    implementationSignature = inheritedSignature;
                 string selectedPhysicalMember = null;
                 JsonArray selectedSlotTypeParams = null;
                 var slotReturnsValue = false;
@@ -1438,6 +1447,18 @@ static class KotlinOverrideSlotBridge
                     : refs.IsInterfaceType(descriptorOwner);
                 var slotHasDefault = descriptorIsInterface && refs.IsPublicConcreteInstanceMethod(
                     descriptorOwner.Name, descriptorMember, methodArity, slotParams, slotRet);
+                // Own declarations precede inherited candidates. A materialized final-method forwarder
+                // owns its selected slot, just as in the local-declaration arm; the inherited fact is
+                // not a second implementation. Compare the complete resolved slot, not its name alone.
+                var slotKey = SupertypeGraph.TypeKey(descriptorOwner) + "::" + descriptorMember
+                    + "`" + methodArity + "(" + string.Join(",", slotParams.Select(SupertypeGraph.TypeKey))
+                    + ")->" + SupertypeGraph.TypeKey(slotRet)
+                    + MethodTypeParameterShapeKey(selectedSlotTypeParams, supArgs);
+                if (inheritedSignatures?.ContainsKey(impl) == true)
+                {
+                    if (ownedSlots.Contains(slotKey)) continue;
+                }
+                else ownedSlots.Add(slotKey);
                 fill(selectedSpec, descriptorOwner, descriptorIsInterface, true, accessorKind != null ? member : sourceIdentity,
                     descriptorMember, accessorKind, slotParams, slotRet, impl, selectedSlotTypeParams,
                     slotHasDefault, slotReturnsValue && IsUnitValueSlot(slotRet));
@@ -1640,7 +1661,8 @@ static class KotlinOverrideSlotBridge
     static JsonObject Implementer(Def cls, IReadOnlyDictionary<string, Def> defs, IEnumerable<JsonObject> methods, string supName,
         string physicalName, string semanticName, string slotDeclarationId,
         string propertyName, string accessorKind, int methodArity,
-        TypeNode[] slotParams, JsonArray slotTypeParams, TypeNode[] slotOwnerArgs, TypeNode[] ownArgs)
+        TypeNode[] slotParams, JsonArray slotTypeParams, TypeNode[] slotOwnerArgs, TypeNode[] ownArgs,
+        IReadOnlyDictionary<JsonObject, TypeNode[]> inheritedSignatures = null)
     {
         JsonObject found = null;
         foreach (var m in methods.OfType<JsonObject>())
@@ -1674,9 +1696,11 @@ static class KotlinOverrideSlotBridge
             // Every position must either already BE the slot or differ from it exactly where the slot was erased —
             // the only positions an override is free to narrow, and so the only ones whose types legitimately differ.
             var ok = true;
+            TypeNode[] inheritedSignature = null;
+            inheritedSignatures?.TryGetValue(m, out inheritedSignature);
             for (var i = 0; i < ps.Count && ok; i++)
             {
-                var t = TypeJson.Read((ps[i] as JsonObject)?["type"]);
+                var t = inheritedSignature?[i] ?? TypeJson.Read((ps[i] as JsonObject)?["type"]);
                 var declared = t == null ? null : SupertypeGraph.SubstOwnerTvs(t, ownArgs);
                 ok = declared != null && (ErasureAligned(slotParams[i], declared)
                     || IsCompanionScalarSeam(slotParams[i], declared));
