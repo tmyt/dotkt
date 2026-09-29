@@ -1282,10 +1282,12 @@ sealed partial class Emitter
             if (x.TryGetProperty("constraints", out var cs))
             {
                 var types = cs.EnumerateArray().Select(c => MapType(c)).ToList();
-                var ifaces = types.Where(IsInterfaceType).ToArray();
-                var baseT = types.FirstOrDefault(t => !IsInterfaceType(t));
+                var baseT = types.FirstOrDefault(t => !t.IsGenericParameter && !IsInterfaceType(t));
+                // Reflection.Emit stores additional constraint rows through this API, including type parameters.
+                // A parameter constraint is not an interface, but must not disappear behind a nominal base bound.
+                var additional = types.Where(t => t != baseT).ToArray();
                 if (baseT != null) gp.SetBaseTypeConstraint(baseT);
-                if (ifaces.Length > 0) gp.SetInterfaceConstraints(ifaces);
+                if (additional.Length > 0) gp.SetInterfaceConstraints(additional);
             }
         }
     }
