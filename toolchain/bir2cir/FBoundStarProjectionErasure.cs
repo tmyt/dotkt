@@ -830,6 +830,7 @@ static class FBoundStarProjectionErasure
         if (declaration[fact] != null || TypeJson.Read(declaration[slot]) is not TypeNode type
             || (!ContainsExistentialProjection(type)
                 && !ContainsWritableVariantArray(type, owners, refs)
+                && !ContainsGenericArray(type)
                 && !ContainsGenericAlias(type, refs)
                 && !ContainsKotlinVariantType(type, owners, refs)))
             return;
@@ -838,6 +839,25 @@ static class FBoundStarProjectionErasure
         declaration[fact] = Str(declaration[slot == "ret" ? "nullableGenericRet" : "nullableGeneric"])
             ?? TypeNode.ToJson(type);
     }
+
+    // Kotlin Array<Int> and IntArray can share a CLR int[] slot. Keep the declaration's generic-array
+    // classifier explicitly, including nested positions; a physical signature cannot recover that distinction.
+    static bool ContainsGenericArray(TypeNode type) => type switch
+    {
+        TypeNode.Array => true,
+        TypeNode.Fqn { Args: { } args } => args.Any(ContainsGenericArray),
+        TypeNode.Nullable nullable => ContainsGenericArray(nullable.Of),
+        TypeNode.Oblivious oblivious => ContainsGenericArray(oblivious.Of),
+        TypeNode.Projection projection => ContainsGenericArray(projection.Of),
+        TypeNode.ByRef byRef => ContainsGenericArray(byRef.Of),
+        TypeNode.Ptr pointer => ContainsGenericArray(pointer.Of),
+        TypeNode.Mod modifier => ContainsGenericArray(modifier.M) || ContainsGenericArray(modifier.Of),
+        TypeNode.Fn function => ContainsGenericArray(function.Ret)
+            || function.Params.Any(ContainsGenericArray)
+            || function.Recv != null && ContainsGenericArray(function.Recv)
+            || function.Ctx?.Any(ContainsGenericArray) == true,
+        _ => false,
+    };
 
     // Aliases are not a reversible source-type encoding: ArrayList<T> and a CLR List<T> declaration can have
     // the same physical signature without the same Kotlin classifier. Preserve declaration truth even when the
