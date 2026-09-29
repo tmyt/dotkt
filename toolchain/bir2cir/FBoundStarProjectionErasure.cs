@@ -3259,9 +3259,9 @@ static class FBoundStarProjectionErasure
         if (!variantOuter && (suppliedOuter == null || !ContainsExistential(suppliedOuter,
                 existentialTypeParameters, existentialMethodParameters))) return;
 
-        // memberSignature remains declaration-relative for an inner classifier's own type parameters (for example
-        // GenericEntry<E>'s value slot is type#1), while argTypes is the frontend-selected constructor descriptor
-        // closed at this use (String).  The hidden outer slot was normalized by kotc #555 and is exact in both.
+        // memberSignature remains declaration-relative, including the hidden enclosing instance and own slots
+        // (for example GenericEntry<E>'s value slot is type#1). argTypes closes that selected constructor descriptor
+        // at this use, including its actual enclosing instance; factory arguments use this caller-relative vector.
         var isLocalInner = defs.TryGetValue(innerType.Name, out var innerDef) && IsInner(innerDef);
         var isReferencedInner = refs.TryInnerSemanticOwner(innerType.Name, out var referencedOuter);
         // A regular constructor may simply take a star-projected value as its first source parameter. Only a local

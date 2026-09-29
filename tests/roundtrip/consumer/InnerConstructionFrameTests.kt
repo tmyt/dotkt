@@ -13,6 +13,7 @@ class ImportedConstructionHost<A> {
 class InnerConstructionFrameTests {
     @TestAttribute
     fun localConstructionKeepsDeclarationAndCallerFramesSeparate() {
+        checkCapturedConstructionFrames()
         checkLocalConstruction(17, "outer")
         checkLocalConstruction("own", 23)
         checkLocalConstruction<Int?, String?>(null, null)
