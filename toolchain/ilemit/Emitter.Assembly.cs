@@ -356,7 +356,8 @@ sealed partial class Emitter
                 if (ti.Def.TryGetProperty("fields", out var ffs))
                     foreach (var f in ffs.EnumerateArray())
                     {
-                        var tlType = MapType(f.GetProperty("type"));
+                        var tlSlot = MapSignatureSlot(f.GetProperty("type"));
+                        var tlType = tlSlot.Type;
                         var tlAttrs = (f.TryGetProperty("vis", out var tlVis) ? tlVis.GetString() : "public") switch
                         {
                             "private" => FieldAttributes.Private,
@@ -372,8 +373,8 @@ sealed partial class Emitter
                         if (tlLiteral) tlAttrs |= FieldAttributes.Literal;
                         // `@kotlin.concurrent.Volatile` on a top-level `var` -> a `modreq(IsVolatile)` static field.
                         var tlFb = f.TryGetProperty("volatile", out var tlVol) && tlVol.GetBoolean()
-                                ? DefineVolatileField(ti.TB, f.GetProperty("name").GetString(), tlType, tlAttrs)
-                                : ti.TB.DefineField(f.GetProperty("name").GetString(), tlType, tlAttrs);
+                                ? DefineVolatileField(ti.TB, f.GetProperty("name").GetString(), tlType, tlAttrs, tlSlot.Required, tlSlot.Optional)
+                                : ti.TB.DefineField(f.GetProperty("name").GetString(), tlType, tlSlot.Required, tlSlot.Optional, tlAttrs);
                         StampMemberAttrs(tlFb.SetCustomAttribute, f);   // [KotlinReadOnly]/[KotlinSuspendFunctionType]/… (bir2cir-generated)
                         if (tlLiteral)
                         {
@@ -407,13 +408,14 @@ sealed partial class Emitter
                         if (f.TryGetProperty("static", out var st) && st.GetBoolean()) fattrs |= FieldAttributes.Static;
                         if (f.TryGetProperty("initOnly", out var initOnly) && initOnly.GetBoolean())
                             fattrs |= FieldAttributes.InitOnly;
-                        var ftype = MapType(f.GetProperty("type"));
+                        var fieldSlot = MapSignatureSlot(f.GetProperty("type"));
+                        var ftype = fieldSlot.Type;
                         var literal = f.TryGetProperty("constant", out var literalValue);
                         if (literal) fattrs |= FieldAttributes.Static | FieldAttributes.Literal;
                         // `@kotlin.concurrent.Volatile` -> a `modreq(IsVolatile)` field (the C# `volatile` encoding).
                         var fb = f.TryGetProperty("volatile", out var vol) && vol.GetBoolean()
-                            ? DefineVolatileField(ti.TB, f.GetProperty("name").GetString(), ftype, fattrs)
-                            : ti.TB.DefineField(f.GetProperty("name").GetString(), ftype, fattrs);
+                            ? DefineVolatileField(ti.TB, f.GetProperty("name").GetString(), ftype, fattrs, fieldSlot.Required, fieldSlot.Optional)
+                            : ti.TB.DefineField(f.GetProperty("name").GetString(), ftype, fieldSlot.Required, fieldSlot.Optional, fattrs);
                         StampMemberAttrs(fb.SetCustomAttribute, f);   // [KotlinReadOnly]/[KotlinSuspendFunctionType]/… (bir2cir-generated)
                         if (literal)
                         {
@@ -699,8 +701,7 @@ sealed partial class Emitter
                             if (physicalDeclarationName != member || DeclaredMethodArity(bm) != describedArity
                                 || !DescriptorTypeParamsMatch(impl, bm, ownerFqn.Args)) continue;
                             if (!bm.TryGetProperty("params", out var bps)) continue;
-                            var declared = DefinitionSigKey(physicalDeclarationName, DeclaredMethodArity(bm),
-                                bps.EnumerateArray().Select(p => DotKt.Bir.TypeNode.Read(p.GetProperty("type"))));
+                            var declared = DefinitionSigKey(physicalDeclarationName, bm);
                             var substituted = SigKey(member, DeclaredMethodArity(bm),
                                 bps.EnumerateArray()
                                     .Select(p => SubstTv(DotKt.Bir.TypeNode.Read(p.GetProperty("type")), ownerFqn.Args)));
@@ -926,14 +927,18 @@ sealed partial class Emitter
             // ECMA-335 requires the Property signature to describe the accessor's index parameters. Most Kotlin
             // properties have none, but a context/extension property's getter physically receives those arguments.
             // A setter's final parameter is the value, not an index parameter.
-            var propertyParams = gm != null
-                ? _mparams[gm]
-                : sm != null ? _mparams[sm].SkipLast(1).ToArray() : Type.EmptyTypes;
+            var propertySlots = gm != null
+                ? p.GetProperty("getSig").EnumerateArray().Select(MapSignatureSlot).ToArray()
+                : sm != null ? p.GetProperty("setSig").EnumerateArray().SkipLast(1).Select(MapSignatureSlot).ToArray()
+                : Array.Empty<DeclaredSignatureSlot>();
+            var propertyType = MapSignatureSlot(p.GetProperty("type"));
             var pb = ti.TB.DefineProperty(
                 p.GetProperty("name").GetString(),
-                PropertyAttributes.None,
-                MapType(p.GetProperty("type")),
-                propertyParams);
+                PropertyAttributes.None, CallingConventions.Standard,
+                propertyType.Type, propertyType.Required, propertyType.Optional,
+                propertySlots.Select(slot => slot.Type).ToArray(),
+                propertySlots.Select(slot => slot.Required).ToArray(),
+                propertySlots.Select(slot => slot.Optional).ToArray());
             if (gm != null) pb.SetGetMethod(gm);
             if (sm != null) pb.SetSetMethod(sm);
             StampMemberAttrs(pb.SetCustomAttribute, p);   // [KotlinSuspendFunctionType]/… (bir2cir-generated)
@@ -949,7 +954,8 @@ sealed partial class Emitter
             ? arity.GetInt32()
             : 0;
         var parameterTypes = signature.EnumerateArray().Select(DotKt.Bir.TypeNode.Read).ToArray();
-        if (ti.MethodsBySig.TryGetValue(DefinitionSigKey(name, methodArity, parameterTypes), out var exact))
+        var returnType = DotKt.Bir.TypeNode.Read(property.GetProperty(role + "Ret"));
+        if (ti.MethodsBySig.TryGetValue(DefinitionSigKey(name, methodArity, parameterTypes, returnType), out var exact))
             return exact;
         throw new InvalidOperationException(
             $"ilemit: resolved Property accessor descriptor {ti.TB.FullName}.{DefinitionSigKey(name, methodArity, parameterTypes)} does not link exactly");
@@ -968,6 +974,18 @@ sealed partial class Emitter
     {
         _methodTypeParams[mb] = parameters;
         foreach (var g in parameters) _emittedMethodTps.Add(g);
+    }
+
+    static void AddMethodAlias(TypeInfo ti, MethodSigKey key, MethodBuilder method)
+    {
+        if (ti.AmbiguousMethodAliases.Contains(key)) return;
+        if (ti.MethodsBySig.TryGetValue(key, out var previous) && previous != method)
+        {
+            ti.MethodsBySig.Remove(key);
+            ti.AmbiguousMethodAliases.Add(key);
+            return;
+        }
+        ti.MethodsBySig[key] = method;
     }
 
     void DeclareMethod(TypeInfo ti, JsonElement m, bool isStatic)
@@ -1051,16 +1069,21 @@ sealed partial class Emitter
             RecordMethodTps(mb, gps);
             _curMethodParams = gps;
             ApplyConstraints(genTps.Value, gps, false);   // `<T : Comparable<T>>` on the method (variance N/A on methods)
-            ps = m.GetProperty("params").EnumerateArray().Select(p => MapType(p.GetProperty("type"))).ToArray();
-            mb.SetParameters(ps);
-            mb.SetReturnType(MapType(m.GetProperty("ret")));
-            _curMethodParams = null;
         }
         else
         {
-            ps = m.GetProperty("params").EnumerateArray().Select(p => MapType(p.GetProperty("type"))).ToArray();
-            mb = ti.TB.DefineMethod(name, attrs, MapType(m.GetProperty("ret")), ps);
+            mb = ti.TB.DefineMethod(name, attrs);
         }
+        var parameterSlots = m.GetProperty("params").EnumerateArray()
+            .Select(p => MapSignatureSlot(p.GetProperty("type"))).ToArray();
+        var returnSlot = MapSignatureSlot(m.GetProperty("ret"));
+        ps = parameterSlots.Select(slot => slot.Type).ToArray();
+        mb.SetSignature(returnSlot.Type, returnSlot.Required, returnSlot.Optional, ps,
+            parameterSlots.Select(slot => slot.Required).ToArray(),
+            parameterSlots.Select(slot => slot.Optional).ToArray());
+        if (returnSlot.HasModifiers || parameterSlots.Any(slot => slot.HasModifiers))
+            _declaredMethodSignatures[mb] = new(returnSlot, parameterSlots);
+        if (genTps != null) _curMethodParams = null;
         // A kotc-authored lifted method (`newDelegate` target) carries the same structural generated fact as
         // synthesized types. Stamp the standard marker here; dll2klib uses it to keep implementation-only helpers
         // out of the re-imported Kotlin surface. This is a direct CIR flag -> metadata mapping, not name inference.
@@ -1068,15 +1091,18 @@ sealed partial class Emitter
             StampCompilerGenerated(mb);
         ti.Methods[name] = mb;
         ti.MethodsBySig[DefinitionSigKey(name, m)] = mb;
-        // Temporary call-side alias: distinct definitions can intentionally share this wildcard key. Keep the first;
-        // constructed-owner structural matching enumerates the exact definitions and selects after substitution.
-        ti.MethodsBySig.TryAdd(SigKey(name, m), mb);
+        ti.MethodDeclarationReturns[mb] = DefinitionSigKey(name, m).Return;
+        // Keep a partial call-side alias only while it is unique. Return-distinct definitions must never
+        // acquire an order-dependent first-wins binding.
+        AddMethodAlias(ti, DefinitionSigKey(name, m) with { Return = null }, mb);
+        AddMethodAlias(ti, SigKey(name, m), mb);
         // Calls whose frontend declaration identity is not yet transported through an erased overload set remain #395.
         // Preserve the first declaration's logical lookup without changing the emitted MethodDef name; exact bir2cir-
         // authored calls and all MethodImpl descriptors use the physical key above.
         ti.Methods.TryAdd(logicalName, mb);
         ti.MethodsBySig.TryAdd(DefinitionSigKey(logicalName, m), mb);
-        ti.MethodsBySig.TryAdd(SigKey(logicalName, m), mb);
+        AddMethodAlias(ti, DefinitionSigKey(logicalName, m) with { Return = null }, mb);
+        AddMethodAlias(ti, SigKey(logicalName, m), mb);
         ti.MethodNameCounts[name] = ti.MethodNameCounts.TryGetValue(name, out var nameCount) ? nameCount + 1 : 1;
         _mparams[mb] = ps;   // MethodBuilder.GetParameters() throws pre-bake; record param types for call-site boxing
         DefineParamNames(mb, m);
@@ -1123,8 +1149,12 @@ sealed partial class Emitter
         _curTypeParams = EffectiveTps(ti);   // so a `gp:T` ctor param resolves when pulled early out of pass-3 order
         foreach (var c in ctors.EnumerateArray())
         {
-            var ps = c.GetProperty("params").EnumerateArray().Select(p => MapType(p.GetProperty("type"))).ToArray();
-            var cb = ti.TB.DefineConstructor(AccessOf(c), CallingConventions.Standard, ps);
+            var slots = c.GetProperty("params").EnumerateArray()
+                .Select(p => MapSignatureSlot(p.GetProperty("type"))).ToArray();
+            var ps = slots.Select(slot => slot.Type).ToArray();
+            var cb = ti.TB.DefineConstructor(AccessOf(c), CallingConventions.Standard, ps,
+                slots.Select(slot => slot.Required).ToArray(), slots.Select(slot => slot.Optional).ToArray());
+            if (slots.Any(slot => slot.HasModifiers)) _declaredConstructorSignatures[cb] = slots;
             DefineParamNames(cb, c);   // ctor param NAMES + [Optional]/DefaultParameterValue (named-arg ctor calls)
             StampMemberAttrs(cb.SetCustomAttribute, c); // declaration carriers/annotations belong to the ctor row
             ti.Ctors.Add(cb);

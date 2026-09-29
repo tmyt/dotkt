@@ -22,5 +22,14 @@ class NominalFunctionDelegateTests {
         val result = Callbacks.UseSpan({ span -> total = Callbacks.SpanTotal(span); Unit }, intArrayOf(1, 2, 3))
         check(result === Unit)
         check(total == 6)
+        val storedSpan: (kotlin.clr.Span<Int>) -> Unit = { span -> total = Callbacks.SpanTotal(span) }
+        val storedResult = Callbacks.UseSpan(storedSpan, intArrayOf(2, 3, 4))
+        check(storedResult === Unit)
+        check(total == 9)
+        val spanIdentity: (kotlin.clr.Span<Int>) -> kotlin.clr.Span<Int> = { it }
+        check(Callbacks.TransformSpan(spanIdentity, intArrayOf(3, 4, 5)) == 12)
+        val backing = intArrayOf(3, 4, 5)
+        val spanFactory: () -> kotlin.clr.Span<Int> = { Callbacks.ArraySpan(backing) }
+        check(Callbacks.ProducedSpanTotal(spanFactory) == 12)
     }
 }

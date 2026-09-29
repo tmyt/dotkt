@@ -8,6 +8,15 @@ class FunctionVarianceTests {
     fun sourceSignaturesAndIdentitySurviveDllBoundaries() {
         val next: (Int) -> Int = increment()
         check(next(4) == 5)
+        val length = sequenceLength()
+        check(length("across") == 6)
+        check(length(StringBuilder("builder")) == 7)
+        check(length(null) == null)
+        val textFactory: () -> String = stringFactory()
+        val sequenceFactory: () -> CharSequence = textFactory
+        check(sequenceFactory === textFactory)
+        check(sequenceFactory().length == 12)
+        check(consumeSequenceFactory(textFactory) == 12)
         val retained: (Int) -> Int = keep(next)
         check(retained === next)
         val holder = FunctionHolder(next)
@@ -15,6 +24,9 @@ class FunctionVarianceTests {
         check(property === next)
         check(property(6) == 7)
         check(invokeDefault(9) == 10)
+        check(CompanionFunctions.answer == 42)
+        val companionFunction: (Int) -> Int = CompanionFunctions.increment
+        check(companionFunction(41) == 42)
         check(optional(false) == null)
         val maybe: ((String?) -> String?)? = optional(true)
         check(maybe!!(null) == null)
@@ -28,7 +40,28 @@ class FunctionVarianceTests {
         val contextFunction: context(Context) (Int) -> String? = contextual()
         with(Context("context")) { check(contextFunction(1) == "context") }
         check(boxed().value(10) == 11)
+        val sink: FunctionSink<(Int) -> Int> = IntFunctionSink()
+        check(sink is IntFunctionSink)
+        check(FunctionBound(next).apply(41) == 42)
+        check(consumeFactoryBox { Box(44) } == 44)
+        val readInt: (Box<Int>) -> Int = boxReader()
+        val readText: (Box<String>) -> String = boxReader()
+        check(readInt(Box(42)) == 42)
+        check(readText(Box("generic")) == "generic")
+        check(boxedStar(Box("star")) == "star")
         check(inlineIncrement(20) == 21)
         check(inlineIncrement(30, next) == 31)
+        val single: () -> Float = { 1.25f }
+        val double: () -> Double = { 2.5 }
+        check(selected(single) == 1.25f)
+        check(selected(double) == 2.5)
+        val slots: ReturnSlots = ReturnImplementation()
+        check(slots.selected(single) == 1.25f)
+        check(slots.selected(double) == 2.5)
+        val generic = GenericReturnSlots<Int>()
+        val singleArgument: (Int) -> Float = { it.toFloat() }
+        val doubleArgument: (Int) -> Double = { it.toDouble() }
+        check(generic.selected(3, singleArgument) == 3.0f)
+        check(generic.selected(4, doubleArgument) == 4.0)
     }
 }

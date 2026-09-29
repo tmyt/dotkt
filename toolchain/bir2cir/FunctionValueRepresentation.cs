@@ -9,6 +9,7 @@ using DotKt.Bir;
 // family retains its exact signature.
 static class FunctionValueRepresentation
 {
+    internal const string RestorationKey = "functionValueRestoration";
     static readonly TypeNode Object = new TypeNode.Fqn("object");
 
     // Preserve the complete source slot, including nested generic function arguments,
@@ -20,6 +21,26 @@ static class FunctionValueRepresentation
 
     static void PreserveOwner(JsonObject owner)
     {
+        var sourceEdges = new JsonObject();
+        if (ContainsOrdinaryFunction(owner["base"]))
+            sourceEdges["base"] = owner["base"].DeepClone();
+        if (owner["interfaces"] is JsonArray interfaces)
+        {
+            var moving = new JsonArray(interfaces.Where(ContainsOrdinaryFunction)
+                .Select(edge => edge.DeepClone()).ToArray());
+            if (moving.Count != 0) sourceEdges["interfaces"] = moving;
+        }
+        if (owner["typeParams"] is JsonArray parameters)
+        {
+            var bounds = new JsonObject();
+            for (var i = 0; i < parameters.Count; i++)
+                if (parameters[i] is JsonObject parameter
+                    && parameter["constraints"] is JsonArray constraints
+                    && constraints.Any(ContainsOrdinaryFunction))
+                    bounds[i.ToString()] = constraints.DeepClone();
+            if (bounds.Count != 0) sourceEdges["bounds"] = bounds;
+        }
+        KotlinSupertypesRecord.Merge(owner, sourceEdges);
         if (owner["methods"] is JsonArray methods)
             foreach (var method in methods.OfType<JsonObject>())
             {
@@ -57,12 +78,15 @@ static class FunctionValueRepresentation
         return node is JsonArray array && array.Any(ContainsOrdinaryFunction);
     }
 
-    public static void Apply(JsonNode root)
+    public static void Apply(JsonNode root, ValueTypeOracle isByRefLike)
     {
-        Walk(root);
+        Walk(root, isByRefLike);
     }
 
-    static void Walk(JsonNode node)
+    static TypeNode Carrier(TypeNode type, ValueTypeOracle isByRefLike) =>
+        type is TypeNode.Fqn named && isByRefLike(named) ? type : Object;
+
+    static void Walk(JsonNode node, ValueTypeOracle isByRefLike)
     {
         if (node is JsonObject obj)
         {
@@ -74,8 +98,11 @@ static class FunctionValueRepresentation
             {
                 var fn = (TypeNode.Fn)TypeJson.Read(obj);
                 if (fn.Suspend || fn.Clr != null) return;
-                var physical = new TypeNode.Fn(false, Object,
-                    fn.Params.Select(_ => Object).ToArray(), fn.Recv == null ? null : Object);
+                // A ref struct cannot cross an object slot. Keep its exact CLR signature even for a stored
+                // Kotlin function; all boxable slots still share the ordinary identity-preserving carrier.
+                var physical = new TypeNode.Fn(false, Carrier(fn.Ret, isByRefLike),
+                    fn.Params.Select(parameter => Carrier(parameter, isByRefLike)).ToArray(),
+                    fn.Recv == null ? null : Carrier(fn.Recv, isByRefLike));
                 var replacement = (JsonObject)TypeJson.Write(physical);
                 obj.Clear();
                 foreach (var pair in replacement.ToList()) obj[pair.Key] = pair.Value?.DeepClone();
@@ -89,20 +116,24 @@ static class FunctionValueRepresentation
                 // signature is not an ordinary Kotlin function value, and can contain unboxable slots.
                 // Stored function conversions still erase their operand and adapt at the SAM boundary.
                 if (pair.Key == "funcType" && ClrMemberResolution.HasDeclaredDelegateSlot(obj)) continue;
-                if (pair.Value != null) Walk(pair.Value);
+                if (pair.Value != null) Walk(pair.Value, isByRefLike);
             }
             if (invocationResult != null)
             {
                 var call = obj.DeepClone();
                 var resultType = TypeJson.Write(invocationResult);
-                Walk(resultType);
+                Walk(resultType, isByRefLike);
                 obj.Clear();
                 obj["k"] = "cast";
                 obj["type"] = resultType;
+                // This restores the function's selected result slot. It is not a source-level
+                // unchecked classifier cast and must retain its constructed generic arguments.
+                obj["_exactBridgeCast"] = true;
+                obj[RestorationKey] = true;
                 obj["e"] = call;
             }
         }
         else if (node is JsonArray array)
-            foreach (var child in array) if (child != null) Walk(child);
+            foreach (var child in array) if (child != null) Walk(child, isByRefLike);
     }
 }

@@ -640,6 +640,9 @@ static class DeclarationIdentityBinding
                     or "newDelegate" or "newBoundDelegate")
                 {
                     obj["method"] = physical;
+                    // This is the selected declaration's return, not the caller's substituted expression type.
+                    obj["calleeRet"] = declarationsById[id]["ret"]?.DeepClone()
+                        ?? throw new InvalidOperationException("Local declaration has no physical return signature");
                     // A trusted overlay can deliberately change selected declaration slots while retaining their
                     // Kotlin surface in metadata. Rewrite only those physical slots: an ordinary call's remaining
                     // descriptor is already substituted into the caller's owner/method frame and must stay there.
@@ -760,7 +763,9 @@ static class DeclarationIdentityBinding
                 TypeJson.Read(p["type"])
                 ?? throw new InvalidOperationException("bir2cir: declaration identity has an untyped physical parameter"))))
             : "";
-        return arity + "|" + parameters;
+        var result = method["ret"] is JsonNode returnType
+            ? PhysicalTypeSignature(TypeJson.Read(returnType)) : "System.Void";
+        return arity + "|" + parameters + " -> " + result;
     }
 
     static string PhysicalPropertySignature(JsonObject property)
@@ -784,6 +789,7 @@ static class DeclarationIdentityBinding
     // leave two MethodDefs with one CLR signature. Keep this nominal projection aligned with ilemit's MapType rules.
     internal static string PhysicalTypeSignature(TypeNode type) => type switch
     {
+        TypeNode.Mod m => (m.Req ? "modreq:" : "modopt:") + PhysicalTypeSignature(m.M) + ":" + PhysicalTypeSignature(m.Of),
         TypeNode.Fqn { Args: null } f => PhysicalTypeName(f.Name),
         TypeNode.Fqn f => PhysicalTypeName(f.Name) + "[" +
             string.Join(",", f.Args!.Select(PhysicalTypeSignature)) + "]",

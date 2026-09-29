@@ -5,6 +5,12 @@ private fun <T, R> varianceWiden(callback: (T) -> R): (T) -> Any? = callback
 private fun <T, R> varianceNullable(callback: ((T) -> R)?): ((T) -> Any?)? = callback
 private fun <T> varianceInvoke(callback: (T) -> Any?, value: T): Any? = callback(value)
 private class VarianceStorage<T>(var callback: (T) -> Any?)
+private class VarianceText(private val text: String) : CharSequence {
+    override val length: Int get() = text.length
+    override fun get(index: Int): Char = text[index]
+    override fun subSequence(startIndex: Int, endIndex: Int): CharSequence =
+        VarianceText(text.substring(startIndex, endIndex))
+}
 
 class FunctionVarianceTests {
     @TestAttribute
@@ -20,6 +26,17 @@ class FunctionVarianceTests {
         check(integers === identity)
         check(strings === identity)
         check(nullable === identity)
+        val sequenceLength: (CharSequence) -> Int = { it.length }
+        check(sequenceLength("abc") == 3)
+        check(sequenceLength(VarianceText("four")) == 4)
+        check(sequenceLength(StringBuilder("builder")) == 7)
+        val nullableLength: (CharSequence?) -> Int? = { it?.length }
+        check(nullableLength(null) == null)
+        check(nullableLength("ab") == 2)
+        val anyValue: (Any) -> Boolean = { it is String }
+        val sequenceView: (CharSequence) -> Boolean = anyValue
+        check(sequenceView === anyValue)
+        check(sequenceView("raw string"))
     }
 
     @TestAttribute
@@ -34,6 +51,16 @@ class FunctionVarianceTests {
         check(maybeWidened(null) == null)
         check(maybeWidened("ab") == 2)
         check(maybeWidened === maybeLength)
+        var evaluations = 0
+        val textFactory: () -> String = { evaluations++; "result" }
+        val sequenceFactory: () -> CharSequence = textFactory
+        check(sequenceFactory === textFactory)
+        check(sequenceFactory().length == 6)
+        check(evaluations == 1)
+        val nullableTextFactory: () -> String? = { null }
+        val nullableSequenceFactory: () -> CharSequence? = nullableTextFactory
+        check(nullableSequenceFactory === nullableTextFactory)
+        check(nullableSequenceFactory() == null)
     }
 
     @TestAttribute

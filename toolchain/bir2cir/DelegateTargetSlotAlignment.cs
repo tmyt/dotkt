@@ -68,6 +68,23 @@ static class DelegateTargetSlotAlignment
 
     static bool _moved;
 
+    public static bool ApplyMaterialized(IEnumerable<JsonNode> roots,
+        IEnumerable<JsonNode> declarations, ValueTypeOracle isValue)
+    {
+        _isValue = isValue ?? (_ => false);
+        var statics = new Dictionary<string, Demand>(StringComparer.Ordinal);
+        var closures = new Dictionary<string, Demand>(StringComparer.Ordinal);
+        foreach (var root in roots) Collect(root, statics, closures);
+        _moved = false;
+        foreach (var declaration in declarations.OfType<JsonObject>())
+        {
+            AlignMethods(declaration["methods"], statics);
+            AlignClosure(declaration, closures);
+            AlignClosureTypes(declaration, closures);
+        }
+        return _moved;
+    }
+
     // The positions one delegate construction requires of its target: the parameter indices stated as `object`
     // (indexed over the funcType's DELEGATE parameters, receiver first, which is the order the lifted method declares
     // them in) and whether the return is stated as `object`.
@@ -119,12 +136,17 @@ static class DelegateTargetSlotAlignment
         foreach (var t in types)
             if (t is JsonObject to)
             {
-                if (closures.Count > 0 && Str(to["name"]) is string tn && closures.TryGetValue(tn, out var d)
-                    && to["methods"] is JsonArray tms)
-                    foreach (var tm in tms)
-                        if (tm is JsonObject tmo && Str(tmo["name"]) == "invoke") Align(tmo, d);
+                AlignClosure(to, closures);
                 AlignClosureTypes(to, closures);
             }
+    }
+
+    static void AlignClosure(JsonObject owner, Dictionary<string, Demand> closures)
+    {
+        if (Str(owner["name"]) is string name && closures.TryGetValue(name, out var demand)
+            && owner["methods"] is JsonArray methods)
+            foreach (var method in methods.OfType<JsonObject>())
+                if (Str(method["name"]) == "invoke") Align(method, demand);
     }
 
     // A declaration is the target when its NAME and its own parameter vector are the ones the construction named.
@@ -196,6 +218,10 @@ static class DelegateTargetSlotAlignment
                             ["init"] = new JsonObject
                             {
                                 ["k"] = "cast", ["type"] = TypeJson.Write(pt),
+                                // Restore the selected target's declaration slot, not a Kotlin unchecked
+                                // classifier cast. Its generic arguments must survive existential lowering.
+                                ["_exactBridgeCast"] = true,
+                                [FunctionValueRepresentation.RestorationKey] = true,
                                 ["e"] = new JsonObject
                                 {
                                     ["k"] = "local", ["name"] = physicalName,

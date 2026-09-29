@@ -246,7 +246,7 @@ static class BirTypeLowering
     // emit, no value ever read — were removed in #37 m5.)
     static readonly HashSet<string> ReturnKeys = new(StringComparer.Ordinal)
     {
-        "ret", "dynRet", "suspendRet",
+        "ret", "dynRet", "suspendRet", "getRet", "setRet",
     };
 
     // The ref.dll @ClrTypeAlias index (Kotlin FQN -> BCL), set per top-level Lower() call. Consulted for EVERY CLR-bound
@@ -574,6 +574,14 @@ static class BirTypeLowering
             || Equal(unit, VoidType, value: true))
             throw new InvalidOperationException("Slot comparison lost the distinction between Unit values and void returns");
         Console.WriteLine("[slot returns] self-test OK (source Unit, nullable Unit, physical Unit value)");
+        var accessor = Lower(JsonNode.Parse("""
+            {"getRet":{"t":"fqn","name":"kotlin.Int"},
+             "setRet":{"t":"fqn","name":"kotlin.Unit"}}
+            """), refBuild: false,
+            aliases: new Dictionary<string, string> { ["kotlin.Int"] = "System.Int32" });
+        if (TypeJson.Read(accessor["getRet"]) != new TypeNode.Fqn("System.Int32")
+            || TypeJson.Read(accessor["setRet"]) != VoidType)
+            throw new InvalidOperationException("Accessor return descriptors did not follow CLR return lowering");
     }
 
     internal static void SelfTestMethodImplMetadata()
@@ -841,7 +849,7 @@ static class BirTypeLowering
                 {
                     continue;
                 }
-                if (kv.Key is ValueReturnKey or "overrides" or "fakeOverride"
+                if (kv.Key is ValueReturnKey or FunctionValueRepresentation.RestorationKey or "overrides" or "fakeOverride"
                     or KotlinPropertyAccessors.InheritedImplementationKey
                     or KotlinPropertyAccessors.InheritedDefaultAccessorsKey
                     or KotlinPropertyAccessors.InheritedDefaultMethodsKey

@@ -27,6 +27,7 @@ static class Bir2Cir
                 AliasHelperHoist.SelfTest();
                 StdlibBindingOverlay.SelfTest();
                 DeclarationIdentityBinding.SelfTest();
+                KotlinPropertyAccessors.SelfTestAccessorSignatures();
                 LexicalDeclarationIds.SelfTest();
                 ExistentialReceiverBinding.SelfTest();
                 MaterializedBirPayload.SelfTest();
@@ -651,7 +652,7 @@ sealed class Pipeline
             // already-erased `suspendRet`.
             RoundtripMetadata.FreezeSuspendResults(new[] { bir.Root });
             NullableGenericErasure.Apply(bir.Root, isValueFqn);
-            FunctionValueRepresentation.Apply(bir.Root);
+            FunctionValueRepresentation.Apply(bir.Root, refs.IsByRefLikeFqn);
             // GENERIC-BOUNDARY nullable-Tv USE realignment — THE USE AXIS of #86's erasure invariant (#4;
             // #113/#117/#120/#142). The DEF-side erasure above turns a member's `T?`/`…Ref<T?>…` into
             // `object`/`…Ref<object>…`, but a CALL site kotc emitted with T already substituted carries the concrete
@@ -739,6 +740,8 @@ sealed class Pipeline
             // a synthesized remove callback. A no-op for the ref/rt stdlib self-build (no .NET events).
             hoisted = ClrEventSubscriptionBinding.Apply(
                 hoisted, refs, clrEventForwardedOwners, localTypeFqns, out var materializedEventSubscriptions);
+            foreach (var materialized in materializedEventSubscriptions)
+                FunctionValueRepresentation.Apply(materialized, refs.IsByRefLikeFqn);
             // Event binding has just synthesized receiver/handler locals plus add/remove member accesses. Feed those
             // NEW fixed slots through the same nullable-value use-axis rule as the original tree. In particular, a
             // proven-present Nullable<V> event receiver must enter the synthesized bare-V spill as V; the first pass
@@ -751,6 +754,11 @@ sealed class Pipeline
             // entry contract so only these newly-created callback classes are assembled.
             var materializedEventClosureTypes = ClosureSynthesis.ApplyMaterialized(
                 hoisted, materializedEventSubscriptions, refs);
+            if (DelegateTargetSlotAlignment.ApplyMaterialized(
+                    materializedEventSubscriptions, materializedEventClosureTypes, isValueFqn))
+                foreach (var materializedType in materializedEventClosureTypes)
+                    NullableTvErasureCallRealign.ApplyAfterDelegateSlotAlignment(
+                        materializedType, nullableTvDeclRets, isValueFqn, refs);
             // ClosureSynthesis stamps the transient lifted-frame correspondence on a GENERIC closure class, and the pass
             // that consumes it (SharedSyntheticSynthesis) already ran. Drop it here so the invariant "it never reaches
             // CIR" holds for a class assembled by this late pass too, rather than only for the main one.

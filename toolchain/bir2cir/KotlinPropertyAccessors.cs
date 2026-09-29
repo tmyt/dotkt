@@ -9,6 +9,26 @@ using DotKt.Bir;
 // the resulting method name to recover the property or accessor role.
 static class KotlinPropertyAccessors
 {
+    internal static void SelfTestAccessorSignatures()
+    {
+        var property = JsonNode.Parse("""
+            {"name":"value","type":{"t":"tv","scope":"type","i":0},
+             "propertyAssociation":"p","kotlinAccessors":["get","set"]}
+            """)!.AsObject();
+        var methods = JsonNode.Parse("""
+            [{"name":"read","propertyAssociation":"p","propertyAccessor":"get",
+              "params":[],"ret":{"t":"fqn","name":"object"}},
+             {"name":"write","propertyAssociation":"p","propertyAccessor":"set",
+              "params":[{"name":"value","type":{"t":"fqn","name":"object"}}],
+              "ret":{"t":"fqn","name":"void"}}]
+            """)!.AsArray().OfType<JsonObject>().ToArray();
+        AllocateProperty(property, methods, stripIdentity: false);
+        if (!JsonNode.DeepEquals(property["getRet"], methods[0]["ret"])
+            || !JsonNode.DeepEquals(property["setRet"], methods[1]["ret"])
+            || JsonNode.DeepEquals(property["getRet"], property["type"]))
+            throw new InvalidOperationException("Property accessor links lost their selected MethodDef return types");
+    }
+
     internal const string SourceNameKey = "propertyName";
     internal const string KindKey = "propertyAccessor";
     internal const string PropertyRolesKey = "kotlinAccessors";
@@ -485,6 +505,7 @@ static class KotlinPropertyAccessors
             {
                 property["get"] = physicalName;
                 property["getSig"] = signature;
+                property["getRet"] = method["ret"]!.DeepClone();
                 property["getMethodArity"] = methodArity;
                 get = true;
             }
@@ -492,6 +513,7 @@ static class KotlinPropertyAccessors
             {
                 property["set"] = physicalName;
                 property["setSig"] = signature;
+                property["setRet"] = method["ret"]!.DeepClone();
                 property["setMethodArity"] = methodArity;
                 set = true;
             }
@@ -502,12 +524,14 @@ static class KotlinPropertyAccessors
         {
             property["get"] = null;
             property.Remove("getSig");
+            property.Remove("getRet");
             property.Remove("getMethodArity");
         }
         if (!set)
         {
             property["set"] = null;
             property.Remove("setSig");
+            property.Remove("setRet");
             property.Remove("setMethodArity");
         }
         if (stripIdentity)
