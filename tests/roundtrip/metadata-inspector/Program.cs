@@ -1174,11 +1174,11 @@ static void VerifyUnsafeAccessorDll(string path)
         .Select(md.GetMethodDefinition)
         .Where(method => md.GetString(method.Name).EndsWith("$invoke", StringComparison.Ordinal))
         .ToArray();
-    Require(wrappers.Length == 15 && wrappers.All(method =>
+    Require(wrappers.Length == 16 && wrappers.All(method =>
             (method.Attributes & MethodAttributes.MemberAccessMask) == MethodAttributes.Assembly &&
             (method.Attributes & MethodAttributes.Static) != 0 && method.RelativeVirtualAddress != 0),
         $"generic UnsafeAccessor holders do not expose only compiler-generated internal wrappers " +
-        $"(found {wrappers.Length}, expected 15)");
+        $"(found {wrappers.Length}, expected 16)");
 }
 
 static void VerifyLayerBoundary(string birPath, string cirPath)
