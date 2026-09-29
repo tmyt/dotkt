@@ -1,5 +1,7 @@
 package roundtrip.constructedmethods
 
+import kotlin.clr.ClrRef
+
 class MethodBox<T>(val value: T)
 class MethodOwner<T>(val owner: T) {
     fun <M> echo(input: M): M = input
@@ -11,6 +13,11 @@ class MethodOwner<T>(val owner: T) {
         fun <M> unpack(input: MethodBox<M>): M = input.value
         fun <M> enclosing(input: M): T = owner
         fun <M> inner(input: M): U = own
+        fun <M> replace(slot: ClrRef<M>, value: M): M {
+            val previous = slot.value
+            slot.value = value
+            return previous
+        }
     }
 }
 
