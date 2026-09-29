@@ -167,7 +167,7 @@ static class AliasHelperHoist
                 var value = obj[key];
                 if (value == null) continue;
                 if (key is "sig" or "resolvedMemberParams" or "shapeTypes" or "paramSig"
-                    or "delegationSig" || (key == "argTypes" && kind != "new"))
+                    or "delegationSig" or "memberSignature" || (key == "argTypes" && kind != "new"))
                     continue;
                 if (TypeJson.IsType(value)) obj[key] = TypeJson.Write(rewrite(TypeJson.Read(value)));
                 else RewriteLexicalTypes(value, rewrite);
@@ -425,11 +425,24 @@ static class AliasHelperHoist
             throw new InvalidOperationException("Hoisted alias receiver lost its binding roles or physical permutation");
         var method = new JsonObject { ["name"] = "Read", ["params"] = new JsonArray(),
             ["ret"] = TypeJson.Write(new TypeNode.Tv("type", 1)), ["body"] = new JsonArray() };
+        var slot = TypeJson.Write(new TypeNode.Tv("type", 0));
+        ((JsonArray)method["body"]).Add(new JsonObject
+        {
+            ["k"] = "new", ["type"] = TypeJson.Write(new TypeNode.Fqn("Target",
+                new TypeNode[] { new TypeNode.Tv("type", 0) })),
+            ["argTypes"] = new JsonArray(slot.DeepClone()),
+            ["memberSignature"] = new JsonArray(slot.DeepClone()),
+            ["args"] = new JsonArray(new JsonObject { ["k"] = "this" }),
+        });
         var hoisted = HoistMethod(method, new JsonArray("S0", "T0", "S1", "T1", "N0", "NS0"), receiver);
         if (TypeJson.Read(hoisted["params"][0]["type"]) is not TypeNode.Fqn { Args: { } hoistedArgs }
             || hoistedArgs.Any(type => type is not TypeNode.Tv { Scope: "method" })
             || TypeJson.Read(hoisted["ret"]) != new TypeNode.Tv("method", 1))
             throw new InvalidOperationException("Hoisted alias receiver and body disagree on the method frame");
+        var construction = hoisted["body"][0];
+        if (TypeJson.Read(construction["argTypes"][0]) != new TypeNode.Tv("method", 0)
+            || TypeJson.Read(construction["memberSignature"][0]) != new TypeNode.Tv("type", 0))
+            throw new InvalidOperationException("Hoisted constructor mixed caller and selected declaration frames");
         Console.WriteLine("[alias helper receiver] self-test OK (binding roles, permutation, scope transfer)");
     }
 

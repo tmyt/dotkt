@@ -95,39 +95,11 @@ static partial class ClrMemberResolution
                     if (declared.Any(t => t == null)) continue;
                     var matches = declared.Select((raw, i) =>
                     {
-                        var wantedKey = SupertypeGraph.TypeKey(wanted[i]);
-                        // A declaration fact normally stays in the target's own open frame.  A lifted/local target
-                        // can instead be serialized through the caller's lexical frame; in that case it is exactly
-                        // the target declaration closed by the constructed owner.  Accept those two equivalent
-                        // spellings, while a plain use-site argTypes lookup remains closed-only.
-                        if (declarationSig != null && SupertypeGraph.TypeKey(raw) == wantedKey) return true;
-                        if ((closeOwnerFrame || declarationSig != null) && owner.Args is { Length: > 0 })
-                            return SupertypeGraph.TypeKey(SupertypeGraph.SubstOwnerTvs(raw, owner.Args)) == wantedKey;
-                        return declarationSig == null && SupertypeGraph.TypeKey(raw) == wantedKey;
-                    }).All(x => x);
-                    if (matches) exact.Add(candidate);
-                }
-            }
-            // A lifted local class can re-home a lexical type parameter into a NEW owner slot.  kotc's open
-            // declaration vector still speaks the original lexical frame there, while the constructed-owner plus
-            // use-site vector states the same selection in its final physical frame.  If the open comparison names
-            // no declaration, normalize through that closed pair.  This remains exact equality and still rejects
-            // both zero and multiple matches; it is not assignability or overload scoring.
-            if (exact.Count == 0 && declarationSig != null && useSiteSig != null
-                && useSiteSig.Count == args.Count && useSiteSig.All(n => n != null))
-            {
-                var wanted = useSiteSig.Select(TypeJson.Read).ToArray();
-                foreach (var candidate in sameArity)
-                {
-                    var ps = (JsonArray)candidate.ctor["params"];
-                    var declared = ps.Select(p => p?["type"] is JsonNode pt ? TypeJson.Read(pt) : null).ToArray();
-                    if (declared.Any(t => t == null)) continue;
-                    var matches = declared.Select((raw, i) =>
-                    {
-                        var closed = owner.Args is { Length: > 0 }
-                            ? SupertypeGraph.SubstOwnerTvs(raw, owner.Args)
-                            : raw;
-                        return SupertypeGraph.TypeKey(closed) == SupertypeGraph.TypeKey(wanted[i]);
+                        // A selected declaration is matched in its own open frame. Closing it here would merge
+                        // distinct overloads such as .ctor(T) and .ctor(Int) when the owner is instantiated with Int.
+                        var selected = closeOwnerFrame && owner.Args is { Length: > 0 }
+                            ? SupertypeGraph.SubstOwnerTvs(raw, owner.Args) : raw;
+                        return SupertypeGraph.TypeKey(selected) == SupertypeGraph.TypeKey(wanted[i]);
                     }).All(x => x);
                     if (matches) exact.Add(candidate);
                 }
@@ -729,8 +701,20 @@ static partial class ClrMemberResolution
             .ToArray();
         var ctors = open.GetConstructors(BindingFlags.Public | BindingFlags.Instance)
             .Where(c => c.GetParameters().Length == argNodes.Count).ToList();
-        var win = PickUnique(ctors, c => c.GetParameters(), argNodes, ownerArgs,
-            $"newClr owner={TypeNode.ToJson(ownerFqn)} ({DescArgs(argNodes)})");
+        ConstructorInfo win;
+        if (node["memberSignature"] is JsonArray selectedSignature)
+        {
+            var declaration = selectedSignature.Select(TypeJson.Read)
+                .Select(BirTypeLowering.CanonicalPhysicalSlotType).ToList();
+            // Compare the complete open shape, not applicability or a nominal-head-only approximation.
+            var exact = ctors.Where(c => c.GetParameters().Select((p, i) =>
+                DeclaredConstructorSlotMatches(declaration[i], p.ParameterType)).All(match => match)).ToList();
+            win = exact.Count == 1 ? exact[0] : throw new InvalidOperationException(
+                $"bir2cir: selected constructor declaration on '{ownerFqn.Name}' resolves to {exact.Count} members: {DescArgs(declaration)}");
+        }
+        else
+            win = PickUnique(ctors, c => c.GetParameters(), argNodes, ownerArgs,
+                $"newClr owner={TypeNode.ToJson(ownerFqn)} ({DescArgs(argNodes)})");
         CoerceCtorCollectionViews(node, win.GetParameters(), argNodes, ownerArgs);
         node["memberRef"] = MemberRefJson(win, MemberRefNode.Kinds.Ctor, open, ownerArgs);
         StampDelegateArgumentTargets(node, win.GetParameters(), ownerArgs ?? Array.Empty<TypeNode>(),
@@ -740,6 +724,44 @@ static partial class ClrMemberResolution
         StampResolvedMemberReturn(node, typeof(void));
         node.Remove("argTypes");
         node.Remove("memberSignature");
+    }
+
+    static bool DeclaredConstructorSlotMatches(TypeNode selected, Type parameter)
+    {
+        selected = BirTypeLowering.CanonicalPhysicalSlotType(selected);
+        if (selected is TypeNode.Oblivious oblivious)
+            return DeclaredConstructorSlotMatches(oblivious.Of, parameter);
+        parameter = AliasResolve(parameter);
+        if (parameter.IsGenericParameter)
+            return selected is TypeNode.Tv tv && tv.I == parameter.GenericParameterPosition
+                && tv.Scope == (parameter.DeclaringMethod == null ? "type" : "method");
+        if (parameter.IsByRef)
+            return selected is TypeNode.ByRef byref && DeclaredConstructorSlotMatches(byref.Of, parameter.GetElementType());
+        if (parameter.IsPointer)
+            return selected is TypeNode.Ptr pointer && DeclaredConstructorSlotMatches(pointer.Of, parameter.GetElementType());
+        if (parameter.IsArray)
+            return selected is TypeNode.Array array && array.Rank == SafeArrayRank(parameter)
+                && array.SzArray == parameter.IsSZArray
+                && DeclaredConstructorSlotMatches(array.Elem, parameter.GetElementType());
+        if (selected is TypeNode.Nullable nullable)
+            return parameter.IsGenericType && SafeDef(parameter) == NullableDef()
+                && DeclaredConstructorSlotMatches(nullable.Of, parameter.GetGenericArguments()[0]);
+        if (selected is TypeNode.Fn function)
+        {
+            if (!IsDelegateType(parameter) || function.Clr != DelegateFamily(parameter)) return false;
+            var invoke = parameter.GetMethod("Invoke");
+            var delegateParameters = function.DelegateParams;
+            return invoke != null && delegateParameters.Length == invoke.GetParameters().Length
+                && delegateParameters.Select((p, i) => DeclaredConstructorSlotMatches(p, invoke.GetParameters()[i].ParameterType)).All(match => match)
+                && DeclaredConstructorSlotMatches(function.Ret, invoke.ReturnType);
+        }
+        if (selected is not TypeNode.Fqn named) return false;
+        var arguments = named.Args ?? Array.Empty<TypeNode>();
+        var definition = RefDef(named.Name, arguments.Length);
+        if (definition == null || SafeDef(definition) != SafeDef(parameter)) return false;
+        var parameters = parameter.IsGenericType ? parameter.GetGenericArguments() : Type.EmptyTypes;
+        return arguments.Length == parameters.Length
+            && arguments.Select((arg, i) => DeclaredConstructorSlotMatches(arg, parameters[i])).All(match => match);
     }
 
     // Root-V lowers a readonly Kotlin collection nested in a constructed generic to its invariant CLR sibling.

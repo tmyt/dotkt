@@ -162,6 +162,8 @@ sealed partial class ReferenceMetadataIndex
     readonly Dictionary<string, string> _ownerTypeParamDeclarations = new(StringComparer.Ordinal);
     readonly Dictionary<string, NullableRepresentationFrame> _ownerNullableFrames = new(StringComparer.Ordinal);
     public IReadOnlyDictionary<string, NullableRepresentationFrame> NullableTypeFrames => _ownerNullableFrames;
+    readonly Dictionary<string, NullableRepresentationFrame> _kotlinConstructorOwnerFrames = new(StringComparer.Ordinal);
+    public IReadOnlyDictionary<string, NullableRepresentationFrame> KotlinConstructorOwnerFrames => _kotlinConstructorOwnerFrames;
     // A referenced concrete type satisfies the CLR new() constraint exactly when it is a non-abstract reference type
     // with a public parameterless instance constructor, or any value type. This is a physical metadata fact used by
     // ExternalGenericConstraintValidation; Kotlin has no nominal upper bound that can encode it.
@@ -739,6 +741,8 @@ sealed partial class ReferenceMetadataIndex
                 _genericStaticCarriers.Add(StripGenericArity(DottedFqn(kv.Value)));
             }
             foreach (var kv in asm.DotKt.TypeArity) _ownerArity[kv.Key] = kv.Value;
+            foreach (var kv in asm.DotKt.KotlinConstructorOwnerFrames)
+                _kotlinConstructorOwnerFrames[kv.Key] = kv.Value;
             foreach (var kv in asm.DotKt.TypeParamNames) _ownerTypeParams[kv.Key] = kv.Value;
             foreach (var kv in asm.DotKt.TypeParamDeclarations) _ownerTypeParamDeclarations[kv.Key] = kv.Value;
             foreach (var kv in asm.DotKt.NullableFrames)
@@ -5177,6 +5181,17 @@ sealed partial class ReferenceMetadataIndex
                     // the same ParamKey space, so same-arity ctor overloads resolve rather than collide.
                     foreach (var ctor in type.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly))
                     {
+                        if (dotKtAuthored)
+                        {
+                            // Constructor signatures imported from Kotlin retain source vocabulary even when the
+                            // owning class has no companions (or no type parameters at all).
+                            var constructorFrame = metadata.NullableFrames.GetValueOrDefault(ownerFqn)
+                                ?? new NullableRepresentationFrame(type.IsGenericType ? type.GetGenericArguments().Length : 0,
+                                    Array.Empty<int>());
+                            metadata.KotlinConstructorOwnerFrames[ownerFqn] = constructorFrame;
+                            metadata.KotlinConstructorOwnerFrames[DottedFqn(ownerFqn)] = constructorFrame;
+                            metadata.KotlinConstructorOwnerFrames[exactPhysicalOwner] = constructorFrame;
+                        }
                         if (CallableDefaultsOf(ctor, mlc) is Dictionary<int, string> cdefaults)
                         {
                             AddKotlinDefaults(metadata, ownerFqn, CtorKeyName, ctor.GetParameters(), cdefaults);
@@ -7578,6 +7593,7 @@ sealed class ReferenceDotKtMetadata
     public readonly Dictionary<string, string[]> TypeParamNames = new(StringComparer.Ordinal); // ownerFqn -> generic param names
     public readonly Dictionary<string, string> TypeParamDeclarations = new(StringComparer.Ordinal); // ownerFqn -> exact descriptor array JSON
     public readonly Dictionary<string, NullableRepresentationFrame> NullableFrames = new(StringComparer.Ordinal);
+    public readonly Dictionary<string, NullableRepresentationFrame> KotlinConstructorOwnerFrames = new(StringComparer.Ordinal);
     public readonly HashSet<ReferenceMetadataIndex.OwnerTypeIdentity> PublicParameterlessConstructibleOwners = new();
     public readonly HashSet<string> PublicParameterlessConstructiblePhysicalOwners = new(StringComparer.Ordinal);
     public readonly Dictionary<string, TypeNode[]> CtorParamTypes = new(StringComparer.Ordinal); // ownerFqn -> sole ctor parameter types
