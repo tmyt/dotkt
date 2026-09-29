@@ -235,9 +235,10 @@ static partial class ClrMemberResolution
             if (TypeJson.Read(ownerNode) is not TypeNode.Fqn owner || !owners.TryGetValue(owner.Name, out var methods))
                 return;
             if ((call["method"] as JsonValue)?.TryGetValue<string>(out var name) != true) return;
+            var sourceSignature = call[FunctionSignatureIdentity.CallKey] as JsonArray;
             var wanted = kind == "newClosure"
                 ? (TypeJson.Read(call["funcType"]) as TypeNode.Fn)?.DelegateParams
-                : (call["sig"] as JsonArray)?.Select(TypeJson.Read).ToArray();
+                : (sourceSignature ?? call["sig"] as JsonArray)?.Select(TypeJson.Read).ToArray();
             if (wanted == null) return;
             if (wanted.Any(t => t == null)) return;
             var suppliedArgs = (call["typeArgs"] as JsonArray)?.Select(TypeJson.Read).ToArray()
@@ -254,17 +255,22 @@ static partial class ClrMemberResolution
                 var declared = parameters.OfType<JsonObject>()
                     .Select(p => TypeJson.Read(p["type"])).ToArray();
                 if (declared.Length != wanted.Length || declared.Any(t => t == null)) continue;
-                var closed = declared.Select(t => SupertypeGraph.SubstOwnerTvs(t, ownerArgs))
+                var selection = sourceSignature == null ? declared : parameters.OfType<JsonObject>()
+                    .Select(p => TypeJson.Read(p[FunctionSignatureIdentity.Key] ?? p["type"])).ToArray();
+                var closed = selection.Select(t => SupertypeGraph.SubstOwnerTvs(t, ownerArgs))
                     .Select(t => SubstMethodTvs(t, methodArgs)).ToArray();
                 // A closure construction names its synthesized class's unique invoke method, not an overload
                 // descriptor. Its requested delegate parameters may need adaptation to that declaration.
-                if (kind == "newClosure" || Keys(declared).SequenceEqual(Keys(wanted)) || Keys(closed).SequenceEqual(Keys(wanted)))
+                if (kind == "newClosure" || Keys(selection).SequenceEqual(Keys(wanted)) || Keys(closed).SequenceEqual(Keys(wanted)))
                     matches.Add((candidate, declared));
             }
             if (matches.Count != 1 && kind is "newDelegate" or "newClosure" or "newBoundDelegate")
                 throw new InvalidOperationException(
                     $"bir2cir: {kind} target '{owner.Name}.{name}' resolves to {matches.Count} exact local methods; call={call.ToJsonString()}");
             if (matches.Count != 1) return;
+            if (matches[0].Method["params"] is JsonArray selectedParameters
+                && selectedParameters.OfType<JsonObject>().Any(p => p[FunctionSignatureIdentity.Key] != null))
+                call["calleeParams"] = FunctionSignatureIdentity.Signature(selectedParameters);
             // Delegate-construction nodes identify the target method itself, so their descriptor must be the
             // declaration's open parameter vector. Ordinary calls already carry the receiver/method-substituted
             // call-site descriptor; replacing it with declaration-relative type variables would reinterpret those

@@ -2931,7 +2931,9 @@ internal sealed class AssemblyScanner : IDisposable
             };
             if (hiddenCompletion)
             {
-                explicitEventShapes.Add(eventName + ":" + TypeKey(physicalHandler));
+                // An accessor parameter is decoded as a platform type, whereas an Event row's
+                // handler is decoded with a rigid outer type. The CLR slot identity is the same.
+                explicitEventShapes.Add(eventName + ":" + TypeKey(inherited.Signatures.AsNonNull(physicalHandler)));
                 projectedEvent.PropertyAnnotation.Add(ExplicitSlotAnnotations(names));
                 projectedEvent.Flags |= 1;
             }
@@ -3378,10 +3380,15 @@ internal sealed class AssemblyScanner : IDisposable
         var identitySignatures = new RawSignatureTypeProvider((metadata, entity) =>
         {
             var path = ReferenceEquals(metadata, reader) ? sourceDefinitionPath : resolvedOwner.DefinitionPath;
-            if (!_publicTypeCatalog.TryResolveDefinition(metadata, entity, out var definition, path))
-                throw new InvalidDataException("Cannot resolve a MethodImpl signature type from the reference catalog");
-            return definition.Reader.GetGuid(definition.Reader.GetModuleDefinition().Mvid) + ":" +
-                MetadataTokens.GetRowNumber(definition.Handle);
+            if (_publicTypeCatalog.TryResolveDefinition(metadata, entity, out var definition, path))
+                return definition.Reader.GetGuid(definition.Reader.GetModuleDefinition().Mvid) + ":" +
+                    MetadataTokens.GetRowNumber(definition.Handle);
+            // An external TypeRef is already a scoped nominal identity, even when the projection
+            // set does not contain its definition. Compare that exact symbolic identity; do not
+            // require loading unrelated assemblies just to compare two identical signatures.
+            if (entity.Kind == HandleKind.TypeReference)
+                return RawSignatureTypeProvider.ScopedReferenceIdentity(metadata, (TypeReferenceHandle)entity);
+            throw new InvalidDataException("Cannot resolve a MethodImpl signature type from the reference catalog");
         });
         MethodSignature<string>? referenceIdentity = declarationEntity.Kind == HandleKind.MemberReference
             ? reader.GetMemberReference((MemberReferenceHandle)declarationEntity)
@@ -7308,6 +7315,38 @@ internal sealed class RawSignatureTypeProvider : ISignatureTypeProvider<string, 
     private readonly Func<MetadataReader, EntityHandle, string>? _typeIdentity;
     public RawSignatureTypeProvider(Func<MetadataReader, EntityHandle, string>? typeIdentity = null) =>
         _typeIdentity = typeIdentity;
+
+    internal static string ScopedReferenceIdentity(MetadataReader reader, TypeReferenceHandle handle)
+    {
+        var reference = reader.GetTypeReference(handle);
+        var scope = reference.ResolutionScope;
+        string identity;
+        if (scope.Kind == HandleKind.TypeReference)
+            identity = ScopedReferenceIdentity(reader, (TypeReferenceHandle)scope);
+        else if (scope.Kind == HandleKind.AssemblyReference)
+        {
+            var assembly = reader.GetAssemblyReference((AssemblyReferenceHandle)scope);
+            var name = new AssemblyName(reader.GetString(assembly.Name))
+            {
+                Version = assembly.Version,
+                CultureName = reader.GetString(assembly.Culture),
+                ContentType = (assembly.Flags & AssemblyFlags.WindowsRuntime) != 0
+                    ? AssemblyContentType.WindowsRuntime : AssemblyContentType.Default,
+                Flags = (assembly.Flags & AssemblyFlags.Retargetable) != 0
+                    ? AssemblyNameFlags.Retargetable : AssemblyNameFlags.None,
+            };
+            var key = reader.GetBlobBytes(assembly.PublicKeyOrToken);
+            if ((assembly.Flags & AssemblyFlags.PublicKey) != 0) name.SetPublicKey(key);
+            else name.SetPublicKeyToken(key);
+            identity = "assembly:" + name.FullName;
+        }
+        else
+            identity = "module:" + reader.GetGuid(reader.GetModuleDefinition().Mvid) + ":" +
+                (scope.Kind == HandleKind.ModuleReference
+                    ? reader.GetString(reader.GetModuleReference((ModuleReferenceHandle)scope).Name)
+                    : scope.Kind.ToString());
+        return JsonSerializer.Serialize(new[] { identity, reader.GetString(reference.Namespace), reader.GetString(reference.Name) });
+    }
 
     public string GetArrayType(string elementType, ArrayShape shape) =>
         $"array[{shape.Rank};{string.Join(",", shape.Sizes)};{string.Join(",", shape.LowerBounds)}]<{elementType}>";

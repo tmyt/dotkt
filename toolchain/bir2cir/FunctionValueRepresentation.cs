@@ -91,6 +91,11 @@ static class FunctionValueRepresentation
     {
         if (node is JsonObject obj)
         {
+            if (obj["k"] is JsonValue callTag && callTag.TryGetValue<string>(out var callKind)
+                && callKind is "callStatic" or "callInstance" or "constrainedCall"
+                && obj[FunctionSignatureIdentity.CallKey] == null
+                && obj["sig"] is JsonArray signature && ContainsOrdinaryFunction(signature))
+                obj[FunctionSignatureIdentity.CallKey] = signature.DeepClone();
             var invocationResult = obj["k"] is JsonValue nodeTag
                 && nodeTag.TryGetValue<string>(out var nodeKind) && nodeKind == "delegateInvoke"
                 && TypeJson.Read(obj["funcType"]) is TypeNode.Fn { Suspend: false, Clr: null } invocation
@@ -112,8 +117,8 @@ static class FunctionValueRepresentation
             foreach (var pair in obj.ToList())
             {
                 // These are authored Kotlin facts, not physical slots.
-                if (pair.Key is DeclarationIdentityBinding.SemanticSignatureKey or FunctionSignatureIdentity.Key
-                    or "memberSignature" or "delegationSig" or "attrs" or "retAttrs") continue;
+                if (pair.Key is DeclarationIdentityBinding.SemanticSignatureKey or FunctionSignatureIdentity.Key or FunctionSignatureIdentity.CallKey
+                    or "memberSignature" or "delegationSig" or "inheritedClassMethods" or "attrs" or "retAttrs") continue;
                 // A literal SAM conversion constructs its declared CLR delegate directly. Its target
                 // signature is not an ordinary Kotlin function value, and can contain unboxable slots.
                 // Stored function conversions still erase their operand and adapt at the SAM boundary.

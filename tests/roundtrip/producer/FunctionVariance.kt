@@ -66,6 +66,8 @@ class CallbackImplementation : CallbackSlots {
     override fun select(callback: (String) -> Unit): Int { callback("six"); return 6 }
 }
 
+class DelegatedCallbacks(target: CallbackSlots) : CallbackSlots by target
+
 interface GenericCallbackSlots<T> {
     fun select(callback: (T) -> Unit): Int
     fun select(callback: (String) -> Unit): Int
@@ -75,3 +77,41 @@ open class GenericCallbackBase<T>(private val value: T) : GenericCallbackSlots<T
     override fun select(callback: (T) -> Unit): Int { callback(value); return 7 }
     override fun select(callback: (String) -> Unit): Int { callback("eight"); return 8 }
 }
+
+class CallbackOuter<T>(private val value: T) {
+    inner class Inner(private val callback: (T) -> Unit) {
+        fun fire() { callback(value) }
+    }
+}
+
+fun callbackInnerFactory(): Int {
+    var calls = 0
+    val outer: CallbackOuter<*> = CallbackOuter("value")
+    val inner = outer.Inner { calls++ }
+    inner.fire()
+    return calls
+}
+
+open class CallbackParent {
+    fun handle(callback: (Int) -> Unit): Int { callback(31); return 31 }
+    fun handle(callback: (String) -> Unit): Int { callback("thirty-two"); return 32 }
+}
+
+interface InheritedCallbackSlot {
+    fun handle(callback: (Int) -> Unit): Int
+    fun handle(callback: (String) -> Unit): Int
+}
+
+class InheritedCallbackChild : CallbackParent(), InheritedCallbackSlot
+
+open class GenericInheritedCallbackParent<T>(private val value: T) {
+    fun handle(callback: (T) -> Unit): Int { callback(value); return 41 }
+    fun handle(callback: (String) -> Unit): Int { callback("generic-inherited"); return 42 }
+}
+
+interface GenericInheritedCallbackSlot<T> {
+    fun handle(callback: (T) -> Unit): Int
+    fun handle(callback: (String) -> Unit): Int
+}
+
+class GenericInheritedCallbackChild : GenericInheritedCallbackParent<Int>(40), GenericInheritedCallbackSlot<Int>

@@ -9,6 +9,7 @@ using DotKt.Bir;
 static class FunctionSignatureIdentity
 {
     internal const string Key = "functionSignatureType";
+    internal const string CallKey = "functionCallSignature";
 
     public static void Capture(JsonNode root)
     {
@@ -28,6 +29,17 @@ static class FunctionSignatureIdentity
 
     public static void Complete(JsonNode root)
     {
+        void RemoveCallFacts(JsonNode node)
+        {
+            if (node is JsonObject obj)
+            {
+                obj.Remove(CallKey);
+                foreach (var child in obj.Select(pair => pair.Value).ToList()) RemoveCallFacts(child);
+            }
+            else if (node is JsonArray array)
+                foreach (var child in array) RemoveCallFacts(child);
+        }
+        RemoveCallFacts(root);
         foreach (var parameters in DeclarationParameters(root))
             foreach (var parameter in parameters.OfType<JsonObject>())
                 if (parameter[Key] != null)

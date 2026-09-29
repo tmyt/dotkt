@@ -1,8 +1,8 @@
 # Function-value variance: contract investigation
 
-Status: investigation for #909. The user permits nominal SAM projection of CLR Func/Action; the ordinary
-Kotlin function representation still needs implementation and validation. This document does not itself
-establish a proven representation.
+Status: implementation under validation for #909. Native CLR Func/Action use nominal SAM projection;
+ordinary Kotlin functions use identity-preserving carriers. This document does not itself establish that
+the complete toolchain or practical coroutines execution has passed validation.
 
 The initial implementation prototype uses one object-argument/object-result delegate shape per ordinary
 function arity, with conversions at compiler-generated target entry rather than ordinary value-flow edges.
@@ -16,11 +16,14 @@ CLR override dispatch, nominal delegate identity, and a Span callback returning 
 Literal constructions already bound to a native delegate keep their exact function signature; ordinary Kotlin
 function operands erase before a stored-value SAM conversion. This prevents illegal boxing of native Span slots.
 This is not yet the completed contract: wide arities, broader existing interop and function regression suites,
-the complete toolchain build, independent reviews, and actual coroutines validation remain outstanding.
+the complete toolchain gate and actual coroutines validation remain outstanding. The budgeted independent
+reviews have completed; their validated findings are being addressed with focused integration checks.
+Expanded Span-return callback tests still report strict ILVerify `ReturnPtrToStack` findings, also reproduced
+by equivalent C# controls. Those findings are not suppressed and the native suite is not yet declared green.
 
 ## Reproduced defect
 
-Ordinary Kotlin function variance currently crosses incompatible physical delegate types:
+Before this change, ordinary Kotlin function variance crossed incompatible physical delegate types:
 
 ```kotlin
 fun <T> narrow(f: (Any?) -> Any?): (T) -> Any? = f
@@ -31,7 +34,7 @@ The complete SDK at `236f7bb4` builds these declarations but emits invalid IL. E
 find the mismatch in nullable function returns, argument passing, and property storage. The same tests run
 successfully on Kotlin/JVM 2.4.10, including identity comparisons after upcasting the functions to `Any`.
 
-`BirTypeLowering.LowerFnDelegate` currently chooses typed `Func`/`Action` slots. CLR generic variance does not
+The former lowering chose typed `Func`/`Action` slots. CLR generic variance does not
 relate arbitrary value-type instantiations, so it cannot implement this Kotlin rule. A cast does not repair the
 runtime relation. Creating a fresh delegate at each ordinary Kotlin value-flow edge instead would break `===`.
 
@@ -52,14 +55,14 @@ runtime relation. Creating a fresh delegate at each ordinary Kotlin value-flow e
 
 ## Native boundary and approved direction
 
-The current documented contract in `dotkt-semantics.md` sections 8e/8e-bis treats `System.Func`/`Action` as
-structural Kotlin function types, unlike other CLR delegates, which are nominal callable SAM types.
+The former contract treated `System.Func`/`Action` as structural Kotlin function types, unlike other CLR
+delegates. Sections 8e/8e-bis of `dotkt-semantics.md` now describe the nominal boundary and ordinary carriers.
 
 A `Func<object, int>` cannot itself be the `Func<int, int>` object required by an exact native slot. A bridge
 can invoke the original object, but the bridge is another CLR object. Thus adapting a function for a native
 round trip and preserving the original object's identity are separate requirements, not an ordinary cast.
 
-Two boundaries need evaluation before implementation:
+Two alternatives informed the boundary decision:
 
 1. Keep the existing structural projection for canonical native delegates. Native crossings then need an
    explicit adaptation/identity contract distinct from ordinary Kotlin function variance, including values
@@ -68,7 +71,7 @@ Two boundaries need evaluation before implementation:
 2. Project `System.Func`/`Action` as nominal SAMs too, keeping ordinary Kotlin function values separate from
    native delegate values. This matches the existing custom-delegate boundary but changes Kotlin source
    signatures for CLR overrides. For example, an override's `(Int) -> Int` parameter becomes
-   `System.Func<Int, Int>`. Automatic lambda/SAM conversion and stored-function conversion must be tested;
+   `System.Func2<Int, Int>`. Automatic lambda/SAM conversion and stored-function conversion must be tested;
    they must not be assumed to make every existing consumer source-compatible.
 
 The user explicitly permits option 2, including changing CLR override parameters to their nominal delegate
@@ -85,10 +88,9 @@ source-facing ClrArray split or require explicit conversions for ordinary CLR ar
 
 ### Current implementation seams to audit
 
-- `BirTypeLowering.LowerFnDelegate` currently lowers every ordinary function's parameter/result slots
-  directly, while `PhysicalDelegate` also constructs exact native delegate signatures. A representation
-  change must distinguish Kotlin function values from these already-physical delegates; changing the shared
-  helper indiscriminately would change native ABI as well as ordinary value storage.
+- `FunctionValueRepresentation` selects ordinary carriers before `BirTypeLowering.LowerFnDelegate`, while
+  explicitly physical delegate signatures retain their exact slots. Keep this distinction: changing the
+  shared delegate helpers indiscriminately would change native ABI as well as ordinary value storage.
 - `dll2klib` has both local and referenced delegate projection paths. The catalog's
   `IsCanonicalFunctionDefinition` is not the only structural projection gate: `GetGenericInstantiation`,
   `GetTypeFromReference`, and the local canonical-function helpers also participate. Nominal projection

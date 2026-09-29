@@ -17,15 +17,53 @@ private class DerivedGenericCallbacks : GenericCallbackBase<Int>(11) {
     override fun select(callback: (Int) -> Unit): Int { callback(11); return 11 }
 }
 
+private class ConsumerInheritedCallbacks : CallbackParent(), InheritedCallbackSlot
+
+private class ConsumerGenericInheritedCallbacks : GenericInheritedCallbackParent<Int>(43), GenericInheritedCallbackSlot<Int>
+
 class FunctionVarianceTests {
     @TestAttribute
     fun sourceSignaturesAndIdentitySurviveDllBoundaries() {
         val next: (Int) -> Int = increment()
         check(next(4) == 5)
+        check(callbackInnerFactory() == 1)
+        var inheritedObserved = 0
+        val inheritedSlot: InheritedCallbackSlot = InheritedCallbackChild()
+        check(inheritedSlot.handle { value: Int -> inheritedObserved = value } == 31)
+        check(inheritedObserved == 31)
+        var inheritedText = ""
+        check(inheritedSlot.handle { value: String -> inheritedText = value } == 32)
+        check(inheritedText == "thirty-two")
+        val importedInheritedSlot: InheritedCallbackSlot = ConsumerInheritedCallbacks()
+        inheritedObserved = 0
+        inheritedText = ""
+        check(importedInheritedSlot.handle { value: Int -> inheritedObserved = value } == 31)
+        check(importedInheritedSlot.handle { value: String -> inheritedText = value } == 32)
+        check(inheritedObserved == 31 && inheritedText == "thirty-two")
+        val genericInherited: GenericInheritedCallbackSlot<Int> = GenericInheritedCallbackChild()
+        check(genericInherited.handle { value: Int -> inheritedObserved = value } == 41)
+        check(genericInherited.handle { value: String -> inheritedText = value } == 42)
+        check(inheritedObserved == 40 && inheritedText == "generic-inherited")
+        val importedGenericInherited: GenericInheritedCallbackSlot<Int> = ConsumerGenericInheritedCallbacks()
+        check(importedGenericInherited.handle { value: Int -> inheritedObserved = value } == 41)
+        check(importedGenericInherited.handle { value: String -> inheritedText = value } == 42)
+        check(inheritedObserved == 43 && inheritedText == "generic-inherited")
+        val delegated: CallbackSlots = DelegatedCallbacks(CallbackImplementation())
+        var delegatedNumber = 0
+        var delegatedText = ""
+        check(delegated.select { value: Int -> delegatedNumber = value } == 5)
+        check(delegated.select { value: String -> delegatedText = value } == 6)
+        check(delegatedNumber == 5 && delegatedText == "six")
         val length = sequenceLength()
         check(length("across") == 6)
         check(length(StringBuilder("builder")) == 7)
         check(length(null) == null)
+        val builder = StringBuilder()
+        builder.append("helper")
+        builder.append(null as String?)
+        check(builder.toString() == "helpernull")
+        val replacement: (MatchResult) -> CharSequence = { it.value.uppercase() }
+        check(Regex("[a-z]+").replace("one 2 two", replacement) == "ONE 2 TWO")
         val textFactory: () -> String = stringFactory()
         val sequenceFactory: () -> CharSequence = textFactory
         check(sequenceFactory === textFactory)
