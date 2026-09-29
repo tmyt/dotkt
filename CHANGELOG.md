@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Inner constructor delegation retains source frames and declaration signatures (#907).**
+  Inherited enclosing instances close omitted defaults without leaking callee type variables into the caller.
+
 - **Nested Kotlin types retain their classifier path through DLL metadata (#924).**
   Inner type arguments are recorded before CLR capture projection so imported declarations preserve their source types.
 
