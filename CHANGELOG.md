@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Non-null generic upper bounds survive Kotlin-to-DLL roundtrips (#742).**
+  Explicit `T : Any` remains distinct from the unconstrained nullable top bound.
+
 - **Inherited inner-member results close after owner argument projection (#933).**
   Kotlin own-first arguments no longer substitute into CLR enclosing-first return slots before projection.
 
