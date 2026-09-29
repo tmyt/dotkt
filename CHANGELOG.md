@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Inner constructor delegation retains source frames and declaration signatures (#907).**
+  Inherited enclosing instances close omitted defaults without leaking callee type variables into the caller.
+
 - **Inner generic metadata retains source parameter indices (#896).**
   Enclosing nullable companion slots no longer shift imported Kotlin bounds or declaration-site variance.
 
