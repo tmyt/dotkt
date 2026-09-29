@@ -13,6 +13,7 @@ open class FunctionBody<T> {
 }
 
 class LocalFunctionSlots<T> : FunctionBody<T>(), FunctionSlot<T>
+class LocalUnitFunctionSlots : FunctionBody<Unit>(), FunctionSlot<Unit>
 
 fun <T> checkFunctionSlots(slot: FunctionSlot<T>, body: FunctionBody<T>, value: T) {
     check(slot.apply(value) { it } == value)

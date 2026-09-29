@@ -33,6 +33,14 @@ using DotKt.Bir;
 // residual `Enum<object>` never reaches a real reified instantiation.)
 static class StarProjectionBoundLowering
 {
+    internal static void FunctionSelfTest()
+    {
+        FunctionRewriteTests.Check("star bound rewrite", type => Subst(type,
+            new Dictionary<string, TypeNode[]>(), ReferenceMetadataIndex.Build(Array.Empty<string>())));
+        FunctionRewriteTests.Check("star bound substitution", type => CloseEarlierOwnerTypeVars(type,
+            Array.Empty<TypeNode>(), 0));
+    }
+
     // Collect in-assembly generic type-param BOUNDS: owner FQN (dotted) -> per-param bound TypeNode (null for an
     // unconstrained / objectish-bounded param). Across ALL input roots (a star-projected owner's declaration may live in
     // a sibling .bir.json — e.g. AbstractCoroutineContextElement uses Key<*> whose interface is in another file).

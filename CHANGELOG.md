@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Unit-valued generic callbacks keep their CLR delegate contract (#950).**
+  Type rewrites retain the declared Func return instead of converting it to a void Action slot.
+
 - **Inherited function-parameter methods bind exact CLR interface slots (#948).**
   Function and nominal delegate representations compare using the same physical signature across DLLs.
 

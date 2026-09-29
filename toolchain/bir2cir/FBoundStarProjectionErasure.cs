@@ -840,6 +840,8 @@ static class FBoundStarProjectionErasure
 
     internal static void ProjectionConstraintSelfTest()
     {
+        FunctionRewriteTests.Check("F-bound rewrite", type => RewriteType(type,
+            new Dictionary<string, Owner>(), ReferenceMetadataIndex.Build(Array.Empty<string>())));
         var variable = new TypeNode.Tv("method", 0);
         var exact = new TypeNode.Fqn("Bound", new TypeNode[] { variable });
         var star = new TypeNode.Fqn("Bound", new TypeNode[] { new TypeNode.Star() });

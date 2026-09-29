@@ -68,6 +68,7 @@ static class ContinuationErasure
 
     internal static void SelfTest()
     {
+        FunctionRewriteTests.Check("continuation erasure", EraseType);
         var names = new Dictionary<string, string>
         {
             [Cont] = "kotlin.coroutines.Continuation`1",

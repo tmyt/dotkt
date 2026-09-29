@@ -24,6 +24,9 @@ using DotKt.Bir;
 // strip, never an NRT byte (nullability at a type usage is compile-time-only, not NRT-annotated).
 static class ReferenceNullableStrip
 {
+    internal static void FunctionSelfTest() => FunctionRewriteTests.Check("reference nullable strip",
+        type => Strip(type, _ => false));
+
     public static void Apply(JsonNode node, ValueTypeOracle isValue)
     {
         switch (node)

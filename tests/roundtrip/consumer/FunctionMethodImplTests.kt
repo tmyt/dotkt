@@ -5,6 +5,7 @@ private class ImportedFunctionSlots<T> : FunctionBody<T>(), FunctionSlot<T>
 private class IntFunctionSlots : FunctionBody<Int>(), FunctionSlot<Int>
 private class NullableIntFunctionSlots : FunctionBody<Int?>(), FunctionSlot<Int?>
 private class StringFunctionSlots : FunctionBody<String>(), FunctionSlot<String>
+private class UnitFunctionSlots : FunctionBody<Unit>(), FunctionSlot<Unit>
 
 private fun <T> checkFunctionOwner(value: T) {
     val local = LocalFunctionSlots<T>()
@@ -16,6 +17,21 @@ private fun <T> checkFunctionOwner(value: T) {
 }
 
 class FunctionMethodImplTests {
+    @TestAttribute
+    fun unitValuedGenericCallbacksRetainTheirDelegateFamily() {
+        checkFunctionOwner(Unit)
+        val local = LocalUnitFunctionSlots()
+        val imported = UnitFunctionSlots()
+        checkFunctionSlots(local, local, Unit)
+        checkFunctionSlots(imported, imported, Unit)
+        check(local.apply(Unit) { Unit } == Unit)
+        check(imported.apply(Unit) { Unit } == Unit)
+        check(imported.extension(Unit) { this } == Unit)
+        var called = false
+        imported.consume(Unit) { called = true }
+        check(called)
+    }
+
     @TestAttribute
     fun inheritedFunctionSlotsMatchAcrossDlls() {
         checkFunctionOwner(31)
