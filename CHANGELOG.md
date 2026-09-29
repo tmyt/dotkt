@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Existential values project at constructed CLR use slots (#922).**
+  Generic inner-class casts retain their erased classifier check while typed consumers receive explicit conversions.
+
 - **Inline lambda argument reads retain their declared types (#917).**
   Non-local smart-cast returns preserve constructed generic types, including across DLL boundaries.
 
