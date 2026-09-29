@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Covariant suspend implementations retain their own Task result type (#955).**
+  Exact existing interface bridges prevent late slot adaptation from rewriting the implementation's signature.
+
 - **Inherited suspend calls through imported generic interfaces resolve their exact slots (#953).**
   Declaration selection uses preserved Kotlin parameter facts before binding the CLR existential member.
 
