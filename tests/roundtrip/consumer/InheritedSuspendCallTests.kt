@@ -31,6 +31,10 @@ private suspend fun <A, B> viaReordered(stream: ReorderedCallMarker<A, B>, sink:
 private suspend fun <T> viaOverload(stream: OverloadedCallMarker<T>, sink: OtherCallSink<T>) {
     stream.collect(sink)
 }
+private fun <T> viaOrdinaryMarker(stream: OrdinaryCallMarker<T>, sink: CallSink<T>, other: OtherCallSink<T>) {
+    stream.collect(sink)
+    stream.collect(other)
+}
 
 private fun checkPausedCall(pause: CallPause, block: suspend () -> Unit) {
     var completed = false
@@ -80,5 +84,11 @@ class InheritedSuspendCallTests {
         checkPausedCall(pause) { viaOverload(consumer, other) }
         check(sink.other == 2)
         check(sink.ordinary == calls.size)
+        val ordinaryStream: OrdinaryCallMarker<Int> = ProducerOrdinaryCallStream(42)
+        ordinaryStream.collect(ordinary)
+        ordinaryStream.collect(other)
+        viaOrdinaryMarker(ordinaryStream, ordinary, other)
+        check(sink.ordinary == calls.size + 2)
+        check(sink.other == 4)
     }
 }

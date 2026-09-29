@@ -20,3 +20,13 @@ class ProducerCallStream<T>(private val value: T, private val pause: suspend () 
         sink.emitOther(value)
     }
 }
+
+interface OrdinaryCallStream<out T> {
+    fun collect(sink: CallSink<T>)
+    fun collect(sink: OtherCallSink<T>)
+}
+interface OrdinaryCallMarker<out T> : OrdinaryCallStream<T>
+class ProducerOrdinaryCallStream<T>(private val value: T) : OrdinaryCallMarker<T> {
+    override fun collect(sink: CallSink<T>) { sink.emit(value) }
+    override fun collect(sink: OtherCallSink<T>) { sink.emitOther(value) }
+}
