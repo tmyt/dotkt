@@ -9,6 +9,86 @@ using DotKt.Bir;
 // capture slots. ilemit then emits nestedIn/capturedTypeParams one-to-one.
 static class TypeOwnershipLowering
 {
+    // KotlinType metadata must retain the source classifier path and own-first inner arguments, before physical
+    // capture projection permutes those arguments. The '+' path separator explicitly records a class segment;
+    // the reader must not guess whether a dot separated a package or an enclosing class.
+    public static void RecordNestedSourceTypes(IReadOnlyList<JsonNode> roots, ReferenceMetadataIndex refs)
+    {
+        var definitions = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
+        foreach (var type in roots.OfType<JsonObject>()
+            .SelectMany(root => (root["types"] as JsonArray)?.OfType<JsonObject>() ?? Enumerable.Empty<JsonObject>())
+            .Where(type => Str(type["name"]) != null))
+        {
+            var name = Str(type["name"]);
+            // Shared synthetic declarations can occur in several roots before module de-duplication.
+            // This index owns only their lexical path; repeated declarations must agree on that owner.
+            if (!definitions.TryAdd(name, type)
+                && Str(definitions[name]["semanticOwner"]) != Str(type["semanticOwner"]))
+                throw new InvalidOperationException($"conflicting Kotlin semantic owners for '{name}'");
+        }
+        var names = new Dictionary<string, string>(StringComparer.Ordinal);
+        string SourceName(string name)
+        {
+            if (names.TryGetValue(name, out var known)) return known;
+            if (!definitions.TryGetValue(name, out var type)
+                || Str(type["semanticOwner"]) is not string owner || !definitions.ContainsKey(owner))
+                return names[name] = name;
+            if (!name.StartsWith(owner + ".", StringComparison.Ordinal))
+                return names[name] = name;
+            return names[name] = SourceName(owner) + "+" + name[(owner.Length + 1)..];
+        }
+
+        string Encode(TypeNode type)
+        {
+            var payload = TypeJson.Write(type);
+            var hasNestedClassifier = false;
+            void Rewrite(JsonNode node)
+            {
+                if (node is JsonObject obj)
+                {
+                    if (Str(obj["t"]) == "fqn" && Str(obj["name"]) is string name)
+                    {
+                        var sourceName = SourceName(name);
+                        if (sourceName != name) obj["name"] = sourceName;
+                        // Only Kotlin inner applications need a referenced source-order snapshot. CLR nested
+                        // classifiers retain their physical signature projection (including arity-clash names).
+                        hasNestedClassifier |= sourceName != name
+                            || (refs?.TryInnerCapturedCount(name, out var captured) == true && captured > 0);
+                    }
+                    foreach (var child in obj.Select(pair => pair.Value).Where(value => value != null).ToList())
+                        Rewrite(child);
+                }
+                else if (node is JsonArray array)
+                    foreach (var child in array.Where(value => value != null)) Rewrite(child);
+            }
+            Rewrite(payload);
+            return hasNestedClassifier ? payload.ToJsonString() : null;
+        }
+
+        void Record(JsonObject declaration, string slot, string fact)
+        {
+            var source = Str(declaration[fact]) ?? Str(declaration[slot == "ret" ? "nullableGenericRet" : "nullableGeneric"]);
+            var type = source == null ? TypeJson.Read(declaration[slot]) : TypeNode.Parse(source);
+            if (type != null && Encode(type) is string encoded) declaration[fact] = encoded;
+        }
+
+        void Visit(JsonNode node)
+        {
+            if (node is JsonObject obj)
+            {
+                if (obj["k"] == null && obj["name"] != null)
+                {
+                    if (obj["type"] != null) Record(obj, "type", "kotlinType");
+                    if (obj["params"] is JsonArray && obj["ret"] != null) Record(obj, "ret", "retKotlinType");
+                }
+                foreach (var child in obj.Select(pair => pair.Value).Where(value => value != null).ToList()) Visit(child);
+            }
+            else if (node is JsonArray array)
+                foreach (var child in array.Where(value => value != null)) Visit(child);
+        }
+        foreach (var root in roots) Visit(root);
+    }
+
     internal sealed class PreparedFacts
     {
         internal IReadOnlyDictionary<string, JsonObject> Types { get; }

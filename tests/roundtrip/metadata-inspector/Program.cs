@@ -23,6 +23,13 @@ const int IsInfixFunctionFlag = 1 << 9;
 // names. Star-projection existential association is metadata-authoritative and does not depend on this spelling.
 const string HoistedMarker = "$companion$";
 
+if (args.Length == 2 && args[0] == "--nested-type-carriers")
+{
+    VerifyNestedTypeCarriers(args[1]);
+    Console.WriteLine("reexported nested source types: OK");
+    return;
+}
+
 if (args.Length >= 4 && args[0] == "--volatile-consumer")
 {
     foreach (var method in args.Skip(3)) VerifyVolatileMethod(args[1], args[2], method);
@@ -2059,11 +2066,17 @@ static JsonDocument CarrierDocument(
     TypeDefinitionHandle handle,
     string attributeName)
 {
-    var attributes = md.GetTypeDefinition(handle).GetCustomAttributes()
+    return DecodeCarrierDocument(md, md.GetTypeDefinition(handle).GetCustomAttributes(), attributeName);
+}
+
+static JsonDocument DecodeCarrierDocument(
+    MetadataReader md, CustomAttributeHandleCollection handles, string attributeName)
+{
+    var attributes = handles
         .Select(md.GetCustomAttribute)
         .Where(attribute => AttributeName(md, attribute) == attributeName)
         .ToArray();
-    Require(attributes.Length == 1, $"{DefinitionName(md, handle)} has {attributes.Length} [{attributeName}] carriers");
+    Require(attributes.Length == 1, $"expected one [{attributeName}] carrier, found {attributes.Length}");
     var blob = md.GetBlobReader(attributes[0].Value);
     Require(blob.ReadUInt16() == 1, $"invalid [{attributeName}] prolog");
     var version = blob.ReadSerializedString() ?? throw new InvalidDataException($"missing [{attributeName}] version");
@@ -2073,6 +2086,33 @@ static JsonDocument CarrierDocument(
     Require(blob.ReadUInt16() == 0 && blob.RemainingBytes == 0,
         $"unexpected named arguments in [{attributeName}]");
     return JsonDocument.Parse(BirCarrier.DecodeBody(version, payload).ToJsonString());
+}
+
+static void VerifyNestedTypeCarriers(string path)
+{
+    using var stream = File.OpenRead(path);
+    using var pe = new PEReader(stream);
+    var md = pe.GetMetadataReader();
+    foreach (var (name, classifier, arguments) in new[]
+    {
+        ("forwardedNestedMetadataItem", "nestedmetadata.Outer+Item", new[] { "kotlin.String", "*" }),
+        ("forwardedNestedMetadataLeaf", "nestedmetadata.Nest+Middle+Leaf", new[] { "kotlin.Int", "kotlin.String", "*" }),
+    })
+    {
+        var method = md.MethodDefinitions.Select(md.GetMethodDefinition)
+            .Single(method => md.GetString(method.Name) == name);
+        var parameter = method.GetParameters().Select(md.GetParameter)
+            .Single(parameter => parameter.SequenceNumber == 1);
+        using var document = DecodeCarrierDocument(md, parameter.GetCustomAttributes(),
+            "DotKt.Runtime.CompilerServices.KotlinTypeAttribute");
+        var type = document.RootElement;
+        Require(type.GetProperty("t").GetString() == "fqn" &&
+            StripArities(type.GetProperty("name").GetString()!) == classifier,
+            $"{name}: nested classifier ownership was not preserved");
+        var actual = type.GetProperty("args").EnumerateArray().Select(argument =>
+            argument.GetProperty("t").GetString() == "star" ? "*" : argument.GetProperty("name").GetString());
+        Require(actual.SequenceEqual(arguments), $"{name}: Kotlin own-first type argument order was not preserved");
+    }
 }
 
 static string AttributeName(MetadataReader md, CustomAttribute attribute)

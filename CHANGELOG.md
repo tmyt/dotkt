@@ -10,6 +10,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 - **Inner generic metadata retains source parameter indices (#896).**
   Enclosing nullable companion slots no longer shift imported Kotlin bounds or declaration-site variance.
 
+- **Nested Kotlin types retain their classifier path through DLL metadata (#924).**
+  Inner type arguments are recorded before CLR capture projection so imported declarations preserve their source types.
+
 - **Value branches box before reference-typed conditional joins (#913).**
   Physical value conversions are explicit before interface merges, including generic and nullable values.
 
