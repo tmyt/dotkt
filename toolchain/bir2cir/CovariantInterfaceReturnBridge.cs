@@ -26,7 +26,8 @@ static class CovariantInterfaceReturnBridge
     }
 
     public static IReadOnlySet<BridgedSlot> ApplyAll(IEnumerable<JsonNode> roots,
-        ReferenceMetadataIndex refs, ValueTypeOracle isValue, GenericRepresentationPolicy representations)
+        ReferenceMetadataIndex refs, ValueTypeOracle isValue, GenericRepresentationPolicy representations,
+        IReadOnlyDictionary<JsonObject, TypeNode[]> sourceParameters)
     {
         var defs = Collect(roots);
         var bridgedSlots = new HashSet<BridgedSlot>();
@@ -34,7 +35,7 @@ static class CovariantInterfaceReturnBridge
         // covariant return differs from the base-interface slot. Treat interfaces and classes uniformly here: the
         // frontend override edge selects the declaration, and this pass only materializes its CLR representation.
         foreach (var cls in defs.Values.Where(d => d.Kind is "class" or "interface"))
-            ApplyClass(cls, defs, refs, isValue, representations, bridgedSlots);
+            ApplyClass(cls, defs, refs, isValue, representations, bridgedSlots, sourceParameters);
         return bridgedSlots;
     }
 
@@ -67,7 +68,7 @@ static class CovariantInterfaceReturnBridge
 
     static void ApplyClass(Def cls, IReadOnlyDictionary<string, Def> defs,
         ReferenceMetadataIndex refs, ValueTypeOracle isValue, GenericRepresentationPolicy representations,
-        ISet<BridgedSlot> bridgedSlots)
+        ISet<BridgedSlot> bridgedSlots, IReadOnlyDictionary<JsonObject, TypeNode[]> sourceParameters)
     {
         if (cls.Node["methods"] is not JsonArray methods) return;
         var bridges = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
@@ -95,6 +96,8 @@ static class CovariantInterfaceReturnBridge
                 var slotRet0 = TypeJson.Read(slotSuspend ? slot["suspendRet"] : slot["ret"]);
                 var slotRet = slotRet0 == null ? null : SubstOwnerTvs(slotRet0, ifaceArgs);
                 if (slotParams.Any(p => p == null) || slotRet == null) continue;
+                var unitValueReturn = IsUnit(slotRet)
+                    && (!IsUnit(slotRet0) || Bool(slot[BirTypeLowering.ValueReturnKey]));
                 KotlinPropertyAccessors.TryIdentity(slot, out var propertyName, out var accessorKind);
 
                 var candidates = methods.OfType<JsonObject>().Where(m =>
@@ -132,14 +135,15 @@ static class CovariantInterfaceReturnBridge
                               slot["typeParams"] as JsonArray, ifaceArgs)
                           + ">(" + string.Join(",", slotParams.Select(type =>
                               ReferencedPhysicalTypeKey(type, refs, isValue))) + ")->"
-                          + ReferencedPhysicalTypeKey(slotRet, refs, isValue);
+                          + ReferencedPhysicalTypeKey(slotRet, refs, isValue)
+                          + (unitValueReturn ? "[value-return]" : "");
                 if (!bridges.TryGetValue(key, out var bridge))
                 {
                     var logicalSuspendResult = slotSuspend
                         ? SubstOwnerTvs(ReadSuspendResult(slot), ifaceArgs)
                         : null;
                     bridge = BuildBridge(cls, implementation, slotParams, slotRet, logicalSuspendResult,
-                        $"dotkt$covar${SafeName(name)}${bridgeOrdinal++}");
+                        $"dotkt$covar${SafeName(name)}${bridgeOrdinal++}", unitValueReturn);
                     bridges[key] = bridge;
                     methods.Add(bridge);
                     if (propertyName != null)
@@ -159,12 +163,14 @@ static class CovariantInterfaceReturnBridge
                 ((JsonArray)bridge["clrInterfaceImpls"]).Add(
                     ImplDescriptor(ifaceSpec, name, methodArity, slotParams, slotRet,
                         KotlinOverrideSlotBridge.SubstituteOwnerTypeParameterConstraints(
-                            slot["typeParams"] as JsonArray, ifaceArgs)));
+                            slot["typeParams"] as JsonArray, ifaceArgs), unitValueReturn));
+                bridgedSlots.Add(BridgedSlotKey(implementation, ifaceSpec,
+                    name, methodArity, slotParams, slotRet, refs, isValue));
             }
         }
 
         ApplyReferencedInterfaces(cls, defs, refs, isValue, representations, methods, bridges,
-            bridgedSlots, ref bridgeOrdinal);
+            bridgedSlots, ref bridgeOrdinal, sourceParameters);
     }
 
     // A referenced interface contributes no MethodDef nodes to the staged BIR. The frontend override edge still
@@ -174,7 +180,7 @@ static class CovariantInterfaceReturnBridge
     static void ApplyReferencedInterfaces(Def cls, IReadOnlyDictionary<string, Def> defs,
         ReferenceMetadataIndex refs, ValueTypeOracle isValue, GenericRepresentationPolicy representations, JsonArray methods,
         Dictionary<string, JsonObject> bridges, ISet<BridgedSlot> bridgedSlots,
-        ref int bridgeOrdinal)
+        ref int bridgeOrdinal, IReadOnlyDictionary<JsonObject, TypeNode[]> sourceParameters)
     {
         if (refs == null) return;
         var ownArgs = ClassOwnArgs(cls);
@@ -195,8 +201,8 @@ static class CovariantInterfaceReturnBridge
                 || TypeJson.Read(IsSuspend(implementation)
                     ? implementation["suspendRet"] : implementation["ret"]) is not TypeNode implementationRet0)
                 continue;
-            var implementationParams = implementationParamNodes.OfType<JsonObject>()
-                .Select(parameter => TypeJson.Read(parameter["type"])).ToArray();
+            var implementationParams = sourceParameters.TryGetValue(implementation, out var sourceSignature)
+                ? sourceSignature : KotlinOverrideSlotBridge.ReadParameterTypes(implementation);
             if (implementationParams.Length != implementationParamNodes.Count
                 || implementationParams.Any(type => type == null)) continue;
             var methodArity = (implementation["typeParams"] as JsonArray)?.Count ?? 0;
@@ -242,6 +248,8 @@ static class CovariantInterfaceReturnBridge
                 var logicalSuspendResult = IsSuspend(implementation)
                     ? SupertypeGraph.SubstOwnerTvs(declaration.Return, ownerArgs)
                     : null;
+                var unitValueReturn = IsUnit(slotRet)
+                    && (IsSuspend(implementation) ? !IsUnit(declaration.Return) : declaration.ReturnsValue);
                 var physicalOwner = refs.ExactReflectedOwner(semanticOwner.Name, ownerArity);
                 if (physicalOwner == null) continue;
                 var descriptorOwner = new TypeNode.Fqn(physicalOwner,
@@ -296,11 +304,12 @@ static class CovariantInterfaceReturnBridge
                               declaration.TypeParams, physicalOwnerArgs)
                           + ">(" + string.Join(",", slotParams.Select(type =>
                               ReferencedPhysicalTypeKey(type, refs, isValue))) + ")->"
-                          + ReferencedPhysicalTypeKey(slotRet, refs, isValue);
+                          + ReferencedPhysicalTypeKey(slotRet, refs, isValue)
+                          + (unitValueReturn ? "[value-return]" : "");
                 if (!bridges.TryGetValue(key, out var bridge))
                 {
                     bridge = BuildBridge(cls, implementation, slotParams, slotRet, logicalSuspendResult,
-                        $"dotkt$covar${SafeName(implementationName)}${bridgeOrdinal++}");
+                        $"dotkt$covar${SafeName(implementationName)}${bridgeOrdinal++}", unitValueReturn);
                     bridges[key] = bridge;
                     methods.Add(bridge);
                     if (accessorKind != null)
@@ -317,7 +326,7 @@ static class CovariantInterfaceReturnBridge
                 var descriptor = ImplDescriptor(descriptorOwner, descriptorMember, methodArity,
                     slotParams, slotRet,
                     KotlinOverrideSlotBridge.SubstituteOwnerTypeParameterConstraints(
-                        declaration.TypeParams, physicalOwnerArgs));
+                        declaration.TypeParams, physicalOwnerArgs), unitValueReturn);
                 var encoded = descriptor.ToJsonString();
                 if (!((JsonArray)bridge["clrInterfaceImpls"])
                     .Any(existing => existing?.ToJsonString() == encoded))
@@ -349,7 +358,7 @@ static class CovariantInterfaceReturnBridge
             refs.PhysicalTypeNames, typeArg: false, nullableFrames: refs.NullableTypeFrames));
 
     static JsonObject BuildBridge(Def cls, JsonObject implementation, TypeNode[] slotParams, TypeNode slotRet,
-        TypeNode logicalSuspendResult, string bridgeName)
+        TypeNode logicalSuspendResult, string bridgeName, bool unitValueReturn)
     {
         var sourceParams = implementation["params"] as JsonArray ?? new JsonArray();
         var bridgeParams = new JsonArray();
@@ -411,6 +420,7 @@ static class CovariantInterfaceReturnBridge
             [KotlinPropertyAccessors.PhysicalSlotBridgeKey] = true,
             ["clrInterfaceImpls"] = new JsonArray(),
         };
+        if (unitValueReturn) bridge[BirTypeLowering.ValueReturnKey] = true;
         if (cls.Kind == "interface")
             bridge[KotlinPropertyAccessors.ClrInterfaceSlotBridgeKey] = true;
         if (IsSuspend(implementation))
@@ -425,7 +435,7 @@ static class CovariantInterfaceReturnBridge
     }
 
     static JsonObject ImplDescriptor(TypeNode.Fqn ifaceSpec, string member, int methodArity,
-        TypeNode[] slotParams, TypeNode slotRet, JsonArray typeParams)
+        TypeNode[] slotParams, TypeNode slotRet, JsonArray typeParams, bool unitValueReturn)
     {
         var ps = new JsonArray();
         foreach (var p in slotParams) ps.Add(TypeJson.Write(p));
@@ -437,6 +447,7 @@ static class CovariantInterfaceReturnBridge
             ["params"] = ps,
             ["ret"] = TypeJson.Write(slotRet),
         };
+        if (unitValueReturn) descriptor[BirTypeLowering.ValueReturnKey] = true;
         if (typeParams != null) descriptor["typeParams"] = typeParams.DeepClone();
         return descriptor;
     }
@@ -525,6 +536,9 @@ static class CovariantInterfaceReturnBridge
     static bool Bool(JsonNode node) => node is JsonValue v && v.TryGetValue<bool>(out var b) && b;
     static bool IsSuspend(JsonObject method) =>
         method["mods"] is JsonObject mods && Bool(mods["suspend"]);
+
+    static bool IsUnit(TypeNode type) => type is TypeNode.Fqn
+        { Name: "kotlin.Unit" or "Unit" or "void" or "System.Void", Args: null };
 
     static TypeNode ReadSuspendResult(JsonObject method) =>
         Str(method["suspendResult"]) is string encoded

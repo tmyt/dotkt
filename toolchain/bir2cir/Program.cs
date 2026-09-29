@@ -38,6 +38,7 @@ static class Bir2Cir
                 InnerRepresentationFrameTests.SelfTest();
                 GenericRepresentationPolicy.SelfTest();
                 BirTypeLowering.SelfTestSlotReturns();
+                BirTypeLowering.SelfTestMethodImplMetadata();
                 SupertypeGraph.SelfTestDeclarationIdentity();
                 CollectionHelperBinding.SelfTest();
                 IntrinsicExtensionRepresentation.SelfTest();
@@ -849,6 +850,9 @@ sealed class Pipeline
         // All source and inline-spliced Kotlin type applications now exist. Project Kotlin inner argument order to
         // CLR flattened nested order before the first CLR-oriented generic/slot pass consumes those applications.
         FBoundStarProjectionErasure.RecordArrayTypeEdges(staged.Select(s => s.Root).ToList());
+        // Declaration selection needs Kotlin classifier spelling and argument order, not the metadata spelling
+        // or the physical existential/inner representation produced below. Keep these facts within this phase.
+        var overrideSourceParameters = KotlinOverrideSlotBridge.CaptureSourceParameters(staged.Select(s => s.Root));
         TypeOwnershipLowering.RecordNestedSourceTypes(staged.Select(s => s.Root).ToList(), refs);
         TypeOwnershipLowering.ProjectInnerApplications(staged.Select(s => s.Root).ToList(), refs);
 
@@ -872,14 +876,17 @@ sealed class Pipeline
         // (so a synthesized suspend member is transformed normally). Exact signature/return only; ambiguity is skipped.
         InheritedClassInterfaceBridge.ApplyAll(staged.Select(s => s.Root).ToList());
 
-        KotlinOverrideSlotBridge.PrepareSuspendValueBridges(
-            staged.Select(s => s.Root).ToList(), isValueFqn, refs, localTypeFqns, _options.RefBuild, genericRepresentations);
-
         // KOTLIN COVARIANT OVERRIDE -> EXACT CLR METHODIMPL: preserve the Kotlin declaration's narrow return and add a
         // private forwarding bridge with the interface slot's exact return. The bridge carries a resolved
         // `clrInterfaceImpls` instruction; ilemit only consumes that instruction and does not infer covariance.
         var covariantBridgedSlots = CovariantInterfaceReturnBridge.ApplyAll(
-            staged.Select(s => s.Root).ToList(), refs, isValueFqn, genericRepresentations);
+            staged.Select(s => s.Root).ToList(), refs, isValueFqn, genericRepresentations, overrideSourceParameters);
+
+        // Covariant bridges own their exact cold and Task slots. Prepare only the remaining suspend-result
+        // obligations, so both passes cannot claim the same interface MethodImpl.
+        KotlinOverrideSlotBridge.PrepareSuspendValueBridges(
+            staged.Select(s => s.Root).ToList(), isValueFqn, refs, localTypeFqns, _options.RefBuild,
+            genericRepresentations, covariantBridgedSlots, overrideSourceParameters);
 
         // KOTLIN-ONLY COLLECTION SLOTS -> EXACT CLR METHODIMPL: the BCL operational faces carry neither Kotlin's
         // remove-capable `MutableIterable.iterator()` return nor `MutableCollection.removeAll`/`retainAll`/
