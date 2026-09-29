@@ -497,6 +497,29 @@ static class InlineSplice
                     ClosureSynthesis.PrebindSplicedFrames(raw);
                     argNode = DefaultArgSplice.SubstituteTokens(raw, defaultDispatchRecv,
                         ext ? boundArgs.ElementAtOrDefault(0) : null, null, boundArgs);
+                    // A default can invoke an ordinary inline parameter, including a
+                    // caller's non-local return. Consume direct invokes before deciding
+                    // which remaining references actually require a function value.
+                    SpliceLambdaInvokes(argNode, lambdaMap);
+                    for (var earlier = 0; earlier < boundArgs.Count; earlier++)
+                    {
+                        if (boundArgs[earlier] is not JsonObject read
+                            || Str(read["k"]) != "local") continue;
+                        var lname = Str(read["name"]);
+                        if (lname == null || !lambdaMap.TryGetValue(lname, out var carrier)
+                            || !HasLocalIn(argNode, new[] { lname })) continue;
+                        var materialized = MaterializeCarrier(carrier,
+                            lambdaFuncType.GetValueOrDefault(lname), stmts, consumerSemanticOwner);
+                        if (materialized == null)
+                        { FailLoud(o, owner, name, pc, ga, $"lambda parameter used by a default could not be materialized [reason={_matReason}]"); return; }
+                        var value = new JsonObject { ["k"] = "local", ["name"] = materialized,
+                            ["sty"] = lambdaFuncType.GetValueOrDefault(lname)?.DeepClone() };
+                        RecordBound(boundArgs, earlier, value);
+                        subst[Str(pParams[earlier]?["name"])] = value;
+                        RewriteLocalRefs(argNode, new Dictionary<string, JsonNode>(StringComparer.Ordinal)
+                            { [lname] = value });
+                        lambdaMap.Remove(lname);
+                    }
                 }
                 else { FailLoud(o, owner, name, pc, ga, $"missing prepared default for param {pn}"); return; }
                 // BATCH B (#75): a capturing newSuspendLambda built inside a param default binds to a temp whose init
@@ -625,9 +648,7 @@ static class InlineSplice
             $"inline splice: cannot splice {owner}.{name} (pc={pc} ga={ga}): {reason} — "
             + "under splice-all a callInline arrives for every inline+lambda call, so there is no fallback; fix the splice shape or the kotc gate.");
 
-    // #34: record the READ that emitted-position param `i` bound to (a plan `bindRef`, or the local a lambda carrier /
-    // pinned capture named), so a later param's TIER-2 default carrier token `{defaultArgParam idx=i}` (a default
-    // reading this earlier param) resolves to the same single evaluation.
+    // Record the value read by later defaults, never a second evaluation.
     static void RecordBound(JsonArray boundArgs, int i, JsonNode read)
     {
         while (boundArgs.Count <= i) boundArgs.Add(null);

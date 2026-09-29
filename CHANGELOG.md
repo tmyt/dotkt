@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Inline defaults retain the lambda arguments they capture (#890).**
+  Arguments used by defaults are materialized once and shared with later defaults and the function body across DLL boundaries.
+
 - **Non-returning inline bodies retain terminal continuations (#928).**
   Bodies ending in infinite loops or throws no longer expose a synthetic Unit value to concrete return slots.
 
