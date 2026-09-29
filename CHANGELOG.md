@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Constructed method signature views preserve instantiated stack types (#936).**
+  Referenced generic methods on constructed owners apply both owner and method arguments when typing results and arguments.
+
 - **Inner constructor delegation retains source frames and declaration signatures (#907).**
   Inherited enclosing instances close omitted defaults without leaking callee type variables into the caller.
 

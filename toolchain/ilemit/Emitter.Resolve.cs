@@ -606,6 +606,16 @@ sealed partial class Emitter
         if (e.TryGetProperty("typeArgs", out var ta) && ta.GetArrayLength() > 0)
         {
             var targs = ta.EnumerateArray().Select(x => MapType(x)).ToArray();
+            if (m is SignatureMethod signature && signature.IsGenericMethodDefinition
+                && signature.GetGenericArguments().Length == targs.Length)
+            {
+                // The signature view retains open declaration types for metadata serialization.
+                // Stack typing uses that same CIR-selected member with both owner and method arguments applied.
+                var constructed = ConstructedMethod(signature, targs);
+                retType = ReturnTypeOf(constructed);
+                paramTypes = ParametersOf(constructed).Select(parameter => parameter.ParameterType).ToArray();
+                return constructed;
+            }
             // Substitute by REFERENCE IDENTITY (the method's own gp builders -> the concrete type args), NOT by
             // reflecting `DeclaringMethod`/`GenericParameterPosition` — those are null/garbage on an un-baked
             // MethodBuilder, which silently dropped the substitution and boxed value args. Identity is reliable.
