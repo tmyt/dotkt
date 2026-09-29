@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Inherited suspend calls through imported generic interfaces resolve their exact slots (#953).**
+  Declaration selection uses preserved Kotlin parameter facts before binding the CLR existential member.
+
 - **Suspend bottom-return overrides have one exact interface bridge (#952).**
   Covariant and suspend-result bridge synthesis share slot ownership, including delegated implementations.
 
