@@ -701,8 +701,20 @@ static partial class ClrMemberResolution
             .ToArray();
         var ctors = open.GetConstructors(BindingFlags.Public | BindingFlags.Instance)
             .Where(c => c.GetParameters().Length == argNodes.Count).ToList();
-        var win = PickUnique(ctors, c => c.GetParameters(), argNodes, ownerArgs,
-            $"newClr owner={TypeNode.ToJson(ownerFqn)} ({DescArgs(argNodes)})");
+        ConstructorInfo win;
+        if (node["memberSignature"] is JsonArray selectedSignature)
+        {
+            var declaration = selectedSignature.Select(TypeJson.Read)
+                .Select(BirTypeLowering.CanonicalPhysicalSlotType).ToList();
+            // Compare the complete open shape, not applicability or a nominal-head-only approximation.
+            var exact = ctors.Where(c => c.GetParameters().Select((p, i) =>
+                DeclaredConstructorSlotMatches(declaration[i], p.ParameterType)).All(match => match)).ToList();
+            win = exact.Count == 1 ? exact[0] : throw new InvalidOperationException(
+                $"bir2cir: selected constructor declaration on '{ownerFqn.Name}' resolves to {exact.Count} members: {DescArgs(declaration)}");
+        }
+        else
+            win = PickUnique(ctors, c => c.GetParameters(), argNodes, ownerArgs,
+                $"newClr owner={TypeNode.ToJson(ownerFqn)} ({DescArgs(argNodes)})");
         CoerceCtorCollectionViews(node, win.GetParameters(), argNodes, ownerArgs);
         node["memberRef"] = MemberRefJson(win, MemberRefNode.Kinds.Ctor, open, ownerArgs);
         StampDelegateArgumentTargets(node, win.GetParameters(), ownerArgs ?? Array.Empty<TypeNode>(),
@@ -712,6 +724,43 @@ static partial class ClrMemberResolution
         StampResolvedMemberReturn(node, typeof(void));
         node.Remove("argTypes");
         node.Remove("memberSignature");
+    }
+
+    static bool DeclaredConstructorSlotMatches(TypeNode selected, Type parameter)
+    {
+        selected = BirTypeLowering.CanonicalPhysicalSlotType(selected);
+        if (selected is TypeNode.Oblivious oblivious)
+            return DeclaredConstructorSlotMatches(oblivious.Of, parameter);
+        parameter = AliasResolve(parameter);
+        if (parameter.IsGenericParameter)
+            return selected is TypeNode.Tv tv && tv.I == parameter.GenericParameterPosition
+                && tv.Scope == (parameter.DeclaringMethod == null ? "type" : "method");
+        if (parameter.IsByRef)
+            return selected is TypeNode.ByRef byref && DeclaredConstructorSlotMatches(byref.Of, parameter.GetElementType());
+        if (parameter.IsPointer)
+            return selected is TypeNode.Ptr pointer && DeclaredConstructorSlotMatches(pointer.Of, parameter.GetElementType());
+        if (parameter.IsArray)
+            return selected is TypeNode.Array array && array.Rank == SafeArrayRank(parameter)
+                && array.SzArray == parameter.IsSZArray
+                && DeclaredConstructorSlotMatches(array.Elem, parameter.GetElementType());
+        if (selected is TypeNode.Nullable nullable)
+            return parameter.IsGenericType && SafeDef(parameter) == NullableDef()
+                && DeclaredConstructorSlotMatches(nullable.Of, parameter.GetGenericArguments()[0]);
+        if (selected is TypeNode.Fn function)
+        {
+            if (!IsDelegateType(parameter) || function.Clr != DelegateFamily(parameter)) return false;
+            var invoke = parameter.GetMethod("Invoke");
+            return invoke != null && function.Params.Length == invoke.GetParameters().Length
+                && function.Params.Select((p, i) => DeclaredConstructorSlotMatches(p, invoke.GetParameters()[i].ParameterType)).All(match => match)
+                && DeclaredConstructorSlotMatches(function.Ret, invoke.ReturnType);
+        }
+        if (selected is not TypeNode.Fqn named) return false;
+        var arguments = named.Args ?? Array.Empty<TypeNode>();
+        var definition = RefDef(named.Name, arguments.Length);
+        if (definition == null || SafeDef(definition) != SafeDef(parameter)) return false;
+        var parameters = parameter.IsGenericType ? parameter.GetGenericArguments() : Type.EmptyTypes;
+        return arguments.Length == parameters.Length
+            && arguments.Select((arg, i) => DeclaredConstructorSlotMatches(arg, parameters[i])).All(match => match);
     }
 
     // Root-V lowers a readonly Kotlin collection nested in a constructed generic to its invariant CLR sibling.

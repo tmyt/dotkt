@@ -1,0 +1,81 @@
+package roundtrip.constructorselection
+
+class SelectedConstructor<T> {
+    val chosen: Int
+    constructor(value: T) { chosen = 1 }
+    constructor(marker: Int) { chosen = 2 }
+}
+
+class SelectionBox<T>(val value: T)
+
+class NestedSelectedConstructor<T> {
+    val chosen: Int
+    constructor(box: SelectionBox<T>) { chosen = 1 }
+    constructor(number: SelectionBox<Int>) { chosen = 2 }
+}
+
+class MultiSelectedConstructor<A, B> {
+    val chosen: Int
+    constructor(first: A, second: B) { chosen = 1 }
+    constructor(number: Int, other: B) { chosen = 2 }
+}
+
+class NullableSelectedConstructor<T> {
+    val chosen: Int
+    constructor(value: T?) { chosen = 1 }
+    constructor(number: Int?) { chosen = 2 }
+}
+
+class ArraySelectedConstructor<T> {
+    val chosen: Int
+    constructor(values: Array<T>) { chosen = 1 }
+    constructor(strings: Array<String>) { chosen = 2 }
+}
+
+class SelectionOuter<T>(val seed: T) {
+    inner class Child(val value: T = seed) {
+        var chosen = 1
+        constructor(marker: Int) : this() { chosen = 2 }
+    }
+}
+
+fun <T> checkGenericSelection(input: T) {
+    check(SelectedConstructor<T>(value = input).chosen == 1)
+    check(SelectedConstructor<T>(marker = 11).chosen == 2)
+    class Local {
+        val captured = input
+        val chosen: Int
+        constructor(value: T) { chosen = 1 }
+        constructor(marker: Int) { chosen = 2 }
+    }
+    val generic = Local(value = input)
+    val concrete = Local(marker = 13)
+    check(generic.chosen == 1 && concrete.chosen == 2)
+    check(generic.captured == input && concrete.captured == input)
+}
+
+fun checkLocalConstructorSelection() {
+    check(SelectedConstructor<Int>(value = 3).chosen == 1)
+    check(SelectedConstructor<Int>(marker = 5).chosen == 2)
+    check(SelectedConstructor<String>(value = "text").chosen == 1)
+    check(SelectedConstructor<String>(marker = 7).chosen == 2)
+    check(SelectedConstructor<Int?>(value = null).chosen == 1)
+    check(NestedSelectedConstructor<Int>(box = SelectionBox(17)).chosen == 1)
+    check(NestedSelectedConstructor<Int>(number = SelectionBox(19)).chosen == 2)
+    check(NestedSelectedConstructor<String>(box = SelectionBox("nested")).chosen == 1)
+    check(MultiSelectedConstructor<Int, String>(first = 23, second = "a").chosen == 1)
+    check(MultiSelectedConstructor<Int, String>(number = 31, other = "b").chosen == 2)
+    check(MultiSelectedConstructor<String, Int>(first = "a", second = 41).chosen == 1)
+    check(MultiSelectedConstructor<String, Int>(number = 43, other = 37).chosen == 2)
+    check(NullableSelectedConstructor<Int>(value = null).chosen == 1)
+    check(NullableSelectedConstructor<Int>(number = null).chosen == 2)
+    check(ArraySelectedConstructor<String>(values = arrayOf("generic")).chosen == 1)
+    check(ArraySelectedConstructor<String>(strings = arrayOf("concrete")).chosen == 2)
+    val outer = SelectionOuter(47)
+    check(outer.Child(value = 53).chosen == 1)
+    val secondary = outer.Child(marker = 0)
+    check(secondary.chosen == 2 && secondary.value == 47)
+    checkGenericSelection(59)
+    checkGenericSelection("captured")
+    checkGenericSelection<Int?>(null)
+}
