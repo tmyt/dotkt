@@ -847,6 +847,7 @@ sealed class Pipeline
 
         // All source and inline-spliced Kotlin type applications now exist. Project Kotlin inner argument order to
         // CLR flattened nested order before the first CLR-oriented generic/slot pass consumes those applications.
+        TypeOwnershipLowering.RecordNestedSourceTypes(staged.Select(s => s.Root).ToList(), refs);
         TypeOwnershipLowering.ProjectInnerApplications(staged.Select(s => s.Root).ToList(), refs);
 
         // F-BOUND STAR PROJECTION: CLR has no legal/reified `Node<*>` TypeSpec for `Node<N : Node<N>>`.
@@ -1464,7 +1465,7 @@ sealed class Pipeline
         // stable. ilemit then emits those ordinary CIR casts without recognizing the collection ABI. A metadata/ref
         // build retains declaration types and only consumes semantic comparisons in executable constructor remnants.
         PhysicalValueCoercion.ApplyAll(loweredRoots.Select(file => file.Root).ToList(),
-            ClrMemberResolution.UnitSingletonRead, referenceBuild: _options.RefBuild);
+            ClrMemberResolution.UnitSingletonRead, isValueFqn, referenceBuild: _options.RefBuild);
 
         // Every representation synthesis is now complete. Validate the exact MethodDef table that CIR will describe;
         // do not defer a generated/user collision to ilemit and do not invent a late name after calls are bound.
