@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Nested Kotlin types retain their classifier path through DLL metadata (#924).**
+  Inner type arguments are recorded before CLR capture projection so imported declarations preserve their source types.
+
 - **Overloaded calls retain selected nullable argument slots (#919).**
   Declaration identities preserve required conversions for local and referenced generic overloads.
 

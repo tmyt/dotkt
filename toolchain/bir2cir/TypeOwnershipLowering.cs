@@ -33,7 +33,7 @@ static class TypeOwnershipLowering
         string Encode(TypeNode type)
         {
             var payload = TypeJson.Write(type);
-            var changed = false;
+            var hasNestedClassifier = false;
             void Rewrite(JsonNode node)
             {
                 if (node is JsonObject obj)
@@ -41,7 +41,10 @@ static class TypeOwnershipLowering
                     if (Str(obj["t"]) == "fqn" && Str(obj["name"]) is string name)
                     {
                         var sourceName = SourceName(name);
-                        if (sourceName != name) { obj["name"] = sourceName; changed = true; }
+                        if (sourceName != name) obj["name"] = sourceName;
+                        // Referenced classifiers already carry an explicit nested path. Their arguments still
+                        // need this source-order snapshot before ProjectInnerApplications permutes them.
+                        hasNestedClassifier |= sourceName.Contains('+');
                     }
                     foreach (var child in obj.Select(pair => pair.Value).Where(value => value != null).ToList())
                         Rewrite(child);
@@ -50,7 +53,7 @@ static class TypeOwnershipLowering
                     foreach (var child in array.Where(value => value != null)) Rewrite(child);
             }
             Rewrite(payload);
-            return changed ? payload.ToJsonString() : null;
+            return hasNestedClassifier ? payload.ToJsonString() : null;
         }
 
         void Record(JsonObject declaration, string slot, string fact)
