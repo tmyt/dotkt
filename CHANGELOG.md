@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Inline defaults retain the lambda arguments they capture (#890).**
+  Arguments used by defaults are materialized once and shared with later defaults and the function body across DLL boundaries.
+
 - **Value branches box before reference-typed conditional joins (#913).**
   Physical value conversions are explicit before interface merges, including generic and nullable values.
 
