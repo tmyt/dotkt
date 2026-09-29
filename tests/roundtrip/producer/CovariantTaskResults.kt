@@ -20,3 +20,14 @@ class TaskResultDerived(text: String) : TaskResultBase(text)
 interface ReferenceTaskResult<T> {
     suspend fun read(value: T, pause: suspend () -> Unit): TaskResultBase
 }
+
+interface MethodTaskResult<T> {
+    suspend fun <U : T> read(value: U, pause: suspend () -> Unit): Any
+}
+interface DefaultStringTask<T> : AnyTaskResult<T>, StringTaskResult<T> {
+    override suspend fun read(value: T, pause: suspend () -> Unit): String {
+        pause()
+        return "default"
+    }
+    override suspend fun read(value: T, tag: String): String = tag
+}

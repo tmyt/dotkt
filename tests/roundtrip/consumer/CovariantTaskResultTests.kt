@@ -22,6 +22,18 @@ private class LocalGenericStringTask<T> : LocalAnyTaskResult<T>, AnyTaskResult<T
     override suspend fun read(value: T, tag: String): String = tag
 }
 private class InheritedStringTask<T> : ProducerStringTask<T>(), LocalAnyTaskResult<T>
+private class StringArgumentTask : AnyTaskResult<String>, StringTaskResult<String> {
+    override suspend fun read(value: String, pause: suspend () -> Unit): String { pause(); return value }
+    override suspend fun read(value: String, tag: String): String = tag
+}
+private class IntArgumentTask : AnyTaskResult<Int>, StringTaskResult<Int> {
+    override suspend fun read(value: Int, pause: suspend () -> Unit): String { pause(); return "$value" }
+    override suspend fun read(value: Int, tag: String): String = tag
+}
+private class ConstrainedMethodTask<T> : MethodTaskResult<T> {
+    override suspend fun <U : T> read(value: U, pause: suspend () -> Unit): String { pause(); return "method" }
+}
+private class DefaultTaskBody<T> : DefaultStringTask<T>
 private class ConsumerReferenceTask : ReferenceTaskResult<TaskResultOuter.Nested> {
     override suspend fun read(value: TaskResultOuter.Nested, pause: suspend () -> Unit): TaskResultDerived {
         pause()
@@ -75,5 +87,17 @@ class CovariantTaskResultTests {
         val reference = ConsumerReferenceTask()
         checkCovariantTask("reference") { pause -> reference.read(value, pause).text }
         checkCovariantTask("reference") { pause -> (reference as ReferenceTaskResult<TaskResultOuter.Nested>).read(value, pause).text }
+        val string = StringArgumentTask()
+        checkCovariantTask("string") { pause -> string.read("string", pause) }
+        checkCovariantTask("string") { pause -> (string as AnyTaskResult<String>).read("string", pause) as String }
+        val int = IntArgumentTask()
+        checkCovariantTask("42") { pause -> int.read(42, pause) }
+        checkCovariantTask("42") { pause -> (int as AnyTaskResult<Int>).read(42, pause) as String }
+        val method = ConstrainedMethodTask<TaskResultBase>()
+        checkCovariantTask("method") { pause -> method.read(TaskResultDerived("argument"), pause) }
+        checkCovariantTask("method") { pause -> (method as MethodTaskResult<TaskResultBase>).read(TaskResultDerived("argument"), pause) as String }
+        val default = DefaultTaskBody<TaskResultOuter.Nested>()
+        checkCovariantTask("default") { pause -> default.read(value, pause) }
+        checkCovariantTask("default") { pause -> (default as AnyTaskResult<TaskResultOuter.Nested>).read(value, pause) as String }
     }
 }
