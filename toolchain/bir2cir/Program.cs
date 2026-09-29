@@ -847,6 +847,7 @@ sealed class Pipeline
 
         // All source and inline-spliced Kotlin type applications now exist. Project Kotlin inner argument order to
         // CLR flattened nested order before the first CLR-oriented generic/slot pass consumes those applications.
+        TypeOwnershipLowering.RecordNestedSourceTypes(staged.Select(s => s.Root).ToList());
         TypeOwnershipLowering.ProjectInnerApplications(staged.Select(s => s.Root).ToList(), refs);
 
         // F-BOUND STAR PROJECTION: CLR has no legal/reified `Node<*>` TypeSpec for `Node<N : Node<N>>`.
