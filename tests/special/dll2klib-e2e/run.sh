@@ -36,6 +36,8 @@ need_stdlib_rt
 need_dotnet_reference_sets
 
 dotnet build "$ROOT/toolchain/dll2klib/dll2klib.csproj" -c Release -o "$OUT/tools" -v:q --nologo
+dotnet run --project "$ROOT/tests/special/dll2klib-e2e/signature-identity/Probe.csproj" -c Release \
+	-- "$OUT/tools/dll2klib.dll"
 dotnet build "$ROOT/tests/roundtrip/metadata-inspector/CompanionMetadataInspector.csproj" \
 	-c Release -o "$OUT/tools/metadata-inspector" -v:q --nologo
 dotnet build "$ROOT/tests/special/dll2klib-e2e/pointer-inspector/PointerInspector.csproj" \
@@ -291,10 +293,21 @@ PY
 [[ -n "$manifest_unique_name" && "$module_header_name" == "<$manifest_unique_name>" ]] \
 	|| die "KLIB header module_name '$module_header_name' is not the special form of manifest unique_name '$manifest_unique_name'"
 
+# Consumption requires the resolved framework universe too: imported Func/Action
+# are nominal SAM declarations, not structural function types supplied by stdlib.
+# Keep the small projection sets above for their targeted incremental-cache checks.
+printf '%s\n' "${FRAMEWORK_COMPILE_REF_PATHS[@]}" "$PROBE_REF" "$CONTRACTS_REF" "$TRANSITIVE_REF" \
+	> "$OUT/consumer-references.rsp"
+dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/consumer-klib" --jobs 0 @"$OUT/consumer-references.rsp"
+consumer_classpath="$FE_KLIB"
+for consumer_klib in "$OUT/consumer-klib"/*.klib; do
+	consumer_classpath+="$KLIB_CP_SEP$consumer_klib"
+done
+
 # The only classpath metadata for Probe.Widget is the packed KLIB.
 "$KOTC" "$ROOT/tests/special/dll2klib-e2e/consumer.kt" \
 	-no-stdlib \
-	-classpath "$FE_KLIB$KLIB_CP_SEP$PROBE_KLIB$KLIB_CP_SEP$CONTRACTS_KLIB" -d "$OUT/bir"
+	-classpath "$consumer_classpath" -d "$OUT/bir"
 grep -q '"name":"kotlin.clr.ClrPointer"' "$OUT/bir/consumer.bir.json" \
 	|| die "frontend did not preserve the projected ClrPointer<T> vocabulary in BIR"
 
@@ -307,7 +320,7 @@ expect_constraint_failure() {
 	mkdir -p "$bir" "$cir"
 	"$KOTC" "$ROOT/tests/special/dll2klib-e2e/invalid-$name-constraint.kt" \
 		-no-stdlib \
-		-classpath "$FE_KLIB$KLIB_CP_SEP$PROBE_KLIB$KLIB_CP_SEP$CONTRACTS_KLIB" -d "$bir"
+		-classpath "$consumer_classpath" -d "$bir"
 	if dotnet "$BIR2CIR_DLL" "$cir" --compile-refs "$compile_refs" "$bir"/*.bir.json >"$log" 2>&1; then
 		die "invalid $name generic constraint unexpectedly reached CIR"
 	fi
@@ -328,7 +341,7 @@ expect_pointer_shape_failure() {
 	mkdir -p "$bir" "$cir"
 	"$KOTC" "$ROOT/tests/special/dll2klib-e2e/invalid-pointer-$name.kt" \
 		-no-stdlib \
-		-classpath "$FE_KLIB$KLIB_CP_SEP$PROBE_KLIB$KLIB_CP_SEP$CONTRACTS_KLIB" -d "$bir"
+		-classpath "$consumer_classpath" -d "$bir"
 	if dotnet "$BIR2CIR_DLL" "$cir" --compile-refs "$compile_refs" "$bir"/*.bir.json >"$log" 2>&1; then
 		die "invalid pointer $name shape unexpectedly reached CIR"
 	fi
@@ -363,7 +376,7 @@ expect_constraint_failure member-constrained-class IMemberConstraintSlot.Referen
 nominal_log="$OUT/constraint-member-nominal.log"
 if "$KOTC" "$ROOT/tests/special/dll2klib-e2e/invalid-member-nominal-constraint.kt" \
 	-no-stdlib \
-	-classpath "$FE_KLIB$KLIB_CP_SEP$PROBE_KLIB$KLIB_CP_SEP$CONTRACTS_KLIB" \
+	-classpath "$consumer_classpath" \
 	-d "$OUT/constraint-member-nominal-bir" >"$nominal_log" 2>&1; then
 	die "dll2klib dropped the nominal IConstraintMarker method bound"
 fi
@@ -376,7 +389,7 @@ grep -q "IConstraintMarker" "$nominal_log" \
 explicit_direct_log="$OUT/explicit-slot-direct.log"
 if "$KOTC" "$ROOT/tests/special/dll2klib-e2e/explicit-slot-direct-call.kt" \
 	-no-stdlib \
-	-classpath "$FE_KLIB$KLIB_CP_SEP$PROBE_KLIB$KLIB_CP_SEP$CONTRACTS_KLIB" \
+	-classpath "$consumer_classpath" \
 	-d "$OUT/explicit-slot-direct-bir" >"$explicit_direct_log" 2>&1; then
 	die "explicit interface slots unexpectedly became ordinary class APIs"
 fi
@@ -394,7 +407,7 @@ grep -q "explicit-slot-direct-call.kt:12:27: error: unresolved reference.*receiv
 no_companion_log="$OUT/no-synthetic-companion.log"
 if "$KOTC" "$ROOT/tests/special/dll2klib-e2e/no-synthetic-companion.kt" \
 	-no-stdlib \
-	-classpath "$FE_KLIB$KLIB_CP_SEP$PROBE_KLIB$KLIB_CP_SEP$CONTRACTS_KLIB" -d "$OUT/no-synthetic-companion-bir" \
+	-classpath "$consumer_classpath" -d "$OUT/no-synthetic-companion-bir" \
 	>"$no_companion_log" 2>&1; then
 	die "plain CLR static owner unexpectedly exposed Widget.Companion"
 fi
@@ -404,7 +417,7 @@ grep -q "unresolved reference.*Companion" "$no_companion_log" \
 reabstract_log="$OUT/reabstract-interface.log"
 if "$KOTC" "$ROOT/tests/special/dll2klib-e2e/reabstract-interface-consumer.kt" \
 	-no-stdlib \
-	-classpath "$FE_KLIB$KLIB_CP_SEP$PROBE_KLIB$KLIB_CP_SEP$CONTRACTS_KLIB" \
+	-classpath "$consumer_classpath" \
 	-d "$OUT/reabstract-interface-bir" >"$reabstract_log" 2>&1; then
 	die "reabstracted interface slots unexpectedly appeared concrete"
 fi
@@ -417,7 +430,7 @@ mkdir -p "$OUT/default-bir" "$OUT/default-cir" "$OUT/default-il" \
 	"$OUT/explicit-slot-bir" "$OUT/explicit-slot-cir" "$OUT/explicit-slot-il"
 "$KOTC" "$ROOT/tests/special/dll2klib-e2e/default-interface-consumer.kt" \
 	-no-stdlib \
-	-classpath "$FE_KLIB$KLIB_CP_SEP$PROBE_KLIB$KLIB_CP_SEP$CONTRACTS_KLIB" -d "$OUT/default-bir"
+	-classpath "$consumer_classpath" -d "$OUT/default-bir"
 dotnet "$BIR2CIR_DLL" "$OUT/default-cir" --compile-refs "$compile_refs" \
 	"$OUT/default-bir/default-interface-consumer.bir.json"
 dotnet "$ILEMIT_DLL" "$OUT/default-il" DefaultInterfaceConsumer \
@@ -432,7 +445,7 @@ default_actual="$(dotnet "$OUT/default-il/DefaultInterfaceConsumer.dll")"
 	|| die "hidden/default/reabstracted interface program returned '$default_actual', expected '236'"
 "$KOTC" "$ROOT/tests/special/dll2klib-e2e/explicit-slot-probe.kt" \
 	-no-stdlib \
-	-classpath "$FE_KLIB$KLIB_CP_SEP$PROBE_KLIB$KLIB_CP_SEP$CONTRACTS_KLIB" -d "$OUT/explicit-slot-bir"
+	-classpath "$consumer_classpath" -d "$OUT/explicit-slot-bir"
 dotnet "$BIR2CIR_DLL" "$OUT/explicit-slot-cir" --compile-refs "$compile_refs" \
 	"$OUT/explicit-slot-bir/explicit-slot-probe.bir.json"
 dotnet "$ILEMIT_DLL" "$OUT/explicit-slot-il" ExplicitSlotProbe \

@@ -63,6 +63,9 @@ sealed partial class Emitter
 
     Type MapType(DotKt.Bir.TypeNode t) => t switch
     {
+        // Custom modifiers distinguish declaration signatures, not runtime value types.
+        // Declaration emission separately writes their arrays through MapSignatureSlot.
+        DotKt.Bir.TypeNode.Mod m => MapType(m.Of),
         DotKt.Bir.TypeNode.ByRef b => MapType(b.Of).MakeByRefType(),
         DotKt.Bir.TypeNode.Array { SzArray: true, Rank: 1 } a => MapType(a.Elem).MakeArrayType(),
         DotKt.Bir.TypeNode.Array a => MapType(a.Elem).MakeArrayType(a.Rank),
@@ -74,6 +77,26 @@ sealed partial class Emitter
         DotKt.Bir.TypeNode.Fqn f => ConstructGeneric(f.Name, f.Args),
         _ => throw new NotSupportedException($"unencodable CIR type node `{t.GetType().Name}`"),
     };
+
+    readonly record struct DeclaredSignatureSlot(Type Type, Type[] Required, Type[] Optional)
+    {
+        internal bool HasModifiers => Required.Length != 0 || Optional.Length != 0;
+    }
+
+    DeclaredSignatureSlot MapSignatureSlot(JsonElement slot)
+    {
+        var type = DotKt.Bir.TypeNode.Read(slot);
+        var required = new List<Type>();
+        var optional = new List<Type>();
+        while (type is DotKt.Bir.TypeNode.Mod modifier)
+        {
+            (modifier.Req ? required : optional).Add(MapType(modifier.M));
+            type = modifier.Of;
+        }
+        required.Reverse();
+        optional.Reverse();
+        return new(MapType(type), required.ToArray(), optional.ToArray());
+    }
 
     // #37/#48: nullability realizes value-vs-reference HERE (MapType resolves the inner type, so it's the natural
     // split point). VALUE-type nullability is STRUCTURAL -> `System.Nullable<T>`. REFERENCE-type nullability is

@@ -1721,9 +1721,9 @@ c.CollectionChanged.subscribe { sender, e -> println("scoped") }.use {
   on it stays an error — you still cannot raise an event you did not declare. Full model:
   [`docs/design-clr-event-model.md`](design-clr-event-model.md).
 
-## 8e. A custom .NET delegate is a nominal Kotlin `fun interface`
+## 8e. A .NET delegate is a nominal Kotlin `fun interface`
 
-A CLR delegate other than the canonical function families is projected as its own Kotlin **nominal callable SAM
+A CLR delegate, including `System.Func` and `System.Action`, is projected as its own Kotlin **nominal callable SAM
 type**. For example, `SendOrPostCallback` exposes
 `operator fun invoke(state: Any?): Unit`, and a value is constructed with
 `SendOrPostCallback { state -> ... }`. A method signature continues to name `SendOrPostCallback`; it does not collapse
@@ -1737,28 +1737,29 @@ delegate types nested recursively inside their own signatures. Recursion stays f
 nominal interface. `bir2cir` resolves that semantic SAM to the exact CLR delegate constructor and `Invoke` MethodDef;
 `ilemit` emits the already-resolved CIR one-to-one.
 
-`System.Action`/`System.Func` remain structural Kotlin function types because they are Kotlin `FunctionN`'s canonical
-CLR representation. The stdlib `KAction`/`KFunc` families do the same for arities 17..22. Overload-priority metadata
-for ambiguous bare function literals therefore applies only to overloads whose delegate slots are canonical function
-families (for example `Task.Run(Action)` versus `Task.Run(Func<T>)`). Nominal overloads such as
-`Thread(ThreadStart)` versus `Thread(ParameterizedThreadStart)` are selected explicitly with their SAM constructor.
+Imported `System.Func`/`Action` signatures retain their exact delegate identity. For example an override taking
+`System.Func2<Int, Int>` must name that nominal type, not `(Int) -> Int`. Lambdas and stored Kotlin functions can
+cross the SAM boundary; this conversion does not make the two source types identical. Select ambiguous nominal
+overloads explicitly with their SAM constructor. The compiler-owned stdlib `KAction`/`KFunc` families retain their
+internal function-family role for arities 17..22.
 
-## 8e-bis. A function type is a delegate: `System.Func`/`Action` to arity 16, the stdlib canonical `KFunc`/`KAction` for 17..22 (#220); above that there is none
+## 8e-bis. Ordinary Kotlin function values use identity-preserving delegate carriers
 
 Every non-suspend Kotlin function type is one CLR delegate type, chosen by ARITY. An extension or context receiver
 occupies a delegate slot, so it counts toward that arity; a `suspend` function type is not a delegate at all (§4).
 
 | Kotlin arity | CLR delegate | Defined by |
 |---|---|---|
-| 0..16, returns `Unit` | `System.Action` / `System.Action\`N` | the BCL |
-| 0..16, returns a value | `System.Func\`N+1` | the BCL |
-| 17..22, returns `Unit` | `DotKt.Runtime.CompilerServices.KAction\`17` … `KAction\`22` | **the DotKt stdlib** |
-| 17..22, returns a value | `DotKt.Runtime.CompilerServices.KFunc\`18` … `KFunc\`23` (the return type is the last type argument) | **the DotKt stdlib** |
+| 0..16 | `System.Func\`N+1` | the BCL |
+| 17..22 | `DotKt.Runtime.CompilerServices.KFunc\`18` … `KFunc\`23` (the return type is the last type argument) | **the DotKt stdlib** |
 | 23 and above | — | **unsupported — refused by bir2cir** (see below) |
 | any arity, `suspend` | not a delegate — an object carrier (§4) | **no arity limit applies** |
 
-Here `Unit` means the non-null return type. `Unit?` is a value return and uses `Func`/`KFunc`, preserving both
-the Unit singleton and null; its physical return type is the `kotlin.Unit` class, not CLR `void`.
+For ordinary Kotlin functions, boxable parameter and result slots use `object`, including `Unit` results. Typed
+consumption restores the required type; a Unit result is the Unit singleton, and `Unit?` also permits null. Kotlin
+function variance therefore preserves the original function object's identity across assignments, storage, and
+DLL boundaries. Metadata retains the source signature. Metadata-proven byref-like types cannot be boxed and retain
+their exact physical slots. A nominal CLR delegate crossing uses its own declared signature instead of this carrier.
 
 `System.Func`/`Action` stop at 16 value parameters, so 17..22 is the band that needs a DotKt type — and 22 is where
 it stops, because each arity is one more pre-baked type in the stdlib (see the refusal below). Those six pairs are

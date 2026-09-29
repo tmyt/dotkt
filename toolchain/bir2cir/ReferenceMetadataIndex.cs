@@ -209,6 +209,27 @@ sealed partial class ReferenceMetadataIndex
         id != null && _declarationById.TryGetValue(id, out var binding)
             ? binding.DeclarationSemanticParams : null;
 
+    internal (TypeNode[] Parameters, TypeNode Return) AliasHelperSourceSignature(string id, string ownerName)
+    {
+        if (!_declarationById.TryGetValue(id, out var binding) || binding.IsStatic
+            || BareOwnerFqn(binding.Owner) != BareOwnerFqn(ownerName))
+            throw new InvalidOperationException($"Alias helper source '{id}' does not select an instance declaration on '{ownerName}'");
+        return PhysicalDeclarationSignature(binding);
+    }
+
+    static (TypeNode[] Parameters, TypeNode Return) PhysicalDeclarationSignature(MemberBinding binding) =>
+        (binding.SignatureParameters, binding.SignatureReturn);
+
+    static TypeNode DeclarationSignatureSlot(ParameterInfo parameter)
+    {
+        TypeNode type = DeclarationTypeNode(parameter.ParameterType);
+        foreach (var modifier in parameter.GetOptionalCustomModifiers().Reverse())
+            type = new TypeNode.Mod(false, DeclarationTypeNode(modifier), type);
+        foreach (var modifier in parameter.GetRequiredCustomModifiers().Reverse())
+            type = new TypeNode.Mod(true, DeclarationTypeNode(modifier), type);
+        return type;
+    }
+
     public bool TryDeclarationIdentity(
         string id,
         out string physicalName,
@@ -3066,7 +3087,8 @@ sealed partial class ReferenceMetadataIndex
                     : type).ToArray(),
             match.NullableGenericRet ?? match.KotlinReturnType ?? match.ReturnTypeNode,
             match.MethodTypeParams, match.ReturnTypeNode is not TypeNode.Fqn { Name: "void" or "System.Void", Args: null },
-            match.IsVirtual, match.ParamTypeNodes, match.ReturnTypeNode, match.NullableFrame);
+            match.IsVirtual, match.ParamTypeNodes, match.ReturnTypeNode, match.NullableFrame,
+            PhysicalDeclarationSignature(match).Parameters, match.DeclarationId);
         return true;
     }
 
@@ -3113,7 +3135,8 @@ sealed partial class ReferenceMetadataIndex
                 ? match.SuspendReturnType
                 : match.NullableGenericRet ?? match.KotlinReturnType ?? match.ReturnTypeNode,
             match.MethodTypeParams, match.ReturnTypeNode is not TypeNode.Fqn { Name: "void" or "System.Void", Args: null },
-            match.IsVirtual, match.ParamTypeNodes, match.ReturnTypeNode, match.NullableFrame);
+            match.IsVirtual, match.ParamTypeNodes, match.ReturnTypeNode, match.NullableFrame,
+            PhysicalDeclarationSignature(match).Parameters, match.DeclarationId);
         return true;
     }
 
@@ -3811,7 +3834,8 @@ sealed partial class ReferenceMetadataIndex
         TypeNode[] ownerTypeArguments, JsonArray selectedTypeParams, TypeNode[] selectedOwnerTypeArguments,
         out TypeNode declaredRet, out TypeNode[] declaredParams, out bool[] paramsRefused,
         out string physicalMember, out JsonArray declarationTypeParams, out bool returnsValue,
-        bool semanticConstraints = false, string selectedPhysicalMember = null)
+        out TypeNode[] signatureParameters,
+        bool semanticConstraints = false, string selectedPhysicalMember = null, string selectedDeclarationId = null)
     {
         declaredRet = null;
         declaredParams = null;
@@ -3819,6 +3843,7 @@ sealed partial class ReferenceMetadataIndex
         physicalMember = null;
         declarationTypeParams = null;
         returnsValue = false;
+        signatureParameters = null;
         if (ownerFqn == null || name == null) return false;
         var path = new HashSet<string>(StringComparer.Ordinal)
             { ReferenceWalkKey(ownerFqn, ownerTypeArguments) };
@@ -3829,7 +3854,8 @@ sealed partial class ReferenceMetadataIndex
                 selectedTypeParams: selectedTypeParams,
                 selectedOwnerTypeArguments: selectedOwnerTypeArguments,
                 semanticConstraints: semanticConstraints,
-                selectedPhysicalMember: selectedPhysicalMember) != SlotLookup.Declared
+                selectedPhysicalMember: selectedPhysicalMember,
+                selectedDeclarationId: selectedDeclarationId) != SlotLookup.Declared
             || declaration == null)
             return false;
         declaredRet = ret.Node;
@@ -3838,6 +3864,7 @@ sealed partial class ReferenceMetadataIndex
         physicalMember = declaration.PhysicalMember;
         returnsValue = declaration.ReturnsValue;
         declarationTypeParams = declaration.TypeParams?.DeepClone() as JsonArray;
+        signatureParameters = declaration.SignatureParameters;
         return declaredRet != null || parameters.Any(parameter => parameter.Node != null || parameter.Refused);
     }
 
@@ -3946,7 +3973,8 @@ sealed partial class ReferenceMetadataIndex
                         (semanticConstraints ? member.SemanticMethodTypeParams ?? member.MethodTypeParams
                             : member.MethodTypeParams)?.DeepClone() as JsonArray,
                         member.ReturnTypeNode != null
-                            && member.ReturnTypeNode is not TypeNode.Fqn { Name: "void" or "System.Void", Args: null });
+                            && member.ReturnTypeNode is not TypeNode.Fqn { Name: "void" or "System.Void", Args: null },
+                        member.SignatureParameters);
                 // DECLARED HERE TERMINATES THE SEARCH, facts or no facts. A concrete member that shadows or
                 // implements an inherited namesake IS the declaration the call binds to; continuing upward because
                 // this one happens to carry no erasure fact would hand the call the BASE's carrier and rewrite a
@@ -3987,7 +4015,8 @@ sealed partial class ReferenceMetadataIndex
             var mps = sps.Select(p => MapThroughSupertype(p, super.Args)).ToArray();
             var mmethod = smethod == null ? null : new MethodSlotIdentity(smethod.PhysicalMember,
                 KotlinOverrideSlotBridge.SubstituteOwnerTypeParameterConstraints(smethod.TypeParams, super.Args),
-                smethod.ReturnsValue);
+                smethod.ReturnsValue,
+                smethod.SignatureParameters.Select(parameter => SupertypeGraph.SubstOwnerTvs(parameter, super.Args)).ToArray());
             if (answers++ == 0)
             {
                 foundRet = mret;
@@ -4009,6 +4038,7 @@ sealed partial class ReferenceMetadataIndex
     {
         if (left == null || right == null) return left == right;
         return left.PhysicalMember == right.PhysicalMember && left.ReturnsValue == right.ReturnsValue
+            && left.SignatureParameters.SequenceEqual(right.SignatureParameters)
             && KotlinOverrideSlotBridge.SameMethodTypeParameterShape(
                 left.TypeParams, right.TypeParams, Array.Empty<TypeNode>(), Array.Empty<TypeNode>());
     }
@@ -5086,6 +5116,8 @@ sealed partial class ReferenceMetadataIndex
                             innerConstructorFactory?.TypeArguments,
                             SemanticMethodTypeParameters(method, dotKtAuthored), declarationIdentity?.NullableFrame)
                         {
+                            SignatureParameters = method.GetParameters().Select(DeclarationSignatureSlot).ToArray(),
+                            SignatureReturn = DeclarationSignatureSlot(method.ReturnParameter),
                             VarargPositions = method.GetParameters()
                                 .Where(parameter => parameter.GetCustomAttributesData().Any(attribute =>
                                     attribute.AttributeType.FullName == "System.ParamArrayAttribute"))
@@ -5763,6 +5795,19 @@ sealed partial class ReferenceMetadataIndex
     // Decode a compiler-owned round-trip [KotlinType] carrier.
     static TypeNode KotlinTypeOf(IList<CustomAttributeData> attrs, Assembly declaringAssembly) =>
         CarrierTypeOf(attrs, declaringAssembly, KotlinTypeAttr);
+
+    internal Type FunctionSignatureDiscriminator(ParameterInfo parameter)
+    {
+        var source = KotlinTypeOf(parameter.GetCustomAttributesData(), parameter.Member.DeclaringType?.Assembly);
+        if (source == null || !FunctionValueRepresentation.ContainsOrdinaryFunction(TypeJson.Write(source)))
+            return null;
+        // The compiler-authored function slot carries its pre-carrier identity as a custom modifier.
+        // Do not infer it from the shared delegate storage type or from another overload's body.
+        var modifiers = parameter.GetOptionalCustomModifiers();
+        if (modifiers.Length != 1)
+            throw new InvalidDataException("A Kotlin function parameter must carry one declaration signature discriminator");
+        return modifiers[0];
+    }
 
     // Decode a compiler-owned round-trip TypeNode carrier (`[KotlinType]`, `[KotlinNullableGeneric]` — both ride the
     // same `(version, bytes)` BirCarrier envelope).  Full-name equality is insufficient: a foreign
@@ -7690,7 +7735,8 @@ readonly record struct SlotFact(TypeNode Node, bool Refused);
 
 // Exact MethodDef selected together with a nullable-generic slot. TypeParams are kept in the current referenced
 // owner's declaration frame and are mapped through each supertype edge in lockstep with the slot types.
-sealed record MethodSlotIdentity(string PhysicalMember, JsonArray TypeParams, bool ReturnsValue);
+sealed record MethodSlotIdentity(string PhysicalMember, JsonArray TypeParams, bool ReturnsValue,
+    TypeNode[] SignatureParameters);
 
 // `ReturnType` is the best-effort STATIC-RESULT projection (TypeNodeOf): it drops a generic parameter, because its
 // consumers want a usable concrete identity or nothing. `ReturnTypeNode` is the DECLARATION projection
@@ -7699,12 +7745,17 @@ sealed record MethodSlotIdentity(string PhysicalMember, JsonArray TypeParams, bo
 // `Iterator<!0>` in the second, and only the second says what the call site's type argument completes.
 sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic, int PropertyAccess = 0, string PropertyName = null, int[] ByrefPositions = null, bool Suspend = false, bool Conv = false, TypeNode ConvTo = null, TypeNode ReturnType = null, int MethodArity = 0, TypeNode[] ParamTypeNodes = null, bool IsVirtual = false, TypeNode KotlinReturnType = null, TypeNode SuspendReturnType = null, TypeNode NullableGenericRet = null, TypeNode[] NullableGenericParams = null, TypeNode ReturnTypeNode = null, int MetadataToken = 0, string SourcePropertyName = null, string AccessorKind = null, string AssociatedPropertyName = null, bool IsPropertyBridge = false, bool IsPublic = false, string PropertyAssociation = null, string SourcePropertyAssociation = null, string SourceMethodName = null, JsonArray MethodTypeParams = null, string DeclarationId = null, string DeclarationSourceName = null, string DeclarationPhysicalOwner = null, TypeNode[] DeclarationSemanticParams = null, TypeNode DeclarationSemanticReturn = null, string CollectionFactoryKind = null, string ArrayFactoryKind = null, string ArrayFactoryElementHint = null, int CountStart = -1, int CountEnd = -1, int[] SemanticReifiedTypeParameterIndices = null, int[] NullableWitnessTypeParameterIndices = null, TypeNode[] KotlinParameterTypes = null, string InnerConstructorOwner = null, TypeNode[] InnerConstructorParameters = null, int[] InnerConstructorTypeArguments = null, JsonArray SemanticMethodTypeParams = null, NullableRepresentationFrame NullableFrame = null)
 {
+    // Capture the selected reference MethodDef while scanning it. A local type may shadow its owner
+    // during stdlib self-compilation; resolving that owner again is not declaration identity.
+    public TypeNode[] SignatureParameters { get; init; }
+    public TypeNode SignatureReturn { get; init; }
     public int[] VarargPositions { get; init; } = Array.Empty<int>();
 }
 
 sealed record ReferencedMethodDeclaration(string PhysicalMember, TypeNode[] Parameters, TypeNode Return,
     JsonArray TypeParams, bool ReturnsValue, bool IsVirtual, TypeNode[] PhysicalParameters,
-    TypeNode PhysicalReturn, NullableRepresentationFrame NullableFrame);
+    TypeNode PhysicalReturn, NullableRepresentationFrame NullableFrame, TypeNode[] SignatureParameters,
+    string DeclarationId);
 
 sealed record ReferencedUnsafeAccessorMethod(string PhysicalMember, TypeNode[] Parameters, TypeNode Return,
     JsonArray TypeParams, TypeNode NullableGenericReturn);

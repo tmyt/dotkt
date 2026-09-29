@@ -6,9 +6,9 @@ using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
 using System.Text.Json;
 
-// ECMA-335 I.8.6.1.6: a method's generic arity is part of its identity independently of its parameter vector.
-// Keep that CLR fact explicit in ilemit's in-memory index so `f(object)` and `f<T>(object)` remain distinct.
-readonly record struct MethodSigKey(string Name, int GenericArity, string Parameters)
+// MethodDef identity includes generic arity, parameter types and return type. A null Return is a partial
+// call-side alias, retained only while it identifies a single declaration.
+readonly record struct MethodSigKey(string Name, int GenericArity, string Parameters, string Return = null)
 {
     public override string ToString() =>
         GenericArity == 0
@@ -27,12 +27,11 @@ sealed class TypeInfo
     public Type ClrBase;   // set when the base is a REFERENCED .NET type; resolved by reflection, not in _types
     public readonly Dictionary<string, FieldBuilder> Fields = new();
     public readonly Dictionary<string, MethodBuilder> Methods = new();
-    // Overloaded methods share a name, so `Methods` (name-keyed) collides — the last-declared wins, and the others'
-    // bodies/calls get misrouted. `MethodsBySig` keys by the complete CLR method identity available before return-type
-    // emission: name + METHOD generic arity + parameter vector. Each MethodDef has an exact key that retains generic
-    // parameter scope/index, plus a first-wins erased alias used only by current call-side linking until #395 carries
-    // frontend-selected declaration identity. Definition bodies and MethodImpl links always use the exact key.
+    // Bodies and MethodImpls use the exact declaration key, including return and generic scope/index.
+    // Partial call-side aliases are removed when multiple declarations would share them.
     public readonly Dictionary<MethodSigKey, MethodBuilder> MethodsBySig = new();
+    public readonly HashSet<MethodSigKey> AmbiguousMethodAliases = new();
+    public readonly Dictionary<MethodBuilder, string> MethodDeclarationReturns = new();
     // How many members share each NAME. `Methods` cannot say (it is last-wins), and the difference decides whether a
     // name-only lookup is safe: with one member there is no overload to mis-select, with several the descriptor is
     // the only thing that picks the right one.

@@ -171,7 +171,7 @@ sealed partial class Emitter
                     m0 = RequiredRef<MethodInfo>(e, "memberRef", "method");
                     rt = m0.ReturnType;
                 }
-                else m0 = ResolveMethod(ciOwner, e.GetProperty("method").GetString(), out rt, cisig, CalledMethodArity(e));
+                else m0 = ResolveMethod(ciOwner, e.GetProperty("method").GetString(), out rt, cisig, CalledMethodArity(e), LocalDeclarationReturn(e));
                 var m = ApplyTypeArgs(m0, e, out var mrt, out var mps);
                 // #108 GUARD (defensive, contract-violation only — never fires on valid CIR). This path pushes the
                 // receiver as a plain value/reference (EmitExpr(recv)) then emits call/callvirt on `m` DIRECTLY. Per
@@ -211,7 +211,7 @@ sealed partial class Emitter
                 MethodInfo mi0;
                 if (ifaceSpec != null && _types.ContainsKey(ifaceSpec.Name))
                     mi0 = ResolveMethod(ParseOwnerSlot(ifaceNode), e.GetProperty("method").GetString(),
-                        out declaredReturn, ccSig, ccArity);
+                        out declaredReturn, ccSig, ccArity, LocalDeclarationReturn(e));
                 else
                 {
                     mi0 = RequiredRef<MethodInfo>(e, "memberRef", "an external constrained-call interface slot");
@@ -258,8 +258,8 @@ sealed partial class Emitter
                     {
                         exactConstructedOwner = DotKt.Bir.TypeNode.Read(ow) is DotKt.Bir.TypeNode.Fqn { Args: not null };
                         resolved = exactConstructedOwner
-                            ? ResolveMethod(ParseOwnerSlot(ow), name, out _, csig, CalledMethodArity(e))
-                            : FindMethod(ownm, name, csig, CalledMethodArity(e));
+                            ? ResolveMethod(ParseOwnerSlot(ow), name, out _, csig, CalledMethodArity(e), LocalDeclarationReturn(e))
+                            : FindMethod(ownm, name, csig, CalledMethodArity(e), LocalDeclarationReturn(e));
                     }
                     else
                         resolved = FindCalleeOwnedStatic(e, "callStatic", name, csig, CalledMethodArity(e));
@@ -776,8 +776,8 @@ sealed partial class Emitter
                     throw new NotSupportedException($"newBoundDelegate target '{boundOwner}.{boundName}' is missing or mismatches required calleeOwner");
                 var mb = PrimaryFromRef(e, "memberRef") as MethodInfo
                     ?? (DotKt.Bir.TypeNode.Read(boundOwnerNode) is DotKt.Bir.TypeNode.Fqn { Args: not null }
-                        ? ResolveMethod(ParseOwnerSlot(boundOwnerNode), boundName, out _, SigNodes(e), CalledMethodArity(e))
-                        : FindMethod(boundOwner, boundName, SigNodes(e), CalledMethodArity(e)));
+                        ? ResolveMethod(ParseOwnerSlot(boundOwnerNode), boundName, out _, SigNodes(e), CalledMethodArity(e), LocalDeclarationReturn(e))
+                        : FindMethod(boundOwner, boundName, SigNodes(e), CalledMethodArity(e), LocalDeclarationReturn(e)));
                 if (mb == null)
                     throw new NotSupportedException($"newBoundDelegate target '{boundOwner}.{boundName}' was not found");
                 MethodInfo boundTarget = e.TryGetProperty("typeArgs", out var boundTypeArgs)

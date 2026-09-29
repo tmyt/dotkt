@@ -341,6 +341,7 @@ static class CompanionExtensionBinding
                 ["type"] = parts.Getter["ret"]!.DeepClone(),
                 ["get"] = getterPhysicalName,
                 ["getSig"] = AccessorSignature(getterSignature),
+                ["getRet"] = getterSignature["ret"]!.DeepClone(),
                 ["getMethodArity"] = (getterSignature["typeParams"] as JsonArray)?.Count ?? 0,
                 ["set"] = setterSignature == null ? null : setterPhysicalName,
                 ["attrs"] = new JsonArray(ExtensionMarker(markerSimpleName)),
@@ -348,6 +349,7 @@ static class CompanionExtensionBinding
             if (setterSignature != null)
             {
                 signatureProperty["setSig"] = AccessorSignature(setterSignature);
+                signatureProperty["setRet"] = setterSignature["ret"]!.DeepClone();
                 signatureProperty["setMethodArity"] =
                     (setterSignature["typeParams"] as JsonArray)?.Count ?? 0;
             }

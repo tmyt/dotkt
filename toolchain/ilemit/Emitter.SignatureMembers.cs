@@ -140,7 +140,9 @@ sealed partial class Emitter
 
     MethodInfo AnchorMethod(Type type, MethodInfo method)
     {
-        var anchored = IsTargetSignatureInstantiation(type)
+        var anchored = method is MethodBuilder builder && _declaredMethodSignatures.TryGetValue(builder, out var declared)
+            ? new SignatureMethod(type, method, declared: declared)
+            : IsTargetSignatureInstantiation(type)
             ? new SignatureMethod(type, method)
             // member-lookup-residual: Reflection.Emit's re-anchoring API: it takes the MemberInfo, not a name
             : TypeBuilder.GetMethod(type, method);
@@ -148,8 +150,10 @@ sealed partial class Emitter
         return anchored;
     }
 
-    static ConstructorInfo AnchorConstructor(Type type, ConstructorInfo constructor) =>
-        IsTargetSignatureInstantiation(type)
+    ConstructorInfo AnchorConstructor(Type type, ConstructorInfo constructor) =>
+        constructor is ConstructorBuilder builder && _declaredConstructorSignatures.TryGetValue(builder, out var declared)
+            ? new SignatureConstructor(type, constructor, declared)
+            : IsTargetSignatureInstantiation(type)
             ? new SignatureConstructor(type, constructor)
             // member-lookup-residual: anchoring an ALREADY-resolved member onto a constructed owner, not choosing one
             : TypeBuilder.GetConstructor(type, constructor);
@@ -189,13 +193,19 @@ sealed partial class Emitter
     {
         readonly Type _modified;
         readonly Type _unmodified;
+        readonly Type[] _required;
+        readonly Type[] _optional;
 
-        public PersistableModifiedType(Type modified) : base(modified)
+        public PersistableModifiedType(Type modified, Type[] required = null, Type[] optional = null) : base(modified)
         {
             _modified = modified;
             _unmodified = modified.UnderlyingSystemType;
+            _required = required;
+            _optional = optional;
         }
 
+        public override Type[] GetRequiredCustomModifiers() => _required ?? _modified.GetRequiredCustomModifiers();
+        public override Type[] GetOptionalCustomModifiers() => _optional ?? _modified.GetOptionalCustomModifiers();
         public override Type UnderlyingSystemType => _unmodified;
         public override bool IsGenericType => _modified.IsGenericType;
         public override bool IsGenericTypeDefinition => _modified.IsGenericTypeDefinition;
@@ -311,6 +321,12 @@ sealed partial class Emitter
     {
         if (type.IsGenericParameter)
         {
+            // Local builder parameters can lack DeclaringMethod until baking. Their
+            // declaration vector still provides an exact, identity-based frame.
+            if (methodParameters != null)
+                for (var i = 0; i < methodParameters.Length; i++)
+                    if (ReferenceEquals(methodParameters[i], type))
+                        return methodArguments != null && i < methodArguments.Length ? methodArguments[i] : type;
             if (type.DeclaringMethod != null)
                 return methodArguments != null && type.GenericParameterPosition < methodArguments.Length
                     ? methodArguments[type.GenericParameterPosition] : type;
@@ -364,6 +380,29 @@ sealed partial class Emitter
         public override bool IsDefined(Type attributeType, bool inherit) => false;
     }
 
+    // MethodBuilder.GetParameters() drops the modifier arrays given to SetSignature. Keep the
+    // original CIR declaration slots for MemberRefs on constructed owners and for MethodSpecs.
+    sealed record DeclaredMethodSignature(DeclaredSignatureSlot Return, DeclaredSignatureSlot[] Parameters);
+    readonly Dictionary<MethodBuilder, DeclaredMethodSignature> _declaredMethodSignatures = new();
+    readonly Dictionary<ConstructorBuilder, DeclaredSignatureSlot[]> _declaredConstructorSignatures = new();
+
+    sealed class DeclaredParameter : ParameterInfo
+    {
+        readonly MemberInfo _member;
+        readonly DeclaredSignatureSlot _slot;
+        readonly int _position;
+
+        internal DeclaredParameter(MemberInfo member, DeclaredSignatureSlot slot, int position)
+        { _member = member; _slot = slot; _position = position; }
+        public override Type ParameterType => _slot.Type;
+        public override MemberInfo Member => _member;
+        public override int Position => _position;
+        public override Type[] GetRequiredCustomModifiers() => _slot.Required;
+        public override Type[] GetOptionalCustomModifiers() => _slot.Optional;
+        public override Type GetModifiedParameterType() => _slot.HasModifiers
+            ? new PersistableModifiedType(_slot.Type, _slot.Required, _slot.Optional) : _slot.Type;
+    }
+
     sealed class SignatureMethod : MethodInfo
     {
         readonly Type _declaringType;
@@ -373,18 +412,21 @@ sealed partial class Emitter
         internal MethodInfo Declaration => _definition;
         readonly Type[] _ownerArguments;
         readonly Type[] _methodArguments;
+        readonly DeclaredMethodSignature _declared;
 
-        public SignatureMethod(Type declaringType, MethodInfo definition, Type[] methodArguments = null)
+        public SignatureMethod(Type declaringType, MethodInfo definition, Type[] methodArguments = null,
+            DeclaredMethodSignature declared = null)
         {
             _declaringType = declaringType;
             _definition = definition.IsConstructedGenericMethod ? definition.GetGenericMethodDefinition() : definition;
             _ownerArguments = declaringType.GetGenericArguments();
             _methodArguments = methodArguments;
+            _declared = declared;
         }
 
         internal SignatureMethod AsPersistable() =>
             NeedsPersistableMemberOwner(_declaringType)
-                ? new SignatureMethod(new PersistableMemberOwnerType(_declaringType), MethodDeclaration(_definition), _methodArguments)
+                ? new SignatureMethod(new PersistableMemberOwnerType(_declaringType), MethodDeclaration(_definition), _methodArguments, _declared)
                 : this;
 
         Type Map(Type type) => SubstituteSignatureType(type, _definition.DeclaringType, _ownerArguments,
@@ -397,24 +439,28 @@ sealed partial class Emitter
         public override MethodAttributes Attributes => _definition.Attributes;
         public override CallingConventions CallingConvention => _definition.CallingConvention;
         public override RuntimeMethodHandle MethodHandle => throw new NotSupportedException();
-        internal Type MappedReturnType => Map(_definition.ReturnType);
-        internal ParameterInfo[] MappedParameters => _definition.GetParameters()
+        ParameterInfo[] DeclarationParameters => _declared == null ? _definition.GetParameters()
+            : _declared.Parameters.Select((slot, index) => (ParameterInfo)new DeclaredParameter(this, slot, index)).ToArray();
+        ParameterInfo DeclarationReturn => _declared == null ? _definition.ReturnParameter
+            : new DeclaredParameter(this, _declared.Return, -1);
+        internal Type MappedReturnType => Map(ReturnType);
+        internal ParameterInfo[] MappedParameters => DeclarationParameters
             .Select(p => (ParameterInfo)new SignatureParameter(p, this, Map(p.ParameterType))).ToArray();
-        public override Type ReturnType => _definition.ReturnType;
+        public override Type ReturnType => _declared?.Return.Type ?? _definition.ReturnType;
         public override ICustomAttributeProvider ReturnTypeCustomAttributes => _definition.ReturnTypeCustomAttributes;
-        public override ParameterInfo ReturnParameter => new SignatureParameter(_definition.ReturnParameter, this, _definition.ReturnType);
+        public override ParameterInfo ReturnParameter => new SignatureParameter(DeclarationReturn, this, ReturnType);
         public override bool IsGenericMethod => _definition.IsGenericMethod;
         public override bool IsGenericMethodDefinition => _definition.IsGenericMethodDefinition && _methodArguments == null;
         public override bool ContainsGenericParameters =>
             _declaringType.ContainsGenericParameters || (_methodArguments ?? _definition.GetGenericArguments()).Any(t => t.ContainsGenericParameters);
         public override MethodImplAttributes GetMethodImplementationFlags() => _definition.GetMethodImplementationFlags();
-        public override ParameterInfo[] GetParameters() => _definition.GetParameters()
+        public override ParameterInfo[] GetParameters() => DeclarationParameters
             .Select(p => (ParameterInfo)new SignatureParameter(p, this, p.ParameterType)).ToArray();
         public override Type[] GetGenericArguments() => _methodArguments ?? _definition.GetGenericArguments();
         public override MethodInfo GetGenericMethodDefinition() =>
-            _methodArguments == null ? this : new SignatureMethod(_declaringType, _definition);
+            _methodArguments == null ? this : new SignatureMethod(_declaringType, _definition, declared: _declared);
         public override MethodInfo MakeGenericMethod(params Type[] typeArguments) =>
-            new SignatureMethod(_declaringType, _definition, typeArguments);
+            new SignatureMethod(_declaringType, _definition, typeArguments, _declared);
         public override MethodInfo GetBaseDefinition() => this;
         public override object Invoke(object obj, BindingFlags invokeAttr, Binder binder, object[] parameters, CultureInfo culture) =>
             throw new NotSupportedException();
@@ -431,21 +477,25 @@ sealed partial class Emitter
         /// <summary>The DECLARATION this signature view describes — what a comparison must look at.</summary>
         internal ConstructorInfo Declaration => _definition;
         readonly Type[] _ownerArguments;
+        readonly DeclaredSignatureSlot[] _declared;
 
-        public SignatureConstructor(Type declaringType, ConstructorInfo definition)
+        public SignatureConstructor(Type declaringType, ConstructorInfo definition, DeclaredSignatureSlot[] declared = null)
         {
             _declaringType = declaringType;
             _definition = definition;
             _ownerArguments = declaringType.GetGenericArguments();
+            _declared = declared;
         }
 
         internal SignatureConstructor AsPersistable() =>
             NeedsPersistableMemberOwner(_declaringType)
-                ? new SignatureConstructor(new PersistableMemberOwnerType(_declaringType), ConstructorDeclaration(_definition))
+                ? new SignatureConstructor(new PersistableMemberOwnerType(_declaringType), ConstructorDeclaration(_definition), _declared)
                 : this;
 
         Type Map(Type type) => SubstituteSignatureType(type, _definition.DeclaringType, _ownerArguments);
-        internal ParameterInfo[] MappedParameters => _definition.GetParameters()
+        ParameterInfo[] DeclarationParameters => _declared == null ? _definition.GetParameters()
+            : _declared.Select((slot, index) => (ParameterInfo)new DeclaredParameter(this, slot, index)).ToArray();
+        internal ParameterInfo[] MappedParameters => DeclarationParameters
             .Select(p => (ParameterInfo)new SignatureParameter(p, this, Map(p.ParameterType))).ToArray();
         public override string Name => _definition.Name;
         public override Type DeclaringType => _declaringType;
@@ -455,7 +505,7 @@ sealed partial class Emitter
         public override CallingConventions CallingConvention => _definition.CallingConvention;
         public override RuntimeMethodHandle MethodHandle => throw new NotSupportedException();
         public override MethodImplAttributes GetMethodImplementationFlags() => _definition.GetMethodImplementationFlags();
-        public override ParameterInfo[] GetParameters() => _definition.GetParameters()
+        public override ParameterInfo[] GetParameters() => DeclarationParameters
             .Select(p => (ParameterInfo)new SignatureParameter(p, this, p.ParameterType)).ToArray();
         public override object Invoke(BindingFlags invokeAttr, Binder binder, object[] parameters, CultureInfo culture) =>
             throw new NotSupportedException();
