@@ -459,13 +459,15 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 				.map { birType(ctorSubst?.substitute(it.type) ?: it.type).toJson() }
 			val ctorArgTypes = (listOfNotNull(innerOuterSlot) + capTypes + regularTypes).joinToString(",")
 			// Preserve the frontend-selected OPEN regular-parameter declaration independently from the substituted use-site
-			// vector. The compiler-authored outer slot has no IrValueParameter, so its exact declaration application is the
-			// projected enclosing owner above. Include every leading slot index-for-index; this lets bir2cir bind an inner or
+			// vector. The enclosing slot comes from the selected constructor's declared dispatch receiver, not its
+			// caller-relative argument. Include every leading slot index-for-index; this lets bir2cir bind an inner or
 			// capturing constructor without reconstructing them, and lets Root-V later close `X` to the invariant physical
 			// owner argument even when the supplied value retains its read-only head view.
 			val regularMemberTypes = node.symbol.owner.parameters.filter { it.kind == IrParameterKind.Regular }
 				.map { birType(it.type).toJson() }
-			val ctorMemberSignature = (listOfNotNull(innerOuterSlot) + capTypes + regularMemberTypes).joinToString(",")
+			val declaredOuterSlot = node.symbol.owner.parameters
+				.firstOrNull { it.kind == IrParameterKind.DispatchReceiver }?.let { birType(it.type).toJson() }
+			val ctorMemberSignature = (listOfNotNull(declaredOuterSlot) + capTypes + regularMemberTypes).joinToString(",")
 			// `ownerSpec` names a lifted generic-capturing LOCAL CLASS as its CONSTRUCTED `L<T>` (own args from
 			// `node.type` + the enclosing captured params it recorded in `liftedTypeArgParams`), so a
 			// `fun <T> f(){ class L{ val x:T=t }; L() }` instantiates `L<T>` at each `new` site. A non-generic local
