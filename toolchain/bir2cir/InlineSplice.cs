@@ -495,6 +495,27 @@ static class InlineSplice
                     var raw = readyDefault.DeepClone();
                     DefaultArgSplice.RehomeSynthClasses(raw, consumerSemanticOwner, spliceCloneId);
                     ClosureSynthesis.PrebindSplicedFrames(raw);
+                    // Defaults are evaluated before the ordinary payload body. A lambda
+                    // referenced by a default therefore needs a value now, even when the
+                    // body itself never reads it. Reuse that same value for later defaults
+                    // and body reads rather than materializing a second closure.
+                    foreach (var earlier in DefaultParameterReads(raw).Distinct())
+                    {
+                        if (earlier < 0 || earlier >= boundArgs.Count
+                            || boundArgs[earlier] is not JsonObject read
+                            || Str(read["k"]) != "local") continue;
+                        var lname = Str(read["name"]);
+                        if (lname == null || !lambdaMap.TryGetValue(lname, out var carrier)) continue;
+                        var materialized = MaterializeCarrier(carrier,
+                            lambdaFuncType.GetValueOrDefault(lname), stmts, consumerSemanticOwner);
+                        if (materialized == null)
+                        { FailLoud(o, owner, name, pc, ga, $"lambda parameter used by a default could not be materialized [reason={_matReason}]"); return; }
+                        var value = new JsonObject { ["k"] = "local", ["name"] = materialized,
+                            ["sty"] = lambdaFuncType.GetValueOrDefault(lname)?.DeepClone() };
+                        RecordBound(boundArgs, earlier, value);
+                        subst[Str(pParams[earlier]?["name"])] = value;
+                        lambdaMap.Remove(lname);
+                    }
                     argNode = DefaultArgSplice.SubstituteTokens(raw, defaultDispatchRecv,
                         ext ? boundArgs.ElementAtOrDefault(0) : null, null, boundArgs);
                 }
@@ -608,9 +629,24 @@ static class InlineSplice
             $"inline splice: cannot splice {owner}.{name} (pc={pc} ga={ga}): {reason} — "
             + "under splice-all a callInline arrives for every inline+lambda call, so there is no fallback; fix the splice shape or the kotc gate.");
 
-    // #34: record the READ that emitted-position param `i` bound to (a plan `bindRef`, or the local a lambda carrier /
-    // pinned capture named), so a later param's TIER-2 default carrier token `{defaultArgParam idx=i}` (a default
-    // reading this earlier param) resolves to the same single evaluation.
+    // These tokens refer to the enclosing default-argument frame, including
+    // references carried in a nested closure's construction values.
+    static IEnumerable<int> DefaultParameterReads(JsonNode node)
+    {
+        if (node is JsonObject obj)
+        {
+            if (Str(obj["k"]) == "defaultArgParam")
+                yield return obj["idx"].GetValue<int>();
+            else
+                foreach (var property in obj)
+                    foreach (var index in DefaultParameterReads(property.Value)) yield return index;
+        }
+        else if (node is JsonArray array)
+            foreach (var element in array)
+                foreach (var index in DefaultParameterReads(element)) yield return index;
+    }
+
+    // Record the value read by later defaults, never a second evaluation.
     static void RecordBound(JsonArray boundArgs, int i, JsonNode read)
     {
         while (boundArgs.Count <= i) boundArgs.Add(null);
