@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Bottom-typed inline calls terminate their physical continuation (#926).**
+  Infinite dispatch loops with non-local returns no longer expose an object-typed result to a concrete return slot.
+
 - **Nested Kotlin types retain their classifier path through DLL metadata (#924).**
   Inner type arguments are recorded before CLR capture projection so imported declarations preserve their source types.
 
