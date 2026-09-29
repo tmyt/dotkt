@@ -1,6 +1,9 @@
 import NUnit.Framework.TestAttribute
 import nestedmetadata.*
 
+fun forwardedNestedMetadataItem(item: Outer<*>.Item<String>): String = readInner(item)
+fun forwardedNestedMetadataLeaf(leaf: Nest<*>.Middle<String>.Leaf<Int>): Int = readLeaf(leaf)
+
 class NestedTypeMetadataTests {
     @TestAttribute
     fun projectedInnerSlotsRetainTheirClassifierAndArgumentOrder() {
