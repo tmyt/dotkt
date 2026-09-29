@@ -112,9 +112,9 @@ static class UnsafeAccessorLowering
                 obj.Remove("memberOwnerTypeParams");
                 obj.Remove("memberMethodTypeParams");
                 obj.Remove("memberReturnType");
-                // Every `new` carries the frontend-selected constructor declaration signature.  Same-unit
-                // constructor binding consumes it after physical lowering; it is not an UnsafeAccessor-only fact.
-                if (Str(obj["k"]) != "new") obj.Remove("memberSignature");
+                // Constructor binding consumes the selected declaration after physical lowering, including
+                // projected CLR constructors. This is not an UnsafeAccessor-only fact.
+                if (Str(obj["k"]) is not ("new" or "newClr")) obj.Remove("memberSignature");
                 foreach (var child in obj.Select(pair => pair.Value).Where(value => value != null).ToList()) Walk(child);
             }
             else if (node is JsonArray array)
@@ -158,7 +158,7 @@ static class UnsafeAccessorLowering
             obj.Remove("memberOwnerTypeParams");
             obj.Remove("memberMethodTypeParams");
             obj.Remove("memberReturnType");
-            obj.Remove("memberSignature");
+            if (kind != "newClr") obj.Remove("memberSignature");
         }
     }
 
