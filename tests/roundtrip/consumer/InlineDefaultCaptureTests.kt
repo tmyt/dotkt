@@ -1,6 +1,11 @@
 import NUnit.Framework.TestAttribute
 import roundtrip.defaultcapture.*
 
+private fun importedEarlyDefault(): Int {
+    inlineDefaultCall({ return 53 })
+    return 0
+}
+
 class InlineDefaultCaptureTests {
     @TestAttribute
     fun defaultOnlyCaptureRemainsDeferred() {
@@ -22,7 +27,7 @@ class InlineDefaultCaptureTests {
         val callback = sharedDefault({}, { effects++ })
         check(effects == 1)
         callback()
-        check(effects == 3)
+        check(effects == 4)
     }
 
     @TestAttribute
@@ -40,6 +45,9 @@ class InlineDefaultCaptureTests {
         check(count == 2)
         val literal = "literal:".orderedDefault({}, { ++count })
         check(literal == "literal:3:4")
+        check(sameModuleEarlyDefault() == 42)
+        check(importedEarlyDefault() == 53)
+        check(inlineDefaultCall({ 61 }) == 61)
     }
 
     @TestAttribute

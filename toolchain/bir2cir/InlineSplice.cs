@@ -495,17 +495,19 @@ static class InlineSplice
                     var raw = readyDefault.DeepClone();
                     DefaultArgSplice.RehomeSynthClasses(raw, consumerSemanticOwner, spliceCloneId);
                     ClosureSynthesis.PrebindSplicedFrames(raw);
-                    // Defaults are evaluated before the ordinary payload body. A lambda
-                    // referenced by a default therefore needs a value now, even when the
-                    // body itself never reads it. Reuse that same value for later defaults
-                    // and body reads rather than materializing a second closure.
-                    foreach (var earlier in DefaultParameterReads(raw).Distinct())
+                    argNode = DefaultArgSplice.SubstituteTokens(raw, defaultDispatchRecv,
+                        ext ? boundArgs.ElementAtOrDefault(0) : null, null, boundArgs);
+                    // A default can invoke an ordinary inline parameter, including a
+                    // caller's non-local return. Consume direct invokes before deciding
+                    // which remaining references actually require a function value.
+                    SpliceLambdaInvokes(argNode, lambdaMap);
+                    for (var earlier = 0; earlier < boundArgs.Count; earlier++)
                     {
-                        if (earlier < 0 || earlier >= boundArgs.Count
-                            || boundArgs[earlier] is not JsonObject read
+                        if (boundArgs[earlier] is not JsonObject read
                             || Str(read["k"]) != "local") continue;
                         var lname = Str(read["name"]);
-                        if (lname == null || !lambdaMap.TryGetValue(lname, out var carrier)) continue;
+                        if (lname == null || !lambdaMap.TryGetValue(lname, out var carrier)
+                            || !HasLocalIn(argNode, new[] { lname })) continue;
                         var materialized = MaterializeCarrier(carrier,
                             lambdaFuncType.GetValueOrDefault(lname), stmts, consumerSemanticOwner);
                         if (materialized == null)
@@ -514,10 +516,10 @@ static class InlineSplice
                             ["sty"] = lambdaFuncType.GetValueOrDefault(lname)?.DeepClone() };
                         RecordBound(boundArgs, earlier, value);
                         subst[Str(pParams[earlier]?["name"])] = value;
+                        RewriteLocalRefs(argNode, new Dictionary<string, JsonNode>(StringComparer.Ordinal)
+                            { [lname] = value });
                         lambdaMap.Remove(lname);
                     }
-                    argNode = DefaultArgSplice.SubstituteTokens(raw, defaultDispatchRecv,
-                        ext ? boundArgs.ElementAtOrDefault(0) : null, null, boundArgs);
                 }
                 else { FailLoud(o, owner, name, pc, ga, $"missing prepared default for param {pn}"); return; }
                 // BATCH B (#75): a capturing newSuspendLambda built inside a param default binds to a temp whose init
@@ -628,23 +630,6 @@ static class InlineSplice
         throw new NotSupportedException(
             $"inline splice: cannot splice {owner}.{name} (pc={pc} ga={ga}): {reason} — "
             + "under splice-all a callInline arrives for every inline+lambda call, so there is no fallback; fix the splice shape or the kotc gate.");
-
-    // These tokens refer to the enclosing default-argument frame, including
-    // references carried in a nested closure's construction values.
-    static IEnumerable<int> DefaultParameterReads(JsonNode node)
-    {
-        if (node is JsonObject obj)
-        {
-            if (Str(obj["k"]) == "defaultArgParam")
-                yield return obj["idx"].GetValue<int>();
-            else
-                foreach (var property in obj)
-                    foreach (var index in DefaultParameterReads(property.Value)) yield return index;
-        }
-        else if (node is JsonArray array)
-            foreach (var element in array)
-                foreach (var index in DefaultParameterReads(element)) yield return index;
-    }
 
     // Record the value read by later defaults, never a second evaluation.
     static void RecordBound(JsonArray boundArgs, int i, JsonNode read)

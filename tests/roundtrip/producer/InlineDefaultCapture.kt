@@ -17,7 +17,7 @@ inline fun sharedDefault(
     check(first === effect)
     check(second === effect)
     effect()
-    return { first(); second() }
+    return { effect(); first(); second() }
 }
 
 inline fun String.orderedDefault(
@@ -32,3 +32,10 @@ inline fun String.orderedDefault(
 
 fun sameModuleDeferred(effect: () -> Unit): () -> String =
     deferredValue({}, "same", effect)
+
+inline fun inlineDefaultCall(block: () -> Int, value: Int = block()): Int = value
+
+fun sameModuleEarlyDefault(): Int {
+    inlineDefaultCall({ return 42 })
+    return 0
+}
