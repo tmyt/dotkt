@@ -576,6 +576,41 @@ static class BirTypeLowering
         Console.WriteLine("[slot returns] self-test OK (source Unit, nullable Unit, physical Unit value)");
     }
 
+    internal static void SelfTestMethodImplMetadata()
+    {
+        var suspendFn = JsonNode.Parse("""{"t":"fn","suspend":true,"params":[],"ret":{"t":"fqn","name":"kotlin.Unit"}}""");
+        var nothing = TypeNode.Write(new TypeNode.Fqn("kotlin.Nothing"));
+        foreach (var carrier in new[] { "clrInterfaceImpls", "clrBaseImpls" })
+        foreach (var ret in new[] { suspendFn, nothing })
+        foreach (var stashed in new[] { false, true })
+        {
+            var descriptor = new JsonObject
+            {
+                ["owner"] = TypeNode.Write(new TypeNode.Fqn("Slot")),
+                ["member"] = "read", ["arity"] = 0, ["params"] = new JsonArray(),
+                ["ret"] = ret.DeepClone(),
+            };
+            var method = new JsonObject
+            {
+                ["name"] = "read", ["params"] = new JsonArray(), ["ret"] = ret.DeepClone(),
+                [carrier] = new JsonArray(descriptor),
+            };
+            if (stashed && ReferenceEquals(ret, suspendFn))
+            {
+                descriptor[NullableGenericErasure.RetSuspendFnPre] = ret.ToJsonString();
+                method[NullableGenericErasure.RetSuspendFnPre] = ret.ToJsonString();
+            }
+            var lowered = Lower(method, refBuild: false,
+                aliases: new Dictionary<string, string> { ["kotlin.Nothing"] = "object" });
+            var slot = lowered[carrier][0].AsObject();
+            var fact = ReferenceEquals(ret, suspendFn) ? "retSuspendFnType" : "retNothing";
+            if (lowered[fact] == null || slot.Count != 5
+                || slot["ret"]?["name"]?.GetValue<string>() != "object")
+                throw new InvalidOperationException($"MethodImpl must retain only physical slot facts while declarations retain Kotlin return metadata: {lowered}");
+        }
+        Console.WriteLine("[MethodImpl metadata] self-test OK (interface/base slots, suspend/Nothing declaration facts)");
+    }
+
     // A representation pass that runs before the full-tree lowering may already have to author a PHYSICAL type
     // inside a CIR-only carrier. Configure the same facts Lower() will use and invoke the same recursive rule; a
     // caller must not reproduce only the primitive, alias, collection-collapse or delegate branch it happened to
@@ -781,7 +816,7 @@ static class BirTypeLowering
     // `force` == "this subtree carries attribute-blob metadata": lower with the FULL map, ignoring refBuild. It is
     // set when entering an attribute-class declaration (base : System.Attribute) or an `attrs` application array,
     // and propagates to the whole subtree.
-    static JsonNode LowerNode(JsonNode node, bool refBuild, bool force)
+    static JsonNode LowerNode(JsonNode node, bool refBuild, bool force, bool methodImpl = false)
     {
         if (node is JsonObject obj)
         {
@@ -826,6 +861,8 @@ static class BirTypeLowering
                     copy[kv.Key] = kv.Value.DeepClone();
                 else if (kv.Key == "attrs")
                     copy[kv.Key] = LowerNode(kv.Value, refBuild, force: true);   // attribute application -> blob metadata
+                else if (kv.Key is "clrInterfaceImpls" or "clrBaseImpls")
+                    copy[kv.Key] = LowerNode(kv.Value, refBuild, here, methodImpl: true);
                 else if (kv.Key is "sig" or "getSig" or "setSig")
                     copy[kv.Key] = LowerSigValue(kv.Value, refBuild, here);   // sig = param types
                 else if (ReturnKeys.Contains(kv.Key))
@@ -864,8 +901,8 @@ static class BirTypeLowering
             // alongside so ilemit can stamp
             // [KotlinSuspendFunctionType(raw)] and dll2klib restore the suspend function type on re-consumption. This
             // carries the SHAPE STRING (not a bare flag): the erased CLR type is `object`, from which the arg/return
-            // types are otherwise unrecoverable. Additive — ilemit reads it only on param/return/field/property builders;
-            // harmless on any other node that happens to carry an sfunc-typed `type`/`ret`.
+            // types are otherwise unrecoverable. MethodImpl descriptors identify physical slots, not declarations:
+            // their types still lower, but declaration-only positional metadata must not be added to them.
             // The PRE-erasure shape wins where one was stashed: a `suspend (…) -> T?` has had its `Nullable(Tv)`
             // object-erased by now (#86), and recording the erased shape would make this carrier faithfully restore
             // `suspend () -> object` — a consumer then cannot bind the slot at all. See NullableGenericErasure's
@@ -873,8 +910,8 @@ static class BirTypeLowering
             // carrier. The stash is consumed here and dropped: it is a bir2cir hand-off and never reaches CIR.
             var h2t = StashedSuspendFn(obj, NullableGenericErasure.SuspendFnPre) ?? SuspendFnSlot(obj["type"]);
             var h2r = StashedSuspendFn(obj, NullableGenericErasure.RetSuspendFnPre) ?? SuspendFnSlot(obj["ret"]);
-            if (h2t != null) copy["suspendFnType"] = h2t;
-            if (h2r != null) copy["retSuspendFnType"] = h2r;
+            if (!methodImpl && h2t != null) copy["suspendFnType"] = h2t;
+            if (!methodImpl && h2r != null) copy["retSuspendFnType"] = h2r;
             copy.Remove(NullableGenericErasure.SuspendFnPre);
             copy.Remove(NullableGenericErasure.RetSuspendFnPre);
             // #133 case3 — KOTLIN `Nothing` RETURN metadata. LowerType erases a `kotlin.Nothing` return to `object`
@@ -884,7 +921,7 @@ static class BirTypeLowering
             // so RoundtripMetadata stamps a bare [KotlinNothing] on the return and dll2klib restores Nothing. A
             // `Nothing?` return already stripped its reference-`?` (ReferenceNullableStrip) to a bare `kotlin.Nothing`
             // here, its nullability carried by the [Nullable] byte — so the bare-Fqn check covers both.
-            if (IsNothingRet(obj["ret"])) copy["retNothing"] = true;
+            if (!methodImpl && IsNothingRet(obj["ret"])) copy["retNothing"] = true;
             // ANNOTATION-BASE DERIVATION (annotation-base-lowering-to-bir2cir, USER 2026-07-02): kotc emits a user
             // `annotation class` as a plain class carrying `"annotation":true` (base:null) — the Kotlin fact. bir2cir
             // is the Kotlin<->CLR layer that DERIVES the CLR base: an annotation class extends System.Attribute. Set
@@ -913,7 +950,7 @@ static class BirTypeLowering
         {
             var copy = new JsonArray();
             foreach (var item in arr)
-                copy.Add(item == null ? null : LowerNode(item, refBuild, force));
+                copy.Add(item == null ? null : LowerNode(item, refBuild, force, methodImpl));
             return copy;
         }
 
