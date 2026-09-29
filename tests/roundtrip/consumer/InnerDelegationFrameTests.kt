@@ -14,6 +14,7 @@ class GenericDelegation<A, B>(seed: B, extra: A) : DelegationBridge<A, B>(seed, 
     inner class Child : Base<A>(extra)
     inner class MiddleChild(middle: A) : Middle<A>(middle) {
         inner class LeafChild : Leaf<Int>(29, readSeed())
+        inner class CapturedChild : CapturedLeaf<Int>(59)
     }
 }
 
@@ -48,19 +49,30 @@ class InnerDelegationFrameTests {
         val leaf = middle.LeafChild()
         check(leaf.value == "outer" && leaf.fromMiddle == 19 && leaf.own == 29)
         check(outer.reads == 1)
+        val captured = middle.CapturedChild()
+        check(captured.value == "outer" && captured.fromMiddle == 19 && captured.own == 59)
+        check(outer.reads == 2)
         val nullable = GenericDelegation<Int?, String?>(null, null)
         val nullLeaf = nullable.MiddleChild(null).LeafChild()
         check(nullLeaf.value == null && nullLeaf.fromMiddle == null && nullLeaf.own == 29)
+        val nullCaptured = nullable.MiddleChild(null).CapturedChild()
+        check(nullCaptured.value == null && nullCaptured.fromMiddle == null && nullCaptured.own == 59)
+        check(nullable.reads == 2)
     }
 
     @TestAttribute
     fun sameModuleAndThisDelegationRetainDefaultsAndOrdering() {
         val text = LocalDelegation("same-module")
         check(text.Child().value == "same-module" && text.trace == "ADB" && text.reads == 1)
+        check(text.readGrandparentDefault() == "same-module" && text.reads == 2)
         val number = LocalDelegation(37)
         check(number.Child().value == 37 && number.reads == 1)
+        check(number.readGrandparentDefault() == 37 && number.reads == 2)
         val nullable = LocalDelegation<Int?>(null)
         check(nullable.Child().value == null && nullable.reads == 1)
+        check(nullable.readGrandparentDefault() == null && nullable.reads == 2)
         checkSecondaryDelegation()
+        checkOmittedThisDefaults()
+        checkLiftedDelegationFrames()
     }
 }

@@ -1191,7 +1191,7 @@ private fun BirEmitter.innerEnclosingReceivers(
 		val parent = owner.parent as? IrClass ?: break
 		// This lexical capture is private storage. A carried default can move its read into another module;
 		// bir2cir then selects the access mechanism from this privilege and the referenced field declaration.
-		receiver = """{"k":"field","ownerType":${fqnJson(typeName(owner))},"recv":$receiver,"name":"__outer","outer":true,"memberVisibility":"private"}"""
+		receiver = """{"k":"field","ownerType":${birType(owner.defaultType).toJson()},"recv":$receiver,"name":"__outer","outer":true,"memberVisibility":"private"}"""
 		owner = parent
 	}
 	return result
