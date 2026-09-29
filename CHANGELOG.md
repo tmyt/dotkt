@@ -10,6 +10,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 - **Generic constraint emission preserves parameter bounds alongside class bounds (#943).**
   CIR constraint rows are retained for both type and method parameters, independent of their order.
 
+- **Selected generic constructors remain distinct after instantiation (#934).**
+  Local and imported calls retain the selected declaration even when its substituted parameter types match another overload.
+
 - **Kotlin generic array signatures retain their source classifier across DLL imports (#941).**
   Array<Int> no longer becomes IntArray when projected from a compiler-produced declaration.
 

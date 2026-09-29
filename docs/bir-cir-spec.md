@@ -523,6 +523,9 @@ physical frame, materializes any required representation conversion, retains the
 argument coercion, and replaces the declaration fact with scalar `localCtorIndex`. For an external constructor, the
 resolved `memberRef` carries the physical parameter vector and `argTypes` is consumed. Neither `memberSignature` nor
 a constructor candidate set reaches CIR.
+Selection against `memberSignature` compares open declaration slots, without owner substitution or an alternate
+use-site match. This applies to referenced constructors as well: `.ctor(T)` and `.ctor(Int)` remain distinct when
+the constructed owner uses `T = Int`. Owner substitution occurs only after the selected declaration is known.
 Collection-factory arguments contextualized by a constructor use this already-substituted `argTypes` vector
 directly. Applying the constructed owner's arguments to it again would rebind unrelated caller-frame variables;
 only the open declaration vector is eligible for that owner substitution.
