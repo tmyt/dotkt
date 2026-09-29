@@ -3759,7 +3759,8 @@ sealed partial class ReferenceMetadataIndex
         out TypeNode declaredRet, out TypeNode[] declaredParams, out bool[] paramsRefused,
         bool includeUnchanged = false, IReadOnlyList<TypeNode> resolvedSignature = null,
         TypeNode resolvedReturn = null, TypeNode[] ownerTypeArguments = null,
-        JsonArray selectedTypeParams = null, TypeNode[] selectedOwnerTypeArguments = null)
+        JsonArray selectedTypeParams = null, TypeNode[] selectedOwnerTypeArguments = null,
+        string selectedDeclarationId = null, bool includeUnchangedReturn = true)
     {
         declaredRet = null;
         declaredParams = null;
@@ -3772,7 +3773,8 @@ sealed partial class ReferenceMetadataIndex
                 methodSignature: resolvedSignature, methodReturn: resolvedReturn,
                 ownerTypeArguments: ownerTypeArguments, includeUnchangedMethod: includeUnchanged,
                 selectedTypeParams: selectedTypeParams,
-                selectedOwnerTypeArguments: selectedOwnerTypeArguments)
+                selectedOwnerTypeArguments: selectedOwnerTypeArguments,
+                selectedDeclarationId: selectedDeclarationId, includeUnchangedMethodReturn: includeUnchangedReturn)
             != SlotLookup.Declared)
             return false;
         declaredRet = ret.Node;
@@ -3843,7 +3845,8 @@ sealed partial class ReferenceMetadataIndex
         bool includeUnchangedMethod = false, IReadOnlyList<TypeNode> methodSignature = null,
         TypeNode methodReturn = null, JsonArray selectedTypeParams = null,
         TypeNode[] selectedOwnerTypeArguments = null, bool semanticConstraints = false,
-        string selectedPhysicalMember = null)
+        string selectedPhysicalMember = null, string selectedDeclarationId = null,
+        bool includeUnchangedMethodReturn = true)
     {
         declaredRet = default;
         declaredParams = null;
@@ -3858,6 +3861,7 @@ sealed partial class ReferenceMetadataIndex
                             : (m.SourceMethodName ?? m.Name) == name
                         : !m.IsPropertyBridge && m.SourcePropertyName == propertyName
                             && m.AccessorKind == accessorKind)
+                    && (selectedDeclarationId == null || m.DeclarationId == selectedDeclarationId)
                     && m.IsStatic == isStatic
                     && m.ParamCount == argCount
                     && m.MethodArity == methodArity
@@ -3904,7 +3908,7 @@ sealed partial class ReferenceMetadataIndex
                     ? new SlotFact(member.ReturnTypeNode, false)
                     : propertyName != null && includeClosedPropertyReturn
                     ? new SlotFact(member.NullableGenericRet ?? member.KotlinReturnType ?? member.ReturnTypeNode, false)
-                    : propertyName == null && includeUnchangedMethod
+                    : propertyName == null && includeUnchangedMethod && includeUnchangedMethodReturn
                         ? new SlotFact(member.NullableGenericRet ?? member.KotlinReturnType ?? member.ReturnTypeNode, false)
                         : DeclaredSlot(member.NullableGenericRet, member.ReturnTypeNode);
                 declaredParams = new SlotFact[argCount];
@@ -3957,7 +3961,7 @@ sealed partial class ReferenceMetadataIndex
                 out var sret, out var sps, out var smethod, propertyName, accessorKind, accessorSignature,
                 superTypeArguments, includeClosedPropertyReturn, includeUnchangedMethod,
                 methodSignature, methodReturn, selectedTypeParams, selectedOwnerTypeArguments, semanticConstraints,
-                selectedPhysicalMember);
+                selectedPhysicalMember, selectedDeclarationId, includeUnchangedMethodReturn);
             path.Remove(key);
             if (found == SlotLookup.Refused) return SlotLookup.Refused;
             if (found != SlotLookup.Declared) continue;

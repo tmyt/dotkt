@@ -77,10 +77,12 @@ static partial class NullableTvErasureCallRealign
     // Local owner/top-level declarations, captured across ALL roots BEFORE the per-file DEF-side EraseNullableTv
     // mutates declarations in place. ALL members are stored (not only erasure-affected ones): re-deriving `get_v`
     // on a rewritten `Ref<object>` receiver needs the plain `tv{type,0}` declaration too. Ordinary methods still
-    // have only name/arity identity at this point and poison ambiguous entries. Property calls retain their exact
-    // source property identity and frontend-resolved signature, so their overload candidates remain separate.
+    // retain their frontend declaration identity when available. The name/arity index remains conservative for
+    // generated or virtual calls without that identity. Property calls retain their exact source property identity
+    // and frontend-resolved signature, so their overload candidates remain separate.
     public sealed class DeclIndex
     {
+        public readonly Dictionary<string, Dictionary<string, DeclSig>> ByDeclarationOwner = new(StringComparer.Ordinal);
         public readonly Dictionary<string, Dictionary<string, DeclSig>> ByOwner = new(StringComparer.Ordinal);
         public readonly Dictionary<string, Dictionary<string, List<DeclSig>>> PropertiesByOwner = new(StringComparer.Ordinal);
         public readonly Dictionary<string, DeclSig> TopLevel = new(StringComparer.Ordinal);
@@ -194,6 +196,7 @@ static partial class NullableTvErasureCallRealign
                 if (m is JsonObject mo && Str(mo["name"]) is string mn && ReadSig(mo) is DeclSig sig)
                 {
                     AddUnambiguous(idx.TopLevel, mn + "|" + sig.Params.Length, sig);
+                    AddDeclarationIdentity(idx, fileClass, mo, sig);
                     if (fileClass is { Length: > 0 }
                         && KotlinPropertyAccessors.TryIdentity(mo, out var propertyName, out var accessorKind))
                     {
@@ -223,6 +226,7 @@ static partial class NullableTvErasureCallRealign
                                     // mismatch this pass fixes. A conflicting key is poisoned to `null` (the lookups
                                     // then skip it).
                                     AddUnambiguous(sigs, mn2 + "|" + sig.Params.Length, sig);
+                                    AddDeclarationIdentity(idx, nm, mo, sig);
                                     if (KotlinPropertyAccessors.TryIdentity(mo,
                                             out var propertyName, out var accessorKind))
                                         AddCandidate(propertySigs,
@@ -304,8 +308,8 @@ static partial class NullableTvErasureCallRealign
         return result;
     }
 
-    // Two same-name/same-arity members whose declarations DISAGREE poison the whole entry. Name+arity is all a call
-    // site gives us, so a surviving entry would be a GUESS at which overload was meant — and deriving the wrong
+    // Two same-key members whose declarations DISAGREE poison the whole entry. For a call without exact identity,
+    // retaining one same-name/same-arity entry would GUESS which overload was meant — and deriving the wrong
     // member's types manufactures exactly the mismatch this pass exists to remove. A poisoned key falls back to the
     // call's own descriptor, which is at least what the member will be resolved by. (Keeping the components apart —
     // a conflicting return poisoning only the return — was tried and is unsound for the same reason: the surviving
@@ -322,6 +326,24 @@ static partial class NullableTvErasureCallRealign
         if (!entries.TryGetValue(key, out var candidates))
             entries[key] = candidates = new List<DeclSig>();
         candidates.Add(sig);
+    }
+
+    static void AddDeclarationIdentity(DeclIndex index, string owner, JsonObject method, DeclSig signature)
+    {
+        if (owner == null || Str(method[DeclarationIdentityBinding.Key]) is not string identity) return;
+        if (!index.ByDeclarationOwner.TryGetValue(owner, out var declarations))
+            index.ByDeclarationOwner[owner] = declarations = new(StringComparer.Ordinal);
+        AddUnambiguous(declarations, identity, signature);
+    }
+
+    // The frontend has already selected this overload. Keep its source declaration slot,
+    // rather than dropping it when another overload shares the name and argument count.
+    // The owner axis prevents applying a base declaration's generic frame as a derived frame.
+    static DeclSig LookupDeclarationIdentity(JsonObject call, TypeNode.Fqn owner, DeclIndex index)
+    {
+        if (owner == null || Str(call[DeclarationIdentityBinding.Key]) is not string identity
+            || !index.ByDeclarationOwner.TryGetValue(owner.Name, out var declarations)) return null;
+        return declarations.GetValueOrDefault(identity);
     }
 
     static bool SameVector(TypeNode[] a, TypeNode[] b)
@@ -736,7 +758,8 @@ static partial class NullableTvErasureCallRealign
         var hasPropertyIdentity = KotlinPropertyAccessors.TryCallIdentity(obj, out _, out _);
         var decl = hasPropertyIdentity
             ? propertyDecl
-            : LookupDecl(owner, method, argCount, methodArgs?.Length ?? 0, isStatic: false, idx);
+            : LookupDeclarationIdentity(obj, owner, idx)
+                ?? LookupDecl(owner, method, argCount, methodArgs?.Length ?? 0, isStatic: false, idx, obj);
         // THE ARGUMENT AXIS: each parameter slot is `Subst(Erase(declared param))` exactly as the return is; with no
         // declaration the call's own descriptor stands in (see RealignArgs).
         RealignArgs(obj, decl?.Params, decl?.ParamsRefused, owner.Args, methodArgs, ctx,
@@ -771,7 +794,8 @@ static partial class NullableTvErasureCallRealign
                 var hasPropertyIdentity = KotlinPropertyAccessors.TryCallIdentity(obj, out _, out _);
                 decl = hasPropertyIdentity
                     ? propertyDecl
-                    : LookupDecl(owner, method, argCount, methodArgs?.Length ?? 0, isStatic: true, ctx.Idx);
+                    : LookupDeclarationIdentity(obj, owner, ctx.Idx)
+                        ?? LookupDecl(owner, method, argCount, methodArgs?.Length ?? 0, isStatic: true, ctx.Idx, obj);
                 ownerArgs = owner.Args;
             }
             else
@@ -783,7 +807,11 @@ static partial class NullableTvErasureCallRealign
                 // owner/association is authoritative; an absent match is a refusal, not permission to re-resolve by
                 // the newly allocated MethodDef name.
                 if (!KotlinPropertyAccessors.TryCallIdentity(obj, out _, out _) && decl == null)
-                    ctx.Idx.TopLevel.TryGetValue(method + "|" + argCount, out decl);
+                {
+                    decl = LookupDeclarationIdentity(obj, owner, ctx.Idx);
+                    if (decl == null && Str(obj[DeclarationIdentityBinding.Key]) == null)
+                        ctx.Idx.TopLevel.TryGetValue(method + "|" + argCount, out decl);
+                }
             }
         }
         RealignArgs(obj, decl?.Params, decl?.ParamsRefused, ownerArgs, methodArgs, ctx,
@@ -962,20 +990,37 @@ static partial class NullableTvErasureCallRealign
     // `Iterable<E>.iterator()`, `Iterator<E>.next()` and `List<E>.get(i)` on a receiver corrected to its erased
     // instantiation, which a hardcoded member table used to approximate.
     static DeclSig LookupDecl(TypeNode.Fqn owner, string method, int argCount, int methodArity, bool isStatic,
-        DeclIndex idx)
+        DeclIndex idx, JsonObject call)
     {
         if (idx.ByOwner.TryGetValue(owner.Name, out var sigs))
+        {
+            // An inherited call can still carry the derived owner before owner binding runs. A missing exact
+            // identity there must not select a derived sibling; the later flow pass uses the bound base owner.
+            if (Str(call[DeclarationIdentityBinding.Key]) != null) return null;
             return sigs.TryGetValue(method + "|" + argCount, out var local) ? local : null;
-        return LookupReferencedDecl(owner, method, argCount, methodArity, isStatic);
+        }
+        return LookupReferencedDecl(owner, method, argCount, methodArity, isStatic, call);
     }
 
     static DeclSig LookupReferencedDecl(TypeNode.Fqn owner, string method, int argCount, int methodArity,
-        bool isStatic)
-        => _refs != null
-           && _refs.TryNullableGenericSlot(owner.Name, method, isStatic, argCount, methodArity,
-               out var ret, out var ps, out var refused, ownerTypeArguments: owner.Args ?? Array.Empty<TypeNode>())
+        bool isStatic, JsonObject call)
+    {
+        var descriptor = call["shapeTypes"] as JsonArray ?? call["sig"] as JsonArray
+            ?? call["argTypes"] as JsonArray;
+        var signature = descriptor?.Select(TypeJson.Read).ToArray();
+        if (signature == null || signature.Length != argCount || signature.Any(type => type == null)) signature = null;
+        var identity = Str(call[DeclarationIdentityBinding.Key]);
+        // Exact closed parameter slots can consume an object-erased argument. This does not grant ownership of
+        // unchanged returns: runtime helpers may already carry another lowering's semantic result projection.
+        // Keep return facts limited to nullable-erasure carriers or open physical declarations.
+        return _refs != null
+            && _refs.TryNullableGenericSlot(owner.Name, method, isStatic, argCount, methodArity,
+               out var ret, out var ps, out var refused, ownerTypeArguments: owner.Args ?? Array.Empty<TypeNode>(),
+               resolvedSignature: signature, includeUnchanged: signature != null || identity != null,
+               selectedDeclarationId: identity, includeUnchangedReturn: false)
             ? new DeclSig { Ret = ret, Params = ps, ParamsRefused = refused }
             : null;
+    }
 
     // Property calls retain their frontend-resolved source property and get/set role until BirTypeLowering strips BIR
     // semantics. Use that identity while it exists. Looking the declaration up again by its newly allocated CLR method
