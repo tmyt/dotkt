@@ -3,6 +3,9 @@ package roundtriptests.delegateargumentconversion
 import NUnit.Framework.TestAttribute
 import roundtrip.delegateargumentconversion.*
 
+private fun <F : (Int) -> Int> invokeImportedBoundedCallback(holder: BoundedCallback<F>, value: Int): Int =
+    holder.callback(value)
+
 class DelegateArgumentConversionTests {
     @TestAttribute
     fun localDelegateArgumentsUsePhysicalInvokeSlots() {
@@ -11,6 +14,12 @@ class DelegateArgumentConversionTests {
 
     @TestAttribute
     fun importedDelegateArgumentsUsePhysicalInvokeSlots() {
+        val bounded: (Int) -> Int = { it + 1 }
+        val holder = BoundedCallback(bounded)
+        check(holder.callback === bounded)
+        check(holder.invoke(40) == 41)
+        check(invokeImportedBoundedCallback(holder, 42) == 43)
+        check(invokeBoundedCallback(bounded, 41) == 42)
         check(objectPredicate()(42))
         check(objectIdentity()(37) as Int == 37)
         check(objectIdentity()(false) as Boolean == false)

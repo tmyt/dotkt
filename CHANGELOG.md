@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Function-bounded generic receivers invoke their selected delegate safely (#959).**
+  bir2cir materializes the receiver conversion explicitly, including imported callback properties.
+
 - **Covariant suspend implementations retain their own Task result type (#955).**
   Exact existing interface bridges prevent late slot adaptation from rewriting the implementation's signature.
 

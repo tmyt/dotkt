@@ -15,6 +15,11 @@ fun nullableIntIdentity(): (Int?) -> Int? = { it }
 fun zeroArguments(): () -> Int = { 51 }
 fun contextIdentity(): context(Token) (Any?) -> Any? = { it }
 
+class BoundedCallback<F : (Int) -> Int>(val callback: F) {
+    fun invoke(value: Int): Int = callback(value)
+}
+fun <F : (Int) -> Int> invokeBoundedCallback(callback: F, value: Int): Int = callback(value)
+
 private var invocationTrace = ""
 private fun orderedFactory(): (Any?, Any?) -> Boolean {
     invocationTrace += "receiver;"
@@ -24,6 +29,11 @@ private fun firstArgument(): Int { invocationTrace += "first;"; return 42 }
 private fun secondArgument(): Long { invocationTrace += "second;"; return 43L }
 
 fun verifyLocalDelegateArguments() {
+    val bounded: (Int) -> Int = { it + 1 }
+    val holder = BoundedCallback(bounded)
+    check(holder.callback === bounded)
+    check(holder.invoke(40) == 41)
+    check(invokeBoundedCallback(bounded, 41) == 42)
     check(objectPredicate()(42))
     check(!objectPredicate()("not an int"))
     check(!objectPredicate()(null))
