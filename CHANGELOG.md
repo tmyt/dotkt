@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Bottom-typed inline calls terminate their physical continuation (#926).**
+  Infinite dispatch loops with non-local returns no longer expose an object-typed result to a concrete return slot.
+
 - **Overloaded calls retain selected nullable argument slots (#919).**
   Declaration identities preserve required conversions for local and referenced generic overloads.
 
