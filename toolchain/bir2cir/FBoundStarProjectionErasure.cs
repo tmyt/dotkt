@@ -4473,7 +4473,9 @@ static class FBoundStarProjectionErasure
                 fn.Params.Select(p => RewriteType(
                     p, owners, refs, boundDeclaration, localClrAliases)).ToArray(),
                 fn.Recv == null ? null : RewriteType(
-                    fn.Recv, owners, refs, boundDeclaration, localClrAliases));
+                    fn.Recv, owners, refs, boundDeclaration, localClrAliases), fn.Clr,
+                fn.Ctx?.Select(context => RewriteType(
+                    context, owners, refs, boundDeclaration, localClrAliases)).ToArray());
             default: return type;
         }
     }

@@ -72,7 +72,8 @@ static class ReferenceNullableStrip
         TypeNode.ByRef b => new TypeNode.ByRef(Strip(b.Of, isValue)),
         TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend, Strip(fn.Ret, isValue),
             fn.Params.Select(x => Strip(x, isValue)).ToArray(),
-            fn.Recv == null ? null : Strip(fn.Recv, isValue)),
+            fn.Recv == null ? null : Strip(fn.Recv, isValue), fn.Clr,
+            fn.Ctx?.Select(context => Strip(context, isValue)).ToArray()),
         _ => t,
     };
 

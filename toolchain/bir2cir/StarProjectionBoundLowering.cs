@@ -126,7 +126,8 @@ static class StarProjectionBoundLowering
             case TypeNode.ByRef b: return new TypeNode.ByRef(Subst(b.Of, localBounds, refs));
             case TypeNode.Fn fn: return new TypeNode.Fn(fn.Suspend, Subst(fn.Ret, localBounds, refs),
                 fn.Params.Select(p => Subst(p, localBounds, refs)).ToArray(),
-                fn.Recv == null ? null : Subst(fn.Recv, localBounds, refs));
+                fn.Recv == null ? null : Subst(fn.Recv, localBounds, refs), fn.Clr,
+                fn.Ctx?.Select(context => Subst(context, localBounds, refs)).ToArray());
             default: return t;
         }
     }
@@ -170,7 +171,8 @@ static class StarProjectionBoundLowering
         TypeNode.ByRef b => new TypeNode.ByRef(CloseEarlierOwnerTypeVars(b.Of, args, current)),
         TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend, CloseEarlierOwnerTypeVars(fn.Ret, args, current),
             fn.Params.Select(p => CloseEarlierOwnerTypeVars(p, args, current)).ToArray(),
-            fn.Recv == null ? null : CloseEarlierOwnerTypeVars(fn.Recv, args, current)),
+            fn.Recv == null ? null : CloseEarlierOwnerTypeVars(fn.Recv, args, current), fn.Clr,
+            fn.Ctx?.Select(context => CloseEarlierOwnerTypeVars(context, args, current)).ToArray()),
         _ => t,
     };
 

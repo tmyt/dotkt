@@ -314,7 +314,8 @@ static class ContinuationErasure
             case TypeNode.Array a: return new TypeNode.Array(EraseType(a.Elem));
             case TypeNode.ByRef b: return new TypeNode.ByRef(EraseType(b.Of));
             case TypeNode.Fn fn: return new TypeNode.Fn(fn.Suspend, EraseType(fn.Ret),
-                fn.Params.Select(EraseType).ToArray(), fn.Recv == null ? null : EraseType(fn.Recv));
+                fn.Params.Select(EraseType).ToArray(), fn.Recv == null ? null : EraseType(fn.Recv), fn.Clr,
+                fn.Ctx?.Select(EraseType).ToArray());
             default: return t;
         }
     }
