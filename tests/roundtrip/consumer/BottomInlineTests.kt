@@ -1,5 +1,6 @@
 import NUnit.Framework.TestAttribute
 import bottominline.*
+import kotlin.coroutines.*
 
 private fun bottomText(code: Int): String = bottomDispatch(code,
     { return "first" }, { return "second" })
@@ -12,6 +13,18 @@ private fun bottomEvaluated(): String = bottomDispatch(bottomCode(), {
     return "evaluated"
 })
 private fun bottomTailThrows(): String = bottomTail<Nothing> { error("tail") }
+private fun bottomSpinning(): String = bottomSpin { return "spinning" }
+private fun bottomOwner(): String = BottomOwner<Nothing>().through { return "owner" }
+private var pendingBottom: Continuation<Unit>? = null
+private suspend fun <T> suspendedBottom(value: T): BottomBox<T> = bottomForward(0) {
+    suspendCoroutine<Unit> { pendingBottom = it }
+    return BottomBox(value)
+}
+private fun <T> nestedBottom(value: T): () -> T = bottomForward(0) {
+    class Local { fun read(): T = value }
+    val local = Local()
+    return { local.read() }
+}
 
 class BottomInlineTests {
     @TestAttribute
@@ -50,5 +63,28 @@ class BottomInlineTests {
         check(result == null)
         check(evaluations == 1)
         check(bottomDispatch<Nothing?>(0, { null }) == null)
+    }
+
+    @TestAttribute
+    fun bottomSplicesRetainSuspensionAndDeclarationOwnership() {
+        var completed = false
+        var answer = 0
+        val work: suspend () -> BottomBox<Int> = { suspendedBottom(37) }
+        work.startCoroutine(object : Continuation<BottomBox<Int>> {
+            override val context: CoroutineContext = EmptyCoroutineContext
+            override fun resumeWith(result: Result<BottomBox<Int>>) {
+                answer = result.getOrThrow().value
+                completed = true
+            }
+        })
+        check(!completed)
+        val continuation = pendingBottom ?: error("did not suspend")
+        pendingBottom = null
+        continuation.resume(Unit)
+        check(completed && answer == 37)
+        check(nestedBottom("nested")() == "nested")
+        check(nestedBottom(29)() == 29)
+        check(bottomSpinning() == "spinning")
+        check(bottomOwner() == "owner")
     }
 }

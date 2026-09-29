@@ -594,7 +594,7 @@ static class InlineSplice
         // A call instantiated with the non-null bottom result never supplies a value to its consumer.
         // Preserve evaluation of a tail-folded result, but terminate the physical continuation explicitly:
         // CLR verification must not see the synthetic object-typed return temporary as a live result.
-        if (TypeJson.Read(pRet) is TypeNode.Fqn { Name: "kotlin.Nothing", Args: null })
+        if (NodeType.IsNothing(TypeJson.Read(pRet)))
         {
             stmts.Add(new JsonObject { ["k"] = "exprStmt", ["expr"] = result.DeepClone() });
             result = new JsonObject

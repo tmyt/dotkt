@@ -1406,6 +1406,12 @@ not a `string`. bir2cir therefore terminates a `Nothing`-typed value position ra
 reader: `else boom()` is emitted as `else throw boom()`. The added `throw` is unreachable by construction, so the
 program's behavior is unchanged; what changes is that no ill-typed merge, and no papering-over cast, is emitted.
 
+An inline splice instantiated with non-null `Nothing` explicitly terminates its synthetic result continuation:
+it evaluates and discards the routed or tail-folded result, then throws null. This preserves evaluation and
+non-local transfers without exposing a synthetic return temporary as a value. `Nothing?` is not terminated:
+its null result remains an ordinary value. If an inline body violates its `Nothing` result contract and reaches
+this continuation, the null throw raises `NullReferenceException` rather than throwing the discarded result.
+
 **If a `Nothing` declaration returns anyway** — only possible from a foreign assembly whose implementation violates
 the contract — the returned reference is thrown, wrapped in a `RuntimeWrappedException` when it is not an exception.
 Kotlin leaves this unspecified (a `Nothing` function returning is a contract violation, not a program state), and
