@@ -1010,11 +1010,14 @@ static partial class NullableTvErasureCallRealign
         var signature = descriptor?.Select(TypeJson.Read).ToArray();
         if (signature == null || signature.Length != argCount || signature.Any(type => type == null)) signature = null;
         var identity = Str(call[DeclarationIdentityBinding.Key]);
+        // Exact closed parameter slots can consume an object-erased argument. This does not grant ownership of
+        // unchanged returns: runtime helpers may already carry another lowering's semantic result projection.
+        // Keep return facts limited to nullable-erasure carriers or open physical declarations.
         return _refs != null
             && _refs.TryNullableGenericSlot(owner.Name, method, isStatic, argCount, methodArity,
                out var ret, out var ps, out var refused, ownerTypeArguments: owner.Args ?? Array.Empty<TypeNode>(),
                resolvedSignature: signature, includeUnchanged: signature != null || identity != null,
-               selectedDeclarationId: identity)
+               selectedDeclarationId: identity, includeUnchangedReturn: false)
             ? new DeclSig { Ret = ret, Params = ps, ParamsRefused = refused }
             : null;
     }

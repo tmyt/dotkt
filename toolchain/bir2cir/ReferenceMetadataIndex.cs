@@ -3760,7 +3760,7 @@ sealed partial class ReferenceMetadataIndex
         bool includeUnchanged = false, IReadOnlyList<TypeNode> resolvedSignature = null,
         TypeNode resolvedReturn = null, TypeNode[] ownerTypeArguments = null,
         JsonArray selectedTypeParams = null, TypeNode[] selectedOwnerTypeArguments = null,
-        string selectedDeclarationId = null)
+        string selectedDeclarationId = null, bool includeUnchangedReturn = true)
     {
         declaredRet = null;
         declaredParams = null;
@@ -3774,7 +3774,7 @@ sealed partial class ReferenceMetadataIndex
                 ownerTypeArguments: ownerTypeArguments, includeUnchangedMethod: includeUnchanged,
                 selectedTypeParams: selectedTypeParams,
                 selectedOwnerTypeArguments: selectedOwnerTypeArguments,
-                selectedDeclarationId: selectedDeclarationId)
+                selectedDeclarationId: selectedDeclarationId, includeUnchangedMethodReturn: includeUnchangedReturn)
             != SlotLookup.Declared)
             return false;
         declaredRet = ret.Node;
@@ -3845,7 +3845,8 @@ sealed partial class ReferenceMetadataIndex
         bool includeUnchangedMethod = false, IReadOnlyList<TypeNode> methodSignature = null,
         TypeNode methodReturn = null, JsonArray selectedTypeParams = null,
         TypeNode[] selectedOwnerTypeArguments = null, bool semanticConstraints = false,
-        string selectedPhysicalMember = null, string selectedDeclarationId = null)
+        string selectedPhysicalMember = null, string selectedDeclarationId = null,
+        bool includeUnchangedMethodReturn = true)
     {
         declaredRet = default;
         declaredParams = null;
@@ -3907,7 +3908,7 @@ sealed partial class ReferenceMetadataIndex
                     ? new SlotFact(member.ReturnTypeNode, false)
                     : propertyName != null && includeClosedPropertyReturn
                     ? new SlotFact(member.NullableGenericRet ?? member.KotlinReturnType ?? member.ReturnTypeNode, false)
-                    : propertyName == null && includeUnchangedMethod
+                    : propertyName == null && includeUnchangedMethod && includeUnchangedMethodReturn
                         ? new SlotFact(member.NullableGenericRet ?? member.KotlinReturnType ?? member.ReturnTypeNode, false)
                         : DeclaredSlot(member.NullableGenericRet, member.ReturnTypeNode);
                 declaredParams = new SlotFact[argCount];
@@ -3960,7 +3961,7 @@ sealed partial class ReferenceMetadataIndex
                 out var sret, out var sps, out var smethod, propertyName, accessorKind, accessorSignature,
                 superTypeArguments, includeClosedPropertyReturn, includeUnchangedMethod,
                 methodSignature, methodReturn, selectedTypeParams, selectedOwnerTypeArguments, semanticConstraints,
-                selectedPhysicalMember, selectedDeclarationId);
+                selectedPhysicalMember, selectedDeclarationId, includeUnchangedMethodReturn);
             path.Remove(key);
             if (found == SlotLookup.Refused) return SlotLookup.Refused;
             if (found != SlotLookup.Declared) continue;
