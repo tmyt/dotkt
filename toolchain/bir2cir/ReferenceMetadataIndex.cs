@@ -3086,7 +3086,7 @@ sealed partial class ReferenceMetadataIndex
                     semanticConstraints ? member.SemanticMethodTypeParams ?? member.MethodTypeParams : member.MethodTypeParams,
                     selectedTypeParams,
                     ownerTypeArguments, implementationOwnerTypeArguments)
-                && AccessorSignatureMatches(member, signature, ownerTypeArguments)
+                && AccessorSignatureMatches(member, signature, ownerTypeArguments, kotlinParameters: true)
                 && member.ParamTypeNodes != null && member.ReturnTypeNode != null
                 && (!selectedSuspend || member.SuspendReturnType != null))
             .ToList();
@@ -4284,7 +4284,7 @@ sealed partial class ReferenceMetadataIndex
     // completed by the constructed owner/method and therefore do not distinguish declarations here; every nominal
     // non-variable position must agree. Physical accessor spellings never participate in this decision.
     static bool AccessorSignatureMatches(MemberBinding member, IReadOnlyList<TypeNode> signature,
-        TypeNode[] ownerTypeArguments)
+        TypeNode[] ownerTypeArguments, bool kotlinParameters = false)
     {
         if (signature == null) return true;
         if (member.ParamTypeNodes == null || member.ParamTypeNodes.Length != signature.Count) return false;
@@ -4292,6 +4292,8 @@ sealed partial class ReferenceMetadataIndex
         {
             var declared = member.NullableGenericParams is { } carriers && i < carriers.Length && carriers[i] != null
                 ? carriers[i]
+                : kotlinParameters && member.KotlinParameterTypes is { } sourceParameters
+                    ? sourceParameters[i]
                 : member.ParamTypeNodes[i];
             if (declared == null) return false;
             if (ownerTypeArguments != null)

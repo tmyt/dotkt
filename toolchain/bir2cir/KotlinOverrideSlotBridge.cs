@@ -222,14 +222,13 @@ static class KotlinOverrideSlotBridge
             var declParams = impl["params"] as JsonArray;
             var declRet = TypeJson.Read(impl["ret"]);
             if (declParams == null || declRet == null || declParams.Count != slotParams.Length) return;
-            var inheritedSuspendResultBridge = inheritedOwner != null && supIsInterface
-                && IsSuspendMethod(impl)
+            var differingSuspendResult = IsSuspendMethod(impl)
                 && !BirTypeLowering.SamePhysicalSlotType(slotRet,
                     SupertypeGraph.SubstOwnerTvs(declRet, ownArgs), refs.Aliases, isValue,
                     refs.PhysicalTypeNames, returnPosition: true, localTypeNames,
                     nullableFrames: refs.NullableTypeFrames);
             if (phase == Phase.SuspendValueBridges
-                && !(inheritedSuspendResultBridge
+                && !(differingSuspendResult
                     || IsSuspendMethod(impl) && (unitValueReturn || !IsVoid(slotRet)) && IsUnit(declRet)
                         && !Bool(impl[BirTypeLowering.ValueReturnKey]))) return;
             // The pre-cold adapter already owns this exact hot obligation, including its argument adaptations.
