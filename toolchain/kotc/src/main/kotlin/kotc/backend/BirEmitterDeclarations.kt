@@ -1995,7 +1995,8 @@ internal fun BirEmitter.ctor(klass: IrClass, ctor: IrConstructor, captures: List
 		else -> emptyList()
 	}
 	val delegationSig = delegating?.let { d ->
-		val enclosing = listOfNotNull(dispatchReceiver(d)?.let { birType(it.type).toJson() })
+		val enclosing = d.symbol.owner.parameters.filter { it.kind == IrParameterKind.DispatchReceiver }
+			.map { birType(it.type).toJson() }
 		val declared = d.symbol.owner.parameters.filter { it.kind == IrParameterKind.Regular }
 			.map { birType(it.type).toJson() }
 		(hiddenDelegationSig + enclosing + declared).joinToString(",")
