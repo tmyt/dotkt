@@ -418,14 +418,14 @@ static class FBoundStarProjectionErasure
                         || key == ExistentialArrayElementProjectionKey) continue;
                     var childBoundDeclaration = boundDeclaration
                         || IsBoundDeclarationType(obj, key, refs, localClrAliases);
-                    if (key == "argTypes" && value is JsonArray argumentTypes
+                    if (key is "argTypes" or "memberSignature" && value is JsonArray argumentTypes
                         && obj["args"] is JsonArray argumentValues)
                     {
                         for (var index = 0; index < argumentTypes.Count; index++)
                         {
                             var argumentType = TypeJson.Read(argumentTypes[index]);
                             if (argumentType == null) continue;
-                            var exactValue = index < argumentValues.Count
+                            var exactValue = key == "argTypes" && index < argumentValues.Count
                                 && argumentValues[index] is JsonObject argument
                                 && (Str(argument["k"]) == "this" || Bool(argument[ExactOuterKey]));
                             var exactOuterSlot = IsInnerConstructionOuterSlot(obj, index, defs, refs);
@@ -2670,14 +2670,14 @@ static class FBoundStarProjectionErasure
                         || rewroteRuntimeOperand && key == "e") continue;
                     var childBoundDeclaration = boundDeclaration
                         || IsBoundDeclarationType(obj, key, refs, localClrAliases);
-                    if (key == "argTypes" && value is JsonArray argumentTypes
+                    if (key is "argTypes" or "memberSignature" && value is JsonArray argumentTypes
                         && obj["args"] is JsonArray argumentValues)
                     {
                         for (var index = 0; index < argumentTypes.Count; index++)
                         {
                             var argumentType = TypeJson.Read(argumentTypes[index]);
                             if (argumentType == null) continue;
-                            var exactValue = index < argumentValues.Count
+                            var exactValue = key == "argTypes" && index < argumentValues.Count
                                 && argumentValues[index] is JsonObject argument
                                 && (Str(argument["k"]) == "this" || Bool(argument[ExactOuterKey]));
                             var exactOuterSlot = IsInnerConstructionOuterSlot(obj, index, defs, refs);
