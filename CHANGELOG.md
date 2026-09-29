@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Non-returning inline bodies retain terminal continuations (#928).**
+  Generic infinite-loop bodies no longer expose a synthetic Unit value to concrete return slots.
+
 - **Overloaded calls retain selected nullable argument slots (#919).**
   Declaration identities preserve required conversions for local and referenced generic overloads.
 
