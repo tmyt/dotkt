@@ -28,6 +28,22 @@ private class LocalForwardingStream<T>(stream: LocalNeverStream<T>) : LocalNever
 private class ImportedBottomValue<T>(private val failure: Throwable) : BottomValue<T> {
     override suspend fun read(): Nothing = throw failure
 }
+private class ImportedClosedUnit(private val failure: Throwable) : BottomValue<Unit>, BottomUnit {
+    override suspend fun read(): Nothing = throw failure
+}
+private interface LocalBottomValue<T> { suspend fun read(): T }
+private interface LocalBottomUnit { suspend fun read() }
+private class LocalClosedUnit(private val failure: Throwable) : LocalBottomValue<Unit>, LocalBottomUnit {
+    override suspend fun read(): Nothing = throw failure
+}
+private class SlotOuter { class Nested(val text: String) }
+private class NestedSlotDerived(text: String) : NestedSlotResult(text)
+private class NestedReferenceBody : NestedReferenceSlot<SlotOuter.Nested> {
+    override fun put(value: SlotOuter.Nested): NestedSlotDerived = NestedSlotDerived(value.text)
+}
+private class NestedSuspendReferenceBody : NestedSuspendReferenceSlot<SlotOuter.Nested> {
+    override suspend fun put(value: SlotOuter.Nested): NestedSlotDerived = NestedSlotDerived(value.text)
+}
 
 private fun checkBottomFailure(failure: Throwable, block: suspend () -> Unit) {
     var completed = false
@@ -89,5 +105,34 @@ class SuspendBottomSlotTests {
         val importedValue: BottomValue<String> = ImportedBottomValue<String>(failure)
         checkBottomFailure(failure) { producerValue.read() }
         checkBottomFailure(failure) { importedValue.read() }
+        val producerUnit = ProducerClosedUnit(failure)
+        val importedUnit = ImportedClosedUnit(failure)
+        val localUnit = LocalClosedUnit(failure)
+        checkBottomFailure(failure) { (producerUnit as BottomValue<Unit>).read() }
+        checkBottomFailure(failure) { (producerUnit as BottomUnit).read() }
+        checkBottomFailure(failure) { (importedUnit as BottomValue<Unit>).read() }
+        checkBottomFailure(failure) { (importedUnit as BottomUnit).read() }
+        checkBottomFailure(failure) { (localUnit as LocalBottomValue<Unit>).read() }
+        checkBottomFailure(failure) { (localUnit as LocalBottomUnit).read() }
+        val nested = SlotOuter.Nested("nested slot")
+        val nestedBody = NestedReferenceBody()
+        val nestedSlot: NestedReferenceSlot<SlotOuter.Nested> = nestedBody
+        check(nestedBody.put(nested).value == "nested slot")
+        check(nestedSlot.put(nested).value == "nested slot")
+        var nestedCompleted = false
+        val nestedCall: suspend () -> Unit = {
+            val body = NestedSuspendReferenceBody()
+            val slot: NestedSuspendReferenceSlot<SlotOuter.Nested> = body
+            check(body.put(nested).value == "nested slot")
+            check(slot.put(nested).value == "nested slot")
+        }
+        nestedCall.startCoroutine(object : Continuation<Unit> {
+            override val context: CoroutineContext = EmptyCoroutineContext
+            override fun resumeWith(result: Result<Unit>) {
+                result.getOrThrow()
+                nestedCompleted = true
+            }
+        })
+        check(nestedCompleted)
     }
 }

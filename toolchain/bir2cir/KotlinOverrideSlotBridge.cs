@@ -89,8 +89,22 @@ static class KotlinOverrideSlotBridge
     // slot's result from the selected implementation's cold call; it must not cast the public Task result.
     public static void PrepareSuspendValueBridges(IEnumerable<JsonNode> roots, ValueTypeOracle isValue,
         ReferenceMetadataIndex refs, IReadOnlySet<string> localTypeNames, bool refBuild, GenericRepresentationPolicy representations,
-        IReadOnlySet<CovariantInterfaceReturnBridge.BridgedSlot> covariantBridgedSlots) =>
-        ApplyAll(roots, isValue, refs, representations, Phase.SuspendValueBridges, localTypeNames, covariantBridgedSlots, refBuild);
+        IReadOnlySet<CovariantInterfaceReturnBridge.BridgedSlot> covariantBridgedSlots,
+        IReadOnlyDictionary<JsonObject, TypeNode[]> sourceParameters) =>
+        ApplyAll(roots, isValue, refs, representations, Phase.SuspendValueBridges, localTypeNames, covariantBridgedSlots, refBuild, sourceParameters);
+
+    internal static IReadOnlyDictionary<JsonObject, TypeNode[]> CaptureSourceParameters(IEnumerable<JsonNode> roots)
+    {
+        var facts = new Dictionary<JsonObject, TypeNode[]>(ReferenceEqualityComparer.Instance);
+        foreach (var definition in SupertypeGraph.Collect(roots).Values)
+            foreach (var method in definition.Methods.OfType<JsonObject>())
+                facts[method] = ReadParameterTypes(method);
+        return facts;
+    }
+
+    internal static TypeNode[] ReadParameterTypes(JsonObject method) =>
+        (method["params"] as JsonArray)?.OfType<JsonObject>()
+            .Select(parameter => TypeJson.Read(parameter["type"])).ToArray() ?? Array.Empty<TypeNode>();
 
     // The bridge half.
     public static void ApplyAll(IEnumerable<JsonNode> roots, ValueTypeOracle isValue, ReferenceMetadataIndex refs,
@@ -100,7 +114,8 @@ static class KotlinOverrideSlotBridge
 
     static void ApplyAll(IEnumerable<JsonNode> roots, ValueTypeOracle isValue, ReferenceMetadataIndex refs,
         GenericRepresentationPolicy representations, Phase phase, IReadOnlySet<string> localTypeNames,
-        IReadOnlySet<CovariantInterfaceReturnBridge.BridgedSlot> covariantBridgedSlots = null, bool refBuild = false)
+        IReadOnlySet<CovariantInterfaceReturnBridge.BridgedSlot> covariantBridgedSlots = null, bool refBuild = false,
+        IReadOnlyDictionary<JsonObject, TypeNode[]> sourceParameters = null)
     {
         var emitBridges = phase != Phase.DeclarationMoves;
         var defs = SupertypeGraph.Collect(roots);
@@ -132,7 +147,7 @@ static class KotlinOverrideSlotBridge
                     exactBridgeSources[method] = sourceAssociation;
         foreach (var cls in defs.Values.Where(d => d.Kind is "class" or "interface").ToList())
             ApplyClass(cls, defs, isValue, refs, phase, refBuild, exactBridgeSources, localTypeNames,
-                covariantBridgedSlots, AnnotationArguments, SourceMapping(cls));
+                covariantBridgedSlots, AnnotationArguments, SourceMapping(cls), sourceParameters);
         // A class-level inherited-DIM bridge consumes the exact MethodImpl descriptor synthesized on its interface.
         // Declarations may appear in either order and in different input files, so first finish every interface/class's
         // own slot allocation above, then inspect classes. Reading the live method arrays during the first loop would
@@ -160,7 +175,8 @@ static class KotlinOverrideSlotBridge
         ReferenceMetadataIndex refs, Phase phase, bool refBuild, IDictionary<JsonObject, string> exactBridgeSources,
         IReadOnlySet<string> localTypeNames,
         IReadOnlySet<CovariantInterfaceReturnBridge.BridgedSlot> covariantBridgedSlots,
-        Func<TypeNode.Fqn, TypeNode[]> annotationArguments, NullableRepresentationTypes sourceMapping)
+        Func<TypeNode.Fqn, TypeNode[]> annotationArguments, NullableRepresentationTypes sourceMapping,
+        IReadOnlyDictionary<JsonObject, TypeNode[]> sourceParameters)
     {
         var emitBridges = phase != Phase.DeclarationMoves;
         if (cls.Node["methods"] is not JsonArray methods) return;
@@ -456,7 +472,8 @@ static class KotlinOverrideSlotBridge
                             slotTypeParams, slotHasDefault, unitValueReturn) =>
                         Fill(semanticOwner, owner, isInterface, referenced, slotHasDefault, identity, member, accessor,
                             parameters, ret, implementation, slotTypeParams, unitValueReturn),
-                    suspendValues: phase == Phase.SuspendValueBridges, inheritedSignatures: inheritedSignatures);
+                    suspendValues: phase == Phase.SuspendValueBridges, inheritedSignatures: inheritedSignatures,
+                    sourceParameters: sourceParameters);
                 continue;
             }
             var supArgs = SupertypeGraph.EffectiveArgs(spec, sup.Arity);
@@ -1239,7 +1256,8 @@ static class KotlinOverrideSlotBridge
         bool supIsInterface, IEnumerable<JsonObject> methods, TypeNode[] ownArgs, ValueTypeOracle isValue,
         ReferenceMetadataIndex refs, Phase phase, NullableRepresentationTypes sourceMapping,
         Action<TypeNode.Fqn, TypeNode.Fqn, bool, bool, string, string, string, TypeNode[], TypeNode, JsonObject, JsonArray, bool, bool> fill,
-        bool suspendValues = false, IReadOnlyDictionary<JsonObject, TypeNode[]> inheritedSignatures = null)
+        bool suspendValues = false, IReadOnlyDictionary<JsonObject, TypeNode[]> inheritedSignatures = null,
+        IReadOnlyDictionary<JsonObject, TypeNode[]> sourceParameters = null)
     {
         if (refs == null) return;
         var supArgs = spec.Args ?? Array.Empty<TypeNode>();
@@ -1286,10 +1304,9 @@ static class KotlinOverrideSlotBridge
                 // example) Collection.size's IReadOnlyCollection<T>.get_Count slot.
                 var selectedSpec = accessorKind != null ? owner : spec;
                 var selectedArgs = selectedSpec.Args ?? Array.Empty<TypeNode>();
-                var implementationSignature = ps.OfType<JsonObject>()
-                    .Select(parameter => suspendValues && Str(parameter["kotlinType"]) is string sourceType
-                        ? TypeNode.Parse(sourceType) : TypeJson.Read(parameter["type"]))
-                    .ToArray();
+                var implementationSignature = suspendValues && sourceParameters != null
+                    && sourceParameters.TryGetValue(impl, out var sourceSignature)
+                    ? sourceSignature : ReadParameterTypes(impl);
                 if (implementationSignature.Length != ps.Count || implementationSignature.Any(type => type == null))
                     continue;
                 if (suspendValues && inheritedSignatures != null
