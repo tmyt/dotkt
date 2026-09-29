@@ -666,20 +666,47 @@ static class FBoundStarProjectionErasure
     // before the slot becomes that interface/object.
     // RoundtripMetadata emits these facts as [KotlinType], and dll2klib restores them without inspecting the physical
     // carrier name. Calls and locals are intentionally excluded: this is exported declaration ABI only.
+    // Array identity on inheritance edges and bounds must be frozen before inner applications are rotated
+    // into CLR order. Reuse the declaration carriers, but do not perform any physical projection here.
+    public static void RecordArrayTypeEdges(IReadOnlyList<JsonNode> roots)
+    {
+        void Visit(JsonNode node)
+        {
+            if (node is JsonObject obj)
+            {
+                if (Str(obj["kind"]) != null)
+                {
+                    RecordProjectedSupertypes(obj, ContainsGenericArray);
+                    RecordProjectedTypeParameterBounds(obj, ContainsGenericArray);
+                }
+                if (obj["k"] == null && obj["name"] is JsonValue && obj["params"] is JsonArray)
+                    RecordProjectedMethodTypeParameterBounds(obj, ContainsGenericArray);
+                foreach (var child in obj.Select(pair => pair.Value).Where(value => value != null).ToList())
+                    Visit(child);
+            }
+            else if (node is JsonArray array)
+                foreach (var child in array.Where(value => value != null).ToList()) Visit(child);
+        }
+        foreach (var root in roots) Visit(root);
+    }
+
     static void RecordDeclarationSurfaces(JsonNode node,
         IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs)
     {
+        bool MovedBound(TypeNode type) => ContainsUseSiteProjection(type)
+            || !RewriteType(type, owners, refs).Equals(type);
         switch (node)
         {
             case JsonObject obj:
                 if (Str(obj["kind"]) != null)
                 {
-                    RecordProjectedTypeParameterBounds(obj, owners, refs);
-                    RecordProjectedSupertypes(obj, owners, refs);
+                    RecordProjectedTypeParameterBounds(obj, MovedBound);
+                    RecordProjectedSupertypes(obj, type =>
+                        !RewriteType(type, owners, refs, preserveConstructedHead: true).Equals(type));
                 }
                 if (obj["k"] == null && obj["name"] is JsonValue && obj["params"] is JsonArray parameters)
                 {
-                    RecordProjectedMethodTypeParameterBounds(obj, owners, refs);
+                    RecordProjectedMethodTypeParameterBounds(obj, MovedBound);
                     foreach (var parameter in parameters.OfType<JsonObject>())
                         RecordProjectionSlot(parameter, "type", "kotlinType", owners, refs);
                     RecordProjectionSlot(obj, "ret", "retKotlinType", owners, refs);
@@ -702,11 +729,10 @@ static class FBoundStarProjectionErasure
     // every intervening physical pass, so dll2klib restores exactly the authored `in`/`out` nodes rather than
     // reconstructing them from an erased constraint row.
     static void RecordProjectedSupertypes(JsonObject declaration,
-        IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs)
+        Func<TypeNode, bool> shouldRecord)
     {
         var source = new JsonObject();
-        bool Moves(JsonNode node) => TypeJson.Read(node) is TypeNode type
-            && !RewriteType(type, owners, refs, preserveConstructedHead: true).Equals(type);
+        bool Moves(JsonNode node) => TypeJson.Read(node) is TypeNode type && shouldRecord(type);
         if (Moves(declaration["base"])) source["base"] = declaration["base"].DeepClone();
         if (declaration["interfaces"] is JsonArray interfaces)
         {
@@ -717,9 +743,9 @@ static class FBoundStarProjectionErasure
     }
 
     static void RecordProjectedTypeParameterBounds(JsonObject declaration,
-        IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs)
+        Func<TypeNode, bool> shouldRecord)
     {
-        var bounds = ProjectedTypeParameterBounds(declaration["typeParams"] as JsonArray, owners, refs);
+        var bounds = ProjectedTypeParameterBounds(declaration["typeParams"] as JsonArray, shouldRecord);
         if (KotlinSupertypesRecord.ReadNullableFrame(declaration) is { } frame)
         {
             var sourceBounds = new JsonObject();
@@ -733,9 +759,9 @@ static class FBoundStarProjectionErasure
     }
 
     static void RecordProjectedMethodTypeParameterBounds(JsonObject declaration,
-        IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs)
+        Func<TypeNode, bool> shouldRecord)
     {
-        var bounds = ProjectedTypeParameterBounds(declaration["typeParams"] as JsonArray, owners, refs);
+        var bounds = ProjectedTypeParameterBounds(declaration["typeParams"] as JsonArray, shouldRecord);
         if (bounds.Count == 0) return;
         var payload = Str(declaration[NullableGenericErasure.MethodTypeParameterBoundsPre]) is string encoded
             ? JsonNode.Parse(encoded) as JsonObject ?? new JsonObject()
@@ -752,7 +778,7 @@ static class FBoundStarProjectionErasure
     }
 
     static JsonObject ProjectedTypeParameterBounds(JsonArray parameters,
-        IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs)
+        Func<TypeNode, bool> shouldRecord)
     {
         var bounds = new JsonObject();
         if (parameters == null) return bounds;
@@ -761,7 +787,7 @@ static class FBoundStarProjectionErasure
             if (parameters[index] is not JsonObject parameter
                 || parameter["constraints"] is not JsonArray constraints
                 || !constraints.Any(constraint => TypeJson.Read(constraint) is TypeNode type
-                    && (ContainsUseSiteProjection(type) || !RewriteType(type, owners, refs).Equals(type)))) continue;
+                    && shouldRecord(type))) continue;
             bounds[index.ToString()] = constraints.DeepClone();
         }
         return bounds;
@@ -830,6 +856,7 @@ static class FBoundStarProjectionErasure
         if (declaration[fact] != null || TypeJson.Read(declaration[slot]) is not TypeNode type
             || (!ContainsExistentialProjection(type)
                 && !ContainsWritableVariantArray(type, owners, refs)
+                && !ContainsGenericArray(type)
                 && !ContainsGenericAlias(type, refs)
                 && !ContainsKotlinVariantType(type, owners, refs)))
             return;
@@ -838,6 +865,25 @@ static class FBoundStarProjectionErasure
         declaration[fact] = Str(declaration[slot == "ret" ? "nullableGenericRet" : "nullableGeneric"])
             ?? TypeNode.ToJson(type);
     }
+
+    // Kotlin Array<Int> and IntArray can share a CLR int[] slot. Keep the declaration's generic-array
+    // classifier explicitly, including nested positions; a physical signature cannot recover that distinction.
+    static bool ContainsGenericArray(TypeNode type) => type switch
+    {
+        TypeNode.Array => true,
+        TypeNode.Fqn { Args: { } args } => args.Any(ContainsGenericArray),
+        TypeNode.Nullable nullable => ContainsGenericArray(nullable.Of),
+        TypeNode.Oblivious oblivious => ContainsGenericArray(oblivious.Of),
+        TypeNode.Projection projection => ContainsGenericArray(projection.Of),
+        TypeNode.ByRef byRef => ContainsGenericArray(byRef.Of),
+        TypeNode.Ptr pointer => ContainsGenericArray(pointer.Of),
+        TypeNode.Mod modifier => ContainsGenericArray(modifier.M) || ContainsGenericArray(modifier.Of),
+        TypeNode.Fn function => ContainsGenericArray(function.Ret)
+            || function.Params.Any(ContainsGenericArray)
+            || function.Recv != null && ContainsGenericArray(function.Recv)
+            || function.Ctx?.Any(ContainsGenericArray) == true,
+        _ => false,
+    };
 
     // Aliases are not a reversible source-type encoding: ArrayList<T> and a CLR List<T> declaration can have
     // the same physical signature without the same Kotlin classifier. Preserve declaration truth even when the
