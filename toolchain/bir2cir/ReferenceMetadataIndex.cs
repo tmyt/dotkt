@@ -3085,7 +3085,8 @@ sealed partial class ReferenceMetadataIndex
                 && KotlinOverrideSlotBridge.SameMethodTypeParameterShape(
                     semanticConstraints ? member.SemanticMethodTypeParams ?? member.MethodTypeParams : member.MethodTypeParams,
                     selectedTypeParams,
-                    ownerTypeArguments, implementationOwnerTypeArguments)
+                    ownerTypeArguments, implementationOwnerTypeArguments,
+                    semanticConstraints ? null : PhysicalConstraintType)
                 && AccessorSignatureMatches(member, signature, ownerTypeArguments)
                 && member.ParamTypeNodes != null && member.ReturnTypeNode != null
                 && (!selectedSuspend || member.SuspendReturnType != null))
@@ -3105,6 +3106,12 @@ sealed partial class ReferenceMetadataIndex
             match.IsVirtual, match.ParamTypeNodes, match.ReturnTypeNode, match.NullableFrame);
         return true;
     }
+
+    // Late bridge selection compares physical constraints, even while local declarations still use Kotlin
+    // classifier names. Lower both sides into the same vocabulary; early semantic selection remains exact.
+    TypeNode PhysicalConstraintType(TypeNode type) => BirTypeLowering.CanonicalPhysicalSlotType(
+        BirTypeLowering.LowerPhysicalType(type, Aliases, IsValueType, PhysicalTypeNames,
+            typeArg: true, nullableFrames: NullableTypeFrames));
 
     // FULL-SIGNATURE @ClrIntrinsic lookup for the member-STRIP: is owner.name(paramKeys) a bound stub? Matches the
     // @ClrIntrinsic member whose canonicalized param types equal the emitted method's — so `StringBuilder.append(Char)`
@@ -3870,7 +3877,8 @@ sealed partial class ReferenceMetadataIndex
                     && (propertyName != null || selectedTypeParams == null
                         || KotlinOverrideSlotBridge.SameMethodTypeParameterShape(
                             semanticConstraints ? m.SemanticMethodTypeParams ?? m.MethodTypeParams : m.MethodTypeParams, selectedTypeParams,
-                            ownerTypeArguments, selectedOwnerTypeArguments)))
+                            ownerTypeArguments, selectedOwnerTypeArguments,
+                            semanticConstraints ? null : PhysicalConstraintType)))
                 .ToArray();
             var shapeMatches = declaredHere.Where(m =>
                     propertyName == null

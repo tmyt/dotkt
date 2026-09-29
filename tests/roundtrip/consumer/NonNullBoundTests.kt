@@ -2,6 +2,22 @@ import NUnit.Framework.TestAttribute
 import kotlin.coroutines.*
 import roundtrip.nonnullbounds.*
 
+private class ConsumerFactory : BoundFactory {
+    override fun <U : Any> make(value: U): String = "factory"
+}
+
+private class ConsumerNullableBound : BoundOrdinarySlot<Int?> {
+    override fun <U : Any> read(value: U): Int? = 43
+}
+
+private class ConsumerValueBound : BoundSlot<Int> {
+    override fun <U : Any> read(value: U): Int = 43
+    override suspend fun <U : Any> delayed(value: U, pause: suspend () -> Unit): Int {
+        pause()
+        return 47
+    }
+}
+
 private class ConsumerBound : BoundBase<String>("base") {
     override fun <U : Any> read(value: U): String = "consumer"
     override suspend fun <U : Any> delayed(value: U, pause: suspend () -> Unit): String {
@@ -10,15 +26,15 @@ private class ConsumerBound : BoundBase<String>("base") {
     }
 }
 
-private fun checkSuspendedBound(slot: BoundSlot<String>, expected: String) {
+private fun <T> checkSuspendedBound(slot: BoundSlot<T>, expected: T) {
     var pending: Continuation<Unit>? = null
-    var actual = "pending"
-    val action: suspend () -> String = {
+    var actual: Any? = "pending"
+    val action: suspend () -> T = {
         slot.delayed(23) { suspendCoroutine<Unit> { pending = it } }
     }
-    action.startCoroutine(object : Continuation<String> {
+    action.startCoroutine(object : Continuation<T> {
         override val context: CoroutineContext = EmptyCoroutineContext
-        override fun resumeWith(result: Result<String>) { actual = result.getOrThrow() }
+        override fun resumeWith(result: Result<T>) { actual = result.getOrThrow() }
     })
     check(actual == "pending")
     pending!!.resume(Unit)
@@ -28,6 +44,10 @@ private fun checkSuspendedBound(slot: BoundSlot<String>, expected: String) {
 class NonNullBoundTests {
     @TestAttribute
     fun importedBoundsPreserveOrdinaryOverridesAndNullableControls() {
+        val factory: BoundFactory = ConsumerFactory()
+        check(factory.make(41) == "factory")
+        val nullableSlot: BoundOrdinarySlot<Int?> = ConsumerNullableBound()
+        check(nullableSlot.read("value") == 43)
         val slot: BoundSlot<String> = ConsumerBound()
         check(slot.read(17) == "consumer" && slot.read("text") == "consumer")
         check(BoundBase(19).read("text") == 19)
@@ -39,6 +59,7 @@ class NonNullBoundTests {
 
     @TestAttribute
     fun importedBoundsPreserveSuspendOverridesAndResumption() {
+        checkSuspendedBound(ConsumerValueBound(), 47)
         checkSuspendedBound(ConsumerBound(), "consumer")
         checkSuspendedBound(BoundBase("producer"), "producer")
     }

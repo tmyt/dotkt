@@ -1,5 +1,13 @@
 package roundtrip.nonnullbounds
 
+interface BoundFactory {
+    fun <U : Any> make(value: U): Any
+}
+
+interface BoundOrdinarySlot<T> {
+    fun <U : Any> read(value: U): T
+}
+
 interface BoundSlot<T> {
     fun <U : Any> read(value: U): T
     suspend fun <U : Any> delayed(value: U, pause: suspend () -> Unit): T
