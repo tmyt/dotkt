@@ -8,6 +8,27 @@ class SelectedConstructor<T> {
 
 class SelectionBox<T>(val value: T)
 
+interface SelectionInvariant<T> {
+    fun read(): T
+    fun write(value: T)
+}
+private class SelectionAnyBox(private var value: Any) : SelectionInvariant<Any> {
+    override fun read(): Any = value
+    override fun write(value: Any) { this.value = value }
+}
+fun selectionInput(): SelectionInvariant<in String> = SelectionAnyBox("initial")
+class SelectionBoundHolder<M : SelectionInvariant<in String>>(val value: M) {
+    fun write(text: String): M { value.write(text); return value }
+}
+
+fun checkLocalProjectedSelection() {
+    val input = selectionInput()
+    check(SelectionBoundHolder(input).write("local") === input)
+    check(input.read() == "local")
+    val star: SelectionInvariant<*> = input
+    check(SelectionBox(star).value === input)
+}
+
 class NullableSelectionOuter<O>(val outer: O?) {
     inner class Child<U>(val value: U?)
 }
@@ -80,6 +101,7 @@ fun <T> checkGenericSelection(input: T) {
 }
 
 fun checkLocalConstructorSelection() {
+    checkLocalProjectedSelection()
     check(CovariantSelectionOuter("outer").child().read() == "outer")
     check(CovariantSelectionOuter(101).child().read() == 101)
     val genericChild = CovariantSelectionOuter("outer").genericChild(103)
