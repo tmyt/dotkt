@@ -61,6 +61,12 @@ static class InnerRepresentationFrameTests
         var expected = new TypeNode.Fqn("Outer.Inner.Leaf", new TypeNode[] { o, no, i, ni, projectedNested, Arg("NL") });
         if (TypeJson.Read(root["fields"]![0]!["type"]) != expected)
             throw new InvalidOperationException("Nested argument applications were projected more than once");
+        var enclosingNested = new TypeNode.Fqn("Outer.Inner", new TypeNode[] { i, ni, nested, no });
+        root["fields"]![0]!["type"] = TypeJson.Write(enclosingNested);
+        TypeOwnershipLowering.ProjectInnerApplications(new[] { root }, null);
+        var expectedEnclosing = new TypeNode.Fqn("Outer.Inner", new TypeNode[] { projectedNested, no, i, ni });
+        if (TypeJson.Read(root["fields"]![0]!["type"]) != expectedEnclosing)
+            throw new InvalidOperationException("An enclosing argument payload was projected more than once");
         Console.WriteLine("[inner declaration argument order] self-test OK");
     }
 
