@@ -2072,6 +2072,20 @@ static class InlineSplice
                 body.RemoveAt(body.Count - 1);
                 return v;
             }
+            // A non-Unit Kotlin body with no return cannot complete normally (for example an infinite
+            // loop or a throw). Keep that continuation terminal even when CLR verification considers a
+            // constant loop's conditional exit reachable; Unit is not a value of the declared result type.
+            if (!unit)
+                return new JsonObject
+                {
+                    ["k"] = "throwExpr",
+                    ["value"] = new JsonObject
+                    {
+                        ["k"] = "const",
+                        ["type"] = new JsonObject { ["t"] = "nullable", ["of"] = TypeJson.Fqn("kotlin.Nothing") },
+                        ["value"] = null,
+                    },
+                };
             // D4: a UNIT callee ending in an explicit `{k:return}` (possibly with a side-effecting value) must NOT leave
             // that bare return in the block — it would return from the CALLER. Strip it (hoisting a non-trivial value as
             // a trailing exprStmt so its side effect survives).
