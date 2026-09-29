@@ -847,6 +847,7 @@ sealed class Pipeline
 
         // All source and inline-spliced Kotlin type applications now exist. Project Kotlin inner argument order to
         // CLR flattened nested order before the first CLR-oriented generic/slot pass consumes those applications.
+        FBoundStarProjectionErasure.RecordArrayTypeEdges(staged.Select(s => s.Root).ToList());
         TypeOwnershipLowering.RecordNestedSourceTypes(staged.Select(s => s.Root).ToList(), refs);
         TypeOwnershipLowering.ProjectInnerApplications(staged.Select(s => s.Root).ToList(), refs);
 

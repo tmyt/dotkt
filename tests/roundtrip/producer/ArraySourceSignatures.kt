@@ -1,3 +1,5 @@
+@file:OptIn(kotlin.ExperimentalUnsignedTypes::class)
+
 package roundtrip.arraysource
 
 class ArraySourceSurface(
@@ -24,6 +26,26 @@ fun nestedArraySlot(value: ArraySourceBox<Array<Int>>): ArraySourceBox<Array<Int
 fun charArraySlot(value: Array<Char>): Array<Char> = value
 fun booleanArraySlot(value: Array<Boolean>): Array<Boolean> = value
 fun doubleArraySlot(value: Array<Double>): Array<Double> = value
+fun unsignedArraySlot(value: Array<UInt>): Array<UInt> = value
+fun unsignedSpecializedSlot(value: UIntArray): UIntArray = value
+var topLevelArray: Array<Int> = arrayOf(61)
+fun Array<Int>.firstArraySource(): Int = this[0]
+suspend fun suspendArraySource(): Array<Int> = arrayOf(67)
+fun <T> relayArraySource(block: suspend (Array<Int>) -> T?): suspend (Array<Int>) -> T? = block
+
+class ArraySourceOuter<A> {
+    class Nested
+    open inner class Inner<B>(val value: B)
+    inner class Sub(values: Array<Int>) : Inner<Array<Int>>(values)
+}
+class NestedArrayEdge : ArraySourceEdge<Array<ArraySourceOuter.Nested>> {
+    override fun value(): Array<ArraySourceOuter.Nested> = emptyArray()
+}
+class InnerArrayEdge : ArraySourceEdge<Array<ArraySourceOuter<String>.Inner<Int>>> {
+    override fun value(): Array<ArraySourceOuter<String>.Inner<Int>> = emptyArray()
+}
+class ArrayBoundHolder<T : ArraySourceEdge<Array<ArraySourceOuter<String>.Inner<Int>>>>(val source: T)
+fun <T : ArraySourceEdge<Array<ArraySourceOuter<String>.Inner<Int>>>> keepArrayBound(value: T): T = value
 
 fun checkLocalArraySources() {
     val edge: ArraySourceEdge<Array<Int>> = IntArraySourceEdge(arrayOf(53))
