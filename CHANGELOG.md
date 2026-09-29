@@ -10,6 +10,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 - **Nullable suspend overrides preserve their physical Task result slots (#946).**
   Cross-DLL callback signatures select their Kotlin declarations before Task result adaptation.
 
+- **Kotlin generic array signatures retain their source classifier across DLL imports (#941).**
+  Array<Int> no longer becomes IntArray when projected from a compiler-produced declaration.
+
 - **Inherited inner-member results close after owner argument projection (#933).**
   Kotlin own-first arguments no longer substitute into CLR enclosing-first return slots before projection.
 
