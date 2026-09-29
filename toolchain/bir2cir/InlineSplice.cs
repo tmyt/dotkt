@@ -591,6 +591,23 @@ static class InlineSplice
         // node type, not a claim about what the splice built, and the two never contradict because they are the
         // Kotlin type and the emitted value's type of the same expression.)
         foreach (var st in pBody) if (st != null) stmts.Add(st.DeepClone());
+        // A call instantiated with the non-null bottom result never supplies a value to its consumer.
+        // Preserve evaluation of a tail-folded result, but terminate the physical continuation explicitly:
+        // CLR verification must not see the synthetic object-typed return temporary as a live result.
+        if (NodeType.IsNothing(TypeJson.Read(pRet)))
+        {
+            stmts.Add(new JsonObject { ["k"] = "exprStmt", ["expr"] = result.DeepClone() });
+            result = new JsonObject
+            {
+                ["k"] = "throwExpr",
+                ["value"] = new JsonObject
+                {
+                    ["k"] = "const",
+                    ["type"] = new JsonObject { ["t"] = "nullable", ["of"] = TypeJson.Fqn("kotlin.Nothing") },
+                    ["value"] = null,
+                },
+            };
+        }
         var repl = new JsonObject { ["k"] = "valueBlock", ["stmts"] = stmts, ["result"] = result };
         foreach (var key in new List<string>(((IDictionary<string, JsonNode>)o).Keys)) o.Remove(key);
         foreach (var kv in repl) o[kv.Key] = kv.Value?.DeepClone();

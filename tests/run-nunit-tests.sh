@@ -52,7 +52,7 @@ PROJECTS=(
 declare -A EXPECTED_DISCOVERED=(
 	["tests/basic"]=665
 	["tests/coroutines"]=246
-	["tests/roundtrip/consumer"]=345
+	["tests/roundtrip/consumer"]=351
 	["tests/roundtrip/bidirectional/consumer"]=38
 	["tests/interop/consumer"]=367
 )
@@ -269,6 +269,13 @@ for proj in "${PROJECTS[@]}"; do
 		referenced_method_generic_cir="$dir/obj/$CONFIGURATION/net10.0/cir/ReferencedProtectedMethodGenericTests.cir.json"
 		referenced_generic_owner_cir="$dir/obj/$CONFIGURATION/net10.0/cir/ReferencedProtectedGenericOwnerTests.cir.json"
 		consumer_dll="$dir/bin/$CONFIGURATION/net10.0/RoundtripConsumer.Tests.dll"
+		if dotnet "$METADATA_INSPECTOR_DLL" --nested-type-carriers "$consumer_dll" \
+			>"$ROOT/build/nunit-$name.nested-type-carriers.log" 2>&1; then
+			echo "  reexported nested source classifiers and argument order preserved"
+		else
+			echo "  NESTED TYPE CARRIER FAIL — see build/nunit-$name.nested-type-carriers.log"
+			tail -25 "$ROOT/build/nunit-$name.nested-type-carriers.log"; rc=1
+		fi
 		if python3 "$ROOT/tests/roundtrip/assert-existential-return-cir.py" "$consumer_cir" \
 			>"$ROOT/build/nunit-$name.existential-return.log" 2>&1; then
 			echo "  referenced existential calls state physical returns + semantic projections"

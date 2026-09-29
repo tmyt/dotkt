@@ -10,6 +10,12 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 - **Non-returning inline bodies retain terminal continuations (#928).**
   Bodies ending in infinite loops or throws no longer expose a synthetic Unit value to concrete return slots.
 
+- **Bottom-typed inline calls terminate their physical continuation (#926).**
+  Infinite dispatch loops with non-local returns no longer expose an object-typed result to a concrete return slot.
+
+- **Nested Kotlin types retain their classifier path through DLL metadata (#924).**
+  Inner type arguments are recorded before CLR capture projection so imported declarations preserve their source types.
+
 - **Value branches box before reference-typed conditional joins (#913).**
   Physical value conversions are explicit before interface merges, including generic and nullable values.
 
