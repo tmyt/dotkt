@@ -706,7 +706,8 @@ static class FBoundStarProjectionErasure
     {
         var source = new JsonObject();
         bool Moves(JsonNode node) => TypeJson.Read(node) is TypeNode type
-            && !RewriteType(type, owners, refs, preserveConstructedHead: true).Equals(type);
+            && (ContainsGenericArray(type)
+                || !RewriteType(type, owners, refs, preserveConstructedHead: true).Equals(type));
         if (Moves(declaration["base"])) source["base"] = declaration["base"].DeepClone();
         if (declaration["interfaces"] is JsonArray interfaces)
         {
@@ -761,7 +762,8 @@ static class FBoundStarProjectionErasure
             if (parameters[index] is not JsonObject parameter
                 || parameter["constraints"] is not JsonArray constraints
                 || !constraints.Any(constraint => TypeJson.Read(constraint) is TypeNode type
-                    && (ContainsUseSiteProjection(type) || !RewriteType(type, owners, refs).Equals(type)))) continue;
+                    && (ContainsUseSiteProjection(type) || ContainsGenericArray(type)
+                        || !RewriteType(type, owners, refs).Equals(type)))) continue;
             bounds[index.ToString()] = constraints.DeepClone();
         }
         return bounds;
