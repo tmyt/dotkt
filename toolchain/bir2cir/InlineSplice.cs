@@ -1123,7 +1123,12 @@ static class InlineSplice
                 ["init"] = invokeArgs.ElementAtOrDefault(j)?.DeepClone()
                            ?? new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("kotlin.Unit"), ["value"] = null },
             });
-            subst[pn] = new JsonObject { ["k"] = "local", ["name"] = temp };
+            // Substitution replaces the complete read, including its frontend type stamp.
+            // Keep the bound declaration's type so later physical projection can distinguish
+            // a constructed smart cast from an unchecked existential cast.
+            subst[pn] = new JsonObject {
+                ["k"] = "local", ["name"] = temp, ["sty"] = lp["type"]?.DeepClone(),
+            };
         }
         // (a) #126 alpha-rename: fold this-site's `cn -> {local:fresh}` into the param subst (keys DISJOINT — a capture free
         // name is never a carrier param), so the spliced body's colliding free refs adopt the fresh host-field name.
