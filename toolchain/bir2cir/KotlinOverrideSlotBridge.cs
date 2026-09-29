@@ -249,9 +249,10 @@ static class KotlinOverrideSlotBridge
                 && !(differingSuspendResult
                     || IsSuspendMethod(impl) && (unitValueReturn || !IsVoid(slotRet)) && IsUnit(declRet)
                         && !Bool(impl[BirTypeLowering.ValueReturnKey]))) return;
-            // The pre-cold adapter already owns this exact hot obligation, including its argument adaptations.
-            // Do not create a second adapter from the public Task merely because an argument is also erased.
-            if (phase == Phase.PhysicalBridges && HasPreparedTaskSlot(methods,
+            // An existing exact MethodImpl bridge already owns this obligation. Both pre-cold adapters and
+            // covariant-return bridges preserve the implementation's own signature and body; do not rewrite that
+            // declaration or build a competing adapter after suspend lowering has materialized its Task result.
+            if (phase == Phase.PhysicalBridges && HasExistingSlotBridge(methods,
                     supIsInterface ? "clrInterfaceImpls" : "clrBaseImpls", descriptorSpec, descriptorMember,
                     (impl["typeParams"] as JsonArray)?.Count ?? 0, slotParams, slotRet,
                     SubstituteOwnerTypeParameterConstraints(slotTypeParams,
@@ -1492,12 +1493,12 @@ static class KotlinOverrideSlotBridge
 
     enum Fit { Same, Bridge, Rewrite, Foreign }
 
-    static bool HasPreparedTaskSlot(JsonArray methods, string key, TypeNode.Fqn owner, string member, int arity,
+    static bool HasExistingSlotBridge(JsonArray methods, string key, TypeNode.Fqn owner, string member, int arity,
         TypeNode[] parameters, TypeNode result, JsonArray typeParams, ReferenceMetadataIndex refs, ValueTypeOracle isValue)
     {
         foreach (var bridge in methods.OfType<JsonObject>())
         {
-            if (!Bool(bridge[KotlinPropertyAccessors.SuspendTaskOnlyBridgeKey])
+            if (!KotlinPropertyAccessors.IsPhysicalSlotBridge(bridge)
                 || bridge[key] is not JsonArray descriptors) continue;
             foreach (var descriptor in descriptors.OfType<JsonObject>())
             {
