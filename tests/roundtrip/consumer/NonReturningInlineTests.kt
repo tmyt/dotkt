@@ -1,5 +1,6 @@
 import NUnit.Framework.TestAttribute
 import nonreturninginline.*
+import kotlin.coroutines.*
 
 private inline fun <R> localSpin(step: () -> Unit): R { while (true) step() }
 private fun <T> nonReturningValue(value: T): T = spinWhile<T> { return value }
@@ -14,6 +15,16 @@ private fun nestedDeclarationValue(value: String): String = spinWhile<String> {
     class Local { fun read(): String = value }
     return Local().read()
 }
+private fun concreteSpinValue(): Int = concreteSpin { return 47 }
+private fun nestedSpinValue(): String = nestedSpin<String> { return "forwarded" }
+private fun statementSpinValue(): String {
+    spinWhile<String> { return "statement" }
+    error("unreachable")
+}
+private fun calleeFinallyValue(): String = spinWithFinally<String>(
+    { return "callee finally" }, { nonReturningFinallyCount++ })
+private suspend fun <T> suspendedSpinValue(value: T): T = suspendingSpin<T>(
+    { suspendCoroutine<Unit> { pendingNonReturning = it } }, { return value })
 
 class NonReturningInlineTests {
     @TestAttribute
@@ -47,5 +58,30 @@ class NonReturningInlineTests {
         check(returnStep { effects++; "tail" } == "tail")
         check(effects == 2)
         check(returnStep<Int?> { null } == null)
+    }
+
+    @TestAttribute
+    fun calleeContinuationsPreserveFinallyAndSuspension() {
+        check(concreteSpinValue() == 47)
+        check(nestedSpinValue() == "forwarded")
+        check(statementSpinValue() == "statement")
+        nonReturningFinallyCount = 0
+        check(calleeFinallyValue() == "callee finally")
+        check(nonReturningFinallyCount == 1)
+        var completed = false
+        var answer = 0
+        val work: suspend () -> Int = { suspendedSpinValue(53) }
+        work.startCoroutine(object : Continuation<Int> {
+            override val context: CoroutineContext = EmptyCoroutineContext
+            override fun resumeWith(result: Result<Int>) {
+                answer = result.getOrThrow()
+                completed = true
+            }
+        })
+        check(!completed)
+        val continuation = pendingNonReturning ?: error("did not suspend")
+        pendingNonReturning = null
+        continuation.resume(Unit)
+        check(completed && answer == 53)
     }
 }
