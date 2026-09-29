@@ -497,6 +497,29 @@ static class InlineSplice
                     ClosureSynthesis.PrebindSplicedFrames(raw);
                     argNode = DefaultArgSplice.SubstituteTokens(raw, defaultDispatchRecv,
                         ext ? boundArgs.ElementAtOrDefault(0) : null, null, boundArgs);
+                    // A default can invoke an ordinary inline parameter, including a
+                    // caller's non-local return. Consume direct invokes before deciding
+                    // which remaining references actually require a function value.
+                    SpliceLambdaInvokes(argNode, lambdaMap);
+                    for (var earlier = 0; earlier < boundArgs.Count; earlier++)
+                    {
+                        if (boundArgs[earlier] is not JsonObject read
+                            || Str(read["k"]) != "local") continue;
+                        var lname = Str(read["name"]);
+                        if (lname == null || !lambdaMap.TryGetValue(lname, out var carrier)
+                            || !HasLocalIn(argNode, new[] { lname })) continue;
+                        var materialized = MaterializeCarrier(carrier,
+                            lambdaFuncType.GetValueOrDefault(lname), stmts, consumerSemanticOwner);
+                        if (materialized == null)
+                        { FailLoud(o, owner, name, pc, ga, $"lambda parameter used by a default could not be materialized [reason={_matReason}]"); return; }
+                        var value = new JsonObject { ["k"] = "local", ["name"] = materialized,
+                            ["sty"] = lambdaFuncType.GetValueOrDefault(lname)?.DeepClone() };
+                        RecordBound(boundArgs, earlier, value);
+                        subst[Str(pParams[earlier]?["name"])] = value;
+                        RewriteLocalRefs(argNode, new Dictionary<string, JsonNode>(StringComparer.Ordinal)
+                            { [lname] = value });
+                        lambdaMap.Remove(lname);
+                    }
                 }
                 else { FailLoud(o, owner, name, pc, ga, $"missing prepared default for param {pn}"); return; }
                 // BATCH B (#75): a capturing newSuspendLambda built inside a param default binds to a temp whose init
@@ -591,6 +614,23 @@ static class InlineSplice
         // node type, not a claim about what the splice built, and the two never contradict because they are the
         // Kotlin type and the emitted value's type of the same expression.)
         foreach (var st in pBody) if (st != null) stmts.Add(st.DeepClone());
+        // A call instantiated with the non-null bottom result never supplies a value to its consumer.
+        // Preserve evaluation of a tail-folded result, but terminate the physical continuation explicitly:
+        // CLR verification must not see the synthetic object-typed return temporary as a live result.
+        if (NodeType.IsNothing(TypeJson.Read(pRet)))
+        {
+            stmts.Add(new JsonObject { ["k"] = "exprStmt", ["expr"] = result.DeepClone() });
+            result = new JsonObject
+            {
+                ["k"] = "throwExpr",
+                ["value"] = new JsonObject
+                {
+                    ["k"] = "const",
+                    ["type"] = new JsonObject { ["t"] = "nullable", ["of"] = TypeJson.Fqn("kotlin.Nothing") },
+                    ["value"] = null,
+                },
+            };
+        }
         var repl = new JsonObject { ["k"] = "valueBlock", ["stmts"] = stmts, ["result"] = result };
         foreach (var key in new List<string>(((IDictionary<string, JsonNode>)o).Keys)) o.Remove(key);
         foreach (var kv in repl) o[kv.Key] = kv.Value?.DeepClone();
@@ -608,9 +648,7 @@ static class InlineSplice
             $"inline splice: cannot splice {owner}.{name} (pc={pc} ga={ga}): {reason} — "
             + "under splice-all a callInline arrives for every inline+lambda call, so there is no fallback; fix the splice shape or the kotc gate.");
 
-    // #34: record the READ that emitted-position param `i` bound to (a plan `bindRef`, or the local a lambda carrier /
-    // pinned capture named), so a later param's TIER-2 default carrier token `{defaultArgParam idx=i}` (a default
-    // reading this earlier param) resolves to the same single evaluation.
+    // Record the value read by later defaults, never a second evaluation.
     static void RecordBound(JsonArray boundArgs, int i, JsonNode read)
     {
         while (boundArgs.Count <= i) boundArgs.Add(null);
@@ -2072,6 +2110,20 @@ static class InlineSplice
                 body.RemoveAt(body.Count - 1);
                 return v;
             }
+            // A non-Unit Kotlin body with no return cannot complete normally (for example an infinite
+            // loop or a throw). Keep that continuation terminal even when CLR verification considers a
+            // constant loop's conditional exit reachable; Unit is not a value of the declared result type.
+            if (!unit)
+                return new JsonObject
+                {
+                    ["k"] = "throwExpr",
+                    ["value"] = new JsonObject
+                    {
+                        ["k"] = "const",
+                        ["type"] = new JsonObject { ["t"] = "nullable", ["of"] = TypeJson.Fqn("kotlin.Nothing") },
+                        ["value"] = null,
+                    },
+                };
             // D4: a UNIT callee ending in an explicit `{k:return}` (possibly with a side-effecting value) must NOT leave
             // that bare return in the block — it would return from the CALLER. Strip it (hoisting a non-trivial value as
             // a trailing exprStmt so its side effect survives).

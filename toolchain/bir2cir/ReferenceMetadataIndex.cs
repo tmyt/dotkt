@@ -5805,15 +5805,20 @@ sealed partial class ReferenceMetadataIndex
             return;
         if (payload["variances"] is not JsonObject variances || variances.Count == 0)
             throw new InvalidDataException("malformed trusted [KotlinSupertypes] variances");
+        var frame = payload[NullableRepresentationFrame.MetadataKey] is JsonNode frameNode
+            ? ReadNullableFrame(frameNode, declarations.Length) : null;
         var seen = new HashSet<int>();
         foreach (var entry in variances)
         {
-            if (!int.TryParse(entry.Key, out var index) || index < 0 || index >= declarations.Length
-                || declarations[index] is not JsonObject declaration
+            if (!int.TryParse(entry.Key, out var index) || index < 0
+                || index >= (frame?.SourceArity ?? declarations.Length)
                 || !seen.Add(index)
                 || (entry.Value as JsonValue)?.TryGetValue<string>(out var variance) != true
                 || variance is not ("in" or "out"))
                 throw new InvalidDataException("malformed trusted [KotlinSupertypes] variance entry");
+            var physicalIndex = frame?.SourcePosition(index) ?? index;
+            var declaration = declarations[physicalIndex] as JsonObject
+                ?? throw new InvalidDataException("missing physical type parameter declaration");
             declaration["variance"] = variance;
         }
     }

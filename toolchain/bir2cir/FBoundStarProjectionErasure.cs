@@ -720,6 +720,14 @@ static class FBoundStarProjectionErasure
         IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs)
     {
         var bounds = ProjectedTypeParameterBounds(declaration["typeParams"] as JsonArray, owners, refs);
+        if (KotlinSupertypesRecord.ReadNullableFrame(declaration) is { } frame)
+        {
+            var sourceBounds = new JsonObject();
+            foreach (var bound in bounds)
+                if (frame.SourceIndex(int.Parse(bound.Key)) is int source)
+                    sourceBounds[source.ToString()] = bound.Value.DeepClone();
+            bounds = sourceBounds;
+        }
         if (bounds.Count > 0)
             KotlinSupertypesRecord.Merge(declaration, new JsonObject { ["bounds"] = bounds });
     }
