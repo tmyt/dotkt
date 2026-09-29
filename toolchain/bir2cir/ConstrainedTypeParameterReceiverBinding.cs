@@ -457,20 +457,41 @@ static class ConstrainedTypeParameterReceiverBinding
         if (Str(type[KotlinSupertypesRecord.PreKey]) is not string encoded
             || JsonNode.Parse(encoded) is not JsonObject payload || payload["bounds"] is not JsonObject bounds)
             return result;
-        // RecordDeclarationSurfaces runs before TypeOwnershipLowering splits the flattened CLR frame into
-        // capturedTypeParams + typeParams, so the carrier keys already name the complete physical frame. CloneDeclarations
-        // reconstructs that same frame; applying the captured prefix a second time would attach or drop inner bounds.
-        RestoreProjectedSourceBounds(result, bounds, offset: 0);
+        // Carrier keys name source parameters; cloned declarations include physical
+        // companion slots. Use the declaration-owned correspondence, not a prefix count.
+        RestoreProjectedSourceBounds(result, bounds, offset: 0,
+            frame: KotlinSupertypesRecord.ReadNullableFrame(type));
         return result;
     }
 
-    static void RestoreProjectedSourceBounds(JsonArray parameters, JsonObject bounds, int offset)
+    static void RestoreProjectedSourceBounds(JsonArray parameters, JsonObject bounds, int offset,
+        NullableRepresentationFrame frame = null)
     {
         foreach (var pair in bounds)
-            if (int.TryParse(pair.Key, out var index) && index >= 0 && offset + index < parameters.Count
-                && parameters[offset + index] is JsonObject parameter && pair.Value is JsonArray sourceBounds
+            if (int.TryParse(pair.Key, out var sourceIndex) && sourceIndex >= 0
+                && (frame == null || sourceIndex < frame.SourceArity)
+                && offset + (frame?.SourcePosition(sourceIndex) ?? sourceIndex) < parameters.Count
+                && parameters[offset + (frame?.SourcePosition(sourceIndex) ?? sourceIndex)] is JsonObject parameter
+                && pair.Value is JsonArray sourceBounds
                 && sourceBounds.Select(TypeJson.Read).Any(bound => bound != null && ContainsProjection(bound)))
-                parameter[FBoundStarProjectionErasure.ErasedInnerConstraintKey] = sourceBounds.DeepClone();
+                parameter[FBoundStarProjectionErasure.ErasedInnerConstraintKey] =
+                    RebindSourceBoundVariables(sourceBounds, frame);
+    }
+
+    static JsonNode RebindSourceBoundVariables(JsonNode node, NullableRepresentationFrame frame)
+    {
+        if (frame == null || node == null) return node?.DeepClone();
+        if (node is JsonObject obj)
+        {
+            if (Str(obj["t"]) == "tv" && Str(obj["scope"]) == "type")
+                return TypeJson.Write(new TypeNode.Tv("type", frame.SourcePosition(obj["i"].GetValue<int>())));
+            var result = new JsonObject();
+            foreach (var pair in obj) result[pair.Key] = RebindSourceBoundVariables(pair.Value, frame);
+            return result;
+        }
+        if (node is JsonArray array)
+            return new JsonArray(array.Select(value => RebindSourceBoundVariables(value, frame)).ToArray());
+        return node.DeepClone();
     }
 
     static TypeNode.Fqn ProjectedForeignConstraint(TypeNode.Fqn source, ReferenceMetadataIndex refs)
