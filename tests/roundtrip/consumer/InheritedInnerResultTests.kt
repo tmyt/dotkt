@@ -1,0 +1,28 @@
+package roundtriptests.innerresults
+
+import NUnit.Framework.TestAttribute
+import roundtrip.innerresults.*
+
+fun <A, B> checkImportedInnerResult(own: A, value: B) {
+    val child = GenericResult<A, B>().Child(own, value)
+    check(child.own == own && child.value == value)
+    check(child.readOwn() == own && child.readValue() == value)
+}
+
+class InheritedInnerResultTests {
+    @TestAttribute
+    fun closedResultsKeepDistinctOwnAndEnclosingTypes() {
+        checkLocalInnerResults()
+        val child = ClosedResult().Child()
+        check(child.value == "value" && child.own == 17)
+        check(child.readValue() == "value" && child.readOwn() == 17)
+    }
+
+    @TestAttribute
+    fun inheritedResultsCloseIntoCallerGenericFrames() {
+        checkImportedInnerResult("own", 23)
+        checkImportedInnerResult(31, "outer")
+        checkImportedInnerResult<Int?, String?>(null, null)
+        checkImportedInnerResult<Int?, String?>(37, "present")
+    }
+}
