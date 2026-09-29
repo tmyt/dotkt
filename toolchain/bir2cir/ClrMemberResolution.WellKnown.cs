@@ -701,6 +701,8 @@ static partial class ClrMemberResolution
         TypeNode.Ptr pointer => new TypeNode.Ptr(CanonicalInterfaceSlotTypeCore(pointer.Of)),
         TypeNode.Mod modifier => new TypeNode.Mod(modifier.Req,
             CanonicalInterfaceSlotTypeCore(modifier.M), CanonicalInterfaceSlotTypeCore(modifier.Of)),
+        TypeNode.Fn { Clr: not null } function =>
+            CanonicalInterfaceSlotTypeCore(BirTypeLowering.DelegateFqnOf(function)),
         TypeNode.Fn function => new TypeNode.Fn(function.Suspend,
             CanonicalInterfaceSlotTypeCore(function.Ret),
             function.Params.Select(CanonicalInterfaceSlotTypeCore).ToArray(),

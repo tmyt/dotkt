@@ -107,6 +107,7 @@ static partial class ClrMemberResolution
             TypeNode.Ptr pointer => new TypeNode.Ptr(MethodImplComparisonType(pointer.Of)),
             TypeNode.Mod modifier => new TypeNode.Mod(modifier.Req,
                 MethodImplComparisonType(modifier.M), MethodImplComparisonType(modifier.Of)),
+            TypeNode.Fn { Clr: not null } fn => MethodImplComparisonType(BirTypeLowering.DelegateFqnOf(fn)),
             TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend,
                 MethodImplComparisonType(fn.Ret), fn.Params.Select(MethodImplComparisonType).ToArray(),
                 fn.Recv == null ? null : MethodImplComparisonType(fn.Recv), fn.Clr,
