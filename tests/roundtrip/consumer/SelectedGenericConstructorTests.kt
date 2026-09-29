@@ -17,6 +17,8 @@ class SelectedGenericConstructorTests {
     @TestAttribute
     fun importedDeclarationsRemainDistinctAfterInstantiation() {
         check(CovariantSelectionOuter("imported").Child().read() == "imported")
+        val genericChild = CovariantSelectionOuter("imported").GenericChild(107)
+        check(genericChild.read() == "imported" && genericChild.own == 107)
         check(ReceiverSelectedConstructor { length }.run("receiver") == 8)
         val pair = System.Collections.Generic.KeyValuePair2<Int, String>(key = 79, value = "clr")
         check(pair.Key == 79 && pair.Value == "clr")

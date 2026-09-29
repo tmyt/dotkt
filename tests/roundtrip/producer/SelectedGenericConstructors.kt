@@ -10,7 +10,9 @@ class SelectionBox<T>(val value: T)
 
 class CovariantSelectionOuter<out T>(val value: T) {
     inner class Child { fun read(): T = value }
+    inner class GenericChild<U>(val own: U) { fun read(): T = value }
     fun child(): Child = Child()
+    fun <U> genericChild(own: U): GenericChild<U> = GenericChild(own)
 }
 
 class ReceiverSelectedConstructor(val block: String.() -> Int) {
@@ -74,6 +76,8 @@ fun <T> checkGenericSelection(input: T) {
 fun checkLocalConstructorSelection() {
     check(CovariantSelectionOuter("outer").child().read() == "outer")
     check(CovariantSelectionOuter(101).child().read() == 101)
+    val genericChild = CovariantSelectionOuter("outer").genericChild(103)
+    check(genericChild.read() == "outer" && genericChild.own == 103)
     SelectionLocalHost("owner").checkLocalFrame()
     SelectionLocalHost(97).checkLocalFrame()
     check(SelectedConstructor<Int>(value = 3).chosen == 1)

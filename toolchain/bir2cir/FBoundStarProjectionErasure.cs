@@ -1993,7 +1993,10 @@ static class FBoundStarProjectionErasure
             ["k"] = "new",
             ["type"] = TypeJson.Write(new TypeNode.Fqn(inner.Name, constructedArgs)),
             ["argTypes"] = exactSignature.DeepClone(),
-            ["memberSignature"] = exactSignature,
+            // Selection belongs to the constructor's open declaration frame, not the factory method frame.
+            ["memberSignature"] = new JsonArray(constructorParams.OfType<JsonObject>()
+                .Select(parameter => TypeJson.Write(
+                    RequiredParamType(parameter, 0, inner.Name + ".<init>"))).ToArray()),
             ["args"] = args,
         };
         var implementation = new JsonObject
