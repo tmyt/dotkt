@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Inherited function-parameter methods bind exact CLR interface slots (#948).**
+  Function and nominal delegate representations compare using the same physical signature across DLLs.
+
 - **Kotlin generic array signatures retain their source classifier across DLL imports (#941).**
   Array<Int> no longer becomes IntArray when projected from a compiler-produced declaration.
 
