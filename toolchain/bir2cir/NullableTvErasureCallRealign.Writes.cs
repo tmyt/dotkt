@@ -285,7 +285,7 @@ static partial class NullableTvErasureCallRealign
             && owner != null
             && CoerceForTarget(recv, recvType, owner) is JsonNode coercedReceiver)
             obj["recv"] = coercedReceiver;
-        var ownerArgs = owner?.Args;
+        var ownerArgs = OwnerArguments(owner);
         var methodArgs = (obj["typeArgs"] as JsonArray)?.Select(TypeJson.Read).ToArray();
         // No declaration and nothing to refuse: the callee is .NET, so `resolvedMemberParams` IS its declaration.
         RealignArgs(obj, null, null, ownerArgs, methodArgs, ctx);
@@ -508,7 +508,7 @@ static partial class NullableTvErasureCallRealign
         if (TypeJson.Read(obj["ownerType"]) is not TypeNode.Fqn owner || Str(obj["name"]) is not string name) return null;
         if (!ctx.Idx.Slots.TryGetValue(owner.Name, out var slots)) return null;
         if (!slots.TryGetValue(name, out var declared) || declared == null) return null;
-        return Subst(NullableGenericErasure.EraseNullableTv(declared, _isValue), owner.Args, null);
+        return Subst(NullableGenericErasure.EraseNullableTv(declared, _isValue), OwnerArguments(owner), null);
     }
 
     static void EvalArraySet(JsonObject obj, Ctx ctx)

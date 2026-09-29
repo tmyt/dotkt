@@ -475,19 +475,7 @@ static class TypeOwnershipLowering
     // before any CLR-oriented pass substitutes a callee-relative type variable through a constructed owner.
     public static void ProjectInnerApplications(IReadOnlyList<JsonNode> roots, ReferenceMetadataIndex refs)
     {
-        var semanticInnerShape = new Dictionary<string, (int CapturedCount, string Owner)>(StringComparer.Ordinal);
-        foreach (var root in roots.OfType<JsonObject>())
-            if (root["types"] is JsonArray types)
-                foreach (var type in types.OfType<JsonObject>())
-                    if (type["outerTypeParamCount"] is JsonValue countValue
-                        && countValue.TryGetValue<int>(out var count) && count > 0
-                        && type["mods"] is JsonObject mods
-                        && mods["inner"] is JsonValue innerValue
-                        && innerValue.TryGetValue<bool>(out var isInner) && isInner
-                        && Str(type["name"]) is string innerName)
-                        semanticInnerShape[innerName] = (count, Str(type["semanticOwner"])
-                            ?? throw new InvalidOperationException(
-                                $"Kotlin inner type '{innerName}' has no semantic owner"));
+        var applicationOrder = new InnerApplicationOrder(roots, refs);
 
         TypeNode Project(TypeNode type) => type switch
         {
@@ -507,24 +495,8 @@ static class TypeOwnershipLowering
         {
             if (f.Args == null) return f;
             var args = f.Args.Select(Project).ToArray();
-            var found = semanticInnerShape.TryGetValue(f.Name, out var shape);
-            if (!found && (refs?.TryInnerCapturedCount(f.Name, out var capturedCount) ?? false))
-            {
-                if (!refs.TryInnerSemanticOwner(f.Name, out var semanticOwner))
-                    throw new InvalidOperationException(
-                        $"referenced Kotlin inner type '{f.Name}' has no semantic owner fact");
-                shape = (capturedCount, semanticOwner);
-                found = true;
-            }
-            if (!found || shape.CapturedCount == 0) return new TypeNode.Fqn(f.Name, args);
-            if (shape.CapturedCount > args.Length)
-                throw new InvalidOperationException(
-                    $"Kotlin inner application '{f.Name}' supplies {args.Length} type arguments but declares " +
-                    $"{shape.CapturedCount} captured outer slots");
-            var ownCount = args.Length - shape.CapturedCount;
-            var ownerApplication = ProjectFqn(new TypeNode.Fqn(
-                shape.Owner, args.Skip(ownCount).ToArray()));
-            return new TypeNode.Fqn(f.Name, ownerApplication.Args.Concat(args.Take(ownCount)).ToArray());
+            return new TypeNode.Fqn(f.Name,
+                applicationOrder.DeclarationArguments(new TypeNode.Fqn(f.Name, args)));
         }
 
         void Rewrite(JsonNode node)

@@ -121,7 +121,9 @@ static class InheritedMemberOwnerBinding
                 }
                 var ownerBefore = DeclaringOwner(obj)?.DeepClone();
                 Bind(obj, types, localDeclarations, refs, enclosingOwner, projectOnly);
-                if (!JsonNode.DeepEquals(ownerBefore, DeclaringOwner(obj)))
+                // The early projection still carries own-first Kotlin inner arguments. Declaration-relative
+                // result slots close only after inner applications have their physical argument order.
+                if (!projectOnly && !JsonNode.DeepEquals(ownerBefore, DeclaringOwner(obj)))
                     ConstructedMemberReturnSubstitution.ApplyCall(obj);
                 foreach (var kv in obj)
                     if (kv.Value != null) Walk(kv.Value, types, localDeclarations, refs, enclosingOwner, projectOnly);

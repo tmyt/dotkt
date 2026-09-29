@@ -10,6 +10,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 - **Kotlin generic array signatures retain their source classifier across DLL imports (#941).**
   Array<Int> no longer becomes IntArray when projected from a compiler-produced declaration.
 
+- **Inherited inner-member results close after owner argument projection (#933).**
+  Kotlin own-first arguments no longer substitute into CLR enclosing-first return slots before projection.
+
 - **Inner construction keeps declaration signatures in the callee frame (#938).**
   Generic callers no longer leak their type parameters into hidden enclosing-instance slots.
 
