@@ -17,10 +17,32 @@ using DotKt.Bir;
 // as an expression statement and read the resolved singleton afterwards; discarded calls remain ordinary void calls.
 static class PhysicalValueCoercion
 {
-    static bool NeedsConversion(TypeNode source, TypeNode target) =>
+    static bool NeedsConversion(TypeNode source, TypeNode target, Index index) =>
         source is TypeNode.Tv && target is TypeNode.Tv && !source.Equals(target)
         || target is TypeNode.Tv && source is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" }
-        || CollectionViewFaces.IsViewSeam(source, target);
+        || CollectionViewFaces.IsViewSeam(source, target)
+        // A concrete value or generic stack slot is not a reference, even when its boxed value implements the
+        // target interface. State the boxing edge before a conditional merge, store, argument or return.
+        || !IsVoid(source) && !IsVoid(target)
+            && NeedsBox(source, index.IsValue) && IsReferenceSlot(target, index.IsValue);
+
+    static bool NeedsBox(TypeNode type, ValueTypeOracle isValue) => type switch
+    {
+        TypeNode.Tv => true,
+        TypeNode.Nullable nullable => NeedsBox(nullable.Of, isValue),
+        TypeNode.Oblivious oblivious => NeedsBox(oblivious.Of, isValue),
+        TypeNode.Fqn named => isValue(named),
+        _ => false,
+    };
+
+    static bool IsReferenceSlot(TypeNode type, ValueTypeOracle isValue) => type switch
+    {
+        TypeNode.Array => true,
+        TypeNode.Nullable nullable => IsReferenceSlot(nullable.Of, isValue),
+        TypeNode.Oblivious oblivious => IsReferenceSlot(oblivious.Of, isValue),
+        TypeNode.Fqn named => !IsVoid(named) && !isValue(named),
+        _ => false,
+    };
     sealed record MethodShape(string Owner, string Name, int Arity, TypeNode[] Parameters, TypeNode Return);
 
     sealed class Index
@@ -28,6 +50,7 @@ static class PhysicalValueCoercion
         readonly Dictionary<string, List<MethodShape>> _methods = new(StringComparer.Ordinal);
         readonly Dictionary<string, TypeNode> _fields = new(StringComparer.Ordinal);
         readonly Func<JsonObject> _unitValue;
+        internal ValueTypeOracle IsValue;
         internal JsonObject Document;
         internal bool ReferenceBuild;
 
@@ -133,9 +156,11 @@ static class PhysicalValueCoercion
         internal Scope Copy() => new(Owner, Return, new Dictionary<string, TypeNode>(Locals, StringComparer.Ordinal), TemporaryFields, TemporaryLocals);
     }
 
-    public static void ApplyAll(IReadOnlyList<JsonNode> roots, Func<JsonObject> unitValue, bool referenceBuild = false)
+    public static void ApplyAll(IReadOnlyList<JsonNode> roots, Func<JsonObject> unitValue,
+        ValueTypeOracle isValue, bool referenceBuild = false)
     {
         var index = Index.Build(roots, unitValue);
+        index.IsValue = isValue;
         index.ReferenceBuild = referenceBuild;
         foreach (var root in roots.OfType<JsonObject>()) RewriteDocument(root, index);
     }
@@ -436,7 +461,17 @@ static class PhysicalValueCoercion
         // collection face while the selected member belongs to its read-only face. Use the exact resolved
         // owner, just as argument coercion uses the exact selected parameter vector.
         if (node["recv"] != null && ResolvedMember(node) is JsonObject selected)
-            CoerceSlot(node, "recv", TypeJson.Read(selected["declaringType"]), scope, index);
+        {
+            // Address-taking dispatch consumes the recorded receiver construction, not a boxed instance of the
+            // declaring interface. Preserve that physical slot for constrained calls and CLR struct dispatch.
+            var receiverTarget = Str(node["k"]) switch
+            {
+                "constrainedCall" => TypeJson.Read(node["recvType"]),
+                "clrInstance" or "clrPropGet" or "clrPropSet" => TypeJson.Read(node["type"]),
+                _ => TypeJson.Read(selected["declaringType"]),
+            };
+            CoerceSlot(node, "recv", receiverTarget, scope, index);
+        }
     }
 
     static void CoerceDelegateArguments(JsonObject node, Scope scope, Index index)
@@ -468,7 +503,11 @@ static class PhysicalValueCoercion
 
     static void CoerceConstructorArguments(JsonObject node, Scope scope, Index index)
     {
-        var targets = ParameterTypes(node);
+        // A local new's argTypes already describe the caller's closed construction. Only a resolved constructor
+        // memberRef still carries declaration-relative parameters that need substitution through its owner.
+        var targets = node["memberRef"] is JsonObject
+            ? ParameterTypes(node)
+            : ReadTypes(node["argTypes"] as JsonArray);
         CoerceArguments(node, targets, scope, index);
         // An erased value may cross into a closed constructor parameter, but that target belongs to the
         // selected physical declaration, not to an independently closed source projection. In particular,
@@ -525,8 +564,8 @@ static class PhysicalValueCoercion
         if (target != null && value is JsonObject conditional && Str(conditional["k"]) == "cond"
             && conditional["type"] == null)
         {
-            var thenSeam = NeedsConversion(ExprType(conditional["then"], scope, index), target);
-            var elseSeam = NeedsConversion(ExprType(conditional["else"], scope, index), target);
+            var thenSeam = NeedsConversion(ExprType(conditional["then"], scope, index), target, index);
+            var elseSeam = NeedsConversion(ExprType(conditional["else"], scope, index), target, index);
             if (thenSeam || elseSeam)
             {
                 CoerceSlot(conditional, "then", target, scope, index);
@@ -539,7 +578,7 @@ static class PhysicalValueCoercion
         if (value is JsonObject expression
             && ClrMemberResolution.AdaptUnitDelegateValue(index.Document, expression, got, target) is JsonObject adapter)
             return adapter;
-        if (!NeedsConversion(got, target)) return value;
+        if (!NeedsConversion(got, target, index)) return value;
         return new JsonObject
         {
             ["k"] = "cast",

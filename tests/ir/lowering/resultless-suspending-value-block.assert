@@ -1,5 +1,6 @@
 # A consumed Unit placeholder becomes the exact singleton, not a null/void literal.
 +},{"k":"return","value":{"k":"staticField","ownerType":{"t":"fqn","name":"kotlin.Unit"},"name":"INSTANCE","fieldRef":{"kind":"field","assembly":"DotKt.Stdlib","declaringType":{"t":"fqn","name":"kotlin.Unit"},"name":"INSTANCE","genericArity":0,"returnType":{"t":"fqn","name":"kotlin.Unit"}}}},{"k":"return"
 -},{"k":"return","value":{"k":"const","type":{"t":"fqn","name":"System.Object"},"value":null}},{"k":"return","value":{"k":"const","type":{"t":"fqn","name":"System.Object"},"value":null}}
-+},{"k":"return","value":{"k":"default","type":{"t":"fqn","name":"System.Int32"}}}
+# The physical suspend result is object, so the default value must be boxed explicitly.
++},{"k":"return","value":{"k":"cast","type":{"t":"fqn","name":"System.Object"},"e":{"k":"default","type":{"t":"fqn","name":"System.Int32"}}}}
 -"value":{"k":"const","type":{"t":"fqn","name":"System.Int32"},"value":null}
