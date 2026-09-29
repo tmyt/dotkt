@@ -24,5 +24,11 @@ class InnerSourceParameterMetadataTests {
         val value: Owner<String>.Bounded<*> = owner.Bounded(Concrete())
         check(value.item.previous.value == null)
         check(owner.storage.value == null)
+        val marked = owner.Marked(NullableMarker(), "unconstrained")
+        check(marked.item.read() == 17 && marked.other == "unconstrained")
+        val projected = owner.Projected(StringMarker(), 29)
+        check(projected.item.read() == "projected" && projected.other == 29)
+        val dependent = owner.Dependent<StringMarker, String>(StringMarker())
+        check(dependent.read() == "projected")
     }
 }

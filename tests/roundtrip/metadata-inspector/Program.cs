@@ -37,6 +37,13 @@ if (args.Length == 2 && args[0] == "--klib-explicit-field-slots")
     return;
 }
 
+if (args.Length == 2 && args[0] == "--klib-inner-source-parameters")
+{
+    VerifyInnerSourceParameters(args[1]);
+    Console.WriteLine("KLIB inner source parameter metadata: OK");
+    return;
+}
+
 if (args.Length == 4 && args[0] == "--klib-class-properties")
 {
     VerifyKlibClassProperties(args[1], args[2], args[3].Split(',', StringSplitOptions.RemoveEmptyEntries));
@@ -128,6 +135,7 @@ if (args.Length != 7)
         "usage:\n" +
         "  CompanionMetadataInspector <producer.dll> <producer.klib> <companion.bir.json> <companion.cir.json> <ownership.bir.json> <ownership.cir.json> <consumer.dll>\n" +
         "  CompanionMetadataInspector --volatile-consumer <consumer.dll> <type> <method>...\n" +
+        "  CompanionMetadataInspector --klib-inner-source-parameters <file.klib>\n" +
         "  CompanionMetadataInspector --klib-class-properties <file.klib> <class> <property[,property...]>\n" +
         "  CompanionMetadataInspector --klib-class-functions <file.klib> <class> <function[,function...]>\n" +
         "  CompanionMetadataInspector --klib-class-supertypes <file.klib> <class> <supertype[,supertype...]>\n" +
@@ -592,6 +600,64 @@ static void VerifyKlibPackageProperties(string path, string packageName, IReadOn
     if (functionCollisions.Length != 0)
         throw new InvalidDataException(
             $"{packageName} properties also leaked as functions [{string.Join(", ", functionCollisions)}]");
+}
+
+static void VerifyInnerSourceParameters(string path)
+{
+    const string ns = "roundtrip.innersourceparameters";
+    using var archive = ZipFile.OpenRead(path);
+    var fragments = archive.Entries.Where(entry => entry.FullName.EndsWith(".knm", StringComparison.Ordinal))
+        .Select(entry => { using var stream = entry.Open(); return PackageFragment.Parser.ParseFrom(stream); })
+        .Where(fragment => fragment.FqName == ns).ToArray();
+    Require(fragments.Length == 1, "inner source parameter fixture package must be unique");
+    var fragment = fragments[0];
+    TypeParameter Parameter(string suffix, int id, TypeParameter.Types.Variance variance)
+    {
+        var declaration = fragment.Class.Single(type => QualifiedName(fragment, type.FqName) == ns + "." + suffix);
+        Require(declaration.TypeParameter.Count == 1, suffix + " must own exactly one source parameter");
+        var parameter = declaration.TypeParameter[0];
+        Require(parameter.Id == id && parameter.Variance == variance,
+            suffix + " source parameter index/variance must survive enclosing companion slots");
+        return parameter;
+    }
+    Parameter("Owner.Covariant", 1, TypeParameter.Types.Variance.Out);
+    Parameter("Owner.Contravariant", 1, TypeParameter.Types.Variance.In);
+    Parameter("Owner.Middle.Leaf", 2, TypeParameter.Types.Variance.Out);
+    var bounded = Parameter("Owner.Bounded", 1, TypeParameter.Types.Variance.Inv);
+    Require(bounded.UpperBound.Count == 1, "inner B must retain exactly one source bound");
+    var bound = bounded.UpperBound[0];
+    Require(bound.HasClassName && QualifiedName(fragment, bound.ClassName) == ns + ".Node"
+        && bound.Argument.Count == 1 && bound.Argument[0].Type is { } argument
+        && argument.HasTypeParameter && argument.TypeParameter == bounded.Id,
+        "inner B bound must be Node<B>, not an erased star or physical companion");
+    foreach (var suffix in new[] { "Marked", "Projected", "Dependent" })
+    {
+        var declaration = fragment.Class.Single(type =>
+            QualifiedName(fragment, type.FqName) == ns + ".Owner." + suffix);
+        Require(declaration.TypeParameter.Count == 2, suffix + " must retain exactly B and C");
+        var first = declaration.TypeParameter.Single(parameter => parameter.Id == 1);
+        var second = declaration.TypeParameter.Single(parameter => parameter.Id == 2);
+        Require(second.UpperBound.Count == 0, suffix + " must not move B's bound onto unconstrained C");
+        Require(first.UpperBound.Count == 1, suffix + " B must retain its source bound");
+        var constraint = first.UpperBound[0];
+        Require(constraint.HasClassName && QualifiedName(fragment, constraint.ClassName) == ns + ".Marker"
+            && constraint.Argument.Count == 1, suffix + " must retain Marker source identity");
+        var arg = constraint.Argument[0];
+        var argumentType = arg.Type
+            ?? throw new InvalidDataException(suffix + " bound argument must not collapse to a star");
+        if (suffix == "Marked")
+            Require(argumentType.HasClassName && QualifiedName(fragment, argumentType.ClassName) == "kotlin.Int"
+                && argumentType.Nullable, "Marked bound must retain Int?");
+        else
+        {
+            Require(arg.Projection == DotKt.Klib.Metadata.Type.Types.Argument.Types.Projection.Out,
+                suffix + " must retain its use-site out projection");
+            Require(suffix == "Dependent"
+                ? argumentType.HasTypeParameter && argumentType.TypeParameter == second.Id
+                : argumentType.HasClassName && QualifiedName(fragment, argumentType.ClassName) == "kotlin.String",
+                suffix + " bound must retain its source argument");
+        }
+    }
 }
 
 static void VerifyKlibPackageNullableMethodBound(string path, string packageName, string functionName)
