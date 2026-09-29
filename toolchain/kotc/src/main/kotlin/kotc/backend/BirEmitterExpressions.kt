@@ -447,7 +447,14 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 			val externalTypes = (listOfNotNull(innerOuterSlot) + node.symbol.owner.parameters
 				.filter { it.kind == IrParameterKind.Regular }
 				.map { birType(ctorSubst?.substitute(it.type) ?: it.type).toJson() }).joinToString(",")
-			"""{"k":"new","type":${clr.toJson()},"argTypes":[$externalTypes],"args":[$externalArgs]}"""
+			val externalSignature = inMemberDeclarationFrame(node.symbol.owner) {
+				val outer = node.symbol.owner.parameters.firstOrNull { it.kind == IrParameterKind.DispatchReceiver }
+					?.let { birType(it.type).toJson() }
+				val regular = node.symbol.owner.parameters.filter { it.kind == IrParameterKind.Regular }
+					.map { birType(it.type).toJson() }
+				(listOfNotNull(outer) + regular).joinToString(",")
+			}
+			"""{"k":"new","type":${clr.toJson()},"argTypes":[$externalTypes],"args":[$externalArgs],"memberSignature":[$externalSignature]}"""
 		}
 		else {
 			// A lifted local class prepends its captured outer locals (evaluated here, in the outer context).

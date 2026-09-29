@@ -521,6 +521,10 @@ static class MemberCallSubstitution
             ["argTypes"] = newClrArgTypes,
             ["args"] = newClrArgs,
         };
+        // A projected CLR declaration keeps the constructor selected by kotc. Alias constructors instead
+        // undergo a representation mapping above and do not retain the source declaration's physical shape.
+        if (!viaAlias && node["memberSignature"] is JsonArray selectedSignature)
+            lowered["memberSignature"] = selectedSignature.DeepClone();
         return plan == null ? lowered : MaterialiseMappedArguments(plan, lowered, typeNode);
     }
 
