@@ -571,7 +571,7 @@ internal sealed class DelegateReferenceCatalog
                     metadataName,
                     path,
                     MetadataTokens.GetRowNumber(handle),
-                    IsCanonicalFunctionDefinition(assemblyName, metadataName, attributes.IsStandardLibrary)));
+                    IsCanonicalFunctionDefinition(metadataName, attributes.IsStandardLibrary)));
             }
         }
 
@@ -639,15 +639,8 @@ internal sealed class DelegateReferenceCatalog
     }
 
     private static bool IsCanonicalFunctionDefinition(
-        string assemblyName, string metadataName, bool isStandardLibrary) =>
-        ((assemblyName is "System.Private.CoreLib" or "System.Runtime" or "mscorlib") &&
-         IsCanonicalSystemFunctionDelegate(metadataName)) ||
-        (isStandardLibrary && IsCanonicalWideFunctionDelegate(metadataName));
-
-    internal static bool IsCanonicalSystemFunctionDelegate(string name) =>
-        name == "System.Action" ||
-        IsArityQualifiedFamily(name, "System.Action", 1, 16) ||
-        IsArityQualifiedFamily(name, "System.Func", 1, 17);
+        string metadataName, bool isStandardLibrary) =>
+        isStandardLibrary && IsCanonicalWideFunctionDelegate(metadataName);
 
     internal static bool IsCanonicalWideFunctionDelegate(string name) =>
         IsArityQualifiedFamily(name, "DotKt.Runtime.CompilerServices.KAction", 17, 22) ||
@@ -7639,8 +7632,6 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
             });
             return MarkValueType(span);
         }
-        if (genericName is not null && IsKnownDelegate(genericName))
-            return ConstructDelegate(genericName, typeArguments);
         // CLR nested TypeSpecs flatten an inner class as [outer capture..., own...]. Kotlin metadata flattens the
         // same classifier as [own..., outer...]; preserve every argument and rotate at this representation boundary.
         if (_nullableTypeFrames.TryGetValue(genericType, out var nullableFrame))
@@ -7867,12 +7858,6 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
             return Platform(collection);
         if (_restoreKotlinCollections && metadataFull == "System.IComparable")
             return Named("kotlin.Comparable");
-        // A generic signature is decoded in two callbacks: first its open
-        // TypeRef, then GetGenericInstantiation. Do not prematurely turn
-        // Action`N into Function0 here or the later arguments
-        // would merely be appended to the wrong Function0 constructor.
-        if (full == "System.Action" && !metadataName.Contains('`'))
-            return KnownDelegate(full, ImmutableArray<KType>.Empty);
         var result = full switch
         {
             "System.String" => Platform("kotlin.String"),
@@ -8404,36 +8389,8 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
         _ => null,
     };
 
-    private bool IsCanonicalLocalFunctionDelegate(string name)
-    {
-        var assemblyName = _md.IsAssembly
-            ? _md.GetString(_md.GetAssemblyDefinition().Name)
-            : null;
-        return ((assemblyName is "System.Private.CoreLib" or "System.Runtime" or "mscorlib") &&
-                DelegateReferenceCatalog.IsCanonicalSystemFunctionDelegate(name)) ||
-               (_attrs.IsStandardLibrary && DelegateReferenceCatalog.IsCanonicalWideFunctionDelegate(name));
-    }
-
-    private static bool IsCanonicalFunctionDelegate(string name) =>
-        DelegateReferenceCatalog.IsCanonicalSystemFunctionDelegate(name);
-
-    private bool IsKnownDelegate(string name) => IsCanonicalFunctionDelegate(name);
-
-    private KType ConstructDelegate(string name, ImmutableArray<KType> typeArguments)
-    {
-        if (name.StartsWith("System.Func", StringComparison.Ordinal))
-        {
-            if (typeArguments.Length == 0) return Any(nullable: true);
-            return Function(typeArguments[..^1], typeArguments[^1]);
-        }
-        if (name.StartsWith("System.Action", StringComparison.Ordinal))
-            return Function(typeArguments, Named("kotlin.Unit"));
-        if (!_delegateDefinitions.TryGetValue(name, out var handle)) return Any(nullable: true);
-        return Substitute(DecodeDelegate(handle), typeArguments);
-    }
-
-    private KType KnownDelegate(string name, ImmutableArray<KType> typeArguments) =>
-        ConstructDelegate(name, typeArguments);
+    private bool IsCanonicalLocalFunctionDelegate(string name) =>
+        _attrs.IsStandardLibrary && DelegateReferenceCatalog.IsCanonicalWideFunctionDelegate(name);
 
     private KType DecodeDelegate(TypeDefinitionHandle handle)
     {

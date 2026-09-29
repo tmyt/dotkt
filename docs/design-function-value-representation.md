@@ -7,8 +7,16 @@ establish a proven representation.
 The initial implementation prototype uses one object-argument/object-result delegate shape per ordinary
 function arity, with conversions at compiler-generated target entry rather than ordinary value-flow edges.
 Five local focused cases now pass strict ILVerify and execution, including Unit and identity after Any views.
-This is not yet the completed contract: native nominal projection, complete source-shape metadata across DLLs,
-byref-like callbacks, receiver/context functions and wide arities still require implementation or validation.
+The prototype now also preserves authored function-containing declaration slots in KotlinType metadata before
+representation changes, and explicitly narrows erased invocation results. The permanent cross-DLL fixture covers
+source signatures and identity, nullable/nested functions, receiver/context functions, generic containers, and
+inline/default arguments. Native Func/Action projection is nominal, using the existing arity-disambiguated names
+(for example `System.Func2<Int, Int>`). Focused native tests cover literal/stored-function SAM conversions,
+CLR override dispatch, nominal delegate identity, and a Span callback returning Unit as an object.
+Literal constructions already bound to a native delegate keep their exact function signature; ordinary Kotlin
+function operands erase before a stored-value SAM conversion. This prevents illegal boxing of native Span slots.
+This is not yet the completed contract: wide arities, broader existing interop and function regression suites,
+the complete toolchain build, independent reviews, and actual coroutines validation remain outstanding.
 
 ## Reproduced defect
 

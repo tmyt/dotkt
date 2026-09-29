@@ -171,6 +171,7 @@ sealed class Pipeline
         // #395: snapshot frontend declaration identity before ANY Kotlin-to-CLR representation pass can rename,
         // move, clone, or synthesize a declaration. These are source facts, never a physical-name reverse inference.
         var declarationSemanticSignatures = DeclarationIdentityBinding.PreserveSourceFacts(birRoots);
+        FunctionValueRepresentation.PreserveSourceFacts(birRoots);
         var localDeclarationIds = DeclarationIdentityBinding.CollectDeclarationIds(birRoots);
         // These are new CLR slot bodies for frontend-selected inherited implementations, not source declarations.
         // Materialize before downstream indexing/freezing so references and local bases use the same suspend ABI.
