@@ -41,3 +41,13 @@ actual="$(dotnet "$probe_dir/TargetUniverseProbe.dll")"
 
 dotnet run --project "$ROOT/tests/target-universe/MetadataProbe.csproj" -c Release -- \
     "$raw"
+
+# Preserve all physical generic-constraint rows, independently of Kotlin lowering choices.
+cir_sources=("$OUT"/obj/Release/net10.0/cir/*.cir.json)
+constraint_project="$ROOT/tests/constraint-emission/ConstraintProbe.csproj"
+dotnet run --project "$constraint_project" -c Release -- generate \
+    "${cir_sources[0]}" "$OUT/constraints.cir.json"
+dotnet "$ILEMIT_DLL" "$OUT/constraints" ConstraintEmission --compile-refs "$FRAMEWORK_COMPILE_REFS" \
+    "$OUT/constraints.cir.json"
+dotnet run --project "$constraint_project" -c Release -- verify "$OUT/constraints/ConstraintEmission.dll"
+bash "$ROOT/tests/run-ilverify.sh" "$OUT/constraints/ConstraintEmission.dll"

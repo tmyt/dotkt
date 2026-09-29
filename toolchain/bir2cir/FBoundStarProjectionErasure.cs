@@ -418,14 +418,14 @@ static class FBoundStarProjectionErasure
                         || key == ExistentialArrayElementProjectionKey) continue;
                     var childBoundDeclaration = boundDeclaration
                         || IsBoundDeclarationType(obj, key, refs, localClrAliases);
-                    if (key == "argTypes" && value is JsonArray argumentTypes
+                    if (key is "argTypes" or "memberSignature" && value is JsonArray argumentTypes
                         && obj["args"] is JsonArray argumentValues)
                     {
                         for (var index = 0; index < argumentTypes.Count; index++)
                         {
                             var argumentType = TypeJson.Read(argumentTypes[index]);
                             if (argumentType == null) continue;
-                            var exactValue = index < argumentValues.Count
+                            var exactValue = key == "argTypes" && index < argumentValues.Count
                                 && argumentValues[index] is JsonObject argument
                                 && (Str(argument["k"]) == "this" || Bool(argument[ExactOuterKey]));
                             var exactOuterSlot = IsInnerConstructionOuterSlot(obj, index, defs, refs);
@@ -2041,7 +2041,10 @@ static class FBoundStarProjectionErasure
             ["k"] = "new",
             ["type"] = TypeJson.Write(new TypeNode.Fqn(inner.Name, constructedArgs)),
             ["argTypes"] = exactSignature.DeepClone(),
-            ["memberSignature"] = exactSignature,
+            // Selection belongs to the constructor's open declaration frame, not the factory method frame.
+            ["memberSignature"] = new JsonArray(constructorParams.OfType<JsonObject>()
+                .Select(parameter => TypeJson.Write(
+                    RequiredParamType(parameter, 0, inner.Name + ".<init>"))).ToArray()),
             ["args"] = args,
         };
         var implementation = new JsonObject
@@ -2718,14 +2721,14 @@ static class FBoundStarProjectionErasure
                         || rewroteRuntimeOperand && key == "e") continue;
                     var childBoundDeclaration = boundDeclaration
                         || IsBoundDeclarationType(obj, key, refs, localClrAliases);
-                    if (key == "argTypes" && value is JsonArray argumentTypes
+                    if (key is "argTypes" or "memberSignature" && value is JsonArray argumentTypes
                         && obj["args"] is JsonArray argumentValues)
                     {
                         for (var index = 0; index < argumentTypes.Count; index++)
                         {
                             var argumentType = TypeJson.Read(argumentTypes[index]);
                             if (argumentType == null) continue;
-                            var exactValue = index < argumentValues.Count
+                            var exactValue = key == "argTypes" && index < argumentValues.Count
                                 && argumentValues[index] is JsonObject argument
                                 && (Str(argument["k"]) == "this" || Bool(argument[ExactOuterKey]));
                             var exactOuterSlot = IsInnerConstructionOuterSlot(obj, index, defs, refs);
@@ -2808,6 +2811,11 @@ static class FBoundStarProjectionErasure
             || declarationSignature.Count != arguments.Count) return;
         var signature = declarationSignature.Select(TypeJson.Read).ToArray();
         if (signature.Any(type => type == null)) return;
+        var projectedResult = RewriteType(owner, owners, refs);
+        // A nested projection may have a concrete carrier argument without hiding this owner's frame:
+        // Holder<Source<*>> becomes Holder<Source$star>. Construct that exact closed owner normally; inferring
+        // Holder<ConcreteSource> from the argument value would create a different invariant CLR instantiation.
+        if (projectedResult is TypeNode.Fqn projectedOwner && projectedOwner.Name == owner.Name) return;
         if (signature.Any(ContainsManagedReference))
             throw new NotSupportedException(
                 $"bir2cir: projected constructor `{owner.Name}` has a ref/out or pointer parameter; "
@@ -2862,7 +2870,6 @@ static class FBoundStarProjectionErasure
                     ["k"] = "newArray", ["elem"] = TypeJson.Write(anyN), ["elems"] = runtimeArguments,
                 }),
         };
-        var projectedResult = RewriteType(owner, owners, refs);
         if (!IsObjectish(projectedResult)) invocation = new JsonObject
         {
             ["k"] = "cast", ["type"] = TypeJson.Write(projectedResult), ["e"] = invocation,

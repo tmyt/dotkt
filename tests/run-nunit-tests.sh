@@ -52,9 +52,9 @@ PROJECTS=(
 declare -A EXPECTED_DISCOVERED=(
 	["tests/basic"]=665
 	["tests/coroutines"]=246
-	["tests/roundtrip/consumer"]=371
+	["tests/roundtrip/consumer"]=377
 	["tests/roundtrip/bidirectional/consumer"]=38
-	["tests/interop/consumer"]=367
+	["tests/interop/consumer"]=368
 )
 
 # Validate the baseline map before doing any expensive work. A new/renamed suite without a reviewed count is a
@@ -261,6 +261,13 @@ for proj in "${PROJECTS[@]}"; do
 	if [[ "$proj" == "tests/roundtrip/consumer" ]]; then
 		producer_dll="$ROOT/tests/roundtrip/producer/bin/$CONFIGURATION/net10.0/RoundtripProducer.dll"
 		producer_klib="$dir/obj/$CONFIGURATION/net10.0/klib/RoundtripProducer.klib"
+		if dotnet "$METADATA_INSPECTOR_DLL" --klib-nonnull-bounds "$producer_klib" \
+			>"$ROOT/build/nunit-$name.nonnull-bounds.log" 2>&1; then
+			echo "  non-null and nullable generic source bounds OK"
+		else
+			echo "  NONNULL BOUNDS FAIL"
+			tail -25 "$ROOT/build/nunit-$name.nonnull-bounds.log"; rc=1
+		fi
 		if dotnet "$METADATA_INSPECTOR_DLL" --klib-inner-source-parameters "$producer_klib" \
 			>"$ROOT/build/nunit-$name.inner-source-parameters.log" 2>&1; then
 			echo "  inner source parameter indices, variance and bounds OK"
