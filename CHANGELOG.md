@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Inner generic metadata retains source parameter indices (#896).**
+  Enclosing nullable companion slots no longer shift imported Kotlin bounds or declaration-site variance.
+
 - **Value branches box before reference-typed conditional joins (#913).**
   Physical value conversions are explicit before interface merges, including generic and nullable values.
 
