@@ -12,12 +12,20 @@ static class TypeOwnershipLowering
     // KotlinType metadata must retain the source classifier path and own-first inner arguments, before physical
     // capture projection permutes those arguments. The '+' path separator explicitly records a class segment;
     // the reader must not guess whether a dot separated a package or an enclosing class.
-    public static void RecordNestedSourceTypes(IReadOnlyList<JsonNode> roots)
+    public static void RecordNestedSourceTypes(IReadOnlyList<JsonNode> roots, ReferenceMetadataIndex refs)
     {
-        var definitions = roots.OfType<JsonObject>()
+        var definitions = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
+        foreach (var type in roots.OfType<JsonObject>()
             .SelectMany(root => (root["types"] as JsonArray)?.OfType<JsonObject>() ?? Enumerable.Empty<JsonObject>())
-            .Where(type => Str(type["name"]) != null)
-            .ToDictionary(type => Str(type["name"]), StringComparer.Ordinal);
+            .Where(type => Str(type["name"]) != null))
+        {
+            var name = Str(type["name"]);
+            // Shared synthetic declarations can occur in several roots before module de-duplication.
+            // This index owns only their lexical path; repeated declarations must agree on that owner.
+            if (!definitions.TryAdd(name, type)
+                && Str(definitions[name]["semanticOwner"]) != Str(type["semanticOwner"]))
+                throw new InvalidOperationException($"conflicting Kotlin semantic owners for '{name}'");
+        }
         var names = new Dictionary<string, string>(StringComparer.Ordinal);
         string SourceName(string name)
         {
@@ -42,9 +50,10 @@ static class TypeOwnershipLowering
                     {
                         var sourceName = SourceName(name);
                         if (sourceName != name) obj["name"] = sourceName;
-                        // Referenced classifiers already carry an explicit nested path. Their arguments still
-                        // need this source-order snapshot before ProjectInnerApplications permutes them.
-                        hasNestedClassifier |= sourceName.Contains('+');
+                        // Only Kotlin inner applications need a referenced source-order snapshot. CLR nested
+                        // classifiers retain their physical signature projection (including arity-clash names).
+                        hasNestedClassifier |= sourceName != name
+                            || (refs?.TryInnerCapturedCount(name, out var captured) == true && captured > 0);
                     }
                     foreach (var child in obj.Select(pair => pair.Value).Where(value => value != null).ToList())
                         Rewrite(child);

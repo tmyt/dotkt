@@ -7,6 +7,11 @@ fun forwardedNestedMetadataLeaf(leaf: Nest<*>.Middle<String>.Leaf<Int>): Int = r
 class NestedTypeMetadataTests {
     @TestAttribute
     fun projectedInnerSlotsRetainTheirClassifierAndArgumentOrder() {
+        check(firstNestedText("first") == "first")
+        check(secondNestedText("second") == "second")
+        val builder = System.Collections.Immutable.ImmutableArray.CreateBuilder<Int>()
+        builder.Add(7)
+        check(nestedClrBuilderCount(builder) == 1)
         val item = Outer(19).Item("inner")
         check(readInner(item) == "inner")
         check(readOuter(item) == 19)

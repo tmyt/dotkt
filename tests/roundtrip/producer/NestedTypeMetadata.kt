@@ -1,5 +1,8 @@
 package nestedmetadata
 
+fun <T : CharSequence> firstNestedText(value: T): T = value
+fun nestedClrBuilderCount(builder: System.Collections.Immutable.ImmutableArray1.Builder<Int>): Int = builder.Count
+
 class Outer<O>(val outerValue: O) {
     inner class Item<I>(val value: I) {
         fun outer(): O = outerValue
