@@ -650,6 +650,7 @@ sealed class Pipeline
             // already-erased `suspendRet`.
             RoundtripMetadata.FreezeSuspendResults(new[] { bir.Root });
             NullableGenericErasure.Apply(bir.Root, isValueFqn);
+            FunctionValueRepresentation.Apply(bir.Root);
             // GENERIC-BOUNDARY nullable-Tv USE realignment — THE USE AXIS of #86's erasure invariant (#4;
             // #113/#117/#120/#142). The DEF-side erasure above turns a member's `T?`/`…Ref<T?>…` into
             // `object`/`…Ref<object>…`, but a CALL site kotc emitted with T already substituted carries the concrete

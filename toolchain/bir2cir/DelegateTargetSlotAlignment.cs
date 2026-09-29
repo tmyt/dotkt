@@ -180,11 +180,30 @@ static class DelegateTargetSlotAlignment
     // first typed consumer and boxes a now-`object` return at the `return`.
     static void Align(JsonObject mo, Demand d)
     {
+        var argumentPrologueCount = 0;
         if (mo["params"] is JsonArray ps)
             for (var i = 0; i < ps.Count; i++)
                 if (d.Params.Contains(i) && ps[i] is JsonObject po
                     && TypeJson.Read(po["type"]) is TypeNode pt && !IsBareObject(pt))
                 {
+                    if (mo["body"] is JsonArray body && Str(po["name"]) is string sourceName)
+                    {
+                        var physicalName = CallEvalLowering.FreshBindingId();
+                        po["name"] = physicalName;
+                        body.Insert(argumentPrologueCount++, new JsonObject
+                        {
+                            ["k"] = "var", ["name"] = sourceName, ["type"] = TypeJson.Write(pt),
+                            ["init"] = new JsonObject
+                            {
+                                ["k"] = "cast", ["type"] = TypeJson.Write(pt),
+                                ["e"] = new JsonObject
+                                {
+                                    ["k"] = "local", ["name"] = physicalName,
+                                    ["sty"] = TypeJson.Write(ObjFqn),
+                                },
+                            },
+                        });
+                    }
                     po["type"] = TypeJson.Write(ObjFqn);
                     _moved = true;
                 }
