@@ -2535,6 +2535,17 @@ sealed partial class ReferenceMetadataIndex
             || !TryMembersByBirOwner(candidateOwner, out var members)
             || !TryMembersByBirOwner(sourceOwner.Name, out var semanticMembers)) return false;
 
+        // Both selection steps describe the Kotlin declaration. A projected physical parameter such as
+        // Sink$star cannot identify an authored Sink<T> signature before the existential slot is selected.
+        static TypeNode[] SourceParameters(MemberBinding member)
+        {
+            var parameters = member.DeclarationSemanticParams
+                ?? member.KotlinParameterTypes ?? member.ParamTypeNodes;
+            return member.DeclarationSemanticParams != null || parameters == null ? parameters
+                : parameters.Select((parameter, index) =>
+                    member.NullableGenericParams?[index] ?? parameter).ToArray();
+        }
+
         var declarations = semanticMembers.Where(m => !m.IsStatic
             && (declarationId != null
                 ? m.DeclarationId == declarationId
@@ -2543,7 +2554,7 @@ sealed partial class ReferenceMetadataIndex
                     : m.SourcePropertyName == null && (m.SourceMethodName ?? m.Name) == sourceMember)
             && m.MethodArity == methodArity && m.ParamCount == paramCount
             && (declarationId != null || authoredSignature == null
-                || m.ParamTypeNodes is { } ps && ps.Length == authoredSignature.Count
+                || SourceParameters(m) is { } ps && ps.Length == authoredSignature.Count
                 && (ps.SequenceEqual(authoredSignature)
                     || ps.Select((p, i) => ForeignStarDeclarationDescribesCall(
                         p, authoredSignature[i], sourceOwner.Args ?? Array.Empty<TypeNode>())).All(x => x))))
@@ -2565,12 +2576,7 @@ sealed partial class ReferenceMetadataIndex
         // CLR descriptors. Compare their preserved Kotlin descriptors instead: EraseParams copied that exact source
         // fact onto every synthesized slot before changing its physical type. This remains exact for same-name overloads
         // without reconstructing the representation change from a generated name or accepting a merely unique sibling.
-        var declarationParameters = declarations[0].DeclarationSemanticParams
-            ?? declarations[0].KotlinParameterTypes
-            ?? declarations[0].ParamTypeNodes;
-        if (declarations[0].DeclarationSemanticParams == null && declarationParameters != null)
-            declarationParameters = declarationParameters.Select((parameter, index) =>
-                declarations[0].NullableGenericParams?[index] ?? parameter).ToArray();
+        var declarationParameters = SourceParameters(declarations[0]);
         bool DescribesSelectedDeclaration(MemberBinding candidate) => declarationParameters == null
             || (candidate.KotlinParameterTypes ?? candidate.ParamTypeNodes) is { } candidateParameters
                 && candidateParameters.Length == declarationParameters.Length
