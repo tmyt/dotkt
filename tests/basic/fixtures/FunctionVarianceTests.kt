@@ -5,6 +5,10 @@ private fun <T, R> varianceWiden(callback: (T) -> R): (T) -> Any? = callback
 private fun <T, R> varianceNullable(callback: ((T) -> R)?): ((T) -> Any?)? = callback
 private fun <T> varianceInvoke(callback: (T) -> Any?, value: T): Any? = callback(value)
 private class VarianceStorage<T>(var callback: (T) -> Any?)
+private class VarianceOverloads {
+    fun select(callback: (Int) -> Unit): Int { callback(17); return 1 }
+    fun select(callback: (String) -> Unit): Int { callback("selected"); return 2 }
+}
 private class VarianceText(private val text: String) : CharSequence {
     override val length: Int get() = text.length
     override fun get(index: Int): Char = text[index]
@@ -37,6 +41,15 @@ class FunctionVarianceTests {
         val sequenceView: (CharSequence) -> Boolean = anyValue
         check(sequenceView === anyValue)
         check(sequenceView("raw string"))
+        var selectedNumber = 0
+        var selectedText = ""
+        val numberCallback: (Int) -> Unit = { selectedNumber = it }
+        val textCallback: (String) -> Unit = { selectedText = it }
+        val overloads = VarianceOverloads()
+        check(overloads.select(numberCallback) == 1)
+        check(overloads.select(textCallback) == 2)
+        check(selectedNumber == 17)
+        check(selectedText == "selected")
     }
 
     @TestAttribute

@@ -3,6 +3,20 @@ package roundtriptests.functionvariance
 import NUnit.Framework.TestAttribute
 import roundtrip.functionvariance.*
 
+private class DerivedConstructorCallbacks : ConstructorCallbacks {
+    constructor(callback: (Int) -> Unit): super(callback)
+    constructor(callback: (String) -> Unit): super(callback)
+}
+
+private class ConsumerGenericCallbacks : GenericCallbackSlots<Int> {
+    override fun select(callback: (Int) -> Unit): Int { callback(9); return 9 }
+    override fun select(callback: (String) -> Unit): Int { callback("ten"); return 10 }
+}
+
+private class DerivedGenericCallbacks : GenericCallbackBase<Int>(11) {
+    override fun select(callback: (Int) -> Unit): Int { callback(11); return 11 }
+}
+
 class FunctionVarianceTests {
     @TestAttribute
     fun sourceSignaturesAndIdentitySurviveDllBoundaries() {
@@ -63,5 +77,37 @@ class FunctionVarianceTests {
         val doubleArgument: (Int) -> Double = { it.toDouble() }
         check(generic.selected(3, singleArgument) == 3.0f)
         check(generic.selected(4, doubleArgument) == 4.0)
+        var number = 0
+        var text = ""
+        val numberCallback: (Int) -> Unit = { number = it }
+        val textCallback: (String) -> Unit = { text = it }
+        check(ConstructorCallbacks(numberCallback).selected == 3)
+        check(ConstructorCallbacks(textCallback).selected == 4)
+        check(ConstructorCallbacks(numberCallback, true).selected == 3)
+        check(ConstructorCallbacks(textCallback, true).selected == 4)
+        check(DerivedConstructorCallbacks(numberCallback).selected == 3)
+        check(DerivedConstructorCallbacks(textCallback).selected == 4)
+        check(number == 3)
+        check(text == "four")
+        val callbackSlots: CallbackSlots = CallbackImplementation()
+        check(callbackSlots.select(numberCallback) == 5)
+        check(callbackSlots.select(textCallback) == 6)
+        check(number == 5)
+        check(text == "six")
+        val producerGeneric: GenericCallbackSlots<Int> = GenericCallbackBase(7)
+        check(producerGeneric.select(numberCallback) == 7)
+        check(producerGeneric.select(textCallback) == 8)
+        check(number == 7)
+        check(text == "eight")
+        val consumerGeneric: GenericCallbackSlots<Int> = ConsumerGenericCallbacks()
+        check(consumerGeneric.select(numberCallback) == 9)
+        check(consumerGeneric.select(textCallback) == 10)
+        check(number == 9)
+        check(text == "ten")
+        val inherited: GenericCallbackSlots<Int> = DerivedGenericCallbacks()
+        check(inherited.select(numberCallback) == 11)
+        check(inherited.select(textCallback) == 8)
+        check(number == 11)
+        check(text == "eight")
     }
 }

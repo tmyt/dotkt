@@ -67,7 +67,7 @@ static class FunctionValueRepresentation
             slot[sourceKey] = slot[typeKey].ToJsonString();
     }
 
-    static bool ContainsOrdinaryFunction(JsonNode node)
+    internal static bool ContainsOrdinaryFunction(JsonNode node)
     {
         if (node is JsonObject obj)
         {
@@ -80,6 +80,7 @@ static class FunctionValueRepresentation
 
     public static void Apply(JsonNode root, ValueTypeOracle isByRefLike)
     {
+        FunctionSignatureIdentity.Capture(root);
         Walk(root, isByRefLike);
     }
 
@@ -111,7 +112,8 @@ static class FunctionValueRepresentation
             foreach (var pair in obj.ToList())
             {
                 // These are authored Kotlin facts, not physical slots.
-                if (pair.Key is DeclarationIdentityBinding.SemanticSignatureKey or "attrs" or "retAttrs") continue;
+                if (pair.Key is DeclarationIdentityBinding.SemanticSignatureKey or FunctionSignatureIdentity.Key
+                    or "memberSignature" or "delegationSig" or "attrs" or "retAttrs") continue;
                 // A literal SAM conversion constructs its declared CLR delegate directly. Its target
                 // signature is not an ordinary Kotlin function value, and can contain unboxable slots.
                 // Stored function conversions still erase their operand and adapt at the SAM boundary.

@@ -1861,6 +1861,7 @@ static class FBoundStarProjectionErasure
             ["ret"] = TypeJson.Write(originalRet),
             ["args"] = args,
             [ExactBridgeOwnerCallKey] = true,
+            ["clrOwnerResolved"] = true,
         };
         // The existential bridge is only a representation of this already-selected source member. Preserve #395's
         // exact declaration key on the forwarding edge so later suspend/collision lowering retargets the same
@@ -1911,8 +1912,7 @@ static class FBoundStarProjectionErasure
             ["owner"] = TypeJson.Write(new TypeNode.Fqn(owner.ErasedName)),
             ["member"] = slotMemberName ?? bridge["name"]?.DeepClone(),
             ["arity"] = (method["typeParams"] as JsonArray)?.Count ?? 0,
-            ["params"] = new JsonArray(bridgeParams.OfType<JsonObject>()
-                .Select(parameter => parameter["type"]?.DeepClone()).ToArray()),
+            ["params"] = FunctionSignatureIdentity.Signature(bridgeParams),
             ["ret"] = bridge["ret"]?.DeepClone(),
         };
         if (slotTypeParams is { Count: > 0 } descriptorTypeParams)
@@ -2413,6 +2413,8 @@ static class FBoundStarProjectionErasure
             if (TypeNode.ToJson(erased) != TypeNode.ToJson(pt))
                 copy["kotlinType"] ??= TypeNode.ToJson(pt);
             copy["type"] = TypeJson.Write(erased);
+            if (TypeJson.Read(copy[FunctionSignatureIdentity.Key]) is TypeNode signatureType)
+                copy[FunctionSignatureIdentity.Key] = TypeJson.Write(EraseOwnerTv(signatureType, owners, refs));
             result.Add(copy);
         }
         return result;
@@ -2536,7 +2538,7 @@ static class FBoundStarProjectionErasure
         var ga = (method["typeParams"] as JsonArray)?.Count ?? 0;
         var ps = method["params"] as JsonArray;
         return name + "|" + ga + "|" + string.Join(";", ps?.OfType<JsonObject>()
-            .Select(p => TypeJson.Read(p["type"])?.ToString() ?? "?") ?? Enumerable.Empty<string>())
+            .Select(p => FunctionSignatureIdentity.SignatureType(p).ToJsonString()) ?? Enumerable.Empty<string>())
             + "|" + KotlinOverrideSlotBridge.MethodTypeParameterShapeKey(
                 method["typeParams"] as JsonArray, Array.Empty<TypeNode>());
     }
@@ -2552,6 +2554,7 @@ static class FBoundStarProjectionErasure
         if (method["params"] is JsonArray ps)
             foreach (var p in ps.OfType<JsonObject>())
                 if (EncodedContainsOwnerTv(p["nullableGeneric"])
+                    || TypeJson.Read(p[FunctionSignatureIdentity.Key]) is TypeNode signatureType && ContainsOwnerTv(signatureType)
                     || TypeJson.Read(p["type"]) is TypeNode pt && ContainsOwnerTv(pt)) return true;
         if (method["typeParams"] is JsonArray mtps)
             foreach (var tp in mtps.OfType<JsonObject>())
@@ -3962,6 +3965,8 @@ static class FBoundStarProjectionErasure
                 ?? Str(allocatedSlot["name"]);
             call["sig"] = new JsonArray((allocatedSlot["params"] as JsonArray ?? new JsonArray())
                 .OfType<JsonObject>().Select(parameter => parameter["type"]?.DeepClone()).ToArray());
+            call["calleeParams"] = FunctionSignatureIdentity.Signature(
+                allocatedSlot["params"] as JsonArray ?? new JsonArray());
             MarkPhysicalPropertyCall(call, propertyCall, sourcePropertyName, accessorKind,
                 ExistentialSlotIdentity(declaration, declaring.Name));
             var selectedDeclarationResult = TypeJson.Read(declaration["ret"])

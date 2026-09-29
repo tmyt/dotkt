@@ -507,8 +507,10 @@ member would be two members to it. The rules, all validator-enforced:
 - a signature carries no `oblivious`, `star`, or `projection`: those are Kotlin type-system facts, and a physical CLR
   signature has neither. `nullable` appears only as the `System.Nullable\`1` value-type collapse;
 - `.ctor` names a constructor and nothing else;
-- `mod` and `array.rank` appear **only** inside a `memberRef`, because they exist solely to distinguish an exact
-  foreign declaration signature. `ptr` is also CIR-only but may appear in ordinary declaration, local, operand,
+- `mod` is CIR-only declaration-signature vocabulary: it can appear in emitted declaration signatures,
+  exact local linkage descriptors, and `memberRef`. It does not change a value's storage type.
+  `array.rank` distinguishes exact foreign array signatures inside a `memberRef`.
+  `ptr` is also CIR-only but may appear in ordinary declaration, local, operand,
   and result slots: bir2cir materializes the KLIB/BIR `kotlin.clr.ClrPointer<T>` vocabulary into that physical type,
   and ilemit emits it one-to-one.
 
@@ -517,7 +519,10 @@ built by this compilation) and stay on the internal linkage (`localCtorIndex`, t
 table). The presence of a `memberRef` is therefore itself the external-vs-emitted discriminator.
 For a declaration-identity-bound local call or delegate target, bir2cir carries `calleeRet`, the selected
 MethodDef's lowered return type in its declaration generic frame. It is not the expression's substituted result
-type. ilemit uses it together with owner, name, generic arity, and `sig` to link the exact local declaration.
+type. `calleeParams`, when present, likewise states the exact MethodDef parameter vector, including custom
+modifiers, in the declaration generic frame. `sig` continues to describe the call's value slots; it is the linkage
+vector only when no separate `calleeParams` is necessary. ilemit uses the stated linkage vector together with
+owner, name, generic arity, and `calleeRet` to link the exact local declaration.
 Parameter-only lookup aliases must not select a declaration when multiple return-distinct methods share them.
 For `clrEventAdd`/`clrEventRemove`, `localAccessor:true` is the same-unit discriminator and is mutually exclusive
 with `memberRef`; it carries the emitted `accessorOwner`, exact accessor `sig`, `delegateType`, accessor name, and

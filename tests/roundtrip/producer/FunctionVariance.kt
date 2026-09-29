@@ -47,3 +47,31 @@ class GenericReturnSlots<T> {
     fun selected(value: T, callback: (T) -> Float): Float = callback(value)
     fun selected(value: T, callback: (T) -> Double): Double = callback(value)
 }
+
+open class ConstructorCallbacks {
+    val selected: Int
+    constructor(callback: (Int) -> Unit) { callback(3); selected = 3 }
+    constructor(callback: (String) -> Unit) { callback("four"); selected = 4 }
+    constructor(callback: (Int) -> Unit, marker: Boolean): this(callback)
+    constructor(callback: (String) -> Unit, marker: Boolean): this(callback)
+}
+
+interface CallbackSlots {
+    fun select(callback: (Int) -> Unit): Int
+    fun select(callback: (String) -> Unit): Int
+}
+
+class CallbackImplementation : CallbackSlots {
+    override fun select(callback: (Int) -> Unit): Int { callback(5); return 5 }
+    override fun select(callback: (String) -> Unit): Int { callback("six"); return 6 }
+}
+
+interface GenericCallbackSlots<T> {
+    fun select(callback: (T) -> Unit): Int
+    fun select(callback: (String) -> Unit): Int
+}
+
+open class GenericCallbackBase<T>(private val value: T) : GenericCallbackSlots<T> {
+    override fun select(callback: (T) -> Unit): Int { callback(value); return 7 }
+    override fun select(callback: (String) -> Unit): Int { callback("eight"); return 8 }
+}

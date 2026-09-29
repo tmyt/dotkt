@@ -2865,6 +2865,8 @@ static class MemberCallSubstitution
             ["method"] = member,
             ["args"] = hargs,
         };
+        if (Str(node[DeclarationIdentityBinding.Key]) is string sourceIdentity)
+            call[DeclarationIdentityBinding.Key] = AliasHelperHoist.DeclarationIdentity(sourceIdentity);
         // The helper is instantiated with the alias class's args FIRST, then the method's own typeArgs (structured).
         var typeArgs = new JsonArray();
         foreach (var ca in classArgs) typeArgs.Add(TypeJson.Write(ca));

@@ -212,7 +212,7 @@ static class BirTypeLowering
         "type", "ownerType", "calleeOwner", "ret", "suspendRet", "base", "interfaces", "argTypes", "delegationSig",
         // BIR-only exact constructor declaration vector.  UnsafeAccessor consumes it when it rewrites the edge;
         // otherwise same-unit constructor binding consumes its physically-lowered form after this pass.
-        "memberSignature",
+        "memberSignature", "calleeParams", FunctionSignatureIdentity.Key,
         // expression / statement type positions
         "dynRet", "funcType", "typeArgs", "constraints", "recvType", "iface", "excType",
         "keyType", "valType", "iterType", "accessOwner", "accessorOwner", "elem",
@@ -526,6 +526,10 @@ static class BirTypeLowering
                 return new TypeNode.Array(LowerType(a.Elem, refBuild, force, typeArg: false));
             case TypeNode.ByRef b:
                 return new TypeNode.ByRef(LowerType(b.Of, refBuild, force, typeArg: false));
+            case TypeNode.Mod modifier:
+                return new TypeNode.Mod(modifier.Req,
+                    LowerType(modifier.M, refBuild, force, typeArg: false),
+                    LowerType(modifier.Of, refBuild, force, typeArg));
             case TypeNode.Oblivious ob:
                 // #8 — an NRT-OBLIVIOUS `T!` (a reference-KLIB-projected `[MaybeNull]`/platform-flexible type: a value-type
                 // arg OR a reference) lowers to the BARE lowered inner in EVERY build — NEVER a `Nullable<T>` wrapper. It

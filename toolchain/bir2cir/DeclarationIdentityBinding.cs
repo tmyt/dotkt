@@ -597,11 +597,12 @@ static class DeclarationIdentityBinding
                 declaration.Remove("declarationSourceName");
                 continue;
             }
-            // SuspendColdLowering derives a private implementation entry from the selected source declaration. Its
-            // `|cold` identity is needed to bind inline/generated calls across modules, but it is not another Kotlin
-            // declaration. Keep the two-field physical carrier for ReferenceMetadataIndex; CompilerGenerated keeps
+            // Cold entries and alias helpers project an existing source declaration onto a separate physical entry.
+            // Their identities bind generated calls across modules, but are not additional Kotlin declarations.
+            // Keep the two-field physical carrier for ReferenceMetadataIndex; CompilerGenerated keeps
             // dll2klib from projecting the entry into KLIB, and no semantic signature belongs on it.
-            if (id.EndsWith("|cold", StringComparison.Ordinal))
+            if (id.EndsWith("|cold", StringComparison.Ordinal)
+                || id.EndsWith(AliasHelperHoist.IdentitySuffix, StringComparison.Ordinal))
             {
                 declaration.Remove(SemanticSignatureKey);
                 continue;
@@ -643,6 +644,9 @@ static class DeclarationIdentityBinding
                     // This is the selected declaration's return, not the caller's substituted expression type.
                     obj["calleeRet"] = declarationsById[id]["ret"]?.DeepClone()
                         ?? throw new InvalidOperationException("Local declaration has no physical return signature");
+                    if (declarationsById[id]["params"] is JsonArray selectedParameters
+                        && selectedParameters.OfType<JsonObject>().Any(p => p[FunctionSignatureIdentity.Key] != null))
+                        obj["calleeParams"] = FunctionSignatureIdentity.Signature(selectedParameters);
                     // A trusted overlay can deliberately change selected declaration slots while retaining their
                     // Kotlin surface in metadata. Rewrite only those physical slots: an ordinary call's remaining
                     // descriptor is already substituted into the caller's owner/method frame and must stay there.

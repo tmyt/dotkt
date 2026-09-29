@@ -3811,7 +3811,7 @@ sealed partial class ReferenceMetadataIndex
         TypeNode[] ownerTypeArguments, JsonArray selectedTypeParams, TypeNode[] selectedOwnerTypeArguments,
         out TypeNode declaredRet, out TypeNode[] declaredParams, out bool[] paramsRefused,
         out string physicalMember, out JsonArray declarationTypeParams, out bool returnsValue,
-        bool semanticConstraints = false, string selectedPhysicalMember = null)
+        bool semanticConstraints = false, string selectedPhysicalMember = null, string selectedDeclarationId = null)
     {
         declaredRet = null;
         declaredParams = null;
@@ -3829,7 +3829,8 @@ sealed partial class ReferenceMetadataIndex
                 selectedTypeParams: selectedTypeParams,
                 selectedOwnerTypeArguments: selectedOwnerTypeArguments,
                 semanticConstraints: semanticConstraints,
-                selectedPhysicalMember: selectedPhysicalMember) != SlotLookup.Declared
+                selectedPhysicalMember: selectedPhysicalMember,
+                selectedDeclarationId: selectedDeclarationId) != SlotLookup.Declared
             || declaration == null)
             return false;
         declaredRet = ret.Node;
@@ -5763,6 +5764,19 @@ sealed partial class ReferenceMetadataIndex
     // Decode a compiler-owned round-trip [KotlinType] carrier.
     static TypeNode KotlinTypeOf(IList<CustomAttributeData> attrs, Assembly declaringAssembly) =>
         CarrierTypeOf(attrs, declaringAssembly, KotlinTypeAttr);
+
+    internal Type FunctionSignatureDiscriminator(ParameterInfo parameter)
+    {
+        var source = KotlinTypeOf(parameter.GetCustomAttributesData(), parameter.Member.DeclaringType?.Assembly);
+        if (source == null || !FunctionValueRepresentation.ContainsOrdinaryFunction(TypeJson.Write(source)))
+            return null;
+        // The compiler-authored function slot carries its pre-carrier identity as a custom modifier.
+        // Do not infer it from the shared delegate storage type or from another overload's body.
+        var modifiers = parameter.GetOptionalCustomModifiers();
+        if (modifiers.Length != 1)
+            throw new InvalidDataException("A Kotlin function parameter must carry one declaration signature discriminator");
+        return modifiers[0];
+    }
 
     // Decode a compiler-owned round-trip TypeNode carrier (`[KotlinType]`, `[KotlinNullableGeneric]` — both ride the
     // same `(version, bytes)` BirCarrier envelope).  Full-name equality is insufficient: a foreign

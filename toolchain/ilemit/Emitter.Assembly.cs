@@ -490,7 +490,7 @@ sealed partial class Emitter
                             var interfaceRet = reanchor
                                 ? SubstituteIfaceArgs(ReturnTypeOf(im), itype.GetGenericArguments())
                                 : ReturnTypeOf(im);
-                            if (FindExternalInterfaceBridge(ti, itype, im.Name, methodArity, ips, interfaceRet, specFqn)
+                            if (FindExternalInterfaceBridge(ti, im, itype, im.Name, methodArity, ips, interfaceRet, specFqn)
                                 is MethodBuilder directiveBridge)
                             {
                                 WireMethodOverride(ti.TB, directiveBridge, reanchor ? AnchorOn(itype, im) : im);
@@ -603,7 +603,7 @@ sealed partial class Emitter
                     var interfaceRet = reanchor
                         ? SubstituteIfaceArgs(ReturnTypeOf(im), itype.GetGenericArguments())
                         : ReturnTypeOf(im);
-                    if (FindExternalInterfaceBridge(ti, itype, im.Name, methodArity, ips, interfaceRet, ibF)
+                    if (FindExternalInterfaceBridge(ti, im, itype, im.Name, methodArity, ips, interfaceRet, ibF)
                         is MethodBuilder resolvedBridge)
                     {
                         WireMethodOverride(ti.TB, resolvedBridge, reanchor ? AnchorOn(itype, im) : im);

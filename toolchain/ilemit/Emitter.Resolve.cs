@@ -521,10 +521,26 @@ sealed partial class Emitter
     //
     // Without this a bridge for a referenced supertype is emitted and then never wired: the name-based lookup below
     // searches for a body CALLED like the slot, and a bridge is deliberately named nothing of the sort.
-    MethodBuilder FindExternalInterfaceBridge(TypeInfo ti, Type ifaceType, string member,
+    MethodBuilder FindExternalInterfaceBridge(TypeInfo ti, MethodInfo declaration, Type ifaceType, string member,
         int methodArity, Type[] ips, Type interfaceRet, DotKt.Bir.TypeNode.Fqn ifaceSpec = null)
     {
         if (ti.Def.ValueKind != JsonValueKind.Object || !ti.Def.TryGetProperty("methods", out var methods)) return null;
+        var slotParameters = ParametersOf(declaration);
+        bool MatchesSlot(DotKt.Bir.TypeNode described, Type value, ParameterInfo parameter)
+        {
+            var required = new List<DotKt.Bir.TypeNode>();
+            var optional = new List<DotKt.Bir.TypeNode>();
+            while (described is DotKt.Bir.TypeNode.Mod modifier)
+            {
+                (modifier.Req ? required : optional).Add(modifier.M);
+                described = modifier.Of;
+            }
+            Type Close(Type modifier) => ifaceType.IsGenericType
+                ? SubstituteIfaceArgs(modifier, ifaceType.GetGenericArguments()) : modifier;
+            return ModifiersEqual(required, parameter.GetRequiredCustomModifiers().Select(Close).ToArray())
+                && ModifiersEqual(optional, parameter.GetOptionalCustomModifiers().Select(Close).ToArray())
+                && GenericParamMatches(described, value, ownerArgs: null);
+        }
         foreach (var method in methods.EnumerateArray())
         {
             if (!method.TryGetProperty("clrInterfaceImpls", out var impls)) continue;
@@ -545,7 +561,7 @@ sealed partial class Emitter
                 if (DescribedArity(impl) != methodArity) continue;
                 if (!impl.TryGetProperty("ret", out var describedRetNode)
                     || DotKt.Bir.TypeNode.Read(describedRetNode) is not { } describedRet
-                    || interfaceRet == null || !GenericParamMatches(describedRet, interfaceRet, ownerArgs: null))
+                    || interfaceRet == null || !MatchesSlot(describedRet, interfaceRet, declaration.ReturnParameter))
                     continue;
                 // The descriptor is the producer's exact answer. Consume its full parameter vector before considering
                 // the body; owner/member/arity alone do not distinguish overloaded CLR indexer/property accessors.
@@ -554,7 +570,7 @@ sealed partial class Emitter
                 foreach (var describedParam in describedParams.EnumerateArray())
                 {
                     var node = DotKt.Bir.TypeNode.Read(describedParam);
-                    if (node == null || !GenericParamMatches(node, ips[describedIndex], ownerArgs: null))
+                    if (node == null || !MatchesSlot(node, ips[describedIndex], slotParameters[describedIndex]))
                     {
                         descriptorMatches = false;
                         break;
@@ -768,7 +784,7 @@ sealed partial class Emitter
     // match (`Matches`) and the canonical `SigKey`. Null when the node carries no `sig` array; empty array for a nullary
     // sig (`sig.Length == 0` -> argc 0 convention).
     static DotKt.Bir.TypeNode[] SigNodes(JsonElement e) =>
-        e.TryGetProperty("sig", out var s) && s.ValueKind == JsonValueKind.Array
+        (e.TryGetProperty("calleeParams", out var s) || e.TryGetProperty("sig", out s)) && s.ValueKind == JsonValueKind.Array
             ? s.EnumerateArray().Select(DotKt.Bir.TypeNode.Read).ToArray()
             : null;
 

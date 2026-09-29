@@ -208,7 +208,7 @@ static class KotlinOverrideSlotBridge
             bool supIsInterface, bool referencedSlot, bool interfaceSlotHasDefault,
             string identityName, string descriptorMember, string propertyAccessor,
             TypeNode[] slotParams, TypeNode slotRet, JsonObject impl, JsonArray slotTypeParams = null,
-            bool unitValueReturn = false)
+            bool unitValueReturn = false, TypeNode[] slotSignature = null)
         {
             if (supIsInterface && enumerationSlots?.Owns(descriptorSpec, descriptorMember,
                     (impl["typeParams"] as JsonArray)?.Count ?? 0, slotParams, slotRet, PhysicalSlotType, refs) == true)
@@ -328,6 +328,7 @@ static class KotlinOverrideSlotBridge
             // would force the emitter to rediscover override meaning from names, bodies, and hierarchy order.
             var needsExactInterfaceSlot = supIsInterface &&
                 (inheritedOwner != null
+                    || declParams.OfType<JsonObject>().Any(parameter => parameter[FunctionSignatureIdentity.Key] != null)
                     || cls.Kind == "interface" && !Bool(impl["abstract"])
                     || cls.Kind == "class" && reimplementsInterface
                         && descriptorMember != Str(impl["name"])
@@ -347,7 +348,7 @@ static class KotlinOverrideSlotBridge
                 {
                     impl["virtual"] = true;
                     var descriptor = ImplDescriptor(descriptorSpec, descriptorMember,
-                        (impl["typeParams"] as JsonArray)?.Count ?? 0, slotParams, slotRet,
+                        (impl["typeParams"] as JsonArray)?.Count ?? 0, slotSignature ?? slotParams, slotRet,
                         constructedSlotTypeParams, unitValueReturn);
                     AddImplDescriptor(impl, "clrInterfaceImpls", descriptor);
                 }
@@ -361,8 +362,12 @@ static class KotlinOverrideSlotBridge
             {
                 impl["virtual"] = true;
                 var descriptor = ImplDescriptor(descriptorSpec, descriptorMember,
-                    (impl["typeParams"] as JsonArray)?.Count ?? 0, slotParams, slotRet,
+                    (impl["typeParams"] as JsonArray)?.Count ?? 0, slotSignature ?? slotParams, slotRet,
                     constructedSlotTypeParams, unitValueReturn);
+                for (var i = 0; i < declParams.Count; i++)
+                    if (slotSignature == null && declParams[i]?[FunctionSignatureIdentity.Key] is JsonNode discriminator)
+                        descriptor["params"][i] = TypeJson.Write(new TypeNode.Mod(false,
+                            SupertypeGraph.SubstOwnerTvs(TypeJson.Read(discriminator), ownArgs), slotParams[i]));
                 AddImplDescriptor(impl, "clrInterfaceImpls", descriptor);
                 return;
             }
@@ -445,7 +450,7 @@ static class KotlinOverrideSlotBridge
             // Which METADATA wiring fills the slot: an interface slot is a MethodImpl against the constructed
             // interface, a base-class slot a MethodImpl against the constructed base. ilemit consumes the
             // resolved descriptor and resolves nothing itself.
-            var bridgeDescriptor = ImplDescriptor(descriptorSpec, descriptorMember, arity, slotParams, slotRet,
+            var bridgeDescriptor = ImplDescriptor(descriptorSpec, descriptorMember, arity, slotSignature ?? slotParams, slotRet,
                 constructedSlotTypeParams, unitValueReturn);
             AddImplDescriptor(bridge, supIsInterface ? "clrInterfaceImpls" : "clrBaseImpls", bridgeDescriptor);
             // The bridge, not its typed forwarding target, owns this exact class slot.
@@ -619,7 +624,14 @@ static class KotlinOverrideSlotBridge
                 Fill(spec, descriptorOwner, supIsInterface, false, slotHasDefault,
                     semanticName, descriptorMember, accessorKind,
                     slotParams, slotRet, impl, slot["typeParams"] as JsonArray,
-                    slotReturnsValue && IsUnitValueSlot(slotRet));
+                    slotReturnsValue && IsUnitValueSlot(slotRet),
+                    descriptorOwner.Name == spec.Name
+                        ? slotParamNodes.OfType<JsonObject>().Select((parameter, index) =>
+                            parameter[FunctionSignatureIdentity.Key] is JsonNode discriminator
+                                ? (TypeNode)new TypeNode.Mod(false,
+                                    SupertypeGraph.SubstOwnerTvs(TypeJson.Read(discriminator), supArgs), slotParams[index])
+                                : slotParams[index]).ToArray()
+                        : null);
             }
         }
 
@@ -1351,7 +1363,7 @@ static class KotlinOverrideSlotBridge
                             // Suspend lowering supplied the physical MethodDef and preserved the unchanged source
                             // override marker. Match its cold/Task projection exactly, as the local-slot arm does;
                             // a cold entry is not another Kotlin method with the marker's source name.
-                            physicalProjection);
+                            physicalProjection, Str(o[DeclarationIdentityBinding.Key]));
                     if (!foundSlot) continue;
                 }
                 if (slotParams0 == null || slotParams0.Length != ps.Count) continue;
@@ -1857,6 +1869,8 @@ static class KotlinOverrideSlotBridge
         ValueTypeOracle isValue, Func<TypeNode.Fqn, TypeNode[]> annotationArguments)
     {
         if (TypeJson.Read(decl[typeKey]) is not TypeNode t || t.Equals(slot)) return;
+        if (typeKey == "type" && FunctionValueRepresentation.ContainsOrdinaryFunction(decl[typeKey]))
+            decl[FunctionSignatureIdentity.Key] ??= decl[typeKey].DeepClone();
         decl[typeKey] = TypeJson.Write(slot);
         decl[factKey] ??= TypeNode.ToJson(t);
         if (!decl.ContainsKey(flagsKey)
@@ -1923,6 +1937,7 @@ static class KotlinOverrideSlotBridge
             ["recv"] = new JsonObject { ["k"] = "this" },
             ["method"] = callMember ?? Str(impl["name"]),
             ["sig"] = callSig,
+            ["calleeParams"] = FunctionSignatureIdentity.Signature(declParams),
             ["dynRet"] = TypeJson.Write(implRet),
             ["ret"] = TypeJson.Write(implRet),
             ["args"] = callArgs,

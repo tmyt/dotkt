@@ -91,7 +91,11 @@ static partial class ClrMemberResolution
                 foreach (var candidate in sameArity)
                 {
                     var ps = (JsonArray)candidate.ctor["params"];
-                    var declared = ps.Select(p => p?["type"] is JsonNode pt ? TypeJson.Read(pt) : null).ToArray();
+                    // These vectors identify the frontend-selected declaration, not the argument carrier.
+                    // Ordinary function values can share storage while naming different constructor overloads.
+                    var declared = ps.Select(p => (declarationSig != null || signatureName == "delegationSig"
+                        ? p?[FunctionSignatureIdentity.Key] ?? p?["type"]
+                        : p?["type"]) is JsonNode pt ? TypeJson.Read(pt) : null).ToArray();
                     if (declared.Any(t => t == null)) continue;
                     var matches = declared.Select((raw, i) =>
                     {
@@ -331,7 +335,7 @@ static partial class ClrMemberResolution
                         + $"{baseArgs.Count} arguments but {semanticSig.Count} signature slots");
                 var arity = open.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
                     .Where(c => c.GetParameters().Length == semanticSig.Count).ToList();
-                var winner = PickUnique(arity, c => c.GetParameters(), semanticSig, baseFqn.Args,
+                var winner = PickDeclaredConstructor(arity, semanticSig,
                     $"base constructor owner={TypeNode.ToJson(baseFqn)} ({DescArgs(semanticSig)})");
                 ctor["baseCtorRef"] = MemberRefJson(winner, MemberRefNode.Kinds.Ctor, open, baseFqn.Args);
                 StampDelegateArgumentTargets(ctor, winner.GetParameters(),
@@ -706,11 +710,8 @@ static partial class ClrMemberResolution
         {
             var declaration = selectedSignature.Select(TypeJson.Read)
                 .Select(BirTypeLowering.CanonicalPhysicalSlotType).ToList();
-            // Compare the complete open shape, not applicability or a nominal-head-only approximation.
-            var exact = ctors.Where(c => c.GetParameters().Select((p, i) =>
-                DeclaredConstructorSlotMatches(declaration[i], p.ParameterType)).All(match => match)).ToList();
-            win = exact.Count == 1 ? exact[0] : throw new InvalidOperationException(
-                $"bir2cir: selected constructor declaration on '{ownerFqn.Name}' resolves to {exact.Count} members: {DescArgs(declaration)}");
+            win = PickDeclaredConstructor(ctors, declaration,
+                $"selected constructor declaration on '{ownerFqn.Name}' ({DescArgs(declaration)})");
         }
         else
             win = PickUnique(ctors, c => c.GetParameters(), argNodes, ownerArgs,
@@ -724,6 +725,22 @@ static partial class ClrMemberResolution
         StampResolvedMemberReturn(node, typeof(void));
         node.Remove("argTypes");
         node.Remove("memberSignature");
+    }
+
+    static ConstructorInfo PickDeclaredConstructor(IEnumerable<ConstructorInfo> constructors,
+        IReadOnlyList<TypeNode> declaration, string context)
+    {
+        // Both `new` and base delegation carry the selected declaration's open shape.
+        // Compare that shape, not argument applicability or a nominal-head approximation.
+        var exact = constructors.Where(constructor =>
+        {
+            var parameters = constructor.GetParameters();
+            return parameters.Length == declaration.Count && parameters.Select((parameter, index) =>
+                DeclaredConstructorSlotMatches(declaration[index],
+                    _refs.FunctionSignatureDiscriminator(parameter) ?? parameter.ParameterType)).All(match => match);
+        }).ToList();
+        return exact.Count == 1 ? exact[0] : throw new InvalidOperationException(
+            $"bir2cir: {context} resolves to {exact.Count} constructor declarations, expected exactly one");
     }
 
     static bool DeclaredConstructorSlotMatches(TypeNode selected, Type parameter)

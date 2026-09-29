@@ -497,8 +497,7 @@ static class KotlinPropertyAccessors
             var signature = new JsonArray(
                 ((method["params"] as JsonArray) ?? new JsonArray())
                     .OfType<JsonObject>()
-                    .Select(parameter => parameter["type"]?.DeepClone()
-                        ?? throw new InvalidOperationException("Kotlin property accessor parameter has no type"))
+                    .Select(FunctionSignatureIdentity.SignatureType)
                     .ToArray());
             var methodArity = (method["typeParams"] as JsonArray)?.Count ?? 0;
             if (role == "get")

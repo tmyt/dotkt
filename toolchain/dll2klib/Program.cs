@@ -3375,6 +3375,18 @@ internal sealed class AssemblyScanner : IDisposable
         }
 
         var candidates = new List<MethodDefinitionHandle>();
+        var identitySignatures = new RawSignatureTypeProvider((metadata, entity) =>
+        {
+            var path = ReferenceEquals(metadata, reader) ? sourceDefinitionPath : resolvedOwner.DefinitionPath;
+            if (!_publicTypeCatalog.TryResolveDefinition(metadata, entity, out var definition, path))
+                throw new InvalidDataException("Cannot resolve a MethodImpl signature type from the reference catalog");
+            return definition.Reader.GetGuid(definition.Reader.GetModuleDefinition().Mvid) + ":" +
+                MetadataTokens.GetRowNumber(definition.Handle);
+        });
+        MethodSignature<string>? referenceIdentity = declarationEntity.Kind == HandleKind.MemberReference
+            ? reader.GetMemberReference((MemberReferenceHandle)declarationEntity)
+                .DecodeMethodSignature(identitySignatures, sourceContext)
+            : null;
         foreach (var candidateHandle in declarationReader.GetTypeDefinition(resolvedOwner.Handle).GetMethods())
         {
             var candidate = declarationReader.GetMethodDefinition(candidateHandle);
@@ -3384,6 +3396,15 @@ internal sealed class AssemblyScanner : IDisposable
                 candidate.GetGenericParameters().Count != referenceSignature.Value.GenericParameterCount)
                 continue;
             var candidateContext = InheritedContext(declarationReader, candidateHandle, candidate);
+            if (referenceIdentity is { } expectedIdentity)
+            {
+                var actualIdentity = candidate.DecodeSignature(identitySignatures, candidateContext);
+                if (actualIdentity.Header != expectedIdentity.Header
+                    || actualIdentity.RequiredParameterCount != expectedIdentity.RequiredParameterCount
+                    || actualIdentity.ReturnType != expectedIdentity.ReturnType
+                    || !actualIdentity.ParameterTypes.SequenceEqual(expectedIdentity.ParameterTypes))
+                    continue;
+            }
             var candidateSignature = candidate.DecodeSignature(declarationSignatures, candidateContext);
             if (referenceSignature is not null)
             {
@@ -7284,6 +7305,9 @@ internal sealed record GenericContext(
 internal sealed class RawSignatureTypeProvider : ISignatureTypeProvider<string, GenericContext>
 {
     public static RawSignatureTypeProvider Instance { get; } = new();
+    private readonly Func<MetadataReader, EntityHandle, string>? _typeIdentity;
+    public RawSignatureTypeProvider(Func<MetadataReader, EntityHandle, string>? typeIdentity = null) =>
+        _typeIdentity = typeIdentity;
 
     public string GetArrayType(string elementType, ArrayShape shape) =>
         $"array[{shape.Rank};{string.Join(",", shape.Sizes)};{string.Join(",", shape.LowerBounds)}]<{elementType}>";
@@ -7302,15 +7326,19 @@ internal sealed class RawSignatureTypeProvider : ISignatureTypeProvider<string, 
     public string GetPrimitiveType(PrimitiveTypeCode typeCode) => $"primitive:{(int)typeCode}";
     public string GetSZArrayType(string elementType) => $"szarray<{elementType}>";
     public string GetTypeFromDefinition(MetadataReader reader, TypeDefinitionHandle handle, byte rawTypeKind) =>
-        $"{rawTypeKind}:def:{DefinitionName(reader, handle)}";
+        _typeIdentity is null ? $"{rawTypeKind}:def:{DefinitionName(reader, handle)}"
+            : $"{rawTypeKind}:type:{_typeIdentity(reader, handle)}";
     public string GetTypeFromReference(MetadataReader reader, TypeReferenceHandle handle, byte rawTypeKind) =>
-        $"{rawTypeKind}:ref:{ReferenceName(reader, handle)}";
+        _typeIdentity is null ? $"{rawTypeKind}:ref:{ReferenceName(reader, handle)}"
+            : $"{rawTypeKind}:type:{_typeIdentity(reader, handle)}";
     public string GetTypeFromSpecification(
         MetadataReader reader,
         GenericContext genericContext,
         TypeSpecificationHandle handle,
         byte rawTypeKind) =>
-        $"{rawTypeKind}:spec:{reader.GetTypeSpecification(handle).DecodeSignature(this, genericContext)}";
+        _typeIdentity is null
+            ? $"{rawTypeKind}:spec:{reader.GetTypeSpecification(handle).DecodeSignature(this, genericContext)}"
+            : reader.GetTypeSpecification(handle).DecodeSignature(this, genericContext);
 
     private static string DefinitionName(MetadataReader reader, TypeDefinitionHandle handle)
     {

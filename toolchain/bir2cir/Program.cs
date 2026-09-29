@@ -1292,9 +1292,11 @@ sealed class Pipeline
             CheckStySanity(outputName, substituted);
             KotlinPropertyAccessors.AllocateAll(substituted, refs, localPropertyAccessors);
             var collisionProjection = substituted.DeepClone();
-            declarationCollisionProjection.Add(BirTypeLowering.Lower(
+            var physicalProjection = BirTypeLowering.Lower(
                 collisionProjection, refBuild: false, declarationCollisionAliases, isValueFqn, outputName,
-                refs.PhysicalTypeNames, emittedLocalTypes, refs.NullableTypeFrames));
+                refs.PhysicalTypeNames, emittedLocalTypes, refs.NullableTypeFrames);
+            FunctionSignatureIdentity.Complete(physicalProjection);
+            declarationCollisionProjection.Add(physicalProjection);
             var lowered = BirTypeLowering.Lower(substituted, _options.RefBuild, refs.Aliases, isValueFqn, outputName,
                 refs.PhysicalTypeNames, emittedLocalTypes, refs.NullableTypeFrames);
             // The erasure can collapse two Kotlin declarations onto ONE CLR signature, where only one of them can
@@ -1485,6 +1487,7 @@ sealed class Pipeline
         // build retains declaration types and only consumes semantic comparisons in executable constructor remnants.
         PhysicalValueCoercion.ApplyAll(loweredRoots.Select(file => file.Root).ToList(),
             ClrMemberResolution.UnitSingletonRead, isValueFqn, referenceBuild: _options.RefBuild);
+        foreach (var (lowered, _) in loweredRoots) FunctionSignatureIdentity.Complete(lowered);
 
         // Every representation synthesis is now complete. Validate the exact MethodDef table that CIR will describe;
         // do not defer a generated/user collision to ilemit and do not invent a late name after calls are bound.
