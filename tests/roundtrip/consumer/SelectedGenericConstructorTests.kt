@@ -16,6 +16,10 @@ class SelectedGenericConstructorTests {
 
     @TestAttribute
     fun importedDeclarationsRemainDistinctAfterInstantiation() {
+        val nullableChild = NullableSelectionOuter<Int>(null).Child("nullable")
+        check(NullableSelectionHolder(nullableChild).child.value == "nullable")
+        val genericHolder = GenericNullableSelectionHolder(109, nullableChild)
+        check(genericHolder.marker == 109 && genericHolder.child.value == "nullable")
         check(CovariantSelectionOuter("imported").Child().read() == "imported")
         val genericChild = CovariantSelectionOuter("imported").GenericChild(107)
         check(genericChild.read() == "imported" && genericChild.own == 107)

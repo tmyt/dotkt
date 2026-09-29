@@ -8,6 +8,12 @@ class SelectedConstructor<T> {
 
 class SelectionBox<T>(val value: T)
 
+class NullableSelectionOuter<O>(val outer: O?) {
+    inner class Child<U>(val value: U?)
+}
+class NullableSelectionHolder(val child: NullableSelectionOuter<Int>.Child<String>)
+class GenericNullableSelectionHolder<T>(val marker: T, val child: NullableSelectionOuter<Int>.Child<String>)
+
 class CovariantSelectionOuter<out T>(val value: T) {
     inner class Child { fun read(): T = value }
     inner class GenericChild<U>(val own: U) { fun read(): T = value }
