@@ -195,11 +195,13 @@ static class NullableGenericErasure
         if (to["typeParams"] is JsonArray tps)
         {
             var bounds = new JsonObject();
+            var frame = KotlinSupertypesRecord.ReadNullableFrame(to);
             for (var i = 0; i < tps.Count; i++)
             {
                 if (tps[i] is not JsonObject tp || tp["constraints"] is not JsonArray cs || cs.Count == 0) continue;
                 if (!cs.Any(c => TypeJson.Read(c) is TypeNode bt && !Erase(bt, Pos.Slot, isValue).Equals(bt))) continue;
-                bounds[i.ToString()] = cs.DeepClone();
+                var sourceIndex = frame is null ? (int?)i : frame.SourceIndex(i);
+                if (sourceIndex is int source) bounds[source.ToString()] = cs.DeepClone();
             }
             if (bounds.Count > 0) { pre["bounds"] = bounds; moved = true; }
         }

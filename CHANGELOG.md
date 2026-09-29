@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Inner generic metadata retains source parameter indices (#896).**
+  Enclosing nullable companion slots no longer shift imported Kotlin bounds or declaration-site variance.
+
 - **Inline defaults retain the lambda arguments they capture (#890).**
   Arguments used by defaults are materialized once and shared with later defaults and the function body across DLL boundaries.
 
