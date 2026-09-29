@@ -9,7 +9,13 @@ private fun boxedConditionalNullable(flag: Boolean, value: Int?): Any? = if (fla
 private fun <T : Comparable<T>> boxedConditionalGeneric(flag: Boolean, value: T): Comparable<*> =
     if (flag) value else "text"
 private fun boxedConditionalArgument(value: Comparable<*>): Any = value
+private fun boxedConditionalArgumentChoice(flag: Boolean): Any = boxedConditionalArgument(if (flag) 7 else "text")
 private fun boxedConditionalStruct(flag: Boolean, value: TimeSpan): Any = if (flag) value else "text"
+private fun <T : System.IDisposable> boxedConditionalDispose(value: T) { value.Dispose() }
+private class BoxedConditionalDisposable : System.IDisposable {
+    var disposed = false
+    override fun Dispose() { disposed = true }
+}
 
 private fun boxedConditionalNested(first: Boolean, second: Boolean, trace: StringBuilder): Any {
     val selected = if (first) {
@@ -44,8 +50,11 @@ class BoxedConditionalTests {
         val span = TimeSpan(0, 0, 5)
         check((boxedConditionalStruct(true, span) as TimeSpan).CompareTo(span) == 0)
         check(boxedConditionalStruct(false, span) == "text")
-        check(boxedConditionalArgument(if (true) 7 else "text") == 7)
-        check(boxedConditionalArgument(if (false) 7 else "text") == "text")
+        check(boxedConditionalArgumentChoice(true) == 7)
+        check(boxedConditionalArgumentChoice(false) == "text")
+        val disposable = BoxedConditionalDisposable()
+        boxedConditionalDispose(disposable)
+        check(disposable.disposed)
     }
 
     @TestAttribute

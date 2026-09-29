@@ -461,7 +461,17 @@ static class PhysicalValueCoercion
         // collection face while the selected member belongs to its read-only face. Use the exact resolved
         // owner, just as argument coercion uses the exact selected parameter vector.
         if (node["recv"] != null && ResolvedMember(node) is JsonObject selected)
-            CoerceSlot(node, "recv", TypeJson.Read(selected["declaringType"]), scope, index);
+        {
+            // Address-taking dispatch consumes the recorded receiver construction, not a boxed instance of the
+            // declaring interface. Preserve that physical slot for constrained calls and CLR struct dispatch.
+            var receiverTarget = Str(node["k"]) switch
+            {
+                "constrainedCall" => TypeJson.Read(node["recvType"]),
+                "clrInstance" or "clrPropGet" or "clrPropSet" => TypeJson.Read(node["type"]),
+                _ => TypeJson.Read(selected["declaringType"]),
+            };
+            CoerceSlot(node, "recv", receiverTarget, scope, index);
+        }
     }
 
     static void CoerceDelegateArguments(JsonObject node, Scope scope, Index index)
