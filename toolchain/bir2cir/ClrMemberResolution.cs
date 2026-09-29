@@ -95,39 +95,11 @@ static partial class ClrMemberResolution
                     if (declared.Any(t => t == null)) continue;
                     var matches = declared.Select((raw, i) =>
                     {
-                        var wantedKey = SupertypeGraph.TypeKey(wanted[i]);
-                        // A declaration fact normally stays in the target's own open frame.  A lifted/local target
-                        // can instead be serialized through the caller's lexical frame; in that case it is exactly
-                        // the target declaration closed by the constructed owner.  Accept those two equivalent
-                        // spellings, while a plain use-site argTypes lookup remains closed-only.
-                        if (declarationSig != null && SupertypeGraph.TypeKey(raw) == wantedKey) return true;
-                        if ((closeOwnerFrame || declarationSig != null) && owner.Args is { Length: > 0 })
-                            return SupertypeGraph.TypeKey(SupertypeGraph.SubstOwnerTvs(raw, owner.Args)) == wantedKey;
-                        return declarationSig == null && SupertypeGraph.TypeKey(raw) == wantedKey;
-                    }).All(x => x);
-                    if (matches) exact.Add(candidate);
-                }
-            }
-            // A lifted local class can re-home a lexical type parameter into a NEW owner slot.  kotc's open
-            // declaration vector still speaks the original lexical frame there, while the constructed-owner plus
-            // use-site vector states the same selection in its final physical frame.  If the open comparison names
-            // no declaration, normalize through that closed pair.  This remains exact equality and still rejects
-            // both zero and multiple matches; it is not assignability or overload scoring.
-            if (exact.Count == 0 && declarationSig != null && useSiteSig != null
-                && useSiteSig.Count == args.Count && useSiteSig.All(n => n != null))
-            {
-                var wanted = useSiteSig.Select(TypeJson.Read).ToArray();
-                foreach (var candidate in sameArity)
-                {
-                    var ps = (JsonArray)candidate.ctor["params"];
-                    var declared = ps.Select(p => p?["type"] is JsonNode pt ? TypeJson.Read(pt) : null).ToArray();
-                    if (declared.Any(t => t == null)) continue;
-                    var matches = declared.Select((raw, i) =>
-                    {
-                        var closed = owner.Args is { Length: > 0 }
-                            ? SupertypeGraph.SubstOwnerTvs(raw, owner.Args)
-                            : raw;
-                        return SupertypeGraph.TypeKey(closed) == SupertypeGraph.TypeKey(wanted[i]);
+                        // A selected declaration is matched in its own open frame. Closing it here would merge
+                        // distinct overloads such as .ctor(T) and .ctor(Int) when the owner is instantiated with Int.
+                        var selected = closeOwnerFrame && owner.Args is { Length: > 0 }
+                            ? SupertypeGraph.SubstOwnerTvs(raw, owner.Args) : raw;
+                        return SupertypeGraph.TypeKey(selected) == SupertypeGraph.TypeKey(wanted[i]);
                     }).All(x => x);
                     if (matches) exact.Add(candidate);
                 }
