@@ -160,6 +160,8 @@ static class CovariantInterfaceReturnBridge
                     ImplDescriptor(ifaceSpec, name, methodArity, slotParams, slotRet,
                         KotlinOverrideSlotBridge.SubstituteOwnerTypeParameterConstraints(
                             slot["typeParams"] as JsonArray, ifaceArgs)));
+                bridgedSlots.Add(BridgedSlotKey(implementation, ifaceSpec,
+                    name, methodArity, slotParams, slotRet, refs, isValue));
             }
         }
 
@@ -196,7 +198,8 @@ static class CovariantInterfaceReturnBridge
                     ? implementation["suspendRet"] : implementation["ret"]) is not TypeNode implementationRet0)
                 continue;
             var implementationParams = implementationParamNodes.OfType<JsonObject>()
-                .Select(parameter => TypeJson.Read(parameter["type"])).ToArray();
+                .Select(parameter => Str(parameter["kotlinType"]) is string sourceType
+                    ? TypeNode.Parse(sourceType) : TypeJson.Read(parameter["type"])).ToArray();
             if (implementationParams.Length != implementationParamNodes.Count
                 || implementationParams.Any(type => type == null)) continue;
             var methodArity = (implementation["typeParams"] as JsonArray)?.Count ?? 0;

@@ -88,8 +88,9 @@ static class KotlinOverrideSlotBridge
     // value slot and a covariant result supplied by an inherited implementation. Cold lowering drives a Task of the
     // slot's result from the selected implementation's cold call; it must not cast the public Task result.
     public static void PrepareSuspendValueBridges(IEnumerable<JsonNode> roots, ValueTypeOracle isValue,
-        ReferenceMetadataIndex refs, IReadOnlySet<string> localTypeNames, bool refBuild, GenericRepresentationPolicy representations) =>
-        ApplyAll(roots, isValue, refs, representations, Phase.SuspendValueBridges, localTypeNames, refBuild: refBuild);
+        ReferenceMetadataIndex refs, IReadOnlySet<string> localTypeNames, bool refBuild, GenericRepresentationPolicy representations,
+        IReadOnlySet<CovariantInterfaceReturnBridge.BridgedSlot> covariantBridgedSlots) =>
+        ApplyAll(roots, isValue, refs, representations, Phase.SuspendValueBridges, localTypeNames, covariantBridgedSlots, refBuild);
 
     // The bridge half.
     public static void ApplyAll(IEnumerable<JsonNode> roots, ValueTypeOracle isValue, ReferenceMetadataIndex refs,
@@ -1286,7 +1287,8 @@ static class KotlinOverrideSlotBridge
                 var selectedSpec = accessorKind != null ? owner : spec;
                 var selectedArgs = selectedSpec.Args ?? Array.Empty<TypeNode>();
                 var implementationSignature = ps.OfType<JsonObject>()
-                    .Select(parameter => TypeJson.Read(parameter["type"]))
+                    .Select(parameter => suspendValues && Str(parameter["kotlinType"]) is string sourceType
+                        ? TypeNode.Parse(sourceType) : TypeJson.Read(parameter["type"]))
                     .ToArray();
                 if (implementationSignature.Length != ps.Count || implementationSignature.Any(type => type == null))
                     continue;
