@@ -18,6 +18,15 @@ private class ConsumerTaskBase(private val result: Long?) : NullableTaskBase<Lon
 }
 
 private class ConsumerInheritedTask(result: Long?) : ProducerTaskBody(result), NullableTaskSlot<Long?>
+private class ConsumerFinalTask(result: Long?) : FinalTaskBody(result), NullableTaskSlot<Long?>
+private class ConsumerOrdinaryCallback(result: Long?) : OrdinaryCallbackBody(result), OrdinaryCallbackSlot<Long?>
+
+private class ConsumerDeclaredTask(private val result: Int?) : NullableDeclaredTaskSlot<Int> {
+    override suspend fun <U> read(marker: U, pause: suspend () -> Unit): Int? {
+        pause()
+        return result
+    }
+}
 
 private interface ConsumerLocalTaskSlot<T> {
     suspend fun <U> read(marker: U, pause: suspend () -> Unit): T
@@ -53,6 +62,8 @@ class NullableTaskSlotTests {
             }
             checkNullableTask(expected) { pause -> local.read(2, pause) }
             checkNullableTask(expected) { pause -> imported.read(3, pause) }
+            val declared: NullableDeclaredTaskSlot<Int> = ConsumerDeclaredTask(expected)
+            checkNullableTask(expected) { pause -> declared.read("declared nullable", pause) }
         }
     }
 
@@ -65,10 +76,22 @@ class NullableTaskSlotTests {
             checkNullableTask(expected) { pause -> concrete.read(5, pause) }
             val inherited = ConsumerInheritedTask(expected)
             val slot: NullableTaskSlot<Long?> = inherited
-            checkNullableTask(expected) { pause -> slot.read("inherited", pause) }
+            checkNullableTask(expected) { pause ->
+                check(slot.read("inherited", pause) == expected)
+                slot.read(1, "ordinary overload")
+            }
             checkNullableTask(expected) { pause -> inherited.read(7, pause) }
             val localSlot: ConsumerLocalTaskSlot<Long?> = ConsumerLocalInheritedTask(expected)
             checkNullableTask(expected) { pause -> localSlot.read("local slot", pause) }
+            val producerBase: NullableTaskBase<Long?> = ProducerTaskBase(expected)
+            checkNullableTask(expected) { pause -> producerBase.read("producer base", pause) }
+            val finalSlot: NullableTaskSlot<Long?> = ConsumerFinalTask(expected)
+            checkNullableTask(expected) { pause ->
+                check(finalSlot.read("final", pause) == expected)
+                finalSlot.read(2, "ordinary overload")
+            }
+            val ordinary: OrdinaryCallbackSlot<Long?> = ConsumerOrdinaryCallback(expected)
+            check(ordinary.read("ordinary") {} == expected)
         }
     }
 }

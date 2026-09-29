@@ -3043,7 +3043,7 @@ sealed partial class ReferenceMetadataIndex
                 && member.MethodArity == methodArity
                 && KotlinOverrideSlotBridge.SameMethodTypeParameterShape(
                     member.SemanticMethodTypeParams ?? member.MethodTypeParams, selectedTypeParams, ownerTypeArguments, ownerTypeArguments)
-                && MethodSignatureMatches(member, signature, resolvedReturn, ownerTypeArguments)
+                && MethodSignatureMatches(member, signature, resolvedReturn, ownerTypeArguments, kotlinParameters: true)
                 && member.ParamTypeNodes != null && member.ReturnTypeNode != null)
             .ToList();
         if (matches.Count != 1) return false;
@@ -4304,9 +4304,9 @@ sealed partial class ReferenceMetadataIndex
     }
 
     static bool MethodSignatureMatches(MemberBinding member, IReadOnlyList<TypeNode> signature,
-        TypeNode resolvedReturn, TypeNode[] ownerTypeArguments)
+        TypeNode resolvedReturn, TypeNode[] ownerTypeArguments, bool kotlinParameters = false)
     {
-        if (!AccessorSignatureMatches(member, signature, ownerTypeArguments)) return false;
+        if (!AccessorSignatureMatches(member, signature, ownerTypeArguments, kotlinParameters)) return false;
         if (resolvedReturn == null) return true;
         var declared = member.NullableGenericRet ?? member.KotlinReturnType ?? member.ReturnTypeNode;
         if (declared == null) return false;

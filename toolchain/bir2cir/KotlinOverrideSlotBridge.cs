@@ -1242,6 +1242,7 @@ static class KotlinOverrideSlotBridge
     {
         if (refs == null) return;
         var supArgs = spec.Args ?? Array.Empty<TypeNode>();
+        var ownedSlots = new HashSet<string>(StringComparer.Ordinal);
         foreach (var impl in methods.OfType<JsonObject>().ToList())
         {
             if (suspendValues && !IsSuspendMethod(impl)) continue;
@@ -1446,6 +1447,18 @@ static class KotlinOverrideSlotBridge
                     : refs.IsInterfaceType(descriptorOwner);
                 var slotHasDefault = descriptorIsInterface && refs.IsPublicConcreteInstanceMethod(
                     descriptorOwner.Name, descriptorMember, methodArity, slotParams, slotRet);
+                // Own declarations precede inherited candidates. A materialized final-method forwarder
+                // owns its selected slot, just as in the local-declaration arm; the inherited fact is
+                // not a second implementation. Compare the complete resolved slot, not its name alone.
+                var slotKey = SupertypeGraph.TypeKey(descriptorOwner) + "::" + descriptorMember
+                    + "`" + methodArity + "(" + string.Join(",", slotParams.Select(SupertypeGraph.TypeKey))
+                    + ")->" + SupertypeGraph.TypeKey(slotRet)
+                    + MethodTypeParameterShapeKey(selectedSlotTypeParams, supArgs);
+                if (inheritedSignatures?.ContainsKey(impl) == true)
+                {
+                    if (ownedSlots.Contains(slotKey)) continue;
+                }
+                else ownedSlots.Add(slotKey);
                 fill(selectedSpec, descriptorOwner, descriptorIsInterface, true, accessorKind != null ? member : sourceIdentity,
                     descriptorMember, accessorKind, slotParams, slotRet, impl, selectedSlotTypeParams,
                     slotHasDefault, slotReturnsValue && IsUnitValueSlot(slotRet));
