@@ -9,6 +9,7 @@ static class InnerRepresentationFrameTests
     public static void SelfTest()
     {
         ApplicationCorrespondence();
+        DeclarationArgumentOrder();
         SourceCarrierIdentity();
         // Declarations use enclosing-first variables; Kotlin inner applications use own-first arguments.
         var root = JsonNode.Parse("""
@@ -35,6 +36,38 @@ static class InnerRepresentationFrameTests
             .Select(index => (TypeNode)new TypeNode.Tv("type", index)).ToArray());
         if (owner != expected)
             throw new InvalidOperationException($"Inner self field lost physical frame: {TypeJson.Write(owner)}; expected {TypeJson.Write(expected)}; after materialization: {materializedOwner}");
+    }
+
+    static void DeclarationArgumentOrder()
+    {
+        var root = JsonNode.Parse("""
+        {"types":[
+          {"name":"Outer","typeParams":["O","NO"]},
+          {"name":"Outer.Inner","mods":{"inner":true},"outerTypeParamCount":2,"semanticOwner":"Outer"},
+          {"name":"Outer.Inner.Leaf","mods":{"inner":true},"outerTypeParamCount":4,"semanticOwner":"Outer.Inner"}],
+         "fields":[]}
+        """)!;
+        TypeNode Arg(string name) => new TypeNode.Fqn(name);
+        var o = Arg("O"); var no = Arg("NO"); var i = Arg("I"); var ni = Arg("NI");
+        var nested = new TypeNode.Fqn("Outer.Inner", new[] { i, ni, o, no });
+        var leaf = new TypeNode.Fqn("Outer.Inner.Leaf", new TypeNode[] { nested, Arg("NL"), i, ni, o, no });
+        var order = new InnerApplicationOrder(new[] { root }, null);
+        var declaration = order.DeclarationArguments(leaf);
+        if (!declaration.SequenceEqual(new TypeNode[] { o, no, i, ni, nested, Arg("NL") }))
+            throw new InvalidOperationException("Declaration substitution changed argument payloads or lost enclosing order");
+        ((JsonArray)root["fields"]!).Add(new JsonObject { ["name"] = "value", ["type"] = TypeJson.Write(leaf) });
+        TypeOwnershipLowering.ProjectInnerApplications(new[] { root }, null);
+        var projectedNested = new TypeNode.Fqn("Outer.Inner", new[] { o, no, i, ni });
+        var expected = new TypeNode.Fqn("Outer.Inner.Leaf", new TypeNode[] { o, no, i, ni, projectedNested, Arg("NL") });
+        if (TypeJson.Read(root["fields"]![0]!["type"]) != expected)
+            throw new InvalidOperationException("Nested argument applications were projected more than once");
+        var enclosingNested = new TypeNode.Fqn("Outer.Inner", new TypeNode[] { i, ni, nested, no });
+        root["fields"]![0]!["type"] = TypeJson.Write(enclosingNested);
+        TypeOwnershipLowering.ProjectInnerApplications(new[] { root }, null);
+        var expectedEnclosing = new TypeNode.Fqn("Outer.Inner", new TypeNode[] { projectedNested, no, i, ni });
+        if (TypeJson.Read(root["fields"]![0]!["type"]) != expectedEnclosing)
+            throw new InvalidOperationException("An enclosing argument payload was projected more than once");
+        Console.WriteLine("[inner declaration argument order] self-test OK");
     }
 
     static void ApplicationCorrespondence()

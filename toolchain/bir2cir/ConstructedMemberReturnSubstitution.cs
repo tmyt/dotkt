@@ -20,8 +20,8 @@ static class ConstructedMemberReturnSubstitution
         return root;
     }
 
-    // InheritedMemberOwnerBinding already visits every call whose declaring owner it may rewrite. Discharge the
-    // constructed-result capability on that same work item instead of scheduling a later whole-module repair walk.
+    // Late inherited-owner binding closes results on the work item whose physical owner changes. Early source-owner
+    // projection leaves this to ApplyAll after inner application arguments have their physical declaration order.
     internal static void ApplyCall(JsonObject obj)
     {
         if (Str(obj["k"]) != "callInstance"

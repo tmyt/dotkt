@@ -331,7 +331,7 @@ sealed class Pipeline
         // (NullableGenericErasure runs inside the transform loop, mutating declarations in place). Feeds
         // NullableTvErasureCallRealign so a `Box<Int>.get_a()` call across the generic boundary re-derives its
         // return from the (erased) declaration instead of kotc's over-substituted `Ref<Nullable<Int>>` (#4).
-        var nullableTvDeclRets = NullableTvErasureCallRealign.CollectDeclaredMemberRets(birFiles.Select(f => f.Root));
+        var nullableTvDeclRets = NullableTvErasureCallRealign.CollectDeclaredMemberRets(birFiles.Select(f => f.Root), refs);
         // Snapshot every method whose source-level `T` return is produced by an unchecked cast from a nullable/object
         // carrier.  Its physical CLR ABI must return object so narrowing can be delayed until the value is consumed;
         // the exact Kotlin `T` return is retained through [KotlinType].  Collected module-wide so cross-file local calls

@@ -82,6 +82,7 @@ static partial class NullableTvErasureCallRealign
     // and frontend-resolved signature, so their overload candidates remain separate.
     public sealed class DeclIndex
     {
+        internal InnerApplicationOrder SourceApplicationOrder;
         public readonly Dictionary<string, Dictionary<string, DeclSig>> ByDeclarationOwner = new(StringComparer.Ordinal);
         public readonly Dictionary<string, Dictionary<string, DeclSig>> ByOwner = new(StringComparer.Ordinal);
         public readonly Dictionary<string, Dictionary<string, List<DeclSig>>> PropertiesByOwner = new(StringComparer.Ordinal);
@@ -103,10 +104,11 @@ static partial class NullableTvErasureCallRealign
         public readonly Dictionary<string, Dictionary<string, TypeNode>> Slots = new(StringComparer.Ordinal);
     }
 
-    public static DeclIndex CollectDeclaredMemberRets(IEnumerable<JsonNode> roots)
+    public static DeclIndex CollectDeclaredMemberRets(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs = null)
     {
-        var idx = new DeclIndex();
-        foreach (var r in roots) CollectFrom(r, idx, topLevel: true);
+        var rootList = roots.ToList();
+        var idx = new DeclIndex { SourceApplicationOrder = new InnerApplicationOrder(rootList, refs) };
+        foreach (var r in rootList) CollectFrom(r, idx, topLevel: true);
         return idx;
     }
 
@@ -116,8 +118,11 @@ static partial class NullableTvErasureCallRealign
     // pre-erasure return carrier without mistaking every other late synthetic or external accessor for that case.
     // topLevel=false skips already-indexed facade members while retaining the recursive `types` walk; existing type
     // names are ignored, making each call an additive transition rather than an ambiguity-producing rescan.
-    public static void CollectNewSyntheticTypes(JsonNode root, DeclIndex idx) =>
+    public static void CollectNewSyntheticTypes(JsonNode root, DeclIndex idx)
+    {
+        idx.SourceApplicationOrder?.Add(root);
         CollectFrom(root, idx, topLevel: false);
+    }
 
     // The same generated holder method can be visited once through the new-type walk and once through the
     // generated-member walk. Keep its one-shot ownership fact stable across both index additions, then consume it
@@ -364,12 +369,16 @@ static partial class NullableTvErasureCallRealign
     // producing assembly instead — its `[KotlinNullableGeneric]` carrier where the erasure recorded one, its physical
     // signature otherwise — and typed by the identical formula. Null when the build has no references.
     static ReferenceMetadataIndex _refs;
+    static InnerApplicationOrder _sourceApplicationOrder;
+    static TypeNode[] OwnerArguments(TypeNode.Fqn owner) =>
+        _sourceApplicationOrder?.DeclarationArguments(owner) ?? owner?.Args;
 
     public static void ApplySourceUses(JsonNode root, DeclIndex idx, ValueTypeOracle isValue,
         ReferenceMetadataIndex refs)
     {
         _isValue = isValue ?? (_ => false);
         _refs = refs;
+        _sourceApplicationOrder = idx.SourceApplicationOrder;
         ApplyRec(root, idx);
     }
 
@@ -388,6 +397,7 @@ static partial class NullableTvErasureCallRealign
     {
         _isValue = isValue ?? (_ => false);
         _refs = refs;
+        _sourceApplicationOrder = idx.SourceApplicationOrder;
         foreach (var root in roots)
             if (root != null) Eval(root, new Ctx { Idx = idx });
     }
@@ -410,7 +420,7 @@ static partial class NullableTvErasureCallRealign
     // idempotent for calls already handled by either earlier phase.
     public static void ApplyAfterInheritedOwnerBinding(
         JsonNode root, DeclIndex idx, ValueTypeOracle isValue, ReferenceMetadataIndex refs)
-        => ApplySourceUses(root, idx, isValue, refs);
+        => ApplyPhysicalUses(root, idx, isValue, refs);
 
     // UnsafeAccessorLowering replaces a Kotlin member edge with a newly-declared wrapper call. The wrapper's
     // declaration is the first authoritative statement of that new call's physical result; re-flow once after the
@@ -419,7 +429,15 @@ static partial class NullableTvErasureCallRealign
     // the original inherited-member pass, and retaining the pre-rewrite concrete `ret` would lie about the wrapper.
     public static void ApplyAfterUnsafeAccessorSynthesis(
         JsonNode root, DeclIndex idx, ValueTypeOracle isValue, ReferenceMetadataIndex refs)
-        => ApplySourceUses(root, idx, isValue, refs);
+        => ApplyPhysicalUses(root, idx, isValue, refs);
+
+    static void ApplyPhysicalUses(JsonNode root, DeclIndex idx, ValueTypeOracle isValue, ReferenceMetadataIndex refs)
+    {
+        _isValue = isValue ?? (_ => false);
+        _refs = refs;
+        _sourceApplicationOrder = null;
+        ApplyRec(root, idx);
+    }
 
     static void ApplyRec(JsonNode root, DeclIndex idx)
     {
@@ -453,7 +471,7 @@ static partial class NullableTvErasureCallRealign
                 foreach (var p in ps)
                     if (p is JsonObject po && Str(po["name"]) is string pn && TypeJson.Read(po["type"]) is TypeNode pt)
                         ctx.Env[pn] = pt;
-            DelegationArgs(co, "baseArgs", baseParams, baseType?.Args, ctx);
+            DelegationArgs(co, "baseArgs", baseParams, OwnerArguments(baseType), ctx);
             DelegationArgs(co, "thisArgs",
                 ownName != null && idx.Ctors.TryGetValue(ownName, out var own) ? own : null, ownerArgs, ctx);
             if (co["body"] is JsonNode body) Eval(body, ctx);
@@ -762,12 +780,12 @@ static partial class NullableTvErasureCallRealign
                 ?? LookupDecl(owner, method, argCount, methodArgs?.Length ?? 0, isStatic: false, idx, obj);
         // THE ARGUMENT AXIS: each parameter slot is `Subst(Erase(declared param))` exactly as the return is; with no
         // declaration the call's own descriptor stands in (see RealignArgs).
-        RealignArgs(obj, decl?.Params, decl?.ParamsRefused, owner.Args, methodArgs, ctx,
+        RealignArgs(obj, decl?.Params, decl?.ParamsRefused, OwnerArguments(owner), methodArgs, ctx,
             exactPropertyTarget: propertyDecl != null);
         if (decl?.Ret == null) return stampedRet;   // no declaration, or an ambiguous same-name/same-arity overload set
 
         var erasedRet = NullableGenericErasure.EraseNullableTv(decl.Ret, _isValue);
-        var derived = Subst(erasedRet, owner.Args, methodArgs);
+        var derived = Subst(erasedRet, OwnerArguments(owner), methodArgs);
         return ApplyDerivedRet(obj, derived, stampedRet, !erasedRet.Equals(decl.Ret),
             decl.NullableErasureOwnershipKnown, ctx.IsNullableCompanion(derived));
     }
@@ -796,7 +814,7 @@ static partial class NullableTvErasureCallRealign
                     ? propertyDecl
                     : LookupDeclarationIdentity(obj, owner, ctx.Idx)
                         ?? LookupDecl(owner, method, argCount, methodArgs?.Length ?? 0, isStatic: true, ctx.Idx, obj);
-                ownerArgs = owner.Args;
+                ownerArgs = OwnerArguments(owner);
             }
             else
             {
@@ -974,7 +992,7 @@ static partial class NullableTvErasureCallRealign
                 declRefused = refRefused;
             }
         }
-        RealignArgs(obj, declParams, declRefused, (type as TypeNode.Fqn)?.Args, null, ctx);
+        RealignArgs(obj, declParams, declRefused, OwnerArguments(type as TypeNode.Fqn), null, ctx);
         // The construction may have been RETYPED by the caller's argument realignment before this ran.
         return TypeJson.Read(obj["type"]);
     }
@@ -1015,7 +1033,7 @@ static partial class NullableTvErasureCallRealign
         // Keep return facts limited to nullable-erasure carriers or open physical declarations.
         return _refs != null
             && _refs.TryNullableGenericSlot(owner.Name, method, isStatic, argCount, methodArity,
-               out var ret, out var ps, out var refused, ownerTypeArguments: owner.Args ?? Array.Empty<TypeNode>(),
+               out var ret, out var ps, out var refused, ownerTypeArguments: OwnerArguments(owner) ?? Array.Empty<TypeNode>(),
                resolvedSignature: signature, includeUnchanged: signature != null || identity != null,
                selectedDeclarationId: identity, includeUnchangedReturn: false)
             ? new DeclSig { Ret = ret, Params = ps, ParamsRefused = refused }
@@ -1042,7 +1060,7 @@ static partial class NullableTvErasureCallRealign
         if (signature == null || signature.Length != argCount || signature.Any(type => type == null))
             signature = null;
         return _refs.TryNullableGenericPropertySlot(owner.Name, propertyName, accessorKind, isStatic,
-            argCount, methodArity, signature, owner.Args ?? Array.Empty<TypeNode>(),
+            argCount, methodArity, signature, OwnerArguments(owner) ?? Array.Empty<TypeNode>(),
             out var ret, out var parameters, out var refused)
             ? new DeclSig { Ret = ret, Params = parameters, ParamsRefused = refused }
             : null;
@@ -1082,7 +1100,7 @@ static partial class NullableTvErasureCallRealign
         var matches = candidates.Where(candidate => signature == null
                 || candidate.Params.Select(parameter => owner?.Args == null
                         ? parameter
-                        : SupertypeGraph.SubstOwnerTvs(parameter, owner.Args))
+                        : SupertypeGraph.SubstOwnerTvs(parameter, OwnerArguments(owner)))
                     .Select((parameter, index) =>
                         ReferenceMetadataIndex.AccessorDeclarationDescribesCall(parameter, signature[index]))
                     .All(match => match))
