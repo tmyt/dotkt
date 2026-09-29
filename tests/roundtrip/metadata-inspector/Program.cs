@@ -23,6 +23,13 @@ const int IsInfixFunctionFlag = 1 << 9;
 // names. Star-projection existential association is metadata-authoritative and does not depend on this spelling.
 const string HoistedMarker = "$companion$";
 
+if (args.Length == 2 && args[0] == "--klib-nonnull-bounds")
+{
+    VerifyNonNullBounds(args[1]);
+    Console.WriteLine("KLIB non-null and nullable top bounds: OK");
+    return;
+}
+
 if (args.Length == 2 && args[0] == "--nested-type-carriers")
 {
     VerifyNestedTypeCarriers(args[1]);
@@ -574,6 +581,33 @@ static IEnumerable<JsonObject> DescendantObjects(JsonNode node)
         foreach (var value in array.Where(value => value is not null))
             foreach (var descendant in DescendantObjects(value!))
                 yield return descendant;
+}
+
+static void VerifyNonNullBounds(string path)
+{
+    const string package = "roundtrip.nonnullbounds";
+    using var archive = ZipFile.OpenRead(path);
+    var fragment = archive.Entries.Where(entry => entry.FullName.EndsWith(".knm", StringComparison.Ordinal))
+        .Select(entry => { using var stream = entry.Open(); return PackageFragment.Parser.ParseFrom(stream); })
+        .Single(fragment => fragment.FqName == package);
+    void Check(TypeParameter parameter, bool nullable, string context)
+    {
+        // KLIB omits the implicit Any? upper bound; an explicit non-null Any must not use that encoding.
+        if (nullable && parameter.UpperBound.Count == 0) return;
+        Require(parameter.UpperBound.Count == 1, context + " must have one Kotlin upper bound");
+        var bound = parameter.UpperBound[0];
+        Require(bound.HasClassName && QualifiedName(fragment, bound.ClassName) == "kotlin.Any"
+            && bound.Nullable == nullable, context + " lost its source upper-bound nullability");
+    }
+    foreach (var name in new[] { "nonNull", "nullable", "unconstrained" })
+        Check(fragment.Package.Function.Single(f => String(fragment, f.Name) == name).TypeParameter.Single(),
+            name != "nonNull", name);
+    foreach (var name in new[] { "NonNullBox", "NullableBox" })
+        Check(Class(fragment, package + "." + name).TypeParameter.Single(), name == "NullableBox", name);
+    foreach (var owner in new[] { "BoundSlot", "BoundBase" })
+        foreach (var method in new[] { "read", "delayed" })
+            Check(Class(fragment, package + "." + owner).Function
+                .Single(f => String(fragment, f.Name) == method).TypeParameter.Single(), false, owner + "." + method);
 }
 
 static void VerifyKlibPackageProperties(string path, string packageName, IReadOnlyList<string> expectedNames)

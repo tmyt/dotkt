@@ -123,6 +123,10 @@ static class NullableRepresentationMaterialization
                 && references.TryDeclarationIdentity(referencedId, out _, out var referencedOwner, out _, out _))
                 return Mapping(types.GetValueOrDefault(referencedOwner), references.NullableMethodFrame(referencedId), referencedOwner);
             var ownerType = Text(use["k"]) == "new" ? use["type"] : use["ownerType"] ?? use["owner"];
+            if (Text(use["k"]) == "new" && TypeJson.Read(ownerType) is TypeNode.Fqn constructorOwner
+                && references != null
+                && references.KotlinConstructorOwnerFrames.TryGetValue(constructorOwner.Name, out var constructorFrame))
+                return Mapping(constructorFrame, empty, constructorOwner.Name);
             return TypeJson.Read(ownerType) is TypeNode.Fqn owner && types.TryGetValue(owner.Name, out var frame)
                 // Knowing the owner does not establish a zero-arity method frame. Unbound method variables in
                 // its declaration signature must not be interpreted as variables of a fictitious empty method.
