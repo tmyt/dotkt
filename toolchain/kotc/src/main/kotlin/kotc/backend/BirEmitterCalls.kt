@@ -481,6 +481,27 @@ internal fun BirEmitter.callSiteSubstitutor(
 			ownerTps.forEach { params.add(it.symbol) }
 			ta.forEach { args.add(it!!) }
 		}
+		// A delegating call has Unit type, but its dispatch receiver still supplies the enclosing instance.
+		// Close that instance through its declared owner: a Derived : Outer<String> receiver binds Outer.T to
+		// String even when Derived has no type parameters of its own.
+		if (enclosingTps.isNotEmpty() && enclosingTps.none { it.symbol in params }) {
+			val enclosingClass = ownerClass?.parent as? IrClass
+			val enclosingType = dispatchReceiver(call)?.type?.let { receiver -> enclosingClass?.let { owner ->
+				correspondingSupertypeInstantiation(receiver, owner, allowCapturedArguments)
+			} } as? IrSimpleType
+			enclosingType?.arguments?.takeIf { it.size == enclosingTps.size }?.let { enclosingArgs ->
+				enclosingTps.forEach { params.add(it.symbol) }
+				args.addAll(enclosingArgs.mapIndexed { index, argument ->
+					val captured = (argument as? IrTypeProjection)?.type as? IrCapturedType
+					if (captured == null) argument else {
+						val parameter = enclosingTps[index].symbol
+						capturedTypeParameters?.add(parameter)
+						if (preserveCapturedArguments) parameter.classifierDefaultType
+						else captured.constructor.superTypes.firstOrNull() ?: parameter.classifierDefaultType
+					}
+				})
+			}
+		}
 	} else {
 		if (semanticOwnerTps.isNotEmpty()) {
 			// A member's whole Kotlin owner frame is instantiated by its receiver. An inner receiver carries its own
@@ -593,7 +614,7 @@ internal fun BirEmitter.enclosingThisSubst(
 	var hop = !calleeIsCtor
 	val out = ArrayList<Pair<IrValueDeclaration, String>>()
 	for ((t, inner) in chain) {
-		if (hop) value = """{"k":"field","ownerType":${fqnJson(typeName(inner))},"recv":$value,"name":"__outer","outer":true}"""
+		if (hop) value = """{"k":"field","ownerType":${birType(inner.defaultType).toJson()},"recv":$value,"name":"__outer","outer":true}"""
 		hop = true
 		out.add(t to value)
 	}

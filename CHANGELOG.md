@@ -10,6 +10,18 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 - **Constructed method signature views preserve instantiated stack types (#936).**
   Referenced generic methods on constructed owners apply both owner and method arguments when typing results and arguments.
 
+- **Inner constructor delegation retains source frames and declaration signatures (#907).**
+  Inherited enclosing instances close omitted defaults without leaking callee type variables into the caller.
+
+- **Inner generic metadata retains source parameter indices (#896).**
+  Enclosing nullable companion slots no longer shift imported Kotlin bounds or declaration-site variance.
+
+- **Inline defaults retain the lambda arguments they capture (#890).**
+  Arguments used by defaults are materialized once and shared with later defaults and the function body across DLL boundaries.
+
+- **Non-returning inline bodies retain terminal continuations (#928).**
+  Bodies ending in infinite loops or throws no longer expose a synthetic Unit value to concrete return slots.
+
 - **Bottom-typed inline calls terminate their physical continuation (#926).**
   Infinite dispatch loops with non-local returns no longer expose an object-typed result to a concrete return slot.
 

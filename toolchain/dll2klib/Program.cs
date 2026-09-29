@@ -2241,7 +2241,7 @@ internal sealed class AssemblyScanner : IDisposable
                     result,
                     signatures,
                     names,
-                    capturedOuterTypeParameters.GetValueOrDefault());
+                    capturedSourceIndices);
             }
         }
         else if (isAnnotation)
@@ -2272,7 +2272,7 @@ internal sealed class AssemblyScanner : IDisposable
                 result,
                 signatures,
                 names,
-                capturedOuterTypeParameters.GetValueOrDefault());
+                capturedSourceIndices);
         }
         if (isKotlinSealed)
         {
@@ -6469,7 +6469,7 @@ internal sealed class AssemblyScanner : IDisposable
     // a conflicting @UnsafeVariance use can require an interface's CLR GenericParam row to be invariant. Restoring the
     // authored variance here preserves the Kotlin declaration without asking consumers to infer it from physical ABI.
     private void RestoreErasedSupertypes(TypeDefinitionHandle handle, Class result, SignatureDecoder signatures,
-        NameTable names, int capturedOuterTypeParameterCount)
+        NameTable names, IReadOnlySet<int> capturedSourceIndices)
     {
         using var doc = _attrs.CarrierDocument(handle, MetadataAttributes.DotKtNs + "KotlinSupertypesAttribute");
         if (doc is null) return;
@@ -6480,8 +6480,8 @@ internal sealed class AssemblyScanner : IDisposable
             ifs.ValueKind == System.Text.Json.JsonValueKind.Array)
             foreach (var i in ifs.EnumerateArray())
                 if (TypeNode.Read(i) is { } n) pre.Add(signatures.FromTypeNode(n));
-        RestoreErasedBounds(doc, result, signatures, capturedOuterTypeParameterCount);
-        RestoreKotlinVariances(doc, result, capturedOuterTypeParameterCount);
+        RestoreErasedBounds(doc, result, signatures, capturedSourceIndices);
+        RestoreKotlinVariances(doc, result, capturedSourceIndices);
         if (pre.Count == 0) return;
         for (var i = 0; i < result.Supertype.Count; i++)
         {
@@ -6496,7 +6496,7 @@ internal sealed class AssemblyScanner : IDisposable
     }
 
     private static void RestoreErasedBounds(System.Text.Json.JsonDocument doc, Class result,
-        SignatureDecoder signatures, int capturedOuterTypeParameterCount)
+        SignatureDecoder signatures, IReadOnlySet<int> capturedSourceIndices)
     {
         if (!doc.RootElement.TryGetProperty("bounds", out var bounds)) return;
         if (bounds.ValueKind != System.Text.Json.JsonValueKind.Object || !bounds.EnumerateObject().Any())
@@ -6510,11 +6510,10 @@ internal sealed class AssemblyScanner : IDisposable
             var restoredNodes = entry.Value.EnumerateArray().Select(TypeNode.Read).ToArray();
             if (restoredNodes.Length == 0)
                 throw new InvalidDataException("empty [KotlinSupertypes] constraint list");
-            // A CLR nested TypeDef flattens its enclosing type parameters before its own. Kotlin metadata instead
-            // owns those declarations on the enclosing class and omits the captured prefix from the inner class.
-            // Their constraints therefore have no declaration to restore here; only the inner class's retained slots
-            // are indexed in `result.TypeParameter`.
-            if (index < capturedOuterTypeParameterCount) continue;
+            // Carrier keys are Kotlin source indices, not positions in the CLR
+            // enclosing prefix (which may include nullable companion slots).
+            // Exclude precisely the source declarations owned by the outer class.
+            if (capturedSourceIndices.Contains(index)) continue;
             var parameter = result.TypeParameter.FirstOrDefault(p => p.Id == index)
                 ?? throw new InvalidDataException("[KotlinSupertypes] bound index exceeds type generic arity");
             var restored = restoredNodes.Select(signatures.FromTypeNode).ToArray();
@@ -6528,7 +6527,7 @@ internal sealed class AssemblyScanner : IDisposable
     }
 
     private static void RestoreKotlinVariances(System.Text.Json.JsonDocument doc, Class result,
-        int capturedOuterTypeParameterCount)
+        IReadOnlySet<int> capturedSourceIndices)
     {
         if (!doc.RootElement.TryGetProperty("variances", out var variances)) return;
         if (variances.ValueKind != System.Text.Json.JsonValueKind.Object || !variances.EnumerateObject().Any())
@@ -6545,7 +6544,7 @@ internal sealed class AssemblyScanner : IDisposable
                 "in" => TypeParameter.Types.Variance.In,
                 _ => throw new InvalidDataException("unknown [KotlinSupertypes] variance"),
             };
-            if (index < capturedOuterTypeParameterCount) continue;
+            if (capturedSourceIndices.Contains(index)) continue;
             var parameter = result.TypeParameter.FirstOrDefault(candidate => candidate.Id == index)
                 ?? throw new InvalidDataException("[KotlinSupertypes] variance index exceeds type generic arity");
             parameter.Variance = variance;
