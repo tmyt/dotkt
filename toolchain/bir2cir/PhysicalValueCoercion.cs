@@ -503,7 +503,11 @@ static class PhysicalValueCoercion
 
     static void CoerceConstructorArguments(JsonObject node, Scope scope, Index index)
     {
-        var targets = ParameterTypes(node);
+        // A local new's argTypes already describe the caller's closed construction. Only a resolved constructor
+        // memberRef still carries declaration-relative parameters that need substitution through its owner.
+        var targets = node["memberRef"] is JsonObject
+            ? ParameterTypes(node)
+            : ReadTypes(node["argTypes"] as JsonArray);
         CoerceArguments(node, targets, scope, index);
         // An erased value may cross into a closed constructor parameter, but that target belongs to the
         // selected physical declaration, not to an independently closed source projection. In particular,

@@ -18,6 +18,10 @@ private fun boxedConditionalNestedEnum(flag: Boolean): Any = if (flag) BoxedCond
 private fun boxedConditionalIdentity(flag: Boolean, value: Comparable<*>): Comparable<*> =
     if (flag) value else "text"
 private class BoxedConditionalStorage(var value: Comparable<*>)
+private class BoxedConditionalSlots<A, B>(val value: B)
+private class BoxedConditionalCaller<T>(val value: T) {
+    fun read(): T = BoxedConditionalSlots<List<T>, T>(value).value
+}
 private fun <T : Comparable<T>> boxedConditionalStore(value: T, storage: BoxedConditionalStorage,
     array: Array<Comparable<*>>) {
     storage.value = value
@@ -59,6 +63,8 @@ class BoxedConditionalTests {
 
     @TestAttribute
     fun genericAndStructValuesRetainTheirValueAcrossReferenceSlots() {
+        check(BoxedConditionalCaller("frame").read() == "frame")
+        check(BoxedConditionalCaller(19).read() == 19)
         check(boxedConditionalGeneric(true, 7) == 7)
         check(boxedConditionalGeneric(false, 7) == "text")
         check(boxedConditionalGeneric(true, "value") == "value")
