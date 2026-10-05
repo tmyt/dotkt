@@ -112,6 +112,21 @@ static class ContinuationErasure
                 Equal(descriptor["params"][0], expected, key + " parameter");
                 Equal(descriptor["ret"], expected, key + " return");
             }
+            var selfType = new TypeNode.Fqn(typeName, new TypeNode[] { new TypeNode.Tv("type", 0) });
+            JsonObject Access(string kind, string receiver) => new()
+            {
+                ["k"] = kind, ["ownerType"] = TypeJson.Write(selfType),
+                ["recv"] = new JsonObject { ["k"] = receiver },
+            };
+            var declaration = new JsonObject
+            {
+                ["kind"] = "class", ["name"] = typeName, ["typeParams"] = new JsonArray("T"),
+                ["body"] = new JsonArray(Access("callInstance", "this"), Access("field", "this"),
+                    Access("setField", "this"), Access("callInstance", "local")),
+            };
+            Apply(declaration, names);
+            for (var i = 0; i < 3; i++) Equal(declaration["body"][i]["ownerType"], selfType, "exact self owner");
+            Equal(declaration["body"][3]["ownerType"], new TypeNode.Fqn(typeName, new TypeNode[] { any }), "ordinary receiver owner");
         }
     }
 
@@ -164,12 +179,18 @@ static class ContinuationErasure
             ? owner["nullableGenericRet"] != null
             : owner["nullableGeneric"] != null);
 
-    static void Walk(JsonNode node, bool inResumeWith)
+    static void Walk(JsonNode node, bool inResumeWith, TypeNode.Fqn selfType = null)
     {
         switch (node)
         {
             case JsonObject obj:
             {
+                if (obj["kind"]?.GetValue<string>() is "class" or "interface" or "struct")
+                {
+                    var arity = (obj["typeParams"] as JsonArray)?.Count ?? 0;
+                    selfType = new TypeNode.Fqn(obj["name"].GetValue<string>(), arity == 0 ? null
+                        : Enumerable.Range(0, arity).Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray());
+                }
                 var here = inResumeWith || IsResumeWithMethod(obj);
                 // Inside the erased resumeWith boundary, the `result` local is now Result<object> (invariant
                 // reference class). A generic Result-accessor whose EXTENSION RECEIVER (first arg) is that erased
@@ -198,13 +219,18 @@ static class ContinuationErasure
                     // there must NOT gain a [kotlin.Any] arg. Every actual type-reference slot (type/ownerType/ret/base/
                     // interfaces/funcType/typeArgs/…) is rewritten.
                     if (key == "name" || key == "owner") continue;
+                    // Value erasure does not change the declaring TypeDef's own generic frame.
+                    // A direct access through its `this` must still name that exact construction.
+                    if (key == "ownerType" && selfType != null
+                        && obj["recv"] is JsonObject receiver && receiver["k"]?.GetValue<string>() == "this"
+                        && TypeJson.Read(val) is TypeNode ownerType && ownerType.Equals(selfType)) continue;
                     // A call's `sig` is a STRUCTURED TypeNode array (#37 m3b), so its `Continuation<T>`/`Result<T>`
                     // elements erase to `Continuation<object>`/`Result<object>` for free via the array-recursion below
                     // (EraseType) — DEF and CALL sigs stay in agreement structurally, no sig-string special case needed.
                     if (TypeJson.Read(val) is TypeNode tn)
                         obj[key] = TypeJson.Write(EraseType(tn));
                     else
-                        Walk(val, here);
+                        Walk(val, here, selfType);
                 }
                 break;
             }
@@ -217,7 +243,7 @@ static class ContinuationErasure
                     if (TypeJson.Read(val) is TypeNode tn)
                         arr[i] = TypeJson.Write(EraseType(tn));
                     else
-                        Walk(val, inResumeWith);
+                        Walk(val, inResumeWith, selfType);
                 }
                 break;
             }
