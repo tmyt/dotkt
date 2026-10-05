@@ -54,13 +54,13 @@ class EmptySuspendDefaultTests {
     fun nonemptyDefaultsAndOverridesActuallySuspend() {
         val gate = DefaultGate()
         val defaultResult = start { (ImportedSuspending() as SuspendingDefault).read(gate) }
-        assertTrue(!defaultResult.done)
+        assertTrue(!defaultResult.done, "Default completed before resume: ${defaultResult.failure}")
         assertEquals(1, gate.entries)
         gate.release()
         assertUnit(defaultResult)
         val overrideGate = DefaultGate()
         val overridden = start { observe(OverriddenEmpty(overrideGate)) }
-        assertTrue(!overridden.done)
+        assertTrue(!overridden.done, "Override completed before resume: ${overridden.failure}")
         assertEquals(1, overrideGate.entries)
         overrideGate.release()
         assertUnit(overridden)

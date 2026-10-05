@@ -3172,6 +3172,8 @@ sealed partial class ReferenceMetadataIndex
             "kotlin.Boolean" or "System.Boolean" or "bool" => new TypeKey(TypeKeyKind.Boolean),
             "kotlin.Char" or "System.Char" or "char" => new TypeKey(TypeKeyKind.Char),
             "kotlin.String" or "System.String" or "string" => new TypeKey(TypeKeyKind.String),
+            "kotlin.CharSequence" or SharedSyntheticSynthesis.CharSeq =>
+                new TypeKey(TypeKeyKind.Named, SharedSyntheticSynthesis.CharSeq),
             "System.Void" or "void" => new TypeKey(TypeKeyKind.Void),
             "kotlin.Any" or "System.Object" or "object" => new TypeKey(TypeKeyKind.Object),
             // Unsigned scalars, folded like every other primitive: the specialized ARRAYS were already folded below, but
@@ -7238,6 +7240,17 @@ sealed partial class ReferenceMetadataIndex
     internal static void SelfTest()
     {
         SelfTestSourceHierarchyFrames();
+        var sourceCharSequenceFunction = new TypeNode.Fn(false, new TypeNode.Fqn("kotlin.CharSequence"),
+            new TypeNode[] { new TypeNode.Fqn("kotlin.Int") });
+        var physicalCharSequenceFunction = new TypeNode.Fn(false, new TypeNode.Fqn(SharedSyntheticSynthesis.CharSeq),
+            new TypeNode[] { new TypeNode.Fqn("System.Int32") });
+        if (!SourceDeclarationDescribesCall(new TypeNode.Nullable(sourceCharSequenceFunction),
+                new TypeNode.Nullable(physicalCharSequenceFunction))
+            || SourceDeclarationDescribesCall(sourceCharSequenceFunction,
+                new TypeNode.Fn(false, new TypeNode.Fqn("System.String"), physicalCharSequenceFunction.Params))
+            || SourceDeclarationDescribesCall(sourceCharSequenceFunction,
+                new TypeNode.Fn(false, physicalCharSequenceFunction.Ret, new TypeNode[] { new TypeNode.Fqn("System.String") })))
+            throw new InvalidOperationException("CharSequence representation changed exact function signature identity");
         var ownerSlot = new TypeNode.Tv("type", 0);
         var stringSlot = new TypeNode.Fqn("System.String");
         var intSlot = new TypeNode.Fqn("System.Int32");

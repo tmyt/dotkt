@@ -427,7 +427,9 @@ static class KotlinOverrideSlotBridge
                         if (slotSignature[i] is TypeNode.Mod { Req: false } signature
                             && bridgeParameters[i] is JsonObject parameter)
                             parameter[FunctionSignatureIdentity.Key] = TypeJson.Write(signature.M);
-                if (phase == Phase.SuspendValueBridges)
+                // Cold suspend entries share an object result, but a parameter conversion still
+                // needs its own MethodImpl there as well as on the public Task entry.
+                if (phase == Phase.SuspendValueBridges && !fit.Contains(Fit.Bridge))
                     bridge[KotlinPropertyAccessors.SuspendTaskOnlyBridgeKey] = true;
                 if (propertyAccessor == null)
                     RoundtripMetadata.AddSourceMethodIdentity(bridge, identityName);
@@ -1384,7 +1386,7 @@ static class KotlinOverrideSlotBridge
                             // Suspend lowering supplied the physical MethodDef and preserved the unchanged source
                             // override marker. Match its cold/Task projection exactly, as the local-slot arm does;
                             // a cold entry is not another Kotlin method with the marker's source name.
-                            physicalProjection, Str(o[DeclarationIdentityBinding.Key]));
+                            physicalProjection, Str(o["physicalDeclarationId"]) ?? Str(o[DeclarationIdentityBinding.Key]));
                     if (!foundSlot) continue;
                 }
                 if (slotParams0 == null || slotParams0.Length != ps.Count) continue;
@@ -1545,7 +1547,11 @@ static class KotlinOverrideSlotBridge
                 || bridge[key] is not JsonArray descriptors) continue;
             foreach (var descriptor in descriptors.OfType<JsonObject>())
             {
-                if (TypeJson.Read(descriptor["owner"]) != owner || Str(descriptor["member"]) != member
+                if (TypeJson.Read(descriptor["owner"]) is not TypeNode descriptorOwner
+                    || !BirTypeLowering.SamePhysicalSlotType(descriptorOwner, owner,
+                        refs.Aliases, isValue, refs.PhysicalTypeNames, returnPosition: false,
+                        nullableFrames: refs.NullableTypeFrames)
+                    || Str(descriptor["member"]) != member
                     || Int(descriptor["arity"]) != arity || descriptor["params"] is not JsonArray ps
                     || TypeJson.Read(descriptor["ret"]) is not TypeNode ret) continue;
                 if (SameMethodTypeParameterShape(descriptor["typeParams"] as JsonArray, typeParams,

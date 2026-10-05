@@ -270,6 +270,22 @@ static class PhysicalValueCoercion
         // Reference declarations retain Kotlin signature vocabulary. Only consume the
         // executable identity operations left in constructor delegation after body squash.
         if (index.ReferenceBuild) return obj;
+        if (Str(obj["k"]) is "return" or "returnExpr" && IsVoid(scope.Return)
+            && obj["value"] is JsonNode discarded)
+        {
+            // A specialized Unit result can remain a real value even though this declaration returns void.
+            // Evaluate it once for effects (and exceptions), then return with an empty stack, including in try.
+            var exit = (JsonObject)obj.DeepClone();
+            exit.Remove("value");
+            var effect = new JsonObject { ["k"] = "exprStmt", ["expr"] = discarded.DeepClone() };
+            return Str(obj["k"]) == "return"
+                ? new JsonObject { ["k"] = "block", ["body"] = new JsonArray(effect, exit) }
+                : new JsonObject
+                {
+                    ["k"] = "valueBlock", ["type"] = TypeJson.Fqn("void"),
+                    ["stmts"] = new JsonArray(effect), ["result"] = exit,
+                };
+        }
         var result = CoerceDeclaredResult(obj, scope, index);
         if (Str(obj["k"]) == "field" && TemporaryFieldKey(obj) is string fieldKey
             && scope.TemporaryFields.TryGetValue(fieldKey, out var retained)

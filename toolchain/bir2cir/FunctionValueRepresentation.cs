@@ -84,8 +84,14 @@ static class FunctionValueRepresentation
         Walk(root, isByRefLike);
     }
 
-    static TypeNode Carrier(TypeNode type, ValueTypeOracle isByRefLike) =>
-        type is TypeNode.Fqn named && isByRefLike(named) ? type : Object;
+    static TypeNode Carrier(TypeNode type, ValueTypeOracle isByRefLike) => type switch
+    {
+        // Changing the CLR value representation must not change the slot's nullability contract.
+        TypeNode.Nullable n => new TypeNode.Nullable(Carrier(n.Of, isByRefLike)),
+        TypeNode.Oblivious o => new TypeNode.Oblivious(Carrier(o.Of, isByRefLike)),
+        TypeNode.Fqn named when isByRefLike(named) => type,
+        _ => Object,
+    };
 
     static void Walk(JsonNode node, ValueTypeOracle isByRefLike)
     {

@@ -112,8 +112,7 @@ static class ClrEventImplBinding
                 throw new InvalidOperationException(
                     $"bir2cir: synthesized local event accessor '{definition.Name}.{name}' resolves to "
                     + $"{candidates.Count} declarations");
-            return new JsonArray(((JsonArray)candidates[0]["params"]).OfType<JsonObject>()
-                .Select(parameter => parameter["type"]?.DeepClone()).ToArray());
+            return FunctionSignatureIdentity.Signature((JsonArray)candidates[0]["params"]);
         }
 
         LocalEventBinding ResolveFromOwner(TypeNode.Fqn owner, string eventName)
@@ -204,6 +203,8 @@ static class ClrEventImplBinding
             TypeNode.Oblivious o => new TypeNode.Oblivious(RemapForClosure(o.Of, free)),
             TypeNode.Array a => new TypeNode.Array(RemapForClosure(a.Elem, free)),
             TypeNode.ByRef r => new TypeNode.ByRef(RemapForClosure(r.Of, free)),
+            TypeNode.Mod m => new TypeNode.Mod(m.Req,
+                RemapForClosure(m.M, free), RemapForClosure(m.Of, free)),
             TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend, RemapForClosure(fn.Ret, free),
                 fn.Params.Select(param => RemapForClosure(param, free)).ToArray(),
                 fn.Recv == null ? null : RemapForClosure(fn.Recv, free), fn.Clr,

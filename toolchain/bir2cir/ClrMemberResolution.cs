@@ -232,8 +232,35 @@ static partial class ClrMemberResolution
                 ? call["iface"]
                 : kind == "newClosure" ? call["closureType"]
                 : call["calleeOwner"] ?? call["owner"] ?? call["ownerType"];
-            if (TypeJson.Read(ownerNode) is not TypeNode.Fqn owner || !owners.TryGetValue(owner.Name, out var methods))
+            if (TypeJson.Read(ownerNode) is not TypeNode.Fqn owner) return;
+            if (!owners.TryGetValue(owner.Name, out var methods))
+            {
+                // The referenced MethodDef is already selected. Its physical slots, not the requested
+                // function-value carrier, determine the natural delegate over that method pointer.
+                if (physicalDelegates && kind == "newDelegate"
+                    && call["memberRef"] is JsonObject reference
+                    && reference["parameterTypes"] is JsonArray parameterTypes
+                    && TypeJson.Read(reference["returnType"]) is TypeNode returnType
+                    && TypeJson.Read(call["funcType"]) is TypeNode.Fn { Suspend: false } requested)
+                {
+                    var referencedOwnerArgs = (TypeJson.Read(reference["declaringType"]) as TypeNode.Fqn)?.Args
+                        ?? Array.Empty<TypeNode>();
+                    var referencedMethodArgs = (call["typeArgs"] as JsonArray)?.Select(TypeJson.Read).ToArray()
+                        ?? Array.Empty<TypeNode>();
+                    TypeNode ValueSlot(TypeNode type) => type is TypeNode.Mod modifier
+                        ? ValueSlot(modifier.Of)
+                        : SubstMethodTvs(SupertypeGraph.SubstOwnerTvs(type, referencedOwnerArgs), referencedMethodArgs);
+                    var natural = BirTypeLowering.PhysicalDelegate(ValueSlot(returnType),
+                        parameterTypes.Select(TypeJson.Read).Select(ValueSlot).ToArray());
+                    if (NeedsSlotAdapter(natural, requested))
+                    {
+                        if (!call.ContainsKey(DelegateSlotKey))
+                            MarkDelegateSlot(call, requested, refs, owners.Keys.ToHashSet(StringComparer.Ordinal));
+                        call["funcType"] = TypeJson.Write(natural);
+                    }
+                }
                 return;
+            }
             if ((call["method"] as JsonValue)?.TryGetValue<string>(out var name) != true) return;
             var sourceSignature = call[FunctionSignatureIdentity.CallKey] as JsonArray;
             var wanted = kind == "newClosure"
@@ -246,10 +273,13 @@ static partial class ClrMemberResolution
             var methodArgs = kind == "newClosure" ? Array.Empty<TypeNode>() : suppliedArgs;
             if (suppliedArgs.Any(t => t == null)) return;
             var ownerArgs = kind == "newClosure" ? suppliedArgs : owner.Args ?? Array.Empty<TypeNode>();
+            var declarationId = (call[DeclarationIdentityBinding.Key] as JsonValue)?.GetValue<string>();
             var matches = new List<(JsonObject Method, TypeNode[] Params)>();
             foreach (var candidate in methods.Where(m =>
-                         (m["name"] as JsonValue)?.TryGetValue<string>(out var candidateName) == true
-                         && candidateName == name && GenericArity(m) == methodArgs.Length))
+                         (declarationId != null
+                             ? (m[DeclarationIdentityBinding.Key] as JsonValue)?.GetValue<string>() == declarationId
+                             : (m["name"] as JsonValue)?.GetValue<string>() == name)
+                         && GenericArity(m) == methodArgs.Length))
             {
                 if (candidate["params"] is not JsonArray parameters || parameters.Count != wanted.Length) continue;
                 var declared = parameters.OfType<JsonObject>()
@@ -261,7 +291,10 @@ static partial class ClrMemberResolution
                     .Select(t => SubstMethodTvs(t, methodArgs)).ToArray();
                 // A closure construction names its synthesized class's unique invoke method, not an overload
                 // descriptor. Its requested delegate parameters may need adaptation to that declaration.
-                if (kind == "newClosure" || Keys(selection).SequenceEqual(Keys(wanted)) || Keys(closed).SequenceEqual(Keys(wanted)))
+                // An authored identity likewise already selected the declaration. Its physical parameters may
+                // have changed during callable adaptation; the old use-site signature cannot select it again.
+                if (declarationId != null || kind == "newClosure"
+                    || Keys(selection).SequenceEqual(Keys(wanted)) || Keys(closed).SequenceEqual(Keys(wanted)))
                     matches.Add((candidate, declared));
             }
             if (matches.Count != 1 && kind is "newDelegate" or "newClosure" or "newBoundDelegate")

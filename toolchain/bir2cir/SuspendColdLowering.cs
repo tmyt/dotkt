@@ -3940,7 +3940,7 @@ static partial class SuspendColdLowering
                 method["typeParams"] = _methodTypeParamDecls.DeepClone();
             if (_generated) method["generated"] = true;
             CarrySourceDeclaration(method);
-            CarryOverrideMarkers(method);
+            CarryOverrideMarkers(method, coldEntry: true);
             CarryPhysicalSlotFacts(method, coldEntry: true);
             if (_declarationId != null)
             {
@@ -3955,10 +3955,17 @@ static partial class SuspendColdLowering
         // MethodDefs but must not rewrite that semantic identity into either physical spelling. The late slot pass
         // matches cold/Task MethodDefs independently by their exact physical name, signature, and constraints, then
         // uses this unchanged marker only to prove which Kotlin declaration the frontend selected.
-        void CarryOverrideMarkers(JsonObject method)
+        void CarryOverrideMarkers(JsonObject method, bool coldEntry = false)
         {
             if (_overrideMarkers.Count == 0) return;
-            method["overrides"] = _overrideMarkers.DeepClone();
+            var markers = (JsonArray)_overrideMarkers.DeepClone();
+            // Keep source identity intact, while allocating the selected physical projection's
+            // identity in the same place that allocates the cold MethodDef identity itself.
+            if (coldEntry)
+                foreach (var marker in markers.OfType<JsonObject>())
+                    if (Str(marker[DeclarationIdentityBinding.Key]) is string sourceId)
+                        marker["physicalDeclarationId"] = sourceId + "|cold";
+            method["overrides"] = markers;
         }
 
         // Keep the frontend declaration identity beside every physical suspend projection. A later CLR slot pass
@@ -4108,7 +4115,7 @@ static partial class SuspendColdLowering
                 method["typeParams"] = _methodTypeParamDecls.DeepClone();
             if (_generated) method["generated"] = true;
             CarrySourceDeclaration(method);
-            CarryOverrideMarkers(method);
+            CarryOverrideMarkers(method, coldEntry: true);
             CarryPhysicalSlotFacts(method, coldEntry: true);
             if (_declarationId != null)
             {

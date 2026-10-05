@@ -584,6 +584,8 @@ sealed partial class Emitter
         var n = ParametersOf(invoke).Length;
         for (int i = 0; i < n; i++) _il.Emit(OpCodes.Ldarg, checked((short)(i + 1)));
         EmitMethod(_il, OpCodes.Callvirt, invoke);
+        // A raise is a statement even when the selected physical delegate returns a value.
+        if (ReturnTypeOf(invoke) != Bcl("System.Void")) _il.Emit(OpCodes.Pop);
         _il.MarkLabel(done);
     }
 

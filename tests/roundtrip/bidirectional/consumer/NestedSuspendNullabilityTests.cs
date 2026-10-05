@@ -56,23 +56,26 @@ public class NestedSuspendNullabilityTests
         Assert.That((await NestedSuspendNullabilityKt.valueSegment())[0], Is.Null);
 
         var function = Result("functionResult").GenericTypeArguments[0];
-        Assert.That(function.Type, Is.EqualTo(typeof(Func<string, string>)));
+        Assert.That(function.Type, Is.EqualTo(typeof(Func<object, object>)));
         State(function, NullabilityState.Nullable);
         State(function.GenericTypeArguments[0], NullabilityState.Nullable);
         State(function.GenericTypeArguments[1], NullabilityState.Nullable);
         Assert.That((await NestedSuspendNullabilityKt.functionResult())!(null!), Is.Null);
 
         var action = Result("actionResult").GenericTypeArguments[0];
-        Assert.That(action.Type, Is.EqualTo(typeof(Action<string>)));
+        Assert.That(action.Type, Is.EqualTo(typeof(Func<object, object>)));
         State(action.GenericTypeArguments[0], NullabilityState.Nullable);
+        State(action.GenericTypeArguments[1], NullabilityState.NotNull);
+        Assert.That((await NestedSuspendNullabilityKt.actionResult())!(null!), Is.TypeOf<kotlin.Unit>());
         var receiver = Result("receiverResult").GenericTypeArguments[0];
-        Assert.That(receiver.Type, Is.EqualTo(typeof(Func<string, string, string>)));
+        Assert.That(receiver.Type, Is.EqualTo(typeof(Func<object, object, object>)));
         State(receiver.GenericTypeArguments[0], NullabilityState.Nullable);
         State(receiver.GenericTypeArguments[1], NullabilityState.NotNull);
         State(receiver.GenericTypeArguments[2], NullabilityState.Nullable);
         var unitFunction = Result("unitFunctionResult").GenericTypeArguments[0];
-        Assert.That(unitFunction.Type, Is.EqualTo(typeof(Func<kotlin.Unit>)));
+        Assert.That(unitFunction.Type, Is.EqualTo(typeof(Func<object>)));
         State(unitFunction.GenericTypeArguments[0], NullabilityState.Nullable);
+        Assert.That((await NestedSuspendNullabilityKt.unitFunctionResult())!(), Is.Null);
         var suspendFunction = Result("suspendFunctionResult").GenericTypeArguments[0];
         Assert.That(suspendFunction.Type, Is.EqualTo(typeof(object)));
         State(suspendFunction, NullabilityState.Nullable);
