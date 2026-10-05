@@ -8,7 +8,10 @@ public static class ExistentialOwnerApi
         ExistentialSlotOwner<string> value) => callback(value);
     public static ExistentialSlotOwner<string> Dispatch(ExistentialOwnerOverride instance,
         ExistentialSlotOwner<string> value) => instance.Echo(value);
+    public static T Read<T>(ExistentialNativeReader<T> reader) => reader.Read();
 }
+
+public interface ExistentialNativeReader<T> { T Read(); }
 
 public delegate ExistentialSlotOwner<string> ExistentialOwnerTransform(ExistentialSlotOwner<string> value);
 

@@ -3,6 +3,15 @@ import kotlin.coroutines.*
 import GenericValueInterop.ExistentialOwnerApi
 import GenericValueInterop.ExistentialOwnerStorage
 import GenericValueInterop.ExistentialOwnerOverride
+import GenericValueInterop.ExistentialNativeReader
+
+private class ExistentialReader<T>(private val value: T) : ExistentialNativeReader<T> {
+    override fun Read(): T = value
+}
+private class ExistentialReaderHolder(val reader: ExistentialNativeReader<String>)
+private fun <T> readerView(value: ExistentialReader<T>): ExistentialNativeReader<T> = value
+private fun <T> selectReader(first: ExistentialReader<T>, second: ExistentialReader<T>, takeFirst: Boolean):
+    ExistentialNativeReader<T> = if (takeFirst) first else second
 
 private class ExistentialNativeOverride : ExistentialOwnerOverride() {
     override fun Echo(value: ExistentialSlotOwner<String>): ExistentialSlotOwner<String> = value
@@ -23,6 +32,16 @@ private fun <T> importedNullableExistentialSlot(owner: ExistentialSlotOwner<T>, 
 class ExistentialConstructedSlotTests {
     @TestAttribute
     fun nativeBoundariesRetainExactConstructedSlots() {
+        val reader = ExistentialReader("value")
+        val native: ExistentialNativeReader<String> = reader
+        check(native.Read() == "value")
+        check(readerView(reader) === reader)
+        check(ExistentialReaderHolder(reader).reader === reader)
+        check(ExistentialOwnerApi.Read(reader) == "value")
+        val second = ExistentialReader("second")
+        check(selectReader(reader, second, true) === reader)
+        check(selectReader(reader, second, false) === second)
+        check(ExistentialOwnerApi.Read(ExistentialReader(23)) == 23)
         val owner = ExistentialSlotOwner("kotlin")
         check(ExistentialOwnerApi.Echo(owner) === owner)
         val imported = ExistentialOwnerApi.Make()
