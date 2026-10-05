@@ -29,6 +29,7 @@ sealed class ManagedReferenceCatalog
     static readonly HashSet<string> CanonicalRuntimeSyntheticTypes = new(StringComparer.Ordinal)
     {
         "dotkt$CharSequence",
+        "dotkt$StringCharSequence",
     };
 
     public static bool IsCanonicalRuntimeSyntheticType(string name) =>

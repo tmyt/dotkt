@@ -6503,6 +6503,19 @@ internal sealed class AssemblyScanner : IDisposable
                 if (TypeNode.Read(i) is { } n) pre.Add(signatures.FromTypeNode(n));
         RestoreErasedBounds(doc, result, signatures, capturedSourceIndices);
         RestoreKotlinVariances(doc, result, capturedSourceIndices);
+        // A representation may change the interface's head, not only its arguments. The
+        // producer records that correspondence; never recover it from a synthetic name.
+        if (doc.RootElement.TryGetProperty("interfaceMappings", out var mappings))
+            foreach (var mapping in mappings.EnumerateArray())
+            {
+                var physical = signatures.FromTypeNode(TypeNode.Read(mapping.GetProperty("physical")));
+                var source = signatures.FromTypeNode(TypeNode.Read(mapping.GetProperty("source")));
+                for (var i = 0; i < result.Supertype.Count; i++)
+                    if (result.Supertype[i].HasClassName && physical.HasClassName
+                        && names.ClassName(result.Supertype[i].ClassName) == names.ClassName(physical.ClassName)
+                        && result.Supertype[i].Argument.Count == physical.Argument.Count)
+                        result.Supertype[i] = source;
+            }
         if (pre.Count == 0) return;
         for (var i = 0; i < result.Supertype.Count; i++)
         {

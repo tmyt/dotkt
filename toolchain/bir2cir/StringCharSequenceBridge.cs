@@ -7,7 +7,7 @@ using DotKt.Bir;
 static class StringCharSequenceBridge
 {
     const string CharSeq = "dotkt$CharSequence";
-    const string Adapter = "dotkt$StringCharSequence";
+    public const string Adapter = "dotkt$StringCharSequence";
     static readonly HashSet<string> StringTokens = new(StringComparer.Ordinal)
         { "kotlin.String", "System.String", "string" };
     // A StringBuilder is a non-String CharSequence that does NOT implement the synthetic `dotkt$CharSequence`; flowing
@@ -22,7 +22,7 @@ static class StringCharSequenceBridge
     // DeclNullableFlags/ReferenceNullableStrip/
     // BirTypeLowering passes lower the `kotlin.*` identities to the CLR forms uniformly. (The retired `@<name>`
     // this-assembly marker is dropped — bir2cir/ilemit derive local-vs-referenced from the FQN via `_types`.)
-    const string AdapterTypeJson = """
+    public const string AdapterTypeJson = """
     {
       "name": "dotkt$StringCharSequence",
       "kind": "class", "generated": true, "abstract": false, "vis": "public", "base": null,
@@ -64,9 +64,8 @@ static class StringCharSequenceBridge
     }
     """;
 
-    // Process-wide: the app-local adapter type is emitted into EXACTLY ONE file's `types` per assembly (all of an app's
-    // BIR files are lowered by a single bir2cir process; other files that also wrap resolve the type assembly-wide via
-    // ilemit's `_types`). Fresh per process; app builds only. `_fired` tracks whether the file just walked wrapped.
+    // Most files receive the shared adapter template from SharedSyntheticSynthesis. A late
+    // conversion can introduce its first use; materialize that missing template once per module.
     static bool _adapterEmitted;
     static bool _fired;
     // The ref.dll index — consulted ONLY to read a spliced anonymous object's (`dotkt$obj*`) ctor param types, so a
@@ -122,13 +121,14 @@ static class StringCharSequenceBridge
         // Seed the shared static-type resolver for THIS file so IsStaticString can recover a receiver's static type
         // uniformly (a property-getter call, an app top-level fun result, a `!!`/elvis valueBlock — none carry a `ret`).
         var walked = Walk(root, new Env());
-        // Emit the app-local adapter type into this file's `types` if a wrap fired here and no other file already got
-        // it (one per assembly). ilemit resolves a wrap in a sibling file against it via the assembly-wide `_types`.
+        // Ensure late uses have a declaration template. Application templates are removed once
+        // bir2cir resolves their canonical runtime ownership; the stdlib emits the actual declaration.
         if (_fired && !_adapterEmitted && walked is JsonObject fileObj)
         {
             var types = fileObj["types"] as JsonArray;
             if (types == null) { types = new JsonArray(); fileObj["types"] = types; }
-            types.Add(JsonNode.Parse(AdapterTypeJson));
+            if (!types.OfType<JsonObject>().Any(type => Str(type["name"]) == Adapter))
+                types.Add(JsonNode.Parse(AdapterTypeJson));
             _adapterEmitted = true;
         }
         materializedDelegateAdapters = _materializedDelegateAdapters;
@@ -206,11 +206,25 @@ static class StringCharSequenceBridge
             case "var":
                 WrapVarInit(node, env);
                 return node;
+            case "setLocal":
+                if (Str(node["name"]) is string localName
+                    && env.Vars.TryGetValue(localName, out var localType) && IsCharSeqT(localType)
+                    && node["value"] is JsonNode assignedValue)
+                    node["value"] = CoerceCharSeqArg(assignedValue, env, nonNullSlot: localType is TypeNode.Fqn);
+                return node;
             case "return":
                 WrapReturn(node, env);
                 return node;
             case "cast":
                 return WrapCast(node, env) ?? node;
+            case "isInstRef":
+                if (IsStringTarget(TypeJson.Read(node["type"])) && node["e"] is JsonNode safeOperand)
+                    return RestoreString(safeOperand, node["type"], safe: true);
+                return node;
+            case "isInst":
+                if (IsStringTarget(TypeJson.Read(node["type"])) && node["e"] is JsonNode testOperand)
+                    return TestString(testOperand, TypeJson.Read(node["type"]) is TypeNode.Nullable);
+                return node;
             default:
                 return node;
         }
@@ -606,12 +620,96 @@ static class StringCharSequenceBridge
     // the plain cast — a runtime-type-check adapter helper for that is a follow-up (see docs 【4-A】).
     static JsonNode WrapCast(JsonObject node, Env env)
     {
+        if (IsStringTarget(TypeJson.Read(node["type"])) && node["e"] is JsonNode source)
+            return RestoreString(source, node["type"]);
         var functionRestore = node.Remove(FunctionValueRepresentation.RestorationKey);
         if (functionRestore && IsCharSeqT(TypeJson.Read(node["type"])) && node["e"] is JsonNode value)
             return RestoreFunctionCharSequence(value, node["type"]);
         if (IsCharSeqT(TypeJson.Read(node["type"])) && node["e"] is JsonNode e && IsStaticString(e, env))
             return WrapAdapter(e);
         return null;
+    }
+
+    static bool IsStringTarget(TypeNode type) => IsStringTokT(type is TypeNode.Nullable nullable ? nullable.Of : type);
+
+    static JsonNode TestString(JsonNode source, bool nullable)
+    {
+        _fired = true;
+        var name = "__cscheck$" + System.Threading.Interlocked.Increment(ref _counter);
+        JsonObject Read() => new() { ["k"] = "local", ["name"] = name };
+        JsonObject Bool(bool value) => new() { ["k"] = "const", ["type"] = TypeJson.Fqn("kotlin.Boolean"), ["value"] = value };
+        JsonObject Branch(string type, JsonNode otherwise) => new()
+        {
+            ["k"] = "cond", ["type"] = TypeJson.Fqn("kotlin.Boolean"),
+            ["cond"] = new JsonObject { ["k"] = "isInst", ["type"] = TypeJson.Fqn(type), ["e"] = Read() },
+            ["then"] = Bool(true), ["else"] = otherwise,
+        };
+        JsonNode nullCase = nullable ? new JsonObject
+        {
+            ["k"] = "objEq", ["lhs"] = Read(),
+            ["rhs"] = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("object"), ["value"] = null },
+        } : Bool(false);
+        return new JsonObject
+        {
+            ["k"] = "valueBlock",
+            ["stmts"] = new JsonArray(new JsonObject
+            {
+                ["k"] = "var", ["name"] = name, ["type"] = TypeJson.Fqn("object"), ["init"] = source.DeepClone(),
+            }),
+            ["result"] = Branch(Adapter, Branch("kotlin.String", nullCase)),
+        };
+    }
+
+    static JsonNode RestoreString(JsonNode source, JsonNode target, bool safe = false)
+    {
+        _fired = true;
+        var name = "__csstring$" + System.Threading.Interlocked.Increment(ref _counter);
+        JsonObject Read() => new() { ["k"] = "local", ["name"] = name };
+        return new JsonObject
+        {
+            ["k"] = "valueBlock",
+            ["stmts"] = new JsonArray(new JsonObject
+            {
+                ["k"] = "var", ["name"] = name, ["type"] = TypeJson.Fqn("object"),
+                ["init"] = source.DeepClone(),
+            }),
+            ["result"] = new JsonObject
+            {
+                ["k"] = "cond", ["type"] = target.DeepClone(),
+                ["cond"] = new JsonObject { ["k"] = "isInst", ["type"] = TypeJson.Fqn(Adapter), ["e"] = Read() },
+                ["then"] = new JsonObject
+                {
+                    ["k"] = "callInstance", ["ownerType"] = TypeJson.Fqn(Adapter),
+                    ["recv"] = new JsonObject { ["k"] = "cast", ["type"] = TypeJson.Fqn(Adapter), ["e"] = Read() },
+                    ["method"] = "value", ["prop"] = "get", ["args"] = new JsonArray(),
+                    ["sig"] = new JsonArray(), ["ret"] = TypeJson.Fqn("kotlin.String"),
+                },
+                ["else"] = new JsonObject
+                {
+                    ["k"] = "cond", ["type"] = target.DeepClone(),
+                    ["cond"] = new JsonObject
+                    {
+                        ["k"] = "cond", ["type"] = TypeJson.Fqn("kotlin.Boolean"),
+                        ["cond"] = new JsonObject { ["k"] = "isInst", ["type"] = TypeJson.Fqn("kotlin.String"), ["e"] = Read() },
+                        ["then"] = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("kotlin.Boolean"), ["value"] = true },
+                        ["else"] = new JsonObject
+                        {
+                            ["k"] = "objEq", ["lhs"] = Read(),
+                            ["rhs"] = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("object"), ["value"] = null },
+                        },
+                    },
+                    ["then"] = new JsonObject { ["k"] = "cast", ["type"] = target.DeepClone(), ["e"] = Read() },
+                    ["else"] = safe ? new JsonObject { ["k"] = "const", ["type"] = target.DeepClone(), ["value"] = null } : new JsonObject
+                    {
+                        ["k"] = "throwExpr", ["value"] = new JsonObject
+                        {
+                            ["k"] = "new", ["type"] = TypeJson.Fqn("kotlin.ClassCastException"),
+                            ["args"] = new JsonArray(), ["argTypes"] = new JsonArray(),
+                        },
+                    },
+                },
+            },
+        };
     }
 
     // An ordinary function carrier retains the original boxed value. Restore its CharSequence
@@ -648,7 +746,7 @@ static class StringCharSequenceBridge
     // against the runtime stdlib.
     static JsonObject WrapAdapter(JsonNode strExpr)
     {
-        _fired = true;   // request app-local adapter synthesis for this file (Apply)
+        _fired = true;
         // Structured type slots (§1 — types are nodes): the adapter owner + the `kotlin.String` ctor-arg type as
         // `{t:"fqn",…}` nodes; BirTypeLowering lowers `kotlin.String` -> `System.String` downstream.
         return new JsonObject
@@ -700,6 +798,47 @@ static class StringCharSequenceBridge
         return tempStmt == null
             ? core
             : new JsonObject { ["k"] = "valueBlock", ["stmts"] = new JsonArray { tempStmt }, ["result"] = core };
+    }
+
+    // Final physical storage includes synthesized capture fields and constructor parameters that
+    // did not exist during the semantic walk. Its source and destination are exact CLR slots.
+    // Reference nullability is erased by this point, so preserve null and evaluate the value once.
+    public static JsonNode AdaptPhysicalString(JsonNode value, TypeNode source, TypeNode target,
+        Func<JsonObject> resolvedConstructor, Func<TypeNode.Fqn, bool> isSequence)
+    {
+        var wrap = source is TypeNode.Fqn { Args: null, Name: "System.String" or "string" }
+            && target is TypeNode.Fqn { Args: null, Name: CharSeq };
+        var snapshot = target is TypeNode.Fqn { Args: null, Name: "System.String" or "string" }
+            && source is TypeNode.Fqn sequence && isSequence(sequence);
+        if (!wrap && !snapshot) return null;
+        var name = "__csphysical$" + System.Threading.Interlocked.Increment(ref _counter);
+        JsonObject Read() => new() { ["k"] = "local", ["name"] = name };
+        JsonObject converted;
+        if (wrap)
+        {
+            converted = resolvedConstructor().DeepClone().AsObject();
+            converted["args"] = new JsonArray { Read() };
+        }
+        else
+            converted = new JsonObject { ["k"] = "objMethod", ["method"] = "ToString",
+                ["recv"] = Read(), ["args"] = new JsonArray() };
+        return new JsonObject
+        {
+            ["k"] = "valueBlock",
+            ["stmts"] = new JsonArray
+            {
+                new JsonObject { ["k"] = "var", ["name"] = name,
+                    ["type"] = TypeJson.Write(source), ["init"] = value.DeepClone() },
+            },
+            ["result"] = new JsonObject
+            {
+                ["k"] = "cond", ["type"] = TypeJson.Write(target),
+                ["cond"] = new JsonObject { ["k"] = "objEq", ["lhs"] = Read(),
+                    ["rhs"] = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Write(source), ["value"] = null } },
+                ["then"] = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Write(target), ["value"] = null },
+                ["else"] = converted,
+            },
+        };
     }
 
     static int _counter;

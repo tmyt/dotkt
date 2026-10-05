@@ -65,6 +65,14 @@ private inline fun CharSequence.strFirstMatched(predicate: (Char) -> Boolean): I
     return -1
 }
 
+private inline fun strChooseSequence(useString: Boolean, other: CharSequence): CharSequence {
+    if (useString) return "new"
+    return other
+}
+
+private fun strInlineSequenceResult(useString: Boolean, other: CharSequence): CharSequence =
+    strChooseSequence(useString, other)
+
 // ---- il-charseqx : user class : CharSequence into a stdlib CharSequence-ext -----------------------------------
 class StrExtS(val s: String) : CharSequence {
     override val length: Int get() = s.length
@@ -204,6 +212,48 @@ class StringsTests {
         fun receiver(): String { evaluations++; return text }
         assertEquals(2, receiver().strFirstMatched { it == 'x' })
         assertEquals(1, evaluations)
+    }
+
+    @TestAttribute
+    fun charSequenceAssignments() {
+        val other: CharSequence = StrSeqS("other")
+        var value: CharSequence = other
+        value = "new"
+        assertEquals(3, value.length)
+        assertEquals('n', value[0])
+        assertEquals("new", strInlineSequenceResult(true, other).toString())
+        assertTrue(strInlineSequenceResult(false, other) === other)
+        var nullable: CharSequence? = other
+        val absent: String? = strNullString()
+        nullable = absent
+        assertNull(nullable)
+        nullable = "text"
+        assertEquals(4, nullable!!.length)
+    }
+
+    @TestAttribute
+    fun capturedCharSequenceAssignments() {
+        var captured: CharSequence = StrSeqS("other")
+        var evaluations = 0
+        fun source(): String { evaluations++; return "new" }
+        val assign = { captured = source() }
+        assign()
+        assertEquals(3, captured.length)
+        assertEquals('n', captured[0])
+        assertEquals(1, evaluations)
+
+        var initialized: CharSequence = "init"
+        val read = { initialized.length }
+        assertEquals(4, read())
+        initialized = StrSeqS("longer")
+        assertEquals(6, read())
+
+        var nullable: CharSequence? = StrSeqS("other")
+        val assignNullable = { value: String? -> nullable = value }
+        assignNullable(null)
+        assertNull(nullable)
+        assignNullable("text")
+        assertEquals(4, nullable!!.length)
     }
 
     @TestAttribute

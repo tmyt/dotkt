@@ -20,6 +20,14 @@ static class KotlinSupertypesRecord
             merged["base"] = addedBase.DeepClone();
 
         MergeInterfaces(merged, additions);
+        if (additions["interfaceMappings"] is JsonArray mappings)
+        {
+            var target = merged["interfaceMappings"] as JsonArray;
+            if (target == null) merged["interfaceMappings"] = target = new JsonArray();
+            foreach (var mapping in mappings)
+                if (!target.Any(existing => SameHead(TypeJson.Read(existing?["physical"]), TypeJson.Read(mapping?["physical"]))))
+                    target.Add(mapping.DeepClone());
+        }
         MergeBounds(merged, additions);
         MergeVariances(merged, additions);
         if (additions[NullableRepresentationFrame.MetadataKey] is JsonNode frameNode)

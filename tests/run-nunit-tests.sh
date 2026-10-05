@@ -71,7 +71,7 @@ done
 # its bin (the single-platform RoundtripProducer + the MPP RoundtripProducerMpp); verify all (§5 order).
 declare -A EXTRA_EMIT=(
 	["tests/coroutines"]="DotKt.Tests.CoroutineSupport.dll"
-	["tests/roundtrip/consumer"]="RoundtripProducer.dll RoundtripProducerMpp.dll RoundtripDefaultPropertySlot.dll"
+	["tests/roundtrip/consumer"]="RoundtripProducer.dll RoundtripProducerMpp.dll RoundtripDefaultPropertySlot.dll RoundtripCharSequence.dll"
 	# The C#-producer dll is csc-emitted (not ilemit), so it needs no DotKt ilverify of its own; ilverify over the
 	# CONSUMER assembly (the .ktproj-named dll) is what proves the emitted interop IL is clean. No EXTRA_EMIT entry
 	# for tests/interop/consumer — adding the plain C# producer would only formally re-verify a non-DotKt assembly.

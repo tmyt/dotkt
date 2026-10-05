@@ -56,6 +56,7 @@ static class PhysicalValueCoercion
         internal bool ReferenceBuild;
         internal Func<TypeNode, TypeNode, bool> NeedsDeclaredProjection;
         internal Func<TypeNode, TypeNode, bool> NeedsNativeProjection;
+        internal Func<JsonNode, TypeNode, TypeNode, JsonNode> AdaptRepresentation;
 
         Index(Func<JsonObject> unitValue) => _unitValue = unitValue;
         internal JsonObject UnitValue() => _unitValue();
@@ -162,13 +163,15 @@ static class PhysicalValueCoercion
     public static void ApplyAll(IReadOnlyList<JsonNode> roots, Func<JsonObject> unitValue,
         ValueTypeOracle isValue, bool referenceBuild = false,
         Func<TypeNode, TypeNode, bool> needsDeclaredProjection = null,
-        Func<TypeNode, TypeNode, bool> needsNativeProjection = null)
+        Func<TypeNode, TypeNode, bool> needsNativeProjection = null,
+        Func<JsonNode, TypeNode, TypeNode, JsonNode> adaptRepresentation = null)
     {
         var index = Index.Build(roots, unitValue);
         index.IsValue = isValue;
         index.ReferenceBuild = referenceBuild;
         index.NeedsDeclaredProjection = needsDeclaredProjection;
         index.NeedsNativeProjection = needsNativeProjection;
+        index.AdaptRepresentation = adaptRepresentation;
         foreach (var root in roots.OfType<JsonObject>()) RewriteDocument(root, index);
     }
 
@@ -639,6 +642,8 @@ static class PhysicalValueCoercion
             }
         }
         var got = ExprType(value, scope, index);
+        if (index.AdaptRepresentation?.Invoke(value, got, target) is JsonNode representation)
+            return representation;
         if (value is JsonObject expression
             && ClrMemberResolution.AdaptUnitDelegateValue(index.Document, expression, got, target) is JsonObject adapter)
             return adapter;

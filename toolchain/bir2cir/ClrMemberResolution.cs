@@ -43,12 +43,14 @@ static partial class ClrMemberResolution
 
     // Resolve every same-emission-unit constructor call to the declaration's stable index before CIR reaches ilemit.
     // The emitter then performs a direct table lookup; all signature/arity reasoning remains in bir2cir.
-    public static void ResolveLocalConstructors(IEnumerable<JsonNode> roots)
+    public static void ResolveLocalConstructors(IEnumerable<JsonNode> roots, IReadOnlySet<string> externalTypes = null,
+        JsonNode construction = null)
     {
         var rootList = roots.ToList();
         var defs = rootList.OfType<JsonObject>()
             .SelectMany(file => file["types"] is JsonArray types ? types.OfType<JsonObject>() : Enumerable.Empty<JsonObject>())
             .Where(t => (t["name"] as JsonValue)?.TryGetValue<string>(out _) == true)
+            .Where(t => externalTypes?.Contains(t["name"].GetValue<string>()) != true)
             // A shared generated declaration may occur in every BIR file that uses it. Every copy has the same generated
             // definition, including constructor list and order, so any one copy defines the assembly-level type index.
             .GroupBy(t => t["name"].GetValue<string>(), StringComparer.Ordinal)
@@ -153,6 +155,11 @@ static partial class ClrMemberResolution
                 foreach (var item in array.ToList()) if (item != null) WalkLocalNews(item);
         }
 
+        if (construction != null)
+        {
+            WalkLocalNews(construction);
+            return;
+        }
         foreach (var type in defs.Values)
         {
             var own = new TypeNode.Fqn(type["name"].GetValue<string>());

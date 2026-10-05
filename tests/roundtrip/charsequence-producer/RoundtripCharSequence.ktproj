@@ -1,0 +1,10 @@
+<!-- Keep the polymorphic CharSequence implementation out of the ordinary producer:
+     that producer must continue exercising the native String representation. -->
+<Project Sdk="DotKt.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <OutputType>Library</OutputType>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup><ProjectReference Include="../producer/RoundtripProducer.ktproj" /></ItemGroup>
+</Project>

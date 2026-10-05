@@ -17,6 +17,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../producer/RoundtripProducer.ktproj" />
+    <ProjectReference Include="../charsequence-producer/RoundtripCharSequence.ktproj" />
     <ProjectReference Include="../generic-value-interop/GenericValueInterop.csproj" />
     <ProjectReference Include="../default-property-slot-producer/RoundtripDefaultPropertySlot.ktproj" />
     <ProjectReference Include="../property-slot-producer/RoundtripPropertySlot.csproj" />

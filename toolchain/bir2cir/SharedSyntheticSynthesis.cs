@@ -99,6 +99,8 @@ static class SharedSyntheticSynthesis
 
         if (referenced.Contains(CharSeq) && present.Add(CharSeq))
             types.Add(JsonNode.Parse(CharSeqDef));
+        if (referenced.Contains(CharSeq) && present.Add(StringCharSequenceBridge.Adapter))
+            types.Add(JsonNode.Parse(StringCharSequenceBridge.AdapterTypeJson));
     }
 
     public static void DropSyntheticTypeArgs(JsonNode node)

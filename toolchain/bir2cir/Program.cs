@@ -161,6 +161,63 @@ sealed class Pipeline
         }
     }
 
+    static void PreserveCharSeqDeclarationTypes(JsonNode node)
+    {
+        bool ContainsCharSeq(JsonNode type) => type switch
+        {
+            JsonObject obj => ((obj["t"] as JsonValue)?.GetValue<string>() == "fqn"
+                && (obj["name"] as JsonValue)?.GetValue<string>() == "kotlin.CharSequence")
+                || obj.Any(pair => ContainsCharSeq(pair.Value)),
+            JsonArray array => array.Any(ContainsCharSeq),
+            _ => false,
+        };
+        void Preserve(JsonObject declaration, string slot, string carrier)
+        {
+            if (declaration[carrier] == null && ContainsCharSeq(declaration[slot]))
+                declaration[carrier] = TypeNode.ToJson(TypeJson.Read(declaration[slot]));
+        }
+        if (node is not JsonObject owner) return;
+        if (owner["kind"] != null)
+        {
+            var sourceEdges = new JsonObject();
+            if (ContainsCharSeq(owner["base"])) sourceEdges["base"] = owner["base"].DeepClone();
+            if (owner["interfaces"] is JsonArray interfaces)
+            {
+                var changed = new JsonArray(interfaces.Where(ContainsCharSeq).Select(edge => edge.DeepClone()).ToArray());
+                if (changed.Count != 0) sourceEdges["interfaces"] = changed;
+                var mappings = new JsonArray();
+                foreach (var edge in interfaces.Where(ContainsCharSeq))
+                {
+                    var physical = edge.DeepClone();
+                    SubstituteCharSeqIdentity(physical);
+                    mappings.Add(new JsonObject { ["physical"] = physical, ["source"] = edge.DeepClone() });
+                }
+                if (mappings.Count != 0) sourceEdges["interfaceMappings"] = mappings;
+            }
+            var bounds = new JsonObject();
+            var parameters = (owner["capturedTypeParams"] as JsonArray ?? new JsonArray())
+                .Concat(owner["typeParams"] as JsonArray ?? new JsonArray()).ToArray();
+            for (var index = 0; index < parameters.Length; index++)
+                if (parameters[index] is JsonObject parameter && parameter["constraints"] is JsonArray constraints
+                    && constraints.Any(ContainsCharSeq))
+                    bounds[index.ToString()] = constraints.DeepClone();
+            if (bounds.Count != 0) sourceEdges["bounds"] = bounds;
+            KotlinSupertypesRecord.Merge(owner, sourceEdges);
+        }
+        if (owner["methods"] is JsonArray methods)
+            foreach (var method in methods.OfType<JsonObject>())
+            {
+                Preserve(method, "ret", "retKotlinType");
+                PreserveCharSeqDeclarationTypes(method);
+            }
+        foreach (var group in new[] { "params", "fields", "properties" })
+            if (owner[group] is JsonArray slots)
+                foreach (var slot in slots.OfType<JsonObject>()) Preserve(slot, "type", "kotlinType");
+        foreach (var group in new[] { "types", "ctors" })
+            if (owner[group] is JsonArray children)
+                foreach (var child in children) PreserveCharSeqDeclarationTypes(child);
+    }
+
     List<CirFile> TransformFiles(IReadOnlyList<BirFile> birFiles, ReferenceMetadataIndex refs)
     {
         var birRoots = birFiles.Select(b => b.Root).ToList();
@@ -245,7 +302,11 @@ sealed class Pipeline
         // the canonical `dotkt$CharSequence` identity defined by SharedSyntheticSynthesis. Only a
         // `{t:"fqn"}` type-reference NAME is rewritten (a type DECLARATION's own `name` sits under `kind`, not `t`, so real
         // kotlin.CharSequence declarations — if any — are untouched).
-        foreach (var b in birFiles) SubstituteCharSeqIdentity(b.Root);
+        foreach (var b in birFiles)
+        {
+            PreserveCharSeqDeclarationTypes(b.Root);
+            SubstituteCharSeqIdentity(b.Root);
+        }
         // A delegated CLR-event declaration and a subscription through that Kotlin wrapper may be in sibling source
         // files. Snapshot the module-wide relation before any declaration-normalizing pass can consume or rebuild the
         // kotc directive; ClrEventSubscriptionBinding later consumes this immutable physical-owner index per file.
@@ -1320,7 +1381,7 @@ sealed class Pipeline
         // collision refusal: an invalid pair of Kotlin constructors that erases to one CLR signature must receive the
         // existing actionable collision diagnostic, rather than being intercepted as an ambiguous local lookup.
         // ilemit receives only the winning declaration index and never selects by name/arity/assignability.
-        ClrMemberResolution.ResolveLocalConstructors(loweredRoots.Select(s => s.Root));
+        ClrMemberResolution.ResolveLocalConstructors(loweredRoots.Select(s => s.Root), externalCanonicalTypes);
         // Compare fully physical method returns: closing a generic R with Unit still returns a value,
         // whereas a declared Kotlin Unit return has lowered to void. Adapt the delegate, not the method.
         ClrMemberResolution.ResolveLocalDelegateTargets(loweredRoots.Select(s => s.Root), refs,
@@ -1432,8 +1493,16 @@ sealed class Pipeline
             // memberRef (+ `dispatch` on clrInstance). ilemit is a pure linker. Runs LAST — on
             // the fully-lowered tree — so owner/argTypes speak the CLR vocabulary the MLC resolves; unconditional so
             // RefBodySquash's `newClr NotImplementedException` is stamped too (its owner resolves off the BCL compile-refs).
+            // Shared representation templates are not application declarations. Drop their bodies
+            // before resolving external members, so their private storage is not treated as an app access.
+            if (lowered is JsonObject canonicalDocument && canonicalDocument["types"] is JsonArray canonicalTypes)
+                for (var i = canonicalTypes.Count - 1; i >= 0; i--)
+                    if (canonicalTypes[i] is JsonObject canonicalType
+                        && (canonicalType["name"] as JsonValue)?.TryGetValue<string>(out var canonicalName) == true
+                        && externalCanonicalTypes.Contains(canonicalName))
+                        canonicalTypes.RemoveAt(i);
             ClrMemberResolution.EnsurePlainCallDescriptors(lowered);
-            ClrMemberResolution.Apply(lowered, refs, emittedLocalTypes);
+            ClrMemberResolution.Apply(lowered, refs, emittedLocalTypes.Except(externalCanonicalTypes).ToHashSet(StringComparer.Ordinal));
             // Exact member resolution above selected the authoritative MethodDef and temporarily carried its CLR-only
             // generic parameter facts. Validate the call's actual method arguments in the caller's lexical frame, then
             // consume that internal carrier before CIR serialization. Generic Kotlin properties are physical accessor
@@ -1482,8 +1551,34 @@ sealed class Pipeline
         // stable. ilemit then emits those ordinary CIR casts without recognizing the collection ABI. A metadata/ref
         // build retains declaration types and only consumes semantic comparisons in executable constructor remnants.
         var physicalValueTypes = SupertypeGraph.Collect(loweredRoots.Select(file => file.Root));
+        JsonObject physicalStringAdapterConstructor = null;
+        JsonObject ResolvePhysicalStringAdapterConstructor()
+        {
+            if (physicalStringAdapterConstructor != null) return physicalStringAdapterConstructor;
+            var construction = new JsonObject
+            {
+                ["k"] = "new", ["type"] = TypeJson.Fqn(StringCharSequenceBridge.Adapter),
+                ["argTypes"] = new JsonArray { TypeJson.Fqn("System.String") },
+                ["args"] = new JsonArray
+                {
+                    new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("System.String"), ["value"] = null },
+                },
+            };
+            // Bind the generated use against current declarations, just like an ordinary new.
+            // Do not revisit already-bound calls or ask ilemit to infer the adapter ABI.
+            ClrMemberResolution.ResolveLocalConstructors(loweredRoots.Select(file => file.Root),
+                externalCanonicalTypes, construction);
+            ClrMemberResolution.Apply(construction, refs,
+                emittedLocalTypes.Except(externalCanonicalTypes).ToHashSet(StringComparer.Ordinal));
+            return physicalStringAdapterConstructor = construction;
+        }
         PhysicalValueCoercion.ApplyAll(loweredRoots.Select(file => file.Root).ToList(),
             ClrMemberResolution.UnitSingletonRead, isValueFqn, referenceBuild: _options.RefBuild,
+            adaptRepresentation: (value, source, target) => StringCharSequenceBridge.AdaptPhysicalString(
+                value, source, target, ResolvePhysicalStringAdapterConstructor,
+                sequence => sequence.Name == "System.Text.StringBuilder"
+                    || SupertypeGraph.Reaches(sequence, new TypeNode.Fqn(SharedSyntheticSynthesis.CharSeq),
+                        physicalValueTypes, refs)),
             needsDeclaredProjection: (source, target) =>
                 source is TypeNode.Fqn { Args: null } carrier
                 && target is TypeNode.Fqn { Args: { Length: > 0 } } concrete
@@ -1512,17 +1607,6 @@ sealed class Pipeline
         // Every representation synthesis is now complete. Validate the exact MethodDef table that CIR will describe;
         // do not defer a generated/user collision to ilemit and do not invent a late name after calls are bound.
         DeclarationIdentityBinding.ValidateFinalPhysicalNames(loweredRoots.Select(file => file.Root));
-
-        // Canonical runtime synthetics were useful as module-wide representation templates, but an application does
-        // not emit their TypeDefs. Remove those declarations from CIR so its local/external ownership is literal:
-        // every surviving reference to the type names the runtime assembly and no duplicate local declaration exists.
-        foreach (var (root, _) in loweredRoots)
-            if (root is JsonObject document && document["types"] is JsonArray types)
-                for (var i = types.Count - 1; i >= 0; i--)
-                    if (types[i] is JsonObject type
-                        && (type["name"] as JsonValue)?.TryGetValue<string>(out var name) == true
-                        && externalCanonicalTypes.Contains(name))
-                        types.RemoveAt(i);
 
         // SERIALIZATION IS THE LAST THING, and not the tail of the loop above. The check that just ran asks each
         // Kotlin body which slot it fills, and the answer is a pass-to-pass record on the declaration that must not

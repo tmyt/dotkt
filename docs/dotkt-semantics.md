@@ -683,6 +683,11 @@ stringification above):
   is `.toString()`-snapshot into the adapter, so a `val cs: CharSequence = sb` initialized from a StringBuilder (or a
   StringBuilder returned as `CharSequence`) captures the content at that point — a later `sb.append(...)` is NOT
   observed through `cs`. Same immutable-snapshot rule as the `= string` model above, applied at the adapter boundary.
+- The String adapter has one canonical runtime identity across DotKt assemblies. Converting a String into a
+  polymorphic CharSequence slot and later casting it back to String preserves the original String reference;
+  String `is`/`as?` checks recognize that representation too. An arbitrary user CharSequence is not a String:
+  casting it to String does not implicitly call `toString()`. Snapshot conversion belongs to a String-backed
+  CharSequence storage or call boundary, not to an explicit String cast.
 
 ## 5b-bis. `Regex.matchEntire`/`matches` are a TRUE anchored full match (matches Kotlin/JVM)
 

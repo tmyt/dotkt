@@ -259,7 +259,8 @@ static class CharSeqStringLowering
         // A member READ on a CharSequence value (kotc: callInstance whose ownerType is the synthetic). A stdlib
         // CharSequence-EXTENSION is a callStatic (receiver as arg[0]), never this shape, so this only ever hits the
         // synthetic interface's own length/get/subSequence.
-        if (k == "callInstance" && IsCharSeqSlot(node["ownerType"]))
+        if (k == "callInstance" && IsCharSeqSlot(node["ownerType"])
+            && IsStaticString(node["recv"], env))
         {
             var rewritten = RewriteMemberRead(node);
             if (rewritten != null) return rewritten;
