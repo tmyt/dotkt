@@ -8,6 +8,7 @@ import GenericValueInterop.ExistentialNativeBase
 import GenericValueInterop.ExistentialNativeBox
 
 private class ExistentialNativeDerived<T> : ExistentialNativeBase()
+class ExistentialDefaultConstructed<T> { fun read(): Int = 17 }
 private class ExistentialNativeStorage(value: ExistentialSlotOwner<String>) : ExistentialOwnerStorage(value)
 private class ExistentialNativeStringStorage(value: String) : ExistentialOwnerStorage(value)
 private fun nativeBase(value: ExistentialNativeDerived<String>): ExistentialNativeBase = value
@@ -44,6 +45,14 @@ class ExistentialConstructedSlotTests {
         check(nativeBase(derived) === derived)
         check(nativeBase(derived).Read() == 23)
         check(nestedNative().Value.value == "nested")
+        val nested = ExistentialSlotOwner(ExistentialSlotOwner("nested Kotlin"))
+        check(ExistentialOwnerApi.EchoNested(nested) === nested)
+        check(ExistentialOwnerApi.EchoNested(nested).value.value == "nested Kotlin")
+        val nestedList = ExistentialSlotOwner(listOf(ExistentialSlotOwner("list")))
+        check(nestedList.value[0].value == "list")
+        val nestedArray = ExistentialSlotOwner(arrayOf(ExistentialSlotOwner("array")))
+        check(nestedArray.value[0].value == "array")
+        check(ExistentialOwnerApi.Create<ExistentialDefaultConstructed<String>>().read() == 17)
         val reader = ExistentialReader("value")
         val native: ExistentialNativeReader<String> = reader
         check(native.Read() == "value")

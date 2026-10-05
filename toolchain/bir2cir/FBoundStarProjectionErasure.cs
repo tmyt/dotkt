@@ -531,6 +531,9 @@ static class FBoundStarProjectionErasure
             && (Bool(owner[ExactOuterKey]) || kind == "this")) return true;
         if (key == "resolvedMemberParams" || key == ClrMemberResolution.ResolvedMemberReturnKey)
             return true;
+        // These nodes were bound from a CLR declaration: their type arguments
+        // instantiate that MethodDef, not ordinary Kotlin value slots.
+        if (key == "typeArgs" && kind is "clrGenericStatic" or "clrGenericInstance") return true;
         if (key == "argTypes" && ClrBoundNode.IsAny(kind)) return true;
         if (key == "memberSignature" && kind is "new" or "newClr"
             && owner["resolvedMemberParams"] is JsonArray) return true;
@@ -4670,8 +4673,14 @@ static class FBoundStarProjectionErasure
         switch (type)
         {
             case TypeNode.Fqn { Args: { } preservedArgs } preserved when preserveConstructedHead:
+                // Reified Kotlin construction arguments retain their own classifier
+                // recursively. Kotlin aliases still own the representation of their
+                // value arguments (for example a collection's element carrier).
+                var aliasArguments = refs != null && refs.TryResolveClrOwner(preserved.Name, out _, out _)
+                    || localClrAliases?.ContainsKey(preserved.Name) == true;
                 return new TypeNode.Fqn(preserved.Name, preservedArgs.Select(argument => RewriteType(
-                    argument, owners, refs, boundDeclaration, localClrAliases)).ToArray());
+                    argument, owners, refs, boundDeclaration, localClrAliases,
+                    preserveConstructedHead: !aliasArguments)).ToArray());
             case TypeNode.Fqn preserved when preserveConstructedHead:
                 return preserved;
             case TypeNode.Fqn { Args: { Length: > 0 } } nominal when !boundDeclaration
