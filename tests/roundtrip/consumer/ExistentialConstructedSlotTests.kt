@@ -73,11 +73,36 @@ class ExistentialConstructedSlotTests {
     }
 
     @TestAttribute
+    @Suppress("DEPRECATION_ERROR")
     fun constructedConsumersPreserveOwnerFramesAndIdentity() {
+        val storage = ExistentialFieldStorage<Int>()
+        var uninitialized = false
+        try { storage.value } catch (error: UninitializedPropertyAccessException) { uninitialized = true }
+        check(uninitialized) { "generic lateinit read must reject uninitialized storage" }
+        uninitialized = false
+        try { storage.read() } catch (error: UninitializedPropertyAccessException) { uninitialized = true }
+        check(uninitialized) { "lexical generic lateinit read must reject uninitialized storage" }
+        storage.value = 23
+        check(storage.value == 23)
+        storage.value = 0
+        check(storage.value == 0)
+        check(storage.read() == 0)
+        storage.write(19)
+        check(storage.value == 19)
+        storage.counter = 7
+        check(storage.counter == 7)
+        val flags = ExistentialFieldStorage<Boolean>()
+        flags.write(false)
+        check(!flags.value)
+        val text = ExistentialFieldStorage<String>()
+        text.value = ""
+        check(text.read() == "")
         val initialized = ExistentialGenericInitializer<String>(3)
         check(initialized.count() == 3)
         check(initialized.read(1) == null)
         check(ExistentialInnerArrayOwner<String>().countFromClosure() == 2)
+        val arrayOwner = ExistentialInnerArrayOwner<String>()
+        check(existentialDisposeNodes(arrayOwner, Array(2) { arrayOwner.Node() }) == 2)
         val strings = ExistentialSlotOwner("owner")
         val integers = ExistentialSlotOwner(19)
         val stringItem = strings.Item(11)

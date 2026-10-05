@@ -43,6 +43,9 @@ static class FBoundStarProjectionErasure
         public int Arity;
         public bool Needed;
         public readonly Dictionary<JsonObject, (JsonObject Slot, TypeNode[] Signature)> Slots = new();
+        public readonly Dictionary<(string Name, string Kind), JsonObject> FieldAccessors = new();
+        public readonly Dictionary<JsonObject, JsonObject> InnerConstructorFactories = new();
+        public readonly Dictionary<string, TypeNode> LateinitStorageTypes = new(StringComparer.Ordinal);
     }
 
     public static IReadOnlyDictionary<string, string> ApplyAll(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs)
@@ -76,6 +79,8 @@ static class FBoundStarProjectionErasure
         AllocateCarrierNames(owners, defs.Keys);
         foreach (var root in rootList) MarkNeeded(root, owners, defs, refs);
         MarkNeededClosure(owners, baseContracts);
+        foreach (var owner in owners.Values.Where(o => o.Needed)) SynthesizeFieldAccessors(owner);
+        _localMethods = IndexLocalMethods(rootList);
 
         foreach (var definition in defs.Values.Concat(rootList))
             if (definition["methods"] is JsonArray declaredMethods)
@@ -437,12 +442,11 @@ static class FBoundStarProjectionErasure
                         {
                             var argumentType = TypeJson.Read(argumentTypes[index]);
                             if (argumentType == null) continue;
-                            var exactValue = key == "argTypes" && index < argumentValues.Count
-                                && argumentValues[index] is JsonObject argument
-                                && (Str(argument["k"]) == "this" || Bool(argument[ExactOuterKey]));
+                            var exactCapture = key == "argTypes" && index < argumentValues.Count
+                                && argumentValues[index] is JsonObject argument && Bool(argument[ExactOuterKey]);
                             var exactOuterSlot = IsInnerConstructionOuterSlot(obj, index, defs, refs);
                             argumentTypes[index] = TypeJson.Write(RewriteType(argumentType, owners, refs,
-                                childBoundDeclaration || exactValue || exactOuterSlot, localClrAliases));
+                                childBoundDeclaration || exactCapture || exactOuterSlot, localClrAliases));
                         }
                         continue;
                     }
@@ -1651,6 +1655,62 @@ static class FBoundStarProjectionErasure
         }
     }
 
+    static string StorageAccessorIdentity(string field) => "dotkt:storage:" + field;
+
+    static void SynthesizeFieldAccessors(Owner owner)
+    {
+        if (owner.Def["fields"] is not JsonArray fields) return;
+        var methods = owner.Def["methods"] as JsonArray;
+        if (methods == null) owner.Def["methods"] = methods = new JsonArray();
+        var ownerType = new TypeNode.Fqn(owner.Name,
+            Enumerable.Range(0, owner.Arity).Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray());
+        foreach (var field in fields.OfType<JsonObject>())
+        {
+            // Lexical receiver storage retains its exact construction and is never
+            // accessed through an ordinary Kotlin value's carrier.
+            if (Bool(field["static"]) || Bool(field[ExactOuterKey]) || Str(field["name"]) is not string name
+                || TypeJson.Read(field["type"]) is not TypeNode type) continue;
+            // A type variable can be instantiated by a CLR value type. Its default
+            // value is not Kotlin's uninitialized sentinel; retain a real null in
+            // storage and keep the declared Kotlin type in metadata instead.
+            if (type is TypeNode.Tv && Bool(field["lateinit"]))
+            {
+                field["kotlinType"] ??= TypeNode.ToJson(type);
+                owner.LateinitStorageTypes.Add(name, type);
+                type = new TypeNode.Fqn("System.Object");
+                field["type"] = TypeJson.Write(type);
+            }
+            foreach (var kind in Bool(field["initOnly"]) || Bool(field["readOnly"])
+                         ? new[] { "get" } : new[] { "get", "set" })
+            {
+                var write = kind == "set";
+                var access = new JsonObject {
+                    ["k"] = write ? "setField" : "field", ["name"] = name,
+                    ["ownerType"] = TypeJson.Write(ownerType),
+                    ["recv"] = new JsonObject { ["k"] = "this", ["type"] = TypeJson.Write(ownerType) },
+                };
+                if (write) access["value"] = new JsonObject {
+                    ["k"] = "local", ["name"] = "value", ["sty"] = TypeJson.Write(type),
+                };
+                else access["memberType"] = TypeJson.Write(type);
+                var method = new JsonObject {
+                    ["name"] = "dotkt:field:" + kind + ":" + name,
+                    ["static"] = false, ["vis"] = "private", ["generated"] = true,
+                    ["virtual"] = false, ["override"] = false, ["abstract"] = false,
+                    ["objectOverride"] = false,
+                    ["params"] = write ? new JsonArray(new JsonObject {
+                        ["name"] = "value", ["type"] = TypeJson.Write(type),
+                    }) : new JsonArray(),
+                    ["ret"] = TypeJson.Write(write ? new TypeNode.Fqn("kotlin.Unit") : type),
+                    ["body"] = new JsonArray(write ? access : new JsonObject { ["k"] = "return", ["value"] = access }),
+                    ["attrs"] = new JsonArray(),
+                };
+                owner.FieldAccessors.Add((name, kind), method);
+                methods.Add(method);
+            }
+        }
+    }
+
     static void Synthesize(Owner owner, IReadOnlyDictionary<string, Owner> owners,
         IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs,
         (TypeNode.Fqn spec, bool isInterface)[] baseContracts, IReadOnlyDictionary<string, string> aliases)
@@ -1694,6 +1754,12 @@ static class FBoundStarProjectionErasure
                     || method[DeclarationIdentityBinding.ExplicitNameKey] != null;
                 var slot = InterfaceSlot(method, requiresBridge ? StarMethodName(owner, method) : null,
                     owner.Name, owners, refs);
+                var storage = owner.FieldAccessors.FirstOrDefault(pair => ReferenceEquals(pair.Value, method));
+                if (storage.Value != null)
+                    slot[KotlinPropertyAccessors.MetadataCarrierKey] = new JsonObject {
+                        ["name"] = StorageAccessorIdentity(storage.Key.Name), ["kind"] = storage.Key.Kind,
+                        ["association"] = "dotkt-field-storage:" + new JsonArray(owner.Name, storage.Key.Name).ToJsonString(),
+                    };
                 owner.Slots[method] = (slot, (method["params"] as JsonArray)?.OfType<JsonObject>()
                     .Select(parameter => TypeJson.Read(parameter["type"])).ToArray() ?? Array.Empty<TypeNode>());
                 var key = MethodKey(slot);
@@ -1748,6 +1814,7 @@ static class FBoundStarProjectionErasure
                             $"duplicate existential inner-constructor factory for '{inner.Name}'");
                     methods.Add(factory.Slot);
                     declared.Add(factory.Bridge);
+                    inner.InnerConstructorFactories.Add(constructor, factory.Slot);
                 }
             }
         }
@@ -2704,6 +2771,7 @@ static class FBoundStarProjectionErasure
                 BindStarInnerConstruction(obj, owners, defs, refs,
                     existentialTypeParameters, existentialMethodParameters);
                 LowerProjectedConstruction(obj, owners, defs, refs);
+                BindCarrierFieldStorage(obj, owners, refs);
                 BindStarFieldThroughCanonicalGetter(obj, owners, defs, refs);
                 BindProjectedConstraintMember(obj, typeParameterDeclarations, methodParameterDeclarations,
                     defs, refs);
@@ -2791,12 +2859,11 @@ static class FBoundStarProjectionErasure
                         {
                             var argumentType = TypeJson.Read(argumentTypes[index]);
                             if (argumentType == null) continue;
-                            var exactValue = key == "argTypes" && index < argumentValues.Count
-                                && argumentValues[index] is JsonObject argument
-                                && (Str(argument["k"]) == "this" || Bool(argument[ExactOuterKey]));
+                            var exactCapture = key == "argTypes" && index < argumentValues.Count
+                                && argumentValues[index] is JsonObject argument && Bool(argument[ExactOuterKey]);
                             var exactOuterSlot = IsInnerConstructionOuterSlot(obj, index, defs, refs);
                             argumentTypes[index] = TypeJson.Write(RewriteType(argumentType, owners, refs,
-                                childBoundDeclaration || exactValue || exactOuterSlot, localClrAliases));
+                                childBoundDeclaration || exactCapture || exactOuterSlot, localClrAliases));
                         }
                         continue;
                     }
@@ -3240,6 +3307,77 @@ static class FBoundStarProjectionErasure
         };
     }
 
+    // Carrier values have no physical fields. Bind raw storage operations through
+    // their producer-authored slots, preserving the lateinit null check before any
+    // conversion back to the semantic result type.
+    static void BindCarrierFieldStorage(JsonObject field, IReadOnlyDictionary<string, Owner> owners,
+        ReferenceMetadataIndex refs)
+    {
+        var kind = Str(field["k"]);
+        if (kind == "lateinitGet" && TypeJson.Read(field["ret"]) is not TypeNode.Fqn { Name: "System.Object" }
+            && TypeJson.Read(field["ownerType"]) is TypeNode.Fqn exactOwner
+            && field["recv"] is JsonObject exactReceiver
+            && (Str(exactReceiver["k"]) == "this" || Bool(exactReceiver[ExactOuterKey]))
+            && owners.TryGetValue(exactOwner.Name, out var storageOwner)
+            && Str(field["name"]) is string storageName
+            && storageOwner.LateinitStorageTypes.TryGetValue(storageName, out var semanticStorageType))
+        {
+            field["ret"] = TypeJson.Write(SubstituteDeclarationTypeArguments(semanticStorageType,
+                exactOwner.Args ?? Array.Empty<TypeNode>(), Array.Empty<TypeNode>()));
+            AlignCallResult(field, new TypeNode.Fqn("System.Object"), protectExactCast: true);
+            return;
+        }
+        if (kind is not ("field" or "lateinitGet" or "setField" or "setFieldExpr")
+            || Bool(field[ExactOuterKey]) || Bool(field["static"])
+            || field["value"] != null && kind == "lateinitGet"
+            || Str(field["name"]) is not string name
+            || TypeJson.Read(field["ownerType"]) is not TypeNode.Fqn ownerType
+            || field["recv"] is not JsonObject receiver
+            || Str(receiver["k"]) == "this" || Bool(receiver[ExactOuterKey])) return;
+        var write = kind is "setField" or "setFieldExpr";
+        var accessor = write ? "set" : "get";
+        string physicalOwner, physicalMethod;
+        TypeNode[] parameters;
+        TypeNode result;
+        if (owners.TryGetValue(ownerType.Name, out var owner)
+            && owner.FieldAccessors.TryGetValue((name, accessor), out var method))
+        {
+            var slot = owner.Slots[method].Slot;
+            physicalOwner = owner.ErasedName;
+            physicalMethod = Str(slot["name"]);
+            parameters = (slot["params"] as JsonArray).OfType<JsonObject>()
+                .Select(parameter => TypeJson.Read(parameter["type"])).ToArray();
+            result = TypeJson.Read(slot["ret"]);
+        }
+        else if (!refs.TryExistentialStorageAccessor(ownerType.Name, StorageAccessorIdentity(name), accessor,
+                     out physicalOwner, out physicalMethod, out parameters, out result)) return;
+        var call = new JsonObject {
+            ["k"] = "callInstance", ["ownerType"] = TypeJson.Fqn(physicalOwner),
+            ["method"] = physicalMethod, ["virtual"] = true, ["recv"] = receiver.DeepClone(),
+            ["sig"] = new JsonArray(parameters.Select(TypeJson.Write).ToArray()),
+            ["ret"] = TypeJson.Write(result),
+            ["args"] = write ? new JsonArray(field["value"]!.DeepClone()) : new JsonArray(),
+        };
+        if (field["pos"] != null) call["pos"] = field["pos"].DeepClone();
+        if (kind == "lateinitGet")
+        {
+            field["value"] = call;
+            field.Remove("recv");
+            field.Remove("ownerType");
+            AlignCallResult(field, result, protectExactCast: true);
+            return;
+        }
+        if (!write && ExpressionType(field) is TypeNode semanticResult)
+        {
+            call["ret"] = TypeJson.Write(semanticResult);
+            AlignCallResult(call, result, protectExactCast: true);
+        }
+        JsonObject replacement = kind == "setField"
+            ? new JsonObject { ["k"] = "exprStmt", ["expr"] = call } : call;
+        field.Clear();
+        foreach (var pair in replacement) field[pair.Key] = pair.Value?.DeepClone();
+    }
+
     // A default-expression carrier or compiler-generated equality body authored inside a generic class may contain a
     // direct read of that class's backing field. Once its dispatch receiver is G<*>, the physical receiver is G$star:
     // an interface which deliberately owns no fields. Reuse the already-projected property-getter slot only when the
@@ -3420,9 +3558,10 @@ static class FBoundStarProjectionErasure
             if (matches.Count != 1)
                 throw new InvalidOperationException(
                     $"bir2cir: star-projected inner construction '{inner.Name}' resolves to {matches.Count} exact local constructors");
-            var generatedFactory = InnerConstructorFactory(outer, inner, matches[0].ctor,
-                matches[0].ordinal, owners, refs);
-            var factory = generatedFactory.Slot;
+            // Bind the declaration that was actually synthesized. Constructor parameter
+            // types may already have undergone value projection at this point; rebuilding
+            // a factory from them can produce a different physical signature.
+            var factory = inner.InnerConstructorFactories[matches[0].ctor];
             declarationParameters = FunctionSignatureIdentity.Signature((JsonArray)factory["params"]);
             physicalOwner = outer.ErasedName;
             physicalMethod = Str(factory["name"]);

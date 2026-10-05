@@ -3831,7 +3831,7 @@ static partial class SuspendColdLowering
         {
             var coldSmType = ColdEntrySmTypeInst();
             var ctorArgs = new JsonArray();
-            if (_isMember) ctorArgs.Add(new JsonObject { ["k"] = "this" });
+            if (_isMember) ctorArgs.Add(new JsonObject { ["k"] = "this", ["outer"] = true });
             foreach (var p in _params) ctorArgs.Add(new JsonObject { ["k"] = "local", ["name"] = Str(p["name"]) });
             ctorArgs.Add(new JsonObject { ["k"] = "local", ["name"] = CompletionParameter });
             var argTypes = new JsonArray();

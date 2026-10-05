@@ -4,6 +4,13 @@ import kotlin.coroutines.suspendCoroutine
 class ExistentialOwnerHolder(val owner: ExistentialSlotOwner<String>)
 class ExistentialItemHolder<T>(val item: ExistentialSlotOwner<T>.Item)
 
+class ExistentialFieldStorage<T : Any> {
+    lateinit var value: T
+    @kotlin.clr.ClrField var counter: Int = 0
+    fun read(): T = value
+    fun write(next: T) { value = next }
+}
+
 class ExistentialGenericInitializer<T>(size: Int) {
     private val values = Array(size) { ExistentialSlotOwner<T?>(null) }
     fun count(): Int = values.size
@@ -27,6 +34,11 @@ class ExistentialInnerArrayOwner<T> {
         continuation.resume(Disposal(nodes).count())
     }
 }
+
+fun <T> existentialDisposeNodes(
+    owner: ExistentialInnerArrayOwner<T>,
+    nodes: Array<ExistentialInnerArrayOwner<T>.Node>,
+): Int = owner.Disposal(nodes).count()
 
 class ExistentialSlotOwner<T>(val value: T) {
     inner class Item(val count: Int)

@@ -2644,6 +2644,26 @@ sealed partial class ReferenceMetadataIndex
         return true;
     }
 
+    public bool TryExistentialStorageAccessor(string sourceOwner, string storageIdentity, string kind,
+        out string physicalOwner, out string physicalMethod, out TypeNode[] parameters, out TypeNode result)
+    {
+        physicalMethod = null;
+        parameters = null;
+        result = null;
+        if (!TryExistentialPhysicalOwner(sourceOwner, out physicalOwner)
+            || !TryMembersByBirOwner(physicalOwner, out var members)) return false;
+        // A field has no source MethodDef. Its producer-authored carrier association is the
+        // complete storage-operation identity; do not infer an accessor from a physical name.
+        var matches = members.Where(member => !member.IsStatic && !member.IsPropertyBridge
+            && member.SourcePropertyName == storageIdentity && member.AccessorKind == kind
+            && member.MethodArity == 0 && member.ParamCount == (kind == "set" ? 1 : 0)).ToList();
+        if (matches.Count != 1) return false;
+        physicalMethod = matches[0].Name;
+        parameters = matches[0].ParamTypeNodes ?? Array.Empty<TypeNode>();
+        result = matches[0].ReturnTypeNode;
+        return result != null;
+    }
+
     // A referenced existential outer publishes constructor factories as trusted generated interface slots.  Select
     // the exact slot from the carrier's Kotlin inner classifier + constructor descriptor; the physical method name is
     // only an output.  This deliberately does not infer construction semantics from a `$star$new$...` spelling.
