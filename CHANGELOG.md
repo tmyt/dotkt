@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Inherited properties on projected Kotlin receivers retain their selected accessor (#961).**
+  bir2cir preserves property declaration identity and binds inherited existential interface slots,
+  including override chains, instead of calling an incompatible concrete generic accessor.
+
 - **Function-bounded generic receivers invoke their selected delegate safely (#959).**
   bir2cir materializes the receiver conversion explicitly, including imported callback properties.
 

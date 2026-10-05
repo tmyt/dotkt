@@ -2617,6 +2617,10 @@ static class MemberCallSubstitution
             ["static"] = staticAxis && propMarker != null && extRecv == null,
             ["recv"] = (extRecv ?? node["recv"])?.DeepClone(),
         };
+        if (KotlinPropertyAccessors.TryCallIdentity(node, out var sourceProperty, out var sourceAccessor))
+            KotlinPropertyAccessors.PreserveCallIdentity(pg, sourceProperty, sourceAccessor);
+        if (node[DeclarationIdentityBinding.Key] is JsonNode selectedDeclaration)
+            pg[DeclarationIdentityBinding.Key] = selectedDeclaration.DeepClone();
         if (!write && RetToken(node) is JsonNode ret) pg["ret"] = ret;
         // Carry the frontend static-type stamp (#122) so a LATE consumer (StringCharSequenceBridge) recovers the
         // property's type even when it is non-generic (no `ret`) — e.g. a String-typed getter feeding a CharSequence slot.
