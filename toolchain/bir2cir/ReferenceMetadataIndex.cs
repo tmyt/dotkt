@@ -4566,14 +4566,10 @@ sealed partial class ReferenceMetadataIndex
         return super.Args.Select(argument => SupertypeGraph.SubstOwnerTvs(argument, ownerTypeArguments)).ToArray();
     }
 
-    // Whether the ref.dll owner DECLARES its own concrete (non-abstract, nullary, instance) `iterator()` — a real slot a
-    // `this.iterator()`/`x.iterator()` binds to directly, so MemberCallSubstitution must NOT reroute it to the base-Iterator
-    // ClrIteratorBridge (which would drop the `MutableIterator` remove()/set() members). The post-#169 concrete
-    // LinkedHashSet is the case an APP sees non-locally; the AbstractMutable{Collection,Set} bases keep iterator() ABSTRACT
-    // (IsAbstract) so they still reroute. Mirrors the local-decl scan MemberCallSubstitution does for same-file owners.
-    public bool DeclaresConcreteIterator(string ownerToken) =>
+    // Abstract and concrete instance declarations both own real slots and must retain virtual dispatch.
+    public bool DeclaresIterator(string ownerToken) =>
         ownerToken != null && TryMembersByBirOwner(ownerToken, out var list)
-        && list.Any(m => m.Name == "iterator" && m.ParamCount == 0 && !m.IsAbstract && !m.IsStatic);
+        && list.Any(m => m.Name == "iterator" && m.ParamCount == 0 && !m.IsStatic);
 
     // Exact referenced declaration lookup for inherited-member owner binding.  The signature is
     // structural (including type-vs-method Tv scope/index), not a name/arity guess, so overloads
