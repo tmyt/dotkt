@@ -24,6 +24,29 @@ private open class OverriddenContextMiddle<in T> : InheritedContextBase<T>() {
 private class OverriddenContextLeaf<U, in T : U> : OverriddenContextMiddle<T>()
 private fun <U, T : U> overriddenContext(value: OverriddenContextLeaf<U, T>): CoroutineContext = value.context
 
+private interface ContextCell<T> { var item: String }
+private interface LeftContextCell<T> : ContextCell<T>
+private interface RightContextCell<T> : ContextCell<T>
+private open class ContextCellBase<T>(initial: String) : LeftContextCell<T> {
+    private var stored = initial
+    var writes = 0
+    override var item: String
+        get() = stored
+        set(value) { writes++; stored = value }
+}
+private class DiamondContextCell<U, T : U>(initial: String) : ContextCellBase<T>(initial), RightContextCell<T>
+private var cellReceiverEvaluations = 0
+private var cellValueEvaluations = 0
+private fun <U, T : U> selectCell(cell: DiamondContextCell<U, T>): DiamondContextCell<U, T> {
+    cellReceiverEvaluations++
+    return cell
+}
+private fun selectCellValue(value: String): String { cellValueEvaluations++; return value }
+private fun <U, T : U> updateCell(cell: DiamondContextCell<U, T>, value: String): String {
+    selectCell(cell).item = selectCellValue(value)
+    return cell.item
+}
+
 private interface CovariantContextSlot<T> { val context: CoroutineContext }
 private class NestedContinuationContext : CovariantContextSlot<List<Continuation<Int>>> {
     override val context = EmptyCoroutineContext
@@ -37,6 +60,22 @@ private class NarrowCompletionBase : CovariantCompletionBase<Continuation<Int>>(
 }
 
 class CovariantContinuationContextTests {
+    @TestAttribute
+    fun inheritedPropertyDiamondPreservesSetterEvaluation() {
+        cellReceiverEvaluations = 0
+        cellValueEvaluations = 0
+        val integers = DiamondContextCell<Any?, Int>("before")
+        check(updateCell(integers, "integer cell") == "integer cell")
+        check(integers.writes == 1)
+        check(cellReceiverEvaluations == 1)
+        check(cellValueEvaluations == 1)
+        val strings = DiamondContextCell<Any?, String>("before")
+        check(updateCell(strings, "string cell") == "string cell")
+        check(strings.writes == 1)
+        check(cellReceiverEvaluations == 2)
+        check(cellValueEvaluations == 2)
+    }
+
     @TestAttribute
     fun constructedBaseAndNestedInterfaceOwnersUseTheSameRepresentation() {
         val continuationSlot: CovariantContextSlot<List<Continuation<Int>>> = NestedContinuationContext()
