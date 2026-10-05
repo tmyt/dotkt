@@ -246,7 +246,7 @@ static class BirTypeLowering
     // emit, no value ever read — were removed in #37 m5.)
     static readonly HashSet<string> ReturnKeys = new(StringComparer.Ordinal)
     {
-        "ret", "dynRet", "suspendRet", "getRet", "setRet",
+        "ret", "calleeRet", "dynRet", "suspendRet", "getRet", "setRet",
     };
 
     // The ref.dll @ClrTypeAlias index (Kotlin FQN -> BCL), set per top-level Lower() call. Consulted for EVERY CLR-bound

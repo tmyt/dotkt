@@ -322,6 +322,9 @@ static class UnsafeAccessorLowering
             ["sig"] = definition.Signature.DeepClone(),
             ["args"] = args,
             ["ret"] = callReturnType.DeepClone(),
+            // Keep the selected declaration's physical result separate from the caller's
+            // instantiated Kotlin result. Storage conversion consumes the former.
+            ["calleeRet"] = declaredAccessorReturn.DeepClone(),
         };
         if (access["typeArgs"] is JsonArray originalTypeArgs)
             replacement["typeArgs"] = originalTypeArgs.DeepClone();
