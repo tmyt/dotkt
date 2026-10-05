@@ -216,7 +216,10 @@ static class InheritedClassInterfaceBridge
                 var slotRet = slotRet0 == null ? null : SubstOwnerTvs(slotRet0, ifaceArgs);
                 if (slotParams.Any(p => p == null) || slotRet == null) continue;
 
-                var own = ExactMethods(classMethods, name, methodArity, slotParams, slotRet, ClassOwnArgs(cls))
+                var slotSignature = ips.OfType<JsonObject>()
+                    .Select(p => SubstOwnerTvs(TypeJson.Read(FunctionSignatureIdentity.SignatureType(p)), ifaceArgs))
+                    .ToArray();
+                var own = ExactMethods(classMethods, name, methodArity, slotParams, slotRet, ClassOwnArgs(cls), slotSignature)
                     .Where(m => !Bool(m["static"]) && (Str(m["vis"]) is null or "public"))
                     .ToList();
                 if (own.Count != 1) continue;
@@ -278,7 +281,7 @@ static class InheritedClassInterfaceBridge
                     .Where(m => !Bool(m["static"]) && !Bool(m["abstract"])
                         && (Str(m["vis"]) is null or "public")
                         && KotlinOverrideSlotBridge.SameMethodTypeParameterShape(KotlinOverrideSlotBridge.SemanticMethodTypeParameters(m),
-                            target["typeParams"] as JsonArray, args, args)).ToList();
+                            KotlinOverrideSlotBridge.SemanticMethodTypeParameters(target), args, args)).ToList();
                 if (matches.Count != 1) return null;
                 var method = matches[0];
                 // A virtual inherited member already participates in CLR slot dispatch. The missing case is exactly the
@@ -399,7 +402,7 @@ static class InheritedClassInterfaceBridge
         ExactMethods(methods, name, arity, ps, ret, ownerArgs).Any();
 
     static IEnumerable<JsonObject> ExactMethods(JsonArray methods, string name, int arity, TypeNode[] ps, TypeNode ret,
-        TypeNode[] ownerArgs)
+        TypeNode[] ownerArgs, TypeNode[] signature = null)
     {
         foreach (var m in methods.OfType<JsonObject>())
         {
@@ -410,6 +413,9 @@ static class InheritedClassInterfaceBridge
             {
                 var mt = mps[i] is JsonObject po ? TypeJson.Read(po["type"]) : null;
                 if (mt == null || SubstOwnerTvs(mt, ownerArgs) != ps[i]) { exact = false; break; }
+                if (signature != null && SubstOwnerTvs(
+                    TypeJson.Read(FunctionSignatureIdentity.SignatureType((JsonObject)mps[i])), ownerArgs) != signature[i])
+                { exact = false; break; }
             }
             var mr = TypeJson.Read(m["ret"]);
             if (exact && mr != null && SubstOwnerTvs(mr, ownerArgs) == ret) yield return m;

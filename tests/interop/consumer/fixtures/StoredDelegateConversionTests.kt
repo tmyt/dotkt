@@ -121,7 +121,7 @@ class StoredDelegateConversionTests {
         post(null)
         assertEquals(null, seen)
         Legacy.Calls = 0
-        val legacy = ThreadStart(Legacy.GetAction())
+        val legacy = ThreadStart(Legacy.GetAction()::invoke)
         assertEquals(0, Legacy.Calls)
         legacy()
         assertEquals(1, Legacy.Calls)

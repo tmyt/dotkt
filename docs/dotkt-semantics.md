@@ -1725,9 +1725,9 @@ c.CollectionChanged.subscribe { sender, e -> println("scoped") }.use {
   on it stays an error — you still cannot raise an event you did not declare. Full model:
   [`docs/design-clr-event-model.md`](design-clr-event-model.md).
 
-## 8e. A custom .NET delegate is a nominal Kotlin `fun interface`
+## 8e. A .NET delegate is a nominal Kotlin `fun interface`
 
-A CLR delegate other than the canonical function families is projected as its own Kotlin **nominal callable SAM
+A CLR delegate, including `System.Func` and `System.Action`, is projected as its own Kotlin **nominal callable SAM
 type**. For example, `SendOrPostCallback` exposes
 `operator fun invoke(state: Any?): Unit`, and a value is constructed with
 `SendOrPostCallback { state -> ... }`. A method signature continues to name `SendOrPostCallback`; it does not collapse
@@ -1741,28 +1741,29 @@ delegate types nested recursively inside their own signatures. Recursion stays f
 nominal interface. `bir2cir` resolves that semantic SAM to the exact CLR delegate constructor and `Invoke` MethodDef;
 `ilemit` emits the already-resolved CIR one-to-one.
 
-`System.Action`/`System.Func` remain structural Kotlin function types because they are Kotlin `FunctionN`'s canonical
-CLR representation. The stdlib `KAction`/`KFunc` families do the same for arities 17..22. Overload-priority metadata
-for ambiguous bare function literals therefore applies only to overloads whose delegate slots are canonical function
-families (for example `Task.Run(Action)` versus `Task.Run(Func<T>)`). Nominal overloads such as
-`Thread(ThreadStart)` versus `Thread(ParameterizedThreadStart)` are selected explicitly with their SAM constructor.
+Imported `System.Func`/`Action` signatures retain their exact delegate identity. For example an override taking
+`System.Func2<Int, Int>` must name that nominal type, not `(Int) -> Int`. Lambdas and stored Kotlin functions can
+cross the SAM boundary; this conversion does not make the two source types identical. Select ambiguous nominal
+overloads explicitly with their SAM constructor. The compiler-owned stdlib `KAction`/`KFunc` families retain their
+internal function-family role for arities 17..22.
 
-## 8e-bis. A function type is a delegate: `System.Func`/`Action` to arity 16, the stdlib canonical `KFunc`/`KAction` for 17..22 (#220); above that there is none
+## 8e-bis. Ordinary Kotlin function values use identity-preserving delegate carriers
 
 Every non-suspend Kotlin function type is one CLR delegate type, chosen by ARITY. An extension or context receiver
 occupies a delegate slot, so it counts toward that arity; a `suspend` function type is not a delegate at all (§4).
 
 | Kotlin arity | CLR delegate | Defined by |
 |---|---|---|
-| 0..16, returns `Unit` | `System.Action` / `System.Action\`N` | the BCL |
-| 0..16, returns a value | `System.Func\`N+1` | the BCL |
-| 17..22, returns `Unit` | `DotKt.Runtime.CompilerServices.KAction\`17` … `KAction\`22` | **the DotKt stdlib** |
-| 17..22, returns a value | `DotKt.Runtime.CompilerServices.KFunc\`18` … `KFunc\`23` (the return type is the last type argument) | **the DotKt stdlib** |
+| 0..16 | `System.Func\`N+1` | the BCL |
+| 17..22 | `DotKt.Runtime.CompilerServices.KFunc\`18` … `KFunc\`23` (the return type is the last type argument) | **the DotKt stdlib** |
 | 23 and above | — | **unsupported — refused by bir2cir** (see below) |
 | any arity, `suspend` | not a delegate — an object carrier (§4) | **no arity limit applies** |
 
-Here `Unit` means the non-null return type. `Unit?` is a value return and uses `Func`/`KFunc`, preserving both
-the Unit singleton and null; its physical return type is the `kotlin.Unit` class, not CLR `void`.
+For ordinary Kotlin functions, boxable parameter and result slots use `object`, including `Unit` results. Typed
+consumption restores the required type; a Unit result is the Unit singleton, and `Unit?` also permits null. Kotlin
+function variance therefore preserves the original function object's identity across assignments, storage, and
+DLL boundaries. Metadata retains the source signature. Metadata-proven byref-like types cannot be boxed and retain
+their exact physical slots. A nominal CLR delegate crossing uses its own declared signature instead of this carrier.
 
 `System.Func`/`Action` stop at 16 value parameters, so 17..22 is the band that needs a DotKt type — and 22 is where
 it stops, because each arity is one more pre-baked type in the stdlib (see the refusal below). Those six pairs are
@@ -2070,12 +2071,13 @@ between an open declaration and each closed use, without copying the object or c
 For example, the ordinary parameter `T` and its nullable companion close to `string, string` for `T = String`,
 and to `int32, object` for `T = Int`. Thus an open `Box<T?>` is `Box<N(T)>`: both an existing `Box<String?>` and
 an existing `Box<Int?>` reach the matching construction unchanged. Passing an open type variable forwards its
-companion from the caller's frame. The rule applies to constructed arguments, array elements and delegate return
-arguments; it does not replace ordinary `Box<T>` values with existential interfaces.
+companion from the caller's frame. The rule applies to constructed arguments and array elements;
+it does not replace ordinary `Box<T>` values with existential interfaces. Ordinary Kotlin function slots
+instead use the identity-preserving representation in §8e-bis.
 
-Delegate parameter slots follow their target method's convention: a concrete `V?` (`(Int?) -> String`) is
-`Func<Nullable<int32>, string>`, because a delegate's target may be a member the author declared and moving that
-member's own slot is not the compiler's to do. The exception, its cost and what closes it are recorded below.
+Native delegate slots retain the selected CLR declaration's convention. For example a native
+`Func<Nullable<int32>, string>` keeps that exact signature. A Kotlin `(Int?) -> String` value instead uses
+`Func<object, object>`; SAM conversion bridges these signatures without changing an authored method's slots.
 
 Constructed value types such as `KeyValuePair<K,V>` follow the same concrete nullable-value rule as `Int`.
 Concretely:
@@ -2088,10 +2090,10 @@ Concretely:
 | `List<Int?>` / `MutableList<Int?>` | `IReadOnlyList<object>` / `IList<object>` |
 | `Map<String, Int?>`, `Pair<Int?, String>`, `Box<Int?>` | `object`, `Pair<object, string>`, `Box<object>` |
 | `Array<Int?>` | `object[]` |
-| `(Int) -> Int?` | `Func<int32, object>` |
-| `(Int?) -> String` | `Func<Nullable<int32>, string>` — a delegate PARAMETER is the one exception, below |
+| `(Int) -> Int?` | `Func<object, object>` — ordinary Kotlin function carrier |
+| `(Int?) -> String` | `Func<object, object>` — ordinary Kotlin function carrier |
 | `f<Int?>(…)`, `Comparable<Int?>` | instantiated at `object`, `IComparable<object>` |
-| `List<String?>`, `Array<String?>`, `(String?) -> R` | `IReadOnlyList<string>`, `string[]`, `Func<string, R>` |
+| `List<String?>`, `Array<String?>`, `(String?) -> R` | `IReadOnlyList<string>`, `string[]`, `Func<object, object>` for boxable `R` |
 
 **Why the two positions differ.** The Kotlin type system's contract for an unconstrained `T?` is a runtime null for
 every `T`, which is more than a reified CLR argument expresses — so a generic position has to box. A scalar slot has
@@ -2105,6 +2107,14 @@ instruction and **null stays distinct from `0`**. A bare `T` stays monomorphized
 Frame demand is structural, not inferred by chasing upper bounds. A nullable argument can require a companion even
 when its source variable has a reference-only bound. Ordinary source parameters retain their constraints. Companions
 are implementation parameters, not new Kotlin parameters or a requirement that users add a `reified` modifier.
+
+An ordinary physical parameter also carries a CLR upper bound naming its nullable-argument companion, when present.
+The companion closes to the same reference type or to boxed `object` for nullable values; it is not the scalar
+`Nullable<V>` representation. This states the physical relation needed when Kotlin supplies `T` and `T?` to a
+declaration with a dependent type-parameter bound. No such relation is inferred for storage companions. The original
+Kotlin bound list is recorded separately before adding the physical constraint, including an explicit empty list for
+an originally unbounded parameter. Readers replace physical bounds with that complete source list; they do not expose
+the implementation-only companion as a Kotlin type parameter or bound.
 
 Each frame records its source arity, the source indices requiring nullable companions and the physical slot order.
 Nested types preserve the entire enclosing CLR parameter prefix using that explicit correspondence. Owned TypeDefs
@@ -2224,9 +2234,10 @@ entirely. This is a real source break against a .NET API that declares such a me
 compiled and ran before the erasure and is refused now, exactly as an `int?[]` parameter is.
 
 **Only a REIFIED-ARGUMENT position is a crossing.** A direct `Nullable<V>` parameter or return is untouched — a
-Kotlin scalar `Int?` IS a `System.Nullable<int32>` — and so is a delegate PARAMETER, which keeps its concrete `V?`
-by the exception below: a `Func<int?, string>` parameter is inhabited by an ordinary Kotlin lambda and must keep
-crossing. A refusal that read a delegate parameter as an argument position rejected exactly that.
+Kotlin scalar `Int?` IS a `System.Nullable<int32>` — and a native delegate's concrete parameter also keeps
+its declared `Nullable<V>` slot. A lambda can SAM-convert to that native delegate; a stored Kotlin function
+uses an adapter between its object carrier and the exact native slots. This does not make the native
+delegate and the Kotlin function type identical (§8e).
 
 **The same crossing at the IMPLEMENTING position is refused too.** A Kotlin type can meet the slot by DERIVING from
 a .NET type that declares one — `class C : ITake` for a C# `interface ITake { string Take(List<int?> xs); }` — and
@@ -2276,28 +2287,24 @@ slots and is REFUSED, even though filling only the Kotlin one would have a valid
 uninhabitable one, so there is nothing in the source to choose with; naming a different element type for the Kotlin
 slot separates the two.
 
-### Delegates: the target's slots follow the delegate's, and a CONCRETE parameter is the one exception
+### Delegate targets and ordinary function carriers
 
-A delegate's return is a reified argument, so `(Int) -> Int?` is `Func<int32, object>` and `(T?) -> String` is
-`Func<object, string>` at every instantiation. The method bound into it declares ordinary slots, where a direct `Int?`
-is a `Nullable<int32>` and a `String?` is a `string` — and ECMA-335 II.14.6 admits neither pair, since a delegate
-parameter is contravariant (only `object` is assignable from `object`) and its return covariant. So the target's slot
-follows the delegate's `object`: every parameter it states as `object`, and a value / `Nullable<V>` / type-variable
-return. A REFERENCE return stays as declared, because it already reaches `object`.
+Ordinary Kotlin function values use §8e-bis: boxable parameters and results are `object`, whether their source
+types are concrete or generic. Thus both `(Int?) -> String` and `(T?) -> String` use `Func<object, object>`.
+Metadata-proven byref-like slots stay exact because they cannot be boxed. Native nominal delegates instead
+retain their selected declaration's physical signature, including concrete `Nullable<V>` parameters.
+Compiler-generated targets and adapters must satisfy that delegate's parameter and return compatibility;
+representation conversions belong in their bodies, not in an unrelated authored method's declaration.
 
-**A CONCRETE `V?` delegate PARAMETER keeps its `Nullable<V>`**, so `(Int?) -> String` is
-`Func<Nullable<int32>, string>` — a deliberate, recorded exception to the rule above rather than an oversight. The
-exception is concrete because no open type variable needs a representation that is stable across instantiations.
 A callable reference never makes the authored declaration itself the movable delegate target. kotc synthesizes a
 static forwarder for `::fn` (including an explicit companion receiver) and a receiver-capturing closure for an
 ordinary `expr::member`; each calls the selected declaration with its frontend identity and declared signature
 intact. A member projected from a foreign CLR assembly uses the same compiler-owned closure; bir2cir resolves its
 physical owner, overload, value-type capture conversion, and dispatch slot from the selected CLR declaration.
 
-An OPEN slot still demands
-`object` at every instantiation — `fun <T> invokeNullable(block: (T?) -> String)` is a `Func<object, string>` whatever
-`T` is. When a callable reference enters one (`invokeNullable<Int>(3, ::handleQ)`), bir2cir retypes the synthesized
-target to accept `object` and inserts the narrowing conversion inside its forwarding body. The authored
+For `fun <T> invokeNullable(block: (T?) -> String)`, the function slot is `Func<object, object>` whatever
+`T` is. When a callable reference enters it (`invokeNullable<Int>(3, ::handleQ)`), bir2cir gives the synthesized
+target the object-carrier signature and inserts the argument/result conversions inside its forwarding body. The authored
 `handleQ(Nullable<int32>)` remains unchanged. The same rule works across a DLL/KLIB boundary because the restored
 declaration identity stays on the inner call. A lambda follows the same compiler-owned target rule.
 

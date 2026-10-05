@@ -571,7 +571,7 @@ internal sealed class DelegateReferenceCatalog
                     metadataName,
                     path,
                     MetadataTokens.GetRowNumber(handle),
-                    IsCanonicalFunctionDefinition(assemblyName, metadataName, attributes.IsStandardLibrary)));
+                    IsCanonicalFunctionDefinition(metadataName, attributes.IsStandardLibrary)));
             }
         }
 
@@ -639,15 +639,8 @@ internal sealed class DelegateReferenceCatalog
     }
 
     private static bool IsCanonicalFunctionDefinition(
-        string assemblyName, string metadataName, bool isStandardLibrary) =>
-        ((assemblyName is "System.Private.CoreLib" or "System.Runtime" or "mscorlib") &&
-         IsCanonicalSystemFunctionDelegate(metadataName)) ||
-        (isStandardLibrary && IsCanonicalWideFunctionDelegate(metadataName));
-
-    internal static bool IsCanonicalSystemFunctionDelegate(string name) =>
-        name == "System.Action" ||
-        IsArityQualifiedFamily(name, "System.Action", 1, 16) ||
-        IsArityQualifiedFamily(name, "System.Func", 1, 17);
+        string metadataName, bool isStandardLibrary) =>
+        isStandardLibrary && IsCanonicalWideFunctionDelegate(metadataName);
 
     internal static bool IsCanonicalWideFunctionDelegate(string name) =>
         IsArityQualifiedFamily(name, "DotKt.Runtime.CompilerServices.KAction", 17, 22) ||
@@ -2938,7 +2931,9 @@ internal sealed class AssemblyScanner : IDisposable
             };
             if (hiddenCompletion)
             {
-                explicitEventShapes.Add(eventName + ":" + TypeKey(physicalHandler));
+                // An accessor parameter is decoded as a platform type, whereas an Event row's
+                // handler is decoded with a rigid outer type. The CLR slot identity is the same.
+                explicitEventShapes.Add(eventName + ":" + TypeKey(inherited.Signatures.AsNonNull(physicalHandler)));
                 projectedEvent.PropertyAnnotation.Add(ExplicitSlotAnnotations(names));
                 projectedEvent.Flags |= 1;
             }
@@ -3382,6 +3377,23 @@ internal sealed class AssemblyScanner : IDisposable
         }
 
         var candidates = new List<MethodDefinitionHandle>();
+        var identitySignatures = new RawSignatureTypeProvider((metadata, entity) =>
+        {
+            var path = ReferenceEquals(metadata, reader) ? sourceDefinitionPath : resolvedOwner.DefinitionPath;
+            if (_publicTypeCatalog.TryResolveDefinition(metadata, entity, out var definition, path))
+                return definition.Reader.GetGuid(definition.Reader.GetModuleDefinition().Mvid) + ":" +
+                    MetadataTokens.GetRowNumber(definition.Handle);
+            // An external TypeRef is already a scoped nominal identity, even when the projection
+            // set does not contain its definition. Compare that exact symbolic identity; do not
+            // require loading unrelated assemblies just to compare two identical signatures.
+            if (entity.Kind == HandleKind.TypeReference)
+                return RawSignatureTypeProvider.ScopedReferenceIdentity(metadata, (TypeReferenceHandle)entity);
+            throw new InvalidDataException("Cannot resolve a MethodImpl signature type from the reference catalog");
+        });
+        MethodSignature<string>? referenceIdentity = declarationEntity.Kind == HandleKind.MemberReference
+            ? reader.GetMemberReference((MemberReferenceHandle)declarationEntity)
+                .DecodeMethodSignature(identitySignatures, sourceContext)
+            : null;
         foreach (var candidateHandle in declarationReader.GetTypeDefinition(resolvedOwner.Handle).GetMethods())
         {
             var candidate = declarationReader.GetMethodDefinition(candidateHandle);
@@ -3391,6 +3403,15 @@ internal sealed class AssemblyScanner : IDisposable
                 candidate.GetGenericParameters().Count != referenceSignature.Value.GenericParameterCount)
                 continue;
             var candidateContext = InheritedContext(declarationReader, candidateHandle, candidate);
+            if (referenceIdentity is { } expectedIdentity)
+            {
+                var actualIdentity = candidate.DecodeSignature(identitySignatures, candidateContext);
+                if (actualIdentity.Header != expectedIdentity.Header
+                    || actualIdentity.RequiredParameterCount != expectedIdentity.RequiredParameterCount
+                    || actualIdentity.ReturnType != expectedIdentity.ReturnType
+                    || !actualIdentity.ParameterTypes.SequenceEqual(expectedIdentity.ParameterTypes))
+                    continue;
+            }
             var candidateSignature = candidate.DecodeSignature(declarationSignatures, candidateContext);
             if (referenceSignature is not null)
             {
@@ -3913,8 +3934,8 @@ internal sealed class AssemblyScanner : IDisposable
                     ? bound
                     : SubstituteTypeParameters(bound, ownerArguments);
             }).ToArray();
-            if (restored.Length == 0)
-                throw new InvalidDataException("empty [KotlinTypeParameterBounds] constraint list");
+            // An empty source list explicitly restores an unbounded Kotlin parameter whose CLR
+            // declaration may carry an implementation-only nullable companion constraint.
             parameter.UpperBound.Clear();
             parameter.UpperBound.Add(restored);
         }
@@ -6508,8 +6529,7 @@ internal sealed class AssemblyScanner : IDisposable
                 || entry.Value.ValueKind != System.Text.Json.JsonValueKind.Array)
                 throw new InvalidDataException("malformed [KotlinSupertypes] bound entry");
             var restoredNodes = entry.Value.EnumerateArray().Select(TypeNode.Read).ToArray();
-            if (restoredNodes.Length == 0)
-                throw new InvalidDataException("empty [KotlinSupertypes] constraint list");
+            // Empty is an explicit source fact, not an absent carrier: replace any physical-only bounds too.
             // Carrier keys are Kotlin source indices, not positions in the CLR
             // enclosing prefix (which may include nullable companion slots).
             // Exclude precisely the source declarations owned by the outer class.
@@ -7291,6 +7311,41 @@ internal sealed record GenericContext(
 internal sealed class RawSignatureTypeProvider : ISignatureTypeProvider<string, GenericContext>
 {
     public static RawSignatureTypeProvider Instance { get; } = new();
+    private readonly Func<MetadataReader, EntityHandle, string>? _typeIdentity;
+    public RawSignatureTypeProvider(Func<MetadataReader, EntityHandle, string>? typeIdentity = null) =>
+        _typeIdentity = typeIdentity;
+
+    internal static string ScopedReferenceIdentity(MetadataReader reader, TypeReferenceHandle handle)
+    {
+        var reference = reader.GetTypeReference(handle);
+        var scope = reference.ResolutionScope;
+        string identity;
+        if (scope.Kind == HandleKind.TypeReference)
+            identity = ScopedReferenceIdentity(reader, (TypeReferenceHandle)scope);
+        else if (scope.Kind == HandleKind.AssemblyReference)
+        {
+            var assembly = reader.GetAssemblyReference((AssemblyReferenceHandle)scope);
+            var name = new AssemblyName(reader.GetString(assembly.Name))
+            {
+                Version = assembly.Version,
+                CultureName = reader.GetString(assembly.Culture),
+                ContentType = (assembly.Flags & AssemblyFlags.WindowsRuntime) != 0
+                    ? AssemblyContentType.WindowsRuntime : AssemblyContentType.Default,
+                Flags = (assembly.Flags & AssemblyFlags.Retargetable) != 0
+                    ? AssemblyNameFlags.Retargetable : AssemblyNameFlags.None,
+            };
+            var key = reader.GetBlobBytes(assembly.PublicKeyOrToken);
+            if ((assembly.Flags & AssemblyFlags.PublicKey) != 0) name.SetPublicKey(key);
+            else name.SetPublicKeyToken(key);
+            identity = "assembly:" + name.FullName;
+        }
+        else
+            identity = "module:" + reader.GetGuid(reader.GetModuleDefinition().Mvid) + ":" +
+                (scope.Kind == HandleKind.ModuleReference
+                    ? reader.GetString(reader.GetModuleReference((ModuleReferenceHandle)scope).Name)
+                    : scope.Kind.ToString());
+        return JsonSerializer.Serialize(new[] { identity, reader.GetString(reference.Namespace), reader.GetString(reference.Name) });
+    }
 
     public string GetArrayType(string elementType, ArrayShape shape) =>
         $"array[{shape.Rank};{string.Join(",", shape.Sizes)};{string.Join(",", shape.LowerBounds)}]<{elementType}>";
@@ -7309,15 +7364,19 @@ internal sealed class RawSignatureTypeProvider : ISignatureTypeProvider<string, 
     public string GetPrimitiveType(PrimitiveTypeCode typeCode) => $"primitive:{(int)typeCode}";
     public string GetSZArrayType(string elementType) => $"szarray<{elementType}>";
     public string GetTypeFromDefinition(MetadataReader reader, TypeDefinitionHandle handle, byte rawTypeKind) =>
-        $"{rawTypeKind}:def:{DefinitionName(reader, handle)}";
+        _typeIdentity is null ? $"{rawTypeKind}:def:{DefinitionName(reader, handle)}"
+            : $"{rawTypeKind}:type:{_typeIdentity(reader, handle)}";
     public string GetTypeFromReference(MetadataReader reader, TypeReferenceHandle handle, byte rawTypeKind) =>
-        $"{rawTypeKind}:ref:{ReferenceName(reader, handle)}";
+        _typeIdentity is null ? $"{rawTypeKind}:ref:{ReferenceName(reader, handle)}"
+            : $"{rawTypeKind}:type:{_typeIdentity(reader, handle)}";
     public string GetTypeFromSpecification(
         MetadataReader reader,
         GenericContext genericContext,
         TypeSpecificationHandle handle,
         byte rawTypeKind) =>
-        $"{rawTypeKind}:spec:{reader.GetTypeSpecification(handle).DecodeSignature(this, genericContext)}";
+        _typeIdentity is null
+            ? $"{rawTypeKind}:spec:{reader.GetTypeSpecification(handle).DecodeSignature(this, genericContext)}"
+            : reader.GetTypeSpecification(handle).DecodeSignature(this, genericContext);
 
     private static string DefinitionName(MetadataReader reader, TypeDefinitionHandle handle)
     {
@@ -7639,8 +7698,6 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
             });
             return MarkValueType(span);
         }
-        if (genericName is not null && IsKnownDelegate(genericName))
-            return ConstructDelegate(genericName, typeArguments);
         // CLR nested TypeSpecs flatten an inner class as [outer capture..., own...]. Kotlin metadata flattens the
         // same classifier as [own..., outer...]; preserve every argument and rotate at this representation boundary.
         if (_nullableTypeFrames.TryGetValue(genericType, out var nullableFrame))
@@ -7867,12 +7924,6 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
             return Platform(collection);
         if (_restoreKotlinCollections && metadataFull == "System.IComparable")
             return Named("kotlin.Comparable");
-        // A generic signature is decoded in two callbacks: first its open
-        // TypeRef, then GetGenericInstantiation. Do not prematurely turn
-        // Action`N into Function0 here or the later arguments
-        // would merely be appended to the wrong Function0 constructor.
-        if (full == "System.Action" && !metadataName.Contains('`'))
-            return KnownDelegate(full, ImmutableArray<KType>.Empty);
         var result = full switch
         {
             "System.String" => Platform("kotlin.String"),
@@ -8404,36 +8455,8 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
         _ => null,
     };
 
-    private bool IsCanonicalLocalFunctionDelegate(string name)
-    {
-        var assemblyName = _md.IsAssembly
-            ? _md.GetString(_md.GetAssemblyDefinition().Name)
-            : null;
-        return ((assemblyName is "System.Private.CoreLib" or "System.Runtime" or "mscorlib") &&
-                DelegateReferenceCatalog.IsCanonicalSystemFunctionDelegate(name)) ||
-               (_attrs.IsStandardLibrary && DelegateReferenceCatalog.IsCanonicalWideFunctionDelegate(name));
-    }
-
-    private static bool IsCanonicalFunctionDelegate(string name) =>
-        DelegateReferenceCatalog.IsCanonicalSystemFunctionDelegate(name);
-
-    private bool IsKnownDelegate(string name) => IsCanonicalFunctionDelegate(name);
-
-    private KType ConstructDelegate(string name, ImmutableArray<KType> typeArguments)
-    {
-        if (name.StartsWith("System.Func", StringComparison.Ordinal))
-        {
-            if (typeArguments.Length == 0) return Any(nullable: true);
-            return Function(typeArguments[..^1], typeArguments[^1]);
-        }
-        if (name.StartsWith("System.Action", StringComparison.Ordinal))
-            return Function(typeArguments, Named("kotlin.Unit"));
-        if (!_delegateDefinitions.TryGetValue(name, out var handle)) return Any(nullable: true);
-        return Substitute(DecodeDelegate(handle), typeArguments);
-    }
-
-    private KType KnownDelegate(string name, ImmutableArray<KType> typeArguments) =>
-        ConstructDelegate(name, typeArguments);
+    private bool IsCanonicalLocalFunctionDelegate(string name) =>
+        _attrs.IsStandardLibrary && DelegateReferenceCatalog.IsCanonicalWideFunctionDelegate(name);
 
     private KType DecodeDelegate(TypeDefinitionHandle handle)
     {

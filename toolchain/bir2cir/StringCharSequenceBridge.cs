@@ -601,9 +601,41 @@ static class StringCharSequenceBridge
     // the plain cast — a runtime-type-check adapter helper for that is a follow-up (see docs 【4-A】).
     static JsonNode WrapCast(JsonObject node, Env env)
     {
+        var functionRestore = node.Remove(FunctionValueRepresentation.RestorationKey);
+        if (functionRestore && IsCharSeqT(TypeJson.Read(node["type"])) && node["e"] is JsonNode value)
+            return RestoreFunctionCharSequence(value, node["type"]);
         if (IsCharSeqT(TypeJson.Read(node["type"])) && node["e"] is JsonNode e && IsStaticString(e, env))
             return WrapAdapter(e);
         return null;
+    }
+
+    // An ordinary function carrier retains the original boxed value. Restore its CharSequence
+    // representation at typed consumption without adapting (and changing the identity of) the function.
+    static JsonNode RestoreFunctionCharSequence(JsonNode value, JsonNode target)
+    {
+        var name = "__csrestore$" + System.Threading.Interlocked.Increment(ref _counter);
+        JsonObject Read() => new() { ["k"] = "local", ["name"] = name };
+        JsonObject Cast(string type) => new()
+        {
+            ["k"] = "cast", ["type"] = TypeJson.Fqn(type), ["e"] = Read(),
+        };
+        JsonObject Branch(string type, JsonNode converted, JsonNode otherwise) => new()
+        {
+            ["k"] = "cond", ["type"] = target.DeepClone(),
+            ["cond"] = new JsonObject { ["k"] = "isInst", ["type"] = TypeJson.Fqn(type), ["e"] = Read() },
+            ["then"] = converted, ["else"] = otherwise,
+        };
+        var unchanged = new JsonObject { ["k"] = "cast", ["type"] = target.DeepClone(), ["e"] = Read() };
+        var builder = Branch("System.Text.StringBuilder", WrapStringBuilder(Cast("System.Text.StringBuilder")), unchanged);
+        return new JsonObject
+        {
+            ["k"] = "valueBlock",
+            ["stmts"] = new JsonArray(new JsonObject
+            {
+                ["k"] = "var", ["name"] = name, ["type"] = TypeJson.Fqn("object"), ["init"] = value.DeepClone(),
+            }),
+            ["result"] = Branch("kotlin.String", WrapAdapter(Cast("kotlin.String")), builder),
+        };
     }
 
     // `new kotlin.StringCharSequence(<str>)`. Not @ClrTypeAlias, so MemberCallSubstitution.TransformNew (already run)

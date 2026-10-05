@@ -60,6 +60,8 @@ Notes:
 - **The three CIR-only ECMA signature carriers** (`ptr`, `mod`, `array.rank`) allow CIR to spell physical shapes
   that kotc does not own. A §2.2.2 `memberRef` must describe any signature the *target metadata* can declare;
   `ptr` additionally represents ordinary values whose BIR type is the semantic `kotlin.clr.ClrPointer<T>` carrier.
+  `mod` also appears in CIR MethodDef parameter/return signatures and their exact local call, MethodImpl,
+  property-accessor and event-accessor linkage descriptors. It is not a local-variable storage annotation.
   kotc MUST omit all three physical nodes, and the validator refuses them in BIR. Dropping them is not neutral:
   `T*` degrades to the FQN string `"System.Int32*"`, an identity naming no type; `T[,]` and `T[*]` collapse
   onto `T[]`;
@@ -215,7 +217,9 @@ it is limited to linking one Property record to its own accessors and is not a g
 not author CLR MethodDef names or Property getter/setter links.
 Property calls continue to use the bare Kotlin property name plus the existing `prop:get|set` role. bir2cir is the
 only layer that projects those facts to physical MethodDef/MethodRef names and exact Property links (physical name,
-method generic arity, and parameter signature). ilemit consumes that descriptor one-to-one. For this format version
+method generic arity, parameter signature, and declared return type in `getRet` / `setRet`). The accessor return
+is taken from the selected MethodDef, not reconstructed from the Property row's type. ilemit consumes that descriptor
+one-to-one. For this format version
 the physical rule is `prop_get<name>` / `prop_set<name>`, but that spelling is one-way output: no pass may parse it to
 recover Kotlin meaning. External CLR properties are read through Property/MethodSemantics metadata. The four BIR-only
 identity fields (`propertyName`, `propertyAccessor`, `propertyAssociation`, `kotlinAccessors`) and `prop:get|set`
@@ -307,8 +311,12 @@ surface even when its Kotlin body is default. A field-backed companion extension
 representation: kotc carries the getter/setter name and declaration identity as paired BIR field facts, and bir2cir
 transfers them to the synthesized accessor MethodDefs. None of those hand-off facts survive in CIR.
 
-The final MethodDef identity is declaring type, physical name, method generic arity, and lowered parameter vector.
-Return type, nullability metadata, constraints, and declaration order do not distinguish a CLR overload. If two
+The final MethodDef identity is declaring type, physical name, method generic arity, lowered parameter vector,
+and lowered return type, including in-position ECMA custom modifiers. A modifier is part of the signature,
+not the runtime type of the value occupying that slot. ilemit preserves CIR-declared modifiers in method,
+constructor, property, and field metadata; its local declaration keys also retain them.
+Return-distinct CLR methods are retained even though C# cannot select them by return
+type alone. Nullability metadata, constraints, and declaration order do not distinguish a CLR overload. If two
 independently authored declarations occupy one such identity, bir2cir rejects them unless their explicit names make
 the identities distinct; it never appends a declaration hash. Explicit names that still collide are rejected too.
 Generic-parameter scope and index remain part of the lowered parameter vector: `!0`, `!1`, and `!!0` are distinct
@@ -501,14 +509,23 @@ member would be two members to it. The rules, all validator-enforced:
 - a signature carries no `oblivious`, `star`, or `projection`: those are Kotlin type-system facts, and a physical CLR
   signature has neither. `nullable` appears only as the `System.Nullable\`1` value-type collapse;
 - `.ctor` names a constructor and nothing else;
-- `mod` and `array.rank` appear **only** inside a `memberRef`, because they exist solely to distinguish an exact
-  foreign declaration signature. `ptr` is also CIR-only but may appear in ordinary declaration, local, operand,
+- `mod` is CIR-only declaration-signature vocabulary: it can appear in emitted declaration signatures,
+  exact local linkage descriptors, and `memberRef`. It does not change a value's storage type.
+  `array.rank` distinguishes exact foreign array signatures inside a `memberRef`.
+  `ptr` is also CIR-only but may appear in ordinary declaration, local, operand,
   and result slots: bir2cir materializes the KLIB/BIR `kotlin.clr.ClrPointer<T>` vocabulary into that physical type,
   and ilemit emits it one-to-one.
 
 Same-emission-unit members are NOT memberRefs: they have no assembly identity yet (their MethodDefs are being
 built by this compilation) and stay on the internal linkage (`localCtorIndex`, the emitted type's own signature
 table). The presence of a `memberRef` is therefore itself the external-vs-emitted discriminator.
+For a declaration-identity-bound local call or delegate target, bir2cir carries `calleeRet`, the selected
+MethodDef's lowered return type in its declaration generic frame. It is not the expression's substituted result
+type. `calleeParams`, when present, likewise states the exact MethodDef parameter vector, including custom
+modifiers, in the declaration generic frame. `sig` continues to describe the call's value slots; it is the linkage
+vector only when no separate `calleeParams` is necessary. ilemit uses the stated linkage vector together with
+owner, name, generic arity, and `calleeRet` to link the exact local declaration.
+Parameter-only lookup aliases must not select a declaration when multiple return-distinct methods share them.
 For `clrEventAdd`/`clrEventRemove`, `localAccessor:true` is the same-unit discriminator and is mutually exclusive
 with `memberRef`; it carries the emitted `accessorOwner`, exact accessor `sig`, `delegateType`, accessor name, and
 dispatch decision. This is scalar MethodDef linkage, not permission for ilemit to search an inherited event by name.

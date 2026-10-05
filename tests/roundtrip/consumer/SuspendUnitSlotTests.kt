@@ -28,7 +28,7 @@ private fun assertUnit(completion: Completion) {
     assertTrue(completion.value === Unit)
 }
 private fun complete(gate: UnitGate, completion: Completion) {
-    assertTrue(!completion.completed)
+    assertTrue(!completion.completed, "Expected suspension; value=${completion.value}, failure=${completion.failure}")
     assertEquals(1, gate.entries)
     gate.release()
     assertUnit(completion)

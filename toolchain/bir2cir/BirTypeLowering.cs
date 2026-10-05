@@ -212,7 +212,7 @@ static class BirTypeLowering
         "type", "ownerType", "calleeOwner", "ret", "suspendRet", "base", "interfaces", "argTypes", "delegationSig",
         // BIR-only exact constructor declaration vector.  UnsafeAccessor consumes it when it rewrites the edge;
         // otherwise same-unit constructor binding consumes its physically-lowered form after this pass.
-        "memberSignature",
+        "memberSignature", "calleeParams", FunctionSignatureIdentity.Key,
         // expression / statement type positions
         "dynRet", "funcType", "typeArgs", "constraints", "recvType", "iface", "excType",
         "keyType", "valType", "iterType", "accessOwner", "accessorOwner", "elem",
@@ -246,7 +246,7 @@ static class BirTypeLowering
     // emit, no value ever read — were removed in #37 m5.)
     static readonly HashSet<string> ReturnKeys = new(StringComparer.Ordinal)
     {
-        "ret", "dynRet", "suspendRet",
+        "ret", "dynRet", "suspendRet", "getRet", "setRet",
     };
 
     // The ref.dll @ClrTypeAlias index (Kotlin FQN -> BCL), set per top-level Lower() call. Consulted for EVERY CLR-bound
@@ -526,6 +526,10 @@ static class BirTypeLowering
                 return new TypeNode.Array(LowerType(a.Elem, refBuild, force, typeArg: false));
             case TypeNode.ByRef b:
                 return new TypeNode.ByRef(LowerType(b.Of, refBuild, force, typeArg: false));
+            case TypeNode.Mod modifier:
+                return new TypeNode.Mod(modifier.Req,
+                    LowerType(modifier.M, refBuild, force, typeArg: false),
+                    LowerType(modifier.Of, refBuild, force, typeArg));
             case TypeNode.Oblivious ob:
                 // #8 — an NRT-OBLIVIOUS `T!` (a reference-KLIB-projected `[MaybeNull]`/platform-flexible type: a value-type
                 // arg OR a reference) lowers to the BARE lowered inner in EVERY build — NEVER a `Nullable<T>` wrapper. It
@@ -574,6 +578,14 @@ static class BirTypeLowering
             || Equal(unit, VoidType, value: true))
             throw new InvalidOperationException("Slot comparison lost the distinction between Unit values and void returns");
         Console.WriteLine("[slot returns] self-test OK (source Unit, nullable Unit, physical Unit value)");
+        var accessor = Lower(JsonNode.Parse("""
+            {"getRet":{"t":"fqn","name":"kotlin.Int"},
+             "setRet":{"t":"fqn","name":"kotlin.Unit"}}
+            """), refBuild: false,
+            aliases: new Dictionary<string, string> { ["kotlin.Int"] = "System.Int32" });
+        if (TypeJson.Read(accessor["getRet"]) != new TypeNode.Fqn("System.Int32")
+            || TypeJson.Read(accessor["setRet"]) != VoidType)
+            throw new InvalidOperationException("Accessor return descriptors did not follow CLR return lowering");
     }
 
     internal static void SelfTestMethodImplMetadata()
@@ -841,7 +853,7 @@ static class BirTypeLowering
                 {
                     continue;
                 }
-                if (kv.Key is ValueReturnKey or "overrides" or "fakeOverride"
+                if (kv.Key is ValueReturnKey or FunctionValueRepresentation.RestorationKey or "overrides" or "fakeOverride"
                     or KotlinPropertyAccessors.InheritedImplementationKey
                     or KotlinPropertyAccessors.InheritedDefaultAccessorsKey
                     or KotlinPropertyAccessors.InheritedDefaultMethodsKey

@@ -11,6 +11,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   bir2cir uses the declared existential carrier for ordinary value slots and explicit adapters at exact CLR
   constructor, storage, delegate, and override boundaries, preserving Kotlin source types in metadata.
 
+- **Generic nullable widening preserves CLR constraint proofs (#965).**
+  Nullable representation companions retain their relation to the original type across calls,
+  closures, inner owners, and suspension, while imported Kotlin declarations keep their source bounds.
+
 - **Inherited properties on projected Kotlin receivers retain their selected accessor (#961).**
   bir2cir preserves property declaration identity and binds inherited existential interface slots,
   including override chains, instead of calling an incompatible concrete generic accessor.

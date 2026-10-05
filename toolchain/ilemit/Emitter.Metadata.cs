@@ -26,9 +26,11 @@ sealed partial class Emitter
 
     // DefineField with a `modreq(IsVolatile)` required custom modifier (the C# `volatile` shape); tracks the field so
     // access sites can emit the matching `volatile.` prefix.
-    FieldBuilder DefineVolatileField(TypeBuilder tb, string name, Type type, FieldAttributes attrs)
+    FieldBuilder DefineVolatileField(TypeBuilder tb, string name, Type type, FieldAttributes attrs,
+        Type[] required, Type[] optional)
     {
-        var fb = tb.DefineField(name, type, new[] { Bcl("System.Runtime.CompilerServices.IsVolatile") }, null, attrs);
+        var modifiers = required.Append(Bcl("System.Runtime.CompilerServices.IsVolatile")).Distinct().ToArray();
+        var fb = tb.DefineField(name, type, modifiers, optional, attrs);
         _volatileFields.Add(fb);
         return fb;
     }

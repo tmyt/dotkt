@@ -1,0 +1,45 @@
+{
+  "fileClass": "ModifiedMethods", "hasMain": false,
+  "methods": [
+    {
+      "name": "Select", "static": true, "override": false, "virtual": false, "vis": "public",
+      "params": [{"name": "callback", "type": {"t": "mod", "req": false,
+        "m": {"t": "fqn", "name": "System.Action", "args": [{"t": "fqn", "name": "System.Int32"}]},
+        "of": {"t": "fqn", "name": "System.Func", "args": [{"t": "fqn", "name": "System.Object"}, {"t": "fqn", "name": "System.Object"}]}}}],
+      "ret": {"t": "fqn", "name": "System.Int32"},
+      "body": [{"k": "return", "value": {"k": "const", "type": {"t": "fqn", "name": "System.Int32"}, "value": 1}}]
+    },
+    {
+      "name": "Select", "static": true, "override": false, "virtual": false, "vis": "public",
+      "params": [{"name": "callback", "type": {"t": "mod", "req": false,
+        "m": {"t": "fqn", "name": "System.Action", "args": [{"t": "fqn", "name": "System.String"}]},
+        "of": {"t": "fqn", "name": "System.Func", "args": [{"t": "fqn", "name": "System.Object"}, {"t": "fqn", "name": "System.Object"}]}}}],
+      "ret": {"t": "fqn", "name": "System.Int32"},
+      "body": [{"k": "return", "value": {"k": "const", "type": {"t": "fqn", "name": "System.Int32"}, "value": 2}}]
+    },
+    {
+      "name": "CallInt", "static": true, "override": false, "virtual": false, "vis": "public",
+      "params": [], "ret": {"t": "fqn", "name": "System.Int32"},
+      "body": [{"k": "return", "value": {
+        "k": "callStatic", "owner": "ModifiedMethods", "calleeOwner": {"t": "fqn", "name": "ModifiedMethods"},
+        "method": "Select", "calleeRet": {"t": "fqn", "name": "System.Int32"}, "ret": {"t": "fqn", "name": "System.Int32"},
+        "sig": [{"t": "mod", "req": false,
+          "m": {"t": "fqn", "name": "System.Action", "args": [{"t": "fqn", "name": "System.Int32"}]},
+          "of": {"t": "fqn", "name": "System.Func", "args": [{"t": "fqn", "name": "System.Object"}, {"t": "fqn", "name": "System.Object"}]}}],
+        "args": [{"k": "const", "type": {"t": "fqn", "name": "System.Object"}, "value": null}]
+      }}]
+    },
+    {
+      "name": "CallText", "static": true, "override": false, "virtual": false, "vis": "public",
+      "params": [], "ret": {"t": "fqn", "name": "System.Int32"},
+      "body": [{"k": "return", "value": {
+        "k": "callStatic", "owner": "ModifiedMethods", "calleeOwner": {"t": "fqn", "name": "ModifiedMethods"},
+        "method": "Select", "calleeRet": {"t": "fqn", "name": "System.Int32"}, "ret": {"t": "fqn", "name": "System.Int32"},
+        "sig": [{"t": "mod", "req": false,
+          "m": {"t": "fqn", "name": "System.Action", "args": [{"t": "fqn", "name": "System.String"}]},
+          "of": {"t": "fqn", "name": "System.Func", "args": [{"t": "fqn", "name": "System.Object"}, {"t": "fqn", "name": "System.Object"}]}}],
+        "args": [{"k": "const", "type": {"t": "fqn", "name": "System.Object"}, "value": null}]
+      }}]
+    }
+  ], "types": [], "fields": [], "properties": []
+}

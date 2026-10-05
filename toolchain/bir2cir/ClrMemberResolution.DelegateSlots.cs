@@ -53,6 +53,9 @@ static partial class ClrMemberResolution
     // MaterializeDelegateSlots and never written to CIR.
     const string DelegateSlotKey = "dotktDelegateSlot";
 
+    internal static bool HasDeclaredDelegateSlot(JsonObject construction) =>
+        construction.ContainsKey(DelegateSlotKey);
+
     /// <summary>
     /// Mark every delegate construction among <paramref name="call"/>'s arguments with the delegate its
     /// parameter declares.

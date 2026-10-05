@@ -51,3 +51,12 @@ dotnet "$ILEMIT_DLL" "$OUT/constraints" ConstraintEmission --compile-refs "$FRAM
     "$OUT/constraints.cir.json"
 dotnet run --project "$constraint_project" -c Release -- verify "$OUT/constraints/ConstraintEmission.dll"
 bash "$ROOT/tests/run-ilverify.sh" "$OUT/constraints/ConstraintEmission.dll"
+
+# Signature identity includes custom modifiers even when runtime parameter types coincide.
+signature_project="$ROOT/tests/signature-emission/SignatureProbe.csproj"
+dotnet run --project "$signature_project" -c Release -- generate \
+    "${cir_sources[0]}" "$OUT/signatures.cir.json"
+dotnet "$ILEMIT_DLL" "$OUT/signatures" SignatureEmission --compile-refs "$FRAMEWORK_COMPILE_REFS" \
+    "$OUT/signatures.cir.json"
+dotnet run --project "$signature_project" -c Release -- verify "$OUT/signatures/SignatureEmission.dll"
+bash "$ROOT/tests/run-ilverify.sh" "$OUT/signatures/SignatureEmission.dll"

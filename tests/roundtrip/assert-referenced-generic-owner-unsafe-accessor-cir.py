@@ -43,7 +43,9 @@ expected_params = [base_open, physical_array]
 
 accessor_targets = []
 for holder in holders:
-    if holder.get("typeParams") != [{"name": "__owner0"}, {"name": "__owner1"}]:
+    if holder.get("typeParams") != [
+        {"name": "__owner0", "constraints": [nullable_tv]}, {"name": "__owner1"}
+    ]:
         raise SystemExit(f"UnsafeAccessor holder lost the referenced owner's generic frame: {holder!r}")
     accessors = [
         method

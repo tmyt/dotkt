@@ -27,6 +27,7 @@ static class Bir2Cir
                 AliasHelperHoist.SelfTest();
                 StdlibBindingOverlay.SelfTest();
                 DeclarationIdentityBinding.SelfTest();
+                KotlinPropertyAccessors.SelfTestAccessorSignatures();
                 LexicalDeclarationIds.SelfTest();
                 ExistentialReceiverBinding.SelfTest();
                 MaterializedBirPayload.SelfTest();
@@ -171,6 +172,7 @@ sealed class Pipeline
         // #395: snapshot frontend declaration identity before ANY Kotlin-to-CLR representation pass can rename,
         // move, clone, or synthesize a declaration. These are source facts, never a physical-name reverse inference.
         var declarationSemanticSignatures = DeclarationIdentityBinding.PreserveSourceFacts(birRoots);
+        FunctionValueRepresentation.PreserveSourceFacts(birRoots);
         var localDeclarationIds = DeclarationIdentityBinding.CollectDeclarationIds(birRoots);
         // These are new CLR slot bodies for frontend-selected inherited implementations, not source declarations.
         // Materialize before downstream indexing/freezing so references and local bases use the same suspend ABI.
@@ -650,6 +652,7 @@ sealed class Pipeline
             // already-erased `suspendRet`.
             RoundtripMetadata.FreezeSuspendResults(new[] { bir.Root });
             NullableGenericErasure.Apply(bir.Root, isValueFqn);
+            FunctionValueRepresentation.Apply(bir.Root, refs.IsByRefLikeFqn);
             // GENERIC-BOUNDARY nullable-Tv USE realignment — THE USE AXIS of #86's erasure invariant (#4;
             // #113/#117/#120/#142). The DEF-side erasure above turns a member's `T?`/`…Ref<T?>…` into
             // `object`/`…Ref<object>…`, but a CALL site kotc emitted with T already substituted carries the concrete
@@ -737,6 +740,8 @@ sealed class Pipeline
             // a synthesized remove callback. A no-op for the ref/rt stdlib self-build (no .NET events).
             hoisted = ClrEventSubscriptionBinding.Apply(
                 hoisted, refs, clrEventForwardedOwners, localTypeFqns, out var materializedEventSubscriptions);
+            foreach (var materialized in materializedEventSubscriptions)
+                FunctionValueRepresentation.Apply(materialized, refs.IsByRefLikeFqn);
             // Event binding has just synthesized receiver/handler locals plus add/remove member accesses. Feed those
             // NEW fixed slots through the same nullable-value use-axis rule as the original tree. In particular, a
             // proven-present Nullable<V> event receiver must enter the synthesized bare-V spill as V; the first pass
@@ -749,6 +754,11 @@ sealed class Pipeline
             // entry contract so only these newly-created callback classes are assembled.
             var materializedEventClosureTypes = ClosureSynthesis.ApplyMaterialized(
                 hoisted, materializedEventSubscriptions, refs);
+            if (DelegateTargetSlotAlignment.ApplyMaterialized(
+                    materializedEventSubscriptions, materializedEventClosureTypes, isValueFqn))
+                foreach (var materializedType in materializedEventClosureTypes)
+                    NullableTvErasureCallRealign.ApplyAfterDelegateSlotAlignment(
+                        materializedType, nullableTvDeclRets, isValueFqn, refs);
             // ClosureSynthesis stamps the transient lifted-frame correspondence on a GENERIC closure class, and the pass
             // that consumes it (SharedSyntheticSynthesis) already ran. Drop it here so the invariant "it never reaches
             // CIR" holds for a class assembled by this late pass too, rather than only for the main one.
@@ -769,7 +779,7 @@ sealed class Pipeline
                 hoisted = CharSeqStringLowering.Apply(hoisted, localTopLevelFns, out charSeqRetLambdas);
             var substituted = _options.RefBuild ? hoisted : MemberCallSubstitution.Apply(hoisted, refs,
                 localTopLevelFns, attributeTopLevelOwner, isValueFqn, localPropertyDeclarations, genericRepresentations,
-                localFactories);
+                localFactories, localDeclarationIds);
             // Reified-nullability witnesses were prepared while declaration identities and Kotlin type arguments were
             // still authoritative. Materialize them only after semantic calls (enum/array/collection intrinsics) have
             // either been replaced or deliberately retained, so a physical hidden ABI argument cannot interfere with
@@ -1282,9 +1292,11 @@ sealed class Pipeline
             CheckStySanity(outputName, substituted);
             KotlinPropertyAccessors.AllocateAll(substituted, refs, localPropertyAccessors);
             var collisionProjection = substituted.DeepClone();
-            declarationCollisionProjection.Add(BirTypeLowering.Lower(
+            var physicalProjection = BirTypeLowering.Lower(
                 collisionProjection, refBuild: false, declarationCollisionAliases, isValueFqn, outputName,
-                refs.PhysicalTypeNames, emittedLocalTypes, refs.NullableTypeFrames));
+                refs.PhysicalTypeNames, emittedLocalTypes, refs.NullableTypeFrames);
+            FunctionSignatureIdentity.Complete(physicalProjection);
+            declarationCollisionProjection.Add(physicalProjection);
             var lowered = BirTypeLowering.Lower(substituted, _options.RefBuild, refs.Aliases, isValueFqn, outputName,
                 refs.PhysicalTypeNames, emittedLocalTypes, refs.NullableTypeFrames);
             // The erasure can collapse two Kotlin declarations onto ONE CLR signature, where only one of them can
@@ -1492,6 +1504,7 @@ sealed class Pipeline
                 && target is TypeNode.Fqn targetInterface
                 && refs.ResolveNetType(ReferenceMetadataIndex.ReflectedOwnerFqn(targetInterface.Name),
                     targetInterface.Args?.Length ?? 0)?.IsInterface == true);
+        foreach (var (lowered, _) in loweredRoots) FunctionSignatureIdentity.Complete(lowered);
 
         // Every representation synthesis is now complete. Validate the exact MethodDef table that CIR will describe;
         // do not defer a generated/user collision to ilemit and do not invent a late name after calls are bound.

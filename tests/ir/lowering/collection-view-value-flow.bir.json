@@ -60,7 +60,7 @@
             {
               "t": "fqn",
               "name": "kotlin.collections.MutableList",
-              "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+              "args": [{ "t": "tv", "scope": "type", "i": 0 }]
             }
           ],
           "baseArgs": [{ "k": "local", "name": "readonly" }],
@@ -95,7 +95,7 @@
             {
               "t": "fqn",
               "name": "kotlin.collections.MutableList",
-              "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+              "args": [{ "t": "tv", "scope": "type", "i": 0 }]
             }
           ],
           "baseArgs": [{ "k": "local", "name": "mutableTemp" }],

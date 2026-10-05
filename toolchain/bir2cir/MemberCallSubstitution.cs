@@ -67,6 +67,7 @@ static class MemberCallSubstitution
     internal sealed record LocalFactory(string CollectionKind, string ArrayKind, string ArrayElementHint, int[] VarargPositions,
         NullableRepresentationFrame Frame);
     static IReadOnlyDictionary<string, LocalFactory> _localFactories;
+    static IReadOnlySet<string> _localDeclarationIds;
 
     public static IReadOnlyDictionary<string, LocalFactory> CollectLocalFactories(
         IEnumerable<JsonNode> roots)
@@ -108,13 +109,15 @@ static class MemberCallSubstitution
         IReadOnlySet<string> localTopLevelFns, bool attributeTopLevelOwner, ValueTypeOracle isValue,
         IReadOnlyDictionary<LocalPropertyAccessorKey, IReadOnlyList<LocalPropertyAccessor>> localPropertyAccessors,
         GenericRepresentationPolicy representations,
-        IReadOnlyDictionary<string, LocalFactory> localFactories)
+        IReadOnlyDictionary<string, LocalFactory> localFactories,
+        IReadOnlySet<string> localDeclarationIds = null)
     {
         _localTopLevelFns = localTopLevelFns;
         _attributeTopLevelOwner = attributeTopLevelOwner;
         _isValue = isValue ?? (_ => false);
         _representations = representations;
         _localFactories = localFactories;
+        _localDeclarationIds = localDeclarationIds;
         _localPropertyAccessors = localPropertyAccessors
             ?? new Dictionary<LocalPropertyAccessorKey, IReadOnlyList<LocalPropertyAccessor>>();
         _localPropertyOwners = _localPropertyAccessors.Keys.Select(key => key.Owner)
@@ -2869,6 +2872,9 @@ static class MemberCallSubstitution
             ["method"] = member,
             ["args"] = hargs,
         };
+        var sourceIdentity = Str(node[DeclarationIdentityBinding.Key]);
+        if (sourceIdentity != null && _localDeclarationIds?.Contains(sourceIdentity) == true)
+            call[DeclarationIdentityBinding.Key] = AliasHelperHoist.DeclarationIdentity(sourceIdentity);
         // The helper is instantiated with the alias class's args FIRST, then the method's own typeArgs (structured).
         var typeArgs = new JsonArray();
         foreach (var ca in classArgs) typeArgs.Add(TypeJson.Write(ca));
@@ -2895,6 +2901,19 @@ static class MemberCallSubstitution
         // `sig` may be LONGER than args (omitted defaulted params, filled downstream) — the bridge matches
         // positionally from the left; only a SHORTER sig would misalign.
         if (sigParts.Count >= hargs.Count) call["sig"] = sigParts;
+        if (sourceIdentity != null && _localDeclarationIds?.Contains(sourceIdentity) != true)
+        {
+            // Reference stdlib retains the semantic alias declaration, not the runtime helper.
+            // Select that exact declaration by identity and project its complete signature using
+            // the same receiver insertion and generic-frame transfer as AliasHelperHoist.
+            var selected = refs.AliasHelperSourceSignature(sourceIdentity, ownerName);
+            var linkage = new JsonArray();
+            if (instance && node["recv"] != null) linkage.Add(sigParts[0].DeepClone());
+            foreach (var parameter in selected.Parameters)
+                linkage.Add(TypeJson.Write(RemapHoistedTypeVars(parameter, arity)));
+            call["calleeParams"] = linkage;
+            call["calleeRet"] = TypeJson.Write(RemapHoistedTypeVars(selected.Return, arity));
+        }
         // Carry the call's statically-known return: a helper returning the alias class's BARE type param
         // (`ArrayList<Int>.removeAt` -> E) reflects as the callee's own `!!n` at the call site, and boxing that
         // out-of-scope token is invalid IL (BadImageFormat); ilemit's RetOr/CoerceReturn recover the concrete type
@@ -2921,6 +2940,7 @@ static class MemberCallSubstitution
         TypeNode.Oblivious o => new TypeNode.Oblivious(RemapHoistedTypeVars(o.Of, classArity)),
         TypeNode.Array a => new TypeNode.Array(RemapHoistedTypeVars(a.Elem, classArity)),
         TypeNode.ByRef b => new TypeNode.ByRef(RemapHoistedTypeVars(b.Of, classArity)),
+        TypeNode.Mod m => new TypeNode.Mod(m.Req, RemapHoistedTypeVars(m.M, classArity), RemapHoistedTypeVars(m.Of, classArity)),
         TypeNode.Fn fn => new TypeNode.Fn(
             fn.Suspend,
             RemapHoistedTypeVars(fn.Ret, classArity),
