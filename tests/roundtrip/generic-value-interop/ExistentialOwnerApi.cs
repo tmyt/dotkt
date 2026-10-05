@@ -28,6 +28,7 @@ public class ExistentialOwnerStorage
     public ExistentialSlotOwner<string> Slot;
     public ExistentialSlotOwner<string> Value { get; set; }
     public ExistentialOwnerStorage(ExistentialSlotOwner<string> value) { Slot = value; Value = value; }
+    public ExistentialOwnerStorage(string value) : this(new ExistentialSlotOwner<string>(value)) { }
 }
 
 public abstract class ExistentialOwnerOverride

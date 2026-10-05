@@ -30,6 +30,7 @@ static class FBoundStarProjectionErasure
     internal const string ExactBridgeOwnerCallKey = "_exactExistentialBridgeOwnerCall";
     const string ExactOuterKey = "outer";
     const string DelegationOuterSlotKey = "delegationOuterSlot";
+    const string BoundDelegationSignatureKey = "_boundDelegationSignature";
     static Dictionary<string, List<JsonObject>> _localMethods = new(StringComparer.Ordinal);
     static Dictionary<JsonObject, TypeNode[]> _localConstructorSignatures = new();
 
@@ -501,6 +502,7 @@ static class FBoundStarProjectionErasure
                     && refs.ResolveNetType(ReferenceMetadataIndex.ReflectedOwnerFqn(boundOwner.Name),
                         boundOwner.Args?.Length ?? 0) != null))) return true;
         var kind = Str(owner["k"]);
+        if (key == "delegationSig" && Bool(owner[BoundDelegationSignatureKey])) return true;
         // A static delegate target names the declaring construction, not a value receiver.
         // Its lifted method stays on that owner even when ordinary values use a carrier.
         if (kind == "newDelegate" && key == "calleeOwner") return true;
@@ -525,6 +527,19 @@ static class FBoundStarProjectionErasure
 
     static void BindSelectedConstructorSignature(JsonObject construction, ReferenceMetadataIndex refs)
     {
+        if (refs != null && construction["baseArgs"] is JsonArray
+            && construction["thisArgs"] == null && !Bool(construction[BoundDelegationSignatureKey])
+            && construction.Parent is JsonArray declarations
+            && declarations.Parent is JsonObject definition
+            && ReferenceEquals(definition["ctors"], declarations)
+            && TypeJson.Read(definition["base"]) is TypeNode.Fqn baseOwner
+            && construction["delegationSig"] is JsonArray delegation
+            && refs.TrySelectedConstructorPhysicalSignature(baseOwner.Name,
+                delegation.Select(TypeJson.Read).ToArray(), out var baseParameters))
+        {
+            construction["delegationSig"] = new JsonArray(baseParameters.Select(TypeJson.Write).ToArray());
+            construction[BoundDelegationSignatureKey] = true;
+        }
         if (refs == null || Str(construction["k"]) is not ("new" or "newClr")
             || construction["resolvedMemberParams"] is JsonArray
             || TypeJson.Read(construction["type"]) is not TypeNode.Fqn owner
@@ -4329,6 +4344,7 @@ static class FBoundStarProjectionErasure
                 obj.Remove(ExactBridgeOwnerCallKey);
                 obj.Remove(ExactOuterKey);
                 obj.Remove(DelegationOuterSlotKey);
+                obj.Remove(BoundDelegationSignatureKey);
                 foreach (var value in obj.Select(pair => pair.Value).ToList())
                     if (value != null) RemoveTransientMarkers(value);
                 break;

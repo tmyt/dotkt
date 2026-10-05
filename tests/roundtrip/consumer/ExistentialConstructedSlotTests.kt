@@ -8,6 +8,8 @@ import GenericValueInterop.ExistentialNativeBase
 import GenericValueInterop.ExistentialNativeBox
 
 private class ExistentialNativeDerived<T> : ExistentialNativeBase()
+private class ExistentialNativeStorage(value: ExistentialSlotOwner<String>) : ExistentialOwnerStorage(value)
+private class ExistentialNativeStringStorage(value: String) : ExistentialOwnerStorage(value)
 private fun nativeBase(value: ExistentialNativeDerived<String>): ExistentialNativeBase = value
 private fun nestedNative(): ExistentialNativeBox<ExistentialSlotOwner<String>> = ExistentialOwnerApi.MakeNested()
 
@@ -53,6 +55,8 @@ class ExistentialConstructedSlotTests {
         check(selectReader(reader, second, false) === second)
         check(ExistentialOwnerApi.Read(ExistentialReader(23)) == 23)
         val owner = ExistentialSlotOwner("kotlin")
+        check(ExistentialNativeStorage(owner).Slot === owner)
+        check(ExistentialNativeStringStorage("delegated").Slot.value == "delegated")
         check(ExistentialOwnerApi.Echo(owner) === owner)
         val imported = ExistentialOwnerApi.Make()
         check(imported.value == "native")

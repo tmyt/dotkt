@@ -212,7 +212,18 @@ static class PhysicalValueCoercion
                 if (arguments != null)
                 {
                     RewriteArray(arguments, scope, index);
-                    if (!index.ReferenceBuild) CoerceVector(arguments, ConstructorParameterTypes(constructor), scope, index);
+                    if (!index.ReferenceBuild)
+                    {
+                        var targets = ConstructorParameterTypes(constructor);
+                        CoerceVector(arguments, targets, scope, index);
+                        if (constructor["baseCtorRef"] is JsonObject && targets?.Length == arguments.Count)
+                            for (var i = 0; i < arguments.Count; i++)
+                                if (arguments[i] is JsonNode argument)
+                                {
+                                    var converted = CoerceDeclaredValue(argument, targets[i], scope, index);
+                                    if (!ReferenceEquals(converted, argument)) arguments[i] = converted;
+                                }
+                    }
                 }
                 if (constructor["body"] is JsonArray body) RewriteArray(body, scope, index);
             }
