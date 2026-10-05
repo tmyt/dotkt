@@ -15,11 +15,14 @@ inline/default arguments. Native Func/Action projection is nominal, using the ex
 CLR override dispatch, nominal delegate identity, and a Span callback returning Unit as an object.
 Literal constructions already bound to a native delegate keep their exact function signature; ordinary Kotlin
 function operands erase before a stored-value SAM conversion. This prevents illegal boxing of native Span slots.
-This is not yet the completed contract: wide arities, broader existing interop and function regression suites,
-the complete toolchain gate and actual coroutines validation remain outstanding. The budgeted independent
-reviews have completed; their validated findings are being addressed with focused integration checks.
-Expanded Span-return callback tests still report strict ILVerify `ReturnPtrToStack` findings, also reproduced
-by equivalent C# controls. Those findings are not suppressed and the native suite is not yet declared green.
+The budgeted independent reviews and response checks have completed. The categorized runtime suites,
+including existing wide-arity and callable-reference coverage, have passed after integration, as has whole-suite
+ILVerify with the narrow Span classification below. The canonical gate and actual coroutines runtime validation
+remain separate requirements; neither is claimed complete here.
+Expanded Span-return callback tests report `ReturnPtrToStack`, also reproduced by equivalent C# controls.
+The user confirmed this as a known verifier limitation, not a compiler defect. The gate classifies only those
+two exact methods and that diagnostic as `SPAN-VERIFIER-LIMIT`, requires the findings to remain present,
+and retains their runtime tests. Other methods, diagnostics, and incomplete verifier runs still fail.
 
 ## Reproduced defect
 
