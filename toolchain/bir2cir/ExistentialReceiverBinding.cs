@@ -12,16 +12,19 @@ using DotKt.Bir;
 //
 // This is an explicit CIR binding pass: it consumes the synthesized interface's actual method
 // table (or reference metadata), and ilemit merely emits the owner/member recorded here.
+// Inherited members and substituted CLR property nodes retain their frontend-selected identity;
+// the physical interface graph supplies reachable declarations, not Kotlin override precedence.
 static class ExistentialReceiverBinding
 {
     public sealed class Index
     {
         internal readonly Dictionary<string, List<Member>> Members = new(StringComparer.Ordinal);
         internal readonly Dictionary<string, string> SemanticOwnerByPhysical = new(StringComparer.Ordinal);
+        internal readonly Dictionary<string, string[]> Bases = new(StringComparer.Ordinal);
     }
 
     internal sealed record Member(string Name, string SourceName, string AccessorKind,
-        TypeNode[] Parameters, TypeNode Return, int GenericArity)
+        TypeNode[] Parameters, TypeNode Return, int GenericArity, string DeclarationId = null)
     {
         public int ParamCount => Parameters.Length;
     }
@@ -57,10 +60,13 @@ static class ExistentialReceiverBinding
                                 .Select(p => TypeJson.Read(p["type"]))
                                 .Where(t => t != null).ToArray() ?? Array.Empty<TypeNode>(),
                             TypeJson.Read(method["ret"]),
-                            (method["typeParams"] as JsonArray)?.Count ?? 0));
+                            (method["typeParams"] as JsonArray)?.Count ?? 0,
+                            Str(method[DeclarationIdentityBinding.Key])));
                     }
                 index.Members[name] = slots;
                 index.SemanticOwnerByPhysical[name] = semanticOwner;
+                index.Bases[name] = (type["interfaces"] as JsonArray ?? new JsonArray())
+                    .Select(TypeJson.Read).OfType<TypeNode.Fqn>().Select(parent => parent.Name).ToArray();
             }
             CollectTypes(type, index);
         }
@@ -77,7 +83,8 @@ static class ExistentialReceiverBinding
         var any = new TypeNode.Fqn("kotlin.Any");
         index.SemanticOwnerByPhysical["ProbeCarrier"] = "ProbeSource";
         index.Members["ProbeCarrier"] = new List<Member> {
-            new("physicalSlot", "sourceMember", null, new TypeNode[] { any }, any, 0),
+            new("physicalSlot", "sourceMember", null, new TypeNode[] { any }, any, 0,
+                FBoundStarProjectionErasure.ExistentialSlotIdentity("source-id", "ProbeSource")),
         };
         var call = (JsonObject)JsonNode.Parse("""
         {"k":"callInstance","ownerType":{"t":"fqn","name":"ProbeCarrier"},"method":"sourceMember",
@@ -88,6 +95,29 @@ static class ExistentialReceiverBinding
         if (Str(call["method"]) != "physicalSlot" || call[DeclarationIdentityBinding.Key] != null
             || call["memberRef"] != null)
             throw new InvalidOperationException("Existential slot retained the generic source declaration binding");
+        index.SemanticOwnerByPhysical["ChildCarrier"] = "ChildSource";
+        index.Members["ChildCarrier"] = new List<Member>();
+        index.Bases["ChildCarrier"] = new[] { "ProbeCarrier" };
+        index.Members["ProbeCarrier"].Add(new("readSlot", "item", "get", Array.Empty<TypeNode>(), any, 0));
+        index.Members["ProbeCarrier"].Add(new("writeSlot", "item", "set", new[] { any }, new TypeNode.Fqn("void"), 0));
+        foreach (var setter in new[] { false, true })
+        {
+            var property = new JsonObject
+            {
+                ["k"] = setter ? "clrPropSet" : "clrPropGet", ["name"] = "item",
+                ["type"] = TypeJson.Fqn("ProbeSource"), ["memberRef"] = new JsonObject(),
+                ["recv"] = new JsonObject { ["k"] = "local", ["name"] = "receiver" },
+            };
+            if (setter) property["value"] = new JsonObject { ["k"] = "local", ["name"] = "value" };
+            KotlinPropertyAccessors.PreserveCallIdentity(property, "item", setter ? "set" : "get");
+            BindCall(property, new Dictionary<string, TypeNode> { ["receiver"] = new TypeNode.Fqn("ChildCarrier") },
+                index, ReferenceMetadataIndex.Build(Array.Empty<string>()), null);
+            if (Str(property["k"]) != "callInstance" || Str(property["method"]) != (setter ? "writeSlot" : "readSlot")
+                || TypeJson.Read(property["ownerType"]) != new TypeNode.Fqn("ProbeCarrier")
+                || property["memberRef"] != null || property["type"] != null
+                || (property["args"] as JsonArray)?.Count != (setter ? 1 : 0))
+                throw new InvalidOperationException("Inherited existential property did not bind its declaring slot");
+        }
         Console.WriteLine("[existential receiver] self-test OK (selected slot consumes source identity)");
     }
 
@@ -154,7 +184,7 @@ static class ExistentialReceiverBinding
             return;
         }
 
-        if (kind == "callInstance")
+        if (kind is "callInstance" or "clrPropGet" or "clrPropSet")
             BindCall(obj, vars, index, refs, expectedResult);
 
         // A nested carrier owns its own parameters/locals. It is visited as a declaration
@@ -170,10 +200,13 @@ static class ExistentialReceiverBinding
     static void BindCall(JsonObject call, IReadOnlyDictionary<string, TypeNode> vars,
         Index index, ReferenceMetadataIndex refs, TypeNode expectedResult)
     {
-        if (Str(call["method"]) is not string authoredMethod) return;
+        var clrPropertyKind = Str(call["k"]) switch { "clrPropGet" => "get", "clrPropSet" => "set", _ => null };
+        var authoredMethod = Str(call["method"]) ?? (clrPropertyKind != null ? Str(call["name"]) : null);
+        if (authoredMethod == null) return;
         if (authoredMethod.StartsWith("$star$", StringComparison.Ordinal)) return;
         var propertyCall = KotlinPropertyAccessors.TryCallIdentity(call,
             out var sourcePropertyName, out var accessorKind);
+        if (!propertyCall && clrPropertyKind != null) return;
         var sourceMethod = propertyCall ? sourcePropertyName : authoredMethod;
         // Inline substitution replaces a parameter local with the concrete argument type, but the selected call owner
         // remains the existential interface whose slot must be invoked. Prefer that explicit declaration carrier when
@@ -190,7 +223,7 @@ static class ExistentialReceiverBinding
 
         var pc = (call["sig"] as JsonArray)?.Count
             ?? (call["argTypes"] as JsonArray)?.Count
-            ?? (call["args"] as JsonArray)?.Count ?? 0;
+            ?? (call["args"] as JsonArray)?.Count ?? (clrPropertyKind == "set" ? 1 : 0);
         var ga = (call["typeArgs"] as JsonArray)?.Count ?? 0;
         var authoredSignature = ((call["sig"] ?? call["argTypes"]) as JsonArray)?
             .Select(TypeJson.Read).ToArray();
@@ -199,24 +232,45 @@ static class ExistentialReceiverBinding
         TypeNode[] physicalParameters = null;
         TypeNode physicalResult = null;
 
-        if (index.Members.TryGetValue(receiverType.Name, out var members))
+        var physicalOwner = receiverType;
+        var selectedId = Str(call[DeclarationIdentityBinding.Key]);
+        if (index.Members.ContainsKey(receiverType.Name))
         {
-            var candidates = members
-                .Where(m => m.ParamCount == pc && m.GenericArity == ga
-                    && m.SourceName == sourceMethod && m.AccessorKind == accessorKind
-                    && SignatureMatches(m.Parameters, authoredSignature))
-                .ToList();
+            var visited = new HashSet<string>(StringComparer.Ordinal);
+            var frontier = new List<string> { receiverType.Name };
+            var candidates = new List<(string Owner, Member Slot)>();
+            while (frontier.Count != 0 && candidates.Count == 0)
+            {
+                var next = new List<string>();
+                foreach (var owner in frontier)
+                {
+                    if (!visited.Add(owner)) continue;
+                    if (index.Members.TryGetValue(owner, out var members))
+                        candidates.AddRange(members
+                            .Where(m => m.ParamCount == pc && m.GenericArity == ga
+                                && m.SourceName == sourceMethod && m.AccessorKind == accessorKind
+                                && (selectedId == null || m.DeclarationId == selectedId
+                                    || m.DeclarationId == FBoundStarProjectionErasure.ExistentialSlotIdentity(
+                                        selectedId, index.SemanticOwnerByPhysical[owner]))
+                                && SignatureMatches(m.Parameters, authoredSignature))
+                            .Select(member => (owner, member)));
+                    if (index.Bases.TryGetValue(owner, out var parents)) next.AddRange(parents);
+                }
+                frontier = next;
+            }
             // Duplicate roots may describe the same physical slot. Coalesce only a structurally identical CLR
             // descriptor. TypeNode.ToString() is not an identity for nested generic arguments, and a MethodDef's
             // return participates in its signature, so either shortcut could hide a genuinely ambiguous slot here.
             for (var i = candidates.Count - 1; i >= 0; i--)
-                if (candidates.Take(i).Any(existing => SamePhysicalSlot(existing, candidates[i])))
+                if (candidates.Take(i).Any(existing => existing.Owner == candidates[i].Owner
+                        && SamePhysicalSlot(existing.Slot, candidates[i].Slot)))
                     candidates.RemoveAt(i);
             if (candidates.Count == 1)
             {
-                physicalMethod = candidates[0].Name;
-                physicalParameters = candidates[0].Parameters;
-                physicalResult = candidates[0].Return;
+                physicalOwner = new TypeNode.Fqn(candidates[0].Owner);
+                physicalMethod = candidates[0].Slot.Name;
+                physicalParameters = candidates[0].Slot.Parameters;
+                physicalResult = candidates[0].Slot.Return;
             }
         }
         else
@@ -245,7 +299,16 @@ static class ExistentialReceiverBinding
         // identity (or an earlier descriptor) would let final reference binding retarget it to G<T> again.
         call.Remove(DeclarationIdentityBinding.Key);
         call.Remove("memberRef");
-        call["ownerType"] = TypeJson.Write(receiverType);
+        call["ownerType"] = TypeJson.Write(physicalOwner);
+        if (clrPropertyKind != null)
+        {
+            call["k"] = "callInstance";
+            call["args"] = clrPropertyKind == "set"
+                ? new JsonArray(call["value"]?.DeepClone()) : new JsonArray();
+            call.Remove("value");
+            call.Remove("name");
+            call.Remove("type");
+        }
         call["method"] = physicalMethod;
         if (propertyCall)
         {

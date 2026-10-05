@@ -8,6 +8,22 @@ private class CovariantContextCompletion<T> : Continuation<T> {
     override fun resumeWith(result: Result<T>) {}
 }
 
+private open class InheritedContextBase<in T> : Continuation<T> {
+    override val context: CoroutineContext get() = EmptyCoroutineContext
+    override fun resumeWith(result: Result<T>) {}
+}
+private class InheritedContextChild<U, in T : U> : InheritedContextBase<T>()
+private fun <U, T : U> inheritedContext(value: InheritedContextChild<U, T>): CoroutineContext = value.context
+private var overriddenContextReads = 0
+private open class OverriddenContextMiddle<in T> : InheritedContextBase<T>() {
+    override val context: CoroutineContext get() {
+        overriddenContextReads++
+        return EmptyCoroutineContext
+    }
+}
+private class OverriddenContextLeaf<U, in T : U> : OverriddenContextMiddle<T>()
+private fun <U, T : U> overriddenContext(value: OverriddenContextLeaf<U, T>): CoroutineContext = value.context
+
 private interface CovariantContextSlot<T> { val context: CoroutineContext }
 private class NestedContinuationContext : CovariantContextSlot<List<Continuation<Int>>> {
     override val context = EmptyCoroutineContext
@@ -53,6 +69,11 @@ class CovariantContinuationContextTests {
 
     @TestAttribute
     fun namedGenericContextDispatchesThroughTheErasedInterface() {
+        check(inheritedContext(InheritedContextChild<Any?, String>()) === EmptyCoroutineContext)
+        check(inheritedContext(InheritedContextChild<Any?, Int>()) === EmptyCoroutineContext)
+        overriddenContextReads = 0
+        check(overriddenContext(OverriddenContextLeaf<Any?, String>()) === EmptyCoroutineContext)
+        check(overriddenContextReads == 1)
         val integers = CovariantContextCompletion<Int>()
         val strings = CovariantContextCompletion<String>()
         check(integers.context === EmptyCoroutineContext)
