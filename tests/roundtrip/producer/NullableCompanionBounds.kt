@@ -8,6 +8,27 @@ fun <U, T : U> companionWiden(value: T): U = value
 fun <T> companionNullable(value: T): T? = companionWiden<T?, T>(value)
 fun <T> companionDeferred(value: T): () -> T? = { companionWiden<T?, T>(value) }
 
+fun <T> capturedCompanion(value: T): suspend () -> T? = {
+    companionSuspended(value)
+    companionWiden<T?, T>(value)
+}
+
+interface VariantCompanion<out T> { fun get(): T? }
+class VariantCompanionImpl<T>(val value: T) : VariantCompanion<T> {
+    override fun get(): T? = companionWiden<T?, T>(value)
+}
+
+class OuterCompanion<T>(val value: T) {
+    inner class Inner<U>(val other: U) {
+        fun outer(): T? = companionWiden<T?, T>(value)
+        fun inner(): U? = companionWiden<U?, U>(other)
+    }
+}
+
+open class VirtualCompanion {
+    open fun <T> get(value: T): T? = companionWiden<T?, T>(value)
+}
+
 open class CompanionBox<T>(val original: T) {
     fun nullable(): T? = companionWiden<T?, T>(original)
     fun deferred(): () -> T? = { nullable() }

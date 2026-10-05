@@ -33,6 +33,7 @@ class NullableCompanionBoundTests {
         check(companionNullable<Int?>(null) == null)
         check(companionNullable<Int?>(0) == 0)
         check(companionNullable<String?>(null) == null)
+        check(VirtualCompanion().get(71) == 71)
     }
 
     @TestAttribute
@@ -46,6 +47,11 @@ class NullableCompanionBoundTests {
         val named = CompanionName("bound")
         check(BoundedCompanionBox(named).nullable() === named)
         check(BoundedCompanionBox(named).nullable()!!.name == "bound")
+        val variant: VariantCompanion<Int> = VariantCompanionImpl(61)
+        check(variant.get() == 61)
+        val inner = OuterCompanion(67).Inner("inner")
+        check(inner.outer() == 67)
+        check(inner.inner() == "inner")
     }
 
     @TestAttribute
@@ -53,5 +59,8 @@ class NullableCompanionBoundTests {
         check(runCompanion { companionSuspended(53) } == 53)
         check(runCompanion { companionSuspended("resumed") } == "resumed")
         check(runCompanion { companionSuspended<Int?>(null) } == null)
+        check(runCompanion(capturedCompanion(59)) == 59)
+        check(runCompanion(capturedCompanion("suspend capture")) == "suspend capture")
+        check(runCompanion(capturedCompanion<Int?>(null)) == null)
     }
 }
