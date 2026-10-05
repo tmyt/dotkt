@@ -728,6 +728,7 @@ sealed class Pipeline
             // STAR-PROJECTION COLLECTION CLASSIFIERS: use faithful non-generic BCL faces where one exists; otherwise
             // author the Collection/Set/MutableSet composite classifier plus the following smart-cast member access.
             // App build only, before MemberCallSubstitution while the Kotlin owner is still visible.
+            GenericArrayValueLowering.RecordCastOperands(hoisted);
             if (!_options.RefBuild) KotlinCollectionClassifierLowering.Apply(hoisted, refs);
             if (attributeTopLevelOwner) StarProjectionLowering.Apply(hoisted, refs);
             // .NET EVENT `subscribe` BINDING: kotc surfaces a .NET event as a `kotlin.clr.ClrEvent<T>` property and emits
@@ -871,6 +872,7 @@ sealed class Pipeline
         // it. Runs before interface-slot normalization and suspend lowering, in ref and runtime builds alike.
         var localExistentialOwners =
             FBoundStarProjectionErasure.ApplyAll(staged.Select(s => s.Root).ToList(), refs);
+        GenericArrayValueLowering.ApplyAll(staged.Select(stage => stage.Root));
         var existentialReceiverMembers =
             ExistentialReceiverBinding.Collect(staged.Select(s => s.Root));
 
@@ -1494,7 +1496,8 @@ sealed class Pipeline
             // projection. Local Kotlin base classes have the same physical boundary as
             // referenced classes; the carrier interface cannot inherit either class.
             needsNativeProjection: (source, target) =>
-                source is TypeNode.Fqn { Args: null } carrier
+                source is TypeNode.Fqn { Name: "System.Array" } && target is TypeNode.Array
+                || source is TypeNode.Fqn { Args: null } carrier
                 && (localExistentialOwners.Values.Contains(carrier.Name)
                     || refs.IsExistentialPhysicalOwner(carrier.Name))
                 && target is TypeNode.Fqn targetNative

@@ -467,6 +467,10 @@ static class PhysicalValueCoercion
                 break;
             case "arraySet":
                 CoerceSlot(node, "value", TypeJson.Read(node["elem"]), scope, index);
+                goto case "arrayGet";
+            case "arrayGet": case "forArray":
+                if (TypeJson.Read(node["elem"]) is TypeNode arrayElement)
+                    CoerceSlot(node, "array", new TypeNode.Array(arrayElement), scope, index);
                 break;
             case "stackSet": case "byrefStore":
                 CoerceSlot(node, "value", TypeJson.Read(node["elem"]), scope, index);
@@ -668,7 +672,8 @@ static class PhysicalValueCoercion
         var genericObjectProjection = declared is TypeNode.Tv
             && actual is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" }
             && Str(expression["k"]) is "callStatic" or "callInstance" or "constrainedCall";
-        if (!genericObjectProjection && !CollectionViewFaces.IsViewSeam(actual, declared)) return expression;
+        if (!genericObjectProjection && !CollectionViewFaces.IsViewSeam(actual, declared)
+            && index.NeedsNativeProjection?.Invoke(actual, declared) != true) return expression;
         var physical = expression.DeepClone().AsObject();
         // The inner expression leaves the exact member/declaration result on the CLR stack. Once the caller-facing
         // view moves to the explicit outer cast, every surviving inner result stamp must describe that physical value;
@@ -705,6 +710,9 @@ static class PhysicalValueCoercion
                 or "clrStatic" or "clrInstance" or "clrGenericStatic" or "clrGenericInstance"
                 or "clrPropGet" or "field" or "staticField" or "clrStaticField" or "lateinitGet")
             return Close(TypeJson.Read(member["returnType"]), OwnerArgs(member), MethodArgs(expression));
+        if (kind is "callStatic" or "callInstance" or "constrainedCall"
+            && TypeJson.Read(expression["calleeRet"]) is TypeNode selectedReturn)
+            return Close(selectedReturn, CallOwner(expression)?.Args, MethodArgs(expression));
         if (kind is "callStatic" or "callInstance" or "constrainedCall" && index.Method(expression) is MethodShape method)
         {
             var owner = CallOwner(expression);
