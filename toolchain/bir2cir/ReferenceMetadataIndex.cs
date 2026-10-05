@@ -3857,7 +3857,8 @@ sealed partial class ReferenceMetadataIndex
         out TypeNode declaredRet, out TypeNode[] declaredParams, out bool[] paramsRefused,
         out string physicalMember, out JsonArray declarationTypeParams, out bool returnsValue,
         out TypeNode[] signatureParameters,
-        bool semanticConstraints = false, string selectedPhysicalMember = null, string selectedDeclarationId = null)
+        bool semanticConstraints = false, string selectedPhysicalMember = null, string selectedDeclarationId = null,
+        bool physicalSlots = false)
     {
         declaredRet = null;
         declaredParams = null;
@@ -3877,7 +3878,7 @@ sealed partial class ReferenceMetadataIndex
                 selectedOwnerTypeArguments: selectedOwnerTypeArguments,
                 semanticConstraints: semanticConstraints,
                 selectedPhysicalMember: selectedPhysicalMember,
-                selectedDeclarationId: selectedDeclarationId) != SlotLookup.Declared
+                selectedDeclarationId: selectedDeclarationId, physicalSlots: physicalSlots) != SlotLookup.Declared
             || declaration == null)
             return false;
         declaredRet = ret.Node;
@@ -3912,7 +3913,7 @@ sealed partial class ReferenceMetadataIndex
         TypeNode methodReturn = null, JsonArray selectedTypeParams = null,
         TypeNode[] selectedOwnerTypeArguments = null, bool semanticConstraints = false,
         string selectedPhysicalMember = null, string selectedDeclarationId = null,
-        bool includeUnchangedMethodReturn = true)
+        bool includeUnchangedMethodReturn = true, bool physicalSlots = false)
     {
         declaredRet = default;
         declaredParams = null;
@@ -3969,7 +3970,7 @@ sealed partial class ReferenceMetadataIndex
                         : new SlotFact(Canonical(physical), false);
                 // A selected suspend projection is already a physical hot/cold MethodDef. Its logical Kotlin
                 // result carrier belongs to the source declaration, not to the Task-returning MethodImpl row.
-                declaredRet = explicitNullableFrame
+                declaredRet = physicalSlots ? new SlotFact(member.ReturnTypeNode, false) : explicitNullableFrame
                     ? FramedSlot(member.NullableGenericRet, member.ReturnTypeNode)
                     : selectedPhysicalMember != null
                     ? new SlotFact(member.ReturnTypeNode, false)
@@ -3980,7 +3981,7 @@ sealed partial class ReferenceMetadataIndex
                         : DeclaredSlot(member.NullableGenericRet, member.ReturnTypeNode);
                 declaredParams = new SlotFact[argCount];
                 for (var i = 0; i < argCount; i++)
-                    declaredParams[i] = explicitNullableFrame
+                    declaredParams[i] = physicalSlots ? new SlotFact(member.ParamTypeNodes[i], false) : explicitNullableFrame
                         ? FramedSlot(member.NullableGenericParams?[i], member.ParamTypeNodes[i])
                         : selectedPhysicalMember != null
                         ? new SlotFact(member.ParamTypeNodes[i], false)
@@ -4029,7 +4030,7 @@ sealed partial class ReferenceMetadataIndex
                 out var sret, out var sps, out var smethod, propertyName, accessorKind, accessorSignature,
                 superTypeArguments, includeClosedPropertyReturn, includeUnchangedMethod,
                 methodSignature, methodReturn, selectedTypeParams, selectedOwnerTypeArguments, semanticConstraints,
-                selectedPhysicalMember, selectedDeclarationId, includeUnchangedMethodReturn);
+                selectedPhysicalMember, selectedDeclarationId, includeUnchangedMethodReturn, physicalSlots);
             path.Remove(key);
             if (found == SlotLookup.Refused) return SlotLookup.Refused;
             if (found != SlotLookup.Declared) continue;

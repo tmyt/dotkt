@@ -101,6 +101,25 @@ class ExistentialSlotOwner<T>(val value: T) {
     }
 }
 
+abstract class ExistentialIteratorCollection<T> : AbstractMutableCollection<T>() {
+    fun consumeOne() {
+        val cursor = iterator()
+        if (cursor.hasNext()) { cursor.next(); cursor.remove() }
+    }
+}
+
+open class ExistentialSingleCollection<T>(private val item: T) : ExistentialIteratorCollection<T>() {
+    var removed = false
+    override val size: Int get() = if (removed) 0 else 1
+    override fun add(element: T): Boolean = false
+    override fun iterator(): MutableIterator<T> = object : MutableIterator<T> {
+        private var consumed = false
+        override fun hasNext(): Boolean = !consumed && !removed
+        override fun next(): T { consumed = true; return item }
+        override fun remove() { removed = true }
+    }
+}
+
 class ExistentialHierarchyOwner<T> {
     open inner class Base(val count: Int)
     inner class Derived : Base(23)

@@ -8,6 +8,10 @@ import GenericValueInterop.ExistentialNativeBase
 import GenericValueInterop.ExistentialNativeBox
 
 private class ExistentialNativeDerived<T> : ExistentialNativeBase()
+private class ExistentialFurtherCollection<T>(item: T) : ExistentialSingleCollection<T>(item) {
+    var calls = 0
+    override fun iterator(): MutableIterator<T> { calls++; return super.iterator() }
+}
 class ExistentialDefaultConstructed<T> { fun read(): Int = 17 }
 fun interface ExistentialNestedReceiver<T> { fun accept(value: T): Int }
 private fun <T> nestedReceiver(expected: T): ExistentialNestedReceiver<ExistentialSlotOwner<T>> =
@@ -179,6 +183,20 @@ class ExistentialConstructedSlotTests {
     fun inheritedCarrierArgumentsPreserveTheSelectedBaseSlot() {
         val owner = ExistentialHierarchyOwner<String>()
         check(owner.fromAny(owner.Derived()) == 23)
+        val strings = ExistentialSingleCollection("value")
+        strings.consumeOne()
+        check(strings.removed)
+        val integers = ExistentialSingleCollection(42)
+        integers.consumeOne()
+        check(integers.removed)
+        val derived = ExistentialFurtherCollection("derived")
+        val typed: ExistentialSingleCollection<String> = derived
+        typed.iterator()
+        check(derived.calls == 1)
+        val abstractView: ExistentialIteratorCollection<String> = derived
+        abstractView.consumeOne()
+        check(derived.calls == 2)
+        check(derived.removed)
     }
 
     @TestAttribute
