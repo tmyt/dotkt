@@ -10,6 +10,11 @@ class ExistentialSlotOwner<T>(val value: T) {
     fun store(raw: Any) { stored = raw as ExistentialSlotOwner<T>.Item }
     fun storedItem(): Item? = stored
     private fun consume(item: Item): Int = item.count
+    private val secret: Int = 17
+    private inline fun withSecret(action: () -> Int): Int = secret + action()
+    fun inlineRead(item: Item): Int = withSecret { consume(item) }
+    fun readPrivate(other: ExistentialSlotOwner<T>, raw: Any): Int =
+        other.consume(raw as ExistentialSlotOwner<T>.Item)
     fun read(item: Item): Int = consume(item)
     fun same(item: Item, raw: Any): Boolean = item === raw
     fun nullable(item: Item?): Int = item?.count ?: 0

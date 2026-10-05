@@ -3958,8 +3958,8 @@ static class FBoundStarProjectionErasure
         // implementation-side dispatch on its source MethodDef; only value-slot receivers need the existential ABI.
         var lexicalReceiver = call["recv"] is JsonObject receiver
             && (Str(receiver["k"]) == "this" || Bool(receiver[ExactOuterKey]));
-        var kotlinVariantOwner = !lexicalReceiver
-            && RequiresKotlinVariantCarrier(f, owners, refs);
+        var kotlinValueOwner = !lexicalReceiver
+            && TryExistentialCarrier(f.Name, owners, refs, out _);
         var erasedSmartCast = call["recv"] is JsonObject recv && Str(recv["k"]) == "cast"
             && TypeJson.Read(recv["type"]) is TypeNode.Fqn { Args: { } castArgs } castF
             && castF.Name == f.Name
@@ -3968,7 +3968,7 @@ static class FBoundStarProjectionErasure
             || ExpressionType(call["recv"]) is TypeNode.Fqn receiverType
                 && (owners.Values.Any(owner => owner.ErasedName == receiverType.Name)
                     || refs.IsExistentialPhysicalOwner(receiverType.Name));
-        if (!starOwner && !erasedSmartCast && !existentialReceiver && !kotlinVariantOwner) return;
+        if (!starOwner && !erasedSmartCast && !existentialReceiver && !kotlinValueOwner) return;
 
         var pc = (call["sig"] as JsonArray)?.Count
             ?? (call["argTypes"] as JsonArray)?.Count
