@@ -201,6 +201,16 @@ static partial class NullableRepresentationDemand
                     Scan(method.Declaration["body"], method.Body, typeFrames, methodFrames, localFrames, policy: policy);
                 }
             }
+            foreach (var owner in owners.Where(owner => owner.CapturedOwner != null))
+            {
+                // A nullable companion for a captured enclosing variable carries a constraint on
+                // that variable. Both slots must belong to the enclosing frame: an inner factory
+                // cannot constrain an owner's variable against a new method-owned companion.
+                var parentArity = (owner.CapturedOwner.Declaration["typeParams"] as JsonArray)?.Count ?? 0;
+                foreach (var index in owner.Frame.NullableIndices)
+                    if (index >= owner.CaptureOffset && index < owner.CaptureOffset + parentArity)
+                        owner.CapturedOwner.Body.Type.Add(index - owner.CaptureOffset);
+            }
             changed = Count(owners) != before;
         } while (changed);
         return owners;

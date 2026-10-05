@@ -3934,8 +3934,8 @@ internal sealed class AssemblyScanner : IDisposable
                     ? bound
                     : SubstituteTypeParameters(bound, ownerArguments);
             }).ToArray();
-            if (restored.Length == 0)
-                throw new InvalidDataException("empty [KotlinTypeParameterBounds] constraint list");
+            // An empty source list explicitly restores an unbounded Kotlin parameter whose CLR
+            // declaration may carry an implementation-only nullable companion constraint.
             parameter.UpperBound.Clear();
             parameter.UpperBound.Add(restored);
         }
@@ -6529,8 +6529,7 @@ internal sealed class AssemblyScanner : IDisposable
                 || entry.Value.ValueKind != System.Text.Json.JsonValueKind.Array)
                 throw new InvalidDataException("malformed [KotlinSupertypes] bound entry");
             var restoredNodes = entry.Value.EnumerateArray().Select(TypeNode.Read).ToArray();
-            if (restoredNodes.Length == 0)
-                throw new InvalidDataException("empty [KotlinSupertypes] constraint list");
+            // Empty is an explicit source fact, not an absent carrier: replace any physical-only bounds too.
             // Carrier keys are Kotlin source indices, not positions in the CLR
             // enclosing prefix (which may include nullable companion slots).
             // Exclude precisely the source declarations owned by the outer class.

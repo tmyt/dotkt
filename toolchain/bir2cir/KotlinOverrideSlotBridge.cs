@@ -690,7 +690,7 @@ static class KotlinOverrideSlotBridge
                                 && Str(source[KotlinPropertyAccessors.KindKey]) == propertyAccessor)
                         && ((source["typeParams"] as JsonArray)?.Count ?? 0) == arity
                         && SameMethodTypeParameterShape(SemanticMethodTypeParameters(source),
-                            implementation["typeParams"] as JsonArray, args, args)
+                            SemanticMethodTypeParameters(implementation), args, args)
                         && SignatureMatches(source, factParams, factRet, args, refs, isValue)).ToList();
                     if (sources.Count != 1) continue;
                     var source = sources[0];
@@ -719,7 +719,7 @@ static class KotlinOverrideSlotBridge
                         logicalSuspendResult = SupertypeGraph.SubstOwnerTvs(source.Return, args);
                     }
                     else if (!refs.TrySelectedMethodDeclaration(spec.Name, member, arity,
-                            factParams, factRet, args, implementation["typeParams"] as JsonArray,
+                            factParams, factRet, args, SemanticMethodTypeParameters(implementation),
                             out source, propertyAccessor)) continue;
                     sourceParams = source.Parameters.Select(p => SupertypeGraph.SubstOwnerTvs(p, args)).ToArray();
                     declarationSignature = new JsonArray(source.SignatureParameters.Select(TypeJson.Write).ToArray());
@@ -827,7 +827,7 @@ static class KotlinOverrideSlotBridge
 
                 if (refs == null
                     || !refs.TrySelectedMethodDeclaration(spec.Name, implementationMember, methodArity,
-                        factParams, factRet, spec.Args ?? Array.Empty<TypeNode>(), implementationTypeParams,
+                        factParams, factRet, spec.Args ?? Array.Empty<TypeNode>(), SemanticMethodTypeParameters(implementation),
                         out var referencedDeclaration)
                     || referencedDeclaration.Return == null
                     || referencedDeclaration.Parameters == null
