@@ -871,12 +871,6 @@ sealed class Pipeline
         // it. Runs before interface-slot normalization and suspend lowering, in ref and runtime builds alike.
         var localExistentialOwners =
             FBoundStarProjectionErasure.ApplyAll(staged.Select(s => s.Root).ToList(), refs);
-        // Closure/SAM synthesis ran while captures still carried their Kotlin constructed types, and suspend-lambda
-        // state machines will copy those same declarations later. An erased smart cast can now deliver an existential
-        // carrier to generated storage; make each capture declaration/construction/field agree on that exact physical
-        // representation before state-machine materialization and final member binding.
-        ExistentialCaptureAlignment.ApplyAll(
-            staged.Select(s => s.Root).ToList(), localExistentialOwners, refs);
         var existentialReceiverMembers =
             ExistentialReceiverBinding.Collect(staged.Select(s => s.Root));
 
@@ -1485,6 +1479,7 @@ sealed class Pipeline
         // required by the final value-flow graph only now, after every synthetic declaration and exact memberRef is
         // stable. ilemit then emits those ordinary CIR casts without recognizing the collection ABI. A metadata/ref
         // build retains declaration types and only consumes semantic comparisons in executable constructor remnants.
+        var physicalValueTypes = SupertypeGraph.Collect(loweredRoots.Select(file => file.Root));
         PhysicalValueCoercion.ApplyAll(loweredRoots.Select(file => file.Root).ToList(),
             ClrMemberResolution.UnitSingletonRead, isValueFqn, referenceBuild: _options.RefBuild,
             needsDeclaredProjection: (source, target) =>
@@ -1495,16 +1490,20 @@ sealed class Pipeline
                 && carrier.Name == declaredCarrier,
             // The source object's CLR construction can implement I<T> or inherit a native
             // class, but its carrier cannot state that open interface or concrete base.
-            // A value crossing an already-selected foreign slot needs an explicit CLR
-            // projection, including concrete native bases, returns, locals and conditional branches.
+            // A value crossing an already-selected reference slot needs an explicit CLR
+            // projection. Local Kotlin base classes have the same physical boundary as
+            // referenced classes; the carrier interface cannot inherit either class.
             needsNativeProjection: (source, target) =>
                 source is TypeNode.Fqn { Args: null } carrier
                 && (localExistentialOwners.Values.Contains(carrier.Name)
                     || refs.IsExistentialPhysicalOwner(carrier.Name))
                 && target is TypeNode.Fqn targetNative
-                && refs.ResolveNetType(ReferenceMetadataIndex.ReflectedOwnerFqn(targetNative.Name),
+                && !source.Equals(target)
+                && (physicalValueTypes.TryGetValue(targetNative.Name, out var localTarget)
+                    && localTarget.Kind is "class" or "interface" && !isValueFqn(targetNative)
+                    || refs.ResolveNetType(ReferenceMetadataIndex.ReflectedOwnerFqn(targetNative.Name),
                     targetNative.Args?.Length ?? 0) is { IsValueType: false } nativeType
-                && (nativeType.IsInterface || nativeType.IsClass));
+                    && (nativeType.IsInterface || nativeType.IsClass)));
         foreach (var (lowered, _) in loweredRoots) FunctionSignatureIdentity.Complete(lowered);
 
         // Every representation synthesis is now complete. Validate the exact MethodDef table that CIR will describe;

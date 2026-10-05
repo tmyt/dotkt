@@ -31,6 +31,8 @@ static class FBoundStarProjectionErasure
     const string ExactOuterKey = "outer";
     const string DelegationOuterSlotKey = "delegationOuterSlot";
     const string BoundDelegationSignatureKey = "_boundDelegationSignature";
+    const string SelectedInnerSignatureKey = "_selectedInnerSignature";
+    const string SelectedInnerDeclarationKey = "_selectedInnerDeclaration";
     static Dictionary<string, List<JsonObject>> _localMethods = new(StringComparer.Ordinal);
     static Dictionary<JsonObject, TypeNode[]> _localConstructorSignatures = new();
 
@@ -181,6 +183,13 @@ static class FBoundStarProjectionErasure
             owners.Values.Where(owner => owner.Needed).ToDictionary(
                 owner => owner.Name, owner => owner.ErasedName, StringComparer.Ordinal), refs, localClrAliases);
         foreach (var root in rootList) Rewrite(root, owners, defs, refs, localClrAliases: localClrAliases);
+        // Capture alignment can replace an exact lexical receiver with an ordinary
+        // carrier. Bind inner constructions against that final receiver while the
+        // synthesized factories and selected constructor declarations are still here.
+        ExistentialCaptureAlignment.ApplyAll(rootList,
+            owners.Values.Where(owner => owner.Needed).ToDictionary(
+                owner => owner.Name, owner => owner.ErasedName, StringComparer.Ordinal), refs);
+        foreach (var root in rootList) RebindAlignedInnerConstructions(root, owners, defs, refs);
         var normalizedReturns = new NormalizedReturnBindings();
         // Method-local normalization runs after the first post-order binding walk. Revisit consumers once so a
         // projected array read that flowed through a compiler-generated nullable temporary binds its member on the
@@ -432,6 +441,7 @@ static class FBoundStarProjectionErasure
                 {
                     var value = obj[key];
                     if (value == null || key == "name" || key == InnerConstructorFactoryKey
+                        || key == SelectedInnerSignatureKey
                         || key == ExistentialResultProjectionKey
                         || key == ExistentialArrayElementProjectionKey) continue;
                     var childBoundDeclaration = boundDeclaration
@@ -2849,6 +2859,7 @@ static class FBoundStarProjectionErasure
                 {
                     var value = obj[key];
                     if (value == null || key == "name" || key == InnerConstructorFactoryKey
+                        || key == SelectedInnerSignatureKey
                         || key == ExistentialResultProjectionKey
                         || key == ExistentialArrayElementProjectionKey
                         || rewroteRuntimeOperand && key == "e") continue;
@@ -3493,6 +3504,21 @@ static class FBoundStarProjectionErasure
         return field;
     }
 
+    static void RebindAlignedInnerConstructions(JsonNode node,
+        IReadOnlyDictionary<string, Owner> owners, IReadOnlyDictionary<string, JsonObject> defs,
+        ReferenceMetadataIndex refs)
+    {
+        if (node is JsonObject obj)
+        {
+            foreach (var child in obj.Select(pair => pair.Value).ToList())
+                if (child != null) RebindAlignedInnerConstructions(child, owners, defs, refs);
+            BindStarInnerConstruction(obj, owners, defs, refs, null, null);
+        }
+        else if (node is JsonArray array)
+            foreach (var child in array.ToList())
+                if (child != null) RebindAlignedInnerConstructions(child, owners, defs, refs);
+    }
+
     static void BindStarInnerConstruction(JsonObject construction,
         IReadOnlyDictionary<string, Owner> owners, IReadOnlyDictionary<string, JsonObject> defs,
         ReferenceMetadataIndex refs,
@@ -3505,6 +3531,15 @@ static class FBoundStarProjectionErasure
             || (construction["memberSignature"] as JsonArray
                 ?? construction["argTypes"] as JsonArray) is not JsonArray signature || signature.Count == 0
             || TypeJson.Read(signature[0]) is not TypeNode.Fqn selectedOuter) return;
+
+        // Receiver capture alignment can require a factory only after the first
+        // value rewrite. Retain the selected constructor descriptor in its original
+        // declaration/use frame rather than matching a subsequently projected vector.
+        if (construction[SelectedInnerSignatureKey] == null)
+        {
+            construction[SelectedInnerSignatureKey] = signature.DeepClone();
+            construction[SelectedInnerDeclarationKey] = construction["memberSignature"] is JsonArray;
+        }
 
         var suppliedOuter = ExpressionType(arguments[0]);
         var exactOuterValue = arguments[0] is JsonObject outerValue
@@ -3553,9 +3588,8 @@ static class FBoundStarProjectionErasure
             var matches = constructors.Select((ctor, ordinal) => (ctor, ordinal))
                 .Where(candidate => ConstructorDescribesUse(
                     candidate.ctor, innerType.Args ?? Array.Empty<TypeNode>(),
-                    construction["memberSignature"] is JsonArray declarationSignature
-                        ? declarationSignature.Select(TypeJson.Read).ToArray() : authoredSignature,
-                    construction["memberSignature"] is JsonArray))
+                    ((JsonArray)construction[SelectedInnerSignatureKey]).Select(TypeJson.Read).ToArray(),
+                    Bool(construction[SelectedInnerDeclarationKey])))
                 .ToList();
             if (matches.Count != 1)
                 throw new InvalidOperationException(
@@ -4486,6 +4520,8 @@ static class FBoundStarProjectionErasure
                 obj.Remove(ExactOuterKey);
                 obj.Remove(DelegationOuterSlotKey);
                 obj.Remove(BoundDelegationSignatureKey);
+                obj.Remove(SelectedInnerSignatureKey);
+                obj.Remove(SelectedInnerDeclarationKey);
                 foreach (var value in obj.Select(pair => pair.Value).ToList())
                     if (value != null) RemoveTransientMarkers(value);
                 break;

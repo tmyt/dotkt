@@ -4,6 +4,15 @@ import kotlin.coroutines.suspendCoroutine
 class ExistentialOwnerHolder(val owner: ExistentialSlotOwner<String>)
 class ExistentialItemHolder<T>(val item: ExistentialSlotOwner<T>.Item)
 
+open class ExistentialLocalBase(val label: String)
+class ExistentialLocalDerived<T>(val value: T) : ExistentialLocalBase("base")
+fun existentialAcceptLocalBase(value: ExistentialLocalBase): String = value.label
+fun <T> existentialCheckLocalBase(value: T): Boolean {
+    val derived = ExistentialLocalDerived(value)
+    val base: ExistentialLocalBase = derived
+    return existentialAcceptLocalBase(derived) == "base" && base === derived
+}
+
 class ExistentialFieldStorage<T : Any> {
     lateinit var value: T
     @kotlin.clr.ClrField var counter: Int = 0

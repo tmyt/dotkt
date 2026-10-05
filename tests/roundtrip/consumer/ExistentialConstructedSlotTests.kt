@@ -75,6 +75,8 @@ class ExistentialConstructedSlotTests {
     @TestAttribute
     @Suppress("DEPRECATION_ERROR")
     fun constructedConsumersPreserveOwnerFramesAndIdentity() {
+        check(existentialCheckLocalBase("local base"))
+        check(existentialCheckLocalBase(0))
         val storage = ExistentialFieldStorage<Int>()
         var uninitialized = false
         try { storage.value } catch (error: UninitializedPropertyAccessException) { uninitialized = true }

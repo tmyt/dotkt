@@ -68,6 +68,8 @@ static class ExistentialCaptureAlignment
 
             field["type"] = TypeJson.Write(carrier);
             parameter["type"] = TypeJson.Write(carrier);
+            field.Remove("outer");
+            parameter.Remove("outer");
             RetypeFieldUses(closure, closureName, fieldName, carrier);
             foreach (var use in captureUses)
                 RetypeCaptureBoundary(use.Expression, semanticOwner, carrier);
@@ -197,6 +199,7 @@ static class ExistentialCaptureAlignment
                     && logical.Name == semanticOwner)
                 {
                     capture["type"] = TypeJson.Write(carrier);
+                    capture.Remove("outer");
                     if (value is JsonObject expression)
                         RetypeCaptureBoundary(expression, semanticOwner, carrier);
                     declared = carrier;
@@ -266,6 +269,7 @@ static class ExistentialCaptureAlignment
                 && TypeJson.Read(obj["ownerType"]) is TypeNode.Fqn owner && owner.Name == closureName)
             {
                 obj["sty"] = TypeJson.Write(carrier);
+                obj.Remove("outer");
                 if (obj["memberType"] != null) obj["memberType"] = TypeJson.Write(carrier);
             }
             foreach (var value in obj.Select(pair => pair.Value).ToList())
