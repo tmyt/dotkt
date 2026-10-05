@@ -9,6 +9,14 @@ public static class ExistentialOwnerApi
     public static ExistentialSlotOwner<string> Dispatch(ExistentialOwnerOverride instance,
         ExistentialSlotOwner<string> value) => instance.Echo(value);
     public static T Read<T>(ExistentialNativeReader<T> reader) => reader.Read();
+    public static ExistentialNativeBox<ExistentialSlotOwner<string>> MakeNested() => new(new("nested"));
+}
+
+public class ExistentialNativeBase { public int Read() => 23; }
+public class ExistentialNativeBox<T>
+{
+    public T Value;
+    public ExistentialNativeBox(T value) { Value = value; }
 }
 
 public interface ExistentialNativeReader<T> { T Read(); }

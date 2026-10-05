@@ -21,7 +21,7 @@ static class PhysicalValueCoercion
         source is TypeNode.Tv && target is TypeNode.Tv && !source.Equals(target)
         || target is TypeNode.Tv && source is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" }
         || CollectionViewFaces.IsViewSeam(source, target)
-        || index.NeedsInterfaceProjection?.Invoke(source, target) == true
+        || index.NeedsNativeProjection?.Invoke(source, target) == true
         // A concrete value or generic stack slot is not a reference, even when its boxed value implements the
         // target interface. State the boxing edge before a conditional merge, store, argument or return.
         || !IsVoid(source) && !IsVoid(target)
@@ -55,7 +55,7 @@ static class PhysicalValueCoercion
         internal JsonObject Document;
         internal bool ReferenceBuild;
         internal Func<TypeNode, TypeNode, bool> NeedsDeclaredProjection;
-        internal Func<TypeNode, TypeNode, bool> NeedsInterfaceProjection;
+        internal Func<TypeNode, TypeNode, bool> NeedsNativeProjection;
 
         Index(Func<JsonObject> unitValue) => _unitValue = unitValue;
         internal JsonObject UnitValue() => _unitValue();
@@ -162,13 +162,13 @@ static class PhysicalValueCoercion
     public static void ApplyAll(IReadOnlyList<JsonNode> roots, Func<JsonObject> unitValue,
         ValueTypeOracle isValue, bool referenceBuild = false,
         Func<TypeNode, TypeNode, bool> needsDeclaredProjection = null,
-        Func<TypeNode, TypeNode, bool> needsInterfaceProjection = null)
+        Func<TypeNode, TypeNode, bool> needsNativeProjection = null)
     {
         var index = Index.Build(roots, unitValue);
         index.IsValue = isValue;
         index.ReferenceBuild = referenceBuild;
         index.NeedsDeclaredProjection = needsDeclaredProjection;
-        index.NeedsInterfaceProjection = needsInterfaceProjection;
+        index.NeedsNativeProjection = needsNativeProjection;
         foreach (var root in roots.OfType<JsonObject>()) RewriteDocument(root, index);
     }
 

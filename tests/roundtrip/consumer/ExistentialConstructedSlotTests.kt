@@ -4,6 +4,12 @@ import GenericValueInterop.ExistentialOwnerApi
 import GenericValueInterop.ExistentialOwnerStorage
 import GenericValueInterop.ExistentialOwnerOverride
 import GenericValueInterop.ExistentialNativeReader
+import GenericValueInterop.ExistentialNativeBase
+import GenericValueInterop.ExistentialNativeBox
+
+private class ExistentialNativeDerived<T> : ExistentialNativeBase()
+private fun nativeBase(value: ExistentialNativeDerived<String>): ExistentialNativeBase = value
+private fun nestedNative(): ExistentialNativeBox<ExistentialSlotOwner<String>> = ExistentialOwnerApi.MakeNested()
 
 private class ExistentialReader<T>(private val value: T) : ExistentialNativeReader<T> {
     override fun Read(): T = value
@@ -32,6 +38,10 @@ private fun <T> importedNullableExistentialSlot(owner: ExistentialSlotOwner<T>, 
 class ExistentialConstructedSlotTests {
     @TestAttribute
     fun nativeBoundariesRetainExactConstructedSlots() {
+        val derived = ExistentialNativeDerived<String>()
+        check(nativeBase(derived) === derived)
+        check(nativeBase(derived).Read() == 23)
+        check(nestedNative().Value.value == "nested")
         val reader = ExistentialReader("value")
         val native: ExistentialNativeReader<String> = reader
         check(native.Read() == "value")

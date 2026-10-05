@@ -696,8 +696,6 @@ static class FBoundStarProjectionErasure
         return false;
     }
 
-    static bool IsAbiVisible(JsonObject def) => Str(def["vis"]) is null or "public" or "protected" or "internal";
-
     // The physical existential is one non-generic interface for every projection mask. Preserve each declaration's
     // exact Kotlin type (`Pair<*, String>`, `Array<out G<T>>`, a mutable `Array<G<T>>` whose physical element is
     // the declaration's existential carrier, or a declaration-site variant class whose value slot uses that carrier)
@@ -4457,6 +4455,14 @@ static class FBoundStarProjectionErasure
         IReadOnlyDictionary<string, string> localClrAliases = null,
         bool preserveConstructedHead = false)
     {
+        // A native generic construction owns its exact CLR argument identities. Erasing
+        // G<T> inside NativeBox<G<T>> would invent an unrelated invariant construction.
+        // Explicit foreign projections keep their separate existential representation.
+        if (!boundDeclaration && type is TypeNode.Fqn { Args: { Length: > 0 } } native
+            && !native.Args.Any(ContainsExistentialProjection)
+            && !owners.ContainsKey(native.Name) && refs != null && !refs.HasDotKtOwner(native.Name)
+            && refs.ResolveNetType(ReferenceMetadataIndex.ReflectedOwnerFqn(native.Name), native.Args.Length) != null)
+            boundDeclaration = true;
         switch (type)
         {
             case TypeNode.Fqn { Args: { } preservedArgs } preserved when preserveConstructedHead:

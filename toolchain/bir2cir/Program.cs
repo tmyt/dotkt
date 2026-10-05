@@ -1493,17 +1493,18 @@ sealed class Pipeline
                 && (localExistentialOwners.TryGetValue(concrete.Name, out var declaredCarrier)
                     || refs.TryExistentialPhysicalOwner(concrete.Name, out declaredCarrier))
                 && carrier.Name == declaredCarrier,
-            // The source object's CLR construction can implement I<T>, but its non-generic
-            // Kotlin value carrier cannot state an open I<T> InterfaceImpl. A value crossing
-            // an already-selected foreign interface slot therefore needs an explicit CLR
-            // interface projection, including returns, locals and conditional branches.
-            needsInterfaceProjection: (source, target) =>
+            // The source object's CLR construction can implement I<T> or inherit a native
+            // class, but its carrier cannot state that open interface or concrete base.
+            // A value crossing an already-selected foreign slot needs an explicit CLR
+            // projection, including concrete native bases, returns, locals and conditional branches.
+            needsNativeProjection: (source, target) =>
                 source is TypeNode.Fqn { Args: null } carrier
                 && (localExistentialOwners.Values.Contains(carrier.Name)
                     || refs.IsExistentialPhysicalOwner(carrier.Name))
-                && target is TypeNode.Fqn targetInterface
-                && refs.ResolveNetType(ReferenceMetadataIndex.ReflectedOwnerFqn(targetInterface.Name),
-                    targetInterface.Args?.Length ?? 0)?.IsInterface == true);
+                && target is TypeNode.Fqn targetNative
+                && refs.ResolveNetType(ReferenceMetadataIndex.ReflectedOwnerFqn(targetNative.Name),
+                    targetNative.Args?.Length ?? 0) is { IsValueType: false } nativeType
+                && (nativeType.IsInterface || nativeType.IsClass));
         foreach (var (lowered, _) in loweredRoots) FunctionSignatureIdentity.Complete(lowered);
 
         // Every representation synthesis is now complete. Validate the exact MethodDef table that CIR will describe;
