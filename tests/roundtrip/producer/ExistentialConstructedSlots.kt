@@ -10,6 +10,24 @@ class ExistentialGenericInitializer<T>(size: Int) {
     fun read(index: Int): T? = values[index].value
 }
 
+class ExistentialInnerArrayOwner<T> {
+    inner class Node
+    inner class Disposal(private val nodes: Array<Node>) {
+        fun count(): Int = nodes.size
+    }
+    fun countFromClosure(): Int {
+        val action = {
+            val nodes = Array(2) { Node() }
+            Disposal(nodes).count()
+        }
+        return action()
+    }
+    suspend fun countSuspended(): Int = suspendCoroutine { continuation ->
+        val nodes = Array(2) { Node() }
+        continuation.resume(Disposal(nodes).count())
+    }
+}
+
 class ExistentialSlotOwner<T>(val value: T) {
     inner class Item(val count: Int)
     private var stored: Item? = null

@@ -63,6 +63,7 @@ class ExistentialConstructedSlotTests {
         val initialized = ExistentialGenericInitializer<String>(3)
         check(initialized.count() == 3)
         check(initialized.read(1) == null)
+        check(ExistentialInnerArrayOwner<String>().countFromClosure() == 2)
         val strings = ExistentialSlotOwner("owner")
         val integers = ExistentialSlotOwner(19)
         val stringItem = strings.Item(11)
@@ -109,6 +110,7 @@ class ExistentialConstructedSlotTests {
         val integers = ExistentialSlotOwner(19)
         var completed = 0
         val action: suspend () -> Unit = {
+            check(ExistentialInnerArrayOwner<String>().countSuspended() == 2)
             check(strings.suspended(strings.Item(11)) == 11)
             check(integers.suspended(integers.Item(23)) == 23)
         }

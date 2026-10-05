@@ -11,9 +11,10 @@ using DotKt.Bir;
 // and allowing a `G<X>` value to flow through a `G<*>` slot without a fictitious variance conversion. The same view
 // is used for Kotlin's erased generic `is`/`as` checks (`x is G<T>`): JVM semantics test only the raw classifier.
 //
-// BIR faithfully carries `{t:"star"}`. This pass synthesizes the CLR-facing interface, attaches it to the generic
-// declaration, and rewrites only explicit star positions and erased runtime classifier tests/casts. Reference and
-// runtime builds both run it, so downstream compilations recognize the view from trusted DotKt metadata. BIR from an
+// BIR faithfully carries Kotlin type arguments. This pass synthesizes the CLR-facing interface, attaches it to the
+// generic declaration, and projects ordinary Kotlin value slots and erased runtime classifier tests/casts onto it.
+// Allocations and exact CLR declaration boundaries retain their constructions. Reference and runtime builds both
+// run it, so downstream compilations recognize the view from trusted DotKt metadata. BIR from an
 // older toolchain is unsupported: `G<Any>` is always the concrete Kotlin type and is never guessed back into `G<*>`.
 static class FBoundStarProjectionErasure
 {
@@ -30,6 +31,7 @@ static class FBoundStarProjectionErasure
     const string ExactOuterKey = "outer";
     const string DelegationOuterSlotKey = "delegationOuterSlot";
     static Dictionary<string, List<JsonObject>> _localMethods = new(StringComparer.Ordinal);
+    static Dictionary<JsonObject, TypeNode[]> _localConstructorSignatures = new();
 
     sealed class Owner
     {
@@ -53,6 +55,14 @@ static class FBoundStarProjectionErasure
         var defs = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
         foreach (var root in rootList) Collect(root, root, owners, defs);
         foreach (var root in rootList) NormalizeRedundantProjections(root, defs, refs);
+        // Constructor selection uses the declaration frame at this phase, before value
+        // projection mutates parameter slots. KotlinType metadata intentionally has a
+        // different source nesting/argument vocabulary and is not this linkage descriptor.
+        _localConstructorSignatures = defs.Values
+            .SelectMany(def => (def["ctors"] as JsonArray)?.OfType<JsonObject>() ?? Enumerable.Empty<JsonObject>())
+            .ToDictionary(ctor => ctor, ctor => (ctor["params"] as JsonArray)?.OfType<JsonObject>()
+                .Select(parameter => TypeJson.Read(parameter[FunctionSignatureIdentity.Key] ?? parameter["type"]))
+                .ToArray() ?? Array.Empty<TypeNode>());
         var localClrAliases = CollectLocalClrAliases(defs);
         var aliases = new Dictionary<string, string>(refs.Aliases, StringComparer.Ordinal);
         foreach (var alias in localClrAliases) aliases[alias.Key] = alias.Value;
@@ -3702,8 +3712,8 @@ static class FBoundStarProjectionErasure
     static bool ConstructorDescribesUse(JsonObject constructor, IReadOnlyList<TypeNode> innerArguments,
         IReadOnlyList<TypeNode> authoredSignature, bool declarationRelative)
     {
-        var parameters = (constructor["params"] as JsonArray)?.OfType<JsonObject>()
-            .Select(parameter => TypeJson.Read(parameter[FunctionSignatureIdentity.Key] ?? parameter["type"])).ToArray() ?? Array.Empty<TypeNode>();
+        if (!_localConstructorSignatures.TryGetValue(constructor, out var parameters))
+            throw new InvalidOperationException("Local inner constructor has no captured declaration signature");
         if (parameters.Length != authoredSignature.Count) return false;
         // Slot zero is the hidden outer value. A Kotlin-selected inherited inner constructor legitimately supplies a
         // derived receiver there; the declaration reachability check above proves that relation. Constructor overload
