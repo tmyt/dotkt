@@ -11,6 +11,8 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 STACK = "StackBufferTests::stackAllocationAndSpanInterop()"
 BYREF = "ByRefParameterTests::byrefOfAStackSlotEvaluatesItsIndexOnce()"
+SPAN_INPUT = "NominalFunctionDelegateTests::dotkt:lambda:17([S.P.CoreLib]System.Span`1<int32>)"
+SPAN_HEAP = "NominalFunctionDelegateTests+dotkt$NominalFunctionDelegateTestsKt$Closure102::invoke()"
 
 
 class HarnessTests(unittest.TestCase):
@@ -106,7 +108,30 @@ class HarnessTests(unittest.TestCase):
         self.run_probe(self.complete([self.finding(), self.finding()]), 2, 0)
 
     def test_baseline_audit(self):
-        self.run_probe(self.complete([self.finding(), self.finding(BYREF)]), 2, 0, "--audit-baseline")
+        self.dll = self.work / "InteropConsumer.Tests.dll"
+        self.dll.touch()
+        self.run_probe(self.complete([self.finding(), self.finding(BYREF),
+                                      self.finding(SPAN_INPUT, "ReturnPtrToStack"),
+                                      self.finding(SPAN_HEAP, "ReturnPtrToStack")]), 2, 0, "--audit-baseline")
+
+    def test_exact_span_verifier_limits(self):
+        self.dll = self.work / "InteropConsumer.Tests.dll"
+        self.dll.touch()
+        for method in (SPAN_INPUT, SPAN_HEAP):
+            with self.subTest(method=method):
+                out = self.run_probe(self.complete([self.finding(method, "ReturnPtrToStack")]), 2, 0)
+                self.assertIn("SPAN-VERIFIER-LIMIT", out)
+                self.run_probe(self.complete([self.finding(method, "StackUnexpected")]), 2, 1)
+                self.run_probe(self.complete([self.finding("Other" + method, "ReturnPtrToStack")]), 2, 1)
+                self.run_probe(self.complete([f"[MD]: Error: Error [ReturnPtrToStack] {method}"]), 2, 1)
+
+    def test_span_limit_does_not_apply_to_another_assembly(self):
+        self.run_probe(self.complete([self.finding(SPAN_INPUT, "ReturnPtrToStack")]), 2, 1)
+
+    def test_span_limit_does_not_hide_incomplete_verification(self):
+        self.dll = self.work / "InteropConsumer.Tests.dll"
+        self.dll.touch()
+        self.run_probe(self.finding(SPAN_INPUT, "ReturnPtrToStack"), 2, 1)
 
     def test_stale_baseline(self):
         # A per-assembly VERIFY may precede the final dead-key audit failure.
