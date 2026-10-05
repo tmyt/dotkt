@@ -184,8 +184,13 @@ static class StringCharSequenceBridge
     {
         switch (Str(node["k"]))
         {
-            case "callStatic":
             case "callInstance":
+                // The selected instance owner is an input slot just like a positional parameter.
+                // Inline expansion can leave a String receiver on a CharSequence-owned invocation.
+                if (IsCharSeqT(TypeJson.Read(node["ownerType"])) && node["recv"] is JsonNode receiver)
+                    node["recv"] = CoerceCharSeqArg(receiver, env, nonNullSlot: true);
+                goto case "callStatic";
+            case "callStatic":
                 WrapCallArgs(node, env);
                 return node;
             case "delegateInvoke":

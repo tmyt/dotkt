@@ -60,6 +60,11 @@ class StrSeqS(val s: String) : CharSequence {
 }
 fun strSeqShow(cs: CharSequence): Int = cs.length     // CharSequence-typed param (polymorphic)
 
+private inline fun CharSequence.strFirstMatched(predicate: (Char) -> Boolean): Int {
+    for (i in indices) if (predicate(this[i])) return i
+    return -1
+}
+
 // ---- il-charseqx : user class : CharSequence into a stdlib CharSequence-ext -----------------------------------
 class StrExtS(val s: String) : CharSequence {
     override val length: Int get() = s.length
@@ -187,6 +192,18 @@ class StringsTests {
         assertEquals(3, sub.length)                   // 3
         assertEquals('e', sub[0])                     // e
         assertEquals(5, strSeqShow(c))                // 5  (passed as CharSequence)
+    }
+
+    @TestAttribute
+    fun inlineCharSequenceReceiver() {
+        val text = "  x"
+        assertEquals(2, text.strFirstMatched { it == 'x' })
+        assertEquals(-1, text.strFirstMatched { it == 'y' })
+        assertEquals(0, StrSeqS("x").strFirstMatched { it == 'x' })
+        var evaluations = 0
+        fun receiver(): String { evaluations++; return text }
+        assertEquals(2, receiver().strFirstMatched { it == 'x' })
+        assertEquals(1, evaluations)
     }
 
     @TestAttribute
