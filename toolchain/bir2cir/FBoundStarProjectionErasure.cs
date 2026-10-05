@@ -588,10 +588,23 @@ static class FBoundStarProjectionErasure
     static bool IsInnerConstructionOuterSlot(JsonObject node, int index,
         IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs)
     {
-        if (index != 0 || Str(node["k"]) != "new"
+        if (Str(node["k"]) != "new"
             || TypeJson.Read(node["type"]) is not TypeNode.Fqn constructed) return false;
-        return defs.TryGetValue(constructed.Name, out var local) && IsInner(local)
-            || refs.TryInnerSemanticOwner(constructed.Name, out _);
+        if (defs.TryGetValue(constructed.Name, out var local))
+        {
+            // Anonymous classes also carry explicit outer parameters, without being
+            // Kotlin inner classes. Preserve the declared role when every candidate
+            // of this arity agrees; this does not choose an overload from argument values.
+            var arity = (node["args"] as JsonArray)?.Count;
+            var candidates = (local["ctors"] as JsonArray)?.OfType<JsonObject>()
+                .Select(ctor => ctor["params"] as JsonArray)
+                .Where(parameters => parameters != null && parameters.Count == arity).ToArray();
+            if (candidates is { Length: > 0 } && index >= 0
+                && candidates.All(parameters => index < parameters.Count
+                    && parameters[index] is JsonObject parameter && Bool(parameter["outer"]))) return true;
+            return index == 0 && IsInner(local);
+        }
+        return index == 0 && refs.TryInnerSemanticOwner(constructed.Name, out _);
     }
 
     // The physical name is intentionally not an ABI oracle: trusted [KotlinType] metadata carries the relation.

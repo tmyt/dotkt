@@ -4,6 +4,13 @@ import kotlin.coroutines.suspendCoroutine
 class ExistentialOwnerHolder(val owner: ExistentialSlotOwner<String>)
 class ExistentialItemHolder<T>(val item: ExistentialSlotOwner<T>.Item)
 
+interface ExistentialOuterReader { fun read(): String }
+class ExistentialAnonymousOwner<T>(private val value: T) {
+    fun reader(): ExistentialOuterReader = object : ExistentialOuterReader {
+        override fun read(): String = value.toString()
+    }
+}
+
 fun interface ExistentialImportedNestedReceiver<T> { fun accept(value: T): Int }
 fun <T> existentialImportedNestedReceiver(expected: T): ExistentialImportedNestedReceiver<ExistentialSlotOwner<T>> =
     ExistentialImportedNestedReceiver { check(it.value == expected); 23 }

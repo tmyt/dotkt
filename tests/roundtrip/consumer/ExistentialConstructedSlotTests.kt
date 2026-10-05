@@ -97,6 +97,8 @@ class ExistentialConstructedSlotTests {
     @TestAttribute
     @Suppress("DEPRECATION_ERROR")
     fun constructedConsumersPreserveOwnerFramesAndIdentity() {
+        check(ExistentialAnonymousOwner("anonymous outer").reader().read() == "anonymous outer")
+        check(ExistentialAnonymousOwner(23).reader().read() == "23")
         check(existentialCheckLocalBase("local base"))
         check(existentialCheckLocalBase(0))
         val storage = ExistentialFieldStorage<Int>()
