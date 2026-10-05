@@ -1571,7 +1571,7 @@ sealed partial class ReferenceMetadataIndex
         runtimeName = openDeclaration.Name;
         runtimeParameterKeys = openDeclaration.GetParameters()
             .Select(parameter => ForeignStarRuntimeTypeKey(parameter.ParameterType)).ToArray();
-        declarationReturn = DeclarationTypeNode(selected.ReturnType);
+        declarationReturn = DeclarationTypeNode(selected.ReturnType, nominalDelegates: true);
         // `selected` belongs to MetadataLoadContext. Its System.Void Type is not reference/equality-compatible
         // with the runtime's typeof(void), even though both have the same CLR identity; compare metadata names.
         returnsVoid = selected.ReturnType.FullName == "System.Void";
@@ -1720,7 +1720,7 @@ sealed partial class ReferenceMetadataIndex
         if (declaring.IsConstructedGenericType) declaring = declaring.GetGenericTypeDefinition();
         openDeclaringType = ExactPhysicalMetadataName(declaring);
         metadataToken = selected.MetadataToken;
-        declarationType = DeclarationTypeNode(selected.FieldType);
+        declarationType = DeclarationTypeNode(selected.FieldType, nominalDelegates: true);
         return declarationType != null;
     }
 
@@ -7200,15 +7200,17 @@ sealed partial class ReferenceMetadataIndex
     // Declaration-signature projection used only by bir2cir's reference hierarchy/member index.
     // Unlike TypeNodeOf (a best-effort static-result helper), generic parameters are meaningful
     // here and must retain their CLR owner space and position.
-    static TypeNode DeclarationTypeNode(Type type)
+    static TypeNode DeclarationTypeNode(Type type) => DeclarationTypeNode(type, nominalDelegates: false);
+
+    static TypeNode DeclarationTypeNode(Type type, bool nominalDelegates)
     {
         if (type == null) return null;
-        if (type.IsByRef) return DeclarationTypeNode(type.GetElementType()!) is TypeNode e0 ? new TypeNode.ByRef(e0) : null;
+        if (type.IsByRef) return DeclarationTypeNode(type.GetElementType()!, nominalDelegates) is TypeNode e0 ? new TypeNode.ByRef(e0) : null;
         if (type.IsPointer)
-            return DeclarationTypeNode(type.GetElementType()!) is TypeNode ep ? new TypeNode.Ptr(ep) : null;
+            return DeclarationTypeNode(type.GetElementType()!, nominalDelegates) is TypeNode ep ? new TypeNode.Ptr(ep) : null;
         if (type.IsArray)
         {
-            if (DeclarationTypeNode(type.GetElementType()!) is not TypeNode e1) return null;
+            if (DeclarationTypeNode(type.GetElementType()!, nominalDelegates) is not TypeNode e1) return null;
             return type.IsSZArray ? new TypeNode.Array(e1) : TypeNode.Array.General(e1, type.GetArrayRank());
         }
         if (type.IsGenericParameter)
@@ -7216,7 +7218,7 @@ sealed partial class ReferenceMetadataIndex
         // Kotlin function types remain `{t:fn}` in CIR, with the exact physical delegate family retained.
         // Unknown/custom CLR delegates stay nominal FQNs below; shape-projecting them would lose their identity.
         var delegateFamily = DelegateFamily(type);
-        if (delegateFamily != null)
+        if (delegateFamily != null && !nominalDelegates)
         {
             var invoke = type.GetMethod("Invoke");
             if (invoke == null) return null;
@@ -7227,7 +7229,7 @@ sealed partial class ReferenceMetadataIndex
         if (type.IsConstructedGenericType)
         {
             var def = type.GetGenericTypeDefinition();
-            var args = type.GetGenericArguments().Select(DeclarationTypeNode).ToArray();
+            var args = type.GetGenericArguments().Select(argument => DeclarationTypeNode(argument, nominalDelegates)).ToArray();
             if (IsNullableDefinition(def)) return new TypeNode.Nullable(args[0]);
             return new TypeNode.Fqn(DottedFqn(StripGenericArity(def.FullName ?? def.Name)), args);
         }

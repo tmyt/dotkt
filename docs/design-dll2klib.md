@@ -348,6 +348,12 @@ example, an imported `Func<int, int>` slot is `System.Func2<Int, Int>`, not
 `(Int) -> Int`. Lambdas and stored Kotlin functions cross this boundary through
 SAM conversion; overrides name the nominal delegate type.
 
+When overloads accept different delegate interfaces, an explicit SAM constructor
+selects the intended overload, for example `Task.Run(Action { work() })`.
+A delegate instance is not itself a Kotlin function value: use its bound
+`::invoke` reference when adapting it to another delegate type, for example
+`ThreadStart(action::invoke)`. The bound receiver is evaluated once.
+
 The batch coordinator builds a compact delegate catalog from the complete
 reference set. A conversion consults the defining assembly metadata only when a
 referenced delegate requires it. Cross-assembly delegate definitions therefore
