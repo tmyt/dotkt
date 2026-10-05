@@ -426,6 +426,7 @@ static class FBoundStarProjectionErasure
         switch (node)
         {
             case JsonObject obj:
+                RewriteKotlinAliasOwner(obj, owners, refs, localClrAliases);
                 BindSelectedConstructorSignature(obj, refs);
                 foreach (var key in obj.Select(kv => kv.Key).ToList())
                 {
@@ -2722,6 +2723,7 @@ static class FBoundStarProjectionErasure
         switch (node)
         {
             case JsonObject obj:
+                RewriteKotlinAliasOwner(obj, owners, refs, localClrAliases);
                 BindSelectedConstructorSignature(obj, refs);
                 var projectedArrayRead = Bool(obj[ProjectedArrayReadKey]);
                 if (ExpressionType(obj) is TypeNode.Array expressionArray
@@ -4603,6 +4605,17 @@ static class FBoundStarProjectionErasure
     static void AddAncestor(JsonNode slot, List<Owner> target, IReadOnlyDictionary<string, Owner> owners)
     {
         if (TypeJson.Read(slot) is TypeNode.Fqn f && owners.TryGetValue(f.Name, out var owner)) target.Add(owner);
+    }
+
+    static void RewriteKotlinAliasOwner(JsonObject node, IReadOnlyDictionary<string, Owner> owners,
+        ReferenceMetadataIndex refs, IReadOnlyDictionary<string, string> localClrAliases)
+    {
+        if (!Bool(node[MemberCallSubstitution.KotlinAliasOwnerKey])) return;
+        node.Remove(MemberCallSubstitution.KotlinAliasOwnerKey);
+        if (TypeJson.Read(node["type"]) is TypeNode.Fqn { Args: { } arguments } owner)
+            node["type"] = TypeJson.Write(new TypeNode.Fqn(owner.Name,
+                arguments.Select(argument => RewriteType(argument, owners, refs,
+                    localClrAliases: localClrAliases)).ToArray()));
     }
 
     static TypeNode RewriteType(TypeNode type, IReadOnlyDictionary<string, Owner> owners,

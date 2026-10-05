@@ -382,8 +382,16 @@ static class MemberCallSubstitution
             "field" => TransformStorageField(node) ?? node,
             _ => node,
         };
+        // A substituted Kotlin alias still owns the representation of its generic
+        // arguments. Keep that fact distinct from a genuinely foreign CLR owner.
+        var sourceOwner = TypeJson.OwnerName(node["ownerType"] ?? node["type"]);
+        if (result is JsonObject bound && ClrBoundNode.IsAny(Str(bound["k"]))
+            && sourceOwner != null && refs.TryResolveClrOwner(sourceOwner, out _, out _))
+            bound[KotlinAliasOwnerKey] = true;
         return result;
     }
+
+    internal const string KotlinAliasOwnerKey = "_kotlinAliasOwner";
 
     // A companion INSTANCE load on a CLR-bound owner (`String.Companion` as a value — e.g. the receiver arg of a
     // companion-extension call like `String.format(...)`): the pure-Kotlin type the ref build emits carries the

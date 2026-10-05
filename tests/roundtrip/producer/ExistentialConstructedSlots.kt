@@ -40,6 +40,12 @@ fun <T> existentialDisposeNodes(
     nodes: Array<ExistentialInnerArrayOwner<T>.Node>,
 ): Int = owner.Disposal(nodes).count()
 
+fun <T> existentialOwnerList(value: T): List<ExistentialSlotOwner<T>> {
+    val values = ArrayList<ExistentialSlotOwner<T>>()
+    values.add(ExistentialSlotOwner(value))
+    return values
+}
+
 class ExistentialSlotOwner<T>(val value: T) {
     inner class Item(val count: Int)
     private var stored: Item? = null
