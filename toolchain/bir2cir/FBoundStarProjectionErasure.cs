@@ -4682,10 +4682,17 @@ static class FBoundStarProjectionErasure
                 // value arguments (for example a collection's element carrier).
                 var aliasArguments = refs != null && refs.TryResolveClrOwner(preserved.Name, out _, out _)
                     || localClrAliases?.ContainsKey(preserved.Name) == true;
+                // A Kotlin interface denotes its implemented declaration edge, not an
+                // allocated class. Its arguments must use the same value projection as
+                // that edge even when the interface is itself a construction argument.
+                var interfaceArguments = owners.TryGetValue(preserved.Name, out var interfaceOwner)
+                    ? Str(interfaceOwner.Def["kind"]) == "interface"
+                    : refs != null && refs.HasDotKtOwner(preserved.Name)
+                        && refs.IsInterfaceType(preserved);
                 return new TypeNode.Fqn(preserved.Name, preservedArgs.Select(argument => RewriteType(
                     argument, owners, refs, boundDeclaration, localClrAliases,
-                    preserveConstructedHead: preserveConstructionArguments && !aliasArguments,
-                    preserveConstructionArguments: preserveConstructionArguments && !aliasArguments)).ToArray());
+                    preserveConstructedHead: preserveConstructionArguments && !aliasArguments && !interfaceArguments,
+                    preserveConstructionArguments: preserveConstructionArguments && !aliasArguments && !interfaceArguments)).ToArray());
             case TypeNode.Fqn preserved when preserveConstructedHead:
                 return preserved;
             case TypeNode.Fqn { Args: { Length: > 0 } } nominal when !boundDeclaration

@@ -4,6 +4,10 @@ import kotlin.coroutines.suspendCoroutine
 class ExistentialOwnerHolder(val owner: ExistentialSlotOwner<String>)
 class ExistentialItemHolder<T>(val item: ExistentialSlotOwner<T>.Item)
 
+fun interface ExistentialImportedNestedReceiver<T> { fun accept(value: T): Int }
+fun <T> existentialImportedNestedReceiver(expected: T): ExistentialImportedNestedReceiver<ExistentialSlotOwner<T>> =
+    ExistentialImportedNestedReceiver { check(it.value == expected); 23 }
+
 open class ExistentialLocalBase(val label: String)
 class ExistentialLocalDerived<T>(val value: T) : ExistentialLocalBase("base")
 fun existentialAcceptLocalBase(value: ExistentialLocalBase): String = value.label
