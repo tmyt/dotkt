@@ -7,6 +7,7 @@ import kotlin.coroutines.startCoroutine
 
 private fun <U, T : U> localCompanionWiden(value: T): U = value
 private fun <T> localCompanionNullable(value: T): T? = localCompanionWiden<T?, T>(value)
+private class ImportedDefaultCompanionSink : DefaultCompanionSink
 private class CompanionCompletion<T> : Continuation<T> {
     var completed = false
     var value: T? = null
@@ -24,6 +25,20 @@ private fun <T> runCompanion(block: suspend () -> T): T {
 }
 
 class NullableCompanionBoundTests {
+    @TestAttribute
+    fun inheritedImplementationsCompareSourceBounds() {
+        val values = listOf<Int?>(1, null)
+        val local: CompanionSink = LocalCompanionSink()
+        check(local.count(values) == 2)
+        val bounded = listOf<CompanionName?>(CompanionName("bound"), null)
+        val localBounded: BoundedCompanionSink = LocalBoundedCompanionSink()
+        check(localBounded.count(bounded) == 2)
+        val localDefault: DefaultCompanionSink = LocalDefaultCompanionSink()
+        val importedDefault: DefaultCompanionSink = ImportedDefaultCompanionSink()
+        check(localDefault.count(values) == 2)
+        check(importedDefault.count(values) == 2)
+    }
+
     @TestAttribute
     fun localAndImportedMethodsRetainNullableWidening() {
         check(localCompanionNullable(17) == 17)

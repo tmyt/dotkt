@@ -181,6 +181,7 @@ static class NullableRepresentationMaterialization
                     PreserveSlot(method.Declaration, "ret", "nullableGenericRet", methodMapping);
                     if (method.ImplementationKey != null)
                     {
+                        PreserveCompanionSourceBounds(method.Implementation, methodFrame, owner: false);
                         var inheritedMapping = Mapping(frame, methodFrame);
                         foreach (var key in new[] { "params", "ret" })
                         {

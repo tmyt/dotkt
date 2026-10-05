@@ -52,3 +52,16 @@ fun resumeCompanion() {
     pendingCompanion = null
     continuation.resume(Unit)
 }
+
+interface CompanionSink { fun <T> count(values: List<T?>): Int }
+open class CompanionSinkBase { fun <T> count(values: List<T?>): Int = values.size }
+class LocalCompanionSink : CompanionSinkBase(), CompanionSink
+
+interface BoundedCompanionSink { fun <T : CompanionNamed> count(values: List<T?>): Int }
+open class BoundedCompanionSinkBase {
+    fun <T : CompanionNamed> count(values: List<T?>): Int = values.size
+}
+class LocalBoundedCompanionSink : BoundedCompanionSinkBase(), BoundedCompanionSink
+
+interface DefaultCompanionSink { fun <T> count(values: List<T?>): Int = values.size }
+class LocalDefaultCompanionSink : DefaultCompanionSink
