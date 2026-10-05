@@ -268,7 +268,10 @@ if len(factory_calls) != 1:
     raise SystemExit(f"inner construction through a variant value slot did not use its existential factory: {factory_calls!r}")
 
 generated_collision = method("userNamedGeneratedLexicalVariance")
-closures = [node for node in objects(generated_collision.get("body", [])) if node.get("k") == "newClosure"]
+# Inspect the source lambda, not its outer Unit-to-object delegate adapter.
+closures = [node for node in objects(generated_collision.get("body", []))
+            if node.get("k") == "newClosure"
+            and node.get("funcType", {}).get("clr") == "System.Action"]
 if len(closures) != 1:
     raise SystemExit(f"generated lexical-name collision fixture produced {len(closures)} closures")
 collision_closure = type_def(closures[0].get("closureType", {}).get("name"))
