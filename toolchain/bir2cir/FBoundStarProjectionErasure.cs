@@ -2369,9 +2369,11 @@ static class FBoundStarProjectionErasure
 
     static string ExistentialSlotIdentity(JsonObject declaration, string semanticCarrierOwner) =>
         Str(declaration[DeclarationIdentityBinding.Key]) is string declarationId
-            ? DeclarationIdentityBinding.PhysicalOnlyId(
-                declarationId, "existential-slot:" + semanticCarrierOwner)
+            ? ExistentialSlotIdentity(declarationId, semanticCarrierOwner)
             : null;
+
+    internal static string ExistentialSlotIdentity(string declarationId, string semanticCarrierOwner) =>
+        DeclarationIdentityBinding.PhysicalOnlyId(declarationId, "existential-slot:" + semanticCarrierOwner);
 
     // This pass runs after declaration-side erasure has recorded semantic return facts but before suspend lowering.
     // A synthesized existential slot/bridge is a declaration in its own right, so it must carry the same facts in
