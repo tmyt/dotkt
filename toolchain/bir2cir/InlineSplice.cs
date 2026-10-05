@@ -39,6 +39,8 @@ static class InlineSplice
     static JsonNode _fileClassOwner;            // owner of any carried delegate target re-hoisted into this file
     static HashSet<string> _appLocalMethods;   // #43/#63: file-class method names a `newDelegate` can `ldftn` — MODULE-WIDE (every input file's file-class methods, seeded from Program.cs) + every drained re-hoist (a PENDING re-hoist is checked live via `_hoist`). Provenance oracle for the §4.4ii materialization-side newDelegate guard, the materialization-side counterpart of the §4.6 `!sameModule` payload-side guard in RewriteGeneric.
     static IReadOnlyDictionary<string, DispatchDef> _dispatchDefs;
+    static JsonArray _lexicalOwnerParameters;
+    static JsonArray _lexicalMethodParameters;
 
     public sealed class DispatchDef
     {
@@ -65,6 +67,8 @@ static class InlineSplice
         _refs = refs;
         _dispatchDefs = dispatchDefs;
         _companionExtensions = companionExtensions;
+        _lexicalOwnerParameters = null;
+        _lexicalMethodParameters = null;
         _fileClassOwner = root is JsonObject ro && Str(ro["fileClass"]) is string fc ? TypeJson.Fqn(fc) : null;
         _nextLabelId = MaxLabelId(root) + 1;
         _hoist = new JsonArray();
@@ -91,7 +95,7 @@ static class InlineSplice
             while (_hoist.Count > 0)
             {
                 var h = _hoist[0]; _hoist.RemoveAt(0);
-                Walk(h, 0);
+                WalkInFrame(h, 0, null, null, h["typeParams"] as JsonArray);
                 if (h is JsonObject ho && Str(ho["name"]) is string hn) _appLocalMethods.Add(hn);   // #43: a drained re-hoist is now `ldftn`-resolvable app-local
                 methods.Add(h);
             }
@@ -162,6 +166,16 @@ static class InlineSplice
         }
     }
 
+    static void WalkInFrame(JsonNode node, int depth, string context, JsonArray owner, JsonArray method)
+    {
+        var previousOwner = _lexicalOwnerParameters;
+        var previousMethod = _lexicalMethodParameters;
+        _lexicalOwnerParameters = owner;
+        _lexicalMethodParameters = method;
+        try { Walk(node, depth, context); }
+        finally { _lexicalOwnerParameters = previousOwner; _lexicalMethodParameters = previousMethod; }
+    }
+
     static void Walk(JsonNode node, int depth, string context = null)
     {
         if (node is JsonObject o)
@@ -169,7 +183,25 @@ static class InlineSplice
             var here = DefaultArgSplice.DeclarationContext(o, context);
             // Defaults entered representation selection before inline bodies were stashed. Expanding an
             // inline body consumes that prepared graph, never source defaults in a physical caller frame.
-            foreach (var kv in o) if (kv.Value != null) Walk(kv.Value, depth, here);
+            foreach (var kv in o)
+            {
+                if (kv.Value == null) continue;
+                if (kv.Key is "methods" or "ctors" && kv.Value is JsonArray declarations)
+                    foreach (var declaration in declarations.OfType<JsonObject>())
+                        WalkInFrame(declaration, depth, here, o["typeParams"] as JsonArray,
+                            declaration["typeParams"] as JsonArray);
+                else if (kv.Key == "decl" && Str(o["k"]) == "localFun" && kv.Value is JsonObject local)
+                    WalkInFrame(local, depth, here, _lexicalOwnerParameters, local["typeParams"] as JsonArray);
+                else if (kv.Key == "synthClass" && kv.Value is JsonObject synthetic
+                    && ClosureSynthesis.HasPreboundFrame(synthetic))
+                    WalkInFrame(synthetic, depth, here, synthetic["typeParams"] as JsonArray, null);
+                else if (Str(o["k"]) == "newSuspendLambda" && Str(o["typeFrame"]) == "dense"
+                    && (SuspendLambdaOwnFrame.Contains(kv.Key) || kv.Key == "captures"))
+                    WalkInFrame(kv.Value, depth, here, null, o["typeParamDecls"] as JsonArray);
+                else if (o["methods"] is JsonArray && (o["kind"] != null || o["fileClass"] != null))
+                    WalkInFrame(kv.Value, depth, here, o["typeParams"] as JsonArray, null);
+                else Walk(kv.Value, depth, here);
+            }
             Rewrite(o, depth, here);
         }
         else if (node is JsonArray a)
@@ -1385,8 +1417,7 @@ static class InlineSplice
         var keys = new SortedSet<(string scope, int i)>();
         CollectTvKeys(invBody, keys); CollectTvKeys(invParams, keys); CollectTvKeys(invRet, keys);
         CollectTvKeys(ft, keys); CollectTvKeys(fields, keys);
-        var captureConstraints = SharedCaptureConstraints(carrier);
-        foreach (var bounds in captureConstraints.Values) CollectTvKeys(bounds, keys);
+        var captureConstraints = CapturedConstraints(carrier, keys);
         var remap = new Dictionary<(string, int), int>();
         var typeArgs = new JsonArray();
         var typeParams = new JsonArray();
@@ -1664,8 +1695,7 @@ static class InlineSplice
         var invSuspendRet = ft["ret"]?.DeepClone() ?? TypeJson.Fqn("kotlin.Unit");
         var keys = new SortedSet<(string scope, int i)>();
         CollectTvKeys(invBody, keys); CollectTvKeys(invParams, keys); CollectTvKeys(invSuspendRet, keys); CollectTvKeys(captures, keys);
-        var captureConstraints = SharedCaptureConstraints(carrier);
-        foreach (var bounds in captureConstraints.Values) CollectTvKeys(bounds, keys);
+        var captureConstraints = CapturedConstraints(carrier, keys);
         var remap = new Dictionary<(string, int), int>();
         var ctorTypeArgs = new JsonArray();
         var typeParams = new JsonArray();
@@ -1973,6 +2003,30 @@ static class InlineSplice
     // renumbering so adding another descriptor cannot make those three walks disagree.
     // The frontend-authored cell declaration's bounds use the cell's own frame. Instantiate those facts into
     // the carrier's lexical frame before building its new generic declaration; never infer them from names.
+    static Dictionary<(string scope, int i), JsonArray> CapturedConstraints(
+        JsonObject carrier, SortedSet<(string scope, int i)> keys)
+    {
+        var result = SharedCaptureConstraints(carrier);
+        foreach (var bounds in result.Values) CollectTvKeys(bounds, keys);
+        var visited = new HashSet<(string scope, int i)>();
+        while (keys.Any(key => !visited.Contains(key)))
+            foreach (var key in keys.Where(key => !visited.Contains(key)).ToArray())
+            {
+                visited.Add(key);
+                var parameters = key.scope == "type" ? _lexicalOwnerParameters : _lexicalMethodParameters;
+                if (parameters == null || key.i < 0 || key.i >= parameters.Count
+                    || parameters[key.i] is not JsonObject declaration
+                    || declaration["constraints"] is not JsonArray bounds) continue;
+                if (!result.TryGetValue(key, out var retained)) result[key] = retained = new JsonArray();
+                foreach (var bound in bounds)
+                    if (!retained.Any(existing => JsonNode.DeepEquals(existing, bound))) retained.Add(bound.DeepClone());
+                // Bounds can name additional lexical variables. Capture their declarations transitively,
+                // then renumber the complete frame together with the generated class/body below.
+                CollectTvKeys(bounds, keys);
+            }
+        return result;
+    }
+
     static Dictionary<(string scope, int i), JsonArray> SharedCaptureConstraints(JsonObject carrier)
     {
         var result = new Dictionary<(string scope, int i), JsonArray>();
