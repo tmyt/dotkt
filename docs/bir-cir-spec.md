@@ -60,6 +60,8 @@ Notes:
 - **The three CIR-only ECMA signature carriers** (`ptr`, `mod`, `array.rank`) allow CIR to spell physical shapes
   that kotc does not own. A §2.2.2 `memberRef` must describe any signature the *target metadata* can declare;
   `ptr` additionally represents ordinary values whose BIR type is the semantic `kotlin.clr.ClrPointer<T>` carrier.
+  `mod` also appears in CIR MethodDef parameter/return signatures and their exact local call, MethodImpl,
+  property-accessor and event-accessor linkage descriptors. It is not a local-variable storage annotation.
   kotc MUST omit all three physical nodes, and the validator refuses them in BIR. Dropping them is not neutral:
   `T*` degrades to the FQN string `"System.Int32*"`, an identity naming no type; `T[,]` and `T[*]` collapse
   onto `T[]`;
