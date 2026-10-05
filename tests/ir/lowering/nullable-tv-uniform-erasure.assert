@@ -1,7 +1,7 @@
 # Scalar T? storage erases to object; invariant arrays/generic arguments and delegate returns use
 # the method's explicit N(T) companion. Neither path leaves semantic nullable-tv nodes in CIR.
 -{"t":"nullable","of":{"t":"tv"
-+"name":"pick","typeParams":[{"name":"T"},"$nullable0"]
++"name":"pick","typeParams":[{"name":"T","constraints":[{"t":"tv","scope":"method","i":1}]},"$nullable0"]
 +"name":"x","type":{"t":"fqn","name":"object"}
 +"name":"slot","type":{"t":"fqn","name":"object"}
 +"name":"acc","type":{"t":"fqn","name":"object"},"init":{"k":"const","type":{"t":"fqn","name":"object"},"value":null}

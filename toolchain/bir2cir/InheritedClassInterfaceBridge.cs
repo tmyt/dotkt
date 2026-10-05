@@ -278,7 +278,7 @@ static class InheritedClassInterfaceBridge
                     .Where(m => !Bool(m["static"]) && !Bool(m["abstract"])
                         && (Str(m["vis"]) is null or "public")
                         && KotlinOverrideSlotBridge.SameMethodTypeParameterShape(KotlinOverrideSlotBridge.SemanticMethodTypeParameters(m),
-                            target["typeParams"] as JsonArray, args, args)).ToList();
+                            KotlinOverrideSlotBridge.SemanticMethodTypeParameters(target), args, args)).ToList();
                 if (matches.Count != 1) return null;
                 var method = matches[0];
                 // A virtual inherited member already participates in CLR slot dispatch. The missing case is exactly the

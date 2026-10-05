@@ -53,7 +53,11 @@ if actual_params != expected_params:
         "method-generic UnsafeAccessor must declare target plus the original value parameter: "
         f"{accessor!r}"
     )
-if accessor.get("typeParams") != [{"name": "__method0"}, {"name": "__method1"}] or accessor.get("ret") != physical_array:
+expected_frame = [
+    {"name": "__method0", "constraints": [{"t": "tv", "scope": "method", "i": 1}]},
+    {"name": "__method1"},
+]
+if accessor.get("typeParams") != expected_frame or accessor.get("ret") != physical_array:
     raise SystemExit(f"method-generic UnsafeAccessor lost its generic frame or physical return: {accessor!r}")
 
 calls = [

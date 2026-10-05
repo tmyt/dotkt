@@ -2102,6 +2102,14 @@ Frame demand is structural, not inferred by chasing upper bounds. A nullable arg
 when its source variable has a reference-only bound. Ordinary source parameters retain their constraints. Companions
 are implementation parameters, not new Kotlin parameters or a requirement that users add a `reified` modifier.
 
+An ordinary physical parameter also carries a CLR upper bound naming its nullable-argument companion, when present.
+The companion closes to the same reference type or to boxed `object` for nullable values; it is not the scalar
+`Nullable<V>` representation. This states the physical relation needed when Kotlin supplies `T` and `T?` to a
+declaration with a dependent type-parameter bound. No such relation is inferred for storage companions. The original
+Kotlin bound list is recorded separately before adding the physical constraint, including an explicit empty list for
+an originally unbounded parameter. Readers replace physical bounds with that complete source list; they do not expose
+the implementation-only companion as a Kotlin type parameter or bound.
+
 Each frame records its source arity, the source indices requiring nullable companions and the physical slot order.
 Nested types preserve the entire enclosing CLR parameter prefix using that explicit correspondence. Owned TypeDefs
 and independent nonvirtual methods may include body-only demands. A virtual method's body-only demand must not grow
