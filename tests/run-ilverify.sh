@@ -8,6 +8,7 @@
 #
 #   * ILVERIFY_XFAIL — a real, runtime-safe compiler defect awaiting a fix.
 #   * ILVERIFY_UNVERIFIABLE — intentionally unverifiable ECMA-335 IL whose runtime behavior is separately tested.
+#   * ILVERIFY_SPAN_RETURN — exact Span-return fixtures hitting ILVerify's known provenance limitation.
 #
 # UNVERIFIABLE entries match only ILVerify's `[Unverifiable]` finding kind; a different error on the same method is
 # a NEW-FAIL. A focused unsafe-signature test may additionally pass
@@ -40,6 +41,15 @@ declare -A ILVERIFY_UNVERIFIABLE=(
 )
 declare -A ALLOWED_UNMANAGED_POINTER=()
 
+# These two callbacks return their input Span or a view of a heap array. Equivalent C# methods
+# produce ReturnPtrToStack too. Their NUnit runtime checks remain mandatory; this is not a compiler
+# defect or permission to ignore other errors involving Span. Assembly, full method and error kind
+# must all match. Generated-name drift is deliberately caught by --audit-baseline.
+declare -A ILVERIFY_SPAN_RETURN=(
+	['NominalFunctionDelegateTests::dotkt:lambda:17([S.P.CoreLib]System.Span`1<int32>)']='input Span identity callback'
+	['NominalFunctionDelegateTests+dotkt$NominalFunctionDelegateTestsKt$Closure102::invoke()']='heap-array Span callback'
+)
+
 ILV="$(find "$HOME/.dotnet" -name 'ILVerify.dll' 2>/dev/null | head -1)"
 [[ -n "$ILV" ]] || { echo "ilverify: ILVerify.dll not found — install: dotnet tool install -g dotnet-ilverify"; exit 1; }
 RTDIR="$(ls -d /usr/share/dotnet/shared/Microsoft.NETCore.App/* 2>/dev/null | sort -V | tail -1)"
@@ -66,6 +76,7 @@ done
 declare -A MATCHED_XFAIL=()
 declare -A MATCHED_UNVERIFIABLE=()
 declare -A MATCHED_UNMANAGED_POINTER=()
+declare -A MATCHED_SPAN_RETURN=()
 
 FINDING_CLASS=""
 classify_finding() { # <finding line> -> 0 if classified, setting FINDING_CLASS and recording its key
@@ -73,6 +84,14 @@ classify_finding() { # <finding line> -> 0 if classified, setting FINDING_CLASS 
 	FINDING_CLASS=""
 	# Metadata errors are never covered by method-level IL allowances.
 	[[ "$line" == '[IL]: Error ['* ]] || return 1
+	if [[ "$dll" == */InteropConsumer.Tests.dll && "$line" == '[IL]: Error [ReturnPtrToStack]:'* ]]; then
+		for key in "${!ILVERIFY_SPAN_RETURN[@]}"; do
+			[[ "$line" == *"[$dll : $key][offset "* ]] || continue
+			MATCHED_SPAN_RETURN["$key"]=1
+			FINDING_CLASS="SPAN_RETURN"
+			return 0
+		done
+	fi
 	if [[ "$line" == *"Error [UnmanagedPointer]"* ]]; then
 		for key in "${!ALLOWED_UNMANAGED_POINTER[@]}"; do
 			[[ "$line" == *"$key"* ]] || continue
@@ -125,13 +144,14 @@ for dll in "${DLLS[@]}"; do
 		verification_incomplete=1
 		continue
 	fi
-	declare -a newfails=() xfailed=() unverifiable=() unmanaged_pointer=()
+	declare -a newfails=() xfailed=() unverifiable=() unmanaged_pointer=() span_return=()
 	for f in "${findings[@]}"; do
 		if classify_finding "$f"; then
 			case "$FINDING_CLASS" in
 				XFAIL) xfailed+=("$f") ;;
 				UNVERIFIABLE) unverifiable+=("$f") ;;
 				UNMANAGED_POINTER) unmanaged_pointer+=("$f") ;;
+				SPAN_RETURN) span_return+=("$f") ;;
 			esac
 		else
 			newfails+=("$f")
@@ -148,17 +168,22 @@ for dll in "${DLLS[@]}"; do
 			[[ -z "$summary" ]] || summary+=", "
 			summary+="${#unmanaged_pointer[@]} UNMANAGED-POINTER"
 		fi
+		if (( ${#span_return[@]} )); then
+			[[ -z "$summary" ]] || summary+=", "
+			summary+="${#span_return[@]} SPAN-VERIFIER-LIMIT"
+		fi
 		[[ -z "$summary" ]] || summary="  ($summary finding(s), all baseline-listed)"
 		echo "VERIFY  $(basename "$dll")$summary"
 		for f in ${xfailed[@]+"${xfailed[@]}"}; do echo "    XFAIL: $f"; done
 		for f in ${unverifiable[@]+"${unverifiable[@]}"}; do echo "    UNVERIFIABLE: $f"; done
 		for f in ${unmanaged_pointer[@]+"${unmanaged_pointer[@]}"}; do echo "    UNMANAGED-POINTER: $f"; done
+		for f in ${span_return[@]+"${span_return[@]}"}; do echo "    SPAN-VERIFIER-LIMIT: $f"; done
 	else
 		echo "VERIFY FAIL  $(basename "$dll") — ${#newfails[@]} finding(s) outside the ILVERIFY_XFAIL/ILVERIFY_UNVERIFIABLE baselines:"
 		for f in "${newfails[@]}"; do echo "    NEW-FAIL: $f"; done
 		rc=1
 	fi
-	unset newfails xfailed unverifiable unmanaged_pointer
+	unset newfails xfailed unverifiable unmanaged_pointer span_return
 done
 
 # Missing evidence cannot establish that an allowance is stale. Keep the failed verdict without
@@ -181,6 +206,11 @@ done
 # DEAD-KEY VERDICT: every baseline key that masked nothing over the complete emitted set. xfail_diff's wording,
 # but red rather than its advisory green — see the header note on why this lane is deliberately stricter.
 if (( audit )); then
+	for key in "${!ILVERIFY_SPAN_RETURN[@]}"; do
+		[[ -v MATCHED_SPAN_RETURN["$key"] ]] && continue
+		echo "FIXED     ilverify-span-return:$key — no matching [ReturnPtrToStack] finding; remove or update the exact verifier-limit entry"
+		rc=1
+	done
 	audit_keys=("${!ILVERIFY_XFAIL[@]}")
 	if (( ${#audit_keys[@]} )); then
 		mapfile -t audit_keys < <(printf '%s\n' "${audit_keys[@]}" | LC_ALL=C sort)

@@ -17,6 +17,8 @@ using DotKt.Bir;
 // of rule-3 helper synthesis. Runs only in substitute/app builds (never ref).
 static class AliasHelperHoist
 {
+    internal const string IdentitySuffix = "|alias-helper";
+    internal static string DeclarationIdentity(string sourceIdentity) => sourceIdentity + IdentitySuffix;
     public static JsonNode Apply(JsonNode root, ReferenceMetadataIndex refs, GenericRepresentationPolicy representations)
     {
         if (root is not JsonObject obj || obj["types"] is not JsonArray types) return root;
@@ -381,6 +383,11 @@ static class AliasHelperHoist
         outM["params"] = ps;
         outM["ret"] = rewritten["ret"]?.DeepClone();
         outM["body"] = RewriteThis(rewritten["body"]);
+        if (m[DeclarationIdentityBinding.Key] is JsonValue identity && identity.TryGetValue<string>(out var sourceIdentity))
+        {
+            outM[DeclarationIdentityBinding.Key] = DeclarationIdentity(sourceIdentity);
+            outM["generated"] = true;
+        }
         return outM;
     }
 
@@ -423,7 +430,13 @@ static class AliasHelperHoist
         var arguments = receiver.Args.Cast<TypeNode.Tv>().Select(type => type.I);
         if (!arguments.SequenceEqual(new[] { 0, 1, 2, 3, 4, 5 }))
             throw new InvalidOperationException("Hoisted alias receiver lost its binding roles or physical permutation");
-        var method = new JsonObject { ["name"] = "Read", ["params"] = new JsonArray(),
+        var callback = TypeJson.Write(new TypeNode.Fn(false, new TypeNode.Tv("method", 0),
+            new TypeNode[] { new TypeNode.Tv("type", 1) }));
+        var method = new JsonObject { ["name"] = "Read",
+            [DeclarationIdentityBinding.Key] = "dotkt-declaration-v1:alias-selftest",
+            ["typeParams"] = new JsonArray("R"),
+            ["params"] = new JsonArray(new JsonObject { ["name"] = "callback",
+                ["type"] = callback.DeepClone(), [FunctionSignatureIdentity.Key] = callback.DeepClone() }),
             ["ret"] = TypeJson.Write(new TypeNode.Tv("type", 1)), ["body"] = new JsonArray() };
         var slot = TypeJson.Write(new TypeNode.Tv("type", 0));
         ((JsonArray)method["body"]).Add(new JsonObject
@@ -440,6 +453,12 @@ static class AliasHelperHoist
             || TypeJson.Read(hoisted["ret"]) != new TypeNode.Tv("method", 1))
             throw new InvalidOperationException("Hoisted alias receiver and body disagree on the method frame");
         var construction = hoisted["body"][0];
+        if (hoisted[DeclarationIdentityBinding.Key]?.GetValue<string>() !=
+                DeclarationIdentity("dotkt-declaration-v1:alias-selftest")
+            || TypeJson.Read(hoisted["params"][1][FunctionSignatureIdentity.Key]) is not TypeNode.Fn callbackSignature
+            || callbackSignature.Ret != new TypeNode.Tv("method", 6)
+            || callbackSignature.Params[0] != new TypeNode.Tv("method", 1))
+            throw new InvalidOperationException("Hoisted helper lost declaration identity or its signature generic frame");
         if (TypeJson.Read(construction["argTypes"][0]) != new TypeNode.Tv("method", 0)
             || TypeJson.Read(construction["memberSignature"][0]) != new TypeNode.Tv("type", 0))
             throw new InvalidOperationException("Hoisted constructor mixed caller and selected declaration frames");

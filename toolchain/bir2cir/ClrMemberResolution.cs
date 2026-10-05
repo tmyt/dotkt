@@ -91,7 +91,11 @@ static partial class ClrMemberResolution
                 foreach (var candidate in sameArity)
                 {
                     var ps = (JsonArray)candidate.ctor["params"];
-                    var declared = ps.Select(p => p?["type"] is JsonNode pt ? TypeJson.Read(pt) : null).ToArray();
+                    // These vectors identify the frontend-selected declaration, not the argument carrier.
+                    // Ordinary function values can share storage while naming different constructor overloads.
+                    var declared = ps.Select(p => (declarationSig != null || signatureName == "delegationSig"
+                        ? p?[FunctionSignatureIdentity.Key] ?? p?["type"]
+                        : p?["type"]) is JsonNode pt ? TypeJson.Read(pt) : null).ToArray();
                     if (declared.Any(t => t == null)) continue;
                     var matches = declared.Select((raw, i) =>
                     {
@@ -228,12 +232,40 @@ static partial class ClrMemberResolution
                 ? call["iface"]
                 : kind == "newClosure" ? call["closureType"]
                 : call["calleeOwner"] ?? call["owner"] ?? call["ownerType"];
-            if (TypeJson.Read(ownerNode) is not TypeNode.Fqn owner || !owners.TryGetValue(owner.Name, out var methods))
+            if (TypeJson.Read(ownerNode) is not TypeNode.Fqn owner) return;
+            if (!owners.TryGetValue(owner.Name, out var methods))
+            {
+                // The referenced MethodDef is already selected. Its physical slots, not the requested
+                // function-value carrier, determine the natural delegate over that method pointer.
+                if (physicalDelegates && kind == "newDelegate"
+                    && call["memberRef"] is JsonObject reference
+                    && reference["parameterTypes"] is JsonArray parameterTypes
+                    && TypeJson.Read(reference["returnType"]) is TypeNode returnType
+                    && TypeJson.Read(call["funcType"]) is TypeNode.Fn { Suspend: false } requested)
+                {
+                    var referencedOwnerArgs = (TypeJson.Read(reference["declaringType"]) as TypeNode.Fqn)?.Args
+                        ?? Array.Empty<TypeNode>();
+                    var referencedMethodArgs = (call["typeArgs"] as JsonArray)?.Select(TypeJson.Read).ToArray()
+                        ?? Array.Empty<TypeNode>();
+                    TypeNode ValueSlot(TypeNode type) => type is TypeNode.Mod modifier
+                        ? ValueSlot(modifier.Of)
+                        : SubstMethodTvs(SupertypeGraph.SubstOwnerTvs(type, referencedOwnerArgs), referencedMethodArgs);
+                    var natural = BirTypeLowering.PhysicalDelegate(ValueSlot(returnType),
+                        parameterTypes.Select(TypeJson.Read).Select(ValueSlot).ToArray());
+                    if (NeedsSlotAdapter(natural, requested))
+                    {
+                        if (!call.ContainsKey(DelegateSlotKey))
+                            MarkDelegateSlot(call, requested, refs, owners.Keys.ToHashSet(StringComparer.Ordinal));
+                        call["funcType"] = TypeJson.Write(natural);
+                    }
+                }
                 return;
+            }
             if ((call["method"] as JsonValue)?.TryGetValue<string>(out var name) != true) return;
+            var sourceSignature = call[FunctionSignatureIdentity.CallKey] as JsonArray;
             var wanted = kind == "newClosure"
                 ? (TypeJson.Read(call["funcType"]) as TypeNode.Fn)?.DelegateParams
-                : (call["sig"] as JsonArray)?.Select(TypeJson.Read).ToArray();
+                : (sourceSignature ?? call["sig"] as JsonArray)?.Select(TypeJson.Read).ToArray();
             if (wanted == null) return;
             if (wanted.Any(t => t == null)) return;
             var suppliedArgs = (call["typeArgs"] as JsonArray)?.Select(TypeJson.Read).ToArray()
@@ -241,26 +273,37 @@ static partial class ClrMemberResolution
             var methodArgs = kind == "newClosure" ? Array.Empty<TypeNode>() : suppliedArgs;
             if (suppliedArgs.Any(t => t == null)) return;
             var ownerArgs = kind == "newClosure" ? suppliedArgs : owner.Args ?? Array.Empty<TypeNode>();
+            var declarationId = (call[DeclarationIdentityBinding.Key] as JsonValue)?.GetValue<string>();
             var matches = new List<(JsonObject Method, TypeNode[] Params)>();
             foreach (var candidate in methods.Where(m =>
-                         (m["name"] as JsonValue)?.TryGetValue<string>(out var candidateName) == true
-                         && candidateName == name && GenericArity(m) == methodArgs.Length))
+                         (declarationId != null
+                             ? (m[DeclarationIdentityBinding.Key] as JsonValue)?.GetValue<string>() == declarationId
+                             : (m["name"] as JsonValue)?.GetValue<string>() == name)
+                         && GenericArity(m) == methodArgs.Length))
             {
                 if (candidate["params"] is not JsonArray parameters || parameters.Count != wanted.Length) continue;
                 var declared = parameters.OfType<JsonObject>()
                     .Select(p => TypeJson.Read(p["type"])).ToArray();
                 if (declared.Length != wanted.Length || declared.Any(t => t == null)) continue;
-                var closed = declared.Select(t => SupertypeGraph.SubstOwnerTvs(t, ownerArgs))
+                var selection = sourceSignature == null ? declared : parameters.OfType<JsonObject>()
+                    .Select(p => TypeJson.Read(p[FunctionSignatureIdentity.Key] ?? p["type"])).ToArray();
+                var closed = selection.Select(t => SupertypeGraph.SubstOwnerTvs(t, ownerArgs))
                     .Select(t => SubstMethodTvs(t, methodArgs)).ToArray();
                 // A closure construction names its synthesized class's unique invoke method, not an overload
                 // descriptor. Its requested delegate parameters may need adaptation to that declaration.
-                if (kind == "newClosure" || Keys(declared).SequenceEqual(Keys(wanted)) || Keys(closed).SequenceEqual(Keys(wanted)))
+                // An authored identity likewise already selected the declaration. Its physical parameters may
+                // have changed during callable adaptation; the old use-site signature cannot select it again.
+                if (declarationId != null || kind == "newClosure"
+                    || Keys(selection).SequenceEqual(Keys(wanted)) || Keys(closed).SequenceEqual(Keys(wanted)))
                     matches.Add((candidate, declared));
             }
             if (matches.Count != 1 && kind is "newDelegate" or "newClosure" or "newBoundDelegate")
                 throw new InvalidOperationException(
                     $"bir2cir: {kind} target '{owner.Name}.{name}' resolves to {matches.Count} exact local methods; call={call.ToJsonString()}");
             if (matches.Count != 1) return;
+            if (matches[0].Method["params"] is JsonArray selectedParameters
+                && selectedParameters.OfType<JsonObject>().Any(p => p[FunctionSignatureIdentity.Key] != null))
+                call["calleeParams"] = FunctionSignatureIdentity.Signature(selectedParameters);
             // Delegate-construction nodes identify the target method itself, so their descriptor must be the
             // declaration's open parameter vector. Ordinary calls already carry the receiver/method-substituted
             // call-site descriptor; replacing it with declaration-relative type variables would reinterpret those
@@ -331,7 +374,7 @@ static partial class ClrMemberResolution
                         + $"{baseArgs.Count} arguments but {semanticSig.Count} signature slots");
                 var arity = open.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
                     .Where(c => c.GetParameters().Length == semanticSig.Count).ToList();
-                var winner = PickUnique(arity, c => c.GetParameters(), semanticSig, baseFqn.Args,
+                var winner = PickDeclaredConstructor(arity, semanticSig,
                     $"base constructor owner={TypeNode.ToJson(baseFqn)} ({DescArgs(semanticSig)})");
                 ctor["baseCtorRef"] = MemberRefJson(winner, MemberRefNode.Kinds.Ctor, open, baseFqn.Args);
                 StampDelegateArgumentTargets(ctor, winner.GetParameters(),
@@ -706,11 +749,8 @@ static partial class ClrMemberResolution
         {
             var declaration = selectedSignature.Select(TypeJson.Read)
                 .Select(BirTypeLowering.CanonicalPhysicalSlotType).ToList();
-            // Compare the complete open shape, not applicability or a nominal-head-only approximation.
-            var exact = ctors.Where(c => c.GetParameters().Select((p, i) =>
-                DeclaredConstructorSlotMatches(declaration[i], p.ParameterType)).All(match => match)).ToList();
-            win = exact.Count == 1 ? exact[0] : throw new InvalidOperationException(
-                $"bir2cir: selected constructor declaration on '{ownerFqn.Name}' resolves to {exact.Count} members: {DescArgs(declaration)}");
+            win = PickDeclaredConstructor(ctors, declaration,
+                $"selected constructor declaration on '{ownerFqn.Name}' ({DescArgs(declaration)})");
         }
         else
             win = PickUnique(ctors, c => c.GetParameters(), argNodes, ownerArgs,
@@ -724,6 +764,22 @@ static partial class ClrMemberResolution
         StampResolvedMemberReturn(node, typeof(void));
         node.Remove("argTypes");
         node.Remove("memberSignature");
+    }
+
+    static ConstructorInfo PickDeclaredConstructor(IEnumerable<ConstructorInfo> constructors,
+        IReadOnlyList<TypeNode> declaration, string context)
+    {
+        // Both `new` and base delegation carry the selected declaration's open shape.
+        // Compare that shape, not argument applicability or a nominal-head approximation.
+        var exact = constructors.Where(constructor =>
+        {
+            var parameters = constructor.GetParameters();
+            return parameters.Length == declaration.Count && parameters.Select((parameter, index) =>
+                DeclaredConstructorSlotMatches(declaration[index],
+                    _refs.FunctionSignatureDiscriminator(parameter) ?? parameter.ParameterType)).All(match => match);
+        }).ToList();
+        return exact.Count == 1 ? exact[0] : throw new InvalidOperationException(
+            $"bir2cir: {context} resolves to {exact.Count} constructor declarations, expected exactly one");
     }
 
     static bool DeclaredConstructorSlotMatches(TypeNode selected, Type parameter)

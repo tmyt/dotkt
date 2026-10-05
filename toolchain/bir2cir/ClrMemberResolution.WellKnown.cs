@@ -639,7 +639,7 @@ static partial class ClrMemberResolution
                 // source name here would reconstruct meaning from a physical declaration, so require the final name.
                 if (physicalName != member) return false;
                 var declaredParams = declaredParameters.OfType<JsonObject>()
-                    .Select(parameter => TypeJson.Read(parameter["type"]))
+                    .Select(parameter => TypeJson.Read(FunctionSignatureIdentity.SignatureType(parameter)))
                     .ToArray();
                 if (declaredParams.Length != wantedParams.Length || declaredParams.Any(parameter => parameter == null)
                     || !declaredParams.Select(parameter => SupertypeGraph.SubstOwnerTvs(parameter, args))
@@ -659,7 +659,7 @@ static partial class ClrMemberResolution
                     var source = (method[DeclarationRename.SourceMemberKey] as JsonValue)?.GetValue<string>();
                     var declaredParams = method["params"] is JsonArray ps
                         ? string.Join(", ", ps.OfType<JsonObject>().Select(parameter =>
-                            TypeJson.Write(TypeJson.Read(parameter["type"])).ToJsonString()))
+                            FunctionSignatureIdentity.SignatureType(parameter).ToJsonString()))
                         : "?";
                     var declaredRet = TypeJson.Read(method["ret"]);
                     return $"{name} [source={source ?? "-"}, property={propertyName ?? "-"}:{accessorKind ?? "-"}]"
@@ -667,12 +667,12 @@ static partial class ClrMemberResolution
                 }));
                 throw new InvalidOperationException(
                     $"bir2cir: local interface MethodImpl '{iface.Name}.{member}`{arity}' resolves to "
-                    + $"{candidates.Count} declaration(s), expected exactly one; candidates: {available}");
+                    + $"{candidates.Count} declaration(s), expected exactly one; wanted: {parameters.ToJsonString()}; candidates: {available}");
             }
             var selected = candidates[0];
             descriptor["member"] = selected["name"]?.DeepClone();
             descriptor["params"] = new JsonArray(((JsonArray)selected["params"]).OfType<JsonObject>()
-                .Select(parameter => TypeJson.Read(parameter["type"]))
+                .Select(parameter => TypeJson.Read(FunctionSignatureIdentity.SignatureType(parameter)))
                 .Select(parameter => TypeJson.Write(SupertypeGraph.SubstOwnerTvs(parameter, args)))
                 .ToArray());
             descriptor["ret"] = TypeJson.Write(SupertypeGraph.SubstOwnerTvs(

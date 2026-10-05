@@ -144,9 +144,17 @@ class ForeignStarProjectionTests {
         val actionFactory: CallableFactory<in String> = Factory.ObjectCallableFactory()
         actionFactory.MakeAction().invoke("action")
         val boxedValueFactory: CallableFactory<out Any?> = Factory.IntCallableFactory()
+        assertEquals(41, boxedValueFactory.Make().invoke())
+        assertEquals(41, boxedValueFactory.MakeGeneric<Int>().invoke(7))
+        val storedFactory = boxedValueFactory.Make()
+        assertEquals(41, storedFactory.invoke())
+        val storedField = boxedValueFactory.CallableField
+        assertTrue(storedField === boxedValueFactory.CallableField)
+        assertEquals(41, storedField.invoke())
         assertEquals(41, ForeignProjectedCallableHolder<Any?>().call(boxedValueFactory))
         assertEquals(41, boxedValueFactory.CallableField.invoke())
         val boxedValueStruct: CallableStruct<out Any?> = Factory.IntCallableStruct()
+        assertEquals(43, boxedValueStruct.Make().invoke())
         assertEquals(43, ForeignProjectedCallableHolder<Any?>().callStruct(boxedValueStruct))
     }
 }

@@ -1,0 +1,1 @@
+{"methods":[{"name":"probe","params":[],"ret":{"t":"fqn","name":"void"},"body":[{"k":"var","name":"value","type":{"t":"mod","req":false,"m":{"t":"fqn","name":"SignatureMarker"},"of":{"t":"fqn","name":"object"}},"init":{"k":"const","type":{"t":"fqn","name":"object"},"value":null}}]}]}

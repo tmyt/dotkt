@@ -52,7 +52,8 @@ static class DelegateTargetSlotAlignment
         // form also carries a resolved descriptor. A `newClosure` names its synthetic class by `closureType`, and its
         // body is always that class's `invoke`.
         //
-        // THE NAME ALONE IS NOT AN IDENTITY: generated targets and schema-valid direct forms may share a name. `sig`
+        // Owner, name and signature form the target identity: another owner's method must never move a local
+        // declaration just because they share a name and parameter vector. `sig`
         // is the same frontend fact every overload-bearing node in BIR carries, it has been through the same erasure
         // sweep as declarations by the time this pass runs, and it lays out `[ext receiver?] + contexts + regulars`
         // exactly as `params` does — so the two compare directly.
@@ -61,12 +62,29 @@ static class DelegateTargetSlotAlignment
         Collect(o, statics, closures);
         if (statics.Count == 0 && closures.Count == 0) return false;
         _moved = false;
-        if (statics.Count > 0) AlignMethods(o["methods"], statics);
-        AlignClosureTypes(o, closures);
+        if (statics.Count > 0) AlignMethods(o["methods"], Str(o["fileClass"]), statics);
+        AlignClosureTypes(o, closures, statics);
         return _moved;
     }
 
     static bool _moved;
+
+    public static bool ApplyMaterialized(IEnumerable<JsonNode> roots,
+        IEnumerable<JsonNode> declarations, ValueTypeOracle isValue)
+    {
+        _isValue = isValue ?? (_ => false);
+        var statics = new Dictionary<string, Demand>(StringComparer.Ordinal);
+        var closures = new Dictionary<string, Demand>(StringComparer.Ordinal);
+        foreach (var root in roots) Collect(root, statics, closures);
+        _moved = false;
+        foreach (var declaration in declarations.OfType<JsonObject>())
+        {
+            AlignMethods(declaration["methods"], Str(declaration["fileClass"]) ?? Str(declaration["name"]), statics);
+            AlignClosure(declaration, closures);
+            AlignClosureTypes(declaration, closures, statics);
+        }
+        return _moved;
+    }
 
     // The positions one delegate construction requires of its target: the parameter indices stated as `object`
     // (indexed over the funcType's DELEGATE parameters, receiver first, which is the order the lifted method declares
@@ -86,11 +104,15 @@ static class DelegateTargetSlotAlignment
                 var k = Str(obj["k"]);
                 // A SUSPEND fn is not a delegate at all — its value is a Continuation state machine erased to
                 // `object` — so there is no funcType component for a target slot to follow.
-                if (k is "newDelegate" or "newClosure"
+                // A resolved direct reference retains the authored declaration's signature. Only a lifted
+                // target without a source descriptor owns slots that may follow its function carrier.
+                if ((k == "newClosure" || k == "newDelegate" && obj["sig"] is not JsonArray)
                     && TypeJson.Read(obj["funcType"]) is TypeNode.Fn { Suspend: false } fn)
                 {
                     var key = k == "newDelegate"
-                        ? (Str(obj["method"]) is string method ? method + "|" + SigKey(obj["sig"]) : null)
+                        ? (Str(obj["method"]) is string method
+                            && TypeJson.Read(obj["calleeOwner"] ?? obj["owner"]) is TypeNode.Fqn owner
+                                ? owner.Name + "|" + method + "|" + SigKey(obj["sig"]) : null)
                         : (TypeJson.Read(obj["closureType"]) as TypeNode.Fqn)?.Name;
                     if (key != null) Demanded(k == "newDelegate" ? statics : closures, key, fn);
                 }
@@ -113,21 +135,28 @@ static class DelegateTargetSlotAlignment
         if (IsBareObject(fn.Ret)) d.Ret = true;
     }
 
-    static void AlignClosureTypes(JsonObject owner, Dictionary<string, Demand> closures)
+    static void AlignClosureTypes(JsonObject owner, Dictionary<string, Demand> closures,
+        Dictionary<string, Demand> statics)
     {
         if (owner["types"] is not JsonArray types) return;
         foreach (var t in types)
             if (t is JsonObject to)
             {
-                if (closures.Count > 0 && Str(to["name"]) is string tn && closures.TryGetValue(tn, out var d)
-                    && to["methods"] is JsonArray tms)
-                    foreach (var tm in tms)
-                        if (tm is JsonObject tmo && Str(tmo["name"]) == "invoke") Align(tmo, d);
-                AlignClosureTypes(to, closures);
+                AlignMethods(to["methods"], Str(to["name"]), statics);
+                AlignClosure(to, closures);
+                AlignClosureTypes(to, closures, statics);
             }
     }
 
-    // A declaration is the target when its NAME and its own parameter vector are the ones the construction named.
+    static void AlignClosure(JsonObject owner, Dictionary<string, Demand> closures)
+    {
+        if (Str(owner["name"]) is string name && closures.TryGetValue(name, out var demand)
+            && owner["methods"] is JsonArray methods)
+            foreach (var method in methods.OfType<JsonObject>())
+                if (Str(method["name"]) == "invoke") Align(method, demand);
+    }
+
+    // A declaration is the target when its OWNER, NAME and parameter vector are the ones the construction named.
     // The wildcard arm is for a target with no `sig`: kotc omits it only for a target it MINTED — a lifted
     // `dotkt:lambda:<n>`/`dotkt:mref:<n>` — whose name is unique in the file by construction, so there is no overload to confuse
     // it with and nothing for a parameter vector to disambiguate.
@@ -138,18 +167,21 @@ static class DelegateTargetSlotAlignment
     // that reason). A demand that cannot say which of them it named may not move either: moving both rewrites a
     // public signature the reference never mentions, and the malformed delegate that results from moving neither
     // fails loudly at emit instead.
-    static void AlignMethods(JsonNode methods, Dictionary<string, Demand> byTarget)
+    static void AlignMethods(JsonNode methods, string owner, Dictionary<string, Demand> byTarget)
     {
-        if (methods is not JsonArray a) return;
+        if (owner == null || methods is not JsonArray a) return;
         var matched = new Dictionary<Demand, List<JsonObject>>();
         foreach (var m in a)
         {
             if (m is not JsonObject mo || Str(mo["name"]) is not string n) continue;
+            // Lifted methods remain in the file's declaration list until owner routing. Their explicit
+            // semantic owner already names the target used by the delegate construction.
+            var targetOwner = Str(mo["semanticOwner"]) ?? owner;
             var own = string.Join(",", (mo["params"] as JsonArray ?? new JsonArray())
                 .Select(p => TypeJson.Read((p as JsonObject)?["type"]) is TypeNode t
                     ? TypeJson.Write(t).ToJsonString() : "?"));
-            if (!byTarget.TryGetValue(n + "|" + own, out var d)
-                && !byTarget.TryGetValue(n + "|" + AnySig, out d)) continue;
+            if (!byTarget.TryGetValue(targetOwner + "|" + n + "|" + own, out var d)
+                && !byTarget.TryGetValue(targetOwner + "|" + n + "|" + AnySig, out d)) continue;
             if (!matched.TryGetValue(d, out var list)) matched[d] = list = new List<JsonObject>();
             list.Add(mo);
         }
@@ -180,11 +212,34 @@ static class DelegateTargetSlotAlignment
     // first typed consumer and boxes a now-`object` return at the `return`.
     static void Align(JsonObject mo, Demand d)
     {
+        var argumentPrologueCount = 0;
         if (mo["params"] is JsonArray ps)
             for (var i = 0; i < ps.Count; i++)
                 if (d.Params.Contains(i) && ps[i] is JsonObject po
                     && TypeJson.Read(po["type"]) is TypeNode pt && !IsBareObject(pt))
                 {
+                    if (mo["body"] is JsonArray body && Str(po["name"]) is string sourceName)
+                    {
+                        var physicalName = CallEvalLowering.FreshBindingId();
+                        po["name"] = physicalName;
+                        body.Insert(argumentPrologueCount++, new JsonObject
+                        {
+                            ["k"] = "var", ["name"] = sourceName, ["type"] = TypeJson.Write(pt),
+                            ["init"] = new JsonObject
+                            {
+                                ["k"] = "cast", ["type"] = TypeJson.Write(pt),
+                                // Restore the selected target's declaration slot, not a Kotlin unchecked
+                                // classifier cast. Its generic arguments must survive existential lowering.
+                                ["_exactBridgeCast"] = true,
+                                [FunctionValueRepresentation.RestorationKey] = true,
+                                ["e"] = new JsonObject
+                                {
+                                    ["k"] = "local", ["name"] = physicalName,
+                                    ["sty"] = TypeJson.Write(ObjFqn),
+                                },
+                            },
+                        });
+                    }
                     po["type"] = TypeJson.Write(ObjFqn);
                     _moved = true;
                 }
@@ -197,7 +252,13 @@ static class DelegateTargetSlotAlignment
 
     static readonly TypeNode ObjFqn = new TypeNode.Fqn("object");
 
-    static bool IsBareObject(TypeNode t) => t is TypeNode.Fqn { Name: "object", Args: null };
+    static bool IsBareObject(TypeNode t) => t switch
+    {
+        TypeNode.Nullable n => IsBareObject(n.Of),
+        TypeNode.Oblivious o => IsBareObject(o.Of),
+        TypeNode.Fqn { Name: "object", Args: null } => true,
+        _ => false,
+    };
 
     // Whether this target slot is one the `object` seam does NOT already cover. A value type, a structural
     // `Nullable<V>` and a type variable each need the slot itself rewritten (there is no assignability between them

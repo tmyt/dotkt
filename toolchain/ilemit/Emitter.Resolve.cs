@@ -85,7 +85,7 @@ sealed partial class Emitter
     // on the OPEN generic def (`kotlin.Pair`2::get_first`), an invalid cross-assembly memberref -> runtime
     // TypeLoadException. ParseOwnerSlot preserves the instantiation; this overload consumes the pre-parsed owner.
     MethodInfo ResolveMethod((string open, Type constructed) owner, string name, out Type retType,
-        DotKt.Bir.TypeNode[] sig = null, int methodArity = 0)
+        DotKt.Bir.TypeNode[] sig = null, int methodArity = 0, DotKt.Bir.TypeNode declarationReturn = null)
     {
         var (open, constructed) = owner;
         // A REFERENCED generic owner constructed from PURE reflection types (NOT a TypeBuilder instantiation): resolve
@@ -107,9 +107,9 @@ sealed partial class Emitter
         // arguments. This is token construction, not overload resolution: owner, name, arity, and parameter vector
         // are all CIR facts, and a non-unique match is refused.
         var mb = constructed != null && _types.ContainsKey(open)
-            ? FindDeclaredMethodOnConstructedOwner(open, constructed, name, sig, methodArity)
+            ? FindDeclaredMethodOnConstructedOwner(open, constructed, name, sig, methodArity, declarationReturn)
             : null;
-        mb ??= FindMethod(open, name, sig, methodArity)
+        mb ??= FindMethod(open, name, sig, methodArity, declarationReturn)
             ?? throw new NotSupportedException($"method {open}.{name}({sig}) not found (external owner did not resolve or lacks the member)");
         if (constructed == null)
         {
@@ -149,13 +149,13 @@ sealed partial class Emitter
     }
 
     MethodInfo FindDeclaredMethodOnConstructedOwner(string open, Type constructed, string name,
-        DotKt.Bir.TypeNode[] sig, int methodArity)
+        DotKt.Bir.TypeNode[] sig, int methodArity, DotKt.Bir.TypeNode declarationReturn)
     {
         if (sig == null || !_types.TryGetValue(open, out var ti)) return null;
         // `sig` is first and foremost the selected MethodDef's declaration signature. Link that exact key before
         // interpreting anything in the caller's generic frame: `C<T>.m(!0)` and `<U> caller(C<U>)` legitimately put
         // callee `!0` beside caller `!!0`, and mapping the former through ResolveTv is cross-frame guessing.
-        if (ti.MethodsBySig.TryGetValue(DefinitionSigKey(name, methodArity, sig), out var exact)) return exact;
+        if (ti.MethodsBySig.TryGetValue(DefinitionSigKey(name, methodArity, sig, declarationReturn), out var exact)) return exact;
         // Some hierarchy/representation lowerings carry the already-substituted descriptor instead. Only that form is
         // expressed in the caller frame and needs mapping before comparing it with the declaration on this owner.
         var wanted = sig.Select(MapType).ToArray();
@@ -165,7 +165,8 @@ sealed partial class Emitter
             .Where(entry => entry.Key.Name == name && entry.Key.GenericArity == methodArity)
             .Select(entry => entry.Value)
             .Distinct()
-            .Where(method => _mparams.TryGetValue(method, out var declared)
+            .Where(method => MatchesDeclarationReturn(ti, method, declarationReturn)
+                && _mparams.TryGetValue(method, out var declared)
                 && declared.Length == wanted.Length
                 // Compare the declaration after applying this owner's type arguments through the whole
                 // parameter shape. `Subst` only handles a bare top-level parameter and therefore misses an
@@ -520,10 +521,26 @@ sealed partial class Emitter
     //
     // Without this a bridge for a referenced supertype is emitted and then never wired: the name-based lookup below
     // searches for a body CALLED like the slot, and a bridge is deliberately named nothing of the sort.
-    MethodBuilder FindExternalInterfaceBridge(TypeInfo ti, Type ifaceType, string member,
+    MethodBuilder FindExternalInterfaceBridge(TypeInfo ti, MethodInfo declaration, Type ifaceType, string member,
         int methodArity, Type[] ips, Type interfaceRet, DotKt.Bir.TypeNode.Fqn ifaceSpec = null)
     {
         if (ti.Def.ValueKind != JsonValueKind.Object || !ti.Def.TryGetProperty("methods", out var methods)) return null;
+        var slotParameters = ParametersOf(declaration);
+        bool MatchesSlot(DotKt.Bir.TypeNode described, Type value, ParameterInfo parameter)
+        {
+            var required = new List<DotKt.Bir.TypeNode>();
+            var optional = new List<DotKt.Bir.TypeNode>();
+            while (described is DotKt.Bir.TypeNode.Mod modifier)
+            {
+                (modifier.Req ? required : optional).Add(modifier.M);
+                described = modifier.Of;
+            }
+            Type Close(Type modifier) => ifaceType.IsGenericType
+                ? SubstituteIfaceArgs(modifier, ifaceType.GetGenericArguments()) : modifier;
+            return ModifiersEqual(required, parameter.GetRequiredCustomModifiers().Select(Close).ToArray())
+                && ModifiersEqual(optional, parameter.GetOptionalCustomModifiers().Select(Close).ToArray())
+                && GenericParamMatches(described, value, ownerArgs: null);
+        }
         foreach (var method in methods.EnumerateArray())
         {
             if (!method.TryGetProperty("clrInterfaceImpls", out var impls)) continue;
@@ -544,7 +561,7 @@ sealed partial class Emitter
                 if (DescribedArity(impl) != methodArity) continue;
                 if (!impl.TryGetProperty("ret", out var describedRetNode)
                     || DotKt.Bir.TypeNode.Read(describedRetNode) is not { } describedRet
-                    || interfaceRet == null || !GenericParamMatches(describedRet, interfaceRet, ownerArgs: null))
+                    || interfaceRet == null || !MatchesSlot(describedRet, interfaceRet, declaration.ReturnParameter))
                     continue;
                 // The descriptor is the producer's exact answer. Consume its full parameter vector before considering
                 // the body; owner/member/arity alone do not distinguish overloaded CLR indexer/property accessors.
@@ -553,7 +570,7 @@ sealed partial class Emitter
                 foreach (var describedParam in describedParams.EnumerateArray())
                 {
                     var node = DotKt.Bir.TypeNode.Read(describedParam);
-                    if (node == null || !GenericParamMatches(node, ips[describedIndex], ownerArgs: null))
+                    if (node == null || !MatchesSlot(node, ips[describedIndex], slotParameters[describedIndex]))
                     {
                         descriptorMatches = false;
                         break;
@@ -724,8 +741,8 @@ sealed partial class Emitter
         throw new NotSupportedException($"field {typeName}.{name} not found");
     }
 
-    // Complete CLR method identity for the `MethodsBySig` dictionary: NAME + METHOD generic arity + parameter vector
-    // (ECMA-335 I.8.6.1.6). Return type is deliberately absent. `m` is a method DEF, whose arity comes from typeParams;
+    // Partial call-side alias: NAME + METHOD generic arity + parameter vector. Return-distinct declarations cannot
+    // share this alias; AddMethodAlias removes ambiguous entries. `m` is a method DEF, whose arity comes from typeParams;
     // a call's arity comes from its resolved typeArgs. Param types are STRUCTURED Type nodes rendered to the canonical
     // internal hash spelling below. No type travels as a string on the wire (#48).
     MethodSigKey SigKey(string name, JsonElement methodDef) =>
@@ -739,10 +756,13 @@ sealed partial class Emitter
     MethodSigKey DefinitionSigKey(string name, JsonElement methodDef) =>
         DefinitionSigKey(name, DeclaredMethodArity(methodDef),
             methodDef.GetProperty("params").EnumerateArray()
-                .Select(p => DotKt.Bir.TypeNode.Read(p.GetProperty("type"))));
+                .Select(p => DotKt.Bir.TypeNode.Read(p.GetProperty("type"))),
+            DotKt.Bir.TypeNode.Read(methodDef.GetProperty("ret")));
 
-    MethodSigKey DefinitionSigKey(string name, int methodArity, IEnumerable<DotKt.Bir.TypeNode> sig) =>
-        new(name, methodArity, string.Join("|", sig.Select(DefinitionSigCanon)));
+    MethodSigKey DefinitionSigKey(string name, int methodArity, IEnumerable<DotKt.Bir.TypeNode> sig,
+        DotKt.Bir.TypeNode returnType = null) =>
+        new(name, methodArity, string.Join("|", sig.Select(DefinitionSigCanon)),
+            returnType == null ? null : DefinitionSigCanon(returnType));
 
     MethodSigKey SigKey(string name, int methodArity, IEnumerable<DotKt.Bir.TypeNode> sig) =>
         new(name, methodArity, string.Join("|", sig.Select(SigCanon)));
@@ -764,7 +784,7 @@ sealed partial class Emitter
     // match (`Matches`) and the canonical `SigKey`. Null when the node carries no `sig` array; empty array for a nullary
     // sig (`sig.Length == 0` -> argc 0 convention).
     static DotKt.Bir.TypeNode[] SigNodes(JsonElement e) =>
-        e.TryGetProperty("sig", out var s) && s.ValueKind == JsonValueKind.Array
+        (e.TryGetProperty("calleeParams", out var s) || e.TryGetProperty("sig", out s)) && s.ValueKind == JsonValueKind.Array
             ? s.EnumerateArray().Select(DotKt.Bir.TypeNode.Read).ToArray()
             : null;
 
@@ -772,6 +792,7 @@ sealed partial class Emitter
     // constructed owner frame can reach an open declaration alias. DefinitionSigCanon is the distinct MethodDef key.
     string SigCanon(DotKt.Bir.TypeNode t) => t switch
     {
+        DotKt.Bir.TypeNode.Mod m => (m.Req ? "modreq:" : "modopt:") + SigCanon(m.M) + ":" + SigCanon(m.Of),
         DotKt.Bir.TypeNode.Fqn f => f.Args == null ? SigFqn(f.Name) : SigFqn(f.Name) + "[" + string.Join(",", f.Args.Select(SigCanon)) + "]",
         DotKt.Bir.TypeNode.Tv => "gp:T",
         DotKt.Bir.TypeNode.Fn fn => (fn.Suspend ? "sfunc:" : "func:") + SigCanon(fn.Ret) + ":" + string.Join(",", fn.DelegateParams.Select(SigCanon)),
@@ -789,6 +810,7 @@ sealed partial class Emitter
 
     string DefinitionSigCanon(DotKt.Bir.TypeNode t) => t switch
     {
+        DotKt.Bir.TypeNode.Mod m => (m.Req ? "modreq:" : "modopt:") + DefinitionSigCanon(m.M) + ":" + DefinitionSigCanon(m.Of),
         DotKt.Bir.TypeNode.Fqn f => f.Args == null ? SigFqn(f.Name) : SigFqn(f.Name) + "[" +
             string.Join(",", f.Args.Select(DefinitionSigCanon)) + "]",
         DotKt.Bir.TypeNode.Tv tv => "gp:" + tv.Scope + ":" + tv.I,
@@ -822,6 +844,7 @@ sealed partial class Emitter
     // implementer's concrete args. A method-scope tv / an out-of-range index is left as-is.
     static DotKt.Bir.TypeNode SubstTv(DotKt.Bir.TypeNode t, DotKt.Bir.TypeNode[] args) => t switch
     {
+        DotKt.Bir.TypeNode.Mod m => new DotKt.Bir.TypeNode.Mod(m.Req, SubstTv(m.M, args), SubstTv(m.Of, args)),
         DotKt.Bir.TypeNode.Tv { Scope: "type" } tv when args != null && tv.I >= 0 && tv.I < args.Length => args[tv.I],
         DotKt.Bir.TypeNode.Fqn { Args: { } fa } f => new DotKt.Bir.TypeNode.Fqn(f.Name, fa.Select(a => SubstTv(a, args)).ToArray()),
         DotKt.Bir.TypeNode.Nullable n => new DotKt.Bir.TypeNode.Nullable(SubstTv(n.Of, args)),
@@ -836,7 +859,8 @@ sealed partial class Emitter
         _ => t,
     };
 
-    MethodInfo FindMethod(string typeName, string name, DotKt.Bir.TypeNode[] sig = null, int methodArity = 0)
+    MethodInfo FindMethod(string typeName, string name, DotKt.Bir.TypeNode[] sig = null, int methodArity = 0,
+        DotKt.Bir.TypeNode declarationReturn = null)
     {
         if (sig == null)
             throw new InvalidOperationException($"ilemit: method call {typeName}.{name} is missing its resolved `sig` descriptor");
@@ -864,8 +888,9 @@ sealed partial class Emitter
                     continue;
                 }
                 if (sig != null && iti.MethodsBySig.TryGetValue(
-                        DefinitionSigKey(name, methodArity, sig), out var exact)) return exact;
-                if (sig != null && iti.MethodsBySig.TryGetValue(SigKey(name, methodArity, sig), out var ms)) return ms;
+                        DefinitionSigKey(name, methodArity, sig, declarationReturn), out var exact)) return exact;
+                if (sig != null && iti.MethodsBySig.TryGetValue(SigKey(name, methodArity, sig), out var ms)
+                    && MatchesDeclarationReturn(iti, ms, declarationReturn)) return ms;
                 var inherited = FindInInterfaces(iti);
                 if (inherited != null) return inherited;
             }
@@ -887,8 +912,9 @@ sealed partial class Emitter
         for (var ti = _types[typeName]; ti != null; ti = ti.BaseName != null && _types.ContainsKey(ti.BaseName) ? _types[ti.BaseName] : null)
         {
             if (sig != null && ti.MethodsBySig.TryGetValue(
-                    DefinitionSigKey(name, methodArity, sig), out var exact)) return exact;
-            if (sig != null && ti.MethodsBySig.TryGetValue(SigKey(name, methodArity, sig), out var ms)) return ms;
+                    DefinitionSigKey(name, methodArity, sig, declarationReturn), out var exact)) return exact;
+            if (sig != null && ti.MethodsBySig.TryGetValue(SigKey(name, methodArity, sig), out var ms)
+                && MatchesDeclarationReturn(ti, ms, declarationReturn)) return ms;
             // NAME-ONLY is the last resort, and only where it cannot pick the wrong member: this type declares a
             // single member by that name, or the node carries no descriptor at all. With a carried `sig` that missed
             // both keyed lookups AND a real overload set here, the name-keyed map (last-wins) would hand back some
@@ -1117,9 +1143,15 @@ sealed partial class Emitter
         // SlotName/FindMethod resolves the member on the open `Owner`1` definition; the later generic-static fallback
         // then canonicalizes it to `Owner<object>`, losing the caller's enclosing T and producing invalid IL. The
         // structured ResolveMethod overload anchors the MethodBuilder directly on the exact owner construction.
-        return ResolveMethod(ParseOwnerSlot(ownerNode), name, out _, sig, methodArity)
+        return ResolveMethod(ParseOwnerSlot(ownerNode), name, out _, sig, methodArity, LocalDeclarationReturn(node))
             ?? throw new NotSupportedException($"{kind} target '{owner}.{name}' was not found through calleeOwner");
     }
+
+    static DotKt.Bir.TypeNode LocalDeclarationReturn(JsonElement node) =>
+        node.TryGetProperty("calleeRet", out var result) ? DotKt.Bir.TypeNode.Read(result) : null;
+
+    bool MatchesDeclarationReturn(TypeInfo owner, MethodBuilder method, DotKt.Bir.TypeNode declarationReturn) =>
+        declarationReturn == null || owner.MethodDeclarationReturns[method] == DefinitionSigCanon(declarationReturn);
 
     // The `(object, IntPtr)` delegate constructor. For a delegate type instantiated with a user TypeBuilder
     // (e.g. `Func<int, Point>` where Point is still being emitted), plain reflection `GetConstructor` throws

@@ -328,17 +328,31 @@ indexes remain keyed in Kotlin vocabulary.
 
 ### Delegates
 
-`System.Action`/`System.Func` and the stdlib's wide `KAction`/`KFunc` families
-are the physical representation of Kotlin function types, so their `Invoke`
-signatures are exposed structurally as `FunctionN`.
+The compiler-owned stdlib's wide `KAction`/`KFunc` families retain their internal
+function-family role: their `Invoke` signatures are exposed structurally as
+`FunctionN`. Kotlin declaration metadata preserves the authored function types
+when their physical value slots use erased carriers.
 
-Every other CLR delegate is exposed as a nominal Kotlin `fun interface` whose
+Every other CLR delegate, including `System.Action` and `System.Func`, is exposed
+as a nominal Kotlin `fun interface` whose
 single abstract `operator fun invoke` mirrors the delegate's `Invoke` method.
 Signatures continue to name that interface rather than collapsing it to a
 same-shaped function type. This preserves the delegate identity needed by CLR
 overloads and virtual slots while retaining Kotlin SAM construction and call
 syntax. Recursive delegate signatures remain finite because their edges name
 the nominal interface instead of recursively expanding `Invoke` shapes.
+
+Using a BCL delegate as a compiler-selected carrier for an ordinary Kotlin
+function does not make imported CLR delegate declarations structural. For
+example, an imported `Func<int, int>` slot is `System.Func2<Int, Int>`, not
+`(Int) -> Int`. Lambdas and stored Kotlin functions cross this boundary through
+SAM conversion; overrides name the nominal delegate type.
+
+When overloads accept different delegate interfaces, an explicit SAM constructor
+selects the intended overload, for example `Task.Run(Action { work() })`.
+A delegate instance is not itself a Kotlin function value: use its bound
+`::invoke` reference when adapting it to another delegate type, for example
+`ThreadStart(action::invoke)`. The bound receiver is evaluated once.
 
 The batch coordinator builds a compact delegate catalog from the complete
 reference set. A conversion consults the defining assembly metadata only when a

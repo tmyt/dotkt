@@ -473,7 +473,7 @@ class V:
                           ("attrs" in entry and not isinstance(entry["attrs"], list))):
                         self.err(f, where, "explicit CIR enum entry must carry its name, declaration ordinal, underlying type, and physical value")
 
-    def type_node(self, f, path, o):
+    def type_node(self, f, path, o, declaration_signature=False):
         """Validate a {t:...} type node: known tag + required fields (§1)."""
         t = o.get("t")
         if t not in TYPE_TAGS:
@@ -531,17 +531,19 @@ class V:
                 self.err(f, path, f"type {t!r} is a CIR-only ECMA signature carrier and must not appear in kotc BIR")
             if t == "array" and "rank" in o:
                 self.err(f, path, "array.rank is a CIR-only ECMA signature carrier and must not appear in kotc BIR")
-        # Custom modifiers and general-array ranks describe an exact foreign member identity and remain confined to
-        # member references. `ptr` is different: dll2klib exposes an opaque ClrPointer<T> value to Kotlin, so bir2cir
+        # Custom modifiers also belong to local MethodDef/linkage signatures, but not value storage.
+        # General-array ranks remain confined to member references. `ptr` is different:
+        # dll2klib exposes an opaque ClrPointer<T> value to Kotlin, so bir2cir
         # must materialize `ptr` in ordinary declaration, local, operand, and result slots as well as memberRefs.
-        if (t == "mod" or (t == "array" and "rank" in o)) and not in_member_ref(path):
+        if ((t == "mod" and not declaration_signature) or (t == "array" and "rank" in o)) and not in_member_ref(path):
             carrier = "array.rank" if t == "array" else t
-            self.err(f, path, f"type {carrier} may only appear inside a memberRef signature, not in an ordinary type slot")
+            location = "a declaration/memberRef signature" if t == "mod" else "a memberRef signature"
+            self.err(f, path, f"type {carrier} requires {location}, not an ordinary type slot")
         # The other direction: a member reference is a PHYSICAL identity, so the Kotlin type-system facts have
         # no place in one. `oblivious` is a nullability annotation the CLR signature does not carry, and `star`
         # is a Kotlin projection; either inside a signature would be a second spelling of a physical shape, and
         # two spellings of one member are two members to a consumer that compares them exactly.
-        if in_member_ref(path) and t in ("oblivious", "star", "projection"):
+        if (in_member_ref(path) or declaration_signature) and t in ("oblivious", "star", "projection"):
             self.err(f, path, f"type {t!r} is a Kotlin type-system fact and has no place in a physical member signature")
 
     def member_ref_carrier(self, f, path, key, val):
@@ -792,7 +794,7 @@ class V:
             for i, x in enumerate(o):
                 self.plan_scope(f, x, path + f"[{i}]", bound)
 
-    def walk(self, f, o, path, is_type_decl=False):
+    def walk(self, f, o, path, is_type_decl=False, role=None):
         if isinstance(o, dict):
             self.rich_enum_decl(f, path, o, is_type_decl)
             self.basic_enum_decl(f, path, o, is_type_decl)
@@ -821,7 +823,7 @@ class V:
                 # an object carrying BOTH is ill-formed and must not slip past as either.
                 self.err(f, path, f"object carries BOTH k={o.get('k')!r} and t={o.get('t')!r} (node/type roles are disjoint)")
             elif "t" in o:
-                self.type_node(f, path, o)
+                self.type_node(f, path, o, declaration_signature=role == "signature" and f.endswith(".cir.json"))
             # #370, two independent triggers, because either one alone leaves a hole. The KEY is authoritative:
             # whatever sits under a frozen carrier is a member reference and is checked as one, so a reference
             # that dropped a required field cannot escape validation by no longer looking like one. And
@@ -1272,6 +1274,27 @@ class V:
             clr_owner = o.get("k") in CLR_OWNER_KINDS
             for key, val in o.items():
                 p = path + "/" + key
+                child_role = "signature" if role == "signature" and "t" in o else None
+                if key in ("methods", "ctors") and (path == "" or is_type_decl):
+                    child_role = "declaration"
+                elif key == "properties" and (path == "" or is_type_decl):
+                    child_role = "property"
+                elif role == "property" and key in ("getSig", "setSig"):
+                    child_role = "signature"
+                elif role == "declaration" and key == "params":
+                    child_role = "parameter"
+                elif role == "declaration" and key == "clrInterfaceImpls":
+                    child_role = "linkage"
+                elif role == "linkage" and key in ("params", "ret"):
+                    child_role = "signature"
+                elif (role == "parameter" and key == "type") or (role == "declaration" and key == "ret"):
+                    child_role = "signature"
+                elif "k" in o and key in ("calleeParams", "calleeRet"):
+                    child_role = "signature"
+                elif o.get("k") in ("callStatic", "callInstance", "constrainedCall", "newDelegate") and key == "sig":
+                    child_role = "signature"
+                elif o.get("k") in ("clrEventAdd", "clrEventRemove") and o.get("localAccessor") is True and key == "sig":
+                    child_role = "signature"
                 if isinstance(val, str):
                     if key == "type" and clr_owner:
                         pass  # clr*.type is the call OWNER (owner-FQN island §2.2.1), not a value type
@@ -1288,12 +1311,12 @@ class V:
                         if isinstance(x, str) and key not in STRARR_OK:
                             self.err(f, p + f"[{i}]", f"bare STRING in type-array {key!r}: {x!r} (must be a {{t:...}} node)")
                         else:
-                            self.walk(f, x, p + f"[{i}]", children_are_type_decls)
+                            self.walk(f, x, p + f"[{i}]", children_are_type_decls, child_role)
                 else:
-                    self.walk(f, val, p)
+                    self.walk(f, val, p, role=child_role)
         elif isinstance(o, list):
             for i, x in enumerate(o):
-                self.walk(f, x, path + f"[{i}]")
+                self.walk(f, x, path + f"[{i}]", role=role)
 
 
 def main(argv):

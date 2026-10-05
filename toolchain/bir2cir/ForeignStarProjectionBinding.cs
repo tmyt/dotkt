@@ -286,6 +286,9 @@ static class ForeignStarProjectionBinding
             // view from the opaque receiver and let ordinary member binding consume the selected descriptor.
             if (!ContainsExistential(authoredOwner)
                 && refs.ResolveForeignProjectionType(authoredOwner.Name, authoredOwner.Args) is { } nominalOwner
+                // The same generic declaration is still existential: an authored readable bound
+                // does not prove that the receiver has that exact CLR construction.
+                && nominalOwner != refs.ResolveForeignProjectionType(owner.Name, owner.Args)
                 && nominalOwner.GetGenericArguments().Length == (authoredOwner.Args?.Length ?? 0))
             {
                 obj["recv"] = new JsonObject
@@ -346,7 +349,9 @@ static class ForeignStarProjectionBinding
                 rewritten = WrapDependentDelegateResult(fieldCall, fieldAdapterResult, fieldFunction);
                 return true;
             }
-            var fieldResult = ProjectResult(fieldSemanticResult, owner.Args, refs);
+            // The selected declaration retains which nested generic slots depend on the
+            // projected owner; the readable Kotlin result may already have replaced them by bounds.
+            var fieldResult = ProjectResult(fieldDeclarationType, owner.Args, refs);
             rewritten = IsObjectish(fieldResult) ? fieldCall : new JsonObject
             {
                 ["k"] = "cast", ["type"] = TypeJson.Write(fieldResult), ["e"] = fieldCall,
@@ -409,11 +414,13 @@ static class ForeignStarProjectionBinding
             && !declarationFunction.Suspend
             && DependsOnProjectedOwnerSlot(declarationReturn, owner.Args)
             && semanticFunction != null;
+        var projectedResult = ProjectResult(declarationReturn, owner.Args, refs,
+            (obj["typeArgs"] as JsonArray)?.Select(TypeJson.Read).ToArray());
 
         if (valueReceiver)
         {
             var valueInvocation = BuildValueReceiverInvocation(receiver, arguments, signature, returnsVoid,
-                projectedResult: adaptDelegate ? AnyN : ProjectResult(semanticResult, owner.Args, refs),
+                projectedResult: adaptDelegate ? AnyN : projectedResult,
                 RuntimeInvoke);
             rewritten = adaptDelegate
                 ? WrapDependentDelegateResult(valueInvocation, adapterResult, semanticFunction)
@@ -431,7 +438,6 @@ static class ForeignStarProjectionBinding
             return true;
         }
 
-        var projectedResult = ProjectResult(semanticResult, owner.Args, refs);
         if (adaptDelegate)
         {
             rewritten = WrapDependentDelegateResult(invoke, adapterResult, semanticFunction);
@@ -949,9 +955,13 @@ static class ForeignStarProjectionBinding
     // replacing it recursively with object would manufacture the same invalid CLR fiction this lowering exists to
     // avoid (`Holder<T>` -> `Holder<object>`, `T[]` -> `object[]`, ...). A trusted DotKt existential can retain that
     // nested classifier; every other dependent construction crosses the reflection boundary as one opaque object.
-    static TypeNode ProjectResult(TypeNode type, TypeNode[] ownerArgs, ReferenceMetadataIndex refs)
+    static TypeNode ProjectResult(TypeNode type, TypeNode[] ownerArgs, ReferenceMetadataIndex refs,
+        IReadOnlyList<TypeNode> methodArgs = null)
     {
         if (type == null) return AnyN;
+        if (type is TypeNode.Tv { Scope: "method" } methodVariable
+            && methodArgs != null && methodVariable.I >= 0 && methodVariable.I < methodArgs.Count)
+            return methodArgs[methodVariable.I];
         if (type is TypeNode.Tv { Scope: "type" } tv && tv.I >= 0 && tv.I < ownerArgs.Length)
             return ownerArgs[tv.I] switch
             {
@@ -965,7 +975,7 @@ static class ForeignStarProjectionBinding
             };
         if (type is TypeNode.Star) return AnyN;
         if (type is TypeNode.Projection projection)
-            return projection.Variance == "in" ? AnyN : ProjectResult(projection.Of, ownerArgs, refs);
+            return projection.Variance == "in" ? AnyN : ProjectResult(projection.Of, ownerArgs, refs, methodArgs);
 
         if (DependsOnProjectedOwnerSlot(type, ownerArgs))
         {
@@ -981,26 +991,26 @@ static class ForeignStarProjectionBinding
                 return new TypeNode.Fqn(dependentFqn.Name, dependentArgs.Select(a =>
                     DependsOnProjectedOwnerSlot(a, ownerArgs)
                         ? (TypeNode)new TypeNode.Star()
-                        : ProjectResult(a, ownerArgs, refs)).ToArray());
+                        : ProjectResult(a, ownerArgs, refs, methodArgs)).ToArray());
             if (type is TypeNode.Nullable dependentNullable)
-                return new TypeNode.Nullable(ProjectResult(dependentNullable.Of, ownerArgs, refs));
+                return new TypeNode.Nullable(ProjectResult(dependentNullable.Of, ownerArgs, refs, methodArgs));
             if (type is TypeNode.Oblivious dependentOblivious)
-                return new TypeNode.Oblivious(ProjectResult(dependentOblivious.Of, ownerArgs, refs));
+                return new TypeNode.Oblivious(ProjectResult(dependentOblivious.Of, ownerArgs, refs, methodArgs));
             return AnyN;
         }
 
         return type switch
         {
             TypeNode.Fqn { Args: { } args } f => new TypeNode.Fqn(f.Name,
-                args.Select(a => ProjectResult(a, ownerArgs, refs)).ToArray()),
-            TypeNode.Nullable n => new TypeNode.Nullable(ProjectResult(n.Of, ownerArgs, refs)),
-            TypeNode.Oblivious o => new TypeNode.Oblivious(ProjectResult(o.Of, ownerArgs, refs)),
-            TypeNode.Array a => new TypeNode.Array(ProjectResult(a.Elem, ownerArgs, refs)),
-            TypeNode.ByRef b => new TypeNode.ByRef(ProjectResult(b.Of, ownerArgs, refs)),
-            TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend, ProjectResult(fn.Ret, ownerArgs, refs),
-                fn.Params.Select(p => ProjectResult(p, ownerArgs, refs)).ToArray(),
-                fn.Recv == null ? null : ProjectResult(fn.Recv, ownerArgs, refs), fn.Clr,
-                fn.Ctx?.Select(c => ProjectResult(c, ownerArgs, refs)).ToArray()),
+                args.Select(a => ProjectResult(a, ownerArgs, refs, methodArgs)).ToArray()),
+            TypeNode.Nullable n => new TypeNode.Nullable(ProjectResult(n.Of, ownerArgs, refs, methodArgs)),
+            TypeNode.Oblivious o => new TypeNode.Oblivious(ProjectResult(o.Of, ownerArgs, refs, methodArgs)),
+            TypeNode.Array a => new TypeNode.Array(ProjectResult(a.Elem, ownerArgs, refs, methodArgs)),
+            TypeNode.ByRef b => new TypeNode.ByRef(ProjectResult(b.Of, ownerArgs, refs, methodArgs)),
+            TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend, ProjectResult(fn.Ret, ownerArgs, refs, methodArgs),
+                fn.Params.Select(p => ProjectResult(p, ownerArgs, refs, methodArgs)).ToArray(),
+                fn.Recv == null ? null : ProjectResult(fn.Recv, ownerArgs, refs, methodArgs), fn.Clr,
+                fn.Ctx?.Select(c => ProjectResult(c, ownerArgs, refs, methodArgs)).ToArray()),
             _ => type,
         };
     }
