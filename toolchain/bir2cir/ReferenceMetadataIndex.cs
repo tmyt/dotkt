@@ -4061,6 +4061,32 @@ sealed partial class ReferenceMetadataIndex
         return a.Node == null || a.Node.Equals(b.Node);
     }
 
+    // Resolve a selected source constructor declaration to its physical parameter vector.
+    // Arity only narrows the set; every source slot must agree and the match must be unique.
+    public bool TrySelectedConstructorPhysicalSignature(string ownerFqn,
+        IReadOnlyList<TypeNode> selected, out TypeNode[] physical)
+    {
+        physical = null;
+        if (ownerFqn == null || selected == null || IsLocalEmittedType(ownerFqn)) return false;
+        var lookup = HasExactOwnerPunctuation(ownerFqn) ? ownerFqn : BareOwnerFqn(ownerFqn);
+        if (!_ctorsByOwner.TryGetValue(lookup, out var byArity))
+        {
+            if (HasExactOwnerPunctuation(ownerFqn)) return false;
+            var owners = _ctorsByOwner.Where(pair => DottedFqn(pair.Key) == lookup).Take(2).ToList();
+            if (owners.Count != 1) return false;
+            byArity = owners[0].Value;
+        }
+        if (!byArity.TryGetValue(selected.Count, out var candidates)) return false;
+        var matches = candidates.Where(ctor => ctor.ParamTypeNodes != null
+            && ctor.ParamTypeNodes.Select((type, index) =>
+                SourceDeclarationDescribesCall(
+                    ctor.KotlinParameterTypes?[index] ?? ctor.NullableGenericParams?[index] ?? type,
+                    selected[index])).All(match => match)).ToList();
+        if (matches.Count != 1) return false;
+        physical = matches[0].ParamTypeNodes;
+        return true;
+    }
+
     // The same for a CONSTRUCTOR, keyed by owner + declared parameter count (a ctor has no name). A same-arity overload
     // set is refused for the same reason a same-shape method set is.
     public bool TryNullableGenericCtorSlot(string ownerFqn, int argCount, out TypeNode[] declaredParams,
@@ -5225,6 +5251,10 @@ sealed partial class ReferenceMetadataIndex
                             ctor.GetParameters().Select(p => DeclarationTypeNode(p.ParameterType)).ToArray(),
                             dotKtAuthored
                                 ? ctor.GetParameters().Select(p => CarrierTypeOf(p.GetCustomAttributesData(), ctor.DeclaringType?.Assembly, KotlinNullableGenericAttr)).ToArray()
+                                : null,
+                            dotKtAuthored
+                                ? ctor.GetParameters().Select(p => KotlinTypeOf(
+                                    p.GetCustomAttributesData(), ctor.DeclaringType?.Assembly)).ToArray()
                                 : null));
                     }
                 }
@@ -7726,6 +7756,6 @@ sealed record ExactClrMemberBinding(string Intrinsic, int PropertyAccess, string
 // parameters retained; `NullableGenericParams[i]` is the pre-erasure `[KotlinNullableGeneric]` carrier of that slot
 // when it has one.
 sealed record CtorBinding(string Owner, string PhysicalOwner, int ParamCount, TypeNode[] ParamTypeNodes,
-    TypeNode[] NullableGenericParams);
+    TypeNode[] NullableGenericParams, TypeNode[] KotlinParameterTypes);
 
 sealed record ReferencedAliasConstructorAdapter(string Owner, AliasConstructorAdapter Adapter);

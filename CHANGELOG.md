@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Constructed Kotlin values preserve erased generic and inner-class consumption (#922).**
+  bir2cir uses the declared existential carrier for ordinary value slots and explicit adapters at exact CLR
+  constructor, storage, delegate, and override boundaries, preserving Kotlin source types in metadata.
+
 - **Inherited properties on projected Kotlin receivers retain their selected accessor (#961).**
   bir2cir preserves property declaration identity and binds inherited existential interface slots,
   including override chains, instead of calling an incompatible concrete generic accessor.

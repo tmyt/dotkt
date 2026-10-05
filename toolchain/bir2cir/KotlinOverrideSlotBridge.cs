@@ -109,8 +109,10 @@ static class KotlinOverrideSlotBridge
     // The bridge half.
     public static void ApplyAll(IEnumerable<JsonNode> roots, ValueTypeOracle isValue, ReferenceMetadataIndex refs,
         IReadOnlySet<string> localTypeNames, bool refBuild, GenericRepresentationPolicy representations,
-        IReadOnlySet<CovariantInterfaceReturnBridge.BridgedSlot> covariantBridgedSlots = null) =>
-        ApplyAll(roots, isValue, refs, representations, Phase.PhysicalBridges, localTypeNames, covariantBridgedSlots, refBuild);
+        IReadOnlySet<CovariantInterfaceReturnBridge.BridgedSlot> covariantBridgedSlots = null,
+        IReadOnlyDictionary<JsonObject, TypeNode[]> sourceParameters = null) =>
+        ApplyAll(roots, isValue, refs, representations, Phase.PhysicalBridges, localTypeNames,
+            covariantBridgedSlots, refBuild, sourceParameters);
 
     static void ApplyAll(IEnumerable<JsonNode> roots, ValueTypeOracle isValue, ReferenceMetadataIndex refs,
         GenericRepresentationPolicy representations, Phase phase, IReadOnlySet<string> localTypeNames,
@@ -1305,9 +1307,15 @@ static class KotlinOverrideSlotBridge
                 // example) Collection.size's IReadOnlyCollection<T>.get_Count slot.
                 var selectedSpec = accessorKind != null ? owner : spec;
                 var selectedArgs = selectedSpec.Args ?? Array.Empty<TypeNode>();
-                var implementationSignature = suspendValues && sourceParameters != null
+                var foreignDeclaration = !IsSuspendMethod(impl) && refs.ResolveNetType(
+                    ReferenceMetadataIndex.ReflectedOwnerFqn(selectedSpec.Name), selectedArgs.Length) != null;
+                // Exact CLR overload selection precedes the representation comparison. Two source
+                // constructions can share a Kotlin value carrier without naming the same CLR slot.
+                var implementationSignature = (suspendValues || foreignDeclaration) && sourceParameters != null
                     && sourceParameters.TryGetValue(impl, out var sourceSignature)
                     ? sourceSignature : ReadParameterTypes(impl);
+                var implementationReturn = foreignDeclaration && Str(impl["retKotlinType"]) is string sourceReturn
+                    ? TypeNode.Parse(sourceReturn) : TypeJson.Read(impl["ret"]);
                 if (implementationSignature.Length != ps.Count || implementationSignature.Any(type => type == null))
                     continue;
                 if (suspendValues && inheritedSignatures != null
@@ -1343,7 +1351,7 @@ static class KotlinOverrideSlotBridge
                             ps.Count, methodArity, implementationSignature, selectedArgs,
                             out slotRet0, out slotParams0, out refused, includeUnchanged: true)
                         : refs.TrySelectedNullableGenericSlot(spec.Name, member, isStatic: false, ps.Count, methodArity,
-                            implementationSignature, TypeJson.Read(impl["ret"]),
+                            implementationSignature, implementationReturn,
                             spec.Args ?? Array.Empty<TypeNode>(), impl["typeParams"] as JsonArray, ownArgs,
                             out slotRet0, out slotParams0, out refused,
                             out selectedPhysicalMember, out selectedSlotTypeParams, out slotReturnsValue,
@@ -1548,6 +1556,13 @@ static class KotlinOverrideSlotBridge
         // box/unbox cast. Keep it in this override-edge-driven table: selecting the slot later from name/arity loses
         // the frontend declaration identity and misbinds same-name overloads (#355).
         if (IsNullableValueSlot(slot, declared, refs, isValue, returnPosition)) return Fit.Bridge;
+        // A referenced CLR slot retains its constructed Kotlin-generated class, whereas ordinary
+        // Kotlin values use the classifier's metadata-declared existential carrier. The selected
+        // override edge licenses an explicit adapter; it does not change the Kotlin body signature.
+        if (slot is TypeNode.Fqn { Args: { Length: > 0 } } constructed
+            && declared is TypeNode.Fqn { Args: null } carrier
+            && refs != null && refs.TryExistentialPhysicalOwner(constructed.Name, out var carrierName)
+            && carrier.Name == carrierName) return Fit.Bridge;
         // Kotlin collection declarations can return a value where their aliased CLR interface slot is void
         // (`MutableCollection.add(): Boolean` -> `ICollection<T>.Add(T): void`). The bridge body already models this
         // as an expression statement, so keep the decision and exact MethodImpl in the same table instead of asking

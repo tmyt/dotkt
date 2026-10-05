@@ -53,6 +53,7 @@ static class PhysicalValueCoercion
         internal ValueTypeOracle IsValue;
         internal JsonObject Document;
         internal bool ReferenceBuild;
+        internal Func<TypeNode, TypeNode, bool> NeedsDeclaredProjection;
 
         Index(Func<JsonObject> unitValue) => _unitValue = unitValue;
         internal JsonObject UnitValue() => _unitValue();
@@ -157,11 +158,13 @@ static class PhysicalValueCoercion
     }
 
     public static void ApplyAll(IReadOnlyList<JsonNode> roots, Func<JsonObject> unitValue,
-        ValueTypeOracle isValue, bool referenceBuild = false)
+        ValueTypeOracle isValue, bool referenceBuild = false,
+        Func<TypeNode, TypeNode, bool> needsDeclaredProjection = null)
     {
         var index = Index.Build(roots, unitValue);
         index.IsValue = isValue;
         index.ReferenceBuild = referenceBuild;
+        index.NeedsDeclaredProjection = needsDeclaredProjection;
         foreach (var root in roots.OfType<JsonObject>()) RewriteDocument(root, index);
     }
 
@@ -413,7 +416,7 @@ static class PhysicalValueCoercion
                     CoerceSlot(node, "value", localType, scope, index);
                 break;
             case "setField": case "setFieldExpr": case "staticFieldSet":
-                CoerceSlot(node, "value", FieldTarget(node, scope, index), scope, index);
+                CoerceMemberSlot(node, "value", FieldTarget(node, scope, index), scope, index);
                 break;
             case "return": case "returnExpr":
                 CoerceSlot(node, "value", scope.Return, scope, index);
@@ -429,7 +432,7 @@ static class PhysicalValueCoercion
                 CoerceDelegateArguments(node, scope, index);
                 break;
             case "clrPropSet":
-                CoerceSlot(node, "value", FieldTarget(node, scope, index), scope, index);
+                CoerceMemberSlot(node, "value", FieldTarget(node, scope, index), scope, index);
                 break;
             case "arraySet":
                 CoerceSlot(node, "value", TypeJson.Read(node["elem"]), scope, index);
@@ -501,7 +504,30 @@ static class PhysicalValueCoercion
 
     static void CoerceArguments(JsonObject node, TypeNode[] targets, Scope scope, Index index)
     {
-        if (node["args"] is JsonArray args) CoerceVector(args, targets, scope, index);
+        if (node["args"] is not JsonArray args) return;
+        CoerceVector(args, targets, scope, index);
+        // A selected CLR declaration owns its exact parameter slots. Kotlin value slots use
+        // classifier carriers; do not apply this narrowing to ordinary inferred/local signatures.
+        if (node["memberRef"] is not JsonObject || targets?.Length != args.Count) return;
+        for (var i = 0; i < args.Count; i++)
+            if (args[i] is JsonNode argument)
+            {
+                var converted = CoerceDeclaredValue(argument, targets[i], scope, index);
+                if (!ReferenceEquals(converted, argument)) args[i] = converted;
+            }
+    }
+
+    static JsonNode CoerceDeclaredValue(JsonNode value, TypeNode target, Scope scope, Index index)
+        => index.NeedsDeclaredProjection?.Invoke(ExprType(value, scope, index), target) == true
+            ? new JsonObject { ["k"] = "cast", ["type"] = TypeJson.Write(target), ["e"] = value.DeepClone() }
+            : value;
+
+    static void CoerceMemberSlot(JsonObject node, string key, TypeNode target, Scope scope, Index index)
+    {
+        CoerceSlot(node, key, target, scope, index);
+        if (ResolvedMember(node) == null || node[key] is not JsonNode value) return;
+        var converted = CoerceDeclaredValue(value, target, scope, index);
+        if (!ReferenceEquals(converted, value)) node[key] = converted;
     }
 
     static void CoerceConstructorArguments(JsonObject node, Scope scope, Index index)

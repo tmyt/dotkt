@@ -308,7 +308,7 @@ static partial class ClrMemberResolution
             && SlotInvokeReturn(slot) is TypeNode slotReturn
             && slotReturn is not TypeNode.Fqn { Args: null, Name: "void" or "System.Void" })
             AdaptVoidConstruction(construction, naturalFn, slot, slotReturn);
-        else if (PhysicalFunctionShape(slot) is TypeNode.Fn slotFn
+        else if (PhysicalFunctionShape(slot, includeNominal: true) is TypeNode.Fn slotFn
             && NeedsSlotAdapter(naturalFn, slotFn))
             AdaptBoxedSlots(construction, naturalFn, slot, slotFn);
         else
@@ -328,6 +328,12 @@ static partial class ClrMemberResolution
 
     static bool NeedsSlotAdapter(TypeNode.Fn natural, TypeNode.Fn target) =>
         HasBoxedSlotSeam(natural, target)
+        // A Kotlin classifier carrier and a native constructed slot can both be references.
+        // The selected native Invoke still requires its exact signature; the adapter owns the
+        // conversion rather than changing the original Kotlin function/closure declaration.
+        || !SameDelegate(natural.Ret, target.Ret)
+        || natural.DelegateParams.Zip(target.DelegateParams,
+            (source, destination) => !SameDelegate(source, destination)).Any(different => different)
         || ((natural.Ret is TypeNode.Fqn { Args: null, Name: "void" or "System.Void" })
             != (target.Ret is TypeNode.Fqn { Args: null, Name: "void" or "System.Void" }));
 

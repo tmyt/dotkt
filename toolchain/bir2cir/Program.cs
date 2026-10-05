@@ -974,7 +974,7 @@ sealed class Pipeline
         // the final Task/cold shapes. Star views already exist, and all types are still in the Kotlin vocabulary.
         KotlinOverrideSlotBridge.ApplyAll(
             staged.Select(s => s.Root).ToList(), isValueFqn, refs, localTypeFqns, _options.RefBuild, genericRepresentations,
-            covariantBridgedSlots);
+            covariantBridgedSlots, overrideSourceParameters);
 
         // The final override bridge deliberately runs after the main F-bound/star rewrite because suspend lowering
         // can create additional physical slots. Project any Kotlin star types copied into those late declarations
@@ -1474,7 +1474,13 @@ sealed class Pipeline
         // stable. ilemit then emits those ordinary CIR casts without recognizing the collection ABI. A metadata/ref
         // build retains declaration types and only consumes semantic comparisons in executable constructor remnants.
         PhysicalValueCoercion.ApplyAll(loweredRoots.Select(file => file.Root).ToList(),
-            ClrMemberResolution.UnitSingletonRead, isValueFqn, referenceBuild: _options.RefBuild);
+            ClrMemberResolution.UnitSingletonRead, isValueFqn, referenceBuild: _options.RefBuild,
+            needsDeclaredProjection: (source, target) =>
+                source is TypeNode.Fqn { Args: null } carrier
+                && target is TypeNode.Fqn { Args: { Length: > 0 } } concrete
+                && (localExistentialOwners.TryGetValue(concrete.Name, out var declaredCarrier)
+                    || refs.TryExistentialPhysicalOwner(concrete.Name, out declaredCarrier))
+                && carrier.Name == declaredCarrier);
 
         // Every representation synthesis is now complete. Validate the exact MethodDef table that CIR will describe;
         // do not defer a generated/user collision to ilemit and do not invent a late name after calls are bound.
