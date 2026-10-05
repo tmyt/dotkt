@@ -57,24 +57,77 @@ static class CharSeqStringLowering
     {
         public readonly Dictionary<string, TypeNode> Vars;
         public readonly TypeNode RetCharSeq;
-        public Env() { Vars = new(StringComparer.Ordinal); RetCharSeq = null; }
-        Env(Dictionary<string, TypeNode> vars, TypeNode ret) { Vars = vars; RetCharSeq = ret; }
+        readonly Dictionary<TypeNode.Tv, TypeNode[]> Bounds;
+        public Env() { Vars = new(StringComparer.Ordinal); RetCharSeq = null; Bounds = new(); }
+        Env(Dictionary<string, TypeNode> vars, TypeNode ret, Dictionary<TypeNode.Tv, TypeNode[]> bounds)
+        { Vars = vars; RetCharSeq = ret; Bounds = bounds; }
 
         public Env WithDecl(JsonObject decl)
         {
-            if (decl["params"] is not JsonArray ps) return this;
+            if (decl["kind"] == null && decl["params"] is not JsonArray) return this;
+            var bounds = new Dictionary<TypeNode.Tv, TypeNode[]>(Bounds);
+            void Bind(TypeNode.Tv variable, JsonNode parameter)
+            {
+                bounds[variable] = (parameter as JsonObject)?["constraints"] is JsonArray constraints
+                    ? constraints.Select(TypeJson.Read).Where(t => t != null)
+                        .Select(t => IsCharSeqT(t) ? LowerTokT(t) : t).ToArray()
+                    : Array.Empty<TypeNode>();
+            }
+            if (decl["kind"] != null)
+            {
+                bounds.Clear();
+                var index = 0;
+                foreach (var parameter in TypeParameterFrame.Declarations(decl))
+                    Bind(new TypeNode.Tv("type", index++), parameter);
+            }
+            else if (decl["k"] == null && decl["params"] is JsonArray)
+            {
+                foreach (var variable in bounds.Keys.Where(v => v.Scope == "method").ToArray())
+                    bounds.Remove(variable);
+                if (decl["typeParams"] is JsonArray parameters)
+                    for (var i = 0; i < parameters.Count; i++) Bind(new TypeNode.Tv("method", i), parameters[i]);
+            }
+            else if (Str(decl["k"]) == "newSuspendLambda"
+                     && decl["typeParamDecls"] is JsonArray lambdaParameters)
+            {
+                // Splicing specializes construction arguments, not the donor body's declaration frame.
+                // Use the same explicit correspondence consumed by SuspendLambdaLowering.
+                var arguments = decl[SuspendLambdaLowering.SplicedDeclarationFrameKey] as JsonArray
+                    ?? decl["typeArgs"] as JsonArray;
+                if (arguments != null)
+                    for (var i = 0; i < lambdaParameters.Count && i < arguments.Count; i++)
+                        if (TypeJson.Read(arguments[i]) is TypeNode.Tv variable)
+                            Bind(Str(decl["typeFrame"]) == "dense"
+                                ? new TypeNode.Tv(variable.Scope, i) : variable, lambdaParameters[i]);
+            }
             var vars = new Dictionary<string, TypeNode>(Vars, StringComparer.Ordinal);
-            foreach (var p in ps)
+            foreach (var p in (decl["params"] as JsonArray ?? new JsonArray())
+                .Concat(decl["captures"] as JsonArray ?? new JsonArray()))
                 if (p is JsonObject po && Str(po["name"]) is string pn && TypeJson.Read(po["type"]) is TypeNode pt)
                     vars[pn] = IsCharSeqT(pt) ? LowerTokT(pt) : pt;
             var ret = TypeJson.Read(decl["ret"]) is TypeNode rt ? (IsCharSeqT(rt) ? rt : null) : RetCharSeq;
-            return new Env(vars, ret);
+            return new Env(vars, ret, bounds);
+        }
+
+        public bool IsString(TypeNode type)
+        {
+            var visiting = new HashSet<TypeNode.Tv>();
+            bool ResolveBound(TypeNode bound) => bound switch
+            {
+                TypeNode.Nullable nullable => ResolveBound(nullable.Of),
+                TypeNode.Oblivious oblivious => ResolveBound(oblivious.Of),
+                _ => Resolve(bound),
+            };
+            bool Resolve(TypeNode candidate) => IsStringTokT(candidate)
+                || candidate is TypeNode.Tv variable && visiting.Add(variable)
+                    && Bounds.TryGetValue(variable, out var constraints) && constraints.Any(ResolveBound);
+            return Resolve(type);
         }
 
         public Env WithVar(string name, TypeNode type)
         {
             var vars = new Dictionary<string, TypeNode>(Vars, StringComparer.Ordinal) { [name] = type };
-            return new Env(vars, RetCharSeq);
+            return new Env(vars, RetCharSeq, Bounds);
         }
     }
 
@@ -195,9 +248,13 @@ static class CharSeqStringLowering
                         resultEnv = resultEnv.WithVar(sn, IsCharSeqT(st) ? LowerTokT(st) : st);
             var copy = new JsonObject();
             foreach (var kv in obj)
-                copy[kv.Key] = kv.Value is JsonArray arr ? WalkArray(arr, childEnv)
+            {
+                var memberEnv = Str(obj["k"]) == "newSuspendLambda"
+                    && kv.Key is "capValues" or "typeArgs" or "funcType" or "sty" ? env : childEnv;
+                copy[kv.Key] = kv.Value is JsonArray arr ? WalkArray(arr, memberEnv)
                              : kv.Value == null ? null
-                             : Walk(kv.Value, kv.Key == "result" ? resultEnv : childEnv);
+                             : Walk(kv.Value, kv.Key == "result" ? resultEnv : memberEnv);
+            }
             return Transform(copy, env);
         }
         if (node is JsonArray topArr) return WalkArray(topArr, env);
@@ -262,7 +319,7 @@ static class CharSeqStringLowering
         if (k == "callInstance" && IsCharSeqSlot(node["ownerType"])
             && IsStaticString(node["recv"], env))
         {
-            var rewritten = RewriteMemberRead(node);
+            var rewritten = RewriteMemberRead(node, env);
             if (rewritten != null) return rewritten;
         }
 
@@ -353,9 +410,17 @@ static class CharSeqStringLowering
     // `cs.length` -> System.String.Length; `cs[i]` (get) -> get_Chars; `cs.subSequence(a,b)` -> Substring(a, b-a).
     // Structurally identical to the dotkt$StringCharSequence adapter's proven bodies. Returns null for an
     // unrecognized member (leave as-is).
-    static JsonObject RewriteMemberRead(JsonObject node)
+    static JsonObject RewriteMemberRead(JsonObject node, Env env)
     {
         var recv = node["recv"];
+        // These are concrete, non-virtual String members. A generic value proven to
+        // have the lowered String constraint must cross that representation boundary
+        // as a reference value, not as the managed address used by constrained dispatch.
+        if (ReceiverVariable(StaticType.Surface(recv, BirScope.FromVars(env.Vars))) is TypeNode.Tv variable
+            && env.IsString(variable))
+            recv = new JsonObject {
+                ["k"] = "cast", ["type"] = TypeJson.Fqn("System.String"), ["e"] = recv.DeepClone(),
+            };
         var args = node["args"] as JsonArray;
         var member = Str(node["method"]);
         var propertyAccess = Str(node["prop"]);
@@ -511,6 +576,8 @@ static class CharSeqStringLowering
     static bool IsStaticString(JsonNode n, Env env)
     {
         if (n is not JsonObject o) return false;
+        var surface = StaticType.Surface(n, BirScope.FromVars(env.Vars));
+        if (env.IsString(ReceiverVariable(surface) ?? surface)) return true;
         switch (Str(o["k"]))
         {
             case "const": return IsStringTokT(TypeJson.Read(o["type"]));
@@ -522,6 +589,14 @@ static class CharSeqStringLowering
                 return IsStringTokT(TypeJson.Read(o["ret"]) ?? TypeJson.Read(o["dynRet"]));
         }
     }
+
+    static TypeNode.Tv ReceiverVariable(TypeNode type) => type switch
+    {
+        TypeNode.Tv variable => variable,
+        TypeNode.Nullable nullable => ReceiverVariable(nullable.Of),
+        TypeNode.Oblivious oblivious => ReceiverVariable(oblivious.Of),
+        _ => null,
+    };
 
     static bool IsStringTokT(TypeNode t) => t is TypeNode.Fqn { Args: null } f && StringTokens.Contains(f.Name);
     static bool IsStringDeclT(TypeNode t) => IsStringTokT(t)
