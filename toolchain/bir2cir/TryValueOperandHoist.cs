@@ -5,7 +5,10 @@ using System.Text.Json.Nodes;
 using DotKt.Bir;
 
 // TRY-VALUE OPERAND HOIST (bundle-6 `tryexprop`): CLR eval-order normalization for a value-producing
-// try/catch(/finally) used in an OPERAND slot (`1 + try{..}`, `"x" + try{..}`, `f(try{..})`).
+// try/catch(/finally) or method return used in an OPERAND slot.
+// A method return likewise requires an empty stack apart from its own return value.
+// Conditional and short-circuit operands retain branch-local preparation so that hoisting
+// does not evaluate an untaken branch.
 //
 // kotc already emits the correct value-form: a `valueBlock` whose `stmts` are `[ var dotkt_tryvalN;
 // try{ ..setLocal dotkt_tryvalN.. } catch{ ..setLocal.. } ]` with `result: local(dotkt_tryvalN)`.
@@ -51,13 +54,14 @@ static class TryValueOperandHoist
     // Q4 of the four value questions (roster in bir-common/ValueStability.cs) — STACK-NEUTRAL: may this operand stay
     // in its slot when a LATER sibling hoists out of the expression? A hoist moves the sibling's evaluation to a
     // PRECEDING statement, so every operand left of it now runs after what used to run after it. That is invisible
-    // only for an operand whose evaluation neither has an effect nor can fail — a literal, a local read, `this`.
+    // only for an operand whose value is stable and whose evaluation cannot fail — a literal or `this`.
+    // A local read must be captured before later operands can mutate that local.
     // Anything else (including a load that merely dereferences, so `arrayGet`/`field` too) is spilled to a temp by
     // SpillIfNeeded, which is what preserves left-to-right order.
     //
     // Not a restatement of Q2 (droppable) or Q3 (resume-stable): this one asks about ORDER against a hoisted try,
     // not about skipping an evaluation or about surviving a resume, and the three land differently per kind.
-    static readonly HashSet<string> StackNeutralKinds = new(StringComparer.Ordinal) { "const", "local", "this" };
+    static readonly HashSet<string> StackNeutralKinds = new(StringComparer.Ordinal) { "const", "this" };
 
     // Value-list keys whose elements ilemit evaluates while a construction receiver (and, for an array, its index)
     // is already on the CLR stack. These are deliberately keyed by NODE KIND: arrays such as `sig`, `argTypes`,
@@ -162,8 +166,8 @@ static class TryValueOperandHoist
 
     // Only statements whose operand expression is evaluated EXACTLY ONCE at the statement's start are
     // eligible (var init, assignment value, expr-statement, return/throw value). Loop/if conditions are
-    // NOT hoisted (a cond is re-evaluated per iteration / guards branch entry — hoisting would change
-    // semantics); a try-valueBlock in such a position is out of scope for this normalization.
+    // normalized inside their own evaluation region: a guard's preparation must run only when
+    // that guard runs, including on every loop iteration.
     static void HoistStmtExprs(JsonObject stmt, List<JsonNode> pre, BirScope scope)
     {
         switch (K(stmt))
@@ -173,8 +177,33 @@ static class TryValueOperandHoist
             case "return": HoistChild(stmt, "value", pre, scope); break;
             case "throw": HoistChild(stmt, "value", pre, scope); break;
             case "exprStmt": HoistChild(stmt, "expr", pre, scope); break;
+            case "brIf": HoistChild(stmt, "cond", pre, scope); break;
             case "setField": HoistNamedSlots(stmt, new[] { "recv", "value" }, atEmpty: true, pre, scope); break;
+            case "while": case "doWhile":
+                NormalizeGuard(stmt, "cond", scope);
+                break;
+            case "if":
+                if (stmt["branches"] is JsonArray branches)
+                    foreach (var branch in branches.OfType<JsonObject>()) NormalizeGuard(branch, "cond", scope);
+                break;
         }
+    }
+
+    static void NormalizeGuard(JsonObject owner, string key, BirScope scope)
+    {
+        if (owner[key] is not JsonNode value) return;
+        owner[key] = null;
+        owner[key] = NormalizeConditionalOperand(value, atEmpty: true, scope);
+    }
+
+    static JsonNode NormalizeConditionalOperand(JsonNode value, bool atEmpty, BirScope scope)
+    {
+        var pre = new List<JsonNode>();
+        var result = HoistExpr(value, pre, atEmpty, scope);
+        return pre.Count == 0 ? result : new JsonObject
+        {
+            ["k"] = "valueBlock", ["stmts"] = new JsonArray(pre.ToArray()), ["result"] = result,
+        };
     }
 
     static void HoistChild(JsonObject o, string key, List<JsonNode> pre, BirScope scope)
@@ -189,6 +218,34 @@ static class TryValueOperandHoist
         if (node is not JsonObject o) return node;
         var k = K(o);
 
+        // A method return, like a protected region, cannot retain earlier operands.
+        // Move the whole expression so conditional arms stay conditional.
+        if (!atEmpty && (RunsAReturn(o) || k == "cond" && RunsATry(o)))
+        {
+            var normalized = HoistExpr(o, pre, atEmpty: true, scope);
+            return SpillIfNeeded(normalized, pre, scope);
+        }
+        if (k == "cond")
+        {
+            foreach (var key in new[] { "cond", "then", "else" })
+                if (o[key] is JsonNode operand)
+                {
+                    o[key] = null;
+                    o[key] = NormalizeConditionalOperand(operand, atEmpty, scope);
+                }
+            return o;
+        }
+        if (k == "binOp" && (o["op"]?.GetValue<string>() is "&&" or "||"))
+        {
+            foreach (var key in new[] { "lhs", "rhs" })
+                if (o[key] is JsonNode operand)
+                {
+                    o[key] = null;
+                    o[key] = NormalizeConditionalOperand(operand, atEmpty, scope);
+                }
+            return o;
+        }
+
         // A hazardous block at a NON-EMPTY stack moves; one at an empty stack is already safe and stays. Being safe
         // is not being finished, though: the block's own subexpressions still need normalizing, so the empty-stack
         // case FALLS THROUGH to the generic descent below rather than returning. Returning early there is what made
@@ -200,6 +257,33 @@ static class TryValueOperandHoist
             // The RESULT is still evaluated in the slot, at the same non-empty stack, so a block nested there is
             // hoisted in turn — after this block's own statements, which is the order it ran in.
             return o["result"] is JsonNode r ? HoistExpr(r.DeepClone(), pre, atEmpty, scope) : o;
+        }
+
+        if (k == "valueBlock")
+        {
+            var inner = scope.Child();
+            foreach (var key in new[] { "stmts", "body" })
+                if (o[key] is JsonArray statements)
+                    foreach (var statement in statements.OfType<JsonObject>()) inner.Declare(statement);
+            if (o["result"] is JsonNode result)
+            {
+                o["result"] = null;
+                // Preparation belongs after this block's statements, in their lexical scope.
+                o["result"] = NormalizeConditionalOperand(result, atEmpty, inner);
+            }
+            return o;
+        }
+
+        if (k == "byrefStore")
+        {
+            if (o["ptr"] == null && o["local"] is JsonNode name)
+            {
+                o["ptr"] = new JsonObject { ["k"] = "local", ["name"] = name.DeepClone(),
+                    ["sty"] = new JsonObject { ["t"] = "byRef", ["of"] = o["elem"]?.DeepClone() } };
+                o.Remove("local");
+            }
+            HoistNamedSlots(o, new[] { "ptr", "value" }, atEmpty, pre, scope);
+            return o;
         }
 
         if (k == "binOp" && o["lhs"] != null && o["rhs"] != null)
@@ -260,7 +344,18 @@ static class TryValueOperandHoist
         var n = (hasRecv ? 1 : 0) + argc;
         JsonNode Get(int i) => (hasRecv && i == 0) ? o["recv"] : args[i - (hasRecv ? 1 : 0)];
         void Set(int i, JsonNode v) { if (hasRecv && i == 0) o["recv"] = v; else args[i - (hasRecv ? 1 : 0)] = v; }
-        HoistOrdered(n, Get, Set, atEmpty, pre, scope);
+        // This pass precedes final CLR member linking. Local calls carry sig; projected CLR
+        // calls carry the selected declaration's resolvedMemberParams or its matching argTypes.
+        var signature = (o["memberRef"] as JsonObject)?["parameterTypes"] as JsonArray
+            ?? o["resolvedMemberParams"] as JsonArray
+            ?? o["sig"] as JsonArray
+            ?? o["shapeTypes"] as JsonArray
+            ?? o["argTypes"] as JsonArray;
+        bool IsLocation(int i) => hasRecv && i == 0
+            ? CallEvalLowering.ReceiverNeedsAddress(o, _isValue)
+            : signature != null && i - (hasRecv ? 1 : 0) < signature.Count
+                && TypeJson.Read(signature[i - (hasRecv ? 1 : 0)]) is TypeNode.ByRef;
+        HoistOrdered(n, Get, Set, atEmpty, pre, scope, preserveLocation: IsLocation);
     }
 
     static void HoistNamedSlots(JsonObject o, string[] keys, bool atEmpty, List<JsonNode> pre, BirScope scope)
@@ -269,7 +364,7 @@ static class TryValueOperandHoist
         var preserveFirstLocation = present.Length > 0 && present[0] == "recv"
             && CallEvalLowering.ReceiverNeedsAddress(o, _isValue);
         HoistOrdered(present.Length, i => o[present[i]], (i, v) => o[present[i]] = v,
-            atEmpty, pre, scope, preserveFirstLocation: preserveFirstLocation);
+            atEmpty, pre, scope, preserveLocation: i => preserveFirstLocation && i == 0);
     }
 
     // Dictionary construction evaluates entry 0 key, entry 0 value, entry 1 key, entry 1 value, ... while the
@@ -309,7 +404,7 @@ static class TryValueOperandHoist
     // precedes a slot which hoists must itself be spilled (if side-effecting) so relative order holds.
     static void HoistOrdered(int n, Func<int, JsonNode> get, Action<int, JsonNode> set, bool atEmpty,
                              List<JsonNode> pre, BirScope scope, bool spillAllAfterHoist = false,
-                             bool preserveFirstLocation = false)
+                             Func<int, bool> preserveLocation = null)
     {
         var lastHoist = -1;
         for (var i = 0; i < n; i++) if (WillHoist(get(i), i == 0 && atEmpty)) lastHoist = i;
@@ -324,24 +419,26 @@ static class TryValueOperandHoist
             // Once any protected region moves, materialize the whole non-neutral stream before construction so a
             // suffix expression cannot slide behind an earlier element's user-observable hash/equality operation.
             if (lastHoist >= 0 && (spillAllAfterHoist || i < lastHoist))
-                resolved = preserveFirstLocation && i == 0
-                    ? PinAddressIfNeeded(resolved, pre)
+                resolved = preserveLocation?.Invoke(i) == true
+                    ? PinAddressIfNeeded(resolved, pre, scope)
                     : SpillIfNeeded(resolved, pre, scope);
             set(i, resolved);
         }
     }
 
-    static JsonNode PinAddressIfNeeded(JsonNode location, List<JsonNode> pre)
+    static JsonNode PinAddressIfNeeded(JsonNode location, List<JsonNode> pre, BirScope scope)
     {
-        var pinned = new JsonArray();
-        var resolved = CallEvalLowering.PinAddressForOrdering(location, pinned, _isValue);
-        foreach (var stmt in pinned) if (stmt != null) pre.Add(stmt.DeepClone());
-        return resolved;
+        var type = TypeJson.Read(SpillType(location, scope));
+        var pointerType = type is TypeNode.ByRef ? type : new TypeNode.ByRef(type);
+        var name = "dotkt$hoist" + System.Threading.Interlocked.Increment(ref _tmp);
+        pre.Add(new JsonObject { ["k"] = "var", ["name"] = name, ["type"] = TypeJson.Write(pointerType),
+            ["init"] = new JsonObject { ["k"] = "byrefOf", ["inner"] = location.DeepClone() } });
+        return new JsonObject { ["k"] = "local", ["name"] = name, ["sty"] = TypeJson.Write(pointerType) };
     }
 
     // A slot evaluated before a hoisted try: a leftover leading try-valueBlock (safe-at-empty but now
     // reordered) is hoisted; any other side-effecting operand is spilled to a preceding temp; a
-    // stack-neutral operand (const/local/this) is left untouched.
+    // stack-neutral operand (const/this) is left untouched.
     static JsonNode SpillIfNeeded(JsonNode resolved, List<JsonNode> pre, BirScope scope)
     {
         if (resolved is JsonObject ro && K(ro) == "valueBlock" && IsTryValueBlock(ro))
@@ -350,13 +447,16 @@ static class TryValueOperandHoist
             // …and then the block's RESULT is spilled like any other operand. Moving only the statements would
             // leave the result to be evaluated after the LATER slot's hoisted try, which is the reorder this
             // function exists to prevent. It was invisible while the only such block was kotc's own try-value
-            // form, whose result is a stack-neutral `local`; a block a lowering mints has an arbitrary result —
+            // form, whose result is a dedicated temporary; a block a lowering mints has an arbitrary result —
             // a `newClr` whose constructor can throw — and that one has to move with its statements.
             return ro["result"] is JsonNode r ? SpillIfNeeded(r.DeepClone(), pre, scope) : resolved;
         }
         if (IsStackNeutral(resolved)) return resolved;
+        var preparedScope = scope.Child();
+        foreach (var statement in pre.OfType<JsonObject>())
+            if (K(statement) == "var") preparedScope.Declare(statement);
         var tmp = "dotkt$hoist" + System.Threading.Interlocked.Increment(ref _tmp);
-        pre.Add(new JsonObject { ["k"] = "var", ["name"] = tmp, ["type"] = SpillType(resolved, scope), ["init"] = resolved.DeepClone() });
+        pre.Add(new JsonObject { ["k"] = "var", ["name"] = tmp, ["type"] = SpillType(resolved, preparedScope), ["init"] = resolved.DeepClone() });
         return new JsonObject { ["k"] = "local", ["name"] = tmp };
     }
 
@@ -376,6 +476,9 @@ static class TryValueOperandHoist
     {
         if (node is not JsonObject o) return false;
         var k = K(o);
+        if (!atEmpty && (RunsAReturn(o) || k == "cond" && RunsATry(o))) return true;
+        if (k == "cond" || k == "binOp" && (o["op"]?.GetValue<string>() is "&&" or "||"))
+            return false; // Branch-local preparation stays inside its branch.
         if (k == "valueBlock" && IsTryValueBlock(o)) return !atEmpty;
         if (k == "binOp" && o["lhs"] != null && o["rhs"] != null)
             return WillHoist(o["lhs"], atEmpty) || WillHoist(o["rhs"], false);
@@ -455,6 +558,14 @@ static class TryValueOperandHoist
             default:
                 return false;
         }
+    }
+
+    static bool RunsAReturn(JsonNode node)
+    {
+        if (node is JsonArray array) return array.Any(RunsAReturn);
+        if (node is not JsonObject obj || TypeJson.IsType(obj) || obj["params"] is JsonArray) return false;
+        if (K(obj) is "return" or "returnExpr") return true;
+        return obj.Any(pair => RunsAReturn(pair.Value));
     }
 
     static bool IsStackNeutral(JsonNode n) => n is JsonObject o && StackNeutralKinds.Contains(K(o));
