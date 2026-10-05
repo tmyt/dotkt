@@ -478,7 +478,8 @@ static class FBoundStarProjectionErasure
                             type, owners, refs, childBoundDeclaration, localClrAliases,
                             preserveConstructedHead: (Str(obj["k"]) is "new" or "newClr") && key == "type"
                                 || IsTypeDefinition(obj) && key == "base"
-                                || IsDeclarationOwnerDescriptor(obj) && key == "owner"));
+                                || IsDeclarationOwnerDescriptor(obj) && key == "owner",
+                            preserveConstructionArguments: (Str(obj["k"]) is "new" or "newClr") && key == "type"));
                     else
                         RewriteTypesOnly(value, owners, defs, refs, localClrAliases, childBoundDeclaration);
                 }
@@ -2900,7 +2901,8 @@ static class FBoundStarProjectionErasure
                             type, owners, refs, childBoundDeclaration, localClrAliases,
                             preserveConstructedHead: (Str(obj["k"]) is "new" or "newClr") && key == "type"
                                 || IsTypeDefinition(obj) && key == "base"
-                                || IsDeclarationOwnerDescriptor(obj) && key == "owner"));
+                                || IsDeclarationOwnerDescriptor(obj) && key == "owner",
+                            preserveConstructionArguments: (Str(obj["k"]) is "new" or "newClr") && key == "type"));
                     else
                         Rewrite(value, owners, defs, refs,
                             childTypeParameters, childMethodParameters,
@@ -4660,7 +4662,7 @@ static class FBoundStarProjectionErasure
     static TypeNode RewriteType(TypeNode type, IReadOnlyDictionary<string, Owner> owners,
         ReferenceMetadataIndex refs, bool boundDeclaration = false,
         IReadOnlyDictionary<string, string> localClrAliases = null,
-        bool preserveConstructedHead = false)
+        bool preserveConstructedHead = false, bool preserveConstructionArguments = false)
     {
         // A native generic construction owns its exact CLR argument identities. Erasing
         // G<T> inside NativeBox<G<T>> would invent an unrelated invariant construction.
@@ -4674,13 +4676,16 @@ static class FBoundStarProjectionErasure
         {
             case TypeNode.Fqn { Args: { } preservedArgs } preserved when preserveConstructedHead:
                 // Reified Kotlin construction arguments retain their own classifier
-                // recursively. Kotlin aliases still own the representation of their
+                // recursively at allocation sites. Declaration edges instead substitute
+                // Kotlin value slots, matching the signatures of their implementations.
+                // Kotlin aliases still own the representation of their
                 // value arguments (for example a collection's element carrier).
                 var aliasArguments = refs != null && refs.TryResolveClrOwner(preserved.Name, out _, out _)
                     || localClrAliases?.ContainsKey(preserved.Name) == true;
                 return new TypeNode.Fqn(preserved.Name, preservedArgs.Select(argument => RewriteType(
                     argument, owners, refs, boundDeclaration, localClrAliases,
-                    preserveConstructedHead: !aliasArguments)).ToArray());
+                    preserveConstructedHead: preserveConstructionArguments && !aliasArguments,
+                    preserveConstructionArguments: preserveConstructionArguments && !aliasArguments)).ToArray());
             case TypeNode.Fqn preserved when preserveConstructedHead:
                 return preserved;
             case TypeNode.Fqn { Args: { Length: > 0 } } nominal when !boundDeclaration

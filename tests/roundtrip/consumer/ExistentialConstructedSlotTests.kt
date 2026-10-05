@@ -9,6 +9,9 @@ import GenericValueInterop.ExistentialNativeBox
 
 private class ExistentialNativeDerived<T> : ExistentialNativeBase()
 class ExistentialDefaultConstructed<T> { fun read(): Int = 17 }
+fun interface ExistentialNestedReceiver<T> { fun accept(value: T): Int }
+private fun <T> nestedReceiver(expected: T): ExistentialNestedReceiver<ExistentialSlotOwner<T>> =
+    ExistentialNestedReceiver { check(it.value == expected); 19 }
 private class ExistentialNativeStorage(value: ExistentialSlotOwner<String>) : ExistentialOwnerStorage(value)
 private class ExistentialNativeStringStorage(value: String) : ExistentialOwnerStorage(value)
 private fun nativeBase(value: ExistentialNativeDerived<String>): ExistentialNativeBase = value
@@ -53,6 +56,8 @@ class ExistentialConstructedSlotTests {
         val nestedArray = ExistentialSlotOwner(arrayOf(ExistentialSlotOwner("array")))
         check(nestedArray.value[0].value == "array")
         check(ExistentialOwnerApi.Create<ExistentialDefaultConstructed<String>>().read() == 17)
+        check(nestedReceiver("sam").accept(ExistentialSlotOwner("sam")) == 19)
+        check(nestedReceiver(23).accept(ExistentialSlotOwner(23)) == 19)
         val reader = ExistentialReader("value")
         val native: ExistentialNativeReader<String> = reader
         check(native.Read() == "value")
