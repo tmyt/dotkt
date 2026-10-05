@@ -63,6 +63,9 @@ static partial class ClrMemberResolution
             node["member"] = "accessor";
             node["accessor"] = acc.Name;
             node["memberRef"] = MemberRefJson(acc, MemberRefNode.Kinds.PropertyAccessor, open, ownerFqn.Args);
+            // Property substitution retains the selected Kotlin declaration for existential receiver binding.
+            // A remaining CLR property has now acquired its final accessor MemberRef; the source identity is consumed.
+            node.Remove(DeclarationIdentityBinding.Key);
             StampResolvedMemberReturn(node, acc.ReturnType);
             if (!isStatic) node["dispatch"] = Dispatch(acc, open, superCall);
             // A WRITE's value fills the setter's parameter, which is an ordinary delegate slot when the property is
@@ -79,6 +82,7 @@ static partial class ClrMemberResolution
         {
             node["member"] = "field";
             node["memberRef"] = FieldRefJson(fld, open, ownerFqn.Args);
+            node.Remove(DeclarationIdentityBinding.Key);
             StampResolvedMemberReturn(node, fld.FieldType);
             if (write) MarkWrittenDelegateSlot(node,
                 SubstOwnerParams(fld.FieldType, ownerFqn.Args ?? Array.Empty<TypeNode>()));
