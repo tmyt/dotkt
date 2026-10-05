@@ -184,12 +184,12 @@ static class FBoundStarProjectionErasure
                 owner => owner.Name, owner => owner.ErasedName, StringComparer.Ordinal), refs, localClrAliases);
         foreach (var root in rootList) Rewrite(root, owners, defs, refs, localClrAliases: localClrAliases);
         // Capture alignment can replace an exact lexical receiver with an ordinary
-        // carrier. Bind inner constructions against that final receiver while the
-        // synthesized factories and selected constructor declarations are still here.
+        // carrier. Bind storage operations and inner constructions against that final
+        // receiver while their producer-authored accessors and factories are still here.
         ExistentialCaptureAlignment.ApplyAll(rootList,
             owners.Values.Where(owner => owner.Needed).ToDictionary(
                 owner => owner.Name, owner => owner.ErasedName, StringComparer.Ordinal), refs);
-        foreach (var root in rootList) RebindAlignedInnerConstructions(root, owners, defs, refs);
+        foreach (var root in rootList) RebindAlignedReceiverOperations(root, owners, defs, refs);
         var normalizedReturns = new NormalizedReturnBindings();
         // Method-local normalization runs after the first post-order binding walk. Revisit consumers once so a
         // projected array read that flowed through a compiler-generated nullable temporary binds its member on the
@@ -519,9 +519,9 @@ static class FBoundStarProjectionErasure
                         boundOwner.Args?.Length ?? 0) != null))) return true;
         var kind = Str(owner["k"]);
         if (key == "delegationSig" && Bool(owner[BoundDelegationSignatureKey])) return true;
-        // A static delegate target names the declaring construction, not a value receiver.
+        // A static call or delegate target names the declaring construction, not a value receiver.
         // Its lifted method stays on that owner even when ordinary values use a carrier.
-        if (kind == "newDelegate" && key == "calleeOwner") return true;
+        if (kind is "newDelegate" or "callStatic" && key == "calleeOwner") return true;
         if (kind == "callInstance" && key == "ownerType" && Bool(owner[ExactBridgeOwnerCallKey])) return true;
         if (key == "ownerType" && owner["recv"] is JsonObject receiver
             && (Str(receiver["k"]) == "this" || Bool(receiver[ExactOuterKey])))
@@ -3522,19 +3522,21 @@ static class FBoundStarProjectionErasure
         return field;
     }
 
-    static void RebindAlignedInnerConstructions(JsonNode node,
+    static void RebindAlignedReceiverOperations(JsonNode node,
         IReadOnlyDictionary<string, Owner> owners, IReadOnlyDictionary<string, JsonObject> defs,
         ReferenceMetadataIndex refs)
     {
         if (node is JsonObject obj)
         {
             foreach (var child in obj.Select(pair => pair.Value).ToList())
-                if (child != null) RebindAlignedInnerConstructions(child, owners, defs, refs);
+                if (child != null) RebindAlignedReceiverOperations(child, owners, defs, refs);
+            BindCarrierFieldStorage(obj, owners, refs);
+            BindStarFieldThroughCanonicalGetter(obj, owners, defs, refs);
             BindStarInnerConstruction(obj, owners, defs, refs, null, null);
         }
         else if (node is JsonArray array)
             foreach (var child in array.ToList())
-                if (child != null) RebindAlignedInnerConstructions(child, owners, defs, refs);
+                if (child != null) RebindAlignedReceiverOperations(child, owners, defs, refs);
     }
 
     static void BindStarInnerConstruction(JsonObject construction,

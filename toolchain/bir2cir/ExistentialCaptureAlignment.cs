@@ -12,9 +12,9 @@ using DotKt.Bir;
 //
 // Align only a carrier whose trusted local/reference metadata names the capture field's original generic classifier.
 // The generated declaration and its construction node are the complete authority; no function names, class
-// layout guesses, or old artifact spellings participate. The ordinary ExistentialReceiverBinding pass subsequently
-// binds calls through the retyped field to the exact carrier slot and preserves their semantic result with an explicit
-// projection.
+// layout guesses, or old artifact spellings participate. A suspend body's lexical receiver becomes an explicit
+// capture read before its exact-outer role is removed. FBoundStarProjectionErasure then rebinds storage operations,
+// constructions and calls against that representation; ExistentialReceiverBinding resolves remaining carrier calls.
 static class ExistentialCaptureAlignment
 {
     sealed record CaptureUse(JsonObject Expression, TypeNode.Fqn Carrier);
@@ -199,6 +199,8 @@ static class ExistentialCaptureAlignment
                     && logical.Name == semanticOwner)
                 {
                     capture["type"] = TypeJson.Write(carrier);
+                    if (Bool(capture["outer"]))
+                        RewriteCapturedReceiver(node["body"], name, carrier);
                     capture.Remove("outer");
                     if (value is JsonObject expression)
                         RetypeCaptureBoundary(expression, semanticOwner, carrier);
@@ -213,6 +215,41 @@ static class ExistentialCaptureAlignment
                     nested[name] = type;
         if (node["body"] != null)
             Visit(node["body"], nested, uses, semanticByPhysical, refs);
+    }
+
+    // The lexical receiver remains the same captured value when its storage becomes an
+    // existential carrier. Make that read explicit before dropping the exact-CLR-outer role.
+    // A nested declaration owns its own this; only its construction values run in this scope.
+    static void RewriteCapturedReceiver(JsonNode node, string captureName, TypeNode.Fqn carrier)
+    {
+        if (node is JsonArray array)
+        {
+            foreach (var child in array) RewriteCapturedReceiver(child, captureName, carrier);
+            return;
+        }
+        if (node is not JsonObject obj || TypeJson.IsType(obj)) return;
+        var kind = Str(obj["k"]);
+        if (kind == "this")
+        {
+            obj.Clear();
+            obj["k"] = "local";
+            obj["name"] = captureName;
+            obj["sty"] = TypeJson.Write(carrier);
+            return;
+        }
+        if (kind == "newSuspendLambda")
+        {
+            RewriteCapturedReceiver(obj["capValues"], captureName, carrier);
+            return;
+        }
+        if (kind is "newClosure" or "newSam")
+        {
+            RewriteCapturedReceiver(obj["captures"], captureName, carrier);
+            return;
+        }
+        if (obj["params"] is JsonArray) return;
+        foreach (var value in obj.Select(pair => pair.Value).ToList())
+            RewriteCapturedReceiver(value, captureName, carrier);
     }
 
     // Ask for the value actually delivered to a physical storage slot. A valueBlock/conditional can retain its
