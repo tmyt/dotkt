@@ -60,6 +60,9 @@ class ExistentialConstructedSlotTests {
 
     @TestAttribute
     fun constructedConsumersPreserveOwnerFramesAndIdentity() {
+        val initialized = ExistentialGenericInitializer<String>(3)
+        check(initialized.count() == 3)
+        check(initialized.read(1) == null)
         val strings = ExistentialSlotOwner("owner")
         val integers = ExistentialSlotOwner(19)
         val stringItem = strings.Item(11)

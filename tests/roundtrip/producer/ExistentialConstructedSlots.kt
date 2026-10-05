@@ -4,6 +4,12 @@ import kotlin.coroutines.suspendCoroutine
 class ExistentialOwnerHolder(val owner: ExistentialSlotOwner<String>)
 class ExistentialItemHolder<T>(val item: ExistentialSlotOwner<T>.Item)
 
+class ExistentialGenericInitializer<T>(size: Int) {
+    private val values = Array(size) { ExistentialSlotOwner<T?>(null) }
+    fun count(): Int = values.size
+    fun read(index: Int): T? = values[index].value
+}
+
 class ExistentialSlotOwner<T>(val value: T) {
     inner class Item(val count: Int)
     private var stored: Item? = null

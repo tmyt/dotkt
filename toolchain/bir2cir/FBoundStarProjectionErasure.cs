@@ -491,6 +491,9 @@ static class FBoundStarProjectionErasure
                     && refs.ResolveNetType(ReferenceMetadataIndex.ReflectedOwnerFqn(boundOwner.Name),
                         boundOwner.Args?.Length ?? 0) != null))) return true;
         var kind = Str(owner["k"]);
+        // A static delegate target names the declaring construction, not a value receiver.
+        // Its lifted method stays on that owner even when ordinary values use a carrier.
+        if (kind == "newDelegate" && key == "calleeOwner") return true;
         if (kind == "callInstance" && key == "ownerType" && Bool(owner[ExactBridgeOwnerCallKey])) return true;
         if (key == "ownerType" && owner["recv"] is JsonObject receiver
             && (Str(receiver["k"]) == "this" || Bool(receiver[ExactOuterKey])))
