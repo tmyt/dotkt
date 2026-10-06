@@ -2141,8 +2141,12 @@ static class FBoundStarProjectionErasure
         var ownTypeParams = InnerFactoryTypeParams(
             inner, capturedCount, directDependent, witnesses, methodIndex, owners, refs);
         var result = new TypeNode.Fqn(inner.ErasedName);
+        // Factory lookup compares the selected constructor declaration, not its erased value slots.
+        // In particular a function parameter's physical carrier has already lost its source type variables.
         var carrierParams = new JsonArray(constructorParams.OfType<JsonObject>().Skip(1)
-            .Select(parameter => TypeJson.Write(RequiredParamType(parameter, 0, inner.Name + ".<init>"))).ToArray());
+            .Select(parameter => ConstructorSignatureIdentity.DeclarationType(parameter)
+                ?? throw new InvalidOperationException($"inner constructor '{inner.Name}' has no declaration signature"))
+            .ToArray());
         var slot = new JsonObject
         {
             ["name"] = name,
@@ -2169,7 +2173,7 @@ static class FBoundStarProjectionErasure
                         directDependent.Contains(index)
                             ? InnerFactoryBottomTypeArgument
                             : methodIndex[index])).ToArray()),
-            },
+            }.ToJsonString(),
         };
         if (ownTypeParams.Count > 0) slot["typeParams"] = ownTypeParams.DeepClone();
 

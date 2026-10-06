@@ -14,8 +14,13 @@ class InnerSourceParameterMetadataTests {
         val sink = owner.Contravariant<Any?> { received = it }
         narrowInner(sink).accept("sink")
         check(received == "sink")
+        check(owner.Transform<Int> { it + 1 }.apply(41) == 42)
+        check(owner.Transform<String> { it + "!" }.apply("value") == "value!")
+        check(owner.FunctionFactory<Int> { { it + 2 } }.apply(40) == 42)
+        check(owner.FunctionFactory<String> { { it + "?" } }.apply("value") == "value?")
         val middle = owner.Middle<Int>()
         check(widenLeaf(middle.Leaf("leaf")).item == "leaf")
+        check(middle.Callback<Int> { it + 1 }.apply(41) == 42)
     }
 
     @TestAttribute

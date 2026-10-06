@@ -19,8 +19,17 @@ class Owner<A> {
     inner class Contravariant<in B>(private val action: (B) -> Unit) {
         fun accept(value: B) { action(value) }
     }
+    inner class Transform<B>(private val action: (B) -> B) {
+        fun apply(value: B): B = action(value)
+    }
+    inner class FunctionFactory<B>(private val factory: () -> ((B) -> B)) {
+        fun apply(value: B): B = factory()(value)
+    }
     inner class Middle<B> {
         val storage = Cell<B?>(null)
         inner class Leaf<out C>(val item: C)
+        inner class Callback<C>(private val transform: (C) -> C) {
+            fun apply(value: C): C = transform(value)
+        }
     }
 }
