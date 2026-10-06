@@ -509,6 +509,8 @@ static class FBoundStarProjectionErasure
     static bool IsBoundDeclarationType(JsonObject owner, string key, ReferenceMetadataIndex refs,
         IReadOnlyDictionary<string, string> localClrAliases)
     {
+        // The extension marker identifies a CLR receiver declaration, not a Kotlin value slot.
+        if (key == "type" && Bool(owner[CompanionExtensionBinding.ExactReceiverMarkerKey])) return true;
         if (key == FunctionSignatureIdentity.Key && Bool(owner[ConstructorSignatureIdentity.PhysicalKey]))
             return true;
         // A synthesized adapter to an exact foreign MethodDef already states both its CLR
@@ -4549,6 +4551,7 @@ static class FBoundStarProjectionErasure
         {
             case JsonObject obj:
                 obj.Remove(ExactBridgeOwnerCallKey);
+                obj.Remove(CompanionExtensionBinding.ExactReceiverMarkerKey);
                 obj.Remove(ExactOuterKey);
                 obj.Remove(DelegationOuterSlotKey);
                 obj.Remove(BoundDelegationSignatureKey);

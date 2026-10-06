@@ -13,6 +13,7 @@ using DotKt.Bir;
 // only the exact mapping indexed from producer metadata; it never reconstructs an ABI from generated names.
 static class CompanionExtensionBinding
 {
+    internal const string ExactReceiverMarkerKey = "_exactExtensionReceiverMarker";
     const string KotlinDefault = "kotlin.clr.KotlinDefault";
 
     internal sealed record Binding(string PhysicalName, string PhysicalOwner, string ValueType = null);
@@ -417,6 +418,7 @@ static class CompanionExtensionBinding
                 ["params"] = new JsonArray(new JsonObject
                 {
                     ["name"] = "",
+                    [ExactReceiverMarkerKey] = true,
                     ["type"] = blockArity == 0
                         ? JsonNode.Parse(receiver)
                         : TypeJson.Write(new TypeNode.Fqn(physicalReceiverClassifier,

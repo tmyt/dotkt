@@ -187,6 +187,17 @@ public class BidirectionalTests
             "a generic Kotlin alias receiver must lower to its CLR classifier before emitting the marker");
 
         var assembly = typeof(BidirectionalGenericStatic<>).Assembly;
+        var receiverMarkers = assembly.GetTypes()
+            .SelectMany(type => type.GetMethods(BindingFlags.Public | BindingFlags.Static |
+                BindingFlags.DeclaredOnly))
+            .Where(method => method.Name == "<Extension>$")
+            .Select(method => method.GetParameters().Single().ParameterType)
+            .Where(type => type.IsGenericType &&
+                type.GetGenericTypeDefinition() == typeof(BidirectionalGenericStatic<>))
+            .ToArray();
+        Assert.That(receiverMarkers, Is.Not.Empty,
+            "extension receiver markers must retain the exact CLR classifier, not an erased value carrier");
+        Assert.That(receiverMarkers.All(type => type.GetGenericArguments().Single().IsGenericParameter), Is.True);
         var wrappers = assembly.GetTypes()
             .Where(type => type.DeclaringType is null && type.IsAbstract && type.IsSealed &&
                 type.IsDefined(typeof(ExtensionAttribute), inherit: false))

@@ -22,6 +22,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 - **Constructed Kotlin values preserve erased generic and inner-class consumption (#922).**
   bir2cir uses the declared existential carrier for ordinary value slots and explicit adapters at exact CLR
   constructor, storage, delegate, and override boundaries, preserving Kotlin source types in metadata.
+  Generic companion extension markers retain their exact CLR receiver declaration for Kotlin and C# binding.
 
 - **Generic nullable widening preserves CLR constraint proofs (#965).**
   Nullable representation companions retain their relation to the original type across calls,
