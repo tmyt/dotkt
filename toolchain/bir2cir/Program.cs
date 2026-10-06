@@ -928,9 +928,14 @@ sealed class Pipeline
         TypeOwnershipLowering.RecordNestedSourceTypes(staged.Select(s => s.Root).ToList(), refs);
         TypeOwnershipLowering.ProjectInnerApplications(staged.Select(s => s.Root).ToList(), refs);
 
+        // Inherited implementation forwarders are public declaration slots. They
+        // must exist when existential interfaces are allocated, so those interfaces
+        // expose the same callable surface when the assembly is imported again.
+        InheritedClassInterfaceBridge.ApplyAll(staged.Select(s => s.Root).ToList());
+
         // F-BOUND STAR PROJECTION: CLR has no legal/reified `Node<*>` TypeSpec for `Node<N : Node<N>>`.
         // Materialize a deterministic non-generic existential view in bir2cir and make every closed Node<N> implement
-        // it. Runs before interface-slot normalization and suspend lowering, in ref and runtime builds alike.
+        // it. Runs before final carrier-slot normalization and suspend lowering, in ref and runtime builds alike.
         // Retain the selected constructor's declaration frame before value projection;
         // physical overload identities must survive later alias and nullability lowering.
         foreach (var stagedFile in staged) ConstructorSignatureIdentity.Capture(stagedFile.Root);
@@ -941,10 +946,9 @@ sealed class Pipeline
         var existentialReceiverMembers =
             ExistentialReceiverBinding.Collect(staged.Select(s => s.Root));
 
-        // KOTLIN FAKE-OVERRIDE -> CLR INTERFACE SLOT: if a concrete class implements an interface using a public
-        // NON-VIRTUAL method inherited from its base class, Kotlin considers the member implemented but CLR implicit
-        // interface binding does not. Materialize the exact forwarding member in CIR/BIR-space before suspend lowering
-        // (so a synthesized suspend member is transformed normally). Exact signature/return only; ambiguity is skipped.
+        // Normalize methods that directly implement the newly allocated carrier slots, and materialize any remaining
+        // exact inherited implementation forwarders before suspend lowering. Existing forwarders from the earlier
+        // declaration pass are recognized as owned slots and are not duplicated.
         InheritedClassInterfaceBridge.ApplyAll(staged.Select(s => s.Root).ToList());
 
         // KOTLIN COVARIANT OVERRIDE -> EXACT CLR METHODIMPL: preserve the Kotlin declaration's narrow return and add a

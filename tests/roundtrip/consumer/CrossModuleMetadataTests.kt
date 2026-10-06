@@ -43,6 +43,8 @@ import genq.GenericSlots
 import genq.FunctionSlots
 import genq.InheritedNullableMiddle
 import genq.SlotDerived
+import genq.SlotConsumer
+import genq.SlotBase
 import genq.holderOf
 import genq.invokeNullable
 import genq.invokeNullableValue
@@ -330,6 +332,14 @@ class GenericMetadataRoundtripTests {
         // propagated from SlotConsumer<T> and remain callable through the concrete derived type after re-import.
         val derived = SlotDerived<String>()
         ClassicAssert.AreEqual("bridge", derived.accept(Slot<String?>("bridge")))
+        ClassicAssert.AreEqual("bridge-null", derived.accept(Slot<String?>(null)))
+        val derivedInterface: SlotConsumer<String> = derived
+        val derivedBase: SlotBase<String> = derived
+        ClassicAssert.AreEqual("interface", derivedInterface.accept(Slot<String?>("interface")))
+        ClassicAssert.AreEqual("base", derivedBase.accept(Slot<String?>("base")))
+        val derivedInt = SlotDerived<Int>()
+        ClassicAssert.AreEqual("7", derivedInt.accept(Slot<Int?>(7)))
+        ClassicAssert.AreEqual("bridge-null", derivedInt.accept(Slot<Int?>(null)))
 
         // The inherited nullable-generic slot remains wired when reached through the intermediate base after re-import.
         // The synthetic lowering fixture separately forces a descriptor owner distinct from its CLR declarer.

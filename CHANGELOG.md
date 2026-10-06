@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Inherited interface implementations remain callable across DLLs.** Public forwarding
+  declarations are materialized before existential interfaces are allocated, keeping
+  the imported class surface and its erased call targets consistent.
+
 - **Companion types retain their Kotlin identity in generic signatures across DLLs.**
   Source-type metadata uses the declared companion owner and name, including nested
   and generic owners, rather than the compiler-generated CLR carrier name.
