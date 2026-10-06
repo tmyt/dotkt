@@ -120,6 +120,13 @@ class NestedGenericCompanionOwners {
     }
 }
 
+class CompanionTypeBox<T>(val value: T)
+
+fun boxedNamedCompanion(value: CompanionTypeBox<NamedCompanionHost.Key>): CompanionTypeBox<NamedCompanionHost.Key> = value
+fun boxedDefaultCompanion(value: CompanionTypeBox<DefaultCompanionHost.Companion>): CompanionTypeBox<DefaultCompanionHost.Companion> = value
+fun boxedHoistedCompanion(value: CompanionTypeBox<StarProjectedCompanionHost.dotkt_star>): CompanionTypeBox<StarProjectedCompanionHost.dotkt_star> = value
+fun boxedNestedCompanion(value: CompanionTypeBox<NestedGenericCompanionOwners.Inner.Key>): CompanionTypeBox<NestedGenericCompanionOwners.Inner.Key> = value
+
 class NestedCompanionOwners {
     interface NestedInterface {
         companion object {

@@ -30,8 +30,14 @@ static class TypeOwnershipLowering
         string SourceName(string name)
         {
             if (names.TryGetValue(name, out var known)) return known;
-            if (!definitions.TryGetValue(name, out var type)
-                || Str(type["semanticOwner"]) is not string owner || !definitions.ContainsKey(owner))
+            if (!definitions.TryGetValue(name, out var type))
+                return names[name] = refs?.TryCompanionSourceClassifier(name, out var imported) == true
+                    ? imported : name;
+            // Companion representation runs before source-slot recording. Its explicit association
+            // retains the Kotlin classifier even when the physical carrier is nested or hoisted.
+            if (type["companionCarrier"] is JsonObject companion)
+                return names[name] = SourceName(Str(companion["owner"])) + "+" + Str(companion["name"]);
+            if (Str(type["semanticOwner"]) is not string owner || !definitions.ContainsKey(owner))
                 return names[name] = name;
             if (!name.StartsWith(owner + ".", StringComparison.Ordinal))
                 return names[name] = name;

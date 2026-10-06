@@ -428,6 +428,12 @@ class RoundtripSurfaceTests {
         ClassicAssert.AreSame(generic, passGenericCompanion(generic))
         // Assembly B named the hoisted carrier as a TypeRef it never declared; the identity must survive that too.
         ClassicAssert.AreSame(generic, passGenericOwnerCompanion(generic))
+        val mixedCompanions = mpp.app.passMixedCompanions(mpp.app.CompanionBridgePair(
+            mpp.app.CompanionBridgeOwner.Companion, NamedCompanionHost.Key))
+        ClassicAssert.AreSame(mpp.app.CompanionBridgeOwner.Companion, mixedCompanions.first)
+        ClassicAssert.AreSame(NamedCompanionHost.Key, mixedCompanions.second)
+        val constructedCompanion = ConstrainedGenericOwnerCompanionHost<NamedCompanionHost.Key>()
+        ClassicAssert.AreSame(constructedCompanion, mpp.app.passConstructedCompanion(constructedCompanion))
 
         ClassicAssert.AreEqual(101, NestedCompanionOwners.NestedInterface.marker())
         ClassicAssert.AreEqual(102, NestedCompanionOwners.NestedEnum.marker())
@@ -435,6 +441,14 @@ class RoundtripSurfaceTests {
         ClassicAssert.AreEqual(7, useStarProjectedCompanionHost(StarProjectedCompanionHost(1)))
         ClassicAssert.AreEqual(103, NestedGenericCompanionOwners.Inner.Key.marker())
         ClassicAssert.AreSame(NestedGenericCompanionOwners.Inner.Key, NestedGenericCompanionOwners.Inner.Key)
+        ClassicAssert.AreSame(NamedCompanionHost.Key, roundtrip.dispatchsurface.boxedNamedCompanion(
+            roundtrip.dispatchsurface.CompanionTypeBox(NamedCompanionHost.Key)).value)
+        ClassicAssert.AreSame(DefaultCompanionHost.Companion, roundtrip.dispatchsurface.boxedDefaultCompanion(
+            roundtrip.dispatchsurface.CompanionTypeBox(DefaultCompanionHost.Companion)).value)
+        ClassicAssert.AreSame(StarProjectedCompanionHost.dotkt_star, roundtrip.dispatchsurface.boxedHoistedCompanion(
+            roundtrip.dispatchsurface.CompanionTypeBox(StarProjectedCompanionHost.dotkt_star)).value)
+        ClassicAssert.AreSame(NestedGenericCompanionOwners.Inner.Key, roundtrip.dispatchsurface.boxedNestedCompanion(
+            roundtrip.dispatchsurface.CompanionTypeBox(NestedGenericCompanionOwners.Inner.Key)).value)
 
         // A generic owner's companion keeps ONE state and its lexical access to the owner's private declarations,
         // across an assembly boundary and a hoisted physical carrier.

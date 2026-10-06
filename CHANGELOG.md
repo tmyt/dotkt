@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Companion types retain their Kotlin identity in generic signatures across DLLs.**
+  Source-type metadata uses the declared companion owner and name, including nested
+  and generic owners, rather than the compiler-generated CLR carrier name.
+
 - **Private-set fields remain writable through erased generic receivers.**
   Compiler-generated storage accessors distinguish Kotlin's externally read-only surface
   from immutable CLR storage, preserving lexical writes to private and private-set lateinit fields.

@@ -149,6 +149,7 @@ sealed partial class ReferenceMetadataIndex
     readonly Dictionary<string, string> _semanticOwnerByCompanionCarrier = new(StringComparer.Ordinal);
     readonly Dictionary<string, string> _companionCarrierByPhysicalOwner = new(StringComparer.Ordinal);
     readonly Dictionary<string, string> _companionSourceNameByPhysicalOwner = new(StringComparer.Ordinal);
+    readonly Dictionary<string, string> _companionSourceClassifierByCarrier = new(StringComparer.Ordinal);
     readonly Dictionary<string, string> _companionExtensionMembers = new(StringComparer.Ordinal);
     readonly Dictionary<string, string> _companionPhysicalOwnerBySemanticType = new(StringComparer.Ordinal);
     readonly Dictionary<string, string> _genericStaticCarrierBySemanticOwner = new(StringComparer.Ordinal);
@@ -735,6 +736,13 @@ sealed partial class ReferenceMetadataIndex
                 if (!_companionSourceNameByPhysicalOwner.TryAdd(physicalOwner, kv.Value) ||
                     _companionSourceNameByPhysicalOwner[physicalOwner] != kv.Value)
                     throw new InvalidOperationException($"conflicting Kotlin companion source name for '{physicalOwner}'");
+            }
+            foreach (var kv in asm.DotKt.CompanionSourceClassifierByCarrier)
+            {
+                var carrier = StripGenericArity(DottedFqn(kv.Key));
+                if (!_companionSourceClassifierByCarrier.TryAdd(carrier, kv.Value)
+                    && _companionSourceClassifierByCarrier[carrier] != kv.Value)
+                    throw new InvalidOperationException($"conflicting Kotlin companion classifier '{carrier}'");
             }
             foreach (var kv in asm.DotKt.CompanionExtensionMembers)
             {
@@ -2470,6 +2478,10 @@ sealed partial class ReferenceMetadataIndex
     public bool TryCompanionSemanticOwner(string physicalCarrier, out string semanticOwner) =>
         _semanticOwnerByCompanionCarrier.TryGetValue(
             StripGenericArity(DottedFqn(physicalCarrier)), out semanticOwner);
+
+    public bool TryCompanionSourceClassifier(string physicalCarrier, out string classifier) =>
+        _companionSourceClassifierByCarrier.TryGetValue(
+            StripGenericArity(DottedFqn(physicalCarrier)), out classifier);
 
     // Recover the exact reflected carrier token from an already-physical dotted CIR/KLIB token. Both directions are
     // explicit trusted metadata associations; no `$` suffix or nested-boundary inference participates.
@@ -4773,7 +4785,8 @@ sealed partial class ReferenceMetadataIndex
                     metadata.CompanionCarrierByPhysicalOwner,
                     metadata.CompanionSourceNameByPhysicalOwner,
                     metadata.CompanionPhysicalOwnerBySemanticType,
-                    metadata.CompanionSemanticOwnerByCarrier)
+                    metadata.CompanionSemanticOwnerByCarrier,
+                    metadata.CompanionSourceClassifierByCarrier)
                 : new Dictionary<Type, bool>();
             foreach (var companion in singletonCompanionCarriers)
                 metadata.SingletonCompanionCarrierBySemanticOwner.Add(companion.Key, companion.Value);
@@ -5559,7 +5572,8 @@ sealed partial class ReferenceMetadataIndex
         Dictionary<string, string> companionCarriersByPhysicalOwner,
         Dictionary<string, string> companionSourceNamesByPhysicalOwner,
         Dictionary<string, string> companionPhysicalOwnerBySemanticType,
-        Dictionary<string, string> companionSemanticOwnerByCarrier)
+        Dictionary<string, string> companionSemanticOwnerByCarrier,
+        Dictionary<string, string> companionSourceClassifierByCarrier)
     {
         var physicalTypes = types
             .GroupBy(t => (Name: PhysicalMetadataName(t), Arity: DeclaredGenericArity(t)))
@@ -5700,6 +5714,13 @@ sealed partial class ReferenceMetadataIndex
             companionSemanticOwnerByCarrier.Add(
                 StripGenericArity(DottedFqn(carrierType.FullName ?? carrierType.Name)),
                 StripGenericArity(owner));
+            // The resolved owner supplies the package boundary; the trusted semantic owner/name
+            // supplies every Kotlin class segment, including companions absent from CLR nesting.
+            var packagePrefix = string.IsNullOrEmpty(ownerType.Namespace) ? "" : ownerType.Namespace + ".";
+            if (!owner.StartsWith(packagePrefix, StringComparison.Ordinal))
+                throw new MalformedTrustedCompanionException("companion semantic owner does not belong to its declared package");
+            companionSourceClassifierByCarrier.Add(carrierType.FullName ?? carrierType.Name,
+                packagePrefix + owner[packagePrefix.Length..].Replace('.', '+') + "+" + name);
 
             // Private/internal companions do not participate in downstream call binding. Public and protected
             // companions do; the carrier remains public enough for lifted helper types while the payload restores
@@ -7708,6 +7729,7 @@ sealed class ReferenceDotKtMetadata
     public readonly Dictionary<string, string> SingletonCompanionCarrierBySemanticOwner = new(StringComparer.Ordinal);
     public readonly Dictionary<string, string> CompanionCarrierByPhysicalOwner = new(StringComparer.Ordinal);
     public readonly Dictionary<string, string> CompanionSourceNameByPhysicalOwner = new(StringComparer.Ordinal);
+    public readonly Dictionary<string, string> CompanionSourceClassifierByCarrier = new(StringComparer.Ordinal);
     // owner + semantic receiver + member role + Kotlin source name -> exact MethodDef/FieldDef name.
     public readonly Dictionary<string, string> CompanionExtensionMembers = new(StringComparer.Ordinal);
     public readonly Dictionary<string, string> CompanionPhysicalOwnerBySemanticType = new(StringComparer.Ordinal);

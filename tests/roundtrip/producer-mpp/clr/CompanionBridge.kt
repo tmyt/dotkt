@@ -8,6 +8,16 @@ import roundtrip.ownership.ShadowOwner
 // carrier TypeDef it already maps while projecting A, and must restore the same semantic nested classifier.
 fun passNamedCompanion(value: NamedCompanionHost.Key): NamedCompanionHost.Key = value
 
+class CompanionBridgeOwner<T> { companion object }
+class CompanionBridgePair<A, B>(val first: A, val second: B)
+fun passMixedCompanions(
+    value: CompanionBridgePair<CompanionBridgeOwner.Companion, NamedCompanionHost.Key>,
+): CompanionBridgePair<CompanionBridgeOwner.Companion, NamedCompanionHost.Key> = value
+
+fun passConstructedCompanion(
+    value: ConstrainedGenericOwnerCompanionHost<NamedCompanionHost.Key>,
+): ConstrainedGenericOwnerCompanionHost<NamedCompanionHost.Key> = value
+
 // The same TypeRef path for a companion of a GENERIC owner, whose carrier is hoisted out of that owner: assembly B
 // names a top-level sidecar it never declared, and dll2klib must still restore assembly A's nested Kotlin classifier.
 fun passGenericOwnerCompanion(
