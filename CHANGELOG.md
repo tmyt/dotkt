@@ -25,6 +25,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   Generic companion extension markers retain their exact CLR receiver declaration for Kotlin and C# binding.
   Inner-constructor factory metadata preserves declaration signatures independently of function-value lowering.
   Imported inner defaults read enclosing instances through carrier storage accessors, including captured callbacks.
+  Imported defaults can read private members of generic owners through the public carrier slots across DLLs.
 
 - **Generic nullable widening preserves CLR constraint proofs (#965).**
   Nullable representation companions retain their relation to the original type across calls,

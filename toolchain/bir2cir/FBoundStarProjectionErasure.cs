@@ -4586,6 +4586,12 @@ static class FBoundStarProjectionErasure
         // local binder would retarget the carrier call back to the generic source declaration.
         if (physicalIdentity != null) call[DeclarationIdentityBinding.Key] = physicalIdentity;
         else call.Remove(DeclarationIdentityBinding.Key);
+        // Visibility and declaration frames belong to that same source MethodDef.
+        // The selected carrier slot is public and has its own physical signature;
+        // retaining these facts would synthesize an UnsafeAccessor to the wrong owner.
+        foreach (var key in new[] { "memberVisibility", "memberOwnerTypeParams",
+                     "memberMethodTypeParams", "memberSignature", "memberReturnType" })
+            call.Remove(key);
         if (!propertyCall) return;
         KotlinPropertyAccessors.PreserveCallIdentity(call, sourcePropertyName, accessorKind);
         call.Remove("prop");

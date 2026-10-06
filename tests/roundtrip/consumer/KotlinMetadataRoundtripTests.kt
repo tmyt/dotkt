@@ -708,6 +708,11 @@ class PackageAndInlineRoundtripTests {
         ClassicAssert.AreEqual("private-default", NonConstantPrivateDefaultOwner("private-default").reveal())
         ClassicAssert.AreEqual("generic-private-default",
             NonConstantGenericPrivateDefaultOwner("generic-private-default").reveal())
+        ClassicAssert.AreEqual(37, NonConstantGenericPrivateDefaultOwner(37).reveal())
+        ClassicAssert.IsNull(NonConstantGenericPrivateDefaultOwner<Int?>(null).reveal())
+        @Suppress("UNCHECKED_CAST")
+        val widenedPrivateDefault = NonConstantGenericPrivateDefaultOwner(41) as NonConstantGenericPrivateDefaultOwner<Any?>
+        ClassicAssert.AreEqual(41, widenedPrivateDefault.reveal())
         ClassicAssert.AreEqual("constrained-private-default",
             NonConstantConstrainedPrivateDefaultOwner(
                 roundtrip.nc.PrivateDefaultValue("constrained-private-default")).reveal().text)
