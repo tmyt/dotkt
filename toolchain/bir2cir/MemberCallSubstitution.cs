@@ -2709,6 +2709,7 @@ static class MemberCallSubstitution
                 .Select(TypeJson.Write).ToArray());
         }
         CoerceCharSeqArgsToString(argTypes, call["args"] as JsonArray);
+        ClrAliasMemberSignature.Capture(call, refs);
         return call;
     }
 

@@ -317,6 +317,7 @@ static class FBoundStarProjectionErasure
                 foreach (var value in obj.Select(pair => pair.Value).ToList())
                     if (value != null) RewriteNormalizedInnerFactoryCalls(
                         value, normalizedReturns, owners, defs, refs);
+                ClrAliasMemberSignature.Apply(obj);
                 BindProjectedArrayRead(obj, owners, refs);
                 BindProjectedArrayGenericCall(obj, owners, refs);
                 BindInheritedStarMember(obj, owners, defs, refs);
