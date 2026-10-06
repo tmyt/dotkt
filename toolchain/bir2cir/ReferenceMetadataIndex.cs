@@ -2553,7 +2553,94 @@ sealed partial class ReferenceMetadataIndex
     // member table.  The caller retains the Kotlin vocabulary until bir2cir asks this index for the
     // concrete CIR owner/member pair. The index must consume the source-member/property carrier on that MethodDef;
     // reconstructing a generated spelling would make an unrelated source declaration rename change this binding.
+    // declarationResult is projected into sourceOwner's argument frame. Keep the
+    // selected declaration's own result separately so callers compare descriptors
+    // before closing them; an ancestor's type#0 need not be the receiver's type#0.
     public bool TryStarProjectionMember(TypeNode.Fqn sourceOwner, string sourceMember, string accessorKind,
+        int methodArity,
+        IReadOnlyList<TypeNode> authoredSignature, int paramCount, string declarationId,
+        out string erasedOwner, out string erasedMember, out TypeNode[] erasedSignature,
+        out TypeNode declarationResult, out TypeNode physicalResult, out TypeNode selectedDeclarationResult)
+    {
+        erasedOwner = erasedMember = null;
+        erasedSignature = null;
+        declarationResult = physicalResult = selectedDeclarationResult = null;
+        if (sourceOwner == null || !TryExistentialPhysicalOwner(sourceOwner.Name, out var rootCarrier)) return false;
+        if (TryDeclaredStarProjectionMember(sourceOwner, sourceMember, accessorKind, methodArity,
+                authoredSignature, paramCount, declarationId, out erasedOwner, out erasedMember,
+                out erasedSignature, out declarationResult, out physicalResult))
+        {
+            selectedDeclarationResult = declarationResult;
+            return true;
+        }
+        // Without a selected declaration, a failed local lookup does not authorize
+        // choosing a different inherited overload or bypassing local ambiguity.
+        if (declarationId == null) return false;
+
+        // Only slots reachable through the actual physical carrier are callable on
+        // this receiver. Source inheritance alone does not establish that CLR edge.
+        var carriers = new HashSet<string>(StringComparer.Ordinal);
+        var pending = new Queue<TypeNode.Fqn>();
+        pending.Enqueue(new TypeNode.Fqn(rootCarrier));
+        while (pending.TryDequeue(out var currentCarrier))
+        {
+            if (!carriers.Add(currentCarrier.Name)) continue;
+            foreach (var (parent, _) in ReferencedSupertypes(currentCarrier)) pending.Enqueue(parent);
+        }
+
+        var rootArguments = sourceOwner.Args ?? Array.Empty<TypeNode>();
+        var rootVariables = Enumerable.Range(0, rootArguments.Length)
+            .Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray();
+        var applicationFrame = SourceHierarchyFrame(sourceOwner.Name);
+        if (applicationFrame != null)
+        {
+            if (rootArguments.Length != applicationFrame.PhysicalArity) return false;
+            rootVariables = applicationFrame.OrdinaryArguments(rootVariables);
+        }
+        var rootFrame = new TypeNode.Fqn(sourceOwner.Name, rootVariables);
+        var frontier = new List<TypeNode.Fqn> { rootFrame };
+        var visited = new HashSet<string>(StringComparer.Ordinal);
+        while (frontier.Count != 0)
+        {
+            var next = new List<TypeNode.Fqn>();
+            var matches = new List<(string Owner, string Member, TypeNode[] Signature, TypeNode Declared, TypeNode Physical, TypeNode Selected)>();
+            foreach (var frame in frontier)
+            {
+                if (!visited.Add(TypeJson.Write(frame).ToJsonString())) continue;
+                var closed = (TypeNode.Fqn)SupertypeGraph.SubstOwnerTvs(frame, rootArguments);
+                if (TryDeclaredStarProjectionMember(closed, sourceMember, accessorKind, methodArity,
+                        authoredSignature, paramCount, declarationId, out var owner, out var member,
+                        out var signature, out var declared, out var physical) && carriers.Contains(owner))
+                {
+                    if (!TryMembersByBirOwner(frame.Name, out var sourceMembers)) return false;
+                    var selected = sourceMembers.Single(m => m.DeclarationId == declarationId);
+                    var sourceResult = selected.DeclarationSemanticReturn ?? declared;
+                    var declarationArguments = SourceDeclarationArguments(TypeJson.Write(frame))
+                        ?.Select(TypeJson.Read).ToArray() ?? Array.Empty<TypeNode>();
+                    var result = sourceResult == null ? null
+                        : SupertypeGraph.SubstOwnerTvs(sourceResult, declarationArguments);
+                    if (!matches.Any(m => m.Owner == owner && m.Member == member
+                            && m.Signature.SequenceEqual(signature) && Equals(m.Declared, result)
+                            && Equals(m.Physical, physical) && Equals(m.Selected, declared)))
+                        matches.Add((owner, member, signature, result, physical, declared));
+                }
+                if (!TryReferenceSourceTypeShape(frame, out var arity, out var baseType, out var interfaces)
+                    || frame.Args?.Length != arity) continue;
+                foreach (var parent in interfaces.Concat(baseType == null ? Array.Empty<TypeNode.Fqn>() : new[] { baseType }))
+                    next.Add((TypeNode.Fqn)SupertypeGraph.SubstOwnerTvs(parent, frame.Args));
+            }
+            if (matches.Count > 1) return false;
+            if (matches.Count == 1)
+            {
+                (erasedOwner, erasedMember, erasedSignature, declarationResult, physicalResult, selectedDeclarationResult) = matches[0];
+                return true;
+            }
+            frontier = next;
+        }
+        return false;
+    }
+
+    bool TryDeclaredStarProjectionMember(TypeNode.Fqn sourceOwner, string sourceMember, string accessorKind,
         int methodArity,
         IReadOnlyList<TypeNode> authoredSignature, int paramCount, string declarationId,
         out string erasedOwner, out string erasedMember, out TypeNode[] erasedSignature,

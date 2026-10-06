@@ -25,6 +25,34 @@ class MutableListElements<T>(private val values: MutableList<T>) : AbstractMutab
 
 fun <T> locallyReplaceListElement(values: MutableListElements<T>, value: T): T = values.set(0, value)
 
+class ReorderedListElements<A, B>(private val values: MutableList<B>) : AbstractMutableList<B>() {
+    override val size: Int get() = values.size
+    override fun get(index: Int): B = values[index]
+    override fun set(index: Int, element: B): B = values.set(index, element)
+    override fun add(index: Int, element: B) { values.add(index, element) }
+    override fun removeAt(index: Int): B = values.removeAt(index)
+}
+
+class NestedListElement<T>(val value: T)
+class NestedListElements<T>(private val values: MutableList<NestedListElement<T>>) : AbstractMutableList<NestedListElement<T>>() {
+    override val size: Int get() = values.size
+    override fun get(index: Int): NestedListElement<T> = values[index]
+    override fun set(index: Int, element: NestedListElement<T>): NestedListElement<T> = values.set(index, element)
+    override fun add(index: Int, element: NestedListElement<T>) { values.add(index, element) }
+    override fun removeAt(index: Int): NestedListElement<T> = values.removeAt(index)
+}
+
+class ListElementOuter<O>(val outer: O?) {
+    inner class Inner<T>(private val values: MutableList<T>) : AbstractMutableList<T>() {
+        override val size: Int get() = values.size
+        override fun get(index: Int): T = values[index]
+        override fun set(index: Int, element: T): T = values.set(index, element)
+        override fun add(index: Int, element: T) { values.add(index, element) }
+        override fun removeAt(index: Int): T = values.removeAt(index)
+        fun captured(): O? = outer
+    }
+}
+
 open class ArraySink<T> {
     protected fun accept(values: Array<T?>): Int = values.size
 }

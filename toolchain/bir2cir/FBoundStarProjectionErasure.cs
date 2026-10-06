@@ -4160,7 +4160,7 @@ static class FBoundStarProjectionErasure
         // `ret` is the selected declaration's return vocabulary; `dynRet`/`sty` are already instantiated caller facts.
         // Close only the former from the declaration we actually selected. Rewriting the caller facts by positional
         // owner indices corrupts an unrelated caller-owned `type#i` when this call appears in a generic function.
-        void CloseDeclarationResult(TypeNode declarationResult)
+        void CloseDeclarationResult(TypeNode declarationResult, TypeNode receiverFrameResult = null)
         {
             var currentResult = TypeJson.Read(call["ret"]);
             // An instantiated frontend result can be a bound approximation (`T` on `G<*>` -> `Comparable<*>`) or a
@@ -4168,7 +4168,7 @@ static class FBoundStarProjectionErasure
             if (declarationResult == null || currentResult == null || !currentResult.Equals(declarationResult)) return;
             var methodArgs = (call["typeArgs"] as JsonArray)?.Select(TypeJson.Read).ToArray()
                 ?? Array.Empty<TypeNode>();
-            call["ret"] = TypeJson.Write(CloseDeclarationType(declarationResult, args, methodArgs));
+            call["ret"] = TypeJson.Write(CloseDeclarationType(receiverFrameResult ?? declarationResult, args, methodArgs));
         }
 
         // Binding selects a real MethodDef on a non-generic existential owner. Its result may therefore be an
@@ -4293,9 +4293,9 @@ static class FBoundStarProjectionErasure
         if (refs.TryStarProjectionMember(f, sourceMember, accessorKind, ga, authoredSignature, pc,
                 declarationId,
                 out var erasedOwner, out var erasedMethod, out var erasedSignature, out var declarationResult,
-                out var physicalResult))
+                out var physicalResult, out var referencedDeclarationResult))
         {
-            CloseDeclarationResult(declarationResult);
+            CloseDeclarationResult(referencedDeclarationResult, declarationResult);
             BindOwner(erasedOwner);
             call["method"] = erasedMethod;
             call["sig"] = new JsonArray(erasedSignature.Select(TypeJson.Write).ToArray());

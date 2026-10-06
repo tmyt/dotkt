@@ -2535,14 +2535,18 @@ internal fun BirEmitter.byrefBackingField(inner: IrExpression): String? {
  *  them from provided expressions (the previous shape here and at the three sibling member paths) silently DELETED an
  *  omitted default's slot: no `defaultArg` placeholder was emitted, so a later provided argument slid into the omitted
  *  parameter's position. `sig` (emitted by the callers via [overloadSigField]) identifies the frontend-selected
- *  declaration; `argTypes` stays aligned with the args actually emitted. bir2cir fills both positional placeholders
+ *  declaration; `argTypes` uses that declaration's frame, not the fake override's substituted frame,
+ *  and stays aligned with the args actually emitted. bir2cir fills both positional placeholders
  *  and a purely trailing short vector from that declaration's reference-DLL defaults.
  *
  *  A `ClrRef<T>` param already maps to `byref:T` via birType (so the out/ref overload resolves + optional params still
  *  default-fill); a `byref(x)` arg unwraps to its lvalue `x`, which ilemit passes by address. */
 internal fun BirEmitter.clrCallArgs(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression, callee: org.jetbrains.kotlin.ir.declarations.IrFunction): Pair<String, String> {
 	val aj = filledExternalArgs(call)
-	val tj = regularParams(callee).map { birType(it.type).toJson() }.take(aj.size)
+	val declaration = if (callee is IrSimpleFunction && callee.isFakeOverride) callee.resolveFakeOverride() ?: callee else callee
+	val tj = inMemberDeclarationFrame(declaration) {
+		regularParams(declaration).map { birType(it.type).toJson() }.take(aj.size)
+	}
 	return aj.joinToString(",") to tj.joinToString(",")
 }
 
@@ -2551,8 +2555,10 @@ internal fun BirEmitter.clrCallArgs(call: org.jetbrains.kotlin.ir.expressions.Ir
 internal fun BirEmitter.clrCallArgsWithRecv(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression,
 		callee: org.jetbrains.kotlin.ir.declarations.IrFunction, extRecv: IrExpression): Pair<String, String> {
 	val (aj, tj) = clrCallArgs(call, callee)
-	val extParamType = extensionReceiverParam(callee)
-		?.let { birType(it.type) } ?: birType(extRecv.type)
+	val declaration = if (callee is IrSimpleFunction && callee.isFakeOverride) callee.resolveFakeOverride() ?: callee else callee
+	val extParamType = inMemberDeclarationFrame(declaration) {
+		extensionReceiverParam(declaration)?.let { birType(it.type) }
+	} ?: birType(extRecv.type)
 	val args = listOf(expr(extRecv)) + listOfNotNull(aj.takeIf { it.isNotEmpty() })
 	val types = listOf(extParamType.toJson()) + listOfNotNull(tj.takeIf { it.isNotEmpty() })
 	return args.joinToString(",") to types.joinToString(",")

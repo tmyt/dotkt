@@ -6,7 +6,31 @@ import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
 import roundtrip.collectionarrayidentity.*
 import GenericValueInterop.CollectionStorageApi
 
+private fun <P> firstNestedElement(values: NestedListElements<P>): NestedListElement<P> = values.subList(0, 1)[0]
+private fun <O, T> firstInnerElement(values: ListElementOuter<O>.Inner<T>): T = values.listIterator().next()
+
 class CollectionArrayIdentityTests {
+    @TestAttribute
+    fun inheritedMembersPreserveNestedAndEnclosingTypeArguments() {
+        val first = NestedListElement("first")
+        val second = NestedListElement("second")
+        val values = NestedListElements(mutableListOf(first, second))
+        assertEquals(1, values.indexOf(second))
+        assertTrue(values.subList(1, 2)[0] === second)
+        assertEquals("second", values.listIterator(1).next().value)
+        assertTrue(firstNestedElement(values) === first)
+        val stars: NestedListElements<*> = values
+        assertEquals("first", stars.subList(0, 1)[0].value)
+        val nullable = NestedListElements(mutableListOf(NestedListElement<Int?>(null), NestedListElement<Int?>(7)))
+        assertEquals(null, nullable.subList(0, 1)[0].value)
+        assertEquals(7, nullable.listIterator(1).next().value)
+        val inner = ListElementOuter<Int>(7).Inner<String>(mutableListOf("inner", "second"))
+        assertEquals(7, inner.captured())
+        assertEquals(1, inner.indexOf("second"))
+        assertEquals("inner", inner.subList(0, 1)[0])
+        assertEquals("inner", firstInnerElement(inner))
+    }
+
     @TestAttribute
     fun inheritedArrayMethodUsesTheAccessedOwnersGenericFrame() {
         val sink = ArraySinkChild<String, Int>()
@@ -118,6 +142,13 @@ class CollectionArrayIdentityTests {
         val listIterator = authoredList.listIterator(1)
         assertTrue(listIterator.next() === stored)
         assertTrue(listIterator.previous() === stored)
+        val inheritedNullable = MutableListElements(mutableListOf<Int?>(3, null, 7))
+        assertEquals(1, inheritedNullable.indexOf(null))
+        assertTrue(inheritedNullable.subList(1, 3)[0] == null)
+        val reordered = ReorderedListElements<Int, String>(mutableListOf("first", "second"))
+        assertEquals(1, reordered.indexOf("second"))
+        assertEquals("second", reordered.subList(1, 2)[0])
+        assertEquals("second", reordered.listIterator(1).next())
         val renamed = MutableListElements(mutableListOf("first", "second"))
         renamed[0] = "changed"
         renamed.add(1, "middle")

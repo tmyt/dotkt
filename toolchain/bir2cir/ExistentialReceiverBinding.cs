@@ -285,9 +285,9 @@ static class ExistentialReceiverBinding
             if (refs.TryStarProjectionMember(semanticOwner, sourceMethod, accessorKind,
                     ga, authoredSignature, pc, Str(call[DeclarationIdentityBinding.Key]),
                     out var erasedOwner, out var erasedMethod, out var erasedSignature, out _,
-                    out var erasedResult)
-                && erasedOwner == receiverType.Name)
+                    out var erasedResult, out _))
             {
+                physicalOwner = new TypeNode.Fqn(erasedOwner);
                 physicalMethod = erasedMethod;
                 physicalParameters = erasedSignature;
                 physicalResult = erasedResult;

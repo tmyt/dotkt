@@ -27,6 +27,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   Imported inner defaults read enclosing instances through carrier storage accessors, including captured callbacks.
   Imported defaults can read private members of generic owners through the public carrier slots across DLLs.
   Carrier methods retain Kotlin source names when CLR overrides use different physical names, including list indexers.
+  Imported inherited calls select the declaring carrier and preserve the derived owner's generic argument mapping.
 
 - **Generic nullable widening preserves CLR constraint proofs (#965).**
   Nullable representation companions retain their relation to the original type across calls,

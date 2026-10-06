@@ -18,7 +18,7 @@ static class KotlinIteratorPhysicalProtocol
     {
         if (!refs.TryStarProjectionMember(new TypeNode.Fqn(Iterator, new[] { element }), member,
                 null, 0, Array.Empty<TypeNode>(), 0, null, out var owner, out var name,
-                out var signature, out _, out var physicalReturn))
+                out var signature, out _, out var physicalReturn, out _))
             throw new InvalidOperationException($"Iterator member {member} has no existential physical slot");
         var call = new JsonObject
         {
