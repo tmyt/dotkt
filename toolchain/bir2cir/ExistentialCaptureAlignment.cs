@@ -56,7 +56,7 @@ static class ExistentialCaptureAlignment
                 continue;
             if (fieldType.Equals(carrier)) continue;
             if (fieldType is not TypeNode.Fqn { Args: { Length: > 0 } } logical
-                || logical.Name != semanticOwner)
+                || !NamesSemanticOwner(logical.Name, semanticOwner, refs))
                 continue;
 
             if (closure["ctors"] is not JsonArray { Count: 1 } constructors
@@ -72,7 +72,7 @@ static class ExistentialCaptureAlignment
             parameter.Remove("outer");
             RetypeFieldUses(closure, closureName, fieldName, carrier);
             foreach (var use in captureUses)
-                RetypeCaptureBoundary(use.Expression, semanticOwner, carrier);
+                RetypeCaptureBoundary(use.Expression, semanticOwner, carrier, refs);
         }
     }
 
@@ -196,14 +196,14 @@ static class ExistentialCaptureAlignment
                 if (physical is TypeNode.Fqn carrier
                     && TrySemanticOwner(carrier.Name, semanticByPhysical, refs, out var semanticOwner)
                     && declared is TypeNode.Fqn { Args: { Length: > 0 } } logical
-                    && logical.Name == semanticOwner)
+                    && NamesSemanticOwner(logical.Name, semanticOwner, refs))
                 {
                     capture["type"] = TypeJson.Write(carrier);
                     if (Bool(capture["outer"]))
                         RewriteCapturedReceiver(node["body"], name, carrier);
                     capture.Remove("outer");
                     if (value is JsonObject expression)
-                        RetypeCaptureBoundary(expression, semanticOwner, carrier);
+                        RetypeCaptureBoundary(expression, semanticOwner, carrier, refs);
                     declared = carrier;
                 }
                 nested[name] = declared;
@@ -290,11 +290,17 @@ static class ExistentialCaptureAlignment
         return refs.TryExistentialSemanticOwner(physical, out semantic);
     }
 
-    static void RetypeCaptureBoundary(JsonObject expression, string semanticOwner, TypeNode.Fqn carrier)
+    // Imported default bodies can already name the referenced CLR TypeDef. Compare
+    // through trusted metadata, never by stripping an arity or guessing a nested name.
+    static bool NamesSemanticOwner(string name, string semanticOwner, ReferenceMetadataIndex refs) =>
+        name == semanticOwner || name == refs.RecordedPhysicalTypeName(semanticOwner);
+
+    static void RetypeCaptureBoundary(JsonObject expression, string semanticOwner, TypeNode.Fqn carrier,
+        ReferenceMetadataIndex refs)
     {
         foreach (var key in new[] { "type", "sty" })
             if (TypeJson.Read(expression[key]) is TypeNode.Fqn { Args: { Length: > 0 } } logical
-                && logical.Name == semanticOwner)
+                && NamesSemanticOwner(logical.Name, semanticOwner, refs))
                 expression[key] = TypeJson.Write(carrier);
     }
 

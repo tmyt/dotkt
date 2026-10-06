@@ -183,6 +183,9 @@ static class FBoundStarProjectionErasure
             owners.Values.Where(owner => owner.Needed).ToDictionary(
                 owner => owner.Name, owner => owner.ErasedName, StringComparer.Ordinal), refs, localClrAliases);
         foreach (var root in rootList) Rewrite(root, owners, defs, refs, localClrAliases: localClrAliases);
+        // Finish nested enclosing reads from the inside out before capture storage
+        // is chosen. The first walk can still see an exact outer role on a child.
+        foreach (var root in rootList) RebindAlignedReceiverOperations(root, owners, defs, refs);
         // Capture alignment can replace an exact lexical receiver with an ordinary
         // carrier. Bind storage operations and inner constructions against that final
         // receiver while their producer-authored accessors and factories are still here.
@@ -1699,9 +1702,9 @@ static class FBoundStarProjectionErasure
             Enumerable.Range(0, owner.Arity).Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray());
         foreach (var field in fields.OfType<JsonObject>())
         {
-            // Lexical receiver storage retains its exact construction and is never
-            // accessed through an ordinary Kotlin value's carrier.
-            if (Bool(field["static"]) || Bool(field[ExactOuterKey]) || Str(field["name"]) is not string name
+            // Lexical receiver storage remains exact, but a spliced default may read it
+            // through an ordinary Kotlin value. Expose a read-only carrier view as well.
+            if (Bool(field["static"]) || Str(field["name"]) is not string name
                 || TypeJson.Read(field["type"]) is not TypeNode type) continue;
             // A type variable can be instantiated by a CLR value type. Its default
             // value is not Kotlin's uninitialized sentinel; retain a real null in
@@ -1715,7 +1718,7 @@ static class FBoundStarProjectionErasure
             }
             // readOnly restricts the restored Kotlin surface, not lexical access to
             // the backing storage (a private-set var is still writable internally).
-            foreach (var kind in Bool(field["initOnly"])
+            foreach (var kind in Bool(field["initOnly"]) || Bool(field[ExactOuterKey])
                          ? new[] { "get" } : new[] { "get", "set" })
             {
                 var write = kind == "set";
@@ -1724,6 +1727,7 @@ static class FBoundStarProjectionErasure
                     ["ownerType"] = TypeJson.Write(ownerType),
                     ["recv"] = new JsonObject { ["k"] = "this", ["type"] = TypeJson.Write(ownerType) },
                 };
+                if (Bool(field[ExactOuterKey])) access[ExactOuterKey] = true;
                 if (write) access["value"] = new JsonObject {
                     ["k"] = "local", ["name"] = "value", ["sty"] = TypeJson.Write(type),
                 };
@@ -3374,7 +3378,7 @@ static class FBoundStarProjectionErasure
             return;
         }
         if (kind is not ("field" or "lateinitGet" or "setField" or "setFieldExpr")
-            || Bool(field[ExactOuterKey]) || Bool(field["static"])
+            || Bool(field["static"])
             || field["value"] != null && kind == "lateinitGet"
             || Str(field["name"]) is not string name
             || TypeJson.Read(field["ownerType"]) is not TypeNode.Fqn ownerType
@@ -3413,7 +3417,7 @@ static class FBoundStarProjectionErasure
             AlignCallResult(field, result, protectExactCast: true);
             return;
         }
-        if (!write && ExpressionType(field) is TypeNode semanticResult)
+        if (!write && !Bool(field[ExactOuterKey]) && ExpressionType(field) is TypeNode semanticResult)
         {
             call["ret"] = TypeJson.Write(semanticResult);
             AlignCallResult(call, result, protectExactCast: true);
@@ -3846,6 +3850,9 @@ static class FBoundStarProjectionErasure
                 case JsonObject obj:
                     if (Str(obj["name"]) is string name && locals.TryGetValue(name, out var carrier))
                     {
+                        // An alias initialized from a carrier no longer denotes an
+                        // exact lexical CLR receiver, even if its source was this@Outer.
+                        if (Str(obj["k"]) is "var" or "local") obj.Remove(ExactOuterKey);
                         if (Str(obj["k"]) == "var") obj["type"] = TypeJson.Write(carrier);
                         else if (Str(obj["k"]) == "local")
                         {

@@ -2,6 +2,7 @@ package roundtriptests.innerdefaults
 
 import NUnit.Framework.TestAttribute
 import roundtrip.innerdefaults.*
+import kotlin.coroutines.*
 
 class InnerConstructorDefaultTests {
     @TestAttribute
@@ -38,5 +39,24 @@ class InnerConstructorDefaultTests {
         check(GenericInnerDefaultOuter("callback").Middle(7).Callback().read() == "callback")
         check(GenericInnerDefaultOuter(23).Middle("callback").Callback().read() == 23)
         check(GenericInnerDefaultOuter<Int?>(null).Middle("nullable").Callback().read() == null)
+        @Suppress("UNCHECKED_CAST")
+        val widened = GenericInnerDefaultOuter(29) as GenericInnerDefaultOuter<Any?>
+        val widenedMiddle = widened.Middle("widened")
+        check(widenedMiddle.Leaf().value == 29)
+        check(widenedMiddle.Callback().read() == 29)
+        check(widenedMiddle.Deeper(true).Leaf().value == 29)
+        check(widenedMiddle.Deeper(true).Callback().read() == 29)
+        check(GenericInnerDefaultOuter("deep").Middle(7).Deeper(false).Callback().read() == "deep")
+        check(widenedMiddle.Sibling().sibling.middle == 1)
+        check(widenedMiddle.Deeper(true).SamCallback().reader.read() == 29)
+        var completed = false
+        widenedMiddle.Deeper(true).SuspendCallback().read.startCoroutine(object : Continuation<Any?> {
+            override val context = EmptyCoroutineContext
+            override fun resumeWith(result: Result<Any?>) {
+                check(result.getOrThrow() == 29)
+                completed = true
+            }
+        })
+        check(completed)
     }
 }
