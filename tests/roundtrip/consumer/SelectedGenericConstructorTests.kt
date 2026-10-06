@@ -16,6 +16,17 @@ class SelectedGenericConstructorTests {
 
     @TestAttribute
     fun importedDeclarationsRemainDistinctAfterInstantiation() {
+        check(StarSelectedConstructor(star = SelectionBox("star")).chosen == 1)
+        check(StarSelectedConstructor(exact = SelectionBox<Any>("exact")).chosen == 2)
+        check(NullableBoxSelectedConstructor(number = SelectionBox(1)).chosen == 1)
+        check(NullableBoxSelectedConstructor(text = SelectionBox("text")).chosen == 2)
+        check(NullableBoxSelectedConstructor(text = null).chosen == 2)
+        check(NestedArraySelectedConstructor<String>(flat = arrayOf("a")).chosen == 1)
+        check(NestedArraySelectedConstructor<String>(nested = arrayOf(arrayOf("b"))).chosen == 2)
+        val tagged = TaggedSelectedConstructor<Int>(42, box = SelectionBox(1))
+        val numbered = TaggedSelectedConstructor<String>(43, number = SelectionBox(2))
+        check(tagged.chosen == 1 && tagged.tag == 42)
+        check(numbered.chosen == 2 && numbered.tag == 43)
         val input = selectionInput()
         check(SelectionBoundHolder(input).write("imported") === input)
         check(input.read() == "imported")

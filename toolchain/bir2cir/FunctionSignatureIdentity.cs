@@ -34,6 +34,9 @@ static class FunctionSignatureIdentity
             if (node is JsonObject obj)
             {
                 obj.Remove(CallKey);
+                obj.Remove(ConstructorSignatureIdentity.CallKey);
+                obj.Remove(ConstructorSignatureIdentity.ParameterKey);
+                obj.Remove(ConstructorSignatureIdentity.PhysicalKey);
                 foreach (var child in obj.Select(pair => pair.Value).ToList()) RemoveCallFacts(child);
             }
             else if (node is JsonArray array)

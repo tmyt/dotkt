@@ -503,11 +503,13 @@ static class FBoundStarProjectionErasure
     // A declaration selected in another owner is an exact linkage fact, not a Kotlin value slot this pass owns.
     // In particular an @ClrTypeAlias constructor's memberSignature may contain a source projection
     // (LinkedHashMap(Map<out K, V>)); its physical descriptor is IDictionary<K, V>, never object.  Keep the
-    // projection's bound while still lowering its aliases.  A Kotlin-local constructor is deliberately excluded:
-    // its declaration is rewritten by this pass too, so its memberSignature must follow the same existential ABI.
+    // projection's bound while still lowering its aliases. A local constructor's value slots still follow
+    // existential projection; its independent nominal signature discriminator is an exact declaration fact.
     static bool IsBoundDeclarationType(JsonObject owner, string key, ReferenceMetadataIndex refs,
         IReadOnlyDictionary<string, string> localClrAliases)
     {
+        if (key == FunctionSignatureIdentity.Key && Bool(owner[ConstructorSignatureIdentity.PhysicalKey]))
+            return true;
         // A synthesized adapter to an exact foreign MethodDef already states both its CLR
         // signature and its conversion body. Re-erasing that adapter would destroy the slot
         // it was created to fill. Kotlin-authored obligations still follow ordinary projection.
@@ -2200,6 +2202,10 @@ static class FBoundStarProjectionErasure
                     ?? TypeJson.Write(RequiredParamType(parameter, 0, inner.Name + ".<init>"))).ToArray()),
             ["args"] = args,
         };
+        if (constructorParams.OfType<JsonObject>().All(parameter =>
+                ConstructorSignatureIdentity.DeclarationType(parameter) != null))
+            construction[ConstructorSignatureIdentity.CallKey] = new JsonArray(constructorParams.OfType<JsonObject>()
+                .Select(ConstructorSignatureIdentity.DeclarationType).ToArray()).ToJsonString();
         var implementation = new JsonObject
         {
             ["owner"] = TypeJson.Write(new TypeNode.Fqn(outer.ErasedName)),
@@ -3628,10 +3634,13 @@ static class FBoundStarProjectionErasure
         }
         else
         {
+            var originalDeclaration = ConstructorSignatureIdentity.DeclarationSignature(construction);
+            var factorySignature = originalDeclaration != null
+                ? originalDeclaration.Select(TypeJson.Read).ToArray() : authoredSignature;
             if (!refs.TryExistentialInnerConstructorFactory(
-                     referencedOuter, innerType, authoredSignature.Skip(1).ToArray(),
+                     referencedOuter, innerType, factorySignature.Skip(1).ToArray(),
                      out physicalOwner, out physicalMethod, out physicalParameters, out physicalResult,
-                     out physicalTypeArguments))
+                     out physicalTypeArguments, declarationFrame: originalDeclaration != null))
                 throw new InvalidOperationException(
                     $"bir2cir: referenced inner construction '{innerType.Name}' through star-projected outer " +
                     $"'{referencedOuter}<*>' has no exact existential constructor factory");

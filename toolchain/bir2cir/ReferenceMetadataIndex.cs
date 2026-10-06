@@ -2670,7 +2670,8 @@ sealed partial class ReferenceMetadataIndex
     public bool TryExistentialInnerConstructorFactory(string semanticOuter, TypeNode.Fqn innerType,
         IReadOnlyList<TypeNode> authoredParameters,
         out string physicalOwner, out string physicalMethod, out TypeNode[] physicalParameters,
-        out TypeNode physicalResult, out TypeNode[] physicalTypeArguments)
+        out TypeNode physicalResult, out TypeNode[] physicalTypeArguments,
+        bool declarationFrame = false)
     {
         physicalOwner = physicalMethod = null;
         physicalParameters = null;
@@ -2724,7 +2725,8 @@ sealed partial class ReferenceMetadataIndex
                 && semanticParameters.Length == authoredParameters.Count
                 && semanticParameters.Select((parameter, index) =>
                         SemanticDeclarationDescribesCall(
-                            FBoundStarProjectionErasure.CloseInnerConstructorType(parameter, arguments),
+                            declarationFrame ? parameter
+                                : FBoundStarProjectionErasure.CloseInnerConstructorType(parameter, arguments),
                             authoredParameters[index]))
                     .All(equal => equal)
                 && member.ParamTypeNodes != null && member.ReturnTypeNode != null))
@@ -4136,7 +4138,7 @@ sealed partial class ReferenceMetadataIndex
                     ctor.KotlinParameterTypes?[index] ?? ctor.NullableGenericParams?[index] ?? type,
                     selected[index])).All(match => match)).ToList();
         if (matches.Count != 1) return false;
-        physical = matches[0].ParamTypeNodes;
+        physical = matches[0].SignatureParameters;
         return true;
     }
 
@@ -5306,7 +5308,8 @@ sealed partial class ReferenceMetadataIndex
                             dotKtAuthored
                                 ? ctor.GetParameters().Select(p => KotlinTypeOf(
                                     p.GetCustomAttributesData(), ctor.DeclaringType?.Assembly)).ToArray()
-                                : null));
+                                : null,
+                            ctor.GetParameters().Select(DeclarationSignatureSlot).ToArray()));
                     }
                 }
                 catch (MalformedTrustedCompanionException) { throw; }
@@ -7836,9 +7839,9 @@ sealed record ExactClrMemberBinding(string Intrinsic, int PropertyAccess, string
 // A referenced CONSTRUCTOR's declaration shape. A `new` is a call whose declaration is the owner's constructor, so the
 // nullable-generic realign types its arguments exactly as it types a method call's — and a ctor has no name of its own,
 // so the key is owner + declared parameter count. `ParamTypeNodes` is the physical CLR signature with generic
-// parameters retained; `NullableGenericParams[i]` is the pre-erasure `[KotlinNullableGeneric]` carrier of that slot
-// when it has one.
+// parameters retained for value-flow analysis; SignatureParameters additionally preserves custom modifiers for
+// exact declaration linking. `NullableGenericParams[i]` is the pre-erasure `[KotlinNullableGeneric]` carrier when present.
 sealed record CtorBinding(string Owner, string PhysicalOwner, int ParamCount, TypeNode[] ParamTypeNodes,
-    TypeNode[] NullableGenericParams, TypeNode[] KotlinParameterTypes);
+    TypeNode[] NullableGenericParams, TypeNode[] KotlinParameterTypes, TypeNode[] SignatureParameters);
 
 sealed record ReferencedAliasConstructorAdapter(string Owner, AliasConstructorAdapter Adapter);

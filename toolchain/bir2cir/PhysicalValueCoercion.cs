@@ -757,7 +757,7 @@ static class PhysicalValueCoercion
         if (constructor["baseCtorRef"] is JsonObject member)
         {
             var parameters = ReadTypes(member["parameterTypes"] as JsonArray);
-            return parameters?.Select(p => Close(p, OwnerArgs(member), Array.Empty<TypeNode>())).ToArray();
+            return parameters?.Select(p => ValueSlotType(Close(p, OwnerArgs(member), Array.Empty<TypeNode>()))).ToArray();
         }
         return ReadTypes(constructor["delegationSig"] as JsonArray);
     }
@@ -774,8 +774,13 @@ static class PhysicalValueCoercion
         parameters ??= ReadTypes(node["sig"] as JsonArray) ?? ReadTypes(node["argTypes"] as JsonArray);
         if (parameters == null) return null;
         var methodArgs = MethodArgs(node);
-        return parameters.Select(p => Close(p, ownerArgs ?? CallOwner(node)?.Args, methodArgs)).ToArray();
+        return parameters.Select(p => ValueSlotType(Close(p, ownerArgs ?? CallOwner(node)?.Args, methodArgs))).ToArray();
     }
+
+    // Custom modifiers distinguish declarations, but do not change the value on
+    // the evaluation stack. Keep the memberRef untouched and coerce its value slot.
+    static TypeNode ValueSlotType(TypeNode type) => type is TypeNode.Mod modifier
+        ? ValueSlotType(modifier.Of) : type;
 
     static TypeNode.Fqn CallOwner(JsonObject call)
         => TypeJson.Read(call["ownerType"]) as TypeNode.Fqn

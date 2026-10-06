@@ -79,7 +79,8 @@ static partial class ClrMemberResolution
             // substituted use-site argument vector.  This distinction is load-bearing when physical lowering changes
             // a constructed owner's invariant storage face while the value at the call remains on its read-only head
             // face.  Select from the declaration fact; `argTypes` is rewritten below to the selected physical target.
-            var declarationSig = call["memberSignature"] as JsonArray;
+            var capturedSignature = ConstructorSignatureIdentity.DeclarationSignature(call);
+            var declarationSig = capturedSignature ?? call["memberSignature"] as JsonArray;
             var sig = declarationSig ?? useSiteSig;
             var exact = new List<(JsonObject ctor, int index)>();
             // `new.argTypes` is a use-site vector and therefore closes the constructor owner's type frame.
@@ -96,7 +97,8 @@ static partial class ClrMemberResolution
                     // These vectors identify the frontend-selected declaration, not the argument carrier.
                     // Ordinary function values can share storage while naming different constructor overloads.
                     var declared = ps.Select(p => (declarationSig != null || signatureName == "delegationSig"
-                        ? p?[FunctionSignatureIdentity.Key] ?? p?["type"]
+                        ? (capturedSignature != null ? ConstructorSignatureIdentity.DeclarationType(p) : null)
+                            ?? p?[FunctionSignatureIdentity.Key] ?? p?["type"]
                         : p?["type"]) is JsonNode pt ? TypeJson.Read(pt) : null).ToArray();
                     if (declared.Any(t => t == null)) continue;
                     var matches = declared.Select((raw, i) =>
@@ -782,11 +784,30 @@ static partial class ClrMemberResolution
         {
             var parameters = constructor.GetParameters();
             return parameters.Length == declaration.Count && parameters.Select((parameter, index) =>
-                DeclaredConstructorSlotMatches(declaration[index],
-                    _refs.FunctionSignatureDiscriminator(parameter) ?? parameter.ParameterType)).All(match => match);
+                DeclaredConstructorParameterMatches(declaration[index], parameter)).All(match => match);
         }).ToList();
         return exact.Count == 1 ? exact[0] : throw new InvalidOperationException(
             $"bir2cir: {context} resolves to {exact.Count} constructor declarations, expected exactly one");
+    }
+
+    static bool DeclaredConstructorParameterMatches(TypeNode selected, ParameterInfo parameter)
+    {
+        if (selected is not TypeNode.Mod)
+            return DeclaredConstructorSlotMatches(selected,
+                _refs.FunctionSignatureDiscriminator(parameter) ?? parameter.ParameterType);
+        var required = new List<TypeNode>();
+        var optional = new List<TypeNode>();
+        while (selected is TypeNode.Mod modifier)
+        {
+            (modifier.Req ? required : optional).Add(modifier.M);
+            selected = modifier.Of;
+        }
+        bool Matches(IReadOnlyList<TypeNode> described, Type[] actual) =>
+            described.Count == actual.Length && described.Select((type, index) =>
+                DeclaredConstructorSlotMatches(type, actual[index])).All(match => match);
+        return Matches(required, parameter.GetRequiredCustomModifiers())
+            && Matches(optional, parameter.GetOptionalCustomModifiers())
+            && DeclaredConstructorSlotMatches(selected, parameter.ParameterType);
     }
 
     static bool DeclaredConstructorSlotMatches(TypeNode selected, Type parameter)

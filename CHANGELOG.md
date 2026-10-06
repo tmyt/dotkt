@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Constructor overload identity survives erased value representations.**
+  Distinct Kotlin constructors retain separate CLR signatures after generic, star-projected,
+  nullable, and array lowering, including calls through referenced DLLs and inner-class factories.
+
 - **Constructed Kotlin values preserve erased generic and inner-class consumption (#922).**
   bir2cir uses the declared existential carrier for ordinary value slots and explicit adapters at exact CLR
   constructor, storage, delegate, and override boundaries, preserving Kotlin source types in metadata.

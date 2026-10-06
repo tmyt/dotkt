@@ -8,6 +8,31 @@ class SelectedConstructor<T> {
 
 class SelectionBox<T>(val value: T)
 
+class StarSelectedConstructor {
+    val chosen: Int
+    constructor(star: SelectionBox<*>) { chosen = 1 }
+    constructor(exact: SelectionBox<Any>) { chosen = 2 }
+}
+
+class NullableBoxSelectedConstructor {
+    val chosen: Int
+    constructor(number: SelectionBox<Int>) { chosen = 1 }
+    constructor(text: SelectionBox<String>?) { chosen = 2 }
+}
+
+class NestedArraySelectedConstructor<T> {
+    val chosen: Int
+    constructor(flat: Array<T>) { chosen = 1 }
+    constructor(nested: Array<Array<T>>) { chosen = 2 }
+}
+
+class TaggedSelectedConstructor<T> {
+    val chosen: Int
+    val tag: Any
+    constructor(tag: Any, box: SelectionBox<T>) { this.tag = tag; chosen = 1 }
+    constructor(tag: Any, number: SelectionBox<Int>) { this.tag = tag; chosen = 2 }
+}
+
 interface SelectionInvariant<T> {
     fun read(): T
     fun write(value: T)
@@ -101,6 +126,17 @@ fun <T> checkGenericSelection(input: T) {
 }
 
 fun checkLocalConstructorSelection() {
+    check(StarSelectedConstructor(star = SelectionBox("star")).chosen == 1)
+    check(StarSelectedConstructor(exact = SelectionBox<Any>("exact")).chosen == 2)
+    check(NullableBoxSelectedConstructor(number = SelectionBox(1)).chosen == 1)
+    check(NullableBoxSelectedConstructor(text = SelectionBox("text")).chosen == 2)
+    check(NullableBoxSelectedConstructor(text = null).chosen == 2)
+    check(NestedArraySelectedConstructor<String>(flat = arrayOf("a")).chosen == 1)
+    check(NestedArraySelectedConstructor<String>(nested = arrayOf(arrayOf("b"))).chosen == 2)
+    val tagged = TaggedSelectedConstructor<Int>(42, box = SelectionBox(1))
+    val numbered = TaggedSelectedConstructor<String>(43, number = SelectionBox(2))
+    check(tagged.chosen == 1 && tagged.tag == 42)
+    check(numbered.chosen == 2 && numbered.tag == 43)
     checkLocalProjectedSelection()
     check(CovariantSelectionOuter("outer").child().read() == "outer")
     check(CovariantSelectionOuter(101).child().read() == 101)
