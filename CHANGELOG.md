@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Private-set fields remain writable through erased generic receivers.**
+  Compiler-generated storage accessors distinguish Kotlin's externally read-only surface
+  from immutable CLR storage, preserving lexical writes to private and private-set lateinit fields.
+
 - **Constructor overload identity survives erased value representations.**
   Distinct Kotlin constructors retain separate CLR signatures after generic, star-projected,
   nullable, and array lowering, including calls through referenced DLLs and inner-class factories.

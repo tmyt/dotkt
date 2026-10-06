@@ -152,6 +152,18 @@ class LateinitGenericCompanionHost<T> {
     }
 }
 
+class PrivateSetLateinitCarrierHost<T : Any> {
+    lateinit var slot: T
+        private set
+
+    companion object {
+        fun <T : Any> assign(host: PrivateSetLateinitCarrierHost<T>, value: T): T {
+            host.slot = value
+            return host.slot
+        }
+    }
+}
+
 // A delegated property is exposed through its real CLR get_/set_ accessor. The accessor body alone calls the
 // provider's getValue/setValue and touches the private provider field. A hoisted companion therefore calls only the
 // property accessor and never needs direct access to either implementation detail.

@@ -452,6 +452,13 @@ class RoundtripSurfaceTests {
         ClassicAssert.AreEqual(9, InternalGenericCompanionHost(1).reveal())
         ClassicAssert.AreEqual("filled/derived:filled",
             LateinitGenericCompanionHost.fill(LateinitGenericCompanionHost()))
+        val privateInt = roundtrip.dispatchsurface.PrivateSetLateinitCarrierHost<Int>()
+        ClassicAssert.AreEqual(41, roundtrip.dispatchsurface.PrivateSetLateinitCarrierHost.assign(privateInt, 41))
+        ClassicAssert.AreEqual(42, roundtrip.dispatchsurface.PrivateSetLateinitCarrierHost.assign(privateInt, 42))
+        ClassicAssert.AreEqual(42, privateInt.slot)
+        val privateString = roundtrip.dispatchsurface.PrivateSetLateinitCarrierHost<String>()
+        ClassicAssert.AreEqual("updated", roundtrip.dispatchsurface.PrivateSetLateinitCarrierHost.assign(privateString, "updated"))
+        ClassicAssert.AreEqual("updated", privateString.slot)
         val bumped = ProviderDelegateCompanionHost.bump()
         ClassicAssert.AreEqual(bumped + 1, ProviderDelegateCompanionHost.bump())
         // The provider field stays private in the producer's file facade; the exported top-level property survives

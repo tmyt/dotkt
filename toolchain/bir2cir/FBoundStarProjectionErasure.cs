@@ -1711,7 +1711,9 @@ static class FBoundStarProjectionErasure
                 type = new TypeNode.Fqn("System.Object");
                 field["type"] = TypeJson.Write(type);
             }
-            foreach (var kind in Bool(field["initOnly"]) || Bool(field["readOnly"])
+            // readOnly restricts the restored Kotlin surface, not lexical access to
+            // the backing storage (a private-set var is still writable internally).
+            foreach (var kind in Bool(field["initOnly"])
                          ? new[] { "get" } : new[] { "get", "set" })
             {
                 var write = kind == "set";
