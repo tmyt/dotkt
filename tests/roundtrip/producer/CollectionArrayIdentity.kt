@@ -23,6 +23,8 @@ class MutableListElements<T>(private val values: MutableList<T>) : AbstractMutab
     override fun removeAt(index: Int): T = values.removeAt(index)
 }
 
+fun <T> locallyReplaceListElement(values: MutableListElements<T>, value: T): T = values.set(0, value)
+
 open class ArraySink<T> {
     protected fun accept(values: Array<T?>): Int = values.size
 }

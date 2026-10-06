@@ -1967,10 +1967,12 @@ static class FBoundStarProjectionErasure
         }
         else if (replacementName != null)
         {
-            slot[SourceMemberKey] = method["name"]?.DeepClone();
-            RoundtripMetadata.AddSourceMethodIdentity(slot,
-                Str(method["name"])
-                ?? throw new InvalidOperationException("existential interface slot has no source method name"));
+            // CLR override allocation may already have renamed this declaration.
+            // Carry the recorded Kotlin identity, not the allocated MethodDef name.
+            var sourceName = Str(method[DeclarationRename.SourceMemberKey]) ?? Str(method["name"])
+                ?? throw new InvalidOperationException("existential interface slot has no source method name");
+            slot[SourceMemberKey] = sourceName;
+            RoundtripMetadata.AddSourceMethodIdentity(slot, sourceName);
         }
         // `suspend` is still a Kotlin declaration fact at this point.  The existential slot must
         // participate in the same later SuspendColdLowering as the generic declaration; dropping
