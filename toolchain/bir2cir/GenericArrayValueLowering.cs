@@ -74,7 +74,8 @@ static class GenericArrayValueLowering
         foreach (var child in obj.Select(pair => pair.Value)) CollectNames(child, names);
     }
 
-    static void Visit(JsonNode node, BirScope scope, Context context, JsonArray typeParameters = null, JsonArray methodParameters = null)
+    static void Visit(JsonNode node, BirScope scope, Context context, JsonArray typeParameters = null,
+        JsonArray methodParameters = null, bool address = false)
     {
         if (node is JsonArray array)
         {
@@ -86,7 +87,7 @@ static class GenericArrayValueLowering
                 var variableType = variable == null ? null : TypeJson.Read(declaration["type"]);
                 if (TypeJson.Read(array[i]) is TypeNode type)
                     array[i] = TypeJson.Write(Project(type));
-                else Visit(array[i], child, context, typeParameters, methodParameters);
+                else Visit(array[i], child, context, typeParameters, methodParameters, address);
                 if (variableType != null) child.VarTypes[variable] = variableType;
             }
             return;
@@ -107,6 +108,13 @@ static class GenericArrayValueLowering
         var element = TypeJson.Read(obj["elem"]);
         var genericArray = ArrayConstructionLowering.ArrayElementOf(StaticType.Surface(obj["array"], scope));
         var childScope = scope.Extend(obj);
+        // The selected declaration, not the value's type, owns address-taking.
+        // Both pre-link and linked calls carry their current declaration facts.
+        var signature = (obj["memberRef"] as JsonObject)?["parameterTypes"] as JsonArray
+            ?? obj["resolvedMemberParams"] as JsonArray
+            ?? obj["sig"] as JsonArray
+            ?? obj["shapeTypes"] as JsonArray
+            ?? obj["argTypes"] as JsonArray;
         // Keep the source declaration shape for downstream Kotlin projection.
         if (kind == null && obj["params"] is JsonArray
             && TypeJson.Read(obj["ret"]) is TypeNode ret && !Project(ret).Equals(ret)
@@ -120,8 +128,16 @@ static class GenericArrayValueLowering
         {
             if (key is "memberRef" or "kotlinType" or "retKotlinType") continue;
             if (ClrBoundNode.IsAny(kind) && key is not ("args" or "recv")) continue;
+            if (key == "args" && value is JsonArray arguments)
+            {
+                for (var i = 0; i < arguments.Count; i++)
+                    Visit(arguments[i], childScope, context, typeParameters, methodParameters,
+                        signature != null && i < signature.Count && IsManagedReference(TypeJson.Read(signature[i])));
+                continue;
+            }
             if (TypeJson.Read(value) is TypeNode type) obj[key] = TypeJson.Write(Project(type));
-            else Visit(value, childScope, context, typeParameters, methodParameters);
+            else Visit(value, childScope, context, typeParameters, methodParameters,
+                kind == "byrefOf" && key == "inner" || address && kind == "valueBlock" && key == "result");
         }
         if (castElement != null)
         {
@@ -142,7 +158,7 @@ static class GenericArrayValueLowering
             obj.Clear();
             foreach (var (key, value) in length) obj[key] = value?.DeepClone();
         }
-        if (kind == "arrayGet" && ContainsVariable(element))
+        if (kind == "arrayGet" && ContainsVariable(element) && !address)
         {
             var read = Call(obj["array"], "GetValue", "System.Object",
                 new JsonArray(TypeJson.Fqn("System.Int32")), new JsonArray(obj["index"]?.DeepClone()));
@@ -332,6 +348,13 @@ static class GenericArrayValueLowering
         _ => type,
     };
 
+    static bool IsManagedReference(TypeNode type) => type switch
+    {
+        TypeNode.ByRef => true,
+        TypeNode.Mod modifier => IsManagedReference(modifier.Of),
+        _ => false,
+    };
+
     internal static void SelfTest()
     {
         var array = new TypeNode.Array(new TypeNode.Tv("method", 0));
@@ -340,6 +363,31 @@ static class GenericArrayValueLowering
             || !Project(construction).Equals(construction)
             || !Project(new TypeNode.Nullable(construction)).Equals(new TypeNode.Nullable(construction)))
             throw new System.InvalidOperationException("Generic array value projection changed an exact named construction");
+        JsonObject Element() => new() { ["k"] = "arrayGet", ["elem"] = TypeJson.Write(array.Elem),
+            ["array"] = Local("values"), ["index"] = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("int"), ["value"] = 0 } };
+        foreach (var signatureKey in new[] { "sig", "shapeTypes", "argTypes", "resolvedMemberParams", "memberRef" })
+        {
+            var addressed = Element();
+            var ordinary = Element();
+            var pinned = Element();
+            var call = new JsonObject { ["k"] = signatureKey == "argTypes" ? "clrGenericStatic" : "callStatic",
+                ["args"] = new JsonArray(addressed, ordinary) };
+            var signature = new JsonArray(TypeJson.Write(new TypeNode.ByRef(array.Elem)), TypeJson.Write(array.Elem));
+            if (signatureKey == "memberRef") call[signatureKey] = new JsonObject { ["parameterTypes"] = signature };
+            else call[signatureKey] = signature;
+            var document = new JsonObject { ["fileClass"] = "Consumer", ["methods"] = new JsonArray(
+                new JsonObject { ["name"] = "Use", ["typeParams"] = new JsonArray("T"),
+                    ["params"] = new JsonArray(new JsonObject { ["name"] = "values", ["type"] = TypeJson.Write(array) }),
+                    ["ret"] = TypeJson.Fqn("void"), ["body"] = new JsonArray(
+                        new JsonObject { ["k"] = "exprStmt", ["expr"] = call },
+                        new JsonObject { ["k"] = "var", ["name"] = "pointer", ["type"] = TypeJson.Write(new TypeNode.ByRef(array.Elem)),
+                            ["init"] = new JsonObject { ["k"] = "byrefOf", ["inner"] = pinned } }) }) };
+            ApplyAll(new[] { document });
+            if (Str(addressed["k"]) != "arrayGet" || TypeJson.Read(addressed["elem"]) != array.Elem
+                || Str(pinned["k"]) != "arrayGet" || Str(ordinary["k"]) != "cast"
+                || Str(ordinary["e"]?["method"]) != "GetValue")
+                throw new System.InvalidOperationException("Generic array address was replaced with a value read or an ordinary read retained an address");
+        }
         System.Console.WriteLine("[generic array values] self-test OK (array slot versus invariant construction)");
     }
 

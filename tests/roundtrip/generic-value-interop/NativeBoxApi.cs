@@ -27,6 +27,12 @@ public static class NativeBoxApi
     public static ref Box<string>[] BoxesReference() => ref boxes;
     public static Box<string>[] CreateBoxes(string value) => new[] { new Box<string>(value) };
     public static Box<string>[] ReadBoxes() => boxes;
+    public static void SwapArrayItems<T>(ref T first, ref T second) => (first, second) = (second, first);
+    public static bool ReplaceArrayAliased<T>(ref T first, ref T second, T replacement)
+    {
+        first = replacement;
+        return EqualityComparer<T>.Default.Equals(first, second);
+    }
 
     public static bool ReplaceAliased(ref Box<string> first, ref Box<string> second)
     {

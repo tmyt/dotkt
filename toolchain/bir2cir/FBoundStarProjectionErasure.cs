@@ -528,7 +528,8 @@ static class FBoundStarProjectionErasure
                                 || IsExactCallOwner(obj, key),
                             preserveConstructionArguments: (Str(obj["k"]) is "new" or "newClr") && key == "type"
                                 || IsTypeDefinition(obj) && key == "base"
-                                || IsDeclarationOwnerDescriptor(obj) && key == "owner"));
+                                || IsDeclarationOwnerDescriptor(obj) && key == "owner"
+                                || IsExactCallOwner(obj, key)));
                     else
                         RewriteTypesOnly(value, owners, defs, refs, localClrAliases, childBoundDeclaration);
                 }
@@ -630,8 +631,8 @@ static class FBoundStarProjectionErasure
         // A static call or delegate target names the declaring construction, not a value receiver.
         // Its lifted method stays on that owner even when ordinary values use a carrier.
         if (kind is "newDelegate" or "callStatic" && key == "calleeOwner") return true;
-        // Exact call owners preserve their declaration head, but their applied arguments must
-        // still follow the same representation as the base/interface declaration edge.
+        // Exact call owners follow the full constructed base/interface declaration edge,
+        // including its arguments. Ordinary receiver values independently use carrier storage.
         if (key == "ownerType" && kind != "callInstance" && owner["recv"] is JsonObject receiver
             && (Str(receiver["k"]) == "this" || Bool(receiver[ExactOuterKey])))
             return true;
@@ -1084,6 +1085,21 @@ static class FBoundStarProjectionErasure
             ["interfaces"] = new JsonArray(TypeJson.Write(interfaceEdge)),
             ["methods"] = new JsonArray(ordinaryMethod, finalBridge) };
         var emptyRefs = ReferenceMetadataIndex.Build(Array.Empty<string>());
+        foreach (var receiver in new JsonObject[] {
+            new() { ["k"] = "this" },
+            new() { ["k"] = "local", ["name"] = "outer", [ExactOuterKey] = true },
+            new() { ["k"] = "local", ["name"] = "receiver" } })
+        {
+            var exactCall = new JsonObject { ["k"] = "callInstance", ["clrOwnerResolved"] = true,
+                ["ownerType"] = TypeJson.Write(nestedConstruction), ["recv"] = receiver,
+                ["method"] = "read", ["sig"] = new JsonArray(), ["args"] = new JsonArray() };
+            for (var pass = 0; pass < 2; pass++)
+            {
+                RewriteTypesOnly(exactCall, constructionOwners, new Dictionary<string, JsonObject>(), emptyRefs, null);
+                if (TypeJson.Read(exactCall["ownerType"]) != nestedConstruction)
+                    throw new InvalidOperationException("Exact call owner diverged from its constructed inheritance edge");
+            }
+        }
         var referenceCall = new JsonObject { ["k"] = "callStatic",
             ["typeArgs"] = new JsonArray(TypeJson.Write(nestedConstruction), TypeJson.Write(nestedConstruction)),
             ["shapeTypes"] = new JsonArray(TypeJson.Write(new TypeNode.Fqn("Box", new TypeNode[] {
@@ -3242,7 +3258,8 @@ static class FBoundStarProjectionErasure
                                 || IsExactCallOwner(obj, key),
                             preserveConstructionArguments: (Str(obj["k"]) is "new" or "newClr") && key == "type"
                                 || IsTypeDefinition(obj) && key == "base"
-                                || IsDeclarationOwnerDescriptor(obj) && key == "owner"));
+                                || IsDeclarationOwnerDescriptor(obj) && key == "owner"
+                                || IsExactCallOwner(obj, key)));
                     else
                         Rewrite(value, owners, defs, refs,
                             childTypeParameters, childMethodParameters,

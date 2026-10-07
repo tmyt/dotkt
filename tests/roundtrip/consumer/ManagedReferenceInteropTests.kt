@@ -14,7 +14,63 @@ private fun <T> readNativeSlot(slot: NativeSlot<T>): T {
     return value
 }
 
+private fun <T> replaceArrayElement(values: Array<T>, index: Int, replacement: T) {
+    replaceValueRef(byref(values[index]), replacement)
+}
+
+private fun <T> swapArrayElements(values: Array<T>) {
+    NativeBoxApi.SwapArrayItems(byref(values[0]), byref(values[1]))
+}
+
+private fun <T> replaceAliasedArrayElement(values: Array<T>, replacement: T): Boolean =
+    NativeBoxApi.ReplaceArrayAliased(byref(values[0]), byref(values[0]), replacement)
+
+private fun <T> replaceArrayElementInTry(values: Array<T>, replacement: T): Int {
+    var completed = 0
+    try {
+        replaceValueRef(byref(values[0]), replacement)
+    } finally {
+        completed++
+    }
+    return completed
+}
+
+private fun <T> replaceArrayElementWithTryArgument(values: Array<T>, replacement: T): Int {
+    var completed = 0
+    replaceValueRef(byref(values[0]), try { replacement } finally { completed++ })
+    return completed
+}
+
 class ManagedReferenceInteropTests {
+    @TestAttribute
+    fun genericArrayAddressesPreserveWritesAndImmediateAliases() {
+        val text = arrayOf("initial", "second")
+        replaceArrayElement(text, 0, "updated")
+        assertEquals("updated", text[0])
+        swapArrayElements(text)
+        assertEquals("second", text[0])
+        assertEquals("updated", text[1])
+        assertTrue(replaceAliasedArrayElement(text, "aliased"))
+        assertEquals("aliased", text[0])
+        assertEquals(1, replaceArrayElementInTry(text, "finally"))
+        assertEquals("finally", text[0])
+        assertEquals(1, replaceArrayElementWithTryArgument(text, "pinned"))
+        assertEquals("pinned", text[0])
+        val number = arrayOf(1, 2)
+        replaceArrayElement(number, 0, 17)
+        assertEquals(17, number[0])
+        swapArrayElements(number)
+        assertEquals(2, number[0])
+        assertEquals(17, number[1])
+        assertTrue(replaceAliasedArrayElement(number, 42))
+        assertEquals(42, number[0])
+        val boxes = arrayOf(Box("initial"), Box("second"))
+        val replacement = Box("updated")
+        replaceArrayElement(boxes, 0, replacement)
+        assertTrue(boxes[0] === replacement)
+        assertTrue(replaceAliasedArrayElement(boxes, replacement))
+    }
+
     @TestAttribute
     fun genericLiveReferenceLoadsItsActualReferent() {
         val number = NativeSlot<Int>(17)

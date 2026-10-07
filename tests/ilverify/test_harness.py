@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[2]
 STACK = "StackBufferTests::stackAllocationAndSpanInterop()"
 BYREF = "ByRefParameterTests::byrefOfAStackSlotEvaluatesItsIndexOnce()"
 SPAN_INPUT = "NominalFunctionDelegateTests::dotkt:lambda:17([S.P.CoreLib]System.Span`1<int32>)"
-SPAN_HEAP = "NominalFunctionDelegateTests+dotkt$NominalFunctionDelegateTestsKt$Closure102::invoke()"
+SPAN_HEAP = "NominalFunctionDelegateTests+dotkt$NominalFunctionDelegateTestsKt$Closure104::invoke()"
 
 
 class HarnessTests(unittest.TestCase):

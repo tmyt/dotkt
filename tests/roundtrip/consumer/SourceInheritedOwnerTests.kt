@@ -5,6 +5,16 @@ import NUnit.Framework.TestAttribute
 private fun <T> readDerived(value: Derived<Int, T>): T? = value.cell.value
 private fun <T> readContract(value: ContractDerived<Int, T>): T? = value.box.value
 
+private class InheritedPair<K, V>(val first: K, val second: V)
+private interface InheritedPairContract<T> { fun pass(value: T): T }
+private open class InheritedPairBase<T> { fun pass(value: T): T = value }
+private class InheritedPairForwarder<K, V> :
+    InheritedPairBase<InheritedPair<K, V>>(), InheritedPairContract<InheritedPair<K, V>>
+private fun <K, V> passInheritedPair(value: InheritedPair<K, V>): InheritedPair<K, V> {
+    val contract: InheritedPairContract<InheritedPair<K, V>> = InheritedPairForwarder<K, V>()
+    return contract.pass(value)
+}
+
 class SourceInheritedOwnerTests {
     @TestAttribute
     fun inheritedOwnersPreserveSourceArguments() {
@@ -22,6 +32,11 @@ class SourceInheritedOwnerTests {
 
     @TestAttribute
     fun genericReceiversPreserveInheritedClassAndInterfaceArguments() {
+        val pair = InheritedPair(17, "nested")
+        check(passInheritedPair(pair) === pair)
+        check(passInheritedPair(pair).first == 17 && passInheritedPair(pair).second == "nested")
+        val nullablePair = InheritedPair<Int?, String?>(null, null)
+        check(passInheritedPair(nullablePair) === nullablePair)
         val leaf: Leaf = LeafImpl(43)
         check(leaf.item.value == 43)
         val defaultLeaf: DefaultLeaf = DefaultLeafImpl()

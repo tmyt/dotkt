@@ -19,6 +19,10 @@ fun replaceBoxesRef(slot: kotlin.clr.ClrRef<Array<Box<String>>>, value: Array<Bo
     slot.value = value
 }
 
+fun <T> replaceValueRef(slot: kotlin.clr.ClrRef<T>, value: T) {
+    slot.value = value
+}
+
 class Selected {
     val tag: String
     constructor(value: Box<String>) { tag = "string" }

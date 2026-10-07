@@ -46,6 +46,7 @@ static class DelegateEntryLowering
                     || !entryOwner.Args.SequenceEqual(Enumerable.Range(0, captured + 1)
                         .Select(i => (TypeNode)new TypeNode.Tv("type", i)))
                     || methods[2]["static"].GetValue<bool>() == bound
+                    || Text(methods[2]["vis"]) != "internal" || !methods[2]["generated"].GetValue<bool>()
                     || bound && (first["virtual"].GetValue<bool>()
                         || !methods[2]["body"][0]["value"]["virtual"].GetValue<bool>()
                         || Text(methods[2]["body"][0]["value"]["recv"]["k"]) != "this")
@@ -139,7 +140,7 @@ static class DelegateEntryLowering
                 var body = returnsVoid
                     ? new JsonArray(new JsonObject { ["k"] = "exprStmt", ["expr"] = call }, new JsonObject { ["k"] = "return" })
                     : new JsonArray(new JsonObject { ["k"] = "return", ["value"] = call });
-                entry = new JsonObject { ["name"] = name, ["static"] = !bound, ["vis"] = "public",
+                entry = new JsonObject { ["name"] = name, ["static"] = !bound, ["vis"] = "internal", ["generated"] = true,
                     ["override"] = false, ["virtual"] = false, ["abstract"] = false,
                     ["typeParams"] = target["typeParams"]?.DeepClone() ?? new JsonArray(), ["params"] = parameters,
                     ["ret"] = target["ret"].DeepClone(), ["body"] = body };
