@@ -620,6 +620,8 @@ static partial class NullableTvErasureCallRealign
                 // every consumer of a lambda result falls outside the realignment; without the arguments an `Int`
                 // handed to an object-erased `(Int?) -> R` parameter reaches the delegate unboxed.
                 return EvalDelegateInvoke(obj, ctx);
+            case "newSuspendLambda":
+                return EvalSuspendLambda(obj, ctx);
             case "field":
                 return EvalField(obj, ctx);
             case "setLocal":
@@ -697,6 +699,35 @@ static partial class NullableTvErasureCallRealign
     {
         if (obj[arrayKey] is JsonArray args)
             foreach (var arg in args) if (arg != null) Eval(arg, ctx);
+    }
+
+    static TypeNode EvalSuspendLambda(JsonObject obj, Ctx enclosing)
+    {
+        // Construction values execute in the caller. The body is a separate declaration: its returns fill
+        // suspendRet, and its locals are only its own parameters, captures and body declarations. In particular,
+        // visiting a nested lambda must neither coerce its return to the enclosing method's result nor leak a
+        // same-named local into that method's forward type environment.
+        EvalChildrenOf(obj, "capValues", enclosing);
+        var body = new Ctx { Idx = enclosing.Idx, Ret = TypeJson.Read(obj["suspendRet"]) };
+        // An unbound source payload still names the lexical generic frame. A dense or spliced payload owns a
+        // different declaration frame; the caller's companion indices are not facts about that declaration.
+        if (Str(obj["typeFrame"]) != "dense" && obj[SuspendLambdaLowering.SplicedDeclarationFrameKey] == null)
+        {
+            body.OwnerNullableFrame = enclosing.OwnerNullableFrame;
+            body.MethodNullableFrame = enclosing.MethodNullableFrame;
+        }
+        BindSlots(obj["captures"]);
+        BindSlots(obj["params"]);
+        if (obj["body"] != null) Eval(obj["body"], body);
+        return NodeType.Of(obj);
+
+        void BindSlots(JsonNode slots)
+        {
+            if (slots is not JsonArray array) return;
+            foreach (var slot in array.OfType<JsonObject>())
+                if (Str(slot["name"]) is string name && TypeJson.Read(slot["type"]) is TypeNode type)
+                    body.Env[name] = type;
+        }
     }
 
     static void EvalVar(JsonObject obj, Ctx ctx)
@@ -1196,6 +1227,7 @@ static partial class NullableTvErasureCallRealign
 
     internal static void SelfTest()
     {
+        SelfTestLambdaReturnOwnership();
         foreach (var scope in new[] { "type", "method" })
         {
             var callerResult = new TypeNode.Fqn("Cell", new TypeNode[] { new TypeNode.Tv(scope, 2) });
@@ -1433,6 +1465,42 @@ static partial class NullableTvErasureCallRealign
                 "NullableTvErasureCallRealign self-test confused void and value-bearing Unit delegate returns");
 
         Console.WriteLine("[nullable-generic substitution] self-test OK (general arrays + function facets)");
+    }
+
+    static void SelfTestLambdaReturnOwnership()
+    {
+        var root = JsonNode.Parse("""
+            {"fileClass":"LambdaReturnProbe","methods":[{
+              "name":"make","typeParams":["R"],
+              "params":[{"name":"source","type":{"t":"tv","scope":"method","i":0}}],
+              "ret":{"t":"fqn","name":"Source","args":[{"t":"tv","scope":"method","i":0}]},
+              "body":[{"k":"exprStmt","expr":{
+                "k":"newSuspendLambda","arity":0,
+                "captures":[{"name":"captured","type":{"t":"tv","scope":"method","i":0}}],
+                "capValues":[{"k":"local","name":"source","sty":{"t":"tv","scope":"method","i":0}}],"params":[],
+                "typeParams":["R"],"typeArgs":[{"t":"tv","scope":"method","i":0}],
+                "suspendRet":{"t":"tv","scope":"method","i":0},
+                "funcType":{"t":"fn","suspend":true,"ret":{"t":"tv","scope":"method","i":0},"params":[]},
+                "body":[
+                  {"k":"var","name":"source","type":{"t":"fqn","name":"kotlin.String"},"init":{"k":"const","type":{"t":"fqn","name":"kotlin.String"},"value":"inner"}},
+                  {"k":"return","value":{"k":"local","name":"captured","sty":{"t":"tv","scope":"method","i":0}}}
+                ]
+              }},{"k":"exprStmt","expr":{"k":"local","name":"source","sty":{"t":"tv","scope":"method","i":0}}}]
+            }]}
+            """)!.AsObject();
+        var index = CollectDeclaredMemberRets(new[] { root });
+        NullableGenericErasure.Apply(root, _ => false);
+        var lambda = root["methods"][0]["body"][0]["expr"];
+        for (var iteration = 0; iteration < 2; iteration++)
+        {
+            ApplySourceUses(root, index, _ => false, null);
+            if (Str(lambda["body"][1]["value"]["k"]) != "local"
+                || TypeJson.Read(lambda["body"][1]["value"]["sty"]) != new TypeNode.Fqn("object")
+                || TypeJson.Read(lambda["capValues"][0]["sty"]) != new TypeNode.Fqn("object")
+                || TypeJson.Read(root["methods"][0]["body"][1]["expr"]["sty"]) != new TypeNode.Fqn("object"))
+                throw new InvalidOperationException("A suspend lambda return used its enclosing method's result or leaked its local frame");
+        }
+        Console.WriteLine("[lambda return ownership] self-test OK");
     }
 
     // Late call-shape consumers use the same declaration-to-use formula as this pass without duplicating its
