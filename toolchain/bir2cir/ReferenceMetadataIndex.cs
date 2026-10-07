@@ -3743,7 +3743,11 @@ sealed partial class ReferenceMetadataIndex
         // arrives here depends only on how far the call has been lowered — a call still stating kotlin.IntArray
         // meets a declaration the reference twin reflects as int[]. The kinds differ, so no same-kind arm below
         // can see them, and ParamKey is already the single place that knows the two are the same type.
-        if (declaration is TypeNode.Array != call is TypeNode.Array && ParamKey(declaration) == ParamKey(call))
+        // This equivalence validates a source descriptor against its physical
+        // declaration. It must not select between two Kotlin source declarations:
+        // Array<Int> and IntArray remain different overloads even when both use int[].
+        if (allowVariableErasure && declaration is TypeNode.Array != call is TypeNode.Array
+            && ParamKey(declaration) == ParamKey(call))
             return true;
         if (declaration is TypeNode.Fqn dfqn && call is TypeNode.Fqn cfqn)
         {
@@ -4318,9 +4322,9 @@ sealed partial class ReferenceMetadataIndex
         if (!byArity.TryGetValue(selected.Count, out var candidates)) return false;
         var matches = candidates.Where(ctor => ctor.ParamTypeNodes != null
             && ctor.ParamTypeNodes.Select((type, index) =>
-                SourceDeclarationDescribesCall(
-                    ctor.KotlinParameterTypes?[index] ?? ctor.NullableGenericParams?[index] ?? type,
-                    selected[index])).All(match => match)).ToList();
+                (ctor.KotlinParameterTypes?[index] ?? ctor.NullableGenericParams?[index]) is TypeNode source
+                    ? SourceDeclarationDescribesCall(source, selected[index])
+                    : DeclarationDescribesCall(type, selected[index])).All(match => match)).ToList();
         if (matches.Count != 1) return false;
         physical = matches[0].SignatureParameters;
         // These carriers were recorded before value erasure in the declaration's
@@ -7499,6 +7503,44 @@ sealed partial class ReferenceMetadataIndex
     internal static void SelfTest()
     {
         SelfTestSourceHierarchyFrames();
+        var genericIntArray = new TypeNode.Array(new TypeNode.Fqn("kotlin.Int"));
+        var primitiveIntArray = new TypeNode.Fqn("kotlin.IntArray");
+        if (SourceDeclarationDescribesCall(genericIntArray, primitiveIntArray)
+            || SourceDeclarationDescribesCall(primitiveIntArray, genericIntArray)
+            || !DeclarationDescribesCall(genericIntArray, primitiveIntArray))
+            throw new InvalidOperationException("Source constructor selection collapsed generic and primitive array classifiers");
+        {
+            var constructors = Build(Array.Empty<string>());
+            const string owner = "probe.ArrayOverloads";
+            var physical = new TypeNode.Array(new TypeNode.Fqn("System.Int32"));
+            var genericSignature = new TypeNode.Mod(false, new TypeNode.Fqn("GenericArrayMarker"), physical);
+            var primitiveSignature = new TypeNode.Mod(false, new TypeNode.Fqn("PrimitiveArrayMarker"), physical);
+            constructors._ctorsByOwner[owner] = new Dictionary<int, List<CtorBinding>>
+            {
+                [1] = new() {
+                    new(owner, owner, 1, new TypeNode[] { physical }, null,
+                        new TypeNode[] { genericIntArray }, new TypeNode[] { genericSignature }),
+                    new(owner, owner, 1, new TypeNode[] { physical }, null,
+                        new TypeNode[] { primitiveIntArray }, new TypeNode[] { primitiveSignature }),
+                },
+            };
+            foreach (var (source, signature) in new[] {
+                ((TypeNode)genericIntArray, (TypeNode)genericSignature),
+                ((TypeNode)primitiveIntArray, (TypeNode)primitiveSignature),
+            })
+                if (!constructors.TrySelectedConstructorPhysicalSignature(owner, new[] { source }, out var selected)
+                    || selected is not { Length: 1 } || selected[0] != signature)
+                    throw new InvalidOperationException("Imported source array overload lost its exact physical discriminator");
+            const string plainOwner = "probe.PlainArrayConstructor";
+            constructors._ctorsByOwner[plainOwner] = new Dictionary<int, List<CtorBinding>>
+            {
+                [1] = new() { new(plainOwner, plainOwner, 1, new TypeNode[] { physical }, null,
+                    null, new TypeNode[] { physical }) },
+            };
+            if (!constructors.TrySelectedConstructorPhysicalSignature(plainOwner,
+                    new TypeNode[] { primitiveIntArray }, out var plain) || plain[0] != physical)
+                throw new InvalidOperationException("Physical constructor validation lost a projected primitive array slot");
+        }
         var sourceModified = new TypeNode.Mod(false, new TypeNode.Fqn("SignatureMarker"), new TypeNode.Fqn("kotlin.Int"));
         var physicalModified = new TypeNode.Mod(false, new TypeNode.Fqn("SignatureMarker"), new TypeNode.Fqn("System.Int32"));
         if (!SourceDeclarationDescribesCall(sourceModified, physicalModified)

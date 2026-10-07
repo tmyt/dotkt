@@ -104,6 +104,24 @@ static class NullableGenericErasure
 
     internal static void SelfTestDeclarationConstraints()
     {
+        var nullableInt = new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Int"));
+        foreach (var result in new TypeNode[] {
+            new TypeNode.Fqn("System.Collections.Generic.List`1", new[] { nullableInt }),
+            new TypeNode.Array(nullableInt),
+            TypeNode.Array.General(nullableInt, 2),
+        })
+        {
+            var physical = new TypeNode.Oblivious(result);
+            var nativeCall = new JsonObject { ["k"] = "clrInstance",
+                ["ret"] = TypeJson.Write(physical), ["sty"] = TypeJson.Write(physical) };
+            for (var iteration = 0; iteration < 2; iteration++)
+            {
+                Apply(nativeCall, type => type.Name == "kotlin.Int");
+                if (TypeJson.Read(nativeCall["ret"]) != physical
+                    || TypeJson.Read(nativeCall["sty"]) is TypeNode stamp && !IrSanity.StampAgrees(stamp, physical))
+                    throw new InvalidOperationException("Value erasure left a stale result stamp on an exact CLR return");
+            }
+        }
         var root = JsonNode.Parse("""
             {"methods":[{"name":"capture","typeParams":["T","N"],"params":[],
              "ret":{"t":"fqn","name":"kotlin.Unit"},"body":[{
@@ -567,7 +585,7 @@ static class NullableGenericErasure
         switch (node)
         {
             case JsonObject obj:
-                var retSlotErased = false;
+                var resultSlotErased = false;
                 var k = Str(obj["k"]);
                 ConstrainedTypeParameterReceiverBinding.PreserveSourceReceiver(obj);
                 // A Kotlin alias can become a native call after value erasure.
@@ -614,12 +632,15 @@ static class NullableGenericErasure
                     if (TypeJson.Read(child) is TypeNode tn)
                     {
                         var erased = Erase(tn, keyPos, isValue);
-                        if ((key == "ret" || key == "dynRet") && !erased.Equals(tn)) retSlotErased = true;
+                        if ((key is "ret" or "dynRet" or "sty") && !erased.Equals(tn)) resultSlotErased = true;
                         obj[key] = TypeJson.Write(erased);
                     }
                     else EraseNullableGpAllStrings(child, isValue, keyPos);
                 }
-                if (retSlotErased) DropStaleSty(obj);
+                // A foreign ret is authoritative and can stay unchanged while its
+                // semantic sty moves under value erasure. Reconcile either changed
+                // result claim; otherwise the erased stamp contradicts that CLR slot.
+                if (resultSlotErased) DropStaleSty(obj);
                 break;
             case JsonArray arr:
                 for (var i = 0; i < arr.Count; i++)

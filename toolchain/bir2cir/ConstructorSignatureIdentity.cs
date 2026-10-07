@@ -83,6 +83,13 @@ static class ConstructorSignatureIdentity
                 foreach (var ctor in group)
                 {
                     var parameters = (JsonArray)ctor["params"];
+                    // Every discriminated declaration needs its source selector in metadata,
+                    // including otherwise reversible slots such as IntArray. A sibling
+                    // Array<Int> can have the same CLR parameter type; reflecting int[]
+                    // cannot identify which Kotlin declaration authored that slot.
+                    foreach (var parameter in parameters.OfType<JsonObject>())
+                        parameter["kotlinType"] ??= parameter["nullableGeneric"]?.DeepClone()
+                            ?? DeclarationType(parameter).ToJsonString();
                     var signature = new JsonArray(parameters.OfType<JsonObject>()
                         .Select(DeclarationType).ToArray()).ToJsonString();
                     var identity = obj["name"].GetValue<string>() + "|" + signature;

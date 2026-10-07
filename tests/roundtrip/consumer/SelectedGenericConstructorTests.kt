@@ -2,6 +2,7 @@ package roundtriptests.constructorselection
 
 import NUnit.Framework.TestAttribute
 import roundtrip.constructorselection.*
+import roundtrip.nominaloverloads.*
 
 fun <T> checkImportedGenericSelection(input: T) {
     check(SelectedConstructor<T>(value = input).chosen == 1)
@@ -12,10 +13,20 @@ class SelectedGenericConstructorTests {
     @TestAttribute
     fun localDeclarationsRemainDistinctAfterInstantiation() {
         checkLocalConstructorSelection()
+        checkLocalNominalOverloads()
     }
 
     @TestAttribute
     fun importedDeclarationsRemainDistinctAfterInstantiation() {
+        check(NominalArrayConstructor(arrayOf(1, 2)).chosen == 1)
+        check(NominalArrayConstructor(intArrayOf(1, 2)).chosen == 2)
+        check(NominalNullableConstructor(ints = listOf(1, null)).chosen == 1)
+        check(NominalNullableConstructor(longs = listOf(1L, null)).chosen == 2)
+        val collection: Collection<Int> = listOf(1)
+        val set: Set<Int> = setOf(1)
+        check(collection.left() == 1 && set.right() == 2)
+        check(collection.ordinaryPhysicalName() == 3 && set.ordinaryPhysicalName() == 4)
+        check(collection.firstProperty == 5 && set.firstProperty == 6 && collection.otherProperty == 7)
         check(StarSelectedConstructor(star = SelectionBox("star")).chosen == 1)
         check(StarSelectedConstructor(exact = SelectionBox<Any>("exact")).chosen == 2)
         check(NullableBoxSelectedConstructor(number = SelectionBox(1)).chosen == 1)
