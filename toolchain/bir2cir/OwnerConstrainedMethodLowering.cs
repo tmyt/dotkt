@@ -157,7 +157,7 @@ static class OwnerConstrainedMethodLowering
 
     internal static Dictionary<string, HashSet<int>> PropagateCapturedBounds(
         IReadOnlyDictionary<string, JsonObject> definitions, Func<TypeNode, bool> dependsOnOwner,
-        Func<TypeNode, TypeNode> projectedBound)
+        Func<TypeNode, TypeNode> projectedBound, Func<TypeNode, TypeNode> physicalBound)
     {
         var changed = new Dictionary<string, HashSet<int>>(StringComparer.Ordinal);
         var pending = new Queue<(JsonObject Method, JsonObject Owner, JsonArray Parameters)>();
@@ -165,6 +165,16 @@ static class OwnerConstrainedMethodLowering
         {
             var parameters = method["typeParams"].DeepClone().AsArray();
             RewriteConstraints(method, owner, parameters, dependsOnOwner, projectedBound);
+            foreach (var parameter in parameters.OfType<JsonObject>())
+                if (parameter[FBoundStarProjectionErasure.ErasedInnerConstraintKey] is JsonArray erased
+                    && parameter["constraints"] is JsonArray constraints)
+                    foreach (var bound in erased)
+                    {
+                        var source = TypeJson.Read(bound);
+                        var physical = physicalBound(source);
+                        if (!physical.Equals(source) && !constraints.Any(row => TypeJson.Read(row).Equals(physical)))
+                            constraints.Add(TypeJson.Write(physical));
+                    }
             pending.Enqueue((method, owner, parameters));
         }
         while (pending.TryDequeue(out var context))

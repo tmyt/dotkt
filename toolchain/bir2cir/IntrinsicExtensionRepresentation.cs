@@ -35,6 +35,19 @@ static class IntrinsicExtensionRepresentation
 
     internal static void SelfTest()
     {
+        var sourceVariable = new TypeNode.Tv("method", 0);
+        var source = new JsonObject {
+            ["k"] = "callStatic", ["typeArgs"] = new JsonArray(TypeJson.Fqn("System.String")),
+            ["sig"] = new JsonArray(TypeJson.Write(new TypeNode.Fqn("Receiver", new TypeNode[] { sourceVariable })),
+                TypeJson.Write(sourceVariable)),
+        };
+        NullableGenericErasure.Apply(source, _ => false);
+        var native = new JsonObject();
+        MemberCallSubstitution.PreserveIntrinsicExtensionDeclaration(source, native);
+        var nativeSignature = ForeignStarProjectionBinding.DeclarationSignature(native);
+        if (nativeSignature?.Count != 1 || TypeJson.Read(nativeSignature[0]) != new TypeNode.Fqn("System.String")
+            || TypeJson.Read(source["sig"][1]) != new TypeNode.Fqn("object"))
+            throw new InvalidOperationException("Intrinsic extension lost its source signature or receiver/method frame mapping");
         var ordinary = new TypeNode.Tv("method", 2);
         var storage = new TypeNode.Tv("method", 5);
         var call = new JsonObject { ["k"] = "clrInstance", ["method"] = "Exchange",

@@ -1,4 +1,11 @@
-# The synthesized guard owns its nullable reference result, even without an input sty stamp.
-+"k":"cond","type":{"t":"fqn","name":"System.Collections.Generic.IEnumerable","args":[{"t":"fqn","name":"System.String"}]},"cond":
+# Without an input sty stamp, the guard still owns its nullable result. Iterable
+# values use opaque storage; the signature retains the nominal element type.
++"ret":{"t":"mod","req":false,"m":{"t":"fqn","name":"kotlin.collections.Iterable\u00601","args":[{"t":"fqn","name":"System.String"}]},"of":{"t":"fqn","name":"System.Object"}}
++"stmts":[{"k":"var","name":"dotkt$collectionClassifier$value$0","type":{"t":"fqn","name":"System.Object"},"init":{"k":"local","name":"value"}}],"result":{"k":"cond","type":{"t":"fqn","name":"System.Object"},"cond":
 +"method":"kotlinCollectionMatches"
-+"k":"isInstRef"
+# The physical test uses the open IEnumerable definition, not IEnumerable<string>:
+# a successful erased cast retains the original value and failed casts return null.
++"method":"starProjectionSafeCast"
++"args":[{"k":"local","name":"dotkt$collectionClassifier$value$0"},{"k":"classRef","type":{"t":"fqn","name":"System.Collections.Generic.IEnumerable\u00601"}}]
++"else":{"k":"const","type":{"t":"fqn","name":"System.Object"},"value":null}
++"retNullableFlags":[2]

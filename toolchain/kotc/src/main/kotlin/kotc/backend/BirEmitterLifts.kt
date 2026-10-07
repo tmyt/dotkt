@@ -1630,13 +1630,34 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 		else -> """{"k":"return","value":${accessorCall(false, null)}}"""
 	}
 	val readParams = if (unbound) """{"name":"receiver","type":${str(recvTypeNode ?: OBJ)}}""" else ""
-	val getMethod = """{"name":"get","static":false,"override":true,"virtual":true,"params":[$readParams],"ret":${str(vType)},"body":[$readBody]}"""
+	// Generated implementations carry the same Kotlin override obligation as
+	// source methods; bir2cir decides whether the physical slot needs a bridge.
+	fun propertySlot(member: String, arity: Int): String {
+		val owners = linkedSetOf(ifaceSpec.toJson())
+		val visited = mutableSetOf<IrSimpleFunction>()
+		fun visit(function: IrSimpleFunction) {
+			if (!visited.add(function)) return
+			val owner = function.parent as? IrClass
+			val instantiated = owner?.let { correspondingSupertypeInstantiation(node.type, it) }
+			val ownerType = instantiated?.let { birType(it) }
+			if (ownerType is TypeNode.Fqn) owners.add(ownerType.toJson())
+			function.overriddenSymbols.forEach { visit(it.owner) }
+		}
+		(node.type.classifierOrNull?.owner as? IrClass)?.declarations
+			?.filterIsInstance<IrSimpleFunction>()
+			?.filter { it.name.asString() == member && emittedParamCount(it) == arity }
+			?.forEach(::visit)
+		return ""","overrides":[${owners.joinToString(",") { owner ->
+			"""{"owner":$owner,"member":${str(member)},"kind":"method","arity":$arity}"""
+		}}]"""
+	}
+	val getMethod = """{"name":"get","static":false,"override":true,"virtual":true,"params":[$readParams],"ret":${str(vType)},"body":[$readBody]${propertySlot("get", if (unbound) 1 else 0)}}"""
 	// KProperty0/KProperty1's declared supertype `() -> V`/`(T) -> V` gives them a REAL fake-overridden `invoke`
 	// abstract member (confirmed in the compiled BIR: `interfaces` drops the FunctionN supertype — a Kotlin
 	// function type has no faithful CLR interface base — but the interface's OWN `methods` still carries the
 	// fake override AS ITS OWN abstract slot). So the lifted class must implement it too, same body as `get`
 	// (mirrors JVM's `PropertyReferenceImpl.invoke() = get()`).
-	val invokeMethod = """{"name":"invoke","static":false,"override":true,"virtual":true,"params":[$readParams],"ret":${str(vType)},"body":[$readBody]}"""
+	val invokeMethod = """{"name":"invoke","static":false,"override":true,"virtual":true,"params":[$readParams],"ret":${str(vType)},"body":[$readBody]${propertySlot("invoke", if (unbound) 1 else 0)}}"""
 
 	val setMethod: String? = setterFn?.let {
 		val setBody = when {
@@ -1654,7 +1675,7 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 		}
 		val setParams = (if (unbound) """{"name":"receiver","type":${str(recvTypeNode ?: OBJ)}},""" else "") +
 			"""{"name":"value","type":${str(vType)}}"""
-		"""{"name":"set","static":false,"override":true,"virtual":true,"params":[$setParams],"ret":${str(TypeNode.Fqn("kotlin.Unit"))},"body":[$setBody]}"""
+		"""{"name":"set","static":false,"override":true,"virtual":true,"params":[$setParams],"ret":${str(TypeNode.Fqn("kotlin.Unit"))},"body":[$setBody]${propertySlot("set", if (unbound) 2 else 1)}}"""
 	}
 
 	// KCallable.name + KAnnotatedElement.annotations are NOT re-synthesized here: the lifted class extends the real

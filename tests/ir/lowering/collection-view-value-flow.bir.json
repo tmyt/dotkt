@@ -7,7 +7,7 @@
       "static": true,
       "type": {
         "t": "fqn",
-        "name": "kotlin.collections.List",
+        "name": "System.Collections.Generic.IReadOnlyList",
         "args": [{ "t": "fqn", "name": "kotlin.Int" }]
       }
     },
@@ -16,7 +16,7 @@
       "static": true,
       "type": {
         "t": "fqn",
-        "name": "kotlin.collections.MutableList",
+        "name": "System.Collections.Generic.IList",
         "args": [{ "t": "fqn", "name": "kotlin.Int" }]
       }
     }
@@ -51,7 +51,7 @@
               "name": "readonly",
               "type": {
                 "t": "fqn",
-                "name": "kotlin.collections.List",
+                "name": "System.Collections.Generic.IReadOnlyList",
                 "args": [{ "t": "fqn", "name": "kotlin.Int" }]
               }
             }
@@ -59,7 +59,7 @@
           "delegationSig": [
             {
               "t": "fqn",
-              "name": "kotlin.collections.MutableList",
+              "name": "System.Collections.Generic.IList",
               "args": [{ "t": "tv", "scope": "type", "i": 0 }]
             }
           ],
@@ -73,7 +73,7 @@
               "name": "readonly",
               "type": {
                 "t": "fqn",
-                "name": "kotlin.collections.List",
+                "name": "System.Collections.Generic.IReadOnlyList",
                 "args": [{ "t": "fqn", "name": "kotlin.Int" }]
               }
             },
@@ -85,7 +85,7 @@
               "name": "mutableTemp",
               "type": {
                 "t": "fqn",
-                "name": "kotlin.collections.MutableList",
+                "name": "System.Collections.Generic.IList",
                 "args": [{ "t": "fqn", "name": "kotlin.Int" }]
               },
               "init": { "k": "local", "name": "readonly" }
@@ -94,7 +94,7 @@
           "delegationSig": [
             {
               "t": "fqn",
-              "name": "kotlin.collections.MutableList",
+              "name": "System.Collections.Generic.IList",
               "args": [{ "t": "tv", "scope": "type", "i": 0 }]
             }
           ],
@@ -123,7 +123,7 @@
           "params": [],
           "ret": {
             "t": "fqn",
-            "name": "kotlin.collections.MutableList",
+            "name": "System.Collections.Generic.IList",
             "args": [{ "t": "fqn", "name": "kotlin.Int" }]
           },
           "body": []
@@ -135,7 +135,7 @@
           "params": [],
           "ret": {
             "t": "fqn",
-            "name": "kotlin.collections.List",
+            "name": "System.Collections.Generic.IReadOnlyList",
             "args": [{ "t": "fqn", "name": "kotlin.Int" }]
           },
           "body": []
@@ -155,7 +155,7 @@
           "name": "value",
           "type": {
             "t": "fqn",
-            "name": "kotlin.collections.List",
+            "name": "System.Collections.Generic.IReadOnlyList",
             "args": [{ "t": "fqn", "name": "kotlin.Int" }]
           }
         }
@@ -171,7 +171,7 @@
           "name": "value",
           "type": {
             "t": "fqn",
-            "name": "kotlin.collections.MutableList",
+            "name": "System.Collections.Generic.IList",
             "args": [{ "t": "fqn", "name": "kotlin.Int" }]
           }
         }
@@ -187,14 +187,14 @@
           "name": "value",
           "type": {
             "t": "fqn",
-            "name": "kotlin.collections.MutableList",
+            "name": "System.Collections.Generic.IList",
             "args": [{ "t": "fqn", "name": "kotlin.Int" }]
           }
         }
       ],
       "ret": {
         "t": "fqn",
-        "name": "kotlin.collections.MutableList",
+        "name": "System.Collections.Generic.IList",
         "args": [{ "t": "fqn", "name": "kotlin.Int" }]
       },
       "body": [{ "k": "return", "value": { "k": "local", "name": "value" } }]
@@ -207,14 +207,14 @@
           "name": "value",
           "type": {
             "t": "fqn",
-            "name": "kotlin.collections.List",
+            "name": "System.Collections.Generic.IReadOnlyList",
             "args": [{ "t": "fqn", "name": "kotlin.Int" }]
           }
         }
       ],
       "ret": {
         "t": "fqn",
-        "name": "kotlin.collections.List",
+        "name": "System.Collections.Generic.IReadOnlyList",
         "args": [{ "t": "fqn", "name": "kotlin.Int" }]
       },
       "body": [{ "k": "return", "value": { "k": "local", "name": "value" } }]
@@ -227,14 +227,14 @@
           "name": "value",
           "type": {
             "t": "fqn",
-            "name": "kotlin.collections.MutableList",
+            "name": "System.Collections.Generic.IList",
             "args": [{ "t": "fqn", "name": "kotlin.Int" }]
           }
         }
       ],
       "ret": {
         "t": "fqn",
-        "name": "kotlin.collections.List",
+        "name": "System.Collections.Generic.IReadOnlyList",
         "args": [{ "t": "fqn", "name": "kotlin.Int" }]
       },
       "body": [{ "k": "return", "value": { "k": "local", "name": "value" } }]
@@ -247,14 +247,14 @@
           "name": "value",
           "type": {
             "t": "fqn",
-            "name": "kotlin.collections.List",
+            "name": "System.Collections.Generic.IReadOnlyList",
             "args": [{ "t": "fqn", "name": "kotlin.Int" }]
           }
         }
       ],
       "ret": {
         "t": "fqn",
-        "name": "kotlin.collections.MutableList",
+        "name": "System.Collections.Generic.IList",
         "args": [{ "t": "fqn", "name": "kotlin.Int" }]
       },
       "body": [{ "k": "return", "value": { "k": "local", "name": "value" } }]
@@ -268,7 +268,7 @@
           "name": "mutable",
           "type": {
             "t": "fqn",
-            "name": "kotlin.collections.MutableList",
+            "name": "System.Collections.Generic.IList",
             "args": [{ "t": "fqn", "name": "kotlin.Int" }]
           }
         },
@@ -276,14 +276,14 @@
           "name": "readonly",
           "type": {
             "t": "fqn",
-            "name": "kotlin.collections.List",
+            "name": "System.Collections.Generic.IReadOnlyList",
             "args": [{ "t": "fqn", "name": "kotlin.Int" }]
           }
         }
       ],
       "ret": {
         "t": "fqn",
-        "name": "kotlin.collections.List",
+        "name": "System.Collections.Generic.IReadOnlyList",
         "args": [{ "t": "fqn", "name": "kotlin.Int" }]
       },
       "body": [
@@ -293,7 +293,7 @@
             "k": "cond",
             "type": {
               "t": "fqn",
-              "name": "kotlin.collections.List",
+              "name": "System.Collections.Generic.IReadOnlyList",
               "args": [{ "t": "fqn", "name": "kotlin.Int" }]
             },
             "cond": { "k": "local", "name": "flag" },
@@ -312,7 +312,7 @@
           "name": "mutable",
           "type": {
             "t": "fqn",
-            "name": "kotlin.collections.MutableList",
+            "name": "System.Collections.Generic.IList",
             "args": [{ "t": "fqn", "name": "kotlin.Int" }]
           }
         },
@@ -320,14 +320,14 @@
           "name": "readonly",
           "type": {
             "t": "fqn",
-            "name": "kotlin.collections.List",
+            "name": "System.Collections.Generic.IReadOnlyList",
             "args": [{ "t": "fqn", "name": "kotlin.Int" }]
           }
         }
       ],
       "ret": {
         "t": "fqn",
-        "name": "kotlin.collections.MutableList",
+        "name": "System.Collections.Generic.IList",
         "args": [{ "t": "fqn", "name": "kotlin.Int" }]
       },
       "body": [
@@ -337,7 +337,7 @@
             "k": "cond",
             "type": {
               "t": "fqn",
-              "name": "kotlin.collections.MutableList",
+              "name": "System.Collections.Generic.IList",
               "args": [{ "t": "fqn", "name": "kotlin.Int" }]
             },
             "cond": { "k": "local", "name": "flag" },
@@ -355,7 +355,7 @@
           "name": "mutable",
           "type": {
             "t": "fqn",
-            "name": "kotlin.collections.MutableList",
+            "name": "System.Collections.Generic.IList",
             "args": [{ "t": "fqn", "name": "kotlin.Int" }]
           }
         },
@@ -363,7 +363,7 @@
           "name": "readonly",
           "type": {
             "t": "fqn",
-            "name": "kotlin.collections.List",
+            "name": "System.Collections.Generic.IReadOnlyList",
             "args": [{ "t": "fqn", "name": "kotlin.Int" }]
           }
         },
@@ -405,7 +405,7 @@
             "args": [
               {
                 "t": "fqn",
-                "name": "kotlin.collections.MutableList",
+                "name": "System.Collections.Generic.IList",
                 "args": [{ "t": "fqn", "name": "kotlin.Int" }]
               }
             ]
@@ -437,7 +437,7 @@
           "name": "readonlyLocal",
           "type": {
             "t": "fqn",
-            "name": "kotlin.collections.List",
+            "name": "System.Collections.Generic.IReadOnlyList",
             "args": [{ "t": "fqn", "name": "kotlin.Int" }]
           },
           "init": { "k": "local", "name": "mutable" }
@@ -447,7 +447,7 @@
           "name": "mutableLocal",
           "type": {
             "t": "fqn",
-            "name": "kotlin.collections.MutableList",
+            "name": "System.Collections.Generic.IList",
             "args": [{ "t": "fqn", "name": "kotlin.Int" }]
           },
           "init": { "k": "local", "name": "readonly" }
@@ -459,7 +459,7 @@
           "name": "untypedConditional",
           "type": {
             "t": "fqn",
-            "name": "kotlin.collections.List",
+            "name": "System.Collections.Generic.IReadOnlyList",
             "args": [{ "t": "fqn", "name": "kotlin.Int" }]
           },
           "init": {
@@ -509,7 +509,7 @@
             "name": "readonlyField",
             "ret": {
               "t": "fqn",
-              "name": "kotlin.collections.MutableList",
+              "name": "System.Collections.Generic.IList",
               "args": [{ "t": "fqn", "name": "kotlin.Int" }]
             },
             "fieldRef": {
@@ -538,7 +538,7 @@
               "args": [
                 {
                   "t": "fqn",
-                  "name": "kotlin.collections.MutableList",
+                  "name": "System.Collections.Generic.IList",
                   "args": [{ "t": "fqn", "name": "kotlin.Int" }]
                 }
               ]
@@ -558,7 +558,7 @@
               "args": [
                 {
                   "t": "fqn",
-                  "name": "kotlin.collections.MutableList",
+                  "name": "System.Collections.Generic.IList",
                   "args": [{ "t": "fqn", "name": "kotlin.Int" }]
                 }
               ]
@@ -567,7 +567,7 @@
             "name": "item",
             "ret": {
               "t": "fqn",
-              "name": "kotlin.collections.List",
+              "name": "System.Collections.Generic.IReadOnlyList",
               "args": [{ "t": "fqn", "name": "kotlin.Int" }]
             }
           }
@@ -611,7 +611,7 @@
             "name": "item",
             "ret": {
               "t": "fqn",
-              "name": "kotlin.collections.MutableList",
+              "name": "System.Collections.Generic.IList",
               "args": [{ "t": "fqn", "name": "kotlin.Int" }]
             }
           }
@@ -625,7 +625,7 @@
             "sig": [
               {
                 "t": "fqn",
-                "name": "kotlin.collections.List",
+                "name": "System.Collections.Generic.IReadOnlyList",
                 "args": [{ "t": "fqn", "name": "kotlin.Int" }]
               }
             ],
@@ -641,7 +641,7 @@
             "sig": [
               {
                 "t": "fqn",
-                "name": "kotlin.collections.MutableList",
+                "name": "System.Collections.Generic.IList",
                 "args": [{ "t": "fqn", "name": "kotlin.Int" }]
               }
             ],
@@ -657,13 +657,13 @@
             "sig": [
               {
                 "t": "fqn",
-                "name": "kotlin.collections.MutableList",
+                "name": "System.Collections.Generic.IList",
                 "args": [{ "t": "fqn", "name": "kotlin.Int" }]
               }
             ],
             "ret": {
               "t": "fqn",
-              "name": "kotlin.collections.List",
+              "name": "System.Collections.Generic.IReadOnlyList",
               "args": [{ "t": "fqn", "name": "kotlin.Int" }]
             },
             "args": [{ "k": "local", "name": "mutable" }]
@@ -678,13 +678,13 @@
             "sig": [
               {
                 "t": "fqn",
-                "name": "kotlin.collections.List",
+                "name": "System.Collections.Generic.IReadOnlyList",
                 "args": [{ "t": "fqn", "name": "kotlin.Int" }]
               }
             ],
             "ret": {
               "t": "fqn",
-              "name": "kotlin.collections.MutableList",
+              "name": "System.Collections.Generic.IList",
               "args": [{ "t": "fqn", "name": "kotlin.Int" }]
             },
             "args": [{ "k": "local", "name": "readonly" }]
@@ -714,7 +714,7 @@
             "argTypes": [],
             "ret": {
               "t": "fqn",
-              "name": "kotlin.collections.List",
+              "name": "System.Collections.Generic.IReadOnlyList",
               "args": [{ "t": "fqn", "name": "kotlin.Int" }]
             },
             "args": []
@@ -744,7 +744,7 @@
             "argTypes": [],
             "ret": {
               "t": "fqn",
-              "name": "kotlin.collections.MutableList",
+              "name": "System.Collections.Generic.IList",
               "args": [{ "t": "fqn", "name": "kotlin.Int" }]
             },
             "args": []
@@ -762,7 +762,7 @@
             "dispatch": "callvirt",
             "ret": {
               "t": "fqn",
-              "name": "kotlin.collections.List",
+              "name": "System.Collections.Generic.IReadOnlyList",
               "args": [{ "t": "fqn", "name": "kotlin.Int" }]
             },
             "memberRef": {
@@ -793,7 +793,7 @@
             "dispatch": "callvirt",
             "ret": {
               "t": "fqn",
-              "name": "kotlin.collections.MutableList",
+              "name": "System.Collections.Generic.IList",
               "args": [{ "t": "fqn", "name": "kotlin.Int" }]
             },
             "memberRef": {
@@ -832,7 +832,7 @@
             "name": "Item1",
             "ret": {
               "t": "fqn",
-              "name": "kotlin.collections.List",
+              "name": "System.Collections.Generic.IReadOnlyList",
               "args": [{ "t": "fqn", "name": "kotlin.Int" }]
             }
           }
@@ -857,7 +857,7 @@
             "name": "Item1",
             "ret": {
               "t": "fqn",
-              "name": "kotlin.collections.MutableList",
+              "name": "System.Collections.Generic.IList",
               "args": [{ "t": "fqn", "name": "kotlin.Int" }]
             }
           }

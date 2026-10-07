@@ -19,7 +19,13 @@ static class PhysicalValueCoercion
 {
     static bool NeedsConversion(TypeNode source, TypeNode target, Index index) =>
         source is TypeNode.Tv && target is TypeNode.Tv && !source.Equals(target)
-        || target is TypeNode.Tv && source is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" }
+        || NeedsBox(target, index.IsValue)
+            && source is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" }
+        // Erasure also crosses reference slots: an object value is not yet the
+        // exact delegate, array, or interface consumed by a resolved CLR edge.
+        || source is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" }
+            && IsReferenceSlot(target, index.IsValue)
+            && target is not TypeNode.Fqn { Args: null, Name: "object" or "System.Object" }
         || CollectionViewFaces.IsViewSeam(source, target)
         || index.NeedsNativeProjection?.Invoke(source, target) == true
         // A concrete value or generic stack slot is not a reference, even when its boxed value implements the
@@ -50,6 +56,7 @@ static class PhysicalValueCoercion
     {
         readonly Dictionary<string, List<MethodShape>> _methods = new(StringComparer.Ordinal);
         readonly Dictionary<string, TypeNode> _fields = new(StringComparer.Ordinal);
+        readonly Dictionary<string, TypeNode[]> _captureConstructors = new(StringComparer.Ordinal);
         readonly Func<JsonObject> _unitValue;
         internal ValueTypeOracle IsValue;
         internal JsonObject Document;
@@ -77,6 +84,9 @@ static class PhysicalValueCoercion
         void AddType(JsonObject type)
         {
             var owner = Str(type["name"]);
+            if (owner != null && type["ctors"] is JsonArray { Count: 1 } constructors
+                && constructors[0]?["params"] is JsonArray parameters)
+                _captureConstructors[owner] = parameters.Select(p => TypeJson.Read(p?["type"])).ToArray();
             AddMembers(owner, type);
             if (type["types"] is JsonArray nested)
                 foreach (var child in nested.OfType<JsonObject>()) AddType(child);
@@ -106,6 +116,9 @@ static class PhysicalValueCoercion
 
         internal TypeNode Field(string owner, string name)
             => owner != null && name != null && _fields.TryGetValue(Key(owner, name), out var type) ? type : null;
+
+        internal TypeNode[] CaptureConstructor(string owner)
+            => owner != null && _captureConstructors.TryGetValue(owner, out var parameters) ? parameters : null;
 
         internal MethodShape Method(JsonObject call)
         {
@@ -462,6 +475,15 @@ static class PhysicalValueCoercion
             case "new": case "newClr":
                 CoerceConstructorArguments(node, scope, index);
                 break;
+            case "newClosure": case "newSam":
+                var captureOwner = TypeJson.Read(node[kind == "newClosure" ? "closureType" : "samType"]) as TypeNode.Fqn;
+                var captureParameters = index.CaptureConstructor(captureOwner?.Name);
+                if (node["captures"] is not JsonArray captures || captureParameters == null
+                    || captureParameters.Any(p => p == null) || captures.Count != captureParameters.Length)
+                    throw new InvalidOperationException("bir2cir: captured construction has no exact constructor contract");
+                var captureArguments = ReadTypes(node["typeArgs"] as JsonArray) ?? Array.Empty<TypeNode>();
+                CoerceVector(captures, captureParameters.Select(p => Close(p, captureArguments, Array.Empty<TypeNode>())).ToArray(), scope, index);
+                break;
             case "delegateInvoke":
                 CoerceDelegateArguments(node, scope, index);
                 break;
@@ -475,7 +497,30 @@ static class PhysicalValueCoercion
                 if (TypeJson.Read(node["elem"]) is TypeNode arrayElement)
                     CoerceSlot(node, "array", new TypeNode.Array(arrayElement), scope, index);
                 break;
-            case "stackSet": case "byrefStore":
+            case "byrefLoad": case "byrefStore":
+                // A managed reference's physical referent is owned by its pointer
+                // declaration, not by the erased Kotlin value flowing through it.
+                var pointerType = node["ptr"] is JsonNode pointer
+                    ? ExprType(pointer, scope, index)
+                    : Str(node["local"]) is string pointerLocal
+                        && scope.Locals.TryGetValue(pointerLocal, out var namedPointer) ? namedPointer : null;
+                if (pointerType is TypeNode.ByRef reference)
+                    node["elem"] = TypeJson.Write(reference.Of);
+                if (kind == "byrefStore")
+                {
+                    CoerceSlot(node, "value", TypeJson.Read(node["elem"]), scope, index);
+                    // The pointee is an exact storage declaration even without a
+                    // memberRef on this store. Recover its closed CLR type from a
+                    // Kotlin carrier on the value edge, never by changing the pointer.
+                    if (node["value"] is JsonNode stored)
+                    {
+                        var converted = CoerceDeclaredValue(stored, TypeJson.Read(node["elem"]), scope, index);
+                        converted = CoerceReferenceStore(converted, TypeJson.Read(node["elem"]), scope, index);
+                        if (!ReferenceEquals(converted, stored)) node["value"] = converted;
+                    }
+                }
+                break;
+            case "stackSet":
                 CoerceSlot(node, "value", TypeJson.Read(node["elem"]), scope, index);
                 break;
             case "newArray":
@@ -559,6 +604,27 @@ static class PhysicalValueCoercion
         => index.NeedsDeclaredProjection?.Invoke(ExprType(value, scope, index), target) == true
             ? new JsonObject { ["k"] = "cast", ["type"] = TypeJson.Write(target), ["e"] = value.DeepClone() }
             : value;
+
+    // Managed-reference stores consume the actual referent, including array
+    // constructions and native alias targets. A source declaration modifier is
+    // not a stack type: use its physical value face when comparing the edge.
+    // This is a checked value conversion, never a pointer conversion or copy.
+    static JsonNode CoerceReferenceStore(JsonNode value, TypeNode target, Scope scope, Index index)
+    {
+        var sourceSlot = ReferenceValueSlot(ExprType(value, scope, index));
+        var targetSlot = ReferenceValueSlot(target);
+        if (sourceSlot == targetSlot || !IsReferenceSlot(sourceSlot, index.IsValue)
+            || !IsReferenceSlot(targetSlot, index.IsValue)) return value;
+        return new JsonObject { ["k"] = "cast", ["type"] = TypeJson.Write(target), ["e"] = value.DeepClone() };
+    }
+
+    static TypeNode ReferenceValueSlot(TypeNode type) => type switch
+    {
+        TypeNode.Mod modifier => ReferenceValueSlot(modifier.Of),
+        TypeNode.Nullable nullable => ReferenceValueSlot(nullable.Of),
+        TypeNode.Oblivious oblivious => ReferenceValueSlot(oblivious.Of),
+        _ => type,
+    };
 
     static void CoerceMemberSlot(JsonObject node, string key, TypeNode target, Scope scope, Index index)
     {
@@ -677,7 +743,12 @@ static class PhysicalValueCoercion
         var genericObjectProjection = declared is TypeNode.Tv
             && actual is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" }
             && Str(expression["k"]) is "callStatic" or "callInstance" or "constrainedCall";
-        if (!genericObjectProjection && !CollectionViewFaces.IsViewSeam(actual, declared)
+        // An erased Kotlin result stamp cannot describe the stack result of an
+        // exact CLR member. Keep the native value/generic result on the inner
+        // call so the explicit conversion really emits boxing rather than an
+        // identity object-to-object cast.
+        var boxedResult = NeedsBox(actual, index.IsValue) && IsReferenceSlot(declared, index.IsValue);
+        if (!genericObjectProjection && !boxedResult && !CollectionViewFaces.IsViewSeam(actual, declared)
             && index.NeedsNativeProjection?.Invoke(actual, declared) != true) return expression;
         var physical = expression.DeepClone().AsObject();
         // The inner expression leaves the exact member/declaration result on the CLR stack. Once the caller-facing
@@ -691,6 +762,176 @@ static class PhysicalValueCoercion
             ["type"] = TypeJson.Write(declared),
             ["e"] = physical,
         };
+    }
+
+    internal static void SelfTest()
+    {
+        foreach (var kind in new[] { "newClosure", "newSam" })
+        {
+            var capture = new JsonObject { ["k"] = kind,
+                [kind == "newClosure" ? "closureType" : "samType"] = TypeJson.Fqn("Capture"),
+                ["typeArgs"] = new JsonArray(TypeJson.Fqn("System.Object")),
+                ["captures"] = new JsonArray(new JsonObject { ["k"] = "const",
+                    ["type"] = TypeJson.Fqn("System.Int32"), ["value"] = 7 }) };
+            var document = JsonNode.Parse("""
+                {"fileClass":"CaptureConsumer","methods":[{"name":"Use","params":[],
+                  "ret":{"t":"fqn","name":"void"},"body":[]}],
+                 "types":[{"name":"Capture","typeParams":["T"],"ctors":[{"params":[
+                  {"name":"value","type":{"t":"tv","scope":"type","i":0}}],"body":[]}]}]}
+                """)!.AsObject();
+            document["methods"][0]["body"].AsArray().Add(new JsonObject { ["k"] = "exprStmt", ["expr"] = capture });
+            for (var iteration = 0; iteration < 2; iteration++)
+            {
+                ApplyAll(new JsonNode[] { document }, () => throw new InvalidOperationException("Unexpected Unit"),
+                    t => t.Name == "System.Int32");
+                if (Str(capture["captures"][0]["k"]) != "cast"
+                    || TypeJson.Read(capture["captures"][0]["type"]) != new TypeNode.Fqn("System.Object")
+                    || Str(capture["captures"][0]["e"]["k"]) != "const")
+                    throw new InvalidOperationException("Captured value did not enter its constructed physical slot exactly once");
+            }
+        }
+        var referent = new TypeNode.Tv("method", 0);
+        var referenceRead = new JsonObject { ["k"] = "var", ["name"] = "saved", ["type"] = TypeJson.Fqn("object"),
+            ["init"] = new JsonObject { ["k"] = "byrefLoad", ["elem"] = TypeJson.Fqn("object"),
+                ["ptr"] = new JsonObject { ["k"] = "local", ["name"] = "pointer" } } };
+        var referenceWrite = new JsonObject { ["k"] = "byrefStore", ["elem"] = TypeJson.Fqn("object"),
+            ["ptr"] = new JsonObject { ["k"] = "local", ["name"] = "pointer" },
+            ["value"] = new JsonObject { ["k"] = "local", ["name"] = "saved" } };
+        var namedReferenceRead = new JsonObject { ["k"] = "var", ["name"] = "namedSaved", ["type"] = TypeJson.Fqn("object"),
+            ["init"] = new JsonObject { ["k"] = "byrefLoad", ["elem"] = TypeJson.Fqn("object"), ["local"] = "pointer" } };
+        var namedReferenceWrite = new JsonObject { ["k"] = "byrefStore", ["elem"] = TypeJson.Fqn("object"),
+            ["local"] = "pointer", ["value"] = new JsonObject { ["k"] = "local", ["name"] = "namedSaved" } };
+        var referenceMethod = new JsonObject { ["name"] = "Use", ["typeParams"] = new JsonArray("T"),
+            ["params"] = new JsonArray(new JsonObject { ["name"] = "pointer",
+                ["type"] = TypeJson.Write(new TypeNode.ByRef(referent)) }), ["ret"] = TypeJson.Fqn("void"),
+            ["body"] = new JsonArray(referenceRead, referenceWrite, namedReferenceRead, namedReferenceWrite) };
+        var referenceDocument = new JsonObject { ["fileClass"] = "Consumer", ["methods"] = new JsonArray(referenceMethod) };
+        for (var iteration = 0; iteration < 2; iteration++)
+        {
+            ApplyAll(new JsonNode[] { referenceDocument }, () => throw new InvalidOperationException("Unexpected Unit"), _ => false);
+            if (Str(referenceRead["init"]["k"]) != "cast"
+                || TypeJson.Read(referenceRead["init"]["e"]["elem"]) != referent
+                || TypeJson.Read(referenceWrite["elem"]) != referent
+                || Str(referenceWrite["value"]["k"]) != "cast"
+                || TypeJson.Read(referenceWrite["value"]["type"]) != referent
+                || Str(referenceWrite["value"]["e"]["k"]) != "local"
+                || Str(namedReferenceRead["init"]["k"]) != "cast"
+                || TypeJson.Read(namedReferenceRead["init"]["e"]["elem"]) != referent
+                || TypeJson.Read(namedReferenceWrite["elem"]) != referent
+                || Str(namedReferenceWrite["value"]["k"]) != "cast"
+                || TypeJson.Read(namedReferenceWrite["value"]["type"]) != referent)
+                throw new InvalidOperationException("Managed-reference value flow lost its physical referent or conversion");
+        }
+        var closedReferent = new TypeNode.Fqn("Box", new TypeNode[] { new TypeNode.Fqn("System.String") });
+        var carrierReferent = new TypeNode.Fqn("Box$star");
+        var carrierStore = new JsonObject { ["k"] = "byrefStore", ["elem"] = TypeJson.Write(carrierReferent),
+            ["ptr"] = new JsonObject { ["k"] = "local", ["name"] = "pointer" },
+            ["value"] = new JsonObject { ["k"] = "local", ["name"] = "value" } };
+        var carrierDocument = new JsonObject { ["fileClass"] = "Consumer", ["methods"] = new JsonArray(
+            new JsonObject { ["name"] = "Write", ["ret"] = TypeJson.Fqn("void"),
+                ["params"] = new JsonArray(
+                    new JsonObject { ["name"] = "pointer", ["type"] = TypeJson.Write(new TypeNode.ByRef(closedReferent)) },
+                    new JsonObject { ["name"] = "value", ["type"] = TypeJson.Write(carrierReferent) }),
+                ["body"] = new JsonArray(carrierStore) }) };
+        for (var iteration = 0; iteration < 2; iteration++)
+        {
+            ApplyAll(new JsonNode[] { carrierDocument }, () => throw new InvalidOperationException("Unexpected Unit"),
+                _ => false, needsDeclaredProjection: (source, target) =>
+                    source == carrierReferent && target == closedReferent);
+            if (TypeJson.Read(carrierStore["elem"]) != closedReferent
+                || Str(carrierStore["value"]["k"]) != "cast"
+                || TypeJson.Read(carrierStore["value"]["type"]) != closedReferent
+                || Str(carrierStore["value"]["e"]["k"]) != "local"
+                || Str(carrierStore["ptr"]["k"]) != "local")
+                throw new InvalidOperationException("Managed-reference carrier store lost exact pointee, checked conversion or pointer identity");
+        }
+        foreach (var (source, target) in new (TypeNode, TypeNode)[] {
+            (new TypeNode.Mod(false, new TypeNode.Fqn("Alias"), new TypeNode.Fqn("System.Object")),
+                new TypeNode.Fqn("System.Collections.Generic.IReadOnlyList", new TypeNode[] { new TypeNode.Fqn("System.String") })),
+            (new TypeNode.Array(carrierReferent), new TypeNode.Array(closedReferent)) })
+        {
+            var store = new JsonObject { ["k"] = "byrefStore", ["local"] = "pointer",
+                ["elem"] = TypeJson.Write(source), ["value"] = new JsonObject { ["k"] = "local", ["name"] = "value" } };
+            var document = new JsonObject { ["fileClass"] = "Consumer", ["methods"] = new JsonArray(
+                new JsonObject { ["name"] = "Write", ["ret"] = TypeJson.Fqn("void"),
+                    ["params"] = new JsonArray(
+                        new JsonObject { ["name"] = "pointer", ["type"] = TypeJson.Write(new TypeNode.ByRef(target)) },
+                        new JsonObject { ["name"] = "value", ["type"] = TypeJson.Write(source) }),
+                    ["body"] = new JsonArray(store) }) };
+            for (var iteration = 0; iteration < 2; iteration++)
+            {
+                ApplyAll(new JsonNode[] { document }, () => throw new InvalidOperationException("Unexpected Unit"), _ => false);
+                if (TypeJson.Read(store["elem"]) != target || Str(store["value"]["k"]) != "cast"
+                    || TypeJson.Read(store["value"]["type"]) != target || Str(store["value"]["e"]["k"]) != "local"
+                    || Str(store["local"]) != "pointer" || store["ptr"] != null)
+                    throw new InvalidOperationException("Managed-reference alias/array store lacks a single checked value conversion");
+            }
+        }
+        var delegateType = new TypeNode.Fqn("System.Func", new TypeNode[] {
+            new TypeNode.Fqn("System.Object"), new TypeNode.Fqn("System.Object") });
+        var erasedReference = new JsonObject { ["k"] = "var", ["name"] = "callback",
+            ["type"] = TypeJson.Write(delegateType),
+            ["init"] = new JsonObject { ["k"] = "local", ["name"] = "erased" } };
+        var referenceRoot = new JsonObject { ["fileClass"] = "Consumer", ["methods"] = new JsonArray(
+            new JsonObject { ["name"] = "Use", ["params"] = new JsonArray(new JsonObject {
+                ["name"] = "erased", ["type"] = TypeJson.Fqn("System.Object") }),
+                ["ret"] = TypeJson.Fqn("void"), ["body"] = new JsonArray(erasedReference) }) };
+        for (var iteration = 0; iteration < 2; iteration++)
+        {
+            ApplyAll(new JsonNode[] { referenceRoot }, () => throw new InvalidOperationException("Unexpected Unit"), _ => false);
+            if (Str(erasedReference["init"]["k"]) != "cast"
+                || TypeJson.Read(erasedReference["init"]["type"]) != delegateType
+                || Str(erasedReference["init"]["e"]["k"]) != "local")
+                throw new InvalidOperationException("Erased reference did not enter its exact physical slot once");
+        }
+        foreach (var argument in new TypeNode[] { new TypeNode.Tv("method", 0), new TypeNode.Fqn("System.Int32") })
+        {
+            var call = new JsonObject {
+                ["k"] = "clrStatic", ["type"] = TypeJson.Fqn("Native"), ["method"] = "Read",
+                ["typeArgs"] = new JsonArray(TypeJson.Write(argument)), ["args"] = new JsonArray(),
+                ["ret"] = TypeJson.Fqn("object"), ["sty"] = TypeJson.Fqn("object"),
+                ["memberRef"] = new JsonObject {
+                    ["kind"] = "method", ["declaringType"] = TypeJson.Fqn("Native"),
+                    ["name"] = "Read", ["genericArity"] = 1, ["parameterTypes"] = new JsonArray(),
+                    ["returnType"] = TypeJson.Write(new TypeNode.Tv("method", 0)),
+                },
+            };
+            var root = new JsonObject { ["fileClass"] = "Consumer", ["methods"] = new JsonArray(
+                new JsonObject { ["name"] = "Use", ["params"] = new JsonArray(),
+                    ["typeParams"] = new JsonArray("T"), ["ret"] = TypeJson.Fqn("object"),
+                    ["body"] = new JsonArray(new JsonObject { ["k"] = "return", ["value"] = call }) }) };
+            for (var iteration = 0; iteration < 2; iteration++)
+            {
+                ApplyAll(new JsonNode[] { root }, () => throw new InvalidOperationException("Unexpected Unit"),
+                    type => type.Name == "System.Int32");
+                var value = root["methods"][0]["body"][0]["value"];
+                if (Str(value["k"]) != "cast" || Str(value["e"]["k"]) != "clrStatic"
+                    || TypeJson.Read(value["e"]["ret"]) != argument
+                    || TypeJson.Read(value["e"]["sty"]) != argument
+                    || TypeJson.Read(value["e"]["memberRef"]["returnType"]) != new TypeNode.Tv("method", 0))
+                    throw new InvalidOperationException("Physical CLR result boxing lost the exact native result or was not idempotent");
+            }
+        }
+        foreach (var kind in new[] { "newArray", "newList", "newSet" })
+        {
+            var boxed = new JsonObject { ["k"] = "cast", ["type"] = TypeJson.Fqn("object"),
+                ["e"] = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("System.Int32"), ["value"] = 42 } };
+            var construction = new JsonObject { ["k"] = kind, ["elem"] = TypeJson.Fqn("System.Int32"),
+                ["elems"] = new JsonArray(boxed) };
+            var root = new JsonObject { ["fileClass"] = "Consumer", ["methods"] = new JsonArray(
+                new JsonObject { ["name"] = "Use", ["params"] = new JsonArray(), ["ret"] = TypeJson.Fqn("void"),
+                    ["body"] = new JsonArray(new JsonObject { ["k"] = "exprStmt", ["expr"] = construction }) }) };
+            for (var iteration = 0; iteration < 2; iteration++)
+            {
+                ApplyAll(new JsonNode[] { root }, () => throw new InvalidOperationException("Unexpected Unit"),
+                    type => type.Name == "System.Int32");
+                var element = construction["elems"][0];
+                if (Str(element["k"]) != "cast" || TypeJson.Read(element["type"]) != new TypeNode.Fqn("System.Int32")
+                    || Str(element["e"]["k"]) != "cast" || Str(element["e"]["e"]["k"]) != "const")
+                    throw new InvalidOperationException("Erased element did not enter its physical value slot exactly once");
+            }
+        }
+        Console.WriteLine("[physical value coercion] self-test OK (native generic/value result boxing)");
     }
 
     static TypeNode ExprType(JsonNode node, Scope scope, Index index)

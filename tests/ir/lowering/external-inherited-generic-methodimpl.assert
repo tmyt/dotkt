@@ -1,7 +1,8 @@
-# The descriptor intentionally names the constructed intermediate owner, while `contains(E)` is declared by its
-# generic base. bir2cir must search the inherited set, specialize the declaring edge to Int32 for comparison, and emit
-# the memberRef at the actual declaration without copying the descriptor owner's identity into it.
-+"owner":{"t":"fqn","name":"kotlin.collections.AbstractList\u00601","args":[{"t":"fqn","name":"System.Int32"}]},"member":"contains"
-+"declaringType":{"t":"fqn","name":"kotlin.collections.AbstractCollection\u00601","args":[{"t":"fqn","name":"System.Int32"}]},"name":"contains"
+# The descriptor names Intermediate<String>, but the declaration is Base<Int32,String>.Contains(T).
+# Its Contains(U) sibling has the same name and arity: owner-frame specialization must select the Int32 slot.
+# Use a native declaration so this rule is independent of Kotlin's erased generic value-slot ABI.
++"owner":{"t":"fqn","name":"DotKt.Tests.MethodImplIntermediate\u00601","args":[{"t":"fqn","name":"System.String"}]},"member":"Contains"
++"declaringType":{"t":"fqn","name":"DotKt.Tests.MethodImplBase\u00602","args":[{"t":"fqn","name":"System.Int32"},{"t":"fqn","name":"System.String"}]},"name":"Contains"
 +"parameterTypes":[{"t":"tv","scope":"type","i":0}]
--"declaringType":{"t":"fqn","name":"kotlin.collections.AbstractList\u00601"
+-"parameterTypes":[{"t":"tv","scope":"type","i":1}]
+-"declaringType":{"t":"fqn","name":"DotKt.Tests.MethodImplIntermediate\u00601","args":[{"t":"fqn","name":"System.String"}]},"name":"Contains"

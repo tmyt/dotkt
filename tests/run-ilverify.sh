@@ -47,7 +47,7 @@ declare -A ALLOWED_UNMANAGED_POINTER=()
 # must all match. Generated-name drift is deliberately caught by --audit-baseline.
 declare -A ILVERIFY_SPAN_RETURN=(
 	['NominalFunctionDelegateTests::dotkt:lambda:17([S.P.CoreLib]System.Span`1<int32>)']='input Span identity callback'
-	['NominalFunctionDelegateTests+dotkt$NominalFunctionDelegateTestsKt$Closure102::invoke()']='heap-array Span callback'
+	['NominalFunctionDelegateTests+dotkt$NominalFunctionDelegateTestsKt$Closure104::invoke()']='heap-array Span callback'
 )
 
 ILV="$(find "$HOME/.dotnet" -name 'ILVerify.dll' 2>/dev/null | head -1)"

@@ -1,13 +1,16 @@
-# The call-site stamp says that Array<T> is already closed over the caller's class frame. Both result slots retain
-# that exact shape through the early and late constructed-owner sweeps.
-+"method":"read","sig":[],"ret":{"t":"array","elem":{"t":"tv","scope":"type","i":0}},"dynRet":{"t":"array","elem":{"t":"tv","scope":"type","i":0}}
+# The caller receives System.Array from the erased carrier call. Direct pass
+# selftests also check the un-erased caller frame, where accidental nesting is observable.
++"k":"cast","type":{"t":"fqn","name":"System.Array"},"e":{"k":"callInstance","virtual":true,"ownerType":{"t":"fqn","name":"LocalResultBox$star"},"method":"$star$read$0","sig":[],"ret":{"t":"fqn","name":"object"},"dynRet":{"t":"fqn","name":"object"}
 # The old pass substituted the already-instantiated owner argument once per sweep.
 -"ret":{"t":"array","elem":{"t":"array"
 -"dynRet":{"t":"array","elem":{"t":"array"
 
-# The inherited-class/interface bridge also authors an already-closed result. It must stamp its synthesized call so
-# both sweeps preserve Pairish<K,V> instead of substituting it through PassBase<Pairish<K,V>> once per sweep.
+# The inherited forwarder must survive generic value erasure. Its exact declaration owner uses the same
+# projected argument as the base edge, and its erased object result is explicitly adapted to Pairish's carrier.
+# Direct pass selftests preserve the un-erased caller frame; the Kotlin runtime fixture checks this full path.
 +"name":"DerivedPasser","kind":"class"
-+"ownerType":{"t":"fqn","name":"PassBase","args":[{"t":"fqn","name":"Pairish","args":[{"t":"tv","scope":"type","i":0},{"t":"tv","scope":"type","i":1}]}]},"virtual":false,"clrOwnerResolved":true,"recv":{"k":"this"},"method":"pass"
-+"dynRet":{"t":"fqn","name":"Pairish","args":[{"t":"tv","scope":"type","i":0},{"t":"tv","scope":"type","i":1}]},"ret":{"t":"fqn","name":"Pairish","args":[{"t":"tv","scope":"type","i":0},{"t":"tv","scope":"type","i":1}]}
++"base":{"t":"fqn","name":"PassBase","args":[{"t":"fqn","name":"Pairish$star"}]}
++"k":"cast","type":{"t":"fqn","name":"Pairish$star"},"e":{"k":"callInstance","ownerType":{"t":"fqn","name":"PassBase","args":[{"t":"fqn","name":"Pairish$star"}]},"virtual":false,"clrOwnerResolved":true,"recv":{"k":"this"},"method":"pass","sig":[{"t":"fqn","name":"object"}],"dynRet":{"t":"fqn","name":"object"},"ret":{"t":"fqn","name":"object"},"args":[{"k":"local","name":"value"}]}
++"owner":{"t":"fqn","name":"Passer","args":[{"t":"fqn","name":"Pairish$star"}]},"member":"pass","arity":0,"params":[{"t":"fqn","name":"object"}],"ret":{"t":"fqn","name":"object"}
+-"ownerType":{"t":"fqn","name":"PassBase","args":[{"t":"fqn","name":"Pairish","args"
 -"ret":{"t":"fqn","name":"Pairish","args":[{"t":"fqn","name":"Pairish"

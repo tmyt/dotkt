@@ -51,6 +51,18 @@ private class MaterializedMixedOwner<T>(private val value: T) {
     }
 }
 
+private class MaterializedOverloadedSlot<T> {
+    val selected: Int
+    constructor(value: T) { selected = 1 }
+    constructor(value: Int) { selected = 2 }
+}
+
+private suspend inline fun <T> materializedSelectedConstructor(value: T): Int =
+    suspendCoroutineUninterceptedOrReturn { continuation ->
+        continuation.resume(MaterializedOverloadedSlot<T>(value).selected)
+        COROUTINE_SUSPENDED
+    }
+
 class MaterializedLambdaCaptureTests {
     @TestAttribute
     fun refCellWriteThroughMaterializedCarrier() {
@@ -60,6 +72,18 @@ class MaterializedLambdaCaptureTests {
     @TestAttribute
     fun constructedSpecializationKeepsTheOwnersExactGenericFrame() {
         assertEquals(listOf("OK"), blockOn { MaterializedConstructedOwner("OK").awaitList() })
+        assertEquals(Unit, blockOn {
+            materializedConstructedSuspend<Unit> { it.continuation.resume(Unit) }
+        })
+        assertEquals(42, blockOn {
+            materializedConstructedSuspend<Int> { it.continuation.resume(42) }
+        })
+        assertEquals("closed", blockOn {
+            materializedConstructedSuspend<String> { it.continuation.resume("closed") }
+        })
+        assertEquals(1, blockOn { materializedSelectedConstructor(42) })
+        assertEquals(1, blockOn { materializedSelectedConstructor("value") })
+        assertEquals(2, MaterializedOverloadedSlot<Int>(42).selected)
     }
 
     @TestAttribute

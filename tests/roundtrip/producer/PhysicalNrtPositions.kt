@@ -26,3 +26,26 @@ class StringNrtExchange : NrtExchange<String> {
     override fun exchange(value: NrtTriple<String?, Comparable<Any?>?, String>):
         NrtTriple<String?, Comparable<Any?>?, String> = value
 }
+
+// Native constructions retain physical generic positions, unlike Kotlin value carriers.
+fun nativeNonNull(): System.Tuple2<Comparable<Any?>?, String> = System.Tuple2(null, "value")
+fun nativeNullable(): System.Tuple2<Comparable<Any?>?, String?> = System.Tuple2(null, null)
+fun nativeRetained(): System.Tuple2<Comparable<String>?, String> = System.Tuple2(null, "value")
+fun nativeNested(): System.Tuple2<System.Tuple2<Comparable<Any?>?, String>, String?> =
+    System.Tuple2(nativeNonNull(), null)
+fun nativeEcho(value: System.Tuple2<Comparable<Any?>?, String>): System.Tuple2<Comparable<Any?>?, String> = value
+
+class NativeNrtSlots(initial: System.Tuple2<Comparable<Any?>?, String>) {
+    @ClrField var fieldSlot: System.Tuple2<Comparable<Any?>?, String> = initial
+    @ClrField var nullableFieldSlot: System.Tuple2<Comparable<Any?>?, String?> = nativeNullable()
+    var propertySlot: System.Tuple2<Comparable<Any?>?, String> = initial
+    var nullablePropertySlot: System.Tuple2<Comparable<Any?>?, String?> = nativeNullable()
+}
+
+interface NativeNrtExchange<T> {
+    fun exchange(value: System.Tuple3<T?, Comparable<Any?>?, String>): System.Tuple3<T?, Comparable<Any?>?, String>
+}
+class NativeStringNrtExchange : NativeNrtExchange<String> {
+    override fun exchange(value: System.Tuple3<String?, Comparable<Any?>?, String>):
+        System.Tuple3<String?, Comparable<Any?>?, String> = value
+}

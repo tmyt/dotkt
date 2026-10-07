@@ -11,7 +11,9 @@ using DotKt.Bir;
 static class ConstructorSignatureIdentity
 {
     internal const string ParameterKey = "_constructorDeclarationType";
+    internal const string BeforeValueErasureKey = "constructorTypeBeforeValueErasure";
     internal const string CallKey = "_constructorDeclarationSignature";
+    internal const string SourceCallKey = "_constructorSourceSignature";
     internal const string PhysicalKey = "_constructorPhysicalDiscriminator";
 
     public static void Capture(JsonNode root)
@@ -22,11 +24,27 @@ static class ConstructorSignatureIdentity
                 foreach (var ctor in constructors.OfType<JsonObject>())
                     if (ctor["params"] is JsonArray parameters)
                         foreach (var parameter in parameters.OfType<JsonObject>())
+                        {
                             parameter[ParameterKey] = (parameter[FunctionSignatureIdentity.Key]
+                                ?? parameter[BeforeValueErasureKey]
                                 ?? parameter["type"]).ToJsonString();
-            var signature = obj["k"]?.GetValue<string>() == "new"
+                            parameter.Remove(BeforeValueErasureKey);
+                        }
+        });
+        CaptureCalls(root);
+    }
+
+    public static void CaptureCalls(JsonNode root) => CaptureCalls(root, CallKey);
+
+    public static void CaptureSourceCalls(JsonNode root) => CaptureCalls(root, SourceCallKey);
+
+    static void CaptureCalls(JsonNode root, string key)
+    {
+        Walk(root, obj =>
+        {
+            var signature = obj["k"]?.GetValue<string>() is "new" or "newClr"
                 ? obj["memberSignature"] : obj["delegationSig"];
-            if (signature is JsonArray) obj[CallKey] = signature.ToJsonString();
+            if (signature is JsonArray) obj[key] ??= signature.ToJsonString();
         });
     }
 
@@ -36,6 +54,9 @@ static class ConstructorSignatureIdentity
     public static JsonArray DeclarationSignature(JsonObject call) => call[CallKey] is JsonValue encoded
         ? JsonNode.Parse(encoded.GetValue<string>()).AsArray() : null;
 
+    public static JsonArray SourceSignature(JsonObject call) => call[SourceCallKey] is JsonValue encoded
+        ? JsonNode.Parse(encoded.GetValue<string>()).AsArray() : null;
+
     public static void Materialize(JsonNode root)
     {
         if (root is not JsonObject file) return;
@@ -43,6 +64,15 @@ static class ConstructorSignatureIdentity
         Walk(root, obj =>
         {
             if (obj["ctors"] is not JsonArray constructors) return;
+            // Constructor overloads have a nominal, whole-signature identity below.
+            // A bare generic-variable modifier is redundant here and is not a
+            // C#-consumable modifier type. Keep the captured declaration frame,
+            // but do not also encode method-style variable discriminators.
+            foreach (var ctor in constructors.OfType<JsonObject>())
+                if (ctor["params"] is JsonArray ctorParameters)
+                    foreach (var parameter in ctorParameters.OfType<JsonObject>())
+                        if (TypeJson.Read(parameter[FunctionSignatureIdentity.Key]) is TypeNode.Tv)
+                            parameter.Remove(FunctionSignatureIdentity.Key);
             // Arity survives every value-type projection. Reserve identity for the
             // whole overload family before later passes expose its final collisions.
             var groups = constructors.OfType<JsonObject>()

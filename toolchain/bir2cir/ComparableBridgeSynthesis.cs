@@ -14,10 +14,9 @@ using DotKt.Bir;
 // `a.compareTo(b)` inside the rt's `sortWith`) or `InvalidCastException` (`compareValues`) the moment a compiled
 // stdlib body sorts it. Mirror the BCL convention: for every emitted CLASS whose lowered interfaces include
 // `kotlin.Comparable<X>` (or an explicitly projected `System.IComparable<X>`), add `System.IComparable` + a
-// `CompareTo(Any)` bridge that casts the arg to X and forwards to the generic CompareTo. This runs at the final
-// semantic boundary, before BirTypeLowering: a legal covariant override returning `Nothing` must retain that stamp
-// on the synthesized call so NothingValueTermination can terminate the physical Int32 slot instead of returning
-// Nothing's CLR object erasure into it (#321). Non-ref builds only (the ref surface stays pure Kotlin).
+// `CompareTo(Any)` bridge that casts the arg to X and forwards through IComparable<X>. This runs after generic
+// override-slot synthesis: that slot already handles return adaptation, including a Nothing-returning implementation,
+// and the non-generic bridge consumes its exact Int32 result. Non-ref builds only (the ref surface stays pure Kotlin).
 static class ComparableBridgeSynthesis
 {
     public static void Apply(JsonNode root)
@@ -51,8 +50,7 @@ static class ComparableBridgeSynthesis
             var owner = (to["name"] as JsonValue)?.GetValue<string>();
             if (string.IsNullOrEmpty(owner)) continue;
             // Forward only to the declaration the frontend identified as the Comparable slot implementation. Name
-            // and arity alone also match unrelated Kotlin overloads after DeclarationRename; copying such an overload's
-            // Nothing return stamp would turn a valid Int-returning bridge into invalid terminating IL.
+            // and arity alone also match unrelated Kotlin overloads after DeclarationRename.
             var targets = methods.OfType<JsonObject>().Where(m =>
                 (m["name"] as JsonValue)?.GetValue<string>() is "CompareTo" or "compareTo"
                 && m["params"] is JsonArray ps1 && ps1.Count == 1
@@ -66,28 +64,30 @@ static class ComparableBridgeSynthesis
                     && (o["kind"] as JsonValue)?.GetValue<string>() == "method")).ToList();
             if (targets.Count != 1 || targets[0]["params"] is not JsonArray targetParams
                 || targetParams[0] is not JsonObject targetParam
-                || TypeJson.Read(targetParam["type"]) is not TypeNode targetParamType)
+                || TypeJson.Read(targetParam["type"]) is not TypeNode)
                 continue;
-            var target = targets[0];
-            var targetName = (target["name"] as JsonValue)?.GetValue<string>();
+            // Forward through the exact generic interface obligation, not a Kotlin
+            // classifier for the implementing declaration. The latter may project to
+            // a different CLR type and is not a physical name for this TypeDef.
+            // The generic slot already owns return adaptation (including Nothing).
             var forwardCall = new JsonObject
             {
                 ["k"] = "callInstance",
-                ["ownerType"] = TypeJson.Fqn(owner),
+                ["ownerType"] = TypeJson.Write(new TypeNode.Fqn("System.IComparable", new[] { selfArg })),
                 ["virtual"] = true,
                 ["clrOwnerResolved"] = true,
                 ["recv"] = new JsonObject { ["k"] = "this" },
-                ["method"] = targetName,
-                ["sig"] = new JsonArray { TypeJson.Write(targetParamType) },
+                ["method"] = "CompareTo",
+                ["sig"] = new JsonArray { TypeJson.Write(selfArg) },
+                ["ret"] = TypeJson.Fqn("kotlin.Int"),
+                ["sty"] = TypeJson.Fqn("kotlin.Int"),
                 ["args"] = new JsonArray(new JsonObject
                 {
                     ["k"] = "cast",
-                    ["type"] = TypeJson.Write(targetParamType),
+                    ["type"] = TypeJson.Write(selfArg),
                     ["e"] = new JsonObject { ["k"] = "local", ["name"] = "obj" },
                 }),
             };
-            if (target?["ret"] is JsonNode targetReturn)
-                forwardCall["sty"] = targetReturn.DeepClone();
             ifaces.Add(TypeJson.Fqn("System.IComparable"));
             var bridge = new JsonObject
             {

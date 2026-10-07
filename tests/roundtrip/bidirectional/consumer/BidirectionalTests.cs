@@ -45,7 +45,8 @@ public class BidirectionalTests
     {
         var greeter = new BidirectionalGreeter("Visual Studio");
         Assert.That(greeter.greet(), Is.EqualTo("Hi, Visual Studio (accent=cyan)"));
-        IReadOnlyList<string> names = greeter.roster();
+        // Kotlin covariant values use an erased ABI; C# explicitly selects its native view.
+        IReadOnlyList<string> names = (IReadOnlyList<string>)greeter.roster();
         Assert.That(string.Join(", ", names), Is.EqualTo("Visual Studio A, Visual Studio B, Visual Studio C"));
     }
 

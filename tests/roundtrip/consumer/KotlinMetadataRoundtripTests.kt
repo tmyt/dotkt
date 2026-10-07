@@ -732,6 +732,8 @@ class PackageAndInlineRoundtripTests {
             NonConstantGenericNestedAccessorCaller<String>().callback()("ignored"))
         ClassicAssert.AreEqual("nested-generic-caller",
             NonConstantCapturedGenericNestedAccessorCaller<String>().Entry().callback()("ignored"))
+        ClassicAssert.AreEqual("nested-generic-caller",
+            NonConstantCapturedGenericNestedAccessorCaller<Int>().Entry().callback()(37))
         ClassicAssert.AreEqual("z", NonConstantDefaultRect(3, tag = "z").tag)                           // z   omit the MIDDLE default, name a later arg
         ClassicAssert.AreEqual(6, NonConstantDefaultRect(3, tag = "z").h)                               // 6   the omitted middle still filled from w
         ClassicAssert.AreEqual(203, NonConstantDefaultTri(2).c)                                         // 203 chain: b = a + 1 = 3, c = a * 100 + b

@@ -473,7 +473,11 @@ sealed partial class Emitter
                 {
                     if (!actual.IsGenericType || actual.IsGenericTypeDefinition) return false;
                     var definition = actual.GetGenericTypeDefinition();
-                    if (!NameEquals(named.Name, definition)) return false;
+                    Type expectedDefinition;
+                    try { expectedDefinition = GenericDefinition(named.Name, named.Args.Length); }
+                    catch { return false; }
+                    if (!ReferenceEquals(expectedDefinition, definition) && expectedDefinition != definition)
+                        return false;
                     var arguments = actual.GetGenericArguments();
                     if (arguments.Length != named.Args.Length) return false;
                     for (int i = 0; i < arguments.Length; i++)
@@ -500,6 +504,11 @@ sealed partial class Emitter
         // a signature and so makes no member ambiguous. Asking the universe for "void" asks it for a type
         // nothing declares, so it is answered here.
         if (name == "void") return string.Equals(actual.FullName, "System.Void", StringComparison.Ordinal);
+        // Closing an external declaration over a type emitted in this module
+        // can put that TypeBuilder in its signature (including a custom
+        // modifier). It is not a type in the compile-reference universe.
+        if (_types.TryGetValue(name, out var emitted))
+            return ReferenceEquals(emitted.TB, actual) || emitted.TB == actual;
         // EVERY other leaf goes through the universe, and a matching FullName is NOT enough to shortcut it:
         // two references can define the same full name, which is exactly the ambiguity the universe refuses.
         // Accepting on the name alone would route around that refusal and let a member whose parameter comes

@@ -1,12 +1,14 @@
-# Scalar T? storage and ordinary Kotlin function slots erase to object. Invariant arrays/generic
-# arguments and the function signature modifier retain the explicit N(T) companion.
+# Scalar T? storage and ordinary Kotlin function slots erase to object. Generic
+# arrays use System.Array and local generic values use their shared carrier.
+# The function signature and array-element conversion retain the N(T) companion.
 -{"t":"nullable","of":{"t":"tv"
 +"name":"pick","typeParams":[{"name":"T","constraints":[{"t":"tv","scope":"method","i":1}]},"$nullable0"]
 +"name":"x","type":{"t":"fqn","name":"object"}
 +"name":"slot","type":{"t":"fqn","name":"object"}
 +"name":"acc","type":{"t":"fqn","name":"object"},"init":{"k":"const","type":{"t":"fqn","name":"object"},"value":null}
-+"name":"cells","type":{"t":"array","elem":{"t":"tv","scope":"method","i":1}}
-+"name":"holder","type":{"t":"fqn","name":"NullableTvProbeBox","args":[{"t":"tv","scope":"method","i":1}]}
++"name":"cells","type":{"t":"fqn","name":"System.Array"}
++"name":"holder","type":{"t":"fqn","name":"NullableTvProbeBox$star"}
 +"name":"map","type":{"t":"mod","req":false,"m":{"t":"fn","suspend":false,"ret":{"t":"tv","scope":"method","i":1},"params":[{"t":"tv","scope":"method","i":0}],"clr":"System.Func"},"of":{"t":"fn","suspend":false,"ret":{"t":"fqn","name":"object"},"params":[{"t":"fqn","name":"object"}],"clr":"System.Func"}}
-+"value":{"k":"cast","type":{"t":"tv","scope":"method","i":1},"e":{"k":"local","name":"acc"}}
++"method":"$genericArrayStore","sig":[{"t":"fqn","name":"System.Array"},{"t":"fqn","name":"System.Int32"},{"t":"fqn","name":"System.Object"}],"ret":{"t":"fqn","name":"void"},"args":[{"k":"local","name":"cells"},{"k":"const","type":{"t":"fqn","name":"System.Int32"},"value":0},{"k":"cast","type":{"t":"fqn","name":"System.Object"},"e":{"k":"cast","type":{"t":"tv","scope":"method","i":1},"e":{"k":"local","name":"acc"}}}]
++"k":"return","value":{"k":"local","name":"acc"}
 +"ret":{"t":"fqn","name":"object"}

@@ -129,7 +129,12 @@ static class ValueElementIterableCoercion
             // resolvedMemberParams is Enumerable.Cast<TResult>(IEnumerable)'s exact declared parameter.
             ["typeArgs"] = new JsonArray { TypeJson.Write(target) },
             ["resolvedMemberParams"] = new JsonArray { TypeJson.Fqn("System.Collections.IEnumerable") },
-            ["args"] = new JsonArray { source.DeepClone() },
+            // Kotlin's variant iterable value can occupy an object slot. State
+            // the native parameter conversion explicitly before calling Cast<T>.
+            ["args"] = new JsonArray { new JsonObject {
+                ["k"] = "cast", ["type"] = TypeJson.Fqn("System.Collections.IEnumerable"),
+                ["e"] = source.DeepClone(),
+            } },
             // The adapter changes the operand's static type; stamp the exact value it produces so suspend planning
             // and every later structural consumer see IEnumerable<TTarget>, not the input array.
             ["sty"] = TypeJson.Write(result),

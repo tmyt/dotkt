@@ -7,10 +7,10 @@ using DotKt.Bir;
 // THE ERASURE INVARIANT (#86): CARRIER-ARGUMENT ERASURE. For any declaration slot `s`,
 // `physical(s) = Erase(declaredKotlinType(s))`, and `Erase` is POSITIONAL — one rule, read off where the type sits:
 //
-//   * A DIRECT slot keeps the CLR-native form. A concrete `V?` is `System.Nullable<V>` at a method return, a method
-//     or constructor parameter, a field, a property, a body local and a `ref` referent alike. Only the open
-//     `Nullable(Tv)` erases here, because `Nullable<T>` is not even expressible for an unconstrained `T` and a bare
-//     `!T` slot collapses a null to `default(T)`.
+//   * A DIRECT Kotlin value slot erases an open `Tv` or `Nullable(Tv)` to object. An unchecked generic view must
+//     not impose its receiver's closed CLR type argument on ordinary stores or method arguments. A concrete
+//     `V?` remains `System.Nullable<V>`. CLR-bound declarations and managed-reference referents retain their
+//     exact signatures; construction arguments retain their generic variables independently of value storage.
 //   * An ARGUMENT to a CLR-REIFIED CONSTRUCTION — a generic type's type argument, a generic method's type argument,
 //     an array element, a delegate's return — is `System.Object` whenever the Kotlin type there is `X?` for a
 //     possibly-value `X`: an open `Tv` (some instantiation is a struct) or a value `Fqn` (this one is).
@@ -75,6 +75,10 @@ static class NullableGenericErasure
     public static void Apply(JsonNode root, ValueTypeOracle isValue)
     {
         if (root is not JsonObject o) return;
+        // Function-value lowering runs later, but its declaration discriminator
+        // must precede any value-slot erasure of the function's parameters.
+        FunctionSignatureIdentity.Capture(o);
+        ConstructorSignatureIdentity.CaptureSourceCalls(o);
         // #18/#147/#86 ROUND-TRIP RECORD (runs BEFORE the erasure below): capture each declaration slot the erasure
         // rewrites — a `Nullable(Tv)` at the HEAD (`fun <T> f(x: T?)`, `T?` returns, `T?` fields/properties), and any
         // possibly-value `X?` in a reified ARGUMENT (`List<Int?>`, `Holder<T?>`, `Array<Int?>`, `(Int?) -> R`) — for
@@ -96,6 +100,67 @@ static class NullableGenericErasure
     {
         RecordNullableGenericSlots(root, isValue);
         RecordSuspendFnShapes(root);
+    }
+
+    internal static void SelfTestDeclarationConstraints()
+    {
+        var root = JsonNode.Parse("""
+            {"methods":[{"name":"capture","typeParams":["T","N"],"params":[],
+             "ret":{"t":"fqn","name":"kotlin.Unit"},"body":[{
+              "k":"newSuspendLambda","typeParams":["T","N"],
+              "typeParamDecls":[{"name":"T","constraints":[{"t":"tv","scope":"method","i":1}]},"N"],
+              "typeArgs":[{"t":"tv","scope":"method","i":0},{"t":"tv","scope":"method","i":1}],
+              "params":[{"name":"value","type":{"t":"tv","scope":"method","i":0}}],
+              "ret":{"t":"fqn","name":"kotlin.Unit"},"body":[]
+             }]}]}
+            """)!.AsObject();
+        var lambda = root["methods"][0]["body"][0];
+        var declarations = lambda["typeParamDecls"].DeepClone();
+        var declarationFrame = lambda["typeArgs"].DeepClone();
+        lambda[SuspendLambdaLowering.SplicedDeclarationFrameKey] = declarationFrame.DeepClone();
+        for (var iteration = 0; iteration < 2; iteration++)
+        {
+            Apply(root, _ => false);
+            if (!JsonNode.DeepEquals(declarations, lambda["typeParamDecls"])
+                || !JsonNode.DeepEquals(declarationFrame, lambda[SuspendLambdaLowering.SplicedDeclarationFrameKey])
+                || TypeJson.Read(lambda["params"][0]["type"]) != new TypeNode.Fqn("object")
+                || TypeJson.Read(lambda["typeArgs"][0]) != new TypeNode.Tv("method", 0))
+                throw new InvalidOperationException("Value erasure changed a captured declaration constraint or its generic application");
+        }
+        Console.WriteLine("[value erasure declaration constraints] self-test OK (captured bounds, erased value, exact argument, idempotence)");
+        foreach (var kind in new[] { "isInst", "classRef" })
+        {
+            var classifier = new JsonObject { ["k"] = kind,
+                ["type"] = TypeJson.Write(new TypeNode.Tv("method", 0)) };
+            for (var iteration = 0; iteration < 2; iteration++)
+            {
+                Apply(classifier, _ => false);
+                if (TypeJson.Read(classifier["type"]) != new TypeNode.Tv("method", 0))
+                    throw new InvalidOperationException("Value erasure changed a runtime classifier into a value slot");
+            }
+        }
+        foreach (var nullable in new[] { false, true })
+        {
+            TypeNode parameter = new TypeNode.Tv("method", 0);
+            if (nullable) parameter = new TypeNode.Nullable(parameter);
+            var shape = JsonNode.Parse("""
+                {"t":"fn","suspend":true,"params":[],"ret":{"t":"tv","scope":"method","i":1}}
+                """)!.AsObject();
+            shape["params"].AsArray().Add(JsonNode.Parse(TypeNode.ToJson(parameter)));
+            var slot = new JsonObject { ["type"] = shape.DeepClone() };
+            var declaration = new JsonObject { ["methods"] = new JsonArray(
+                new JsonObject { ["name"] = "consume", ["params"] = new JsonArray(slot) }) };
+            FunctionValueRepresentation.PreserveSourceFacts(new[] { declaration });
+            for (var iteration = 0; iteration < 2; iteration++)
+            {
+                Apply(slot, _ => false);
+                var saved = JsonNode.Parse(slot[SuspendFnPre]!.GetValue<string>());
+                var exact = JsonNode.Parse(slot["kotlinType"]!.GetValue<string>());
+                if (!JsonNode.DeepEquals(shape, saved) || !JsonNode.DeepEquals(shape, exact))
+                    throw new InvalidOperationException("Value erasure lost the source suspend function shape");
+            }
+        }
+        Console.WriteLine("[value erasure suspend metadata] self-test OK (bare and nullable generic parameters, idempotence)");
     }
 
     // Record the PRE-erasure TypeNode on every declaration slot carrying a `Nullable(Tv)`, at the head or nested.
@@ -243,25 +308,25 @@ static class NullableGenericErasure
         static void Stash(JsonObject obj, string typeKey, string factKey)
         {
             if (obj.ContainsKey(factKey)) return;
-            if (TypeJson.Read(obj[typeKey]) is TypeNode.Fn { Suspend: true } fn && HasNullableTv(fn))
+            if (TypeJson.Read(obj[typeKey]) is TypeNode.Fn { Suspend: true } fn && HasGenericVariable(fn))
                 obj[factKey] = TypeNode.ToJson(fn);
         }
     }
 
-    static bool HasNullableTv(TypeNode t) => t switch
+    static bool HasGenericVariable(TypeNode t) => t switch
     {
         // ClrPointer's argument is an opaque ECMA pointee signature, not a reified Kotlin generic argument.
         // Its exact tree crosses unchanged until BirTypeLowering materializes `ptr`.
         TypeNode.Fqn { Name: BirTypeLowering.PointerIntrinsicFqn } => false,
-        TypeNode.Nullable { Of: TypeNode.Tv } => true,
-        TypeNode.Nullable n => HasNullableTv(n.Of),
-        TypeNode.Oblivious o => HasNullableTv(o.Of),
-        TypeNode.Projection p => HasNullableTv(p.Of),
-        TypeNode.Fqn { Args: { } args } => args.Any(HasNullableTv),
-        TypeNode.Array a => HasNullableTv(a.Elem),
-        TypeNode.ByRef b => HasNullableTv(b.Of),
-        TypeNode.Fn fn => HasNullableTv(fn.Ret) || fn.Params.Any(HasNullableTv)
-                          || (fn.Recv != null && HasNullableTv(fn.Recv)),
+        TypeNode.Tv => true,
+        TypeNode.Nullable n => HasGenericVariable(n.Of),
+        TypeNode.Oblivious o => HasGenericVariable(o.Of),
+        TypeNode.Projection p => HasGenericVariable(p.Of),
+        TypeNode.Fqn { Args: { } args } => args.Any(HasGenericVariable),
+        TypeNode.Array a => HasGenericVariable(a.Elem),
+        TypeNode.ByRef b => HasGenericVariable(b.Of),
+        TypeNode.Fn fn => HasGenericVariable(fn.Ret) || fn.Params.Any(HasGenericVariable)
+                          || (fn.Recv != null && HasGenericVariable(fn.Recv)),
         _ => false,
     };
 
@@ -269,7 +334,14 @@ static class NullableGenericErasure
     {
         if (node is not JsonArray a) return;
         foreach (var item in a)
-            if (item is JsonObject ctor) RecordNullableGenericParams(ctor["params"], isValue);
+            if (item is JsonObject ctor)
+            {
+                if (ctor["params"] is JsonArray parameters)
+                    foreach (var parameter in parameters.OfType<JsonObject>())
+                        parameter[ConstructorSignatureIdentity.BeforeValueErasureKey] ??=
+                            parameter["type"]?.DeepClone();
+                RecordNullableGenericParams(ctor["params"], isValue);
+            }
     }
 
     static void RecordNullableGenericParams(JsonNode node, ValueTypeOracle isValue)
@@ -301,11 +373,13 @@ static class NullableGenericErasure
         // walk `object`, whose non-null default stamps nothing at all, and the slot re-imports as a non-null `Any`.
         // Only the HEAD position needs the pre-stamp: a nested `Nullable(Tv)` leaves the head intact, so the ordinary
         // post-erasure byte walk still describes it exactly. Rides DeclNullableFlags' never-overwrite contract.
-        if (t is TypeNode.Nullable { Of: TypeNode.Tv } && NullableFlags.Compute(t, isValue) is JsonArray f)
+        if (t is TypeNode.Tv or TypeNode.Nullable { Of: TypeNode.Tv }
+            && NullableFlags.Compute(t, isValue) is JsonArray f)
             decl[flagsKey] = f;
     }
 
-    // True iff `t` carries a position the erasure rewrites and dll2klib cannot infer back. Two of them:
+    // True iff `t` carries a position the erasure rewrites and dll2klib cannot infer back:
+    //   * an ordinary bare type-variable value slot; or
     //   * a `Nullable(Tv)` anywhere reachable through a CLR-representable declaration shape; and
     //   * a REIFIED ARGUMENT that is a nullable POSSIBLY-VALUE type — `List<Int?>` physically `IReadOnlyList<object>`,
     //     `Box<Int?>` physically `Box<object>`, `Array<Int?>` physically `object[]`. Without the carrier a
@@ -319,6 +393,7 @@ static class NullableGenericErasure
     static bool HasRestorableNullableTv(TypeNode t, ValueTypeOracle isValue) => t switch
     {
         TypeNode.Fqn { Name: BirTypeLowering.PointerIntrinsicFqn } => false,
+        TypeNode.Tv => true,
         TypeNode.Nullable { Of: TypeNode.Tv } => true,
         TypeNode.Nullable n => HasRestorableNullableTv(n.Of, isValue),
         TypeNode.Fqn { Args: { } args } => args.Any(a => ErasedArgument(a, isValue)),
@@ -332,7 +407,7 @@ static class NullableGenericErasure
             ErasedArgument(fn.Ret, isValue)
             || fn.Params.Any(p => HasRestorableNullableTv(p, isValue))
             || (fn.Recv != null && HasRestorableNullableTv(fn.Recv, isValue)),
-        _ => false,   // suspend Fn / bare Fqn / Tv: nothing the erasure rewrites
+        _ => false,   // suspend Fn / bare Fqn: nothing this carrier restores
     };
 
     // One reified ARGUMENT the erasure rewrites: either it is itself the possibly-value `X?` that becomes `object`,
@@ -494,6 +569,12 @@ static class NullableGenericErasure
             case JsonObject obj:
                 var retSlotErased = false;
                 var k = Str(obj["k"]);
+                ConstrainedTypeParameterReceiverBinding.PreserveSourceReceiver(obj);
+                // A Kotlin alias can become a native call after value erasure.
+                // Preserve its selected declaration now, before sig becomes a
+                // descriptor for the Kotlin implementation's object-valued slots.
+                if (k is "callInstance" or "callStatic")
+                    ForeignStarProjectionBinding.PreserveDeclarationSignature(obj, obj["sig"] ?? obj["shapeTypes"]);
                 var elemPos = IsArgumentElementKind(k) ? Pos.Argument : Pos.Slot;
                 foreach (var key in obj.Select(kv => kv.Key).ToList())
                 {
@@ -505,16 +586,29 @@ static class NullableGenericErasure
                     // by the frontend and can leave `compareTo(Int?)` disconnected from its CLR `CompareTo` slot.
                     // Physical bridge consumers derive their own slot types from the selected declaration; this
                     // marker is not one of those slots.
-                    if (key == "overrides") continue;
+                    if (key is "overrides" or "typeParams" or "typeParamDecls"
+                        || key == SuspendLambdaLowering.SplicedDeclarationFrameKey
+                        || key == ConstructorSignatureIdentity.BeforeValueErasureKey) continue;
                     var keyPos = key switch
                     {
                         "elem" => elemPos,
                         "typeArgs" => Pos.Argument,
+                        // Runtime classifiers describe the tested/reflected type,
+                        // not a value slot that may store an erased Kotlin value.
+                        "type" when k is "isInst" or "classRef" => Pos.Bound,
                         // `resolvedMemberParams` is always a resolved .NET declaration; `argTypes` is the SAME vector under
                         // another name once a call is `clr*`-bound (NetInteropBinding writes the callee's declared
                         // signature there), while on a Kotlin `new` it is the caller's own substituted view.
                         "resolvedMemberParams" => Pos.Bound,
+                        "resolvedMemberReturn" => Pos.Bound,
+                        // Frontend-selected declaration identity, before physical
+                        // binding decides whether that declaration is Kotlin or CLR.
+                        "memberSignature" or "memberReturnType" or "delegationSig" => Pos.Bound,
+                        ConstrainedTypeParameterReceiverBinding.SourceReceiverTypeKey => Pos.Bound,
+                        HomogeneousIdentityComparisonLowering.SourceTypeKey => Pos.Bound,
+                        FunctionSignatureIdentity.Key or FunctionSignatureIdentity.CallKey => Pos.Bound,
                         "argTypes" when ClrBoundNode.IsAny(k) => Pos.Bound,
+                        "ret" when ClrBoundNode.IsAny(k) => Pos.Bound,
                         _ => pos,
                     };
                     if (TypeJson.Read(child) is TypeNode tn)
@@ -589,6 +683,9 @@ static class NullableGenericErasure
         // `ClrPointer<Int?>` means `Nullable<int>*`; treating its argument like `List<Int?>` would rewrite it to
         // `object*` before the representation boundary. Keep the complete pointee signature opaque here.
         if (t is TypeNode.Fqn { Name: BirTypeLowering.PointerIntrinsicFqn, Args: { Length: 1 } }) return t;
+        // A Kotlin value slot is independent of the closed construction's runtime
+        // type check. Construction arguments and foreign declarations retain T.
+        if (t is TypeNode.Tv && pos == Pos.Slot) return new TypeNode.Fqn("object");
         if (t is TypeNode.Nullable { Of: TypeNode.Tv }) return new TypeNode.Fqn("object");
         if (pos == Pos.Argument && IsNullableMaybeValue(t, isValue)) return new TypeNode.Fqn("object");
         // A BOUND subtree stays bound all the way down: a `List<int?>` parameter's argument is what the target
@@ -605,7 +702,7 @@ static class NullableGenericErasure
             TypeNode.Fqn { Args: null } f => f,
             TypeNode.Fqn f => new TypeNode.Fqn(f.Name, f.Args.Select(a => Erase(a, inner, isValue)).ToArray()),
             TypeNode.Array a => new TypeNode.Array(Erase(a.Elem, inner, isValue), a.Rank, a.SzArray),
-            TypeNode.ByRef b => new TypeNode.ByRef(Erase(b.Of, slot, isValue)),
+            TypeNode.ByRef b => new TypeNode.ByRef(Erase(b.Of, Pos.Bound, isValue)),
             // A delegate's RETURN follows the argument rule; its PARAMETERS keep the declared form. See the header:
             // the two differ only because a callable reference to a DECLARED member has no forwarder yet. The
             // NOMINAL family and the context parameters ride through untouched — an erasure states positions, and a

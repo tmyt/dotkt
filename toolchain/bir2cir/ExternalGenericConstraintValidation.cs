@@ -316,6 +316,9 @@ static class ExternalGenericConstraintValidation
             }
             case TypeNode.Oblivious oblivious:
                 return Facts(oblivious.Of, typeParameters, methodParameters, refs, isValueFqn, localEnums, localTypes);
+            case TypeNode.Mod modifier:
+                // A signature modifier identifies the declaration; CLR constraints apply to its physical type.
+                return Facts(modifier.Of, typeParameters, methodParameters, refs, isValueFqn, localEnums, localTypes);
             case TypeNode.Array:
             case TypeNode.Fn:
                 return new ParameterFacts(true, false, false, false);
@@ -379,6 +382,25 @@ static class ExternalGenericConstraintValidation
             result[i] = new ParameterFacts(reference, value, isEnum, specials.Contains("new") || value);
         }
         return result;
+    }
+
+    internal static void SelfTest()
+    {
+        var refs = ReferenceMetadataIndex.Build(Array.Empty<string>());
+        var locals = new Dictionary<string, LocalTypeFacts>();
+        var enums = new HashSet<string>();
+        var frame = new[] { new ParameterFacts(true, false, false, false),
+            new ParameterFacts(false, true, true, true) };
+        foreach (var required in new[] { false, true })
+            for (var index = 0; index < frame.Length; index++)
+            {
+                var type = new TypeNode.Mod(required, new TypeNode.Fqn("Marker"),
+                    new TypeNode.Mod(false, new TypeNode.Fqn("OtherMarker"), new TypeNode.Tv("method", index)));
+                var actual = Facts(type, Array.Empty<ParameterFacts>(), frame, refs, _ => false, enums, locals);
+                if (actual != frame[index])
+                    throw new InvalidOperationException("Signature modifier changed CLR generic constraint facts");
+            }
+        Console.WriteLine("[external generic constraints] self-test OK (modified reference/value/enum/new facts)");
     }
 
     static bool IsTypeKind(string kind) => kind is "class" or "interface" or "enum" or "struct" or "value";

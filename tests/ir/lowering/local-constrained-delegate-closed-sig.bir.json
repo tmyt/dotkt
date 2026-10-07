@@ -20,14 +20,14 @@
       "body": [{
         "k": "return",
         "value": {
-          "k": "constrainedCall",
-          "recv": { "k": "local", "name": "engine" },
-          "recvType": { "t": "tv", "scope": "method", "i": 0 },
-          "iface": { "t": "fqn", "name": "LocalClosedCallback", "args": [{ "t": "fqn", "name": "kotlin.Int" }] },
+          "k": "callInstance",
+          "virtual": true,
+          "recv": { "k": "local", "name": "engine", "sty": { "t": "tv", "scope": "method", "i": 0 } },
+          "ownerType": { "t": "fqn", "name": "LocalClosedCallback", "args": [{ "t": "fqn", "name": "kotlin.Int" }] },
           "method": "Apply",
           "sig": [
-            { "t": "fqn", "name": "kotlin.Int" },
-            { "t": "fn", "suspend": false, "ret": { "t": "fqn", "name": "kotlin.Any" }, "params": [{ "t": "fqn", "name": "kotlin.Int" }] }
+            { "t": "tv", "scope": "type", "i": 0 },
+            { "t": "fn", "suspend": false, "ret": { "t": "fqn", "name": "kotlin.Any" }, "params": [{ "t": "tv", "scope": "type", "i": 0 }] }
           ],
           "ret": { "t": "fqn", "name": "kotlin.String" },
           "args": [

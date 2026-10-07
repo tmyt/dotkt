@@ -1,9 +1,11 @@
 using System;
-using System.Reflection;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 
-// A Kotlin declaration-site variant alias cannot use an invariant CLR construction as its value ABI.
+// Kotlin generic aliases cannot use a reified CLR construction as their general value ABI.
+// Invariant aliases also need this boundary: a source argument's existential carrier is not
+// the concrete argument of an inherited native construction. CLR variance additionally
+// only relates reference-type arguments, and has no Kotlin Nothing bottom type.
 // Keep the source application in metadata, but carry the original reference through an opaque value slot.
 // Exact CLR declarations (constructors, inheritance and bound member descriptors) remain reified.
 static class AliasVarianceRepresentation
@@ -17,26 +19,13 @@ static class AliasVarianceRepresentation
         if (sourceParameters?.Count != arguments.Length) return false;
         var physical = refs.ResolveNetType(binding, arguments.Length);
         if (physical == null || !physical.IsGenericType || physical.IsValueType) return false;
-        return HasVarianceMismatch(sourceParameters, physical);
+        return RequiresOpaqueReferenceValues(sourceParameters, physical);
     }
 
-    static bool HasVarianceMismatch(JsonArray sourceParameters, Type physical)
+    static bool RequiresOpaqueReferenceValues(JsonArray sourceParameters, Type physical)
     {
         var parameters = physical.GetGenericArguments();
-        if (parameters.Length != sourceParameters.Count) return false;
-        for (var index = 0; index < parameters.Length; index++)
-        {
-            var source = (sourceParameters[index] as JsonObject)?["variance"]?.GetValue<string>();
-            var required = source switch {
-                "out" => GenericParameterAttributes.Covariant,
-                "in" => GenericParameterAttributes.Contravariant,
-                _ => GenericParameterAttributes.None,
-            };
-            if (required != GenericParameterAttributes.None
-                && (parameters[index].GenericParameterAttributes & GenericParameterAttributes.VarianceMask) != required)
-                return true;
-        }
-        return false;
+        return parameters.Length != 0 && parameters.Length == sourceParameters.Count;
     }
 
     internal static void SelfTest()
@@ -45,12 +34,15 @@ static class AliasVarianceRepresentation
         var contravariant = JsonNode.Parse("""[{"name":"T","variance":"in"}]""").AsArray();
         var invariant = JsonNode.Parse("""["T"]""").AsArray();
         var map = JsonNode.Parse("""["K",{"name":"V","variance":"out"}]""").AsArray();
-        if (!HasVarianceMismatch(map, typeof(System.Collections.Generic.IDictionary<,>))
-            || !HasVarianceMismatch(covariant, typeof(System.Collections.Generic.IList<>))
-            || HasVarianceMismatch(covariant, typeof(System.Collections.Generic.IReadOnlyList<>))
-            || HasVarianceMismatch(contravariant, typeof(IComparable<>))
-            || HasVarianceMismatch(invariant, typeof(System.Collections.Generic.IList<>)))
-            throw new InvalidOperationException("Alias variance projection confused Kotlin and CLR variance");
-        Console.WriteLine("[alias variance] self-test OK (invariant target, covariant/contravariant agreement)");
+        if (!RequiresOpaqueReferenceValues(map, typeof(System.Collections.Generic.IDictionary<,>))
+            || !RequiresOpaqueReferenceValues(covariant, typeof(System.Collections.Generic.IList<>))
+            || !RequiresOpaqueReferenceValues(covariant, typeof(System.Collections.Generic.IReadOnlyList<>))
+            || !RequiresOpaqueReferenceValues(contravariant, typeof(IComparable<>))
+            || !RequiresOpaqueReferenceValues(invariant, typeof(System.Collections.Generic.IList<>)))
+            throw new InvalidOperationException("Generic alias storage retained a potentially different CLR construction");
+        if (typeof(System.Collections.Generic.IReadOnlyList<object>).IsAssignableFrom(
+                typeof(System.Collections.Generic.IReadOnlyList<int>)))
+            throw new InvalidOperationException("CLR value-element variance unexpectedly became assignable");
+        Console.WriteLine("[alias variance] self-test OK (Kotlin variance requires identity-preserving opaque value ABI)");
     }
 }

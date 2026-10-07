@@ -3,9 +3,16 @@ import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import NUnit.Framework.Legacy.ClassicAssert.AreSame as assertSame
 import nullableunitreturns.*
 
-private class NullableUnitDerived : Base() {
+private open class NullableUnitDerived : Base() {
     override fun get(present: Boolean): Unit? = if (present) Unit else null
 }
+private class NullableUnitLeaf : NullableUnitDerived() {
+    override fun get(present: Boolean): Unit? = null
+}
+private interface NullableUnitDefault : DefaultSource {
+    override fun get(present: Boolean): Unit? = if (present) null else Unit
+}
+private class NullableUnitDefaultImpl : NullableUnitDefault
 private class NonNullUnitDerived : Base() {
     override fun get(present: Boolean) {}
 }
@@ -59,5 +66,10 @@ class NullableUnitReturnRoundtripTests {
         assertEquals(null, source.get(false))
         val nonNull: Source = NonNullUnitDerived()
         assertSame(Unit, nonNull.get(false))
+        val leaf: Base = NullableUnitLeaf()
+        assertEquals(null, leaf.get(true))
+        val defaultSource: DefaultSource = NullableUnitDefaultImpl()
+        assertEquals(null, defaultSource.get(true))
+        assertSame(Unit, defaultSource.get(false))
     }
 }

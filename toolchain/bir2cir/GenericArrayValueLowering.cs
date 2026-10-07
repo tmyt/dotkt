@@ -323,11 +323,25 @@ static class GenericArrayValueLowering
     static TypeNode Project(TypeNode type) => type switch
     {
         TypeNode.Array array when ContainsVariable(array.Elem) => new TypeNode.Fqn("System.Array"),
-        TypeNode.Fqn { Args: { } args } fqn => new TypeNode.Fqn(fqn.Name, args.Select(Project).ToArray()),
+        // A named construction has already been chosen by its representation or
+        // CLR binding pass. Its invariant arguments are not independent array value
+        // slots: changing G<T[]> to G<Array> here would disagree with constructors,
+        // member descriptors and native storage. Boundary conversions own that seam.
         TypeNode.Nullable nullable => new TypeNode.Nullable(Project(nullable.Of)),
         TypeNode.Oblivious oblivious => new TypeNode.Oblivious(Project(oblivious.Of)),
         _ => type,
     };
+
+    internal static void SelfTest()
+    {
+        var array = new TypeNode.Array(new TypeNode.Tv("method", 0));
+        var construction = new TypeNode.Fqn("NativeContainer", new TypeNode[] { array });
+        if (!Project(array).Equals(new TypeNode.Fqn("System.Array"))
+            || !Project(construction).Equals(construction)
+            || !Project(new TypeNode.Nullable(construction)).Equals(new TypeNode.Nullable(construction)))
+            throw new System.InvalidOperationException("Generic array value projection changed an exact named construction");
+        System.Console.WriteLine("[generic array values] self-test OK (array slot versus invariant construction)");
+    }
 
     static bool ContainsVariable(TypeNode type) => type switch
     {

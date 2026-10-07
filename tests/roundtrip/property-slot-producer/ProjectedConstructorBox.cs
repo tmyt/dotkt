@@ -15,6 +15,18 @@ public sealed class ConstrainedBox<T> where T : IMarker
     public ConstrainedBox(T value) { Value = value; }
 }
 
+public sealed class DependentBox<T, U> where T : U where U : IMarker
+{
+    public T Value;
+    public DependentBox(T value) { Value = value; }
+}
+
+public sealed class ReorderedDependentBox<U, T> where U : IMarker where T : U
+{
+    public T Value;
+    public ReorderedDependentBox(T value) { Value = value; }
+}
+
 #nullable disable
 public sealed class ObliviousBox<T>
 {

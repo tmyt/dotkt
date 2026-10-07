@@ -112,9 +112,10 @@ private class ReferencedDefaultPropertyWithFunctionCollision : ReferencedDefault
 
 private class ReferencedGenericDefaultPropertyWithFunctionCollision :
     ReferencedGenericDefaultPropertySlot<String> {
+    var ordinarySetterCalls: Int = 0
     override fun defaultValue(): String = "generic-default"
     fun get_value(): String = "generic-function"
-    fun set_value(next: String) {}
+    fun set_value(next: String) { ordinarySetterCalls++ }
 }
 
 private class ReferencedCovariantDefaultPropertyWithFunctionCollision :
@@ -174,7 +175,12 @@ class RoundtripSurfaceTests {
         val genericImplementation = ReferencedGenericDefaultPropertyWithFunctionCollision()
         val genericProperty: RoundtripPropertyInterop.IGenericPropertySlot<String> = genericImplementation
         ClassicAssert.AreEqual("generic-default", genericProperty.value)
+        genericProperty.value = "ignored by the default setter"
+        ClassicAssert.AreEqual("generic-default", genericProperty.value)
+        ClassicAssert.AreEqual(0, genericImplementation.ordinarySetterCalls)
         ClassicAssert.AreEqual("generic-function", genericImplementation.get_value())
+        genericImplementation.set_value("ordinary function")
+        ClassicAssert.AreEqual(1, genericImplementation.ordinarySetterCalls)
 
         val covariantImplementation = ReferencedCovariantDefaultPropertyWithFunctionCollision()
         val covariantProperty: RoundtripPropertyInterop.IReadOnlyNominalPropertySlot = covariantImplementation

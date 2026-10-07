@@ -163,7 +163,10 @@ static class ReadOnlyCollectionStorageSynthesis
             ["k"] = "callStatic", ["owner"] = TypeJson.Fqn(owner), ["method"] = name,
             [DeclarationIdentityBinding.Key] = helper.DeclarationId,
             ["typeArgs"] = new JsonArray(arguments.Select(TypeJson.Write).ToArray()),
-            ["sig"] = new JsonArray(helper.ParamTypeNodes.Select(Physical).Select(TypeJson.Write).ToArray()),
+            // This carrier is synthesized after declaration-id binding. Its call
+            // must already carry the full selected MethodDef signature, including
+            // modifiers that distinguish otherwise identical object value slots.
+            ["sig"] = new JsonArray(helper.SignatureParameters.Select(Physical).Select(TypeJson.Write).ToArray()),
             ["ret"] = TypeJson.Write(result), ["args"] = new JsonArray(receiver, Local("element")),
         };
     }

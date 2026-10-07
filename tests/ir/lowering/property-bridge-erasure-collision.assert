@@ -1,6 +1,8 @@
 # The source override has no independent declaration identity; it keeps the ordinary Property name. The explicit
-# MethodImpl bridge is a bir2cir physical declaration and receives a stable suffix from its bridge association.
-# Collection<Int> and Set<Int> both lower to IReadOnlyCollection<int>, so the PropertyDef identities collide.
-+"name":"map","type":{"t":"fqn","name":"System.Collections.Generic.IReadOnlyCollection","args":[{"t":"fqn","name":"System.Int32"}]},"get":"prop_get\u003Cmap\u003E"
-+"name":"map$bridge$5f5d603d197fa295","type":{"t":"fqn","name":"System.Collections.Generic.IReadOnlyCollection","args":[{"t":"fqn","name":"System.Int32"}]},"get":"dotkt$covar$prop_get_map_$0"
+# MethodImpl bridge retains the interface's nominal signature. Both value representations
+# are object, but Collection<Int> and Set<Int> modifiers distinguish their PropertyDefs.
+# The direct allocator selftest separately witnesses actual equal-signature collision naming.
++"name":"map","type":{"t":"mod","req":false,"m":{"t":"fqn","name":"kotlin.collections.Set\u00601","args":[{"t":"fqn","name":"System.Int32"}]},"of":{"t":"fqn","name":"System.Object"}},"get":"prop_get\u003Cmap\u003E"
++"name":"map","type":{"t":"mod","req":false,"m":{"t":"fqn","name":"kotlin.collections.Collection\u00601","args":[{"t":"fqn","name":"System.Int32"}]},"of":{"t":"fqn","name":"System.Object"}},"get":"dotkt$covar$prop_get_map_$0"
 +"name":"dotkt$covar$prop_get_map_$0"
++"clrInterfaceImpls":[{"owner":{"t":"fqn","name":"ReadMap"},"member":"prop_get\u003Cmap\u003E","arity":0,"params":[],"ret":{"t":"mod","req":false,"m":{"t":"fqn","name":"kotlin.collections.Collection\u00601","args":[{"t":"fqn","name":"System.Int32"}]},"of":{"t":"fqn","name":"System.Object"}}}]

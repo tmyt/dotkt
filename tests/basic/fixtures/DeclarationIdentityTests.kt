@@ -194,6 +194,9 @@ class DeclarationIdentityTests {
         mutableMutableProperty.set(mutable, 12)
         assertEquals(411, readMutableProperty.get(readOnly))
         assertEquals(512, mutableMutableProperty.get(mutable))
+        val baseProperty: kotlin.reflect.KProperty1<Map<Int, Int>, Int> = readMutableProperty
+        assertEquals(411, baseProperty.get(readOnly))
+        assertEquals(411, baseProperty(readOnly))
         val pair = 1 to 2
         assertEquals(2, mapOf(pair)[1])
         val singletonMap: (Pair<Int, Int>) -> Map<Int, Int> = ::mapOf

@@ -273,6 +273,22 @@ static class LocalFunctionLowering
                         TypeJson.Read(JsonNode.Parse(encoded)), sourceMapping));
             }
             RewriteSourceCarrier(method, "nullableGenericRet");
+            if (Str(method[NullableGenericErasure.MethodTypeParameterBoundsPre]) is string encodedBounds)
+            {
+                var payload = JsonNode.Parse(encodedBounds).AsObject();
+                var rewrittenBounds = new JsonObject();
+                foreach (var entry in payload["bounds"].AsObject())
+                {
+                    var mapped = (TypeNode.Tv)sourceMapping[int.Parse(entry.Key)];
+                    // Captured owner parameters no longer belong to this MethodDef.
+                    // Retained method bounds still use the source-coordinate map.
+                    if (mapped.Scope != "method") continue;
+                    rewrittenBounds[mapped.I.ToString()] = new JsonArray(entry.Value.AsArray()
+                        .Select(bound => TypeJson.Write(RewriteCapturedType(TypeJson.Read(bound), sourceMapping))).ToArray());
+                }
+                payload["bounds"] = rewrittenBounds;
+                method[NullableGenericErasure.MethodTypeParameterBoundsPre] = payload.ToJsonString();
+            }
             if (method["params"] is JsonArray parameters)
                 foreach (var parameter in parameters.OfType<JsonObject>())
                     RewriteSourceCarrier(parameter, "nullableGeneric");

@@ -15,6 +15,24 @@ static class CovariantInterfaceReturnBridge
 {
     internal readonly record struct BridgedSlot(JsonObject Implementation, string Descriptor);
 
+    internal static void SelfTestSignatureFrame()
+    {
+        var ownerVariable = new TypeNode.Tv("type", 0);
+        var methodVariable = new TypeNode.Tv("method", 0);
+        var argument = new TypeNode.Fqn("System.Object");
+        foreach (var required in new[] { false, true })
+        {
+            var signature = new TypeNode.Mod(required,
+                new TypeNode.Fqn("probe.Marker", new TypeNode[] { ownerVariable, methodVariable }),
+                ownerVariable);
+            var expected = new TypeNode.Mod(required,
+                new TypeNode.Fqn("probe.Marker", new TypeNode[] { argument, methodVariable }), argument);
+            if (!SubstOwnerTvs(signature, new TypeNode[] { argument }).Equals(expected))
+                throw new InvalidOperationException("Covariant slot substitution lost the modifier's owner frame");
+        }
+        Console.WriteLine("[covariant signature frame] self-test OK (required/optional modifier, owner/method scope)");
+    }
+
     sealed class Def
     {
         public string Name;
@@ -93,6 +111,9 @@ static class CovariantInterfaceReturnBridge
                 var slotParams = slotParamNodes.OfType<JsonObject>()
                     .Select(p => TypeJson.Read(p["type"]))
                     .Select(t => t == null ? null : SubstOwnerTvs(t, ifaceArgs)).ToArray();
+                var slotSignature = slotParamNodes.OfType<JsonObject>()
+                    .Select(p => SubstOwnerTvs(TypeJson.Read(FunctionSignatureIdentity.SignatureType(p)), ifaceArgs))
+                    .ToArray();
                 var slotRet0 = TypeJson.Read(slotSuspend ? slot["suspendRet"] : slot["ret"]);
                 var slotRet = slotRet0 == null ? null : SubstOwnerTvs(slotRet0, ifaceArgs);
                 if (slotParams.Any(p => p == null) || slotRet == null) continue;
@@ -133,7 +154,7 @@ static class CovariantInterfaceReturnBridge
                 var key = Str(implementation["name"]) + "`" + methodArity + "<"
                           + KotlinOverrideSlotBridge.MethodTypeParameterShapeKey(
                               slot["typeParams"] as JsonArray, ifaceArgs)
-                          + ">(" + string.Join(",", slotParams.Select(type =>
+                          + ">(" + string.Join(",", slotSignature.Select(type =>
                               ReferencedPhysicalTypeKey(type, refs, isValue))) + ")->"
                           + ReferencedPhysicalTypeKey(slotRet, refs, isValue)
                           + (unitValueReturn ? "[value-return]" : "");
@@ -144,6 +165,14 @@ static class CovariantInterfaceReturnBridge
                         : null;
                     bridge = BuildBridge(cls, implementation, slotParams, slotRet, logicalSuspendResult,
                         $"dotkt$covar${SafeName(name)}${bridgeOrdinal++}", unitValueReturn);
+                    // The MethodImpl body and declaration share the complete CLR
+                    // signature, even though modifiers do not change value storage.
+                    var bridgeParameters = (JsonArray)bridge["params"];
+                    for (var parameterIndex = 0; parameterIndex < slotParamNodes.Count; parameterIndex++)
+                        if (slotParamNodes[parameterIndex] is JsonObject slotParameter
+                            && slotParameter[FunctionSignatureIdentity.Key] is JsonNode discriminator)
+                            bridgeParameters[parameterIndex][FunctionSignatureIdentity.Key] = TypeJson.Write(
+                                SubstOwnerTvs(TypeJson.Read(discriminator), ifaceArgs));
                     bridges[key] = bridge;
                     methods.Add(bridge);
                     if (propertyName != null)
@@ -161,7 +190,7 @@ static class CovariantInterfaceReturnBridge
                     }
                 }
                 ((JsonArray)bridge["clrInterfaceImpls"]).Add(
-                    ImplDescriptor(ifaceSpec, name, methodArity, slotParams, slotRet,
+                    ImplDescriptor(ifaceSpec, name, methodArity, slotSignature, slotRet,
                         KotlinOverrideSlotBridge.SubstituteOwnerTypeParameterConstraints(
                             slot["typeParams"] as JsonArray, ifaceArgs), unitValueReturn));
                 bridgedSlots.Add(BridgedSlotKey(implementation, ifaceSpec,
@@ -238,6 +267,9 @@ static class CovariantInterfaceReturnBridge
                 var slotParams = declaration.PhysicalParameters
                     .Select(type => SupertypeGraph.SubstOwnerTvs(type, physicalOwnerArgs))
                     .ToArray();
+                var slotSignature = declaration.SignatureParameters
+                    .Select(type => SupertypeGraph.SubstOwnerTvs(type, physicalOwnerArgs))
+                    .ToArray();
                 var declarationMapping = new NullableRepresentationTypes(
                     refs.NullableTypeFrames.GetValueOrDefault(semanticOwner.Name), declaration.NullableFrame,
                     refs.NullableTypeFrames, isValue, policy: representations);
@@ -276,6 +308,7 @@ static class CovariantInterfaceReturnBridge
                             descriptorMember, methodArity, comparableParams, declaration.TypeParams,
                             physicalOwnerArgs, out descriptorOwner, out descriptorMember,
                             out slotParams, out slotRet)) continue;
+                    slotSignature = slotParams;
                     // An alias can change the return ABI (for example Boolean to void). That is not
                     // Kotlin return covariance; its binding/override lowering owns the adaptation.
                     var referenceReturn = SupertypeGraph.SubstOwnerTvs(declaration.PhysicalReturn, physicalOwnerArgs);
@@ -302,7 +335,7 @@ static class CovariantInterfaceReturnBridge
                 var key = implementationName + "`" + methodArity + "<"
                           + KotlinOverrideSlotBridge.MethodTypeParameterShapeKey(
                               declaration.TypeParams, physicalOwnerArgs)
-                          + ">(" + string.Join(",", slotParams.Select(type =>
+                          + ">(" + string.Join(",", slotSignature.Select(type =>
                               ReferencedPhysicalTypeKey(type, refs, isValue))) + ")->"
                           + ReferencedPhysicalTypeKey(slotRet, refs, isValue)
                           + (unitValueReturn ? "[value-return]" : "");
@@ -310,6 +343,11 @@ static class CovariantInterfaceReturnBridge
                 {
                     bridge = BuildBridge(cls, implementation, slotParams, slotRet, logicalSuspendResult,
                         $"dotkt$covar${SafeName(implementationName)}${bridgeOrdinal++}", unitValueReturn);
+                    // Imported MethodDefs carry the complete CLR signature, not
+                    // just the types used for value storage inside the body.
+                    var bridgeParameters = (JsonArray)bridge["params"];
+                    for (var i = 0; i < slotSignature.Length; i++)
+                        bridgeParameters[i]["type"] = TypeJson.Write(slotSignature[i]);
                     bridges[key] = bridge;
                     methods.Add(bridge);
                     if (accessorKind != null)
@@ -324,7 +362,7 @@ static class CovariantInterfaceReturnBridge
                     }
                 }
                 var descriptor = ImplDescriptor(descriptorOwner, descriptorMember, methodArity,
-                    slotParams, slotRet,
+                    slotSignature, slotRet,
                     KotlinOverrideSlotBridge.SubstituteOwnerTypeParameterConstraints(
                         declaration.TypeParams, physicalOwnerArgs), unitValueReturn);
                 var encoded = descriptor.ToJsonString();
@@ -517,19 +555,10 @@ static class CovariantInterfaceReturnBridge
         return spec.Args is { } args && args.Length == arity ? args : null;
     }
 
-    static TypeNode SubstOwnerTvs(TypeNode type, TypeNode[] args) => type switch
-    {
-        TypeNode.Tv { Scope: "type" } tv when tv.I >= 0 && tv.I < args.Length => args[tv.I],
-        TypeNode.Fqn f when f.Args is not null => new TypeNode.Fqn(f.Name, f.Args.Select(a => SubstOwnerTvs(a, args)).ToArray()),
-        TypeNode.Nullable n => new TypeNode.Nullable(SubstOwnerTvs(n.Of, args)),
-        TypeNode.Oblivious o => new TypeNode.Oblivious(SubstOwnerTvs(o.Of, args)),
-        TypeNode.Array a => new TypeNode.Array(SubstOwnerTvs(a.Elem, args)),
-        TypeNode.ByRef b => new TypeNode.ByRef(SubstOwnerTvs(b.Of, args)),
-        TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend, SubstOwnerTvs(fn.Ret, args),
-            fn.Params.Select(p => SubstOwnerTvs(p, args)).ToArray(),
-            fn.Recv == null ? null : SubstOwnerTvs(fn.Recv, args)),
-        _ => type,
-    };
+    // A MethodImpl signature includes custom modifiers as well as value types.
+    // Substitute the entire signature in one owner frame, preserving method variables.
+    static TypeNode SubstOwnerTvs(TypeNode type, TypeNode[] args) =>
+        SupertypeGraph.SubstOwnerTvs(type, args);
 
     static string TypeKey(TypeNode type) => TypeJson.Write(type).ToJsonString();
     static string SafeName(string name) => new(name.Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray());

@@ -34,6 +34,18 @@ static class ExistentialCaptureAlignment
     {
         var definitions = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
         CollectTypes(root, definitions);
+        // Retyping a capture field can expose a carrier at another closure's
+        // construction. Rediscover those uses until storage stops changing.
+        // Each update replaces a constructed classifier with its nominal carrier;
+        // no update reverses that projection, so the finite capture set converges.
+        while (AlignGeneratedCaptures(root, definitions, semanticByPhysical, refs)) { }
+    }
+
+    static bool AlignGeneratedCaptures(JsonObject root,
+        IReadOnlyDictionary<string, JsonObject> definitions,
+        IReadOnlyDictionary<string, string> semanticByPhysical, ReferenceMetadataIndex refs)
+    {
+        var changed = false;
         var uses = new Dictionary<(string Closure, int Position), List<CaptureUse>>();
         VisitOwner(root, uses, semanticByPhysical, refs);
 
@@ -68,12 +80,14 @@ static class ExistentialCaptureAlignment
 
             field["type"] = TypeJson.Write(carrier);
             parameter["type"] = TypeJson.Write(carrier);
+            changed = true;
             field.Remove("outer");
             parameter.Remove("outer");
             RetypeFieldUses(closure, closureName, fieldName, carrier);
             foreach (var use in captureUses)
                 RetypeCaptureBoundary(use.Expression, semanticOwner, carrier, refs);
         }
+        return changed;
     }
 
     static void CollectTypes(JsonObject owner, Dictionary<string, JsonObject> definitions)

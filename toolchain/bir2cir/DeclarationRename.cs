@@ -209,6 +209,14 @@ static class DeclarationRename
                         out _, out _, out var accessorMethod, out _)) return accessorMethod;
                 continue;
             }
+            // The frontend's override identity already selects this declaration.
+            // Value erasure can make its physical parameter vector differ from
+            // the implementing Kotlin signature; do not re-resolve that selection
+            // from the changed vector just to retrieve its CLR allocation.
+            if ((oo[DeclarationIdentityBinding.Key] as JsonValue)?.GetValue<string>() is string selectedId
+                && refs.TryDeclarationIdentity(selectedId, out _, out _, out var selectedIntrinsic, out _)
+                && selectedIntrinsic != null)
+                return selectedIntrinsic;
             if (!TryCallableSignature(declaration, out var signature, out var methodArity)
                 || signature.Length != arity) continue;
             if (refs.TryProjectedIndexerSlot(ownerSpec, member, methodArity, signature, out var indexerSlot, out _))
@@ -262,7 +270,10 @@ static class DeclarationRename
             methodArity = (node["typeParams"] as JsonArray)?.Count ?? 0;
             return signature.Length == parameters.Count && signature.All(type => type != null);
         }
-        if (node["sig"] is JsonArray callSignature)
+        // Physical value erasure can change a call's sig before allocation runs. The saved
+        // source vector still identifies the selected declaration and its intrinsic name.
+        if ((ForeignStarProjectionBinding.DeclarationSignature(node) ?? node["sig"] as JsonArray)
+            is JsonArray callSignature)
         {
             signature = callSignature.Select(TypeJson.Read).ToArray();
             methodArity = (node["typeArgs"] as JsonArray)?.Count ?? 0;

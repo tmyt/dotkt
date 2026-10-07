@@ -120,7 +120,7 @@ static partial class ClrMemberResolution
     {
         member = OpenDeclarationOf(member);
         // The SHIPPED declaration when the member's assembly has a separate one; otherwise the member itself.
-        // Only the signature is taken from it — the declaring head, its instantiation and the physical assembly
+        // Its name and signature are taken from it — the declaring head, its instantiation and the physical assembly
         // are already decided from the resolved member and must not be re-derived here.
         var shipped = _refs.PhysicalTwinOf(member, DeclaringDefOf(member)) ?? member;
         var ctor = member as ConstructorInfo;
@@ -131,7 +131,7 @@ static partial class ClrMemberResolution
             Kind: kind,
             Assembly: PhysicalAssemblyOf(member),
             DeclaringType: DeclaringTypeRef(member, openOwner, ownerArgs, ownerArgumentsAreMethodSlots),
-            Name: ctor != null ? MemberRefNode.CtorName : member.Name,
+            Name: ctor != null ? MemberRefNode.CtorName : method.Name,
             GenericArity: member.IsGenericMethod ? member.GetGenericArguments().Length : 0,
             ReturnType: ctor != null
                 ? MemberRefNode.Void
@@ -354,9 +354,23 @@ static partial class ClrMemberResolution
     // ONLY by the interleaving of a modreq and a modopt would be beyond what reflection can tell us.
     static TypeNode Modified(TypeNode node, Type[] required, Type[] optional)
     {
-        foreach (var m in required) node = new TypeNode.Mod(true, RefTypeOf(m), node);
-        foreach (var m in optional) node = new TypeNode.Mod(false, RefTypeOf(m), node);
+        foreach (var m in required) node = new TypeNode.Mod(true, ModifierTypeOf(m), node);
+        foreach (var m in optional) node = new TypeNode.Mod(false, ModifierTypeOf(m), node);
         return node;
+    }
+
+    // A modifier names a metadata declaration, not the runtime representation
+    // of a value of that Kotlin type. Preserve its exact nominal head; only its
+    // generic arguments cross the reference/runtime vocabulary boundary.
+    static TypeNode ModifierTypeOf(Type type)
+    {
+        if (type.IsGenericParameter) return RefTypeOf(type);
+        var definition = type.IsGenericType ? type.GetGenericTypeDefinition() : type;
+        if (!type.IsGenericType || !_refs.Aliases.ContainsKey(AliasKey(definition)))
+            return RefTypeOf(type);
+        return new TypeNode.Fqn(PhysicalTypeName(definition), type.IsGenericType
+            ? type.GetGenericArguments().Select(argument => RefTypeOf(argument, typeArg: true)).ToArray()
+            : null);
     }
 
     // A resolved member's declared type, spelled as the TARGET spells it (see the header). No arity stripping,

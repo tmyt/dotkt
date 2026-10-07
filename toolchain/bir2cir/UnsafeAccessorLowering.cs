@@ -257,6 +257,15 @@ static class UnsafeAccessorLowering
         var referencedTarget = ResolveReferencedMethodTarget(
             target, targetDeclarationId, ownerType, targetName, methodArity, targetStatic, signature,
             TypeJson.Read(memberReturnType), methodTypeParams, propertyAccessor != null, refs);
+        JsonArray nativeOwnerParameters = null;
+        if (target == null && targetDeclarationId == null && refs != null && !refs.HasDotKtOwner(ownerType.Name))
+        {
+            var native = ClrMemberResolution.ResolveMethodForUnsafeAccessor(refs, ownerType, targetName,
+                targetStatic, methodArity, (memberSignature ?? signature).Select(TypeJson.Read).ToArray(),
+                out nativeOwnerParameters, out var nativeMethodParameters);
+            referencedTarget = new ReferencedUnsafeAccessorMethod(native.Name, native.ParameterTypes,
+                native.ReturnType, nativeMethodParameters, null);
+        }
         if (referencedTarget != null)
             targetName = referencedTarget.PhysicalMember;
 
@@ -286,23 +295,20 @@ static class UnsafeAccessorLowering
         if (referencedTarget != null)
             signature = new JsonArray(referencedTarget.Parameters.Select(TypeJson.Write).ToArray());
         else if (target?["params"] is JsonArray targetParameters)
-            signature = new JsonArray(targetParameters.OfType<JsonObject>().Select(parameter =>
-                parameter["type"]?.DeepClone()
-                    ?? throw new InvalidOperationException(
-                        $"UnsafeAccessor target '{ownerType.Name}.{targetName}' has an untyped parameter")
-            ).ToArray());
+            signature = FunctionSignatureIdentity.Signature(targetParameters);
         var key = $"{caller.Name}|method|{ownerType.Name}|{targetName}|{targetStatic}|{methodArity}|" +
                   string.Join(";", signature.Select(TypeKey)) + "|" + TypeKey(declaredAccessorReturn) +
                   "|declaration:" + targetDeclarationId;
         var definition = EnsureAccessor(caller, accessors, key, targetName, targetStatic ? 2 : 1,
-            ownerNode, PhysicalOwnerTypeParams(targetHost, ownerTypeParams, ownerType, refs),
+            ownerNode, nativeOwnerParameters ?? PhysicalOwnerTypeParams(targetHost, ownerTypeParams, ownerType, refs),
             referencedTarget?.TypeParams ?? PhysicalMethodTypeParams(target, methodTypeParams),
             declaredAccessorReturn, signature, includeTarget: true,
             targetDeclarationId: targetDeclarationId,
             nullableGenericReturn: referencedTarget?.NullableGenericReturn is TypeNode nullableGenericReturn
                 ? JsonValue.Create(TypeNode.ToJson(nullableGenericReturn))
                 : target?["nullableGenericRet"],
-            nullableErasureOwnershipKnown: target != null || referencedTarget != null);
+            nullableErasureOwnershipKnown: target != null || referencedTarget != null,
+            localOwner: targetHost);
 
         var args = new JsonArray();
         if (targetStatic)
@@ -528,7 +534,8 @@ static class UnsafeAccessorLowering
             PhysicalOwnerTypeParams(targetHost, ownerTypeParams, ownerType, refs),
             PhysicalMethodTypeParams(target, methodTypeParams), declaredReturnType,
             signature, includeTarget: true,
-            targetDeclarationId: Str(target?[DeclarationIdentityBinding.Key] ?? access[DeclarationIdentityBinding.Key]));
+            targetDeclarationId: Str(target?[DeclarationIdentityBinding.Key] ?? access[DeclarationIdentityBinding.Key]),
+            localOwner: targetHost);
         var callOwner = AccessorCallOwner(caller, definition, ownerType.Args ?? Array.Empty<TypeNode>());
 
         var replacement = new JsonObject
@@ -658,7 +665,8 @@ static class UnsafeAccessorLowering
         Dictionary<string, AccessorDefinition> accessors, string key, string targetName, int kind,
         JsonNode ownerNode, JsonArray ownerTypeParams, JsonArray methodTypeParams, JsonNode returnType,
         JsonArray signature, bool includeTarget, string targetDeclarationId = null,
-        JsonNode nullableGenericReturn = null, bool nullableErasureOwnershipKnown = false)
+        JsonNode nullableGenericReturn = null, bool nullableErasureOwnershipKnown = false,
+        Host localOwner = null)
     {
         if (accessors.TryGetValue(key, out var existing)) return existing;
         if (TypeJson.Read(ownerNode) is not TypeNode.Fqn owner)
@@ -693,19 +701,27 @@ static class UnsafeAccessorLowering
         }
 
         // Owner generic parameters must remain TYPE parameters with their original positions. Putting them on the
-        // accessor method is rejected by .NET 9+'s strict UnsafeAccessor signature matcher. A compiler-reserved
-        // top-level holder supplies that exact type frame; its internal wrapper is the only same-assembly entry point,
-        // while the attributed method itself remains private static extern.
-        var holderName = "dotkt$unsafe$holder$" + System.Threading.Interlocked.Increment(ref _counter);
+        // accessor method is rejected by .NET 9+'s strict UnsafeAccessor signature matcher. A local target already
+        // supplies the exact frame and can name its own private nested type. Host the accessor there: an unrelated
+        // top-level holder cannot legally name that type in a callable signature. Referenced owners cannot be
+        // extended, so they continue to use a synthesized holder. Target declaration visibility remains unchanged.
+        var holderName = localOwner?.Name
+            ?? "dotkt$unsafe$holder$" + System.Threading.Interlocked.Increment(ref _counter);
         var holderTypeParams = RenamedTypeParams(ownerTypeParams, "__owner");
         var externMethod = AccessorDeclaration(accessorName, returnType, declarationParams, kind, targetName);
+        StampNullableErasureOwnership(externMethod, nullableGenericReturn, nullableErasureOwnershipKnown);
         if (targetDeclarationId != null) externMethod["unsafeTargetDeclarationId"] = targetDeclarationId;
         if (methodParams != null) externMethod["typeParams"] = methodParams.DeepClone();
         var entryName = accessorName + "$invoke";
         var wrapper = WrapperDeclaration(entryName, accessorName, holderName, holderTypeParams.Count,
             methodParams?.Count ?? 0, returnType, declarationParams, methodParams);
         StampNullableErasureOwnership(wrapper, nullableGenericReturn, nullableErasureOwnershipKnown);
-        EnsureArray(caller.Root, "types").Add(new JsonObject
+        if (localOwner != null)
+        {
+            localOwner.Methods.Add(externMethod);
+            localOwner.Methods.Add(wrapper);
+        }
+        else EnsureArray(caller.Root, "types").Add(new JsonObject
         {
             ["name"] = holderName,
             ["kind"] = "class",
@@ -732,8 +748,8 @@ static class UnsafeAccessorLowering
         bool ownershipKnown)
     {
         // The late nullable-use pass needs the selected LOCAL declaration's ownership, not a guess from `object`.
-        // Stamp only the callable entry (flat accessor or holder wrapper); its extern target and parameter vector
-        // already state their physical ABI. The collector consumes the key before CIR emission.
+        // Both the wrapper and its extern target state the selected physical ABI.
+        // The collector consumes the key before CIR emission.
         if (nullableGenericReturn != null)
             entry["nullableGenericRet"] = nullableGenericReturn.DeepClone();
         if (ownershipKnown)
@@ -824,10 +840,15 @@ static class UnsafeAccessorLowering
         else if (frontendVisibility is not ("private" or "protected"))
             return;
 
+        // The frontend signature selects the constructor; the accessor must
+        // declare its selected physical ABI, including signature modifiers.
+        if (target?["params"] is JsonArray targetParameters)
+            signature = FunctionSignatureIdentity.Signature(targetParameters);
         var physicalOwnerTypeParams = PhysicalOwnerTypeParams(targetHost, ownerTypeParams, ownerType, refs);
         var key = $"{caller.Name}|ctor|{ownerType.Name}|" + string.Join(";", signature.Select(TypeKey));
         var definition = EnsureAccessor(caller, accessors, key, null, 0, access["type"], physicalOwnerTypeParams,
-            null, OpenOwner(access["type"], physicalOwnerTypeParams?.Count ?? 0), signature, includeTarget: false);
+            null, OpenOwner(access["type"], physicalOwnerTypeParams?.Count ?? 0), signature, includeTarget: false,
+            localOwner: targetHost);
         var callOwner = AccessorCallOwner(caller, definition, ownerType.Args ?? Array.Empty<TypeNode>());
         var replacement = new JsonObject
         {
@@ -916,7 +937,7 @@ static class UnsafeAccessorLowering
         var definition = EnsureAccessor(caller, accessors, key, targetName, targetStatic ? 4 : 3, ownerNode,
             PhysicalOwnerTypeParams(targetHost, ownerTypeParams, ownerType, refs), null, declaredByRefType,
             new JsonArray(), includeTarget: true, nullableGenericReturn: nullableGenericByRef,
-            nullableErasureOwnershipKnown: target != null);
+            nullableErasureOwnershipKnown: target != null, localOwner: targetHost);
         var callOwner = AccessorCallOwner(caller, definition, ownerType.Args ?? Array.Empty<TypeNode>());
 
         // A read and a write each need their OWN pointer call: a JsonNode has one parent, so handing the same

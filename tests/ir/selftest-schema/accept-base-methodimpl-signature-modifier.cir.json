@@ -1,0 +1,13 @@
+{
+  "types": [{
+    "name": "BaseSignature", "kind": "class",
+    "methods": [{
+      "name": "apply", "params": [], "ret": {"t": "fqn", "name": "void"}, "body": [],
+      "clrBaseImpls": [{
+        "owner": {"t": "fqn", "name": "BaseSignature"}, "member": "apply", "arity": 0,
+        "params": [{"t": "mod", "req": false, "m": {"t": "fqn", "name": "Marker"}, "of": {"t": "fqn", "name": "object"}}],
+        "ret": {"t": "mod", "req": false, "m": {"t": "fqn", "name": "Marker"}, "of": {"t": "fqn", "name": "object"}}
+      }]
+    }]
+  }]
+}

@@ -15,7 +15,8 @@ static class FunctionSignatureIdentity
     {
         foreach (var parameters in DeclarationParameters(root))
             foreach (var parameter in parameters.OfType<JsonObject>())
-                if (parameter[Key] == null && FunctionValueRepresentation.ContainsOrdinaryFunction(parameter["type"]))
+                if (parameter[Key] == null && (TypeJson.Read(parameter["type"]) is TypeNode.Tv
+                    || FunctionValueRepresentation.ContainsOrdinaryFunction(parameter["type"])))
                     parameter[Key] = parameter["type"].DeepClone();
     }
 
@@ -35,6 +36,7 @@ static class FunctionSignatureIdentity
             {
                 obj.Remove(CallKey);
                 obj.Remove(ConstructorSignatureIdentity.CallKey);
+                obj.Remove(ConstructorSignatureIdentity.SourceCallKey);
                 obj.Remove(ConstructorSignatureIdentity.ParameterKey);
                 obj.Remove(ConstructorSignatureIdentity.PhysicalKey);
                 foreach (var child in obj.Select(pair => pair.Value).ToList()) RemoveCallFacts(child);

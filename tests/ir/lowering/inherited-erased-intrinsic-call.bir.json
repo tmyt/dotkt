@@ -1,0 +1,44 @@
+{
+  "fileClass": "InheritedErasedIntrinsicCallKt",
+  "hasMain": false,
+  "fields": [], "properties": [], "types": [], "refTypes": [],
+  "methods": [{
+    "name": "compare", "static": true, "vis": "public",
+    "params": [
+      {"name": "left", "type": {"t": "fqn", "name": "kotlin.time.Duration"}},
+      {"name": "right", "type": {"t": "fqn", "name": "kotlin.time.Duration"}}
+    ],
+    "ret": {"t": "fqn", "name": "kotlin.Int"},
+    "body": [{"k": "return", "value": {
+      "k": "callInstance", "virtual": true,
+      "ownerType": {"t": "fqn", "name": "kotlin.time.Duration"},
+      "recv": {"k": "local", "name": "left"},
+      "method": "compareTo",
+      "sig": [{"t": "fqn", "name": "kotlin.time.Duration"}],
+      "ret": {"t": "fqn", "name": "kotlin.Int"},
+      "args": [{"k": "local", "name": "right"}],
+      "overrides": [{
+        "owner": {"t": "fqn", "name": "kotlin.Comparable", "args": [
+          {"t": "fqn", "name": "kotlin.time.Duration"}
+        ]},
+        "member": "compareTo", "kind": "method", "arity": 1
+      }]
+    }}]
+  }, {
+    "name": "contains", "static": true, "vis": "public",
+    "typeParams": [{"name": "A"}, {"name": "B"}],
+    "params": [
+      {"name": "set", "type": {"t": "fqn", "name": "kotlin.collections.HashSet", "args": [{"t": "tv", "scope": "method", "i": 1}]}},
+      {"name": "value", "type": {"t": "tv", "scope": "method", "i": 1}}
+    ],
+    "ret": {"t": "fqn", "name": "kotlin.Boolean"},
+    "body": [{"k": "return", "value": {
+      "k": "callInstance", "virtual": true,
+      "ownerType": {"t": "fqn", "name": "kotlin.collections.HashSet", "args": [{"t": "tv", "scope": "method", "i": 1}]},
+      "recv": {"k": "local", "name": "set"}, "method": "contains",
+      "sig": [{"t": "tv", "scope": "type", "i": 0}],
+      "ret": {"t": "fqn", "name": "kotlin.Boolean"},
+      "args": [{"k": "local", "name": "value"}]
+    }}]
+  }]
+}

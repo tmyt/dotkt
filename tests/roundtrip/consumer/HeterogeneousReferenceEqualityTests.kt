@@ -10,6 +10,16 @@ private fun <T, U : T> throughSplice(a: T, b: U): Boolean {
     check(calls == 1)
     return result
 }
+private fun concreteSplicedPair(stop: Boolean): Boolean {
+    return splicedPair<Int, Int>(1000, 1000) {
+        if (stop) return false
+    }
+}
+private fun concreteSplicedStructPair(stop: Boolean): Boolean {
+    return splicedPair(System.ValueTuple2<Int, Int>(1, 2), System.ValueTuple2<Int, Int>(1, 3)) {
+        if (stop) return false
+    }
+}
 
 class HeterogeneousReferenceEqualityTests {
     @TestAttribute
@@ -47,6 +57,8 @@ class HeterogeneousReferenceEqualityTests {
         check(pairSame<Any, Any>(boxed, boxed))
         check(!pairSame<Int, Int>(1000, 1000))
         check(!pairReversed<Int, Int>(1000, 1000))
+        check(!concreteSplicedPair(false))
+        check(!concreteSplicedStructPair(false))
         check(homogeneous(1000, 1000))
         check(computedBoolean(false, true) && computedBooleanReversed(false, true))
         check(!computedBoolean(true, true) && !computedBooleanReversed(true, true))

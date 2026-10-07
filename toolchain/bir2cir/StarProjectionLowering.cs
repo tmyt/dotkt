@@ -279,7 +279,9 @@ static class StarProjectionLowering
                 {
                     ["k"] = "classRef",
                     ["type"] = TypeJson.Write(new TypeNode.Fqn(
-                        iterable ? "kotlin.collections.Iterable" : "kotlin.collections.Collection", elementArgs)),
+                        // The runtime helper compares actual CLR interface constructions,
+                        // not Kotlin value carriers (which may be System.Object).
+                        iterable ? "System.Collections.Generic.IEnumerable" : "System.Collections.Generic.IReadOnlyCollection", elementArgs)),
                 });
                 helperSignature.Add(TypeJson.Write(AnyN));
                 helperArguments.Add(sourceSet?.Args is { Length: > 0 } && !ContainsProjection(sourceSet)

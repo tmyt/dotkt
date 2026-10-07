@@ -99,7 +99,14 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   field, property, local, and nested value position carrying `G<X>` uses the declaration's non-generic existential
   interface, including private declarations and generic inner classes. External CLR declarations retain their CLR
   contract; bir2cir authors explicit native argument/storage/delegate conversions and exact override bridges.
+  In particular, nesting CLR-defined generic types does not erase their closed CLR arguments:
+  `Tuple<Tuple<string, string>, string>` remains that exact CLR type when constructed or passed from Kotlin
+  (using the projected `System.Tuple2` name). Kotlin-defined carrier ABI does not justify changing an existing
+  CLR API's parameter types. Tests for CLR-owned constructions are separate from C# consumers of Kotlin-owned types.
   These boundaries require the actual CLR construction and do not promise that an unchecked Kotlin cast can change it.
+  C# exposure of Kotlin-defined types may use compiler-generated representations. This permission does not waive
+  Kotlin type safety at imported native calls: an ordinary well-typed Kotlin call must not acquire a failing
+  invariant CLR cast solely because its source-level and physical generic arguments differ.
   Construction and inheritance remain exact closed
   CLR types: a `new G<String>`, a base or implemented-interface TypeSpec, lexical
   `this`, an inner class's hidden enclosing-instance slot, and compiler-generated storage for that receiver retain
@@ -132,9 +139,12 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   the same; an exact name/arity/parameter-type-shape declaration key bridges a ref.dll whose implementation twin
   assigns different tokens or forwards framework types from a facade. A non-unique declaration key is rejected;
   runtime argument values never participate in overload selection. The runtime creates no wrapper
-  and preserves reference identity. A star local initialized from one exact closed CLR interface retains that
-  closed-view fact for dispatch; this matters when one CLR object implements both `G<X>` and `G<Y>`. If no such
-  static fact remains and the runtime object exposes multiple closures of the same generic definition, dispatch is
+  and preserves reference identity. A star local initialized from a closed source view retains that view for
+  dispatch; ordinary covariant source views retain it across parameter boundaries too. The runtime uses the
+  requested construction only when the receiver is CLR-assignable to it, including native variance. A Kotlin
+  unchecked cast or erased value slot alone does not prove that construction: otherwise dispatch requires a unique
+  actual closure. This matters when one CLR object implements both `G<X>` and `G<Y>`. If no supported source view
+  selects the declaration and the runtime object exposes multiple closures of the same generic definition, dispatch is
   rejected as ambiguous instead of selecting whichever interface reflection happens to enumerate first. A foreign
   star member with `ref`/`out` parameters, a `ref` return, or a byref-like parameter/result is rejected at compile
   time: the reflection `object[]` ABI cannot preserve managed-reference aliasing or box a byref-like value. Generic
@@ -147,9 +157,9 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
 - **The same semantic-boundary rule applies to projected `@ClrTypeAlias` types.** A projection must not be lowered
   mechanically as an invariant construction of its CLR alias. For example, `MutableList<out T>` is carried as Kotlin
   declaration metadata over an opaque CLR slot, and member access binds to the exact closed interface implemented by
-  the runtime object. A projection with a concrete CLR-representable head may retain that head when its variance is
-  faithful: `Comparable<in Number>` lowers to `IComparable<Number>`, while `Comparable<*>` uses non-generic
-  `IComparable`. When a projected map is passed to a stdlib copy constructor, the trusted collection-factory contract
+  the runtime object. Ordinary variant alias values, including `Comparable<in Number>`, use opaque slots;
+  exact CLR member descriptors still name their concrete interfaces. Matching CLR variance alone is insufficient
+  for Kotlin value-type arguments. When a projected map is passed to a stdlib copy constructor, the trusted collection-factory contract
   performs an entry-wise copy instead of casting the source to an invariant `IDictionary<K,V>`.
 - **Corollary — a star-projected collection classifier must erase its element arguments.** On the JVM `x is Map<*,*>` and a subsequent
   `x as Map<*,*>` erase to a raw `Map`, so a `Dictionary<int,int>` passes trivially. On the CLR the star projection
@@ -599,14 +609,20 @@ The **primitive** operators stay IEEE (matching Kotlin, and `il-nancmp`-green): 
 ## 5a-bis. Referential identity `===` on primitive/boxed/enum values deviates from Kotlin/JVM
 
 `===` (`EQEQEQ`) retains its identity-comparison intent until bir2cir knows both physical
-operand types, then lowers to `binOp ==` → IL `ceq`, rather than the structural
-`==`/`.equals()` helpers (§5a). Distinct physical operand types are explicitly converted
-to object references before comparison. This includes generic/object, distinct generic
-slots, generic/reference, and nullable-value/object pairs. It does not unbox an object
-to the other operand's type or call `Equals`; reference-valued instantiations retain
-their identity. Homogeneous generic/value comparisons keep the raw comparison below.
+operand types, then selects `binOp ==` → IL `ceq`, rather than the structural
+`==`/`.equals()` helpers (§5a). Distinct slots compare object references. This includes
+generic/object, distinct generic slots, generic/reference, and nullable-value/object
+pairs. A homogeneous generic comparison retains its declaration frame independently
+of erased object storage: the raw-value path below applies only when that frame's CLR
+instantiation is primitive or enum and both values inhabit it. Otherwise it compares
+the existing references, including non-primitive structs and unchecked views that do
+not inhabit the CLR instantiation. Both operands are evaluated once. It never calls
+`Equals` or forcibly unboxes one operand to the other operand's type.
+These choices belong to the operand declarations and survive inline substitution:
+instantiating two distinct generic slots with the same concrete type does not turn
+their comparison into homogeneous value equality.
 
-Here, homogeneous means that both physical operands retain the same generic slot,
+Here, homogeneous means that both operands declare the same bare generic slot (`T`, not `T?`),
 as in `fun <T> ident(a: T, b: T) = a === b`. This differs from
 `fun <T> nullableIdent(a: T?, b: T) = a === b`: on DotKt,
 `ident<Int>(1000, 1000)` is `true`, while `nullableIdent<Int>(1000, 1000)` is
@@ -614,7 +630,7 @@ as in `fun <T> ident(a: T, b: T) = a === b`. This differs from
 signature does not imply that a non-null argument uses the homogeneous value path.
 
 Because CLR generics are **reified** (§2) and a basic `enum class` is a real CLR
-value-type `enum` (`BirEmitterDeclarations.kt`, `BirEmitter.enumDef`), that single `ceq` lowering produces
+value-type `enum` (`BirEmitterDeclarations.kt`, `BirEmitter.enumDef`), these comparison paths produce
 three JVM-diverging outcomes:
 
 - **A generic type parameter instantiated over a primitive compares by VALUE, not identity.**
@@ -737,9 +753,10 @@ therefore cannot satisfy `IDictionary<K,object>`, and a dictionary containing mu
 compatible.
 
 bir2cir separates a Kotlin value slot from an exact CLR declaration. When a trusted alias's Kotlin declaration
-variance is absent from its CLR target, the value slot is opaque (`object`), with the full Kotlin application
+has variance, the value slot is opaque (`object`), with the full Kotlin application
 retained in metadata. This applies recursively in fields, method slots and generic containers. The original
 reference is retained: widening a Map does not copy or wrap it, so identity and subsequent updates are preserved.
+This includes aliases to variant CLR interfaces: CLR variance does not relate value-type instantiations.
 Constructors, physical inheritance edges and selected CLR member declarations retain their exact reified types.
 `MutableMap<K,V>` is invariant and keeps its exact dictionary face unless an explicit projection requires erasure.
 Classifier tests and casts still check the dictionary classifier; an opaque slot does not mean every object is a Map.
@@ -752,7 +769,7 @@ Consequences and remaining implementation limitations:
 - **`Map.get` is null-on-missing** (Kotlin semantics), synthesized as `ContainsKey` + `get_Item` in
   `kotlin.collections.ClrMapDefaults` (`IDictionary`'s raw indexer throws); `put`/`remove` return the previous value
   the same way. `size`/`containsKey`/`clear` bind 1:1 (`Count`/`ContainsKey`/`Clear`).
-- **`Map.keys`/`values`/`entries` are SNAPSHOTS, not live views** (Kotlin's are live): `keys`/`entries` return an
+- **Foreign BCL-backed `Map.keys`/`values`/`entries` are SNAPSHOTS, not live views** (Kotlin's are live): `keys`/`entries` return an
   identity-bearing Kotlin `Set`, `values` a
   BCL List. Entry VALUES are live (`entry.value`/`setValue` read/write through the backing map), but a key
   added/removed after taking the view is not reflected in it. `MutableMap.keys` is a live identity-bearing Kotlin view:
@@ -761,9 +778,9 @@ Consequences and remaining implementation limitations:
   stable physical MethodDef names after erasure; neither declaration order nor an emitter-local `$dupN` repair
   chooses the call target. Destructuring `for ((k,v) in m)` therefore follows the overload selected by Kotlin for
   the receiver's static type.
-- A **user class implementing `Map`/`MutableMap` in pure Kotlin** must satisfy the full `IDictionary` surface; today
-  only the `@ClrIntrinsic`-renamed slots are generated, so such classes (stdlib `AbstractMap`, `MapWithDefaultImpl`)
-  fail to LOAD when touched — the known under-tested pure-Kotlin dual-rep path (`dual-representation-stdlib-types`).
+- **Kotlin-authored Map implementations** retain their declared operations and views through semantic slots.
+  bir2cir synthesizes the additional native dictionary surface separately. A snapshot restriction of a foreign
+  BCL-backed view does not replace a Kotlin implementation's authored getter or mutation behavior.
 - **Map delegation (`val name by data`) requires a String-KEYED map at runtime.** The stdlib
   `Map<in String, V>.getValue` body pins `getOrImplicitDefault`'s K to `String` (a `(this as Map<String, V>)` CLR
   adaptation in `MapAccessors.kt`): the frontend approximates the contravariant captured K to `Any`, which under
@@ -840,11 +857,11 @@ Two consequences worth stating:
   a concurrent-modification error out of an invalidated BCL enumerator. (A Kotlin implementer that OVERRIDES one of
   the members defines its own behavior for these forms, exactly as on any other platform.)
 
-## 5c-bis. Read-only collection arguments retain their canonical CLR face
+## 5c-bis. Read-only collection values retain their Kotlin identity
 
-Generic nesting does not turn a read-only collection into a mutable collection. `List<T>` keeps its
-`IReadOnlyList<T>` face, and `Collection<T>` keeps `IReadOnlyCollection<T>`, including inside arrays and generic
-containers. A read-only-only Kotlin or foreign implementation must not be cast to `IList<T>`/`ICollection<T>`
+Generic nesting does not turn a read-only collection into a mutable collection. Ordinary Kotlin `List<T>` and
+`Collection<T>` value slots are opaque, with their Kotlin applications retained in metadata and nominal signature
+modifiers. Their operational CLR interfaces remain distinct. A read-only-only Kotlin or foreign implementation must not be cast to `IList<T>`/`ICollection<T>`
 merely because it is stored in another collection.
 
 The current compiler also emits `ICollection<T>`/`IList<T>` storage faces on its own read-only collection
@@ -852,10 +869,9 @@ implementations, with unsupported mutators throwing `NotSupportedException`. The
 surface, not evidence of Kotlin mutable-collection membership and not a requirement imposed on foreign read-only
 implementations. Kotlin classifier checks retain that distinction.
 
-`Array<List<String>>` therefore uses `IReadOnlyList<string>[]`, consistently with a generic `Array<T>` whose
-ordinary type argument is `List<String>`. Allocation, element access and generic calls use that same representation;
-they do not copy the array or its elements. Nullable generic representations remain a separate declaration-owned
-contract. Map's invariant outer construction is handled by §5c, not by changing the type of its contained lists.
+The same value-slot rule applies to lists stored inside arrays and generic containers; it does not introduce
+copies of their elements. Exact foreign declarations of `IReadOnlyList<string>[]` retain that native signature.
+Nullable generic representations remain a separate declaration-owned contract.
 
 ## 5c-ter. Physical collection conversions must preserve source semantics
 
@@ -882,7 +898,8 @@ assembly-level `[AssemblyMetadata("DotKt.Compiler", "metadata-v1")]` marker and 
 `DotKt.Runtime.CompilerServices.KotlinFileClassAttribute` carrier (`IsDotKtEmittedAssembly`). A matching namespace or
 attribute full name without those provenance markers is ignored. Consequences:
 
-- **A DotKt library's `fun f(xs: List<String>)`** compiled its param to `IReadOnlyList<String>`; a consumer's
+- **A DotKt library's `fun f(xs: List<String>)`** carries its Kotlin parameter identity in trusted metadata over
+  an opaque physical slot; a consumer's
   `listOf(...)` (a `kotlin.collections.List`) now **unifies** with it, and generic inference / element-member
   resolution (`h.items.size`) work exactly as same-module. The reverse targets are the inverse of the forward table:
   `IReadOnlyList→List`, `IList→MutableList`, `IReadOnlyCollection→Collection`, `ICollection→MutableCollection`,
@@ -893,13 +910,9 @@ attribute full name without those provenance markers is ignored. Consequences:
   Kotlin `List`, and it has a DIFFERENT member surface (`.Count`/`.Add`/`.IndexOf` vs Kotlin `.size`/`.add`), so
   façade-free interop keeps direct BCL member access. This is why the reverse map is DotKt-gated and **not** universal
   like `System.Int32→kotlin.Int` (which is safe universally because the CLR type and member surface are identical).
-- **Deliberate lossiness (accepted).** Because the forward map is many-to-one, the reverse cannot recover the original
-  in the collapsed families: a DotKt `fun g(m: MutableMap<K,V>)` surfaces cross-module as a `Map<K,V>` param (and a
-  `MutableMap`/`Set`/`MutableSet` **return** surfaces widened to `Map`/`Collection`/`MutableCollection`). This mirrors
-  Kotlin/JVM's own `MutableMap`→`java.util.Map` erasure hole; the frontend's read-only mutability gate is not
-  reconstructed cross-module. **Disposition: documented, not fixed** — the exact restore would need a per-signature
-  round-trip stamp of the original Kotlin collection identity (a bir2cir `RoundtripMetadata` follow-up). `List`,
-  `MutableList`, and `Map` — the common cases — round-trip precisely.
+- **Physical aliases are not sufficient to recover Kotlin identity.** Current compiler-produced declarations carry
+  per-signature Kotlin type metadata, including collection identity, which readers must honor rather than guessing
+  a read-only or mutable source classifier from an erased slot. No fallback for older producer artifacts is promised.
 
 ## 5d. `Appendable` is `System.Text.StringBuilder`
 
@@ -2092,13 +2105,13 @@ Concretely:
 | `fun f(x: Int?)`, `fun f(): Int?`, `val x: Int?` | `Nullable<int32>` — the direct slot is unchanged |
 | `fun <T> f(x: T?)` | `object` — no CLR slot expresses an unconstrained `T?` |
 | Open `Box<T?>`, `Array<T?>` | `Box<N(T)>`, `N(T)[]` in the declaration's explicit frame |
-| `List<Int?>` / `MutableList<Int?>` | `IReadOnlyList<object>` / `IList<object>` |
+| `List<Int?>` / `MutableList<Int?>` | opaque `object` value slot / `IList<object>` |
 | `Map<String, Int?>`, `Pair<Int?, String>`, `Box<Int?>` | `object`, `Pair<object, string>`, `Box<object>` |
 | `Array<Int?>` | `object[]` |
 | `(Int) -> Int?` | `Func<object, object>` — ordinary Kotlin function carrier |
 | `(Int?) -> String` | `Func<object, object>` — ordinary Kotlin function carrier |
-| `f<Int?>(…)`, `Comparable<Int?>` | instantiated at `object`, `IComparable<object>` |
-| `List<String?>`, `Array<String?>`, `(String?) -> R` | `IReadOnlyList<string>`, `string[]`, `Func<object, object>` for boxable `R` |
+| `f<Int?>(…)`, `Comparable<Int?>` | instantiated at `object`, opaque `object` value slot |
+| `List<String?>`, `Array<String?>`, `(String?) -> R` | opaque `object` value slot, `string[]` allocation, `Func<object, object>` for boxable `R` |
 
 **Why the two positions differ.** The Kotlin type system's contract for an unconstrained `T?` is a runtime null for
 every `T`, which is more than a reified CLR argument expresses — so a generic position has to box. A scalar slot has

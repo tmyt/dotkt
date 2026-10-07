@@ -25,6 +25,7 @@ public actual interface RandomAccess
 public actual class ArrayList<E> : MutableList<E>, RandomAccess {
     public actual constructor()
     public actual constructor(initialCapacity: Int)
+    @kotlin.clr.ClrCollectionFactory("list")
     public actual constructor(elements: Collection<E>)
 
     @kotlin.clr.ClrIntrinsic("TrimExcess")

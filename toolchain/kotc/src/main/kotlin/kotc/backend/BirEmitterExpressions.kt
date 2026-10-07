@@ -429,7 +429,7 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 		// A generic .NET type (`Collection<Int>()`) -> a constructed `clrg:` spec; non-generic stays plain.
 		val clr: TypeNode? = klass?.let { clrName(it) }?.let { net ->
 			val args = (node.type as? IrSimpleType)?.arguments
-				?.mapNotNull { (it as? IrTypeProjection)?.type?.let(::birType) }
+				?.map(::birTypeProjection)
 			if (args.isNullOrEmpty()) TypeNode.Fqn(net) else TypeNode.Fqn(net, args)
 		}
 		// A collection ctor `ArrayList<R>()` / `HashSet<T>()` (kotlin.collections.* = java.util.* typealiases) -> the

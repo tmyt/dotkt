@@ -2,6 +2,7 @@ import NUnit.Framework.TestAttribute
 import roundtrip.inlineclosureownership.ClosureOwner
 
 private fun <T> importedGenericClosure(value: T): T = ClosureOwner(value).invokeBlock { value }
+private fun <T> importedGenericSupplier(value: T) = ClosureOwner(value).supplier { value }
 
 private class ClosureValue<T>(val value: T)
 
@@ -28,6 +29,9 @@ class InlineClosureOwnershipRoundtripTests {
         check(importedConstructedClosure(17) == 17)
         check(importedConstructedClosure("constructed") == "constructed")
         check(ClosureOwner(43).sameOwner() == 43)
+        check(importedGenericSupplier(47).read() == 47)
+        check(importedGenericSupplier("supplier").read() == "supplier")
+        check(importedGenericSupplier<String?>(null).read() == null)
     }
 
     @TestAttribute
@@ -38,6 +42,8 @@ class InlineClosureOwnershipRoundtripTests {
         check(receiver.deferred()() == 23)
         check(receiver.nested("nested")()() == "nested")
         check(receiver.supplier().read() == 23)
+        check(ClosureConsumer("label", "supplier").supplier().read() == "supplier")
+        check(ClosureConsumer<String, String?>("label", null).supplier().read() == null)
     }
 
     @TestAttribute

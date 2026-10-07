@@ -27,7 +27,8 @@ static class InheritedClassInterfaceBridge
         public JsonArray Methods;
     }
 
-    readonly record struct MethodMatch(Def Owner, TypeNode.Fqn ConstructedOwner, JsonObject Method);
+    readonly record struct MethodMatch(Def Owner, TypeNode.Fqn ConstructedOwner, JsonObject Method,
+        JsonArray InterfaceOverrides);
 
     public static void MaterializeSuspendDeclarations(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs)
     {
@@ -106,6 +107,9 @@ static class InheritedClassInterfaceBridge
                 bridge["overrides"] = new JsonArray(interfaceEdges.Select(edge => edge.DeepClone()).ToArray());
                 bridge["attrs"] = new JsonArray();
                 bridge["body"] = new JsonArray(new JsonObject { ["k"] = "return", ["value"] = call });
+                if (declarationId != null)
+                    bridge[DeclarationIdentityBinding.Key] = DeclarationIdentityBinding.PhysicalOnlyId(
+                        declarationId, "inherited-interface-body:" + cls.Name);
                 cls.Methods.Add(MaterializedExecutable.Normalize(bridge));
             }
         }
@@ -190,7 +194,11 @@ static class InheritedClassInterfaceBridge
 
                 var inherited = FindSelectedBaseMethod(cls, defs, iface.Name, name, methodArity, slotParams, slotRet);
                 if (inherited == null) continue;
-                classMethods.Add(BuildBridge(iface, ifaceSpec, ifaceArgs, im, slotParams, slotRet, inherited.Value));
+                var bridge = BuildBridge(iface, ifaceSpec, ifaceArgs, im, slotParams, slotRet, inherited.Value);
+                if (Str(inherited.Value.Method[DeclarationIdentityBinding.Key]) is string declarationId)
+                    bridge[DeclarationIdentityBinding.Key] = DeclarationIdentityBinding.PhysicalOnlyId(
+                        declarationId, "inherited-interface-body:" + cls.Name);
+                classMethods.Add(bridge);
             }
         }
     }
@@ -287,7 +295,13 @@ static class InheritedClassInterfaceBridge
                 // A virtual inherited member already participates in CLR slot dispatch. The missing case is exactly the
                 // Kotlin concrete/non-virtual method; don't introduce an unnecessary shadow slot.
                 if (Bool(method["virtual"]) || Bool(method["override"])) return null;
-                return new MethodMatch(def, current, method);
+                var interfaceOverrides = new JsonArray(((JsonArray)selected[0]["overrides"])
+                    .OfType<JsonObject>().Where(edge =>
+                        TypeJson.OwnerName(edge["owner"]) is string edgeOwner
+                        && defs.TryGetValue(edgeOwner, out var edgeDefinition)
+                        && edgeDefinition.Kind == "interface")
+                    .Select(edge => edge.DeepClone()).ToArray());
+                return new MethodMatch(def, current, method, interfaceOverrides);
             }
             current = def.Base == null ? null : (TypeNode.Fqn)SubstOwnerTvs(def.Base, args);
         }
@@ -361,15 +375,11 @@ static class InheritedClassInterfaceBridge
             ["ret"] = TypeJson.Write(slotRet),
             ["body"] = body,
             ["attrs"] = new JsonArray(),
-            ["overrides"] = new JsonArray
-            {
-                new JsonObject
-                {
-                    ["owner"] = TypeJson.Fqn(iface.Name), ["member"] = name,
-                    ["kind"] = "method", ["arity"] = slotParams.Length,
-                }
-            },
+            ["overrides"] = target.InterfaceOverrides.DeepClone(),
         };
+        // One inherited body can satisfy several interface declarations. Keep the
+        // frontend-selected closure and each exact declaration identity; owner,
+        // name and arity alone cannot reconstruct those obligations after erasure.
         if (suspend)
         {
             bridge["mods"] = new JsonObject { ["suspend"] = true };

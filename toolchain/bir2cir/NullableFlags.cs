@@ -132,8 +132,30 @@ static class NullableFlags
             case TypeNode.ByRef b:
                 // `ref T` is transparent for nullability — the referent's nullability is what matters.
                 return Walk(b.Of, nullableHere, flags, isValue, convention, annotationArguments, obliviousHere);
+            case TypeNode.Mod modifier:
+                // Custom modifiers occupy no NRT position. Their identity type is
+                // metadata, not an additional value in the physical signature.
+                return Walk(modifier.Of, nullableHere, flags, isValue, convention, annotationArguments, obliviousHere);
             default:
                 return false;
         }
+    }
+
+    internal static void SelfTest()
+    {
+        var text = new TypeNode.Fqn("System.String");
+        foreach (var required in new[] { false, true })
+        {
+            var marker = new TypeNode.Fqn("Sample.Marker", new TypeNode[] { new TypeNode.Nullable(text) });
+            var modified = new TypeNode.Mod(required, marker, new TypeNode.Fqn("System.Object"));
+            var nullable = new TypeNode.Nullable(modified);
+            var nested = new TypeNode.Fqn("Sample.Pair", new TypeNode[] { nullable, new TypeNode.Nullable(text) });
+            if (!JsonNode.DeepEquals(Compute(nullable, _ => false), JsonNode.Parse("[2]"))
+                || !JsonNode.DeepEquals(Compute(nested, _ => false), JsonNode.Parse("[1,2,2]"))
+                || Compute(modified, _ => false) != null
+                || Compute(new TypeNode.Oblivious(nullable), _ => false) != null)
+                throw new InvalidOperationException("Custom modifier changed physical NRT positions or wrapper precedence");
+        }
+        Console.WriteLine("[nullable modifiers] self-test OK (physical positions, ignored identity payload, wrapper precedence)");
     }
 }

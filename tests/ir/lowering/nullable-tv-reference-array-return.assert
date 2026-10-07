@@ -1,11 +1,10 @@
-# The exact copyOf declaration returns Array<N(T)> and takes both T and N(T). A String instantiation
-# therefore returns String[] directly, not object[] with a compensating cast.
-+"name":"result","type":{"t":"array","elem":{"t":"fqn","name":"System.String"}},"init":{"k":"callStatic"
-+"method":"copyOf","sig":[{"t":"array","elem":{"t":"tv","scope":"method","i":0}},{"t":"fqn","name":"int"}],"typeArgs":[{"t":"fqn","name":"System.String"},{"t":"fqn","name":"System.String"}],"ret":{"t":"array","elem":{"t":"fqn","name":"System.String"}}
-+"name":"copyOf","genericArity":2,"returnType":{"t":"array","elem":{"t":"tv","scope":"method","i":1}},"callingConvention":"static","parameterTypes":[{"t":"array","elem":{"t":"tv","scope":"method","i":0}},{"t":"fqn","name":"System.Int32"}]
+# copyOf retains both T and N(T) in its exact generic frame. Its generic-array physical
+# declaration uses System.Array, so the concrete caller authors a checked String[] projection.
++"name":"result","type":{"t":"array","elem":{"t":"fqn","name":"System.String"}},"init":{"k":"cast","type":{"t":"array","elem":{"t":"fqn","name":"System.String"}},"e":{"k":"callStatic"
++"method":"copyOf","sig":[{"t":"fqn","name":"System.Array"},{"t":"fqn","name":"int"}],"typeArgs":[{"t":"fqn","name":"System.String"},{"t":"fqn","name":"System.String"}],"ret":{"t":"fqn","name":"System.Array"}
++"name":"copyOf","genericArity":2,"returnType":{"t":"fqn","name":"System.Array"},"callingConvention":"static","parameterTypes":[{"t":"fqn","name":"System.Array"},{"t":"fqn","name":"System.Int32"}]
 -"name":"result","type":{"t":"array","elem":{"t":"fqn","name":"object"}}
--"name":"result","type":{"t":"array","elem":{"t":"fqn","name":"System.String"}},"init":{"k":"cast"
-# Any closes both slots at Object, also without an identity cast.
-+"name":"anyResult","type":{"t":"array","elem":{"t":"fqn","name":"System.Object"}},"init":{"k":"callStatic"
-+"typeArgs":[{"t":"fqn","name":"System.Object"},{"t":"fqn","name":"System.Object"}],"ret":{"t":"array","elem":{"t":"fqn","name":"System.Object"}}
--"name":"anyResult","type":{"t":"array","elem":{"t":"fqn","name":"System.Object"}},"init":{"k":"cast"
+-"name":"result","type":{"t":"array","elem":{"t":"fqn","name":"System.Object"}}
+# Any closes both generic slots at Object and projects the same physical declaration to Object[].
++"name":"anyResult","type":{"t":"array","elem":{"t":"fqn","name":"System.Object"}},"init":{"k":"cast","type":{"t":"array","elem":{"t":"fqn","name":"System.Object"}},"e":{"k":"callStatic"
++"typeArgs":[{"t":"fqn","name":"System.Object"},{"t":"fqn","name":"System.Object"}],"ret":{"t":"fqn","name":"System.Array"}

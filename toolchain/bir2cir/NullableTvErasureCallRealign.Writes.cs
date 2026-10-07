@@ -42,7 +42,7 @@ static partial class NullableTvErasureCallRealign
     // Evaluates the arguments as it goes, because one rewrite has to happen BEFORE an argument is evaluated: see the
     // construction case below. Reports the flowed argument types (null when the node has no `args`).
     static TypeNode[] RealignArgs(JsonObject call, TypeNode[] declParams, bool[] declRefused, TypeNode[] ownerArgs,
-        TypeNode[] methodArgs, Ctx ctx, bool exactPropertyTarget = false)
+        TypeNode[] methodArgs, Ctx ctx, bool exactPropertyTarget = false, bool physicalDeclaration = false)
     {
         if (call["args"] is not JsonArray args) return null;
         // A callStatic/callInstance carries `sig`; a `new` carries `argTypes`; a call NetInteropBinding has already
@@ -100,8 +100,22 @@ static partial class NullableTvErasureCallRealign
             // producing assembly could not state structurally); THAT position falls back to the descriptor like an
             // undeclared call.
             var target = !refused && haveDecl && declParams[i] != null
-                ? Subst(NullableGenericErasure.EraseNullableTv(declParams[i], _isValue), ownerArgs, methodArgs)
+                ? Subst(DeclarationSlot(declParams[i], physicalDeclaration), ownerArgs, methodArgs)
                 : null;
+            // Calls synthesized after declaration erasure still carry their authored
+            // Kotlin signature. Derive the open method descriptor from the selected
+            // declaration as well as deriving the closed argument target above.
+            // Foreign descriptors remain owned by the native declaration.
+            if (!clrBound && !refused && haveDecl && declParams[i] != null
+                && Str(call["k"]) is "callStatic" or "callInstance"
+                && call["sig"] is JsonArray signature && signature.Count == args.Count
+                && TypeJson.Read(signature[i]) is TypeNode authoredSignature)
+            {
+                var declaredSignature = physicalDeclaration ? DeclarationSlot(declParams[i], true)
+                    : ErasedCallSignatureType(declParams[i], ownerArgs, _isValue);
+                if (physicalDeclaration || IsObjectErasureOf(declaredSignature, authoredSignature))
+                    signature[i] = TypeJson.Write(declaredSignature);
+            }
             // A CONSTRUCTION whose instantiation is the erasure counterpart of the slot is RETYPED rather than
             // converted, and before it is evaluated so its own constructor arguments are reconciled against the
             // corrected instantiation. `Box<Nullable<int32>>` and `Box<object>` are unrelated invariant reified
@@ -191,6 +205,10 @@ static partial class NullableTvErasureCallRealign
         }
         return argTypes;
     }
+
+    static TypeNode ErasedCallSignatureType(TypeNode declared, TypeNode[] ownerArgs, ValueTypeOracle isValue)
+        => SupertypeGraph.SubstOwnerTvs(NullableGenericErasure.EraseNullableTv(declared, isValue),
+            ownerArgs ?? Array.Empty<TypeNode>());
 
     // Settle method type arguments against the type that FLOWED into a parameter (#86 D2). Walks the DECLARED
     // parameter beside the flowed type; wherever the declaration says `!!i` INSIDE an array or a constructed generic
@@ -283,6 +301,7 @@ static partial class NullableTvErasureCallRealign
         // Ordinary calls/constructors carry it in `type`; CLR delegate constructions carry it in `clrType`.
         if (obj["recv"] is JsonObject recv
             && owner != null
+            && !ConstrainedTypeParameterReceiverBinding.HasSourceReceiver(obj)
             && CoerceForTarget(recv, recvType, owner) is JsonNode coercedReceiver)
             obj["recv"] = coercedReceiver;
         var ownerArgs = OwnerArguments(owner);
@@ -313,6 +332,7 @@ static partial class NullableTvErasureCallRealign
         var owner = ClrOwner(obj);
         if (obj["recv"] is JsonObject recv
             && owner != null
+            && !ConstrainedTypeParameterReceiverBinding.HasSourceReceiver(obj)
             && CoerceForTarget(recv, recvType, owner) is JsonNode coercedReceiver)
             obj["recv"] = coercedReceiver;
         if (obj["value"] != null) Eval(obj["value"], ctx);

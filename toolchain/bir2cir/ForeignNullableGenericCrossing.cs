@@ -522,6 +522,7 @@ static class ForeignNullableGenericCrossing
                 // `resolvedMemberReturn` is a pass-to-pass fact and must not reach CIR: the emitter consumes the reference and
                 // knows nothing of this one.
                 obj.Remove(ClrMemberResolution.ResolvedMemberReturnKey);
+                obj.Remove("resolvedMemberParams");
                 foreach (var kv in obj) if (kv.Value != null) Walk(kv.Value, file);
                 break;
             case JsonArray arr:

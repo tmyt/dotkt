@@ -27,6 +27,25 @@ static class KotlinPropertyAccessors
             || !JsonNode.DeepEquals(property["setRet"], methods[1]["ret"])
             || JsonNode.DeepEquals(property["getRet"], property["type"]))
             throw new InvalidOperationException("Property accessor links lost their selected MethodDef return types");
+
+        // Test a real physical collision independently of which source collection
+        // aliases currently share a CLR signature. Nominal modifiers may distinguish them.
+        const string bridgeAssociation = "dotkt$bridge$property$test|slot";
+        var ordinary = JsonNode.Parse("""
+            {"name":"value","type":{"t":"fqn","name":"System.Object"},
+             "getSig":[],"get":"read","propertyAssociation":"source"}
+            """)!.AsObject();
+        var bridge = (JsonObject)ordinary.DeepClone();
+        bridge[AssociationKey] = bridgeAssociation;
+        bridge["get"] = "bridgeRead";
+        AllocatePhysicalPropertyNames(new (JsonObject Property, IReadOnlyList<JsonObject> Methods)[] {
+            (ordinary, System.Array.Empty<JsonObject>()),
+            (bridge, System.Array.Empty<JsonObject>()),
+        });
+        if (Str(ordinary["name"]) != "value" || Str(ordinary["get"]) != "read"
+            || Str(bridge["name"]) != "value$bridge$" + DeclarationIdentityBinding.StableSuffix(bridgeAssociation)
+            || Str(bridge["get"]) != "bridgeRead")
+            throw new InvalidOperationException("Physical property collision lost the source name or bridge association");
     }
 
     internal const string SourceNameKey = "propertyName";

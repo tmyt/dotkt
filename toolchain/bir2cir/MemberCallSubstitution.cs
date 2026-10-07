@@ -65,6 +65,37 @@ static class MemberCallSubstitution
         NullableRepresentationFrame Frame);
     static IReadOnlyDictionary<string, LocalFactory> _localFactories;
     static IReadOnlySet<string> _localDeclarationIds;
+    internal sealed record LocalIntrinsic(string Target, int[] ByrefPositions);
+    static IReadOnlyDictionary<string, LocalIntrinsic> _localIntrinsics;
+
+    internal static IReadOnlyDictionary<string, LocalIntrinsic> CollectLocalIntrinsics(IEnumerable<JsonNode> roots)
+    {
+        var result = new Dictionary<string, LocalIntrinsic>(StringComparer.Ordinal);
+        void Walk(JsonObject owner)
+        {
+            if (owner["methods"] is JsonArray methods)
+                foreach (var method in methods.OfType<JsonObject>())
+                {
+                    if (Str(method[DeclarationIdentityBinding.Key]) is not string id
+                        || method["attrs"] is not JsonArray attributes) continue;
+                    var binding = attributes.OfType<JsonObject>().SingleOrDefault(attribute =>
+                        TypeJson.OwnerName(attribute["attr"]) == "kotlin.clr.ClrIntrinsic");
+                    if (binding == null) continue;
+                    var target = Str(binding["args"]?[0]?["value"])
+                        ?? throw new InvalidOperationException($"Intrinsic declaration '{id}' has no target");
+                    var positions = (method["params"] as JsonArray ?? new JsonArray())
+                        .Select((parameter, index) => (parameter, index))
+                        .Where(pair => pair.parameter?["attrs"] is JsonArray attrs && attrs.OfType<JsonObject>()
+                            .Any(attribute => TypeJson.OwnerName(attribute["attr"]) == "kotlin.clr.ClrRefArgument"))
+                        .Select(pair => pair.index).ToArray();
+                    result.Add(id, new LocalIntrinsic(target, positions));
+                }
+            if (owner["types"] is JsonArray types)
+                foreach (var type in types.OfType<JsonObject>()) Walk(type);
+        }
+        foreach (var root in roots.OfType<JsonObject>()) Walk(root);
+        return result;
+    }
 
     public static IReadOnlyDictionary<string, LocalFactory> CollectLocalFactories(
         IEnumerable<JsonNode> roots)
@@ -107,7 +138,8 @@ static class MemberCallSubstitution
         IReadOnlyDictionary<LocalPropertyAccessorKey, IReadOnlyList<LocalPropertyAccessor>> localPropertyAccessors,
         GenericRepresentationPolicy representations,
         IReadOnlyDictionary<string, LocalFactory> localFactories,
-        IReadOnlySet<string> localDeclarationIds = null)
+        IReadOnlySet<string> localDeclarationIds = null,
+        IReadOnlyDictionary<string, LocalIntrinsic> localIntrinsics = null)
     {
         _localTopLevelFns = localTopLevelFns;
         _attributeTopLevelOwner = attributeTopLevelOwner;
@@ -115,6 +147,7 @@ static class MemberCallSubstitution
         _representations = representations;
         _localFactories = localFactories;
         _localDeclarationIds = localDeclarationIds;
+        _localIntrinsics = localIntrinsics;
         _localPropertyAccessors = localPropertyAccessors
             ?? new Dictionary<LocalPropertyAccessorKey, IReadOnlyList<LocalPropertyAccessor>>();
         _localPropertyOwners = _localPropertyAccessors.Keys.Select(key => key.Owner)
@@ -485,11 +518,12 @@ static class MemberCallSubstitution
         // constructor cannot consume (Map<String,V> as Map<out Any,V>). The trusted constructor marker states that
         // copy semantics explicitly. Allocate the selected alias through its parameterless CLR constructor and copy
         // through the covariance-safe raw collection helper; never manufacture an invariant cast from the bound.
-        if (sourceSignature != null
-            && refs.CollectionCopyConstructorKind(
-                ownerFqn.Name, sourceSignature, ownerFqn.Args ?? Array.Empty<TypeNode>()) == "map"
-            && args.Count == 1 && typeNode.Args is { Length: 2 } mapTypeArguments)
-            return MapCopyConstruction(typeNode, mapTypeArguments, args[0]);
+        var copyKind = sourceSignature == null ? null : refs.CollectionCopyConstructorKind(
+            ownerFqn.Name, sourceSignature, ownerFqn.Args ?? Array.Empty<TypeNode>());
+        if (args.Count == 1 && typeNode.Args is { } copyArguments
+            && (copyKind == "map" && copyArguments.Length == 2
+                || copyKind == "list" && copyArguments.Length == 1))
+            return CollectionCopyConstruction(typeNode, copyArguments, args[0], kind: copyKind);
 
         // JVM (initialCapacity: Int, loadFactor: Float) collection ctor -> the capacity-only (int) BCL ctor. .NET's
         // HashSet/Dictionary have NO (int, float) constructor (loadFactor is a JVM hashtable concept), so a
@@ -535,8 +569,8 @@ static class MemberCallSubstitution
         return plan == null ? lowered : MaterialiseMappedArguments(plan, lowered, typeNode);
     }
 
-    internal static JsonNode MapCopyConstruction(TypeNode targetType, TypeNode[] typeArguments, JsonNode source,
-        Action<JsonObject> bindHelper = null)
+    internal static JsonNode CollectionCopyConstruction(TypeNode targetType, TypeNode[] typeArguments, JsonNode source,
+        Action<JsonObject> bindHelper = null, string kind = "map")
     {
         var sourceName = CallEvalLowering.FreshBindingId();
         var resultName = CallEvalLowering.FreshBindingId();
@@ -568,10 +602,12 @@ static class MemberCallSubstitution
                     ["expr"] = new JsonObject
                     {
                         ["k"] = "callStatic",
-                        ["owner"] = TypeJson.Write(new TypeNode.Fqn("kotlin.collections.ClrMapDefaultsKt")),
-                        ["method"] = "clrMapPutAll",
+                        ["owner"] = TypeJson.Write(new TypeNode.Fqn(kind == "map"
+                            ? "kotlin.collections.ClrMapDefaultsKt" : "kotlin.collections.ClrCollectionDefaultsKt")),
+                        ["method"] = kind == "map" ? "clrMapPutAll" : "clrCollectionCopyInto",
                         ["sig"] = new JsonArray(TypeJson.Fqn("kotlin.Any"), TypeJson.Fqn("kotlin.Any")),
-                        ["typeArgs"] = new JsonArray(typeArguments.Select(TypeJson.Write).ToArray()),
+                        ["typeArgs"] = new JsonArray((kind == "map" ? typeArguments : Array.Empty<TypeNode>())
+                            .Select(TypeJson.Write).ToArray()),
                         ["ret"] = TypeJson.Write(new TypeNode.Fqn("kotlin.Unit")),
                         ["args"] = new JsonArray(Local(resultName), Local(sourceName)),
                     },
@@ -1038,6 +1074,22 @@ static class MemberCallSubstitution
             if (exactFactory) return null;
             var args0 = node["args"] as JsonArray ?? new JsonArray();
             var sigParts0 = SplitSig(node);
+            if (Str(node[DeclarationIdentityBinding.Key]) is string localId
+                && _localIntrinsics?.TryGetValue(localId, out var localIntrinsic) == true)
+            {
+                if (CompilerMetadataIntrinsic(localIntrinsic.Target, refs) is JsonNode metadata) return metadata;
+                var localDot = localIntrinsic.Target.LastIndexOf('.');
+                if (localDot > 0)
+                    return ClrCallNode(node, new TypeNode.Fqn(localIntrinsic.Target[..localDot]),
+                        localIntrinsic.Target[(localDot + 1)..], localIntrinsic.Target[(localDot + 1)..],
+                        args0, refs, instance: false, localIntrinsic.ByrefPositions);
+                var call = TopLevelExtensionInstance(node, refs, localIntrinsic.Target, args0, sigParts0, ctx)
+                    ?? throw new InvalidOperationException($"Intrinsic declaration '{localId}' has no extension receiver");
+                if (call is JsonObject instanceCall && instanceCall["argTypes"] is JsonArray argumentTypes)
+                    WrapByref(argumentTypes, localIntrinsic.ByrefPositions.Where(index => index > 0)
+                        .Select(index => index - 1).ToArray());
+                return call;
+            }
             // #395: the early declaration-identity binder has already selected this exact ref.dll declaration.
             // Resolve only that declaration's @ClrIntrinsic representation; never repeat overload resolution from
             // owner/name/signature after erasure. Local declarations do not carry this transient marker.
@@ -1096,26 +1148,13 @@ static class MemberCallSubstitution
             // OnlyInputTypes` extension `Map<out K,V>.get`/`.containsKey` (Maps.kt). That extension is `@InlineOnly`
             // but is NOT actually inlined cross-module (the frontend klib carries no IR bodies for it), so it arrives
             // HERE as a genuine generic top-level call instantiated K=V=`object`/`Any?` (the star erasure). Its
-            // compiled body re-casts internally to the covariance-safe non-generic `IDictionary` facade
-            // (`ClrRawDictionary`), but the CALL BOUNDARY's own formal param — `Map<K,V>` = the INVARIANT generic
-            // `IDictionary<object,object>` at this instantiation — throws InvalidCastException first (the real
-            // receiver's runtime type, e.g. `Dictionary<String,Int>`, is not assignable to it). Recognize this
-            // exact shape and emit the non-generic `IDictionary.get_Item`/`.Contains` call directly (its indexer is
-            // null-on-missing, matching Kotlin `Map.get`'s null-on-missing exactly) — bypassing the generic route.
+            // receiver must not be narrowed to IDictionary<object,object>. Route this exact extension shape to
+            // the object-receiver helper, which preserves Kotlin overrides as well as foreign dictionary access.
             if ((fn == "get" || fn == "containsKey") && args0.Count == 2 && sigParts0.Count >= 1
                 && sigParts0[0] is TypeNode.Fqn { Name: "kotlin.collections.Map" or "kotlin.collections.MutableMap" }
                 && node["typeArgs"] is JsonArray starTypeArgs && starTypeArgs.Count >= 1
                 && starTypeArgs.All(t => IsErasedAny(TypeJson.Read(t))))
-                return new JsonObject
-                {
-                    ["k"] = "clrInstance",
-                    ["type"] = TypeJson.Fqn("System.Collections.IDictionary"),
-                    ["method"] = fn == "get" ? "get_Item" : "Contains",
-                    ["argTypes"] = new JsonArray { TypeJson.Fqn("System.Object") },
-                    ["ret"] = TypeJson.Fqn(fn == "get" ? "System.Object" : "System.Boolean"),
-                    ["recv"] = args0[0]?.DeepClone(),
-                    ["args"] = new JsonArray { args0[1]?.DeepClone() },
-                };
+                return ErasedMapReadCall(fn, args0[0], args0[1], refs, ctx);
             // A top-level @ClrIntrinsic bound to a FQ BCL static. Resolve the EXACT overload by the call's full
             // ParamKey signature first (sqrt/abs/pow -> System.Math.* for Double/Int/Long but System.MathF.* for
             // Float; a non-intrinsic sibling like Double.pow(Int) MISSES here). Fall back to the name-only map only for
@@ -1204,7 +1243,8 @@ static class MemberCallSubstitution
         var companionMember = (node["method"] as JsonValue)?.GetValue<string>();
         var companionArgs = node["args"] as JsonArray ?? new JsonArray();
         var companionMethodArity = (node["typeArgs"] as JsonArray)?.Count ?? 0;
-        var companionDeclarationArgs = node["argTypes"] as JsonArray
+        var companionDeclarationArgs = ForeignStarProjectionBinding.DeclarationSignature(node)
+            ?? node["argTypes"] as JsonArray
             ?? node["shapeTypes"] as JsonArray ?? node["sig"] as JsonArray;
         IReadOnlyList<TypeNode> companionSignature = null;
         if (companionDeclarationArgs != null)
@@ -1634,6 +1674,8 @@ static class MemberCallSubstitution
                 : intrinsicCall;
         }
 
+        if (SelectedMapDefault() is { } inheritedMapDefault) return inheritedMapDefault;
+
         // Rule 3: a concrete member of a CLR-bound CLASS with NO @ClrIntrinsic carries a real Kotlin body, which
         // AliasHelperHoist lifts to the static helper `dotkt$ClrH_<owner>` (driven by the SAME class binding that brought us here).
         // `IsRule3Member` (ref.dll: the member is concrete + intrinsic-less) is the signal to hoist it; the helper
@@ -1678,30 +1720,48 @@ static class MemberCallSubstitution
         // that DO bind 1:1 (@ClrIntrinsic size/containsKey/clear + MutableMap values) were already renamed to
         // their BCL slot by DeclarationRename and fall through to Rule 4; the defensive get_keys/get_values entries
         // below catch an un-renamed MutableMap accessor call (no overrides metadata) as a direct property read.
+        // A native-backed concrete class can inherit a Kotlin default that has no
+        // physical BCL member. Follow the frontend-selected declaration, not the
+        // spelling of the concrete receiver or the order of its override closure.
+        JsonNode SelectedMapDefault()
+        {
+        if (instance && kind == "class"
+            && Str(node[DeclarationIdentityBinding.Key]) is string selectedDeclaration
+            && node["overrides"] is JsonArray mapOverrides)
+        {
+            var selectedMapDefaults = new List<(TypeNode.Fqn Owner, string Helper)>();
+            foreach (var inherited in mapOverrides.OfType<JsonObject>())
+            {
+                if (Str(inherited[DeclarationIdentityBinding.Key]) != selectedDeclaration
+                    || Str(inherited["kind"]) != "method" || Str(inherited["member"]) != member
+                    || (inherited["arity"] as JsonValue)?.GetValue<int>() != args.Count
+                    || TypeJson.Read(inherited["owner"]) is not TypeNode.Fqn semanticOwner
+                    || semanticOwner.Name is not ("kotlin.collections.Map" or "kotlin.collections.MutableMap"))
+                    continue;
+                var defaultHelper = MapDefaultHelper(member, null, args.Count,
+                    semanticOwner.Name == "kotlin.collections.MutableMap");
+                if (defaultHelper == null) continue;
+                var closed = new TypeNode.Fqn(semanticOwner.Name, semanticOwner.Args?.Select(argument =>
+                    SupertypeGraph.SubstOwnerTvs(argument, ownerFqnNode.Args ?? Array.Empty<TypeNode>())).ToArray());
+                selectedMapDefaults.Add((closed, defaultHelper));
+            }
+            var distinctDefaults = selectedMapDefaults.GroupBy(candidate =>
+                candidate.Helper + "\0" + SupertypeGraph.TypeKey(candidate.Owner), StringComparer.Ordinal)
+                .Select(group => group.First()).ToList();
+            if (distinctDefaults.Count > 1)
+                throw new InvalidOperationException("bir2cir: selected Map default has inconsistent owner frames");
+            if (distinctDefaults.Count == 1)
+                return MapDefaultCall(node, distinctDefaults[0].Helper, distinctDefaults[0].Owner, args, refs, ctx);
+        }
+        return null;
+        }
         if (instance && kind == "interface" &&
             (ownerFqn == "kotlin.collections.Map" || ownerFqn == "kotlin.collections.MutableMap"))
         {
-            // STAR-PROJECTED Map<*,*> (#74a): `get`/`containsKey` on an ALL-erased Map/MutableMap owner would
-            // otherwise route to the generic ClrMapDefaultsKt.clrMapGet/clrMapContainsKey helper below, whose FORMAL
-            // param is `Map<K,V>` = the INVARIANT generic `IDictionary<object,object>` at this K=V=object
-            // instantiation. The real receiver's runtime type (e.g. `Dictionary<String,Int>`) is NOT assignable to
-            // that generic instantiation (CLR generics are reified + invariant) even though the helper's BODY
-            // immediately re-casts to the covariance-safe NON-generic `IDictionary` facade (`ClrRawDictionary`) —
-            // the call BOUNDARY itself throws InvalidCastException before the body ever runs. Skip the generic
-            // helper entirely and emit the non-generic call directly: `IDictionary.get_Item`/`.Contains` (both
-            // implemented by every `Dictionary<K,V>` regardless of K/V — `IDictionary<K,V> : IDictionary`, so no
-            // recv cast is needed). `IDictionary`'s indexer is null-on-missing, matching Kotlin `Map.get` exactly.
+            // Star reads have erased key/value arguments, but the receiver still goes through semantic dispatch.
+            // The helper's object parameter avoids invariant generic-dictionary casts at this boundary.
             if (FaithfulHints.IsStarProjectedColl(ownerFqnNode) && args.Count >= 1 && member is "get" or "containsKey")
-                return new JsonObject
-                {
-                    ["k"] = "clrInstance",
-                    ["type"] = TypeJson.Fqn("System.Collections.IDictionary"),
-                    ["method"] = member == "get" ? "get_Item" : "Contains",
-                    ["argTypes"] = new JsonArray { TypeJson.Fqn("System.Object") },
-                    ["ret"] = TypeJson.Fqn(member == "get" ? "System.Object" : "System.Boolean"),
-                    ["recv"] = node["recv"]?.DeepClone(),
-                    ["args"] = new JsonArray { args[0].DeepClone() },
-                };
+                return ErasedMapReadCall(member, node["recv"], args[0], refs, ctx);
             var mutable = ownerFqn == "kotlin.collections.MutableMap";
             var semanticPropertyAccess = Str(node[KotlinPropertyAccessors.KindKey]) ?? Str(node["prop"]);
             var helper = MapDefaultHelper(member, semanticPropertyAccess, args.Count, mutable);
@@ -2103,6 +2163,26 @@ static class MemberCallSubstitution
 
     // The 2-type-arg map mirror of CollDefaultCall: `callStatic ClrMapDefaultsKt.<helper>(recv, args...)` typed over
     // the map owner token's [K,V] instantiation args.
+    static JsonNode ErasedMapReadCall(string member, JsonNode receiver, JsonNode key,
+        ReferenceMetadataIndex refs, SubstCtx ctx)
+    {
+        // The helper accepts object, so a star view does not require IDictionary<object,object>.
+        // Unlike direct non-generic IDictionary dispatch, it also preserves authored Kotlin overrides.
+        var helper = member == "get" ? "clrMapGet" : "clrMapContainsKey";
+        var call = new JsonObject
+        {
+            ["k"] = "callStatic",
+            ["owner"] = TypeJson.Fqn("kotlin.collections.ClrMapDefaultsKt"),
+            ["method"] = helper,
+            ["sig"] = MapHelperSig(helper),
+            ["args"] = new JsonArray(receiver?.DeepClone(), key?.DeepClone()),
+            ["typeArgs"] = new JsonArray(TypeJson.Fqn("kotlin.Any"), TypeJson.Fqn("kotlin.Any")),
+            ["ret"] = TypeJson.Fqn(member == "get" ? "System.Object" : "System.Boolean"),
+        };
+        BindAuthoredHelper(call, refs, ctx);
+        return call;
+    }
+
     static JsonNode MapDefaultCall(JsonObject node, string helperMethod, TypeNode.Fqn ownerFqn, JsonArray args, ReferenceMetadataIndex refs, SubstCtx ctx)
     {
         var hargs = new JsonArray();
@@ -2522,6 +2602,15 @@ static class MemberCallSubstitution
         return new TypeNode.Fqn(head);
     }
 
+    internal static void PreserveIntrinsicExtensionDeclaration(JsonObject source, JsonObject call)
+    {
+        if (ForeignStarProjectionBinding.DeclarationSignature(source) is not JsonArray signature) return;
+        var arguments = (source["typeArgs"] as JsonArray)?.Select(TypeJson.Read).ToArray();
+        ForeignStarProjectionBinding.PreserveDeclarationSignature(call,
+            new JsonArray(signature.Skip(1).Select(parameter =>
+                TypeJson.Write(SubstMethodTv(TypeJson.Read(parameter), arguments))).ToArray()));
+    }
+
     static JsonNode TopLevelExtensionInstance(JsonObject node, ReferenceMetadataIndex refs, string intrinsic, JsonArray args, List<TypeNode> sigParts, SubstCtx ctx)
     {
         if (args.Count == 0) return null;   // no receiver -> not an extension shape; leave for FindStatic to report
@@ -2557,6 +2646,9 @@ static class MemberCallSubstitution
             ["recv"] = args[0].DeepClone(),
             ["args"] = rest,
         };
+        // The extension's first declaration parameter becomes the CLR receiver. Its remaining
+        // declaration slots still select the native overload even after Kotlin value erasure.
+        PreserveIntrinsicExtensionDeclaration(node, call);
         if (RetToken(node) is JsonNode ret) call["ret"] = ret;
         // The Kotlin extension's scalar parameters are ordinary values, but a bound CLR instance member
         // consumes its receiver's physical generic arguments. Select that member using the preserved SOURCE
@@ -2667,7 +2759,9 @@ static class MemberCallSubstitution
     static JsonNode ClrCallNode(JsonObject node, TypeNode clrOwner, string intrinsic, string member, JsonArray args,
         ReferenceMetadataIndex refs, bool instance, int[] byrefPositions = null, JsonArray exactArgTypes = null)
     {
-        var argTypes = exactArgTypes?.DeepClone() as JsonArray ?? InferArgTypes(node, args);
+        var argTypes = exactArgTypes?.DeepClone() as JsonArray
+            ?? ForeignStarProjectionBinding.DeclarationSignature(node)
+            ?? InferArgTypes(node, args);
         WrapByref(argTypes, byrefPositions);
         var ret = RetToken(node);
 
@@ -2690,6 +2784,7 @@ static class MemberCallSubstitution
         // return type — e.g. a String-returning BCL/app call feeding the CharSequence bridge.
         if (node["sty"] is JsonNode callSty) call["sty"] = callSty.DeepClone();
         if (instance) call["recv"] = node["recv"]?.DeepClone();
+        ForeignStarProjectionBinding.CopyDeclarationSignature(node, call);
         call["args"] = args.DeepClone();
         // Carry the `super` (non-virtual) marker (issue #14) onto the substituted clrInstance so ilemit emits a
         // non-virtual `call` to the base slot (like C#'s `base.M()`) instead of a `callvirt` that would re-dispatch to
@@ -2933,7 +3028,11 @@ static class MemberCallSubstitution
         // return is the ERASED nullable-generic `object`, CoerceReturn would `unbox.any !!X` a possibly-null —
         // NullReferenceException for a value instantiation. The open representation of such a value stays `object`.
         if (RetToken(node) is JsonNode ret && !IsTvType(ret)) call["ret"] = ret;
-        if (instance && ForeignStarProjectionBinding.IsForeignStarType(ownerFqn, refs))
+        // An opaque alias helper receives the original reference as object and its body already uses
+        // projected operations. It needs no native receiver instantiation and remains an ordinary
+        // declaration-bound call, including while that helper is being compiled in this module.
+        if (instance && ForeignStarProjectionBinding.IsForeignStarType(ownerFqn, refs)
+            && !AliasVarianceRepresentation.RequiresErasure(ownerFqn, refs))
         {
             call["projectedHelperReceiver"] = 0;
             call["ret"] = RetToken(node) ?? TypeJson.Write(NodeType.Of(node)

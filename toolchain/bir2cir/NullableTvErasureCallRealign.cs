@@ -298,6 +298,13 @@ static partial class NullableTvErasureCallRealign
         return TypeJson.Read(slot[physicalKey]);
     }
 
+    // Late synthesized entries already state their selected CLR declaration.
+    // Preserve its ordinary variables; only a retained nullable source carrier
+    // still needs the nullable-erasure rule at this boundary.
+    static TypeNode DeclarationSlot(TypeNode declared, bool physicalDeclaration)
+        => physicalDeclaration ? NullableGenericErasure.EraseBound(declared, _isValue)
+            : NullableGenericErasure.EraseNullableTv(declared, _isValue);
+
     // The declared parameter vector, or null when any slot is untyped — a partially-read vector would silently
     // realign the wrong positions.
     static TypeNode[] ReadParams(JsonNode ps, bool preferCarrier = false)
@@ -781,13 +788,14 @@ static partial class NullableTvErasureCallRealign
         // THE ARGUMENT AXIS: each parameter slot is `Subst(Erase(declared param))` exactly as the return is; with no
         // declaration the call's own descriptor stands in (see RealignArgs).
         RealignArgs(obj, decl?.Params, decl?.ParamsRefused, OwnerArguments(owner), methodArgs, ctx,
-            exactPropertyTarget: propertyDecl != null);
+            exactPropertyTarget: propertyDecl != null,
+            physicalDeclaration: decl?.NullableErasureOwnershipKnown == true);
         if (decl?.Ret == null) return stampedRet;   // no declaration, or an ambiguous same-name/same-arity overload set
 
-        var erasedRet = NullableGenericErasure.EraseNullableTv(decl.Ret, _isValue);
+        var erasedRet = DeclarationSlot(decl.Ret, decl.NullableErasureOwnershipKnown);
         var derived = Subst(erasedRet, OwnerArguments(owner), methodArgs);
         return ApplyDerivedRet(obj, derived, stampedRet, !erasedRet.Equals(decl.Ret),
-            decl.NullableErasureOwnershipKnown, ctx.IsNullableCompanion(derived));
+            decl.NullableErasureOwnershipKnown, ctx.IsNullableCompanion(derived), decl.Ret is TypeNode.Tv);
     }
 
     static TypeNode EvalCallStatic(JsonObject obj, Ctx ctx)
@@ -833,19 +841,21 @@ static partial class NullableTvErasureCallRealign
             }
         }
         RealignArgs(obj, decl?.Params, decl?.ParamsRefused, ownerArgs, methodArgs, ctx,
-            exactPropertyTarget: propertyDecl != null);
+            exactPropertyTarget: propertyDecl != null,
+            physicalDeclaration: decl?.NullableErasureOwnershipKnown == true);
         if (decl?.Ret == null) return stampedRet;   // no declaration, or an ambiguous same-name/same-arity overload set
-        var erasedRet = NullableGenericErasure.EraseNullableTv(decl.Ret, _isValue);
+        var erasedRet = DeclarationSlot(decl.Ret, decl.NullableErasureOwnershipKnown);
         var derived = Subst(erasedRet, ownerArgs, methodArgs);
         return ApplyDerivedRet(obj, derived, stampedRet, !erasedRet.Equals(decl.Ret),
-            decl.NullableErasureOwnershipKnown, ctx.IsNullableCompanion(derived));
+            decl.NullableErasureOwnershipKnown, ctx.IsNullableCompanion(derived), decl.Ret is TypeNode.Tv);
     }
 
     // A current call can state its result only in the frontend's expression stamp. That is the same source-type
     // claim as ret/dynRet, not an absent result. The declaration still supplies the physical type; the stamp only
     // identifies the use that must be realigned against it, including an already-materialized nullable frame.
+    // An explicit caller stamp takes precedence over a declaration-relative ret, just as in NodeType.Of.
     static TypeNode StampedResult(JsonObject obj)
-        => TypeJson.Read(obj["dynRet"]) ?? TypeJson.Read(obj["ret"]) ?? TypeJson.Read(obj["sty"]);
+        => NodeType.Stamp(obj);
 
     // Take the derived result type, ONLY when it is the object-erasure of what the call site stamped — the exact
     // erasure boundary, never a genuine widen/narrow. A direct-write `Ref<Int?>` (derived == stamped) is untouched.
@@ -860,7 +870,8 @@ static partial class NullableTvErasureCallRealign
     // Otherwise this branch leaves the unstamped call alone. A present stamp instead participates in the
     // reconciliation below, including an explicit result cast for a narrower reference-array projection.
     static TypeNode ApplyDerivedRet(JsonObject obj, TypeNode derived, TypeNode stampedRet, bool erasureApplied,
-        bool nullableErasureOwnershipKnown = false, bool nullableCompanionResult = false)
+        bool nullableErasureOwnershipKnown = false, bool nullableCompanionResult = false,
+        bool ordinaryVariableResult = false)
     {
         if (derived == null) return stampedRet;
         // Substitution through a materialized frame can return its companion directly (Box<N>.value). That is
@@ -894,6 +905,15 @@ static partial class NullableTvErasureCallRealign
         // Without a pre-erasure nullable declaration that actually changes under Erase, preserving that stamp is the
         // other lowering's contract; rewriting it to object here destroys the consumer's required unbox/cast.
         if (nullableErasureOwnershipKnown && !erasureApplied) return stampedRet;
+
+        // The declaration stores an erased Kotlin value, while this use can demand
+        // a concrete value type. State the unbox/cast here; neither equality nor
+        // ilemit may infer it from the original generic construction.
+        if (ordinaryVariableResult && !IsSemanticObjectElement(stampedRet))
+        {
+            WrapResultCast(obj, derived, stampedRet);
+            return stampedRet;
+        }
 
         // An open `Array<T?>` return has the one declaration shape that can serve both CLR instantiations:
         // `object[]`.  At a concrete REFERENCE instantiation, however, the Kotlin value it denotes is still the
@@ -1176,6 +1196,19 @@ static partial class NullableTvErasureCallRealign
 
     internal static void SelfTest()
     {
+        foreach (var scope in new[] { "type", "method" })
+        {
+            var callerResult = new TypeNode.Fqn("Cell", new TypeNode[] { new TypeNode.Tv(scope, 2) });
+            var declarationResult = new TypeNode.Fqn("Cell", new TypeNode[] { new TypeNode.Tv("type", 3) });
+            var call = new JsonObject {
+                ["sty"] = TypeJson.Write(callerResult), ["ret"] = TypeJson.Write(declarationResult),
+                ["dynRet"] = TypeJson.Fqn("object"),
+            };
+            if (StampedResult(call) != callerResult
+                || ApplyDerivedRet(call, declarationResult, StampedResult(call), false) != callerResult
+                || TypeJson.Read(call["sty"]) != callerResult)
+                throw new InvalidOperationException("Nullable result flow replaced the caller frame with declaration indices");
+        }
         var sourceFunction = new TypeNode.Fn(false, new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Int")),
             new TypeNode[] { new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Int")) });
         var physicalCallbackResult = new TypeNode.Fn(false, new TypeNode.Fqn("object"),
@@ -1204,8 +1237,127 @@ static partial class NullableTvErasureCallRealign
         ApplyDerivedRet(scalarCall, new TypeNode.Fqn("object"), new TypeNode.Fqn("object"), true);
         if (TypeJson.Read(scalarCall["sty"]) != TypeJson.Read(scalarCall["ret"]))
             throw new InvalidOperationException("An already-erased scalar descriptor kept its semantic result stamp");
+        var ordinaryCall = new JsonObject {
+            ["k"] = "callInstance", ["ret"] = TypeJson.Fqn("kotlin.Int"),
+            ["sty"] = TypeJson.Fqn("kotlin.Int"),
+        };
+        var integerResult = new TypeNode.Fqn("kotlin.Int");
+        var objectResult = new TypeNode.Fqn("object");
+        if (ApplyDerivedRet(ordinaryCall, objectResult, integerResult, true,
+                ordinaryVariableResult: true) != integerResult
+            || Str(ordinaryCall["k"]) != "cast"
+            || TypeJson.Read(ordinaryCall["type"]) != integerResult
+            || TypeJson.Read(ordinaryCall["e"]["ret"]) != objectResult)
+            throw new InvalidOperationException("An erased ordinary generic result lost its concrete value projection");
+        var variable = new TypeNode.Tv("type", 0);
+        var construction = new TypeNode.Fqn("Box", new TypeNode[] { variable });
+        if (NullableGenericErasure.EraseNullableTv(variable, _ => false) != objectResult
+            || NullableGenericErasure.EraseArgument(variable, _ => false) != variable
+            || NullableGenericErasure.EraseBound(variable, _ => false) != variable
+            || NullableGenericErasure.EraseNullableTv(construction, _ => false) != construction
+            || NullableGenericErasure.EraseNullableTv(new TypeNode.ByRef(variable), _ => false)
+                != new TypeNode.ByRef(variable))
+            throw new InvalidOperationException("Ordinary generic value erasure changed a construction or native reference slot");
+        var delegatedConstructor = new JsonObject {
+            ["params"] = new JsonArray(new JsonObject { ["name"] = "value", ["type"] = TypeJson.Write(variable) }),
+            ["delegationSig"] = new JsonArray(TypeJson.Write(variable)),
+            ["baseArgs"] = new JsonArray(new JsonObject { ["k"] = "local", ["name"] = "value" }),
+        };
+        var constructorRoot = new JsonObject { ["ctors"] = new JsonArray(delegatedConstructor) };
+        NullableGenericErasure.Apply(constructorRoot, _ => false);
+        ConstructorSignatureIdentity.Capture(constructorRoot);
+        if (TypeJson.Read(delegatedConstructor["params"][0]["type"]) != objectResult
+            || TypeJson.Read(ConstructorSignatureIdentity.DeclarationType(delegatedConstructor["params"][0])) != variable
+            || TypeJson.Read(ConstructorSignatureIdentity.DeclarationSignature(delegatedConstructor)[0]) != variable
+            || delegatedConstructor["params"][0][ConstructorSignatureIdentity.BeforeValueErasureKey] != null)
+            throw new InvalidOperationException("Value erasure changed constructor selection or leaked its pre-erasure record");
+        ConstructorSignatureIdentity.Materialize(constructorRoot);
+        var nullableConstruction = new JsonObject {
+            ["k"] = "new", ["type"] = TypeJson.Fqn("ConstructorProbe"),
+            ["memberSignature"] = new JsonArray(TypeJson.Write(new TypeNode.Nullable(variable))),
+            ["args"] = new JsonArray(),
+        };
+        NullableGenericErasure.Apply(nullableConstruction, _ => false);
+        ConstructorSignatureIdentity.Capture(nullableConstruction);
+        if (TypeJson.Read(ConstructorSignatureIdentity.SourceSignature(nullableConstruction)[0])
+                != new TypeNode.Nullable(variable)
+            || TypeJson.Read(ConstructorSignatureIdentity.DeclarationSignature(nullableConstruction)[0])
+                != new TypeNode.Fqn("object"))
+            throw new InvalidOperationException("Constructor source selection and materialized frame were conflated");
+        if (delegatedConstructor["params"][0][FunctionSignatureIdentity.Key] != null
+            || TypeJson.Read(ConstructorSignatureIdentity.DeclarationType(delegatedConstructor["params"][0])) != variable
+            || TypeJson.Read(FunctionSignatureIdentity.SignatureType(
+                (JsonObject)delegatedConstructor["params"][0])) != objectResult)
+            throw new InvalidOperationException("A unique constructor retained a redundant variable discriminator or lost its declaration frame");
+        var functionIdentity = new TypeNode.Fn(false, variable, new TypeNode[] { variable });
+        var functionIdentityRecord = new JsonObject {
+            [FunctionSignatureIdentity.Key] = TypeJson.Write(functionIdentity),
+            [FunctionSignatureIdentity.CallKey] = TypeJson.Write(functionIdentity),
+        };
+        NullableGenericErasure.Apply(functionIdentityRecord, _ => false);
+        if (TypeJson.Read(functionIdentityRecord[FunctionSignatureIdentity.Key]) != functionIdentity
+            || TypeJson.Read(functionIdentityRecord[FunctionSignatureIdentity.CallKey]) != functionIdentity)
+            throw new InvalidOperationException("Value erasure changed a function signature's declaration identity");
+        var functionParameter = new JsonObject { ["name"] = "callback", ["type"] = TypeJson.Write(functionIdentity) };
+        var functionConstructor = new JsonObject { ["ctors"] = new JsonArray(new JsonObject {
+            ["params"] = new JsonArray(functionParameter),
+        }) };
+        NullableGenericErasure.Apply(functionConstructor, _ => false);
+        if (TypeJson.Read(functionParameter[FunctionSignatureIdentity.Key]) != functionIdentity)
+            throw new InvalidOperationException("A function discriminator was captured after generic value erasure");
+        foreach (var callKind in new[] { "callInstance", "callStatic" })
+        {
+            var sourceCall = new JsonObject {
+                ["k"] = callKind, ["sig"] = new JsonArray(TypeJson.Write(variable)),
+                ["memberSignature"] = new JsonArray(TypeJson.Write(variable)),
+                ["memberReturnType"] = TypeJson.Write(variable),
+            };
+            NullableGenericErasure.Apply(sourceCall, _ => false);
+            // A repeated visit must not replace declaration facts with value types.
+            NullableGenericErasure.Apply(sourceCall, _ => false);
+            var nativeCall = new JsonObject();
+            ForeignStarProjectionBinding.CopyDeclarationSignature(sourceCall, nativeCall);
+            if (TypeJson.Read(sourceCall["sig"][0]) != objectResult
+                || TypeJson.Read(sourceCall["memberSignature"][0]) != variable
+                || TypeJson.Read(sourceCall["memberReturnType"]) != variable
+                || TypeJson.Read(ForeignStarProjectionBinding.DeclarationSignature(nativeCall)[0]) != variable)
+                throw new InvalidOperationException("Native binding lost the selected signature before Kotlin value erasure");
+        }
+        foreach (var scope in new[] { "type", "method" })
+        {
+            var physicalVariable = new TypeNode.Tv(scope, 0);
+            var stringSlot = new TypeNode.Fqn("System.String");
+            var owner = new TypeNode.Fqn("PhysicalEntry", scope == "type" ? new TypeNode[] { stringSlot } : null);
+            var physicalCall = new JsonObject {
+                ["k"] = "callStatic", ["owner"] = TypeJson.Write(owner),
+                ["method"] = "invoke", ["sig"] = new JsonArray(TypeJson.Write(physicalVariable)),
+                ["ret"] = TypeJson.Write(stringSlot), ["sty"] = TypeJson.Write(stringSlot),
+                ["args"] = new JsonArray(new JsonObject {
+                    ["k"] = "const", ["type"] = TypeJson.Write(stringSlot), ["value"] = "native",
+                }),
+            };
+            if (scope == "method") physicalCall["typeArgs"] = new JsonArray(TypeJson.Write(stringSlot));
+            var physicalIndex = new DeclIndex();
+            physicalIndex.ByOwner["PhysicalEntry"] = new Dictionary<string, DeclSig> {
+                ["invoke|1"] = new DeclSig {
+                    Ret = physicalVariable, Params = new TypeNode[] { physicalVariable },
+                    NullableErasureOwnershipKnown = true,
+                },
+            };
+            ApplyMaterialized(new[] { physicalCall }, physicalIndex, _ => false, null);
+            ApplyMaterialized(new[] { physicalCall }, physicalIndex, _ => false, null);
+            if (TypeJson.Read(physicalCall["sig"][0]) != physicalVariable
+                || TypeJson.Read(physicalCall["ret"]) != stringSlot
+                || Str(physicalCall["args"][0]["k"]) != "const")
+                throw new InvalidOperationException("An exact late CLR declaration was re-erased as a Kotlin value slot");
+        }
         var typeArgs = new TypeNode[] { new TypeNode.Fqn("System.Int32") };
         var methodArgs = new TypeNode[] { new TypeNode.Fqn("System.String") };
+        var openMethodVariable = new TypeNode.Tv("method", 0);
+        var openCollection = new TypeNode.Fqn("Collection", new TypeNode[] { openMethodVariable });
+        if (ErasedCallSignatureType(openMethodVariable, null, _ => false) != objectResult
+            || ErasedCallSignatureType(openCollection, null, _ => false) != openCollection)
+            throw new InvalidOperationException("A synthesized call lost its open generic method signature");
 
         var arrays = new TypeNode[]
         {

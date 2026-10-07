@@ -433,6 +433,9 @@ static partial class ClrMemberResolution
     {
         if (node.ContainsKey("memberRef")) return;
         if (TypeJson.Read(node["iface"]) is not TypeNode.Fqn iface) return;
+        // Constrained dispatch has the same local-over-reference ownership rule as
+        // ordinary calls. A reflected twin cannot select a method on our local TypeDef.
+        if (_localTypes.Contains(iface.Name) && !_externalCanonicalTypes.Contains(iface.Name)) return;
         if ((node["method"] as JsonValue)?.GetValue<string>() is not string name) return;
         if (node["args"] is not JsonArray args)
             throw new InvalidOperationException(
@@ -459,5 +462,31 @@ static partial class ClrMemberResolution
         StampResolvedMethodTypeParameters(node, win);
         StampDelegateArgumentTargets(node, win, iface.Args ?? Array.Empty<TypeNode>());
         StampResolvedMemberReturn(node, win.ReturnType);
+    }
+
+    internal static void ConstrainedLocalOwnerSelfTest()
+    {
+        var localTypes = _localTypes;
+        var externalTypes = _externalCanonicalTypes;
+        try
+        {
+            _localTypes = new System.Collections.Generic.HashSet<string> { "LocalConstraint" };
+            _externalCanonicalTypes = new System.Collections.Generic.HashSet<string>();
+            var call = JsonNode.Parse("""
+                {"k":"constrainedCall","iface":{"t":"fqn","name":"LocalConstraint"},
+                 "recvType":{"t":"tv","scope":"method","i":0},
+                 "recv":{"k":"local","name":"receiver"},"method":"read", "sig":[],"args":[],
+                 "ret":{"t":"fqn","name":"System.Object"}}
+                """)!.AsObject();
+            var expected = call.DeepClone();
+            ResolveConstrainedCall(call);
+            if (!JsonNode.DeepEquals(call, expected))
+                throw new InvalidOperationException("Local constrained call was rebound through a reference assembly");
+        }
+        finally
+        {
+            _localTypes = localTypes;
+            _externalCanonicalTypes = externalTypes;
+        }
     }
 }

@@ -513,7 +513,7 @@ static partial class ClrMemberResolution
                             .Select(ReferenceMetadataIndex.GenericParamDeclaration).ToArray());
                         return KotlinOverrideSlotBridge.SameMethodTypeParameterShape(
                             declaredTypeParams, wantedTypeParams,
-                            candidate.DeclaringArgs, Array.Empty<TypeNode>());
+                            candidate.DeclaringArgs, Array.Empty<TypeNode>(), MethodImplComparisonType);
                     }).ToList();
                 var mostDerived = MostDerived(candidates.Select(candidate => candidate.Method)
                     .GroupBy(method => (method.Module, method.MetadataToken))
@@ -648,7 +648,8 @@ static partial class ClrMemberResolution
                     return false;
                 return descriptor["typeParams"] is not JsonArray wantedTypeParams
                     || KotlinOverrideSlotBridge.SameMethodTypeParameterShape(
-                        method["typeParams"] as JsonArray, wantedTypeParams, args, Array.Empty<TypeNode>());
+                        method["typeParams"] as JsonArray, wantedTypeParams, args, Array.Empty<TypeNode>(),
+                        MethodImplComparisonType);
             }).ToList();
             if (candidates.Count != 1)
             {
@@ -667,7 +668,10 @@ static partial class ClrMemberResolution
                 }));
                 throw new InvalidOperationException(
                     $"bir2cir: local interface MethodImpl '{iface.Name}.{member}`{arity}' resolves to "
-                    + $"{candidates.Count} declaration(s), expected exactly one; wanted: {parameters.ToJsonString()}; candidates: {available}");
+                    + $"{candidates.Count} declaration(s), expected exactly one; wanted: {parameters.ToJsonString()}"
+                    + $" -> {TypeJson.Write(wantedRet).ToJsonString()}; owner arguments: "
+                    + $"{new JsonArray(args.Select(TypeJson.Write).ToArray()).ToJsonString()}; "
+                    + $"implementation: {descriptor.Parent?.Parent?["name"]} on {descriptor.Parent?.Parent?.Parent?.Parent?["name"]}; candidates: {available}");
             }
             var selected = candidates[0];
             descriptor["member"] = selected["name"]?.DeepClone();

@@ -58,8 +58,8 @@ static partial class ClrMemberResolution
                 && method.GetParameters().Length == parameters.Count
                 && (method.IsPublic || method.IsFamily || method.IsFamilyOrAssembly))
             .ToList();
-        // GetMethods returns declarations in their OPEN declaring-type frames.  Specialize each through the
-        // constructed owner edge before comparing it with the already-constructed descriptor: a Base<T,U> that
+        // Normalize each reflected method to its declaration before specializing through the constructed
+        // owner edge and comparing with the descriptor: a Base<T,U> that
         // declares M(T) and M(U) must become distinguishable when reached through Base<Int32,String>.
         var matches = MostDerived(candidates.Where(candidate =>
             ExternalMethodImplSlotMatches(candidate, open, ownerSpec.Args, parameters, ret)).ToList());
@@ -74,6 +74,10 @@ static partial class ClrMemberResolution
     static bool ExternalMethodImplSlotMatches(MethodInfo candidate, Type open, TypeNode[] ownerArgs,
         IReadOnlyList<TypeNode> parameters, TypeNode ret)
     {
+        // GetMethods on Intermediate<V> : Base<int,V> returns partially substituted signatures.
+        // Their V belongs to Intermediate, not Base's parameter zero. Read the exact MethodDef's
+        // open signature before applying the declaring edge, as MemberRefOf does for serialization.
+        candidate = (MethodInfo)OpenDeclarationOf(candidate);
         var declarer = DeclaringTypeRef(candidate, open, ownerArgs ?? Array.Empty<TypeNode>()) as TypeNode.Fqn;
         var declaringArgs = declarer?.Args ?? Array.Empty<TypeNode>();
         var candidateParameters = RefParamsOf(candidate)

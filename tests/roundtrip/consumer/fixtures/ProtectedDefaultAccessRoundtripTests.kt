@@ -26,4 +26,13 @@ class ProtectedDefaultAccessRoundtripTests {
         check(mapped.read() == "written imported")
         check((mapped as ProtectedDefaultAccess.IExplicitValue).Value == 283)
     }
+
+    @TestAttribute fun protectedNativeMethodsKeepOwnerAndMethodGenericDeclarations() {
+        val strings = protecteddefaults.GenericChild("initial")
+        check(strings.genericEcho("owner string") == "owner string")
+        check(strings.referenceEcho("method string") == "method string")
+        val integers = protecteddefaults.GenericChild(239)
+        check(integers.genericEcho(263) == 263)
+        check(integers.referenceEcho("method with value owner") == "method with value owner")
+    }
 }

@@ -2052,8 +2052,11 @@ static class InlineSplice
         return result;
     }
 
+    // On a declaration, an override edge's owner is a constructed supertype in
+    // the implementing class's frame. Expression nodes instead carry the chosen
+    // callee's override chain; that chain belongs to the callee declaration frame.
     static bool IsForeignDeclarationFrameKey(string key) => key is
-        "sig" or "resolvedMemberParams" or "shapeTypes" or "paramSig" or "delegationSig" or "overrides"
+        "sig" or "resolvedMemberParams" or "shapeTypes" or "paramSig" or "delegationSig"
         or "memberOwnerTypeParams" or "memberMethodTypeParams" or "memberReturnType" or "memberSignature" or "memberType"
         or "sharedCellTypeParams"
         or ClrMemberResolution.ResolvedMethodTypeParamsKey or ClrMemberResolution.ResolvedMemberReturnKey;
@@ -2062,6 +2065,7 @@ static class InlineSplice
     // `argTypes` as the selected declaration vector until a later resolver renames it to `resolvedMemberParams`.
     static bool IsIndependentDeclarationFrameField(JsonObject owner, string key)
         => IsForeignDeclarationFrameKey(key)
+            || (key == "overrides" && owner["k"] != null)
             || (key == "argTypes" && Str(owner["k"]) != "new")
             // A local function declaration owns a separate dense method frame. Its use-site application remains on
             // the sibling callLocal/localFunRef.typeArgs, which is deliberately still traversed.
@@ -2744,7 +2748,9 @@ static class InlineSplice
                 if (c is JsonObject co) foreach (var kv in co) o[kv.Key] = kv.Value?.DeepClone();
                 return;
             }
-            foreach (var kv in o) if (kv.Value != null) SubstTypeScopeTvs(kv.Value, typeArgs);
+            foreach (var kv in o)
+                if (kv.Value != null && !IsIndependentDeclarationFrameField(o, kv.Key))
+                    SubstTypeScopeTvs(kv.Value, typeArgs);
         }
         else if (node is JsonArray a) foreach (var c in a) if (c != null) SubstTypeScopeTvs(c, typeArgs);
     }

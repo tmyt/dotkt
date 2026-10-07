@@ -272,6 +272,26 @@ static class ClrEventImplBinding
                         // A type-parameter receiver requires an address plus constrained. dispatch.  A concrete local
                         // owner uses the synthesized public-virtual accessor normally.
                         obj["dispatch"] = TypeJson.Read(obj["type"]) is TypeNode.Tv ? "constrained" : "callvirt";
+                        // The local accessor is now an ordinary selected Kotlin method.
+                        // Keep it on that path so existential slot allocation can bind
+                        // its physical owner and name together with other local calls.
+                        var isStatic = (obj["static"] as JsonValue)?.GetValue<bool>() == true;
+                        obj["k"] = isStatic ? "callStatic" : "callInstance";
+                        obj[isStatic ? "owner" : "ownerType"] = TypeJson.Write(binding.AccessorOwner);
+                        obj["method"] = obj["accessor"]?.DeepClone();
+                        obj["ret"] = TypeJson.Fqn("kotlin.Unit");
+                        obj["args"] = new JsonArray(obj["handler"]?.DeepClone());
+                        var accessorSignature = (JsonArray)obj["sig"];
+                        obj[FunctionSignatureIdentity.CallKey] = new JsonArray(accessorSignature
+                            .Select(TypeJson.Read).Select(type => TypeJson.Write(
+                                type is TypeNode.Mod { M: TypeNode.Fn } modifier ? modifier.M : type)).ToArray());
+                        obj["sig"] = new JsonArray(accessorSignature.Select(TypeJson.Read)
+                            .Select(type => TypeJson.Write(
+                                type is TypeNode.Mod { M: TypeNode.Fn } modifier ? modifier.Of : type)).ToArray());
+                        if (!isStatic) obj["virtual"] = true;
+                        foreach (var field in new[] { "type", "event", "static", "handler", "handlerExact",
+                            "accessor", "accessorOwner", "delegateType", "localAccessor", "dispatch" })
+                            obj.Remove(field);
                     }
                     obj.Remove("eventSubscriptionKey");
                     obj.Remove("eventBindingFree");

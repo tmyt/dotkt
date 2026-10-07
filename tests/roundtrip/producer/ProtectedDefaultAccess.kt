@@ -11,6 +11,8 @@ class Child : ProtectedDefaultAccess.Base() {
 
 class GenericChild<T>(value: T) : ProtectedDefaultAccess.GenericBase<T>(value) {
     fun instanceDefault(value: T = Value): T = value
+    fun genericEcho(value: T): T = Echo(value = value)
+    fun referenceEcho(value: String): String = EchoReference(value)
 }
 
 class StringChild(value: String) : ProtectedDefaultAccess.GenericBase<String>(value) {

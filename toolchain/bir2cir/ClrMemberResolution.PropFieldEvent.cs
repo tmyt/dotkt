@@ -16,6 +16,41 @@ using DotKt.Bir;
 // dispatch. ilemit consumes those facts one-to-one — zero member-kind derivation, zero first-pick.
 static partial class ClrMemberResolution
 {
+    // The frontend supplies the selected declaration frame, not the erased
+    // Kotlin argument storage. Resolve that exact native MethodDef and reuse
+    // its physical signature, modifiers and generic constraints for the bridge.
+    internal static MemberRefNode ResolveMethodForUnsafeAccessor(ReferenceMetadataIndex refs,
+        TypeNode.Fqn owner, string name, bool isStatic, int methodArity,
+        IReadOnlyList<TypeNode> declarationSignature,
+        out JsonArray ownerParameters, out JsonArray methodParameters)
+    {
+        _refs = refs;
+        ownerParameters = null;
+        methodParameters = null;
+        var open = ResolveOwnerType(owner)
+            ?? throw new InvalidOperationException($"UnsafeAccessor method owner '{owner.Name}' has no referenced TypeDef");
+        TypeNode Physical(TypeNode type) => BirTypeLowering.CanonicalPhysicalSlotType(
+            BirTypeLowering.LowerPhysicalType(type, refs.Aliases, refs.IsValueType,
+                refs.PhysicalTypeNames, typeArg: false, nullableFrames: refs.NullableTypeFrames));
+        var selected = declarationSignature.Select(Physical).ToArray();
+        var flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly
+            | (isStatic ? BindingFlags.Static : BindingFlags.Instance);
+        var candidates = open.GetMethods(flags).Where(method => method.Name == name
+            && method.GetGenericArguments().Length == methodArity
+            && method.GetParameters().Length == selected.Length
+            && RefParamsOf(method).Select(BirTypeLowering.CanonicalPhysicalSlotType)
+                .SequenceEqual(selected)).ToArray();
+        if (candidates.Length != 1)
+            throw new InvalidOperationException(
+                $"UnsafeAccessor method '{owner.Name}.{name}' selects {candidates.Length} exact native MethodDefs");
+        var declaration = candidates[0];
+        ownerParameters = new JsonArray(declaration.DeclaringType.GetGenericArguments()
+            .Select(ReferenceMetadataIndex.GenericParamDeclaration).ToArray());
+        methodParameters = new JsonArray(declaration.GetGenericArguments()
+            .Select(ReferenceMetadataIndex.GenericParamDeclaration).ToArray());
+        return MemberRefOf(declaration, "method", open, owner.Args);
+    }
+
     // UnsafeAccessor binds a field on its declaring TypeDef, unlike ordinary inherited
     // field lookup. Reuse the exact MemberRef projection, including constructed bases.
     internal static MemberRefNode ResolveFieldForUnsafeAccessor(ReferenceMetadataIndex refs,

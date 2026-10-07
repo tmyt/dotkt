@@ -18,6 +18,7 @@ using DotKt.Bir;
 static class AliasHelperHoist
 {
     internal const string IdentitySuffix = "|alias-helper";
+    internal const string OwnershipHostKey = "aliasOwnershipHost";
     internal static string DeclarationIdentity(string sourceIdentity) => sourceIdentity + IdentitySuffix;
     public static JsonNode Apply(JsonNode root, ReferenceMetadataIndex refs, GenericRepresentationPolicy representations)
     {
@@ -38,7 +39,12 @@ static class AliasHelperHoist
                 // substituted to the BCL type. Retain only a compiler-generated ownership shell plus any companion
                 // value field; no ordinary alias member/backing state survives. Without the shell, the child cannot
                 // preserve its semantic owner in CLR metadata.
-                if (BuildOwnershipHost(td, types) is { } host) rebuilt.Add(host);
+                var parameters = td["typeParams"] as JsonArray;
+                var signatureHost = parameters is { Count: > 0 }
+                    && AliasVarianceRepresentation.RequiresErasure(new TypeNode.Fqn(fqn,
+                        Enumerable.Range(0, parameters.Count).Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray()),
+                        refs, parameters);
+                if (BuildOwnershipHost(td, types, signatureHost) is { } host) rebuilt.Add(host);
                 var helper = BuildHelper(td, fqn, refs, representations);
                 if (helper != null) rebuilt.Add(helper);         // null = no rule-3 members (e.g. kotlin.Any) -> just dropped
             }
@@ -171,6 +177,10 @@ static class AliasHelperHoist
                 if (key is "sig" or "resolvedMemberParams" or "shapeTypes" or "paramSig"
                     or "delegationSig" or "memberSignature" || (key == "argTypes" && kind != "new"))
                     continue;
+                // A call's override closure is relative to the selected owner's declaration,
+                // not the lexical method being hoisted. Its ownerType is the application
+                // that closes that frame; remap that application, not the closure itself.
+                if (key == "overrides" && kind == "callInstance") continue;
                 if (TypeJson.IsType(value)) obj[key] = TypeJson.Write(rewrite(TypeJson.Read(value)));
                 else RewriteLexicalTypes(value, rewrite);
             }
@@ -247,7 +257,7 @@ static class AliasHelperHoist
         return true;
     }
 
-    static JsonObject BuildOwnershipHost(JsonObject owner, JsonArray types)
+    static JsonObject BuildOwnershipHost(JsonObject owner, JsonArray types, bool signatureHost = false)
     {
         var ownerName = (owner["name"] as JsonValue)?.GetValue<string>();
         if (ownerName == null) return null;
@@ -258,7 +268,7 @@ static class AliasHelperHoist
             .Where(t => (t["nestedIn"] as JsonValue)?.GetValue<string>() == ownerName ||
                 (t["semanticOwner"] as JsonValue)?.GetValue<string>() == ownerName)
             .ToArray();
-        if (ownedTypes.Length == 0) return null;
+        if (ownedTypes.Length == 0 && !signatureHost) return null;
         var carrierNames = ownedTypes
             .Where(t => t["companionCarrier"] is JsonObject)
             .Select(t => (t["name"] as JsonValue)?.GetValue<string>())
@@ -274,6 +284,7 @@ static class AliasHelperHoist
         var host = new JsonObject
         {
             ["name"] = ownerName,
+            [OwnershipHostKey] = true,
             ["kind"] = "class",
             ["generated"] = true,
             ["abstract"] = false,
@@ -382,7 +393,7 @@ static class AliasHelperHoist
         if (tps != null) outM["typeParams"] = tps;
         outM["params"] = ps;
         outM["ret"] = rewritten["ret"]?.DeepClone();
-        outM["body"] = RewriteThis(rewritten["body"]);
+        outM["body"] = RewriteThis(rewritten["body"], Rebind(receiverType));
         if (m[DeclarationIdentityBinding.Key] is JsonValue identity && identity.TryGetValue<string>(out var sourceIdentity))
         {
             outM[DeclarationIdentityBinding.Key] = DeclarationIdentity(sourceIdentity);
@@ -413,6 +424,24 @@ static class AliasHelperHoist
 
     internal static void SelfTest()
     {
+        var helperReceiver = new TypeNode.Fqn("Alias", new TypeNode[] { new TypeNode.Tv("method", 2) });
+        var rewrittenReceiver = RewriteThis(new JsonObject {
+            ["recv"] = new JsonObject { ["k"] = "this" },
+        }, helperReceiver)["recv"];
+        if (rewrittenReceiver["k"]?.GetValue<string>() != "local"
+            || NodeType.Of(rewrittenReceiver) != helperReceiver)
+            throw new InvalidOperationException("Hoisted receiver lost its declaration-owned generic frame");
+        var host = BuildOwnershipHost(new JsonObject { ["name"] = "Alias" }, new JsonArray(), signatureHost: true);
+        var nestedChild = new JsonObject { ["name"] = "Child", ["kind"] = "class" };
+        host["types"] = new JsonArray(nestedChild);
+        var ordinary = new JsonObject { ["name"] = "Ordinary", ["kind"] = "class", ["methods"] = new JsonArray() };
+        var document = new JsonObject { ["types"] = new JsonArray(host, ordinary) };
+        var semanticTypes = SupertypeGraph.Collect(new[] { document });
+        if (semanticTypes.ContainsKey("Alias") || !semanticTypes.ContainsKey("Child") || !semanticTypes.ContainsKey("Ordinary"))
+            throw new InvalidOperationException("Alias ownership host shadowed semantic declarations or hid nested types");
+        CirMetadataBoundary.Apply(document);
+        if (host[OwnershipHostKey] != null || host["name"]?.GetValue<string>() != "Alias")
+            throw new InvalidOperationException("Alias ownership host fact leaked into CIR or removed its physical declaration");
         foreach (var reverse in new[] { false, true })
         {
             var owner = new JsonObject { ["name"] = "Owner" };
@@ -462,6 +491,32 @@ static class AliasHelperHoist
         if (TypeJson.Read(construction["argTypes"][0]) != new TypeNode.Tv("method", 0)
             || TypeJson.Read(construction["memberSignature"][0]) != new TypeNode.Tv("type", 0))
             throw new InvalidOperationException("Hoisted constructor mixed caller and selected declaration frames");
+        foreach (var genericCaller in new[] { false, true })
+        {
+            var selectedArgument = genericCaller
+                ? (TypeNode)new TypeNode.Tv("type", 0) : new TypeNode.Fqn("Element");
+            var selectedOwner = new TypeNode.Fqn("Container", new[] { selectedArgument });
+            var overrideOwner = new TypeNode.Fqn("Interface",
+                new TypeNode[] { new TypeNode.Tv("type", 0) });
+            var call = new JsonObject {
+                ["k"] = "callInstance", ["method"] = "add", ["ownerType"] = TypeJson.Write(selectedOwner),
+                ["sig"] = new JsonArray(slot.DeepClone()), ["args"] = new JsonArray(),
+                ["overrides"] = new JsonArray(new JsonObject {
+                    ["owner"] = TypeJson.Write(overrideOwner), ["member"] = "add", ["kind"] = "method" }),
+            };
+            var caller = new JsonObject { ["name"] = "Use", ["params"] = new JsonArray(),
+                ["ret"] = TypeJson.Fqn("kotlin.Unit"), ["body"] = new JsonArray(call) };
+            var moved = HoistMethod(caller, genericCaller ? new JsonArray("T") : null,
+                new TypeNode.Fqn("Alias"));
+            var movedCall = moved["body"][0];
+            var expectedArgument = genericCaller ? (TypeNode)new TypeNode.Tv("method", 0) : selectedArgument;
+            if (TypeJson.Read(movedCall["ownerType"]) is not TypeNode.Fqn movedOwner
+                || movedOwner.Args[0] != expectedArgument
+                || TypeJson.Read(movedCall["overrides"][0]["owner"]) is not TypeNode.Fqn movedOverride
+                || movedOverride.Args[0] != new TypeNode.Tv("type", 0)
+                || SupertypeGraph.SubstOwnerTvs(movedOverride.Args[0], movedOwner.Args) != expectedArgument)
+                throw new InvalidOperationException("Hoisted call override closure escaped its selected-owner frame");
+        }
         Console.WriteLine("[alias helper receiver] self-test OK (binding roles, permutation, scope transfer)");
     }
 
@@ -496,20 +551,21 @@ static class AliasHelperHoist
 
     // Rewrite every dispatch-receiver node {"k":"this"} to the hoisted static's leading `__self` local. kotc lifts all
     // lambdas/local funs to separate methods, so within a single member body every {"k":"this"} is THIS receiver.
-    static JsonNode RewriteThis(JsonNode n)
+    static JsonNode RewriteThis(JsonNode n, TypeNode receiverType)
     {
         if (n is JsonObject o)
         {
             if ((o["k"] as JsonValue)?.GetValue<string>() == "this")
-                return new JsonObject { ["k"] = "local", ["name"] = "__self" };
+                return new JsonObject { ["k"] = "local", ["name"] = "__self",
+                    ["sty"] = TypeJson.Write(receiverType) };
             var c = new JsonObject();
-            foreach (var kv in o) c[kv.Key] = kv.Value == null ? null : RewriteThis(kv.Value);
+            foreach (var kv in o) c[kv.Key] = kv.Value == null ? null : RewriteThis(kv.Value, receiverType);
             return c;
         }
         if (n is JsonArray a)
         {
             var c = new JsonArray();
-            foreach (var i in a) c.Add(i == null ? null : RewriteThis(i));
+            foreach (var i in a) c.Add(i == null ? null : RewriteThis(i, receiverType));
             return c;
         }
         return n?.DeepClone();

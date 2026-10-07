@@ -4,6 +4,7 @@ import roundtrip.defaultlambdaframes.DefaultOwner
 private class DefaultFrameCaller<A : CharSequence, B>(val label: A, val value: B) {
     fun read(): B = DefaultOwner(value).read()
     fun nested(): B = DefaultOwner(value).nested()
+    fun deep(): B = DefaultOwner(value).deep()
     fun inlineRead(): B = DefaultOwner(value).inlineRead({ check(label.length > 0); it })
     fun <M> method(value: M): M = DefaultOwner(this.value).method(value)
     fun sam(): B = DefaultOwner(value).sam()
@@ -24,6 +25,8 @@ class DefaultLambdaFrameRoundtripTests {
         val caller = DefaultFrameCaller("label", 23)
         check(caller.read() == 23)
         check(caller.nested() == 23)
+        check(caller.deep() == 23)
+        check(DefaultFrameCaller("label", "deep").deep() == "deep")
         check(caller.inlineRead() == 23)
         check(caller.method("method") == "method")
         check(caller.sam() == 23)
@@ -47,5 +50,7 @@ class DefaultLambdaFrameRoundtripTests {
         check(DefaultOwner("text").nested() == "text")
         check(DefaultOwner<String?>(null).read() == null)
         check(DefaultFrameCaller<String, Int?>("nullable", null).read() == null)
+        check(DefaultOwner<String?>(null).deep() == null)
+        check(DefaultFrameCaller<String, Int?>("nullable", null).deep() == null)
     }
 }

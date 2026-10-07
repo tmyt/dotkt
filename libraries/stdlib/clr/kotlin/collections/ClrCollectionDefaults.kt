@@ -95,6 +95,11 @@ private class ClrProjectedCollectionView<T>(private val source: Any) : Collectio
 public fun <T> clrProjectedCollectionView(source: Any): Collection<T> =
     (source as? Collection<T>) ?: ClrProjectedCollectionView(source)
 
+// Native dictionary views require ICollection<T> even when the original Kotlin view only
+// provides a read-only collection face. The compiler-owned view receives that storage face;
+// returning an arbitrary foreign IReadOnlyCollection<T> directly would not guarantee it.
+public fun <T> clrNativeCollectionView(source: Any): Collection<T> = ClrProjectedCollectionView(source)
+
 private class ClrProjectedSetView<T>(private val source: Any, private val sourceWitness: Any?) : AbstractSet<T>() {
     override val size: Int get() = projectedSetViewCount(source, sourceWitness)
     override fun isEmpty(): Boolean {
@@ -152,6 +157,12 @@ public fun <T> clrCollAdd(c: MutableCollection<T>, element: T): Boolean {
 
 /** Projected `MutableCollection.add`; the receiver's exact invariant collection element is known only at runtime. */
 public fun <T> clrProjectedCollAdd(c: Any, element: T): Boolean = mutableCollectionAddErased(c, element)
+
+/** Copy elements into a newly allocated native collection without assuming CLR generic covariance. */
+public fun clrCollectionCopyInto(target: Any, source: Any) {
+    val iterator = iteratorOverRawEnumerable(source)
+    while (iterator.hasNext()) mutableCollectionAddErased(target, iterator.next())
+}
 
 private fun <T> clrProjectedCollSnapshot(source: Any): ArrayList<T> {
     val out = ArrayList<T>()

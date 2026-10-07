@@ -15,6 +15,8 @@ public class GenericBase<T>
     protected T Value;
     protected static T StaticValue;
     protected T Echo(T value) => value;
+    protected int Echo(int number) => number + 1000;
+    protected U EchoReference<U>(U value) where U : class => value;
     public GenericBase(T value) { Value = value; StaticValue = value; }
 }
 

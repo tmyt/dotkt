@@ -1,0 +1,13 @@
+# The reference interface's value parameter is physically object, but its Kotlin metadata says T.
+# Close that semantic declaration at Duration before selecting the inherited CLR intrinsic.
+# Comparable's variant alias uses the runtime projection path. Its descriptor must still identify
+# the exact native generic declaration, not the reference-only Duration.compareTo stub.
++"method":"starProjectionInvoke"
++"k":"classRef","type":{"t":"fqn","name":"System.IComparable\u00601","args":[{"t":"fqn","name":"kotlin.time.Duration"}]}
++"value":"CompareTo"
++"value":"t0"
+-"method":"compareTo"
+-"name":"compareTo"
+# Direct aliased calls also select from the source vector (!0), not its erased object slot.
++"method":"Contains"
++"declaringType":{"t":"fqn","name":"System.Collections.Generic.HashSet\u00601","args":[{"t":"tv","scope":"method","i":1}]},"name":"Contains"

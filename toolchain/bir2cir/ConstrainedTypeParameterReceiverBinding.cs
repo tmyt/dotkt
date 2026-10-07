@@ -47,6 +47,29 @@ using DotKt.Bir;
 static class ConstrainedTypeParameterReceiverBinding
 {
     const string ErasedConstraintDispatchKey = "_erasedConstraintDispatch";
+    internal const string SourceReceiverTypeKey = "_sourceConstraintReceiverType";
+
+    // Preserve the declaration-relative Kotlin receiver before ordinary value
+    // erasure changes its storage and stamp. This is a constraint-selection fact,
+    // not the physical receiver slot used by the constrained instruction.
+    internal static void PreserveSourceReceiver(JsonObject node)
+    {
+        if (node[SourceReceiverTypeKey] != null) return;
+        // Kotlin-owner calls still need their representation/binding transforms;
+        // only an already CLR-bound edge can defer that receiver conversion here.
+        if (Str(node["k"]) is "clrInstance" or "clrGenericInstance"
+            or "clrPropGet" or "clrPropSet"
+            && Peel(NodeType.Of(node["recv"])) is TypeNode.Tv variable)
+            node[SourceReceiverTypeKey] = TypeJson.Write(variable);
+    }
+
+    internal static bool HasSourceReceiver(JsonObject node)
+        => TypeJson.Read(node[SourceReceiverTypeKey]) is TypeNode.Tv;
+
+    static TypeNode.Tv ConstraintReceiverVariable(JsonObject call, JsonObject receiver,
+        BirScope scope, Dictionary<string, TypeNode> locals)
+        => TypeJson.Read(call[SourceReceiverTypeKey]) as TypeNode.Tv
+            ?? ReceiverTypeVariable(receiver, scope, locals);
 
     // PHASE 1 — close a bare owner token from the receiver type parameter's bound, leaving the node a
     // callInstance so the inherited-owner walk can still substitute the declaring type into it.
@@ -288,7 +311,7 @@ static class ConstrainedTypeParameterReceiverBinding
                         && kind is "clrPropGet" or "clrPropSet"
                         && TypeJson.Read(call["type"]) is TypeNode.Fqn unresolvedPropertyOwner
                         && call["recv"] is JsonObject unresolvedPropertyRecv
-                        && ReceiverTypeVariable(unresolvedPropertyRecv, scope, locals) is TypeNode.Tv unresolvedPropertyTv
+                        && ConstraintReceiverVariable(call, unresolvedPropertyRecv, scope, locals) is TypeNode.Tv unresolvedPropertyTv
                         && ConstraintAtPhysical(unresolvedPropertyTv, unresolvedPropertyOwner.Name,
                             typeParams, methodParams, refs, out var propertyConstraintErased) is TypeNode.Fqn propertyConstraint)
                     {
@@ -304,14 +327,14 @@ static class ConstrainedTypeParameterReceiverBinding
                         && !(call["static"]?.GetValue<bool>() ?? false)
                         && TypeJson.Read(call["type"]) is TypeNode.Fqn propertyOwner
                         && call["recv"] is JsonObject propertyRecv
-                        && ReceiverTypeVariable(propertyRecv, scope, locals) is TypeNode.Tv propertyTv
+                        && ConstraintReceiverVariable(call, propertyRecv, scope, locals) is TypeNode.Tv propertyTv
                         && ClosedOwner(propertyOwner, arity) is TypeNode.Fqn closedPropertyOwner)
                     {
                         var propertyRouteWasErased = NullableBool(call[ErasedConstraintDispatchKey])
                             ?? ConstraintDispatchWasErased(
                                 propertyTv, closedPropertyOwner.Name, typeParams, methodParams);
                         call.Remove(ErasedConstraintDispatchKey);
-                        if (propertyRouteWasErased)
+                        if (propertyRouteWasErased || ReceiverTypeVariable(propertyRecv, scope, locals) == null)
                             CastResolvedPropertyReceiver(call, closedPropertyOwner);
                         else if (Str(call["dispatch"]) == "callvirt")
                             ConstrainResolvedProperty(call, kind == "clrPropSet", propertyTv, closedPropertyOwner);
@@ -324,7 +347,7 @@ static class ConstrainedTypeParameterReceiverBinding
                     if (!resolvedPropertiesOnly && (kind == "callInstance" || clrCall)
                         && TypeJson.Read(call[ownerKey]) is TypeNode.Fqn owner
                         && call["recv"] is JsonObject recv
-                        && ReceiverTypeVariable(recv, scope, locals) is TypeNode.Tv tv)
+                        && ConstraintReceiverVariable(call, recv, scope, locals) is TypeNode.Tv tv)
                     {
                         if (close)
                         {
@@ -362,12 +385,12 @@ static class ConstrainedTypeParameterReceiverBinding
                                 var projectedForeign = ProjectedForeignConstraint(selectedSourceConstraint, refs);
                                 if (projectedForeign != null)
                                 {
-                                    call["k"] = "clrInstance";
+                                    call["k"] = genericClrCall ? "clrGenericInstance" : "clrInstance";
                                     call["type"] = TypeJson.Write(projectedForeign);
                                     call.Remove("ownerType");
                                     call.Remove("virtual");
                                     call.Remove("dynRet");
-                                    kind = "clrInstance";
+                                    kind = Str(call["k"]);
                                 }
                                 else
                                 {
@@ -382,6 +405,19 @@ static class ConstrainedTypeParameterReceiverBinding
                                         ["e"] = recv.DeepClone(),
                                     };
                                 }
+                            }
+                            else if ((HasSourceReceiver(call) && ReceiverTypeVariable(recv, scope, locals) == null)
+                                || (!clrCall && NullableBool(call["virtual"]) == false
+                                    && isValue != null && !isValue(iface)))
+                            {
+                                // Erased object storage cannot be addressed as the source !!T.
+                                // Likewise, a non-virtual reference-owner call needs a reference
+                                // receiver rather than constrained virtual dispatch.
+                                call["recv"] = new JsonObject
+                                {
+                                    ["k"] = "cast", ["type"] = TypeJson.Write(iface),
+                                    ["e"] = recv.DeepClone(),
+                                };
                             }
                             else
                             {
@@ -409,6 +445,7 @@ static class ConstrainedTypeParameterReceiverBinding
                                 call.Remove("virtual");
                                 call.Remove("dynRet");
                             }
+                            call.Remove(SourceReceiverTypeKey);
                         }
                     }
                     foreach (var kv in call)
@@ -496,6 +533,11 @@ static class ConstrainedTypeParameterReceiverBinding
 
     static TypeNode.Fqn ProjectedForeignConstraint(TypeNode.Fqn source, ReferenceMetadataIndex refs)
     {
+        // Declaration-site variance can erase an alias without an explicit in/out
+        // projection. Keep its semantic owner for the existing existential binder;
+        // casting to the invariant physical alias would impose a false CLR proof.
+        if (source != null && refs != null && ForeignStarProjectionBinding.IsForeignStarType(source, refs))
+            return source;
         if (source?.Args is not { Length: > 0 } args || !args.Any(ContainsProjection) || refs == null) return null;
         var physical = refs.TryResolveClrOwner(source.Name, out var alias, out _) ? alias : source.Name;
         var candidate = new TypeNode.Fqn(physical, args);
@@ -599,6 +641,68 @@ static class ConstrainedTypeParameterReceiverBinding
         TypeNode.Nullable n => Peel(n.Of),
         _ => t,
     };
+
+    internal static void SelfTestSourceReceiver()
+    {
+        var variable = new TypeNode.Tv("method", 0);
+        var calls = new List<JsonObject>();
+        var body = new JsonArray();
+        foreach (var kind in new[] { "clrInstance", "clrGenericInstance", "clrPropGet" })
+        {
+            var call = new JsonObject {
+                ["k"] = kind, ["type"] = TypeJson.Fqn("Marker"),
+                ["method"] = "read", ["args"] = new JsonArray(), ["sig"] = new JsonArray(),
+                ["ret"] = TypeJson.Fqn("int"),
+                ["recv"] = new JsonObject {
+                    ["k"] = "local", ["name"] = "value", ["sty"] = TypeJson.Write(variable),
+                },
+            };
+            if (kind == "clrGenericInstance") call["typeArgs"] = new JsonArray(TypeJson.Fqn("int"));
+            if (kind == "clrPropGet")
+            {
+                call["member"] = "accessor";
+                call["accessor"] = "get_Value";
+                call["dispatch"] = "callvirt";
+            }
+            calls.Add(call);
+            body.Add(new JsonObject { ["k"] = "exprStmt", ["expr"] = call });
+        }
+        var parameter = new JsonObject { ["name"] = "value", ["type"] = TypeJson.Write(variable) };
+        var file = new JsonObject { ["methods"] = new JsonArray(new JsonObject {
+            ["name"] = "run", ["params"] = new JsonArray(parameter), ["ret"] = TypeJson.Fqn("void"),
+            ["typeParams"] = new JsonArray(new JsonObject {
+                ["name"] = "R", ["constraints"] = new JsonArray(TypeJson.Fqn("Marker")),
+            }), ["body"] = body,
+        }) };
+        NullableGenericErasure.Apply(file, _ => false);
+        NullableGenericErasure.Apply(file, _ => false);
+        if (TypeJson.Read(parameter["type"]) != new TypeNode.Fqn("object")
+            || calls.Any(call => TypeJson.Read(call[SourceReceiverTypeKey]) != variable))
+            throw new InvalidOperationException("Value erasure lost a source constraint receiver frame");
+        var authoredCast = new JsonObject {
+            ["k"] = "clrInstance", ["recv"] = new JsonObject {
+                ["k"] = "cast", ["type"] = TypeJson.Fqn("Other"), ["e"] = calls[0]["recv"].DeepClone(),
+            },
+        };
+        PreserveSourceReceiver(authoredCast);
+        if (HasSourceReceiver(authoredCast))
+            throw new InvalidOperationException("Constraint binding looked through an authored receiver cast");
+        var semanticCall = new JsonObject {
+            ["k"] = "callInstance", ["ownerType"] = TypeJson.Fqn("SemanticInterface"),
+            ["recv"] = new JsonObject { ["k"] = "local", ["name"] = "value", ["sty"] = TypeJson.Write(variable) },
+        };
+        PreserveSourceReceiver(semanticCall);
+        if (HasSourceReceiver(semanticCall))
+            throw new InvalidOperationException("An unbound Kotlin receiver bypassed its representation transform");
+        ApplyAll(new[] { file }, _ => false, null);
+        ApplyResolvedProperties(new[] { file });
+        if (calls.Any(call => Str(call["k"]) == "constrainedCall"
+                || Str(call["recv"]?["k"]) != "cast"
+                || TypeJson.Read(call["recv"]?["type"]) != new TypeNode.Fqn("Marker")
+                || call[SourceReceiverTypeKey] != null))
+            throw new InvalidOperationException("A source receiver proof was emitted as an address of erased storage");
+        Console.WriteLine("[constraint source receivers] self-test OK (source frame, erased storage, authored cast, cleanup)");
+    }
 
     // The owner token to name in the constrained call, or null to leave the node alone. By phase 2 the token is
     // whatever the inherited-owner walk settled on, so the only judgement left is whether it is CLOSED: a
@@ -718,6 +822,7 @@ static class ConstrainedTypeParameterReceiverBinding
         {
             case JsonObject obj:
                 obj.Remove(ErasedConstraintDispatchKey);
+                obj.Remove(SourceReceiverTypeKey);
                 foreach (var child in obj.Select(pair => pair.Value).Where(value => value != null).ToList())
                     DropConstraintDispatchFacts(child);
                 break;

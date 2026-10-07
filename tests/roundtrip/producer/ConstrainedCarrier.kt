@@ -19,3 +19,6 @@ fun <T, R : System.Collections.Generic.IComparer<T>> compareReferencedGeneric(va
     value.Compare(item, item)
 fun <T, R : System.Collections.Generic.IComparer<T>> deferReferencedGeneric(value: R, item: T): () -> Int =
     { value.Compare(item, item) }
+
+fun <T, R : System.Collections.Generic.IReadOnlyList<T>> headReferencedNative(value: R): T = value[0]
+fun <T, R : System.Collections.Generic.IReadOnlyList<T>> countReferencedNative(value: R): Int = value.Count

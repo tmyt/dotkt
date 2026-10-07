@@ -14,6 +14,14 @@ namespace DotKt.Runtime.CompilerServices
 
 namespace DotKt.Tests
 {
+    public class MethodImplBase<T, U>
+    {
+        public virtual bool Contains(T value) => false;
+        public virtual bool Contains(U value) => true;
+    }
+
+    public class MethodImplIntermediate<V> : MethodImplBase<int, V> { }
+
     // This assembly is a compiler-owned reference-metadata fixture, not a supported user-authored annotation use.
     // It consumes the compiler stdlib's actual binding-annotation definitions. Only the assembly-local provenance
     // carrier above is embedded, matching normal DotKt output where every emitted assembly owns that carrier.

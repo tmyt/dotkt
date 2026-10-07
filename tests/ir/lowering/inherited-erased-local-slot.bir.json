@@ -1,0 +1,34 @@
+{
+  "fileClass": "InheritedErasedLocalSlotKt", "hasMain": false,
+  "fields": [], "properties": [], "refTypes": [],
+  "types": [{
+    "name": "LocalSink", "kind": "interface", "typeParams": [{"name":"T"}],
+    "base": null, "interfaces": [], "fields": [], "properties": [], "ctors": [],
+    "methods": [{
+      "name":"write", "static":false, "virtual":true, "abstract":true, "vis":"public",
+      "params":[{"name":"value","type":{"t":"tv","scope":"type","i":0}}],
+      "ret":{"t":"fqn","name":"kotlin.Int"}, "body":[]
+    }, {
+      "name":"write", "static":false, "virtual":true, "abstract":true, "vis":"public",
+      "params":[{"name":"value","type":{"t":"fqn","name":"kotlin.String"}}],
+      "ret":{"t":"fqn","name":"kotlin.Int"}, "body":[]
+    }]
+  }, {
+    "name":"DerivedSink", "kind":"interface", "typeParams":[{"name":"T"}],
+    "base":null, "interfaces":[{"t":"fqn","name":"LocalSink","args":[{"t":"tv","scope":"type","i":0}]}],
+    "fields":[], "properties":[], "ctors":[], "methods":[]
+  }],
+  "methods":[{
+    "name":"send", "static":true, "vis":"public",
+    "params":[{"name":"sink","type":{"t":"fqn","name":"DerivedSink","args":[{"t":"fqn","name":"kotlin.Int"}]}}],
+    "ret":{"t":"fqn","name":"kotlin.Int"},
+    "body":[{"k":"return","value":{
+      "k":"callInstance", "virtual":true,
+      "ownerType":{"t":"fqn","name":"DerivedSink","args":[{"t":"fqn","name":"kotlin.Int"}]},
+      "recv":{"k":"local","name":"sink"}, "method":"write",
+      "sig":[{"t":"tv","scope":"type","i":0}],
+      "ret":{"t":"fqn","name":"kotlin.Int"},
+      "args":[{"k":"const","type":{"t":"fqn","name":"kotlin.Int"},"value":7}]
+    }}]
+  }]
+}

@@ -63,8 +63,21 @@ static class FunctionValueRepresentation
 
     static void PreserveSlot(JsonObject slot, string typeKey, string sourceKey)
     {
-        if (slot[sourceKey] == null && ContainsOrdinaryFunction(slot[typeKey]))
+        // Suspend function slots also lose their generic parameter shapes during
+        // value erasure. Capture the source before later passes can publish a
+        // partially erased shape through the higher-priority KotlinType carrier.
+        if (slot[sourceKey] == null && ContainsSourceFunction(slot[typeKey]))
             slot[sourceKey] = slot[typeKey].ToJsonString();
+    }
+
+    static bool ContainsSourceFunction(JsonNode node)
+    {
+        if (node is JsonObject obj)
+        {
+            if (TypeJson.Read(obj) is TypeNode.Fn { Clr: null }) return true;
+            return obj.Any(pair => pair.Value != null && ContainsSourceFunction(pair.Value));
+        }
+        return node is JsonArray array && array.Any(ContainsSourceFunction);
     }
 
     internal static bool ContainsOrdinaryFunction(JsonNode node)

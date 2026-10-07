@@ -4477,6 +4477,9 @@ static partial class SuspendColdLowering
                 {
                     ["k"] = "callInstance",
                     ["ownerType"] = Tw(_selfType),
+                    // This bridge calls the cold entry synthesized on this exact owner,
+                    // not an inherited source member with the same allocated name.
+                    ["clrOwnerResolved"] = true,
                     ["virtual"] = false,
                     ["recv"] = new JsonObject { ["k"] = "this" },
                     ["method"] = _coldName,

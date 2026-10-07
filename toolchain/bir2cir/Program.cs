@@ -25,6 +25,9 @@ static class Bir2Cir
                 MemberRefNodeSelfTest.Run();
                 AliasConstructorDelegationExpansion.SelfTest();
                 AliasHelperHoist.SelfTest();
+                PhysicalValueCoercion.SelfTest();
+                HomogeneousIdentityComparisonLowering.SelfTest();
+                DelegateEntryLowering.SelfTest();
                 StdlibBindingOverlay.SelfTest();
                 DeclarationIdentityBinding.SelfTest();
                 KotlinPropertyAccessors.SelfTestAccessorSignatures();
@@ -32,10 +35,12 @@ static class Bir2Cir
                 ExistentialReceiverBinding.SelfTest();
                 MaterializedBirPayload.SelfTest();
                 MaterializedExecutable.SelfTest();
+                ConstructedMemberReturnSubstitution.SelfTest();
                 NullableWitnessDemand.SelfTest();
                 NullableRepresentationDemand.SelfTest();
                 NullableRepresentationTypes.SelfTest();
                 NullableRepresentationMaterialization.SelfTest();
+                NullableGenericErasure.SelfTestDeclarationConstraints();
                 InnerRepresentationFrameTests.SelfTest();
                 GenericRepresentationPolicy.SelfTest();
                 BirTypeLowering.SelfTestSlotReturns();
@@ -46,16 +51,24 @@ static class Bir2Cir
                 ReferenceExistentialAbiBinding.SelfTest();
                 KotlinCollectionSlotSynthesis.SelfTest();
                 KotlinOverrideSlotBridge.SelfTest();
+                CovariantInterfaceReturnBridge.SelfTestSignatureFrame();
                 ContinuationErasure.SelfTest();
                 ClrMemberResolution.InheritedGenericResultSelfTest();
                 ClrMemberResolution.FunctionSlotComparisonSelfTest();
+                ClrMemberResolution.ConstrainedLocalOwnerSelfTest();
                 OwnerConstrainedMethodLowering.SelfTest();
+                ConstrainedTypeParameterReceiverBinding.SelfTestSourceReceiver();
                 StdlibSubstituteTypeParams.SelfTest();
                 FBoundStarProjectionErasure.ProjectionConstraintSelfTest();
                 ComparableRepresentationLowering.SelfTest();
                 AliasVarianceRepresentation.SelfTest();
+                ExternalGenericConstraintValidation.SelfTest();
+                NullableFlags.SelfTest();
+                GenericArrayValueLowering.SelfTest();
                 ReferenceMetadataIndex.SelfTest();
                 NullableTvErasureCallRealign.SelfTest();
+                CirMetadataBoundary.SelfTest();
+                CirValueTypeBoundary.SelfTest();
                 DriverOptions.SelfTest();
                 return 0;
             }
@@ -226,14 +239,19 @@ sealed class Pipeline
         // source names or annotations. Ordinary app/library builds cannot opt into this trusted-stdlib input.
         var stdlibPhysicalParameterIndices = StdlibBindingOverlay.Apply(birRoots, _options.StdlibBindings);
         ComparableRepresentationLowering.Apply(birRoots, _options.RefBuild);
-        // #395: snapshot frontend declaration identity before ANY Kotlin-to-CLR representation pass can rename,
-        // move, clone, or synthesize a declaration. These are source facts, never a physical-name reverse inference.
-        var declarationSemanticSignatures = DeclarationIdentityBinding.PreserveSourceFacts(birRoots);
-        FunctionValueRepresentation.PreserveSourceFacts(birRoots);
-        var localDeclarationIds = DeclarationIdentityBinding.CollectDeclarationIds(birRoots);
         // These are new CLR slot bodies for frontend-selected inherited implementations, not source declarations.
         // Materialize before downstream indexing/freezing so references and local bases use the same suspend ABI.
         InheritedClassInterfaceBridge.MaterializeSuspendDeclarations(birRoots, refs);
+        // Select local inherited implementations while their signatures and the frontend facts still
+        // share Kotlin types. Their forwarding declarations must participate in value erasure too;
+        // after erasure, a concrete inherited fact can no longer match an object-valued generic slot.
+        InheritedClassInterfaceBridge.ApplyAll(birRoots);
+        // Snapshot source signatures after source-shaped inherited forwarders exist,
+        // before any representation pass changes names or types. Their compiler-only
+        // identities also own the nullable frames materialized on those new bodies.
+        var declarationSemanticSignatures = DeclarationIdentityBinding.PreserveSourceFacts(birRoots);
+        FunctionValueRepresentation.PreserveSourceFacts(birRoots);
+        var localDeclarationIds = DeclarationIdentityBinding.CollectDeclarationIds(birRoots);
         var representationAliases = DeclarationIdentityBinding.CollisionAliases(birRoots, refs.Aliases);
         var localValueTypeFqns = new HashSet<string>(StringComparer.Ordinal);
         foreach (var b in birFiles) CollectLocalValueTypes(b.Root, localValueTypeFqns);
@@ -274,11 +292,13 @@ sealed class Pipeline
         if (!_options.RefBuild) SequenceElementAdapterLowering.Apply(birRoots);
         var genericRepresentations = new GenericRepresentationPolicy(representationAliases);
         var restoreDefaultFrames = DefaultArgSplice.PrepareInlineDefaults(birRoots, refs);
+        foreach (var root in birRoots) ConstructorSignatureIdentity.CaptureSourceCalls(root);
         NullableRepresentationMaterialization.Apply(birRoots, isValueFqn, refs, policy: genericRepresentations);
         restoreDefaultFrames();
         // Preserve selected local factory facts before per-file transformations. In a
         // stdlib self-build these declarations are local, not referenced MethodDefs.
         var localFactories = MemberCallSubstitution.CollectLocalFactories(birRoots);
+        var localIntrinsics = MemberCallSubstitution.CollectLocalIntrinsics(birRoots);
         var companionRepresentations = CompanionRepresentationLowering.Apply(birRoots);
         // CLR multiplies static storage and .cctors on a generic TypeDef per constructed type. Kotlin companion-block
         // statics are one declaration independent of the owner's T, so materialize their non-generic carrier before
@@ -841,7 +861,7 @@ sealed class Pipeline
                 hoisted = CharSeqStringLowering.Apply(hoisted, localTopLevelFns, out charSeqRetLambdas);
             var substituted = _options.RefBuild ? hoisted : MemberCallSubstitution.Apply(hoisted, refs,
                 localTopLevelFns, attributeTopLevelOwner, isValueFqn, localPropertyDeclarations, genericRepresentations,
-                localFactories, localDeclarationIds);
+                localFactories, localDeclarationIds, localIntrinsics);
             // Reified-nullability witnesses were prepared while declaration identities and Kotlin type arguments were
             // still authoritative. Materialize them only after semantic calls (enum/array/collection intrinsics) have
             // either been replaced or deliberately retained, so a physical hidden ABI argument cannot interfere with
@@ -927,11 +947,18 @@ sealed class Pipeline
         var overrideSourceParameters = KotlinOverrideSlotBridge.CaptureSourceParameters(staged.Select(s => s.Root));
         TypeOwnershipLowering.RecordNestedSourceTypes(staged.Select(s => s.Root).ToList(), refs);
         TypeOwnershipLowering.ProjectInnerApplications(staged.Select(s => s.Root).ToList(), refs);
+        var inheritedSourceSignatures = KotlinOverrideSlotBridge.CaptureInheritedSignatures(staged.Select(s => s.Root), refs);
 
         // Inherited implementation forwarders are public declaration slots. They
         // must exist when existential interfaces are allocated, so those interfaces
         // expose the same callable surface when the assembly is imported again.
         InheritedClassInterfaceBridge.ApplyAll(staged.Select(s => s.Root).ToList());
+
+        // Classifier identity belongs to the Kotlin declaration graph. Existential synthesis can add
+        // operational CLR faces (for example IEnumerable) that do not grant Kotlin mutability.
+        // Record the nominal identities before those physical implementation edges exist.
+        if (!_options.RefBuild)
+            KotlinCollectionIdentitySynthesis.ApplyAll(staged.Select(s => s.Root).ToList(), refs);
 
         // F-BOUND STAR PROJECTION: CLR has no legal/reified `Node<*>` TypeSpec for `Node<N : Node<N>>`.
         // Materialize a deterministic non-generic existential view in bir2cir and make every closed Node<N> implement
@@ -939,10 +966,12 @@ sealed class Pipeline
         // Retain the selected constructor's declaration frame before value projection;
         // physical overload identities must survive later alias and nullability lowering.
         foreach (var stagedFile in staged) ConstructorSignatureIdentity.Capture(stagedFile.Root);
+        // Assign declaration-owned overload identities before projected
+        // construction binds its exact physical constructor descriptor.
+        foreach (var stagedFile in staged) ConstructorSignatureIdentity.Materialize(stagedFile.Root);
         var localExistentialOwners =
             FBoundStarProjectionErasure.ApplyAll(staged.Select(s => s.Root).ToList(), refs);
         GenericArrayValueLowering.ApplyAll(staged.Select(stage => stage.Root));
-        foreach (var stagedFile in staged) ConstructorSignatureIdentity.Materialize(stagedFile.Root);
         var existentialReceiverMembers =
             ExistentialReceiverBinding.Collect(staged.Select(s => s.Root));
 
@@ -961,7 +990,7 @@ sealed class Pipeline
         // obligations, so both passes cannot claim the same interface MethodImpl.
         KotlinOverrideSlotBridge.PrepareSuspendValueBridges(
             staged.Select(s => s.Root).ToList(), isValueFqn, refs, localTypeFqns, _options.RefBuild,
-            genericRepresentations, covariantBridgedSlots, overrideSourceParameters);
+            genericRepresentations, covariantBridgedSlots, overrideSourceParameters, inheritedSourceSignatures);
 
         // KOTLIN-ONLY COLLECTION SLOTS -> EXACT CLR METHODIMPL: the BCL operational faces carry neither Kotlin's
         // remove-capable `MutableIterable.iterator()` return nor `MutableCollection.removeAll`/`retainAll`/
@@ -973,14 +1002,6 @@ sealed class Pipeline
         // survive to CIR — and on Kotlin's own supertype graph. Non-ref builds only.
         if (!_options.RefBuild)
             KotlinCollectionSlotSynthesis.ApplyAll(staged.Select(s => s.Root).ToList(), refs, isValueFqn, genericRepresentations);
-
-        // NOMINAL COLLECTION CLASSIFIER IDENTITIES: the operational aliases intentionally share BCL faces
-        // (Collection/Set -> IReadOnlyCollection, MutableCollection/MutableSet -> ICollection), which otherwise makes
-        // the Kotlin classifiers indistinguishable for emitted user implementations. Add the compiler-owned identity
-        // edge while the Kotlin supertype graph is still present. BCL-backed values are handled by their real generic
-        // collection faces in StarProjectionLowering's runtime classifier.
-        if (!_options.RefBuild)
-            KotlinCollectionIdentitySynthesis.ApplyAll(staged.Select(s => s.Root).ToList(), refs);
 
         // CONSTRUCTED MEMBER RESULT SUBSTITUTION (early): suspend lowering copies a call's result type into
         // state-machine fields/locals. Close every already-constructed receiver-relative return BEFORE that copy
@@ -1049,7 +1070,7 @@ sealed class Pipeline
         // the final Task/cold shapes. Star views already exist, and all types are still in the Kotlin vocabulary.
         KotlinOverrideSlotBridge.ApplyAll(
             staged.Select(s => s.Root).ToList(), isValueFqn, refs, localTypeFqns, _options.RefBuild, genericRepresentations,
-            covariantBridgedSlots, overrideSourceParameters);
+            covariantBridgedSlots, overrideSourceParameters, inheritedSourceSignatures, localExistentialOwners);
 
         // The final override bridge deliberately runs after the main F-bound/star rewrite because suspend lowering
         // can create additional physical slots. Project any Kotlin star types copied into those late declarations
@@ -1057,10 +1078,8 @@ sealed class Pipeline
         FBoundStarProjectionErasure.RewriteLateTypes(
             staged.Select(s => s.Root).ToList(), localExistentialOwners, refs);
 
-        // Non-generic `System.IComparable` bridge. Synthesize it at this final Kotlin-vocabulary boundary so its
-        // forwarding call carries the target declaration's semantic return stamp. In particular, a legal
-        // `compareTo(...): Nothing` is normalized at that bridge's construction boundary, before the physical Int32
-        // slot could receive Nothing's later CLR object erasure.
+        // The non-generic System.IComparable bridge forwards through the generic interface slot established above.
+        // That slot already owns adaptation of covariant returns, including a Nothing-returning implementation.
         if (!_options.RefBuild)
             foreach (var stagedFile in staged) ComparableBridgeSynthesis.Apply(stagedFile.Root);
 
@@ -1409,6 +1428,7 @@ sealed class Pipeline
         // PHASE 3A — complete every representation synthesis module-wide before any pass snapshots the final type
         // graph. A derived type can precede its base in another file; resolving interface manifests inside this loop
         // would otherwise make their contents depend on source-file order.
+        var mapEnumeratorNeeded = false;
         foreach (var (lowered, _) in loweredRoots)
         {
             // `.size` (Count) on a STAR-PROJECTED / `Any`-erased collection receiver: StarProjectionLowering already
@@ -1426,6 +1446,7 @@ sealed class Pipeline
             // (Add/set_Item/RemoveAt) are allocated by the common KotlinOverrideSlotBridge pass below, which carries
             // their exact MethodImpl descriptors to ilemit.
             if (!_options.RefBuild) CollectionBclSlotSynthesis.Apply(lowered, refs);
+            if (!_options.RefBuild) mapEnumeratorNeeded |= MapBclSlotSynthesis.Apply(lowered, refs);
             // The READ-ONLY sibling of every mutable collection face this unit's types name. Kotlin's `MutableList<E>`
             // IS-A `List<E>`, but their lowered CLR faces (`IList<T>` / `IReadOnlyList<T>`) are unrelated interfaces,
             // so the read-only view is real only when the emitted type declares it. Runs AFTER the mutable faces are
@@ -1434,6 +1455,12 @@ sealed class Pipeline
             // All builds: the rule is keyed on the lowered BCL face, which the reference build (whose surface stays
             // Kotlin-faced) simply never has.
             ReadOnlyCollectionViewInterfaces.Apply(lowered);
+        }
+
+        if (mapEnumeratorNeeded)
+        {
+            loweredRoots[0].Root["types"].AsArray().Add(MapEnumeratorSynthesis.Create(refs));
+            emittedLocalTypes.Add(MapEnumeratorSynthesis.Name);
         }
 
         if (!_options.RefBuild)
@@ -1483,8 +1510,8 @@ sealed class Pipeline
             // are emitted ONCE below (SynthDefsFile), not per-file.
             if (!_options.SubstituteStdlibBuild) RoundtripMetadata.Stamp(lowered);
             // RUNTIME build: strip every applied user annotation (kotc's kotlin.Deprecated/SinceKotlin/InlineOnly/…) —
-            // DotKt.Stdlib.dll is the shipping runtime assembly and is never metadata-read, so only runtime-relevant
-            // annotations survive this boundary.
+            // The shipping runtime keeps physical declaration IDs for exact twin linkage,
+            // but not the source-shape carriers already provided by the reference assembly.
             else RoundtripMetadata.StripRuntimeAttrs(lowered);
             // The Kotlin `suspend` modifier has no CLR meaning and every consumer of it is a bir2cir pass: the cold
             // lowering, and the [KotlinFunction(Suspend)] stamp just written (which is how a referenced module still
@@ -1509,6 +1536,7 @@ sealed class Pipeline
                         && (canonicalType["name"] as JsonValue)?.TryGetValue<string>(out var canonicalName) == true
                         && externalCanonicalTypes.Contains(canonicalName))
                         canonicalTypes.RemoveAt(i);
+            HomogeneousIdentityComparisonLowering.Apply(lowered);
             ClrMemberResolution.EnsurePlainCallDescriptors(lowered);
             ClrMemberResolution.Apply(lowered, refs, emittedLocalTypes.Except(externalCanonicalTypes).ToHashSet(StringComparer.Ordinal));
             // Exact member resolution above selected the authoritative MethodDef and temporarily carried its CLR-only
@@ -1538,13 +1566,6 @@ sealed class Pipeline
             // return. Two omissions of exactly that shape — a generic method and a public field — each removed a
             // whole family from the crossing refusal below without any gate noticing.
             ClrMemberResolution.CheckStamped(lowered, outputName);
-            // The other side of the erasure: a .NET member may DECLARE a `List<int?>`, which no Kotlin type inhabits
-            // once `X?` in a reified argument is `System.Object`. Unrelated invariant reified generics have no
-            // conversion between them and an adapter would change the argument's identity, so the crossing is
-            // refused rather than silently mis-typed. Checked HERE, immediately after resolution has established the
-            // member's declared physical signature: before it, most `clr*` nodes still carry caller-side `argTypes` and the .NET declaration
-            // this refusal is about has not been read yet.
-            ForeignNullableGenericCrossing.Check(lowered, outputName);
         }
 
         // The IMPLEMENTING-POSITION half of the same refusal: a .NET supertype declaring a slot no Kotlin body can
@@ -1611,6 +1632,7 @@ sealed class Pipeline
                     targetNative.Args?.Length ?? 0) is { IsValueType: false } nativeType
                     && (nativeType.IsInterface || nativeType.IsClass)));
         foreach (var (lowered, _) in loweredRoots) FunctionSignatureIdentity.Complete(lowered);
+        DelegateEntryLowering.Apply(loweredRoots.Select(file => file.Root));
 
         // Every representation synthesis is now complete. Validate the exact MethodDef table that CIR will describe;
         // do not defer a generated/user collision to ilemit and do not invent a late name after calls are bound.
@@ -1627,6 +1649,11 @@ sealed class Pipeline
             .FirstOrDefault(table => table != null)?.DeepClone();
         foreach (var (lowered, outputName) in loweredRoots)
         {
+            // Physical coercion can author or clone bound calls. Validate the final call graph and consume
+            // its resolution records only after those transformations, before anything is serialized.
+            ForeignNullableGenericCrossing.Check(lowered, outputName);
+            CirMetadataBoundary.Apply(lowered);
+            CirValueTypeBoundary.Apply(lowered);
             // A file whose ENTIRE content was @ClrTypeAlias types (e.g. Primitives.kt, Comparable.kt) is now empty after
             // AliasHelperHoist dropped them — emit no CIR file for it (an empty file-class would be a pointless empty
             // static type in the assembly). Skips only when types AND methods AND fields are all empty; never in ref.
@@ -1652,15 +1679,15 @@ sealed class Pipeline
 
         // #71 S2: emit the embedded round-trip attribute-class defs ONCE per assembly, as a dedicated synthetic CIR
         // file (glob-sorted first via the `000-` prefix so its TypeDefs precede the user types, minimizing dump churn).
-        // ilemit defines them like any type (no EnsureKotlinAttrs). Ref + app only — the runtime build stamps nothing.
-        if (!_options.SubstituteStdlibBuild)
+        // Runtime stdlib emits only the declaration identity needed to link its
+        // physical MethodDefs to the reference twin. Ref/app retain full carriers.
         {
             const string synthName = "000-dotkt-roundtrip-attrs.cir.json";
             // A real source file must never map to the reserved synthetic name — the two CirFiles would clobber on disk
             // and every Kotlin stamp would then silently vanish (its attr class absent -> BuildCab skips).
             if (files.Any(f => f.OutputName == synthName))
                 throw new InvalidOperationException($"bir2cir: reserved synthetic CIR name '{synthName}' collides with an input file");
-            var attributeDefinitions = RoundtripMetadata.SynthDefsFile(refs);
+            var attributeDefinitions = RoundtripMetadata.SynthDefsFile(refs, linkageOnly: _options.SubstituteStdlibBuild);
             if (fixedMemberTable != null) attributeDefinitions["wellKnownRefs"] = fixedMemberTable.DeepClone();
             files.Insert(0, new CirFile(synthName, attributeDefinitions.ToJsonString(JsonOptions.Indented)));
         }

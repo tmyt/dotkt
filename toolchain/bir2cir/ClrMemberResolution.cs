@@ -804,7 +804,7 @@ static partial class ClrMemberResolution
         }
         bool Matches(IReadOnlyList<TypeNode> described, Type[] actual) =>
             described.Count == actual.Length && described.Select((type, index) =>
-                DeclaredConstructorSlotMatches(type, actual[index])).All(match => match);
+                SameInterfaceSlotType(type, ModifierTypeOf(actual[index]))).All(match => match);
         return Matches(required, parameter.GetRequiredCustomModifiers())
             && Matches(optional, parameter.GetOptionalCustomModifiers())
             && DeclaredConstructorSlotMatches(selected, parameter.ParameterType);
@@ -1768,7 +1768,7 @@ static partial class ClrMemberResolution
                     || (k != null && Array.IndexOf(ResolvedOnlyKinds, k) >= 0);
                 if (resolved && obj[ResolvedMemberReturnKey] == null)
                     throw new InvalidOperationException(
-                        $"bir2cir: {file}: a '{k ?? "?"}' node resolved against a .NET member carries no declared "
+                        $"bir2cir: {file}: a '{k ?? "?"}' node for '{obj["method"] ?? obj["name"]}' on '{obj["type"] ?? obj["ownerType"]}' resolved against a .NET member carries no declared "
                         + "return (resolvedMemberReturn). Every site that establishes a foreign declaration must stamp one — "
                         + "the crossing refusal reads it, and an unstamped node silently leaves its family unchecked.");
                 foreach (var kv in obj) if (kv.Value != null) CheckForeignDeclStamped(kv.Value, file);

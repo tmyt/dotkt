@@ -6,6 +6,8 @@ public static class ExistentialOwnerApi
     public static ExistentialSlotOwner<string> Make() => new("native");
     public static ExistentialSlotOwner<ExistentialSlotOwner<string>> EchoNested(
         ExistentialSlotOwner<ExistentialSlotOwner<string>> value) => value;
+    public static ExistentialSlotOwner<ExistentialSlotOwner<string>> MakeNestedOwner() =>
+        new(new ExistentialSlotOwner<string>("nested native"));
     public static T Create<T>() where T : new() => new T();
     public static ExistentialSlotOwner<string> Invoke(ExistentialOwnerTransform callback,
         ExistentialSlotOwner<string> value) => callback(value);

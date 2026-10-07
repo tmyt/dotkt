@@ -6,6 +6,8 @@ import constrainedcarrier.ReferencedAnimal
 import constrainedcarrier.ReferencedDog
 import constrainedcarrier.compareReferencedGeneric
 import constrainedcarrier.deferReferencedGeneric
+import constrainedcarrier.headReferencedNative
+import constrainedcarrier.countReferencedNative
 
 class ConsumerConstrainedSink : ReferencedSink<ReferencedAnimal>() {
     override fun <R : ReferencedAnimal> render(value: R): String {
@@ -25,6 +27,11 @@ class ConsumerGenericValue<out T>(val item: T) {
     fun <R : System.Collections.Generic.IComparer<T>> deferred(value: R): () -> Int = deferReferencedGeneric<T, R>(value, item)
 }
 
+class ConsumerNativeListView<in T> {
+    fun <R : System.Collections.Generic.IReadOnlyList<T>> head(value: R): Any? = headReferencedNative<T, R>(value)
+    fun <R : System.Collections.Generic.IReadOnlyList<T>> count(value: R): Int = countReferencedNative<T, R>(value)
+}
+
 class ConstrainedCarrierRoundtripTests {
     @TestAttribute
     fun constrainedMethodsRetainSourceBoundsAndDispatchAcrossAssemblies() {
@@ -39,5 +46,14 @@ class ConstrainedCarrierRoundtripTests {
         val generic: ConsumerGenericValue<Any> = ConsumerGenericValue(29)
         assertEquals(29, generic.compare(ConsumerGenericComparer()))
         assertEquals(29, generic.deferred(ConsumerGenericComparer())())
+    }
+
+    @TestAttribute
+    fun projectedNativeConstraintKeepsInheritedPropertyAndIndexer() {
+        val narrowed: ConsumerNativeListView<Int> = ConsumerNativeListView<Any>()
+        val list = System.Collections.Generic.List<Int>()
+        list.Add(37)
+        assertEquals(37, narrowed.head(list))
+        assertEquals(1, narrowed.count(list))
     }
 }

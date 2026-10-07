@@ -17,8 +17,19 @@ static class ForeignStarProjectionBinding
 
     internal static void PreserveDeclarationSignature(JsonObject target, JsonNode signature)
     {
-        if (signature is JsonArray) target[DeclarationSignatureKey] = signature.ToJsonString();
+        if (signature is JsonArray && target[DeclarationSignatureKey] == null)
+            target[DeclarationSignatureKey] = signature.ToJsonString();
     }
+
+    internal static void CopyDeclarationSignature(JsonObject source, JsonObject target)
+    {
+        if (source[DeclarationSignatureKey] is JsonNode signature)
+            target[DeclarationSignatureKey] = signature.DeepClone();
+    }
+
+    internal static JsonArray DeclarationSignature(JsonObject source) =>
+        Str(source[DeclarationSignatureKey]) is string encoded
+            ? JsonNode.Parse(encoded).AsArray() : null;
 
     internal static void DropDeclarationSignatures(JsonNode node)
     {
@@ -110,6 +121,13 @@ static class ForeignStarProjectionBinding
                 if (Str(obj["k"]) == "local" && Str(obj["name"]) is string localName
                     && _dependentLocalTypes.TryGetValue(localName, out var localType))
                     obj["sty"] = TypeJson.Write(localType);
+                // Child classifier lowering replaces an erased cast with an object-returning
+                // runtime call. Keep its stated receiver type for this member selection;
+                // do not stamp the physical runtime call with the old semantic type.
+                var receiverBeforeLowering = obj["recv"] is JsonNode sourceReceiver
+                    ? NodeType.Of(sourceReceiver) : null;
+                var receiverCastBeforeLowering = obj["recv"] is JsonObject receiverCast
+                    && Str(receiverCast["k"]) == "cast" ? TypeJson.Read(receiverCast["type"]) : null;
                 foreach (var key in obj.Select(kv => kv.Key).ToList())
                 {
                     var value = obj[key];
@@ -133,7 +151,7 @@ static class ForeignStarProjectionBinding
                     UsedRuntimeFallback = true;
                     Replace(obj, classifier);
                 }
-                else if (TryRewriteCall(obj, refs, out var call))
+                else if (TryRewriteCall(obj, refs, receiverBeforeLowering, receiverCastBeforeLowering, out var call))
                 {
                     UsedRuntimeFallback = true;
                     Replace(obj, call);
@@ -160,7 +178,8 @@ static class ForeignStarProjectionBinding
             || receiverIndex < 0 || receiverIndex >= arguments.Count || signature == null
             || !refs.TryResolveStaticMemberSignature(owner, Str(node["method"]), typeArguments.Count, true,
                 signature, null, out _, out var declaration, out var declaringOwner))
-            throw new InvalidOperationException("Projected alias helper has no exact static declaration");
+            throw new InvalidOperationException($"Projected alias helper has no exact static declaration: "
+                + $"{owner}.{Str(node["method"])}`{typeArguments?.Count}; signature={node["sig"]?.ToJsonString()}");
         var result = TypeJson.Read(node["ret"])
             ?? throw new InvalidOperationException("Projected alias helper has no declared result");
         if (declaration.ReturnType.IsByRef || signature.Any(type => type is TypeNode.ByRef)
@@ -262,7 +281,8 @@ static class ForeignStarProjectionBinding
         return true;
     }
 
-    static bool TryRewriteCall(JsonObject obj, ReferenceMetadataIndex refs, out JsonObject rewritten)
+    static bool TryRewriteCall(JsonObject obj, ReferenceMetadataIndex refs,
+        TypeNode receiverBeforeLowering, TypeNode receiverCastBeforeLowering, out JsonObject rewritten)
     {
         rewritten = null;
         var kind = Str(obj["k"]);
@@ -279,8 +299,12 @@ static class ForeignStarProjectionBinding
         TypeNode.Fqn owner;
         if (!TryForeignStarOwner(authoredOwner, refs, out owner, out _))
         {
-            var receiverType = NodeType.Of(receiver);
-            if (!TryForeignStarOwner(receiverType, refs, out owner, out _)) return false;
+            // A child call can expose a dependent construction (for example a
+            // delegate returned by an existential receiver). Its projected result
+            // is authoritative; the pre-lowering type is only needed when a
+            // classifier operation has replaced that view with an opaque value.
+            if (!TryForeignStarOwner(NodeType.Of(receiver), refs, out owner, out _)
+                && !TryForeignStarOwner(receiverBeforeLowering, refs, out owner, out _)) return false;
             // A projected receiver can select a fully known base construction. Its descriptor is in that
             // authored base's frame, not the receiver's unrelated generic frame. Recover the stated nominal
             // view from the opaque receiver and let ordinary member binding consume the selected descriptor.
@@ -305,9 +329,8 @@ static class ForeignStarProjectionBinding
 
         // Source CLR calls retain their selected declaration descriptor before Kotlin nullable-value erasure.
         // Compiler-authored calls already state the descriptor in sig/argTypes; neither route infers it from values.
-        var declaredSignature = Str(obj[DeclarationSignatureKey]) is string encodedSignature
-            ? JsonNode.Parse(encodedSignature) as JsonArray
-            : (obj["sig"] ?? obj["argTypes"] ?? obj["resolvedMemberParams"]) as JsonArray;
+        var declaredSignature = DeclarationSignature(obj)
+            ?? (obj["sig"] ?? obj["argTypes"] ?? obj["resolvedMemberParams"]) as JsonArray;
         var signature = declaredSignature?.Select(TypeJson.Read).ToArray();
         if (signature == null && kind == "clrPropSet" && obj["value"] is JsonNode setValue)
             signature = new[] { NodeType.Of(setValue) };
@@ -322,7 +345,7 @@ static class ForeignStarProjectionBinding
             && refs.TryForeignStarField(owner, sourceName, out openType, out declaringView, out token,
                 out var fieldDeclarationType))
         {
-            var fieldClosedViewHint = ClosedViewHint(receiver, owner, declaringView, refs);
+            var fieldClosedViewHint = ClosedViewHint(receiver, owner, declaringView, refs, receiverCastBeforeLowering);
             var fieldCall = kind == "clrPropGet"
                 ? Call("starProjectionGetField", new TypeNode[] { Any, Type, TypeN, Int, String }, AnyN,
                     receiver.DeepClone(), ClassRef(openType), fieldClosedViewHint,
@@ -361,8 +384,9 @@ static class ForeignStarProjectionBinding
         if (!methodFound)
             throw new NotSupportedException(
                 $"bir2cir: cannot bind exact foreign star member `{owner.Name}.{sourceName}`/"
-                + $"{signature.Length}<{methodArity}>");
-        var closedViewHint = ClosedViewHint(receiver, owner, declaringView, refs);
+                + $"{signature.Length}<{methodArity}>; owner={TypeJson.Write(owner).ToJsonString()}; "
+                + $"signature={declaredSignature?.ToJsonString()}");
+        var closedViewHint = ClosedViewHint(receiver, owner, declaringView, refs, receiverCastBeforeLowering);
         if (signature.Any(t => t is TypeNode.ByRef))
             throw new NotSupportedException(
                 $"bir2cir: foreign star member `{owner.Name}.{sourceName}` has ref/out parameters; "
@@ -793,11 +817,20 @@ static class ForeignStarProjectionBinding
     };
 
     static JsonNode ClosedViewHint(JsonNode receiver, TypeNode.Fqn owner, TypeNode declaringView,
-        ReferenceMetadataIndex refs)
+        ReferenceMetadataIndex refs, TypeNode receiverCast)
     {
+        while (receiverCast is TypeNode.Nullable or TypeNode.Oblivious)
+            receiverCast = receiverCast is TypeNode.Nullable nullable ? nullable.Of : ((TypeNode.Oblivious)receiverCast).Of;
+        TypeNode.Fqn hint = receiverCast as TypeNode.Fqn;
         if (receiver is JsonObject { } obj && Str(obj["k"]) == "local"
-            && Str(obj["name"]) is string name && _closedViewHints.TryGetValue(name, out var hint)
-            && SameForeignProjectionOwner(hint, owner, refs)
+            && Str(obj["name"]) is string name && _closedViewHints.TryGetValue(name, out var localHint))
+            hint = localHint;
+        // An ordinary covariant source view remains meaningful across parameter
+        // boundaries even though its value carrier is erased. The runtime uses
+        // this construction only if the actual receiver supports it; it is not
+        // an assertion that Kotlin variance or an unchecked cast reifies it.
+        if (hint == null && !ContainsExistential(owner)) hint = owner;
+        if (hint != null && !ContainsExistential(hint) && SameForeignProjectionOwner(hint, owner, refs)
             && hint.Args?.Length == owner.Args?.Length)
         {
             // MetadataLoadContext reports a method declared directly on an open generic as the bare definition.
@@ -805,12 +838,22 @@ static class ForeignStarProjectionBinding
             // classRef would be an invalid/absent CLR type token.
             if (declaringView is TypeNode.Fqn { Args: null } direct
                 && SameForeignProjectionOwner(hint, new TypeNode.Fqn(direct.Name, hint.Args), refs))
-                return ClassRef(hint);
+                return ClosedViewClassRef(hint, refs);
             var translated = SubstituteOwnerSlots(declaringView, hint.Args);
             if (translated is TypeNode.Fqn translatedFqn && !ContainsExistential(translatedFqn))
-                return ClassRef(translatedFqn);
+                return ClosedViewClassRef(translatedFqn, refs);
         }
         return new JsonObject { ["k"] = "const", ["type"] = TypeJson.Write(TypeN), ["value"] = null };
+    }
+
+    static JsonObject ClosedViewClassRef(TypeNode.Fqn view, ReferenceMetadataIndex refs)
+    {
+        // This token selects an actual foreign interface construction. A Kotlin
+        // alias's ordinary value carrier is not the reflection dispatch witness.
+        var declaration = refs.ResolveForeignProjectionType(view.Name, view.Args)
+            ?? throw new InvalidOperationException($"Foreign view '{view.Name}' has no CLR declaration");
+        if (declaration.IsConstructedGenericType) declaration = declaration.GetGenericTypeDefinition();
+        return ClassRef(new TypeNode.Fqn(declaration.FullName, view.Args));
     }
 
     static bool SameForeignProjectionOwner(TypeNode.Fqn left, TypeNode.Fqn right,

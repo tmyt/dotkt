@@ -51,11 +51,18 @@ static class KotlinCollectionSlotSynthesis
     const string ListDefaultSlots = "DotKt.Runtime.CompilerServices.KotlinListDefaultSlots";
     const string CollectionSlots = "DotKt.Runtime.CompilerServices.KotlinMutableCollectionSlots";
     const string ListSlots = "DotKt.Runtime.CompilerServices.KotlinMutableListSlots";
+    const string Map = "kotlin.collections.Map";
+    const string MapSlots = "DotKt.Runtime.CompilerServices.KotlinMapSlots";
+    const string MutableMap = "kotlin.collections.MutableMap";
+    const string MutableMapSlots = "DotKt.Runtime.CompilerServices.KotlinMutableMapSlots";
+    const string MapGetOrDefaultSlot = "DotKt.Runtime.CompilerServices.KotlinMapGetOrDefaultSlot";
+    const string MapRemoveEntrySlot = "DotKt.Runtime.CompilerServices.KotlinMapRemoveEntrySlot";
 
     enum ParameterCarrier
     {
         Exact,
         ErasedValue,
+        ErasedArgument,
         ErasedCollection,
     }
 
@@ -69,11 +76,48 @@ static class KotlinCollectionSlotSynthesis
         public string SlotMember;           // the slot's member name
         public string Bridge;               // the synthesized forwarding method's name
         public bool EraseReturn;             // the non-generic carrier returns Any, while the target stays exact
+        public bool PropertyGetter;
         public ParameterCarrier[] Parameters = Array.Empty<ParameterCarrier>();
     }
 
     static readonly Slot[] Slots =
     {
+        new() { DeclaringInterface = Map, Member = "getOrDefault", Arity = 2, EraseReturn = true,
+                SlotInterface = MapGetOrDefaultSlot, SlotMember = "dotktMapGetOrDefault", Bridge = "dotkt$slot$mapGetOrDefault",
+                Parameters = new[] { ParameterCarrier.ErasedValue, ParameterCarrier.ErasedArgument } },
+        new() { DeclaringInterface = MutableMap, Member = "remove", Arity = 2,
+                SlotInterface = MapRemoveEntrySlot, SlotMember = "dotktMapRemoveEntry", Bridge = "dotkt$slot$mapRemoveEntry",
+                Parameters = new[] { ParameterCarrier.ErasedValue, ParameterCarrier.ErasedValue } },
+        new() { DeclaringInterface = MutableMap, Member = "put", Arity = 2, EraseReturn = true,
+                SlotInterface = MutableMapSlots, SlotMember = "dotktMapPut", Bridge = "dotkt$slot$mapPut",
+                Parameters = new[] { ParameterCarrier.ErasedArgument, ParameterCarrier.ErasedArgument } },
+        new() { DeclaringInterface = MutableMap, Member = "remove", Arity = 1, EraseReturn = true,
+                SlotInterface = MutableMapSlots, SlotMember = "dotktMapRemove", Bridge = "dotkt$slot$mapRemove",
+                Parameters = new[] { ParameterCarrier.ErasedValue } },
+        new() { DeclaringInterface = MutableMap, Member = "putAll", Arity = 1,
+                SlotInterface = MutableMapSlots, SlotMember = "dotktMapPutAll", Bridge = "dotkt$slot$mapPutAll",
+                Parameters = new[] { ParameterCarrier.ErasedArgument } },
+        new() { DeclaringInterface = MutableMap, Member = "clear", Arity = 0,
+                SlotInterface = MutableMapSlots, SlotMember = "dotktMapClear", Bridge = "dotkt$slot$mapClear" },
+        new() { DeclaringInterface = Map, Member = "size", Arity = 0, PropertyGetter = true,
+                SlotInterface = MapSlots, SlotMember = "dotktMapSize", Bridge = "dotkt$slot$mapSize" },
+        new() { DeclaringInterface = Map, Member = "isEmpty", Arity = 0,
+                SlotInterface = MapSlots, SlotMember = "dotktMapIsEmpty", Bridge = "dotkt$slot$mapIsEmpty" },
+        new() { DeclaringInterface = Map, Member = "containsKey", Arity = 1,
+                SlotInterface = MapSlots, SlotMember = "dotktMapContainsKey", Bridge = "dotkt$slot$mapContainsKey",
+                Parameters = new[] { ParameterCarrier.ErasedValue } },
+        new() { DeclaringInterface = Map, Member = "containsValue", Arity = 1,
+                SlotInterface = MapSlots, SlotMember = "dotktMapContainsValue", Bridge = "dotkt$slot$mapContainsValue",
+                Parameters = new[] { ParameterCarrier.ErasedValue } },
+        new() { DeclaringInterface = Map, Member = "get", Arity = 1, EraseReturn = true,
+                SlotInterface = MapSlots, SlotMember = "dotktMapGet", Bridge = "dotkt$slot$mapGet",
+                Parameters = new[] { ParameterCarrier.ErasedValue } },
+        new() { DeclaringInterface = Map, Member = "entries", Arity = 0, PropertyGetter = true, EraseReturn = true,
+                SlotInterface = MapSlots, SlotMember = "dotktMapEntries", Bridge = "dotkt$slot$mapEntries" },
+        new() { DeclaringInterface = Map, Member = "keys", Arity = 0, PropertyGetter = true, EraseReturn = true,
+                SlotInterface = MapSlots, SlotMember = "dotktMapKeys", Bridge = "dotkt$slot$mapKeys" },
+        new() { DeclaringInterface = Map, Member = "values", Arity = 0, PropertyGetter = true, EraseReturn = true,
+                SlotInterface = MapSlots, SlotMember = "dotktMapValues", Bridge = "dotkt$slot$mapValues" },
         new() { DeclaringInterface = MutableIterable, Member = "iterator", Arity = 0,
                 SlotInterface = IteratorSlots, SlotMember = "dotktIterator", Bridge = "dotkt$slot$iterator",
                 EraseReturn = true },
@@ -218,8 +262,7 @@ static class KotlinCollectionSlotSynthesis
         {
             if (!defs.TryGetValue(baseSpec.Name, out var local)) break;
             foreach (var i in local.Interfaces)
-                if (i.Name == IteratorSlots || i.Name == CollectionDefaultSlots || i.Name == ListDefaultSlots
-                    || i.Name == CollectionSlots || i.Name == ListSlots) found.Interfaces.Add(i.Name);
+                if (Slots.Any(slot => slot.SlotInterface == i.Name)) found.Interfaces.Add(i.Name);
             // A local base not yet visited still ANSWERS for its own declarations: the decision below is
             // declaration-driven, so a base that WILL receive the interface is detected by the same predicate
             // rather than by visit order.
@@ -278,10 +321,12 @@ static class KotlinCollectionSlotSynthesis
     }
 
     static bool Overrides(JsonObject method, Slot slot) =>
-        method["overrides"] is JsonArray overrides && overrides.OfType<JsonObject>().Any(o =>
+        (!slot.PropertyGetter || (KotlinPropertyAccessors.TryIdentity(method, out var property, out var accessor)
+            && property == slot.Member && accessor == "get"))
+        && method["overrides"] is JsonArray overrides && overrides.OfType<JsonObject>().Any(o =>
             TypeJson.Read(o["owner"]) is TypeNode.Fqn f && f.Name == slot.DeclaringInterface
             && Str(o["member"]) == slot.Member
-            && Str(o["kind"]) == "method"
+            && Str(o["kind"]) == (slot.PropertyGetter ? "getter" : "method")
             && (o["arity"] as JsonValue) is JsonValue a && a.TryGetValue<int>(out var arity) && arity == slot.Arity);
 
     /// <summary>Base classes then interfaces, transitively, each constructed in the starting class's own frame.</summary>
@@ -352,7 +397,7 @@ static class KotlinCollectionSlotSynthesis
             callArgs.Add(carrier switch
             {
                 ParameterCarrier.Exact => Local(name),
-                ParameterCarrier.ErasedValue => new JsonObject
+                ParameterCarrier.ErasedValue or ParameterCarrier.ErasedArgument => new JsonObject
                     { ["k"] = "cast", ["type"] = TypeJson.Write(declared), ["e"] = Local(name) },
                 ParameterCarrier.ErasedCollection => AdaptCollectionArgument(slot,
                     (JsonObject)target.Method["params"][i], declared, ownerArgs, declarationMapping, refs, name),
@@ -469,7 +514,11 @@ static class KotlinCollectionSlotSynthesis
 
     static JsonNode ErasedQueryMiss(Slot slot) => slot.SlotMember switch
     {
-        "dotktContains" => ConstBool(false),
+        "dotktContains" or "dotktMapContainsKey" or "dotktMapContainsValue" or "dotktMapRemoveEntry" => ConstBool(false),
+        "dotktMapGetOrDefault" => Local("p1"),
+        "dotktMapGet" or "dotktMapRemove" => new JsonObject
+            { ["k"] = "const", ["type"] = TypeJson.Write(new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"))),
+              ["value"] = null },
         "dotktIndexOf" or "dotktLastIndexOf" => new JsonObject
             { ["k"] = "const", ["type"] = TypeJson.Fqn("kotlin.Int"), ["value"] = -1 },
         _ => throw new InvalidOperationException(
@@ -487,12 +536,19 @@ static class KotlinCollectionSlotSynthesis
     static JsonObject AdaptCollectionArgument(Slot slot, JsonObject parameter, TypeNode declared,
         TypeNode[] ownerArgs, NullableRepresentationTypes declarationMapping, ReferenceMetadataIndex refs, string name)
     {
-        var source = Str(parameter["nullableGeneric"]) is string sourceType
+        var source = (Str(parameter["kotlinType"]) ?? Str(parameter["nullableGeneric"])) is string sourceType
             ? TypeJson.Read(JsonNode.Parse(sourceType)) : TypeJson.Read(parameter["type"]);
         if (source is not TypeNode.Fqn { Name: Collection, Args: { Length: 1 } args })
             throw new InvalidOperationException(
                 $"bir2cir: '{slot.DeclaringInterface}.{slot.Member}' marks a non-Collection parameter as an erased "
                 + $"collection carrier ({TypeJson.Write(source)}); the slot table and Kotlin declaration are inconsistent.");
+        // The source collection declaration has been validated above. When its
+        // selected physical parameter already carries the original object, the
+        // semantic slot can forward it unchanged; a typed view would lose identity.
+        var storage = declared;
+        while (storage is TypeNode.Mod modifier) storage = modifier.Of;
+        if (storage is TypeNode.Fqn { Name: "kotlin.Any" or "System.Object" or "object", Args: null })
+            return Local(name);
         var helper = refs.AuthoredKotlinHelper("kotlin.collections.ClrCollectionDefaultsKt", "clrProjectedCollectionView", 1,
             new TypeNode[] { new TypeNode.Fqn("kotlin.Any") });
         var typeArguments = CloseCollectionViewArguments(args[0], helper.NullableFrame,

@@ -265,6 +265,15 @@ static class BirTypeLowering
 
     static string AliasBcl(string fqn) => _aliases.TryGetValue(fqn, out var bcl) ? bcl : null;
 
+    // A referenced Kotlin alias may arrive through a reflected declaration slot using the reference
+    // assembly's exact TypeDef identity. Resolve that identity through recorded metadata, never by
+    // removing CLR arity or nesting punctuation. It still owns the same runtime representation.
+    static IReadOnlyDictionary<string, string> _physicalAliasSources = new Dictionary<string, string>();
+    static IReadOnlyDictionary<string, string> PhysicalAliasSources() => _physicalTypeNames
+        .Where(pair => _aliases.ContainsKey(pair.Key) && !_localTypeNames.Contains(pair.Key)
+            && !_localTypeNames.Contains(pair.Value))
+        .ToDictionary(pair => pair.Value, pair => pair.Key, StringComparer.Ordinal);
+
     internal static bool UsesReadOnlyCollectionFace(string name) =>
         name is "kotlin.collections.List" or "kotlin.collections.Collection" or "kotlin.collections.Set";
 
@@ -438,6 +447,8 @@ static class BirTypeLowering
         {
             case TypeNode.Fqn f:
                 {
+                    if ((!refBuild || force) && _physicalAliasSources.TryGetValue(f.Name, out var semanticAlias))
+                        f = new TypeNode.Fqn(semanticAlias, f.Args);
                     // A SIGNED primitive array (`kotlin.IntArray`) -> `Array(elem)` in EVERY build (ref included): this is
                     // the array REPRESENTATION, not a primitive substitution, so it fires before the refBuild passthrough.
                     // The element then lowers on the recursive call (kotlin.Int -> System.Int32 in app/rt, verbatim in ref).
@@ -523,12 +534,16 @@ static class BirTypeLowering
                     return IsValueNullableInner(n.Of) ? new TypeNode.Nullable(lowered) : lowered;
                 }
             case TypeNode.Array a:
-                return new TypeNode.Array(LowerType(a.Elem, refBuild, force, typeArg: false));
+                return new TypeNode.Array(LowerType(a.Elem, refBuild, force, typeArg: false), a.Rank, a.SzArray);
             case TypeNode.ByRef b:
                 return new TypeNode.ByRef(LowerType(b.Of, refBuild, force, typeArg: false));
             case TypeNode.Mod modifier:
                 return new TypeNode.Mod(modifier.Req,
-                    LowerType(modifier.M, refBuild, force, typeArg: false),
+                    modifier.M is TypeNode.Fqn { Args.Length: > 0 } marker
+                        && (AliasBcl(marker.Name) != null || _physicalAliasSources.ContainsKey(marker.Name))
+                        ? new TypeNode.Fqn(PhysicalName(marker.Name), marker.Args?.Select(argument =>
+                            LowerType(argument, refBuild, force, typeArg: true)).ToArray())
+                        : LowerType(modifier.M, refBuild, force, typeArg: false),
                     LowerType(modifier.Of, refBuild, force, typeArg));
             case TypeNode.Oblivious ob:
                 // #8 — an NRT-OBLIVIOUS `T!` (a reference-KLIB-projected `[MaybeNull]`/platform-flexible type: a value-type
@@ -586,6 +601,91 @@ static class BirTypeLowering
         if (TypeJson.Read(accessor["getRet"]) != new TypeNode.Fqn("System.Int32")
             || TypeJson.Read(accessor["setRet"]) != VoidType)
             throw new InvalidOperationException("Accessor return descriptors did not follow CLR return lowering");
+
+        var markerAliases = new Dictionary<string, string>
+        {
+            ["sample.Collection"] = "System.Collections.Generic.IReadOnlyCollection",
+            ["kotlin.Int"] = "System.Int32", ["kotlin.Any"] = "System.Object",
+        };
+        foreach (var element in new TypeNode[] { new TypeNode.Fqn("kotlin.Int"), new TypeNode.Tv("method", 0) })
+        {
+            var physicalElement = element is TypeNode.Tv ? element : new TypeNode.Fqn("System.Int32");
+            var sourceMarker = new TypeNode.Fqn("sample.Collection", new[] { element });
+            var slot = new TypeNode.Mod(false, sourceMarker, new TypeNode.Fqn("kotlin.Any"));
+            var lowered = Lower(new JsonObject { ["type"] = TypeJson.Write(slot) }, false, markerAliases);
+            var expected = new TypeNode.Mod(false,
+                new TypeNode.Fqn("sample.Collection", new[] { physicalElement }),
+                new TypeNode.Fqn("System.Object"));
+            if (!JsonNode.DeepEquals(lowered["type"], TypeJson.Write(expected)))
+                throw new InvalidOperationException("Alias signature marker lost its nominal head or generic argument");
+            var pending = Lower(new JsonObject { [FunctionSignatureIdentity.Key] = TypeJson.Write(sourceMarker) }, false, markerAliases);
+            if (!JsonNode.DeepEquals(pending[FunctionSignatureIdentity.Key], TypeJson.Write(expected.M)))
+                throw new InvalidOperationException("Pending signature marker and materialized modifier lowered differently");
+        }
+        var primitiveModifier = new TypeNode.Mod(false,
+            new TypeNode.Fqn("kotlin.Any"), new TypeNode.Fqn("kotlin.Any"));
+        var primitiveSlot = Lower(new JsonObject { ["type"] = TypeJson.Write(primitiveModifier) }, false, markerAliases);
+        if (TypeJson.Read(primitiveSlot["type"]) is not TypeNode.Mod
+            { M: TypeNode.Fqn { Name: "System.Object" }, Of: TypeNode.Fqn { Name: "System.Object" } })
+            throw new InvalidOperationException("Ordinary primitive modifier stopped following its physical type");
+        Console.WriteLine("[alias signature markers] self-test OK (nominal head, value/generic argument, ordinary modifier)");
+
+        var aliasNames = new Dictionary<string, string>
+        {
+            ["sample.Collection"] = "reference.Container+Face`1",
+        };
+        var aliasArgument = new[] { new TypeNode.Fqn("kotlin.Int") };
+        var semanticFace = new TypeNode.Fqn("sample.Collection", aliasArgument);
+        var reflectedFace = new TypeNode.Fqn("reference.Container+Face`1", aliasArgument);
+        foreach (var typeArgument in new[] { false, true })
+        {
+            var semantic = LowerPhysicalType(semanticFace, markerAliases, _ => false, aliasNames, typeArgument);
+            var reflected = LowerPhysicalType(reflectedFace, markerAliases, _ => false, aliasNames, typeArgument);
+            if (!semantic.Equals(reflected))
+                throw new InvalidOperationException("Recorded reference alias and semantic alias lowered differently");
+        }
+        var referenceFace = LowerPhysicalType(reflectedFace, markerAliases, _ => false, aliasNames,
+            typeArg: false, refBuild: true);
+        var nominalMarker = new TypeNode.Mod(false, reflectedFace, new TypeNode.Fqn("kotlin.Any"));
+        var nominalSlot = LowerPhysicalType(nominalMarker, markerAliases, _ => false, aliasNames, typeArg: false);
+        if (nominalSlot is not TypeNode.Mod { M: TypeNode.Fqn nominalHead }
+            || nominalHead.Name != reflectedFace.Name)
+            throw new InvalidOperationException("Reflected alias signature marker lost its nominal identity");
+        var localFace = LowerPhysicalType(reflectedFace, markerAliases, _ => false, aliasNames,
+            typeArg: false, localTypeNames: new HashSet<string> { reflectedFace.Name });
+        var unrelatedFace = new TypeNode.Fqn("unrelated.Container+Face`1", aliasArgument);
+        var unrelated = LowerPhysicalType(unrelatedFace, markerAliases, _ => false, aliasNames, typeArg: false);
+        if (referenceFace is not TypeNode.Fqn reference || reference.Name != reflectedFace.Name
+            || localFace is not TypeNode.Fqn local || local.Name != reflectedFace.Name
+            || unrelated is not TypeNode.Fqn foreign || foreign.Name != unrelatedFace.Name)
+            throw new InvalidOperationException("Reference alias normalization crossed an unrecorded or local identity");
+        Console.WriteLine("[reference alias identities] self-test OK (recorded identity, reference build, local isolation)");
+
+        foreach (var exact in new[] { false, true })
+        foreach (var localOwner in new[] { false, true })
+        {
+            var call = new JsonObject
+            {
+                ["k"] = "callInstance", ["ownerType"] = TypeJson.Write(semanticFace),
+                ["clrOwnerResolved"] = exact,
+            };
+            var lowered = Lower(call, false, markerAliases, physicalTypeNames: aliasNames,
+                localTypeNames: localOwner ? new HashSet<string> { semanticFace.Name } : null);
+            var expectedOwner = new TypeNode.Fqn(exact
+                ? localOwner ? semanticFace.Name : aliasNames[semanticFace.Name]
+                : "System.Collections.Generic.IReadOnlyCollection",
+                new[] { new TypeNode.Fqn("System.Int32") });
+            if (!JsonNode.DeepEquals(lowered["ownerType"], TypeJson.Write(expectedOwner)))
+                throw new InvalidOperationException("Selected declaration owner was value-projected or lost argument lowering");
+        }
+        var enumOwner = new TypeNode.Fqn("kotlin.Enum", new TypeNode[] { new TypeNode.Tv("type", 0) });
+        var enumCall = Lower(new JsonObject
+        {
+            ["k"] = "callInstance", ["ownerType"] = TypeJson.Write(enumOwner), ["clrOwnerResolved"] = true,
+        }, false);
+        if (!JsonNode.DeepEquals(enumCall["ownerType"], TypeJson.Write(enumOwner)))
+            throw new InvalidOperationException("Selected generic declaration owner lost its generic frame");
+        Console.WriteLine("[selected declaration owners] self-test OK (alias, metadata name, local head, applied arguments)");
     }
 
     internal static void SelfTestMethodImplMetadata()
@@ -638,6 +738,7 @@ static class BirTypeLowering
         var savedPhysicalNames = _physicalTypeNames;
         var savedLocalNames = _localTypeNames;
         var savedNullableFrames = _nullableFrames;
+        var savedPhysicalAliasSources = _physicalAliasSources;
         try
         {
             _aliases = aliases ?? new Dictionary<string, string>(StringComparer.Ordinal);
@@ -645,6 +746,7 @@ static class BirTypeLowering
             _physicalTypeNames = physicalTypeNames ?? new Dictionary<string, string>(StringComparer.Ordinal);
             _localTypeNames = localTypeNames ?? new HashSet<string>(StringComparer.Ordinal);
             _nullableFrames = nullableFrames;
+            _physicalAliasSources = PhysicalAliasSources();
             return LowerType(type, refBuild, force: false, typeArg);
         }
         finally
@@ -654,6 +756,7 @@ static class BirTypeLowering
             _physicalTypeNames = savedPhysicalNames;
             _localTypeNames = savedLocalNames;
             _nullableFrames = savedNullableFrames;
+            _physicalAliasSources = savedPhysicalAliasSources;
         }
     }
 
@@ -822,6 +925,7 @@ static class BirTypeLowering
         _physicalTypeNames = physicalTypeNames ?? new Dictionary<string, string>(StringComparer.Ordinal);
         _localTypeNames = localTypeNames ?? new HashSet<string>(StringComparer.Ordinal);
         _nullableFrames = nullableFrames;
+        _physicalAliasSources = PhysicalAliasSources();
         return LowerNode(root, refBuild, force: false);
     }
 
@@ -884,7 +988,8 @@ static class BirTypeLowering
                 else if (kv.Key == "funcType")
                     copy[kv.Key] = LowerFuncTypeValued(kv.Value, refBuild, here);  // delegate slot -> keep sfunc as func:
                 else if ((kv.Key == "ownerType" || kv.Key == "owner") && IsTypeObject(kv.Value))
-                    copy[kv.Key] = LowerOwnerValued(kv.Value, refBuild, here);   // primitive-array owner stays kotlin.IntArray
+                    copy[kv.Key] = LowerOwnerValued(kv.Value, refBuild, here,
+                        exactDeclaration: obj["clrOwnerResolved"]?.GetValue<bool>() == true);
                 else if (arrayStorage && kv.Key == "elem")
                     copy[kv.Key] = LowerTypeValued(kv.Value, refBuild, here, typeArg: false);
                 else if (kv.Key == "typeArgs" || (collCtor && kv.Key is "elem" or "keyType" or "valType"))
@@ -900,6 +1005,15 @@ static class BirTypeLowering
                         _ => throw new InvalidDataException(
                             $"{_file}: malformed current node: field `to` is not defined for k={nodeK ?? "<missing>"}"),
                     };
+                else if (kv.Key == FunctionSignatureIdentity.Key && TypeJson.Read(kv.Value) is TypeNode marker)
+                    copy[kv.Key] = TypeJson.Write(((TypeNode.Mod)LowerType(
+                        new TypeNode.Mod(false, marker, new TypeNode.Fqn("kotlin.Any")),
+                        refBuild, here, typeArg: false)).M);
+                else if (kv.Key == HomogeneousIdentityComparisonLowering.SourceTypeKey)
+                    // Inline substitution can close the retained frame with a
+                    // Kotlin type. Its eventual classRef denotes the exact CLR
+                    // generic argument, even in an executable reference remnant.
+                    copy[kv.Key] = LowerTypeValued(kv.Value, refBuild: false, force: true, typeArg: true);
                 else if (TypeKeys.Contains(kv.Key))
                     copy[kv.Key] = LowerTypeValued(kv.Value, refBuild, here);
                 else
@@ -1080,9 +1194,15 @@ static class BirTypeLowering
     // expects a Fqn/string, NOT a decomposed `Array(elem)` node). Decomposing the owner to `Array(int)` here would
     // hand ilemit an owner node it cannot read. Every OTHER owner (a collection, a user type, a primitive) lowers
     // normally. Mirrors the pre-#73-2b-A behavior, where kotc emitted the un-lowered `kotlin.IntArray` owner.
-    static JsonNode LowerOwnerValued(JsonNode val, bool refBuild, bool force)
+    static JsonNode LowerOwnerValued(JsonNode val, bool refBuild, bool force, bool exactDeclaration = false)
     {
         var type = TypeNode.Parse(val.ToJsonString());
+        // A synthesized forwarding edge has already selected a declaration, not a value representation.
+        // Its nominal head must survive alias projection; only metadata naming and the owner's applied
+        // arguments remain to be lowered. Otherwise a bridge can call an unrelated TypeDef on `this`.
+        if (exactDeclaration && type is TypeNode.Fqn declaration)
+            return TypeNode.Write(new TypeNode.Fqn(PhysicalName(declaration.Name),
+                declaration.Args?.Select(a => LowerType(a, refBuild, force, typeArg: true)).ToArray()));
         if (type is TypeNode.Fqn f && f.Args == null && PrimArrayElem.ContainsKey(f.Name))
             return TypeNode.Write(f);   // keep kotlin.IntArray verbatim for ilemit's array-owner resolution
         return TypeNode.Write(LowerType(type, refBuild, force, typeArg: false));

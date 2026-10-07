@@ -155,11 +155,14 @@ static class PrimitiveOperatorLowering
             // signed/unsigned, and the narrow unsigned types (UByte/UShort) have no shift operator, so only UInt/ULong
             // reach here.
             if (member == "shr" && (ownerFqn == "kotlin.UInt" || ownerFqn == "kotlin.ULong")) aop = ">>>";
-            var bin = new JsonObject { ["k"] = "binOp", ["op"] = aop, ["lhs"] = o["recv"]?.DeepClone(), ["rhs"] = args[0]?.DeepClone() };
+            var bin = new JsonObject { ["k"] = "binOp", ["op"] = aop,
+                ["lhs"] = PrimitiveOperand(o["recv"], new TypeNode.Fqn(ownerFqn)),
+                ["rhs"] = PrimitiveOperand(args[0], StaticType.Surface(args[0], scope)) };
             return WrapDeclaredReturn(o, ownerFqn, bin);
         }
         if (args.Count == 0 && UnaryOp.TryGetValue(member, out var uop))
-            return WrapDeclaredReturn(o, ownerFqn, new JsonObject { ["k"] = "unaryOp", ["op"] = uop, ["e"] = o["recv"]?.DeepClone() });
+            return WrapDeclaredReturn(o, ownerFqn, new JsonObject { ["k"] = "unaryOp", ["op"] = uop,
+                ["e"] = PrimitiveOperand(o["recv"], new TypeNode.Fqn(ownerFqn)) });
         // inc/dec (the `i++`/`i--` desugaring) -> `(recv + 1)`/`(recv - 1)`. The `const 1` is typed `kotlin.Int` for
         // EVERY primitive (ilemit widens it), so a narrow receiver's `+1` runs at int width and MUST be converted back
         // to the receiver's own narrow type (`dynRet`) — else `(127.toByte()).inc()` yields int 128, not Byte -128.
@@ -167,11 +170,18 @@ static class PrimitiveOperatorLowering
             return WrapDeclaredReturn(o, ownerFqn, new JsonObject
             {
                 ["k"] = "binOp", ["op"] = member == "inc" ? "+" : "-",
-                ["lhs"] = o["recv"]?.DeepClone(),
+                ["lhs"] = PrimitiveOperand(o["recv"], new TypeNode.Fqn(ownerFqn)),
                 ["rhs"] = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("kotlin.Int"), ["value"] = 1 },
             });
         return null;
     }
+
+    // Preserve each primitive operand's source requirement before generic member
+    // storage is erased. The numeric operation consumes values, not boxed carriers.
+    static JsonNode PrimitiveOperand(JsonNode operand, TypeNode type)
+        => type is TypeNode.Fqn primitive && PrimitiveOpFq.Contains(primitive.Name)
+            ? new JsonObject { ["k"] = "cast", ["type"] = TypeJson.Write(type), ["e"] = operand?.DeepClone() }
+            : operand?.DeepClone();
 
     // A comparison intrinsic `callStatic owner=kotlin.internal.ir` -> `{k:binOp, op:<}`, else null. The operands
     // already carry the frontend-resolved value shape required by the CIR comparison node.
@@ -218,7 +228,14 @@ static class PrimitiveOperatorLowering
             var rs = StaticType.Surface(args[1], scope);
             if (ls is TypeNode.Fqn lsf && EqEqPrimFq.Contains(lsf.Name)
                 && rs is TypeNode.Fqn rsf && EqEqPrimFq.Contains(rsf.Name))
-                return new JsonObject { ["k"] = "binOp", ["op"] = "==", ["lhs"] = args[0]?.DeepClone(), ["rhs"] = args[1]?.DeepClone() };
+                // A selected generic call can subsequently acquire object storage.
+                // Preserve each operand's own primitive interpretation explicitly;
+                // the raw comparison must not depend on its current call ABI.
+                return new JsonObject {
+                    ["k"] = "binOp", ["op"] = "==",
+                    ["lhs"] = new JsonObject { ["k"] = "cast", ["type"] = TypeJson.Write(ls), ["e"] = args[0]?.DeepClone() },
+                    ["rhs"] = new JsonObject { ["k"] = "cast", ["type"] = TypeJson.Write(rs), ["e"] = args[1]?.DeepClone() },
+                };
             var lt = StaticType.Value(args[0], scope);
             var rt = StaticType.Value(args[1], scope);
             var lc = lt != null ? FaithfulHints.ClassifyColl(lt) : null;
@@ -252,7 +269,11 @@ static class PrimitiveOperatorLowering
         // Preserve identity intent until physical operand types are final. Numeric equality
         // already uses == and must not acquire reference boxing from this operation.
         if (m == "EQEQEQ" && args.Count == 2)
-            return new JsonObject { ["k"] = "binOp", ["op"] = "===", ["lhs"] = args[0]?.DeepClone(), ["rhs"] = args[1]?.DeepClone() };
+        {
+            var comparison = new JsonObject { ["k"] = "binOp", ["op"] = "===", ["lhs"] = args[0]?.DeepClone(), ["rhs"] = args[1]?.DeepClone() };
+            HomogeneousIdentityComparisonLowering.Capture(comparison, args[0], args[1], scope);
+            return comparison;
+        }
         // `ieee754equals`: the ordered IEEE-754 float/double comparison (`-0.0 == 0.0`, `NaN != NaN`) -> raw CIL
         // `ceq` (`binOp ==`). For the NON-NULL direct `==` the operands already satisfy the raw CIR binOp contract. But
         // the frontend ALSO routes a DIRECT/mixed NULLABLE float `==`
@@ -271,7 +292,9 @@ static class PrimitiveOperatorLowering
             var rf = FloatOperand(StaticType.Surface(args[1], scope));
             if (lf is { } lo && rf is { } ro && (lo.nullable || ro.nullable))
                 return NullableIeeeEquals(args[0], lo.nullable, args[1], ro.nullable, lo.nullable ? lo.elem : ro.elem);
-            return new JsonObject { ["k"] = "binOp", ["op"] = "==", ["lhs"] = args[0]?.DeepClone(), ["rhs"] = args[1]?.DeepClone() };
+            return new JsonObject { ["k"] = "binOp", ["op"] = "==",
+                ["lhs"] = PrimitiveOperand(args[0], StaticType.Surface(args[0], scope)),
+                ["rhs"] = PrimitiveOperand(args[1], StaticType.Surface(args[1], scope)) };
         }
         return null;
     }
@@ -293,7 +316,7 @@ static class PrimitiveOperatorLowering
             if (os is not null && !(os is TypeNode.Fqn of && of.Name == "kotlin.Any"))
                 return new JsonObject { ["k"] = "cast", ["type"] = TypeNode.Write(os), ["e"] = operand?.DeepClone() };
         }
-        return operand?.DeepClone();
+        return PrimitiveOperand(operand, s);
     }
 
     // The value-nullable float element FQN (`kotlin.Double`/`kotlin.Float`) iff the type is raw `Nullable<T>` over a

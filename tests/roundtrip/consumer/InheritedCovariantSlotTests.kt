@@ -5,6 +5,7 @@ import inheritedcovariantreference.*
 
 class Derived<T>(value: T) : Base<T>(value), Producer<T>
 class Concrete : Base<String>("before"), Producer<String>
+class NestedProducer : Base<Channel<String>>(Base("before")), Producer<Channel<String>>
 interface LocalProducer<in T> { val channel: Sink<T> }
 class LocalDerived<T>(value: T) : Base<T>(value), LocalProducer<T>
 open class FactoryMiddle : FactoryBase(), Factory
@@ -58,6 +59,17 @@ class InheritedCovariantSlotTests {
         val concreteProducer: Producer<String> = concrete
         concreteProducer.channel.send("concrete")
         check(concrete.last == "concrete")
+        val nullable = Derived<String?>(null)
+        val nullableProducer: Producer<String?> = nullable
+        nullableProducer.channel.send("nullable")
+        check(nullable.last == "nullable")
+        nullableProducer.channel.send(null)
+        check(nullable.last == null)
+        val nested = NestedProducer()
+        val nestedProducer: Producer<Channel<String>> = nested
+        val replacement = Base("nested")
+        nestedProducer.channel.send(replacement)
+        check(nested.last === replacement)
     }
 
     @TestAttribute

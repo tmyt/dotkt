@@ -24,9 +24,9 @@ public interface ClrEnumerable<out T> {
     fun GetEnumerator(): ClrEnumerator<T>
 }
 
-/** Kotlin `Iterator<T>` (hasNext/next) over a BCL `IEnumerator<T>` (MoveNext/Current). `hasNext()` buffers by calling
- *  `MoveNext()` at most once per element; `next()` consumes the buffered state and returns `Current`. */
-internal class KotlinIteratorOverEnumerator<out T>(private val e: ClrEnumerator<T>) : Iterator<T> {
+/** Kotlin `Iterator<T>` over the non-generic CLR enumeration surface. Kotlin covariance can widen value-type
+ *  elements without changing the underlying enumerable's CLR construction; convert each element at `next()`. */
+internal class KotlinIteratorOverEnumerator<out T>(private val e: ClrRawEnumerator) : Iterator<T> {
     private var state: Int = 0   // 0 = unknown, 1 = has current buffered, 2 = done
     override fun hasNext(): Boolean {
         if (state == 1) return true
@@ -36,14 +36,15 @@ internal class KotlinIteratorOverEnumerator<out T>(private val e: ClrEnumerator<
     override fun next(): T {
         if (!hasNext()) throw NoSuchElementException()
         state = 0
-        return e.current()
+        @Suppress("UNCHECKED_CAST")
+        return e.current() as T
     }
 }
 
 /** Wrap a BCL enumerable as a Kotlin `Iterator<T>`. `Iterable<T>.iterator()` (CLR-bound to IEnumerable) delegates here;
  *  because the default body is Kotlin, rule 3 hoists it to a static helper automatically. */
 public fun <T> iteratorOverEnumerable(self: ClrEnumerable<T>): Iterator<T> =
-    KotlinIteratorOverEnumerator(self.GetEnumerator())
+    KotlinIteratorOverEnumerator((self as ClrRawEnumerable).GetEnumerator())
 
 /** The RAW (non-generic `System.Collections.IEnumerator`) twin of [KotlinIteratorOverEnumerator] — #74b(ii): a
  *  star-projected/erased collection (`Collection<*>`/`Map<*,*>`) only implements the NON-generic BCL enumerable

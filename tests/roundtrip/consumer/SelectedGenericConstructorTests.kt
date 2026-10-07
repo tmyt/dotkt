@@ -32,6 +32,8 @@ class SelectedGenericConstructorTests {
         check(input.read() == "imported")
         val star: SelectionInvariant<*> = input
         check(SelectionBox(star).value === input)
+        val capturedBox: SelectionBox<*> = SelectionBox("captured")
+        check(NestedSelectedConstructor(box = capturedBox).chosen == 1)
         val nullableChild = NullableSelectionOuter<Int>(null).Child("nullable")
         check(NullableSelectionHolder(nullableChild).child.value == "nullable")
         val genericHolder = GenericNullableSelectionHolder(109, nullableChild)

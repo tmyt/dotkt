@@ -1,0 +1,5 @@
+# The selected declaration is write(T), not its same-arity write(String) sibling.
+# Its erased physical parameter must not replace either side of source selection.
++"method":"$star$write$0"
+-"ownerType":{"t":"fqn","name":"DerivedSink$star"}
+-"method":"$star$write$1"

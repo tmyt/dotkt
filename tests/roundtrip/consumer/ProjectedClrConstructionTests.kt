@@ -4,7 +4,48 @@ import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import roundtrip.projectedclrconstruction.*
 
+private class ProjectedStorageValue<T>(val value: T)
+
 class ProjectedClrConstructionTests {
+    @TestAttribute
+    fun projectedNativeStorageRemainsWritableAcrossDifferentConstructions() {
+        val integers = mutableListOf(7)
+        val strings = mutableListOf("replacement")
+        val nonNull = ProjectedConstructionInterop.NonNullBox<MutableList<*>>(integers)
+        nonNull.Value = strings
+        check(nonNull.Value === strings)
+        val nullable = ProjectedConstructionInterop.ObliviousBox<MutableList<*>?>(null)
+        nullable.Value = integers
+        check(nullable.Value === integers)
+        nullable.Value = null
+        check(nullable.Value == null)
+
+        val firstMarker: ProjectedConstructionInterop.MarkerValue<*> = ProjectedConstructionInterop.MarkerValue<Int>()
+        val secondMarker: ProjectedConstructionInterop.MarkerValue<*> = ProjectedConstructionInterop.MarkerValue<String>()
+        val constrained = ProjectedConstructionInterop.ConstrainedBox<ProjectedConstructionInterop.MarkerValue<*>>(firstMarker)
+        constrained.Value = secondMarker
+        check(constrained.Value === secondMarker)
+        val dependent = ProjectedConstructionInterop.DependentBox<
+            ProjectedConstructionInterop.MarkerValue<*>, ProjectedConstructionInterop.MarkerValue<*>>(firstMarker)
+        dependent.Value = secondMarker
+        check(dependent.Value === secondMarker)
+        val reordered = ProjectedConstructionInterop.ReorderedDependentBox<
+            ProjectedConstructionInterop.MarkerValue<*>, ProjectedConstructionInterop.MarkerValue<*>>(firstMarker)
+        reordered.Value = secondMarker
+        check(reordered.Value === secondMarker)
+
+        val readonly = ProjectedConstructionInterop.ObliviousBox<List<*>>(listOf(7))
+        val readonlyReplacement = listOf("readonly")
+        readonly.Value = readonlyReplacement
+        check(readonly.Value === readonlyReplacement)
+        check(readonly.Value[0] == "readonly")
+        val local = ProjectedConstructionInterop.ObliviousBox<ProjectedStorageValue<*>>(ProjectedStorageValue(7))
+        val localReplacement = ProjectedStorageValue("local")
+        local.Value = localReplacement
+        check(local.Value === localReplacement)
+        check(local.Value.value == "local")
+    }
+
     @TestAttribute
     fun redundantProjectionConstructsTheClosedClrType() {
         val local = System.Collections.Generic.List<Comparable<in String>>()

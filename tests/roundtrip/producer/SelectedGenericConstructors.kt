@@ -52,6 +52,8 @@ fun checkLocalProjectedSelection() {
     check(input.read() == "local")
     val star: SelectionInvariant<*> = input
     check(SelectionBox(star).value === input)
+    val capturedBox: SelectionBox<*> = SelectionBox("captured")
+    check(NestedSelectedConstructor(box = capturedBox).chosen == 1)
 }
 
 class NullableSelectionOuter<O>(val outer: O?) {

@@ -130,7 +130,8 @@ static class NullableGenericOverloadCollision
     // `System.Object` — and a signature key that told those apart would miss exactly the collision it is looking for.
     static string ErasedVector(JsonObject mo)
         => string.Join(", ", (mo["params"] as JsonArray)?.OfType<JsonObject>()
-            .Select(p => TypeJson.Read(p["type"]) is TypeNode t ? Normalize(Render(t, NoTps, source: false)) : "?")
+            .Select(p => TypeJson.Read(FunctionSignatureIdentity.SignatureType(p)) is TypeNode t
+                ? Normalize(Render(t, NoTps, source: false)) : "?")
             ?? Enumerable.Empty<string>());
 
     static string Normalize(string rendered) => rendered

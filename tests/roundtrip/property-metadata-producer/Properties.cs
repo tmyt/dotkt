@@ -6,7 +6,9 @@ public interface IValue<T> { T Value { get; } }
 
 public class CarrierMix<X, Y> : CarrierBase<Y>, IValue<int> where Y : notnull
 {
-    public CarrierMix(Y value) : base(new[] { value }) { }
+    // The Kotlin declaration requires List<Y>; native arrays do not acquire
+    // Kotlin collection membership merely because CLR exposes IList<T> on them.
+    public CarrierMix(Y value) : base(new System.Collections.Generic.List<Y> { value }) { }
     int IValue<int>.Value => 17;
 }
 

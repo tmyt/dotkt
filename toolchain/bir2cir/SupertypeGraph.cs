@@ -52,6 +52,14 @@ static class SupertypeGraph
         if (node is not JsonObject obj || obj["types"] is not JsonArray types) return;
         foreach (var type in types.OfType<JsonObject>())
         {
+            // This TypeDef only retains physical ownership/signature identity.
+            // The alias's semantic declaration still belongs to reference metadata;
+            // an empty ownership shell must not shadow its members or supertype edges.
+            if (type[AliasHelperHoist.OwnershipHostKey]?.GetValue<bool>() == true)
+            {
+                CollectFrom(type, result);
+                continue;
+            }
             if (Str(type["name"]) is not string name) continue;
             result[name] = new Def
             {

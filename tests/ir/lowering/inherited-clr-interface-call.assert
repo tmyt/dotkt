@@ -14,4 +14,8 @@
 # A local subclass with no declaration of its own still needs the inherited external interface slot.
 +"type":{"t":"fqn","name":"System.Collections.Generic.ICollection","args":[{"t":"fqn","name":"System.Int32"}]},"method":"Clear"
 +"declaringType":{"t":"fqn","name":"System.Collections.Generic.ICollection\u00601","args":[{"t":"fqn","name":"System.Int32"}]},"name":"Clear"
--"k":"callInstance"
+# No source call remains unresolved. Synthesized iterator bridges may legitimately contain
+# same-unit or exact-memberRef callInstance nodes unrelated to these selected inherited slots.
+-"method":"close"
+-"method":"add"
+-"method":"clear"

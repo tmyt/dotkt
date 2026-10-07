@@ -1279,11 +1279,15 @@ class V:
                     child_role = "declaration"
                 elif key == "properties" and (path == "" or is_type_decl):
                     child_role = "property"
-                elif role == "property" and key in ("getSig", "setSig"):
+                elif key == "fields" and (path == "" or is_type_decl):
+                    child_role = "field"
+                elif role == "field" and key == "type":
+                    child_role = "signature"
+                elif role == "property" and key in ("type", "getRet", "getSig", "setSig"):
                     child_role = "signature"
                 elif role == "declaration" and key == "params":
                     child_role = "parameter"
-                elif role == "declaration" and key == "clrInterfaceImpls":
+                elif role == "declaration" and key in ("clrInterfaceImpls", "clrBaseImpls"):
                     child_role = "linkage"
                 elif role == "linkage" and key in ("params", "ret"):
                     child_role = "signature"

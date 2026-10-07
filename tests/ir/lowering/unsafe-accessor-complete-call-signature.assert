@@ -1,7 +1,8 @@
 # A physical lowering may already have appended parameters to `sig` while `shapeTypes` and `memberSignature` remain
 # the frontend declaration vector. UnsafeAccessor synthesis must respect the standard sig -> shapeTypes -> argTypes
 # precedence and retain the complete call vector, not truncate it back to the semantic declaration arity.
+# The Kotlin generic value parameter occupies an object slot; the appended Boolean must remain present.
 -"shapeTypes":
 +"generated":true,"static":true,"extern":true,"override":false,"virtual":false
-+"params":[{"name":"target","type":{"t":"fqn","name":"UnsafeAccessorCompleteCallSignatureTarget"}},{"name":"arg0","type":{"t":"tv","scope":"method","i":0}},{"name":"arg1","type":{"t":"fqn","name":"System.Boolean"}}]
-+"sig":[{"t":"fqn","name":"UnsafeAccessorCompleteCallSignatureTarget"},{"t":"tv","scope":"method","i":0},{"t":"fqn","name":"System.Boolean"}],"args":[{"k":"local","name":"target"}
++"params":[{"name":"target","type":{"t":"fqn","name":"UnsafeAccessorCompleteCallSignatureTarget"}},{"name":"arg0","type":{"t":"fqn","name":"object"}},{"name":"arg1","type":{"t":"fqn","name":"System.Boolean"}}]
++"sig":[{"t":"fqn","name":"UnsafeAccessorCompleteCallSignatureTarget"},{"t":"fqn","name":"object"},{"t":"fqn","name":"System.Boolean"}],"args":[{"k":"local","name":"target"}

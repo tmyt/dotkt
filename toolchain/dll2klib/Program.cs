@@ -2602,6 +2602,12 @@ internal sealed class AssemblyScanner : IDisposable
                     "System.Runtime.CompilerServices.CompilerGeneratedAttribute",
                     requireTrust: false))
                 continue;
+            // A public Kotlin declaration is already projected from its MethodDef
+            // and semantic carriers above. Its explicit CLR slot wiring is not a
+            // second source declaration (nor an additional fake override).
+            if (_attrs.IsDotKtAssembly && IsPublicOrProtected(body.Attributes)
+                && _attrs.Has(bodyHandle, MetadataAttributes.DotKtNs + "KotlinDeclarationIdentityAttribute"))
+                continue;
             // A trusted Kotlin accessor carrier says this MethodImpl body is a physical implementation of an
             // already-declared Kotlin property, not another declaration to surface. Public/protected accessor bodies
             // are projected through KotlinAccessorPairs; private compiler bridges forward to that same declaration.
@@ -5684,10 +5690,10 @@ internal sealed class AssemblyScanner : IDisposable
                     throw new InvalidDataException(
                         "[KotlinPropertyAccessor] getter/setter disagree about the extension-receiver role");
                 var getterSignature = getter.DecodeSignature(
-                    RawSignatureTypeProvider.Instance,
+                    RawSignatureTypeProvider.PropertyValueInstance,
                     new GenericContext(owner, pair.Getter, typeParameterIds));
                 var setterSignature = setter.DecodeSignature(
-                    RawSignatureTypeProvider.Instance,
+                    RawSignatureTypeProvider.PropertyValueInstance,
                     new GenericContext(owner, pair.Setter, typeParameterIds));
                 var getterParameterCount = SemanticParameterCount(
                     pair.Getter, getterSignature.ParameterTypes.Length);
@@ -5701,7 +5707,10 @@ internal sealed class AssemblyScanner : IDisposable
                         StringComparer.Ordinal)
                     || getterSignature.ReturnType != setterSignature.ParameterTypes[setterParameterCount - 1])
                     throw new InvalidDataException(
-                        "[KotlinPropertyAccessor] getter/setter signatures are incompatible");
+                        $"[KotlinPropertyAccessor] getter/setter signatures are incompatible: " +
+                        $"{MetadataTypeName(owner)}::{pair.Name}: " +
+                        $"({string.Join(",", getterSignature.ParameterTypes)}) -> {getterSignature.ReturnType}; " +
+                        $"({string.Join(",", setterSignature.ParameterTypes)}) -> {setterSignature.ReturnType}");
             }
             var physical = SemanticPhysicalParameters(representativeHandle, representative);
             var propertyPhysical = pair.Getter.IsNil ? physical.Take(physical.Count - 1).ToList() : physical;
@@ -7324,9 +7333,18 @@ internal sealed record GenericContext(
 internal sealed class RawSignatureTypeProvider : ISignatureTypeProvider<string, GenericContext>
 {
     public static RawSignatureTypeProvider Instance { get; } = new();
+    // Accessor association compares value shapes, not method-overload identities.
+    // A setter value may carry an optional declaration discriminator absent from
+    // the getter return. Required modifiers still participate in compatibility.
+    internal static RawSignatureTypeProvider PropertyValueInstance { get; } = new(ignoreOptionalModifiers: true);
     private readonly Func<MetadataReader, EntityHandle, string>? _typeIdentity;
-    public RawSignatureTypeProvider(Func<MetadataReader, EntityHandle, string>? typeIdentity = null) =>
+    private readonly bool _ignoreOptionalModifiers;
+    public RawSignatureTypeProvider(Func<MetadataReader, EntityHandle, string>? typeIdentity = null,
+        bool ignoreOptionalModifiers = false)
+    {
         _typeIdentity = typeIdentity;
+        _ignoreOptionalModifiers = ignoreOptionalModifiers;
+    }
 
     internal static string ScopedReferenceIdentity(MetadataReader reader, TypeReferenceHandle handle)
     {
@@ -7371,7 +7389,8 @@ internal sealed class RawSignatureTypeProvider : ISignatureTypeProvider<string, 
     public string GetGenericMethodParameter(GenericContext genericContext, int index) => $"!!{index}";
     public string GetGenericTypeParameter(GenericContext genericContext, int index) => $"!{index}";
     public string GetModifiedType(string modifier, string unmodifiedType, bool isRequired) =>
-        $"{(isRequired ? "modreq" : "modopt")}<{modifier}>({unmodifiedType})";
+        _ignoreOptionalModifiers && !isRequired ? unmodifiedType
+            : $"{(isRequired ? "modreq" : "modopt")}<{modifier}>({unmodifiedType})";
     public string GetPinnedType(string elementType) => $"pinned<{elementType}>";
     public string GetPointerType(string elementType) => $"ptr<{elementType}>";
     public string GetPrimitiveType(PrimitiveTypeCode typeCode) => $"primitive:{(int)typeCode}";

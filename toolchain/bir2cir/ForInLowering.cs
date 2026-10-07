@@ -86,8 +86,8 @@ static class ForInLowering
         if (Str(o["k"]) != "forIn") return;
         if (IsCountedRange(o["srcType"], stdlibBuild)) ReplaceWith(o, BuildForRange(o, o["src"]));
         else if (!stdlibBuild && TryBuildDownTo(o, localTopLevelFns) is JsonObject dt) ReplaceWith(o, dt);
-        else if (IsNetOrSequenceEnumerable(o["srcType"], refs)) ReplaceWith(o, BuildForEachInline(o));
-        else if (stdlibBuild && IsStdlibCollection(o["srcType"], typeSupers)) ReplaceWith(o, BuildForEachInline(o));
+        else if (IsNetOrSequenceEnumerable(o["srcType"], refs)) ReplaceWith(o, BuildForEachInline(o, refs));
+        else if (stdlibBuild && IsStdlibCollection(o["srcType"], typeSupers)) ReplaceWith(o, BuildForEachInline(o, refs));
         else if (o["fallback"] is JsonObject fb) ReplaceWith(o, fb);
     }
 
@@ -189,13 +189,47 @@ static class ForInLowering
         ["body"] = o["body"]?.DeepClone(),
     };
 
-    // A stdlib-collection forIn -> forEachInline (GetEnumerator); transient srcType/fallback facts are dropped.
-    static JsonObject BuildForEachInline(JsonObject o) => new()
+    // Select the erased enumeration surface before dropping the source type. A star-projected
+    // collection need not implement IEnumerable<object> (for example, List<int> does not).
+    // The explicit native cast also lets SequenceForEachLowering realize the erased loop
+    // without reconstructing a local's Kotlin type after type erasure.
+    static JsonNode EnumerationSource(JsonObject o, ReferenceMetadataIndex refs)
+    {
+        var sourceType = TypeJson.Read(o["srcType"]);
+        while (sourceType is TypeNode.Nullable or TypeNode.Oblivious)
+            sourceType = sourceType is TypeNode.Nullable nu ? nu.Of : ((TypeNode.Oblivious)sourceType).Of;
+        if (FaithfulHints.IsStarProjectedColl(sourceType)
+            || sourceType is TypeNode.Fqn variant && refs != null
+                && AliasVarianceRepresentation.RequiresErasure(variant, refs)
+            || sourceType is TypeNode.Fqn { Args: [TypeNode.Star] } star && CollectionFqns.Contains(star.Name)
+            || sourceType is TypeNode.Fqn { Name: "kotlin.sequences.Sequence" })
+            return new JsonObject
+            {
+                ["k"] = "cast", ["type"] = TypeJson.Fqn("System.Collections.IEnumerable"),
+                ["e"] = o["src"]?.DeepClone(),
+            };
+        // The loop consumes an interface reference, not the source's storage value.
+        // Inlining can substitute a generic C : Iterable<T> (or a native value-type
+        // enumerable) for the original receiver. Keep that conversion explicit so
+        // emitting the cast boxes a value/generic source before interface dispatch.
+        return new JsonObject
+        {
+            ["k"] = "cast",
+            ["type"] = new JsonObject
+            {
+                ["t"] = "fqn", ["name"] = "System.Collections.Generic.IEnumerable",
+                ["args"] = new JsonArray(o["elem"]?.DeepClone()),
+            },
+            ["e"] = o["src"]?.DeepClone(),
+        };
+    }
+
+    static JsonObject BuildForEachInline(JsonObject o, ReferenceMetadataIndex refs) => new()
     {
         ["k"] = "forEachInline",
         ["label"] = o["label"]?.DeepClone(),
         ["elem"] = o["elem"]?.DeepClone(),
-        ["src"] = o["src"]?.DeepClone(),
+        ["src"] = EnumerationSource(o, refs),
         ["var"] = o["var"]?.DeepClone(),
         ["body"] = o["body"]?.DeepClone(),
     };

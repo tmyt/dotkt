@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Text.Json.Nodes;
 using System.Threading.Tasks;
 using NUnit.Framework;
 using roundtrip.nestedsuspendnullability;
@@ -13,6 +14,40 @@ public class NestedSuspendNullabilityTests
 
     private static void State(NullabilityInfo info, NullabilityState expected) =>
         Assert.That(info.ReadState, Is.EqualTo(expected));
+
+    private static JsonNode Fqn(string name, params JsonNode[] args)
+    {
+        var result = new JsonObject { ["t"] = "fqn", ["name"] = name };
+        if (args.Length != 0) result["args"] = new JsonArray(args);
+        return result;
+    }
+
+    private static JsonNode Nullable(JsonNode type) => new JsonObject { ["t"] = "nullable", ["of"] = type };
+    private static JsonNode ArrayOf(JsonNode type) => new JsonObject { ["t"] = "array", ["elem"] = type };
+    private static JsonNode Box(JsonNode type) => Fqn("roundtrip.nestedsuspendnullability.InvariantBox", type);
+    private static JsonNode StringType() => Fqn("kotlin.String");
+
+    private static void LogicalResult(MethodInfo method, JsonNode expected, bool suspend = true)
+    {
+        var attributes = suspend ? method.GetCustomAttributesData() : method.ReturnParameter.GetCustomAttributesData();
+        var attribute = attributes.Single(a => a.AttributeType.FullName ==
+            "DotKt.Runtime.CompilerServices." + (suspend ? "KotlinSuspendResultAttribute" : "KotlinTypeAttribute"));
+        Assert.That(attribute.ConstructorArguments[0].Value, Is.EqualTo("bir-json/1"));
+        var bytes = ((IEnumerable<CustomAttributeTypedArgument>)attribute.ConstructorArguments[1].Value!)
+            .Select(a => (byte)a.Value!).ToArray();
+        Assert.That(JsonNode.DeepEquals(JsonNode.Parse(bytes), expected), Is.True, method.Name);
+    }
+
+    private static void LogicalResult(string name, JsonNode expected, bool suspend = true) =>
+        LogicalResult(typeof(NestedSuspendNullabilityKt).GetMethod(name)!, expected, suspend);
+
+    private static void Carrier(NullabilityInfo info, string name, NullabilityState state)
+    {
+        Assert.That(info.Type.FullName, Is.EqualTo("roundtrip.nestedsuspendnullability." + name + "$star"));
+        Assert.That(info.Type.IsInterface, Is.True);
+        Assert.That(info.GenericTypeArguments, Is.Empty);
+        State(info, state);
+    }
 
     private static byte[] Flags(string name)
     {
@@ -29,20 +64,21 @@ public class NestedSuspendNullabilityTests
         foreach (var name in new[] { "nullableBox", "nonNullBox" })
         {
             var task = Result(name);
-            Assert.That(task.Type, Is.EqualTo(typeof(Task<InvariantBox<string>>)));
+            Assert.That(task.Type.GetGenericTypeDefinition(), Is.EqualTo(typeof(Task<>)));
             State(task, NullabilityState.NotNull);
             var box = task.GenericTypeArguments[0];
-            State(box, name == "nullableBox" ? NullabilityState.Nullable : NullabilityState.NotNull);
-            State(box.GenericTypeArguments[0], NullabilityState.Nullable);
+            Carrier(box, "InvariantBox", name == "nullableBox" ? NullabilityState.Nullable : NullabilityState.NotNull);
+            var logicalBox = Box(Nullable(StringType()));
+            LogicalResult(name, name == "nullableBox" ? Nullable(logicalBox) : logicalBox);
         }
         var array = Result("nullableArray").GenericTypeArguments[0];
         Assert.That(array.Type, Is.EqualTo(typeof(string[])));
         State(array, NullabilityState.Nullable);
         State(array.ElementType!, NullabilityState.Nullable);
-        var nested = Result("nestedArray").GenericTypeArguments[0].GenericTypeArguments[0];
-        State(nested, NullabilityState.Nullable);
-        State(nested.ElementType!, NullabilityState.Nullable);
-        Assert.That((await NestedSuspendNullabilityKt.nonNullBox()).value, Is.Null);
+        LogicalResult("nullableArray", Nullable(ArrayOf(Nullable(StringType()))));
+        Carrier(Result("nestedArray").GenericTypeArguments[0], "InvariantBox", NullabilityState.NotNull);
+        LogicalResult("nestedArray", Box(Nullable(ArrayOf(Nullable(StringType())))));
+        Assert.That(((InvariantBox<string>)(await NestedSuspendNullabilityKt.nonNullBox())).value, Is.Null);
         Assert.That((await NestedSuspendNullabilityKt.nullableArray())![0], Is.Null);
     }
 
@@ -80,45 +116,81 @@ public class NestedSuspendNullabilityTests
         Assert.That(suspendFunction.Type, Is.EqualTo(typeof(object)));
         State(suspendFunction, NullabilityState.Nullable);
         Assert.That(suspendFunction.GenericTypeArguments, Is.Empty);
-        var collapsed = Result("collapsedResult").GenericTypeArguments[0];
-        Assert.That(collapsed.GenericTypeArguments[0].Type.IsGenericType, Is.False);
-        State(collapsed.GenericTypeArguments[0], NullabilityState.Nullable);
-        State(collapsed.GenericTypeArguments[1], NullabilityState.Nullable);
-        foreach (var name in new[] { "lateCollapsedResult", "starComparableResult", "enumResult" })
+        foreach (var name in new[] { "collapsedResult", "lateCollapsedResult", "lateCollapsedNullableResult",
+            "starComparableResult", "enumResult", "primitiveResult" })
         {
-            var pair = Result(name).GenericTypeArguments[0];
-            Assert.That(pair.GenericTypeArguments[0].Type,
-                Is.EqualTo(name == "enumResult" ? typeof(Enum) : typeof(IComparable)));
-            State(pair.GenericTypeArguments[0], NullabilityState.Nullable);
-            State(pair.GenericTypeArguments[1], NullabilityState.NotNull);
-            Assert.That(Flags(name), Is.EqualTo(new byte[] { 1, 1, 2, 1 }));
+            State(Result(name), NullabilityState.NotNull);
+            Carrier(Result(name).GenericTypeArguments[0], "TwoSlots", NullabilityState.NotNull);
         }
-        State(Result("lateCollapsedNullableResult").GenericTypeArguments[0].GenericTypeArguments[1],
-            NullabilityState.Nullable);
-        Assert.That(Flags("lateCollapsedNullableResult"), Is.EqualTo(new byte[] { 1, 1, 2, 2 }));
-        State(Result("primitiveResult").GenericTypeArguments[0].GenericTypeArguments[1], NullabilityState.Nullable);
+        LogicalResult("collapsedResult", Fqn("roundtrip.nestedsuspendnullability.TwoSlots",
+            Nullable(Fqn("kotlin.Pair", StringType(), StringType())), Nullable(StringType())));
+        foreach (var name in new[] { "lateCollapsedResult", "lateCollapsedNullableResult", "starComparableResult", "enumResult" })
+        {
+            var argument = name == "starComparableResult" || name == "enumResult"
+                ? new JsonObject { ["t"] = "star" } : Nullable(Fqn("kotlin.Any"));
+            LogicalResult(name, Fqn("roundtrip.nestedsuspendnullability.TwoSlots",
+                Nullable(Fqn(name == "enumResult" ? "kotlin.Enum" : "kotlin.Comparable", argument)),
+                name == "lateCollapsedNullableResult" ? Nullable(StringType()) : StringType()));
+        }
+        LogicalResult("primitiveResult", Fqn("roundtrip.nestedsuspendnullability.TwoSlots",
+            Fqn("kotlin.Int"), Nullable(StringType())));
+
+        // Keep a physical nested-slot control: these CLR tuples are not erased.
+        foreach (var name in new[] { "nativeComparableSlots", "nativeNullableSlots" })
+        {
+            var tuple = Result(name).GenericTypeArguments[0];
+            Assert.That(tuple.Type.GetGenericTypeDefinition(), Is.EqualTo(typeof(Tuple<,>)));
+            State(tuple, NullabilityState.NotNull);
+            Assert.That(tuple.GenericTypeArguments[0].Type, Is.EqualTo(typeof(IComparable)));
+            State(tuple.GenericTypeArguments[0], NullabilityState.Nullable);
+            State(tuple.GenericTypeArguments[1], name == "nativeNullableSlots"
+                ? NullabilityState.Nullable : NullabilityState.NotNull);
+            Assert.That(Flags(name), Is.EqualTo(name == "nativeNullableSlots"
+                ? new byte[] { 1, 1, 2, 2 } : new byte[] { 1, 1, 2, 1 }));
+        }
+        Assert.That((await NestedSuspendNullabilityKt.nativeComparableSlots()).Item2, Is.EqualTo("value"));
+        Assert.That((await NestedSuspendNullabilityKt.nativeNullableSlots()).Item2, Is.Null);
+
+        // A nested existential cannot be substituted into an invariant foreign
+        // construction. Its object slot retains the exact runtime tuple instead.
+        foreach (var name in new[] { "nativeStarSlots", "nativeEnumSlots" })
+        {
+            var result = Result(name).GenericTypeArguments[0];
+            Assert.That(result.Type, Is.EqualTo(typeof(object)));
+            State(result, NullabilityState.NotNull);
+            Assert.That(result.GenericTypeArguments, Is.Empty);
+            LogicalResult(name, Fqn("System.Tuple`2",
+                Nullable(Fqn(name == "nativeEnumSlots" ? "kotlin.Enum" : "kotlin.Comparable",
+                    new JsonObject { ["t"] = "star" })), StringType()));
+        }
+        foreach (var tuple in new[] { await NestedSuspendNullabilityKt.nativeStarSlots(),
+            await NestedSuspendNullabilityKt.nativeEnumSlots() })
+        {
+            Assert.That(tuple.GetType().GetGenericTypeDefinition(), Is.EqualTo(typeof(Tuple<,>)));
+            Assert.That(tuple.GetType().GetProperty("Item1")!.GetValue(tuple), Is.Null);
+            Assert.That(tuple.GetType().GetProperty("Item2")!.GetValue(tuple), Is.EqualTo("value"));
+        }
     }
 
     [Test]
     public void UnitAndAbstractDefaultSlotsUseTheirOwnNullabilityConventions()
     {
-        var unit = Result("nestedUnit").GenericTypeArguments[0];
-        State(unit, NullabilityState.NotNull);
-        unit = unit.GenericTypeArguments[0];
-        State(unit, NullabilityState.Nullable);
-        State(unit.GenericTypeArguments[0], NullabilityState.Nullable);
-        Assert.That(unit.GenericTypeArguments[0].Type, Is.EqualTo(typeof(kotlin.Unit)));
-        State(Result("nonNullControl").GenericTypeArguments[0].GenericTypeArguments[0], NullabilityState.NotNull);
-        State(Result("ordinaryBox").GenericTypeArguments[0], NullabilityState.Nullable);
+        Carrier(Result("nestedUnit").GenericTypeArguments[0], "InvariantBox", NullabilityState.NotNull);
+        LogicalResult("nestedUnit", Box(Nullable(Box(Nullable(Fqn("kotlin.Unit"))))));
+        Carrier(Result("nonNullControl").GenericTypeArguments[0], "InvariantBox", NullabilityState.NotNull);
+        LogicalResult("nonNullControl", Box(StringType()));
+        Carrier(Result("ordinaryBox"), "InvariantBox", NullabilityState.NotNull);
+        LogicalResult("ordinaryBox", Box(Nullable(StringType())), suspend: false);
         Assert.That(Flags("ordinaryFunction"), Is.EqualTo(new byte[] { 2 }));
         Assert.That(Flags("ordinaryUnitBox"), Is.EqualTo(new byte[] { 2 }));
+        Carrier(Result("ordinaryUnitBox"), "InvariantBox", NullabilityState.Nullable);
+        LogicalResult("ordinaryUnitBox", Nullable(Box(Nullable(Fqn("kotlin.Unit")))), suspend: false);
         var context = new NullabilityInfoContext();
         var defaultResult = context.Create(typeof(NestedDefault).GetMethod("read")!.ReturnParameter);
-        State(defaultResult.GenericTypeArguments[0], NullabilityState.Nullable);
-        State(defaultResult.GenericTypeArguments[0].GenericTypeArguments[0], NullabilityState.Nullable);
+        Carrier(defaultResult.GenericTypeArguments[0], "InvariantBox", NullabilityState.Nullable);
+        LogicalResult(typeof(NestedDefault).GetMethod("read")!, Nullable(Box(Nullable(StringType()))));
         var abstractResult = context.Create(typeof(NestedAbstract).GetMethod("read")!.ReturnParameter);
-        var array = abstractResult.GenericTypeArguments[0].GenericTypeArguments[0];
-        State(array, NullabilityState.Nullable);
-        State(array.ElementType!, NullabilityState.Nullable);
+        Carrier(abstractResult.GenericTypeArguments[0], "InvariantBox", NullabilityState.NotNull);
+        LogicalResult(typeof(NestedAbstract).GetMethod("read")!, Box(Nullable(ArrayOf(Nullable(StringType())))));
     }
 }

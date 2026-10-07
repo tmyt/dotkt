@@ -33,12 +33,16 @@ private class AuthoredArgumentIterator : Iterator<Int> {
     }
 }
 
-private class AuthoredArgumentSet : AbstractSet<Int>() {
+private open class AuthoredArgumentSet : AbstractSet<Int>() {
     override val size: Int get() = 3
     override fun iterator(): Iterator<Int> = AuthoredArgumentIterator()
     override fun isEmpty(): Boolean = true
     override fun contains(element: Int): Boolean = element == 99
     override fun containsAll(elements: Collection<Int>): Boolean = false
+}
+
+private class DerivedAuthoredArgumentSet : AuthoredArgumentSet() {
+    override fun containsAll(elements: Collection<Int>): Boolean = true
 }
 
 class ProjectedSetArgumentTests {
@@ -144,6 +148,7 @@ class ProjectedSetArgumentTests {
         check(view.contains(99)) { "authored contains hit" }
         check(!view.contains(7)) { "authored contains miss" }
         check(!view.containsAll(emptyList())) { "authored containsAll" }
+        check(forwardView(DerivedAuthoredArgumentSet()).containsAll(emptyList())) { "derived containsAll" }
         check(view.iterator().next() == 7) { "authored iterator" }
     }
 

@@ -52,6 +52,7 @@ static class RoundtripMetadata
     const string AKSourceMethod = Ns + "KotlinSourceMethodAttribute";
     const string AKInnerConstructorFactory = Ns + "KotlinInnerConstructorFactoryAttribute";
     const string AKDeclarationIdentity = Ns + "KotlinDeclarationIdentityAttribute";
+    internal const string AKPhysicalDeclarationIdentity = Ns + "KotlinPhysicalDeclarationIdentityAttribute";
     const string AKConstructorAdapter = Ns + "KotlinConstructorAdapterAttribute";
     internal const string AKPropertyStorage = Ns + "KotlinPropertyStorageAttribute";
     internal const string AKExtensionCore = Ns + "KotlinExtensionCoreAttribute";
@@ -626,6 +627,9 @@ static class RoundtripMetadata
         o.Remove("retKotlinType");
         o.Remove(KotlinSupertypesRecord.PreKey);
         o.Remove("kotlinCompanion");
+        // Metadata builds materialize this hand-off into KotlinCompanion. Runtime
+        // stdlib deliberately publishes no round-trip carriers, so consume it here.
+        o.Remove("companionCarrier");
         o.Remove("richEnum");
         o.Remove("enumRich");
         o.Remove("basicEnum");
@@ -649,6 +653,7 @@ static class RoundtripMetadata
         if (arr is not JsonArray a) return;
         foreach (var d in a) if (d is JsonObject po)
         {
+            var linkageIdentity = po[DeclarationIdentityBinding.Key]?.GetValue<string>();
             po.Remove("kotlinType");
             po.Remove("retKotlinType");
             po.Remove("suspendResult");
@@ -656,6 +661,7 @@ static class RoundtripMetadata
             // consume this exact association into [KotlinPropertyAccessor]; the runtime twin emits no round-trip
             // metadata, so discard the same pass-local hand-off before CIR reaches ilemit.
             po.Remove(KotlinPropertyAccessors.MetadataCarrierKey);
+            po.Remove(FBoundStarProjectionErasure.InnerConstructorFactoryKey);
             po.Remove(DeclarationIdentityBinding.Key);
             po.Remove("declarationSourceName");
             po.Remove(DeclarationIdentityBinding.SemanticSignatureKey);
@@ -670,6 +676,10 @@ static class RoundtripMetadata
             }
             StripAttrs(po, "attrs");
             StripAttrs(po, "retAttrs");
+            // The runtime twin need not publish Kotlin source-shape metadata, but
+            // consumers must identify its actual MethodDef after CLR allocation.
+            if (linkageIdentity != null)
+                Append(po, Marker(AKPhysicalDeclarationIdentity, StringArg(linkageIdentity)));
             if (hasParams) StripDecls(po["params"]);
         }
     }
@@ -854,7 +864,7 @@ static class RoundtripMetadata
     // NO name (a named ctor param would mint Param rows the embedded attrs never had); the empty body chains to
     // Attribute()'s protected ctor.
     // ---------------------------------------------------------------------------------------------------------------
-    public static JsonObject SynthDefsFile(ReferenceMetadataIndex refs)
+    public static JsonObject SynthDefsFile(ReferenceMetadataIndex refs, bool linkageOnly = false)
     {
         // Resolve the shared base delegation BEFORE any ctor is built, so every synthesized class states the
         // member it delegates to rather than describing it.
@@ -897,6 +907,11 @@ static class RoundtripMetadata
             AttrClass(AKSupertypes, Ctor(Param("System.String"), Param(ByteArrayType()))),   // #86 — pre-erasure supertype edges + type-parameter bounds
             AttrClass(AKTypeParameterBounds, Ctor(Param("System.String"), Param(ByteArrayType()))), // pre-erasure MethodDef type-parameter bounds
         };
+        if (linkageOnly)
+        {
+            types.Clear();
+            types.Add(AttrClass(AKPhysicalDeclarationIdentity, Ctor(Param("System.String"))));
+        }
         return new JsonObject
         {
             ["fileClass"] = "",     // no top-level funs/fields -> ilemit defines no file-class type for this file

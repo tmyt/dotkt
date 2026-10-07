@@ -70,6 +70,12 @@ internal enum class StarProjectionBindingFlags(value: Int) {
 internal interface StarProjectionParameter {
     @property:kotlin.clr.ClrProperty(kotlin.clr.READ, "ParameterType")
     val parameterType: StarProjectionType
+
+    @kotlin.clr.ClrIntrinsic("GetOptionalCustomModifiers")
+    fun getOptionalCustomModifiers(): Array<StarProjectionType>
+
+    @kotlin.clr.ClrIntrinsic("GetRequiredCustomModifiers")
+    fun getRequiredCustomModifiers(): Array<StarProjectionType>
 }
 
 @kotlin.clr.ClrTypeAlias("System.Reflection.FieldInfo")
@@ -191,17 +197,17 @@ private fun Any.starProjectionRuntimeType(): StarProjectionType = TODO("clr bind
 // this code never resolves an overload by source name.
 @PublishedApi
 internal fun starProjectionIsInstance(value: Any?, openGenericType: StarProjectionType): Boolean =
-    value != null && starProjectionClosedView(value.starProjectionRuntimeType(), openGenericType) != null
+    value != null && starProjectionHasView(value.starProjectionRuntimeType(), openGenericType)
 
 @PublishedApi
 internal fun starProjectionCast(value: Any?, openGenericType: StarProjectionType): Any {
-    if (value != null && starProjectionClosedView(value.starProjectionRuntimeType(), openGenericType) != null) return value
+    if (value != null && starProjectionHasView(value.starProjectionRuntimeType(), openGenericType)) return value
     throw ClassCastException("Value is not an instance of " + openGenericType.fullName)
 }
 
 @PublishedApi
 internal fun starProjectionSafeCast(value: Any?, openGenericType: StarProjectionType): Any? =
-    if (value != null && starProjectionClosedView(value.starProjectionRuntimeType(), openGenericType) != null) value else null
+    if (value != null && starProjectionHasView(value.starProjectionRuntimeType(), openGenericType)) value else null
 
 // String, arrays and dictionary storage have CLR enumerators without Kotlin Iterable membership.
 // Declaration-owned Kotlin identities are checked before this foreign-storage policy, so a map that
@@ -552,6 +558,8 @@ internal fun starProjectionInvokeDelegate(receiver: Any?, arguments: Array<Any?>
 internal fun starProjectionConstruct(
     openGenericType: StarProjectionType,
     parameterTypeKeys: Array<String>,
+    inferenceProgram: IntArray,
+    inferenceDefinitions: Array<StarProjectionType>,
     fallbackTypeArguments: Array<StarProjectionType>,
     arguments: Array<Any?>,
 ): Any? {
@@ -564,13 +572,15 @@ internal fun starProjectionConstruct(
         throw IllegalStateException("Projected constructor owner arity changed")
     val inferred = arrayOfNulls<StarProjectionType>(ownerParameters.size)
     var index = 0
+    var instruction = 0
     while (index < parameters.size) {
         val argument = arguments[index]
-        if (argument != null)
-            starProjectionBindConstructionSlots(parameters[index].parameterType,
-                argument.starProjectionRuntimeType(), inferred)
+        instruction = starProjectionExecuteConstructionInference(inferenceProgram, instruction,
+            if (argument == null) null else argument.starProjectionRuntimeType(), inferenceDefinitions, inferred)
         index++
     }
+    if (instruction != inferenceProgram.size)
+        throw IllegalStateException("Projected constructor inference program size changed")
     val closedArguments = Array<StarProjectionType>(ownerParameters.size) { slot ->
         inferred[slot] ?: fallbackTypeArguments[slot]
     }
@@ -592,6 +602,54 @@ internal fun starProjectionConstruct(
     }
 }
 
+// Compiler-authored CLR shape program. An erased object parameter is not an
+// inference source; its declaration-owned owner slot is carried explicitly.
+private fun starProjectionExecuteConstructionInference(
+    program: IntArray,
+    offset: Int,
+    actual: StarProjectionType?,
+    definitions: Array<StarProjectionType>,
+    bindings: Array<StarProjectionType?>,
+): Int {
+    when (program[offset]) {
+        0 -> return offset + 1
+        1 -> {
+            val slot = program[offset + 1]
+            if (actual != null) {
+                val previous = bindings[slot]
+                if (previous != null && previous != actual)
+                    throw IllegalStateException("Conflicting projected declaration type argument")
+                bindings[slot] = actual
+            }
+            return offset + 2
+        }
+        2 -> {
+            val rank = program[offset + 1]
+            val szArray = program[offset + 2] != 0
+            val element = if (actual != null && actual.isArray && actual.getArrayRank() == rank
+                && actual.isSzArray == szArray) actual.getElementType() else null
+            return starProjectionExecuteConstructionInference(program, offset + 3, element, definitions, bindings)
+        }
+        3 -> {
+            val definition = definitions[program[offset + 1]]
+            val count = program[offset + 2]
+            val view = if (actual == null) null else starProjectionClosedView(actual, definition)
+            val arguments = view?.getGenericArguments()
+            if (arguments != null && arguments.size != count)
+                throw IllegalStateException("Projected constructor inference definition arity changed")
+            var next = offset + 3
+            var index = 0
+            while (index < count) {
+                next = starProjectionExecuteConstructionInference(program, next, arguments?.get(index),
+                    definitions, bindings)
+                index++
+            }
+            return next
+        }
+        else -> throw IllegalStateException("Invalid projected constructor inference opcode")
+    }
+}
+
 private fun starProjectionOpenConstructor(
     openGenericType: StarProjectionType,
     parameterTypeKeys: Array<String>,
@@ -604,7 +662,7 @@ private fun starProjectionOpenConstructor(
         var matches = true
         var index = 0
         while (index < parameters.size) {
-            if (starProjectionProjectedConstructorTypeKey(parameters[index].parameterType)
+            if (starProjectionProjectedConstructorParameterKey(parameters[index])
                 != parameterTypeKeys[index]) {
                 matches = false
                 break
@@ -653,6 +711,23 @@ private fun starProjectionBindConstructionSlots(
         starProjectionBindConstructionSlots(declarationArguments[index], actualArguments[index], bindings, methodSlots)
         index++
     }
+}
+
+private fun starProjectionProjectedConstructorParameterKey(parameter: StarProjectionParameter): String {
+    var key = starProjectionProjectedConstructorTypeKey(parameter.parameterType)
+    val optional = parameter.getOptionalCustomModifiers()
+    var index = optional.size - 1
+    while (index >= 0) {
+        key = "o[" + starProjectionProjectedConstructorTypeKey(optional[index]) + "](" + key + ")"
+        index--
+    }
+    val required = parameter.getRequiredCustomModifiers()
+    index = required.size - 1
+    while (index >= 0) {
+        key = "q[" + starProjectionProjectedConstructorTypeKey(required[index]) + "](" + key + ")"
+        index--
+    }
+    return key
 }
 
 private fun starProjectionProjectedConstructorTypeKey(type: StarProjectionType): String {
@@ -823,31 +898,29 @@ private fun starProjectionClosedView(
     openGenericType: StarProjectionType,
     closedViewHint: StarProjectionType? = null,
 ): StarProjectionType? {
-    // The compiler's exact witness describes the authored receiver.  An inherited member can be declared on a
+    // The compiler's source view describes the authored receiver. An inherited member can be declared on a
     // different open generic (`Derived<String>` -> `Base<String>`), so translate that witness through its physical
-    // base/interface graph before comparing it with the declaring closure.  Calling this helper without a hint is
-    // also the ambiguity check: two distinct closed interface views are never guessed.
+    // base/interface graph before selecting the declaring closure. Kotlin casts and covariant value slots do not
+    // prove an exact native construction. Use the requested CLR view when the receiver actually supports it;
+    // otherwise dispatch through its unique erased view. Multiple erased views remain ambiguous.
     val declaringHint = if (closedViewHint != null
         && closedViewHint != openGenericType
         && (!closedViewHint.isGenericType
             || closedViewHint.getGenericTypeDefinition() != openGenericType))
         starProjectionClosedView(closedViewHint, openGenericType, null)
     else closedViewHint
+    if (declaringHint != null && declaringHint.isAssignableFrom(runtimeType)) return declaringHint
     var current: StarProjectionType? = runtimeType
     while (current != null) {
         if (current == openGenericType) return current
         if (current.isGenericType && current.getGenericTypeDefinition() == openGenericType) {
-            if (declaringHint == null || current == declaringHint) return current
+            return current
         }
         current = current.baseType
     }
     var match: StarProjectionType? = null
     for (candidate in runtimeType.getInterfaces()) {
         if (!candidate.isGenericType || candidate.getGenericTypeDefinition() != openGenericType) continue
-        if (declaringHint != null) {
-            if (candidate == declaringHint) return candidate
-            continue
-        }
         if (match != null) throw IllegalStateException(
             "Ambiguous star-projection view " + openGenericType.fullName
         )

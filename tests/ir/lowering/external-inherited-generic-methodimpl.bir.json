@@ -12,8 +12,8 @@
       "vis": "public",
       "base": {
         "t": "fqn",
-        "name": "kotlin.collections.AbstractList",
-        "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+        "name": "DotKt.Tests.MethodImplIntermediate",
+        "args": [{ "t": "fqn", "name": "kotlin.String" }]
       },
       "interfaces": [],
       "fields": [],
@@ -34,10 +34,10 @@
             {
               "owner": {
                 "t": "fqn",
-                "name": "kotlin.collections.AbstractList",
-                "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+                "name": "DotKt.Tests.MethodImplIntermediate",
+                "args": [{ "t": "fqn", "name": "kotlin.String" }]
               },
-              "member": "contains",
+              "member": "Contains",
               "arity": 0,
               "params": [{ "t": "fqn", "name": "kotlin.Int" }],
               "ret": { "t": "fqn", "name": "kotlin.Boolean" }

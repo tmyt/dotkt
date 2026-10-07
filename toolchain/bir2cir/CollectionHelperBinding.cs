@@ -90,15 +90,17 @@ static class CollectionHelperBinding
                 if (child != null && Walk(child, context) is { } next && !ReferenceEquals(child, next)) obj[key] = next;
             }
             if (Text(obj["k"]) == "new"
-                && TypeJson.Read(obj["type"]) is TypeNode.Fqn { Args.Length: 2 } constructed
+                && TypeJson.Read(obj["type"]) is TypeNode.Fqn { Args: { } } constructed
                 && aliases.ContainsKey(constructed.Name)
                 && obj["args"] is JsonArray { Count: 1 } constructorArguments
                 && obj["argTypes"] is JsonArray constructorSignature
                 && (constructors != null
                     ? constructors.CollectionCopyConstructorKind(constructed.Name, constructorSignature.Select(TypeJson.Read).ToArray(), constructed.Args)
-                    : references?.CollectionCopyConstructorKind(constructed.Name, constructorSignature.Select(TypeJson.Read).ToArray(), constructed.Args)) == "map")
-                return MemberCallSubstitution.MapCopyConstruction(constructed, constructed.Args,
-                    constructorArguments[0], BindAuthoredCall);
+                    : references?.CollectionCopyConstructorKind(constructed.Name, constructorSignature.Select(TypeJson.Read).ToArray(), constructed.Args)) is string copyKind
+                && (copyKind == "map" && constructed.Args.Length == 2
+                    || copyKind == "list" && constructed.Args.Length == 1))
+                return MemberCallSubstitution.CollectionCopyConstruction(constructed, constructed.Args,
+                    constructorArguments[0], BindAuthoredCall, copyKind);
             if (Text(obj["k"]) != "callInstance"
                 || obj["clrOwnerResolved"]?.GetValue<bool>() == true
                 || TypeJson.Read(obj["ownerType"]) is not TypeNode.Fqn owner
@@ -203,7 +205,7 @@ static class CollectionHelperBinding
         root["methods"][0]["body"].AsArray().Add(new JsonObject { ["k"] = "var", ["name"] = "storage", ["type"] = TypeJson.Write(map) });
         root["methods"][1]["body"] = body;
         var aliases = new Dictionary<string, string> { [map.Name] = "System.Collections.Generic.IDictionary" };
-        Apply(new[] { root }, null, aliases, bind => body.Add(MemberCallSubstitution.MapCopyConstruction(
+        Apply(new[] { root }, null, aliases, bind => body.Add(MemberCallSubstitution.CollectionCopyConstruction(
             map, new TypeNode[] { key, value }, new JsonObject { ["k"] = "callStatic", ["method"] = "ReadOnce" }, bind)));
         var call = body[0]["stmts"][2]["expr"];
         if (Text(call[DeclarationIdentityBinding.Key]) != "copy-map"
@@ -216,6 +218,22 @@ static class CollectionHelperBinding
             || TypeJson.Read(call["typeArgs"][1]) != value)
             throw new InvalidOperationException("Map copy helper changed its canonical key/value arguments");
         Console.WriteLine("[map copy binding] self-test OK (source evaluation, exact helper, canonical arguments)");
+        root["fileClass"] = "kotlin.collections.ClrCollectionDefaultsKt";
+        root["methods"][0]["name"] = "clrCollectionCopyInto";
+        root["methods"][0]["typeParams"] = new JsonArray();
+        root["methods"][0][DeclarationIdentityBinding.Key] = "copy-list";
+        body.Clear();
+        var list = new TypeNode.Fqn("probe.List", new TypeNode[] { key });
+        Apply(new[] { root }, null, aliases, bind => body.Add(MemberCallSubstitution.CollectionCopyConstruction(
+            list, new TypeNode[] { key }, new JsonObject { ["k"] = "callStatic", ["method"] = "ReadOnce" }, bind, "list")));
+        var listCall = body[0]["stmts"][2]["expr"];
+        if (Text(listCall[DeclarationIdentityBinding.Key]) != "copy-list"
+            || ((JsonArray)listCall["typeArgs"]).Count != 0
+            || Text(body[0]["stmts"][0]["init"]["method"]) != "ReadOnce"
+            || TypeJson.Read(body[0]["stmts"][1]["init"]["type"]) != list
+            || ((JsonArray)body[0]["stmts"][1]["init"]["args"]).Count != 0)
+            throw new InvalidOperationException("List copy lost source evaluation, exact target, or erased helper binding");
+        Console.WriteLine("[list copy binding] self-test OK (source evaluation, exact target, erased helper)");
     }
 
     static void SemanticHelperSelfTest()

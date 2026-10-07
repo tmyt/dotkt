@@ -1,4 +1,5 @@
-# Kotlin relates mutable/read-only collection views, but their CLR IList/IReadOnlyList faces are siblings. This
+# CLR IList/IReadOnlyList faces are siblings. Use those native faces directly so Kotlin List's opaque
+# value representation cannot erase the physical conversion seam this fixture must exercise. This
 # fixture pins the final value-flow pass rather than an emitter accommodation: every checked transition is an
 # explicit CIR cast, in both directions, and the expression-result cases retain the exact physical return on the
 # inner call so ilemit cannot mistake the enclosing cast for an identity conversion.
@@ -22,11 +23,12 @@
 +"k":"staticFieldSet","ownerType":{"t":"fqn","name":"CollectionViewValueFlowProbeKt"},"name":"mutableField","value":{"k":"cast","type":{"t":"fqn","name":"System.Collections.Generic.IList","args":[{"t":"fqn","name":"System.Int32"}]},"e":{"k":"local","name":"readonly"}}
 +"k":"cast","type":{"t":"fqn","name":"System.Collections.Generic.IList","args":[{"t":"fqn","name":"System.Int32"}]},"e":{"k":"staticField","ownerType":{"t":"fqn","name":"CollectionViewValueFlowProbeKt"},"name":"readonlyField","ret":{"t":"fqn","name":"System.Collections.Generic.IReadOnlyList","args":[{"t":"fqn","name":"System.Int32"}]},"fieldRef":{"kind":"field"
 
-# A generic local field closes its declaration !0 against the constructed owner before both stores and reads.
-+"k":"setFieldExpr","ownerType":{"t":"fqn","name":"GenericCollectionCell","args":[{"t":"fqn","name":"System.Collections.Generic.IList","args":[{"t":"fqn","name":"System.Int32"}]}]},"recv":{"k":"local","name":"mutableCell"},"name":"item","value":{"k":"cast","type":{"t":"fqn","name":"System.Collections.Generic.IList","args":[{"t":"fqn","name":"System.Int32"}]},"e":{"k":"local","name":"readonly"}}
-+"k":"cast","type":{"t":"fqn","name":"System.Collections.Generic.IReadOnlyList","args":[{"t":"fqn","name":"System.Int32"}]},"e":{"k":"field","ownerType":{"t":"fqn","name":"GenericCollectionCell","args":[{"t":"fqn","name":"System.Collections.Generic.IList","args":[{"t":"fqn","name":"System.Int32"}]}]},"recv":{"k":"local","name":"mutableCell"},"name":"item","ret":{"t":"fqn","name":"System.Collections.Generic.IList"
-+"k":"setFieldExpr","ownerType":{"t":"fqn","name":"GenericCollectionCell","args":[{"t":"fqn","name":"System.Collections.Generic.IReadOnlyList","args":[{"t":"fqn","name":"System.Int32"}]}]},"recv":{"k":"local","name":"readonlyCell"},"name":"item","value":{"k":"cast","type":{"t":"fqn","name":"System.Collections.Generic.IReadOnlyList","args":[{"t":"fqn","name":"System.Int32"}]},"e":{"k":"local","name":"mutable"}}
-+"k":"cast","type":{"t":"fqn","name":"System.Collections.Generic.IList","args":[{"t":"fqn","name":"System.Int32"}]},"e":{"k":"field","ownerType":{"t":"fqn","name":"GenericCollectionCell","args":[{"t":"fqn","name":"System.Collections.Generic.IReadOnlyList","args":[{"t":"fqn","name":"System.Int32"}]}]},"recv":{"k":"local","name":"readonlyCell"},"name":"item","ret":{"t":"fqn","name":"System.Collections.Generic.IReadOnlyList"
+# A generic Kotlin cell is accessed through its carrier. Stores retain their exact receiver/value;
+# reads explicitly project the erased accessor result to the requested native face.
++"k":"callInstance","ownerType":{"t":"fqn","name":"GenericCollectionCell$star"},"method":"$star$dotkt:field:set:item$1","virtual":true,"recv":{"k":"local","name":"mutableCell"},"sig":[{"t":"fqn","name":"object"}],"ret":{"t":"fqn","name":"void"},"args":[{"k":"local","name":"readonly"}]
++"k":"cast","type":{"t":"fqn","name":"System.Collections.Generic.IReadOnlyList","args":[{"t":"fqn","name":"System.Int32"}]},"e":{"k":"callInstance","ownerType":{"t":"fqn","name":"GenericCollectionCell$star"},"method":"$star$dotkt:field:get:item$0","virtual":true,"recv":{"k":"local","name":"mutableCell"},"sig":[],"ret":{"t":"fqn","name":"object"},"args":[]}
++"k":"callInstance","ownerType":{"t":"fqn","name":"GenericCollectionCell$star"},"method":"$star$dotkt:field:set:item$1","virtual":true,"recv":{"k":"local","name":"readonlyCell"},"sig":[{"t":"fqn","name":"object"}],"ret":{"t":"fqn","name":"void"},"args":[{"k":"local","name":"mutable"}]
++"k":"cast","type":{"t":"fqn","name":"System.Collections.Generic.IList","args":[{"t":"fqn","name":"System.Int32"}]},"e":{"k":"callInstance","ownerType":{"t":"fqn","name":"GenericCollectionCell$star"},"method":"$star$dotkt:field:get:item$0","virtual":true,"recv":{"k":"local","name":"readonlyCell"},"sig":[],"ret":{"t":"fqn","name":"object"},"args":[]}
 
 # Conditional branch merges receive the target view on the branch that has the sibling physical face.
 +"name":"chooseReadonly","static":true,"params":[{"name":"flag","type":{"t":"fqn","name":"System.Boolean"}},{"name":"mutable","type":{"t":"fqn","name":"System.Collections.Generic.IList"

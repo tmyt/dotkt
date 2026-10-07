@@ -8,6 +8,39 @@ using DotKt.Bir;
 // bind to the caller class's unrelated `!0` (or object fallback), producing invalid casts and signatures.
 static class ConstructedMemberReturnSubstitution
 {
+    // Final value erasure can hide a wrongly nested Array<T> or Pair<K,V>.
+    // Witness frame ownership before that information is deliberately erased.
+    public static void SelfTest()
+    {
+        var first = new TypeNode.Tv("type", 0);
+        TypeNode[] results = {
+            new TypeNode.Array(first),
+            new TypeNode.Fqn("Pair", new TypeNode[] { first, new TypeNode.Tv("type", 1) }),
+        };
+        foreach (var result in results)
+        {
+            var call = new JsonObject {
+                ["k"] = "callInstance",
+                ["ownerType"] = TypeJson.Write(new TypeNode.Fqn("Box", new[] { result })),
+                ["ret"] = TypeJson.Write(result), ["dynRet"] = TypeJson.Write(result),
+                ["sty"] = TypeJson.Write(result),
+            };
+            ApplyAll(new[] { call });
+            ApplyMaterialized(call);
+            foreach (var slot in new[] { "ret", "dynRet", "sty" })
+                if (!result.Equals(TypeJson.Read(call[slot])))
+                    throw new System.InvalidOperationException("Constructed result was substituted out of its caller frame");
+
+            // A callee-relative result must still be substituted, not merely left alone.
+            call["ret"] = TypeJson.Write(first);
+            call["dynRet"] = TypeJson.Write(first);
+            ApplyCall(call);
+            foreach (var slot in new[] { "ret", "dynRet" })
+                if (!result.Equals(TypeJson.Read(call[slot])))
+                    throw new System.InvalidOperationException("Callee result was not closed over the constructed owner");
+        }
+    }
+
     public static void ApplyAll(System.Collections.Generic.IEnumerable<JsonNode> roots)
     {
         foreach (var root in roots) Walk(root);

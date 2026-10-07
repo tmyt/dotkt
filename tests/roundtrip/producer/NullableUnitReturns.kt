@@ -4,6 +4,7 @@ fun optionalUnit(present: Boolean): Unit? = if (present) Unit else null
 fun plainUnit() {}
 fun <T> identity(value: T): T = value
 interface Source { fun get(present: Boolean): Unit? }
+interface DefaultSource { fun get(present: Boolean): Unit? = optionalUnit(present) }
 open class Base : Source { override fun get(present: Boolean): Unit? = optionalUnit(present) }
 fun callback(): (Boolean) -> Unit? = ::optionalUnit
 fun action(): () -> Unit = ::plainUnit

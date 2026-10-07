@@ -26,6 +26,12 @@ suspend fun starComparableResult(): TwoSlots<Comparable<*>?, String> = TwoSlots(
 suspend fun enumResult(): TwoSlots<Enum<*>?, String> = TwoSlots(null, "value")
 suspend fun primitiveResult(): TwoSlots<Int, String?> = TwoSlots(1, null)
 
+// Native generic slots remain physical even when Kotlin-owned wrappers are erased.
+suspend fun nativeComparableSlots(): System.Tuple2<Comparable<Any?>?, String> = System.Tuple2(null, "value")
+suspend fun nativeNullableSlots(): System.Tuple2<Comparable<Any?>?, String?> = System.Tuple2(null, null)
+suspend fun nativeStarSlots(): System.Tuple2<Comparable<*>?, String> = System.Tuple2(null, "value")
+suspend fun nativeEnumSlots(): System.Tuple2<Enum<*>?, String> = System.Tuple2(null, "value")
+
 interface NestedDefault {
     suspend fun read(): InvariantBox<String?>? = InvariantBox(null)
 }

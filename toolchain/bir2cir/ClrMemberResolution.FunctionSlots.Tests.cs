@@ -1,4 +1,5 @@
 using System;
+using System.Text.Json.Nodes;
 using DotKt.Bir;
 
 static partial class ClrMemberResolution
@@ -21,6 +22,17 @@ static partial class ClrMemberResolution
         Check(new TypeNode.Fn(false, new TypeNode.Fqn("void"), new TypeNode[] { owner }, Clr: "System.Action"),
             new TypeNode.Fqn("System.Action`1", new TypeNode[] { owner }), true);
         Check(fn with { Clr = null }, nominal, false);
+        Check(new TypeNode.Fqn("sample.Marker", new[] { owner }),
+            new TypeNode.Fqn("sample.Marker`1", new[] { owner }), true);
+        Check(new TypeNode.Fqn("sample.Marker", new[] { owner }),
+            new TypeNode.Fqn("sample.NativeValue`1", new[] { owner }), false);
+        var declaredBounds = JsonNode.Parse("""[{"name":"T","constraints":[{"t":"fqn","name":"sample.Outer.Nested","args":[{"t":"tv","scope":"type","i":0}]}]}]""").AsArray();
+        var descriptorBounds = JsonNode.Parse("""[{"name":"T","constraints":[{"t":"fqn","name":"sample.Outer+Nested`1","args":[{"t":"tv","scope":"type","i":0}]}]}]""").AsArray();
+        bool SameBounds() => KotlinOverrideSlotBridge.SameMethodTypeParameterShape(
+            declaredBounds, descriptorBounds, new[] { owner }, new[] { owner }, MethodImplComparisonType);
+        if (!SameBounds()) throw new InvalidOperationException("MethodImpl constraint comparison lost nested declaration identity");
+        descriptorBounds[0]["constraints"][0]["name"] = "sample.Other+Nested`1";
+        if (SameBounds()) throw new InvalidOperationException("MethodImpl constraint comparison merged unrelated bounds");
         Console.WriteLine("[function MethodImpl slots] self-test OK (exact family, arguments, receiver and generic frames)");
 
         static void Check(TypeNode left, TypeNode right, bool expected)

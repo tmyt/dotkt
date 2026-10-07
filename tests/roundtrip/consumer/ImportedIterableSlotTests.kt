@@ -23,7 +23,33 @@ private class DerivedCollection : ForeignCollectionWithIterable<Int>() {
 
 private class InheritedCollection : ForeignCollectionWithIterable<Int>()
 
+private fun <T> appendImportedCollection(values: ImportedCollection<T>, item: T): T {
+    values.Add(item)
+    return values[values.Count - 1]
+}
+
 class ImportedIterableSlotTests {
+    @TestAttribute
+    fun inheritedNativeSlotsUseTheKotlinReceiversStorageArguments() {
+        val first = listOf("first")
+        val replacement = listOf("replacement")
+        val values = ImportedCollection<List<String>>(first)
+        values.Add(first)
+        check(values[0] === first)
+        values[0] = replacement
+        check(values[0] === replacement)
+        val add = values::Add
+        add(first)
+        check(values[1] === first)
+        check(appendImportedCollection(values, replacement) === replacement)
+
+        val imported = ForeignCollectionWithIterable<List<String>>()
+        imported.Add(first)
+        check(imported[0] === first)
+        imported[0] = replacement
+        check(imported[0] === replacement)
+    }
+
     @TestAttribute
     fun importedInterfaceUsesKotlinIteratorForValueAndReferenceElements() {
         val ints = ImportedCollection(42)

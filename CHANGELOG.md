@@ -7,6 +7,16 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Variant Kotlin collection and Comparable value slots use an opaque CLR representation.**
+  Kotlin declaration metadata and nominal signature modifiers retain their source identity, while ordinary
+  CLR slots use `object` even when the corresponding BCL interface is variant. CLR variance alone does not
+  support Kotlin's value-type generic widening. Exact imported CLR API signatures remain unchanged; C# consumers
+  of Kotlin-produced collection signatures may need explicit adaptation.
+
+- **Inherited covariant interface getters resolve across DLLs.** Implementation
+  selection retains the pre-erasure parameter and return types instead of comparing
+  Kotlin declaration types against already-erased carrier types.
+
 - **Inherited interface implementations remain callable across DLLs.** Public forwarding
   declarations are materialized before existential interfaces are allocated, keeping
   the imported class surface and its erased call targets consistent.

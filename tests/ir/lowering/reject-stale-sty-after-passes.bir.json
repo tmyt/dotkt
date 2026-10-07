@@ -6,13 +6,12 @@
   "refTypes": [],
   "methods": [
     {
-      "name": "nullableGenericRead",
+      "name": "sourceRead",
       "static": true,
       "params": [],
       "ret": {
         "t": "fqn",
-        "name": "kotlin.collections.List",
-        "args": [{ "t": "fqn", "name": "kotlin.Any" }]
+        "name": "kotlin.String"
       },
       "body": [
         {
@@ -21,22 +20,20 @@
             "k": "const",
             "type": {
               "t": "fqn",
-              "name": "kotlin.collections.List",
-              "args": [{ "t": "fqn", "name": "kotlin.Any" }]
+              "name": "kotlin.String"
             },
-            "value": null
+            "value": "value"
           }
         }
       ]
     },
     {
-      "name": "erasedReadKeptItsFrontendStamp",
+      "name": "readKeptItsFrontendStamp",
       "static": true,
       "params": [],
       "ret": {
         "t": "fqn",
-        "name": "kotlin.collections.List",
-        "args": [{ "t": "fqn", "name": "kotlin.Any" }]
+        "name": "kotlin.String"
       },
       "body": [
         {
@@ -45,17 +42,15 @@
             "k": "callStatic",
             "owner": null,
             "calleeOwner": { "t": "fqn", "name": "RejectStaleStyKt" },
-            "method": "nullableGenericRead",
+            "method": "sourceRead",
             "sig": [],
             "sty": {
               "t": "fqn",
-              "name": "kotlin.collections.List",
-              "args": [{ "t": "fqn", "name": "kotlin.String" }]
+              "name": "kotlin.Int"
             },
             "ret": {
               "t": "fqn",
-              "name": "kotlin.collections.List",
-              "args": [{ "t": "fqn", "name": "kotlin.Any" }]
+              "name": "kotlin.String"
             },
             "args": []
           }

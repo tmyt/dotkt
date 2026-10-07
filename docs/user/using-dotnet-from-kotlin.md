@@ -97,6 +97,15 @@ c.Swap(byref(x), byref(y))              // ref int, ref int → swapped in place
 A `ref`-returning method received plainly gives you a value copy; bind it with
 `var x by byref(m())` to keep a **live** reference whose writes flow back into the .NET storage.
 
+A managed reference retains the exact CLR type of that storage, including nested
+generic constructions. Reading it exposes the normal Kotlin value view; writing
+through it checks the value against its real CLR referent. For example, an
+unchecked Kotlin `Box<Int> as Box<String>` view does not make that object valid
+for a native `ref Box<string>` slot: storing it through the live-reference
+delegate throws a runtime type error. The reference is not reinterpreted or
+replaced with a copy-in/copy-out temporary. A supported `ClrRef<T>` function
+parameter likewise keeps its real CLR reference type when forwarded.
+
 You can also expose a real CLR `ref` parameter from a non-suspend Kotlin function. Read and write its live storage
 through `ClrRef<T>.value`:
 
