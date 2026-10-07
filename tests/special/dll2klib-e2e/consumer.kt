@@ -32,6 +32,9 @@ import Probe.ReferenceConstraintBox
 import Probe.StructConstraintBox
 import Probe.PointerProbe
 import Probe.PointerBase
+import Probe.IInheritedFrameSlot
+import Probe.IInheritedReadSlot
+import Probe.IInheritedMutableSlot
 import kotlin.clr.byref
 import kotlin.clr.ClrPointer
 
@@ -153,6 +156,57 @@ fun consume(): Int {
         genericConstraints + pointerResult
 }
 
+interface LocalFrameSlot<A, B> : IInheritedFrameSlot<B>
+interface TwiceLocalFrameSlot<A, B> : LocalFrameSlot<B, A>
+class IntFrameSlot : TwiceLocalFrameSlot<Int, String>
+class StringFrameSlot : TwiceLocalFrameSlot<String, Int>
+
+fun <A, B> inheritedOwnerCall(slot: LocalFrameSlot<A, B>, value: B): B = slot.Echo(value, "marker")
+fun <A, B> inheritedIntCall(slot: LocalFrameSlot<A, B>, value: Int): String = slot.Echo(value, "marker")
+fun <A, B> inheritedOwnerReference(slot: LocalFrameSlot<A, B>): (B, String) -> B = slot::Echo
+fun <A, B> inheritedIntReference(slot: LocalFrameSlot<A, B>): (Int, String) -> String = slot::Echo
+
+interface RedeclaredReadSlot : IInheritedReadSlot {
+    override fun <T> Read(value: T): Int
+}
+interface InheritsReadDeclaration : RedeclaredReadSlot
+class LocalReadSlot : InheritsReadDeclaration {
+    override fun <T> Read(value: T): Int = 31
+}
+fun readLocalDeclaration(slot: InheritsReadDeclaration): Int = slot.Read(7)
+
+interface DirectMutableSlot : IInheritedMutableSlot
+class LocalMutableSlot : DirectMutableSlot {
+    override var Number: Int = 0
+    override fun <T> Read(value: T): Int = 31
+    override fun <T> Accept(value: T) { Number = 71 }
+}
+fun readDirectMutableSlot(slot: DirectMutableSlot): Int = slot.Read("text")
+fun directMutableReference(slot: DirectMutableSlot): (String) -> Int = slot::Read
+
+fun checkInheritedNativeSlots() {
+    val slot: LocalFrameSlot<String, Int> = IntFrameSlot()
+    check(inheritedOwnerCall(slot, 37) == 37)
+    check(inheritedIntCall(slot, 37) == "int-overload")
+    check(inheritedOwnerReference(slot)(39, "marker") == 39)
+    check(inheritedIntReference(slot)(39, "marker") == "int-overload")
+    check(slot.Count == 43)
+    val concrete = StringFrameSlot()
+    check(concrete.Echo(38, "marker") == "int-overload")
+    check(concrete.Echo("owner", "marker") == "owner")
+    val values = intArrayOf(7, 9)
+    check(slot.Array(values) === values)
+    check(readLocalDeclaration(LocalReadSlot()) == 31)
+    val direct: DirectMutableSlot = LocalMutableSlot()
+    check(readDirectMutableSlot(direct) == 31)
+    check(directMutableReference(direct)("text") == 31)
+    direct.Accept("text")
+    check(direct.Number == 71)
+    direct.Number = 72
+    check(direct.Number == 72)
+}
+
 fun main() {
+    checkInheritedNativeSlots()
     println(consume())
 }

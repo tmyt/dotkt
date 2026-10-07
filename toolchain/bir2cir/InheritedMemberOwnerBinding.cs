@@ -40,6 +40,7 @@ static class InheritedMemberOwnerBinding
 
     readonly record struct Reachable(TypeNode.Fqn Type, int Depth);
     readonly record struct LocalDeclaration(string Owner, JsonObject Method);
+    readonly record struct NativeSlot(TypeNode.Fqn Owner, MemberBinding Declaration);
 
     public static void ApplyAll(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs)
     {
@@ -50,12 +51,131 @@ static class InheritedMemberOwnerBinding
     }
 
     // Frame materialization must see use-site owner arguments, not the variables of an inherited
-    // declaration. This early phase only constructs that owner; member selection remains in ApplyAll.
+    // declaration. Native inherited slots must also bind before Kotlin frame materialization: their formal
+    // variables and constraints belong to the existing CLR declaration, not to a new erased fake-override slot.
     public static void ProjectOwners(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs)
     {
         var rootList = roots.ToList();
         var types = CollectTypes(rootList);
-        foreach (var root in rootList) Walk(root, types, null, refs, null, projectOnly: true);
+        var nativeSlots = CollectNativeSlots(types, refs);
+        foreach (var root in rootList) Walk(root, types, null, refs, null, projectOnly: true, nativeSlots);
+        var inherited = nativeSlots.Keys.ToHashSet();
+        foreach (var root in rootList) InheritedDefaultFakeOverrideElision.ApplyNativeSlots(root, inherited);
+    }
+
+    static Dictionary<JsonObject, NativeSlot> CollectNativeSlots(Dictionary<string, TypeDef> types,
+        ReferenceMetadataIndex refs)
+    {
+        var result = new Dictionary<JsonObject, NativeSlot>();
+        foreach (var type in types.Values.Where(type => type.Kind == "interface"))
+        {
+            var owner = new TypeNode.Fqn(type.Name, type.TypeParamCount == 0 ? null
+                : Enumerable.Range(0, type.TypeParamCount).Select(index => (TypeNode)new TypeNode.Tv("type", index)).ToArray());
+            foreach (var method in type.Methods?.OfType<JsonObject>() ?? Enumerable.Empty<JsonObject>())
+            {
+                if (!Bool(method["fakeOverride"])
+                    || method["params"] is not JsonArray parameters || method["overrides"] is not JsonArray overrides)
+                    continue;
+                var signature = parameters.OfType<JsonObject>().Select(parameter => TypeJson.Read(parameter["type"])).ToArray();
+                var resultType = TypeJson.Read(method["ret"]);
+                if (signature.Length != parameters.Count || signature.Any(type => type == null) || resultType == null) continue;
+                KotlinPropertyAccessors.TryIdentity(method, out var propertyName, out var accessorKind);
+                var name = Str(method["name"]);
+                var owners = overrides.OfType<JsonObject>().Where(ancestor =>
+                        Str(ancestor["member"]) == (propertyName ?? name)
+                        && Str(ancestor["kind"]) == (accessorKind switch { "get" => "getter", "set" => "setter", _ => "method" }))
+                    .Select(ancestor => TypeJson.OwnerName(ancestor["owner"])).ToHashSet(StringComparer.Ordinal);
+                var arity = (method["typeParams"] as JsonArray)?.Count ?? 0;
+                var hierarchy = ReachableTypes(owner, types, refs, sourceFrames: true).ToList();
+                var candidates = hierarchy
+                    .Where(ancestor => owners.Contains(ancestor.Type.Name) && !types.ContainsKey(ancestor.Type.Name))
+                    .Select(ancestor => (ancestor, declaration: refs.NativeInterfaceSourceDeclaration(
+                        ancestor.Type, name, arity, signature, resultType, propertyName, accessorKind)))
+                    .Where(candidate => candidate.declaration != null).ToList();
+                if (candidates.Count == 0) continue;
+                var nearestDepth = candidates.Min(candidate => candidate.ancestor.Depth);
+                // The native closure is ancestry, not a request to bypass a closer real Kotlin override.
+                // A derived fake of that real declaration owns the Kotlin ABI rather than the native slot ABI.
+                if (hierarchy.Any(ancestor => ancestor.Depth > 0 && ancestor.Depth <= nearestDepth
+                    && owners.Contains(ancestor.Type.Name) && types.TryGetValue(ancestor.Type.Name, out var local)
+                    && EffectiveArgs(ancestor.Type, local.TypeParamCount) is { } localArguments
+                    && local.Methods?.OfType<JsonObject>().Any(declaration => !Bool(declaration["fakeOverride"])
+                        && MatchesSourceMethod(declaration, name, arity, signature, localArguments,
+                            propertyName, accessorKind)) == true)) continue;
+                var nearest = candidates.Where(candidate => candidate.ancestor.Depth == nearestDepth)
+                    .Select(candidate => new NativeSlot(candidate.ancestor.Type, candidate.declaration)).Distinct().ToList();
+                if (nearest.Count == 1) result.Add(method, nearest[0]);
+            }
+        }
+        return result;
+    }
+
+    static bool MatchesSourceMethod(JsonObject method, string name, int arity, TypeNode[] signature,
+        TypeNode[] ownerArguments, string propertyName, string accessorKind)
+    {
+        if (((method["typeParams"] as JsonArray)?.Count ?? 0) != arity
+            || method["params"] is not JsonArray parameters || parameters.Count != signature.Length) return false;
+        if (propertyName != null)
+        {
+            if (!KotlinPropertyAccessors.TryIdentity(method, out var candidateProperty, out var candidateAccessor)
+                || candidateProperty != propertyName || candidateAccessor != accessorKind) return false;
+        }
+        else if (Str(method["name"]) != name || KotlinPropertyAccessors.TryIdentity(method, out _, out _)) return false;
+        if (parameters.Any(parameter => parameter is not JsonObject)) return false;
+        return parameters.Cast<JsonObject>().Select((parameter, index) =>
+            TypeJson.Read(parameter["type"]) is { } type
+                && ReferenceMetadataIndex.SourceDeclarationDescribesCall(
+                    SubstOwnerTvs(type, ownerArguments), signature[index])).All(match => match);
+    }
+
+    static void BindNativeSlotCall(JsonObject call, TypeNode.Fqn owner, Dictionary<string, TypeDef> types,
+        IReadOnlyDictionary<JsonObject, NativeSlot> nativeSlots, ReferenceMetadataIndex refs)
+    {
+        if (nativeSlots == null || Str(call["k"]) is not ("callInstance" or "newBoundDelegate")
+            || Bool(call["super"]) || !types.TryGetValue(owner.Name, out var type)
+            || ReadTypes(call["sig"] as JsonArray) is not { } signature) return;
+        KotlinPropertyAccessors.TryCallIdentity(call, out var propertyName, out var accessorKind);
+        var arity = (call["typeArgs"] as JsonArray)?.Count ?? 0;
+        if (ExactMethod(type, Str(call["method"]), arity, signature, owner.Args,
+                propertyName, accessorKind, fakeOverride: false) != null) return;
+        if (EffectiveArgs(owner, type.TypeParamCount) is not { } arguments) return;
+        // A frontend descriptor selects a declaration in the accessed owner's OPEN frame. Closing it first
+        // can collapse distinct overloads (T versus Int when the owner is instantiated at Int).
+        var selectionOwner = new TypeNode.Fqn(owner.Name, type.TypeParamCount == 0 ? null
+            : Enumerable.Range(0, type.TypeParamCount).Select(index => (TypeNode)new TypeNode.Tv("type", index)).ToArray());
+        var candidates = new List<(TypeNode.Fqn Owner, MemberBinding Declaration, int Depth)>();
+        foreach (var reachable in ReachableTypes(selectionOwner, types, refs, sourceFrames: true))
+        {
+            if (!types.TryGetValue(reachable.Type.Name, out var inheritedType)
+                || EffectiveArgs(reachable.Type, inheritedType.TypeParamCount) is not { } inheritedArguments) continue;
+            foreach (var method in inheritedType.Methods?.OfType<JsonObject>() ?? Enumerable.Empty<JsonObject>())
+            {
+                if (!nativeSlots.TryGetValue(method, out var selected)
+                    || !MatchesSourceMethod(method, Str(call["method"]), arity, signature, inheritedArguments,
+                        propertyName, accessorKind)) continue;
+                candidates.Add(((TypeNode.Fqn)SubstOwnerTvs(selected.Owner, inheritedArguments),
+                    selected.Declaration, reachable.Depth));
+            }
+        }
+        if (candidates.Count == 0) return;
+        var depth = candidates.Min(candidate => candidate.Depth);
+        var nearest = candidates.Where(candidate => candidate.Depth == depth)
+            .Select(candidate => new NativeSlot(candidate.Owner, candidate.Declaration)).Distinct().ToList();
+        if (nearest.Count != 1) return;
+        var selectedSlot = nearest[0];
+        var nativeOwner = (TypeNode.Fqn)SubstOwnerTvs(selectedSlot.Owner, arguments);
+        call["ownerType"] = TypeJson.Write(nativeOwner);
+        if (Str(call["k"]) == "newBoundDelegate") call["calleeOwner"] = TypeJson.Write(nativeOwner);
+        var nativeParameters = new JsonArray(selectedSlot.Declaration.ParamTypeNodes.Select(TypeJson.Write).ToArray());
+        call["sig"] = nativeParameters;
+        if (call["memberSignature"] != null) call["memberSignature"] = nativeParameters.DeepClone();
+        if (call["memberReturnType"] != null)
+            call["memberReturnType"] = TypeJson.Write(selectedSlot.Declaration.ReturnTypeNode);
+        if (call["memberOwnerTypeParams"] != null)
+            call["memberOwnerTypeParams"] = refs.OwnerTypeParamDeclarations(nativeOwner.Name)?.DeepClone() ?? new JsonArray();
+        if (call["memberMethodTypeParams"] != null)
+            call["memberMethodTypeParams"] = selectedSlot.Declaration.MethodTypeParams?.DeepClone() ?? new JsonArray();
+        call["virtual"] = true;
     }
 
     static Dictionary<string, LocalDeclaration> CollectLocalDeclarations(Dictionary<string, TypeDef> types)
@@ -104,7 +224,8 @@ static class InheritedMemberOwnerBinding
 
     static void Walk(JsonNode node, Dictionary<string, TypeDef> types,
         IReadOnlyDictionary<string, LocalDeclaration> localDeclarations, ReferenceMetadataIndex refs,
-        TypeNode.Fqn enclosingOwner, bool projectOnly = false)
+        TypeNode.Fqn enclosingOwner, bool projectOnly = false,
+        IReadOnlyDictionary<JsonObject, NativeSlot> nativeSlots = null)
     {
         switch (node)
         {
@@ -120,17 +241,17 @@ static class InheritedMemberOwnerBinding
                         ownerArgs.Length == 0 ? null : ownerArgs);
                 }
                 var ownerBefore = DeclaringOwner(obj)?.DeepClone();
-                Bind(obj, types, localDeclarations, refs, enclosingOwner, projectOnly);
+                Bind(obj, types, localDeclarations, refs, enclosingOwner, projectOnly, nativeSlots);
                 // The early projection still carries own-first Kotlin inner arguments. Declaration-relative
                 // result slots close only after inner applications have their physical argument order.
                 if (!projectOnly && !JsonNode.DeepEquals(ownerBefore, DeclaringOwner(obj)))
                     ConstructedMemberReturnSubstitution.ApplyCall(obj);
                 foreach (var kv in obj)
-                    if (kv.Value != null) Walk(kv.Value, types, localDeclarations, refs, enclosingOwner, projectOnly);
+                    if (kv.Value != null) Walk(kv.Value, types, localDeclarations, refs, enclosingOwner, projectOnly, nativeSlots);
                 break;
             case JsonArray arr:
                 foreach (var item in arr)
-                    if (item != null) Walk(item, types, localDeclarations, refs, enclosingOwner, projectOnly);
+                    if (item != null) Walk(item, types, localDeclarations, refs, enclosingOwner, projectOnly, nativeSlots);
                 break;
         }
     }
@@ -145,7 +266,7 @@ static class InheritedMemberOwnerBinding
 
     static void Bind(JsonObject call, Dictionary<string, TypeDef> types,
         IReadOnlyDictionary<string, LocalDeclaration> localDeclarations, ReferenceMetadataIndex refs,
-        TypeNode.Fqn enclosingOwner, bool projectOnly)
+        TypeNode.Fqn enclosingOwner, bool projectOnly, IReadOnlyDictionary<JsonObject, NativeSlot> nativeSlots)
     {
         var kind = Str(call["k"]);
         if (kind is not ("callInstance" or "newBoundDelegate" or "newBoundClrDelegate"
@@ -189,7 +310,11 @@ static class InheritedMemberOwnerBinding
                 if (kind == "newBoundDelegate") call["calleeOwner"] = TypeJson.Write(owner);
             }
         }
-        if (projectOnly) return;
+        if (projectOnly)
+        {
+            BindNativeSlotCall(call, owner, types, nativeSlots, refs);
+            return;
+        }
         // The CLR-shaped nodes have already crossed MemberCallSubstitution. Their declaration descriptor and member
         // kind are resolved later by ClrMemberResolution; this pass owns only the constructed declaring owner.
         if (kind is "newBoundClrDelegate" or "clrInstance" or "clrPropGet" or "clrPropSet"

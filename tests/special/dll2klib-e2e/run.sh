@@ -332,7 +332,9 @@ expect_constraint_failure() {
 		|| die "invalid $name generic constraint diagnostic did not state $requirement"
 }
 
-compile_refs="$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_REF_DLL" "$PROBE_REF" "$CONTRACTS_REF")"
+# The Kotlin surface twin and the shipped CLR declaration twin have different responsibilities.
+# bir2cir needs both to resolve canonical runtime representation types before one-to-one emission.
+compile_refs="$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_REF_DLL" "$STDLIB_RT_DLL" "$PROBE_REF" "$CONTRACTS_REF")"
 
 expect_pointer_shape_failure() {
 	local name="$1" expected="$2"
@@ -369,6 +371,7 @@ expect_constraint_failure member-unmanaged MemberConstraintApi.Unmanaged "value 
 expect_constraint_failure member-static-delegate MemberConstraintApi.Struct "value type"
 expect_constraint_failure member-bound-delegate MemberConstraintHost.Struct "value type"
 expect_constraint_failure member-inherited-class IMemberConstraintSlot.Reference "reference type"
+expect_constraint_failure member-inherited-void-class IInheritedVoidConstraintSlot.Accept "reference type"
 expect_constraint_failure member-constrained-class IMemberConstraintSlot.Reference "reference type"
 
 # The mixed struct + nominal row proves the common projection policy removes only the physical ValueType root.
@@ -460,6 +463,32 @@ explicit_slot_actual="$(dotnet "$OUT/explicit-slot-il/ExplicitSlotProbe.dll")"
 	|| die "explicit interface slot program returned '$explicit_slot_actual', expected '463'"
 bash "$ROOT/tests/run-ilverify.sh" "$OUT/explicit-slot-il/ExplicitSlotProbe.dll"
 dotnet "$BIR2CIR_DLL" "$OUT/cir" --compile-refs "$compile_refs" "$OUT/bir/consumer.bir.json"
+python3 - "$OUT/cir/consumer.cir.json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1]) as source:
+    document = json.load(source)
+canonical = {"dotkt$CharSequence", "dotkt$StringCharSequence"}
+assert not any(t["name"] in canonical for t in document.get("types", [])), \
+    "application must reference shipped canonical TypeDefs, not redefine them"
+
+def walk(node):
+    if isinstance(node, dict):
+        yield node
+        for value in node.values():
+            yield from walk(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from walk(value)
+
+calls = [node for node in walk(document)
+         if node.get("k") == "callInstance"
+         and node.get("ownerType", {}).get("name") == "dotkt$StringCharSequence"]
+assert calls, "fixture must exercise canonical String/CharSequence member binding"
+assert all(node.get("memberRef", {}).get("assembly") == "DotKt.Stdlib" for node in calls), \
+    "every canonical adapter call must name its exact shipped declaration"
+PY
 grep -q '"t": "ptr"' "$OUT/cir/consumer.cir.json" \
 	|| die "bir2cir did not lower ClrPointer<T> to an exact unmanaged-pointer CIR type"
 dotnet "$ILEMIT_DLL" "$OUT/il" Consumer \

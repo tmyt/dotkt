@@ -6,9 +6,17 @@ using System.Text.Json.Nodes;
 // a member inherits a concrete implementation and records that answer as "inheritedImplementation". Consuming that
 // explicit fact here avoids shadowing a DIM with a fresh abstract CLR slot. bir2cir must not rediscover the answer from
 // ancestor bodies, CLR metadata, or a physical method name.
+// The early native-slot mode instead consumes exact declaration bindings from InheritedMemberOwnerBinding:
+// a native inherited slot already exists on its CLR owner, whether abstract or concrete, and is not a new Kotlin slot.
 static class InheritedDefaultFakeOverrideElision
 {
     public static void Apply(JsonNode root)
+        => Apply(root, null);
+
+    internal static void ApplyNativeSlots(JsonNode root, IReadOnlySet<JsonObject> nativeSlots)
+        => Apply(root, nativeSlots);
+
+    static void Apply(JsonNode root, IReadOnlySet<JsonObject> nativeSlots)
     {
         if (root is not JsonObject ro || ro["types"] is not JsonArray types) return;
         var local = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
@@ -20,8 +28,9 @@ static class InheritedDefaultFakeOverrideElision
             var inheritedMethods = type[KotlinPropertyAccessors.InheritedDefaultMethodsKey] as JsonArray;
             for (var i = methods.Count - 1; i >= 0; i--)
             {
-                if (methods[i] is not JsonObject method || !Bool(method["fakeOverride"])
-                    || method[KotlinPropertyAccessors.InheritedImplementationKey] is not JsonObject implementation) continue;
+                if (methods[i] is not JsonObject method || !Bool(method["fakeOverride"])) continue;
+                var implementation = method[KotlinPropertyAccessors.InheritedImplementationKey] as JsonObject;
+                if (nativeSlots != null ? !nativeSlots.Contains(method) : implementation == null) continue;
                 if (KotlinPropertyAccessors.TryIdentity(method, out _, out var accessorKind)
                     && Str(method[KotlinPropertyAccessors.AssociationKey]) is string association)
                 {
@@ -29,7 +38,7 @@ static class InheritedDefaultFakeOverrideElision
                         removedAccessors[association] = roles = new HashSet<string>(StringComparer.Ordinal);
                     roles.Add(accessorKind);
                 }
-                else if (Str(method["name"]) is string member && method["params"] is JsonArray parameters
+                else if (nativeSlots == null && implementation != null && Str(method["name"]) is string member && method["params"] is JsonArray parameters
                     && method["ret"] is JsonNode ret)
                 {
                     inheritedMethods ??= new JsonArray();

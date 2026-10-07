@@ -83,6 +83,31 @@ public interface IMemberConstraintSlot
     int Reference<T>(T value) where T : class;
 }
 
+public interface IInheritedFrameSlot<T>
+{
+    int Count => 43;
+    T Echo<U>(T value, U marker) where U : class => value;
+    string Echo<U>(int value, U marker) where U : class => "int-overload";
+    int[] Array(int[] values) => values;
+}
+
+public interface IInheritedReadSlot
+{
+    int Read<T>(T value);
+}
+
+public interface IInheritedMutableSlot
+{
+    int Number { get; set; }
+    int Read<T>(T value);
+    void Accept<T>(T value);
+}
+
+public interface IInheritedVoidConstraintSlot
+{
+    void Accept<T>(T value) where T : class;
+}
+
 public sealed class FreshConstraintBox<T> where T : class, new()
 {
     public T Create() => new();

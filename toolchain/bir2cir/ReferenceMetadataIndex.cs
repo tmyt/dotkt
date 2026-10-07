@@ -3695,9 +3695,11 @@ sealed partial class ReferenceMetadataIndex
         DeclarationDescribesCallCore(declaration, candidate, false)
         || DeclarationDescribesCallCore(candidate, declaration, false);
 
-    static bool DeclarationDescribesCallCore(TypeNode declaration, TypeNode call, bool allowVariableErasure)
+    static bool DeclarationDescribesCallCore(TypeNode declaration, TypeNode call, bool allowVariableErasure,
+        bool allowArrayRepresentation = false)
     {
-        bool Describes(TypeNode left, TypeNode right) => DeclarationDescribesCallCore(left, right, allowVariableErasure);
+        bool Describes(TypeNode left, TypeNode right) => DeclarationDescribesCallCore(left, right,
+            allowVariableErasure, allowArrayRepresentation);
         if (declaration == call) return true;
         // A star projection states no bound, so it describes whatever the declaration says — the erasure the
         // reference twin shows as `object` is one such answer, not a different type. Without this a
@@ -3746,7 +3748,7 @@ sealed partial class ReferenceMetadataIndex
         // This equivalence validates a source descriptor against its physical
         // declaration. It must not select between two Kotlin source declarations:
         // Array<Int> and IntArray remain different overloads even when both use int[].
-        if (allowVariableErasure && declaration is TypeNode.Array != call is TypeNode.Array
+        if ((allowVariableErasure || allowArrayRepresentation) && declaration is TypeNode.Array != call is TypeNode.Array
             && ParamKey(declaration) == ParamKey(call))
             return true;
         if (declaration is TypeNode.Fqn dfqn && call is TypeNode.Fqn cfqn)
@@ -4784,6 +4786,38 @@ sealed partial class ReferenceMetadataIndex
                 .Select((p, i) => SupertypeGraph.SubstOwnerTvs(p, ownerTypeArguments) == signature[i]).All(x => x))
                 .ToList();
         return matches.Count == 1;
+    }
+
+    // Select a native interface declaration while the inherited Kotlin descriptor still owns its source frame.
+    // Never match a method variable to object: these signatures select a declaration, not its Kotlin erasure.
+    internal MemberBinding NativeInterfaceSourceDeclaration(TypeNode.Fqn owner, string name, int methodArity,
+        IReadOnlyList<TypeNode> signature, TypeNode result, string propertyName, string accessorKind)
+    {
+        if (ResolveNetType(owner.Name, owner.Args?.Length ?? 0) is not { IsInterface: true }
+            || !TryMembersByBirOwner(owner.Name, out var members)) return null;
+        var candidates = members.Where(member => !member.IsStatic && !member.IsPropertyBridge
+            && member.MethodArity == methodArity
+            && (propertyName == null ? member.Name == name && member.AccessorKind == null
+                : member.SourcePropertyName == propertyName && member.AccessorKind == accessorKind)
+            && member.ParamTypeNodes is { } parameters && parameters.Length == signature.Count
+            && parameters.Select((parameter, index) => DeclarationDescribesCallCore(
+                SupertypeGraph.SubstOwnerTvs(parameter, owner.Args ?? Array.Empty<TypeNode>()), signature[index],
+                allowVariableErasure: false, allowArrayRepresentation: true))
+                .All(match => match)
+            && member.ReturnTypeNode is { } returnType
+            && NativeSourceReturnMatches(SupertypeGraph.SubstOwnerTvs(
+                member.SuspendReturnType ?? member.KotlinReturnType ?? returnType,
+                owner.Args ?? Array.Empty<TypeNode>()), result)).ToList();
+        return candidates.Count == 1 ? candidates[0] : null;
+    }
+
+    static bool NativeSourceReturnMatches(TypeNode declaration, TypeNode source)
+    {
+        // Void projects to Unit only as a method result, never as a parameter or delegate result slot.
+        if (declaration is TypeNode.Fqn { Args: null, Name: "void" or "System.Void" }
+            && source is TypeNode.Fqn { Args: null, Name: "kotlin.Unit" }) return true;
+        return DeclarationDescribesCallCore(declaration, source, allowVariableErasure: false,
+            allowArrayRepresentation: true);
     }
 
     // Property twin of DeclaresExactInstanceMember. Source property identity and accessor role select the
