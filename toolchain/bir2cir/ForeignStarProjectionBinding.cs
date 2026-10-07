@@ -17,9 +17,14 @@ static class ForeignStarProjectionBinding
 
     internal static void PreserveDeclarationSignature(JsonObject target, JsonNode signature)
     {
-        if (signature is JsonArray && target[DeclarationSignatureKey] == null)
-            target[DeclarationSignatureKey] = signature.ToJsonString();
+        if (signature is JsonArray parameters && target[DeclarationSignatureKey] == null)
+            RebindDeclarationSignature(target, parameters);
     }
+
+    // An exact inherited slot can replace the selected owner. Its descriptor must then
+    // travel in that slot's constructed view, not in the former owner's type frame.
+    internal static void RebindDeclarationSignature(JsonObject target, JsonArray signature) =>
+        target[DeclarationSignatureKey] = signature.ToJsonString();
 
     internal static void CopyDeclarationSignature(JsonObject source, JsonObject target)
     {

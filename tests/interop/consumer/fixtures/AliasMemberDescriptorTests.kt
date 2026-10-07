@@ -15,6 +15,8 @@ private class Rank<T>(val score: Int) : Comparable<Rank<T>> {
 }
 private fun <T : Comparable<T>> order(first: T, second: T): Int = first.compareTo(second)
 private fun <T> direct(first: Slot<T>, second: Slot<T>): Int = first.compareTo(second)
+private fun <A, B> directNested(first: Slot<List<B>>, second: Slot<List<B>>, marker: A): Int =
+    first.compareTo(second)
 
 class AliasMemberDescriptorTests {
     @TestAttribute
@@ -23,6 +25,10 @@ class AliasMemberDescriptorTests {
         check((item as Slot<List<String>>).compareTo(item) == 83)
         check(item.CompareTo(item) == 84)
         check(direct<List<String>>(item, item) == 83)
+        check(directNested<Int, String>(item, item, 42) == 83)
+        val intItem = Item<Int>()
+        check(directNested<String, Int>(intItem, intItem, "tag") == 83)
+        check(intItem.CompareTo(intItem) == 84)
         check(order(Rank<String>(1), Rank<String>(2)) < 0)
         check(order(Rank<Int>(2), Rank<Int>(1)) > 0)
 

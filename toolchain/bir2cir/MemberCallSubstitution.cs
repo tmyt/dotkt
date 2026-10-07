@@ -1369,7 +1369,10 @@ static class MemberCallSubstitution
                 inheritedExactMemberBinding = inheritedSlot.Binding;
                 companionSignature = inheritedSignature;
                 if (inheritedSignature != null)
+                {
                     node["sig"] = new JsonArray(inheritedSignature.Select(TypeJson.Write).ToArray());
+                    ForeignStarProjectionBinding.RebindDeclarationSignature(node, node["sig"].AsArray());
+                }
             }
         }
 
