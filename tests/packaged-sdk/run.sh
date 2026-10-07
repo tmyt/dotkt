@@ -1037,6 +1037,10 @@ EOF
 		fail refcheck-unavailable "the metadata verdict cannot be taken — refcheck did not build"
 	else
 		local shape_fail="" probe
+		# Source-generic signature modifiers live in the consumed stdlib package.
+		# MetadataLoadContext needs that exact dependency to inspect the slots; do
+		# not discover references by scanning the library's output directory.
+		local shape_refs="$WS/pkgs/dotkt.stdlib/$VER/lib/net10.0/DotKt.Stdlib.dll"
 		# owner | member | slot | expected CLR type | carrier
 		for probe in \
 			"nglib.ApiKt|firstOr|p0|System.Object|1" \
@@ -1049,7 +1053,7 @@ EOF
 			'nglib.NgLists|joinPresent|p0|System.Object|0'
 		do
 			IFS='|' read -r pOwner pMember pSlot pType pCarrier <<<"$probe"
-			if ! dotnet "$REFCHECK/bin/refcheck.dll" --shape "$libdll" "$pOwner" "$pMember" "$pSlot" "$pType" "$pCarrier" \
+			if ! dotnet "$REFCHECK/bin/refcheck.dll" --shape "$libdll" "$pOwner" "$pMember" "$pSlot" "$pType" "$pCarrier" "$shape_refs" \
 				>"$d/shape.log" 2>&1; then
 				shape_fail+="$(cat "$d/shape.log")"$'\n'
 			fi
