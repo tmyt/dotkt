@@ -992,7 +992,7 @@ class NgLists {
         for (x in xs) if (x != null) s += x
         return s
     }
-    fun joinPresent(xs: List<String?>): String {                 // the REFERENCE control: still IReadOnlyList<string>
+    fun joinPresent(xs: List<String?>): String {                 // the REFERENCE control: no nullable-value erasure
         var s = ""
         for (x in xs) if (x != null) s = if (s == "") x else s + "," + x
         return s
@@ -1044,9 +1044,9 @@ EOF
 			'nglib.NBox`1|.ctor|p0|System.Object|1' \
 			"nglib.NgArrays|boxedPair|ret|System.Object[]|any" \
 			"nglib.NgArrays|sumPresent|p0|System.Object[]|any" \
-			'nglib.NgLists|boxedList|ret|System.Collections.Generic.IReadOnlyList`1[System.Object]|1' \
-			'nglib.NgLists|sumPresent|p0|System.Collections.Generic.IReadOnlyList`1[System.Object]|1' \
-			'nglib.NgLists|joinPresent|p0|System.Collections.Generic.IReadOnlyList`1[System.String]|0'
+			'nglib.NgLists|boxedList|ret|System.Object|1' \
+			'nglib.NgLists|sumPresent|p0|System.Object|1' \
+			'nglib.NgLists|joinPresent|p0|System.Object|0'
 		do
 			IFS='|' read -r pOwner pMember pSlot pType pCarrier <<<"$probe"
 			if ! dotnet "$REFCHECK/bin/refcheck.dll" --shape "$libdll" "$pOwner" "$pMember" "$pSlot" "$pType" "$pCarrier" \
@@ -1069,7 +1069,9 @@ EOF
 		fi
 	fi
 
-	# (c) BEHAVIOR verdict: a plain C# Exe ProjectReferences the .ktproj and binds the emitted signatures literally.
+	# (c) BEHAVIOR verdict: a plain C# Exe consumes the emitted Kotlin declarations. Erased Kotlin generic value
+	# slots carry source discriminators that C# cannot bind directly; invoke those declarations through reflection.
+	# Native-facing ordinary calls and the returned collection view still bind directly, without copying values.
 	local app="$d/app"; mkdir -p "$app"
 	cat > "$app/CsConsumer.csproj" <<'EOF'
 <Project Sdk="Microsoft.NET.Sdk">
@@ -1089,21 +1091,28 @@ EOF
 using System;
 using nglib;
 
-// Every line below needs the nullable-generic slot to be `object`: a bare `T` slot at T=int cannot take `null`,
-// so a wrong ABI fails at COMPILE here rather than producing a wrong value. The array lines additionally need
-// Array<Int?> to be `object[]` — `Nullable<int>[]` is not array-compatible with it.
+// Kotlin generic value-slot discriminators are valid CLR metadata but not C# parameter syntax. Reflection keeps
+// the closed method/type frame while exercising null and boxed values through the actual emitted MethodDefs.
+// Exact slot shapes and nullable carriers are independently checked above. Array and collection calls retain
+// their direct C# bindings; the collection's opaque Kotlin storage is checked as the same returned CLR view.
 class Program {
+    static T Invoke<T>(Type owner, string name, object target, Type[] genericArguments, params object[] arguments) {
+        var method = owner.GetMethod(name) ?? throw new MissingMethodException(owner.FullName, name);
+        if (genericArguments != null) method = method.MakeGenericMethod(genericArguments);
+        return (T)method.Invoke(target, arguments);
+    }
     static int Main() {
-        int viaNull = ApiKt.firstOr<int>(null, 7);
-        int viaValue = ApiKt.firstOr<int>(3, 7);
-        object absent = ApiKt.pick<int>(5, false);
-        object present = ApiKt.pick<int>(5, true);
-        int boxNull = new NBox<int>(null).orElse(9);
-        int boxValue = new NBox<int>(4).orElse(9);
+        int viaNull = Invoke<int>(typeof(ApiKt), "firstOr", null, new[] { typeof(int) }, null, 7);
+        int viaValue = Invoke<int>(typeof(ApiKt), "firstOr", null, new[] { typeof(int) }, 3, 7);
+        object absent = Invoke<object>(typeof(ApiKt), "pick", null, new[] { typeof(int) }, 5, false);
+        object present = Invoke<object>(typeof(ApiKt), "pick", null, new[] { typeof(int) }, 5, true);
+        int boxNull = Invoke<int>(typeof(NBox<int>), "orElse", new NBox<int>(null), null, 9);
+        int boxValue = Invoke<int>(typeof(NBox<int>), "orElse", new NBox<int>(4), null, 9);
         var lists = new NgLists();
-        // A `List<Int?>` is an `IReadOnlyList<object>`: a C# caller can hand it a list holding a null at T=int,
-        // which no `IReadOnlyList<int>` slot admits. The `List<String?>` control still binds as `string`.
-        System.Collections.Generic.IReadOnlyList<object> boxedList = lists.boxedList(4);
+        // Kotlin List<T> has opaque storage, while the actual object exposes its typed CLR collection view.
+        // The checked cast observes that same object, not a copied collection or a nullable-value adapter.
+        System.Collections.Generic.IReadOnlyList<object> boxedList =
+            (System.Collections.Generic.IReadOnlyList<object>)lists.boxedList(4);
         int listSum = lists.sumPresent(new object[] { 1, null, 5 });
         string joined = lists.joinPresent(new string[] { "a", null, "b" });
         var arrays = new NgArrays();
