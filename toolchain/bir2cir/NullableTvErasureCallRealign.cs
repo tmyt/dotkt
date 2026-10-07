@@ -1228,6 +1228,7 @@ static partial class NullableTvErasureCallRealign
     internal static void SelfTest()
     {
         SelfTestLambdaReturnOwnership();
+        SelfTestFieldResultOwnership();
         foreach (var scope in new[] { "type", "method" })
         {
             var callerResult = new TypeNode.Fqn("Cell", new TypeNode[] { new TypeNode.Tv(scope, 2) });

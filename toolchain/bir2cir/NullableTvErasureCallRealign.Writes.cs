@@ -506,12 +506,39 @@ static partial class NullableTvErasureCallRealign
             obj["value"] = wrapped;
     }
 
+    static void SelfTestFieldResultOwnership()
+    {
+        var index = new DeclIndex();
+        index.Slots["Storage"] = new Dictionary<string, TypeNode>
+        {
+            ["value"] = new TypeNode.Fqn("object"),
+        };
+        var context = new Ctx { Idx = index };
+        var field = JsonNode.Parse("""
+            {"k":"field","ownerType":{"t":"fqn","name":"Storage"},
+             "recv":{"k":"this"},"name":"value",
+             "ret":{"t":"fqn","name":"kotlin.String"},
+             "sty":{"t":"fqn","name":"kotlin.String"}}
+            """).AsObject();
+        for (var iteration = 0; iteration < 2; iteration++)
+        {
+            var physical = EvalField(field, context);
+            if (physical != new TypeNode.Fqn("object")
+                || TypeJson.Read(field["ret"]) != physical || TypeJson.Read(field["sty"]) != physical)
+                throw new InvalidOperationException("Field result descriptors disagree with their erased declaration slot");
+        }
+        Console.WriteLine("[field result ownership] self-test OK");
+    }
+
     // A `field` read produces `Subst(Erase(field decl), owner args)` — the same derivation the store side uses, so a
     // read of an object-erased field flows as `object` and its consumer re-narrows once.
     static TypeNode EvalField(JsonObject obj, Ctx ctx)
     {
         if (obj["recv"] != null) Eval(obj["recv"], ctx);
         if (SlotType(obj, ctx) is not TypeNode derived) return TypeJson.Read(obj["type"]);
+        if (TypeJson.Read(obj["ret"]) is TypeNode result && !result.Equals(derived)
+            && IsObjectErasureOf(derived, result))
+            obj["ret"] = TypeJson.Write(derived);
         if (TypeJson.Read(obj["type"]) is TypeNode stamped && !stamped.Equals(derived) && IsObjectErasureOf(derived, stamped))
         {
             obj["type"] = TypeJson.Write(derived);
