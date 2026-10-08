@@ -353,9 +353,13 @@ static class TryValueOperandHoist
             ?? o["argTypes"] as JsonArray;
         bool IsLocation(int i) => hasRecv && i == 0
             ? CallEvalLowering.ReceiverNeedsAddress(o, _isValue)
-            : signature != null && i - (hasRecv ? 1 : 0) < signature.Count
+            : IsBorrowedLocation(i)
+                || signature != null && i - (hasRecv ? 1 : 0) < signature.Count
                 && TypeJson.Read(signature[i - (hasRecv ? 1 : 0)]) is TypeNode.ByRef;
-        HoistOrdered(n, Get, Set, atEmpty, pre, scope, preserveLocation: IsLocation);
+        bool IsBorrowedLocation(int i) => !(hasRecv && i == 0)
+            && LocalFunctionLowering.IsBorrowedArgument(o, i - (hasRecv ? 1 : 0));
+        HoistOrdered(n, Get, Set, atEmpty, pre, scope, preserveLocation: IsLocation,
+            borrowedLocation: IsBorrowedLocation);
     }
 
     static void HoistNamedSlots(JsonObject o, string[] keys, bool atEmpty, List<JsonNode> pre, BirScope scope)
@@ -404,7 +408,8 @@ static class TryValueOperandHoist
     // precedes a slot which hoists must itself be spilled (if side-effecting) so relative order holds.
     static void HoistOrdered(int n, Func<int, JsonNode> get, Action<int, JsonNode> set, bool atEmpty,
                              List<JsonNode> pre, BirScope scope, bool spillAllAfterHoist = false,
-                             Func<int, bool> preserveLocation = null)
+                             Func<int, bool> preserveLocation = null,
+                             Func<int, bool> borrowedLocation = null)
     {
         var lastHoist = -1;
         for (var i = 0; i < n; i++) if (WillHoist(get(i), i == 0 && atEmpty)) lastHoist = i;
@@ -420,20 +425,26 @@ static class TryValueOperandHoist
             // suffix expression cannot slide behind an earlier element's user-observable hash/equality operation.
             if (lastHoist >= 0 && (spillAllAfterHoist || i < lastHoist))
                 resolved = preserveLocation?.Invoke(i) == true
-                    ? PinAddressIfNeeded(resolved, pre, scope)
+                    ? PinAddressIfNeeded(resolved, pre, scope, borrowedLocation?.Invoke(i) == true)
                     : SpillIfNeeded(resolved, pre, scope);
             set(i, resolved);
         }
     }
 
-    static JsonNode PinAddressIfNeeded(JsonNode location, List<JsonNode> pre, BirScope scope)
+    static JsonNode PinAddressIfNeeded(JsonNode location, List<JsonNode> pre, BirScope scope,
+        bool borrowedStorage = false)
     {
         var type = TypeJson.Read(SpillType(location, scope));
-        var pointerType = type is TypeNode.ByRef ? type : new TypeNode.ByRef(type);
+        var pointerType = borrowedStorage || type is TypeNode.ByRef ? type : new TypeNode.ByRef(type);
         var name = "dotkt$hoist" + System.Threading.Interlocked.Increment(ref _tmp);
-        pre.Add(new JsonObject { ["k"] = "var", ["name"] = name, ["type"] = TypeJson.Write(pointerType),
-            ["init"] = new JsonObject { ["k"] = "byrefOf", ["inner"] = location.DeepClone() } });
-        return new JsonObject { ["k"] = "local", ["name"] = name, ["sty"] = TypeJson.Write(pointerType) };
+        var pinned = new JsonObject { ["k"] = "var", ["name"] = name, ["type"] = TypeJson.Write(pointerType),
+            ["init"] = new JsonObject { ["k"] = "byrefOf", ["inner"] = location.DeepClone() } };
+        // This pin aliases a Kotlin value location, so its referent must still
+        // traverse value projection before the final managed pointer is formed.
+        if (borrowedStorage) pinned[LocalFunctionLowering.BorrowedStorageKey] = true;
+        pre.Add(pinned);
+        return borrowedStorage ? new JsonObject { ["k"] = "local", ["name"] = name }
+            : new JsonObject { ["k"] = "local", ["name"] = name, ["sty"] = TypeJson.Write(pointerType) };
     }
 
     // A slot evaluated before a hoisted try: a leftover leading try-valueBlock (safe-at-empty but now

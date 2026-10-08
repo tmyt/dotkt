@@ -363,6 +363,85 @@ fun <T, U> capturedVarRefCellLocalFunBoundedTv(a: T, b: T): T where T : Captured
     return cur
 }
 
+class CapturedVarRefCellValue<T>(val value: T)
+
+fun <T> capturedVarRefCellBorrowedValue(
+    first: CapturedVarRefCellValue<T>, second: CapturedVarRefCellValue<T>
+): CapturedVarRefCellValue<T> {
+    var current = first
+    fun replace() {
+        check(current === first)
+        current = second
+        check(current === second)
+    }
+    fun relay() { replace() }
+    relay()
+    return current
+}
+
+fun <T> capturedVarRefCellBorrowedArray(first: Array<T>, second: Array<T>): Array<T> {
+    var current = first
+    fun replace(times: Int) {
+        current = second
+        check(current === second)
+        if (times > 0) replace(times - 1)
+    }
+    replace(2)
+    return current
+}
+
+fun <T> capturedVarRefCellBorrowedList(first: List<T>, second: List<T>): List<T> {
+    var current = first
+    fun replace() {
+        check(current === first)
+        current = second
+        check(current.size == second.size)
+    }
+    replace()
+    return current
+}
+
+fun <T> capturedVarRefCellBorrowedNullable(first: T?, second: T?): T? {
+    var current = first
+    fun replace() { current = second }
+    replace()
+    return current
+}
+
+fun capturedVarRefCellBorrowedTry(input: Int): Int {
+    var current = 0
+    fun replace(next: Int) { current = next }
+    replace(try { input } catch (_: Exception) { -1 })
+    return current
+}
+
+fun capturedVarRefCellBorrowedElvis(input: String?): Int {
+    var current = 0
+    fun add(value: String) { current += value.length }
+    add(input ?: return -1)
+    return current
+}
+
+fun <T> capturedVarRefCellBorrowedArrayTry(first: Array<T>, second: Array<T>, forwarded: Boolean): Array<T> {
+    var current = first
+    fun replace(next: Array<T>) { current = next }
+    fun relay() { replace(try { second } catch (_: Exception) { first }) }
+    if (forwarded) relay()
+    else replace(try { second } catch (_: Exception) { first })
+    return current
+}
+
+fun capturedVarRefCellBorrowedAndNativeLocations(input: Int): Int {
+    var current = 0
+    var counter = 0
+    fun replace(slot: kotlin.clr.ClrRef<Int>, next: Int) {
+        current = next
+        slot.value = next + 1
+    }
+    replace(kotlin.clr.byref(counter), try { input } catch (_: Exception) { -1 })
+    return current + counter
+}
+
 // A local class declared INSIDE a lambda: the lift must restore the lambda's own capture binding for `n`.
 fun capturedVarRefCellLocalClassInsideClosure(): Int {
     var n = 0
@@ -568,6 +647,29 @@ class CapturedVarRefCellTests {
         assertEquals("sparse", capturedVarRefCellSparseLocalFun(1, "sparse"))
         assertEquals(2, capturedVarRefCellLocalFunViaClosure())              // 2
         assertEquals(6, capturedVarRefCellLocalFunRecursive())               // 3 + 2 + 1
+        val stringValue = CapturedVarRefCellValue("second")
+        check(capturedVarRefCellBorrowedValue(CapturedVarRefCellValue("first"), stringValue) === stringValue)
+        val nestedValue = CapturedVarRefCellValue(CapturedVarRefCellValue<Int?>(null))
+        check(capturedVarRefCellBorrowedValue(CapturedVarRefCellValue(CapturedVarRefCellValue<Int?>(1)), nestedValue) === nestedValue)
+        val stringArray = arrayOf("second")
+        check(capturedVarRefCellBorrowedArray(arrayOf("first"), stringArray) === stringArray)
+        val nullableArray = arrayOf<Int?>(null, 2)
+        check(capturedVarRefCellBorrowedArray(arrayOf<Int?>(1), nullableArray) === nullableArray)
+        assertEquals(null, nullableArray[0])
+        val nullableList = listOf<Int?>(null, 2)
+        check(capturedVarRefCellBorrowedList(listOf<Int?>(1), nullableList) === nullableList)
+        assertEquals(null, nullableList[0])
+        assertEquals("second", capturedVarRefCellBorrowedNullable("first", "second"))
+        assertEquals(2, capturedVarRefCellBorrowedNullable(1, 2))
+        assertEquals(null, capturedVarRefCellBorrowedNullable<Int>(1, null))
+        assertEquals(2, capturedVarRefCellBorrowedTry(2))
+        assertEquals(5, capturedVarRefCellBorrowedElvis("hello"))
+        assertEquals(-1, capturedVarRefCellBorrowedElvis(null))
+        check(capturedVarRefCellBorrowedArrayTry(arrayOf("first"), stringArray, false) === stringArray)
+        check(capturedVarRefCellBorrowedArrayTry(arrayOf("first"), stringArray, true) === stringArray)
+        check(capturedVarRefCellBorrowedArrayTry(arrayOf<Int?>(1), nullableArray, false) === nullableArray)
+        check(capturedVarRefCellBorrowedArrayTry(arrayOf<Int?>(1), nullableArray, true) === nullableArray)
+        assertEquals(5, capturedVarRefCellBorrowedAndNativeLocations(2))
     }
 
     @TestAttribute

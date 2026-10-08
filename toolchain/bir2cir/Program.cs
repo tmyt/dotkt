@@ -998,6 +998,7 @@ sealed class Pipeline
         var localExistentialOwners =
             FBoundStarProjectionErasure.ApplyAll(staged.Select(s => s.Root).ToList(), refs);
         GenericArrayValueLowering.ApplyAll(staged.Select(stage => stage.Root));
+        LocalFunctionLowering.MaterializeBorrowedLocations(staged.Select(stage => stage.Root));
         var existentialReceiverMembers =
             ExistentialReceiverBinding.Collect(staged.Select(s => s.Root));
 

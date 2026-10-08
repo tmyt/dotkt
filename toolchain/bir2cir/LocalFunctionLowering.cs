@@ -11,6 +11,8 @@ using DotKt.Bir;
 // shape is inspected to reconstruct ownership.
 static class LocalFunctionLowering
 {
+    internal const string BorrowedStorageKey = "_localFunctionBorrowedStorage";
+    internal const string BorrowedSlotsKey = "_localFunctionBorrowedSlots";
     sealed record Binding(string Name, string Owner, int[] OwnerArgPositions, int[] SemanticOwnerArgOrder)
     {
         public int[] ByRefCaptureSlots { get; init; } = Array.Empty<int>();
@@ -366,8 +368,10 @@ static class LocalFunctionLowering
             if (parameters[i] is not JsonObject parameter || parameter["sharedCellType"] is not JsonNode shared
                 || JsonNode.DeepEquals(parameter["type"], shared)) continue;
             var element = parameter["type"].DeepClone();
+            // The referent is a Kotlin value slot. Keep it in value vocabulary
+            // through representation selection; only then form the CLR pointer.
             locations.Add(Str(parameter["name"]), element);
-            parameter["type"] = TypeJson.Write(new TypeNode.ByRef(TypeJson.Read(element)));
+            parameter[BorrowedStorageKey] = true;
             slots.Add(i);
         }
         if (slots.Count == 0) return Array.Empty<int>();
@@ -414,13 +418,13 @@ static class LocalFunctionLowering
 
     static void RewriteUse(JsonObject use, string kind, Binding binding)
     {
-        foreach (var slot in binding.ByRefCaptureSlots)
+        if (binding.ByRefCaptureSlots.Length != 0)
         {
             if (kind != "callLocal" || use["args"] is not JsonArray args || use["sig"] is not JsonArray signature)
                 throw new InvalidOperationException("a borrowed local-function capture requires a direct call");
             // A by-ref call slot consumes the argument as an lvalue, like any other CLR ref parameter.
             // Keep that lvalue rather than wrapping it in a second address-producing expression.
-            signature[slot] = TypeJson.Write(new TypeNode.ByRef(TypeJson.Read(signature[slot])));
+            use[BorrowedSlotsKey] = new JsonArray(binding.ByRefCaptureSlots.Select(slot => (JsonNode)JsonValue.Create(slot)).ToArray());
         }
         var callTypeArgs = use["typeArgs"] as JsonArray;
         var ownerArgs = Enumerable.Range(0, binding.OwnerArgPositions.Length).Select(slot =>
@@ -460,5 +464,40 @@ static class LocalFunctionLowering
             use["owner"] = null;
         }
         else use["k"] = "newDelegate";
+    }
+
+    internal static bool IsBorrowedArgument(JsonObject call, int index) =>
+        call[BorrowedSlotsKey] is JsonArray slots
+        && slots.Any(slot => slot is JsonValue value && value.TryGetValue<int>(out var position) && position == index);
+
+    // Both declaration and call descriptors have traversed the ordinary Kotlin
+    // value representation passes. The borrowed location must point to that
+    // storage, not to the exact native construction used by a CLR ref parameter.
+    public static void MaterializeBorrowedLocations(IEnumerable<JsonNode> roots)
+    {
+        void Visit(JsonNode node)
+        {
+            if (node is JsonArray array) { foreach (var child in array) Visit(child); return; }
+            if (node is not JsonObject obj) return;
+            foreach (var child in obj.Select(pair => pair.Value).ToArray()) Visit(child);
+            if (obj[BorrowedStorageKey] is JsonValue flag && flag.TryGetValue<bool>(out var borrowed) && borrowed)
+            {
+                if (obj["k"] == null || Str(obj["k"]) == "var")
+                    obj["type"] = TypeJson.Write(new TypeNode.ByRef(TypeJson.Read(obj["type"])));
+                obj.Remove(BorrowedStorageKey);
+            }
+            if (obj[BorrowedSlotsKey] is JsonArray slots)
+            {
+                if (obj["sig"] is not JsonArray signature)
+                    throw new InvalidOperationException("borrowed local-function call has no signature");
+                foreach (var slot in slots)
+                {
+                    var index = slot.GetValue<int>();
+                    signature[index] = TypeJson.Write(new TypeNode.ByRef(TypeJson.Read(signature[index])));
+                }
+                obj.Remove(BorrowedSlotsKey);
+            }
+        }
+        foreach (var root in roots) Visit(root);
     }
 }

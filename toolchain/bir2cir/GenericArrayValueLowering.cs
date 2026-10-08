@@ -132,7 +132,8 @@ static class GenericArrayValueLowering
             {
                 for (var i = 0; i < arguments.Count; i++)
                     Visit(arguments[i], childScope, context, typeParameters, methodParameters,
-                        signature != null && i < signature.Count && IsManagedReference(TypeJson.Read(signature[i])));
+                        LocalFunctionLowering.IsBorrowedArgument(obj, i)
+                        || signature != null && i < signature.Count && IsManagedReference(TypeJson.Read(signature[i])));
                 continue;
             }
             if (TypeJson.Read(value) is TypeNode type) obj[key] = TypeJson.Write(Project(type));
