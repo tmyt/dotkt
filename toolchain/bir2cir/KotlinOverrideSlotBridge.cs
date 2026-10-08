@@ -2011,11 +2011,25 @@ static class KotlinOverrideSlotBridge
             throw new InvalidOperationException("Override slot classification lost Unit value-return identity");
         var unitBridge = BuildBridge(new Def { Name = "UnitDefault", Kind = "interface" },
             new JsonObject { ["name"] = "read", ["params"] = new JsonArray(),
+                [DeclarationIdentityBinding.Key] = "selected-unit-body",
                 ["ret"] = TypeJson.Write(nullableUnit) },
             Array.Empty<TypeNode>(), unit, "bridge", _ => false, null, unitValueReturn: true);
         if (Str(unitBridge["body"]?[0]?["value"]?["k"]) != "callInstance"
+            || Str(unitBridge["body"]?[0]?["value"]?[DeclarationIdentityBinding.Key]) != "selected-unit-body"
             || unitBridge["nullableGenericRet"] == null)
-            throw new InvalidOperationException("Exact Unit value bridge must forward without nullable extraction and retain source metadata");
+            throw new InvalidOperationException("Exact Unit value bridge must forward to its selected body without nullable extraction and retain source metadata");
+        var inheritedUnitImplementation = new JsonObject {
+            ["name"] = "read", ["params"] = new JsonArray(), ["ret"] = TypeJson.Write(nullableUnit),
+            [DeclarationIdentityBinding.Key] = "not-an-owned-target",
+        };
+        JsonObject InheritedUnitBridge() => BuildBridge(new Def { Name = "UnitDefault", Kind = "interface" },
+            inheritedUnitImplementation, Array.Empty<TypeNode>(), unit, "bridge", _ => false, null,
+            callOwner: new TypeNode.Fqn("InheritedUnit"), unitValueReturn: true);
+        if (InheritedUnitBridge()["body"]?[0]?["value"]?[DeclarationIdentityBinding.Key] != null)
+            throw new InvalidOperationException("Inherited bridge copied a non-owned declaration identity");
+        inheritedUnitImplementation["inheritedDeclarationId"] = "selected-inherited-body";
+        if (Str(InheritedUnitBridge()["body"]?[0]?["value"]?[DeclarationIdentityBinding.Key]) != "selected-inherited-body")
+            throw new InvalidOperationException("Inherited bridge lost its selected declaration identity");
         var frame = new NullableRepresentationFrame(2, new[] { 0 },
             physicalOrder: new[] { 3, 0, 4, 1, 2, 5 }, storageIndices: new[] { 0, 1 },
             nullableStorageIndices: new[] { 0 });
@@ -2385,6 +2399,11 @@ static class KotlinOverrideSlotBridge
         };
         if (impl["inheritedDeclarationId"] is JsonNode declarationId)
             call[DeclarationIdentityBinding.Key] = declarationId.DeepClone();
+        else if (callOwner == null && impl[DeclarationIdentityBinding.Key] is JsonNode ownDeclarationId)
+            // An owned forwarding body is a selected MethodDef too. Carry its
+            // identity through physical-name allocation instead of leaving a
+            // semantic name that can accidentally bind to the interface slot.
+            call[DeclarationIdentityBinding.Key] = ownDeclarationId.DeepClone();
         if (IsSuspendMethod(impl)) call["suspendCall"] = true;
         if (impl["typeParams"] is JsonArray methodTps && methodTps.Count > 0)
         {

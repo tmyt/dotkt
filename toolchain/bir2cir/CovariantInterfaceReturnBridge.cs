@@ -434,6 +434,10 @@ static class CovariantInterfaceReturnBridge
             ["ret"] = TypeJson.Write(implementationRet),
             ["args"] = callArgs,
         };
+        // The owned implementation may be renamed during physical allocation.
+        // Keep the selected declaration edge, not its temporary semantic name.
+        if (implementation[DeclarationIdentityBinding.Key] is JsonNode implementationId)
+            call[DeclarationIdentityBinding.Key] = implementationId.DeepClone();
         if (IsSuspend(implementation)) call["suspendCall"] = true;
         if (implementation["typeParams"] is JsonArray methodTps)
         {

@@ -12,6 +12,17 @@ open class InheritedNameStringBody {
     fun read(): String = "named"
 }
 class InheritedNameString : InheritedNameStringBody(), InheritedNameStringSlot, InheritedNameValueSlot<String>
+open class InheritedNameNominalValue
+class InheritedNameNominalText : InheritedNameNominalValue()
+interface InheritedNameNominalWideSlot { fun read(): InheritedNameNominalValue }
+interface InheritedNameNominalExactSlot { fun read(): InheritedNameNominalText }
+open class InheritedNameNominalBody {
+    private val result = InheritedNameNominalText()
+    @kotlin.clr.ClrName("ReadNominal")
+    fun read(): InheritedNameNominalText = result
+}
+class InheritedNameNominalBoth : InheritedNameNominalBody(), InheritedNameNominalWideSlot, InheritedNameNominalExactSlot
+class InheritedNameNominalReversed : InheritedNameNominalBody(), InheritedNameNominalExactSlot, InheritedNameNominalWideSlot
 abstract class InheritedNameAbstract : InheritedNameStringBody(), InheritedNameStringSlot
 class InheritedNameConcrete : InheritedNameAbstract()
 
@@ -90,6 +101,14 @@ class InheritedClrNameTests {
         assertEquals("named", plain.read())
         assertEquals("named", generic.read())
         assertEquals("named", body.read())
+        val nominalBody = InheritedNameNominalBoth()
+        val wide: InheritedNameNominalWideSlot = nominalBody
+        val exact: InheritedNameNominalExactSlot = nominalBody
+        assertSame(nominalBody.read(), wide.read())
+        assertSame(nominalBody.read(), exact.read())
+        val reversedBody = InheritedNameNominalReversed()
+        val reversed: InheritedNameNominalWideSlot = reversedBody
+        assertSame(reversedBody.read(), reversed.read())
     }
 
     @TestAttribute
