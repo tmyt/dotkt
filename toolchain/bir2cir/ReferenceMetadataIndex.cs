@@ -5750,7 +5750,7 @@ sealed partial class ReferenceMetadataIndex
         });
         public TypeNode GetSZArrayType(TypeNode elementType) => new TypeNode.Array(elementType);
         public TypeNode GetTypeFromDefinition(MetadataReader reader, TypeDefinitionHandle handle, byte rawTypeKind) =>
-            new TypeNode.Fqn(MetadataDefinitionName(reader, handle));
+            new TypeNode.Fqn(PhysicalDefinitionName(reader, handle));
         public TypeNode GetTypeFromReference(MetadataReader reader, TypeReferenceHandle handle, byte rawTypeKind) =>
             new TypeNode.Fqn(MetadataReferenceName(reader, handle));
         public TypeNode GetTypeFromSpecification(MetadataReader reader, MethodImplGenericContext genericContext,
@@ -5760,10 +5760,20 @@ sealed partial class ReferenceMetadataIndex
         static string MetadataReferenceName(MetadataReader reader, TypeReferenceHandle handle)
         {
             var reference = reader.GetTypeReference(handle);
-            var simple = StripGenericArity(reader.GetString(reference.Name));
+            var simple = reader.GetString(reference.Name);
             if (reference.ResolutionScope.Kind == HandleKind.TypeReference)
                 return MetadataReferenceName(reader, (TypeReferenceHandle)reference.ResolutionScope) + "." + simple;
             var ns = reader.GetString(reference.Namespace);
+            return string.IsNullOrEmpty(ns) ? simple : ns + "." + simple;
+        }
+
+        static string PhysicalDefinitionName(MetadataReader reader, TypeDefinitionHandle handle)
+        {
+            var definition = reader.GetTypeDefinition(handle);
+            var simple = reader.GetString(definition.Name);
+            var parent = definition.GetDeclaringType();
+            if (!parent.IsNil) return PhysicalDefinitionName(reader, parent) + "." + simple;
+            var ns = reader.GetString(definition.Namespace);
             return string.IsNullOrEmpty(ns) ? simple : ns + "." + simple;
         }
     }
@@ -7537,6 +7547,22 @@ sealed partial class ReferenceMetadataIndex
     internal static void SelfTest()
     {
         SelfTestSourceHierarchyFrames();
+        {
+            var metadata = new MetadataBuilder();
+            metadata.AddModule(0, metadata.GetOrAddString("MethodImplOwners"), default, default, default);
+            var definition = metadata.AddTypeDefinition(TypeAttributes.Public, metadata.GetOrAddString("probe"),
+                metadata.GetOrAddString("Contract`1"), default, default, default);
+            var outer = metadata.AddTypeReference(default, metadata.GetOrAddString("probe"), metadata.GetOrAddString("Outer`1"));
+            var inner = metadata.AddTypeReference(outer, default, metadata.GetOrAddString("Inner`2"));
+            var image = new BlobBuilder();
+            new MetadataRootBuilder(metadata).Serialize(image, 0, 0);
+            using var provider = MetadataReaderProvider.FromMetadataImage(image.ToImmutableArray());
+            var reader = provider.GetMetadataReader();
+            var signatures = new MethodImplOwnerTypeProvider();
+            if (signatures.GetTypeFromDefinition(reader, definition, 0) != new TypeNode.Fqn("probe.Contract`1")
+                || signatures.GetTypeFromReference(reader, inner, 0) != new TypeNode.Fqn("probe.Outer`1.Inner`2"))
+                throw new InvalidOperationException("MethodImpl owner decoding discarded exact CLR generic arity");
+        }
         var genericIntArray = new TypeNode.Array(new TypeNode.Fqn("kotlin.Int"));
         var primitiveIntArray = new TypeNode.Fqn("kotlin.IntArray");
         if (SourceDeclarationDescribesCall(genericIntArray, primitiveIntArray)

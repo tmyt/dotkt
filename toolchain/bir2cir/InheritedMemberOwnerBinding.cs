@@ -141,6 +141,10 @@ static class InheritedMemberOwnerBinding
         if (Str(call["k"]) is not ("callInstance" or "newBoundDelegate")
             || Bool(call["super"]) || Str(call["method"]) is not string name
             || ReadTypes(call["sig"] as JsonArray) is not { } signature) return;
+        // An alias's accessed owner selects its CLR projection. Its Kotlin ancestor need not
+        // be a CLR supertype of that projection; MemberCallSubstitution owns this boundary.
+        // Keep the frontend declaration facts without re-anchoring to a reference-only stub.
+        if (refs?.TryResolveClrOwner(owner.Name, out _, out _) == true) return;
         KotlinPropertyAccessors.TryCallIdentity(call, out var propertyName, out var accessorKind);
         var arity = (call["typeArgs"] as JsonArray)?.Count ?? 0;
         // A fake override's descriptor is expressed in the accessed owner's
@@ -302,6 +306,12 @@ static class InheritedMemberOwnerBinding
         """)!.AsObject();
         call["ownerType"] = TypeJson.Write(owner);
         var source = call.DeepClone();
+        var aliasRefs = ReferenceMetadataIndex.Build(Array.Empty<string>());
+        ((IDictionary<string, string>)aliasRefs.Aliases).Add(owner.Name, "probe.NativeSourceLeaf`2");
+        var aliasCall = (JsonObject)source.DeepClone();
+        BindSourceDeclarationCall(aliasCall, owner, types, declarations, aliasRefs);
+        if (!JsonNode.DeepEquals(aliasCall, source))
+            throw new InvalidOperationException("Source inherited binding displaced an alias's selected CLR projection owner");
         BindSourceDeclarationCall(call, owner, types, declarations, null);
         var expectedOwner = new TypeNode.Fqn("SourceSlot", owner.Args);
         if (!JsonNode.DeepEquals(call["ownerType"], TypeJson.Write(expectedOwner))

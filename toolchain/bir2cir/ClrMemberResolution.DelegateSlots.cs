@@ -454,7 +454,7 @@ static partial class ClrMemberResolution
     static void AdaptVoidConstruction(JsonObject construction, TypeNode.Fn naturalFn,
         TypeNode.Fqn slot, TypeNode slotReturn)
     {
-        if (PhysicalFunctionShape(slot) is TypeNode.Fn target && HasBoxedSlotSeam(naturalFn, target))
+        if (PhysicalFunctionShape(slot, includeNominal: true) is TypeNode.Fn target && HasBoxedSlotSeam(naturalFn, target))
         {
             AdaptBoxedSlots(construction, naturalFn, slot, target);
             return;

@@ -116,9 +116,12 @@ class ReifiedCollectionFacesTests {
         check(exactNullableMutableCollection(null) == null)
         check(exactNullableMutableCollection(value)!!.size == 1)
         val wrongElement: Any = mutableListOf(1)
-        check(exactSafeMutableCollection(wrongElement) == null)
+        val erasedElements = exactMutableCollection(wrongElement)
+        check(erasedElements === wrongElement)
+        check(exactSafeMutableCollection(wrongElement) === wrongElement)
+        check(erasedElements.single() == 1)
         var rejected = false
-        try { exactMutableCollection(wrongElement) } catch (_: System.InvalidCastException) { rejected = true }
+        try { exactMutableCollection(Any()) } catch (_: ClassCastException) { rejected = true }
         check(rejected)
     }
 }

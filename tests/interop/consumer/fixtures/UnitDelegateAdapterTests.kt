@@ -110,6 +110,9 @@ class UnitDelegateAdapterTests {
         val log = StringBuilder()
         assertEquals(Unit, binaryCapturingUnitDelegate(41, log))
         assertEquals("b41", log.toString())
+        val referenceLog = StringBuilder()
+        assertEquals(Unit, binaryCapturingUnitDelegate("text", referenceLog))
+        assertEquals("btext", referenceLog.toString())
     }
 
     @TestAttribute
