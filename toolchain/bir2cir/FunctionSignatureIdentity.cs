@@ -13,8 +13,24 @@ static class FunctionSignatureIdentity
     internal const string Key = "functionSignatureType";
     internal const string CallKey = "functionCallSignature";
     internal const string PhysicalKey = "functionPhysicalSignatureMarker";
+    const string ConstraintKey = "_functionSourceConstraintIdentity";
     internal const string OutputName = "000-dotkt-parameter-signatures.cir.json";
     static readonly HashSet<string> Markers = new(StringComparer.Ordinal);
+
+    public static void CaptureSourceConstraints(JsonNode root)
+    {
+        void Visit(JsonNode node)
+        {
+            if (node is not JsonObject owner) return;
+            foreach (var key in new[] { "methods", "ctors" })
+            foreach (var declaration in (owner[key] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
+            foreach (var parameter in (declaration["params"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
+                if (parameter[ConstraintKey] == null && TypeJson.Read(parameter["type"]) is TypeNode.Tv variable)
+                    parameter[ConstraintKey] = ConstraintIdentity(owner, declaration, variable);
+            foreach (var type in owner["types"] as JsonArray ?? new JsonArray()) Visit(type);
+        }
+        Visit(root);
+    }
 
     public static void Capture(JsonNode root)
     {
@@ -32,7 +48,8 @@ static class FunctionSignatureIdentity
                 if (parameter[PhysicalKey] == null && TypeJson.Read(parameter[Key]) is TypeNode.Tv variable)
                 {
                     var marker = "dotkt$ParameterSignature$" + Convert.ToHexString(
-                        SHA256.HashData(Encoding.UTF8.GetBytes(ownerName + "|" + TypeNode.ToJson(variable))));
+                        SHA256.HashData(Encoding.UTF8.GetBytes(ownerName + "|" + TypeNode.ToJson(variable)
+                            + (parameter[ConstraintKey]?.GetValue<string>() ?? ""))));
                     parameter[PhysicalKey] = marker;
                     Markers.Add(marker);
                 }
@@ -40,6 +57,45 @@ static class FunctionSignatureIdentity
             foreach (var type in owner["types"] as JsonArray ?? new JsonArray()) Visit(type);
         }
         Visit(root);
+    }
+
+    // A method variable's index is local to its declaration: two !!1 parameters
+    // in the same facade need not have the same Kotlin bounds. Retain the source
+    // bound graph before representation lowering erases it. Follow only variables
+    // mentioned by those bounds; unrelated method parameters do not describe this
+    // parameter. Names and bound declaration order are not semantic selectors.
+    static string ConstraintIdentity(JsonObject owner, JsonObject declaration, TypeNode.Tv variable)
+    {
+        var selected = new SortedDictionary<string, string>(StringComparer.Ordinal);
+        var hasBounds = false;
+        void CaptureVariable(TypeNode.Tv current)
+        {
+            var key = current.Scope + ":" + current.I;
+            if (selected.ContainsKey(key)) return;
+            var frame = (current.Scope == "type" ? owner : declaration)["typeParams"] as JsonArray;
+            var parameter = frame != null && current.I < frame.Count
+                ? frame[current.I] as JsonObject : null;
+            var constraints = parameter?["constraints"] as JsonArray;
+            hasBounds |= constraints is { Count: > 0 };
+            var bounds = (constraints ?? new JsonArray())
+                .Select(bound => TypeJson.Write(TypeJson.Read(bound)))
+                .OrderBy(bound => bound.ToJsonString(), StringComparer.Ordinal).ToArray();
+            selected.Add(key, new JsonArray(bounds).ToJsonString());
+            foreach (var bound in bounds) VisitType(bound);
+        }
+        void VisitType(JsonNode node)
+        {
+            if (node is JsonObject type)
+            {
+                if (TypeJson.Read(type) is TypeNode.Tv mentioned) CaptureVariable(mentioned);
+                foreach (var child in type.Select(pair => pair.Value)) VisitType(child);
+            }
+            else if (node is JsonArray array)
+                foreach (var child in array) VisitType(child);
+        }
+        CaptureVariable(variable);
+        return hasBounds
+            ? "|bounds:" + string.Join(";", selected.Select(pair => pair.Key + "=" + pair.Value)) : "";
     }
 
     internal static JsonNode SignatureType(JsonObject parameter) => parameter[Key] is JsonNode discriminator
@@ -89,6 +145,7 @@ static class FunctionSignatureIdentity
 
     internal static void SelfTest()
     {
+        SelfTestConstraintIdentity();
         var physical = new TypeNode.Fqn("object");
         foreach (var scope in new[] { "type", "method" })
         foreach (var index in new[] { 0, 2 })
@@ -130,6 +187,63 @@ static class FunctionSignatureIdentity
         Console.WriteLine("[function signature identity] self-test OK (source variable selectors, nominal physical modifiers)");
     }
 
+    static void SelfTestConstraintIdentity()
+    {
+        JsonObject Root(string ownerBound, string sink, bool reverse = false)
+        {
+            JsonObject Parameter(string name, params TypeNode[] bounds) => new() {
+                ["name"] = name, ["constraints"] = new JsonArray(bounds.Select(TypeJson.Write).ToArray()),
+            };
+            var targetBounds = new TypeNode[] {
+                new TypeNode.Fqn(sink, new[] { new TypeNode.Tv("method", 0) }), new TypeNode.Fqn("AdditionalBound"),
+            };
+            return new JsonObject {
+                ["fileClass"] = "ConstraintSignatureProbe",
+                ["typeParams"] = new JsonArray(Parameter("A", new TypeNode.Fqn(ownerBound))),
+                ["methods"] = new JsonArray(new JsonObject {
+                    ["typeParams"] = new JsonArray(
+                        Parameter("E", new TypeNode.Tv("type", 0)),
+                        Parameter("C", reverse ? targetBounds.Reverse().ToArray() : targetBounds),
+                        Parameter("Unrelated", new TypeNode.Fqn("UnrelatedBound"))),
+                    ["params"] = new JsonArray(new JsonObject {
+                        ["type"] = TypeJson.Write(new TypeNode.Tv("method", 1)),
+                    }),
+                }),
+            };
+        }
+        string Marker(JsonObject root)
+        {
+            CaptureSourceConstraints(root);
+            Capture(root);
+            return root["methods"][0]["params"][0][PhysicalKey].GetValue<string>();
+        }
+        var original = Root("FirstBound", "Sink");
+        var expected = Marker(original);
+        if (Marker(Root("FirstBound", "OtherSink")) == expected
+            || Marker(Root("SecondBound", "Sink")) == expected
+            || Marker(Root("FirstBound", "Sink", reverse: true)) != expected)
+            throw new InvalidOperationException("Parameter signature lost its reachable source constraint graph");
+        var renamed = Root("FirstBound", "Sink");
+        renamed["methods"][0]["typeParams"][0]["name"] = "Renamed";
+        renamed["methods"][0]["typeParams"][2]["constraints"] = new JsonArray(TypeJson.Write(new TypeNode.Fqn("OtherUnused")));
+        if (Marker(renamed) != expected)
+            throw new InvalidOperationException("Names or unrelated constraints changed a parameter signature");
+        var projected = Root("FirstBound", "Sink");
+        CaptureSourceConstraints(projected);
+        projected["methods"][0]["typeParams"][1]["constraints"] = new JsonArray(TypeJson.Write(new TypeNode.Fqn("PhysicalBound")));
+        if (Marker(projected) != expected)
+            throw new InvalidOperationException("Physical lowering replaced a captured source constraint identity");
+        var recursive = Root("FirstBound", "Sink");
+        recursive["typeParams"][0]["constraints"] = new JsonArray(TypeJson.Write(
+            new TypeNode.Fqn("RecursiveBound", new[] { new TypeNode.Tv("type", 0) })));
+        var recursiveMarker = Marker(recursive);
+        if (recursiveMarker != Marker(recursive.DeepClone().AsObject()))
+            throw new InvalidOperationException("Recursive source bounds changed a copied signature identity");
+        Complete(original);
+        if (original["methods"][0]["params"][0].AsObject().ContainsKey(ConstraintKey))
+            throw new InvalidOperationException("Source constraint routing facts leaked into CIR");
+    }
+
     internal static JsonArray Signature(JsonArray parameters) =>
         new(parameters.OfType<JsonObject>().Select(SignatureType).ToArray());
 
@@ -152,12 +266,15 @@ static class FunctionSignatureIdentity
         RemoveCallFacts(root);
         foreach (var parameters in DeclarationParameters(root))
             foreach (var parameter in parameters.OfType<JsonObject>())
+            {
+                parameter.Remove(ConstraintKey);
                 if (parameter[Key] != null)
                 {
                     parameter["type"] = SignatureType(parameter);
                     parameter.Remove(Key);
                     parameter.Remove(PhysicalKey);
                 }
+            }
     }
 
     static IEnumerable<JsonArray> DeclarationParameters(JsonNode node)

@@ -320,6 +320,13 @@ Return-distinct CLR methods are retained even though C# cannot select them by re
 type alone. Nullability metadata, constraints, and declaration order do not distinguish a CLR overload. If two
 independently authored declarations occupy one such identity, bir2cir rejects them unless their explicit names make
 the identities distinct; it never appends a declaration hash. Explicit names that still collide are rejected too.
+When a Kotlin type-variable value slot needs a nominal signature modifier, its discriminator retains the
+reachable source upper-bound graph as well as the declaration owner and variable scope/index. Distinct
+method-variable binders can have different bounds at the same index. bir2cir snapshots those source bounds
+before nullable/physical frame materialization, canonicalizes bound order without using parameter names,
+and retains the captured discriminator in generated copies and selected calls. The modifier is part of the
+physical signature; CLR generic constraints alone still do not distinguish MethodDefs. This does not allocate
+new method names or resolve a remaining physical-signature collision by automatic hash mangling.
 Generic-parameter scope and index remain part of the lowered parameter vector: `!0`, `!1`, and `!!0` are distinct
 MethodDef signature elements even if a constructed owner later supplies equal concrete arguments for two slots.
 Compiler-generated physical artifacts may use documented role-based unspeakable names and deterministic suffixes,

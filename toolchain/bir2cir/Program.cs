@@ -320,6 +320,7 @@ sealed class Pipeline
         var genericRepresentations = new GenericRepresentationPolicy(representationAliases);
         var restoreDefaultFrames = DefaultArgSplice.PrepareInlineDefaults(birRoots, refs);
         foreach (var root in birRoots) ConstructorSignatureIdentity.CaptureSourceCalls(root);
+        foreach (var root in birRoots) FunctionSignatureIdentity.CaptureSourceConstraints(root);
         NullableRepresentationMaterialization.Apply(birRoots, isValueFqn, refs, policy: genericRepresentations);
         restoreDefaultFrames();
         foreach (var restore in restoreEventFrames) restore();

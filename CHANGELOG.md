@@ -7,6 +7,11 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Generic parameter signature identity retains source upper bounds.** Independently
+  bound Kotlin overloads keep distinct nominal signature modifiers across DLL/KLIB
+  boundaries, including callable references, without source annotations or physical
+  method-name changes. Remaining CLR signature collisions still require explicit names.
+
 - **Variant Kotlin collection and Comparable value slots use an opaque CLR representation.**
   Kotlin declaration metadata and nominal signature modifiers retain their source identity, while ordinary
   CLR slots use `object` even when the corresponding BCL interface is variant. CLR variance alone does not
