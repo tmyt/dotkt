@@ -280,14 +280,21 @@ static class ExistentialReceiverBinding
                 refs.TryExistentialSemanticOwner(receiverType.Name, out sourceOwner);
             var semanticOwner = TypeJson.Read(call["ownerType"]) as TypeNode.Fqn
                 ?? new TypeNode.Fqn(sourceOwner, Array.Empty<TypeNode>());
-            if (semanticOwner.Name != sourceOwner)
+            // Splicing can retain a base member's declaration identity while projecting its receiver owner.
+            // That selected declaration, not the receiver classifier, owns the existential slot.
+            if (selectedId != null && refs.TryDeclarationIdentity(selectedId, out _, out var selectedOwner, out _, out _))
+                semanticOwner = new TypeNode.Fqn(selectedOwner);
+            if (refs.IsExistentialPhysicalOwner(semanticOwner.Name)
+                || refs.TryExistentialPhysicalOwner(semanticOwner.Name, out var authoredCarrier)
+                    && authoredCarrier == receiverType.Name)
                 semanticOwner = new TypeNode.Fqn(sourceOwner, semanticOwner.Args);
             if (refs.TryStarProjectionMember(semanticOwner, sourceMethod, accessorKind,
                     ga, authoredSignature, pc, Str(call[DeclarationIdentityBinding.Key]),
                     out var erasedOwner, out var erasedMethod, out var erasedSignature, out _,
                     out var erasedResult)
-                && erasedOwner == receiverType.Name)
+                && IsReachableReferenceCarrier(receiverType, erasedOwner, refs))
             {
+                physicalOwner = new TypeNode.Fqn(erasedOwner);
                 physicalMethod = erasedMethod;
                 physicalParameters = erasedSignature;
                 physicalResult = erasedResult;
@@ -299,6 +306,8 @@ static class ExistentialReceiverBinding
         // identity (or an earlier descriptor) would let final reference binding retarget it to G<T> again.
         call.Remove(DeclarationIdentityBinding.Key);
         call.Remove("memberRef");
+        call.Remove("memberVisibility");
+        call.Remove("memberOwnerTypeParams");
         call["ownerType"] = TypeJson.Write(physicalOwner);
         if (clrPropertyKind != null)
         {
@@ -349,6 +358,23 @@ static class ExistentialReceiverBinding
         && left.GenericArity == right.GenericArity
         && Equals(left.Return, right.Return)
         && left.Parameters.SequenceEqual(right.Parameters);
+
+    static bool IsReachableReferenceCarrier(TypeNode.Fqn receiver, string declaration, ReferenceMetadataIndex refs)
+    {
+        var pending = new Stack<TypeNode.Fqn>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        pending.Push(receiver);
+        while (pending.Count != 0)
+        {
+            var current = pending.Pop();
+            if (!seen.Add(current.Name)) continue;
+            if (current.Name == declaration) return true;
+            if (!refs.TryReferenceTypeShape(current, out _, out _, out var baseType, out var interfaces)) continue;
+            if (baseType != null) pending.Push(baseType);
+            foreach (var inherited in interfaces) pending.Push(inherited);
+        }
+        return false;
+    }
 
     static TypeNode ReceiverType(JsonNode receiver, IReadOnlyDictionary<string, TypeNode> vars)
     {
