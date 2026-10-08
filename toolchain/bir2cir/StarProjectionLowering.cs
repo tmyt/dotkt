@@ -128,7 +128,7 @@ static class StarProjectionLowering
     {
         if (node is JsonObject obj)
         {
-            AdaptProjectedCollectionArguments(obj);
+            AdaptProjectedCollectionArguments(obj, refs.Aliases);
             if (Str(obj["k"]) == "callInstance"
                 && IsIdentityCollection(obj["ownerType"], out var collectionKind, out _)
                 && collectionKind is 0 or 1 or 2 or 5
@@ -221,7 +221,7 @@ static class StarProjectionLowering
     // cannot be cast to IReadOnlyCollection<object>. Materialize the compiler/runtime-owned live view while both the
     // source projection and the selected Kotlin parameter are still explicit. This is a rule for every Collection
     // argument edge, not for any particular extension such as `plus`.
-    static void AdaptProjectedCollectionArguments(JsonObject call)
+    static void AdaptProjectedCollectionArguments(JsonObject call, IReadOnlyDictionary<string, string> aliases)
     {
         var kind = Str(call["k"]);
         if (kind is not ("callStatic" or "callInstance")) return;
@@ -285,7 +285,10 @@ static class StarProjectionLowering
                 });
                 helperSignature.Add(TypeJson.Write(AnyN));
                 helperArguments.Add(sourceSet?.Args is { Length: > 0 } && !ContainsProjection(sourceSet)
-                    ? new JsonObject { ["k"] = "classRef", ["type"] = TypeJson.Write(sourceSet) }
+                    ? new JsonObject { ["k"] = "classRef", ["type"] = TypeJson.Write(
+                        // The source witness also describes an operational CLR
+                        // construction, not the erased Kotlin value slot.
+                        new TypeNode.Fqn(aliases[sourceSet.Name], sourceSet.Args)) }
                     : new JsonObject { ["k"] = "const", ["type"] = TypeJson.Write(AnyN), ["value"] = null });
             }
             arguments[index] = new JsonObject
@@ -299,6 +302,43 @@ static class StarProjectionLowering
                 ["args"] = helperArguments,
             };
         }
+    }
+
+    internal static void SelfTestSourceStorageWitness()
+    {
+        var aliases = new Dictionary<string, string> {
+            ["kotlin.collections.MutableSet"] = "System.Collections.Generic.ICollection",
+        };
+        foreach (var projected in new[] { false, true })
+        foreach (var nullable in new[] { false, true })
+        {
+            TypeNode element = projected ? new TypeNode.Star() : Any;
+            TypeNode source = new TypeNode.Fqn("kotlin.collections.MutableSet", new[] { element });
+            TypeNode target = new TypeNode.Fqn("kotlin.collections.Set", new[] { Any });
+            if (nullable) { source = new TypeNode.Nullable(source); target = new TypeNode.Nullable(target); }
+            var operand = new JsonObject { ["k"] = "local", ["name"] = "values", ["sty"] = TypeJson.Write(source) };
+            var call = new JsonObject {
+                ["k"] = "callStatic", ["sig"] = new JsonArray(TypeJson.Write(target)),
+                ["args"] = new JsonArray(operand.DeepClone()),
+            };
+            AdaptProjectedCollectionArguments(call, aliases);
+            var helper = call["args"][0].AsObject();
+            var arguments = helper["args"].AsArray();
+            var witness = arguments[2].AsObject();
+            if (Str(helper["method"]) != (nullable ? "clrProjectedNullableSetView" : "clrProjectedSetView")
+                || !JsonNode.DeepEquals(arguments[0], operand)
+                || TypeJson.Read(arguments[1]["type"]) != new TypeNode.Fqn("System.Collections.Generic.IReadOnlyCollection", new[] { Any })
+                || (projected
+                    ? Str(witness["k"]) != "const" || witness["value"] != null
+                    : Str(witness["k"]) != "classRef"
+                        || TypeJson.Read(witness["type"]) != new TypeNode.Fqn(aliases["kotlin.collections.MutableSet"], new[] { Any })))
+                throw new InvalidOperationException("Set adaptation lost its exact source storage witness or evaluated source");
+            var stable = helper.DeepClone();
+            AdaptProjectedCollectionArguments(call, aliases);
+            if (!JsonNode.DeepEquals(stable, call["args"][0]))
+                throw new InvalidOperationException("Set adaptation wrapped its already adapted argument again");
+        }
+        Console.WriteLine("[projected Set storage witness] self-test OK (exact native source, existential source, nullable, idempotence)");
     }
 
     static TypeNode StripOuterWrappers(TypeNode type) => type switch

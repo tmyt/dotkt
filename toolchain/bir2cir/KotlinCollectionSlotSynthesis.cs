@@ -430,7 +430,8 @@ static class KotlinCollectionSlotSynthesis
                 {
                     ["k"] = "cond",
                     ["type"] = TypeJson.Write(targetRet),
-                    ["cond"] = ErasedValueCompatible(Subst(declaredParams[i], ownerArgs), "p" + i),
+                    ["cond"] = ErasedValueCompatible(
+                        QueryParameterClassifier((JsonObject)target.Method["params"][i], declarationMapping, ownerArgs), "p" + i),
                     ["then"] = forwarded,
                     ["else"] = ErasedQueryMiss(slot),
                 };
@@ -491,6 +492,16 @@ static class KotlinCollectionSlotSynthesis
         },
     };
 
+    // A query's compatibility barrier inspects the implementation's source
+    // element, not its already erased object-valued parameter slot.
+    static TypeNode QueryParameterClassifier(JsonObject parameter,
+        NullableRepresentationTypes declarationMapping, TypeNode[] ownerArgs) =>
+        Subst(declarationMapping.Argument(SourceParameter(parameter)), ownerArgs);
+
+    static TypeNode SourceParameter(JsonObject parameter) =>
+        (Str(parameter["kotlinType"]) ?? Str(parameter["nullableGeneric"])) is string source
+            ? TypeNode.Parse(source) : TypeJson.Read(parameter["type"]);
+
     static JsonNode NullFits(TypeNode declared) => declared switch
     {
         TypeNode.Nullable => ConstBool(true),
@@ -536,8 +547,7 @@ static class KotlinCollectionSlotSynthesis
     static JsonObject AdaptCollectionArgument(Slot slot, JsonObject parameter, TypeNode declared,
         TypeNode[] ownerArgs, NullableRepresentationTypes declarationMapping, ReferenceMetadataIndex refs, string name)
     {
-        var source = (Str(parameter["kotlinType"]) ?? Str(parameter["nullableGeneric"])) is string sourceType
-            ? TypeJson.Read(JsonNode.Parse(sourceType)) : TypeJson.Read(parameter["type"]);
+        var source = SourceParameter(parameter);
         if (source is not TypeNode.Fqn { Name: Collection, Args: { Length: 1 } args })
             throw new InvalidOperationException(
                 $"bir2cir: '{slot.DeclaringInterface}.{slot.Member}' marks a non-Collection parameter as an erased "
@@ -608,6 +618,17 @@ static class KotlinCollectionSlotSynthesis
                 nullableFrames: new Dictionary<string, NullableRepresentationFrame> { [Collection] = helperFrame })).Any(argument =>
                 argument is not TypeNode.Fqn { Name: "System.Collections.Generic.IReadOnlyCollection", Args.Length: 1 }))
             throw new InvalidOperationException("Final collection alias lowering changed its canonical readonly face");
+        foreach (var carrier in new[] { "kotlinType", "nullableGeneric" })
+        {
+            var parameter = new JsonObject { ["type"] = TypeJson.Fqn("object"),
+                [carrier] = TypeNode.ToJson(new TypeNode.Tv("type", 1)) };
+            var classifier = QueryParameterClassifier(parameter, mapping, inheritedOwnerArguments);
+            if (classifier != new TypeNode.Tv("type", 2))
+                throw new InvalidOperationException("Erased collection query barrier lost its exact source classifier frame");
+        }
+        var exactParameter = new JsonObject { ["type"] = TypeJson.Fqn("kotlin.Int") };
+        if (QueryParameterClassifier(exactParameter, mapping, inheritedOwnerArguments) != new TypeNode.Fqn("kotlin.Int"))
+            throw new InvalidOperationException("Concrete collection query barrier changed its declaration classifier");
         Console.WriteLine("[collection slot frames] self-test OK (source element, inherited physical permutation, concrete roles)");
     }
 

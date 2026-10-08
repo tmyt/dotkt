@@ -49,6 +49,7 @@ static class Bir2Cir
                 BirTypeLowering.SelfTestMethodImplMetadata();
                 SupertypeGraph.SelfTestDeclarationIdentity();
                 CollectionHelperBinding.SelfTest();
+                StarProjectionLowering.SelfTestSourceStorageWitness();
                 IntrinsicExtensionRepresentation.SelfTest();
                 ReferenceExistentialAbiBinding.SelfTest();
                 KotlinCollectionSlotSynthesis.SelfTest();
