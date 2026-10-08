@@ -92,6 +92,10 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   arbitrary arity and mixed masks such as `Pair<*, String>`, and is hidden when the DLL is re-imported. Trusted
   `[KotlinType]` metadata records the semantic owner and projected declaration types; the carrier's allocated CLR
   name has no meaning and is chosen collision-free.
+  Generated carrier entry points are internal CLR ABI, not new Kotlin declarations. A public carrier can expose
+  forwarding slots for non-public source members to CLR callers; DLL-to-KLIB projection hides those synthetic
+  declarations and retains the original Kotlin visibility. C# consumers may therefore see extra callable members
+  in a Kotlin-produced DLL, without a source-level Kotlin visibility change or a stable carrier API guarantee.
 - **Ordinary constructed Kotlin values use the same nominal existential representation, independent of variance.**
   CLR classes are invariant, and CLR interface variance does not relate value-type instantiations. Kotlin variance,
   captured stars, and unchecked generic casts must not introduce a concrete CLR construction check at an ordinary
@@ -2089,9 +2093,12 @@ between an open declaration and each closed use, without copying the object or c
 For example, the ordinary parameter `T` and its nullable companion close to `string, string` for `T = String`,
 and to `int32, object` for `T = Int`. Thus an open `Box<T?>` is `Box<N(T)>`: both an existing `Box<String?>` and
 an existing `Box<Int?>` reach the matching construction unchanged. Passing an open type variable forwards its
-companion from the caller's frame. The rule applies to constructed arguments and array elements;
-it does not replace ordinary `Box<T>` values with existential interfaces. Ordinary Kotlin function slots
-instead use the identity-preserving representation in §8e-bis.
+companion from the caller's frame. This rule describes exact constructed CLR arguments, including
+native generic arguments, allocations and inheritance. Ordinary Kotlin-owned `Box<T>` and `Box<T?>`
+value slots instead use the declaration's existential interface (§1), independent of their concrete
+arguments. A Kotlin array value slot whose element contains a type variable is `System.Array`;
+an allocation still retains its exact native element type. Ordinary Kotlin function slots use the
+identity-preserving representation in §8e-bis.
 
 Native delegate slots retain the selected CLR declaration's convention. For example a native
 `Func<Nullable<int32>, string>` keeps that exact signature. A Kotlin `(Int?) -> String` value instead uses
@@ -2104,7 +2111,10 @@ Concretely:
 |---|---|
 | `fun f(x: Int?)`, `fun f(): Int?`, `val x: Int?` | `Nullable<int32>` — the direct slot is unchanged |
 | `fun <T> f(x: T?)` | `object` — no CLR slot expresses an unconstrained `T?` |
-| Open `Box<T?>`, `Array<T?>` | `Box<N(T)>`, `N(T)[]` in the declaration's explicit frame |
+| Open Kotlin-owned `Box<T?>` value slot | the declaration's existential interface, with source `Box<T?>` metadata |
+| Open native `Box<T?>` argument / Kotlin-owned `Box<T?>` construction | `Box<N(T)>` in the declaration's explicit frame |
+| Open `Array<T>` / `Array<T?>` value slot | `System.Array`, with the exact source element in metadata |
+| Bare `T` / `T?` Kotlin parameter or return slot | `object`, with the source type variable and nullability in metadata |
 | `List<Int?>` / `MutableList<Int?>` | opaque `object` value slot / `IList<object>` |
 | `Map<String, Int?>`, `Pair<Int?, String>`, `Box<Int?>` | `object`, `Pair<object, string>`, `Box<object>` |
 | `Array<Int?>` | `object[]` |
@@ -2119,8 +2129,11 @@ no such meeting to arrange: nothing is reified over it, so it keeps the CLR-nati
 caller expects to see and what interop is written in. `object` is not an approximation for the boxed case, it is the
 CLR's own boxed form of a nullable value: boxing an empty `Nullable<V>` produces a genuine null reference, and
 `unbox.any Nullable<V>` accepts a null back into an empty one, so the two interconvert in one verifier-clean
-instruction and **null stays distinct from `0`**. A bare `T` stays monomorphized and unboxed and `List<Int>` keeps
-`int32` storage — only the `?` moves anything.
+instruction and **null stays distinct from `0`**. A bare `T` Kotlin value slot is also `object`: its source type
+parameter remains in declaration metadata, and concrete consumers explicitly unbox or cast the value when needed.
+That does not erase the CLR generic frame or permit losing the type operand of a reified Kotlin operation.
+Native parameters and returns retain the selected CLR MethodDef's exact signature. Concrete native storage
+such as `IList<int32>` remains unboxed even when an ordinary Kotlin value is transported through a carrier.
 
 Frame demand is structural, not inferred by chasing upper bounds. A nullable argument can require a companion even
 when its source variable has a reference-only bound. Ordinary source parameters retain their constraints. Companions

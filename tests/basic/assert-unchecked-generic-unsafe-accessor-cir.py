@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+import base64
+import copy
 import json
 import sys
 
@@ -42,11 +44,15 @@ for method in methods.values():
         node
         for node in objects(method.get("body", []))
         if node.get("k") == "callStatic"
-        and node.get("owner", {}).get("name", "").startswith("dotkt$unsafe$holder$")
+        and node.get("owner", {}).get("name") == "ProtectedGenericCast"
         and node.get("method", "").startswith("dotkt$unsafe$")
         and node.get("method", "").endswith("$invoke")
     ]
-    if len(matches) != 1 or matches[0].get("ret") != int_type:
+    projections = [node for node in objects(method.get("body", []))
+                   if node.get("k") == "cast" and node.get("type") == int_type
+                   and node.get("e") in matches]
+    if (len(matches) != 1 or matches[0].get("ret") != object_type
+            or matches[0]["owner"].get("args") != [int_type] or len(projections) != 1):
         raise SystemExit(
             f"{method['name']} must retain exactly one concrete Int use projection over its UnsafeAccessor: "
             f"{matches!r}"
@@ -62,7 +68,8 @@ if len(holders) != 1:
 
 entry_names = {call["method"] for call in calls}
 entries = [method for method in holders[0].get("methods", []) if method.get("name") in entry_names]
-if len(entries) != 1 or entries[0].get("ret") != object_type:
+if (len(entries) != 1 or entries[0].get("ret") != object_type
+        or len(holders[0].get("typeParams", [])) != 1):
     raise SystemExit(
         "the generated wrapper must retain the deferred unchecked-cast physical object return: "
         f"{entries!r}"
@@ -79,7 +86,7 @@ nullable_calls = [
     node
     for node in objects(nullable_owners[0].get("methods", []))
     if node.get("k") == "callStatic"
-    and node.get("owner", {}).get("name", "").startswith("dotkt$unsafe$holder$")
+    and node.get("owner", {}).get("name") == "ProtectedNullableProperty"
     and "$prop_get_stored_$invoke" in node.get("method", "")
 ]
 nullable_int = {"t": "nullable", "of": int_type}
@@ -96,15 +103,14 @@ if len(nullable_calls) != 1 or nullable_calls[0].get("ret") != object_type or le
         f"calls={nullable_calls!r}, casts={nullable_casts!r}"
     )
 
-byref_object = {"t": "byRef", "of": object_type}
 field_loads = [
     node
     for node in objects(root)
-    if node.get("k") == "byrefLoad"
-    and node.get("elem") == object_type
-    and node.get("ptr", {}).get("k") == "callStatic"
-    and node["ptr"].get("method", "").endswith("$stored$invoke")
-    and node["ptr"].get("ret") == byref_object
+    if node.get("k") == "callInstance"
+    and node.get("ownerType") == {"t": "fqn", "name": "InlinePrivateNullableField$star"}
+    and node.get("method") == "$star$dotkt:field:get:stored$1"
+    and node.get("virtual") is True and node.get("sig") == []
+    and node.get("ret") == object_type
 ]
 field_casts = [
     node
@@ -115,10 +121,79 @@ field_casts = [
 ]
 if len(field_loads) != 2 or len(field_casts) != 2:
     raise SystemExit(
-        "the inline private nullable field must use byref<object> accessors before nullable Int projection: "
+        "the inline private nullable field must use its object carrier slot before nullable Int projection: "
         f"loads={field_loads!r}, casts={field_casts!r}"
     )
+field_carriers = [owner for owner in root.get("types", [])
+                  if owner.get("name") == "InlinePrivateNullableField$star"]
+field_slots = [method for owner in field_carriers for method in owner.get("methods", [])
+               if method.get("name") == "$star$dotkt:field:get:stored$1"]
+if (len(field_carriers) != 1 or field_carriers[0].get("kind") != "interface"
+        or len(field_slots) != 1 or field_slots[0].get("abstract") is not True
+        or field_slots[0].get("ret") != object_type or field_slots[0].get("params") != []):
+    raise SystemExit("private inline reads lack their exact declared object carrier slot")
 
-print(
-    "UnsafeAccessor distinguishes unchecked-generic object ABI from nullable-generic method/field erasure"
-)
+def source_result(method, expected):
+    carriers = [attribute for attribute in method.get("retAttrs", [])
+                if attribute.get("attr", {}).get("name")
+                == "DotKt.Runtime.CompilerServices.KotlinNullableGenericAttribute"]
+    if len(carriers) != 1:
+        raise ValueError("expected one exact Kotlin source result carrier")
+    arguments = carriers[0].get("args", [])
+    if (len(arguments) != 2 or arguments[0].get("value") != "bir-json/1"
+            or json.loads(base64.b64decode(arguments[1]["bytes"], validate=True)) != expected):
+        raise ValueError("Kotlin source result lost its declaration frame")
+
+
+source_t = {"t": "tv", "scope": "type", "i": 0}
+source_result(entries[0], source_t)
+externs = [method for method in holders[0].get("methods", [])
+           if method.get("extern") and method.get("name") == entries[0]["name"].removesuffix("$invoke")]
+expected_owner = {"t": "fqn", "name": "ProtectedGenericCast", "args": [source_t]}
+if (len(externs) != 1 or externs[0].get("ret") != object_type
+        or [parameter.get("type") for parameter in externs[0].get("params", [])]
+        != [expected_owner, {"t": "fqn", "name": "System.Object"}]):
+    raise SystemExit("owned UnsafeAccessor lost its exact target or object signature")
+source_result(externs[0], source_t)
+target_names = [argument.get("value", {}).get("value")
+                for attribute in externs[0].get("attrs", [])
+                if attribute.get("attr", {}).get("name") == "System.Runtime.CompilerServices.UnsafeAccessorAttribute"
+                for argument in attribute.get("namedArgs", []) if argument.get("name") == "Name"]
+if target_names != ["read"]:
+    raise SystemExit(f"owned UnsafeAccessor targets the wrong declaration: {target_names!r}")
+
+
+def enclosing_contract(method):
+    if method.get("ret") != object_type or method.get("typeParams") != ["T"]:
+        raise ValueError("enclosing generic function lost its physical return or method frame")
+    source_result(method, {"t": "tv", "scope": "method", "i": 0})
+
+
+for name in ("throughNestedClosure", "throughNestedSam"):
+    declarations = [method for method in root.get("methods", []) if method.get("name") == name]
+    if len(declarations) != 1:
+        raise SystemExit(f"expected one {name} declaration")
+    enclosing_contract(declarations[0])
+    for slot in ("retAttrs", "typeParams"):
+        malformed = copy.deepcopy(declarations[0])
+        malformed[slot] = []
+        try:
+            enclosing_contract(malformed)
+        except ValueError:
+            pass
+        else:
+            raise SystemExit(f"malformed current {slot} escaped the enclosing contract guard")
+    malformed = copy.deepcopy(declarations[0])
+    carrier = next(attribute for attribute in malformed["retAttrs"]
+                   if attribute.get("attr", {}).get("name")
+                   == "DotKt.Runtime.CompilerServices.KotlinNullableGenericAttribute")
+    carrier["args"][1]["bytes"] = base64.b64encode(
+        json.dumps({"t": "tv", "scope": "method", "i": 1}).encode()).decode()
+    try:
+        enclosing_contract(malformed)
+    except ValueError:
+        pass
+    else:
+        raise SystemExit("wrong current source generic index escaped the enclosing contract guard")
+
+print("nested closure/SAM preserve enclosing Kotlin result frames (six malformed-current mutations rejected)")

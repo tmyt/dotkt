@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Assert exact referenced existential result projection, including star-dependent nested carriers."""
 
+import base64
 import json
 import sys
 
@@ -13,6 +14,14 @@ def objects(node):
     elif isinstance(node, list):
         for value in node:
             yield from objects(value)
+
+
+def value_slot(slot):
+    # Signature modifiers select declarations; the stack value is the underlying
+    # slot. Do not remove modifiers nested inside a constructed type argument.
+    while slot.get("t") == "mod":
+        slot = slot["of"]
+    return slot
 
 
 if len(sys.argv) != 2:
@@ -67,8 +76,26 @@ semantic = {
     "name": "starprojection.ReferencedExistentialFlow`1",
     "args": [{"t": "tv", "scope": "method", "i": 0}],
 }
-if casts[0].get("type") != semantic:
-    raise SystemExit(f"referenced result is not projected to the consumer's semantic type: {casts[0]!r}")
+def assert_source_result(method):
+    if method.get("ret") != physical or len(method.get("typeParams", [])) != 1:
+        raise SystemExit(f"referenced result lost its carrier or method frame: {method!r}")
+    for attribute_name in ("KotlinTypeAttribute", "KotlinNullableGenericAttribute"):
+        carriers = [attribute for attribute in method.get("retAttrs", [])
+                    if attribute.get("attr", {}).get("name")
+                    == f"DotKt.Runtime.CompilerServices.{attribute_name}"]
+        if len(carriers) != 1:
+            raise SystemExit(f"referenced result must retain one {attribute_name}: {method!r}")
+        arguments = carriers[0].get("args", [])
+        if (len(arguments) != 2 or arguments[0].get("value") != "bir-json/1"
+                or json.loads(base64.b64decode(arguments[1]["bytes"], validate=True)) != semantic):
+            raise SystemExit(f"referenced result lost its source Flow<T> method frame: {method!r}")
+
+
+# Value slots and casts use the physical carrier. The original Kotlin application
+# belongs to declaration metadata, not to a second reified CLR result type.
+assert_source_result(methods[0])
+if casts[0].get("type") != physical:
+    raise SystemExit(f"referenced result cast does not use its physical carrier: {casts[0]!r}")
 
 referenced_exact = [
     method
@@ -82,11 +109,12 @@ if len(referenced_exact) != 1:
 exact_casts = [
     node
     for node in objects(referenced_exact[0].get("body", []))
-    if node.get("k") == "cast" and node.get("type") == semantic
+    if node.get("k") == "cast" and node.get("type") == physical
 ]
+assert_source_result(referenced_exact[0])
 if len(exact_casts) != 1:
     raise SystemExit(
-        f"referenced exact generic upcast did not retain its construction: {exact_casts!r}"
+        f"referenced generic upcast did not retain its physical carrier: {exact_casts!r}"
     )
 
 referenced_composed = [
@@ -104,6 +132,7 @@ composed_casts = [
     if node.get("k") == "cast"
 ]
 if sorted(composed_casts) != sorted([
+    "System.Object",
     "starprojection.ReferencedExistentialFusibleFlow$star",
     "starprojection.ReferencedExistentialFlow$star",
 ]):
@@ -189,8 +218,8 @@ again_calls = [
     and str(node.get("method", "")).startswith("$star$again$")
     and node.get("ret") == nested_carrier
 ]
-if len(again_calls) != 2:
-    raise SystemExit(f"star-dependent chained results must use the carrier twice: {again_calls!r}")
+if len(again_calls) != 3:
+    raise SystemExit(f"copy and both mixed chained results must use the carrier: {again_calls!r}")
 for again_call in again_calls:
     member_ref = again_call.get("memberRef", {})
     if (
@@ -207,7 +236,7 @@ value_getters = [
     and node.get("ownerType", {}).get("name") == "starprojection.ReferencedStarNested$star"
     and node.get("ret", {}).get("name") == "System.Object"
 ]
-if len(value_getters) != 2:
+if len(value_getters) != 4:
     raise SystemExit(
         f"referenced nested value use must bind through the existential carrier: {value_getters!r}"
     )
@@ -221,6 +250,31 @@ for value_getter in value_getters:
         raise SystemExit(
             f"referenced nested value/memberRef disagree with the physical slot: {value_getter!r}"
         )
+
+string_type = {"t": "fqn", "name": "System.String"}
+length_uses = [node for node in objects(body)
+               if node.get("k") == "clrPropGet" and node.get("type") == string_type
+               and node.get("name") == "Length"
+               and any(child in value_getters for child in objects(node.get("recv")))]
+if len(length_uses) != 1:
+    raise SystemExit("concrete nested String must consume its carrier result through Length")
+string_receiver = length_uses[0].get("recv", {})
+temps = [node for node in string_receiver.get("stmts", [])
+         if node.get("k") == "var"
+         and any(child in value_getters for child in objects(node.get("init")))]
+if len(temps) != 1 or string_receiver.get("result", {}).get("type") != string_type:
+    raise SystemExit("nested String use must evaluate the carrier getter once and project its result")
+string_projections = [node for node in objects(string_receiver.get("result"))
+                      if node.get("k") == "cast" and node.get("type") == string_type
+                      and node.get("e") == {"k": "local", "name": temps[0]["name"]}]
+if len(string_projections) != 1:
+    raise SystemExit("concrete nested String use lost its checked projection from the captured carrier result")
+length_member = length_uses[0].get("memberRef", {})
+if (length_member.get("declaringType") != string_type
+        or length_member.get("name") != "get_Length"
+        or length_member.get("returnType") != {"t": "fqn", "name": "System.Int32"}
+        or length_member.get("parameterTypes") != []):
+    raise SystemExit("concrete nested String use must retain its exact native Length accessor")
 
 mixed_calls = {}
 for node in objects(body):
@@ -248,15 +302,8 @@ for method_name, mixed_call in mixed_calls.items():
             f"mixed nested call/memberRef must state the physical carrier slot: {mixed_call!r}"
         )
 
-exact_nested = {
-    "t": "fqn",
-    "name": "starprojection.ReferencedStarNested`1",
-    "args": [{"t": "fqn", "name": "System.String"}],
-}
-for source_name, projected_type in {
-    "capturedNested": nested_carrier,
-    "exactNested": exact_nested,
-}.items():
+for source_name in ("capturedNested", "exactNested"):
+    projected_type = nested_carrier
     mixed_call = mixed_calls[source_name]
     matching_locals = [
         node
@@ -360,11 +407,25 @@ if not variant_member_calls:
     raise SystemExit("referenced variant class members did not bind through existential carriers")
 for variant_call in variant_member_calls:
     member_ref = variant_call.get("memberRef", {})
+    if variant_call.get("ownerType") == referenced_covariant_carrier:
+        expected_name = "$star$prop_get<value>$0"
+        expected_signature = []
+    else:
+        expected_name = "$star$render$0"
+        expected_signature = [{"t": "mod", "req": False,
+                               "m": {"t": "fqn", "name": "System.Object"},
+                               "of": {"t": "fqn", "name": "System.Object"}}]
     if (
         variant_call.get("virtual") is not True
+        or variant_call.get("method") != expected_name
+        or member_ref.get("kind") != "method"
+        or member_ref.get("assembly") != "RoundtripProducer"
+        or member_ref.get("name") != variant_call.get("method")
         or member_ref.get("declaringType") != variant_call.get("ownerType")
         or member_ref.get("returnType") != variant_call.get("ret")
-        or member_ref.get("parameterTypes") != variant_call.get("sig", [])
+        or member_ref.get("parameterTypes") != expected_signature
+        or [value_slot(slot) for slot in member_ref.get("parameterTypes", [])]
+        != variant_call.get("sig", [])
     ):
         raise SystemExit(f"referenced variant carrier call/memberRef disagree: {variant_call!r}")
 

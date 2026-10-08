@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Assert that existential calls and generated capture storage state exact physical carriers."""
 
+import base64
 import json
 import sys
 
@@ -33,7 +34,22 @@ semantic = {
     "args": [{"t": "tv", "scope": "method", "i": 0}],
 }
 
-exact_target = semantic
+def assert_source_result(method, source):
+    if method.get("ret") != physical:
+        raise SystemExit(f"result declaration must use the physical carrier: {method!r}")
+    for name in ("KotlinTypeAttribute", "KotlinNullableGenericAttribute"):
+        carriers = [attribute for attribute in method.get("retAttrs", [])
+                    if attribute.get("attr", {}).get("name")
+                    == f"DotKt.Runtime.CompilerServices.{name}"]
+        if len(carriers) != 1:
+            raise SystemExit(f"result must retain one {name}: {method!r}")
+        arguments = carriers[0].get("args", [])
+        if (len(arguments) != 2 or arguments[0].get("value") != "bir-json/1"
+                or json.loads(base64.b64decode(arguments[1]["bytes"], validate=True)) != source):
+            raise SystemExit(f"result lost its exact Kotlin source frame: {method!r}")
+
+
+exact_target = physical
 for method_name in (
     "runtimeTypesExactGenericUpcast",
     "runtimeTypesNullableExactGenericUpcast",
@@ -46,6 +62,7 @@ for method_name in (
     ]
     if len(exact_upcasts) != 1:
         raise SystemExit(f"found {len(exact_upcasts)} {method_name} methods, expected 1")
+    assert_source_result(exact_upcasts[0], semantic)
     exact_casts = [
         node
         for node in objects(exact_upcasts[0].get("body", []))
@@ -53,7 +70,7 @@ for method_name in (
     ]
     if len(exact_casts) != 1:
         raise SystemExit(
-            f"{method_name} did not retain its exact constructed target: {exact_casts!r}"
+            f"{method_name} did not retain its physical carrier target: {exact_casts!r}"
         )
 
 this_upcasts = [
@@ -67,12 +84,13 @@ this_target = {
     "args": [{"t": "tv", "scope": "type", "i": 0}],
 }
 if len(this_upcasts) != 1 or not any(
-    node.get("k") == "cast" and node.get("type") == this_target
+    node.get("k") == "cast" and node.get("type") == physical
     for node in objects(this_upcasts[0].get("body", []))
 ):
     raise SystemExit(
-        f"a this-based exact generic upcast did not retain its construction: {this_upcasts!r}"
+        f"a this-based generic upcast did not retain its physical carrier: {this_upcasts!r}"
     )
+assert_source_result(this_upcasts[0], this_target)
 
 composed = [
     method
@@ -89,6 +107,7 @@ composed_casts = [
     if node.get("k") == "cast"
 ]
 if sorted(composed_casts) != sorted([
+    "System.Object",
     "RuntimeTypesExistentialFusibleFlow$star",
     "RuntimeTypesExistentialFlow$star",
 ]):
@@ -105,6 +124,7 @@ for method_name in ("runtimeTypesFuse", "runtimeTypesFuseViaRealignedLocal"):
     ]
     if len(methods) != 1:
         raise SystemExit(f"found {len(methods)} {method_name} methods, expected 1")
+    assert_source_result(methods[0], semantic)
 
     calls = [
         node
@@ -137,9 +157,9 @@ for method_name in ("runtimeTypesFuse", "runtimeTypesFuseViaRealignedLocal"):
         raise SystemExit(
             f"found {len(casts)} semantic projections in {method_name}, expected 1"
         )
-    if casts[0].get("type") != semantic:
+    if casts[0].get("type") != physical:
         raise SystemExit(
-            f"{method_name} does not project to the caller's semantic type: {casts[0]!r}"
+            f"{method_name} does not project to its physical carrier: {casts[0]!r}"
         )
 
 reference_methods = [
@@ -199,14 +219,15 @@ closure_semantic = {
     "args": [{"t": "tv", "scope": "type", "i": 0}],
 }
 invoke = invokes[0]
+assert_source_result(invoke, closure_semantic)
 returns = [node for node in invoke.get("body", []) if node.get("k") == "return"]
 if len(returns) != 1 or returns[0].get("value", {}).get("k") != "cast":
     raise SystemExit(f"{closure_name}.invoke does not explicitly project its result: {invoke!r}")
 projection = returns[0]["value"]
 call = projection.get("e", {})
 if (
-    invoke.get("ret") != closure_semantic
-    or projection.get("type") != closure_semantic
+    invoke.get("ret") != physical
+    or projection.get("type") != physical
     or call.get("k") != "callInstance"
     or call.get("ownerType") != carrier
     or call.get("method") != "$star$fuse$0"
@@ -215,7 +236,7 @@ if (
     or call["recv"].get("name") != "__recv"
 ):
     raise SystemExit(
-        f"{closure_name}.invoke does not call the physical slot and project to its semantic return: {invoke!r}"
+        f"{closure_name}.invoke does not call and return its physical carrier: {invoke!r}"
     )
 
 sam_factories = [
@@ -243,12 +264,13 @@ if (
 sam_methods = [method for method in sam.get("methods", []) if method.get("name") == "fuse"]
 if len(sam_methods) != 1:
     raise SystemExit(f"found {len(sam_methods)} fuse methods on {sam_name!r}, expected 1")
+assert_source_result(sam_methods[0], closure_semantic)
 sam_returns = [node for node in sam_methods[0].get("body", []) if node.get("k") == "return"]
 sam_projection = sam_returns[0].get("value", {}) if len(sam_returns) == 1 else {}
 sam_call = sam_projection.get("e", {})
 if (
     sam_projection.get("k") != "cast"
-    or sam_projection.get("type") != closure_semantic
+    or sam_projection.get("type") != physical
     or sam_call.get("ownerType") != carrier
     or sam_call.get("method") != "$star$fuse$0"
     or sam_call.get("recv", {}).get("name") != "fusible"
@@ -305,7 +327,7 @@ sm_projections = [
     for node in objects(invoke_suspends[0].get("body", []))
     if node.get("k") == "cast" and node.get("e") is sm_calls[0]
 ]
-if len(sm_projections) != 1 or sm_projections[0].get("type") != closure_semantic:
+if len(sm_projections) != 1 or sm_projections[0].get("type") != physical:
     raise SystemExit(
         f"{sm_name}.invokeSuspend does not explicitly project its carrier result: {invoke_suspends[0]!r}"
     )
@@ -354,5 +376,5 @@ if len(value_peer_getters) != 1 or value_peer_getters[0].get("virtual") is not T
     )
 
 print(
-    "existential calls and generated capture storage state physical carriers with explicit semantic projections"
+    "existential calls and captures state physical carriers with exact source-result metadata"
 )

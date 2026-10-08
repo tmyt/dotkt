@@ -72,7 +72,7 @@ for helper, star_owner in (
         for node in default_reads
         if isinstance(node.get("ret"), dict)
     )
-    if returns != ["System.Object", "System.String"] or not all(
+    if returns != ["System.String", "object"] or not all(
         node.get("virtual") is True for node in default_reads
     ):
         raise SystemExit(
@@ -111,7 +111,7 @@ for class_name, star_owner in (
         for node in peer_reads
         if isinstance(node.get("ret"), dict)
     )
-    if returns != ["System.Object", "System.String"] or not all(
+    if returns != ["System.String", "object"] or not all(
         node.get("virtual") is True for node in peer_reads
     ):
         raise SystemExit(
@@ -194,7 +194,7 @@ value_getters = [
     for node in objects(nested_body)
     if node.get("k") == "callInstance"
     and node.get("ownerType", {}).get("name") == "DefaultArgStarNested$star"
-    and node.get("ret", {}).get("name") == "System.Object"
+    and node.get("ret") == {"t": "fqn", "name": "object"}
 ]
 if len(value_getters) != 1 or value_getters[0].get("virtual") is not True:
     raise SystemExit(
@@ -215,8 +215,7 @@ if len(inherited_helpers) != 1:
     )
 exact_nested = {
     "t": "fqn",
-    "name": "DefaultArgStarNested",
-    "args": [{"t": "fqn", "name": "System.String"}],
+    "name": "DefaultArgStarNested$star",
 }
 inherited_locals = [
     node
@@ -233,7 +232,7 @@ inherited_locals = [
 ]
 if len(inherited_locals) != 1:
     raise SystemExit(
-        "CIR: Base<B> must project Derived<*, String>'s inherited result to Nested<String>: "
+        "CIR: Base<B> must retain the exact Nested carrier for Derived<*, String>'s inherited result: "
         f"{inherited_locals!r}"
     )
 

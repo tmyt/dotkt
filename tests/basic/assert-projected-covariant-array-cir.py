@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Assert exact CLR carriers for projected covariant arrays and exact invariant projections."""
 
+import base64
 import json
 import sys
 
@@ -94,10 +95,35 @@ generic_reads = [
     if node.get("method") in ("firstProjectedValue", "first") and node.get("typeArgs") is not None
 ]
 if len(generic_reads) != 2 or any(
-    node.get("typeArgs") != [producer_carrier] or node.get("ret") != producer_carrier
+    node.get("typeArgs") != [producer_carrier] or node.get("ret") != fqn("object")
     for node in generic_reads
 ):
     raise SystemExit(f"generic projected-array reads did not close over Producer$star: {generic_reads!r}")
+for call in generic_reads:
+    projections = [node for node in objects(writable_storage["body"])
+                   if node.get("k") == "cast" and node.get("type") == producer_carrier
+                   and node.get("e") is call]
+    if len(projections) != 1:
+        raise SystemExit("generic projected-array read lacks its exact producer-carrier use projection")
+
+
+def source_attribute(declaration, slot, name, expected):
+    carriers = [attribute for attribute in declaration.get(slot, [])
+                if attribute.get("attr", {}).get("name") == f"DotKt.Runtime.CompilerServices.{name}"]
+    if len(carriers) != 1:
+        raise SystemExit("projected-array declaration lost its source type carrier")
+    args = carriers[0].get("args", [])
+    if (len(args) != 2 or args[0].get("value") != "bir-json/1"
+            or json.loads(base64.b64decode(args[1]["bytes"], validate=True)) != expected):
+        raise SystemExit("projected-array declaration lost its exact source application")
+
+
+for declaration in (method("firstProjectedValue"),
+                    next(item for item in type_def("ProjectedArrayHelper")["methods"] if item.get("name") == "first")):
+    if declaration.get("ret") != fqn("object") or declaration.get("typeParams") != ["T"]:
+        raise SystemExit("generic projected-array helper lost its method frame or opaque return")
+    source_attribute(declaration, "retAttrs", "KotlinNullableGenericAttribute",
+                     {"t": "tv", "scope": "method", "i": 0})
 
 holders = [item for item in root.get("types", []) if item.get("name") == "ProjectedProducerArrayHolder"]
 if len(holders) != 1:
@@ -281,9 +307,12 @@ if covariant_carrier not in collision_locals:
     raise SystemExit(f"a user __outer local in a generated frame was mistaken for lexical this: {collision_locals!r}")
 
 invariant = method("invariantProjectedValue")
-exact_invariant = array(fqn("InvariantValue", fqn("System.String")))
+exact_invariant = array(fqn("InvariantValue$star"))
 parameters = invariant.get("params", [])
 if len(parameters) != 1 or parameters[0].get("type") != exact_invariant:
-    raise SystemExit(f"invariant projected element was over-erased: {parameters!r}")
+    raise SystemExit(f"invariant projected element lost its declared carrier: {parameters!r}")
+source_attribute(parameters[0], "attrs", "KotlinTypeAttribute", {
+    "t": "array", "elem": {"t": "projection", "variance": "out", "of": {
+        "t": "fqn", "name": "InvariantValue", "args": [fqn("kotlin.String")]}}})
 
 print("projected covariant array carriers and invariant projection are exact")

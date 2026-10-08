@@ -549,8 +549,14 @@
           }
         },
         {
-          "k": "exprStmt",
-          "expr": {
+          "k": "var",
+          "name": "readonlyFromGeneric",
+          "type": {
+            "t": "fqn",
+            "name": "System.Collections.Generic.IReadOnlyList",
+            "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+          },
+          "init": {
             "k": "field",
             "ownerType": {
               "t": "fqn",
@@ -593,8 +599,14 @@
           }
         },
         {
-          "k": "exprStmt",
-          "expr": {
+          "k": "var",
+          "name": "mutableFromGeneric",
+          "type": {
+            "t": "fqn",
+            "name": "System.Collections.Generic.IList",
+            "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+          },
+          "init": {
             "k": "field",
             "ownerType": {
               "t": "fqn",

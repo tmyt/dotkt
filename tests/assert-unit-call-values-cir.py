@@ -50,8 +50,24 @@ if lane == "basic":
     assert sum(node.get("method") == "unitValueEffect" for node in objects(discarded)) == 1
     constrained = methods["unitConstrainedValue"]["body"]
     assert not any(unit_read(node) for node in objects(constrained)), constrained
-    calls = [node for node in objects(constrained) if node.get("k") == "constrainedCall"]
-    assert len(calls) == 1 and calls[0]["ret"] == {"t": "fqn", "name": "kotlin.Unit"}, calls
+    carrier = {"t": "fqn", "name": "UnitCallSource$star"}
+    object_type = {"t": "fqn", "name": "object"}
+    calls = [node for node in objects(constrained)
+             if node.get("k") == "callInstance" and node.get("ownerType") == carrier]
+    assert len(calls) == 1, calls
+    call = calls[0]
+    assert (call.get("method") == "$star$get$0" and call.get("virtual") is True
+            and call.get("sig") == [] and call.get("args") == []
+            and call.get("ret") == object_type), call
+    projections = [node for node in objects(constrained)
+                   if node.get("k") == "cast" and node.get("e") == call
+                   and node.get("type") == {"t": "fqn", "name": "kotlin.Unit"}]
+    assert len(projections) == 1, projections
+    owners = [owner for owner in cir.get("types", []) if owner.get("name") == carrier["name"]]
+    assert len(owners) == 1 and owners[0].get("kind") == "interface", owners
+    entries = [entry for entry in owners[0].get("methods", []) if entry.get("name") == call["method"]]
+    assert (len(entries) == 1 and entries[0].get("abstract") is True
+            and entries[0].get("params") == [] and entries[0].get("ret") == object_type), entries
 elif lane == "consumer":
     returned = methods["referencedUnitReturn"]["body"][0]["value"]
     assert returned in blocks, returned

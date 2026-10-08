@@ -656,6 +656,7 @@ class GenericMetadataRoundtripTests {
         val exactNested: ReferencedStarNested<String> = mixed.exactNested().again()
         ClassicAssert.AreEqual(29, capturedNested.value)
         ClassicAssert.AreEqual("exact-nested", exactNested.value)
+        ClassicAssert.AreEqual(12, exactNested.value.length)
         // The frontend-selected concrete-B overload must select its exact existential slot; name+arity sees both
         // choose(A) and choose(String) and is insufficient after the A slot becomes star-input Nothing.
         ClassicAssert.AreEqual("string:ok", mixed.choose("ok"))

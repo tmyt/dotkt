@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import base64
 import json
 import sys
 
@@ -43,9 +44,9 @@ if len(accessors) != 1:
 
 accessor = accessors[0]
 base = {"t": "fqn", "name": "roundtrip.protectedmethodgeneric.ReferencedProtectedMethodGenericBase"}
-physical_array = {"t": "array", "elem": {"t": "tv", "scope": "method", "i": 1}}
+physical_array = {"t": "fqn", "name": "System.Array"}
 string_type = {"t": "fqn", "name": "System.String"}
-call_array = {"t": "array", "elem": string_type}
+call_array = physical_array
 expected_params = [base, physical_array]
 actual_params = [param.get("type") for param in accessor.get("params", [])]
 if actual_params != expected_params:
@@ -59,6 +60,19 @@ expected_frame = [
 ]
 if accessor.get("typeParams") != expected_frame or accessor.get("ret") != physical_array:
     raise SystemExit(f"method-generic UnsafeAccessor lost its generic frame or physical return: {accessor!r}")
+
+# The CLR slot is opaque, not N(T)[]. The nullable Kotlin element still belongs
+# to source method T, independently of the companion used by the target frame.
+source_array = {"t": "array", "elem": {"t": "nullable", "of": {"t": "tv", "scope": "method", "i": 0}}}
+carriers = [attribute for attribute in accessor.get("retAttrs", [])
+            if attribute.get("attr", {}).get("name")
+            == "DotKt.Runtime.CompilerServices.KotlinNullableGenericAttribute"]
+if len(carriers) != 1:
+    raise SystemExit("method-generic UnsafeAccessor must retain one source array result carrier")
+arguments = carriers[0].get("args", [])
+if (len(arguments) != 2 or arguments[0].get("value") != "bir-json/1"
+        or json.loads(base64.b64decode(arguments[1]["bytes"], validate=True)) != source_array):
+    raise SystemExit("method-generic UnsafeAccessor lost its source Array<T?> result frame")
 
 calls = [
     node

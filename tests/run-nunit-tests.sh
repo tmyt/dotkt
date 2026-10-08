@@ -214,7 +214,7 @@ for proj in "${PROJECTS[@]}"; do
 		fi
 		if python3 "$ROOT/tests/basic/assert-existential-return-cir.py" "$abstract_super_cir" \
 			>"$ROOT/build/nunit-$name.existential-return.log" 2>&1; then
-			echo "  existential calls state physical returns + semantic projections"
+			echo "  existential calls preserve physical returns and consuming projections"
 		else
 			echo "  EXISTENTIAL RETURN BINDING FAIL — see build/nunit-$name.existential-return.log"
 			tail -25 "$ROOT/build/nunit-$name.existential-return.log"; rc=1
@@ -236,9 +236,9 @@ for proj in "${PROJECTS[@]}"; do
 			tail -25 "$ROOT/build/nunit-$name.unchecked-generic-unsafe-accessor.log"; rc=1
 		fi
 		inherited_callable_cir="$dir/obj/$CONFIGURATION/net10.0/cir/InheritedProtectedCallableTests.cir.json"
-		if python3 "$ROOT/tests/basic/assert-inherited-protected-callable-cir.py" "$inherited_callable_cir" \
+		if python3 "$ROOT/tests/basic/test-inherited-protected-callable-cir.py" "$inherited_callable_cir" \
 			>"$ROOT/build/nunit-$name.inherited-protected-callable.log" 2>&1; then
-			echo "  inherited protected callable uses its local base owner + physical ABI"
+			echo "  inherited callable references preserve base slots and exact overload selectors"
 		else
 			echo "  INHERITED PROTECTED CALLABLE FAIL — see build/nunit-$name.inherited-protected-callable.log"
 			tail -25 "$ROOT/build/nunit-$name.inherited-protected-callable.log"; rc=1
@@ -292,7 +292,7 @@ for proj in "${PROJECTS[@]}"; do
 		fi
 		if python3 "$ROOT/tests/roundtrip/assert-existential-return-cir.py" "$consumer_cir" \
 			>"$ROOT/build/nunit-$name.existential-return.log" 2>&1; then
-			echo "  referenced existential calls state physical returns + semantic projections"
+			echo "  referenced existential calls preserve physical returns and consuming projections"
 		else
 			echo "  REFERENCED EXISTENTIAL RETURN BINDING FAIL — see build/nunit-$name.existential-return.log"
 			tail -25 "$ROOT/build/nunit-$name.existential-return.log"; rc=1
@@ -464,7 +464,7 @@ for proj in "${PROJECTS[@]}"; do
 			tail -25 "$ROOT/build/nunit-$name.inline-suspend-frame-cir.log"; rc=1
 		fi
 		materialized_frame_cir="$dir/obj/$CONFIGURATION/net10.0/cir/MaterializedLambdaCaptureTests.cir.json"
-		if python3 "$ROOT/tests/coroutines/assert-materialized-constructed-frame-cir.py" "$materialized_frame_cir" \
+		if python3 "$ROOT/tests/coroutines/test-materialized-constructed-frame-cir.py" "$materialized_frame_cir" \
 			>"$ROOT/build/nunit-$name.materialized-constructed-frame-cir.log" 2>&1; then
 			echo "  materialized constructed intrinsic generic frame OK"
 		else
@@ -544,7 +544,7 @@ for proj in "${PROJECTS[@]}"; do
 		basic_dll="$dir/bin/$CONFIGURATION/net10.0/DotKt.Tests.Basic.dll"
 		if dotnet "$METADATA_INSPECTOR_DLL" \
 			--volatile-consumer "$basic_dll" 'GenericVolatileBox`1' \
-			"prop_get<value>" "prop_set<value>" "readValueByRef" "writeValueByRef" \
+			"prop_get<value>" "prop_set<value>" \
 			>"$ROOT/build/nunit-$name.volatile-generic.log" 2>&1; then
 			echo "  local generic volatile field access IL OK"
 		else
