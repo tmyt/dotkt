@@ -378,7 +378,7 @@ static class GenericArrayValueLowering
             };
             var nativeCall = new JsonObject {
                 ["k"] = "clrGenericStatic", ["type"] = TypeJson.Write(construction),
-                ["method"] = "Produce", ["args"] = new JsonArray(),
+                ["method"] = "Produce", ["args"] = new JsonArray(Local("values")),
                 ["typeArgs"] = new JsonArray(TypeJson.Write(array.Elem)),
                 ["argTypes"] = new JsonArray(TypeJson.Write(array)),
                 ["memberRef"] = nativeSignature,
@@ -388,7 +388,8 @@ static class GenericArrayValueLowering
             var signatureBefore = nativeSignature.ToJsonString();
             var document = new JsonObject { ["fileClass"] = "ResultProjection", ["methods"] = new JsonArray(
                 new JsonObject { ["name"] = "Use", ["typeParams"] = new JsonArray("T"),
-                    ["params"] = new JsonArray(), ["ret"] = TypeJson.Write(array),
+                    ["params"] = new JsonArray(new JsonObject { ["name"] = "values", ["type"] = TypeJson.Write(array) }),
+                    ["ret"] = TypeJson.Write(array),
                     ["body"] = new JsonArray(new JsonObject { ["k"] = "return", ["value"] = nativeCall }) }) };
             ApplyAll(new[] { document });
             if (new[] { "ret", "dynRet", "sty" }.Any(key => TypeJson.Read(nativeCall[key])

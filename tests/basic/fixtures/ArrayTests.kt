@@ -41,15 +41,28 @@ private class ArrResizeItem : ArrResizeNode
 private fun <T : ArrResizeNode> arrResizeInternal(item: T): Int {
     var values = arrayOfNulls<ArrResizeNode>(4) as Array<T?>
     values[0] = item
+    val original = values
     check(values[0] === item)
     val cloned = values.copyOf()
     check(cloned !== values && cloned[0] === item)
+    check(cloned::class == original::class)
+    cloned[0] = null
+    check(values[0] === item)
     values = values.copyOf(8)
     check(values[0] === item && values[7] == null)
+    check(values !== original && values::class == original::class)
+    values[4] = item
+    check(values[4] === item && original.size == 4 && original[0] === item)
     val sliced = values.copyOfRange(0, 2)
     check(sliced[0] === item && sliced[1] == null)
+    check(sliced !== values && sliced::class == original::class)
+    sliced[0] = null
+    check(values[0] === item)
     val shrunk = values.copyOf(1)
     check(shrunk[0] === item && shrunk.size == 1)
+    check(shrunk !== values && shrunk::class == original::class)
+    shrunk[0] = null
+    check(values[0] === item)
     return values.size
 }
 
