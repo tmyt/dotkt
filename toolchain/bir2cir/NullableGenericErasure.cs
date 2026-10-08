@@ -146,15 +146,28 @@ static class NullableGenericErasure
                 throw new InvalidOperationException("Value erasure changed a captured declaration constraint or its generic application");
         }
         Console.WriteLine("[value erasure declaration constraints] self-test OK (captured bounds, erased value, exact argument, idempotence)");
-        foreach (var kind in new[] { "isInst", "classRef" })
+        foreach (var kind in new[] { "isInst", "classRef", "enumValues", "enumParse", "cast", "isInstRef" })
         {
             var classifier = new JsonObject { ["k"] = kind,
-                ["type"] = TypeJson.Write(new TypeNode.Tv("method", 0)) };
+                ["type"] = TypeJson.Write(new TypeNode.Tv("method", 0)),
+                ["reifiedTypeOperand"] = true };
             for (var iteration = 0; iteration < 2; iteration++)
             {
                 Apply(classifier, _ => false);
                 if (TypeJson.Read(classifier["type"]) != new TypeNode.Tv("method", 0))
                     throw new InvalidOperationException("Value erasure changed a runtime classifier into a value slot");
+            }
+        }
+        foreach (var kind in new[] { "cast", "isInstRef", "var" })
+        {
+            var value = new JsonObject { ["k"] = kind,
+                ["type"] = TypeJson.Write(new TypeNode.Tv("method", 0)),
+                ["reifiedTypeOperand"] = false };
+            for (var iteration = 0; iteration < 2; iteration++)
+            {
+                Apply(value, _ => false);
+                if (TypeJson.Read(value["type"]) != new TypeNode.Fqn("object"))
+                    throw new InvalidOperationException("Value erasure retained an unchecked generic value operand");
             }
         }
         foreach (var nullable in new[] { false, true })
@@ -613,7 +626,8 @@ static class NullableGenericErasure
                         "typeArgs" => Pos.Argument,
                         // Runtime classifiers describe the tested/reflected type,
                         // not a value slot that may store an erased Kotlin value.
-                        "type" when k is "isInst" or "classRef" => Pos.Bound,
+                        "type" when k is "classRef" or "enumValues" or "enumParse"
+                            || KotlinTypeWitness.NeedsWitness(obj) => Pos.Bound,
                         // `resolvedMemberParams` is always a resolved .NET declaration; `argTypes` is the SAME vector under
                         // another name once a call is `clr*`-bound (NetInteropBinding writes the callee's declared
                         // signature there), while on a Kotlin `new` it is the caller's own substituted view.
