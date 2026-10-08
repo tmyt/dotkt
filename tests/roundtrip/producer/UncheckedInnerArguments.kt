@@ -2,12 +2,23 @@ package roundtrip.innercast
 
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
+import kotlin.clr.ClrField
 
 class InnerCastOwner<T>(val value: T) {
     inner class Item(val count: Int)
     inner class GenericItem<U>(val payload: U, val count: Int) {
         fun sameCount(other: GenericItem<U>): Boolean = count == other.count
     }
+    inner class FieldItem {
+        lateinit var label: String
+        @ClrField var count: Int = 0
+    }
+    inner class Middle<U>(val own: U) {
+        inner class Leaf(val payload: T = value)
+    }
+
+    fun writeFields(item: FieldItem) { item.label = "written"; item.count = 19 }
+    fun readFields(item: FieldItem): String = item.label + item.count
 
     private fun consume(item: Item): Int = item.count
     fun ordinary(raw: Any): Int = consume(raw as InnerCastOwner<T>.Item)

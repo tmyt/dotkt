@@ -2541,6 +2541,39 @@ sealed partial class ReferenceMetadataIndex
     // member table.  The caller retains the Kotlin vocabulary until bir2cir asks this index for the
     // concrete CIR owner/member pair. The index must consume the source-member/property carrier on that MethodDef;
     // reconstructing a generated spelling would make an unrelated source declaration rename change this binding.
+    // A direct field projection must not select an authored/custom property getter.
+    public bool TryStarProjectionField(TypeNode.Fqn sourceOwner, string sourceName, string accessorKind,
+        out string erasedOwner, out string erasedMember, out TypeNode[] erasedSignature,
+        out TypeNode declarationResult, out TypeNode physicalResult)
+    {
+        erasedOwner = erasedMember = null;
+        erasedSignature = null;
+        declarationResult = physicalResult = null;
+        if (sourceOwner == null || sourceName == null || accessorKind is not ("get" or "set")
+            || !TryInnerCapturedCount(sourceOwner.Name, out var captured) || captured <= 0
+            || !TryExistentialPhysicalOwner(sourceOwner.Name, out var carrier)
+            || !TryMembersByBirOwner(carrier, out var members)
+            || !TryExistentialSemanticOwner(carrier, out var semanticOwner)) return false;
+        var reflectedOwner = ResolveRefType(sourceOwner.Name, sourceOwner.Args?.Length ?? 0);
+        var field = reflectedOwner?.GetField(sourceName,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly);
+        if (field == null || accessorKind == "set" && field.IsInitOnly) return false;
+        var fieldType = KotlinTypeOf(field.GetCustomAttributesData(), field.DeclaringType?.Assembly)
+            ?? DeclarationTypeNode(field.FieldType);
+        var slots = members.Where(member => !member.IsStatic && member.MethodArity == 0
+            && member.SourcePropertyName == sourceName && member.AccessorKind == accessorKind
+            && member.PropertyAssociation == semanticOwner + ":field:" + sourceName
+            && member.ParamCount == (accessorKind == "get" ? 0 : 1)).ToList();
+        if (fieldType == null || slots.Count != 1) return false;
+        var selected = slots[0];
+        erasedOwner = carrier;
+        erasedMember = selected.Name;
+        erasedSignature = selected.ParamTypeNodes;
+        declarationResult = accessorKind == "get" ? fieldType : new TypeNode.Fqn("kotlin.Unit");
+        physicalResult = selected.ReturnTypeNode ?? selected.ReturnType;
+        return true;
+    }
+
     public bool TryStarProjectionMember(TypeNode.Fqn sourceOwner, string sourceMember, string accessorKind,
         int methodArity,
         IReadOnlyList<TypeNode> authoredSignature, int paramCount, string declarationId,
@@ -2553,8 +2586,9 @@ sealed partial class ReferenceMetadataIndex
         physicalResult = null;
         if (sourceOwner == null || sourceMember == null) return false;
         if (!TryExistentialPhysicalOwner(sourceOwner.Name, out var candidateOwner)
-            || !TryMembersByBirOwner(candidateOwner, out var members)
-            || !TryMembersByBirOwner(sourceOwner.Name, out var semanticMembers)) return false;
+            || !TryMembersByBirOwner(candidateOwner, out var members)) return false;
+        TryMembersByBirOwner(sourceOwner.Name, out var semanticMembers);
+        semanticMembers ??= new List<MemberBinding>();
 
         // Both selection steps describe the Kotlin declaration. A projected physical parameter such as
         // Sink$star cannot identify an authored Sink<T> signature before the existential slot is selected.
@@ -2580,6 +2614,10 @@ sealed partial class ReferenceMetadataIndex
                     || ps.Select((p, i) => ForeignStarDeclarationDescribesCall(
                         p, authoredSignature[i], sourceOwner.Args ?? Array.Empty<TypeNode>())).All(x => x))))
             .ToList();
+        if (declarations.Count == 0 && declarationId == null && methodArity == 0
+            && paramCount == (accessorKind == "get" ? 0 : 1))
+            return TryStarProjectionField(sourceOwner, sourceMember, accessorKind,
+                out erasedOwner, out erasedMember, out erasedSignature, out declarationResult, out physicalResult);
         if (declarations.Count != 1) return false;
 
         // Select the actual MethodDef on the trusted existential owner through its explicit source identity. Its Name

@@ -68,4 +68,30 @@ class UncheckedInnerArgumentTests {
         val other: Any = InnerCastOwner(42).GenericItem("reference", 17)
         check(castAndCompareGeneric<String, Int>(raw, other))
     }
+
+    @TestAttribute
+    @Suppress("DEPRECATION_ERROR")
+    fun directFieldsKeepTheirStorageAndLateinitCheckThroughInnerValues() {
+        val reference = InnerCastOwner("reference")
+        val item = reference.FieldItem()
+        var uninitialized = false
+        try { item.label } catch (e: UninitializedPropertyAccessException) { uninitialized = true }
+        check(uninitialized)
+        item.label = "local"
+        item.count = 7
+        check(item.label + item.count == "local7")
+        reference.writeFields(item)
+        check(reference.readFields(item) == "written19")
+        val raw: Any = item
+        val unchecked = raw as InnerCastOwner<Int>.FieldItem
+        unchecked.count = 23
+        check(item.count == 23)
+        check(InnerCastOwner(42).readFields(unchecked) == "written23")
+    }
+
+    @TestAttribute
+    fun nestedInnerConstructorDefaultsProjectTheSameTemporaryArguments() {
+        val owner = InnerCastOwner("seed")
+        check(owner.Middle(owner.Item(29)).Leaf().payload == "seed")
+    }
 }

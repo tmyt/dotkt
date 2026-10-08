@@ -106,7 +106,7 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   accepted by a parameter of that source type, including across DLLs and in suspend methods. Parameters, returns,
   fields, and nested value positions share the representation so forwarding or storing that value does not introduce
   an enclosing-frame check. Construction, inheritance, lexical receivers, and the hidden enclosing-instance slot
-  retain their exact CLR construction.
+  retain their exact CLR class head; nested type arguments still use their ordinary physical value representation.
   It does not erase ordinary invariant generic declarations that do not capture an enclosing frame, or change
   imported CLR declaration signatures.
 - **Generic members retain owner-dependent Kotlin constraints as metadata, not CLR constraint rows.**

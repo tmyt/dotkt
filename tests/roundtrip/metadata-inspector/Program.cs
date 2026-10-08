@@ -169,7 +169,7 @@ VerifyDll(args[0]);
 VerifyOwnershipDll(args[0]);
 VerifyCovariantPropertyBridge(args[0]);
 VerifyReverseEnumeratorBridge(args[0]);
-VerifyUnsafeAccessorDll(args[6]);
+VerifyUnsafeAccessorDll(args[6], args[0]);
 VerifyKlib(args[1]);
 Console.WriteLine("companion + nested ownership semantic BIR / physical CIR / DLL / KLIB linkage: OK");
 
@@ -1208,7 +1208,7 @@ static void VerifyOwnershipDll(string path)
         "top-level local class is not nested under its file facade");
 }
 
-static void VerifyUnsafeAccessorDll(string path)
+static void VerifyUnsafeAccessorDll(string path, string producerPath)
 {
     using var stream = File.OpenRead(path);
     using var pe = new PEReader(stream);
@@ -1246,9 +1246,36 @@ static void VerifyUnsafeAccessorDll(string path)
 
     var secretAccessors = accessors.Where(pair =>
         md.GetString(pair.Definition.Name).Contains("$prop_get_secret_", StringComparison.Ordinal)).ToArray();
-    Require(secretAccessors.Length == 6, "unexpected prop_get<secret> UnsafeAccessor set");
-    Require(secretAccessors.Count(pair => md.GetTypeDefinition(pair.TypeHandle).GetGenericParameters().Count == 1) == 5,
+    Require(secretAccessors.Length == 5, "unexpected prop_get<secret> UnsafeAccessor set");
+    Require(secretAccessors.Count(pair => md.GetTypeDefinition(pair.TypeHandle).GetGenericParameters().Count == 1) == 4,
         "generic owner slots were not preserved on generic UnsafeAccessor holder types");
+    // The captured inner default now uses its public carrier slot, not a private concrete getter accessor.
+    // Select that slot from trusted source metadata rather than assuming its compiler-generated physical name.
+    using var producerStream = File.OpenRead(producerPath);
+    using var producerPe = new PEReader(producerStream);
+    var producerMd = producerPe.GetMetadataReader();
+    var innerCarrier = producerMd.TypeDefinitions.Single(handle =>
+    {
+        var definition = producerMd.GetTypeDefinition(handle);
+        if ((definition.Attributes & TypeAttributes.Interface) == 0
+            || !HasAttribute(producerMd, handle, "DotKt.Runtime.CompilerServices.KotlinTypeAttribute")) return false;
+        using var source = CarrierDocument(producerMd, handle, "DotKt.Runtime.CompilerServices.KotlinTypeAttribute");
+        return source.RootElement.GetProperty("name").GetString() == "roundtrip.nc.NestedGenericPrivateDefaultOwner.Entry";
+    });
+    var innerGetter = producerMd.GetTypeDefinition(innerCarrier).GetMethods().Single(handle =>
+    {
+        if (!HasMethodAttribute(producerMd, handle, "DotKt.Runtime.CompilerServices.KotlinPropertyAccessorAttribute")) return false;
+        using var source = DecodeCarrierDocument(producerMd,
+            producerMd.GetMethodDefinition(handle).GetCustomAttributes(),
+            "DotKt.Runtime.CompilerServices.KotlinPropertyAccessorAttribute");
+        return source.RootElement.GetProperty("name").GetString() == "secret"
+            && source.RootElement.GetProperty("kind").GetString() == "get";
+    });
+    var innerGetterName = producerMd.GetString(producerMd.GetMethodDefinition(innerGetter).Name);
+    Require(md.MemberReferences.Select(md.GetMemberReference).Any(member => member.GetKind() == MemberReferenceKind.Method
+            && TypeName(md, member.Parent) == DefinitionName(producerMd, innerCarrier)
+            && md.GetString(member.Name) == innerGetterName),
+        "captured inner default did not call its metadata-selected public carrier getter");
     Require(secretAccessors.Any(pair => md.GetTypeDefinition(pair.TypeHandle).GetGenericParameters().Any(handle =>
             md.GetGenericParameter(handle).GetConstraints().Any(constraint =>
                 TypeName(md, md.GetGenericParameterConstraint(constraint).Type) == "roundtrip.nc.PrivateDefaultBound"))),
