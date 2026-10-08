@@ -171,8 +171,12 @@ static class CovariantInterfaceReturnBridge
                     for (var parameterIndex = 0; parameterIndex < slotParamNodes.Count; parameterIndex++)
                         if (slotParamNodes[parameterIndex] is JsonObject slotParameter
                             && slotParameter[FunctionSignatureIdentity.Key] is JsonNode discriminator)
+                        {
                             bridgeParameters[parameterIndex][FunctionSignatureIdentity.Key] = TypeJson.Write(
                                 SubstOwnerTvs(TypeJson.Read(discriminator), ifaceArgs));
+                            bridgeParameters[parameterIndex][FunctionSignatureIdentity.PhysicalKey] =
+                                slotParameter[FunctionSignatureIdentity.PhysicalKey]?.DeepClone();
+                        }
                     bridges[key] = bridge;
                     methods.Add(bridge);
                     if (propertyName != null)

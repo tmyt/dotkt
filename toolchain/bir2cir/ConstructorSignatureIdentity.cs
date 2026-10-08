@@ -72,7 +72,10 @@ static class ConstructorSignatureIdentity
                 if (ctor["params"] is JsonArray ctorParameters)
                     foreach (var parameter in ctorParameters.OfType<JsonObject>())
                         if (TypeJson.Read(parameter[FunctionSignatureIdentity.Key]) is TypeNode.Tv)
+                        {
                             parameter.Remove(FunctionSignatureIdentity.Key);
+                            parameter.Remove(FunctionSignatureIdentity.PhysicalKey);
+                        }
             // Arity survives every value-type projection. Reserve identity for the
             // whole overload family before later passes expose its final collisions.
             var groups = constructors.OfType<JsonObject>()
@@ -106,6 +109,7 @@ static class ConstructorSignatureIdentity
                     // retain their own physical representation and modifiers.
                     var first = (JsonObject)parameters[0];
                     first[FunctionSignatureIdentity.Key] = TypeJson.Write(new TypeNode.Fqn(marker));
+                    first.Remove(FunctionSignatureIdentity.PhysicalKey);
                     first[PhysicalKey] = true;
                 }
         });

@@ -30,6 +30,7 @@ static class Bir2Cir
                 DelegateEntryLowering.SelfTest();
                 StdlibBindingOverlay.SelfTest();
                 DeclarationIdentityBinding.SelfTest();
+                FunctionSignatureIdentity.SelfTest();
                 KotlinPropertyAccessors.SelfTestAccessorSignatures();
                 LexicalDeclarationIds.SelfTest();
                 ExistentialReceiverBinding.SelfTest();
@@ -1675,6 +1676,7 @@ sealed class Pipeline
         // then the only surviving carrier, and ilemit must still receive the complete fail-closed role table.
         var fixedMemberTable = loweredRoots.Select(file => (file.Root as JsonObject)?["wellKnownRefs"])
             .FirstOrDefault(table => table != null)?.DeepClone();
+        var parameterSignatureDefinitions = FunctionSignatureIdentity.SynthDefsFile(loweredRoots.Select(file => file.Root));
         foreach (var (lowered, outputName) in loweredRoots)
         {
             // Physical coercion can author or clone bound calls. Validate the final call graph and consume
@@ -1687,6 +1689,15 @@ sealed class Pipeline
             // static type in the assembly). Skips only when types AND methods AND fields are all empty; never in ref.
             if (!_options.RefBuild && IsEmptyCir(lowered)) continue;
             files.Add(new CirFile(outputName, lowered.ToJsonString(JsonOptions.Indented)));
+        }
+
+        if (parameterSignatureDefinitions["types"] is JsonArray { Count: > 0 })
+        {
+            if (files.Any(file => file.OutputName == FunctionSignatureIdentity.OutputName))
+                throw new InvalidOperationException("bir2cir: reserved parameter-signature CIR name collides with an input file");
+            if (fixedMemberTable != null) parameterSignatureDefinitions["wellKnownRefs"] = fixedMemberTable.DeepClone();
+            files.Insert(0, new CirFile(FunctionSignatureIdentity.OutputName,
+                parameterSignatureDefinitions.ToJsonString(JsonOptions.Indented)));
         }
 
         // #220: both stdlib twins define the canonical wide-delegate family. This is a physical CLR declaration,

@@ -448,8 +448,8 @@ static class KotlinOverrideSlotBridge
                     constructedSlotTypeParams, unitValueReturn);
                 for (var i = 0; i < declParams.Count; i++)
                     if (slotSignature == null && declParams[i]?[FunctionSignatureIdentity.Key] is JsonNode discriminator)
-                        descriptor["params"][i] = TypeJson.Write(new TypeNode.Mod(false,
-                            SupertypeGraph.SubstOwnerTvs(TypeJson.Read(discriminator), ownArgs), slotParams[i]));
+                        descriptor["params"][i] = TypeJson.Write(FunctionSignatureIdentity.SignatureType(
+                            (JsonObject)declParams[i], slotParams[i], marker => SupertypeGraph.SubstOwnerTvs(marker, ownArgs)));
                 AddImplDescriptor(impl, "clrInterfaceImpls", descriptor);
                 return;
             }
@@ -514,6 +514,7 @@ static class KotlinOverrideSlotBridge
                             // its marker again would wrap the physical slot twice.
                             parameter["type"] = TypeJson.Write(signature);
                             parameter.Remove(FunctionSignatureIdentity.Key);
+                            parameter.Remove(FunctionSignatureIdentity.PhysicalKey);
                         }
                 // Cold suspend entries share an object result, but a parameter conversion still
                 // needs its own MethodImpl there as well as on the public Task entry.
@@ -740,9 +741,9 @@ static class KotlinOverrideSlotBridge
                     descriptorOwner.Name == spec.Name
                         ? slotParamNodes.OfType<JsonObject>().Select((parameter, index) =>
                             parameter[FunctionSignatureIdentity.Key] is JsonNode discriminator
-                                ? (TypeNode)new TypeNode.Mod(false,
-                                    SupertypeGraph.SubstOwnerTvs(TypeJson.Read(discriminator),
-                                        supArgs.Select(RuntimeConstructionArgument).ToArray()), slotParams[index])
+                                ? FunctionSignatureIdentity.SignatureType(parameter, slotParams[index],
+                                    marker => SupertypeGraph.SubstOwnerTvs(marker,
+                                        supArgs.Select(RuntimeConstructionArgument).ToArray()))
                                 : slotParams[index]).ToArray()
                         : null);
             }
