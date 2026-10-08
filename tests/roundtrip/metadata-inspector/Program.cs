@@ -3,7 +3,10 @@ using System.IO.Compression;
 using System.Reflection;
 using System.Reflection.Emit;
 using System.Reflection.Metadata;
+using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
@@ -170,6 +173,7 @@ VerifyOwnershipDll(args[0]);
 VerifyCovariantPropertyBridge(args[0]);
 VerifyReverseEnumeratorBridge(args[0]);
 VerifyUnsafeAccessorDll(args[6]);
+VerifyGenericPrivateDefaultCarriers(args[0], args[6]);
 VerifyKlib(args[1]);
 Console.WriteLine("companion + nested ownership semantic BIR / physical CIR / DLL / KLIB linkage: OK");
 
@@ -835,9 +839,23 @@ static void VerifyCovariantPropertyBridge(string producerPath)
         var ownerHandle = md.TypeDefinitions.Single(handle =>
             md.GetString(md.GetTypeDefinition(handle).Name) == ownerName);
         var owner = md.GetTypeDefinition(ownerHandle);
-        var bridge = owner.GetMethods().Single(handle =>
-            md.GetString(md.GetMethodDefinition(handle).Name)
-                .StartsWith("dotkt$covar$prop_get_" + propertyName + "_$", StringComparison.Ordinal));
+        const string accessorAttribute = "DotKt.Runtime.CompilerServices.KotlinPropertyAccessorAttribute";
+        var methodImplBodies = owner.GetMethodImplementations()
+            .Select(handle => md.GetMethodImplementation(handle).MethodBody)
+            .Where(handle => handle.Kind == HandleKind.MethodDefinition)
+            .Select(handle => (MethodDefinitionHandle)handle)
+            .ToArray();
+        var bridge = methodImplBodies.Distinct().Single(handle =>
+        {
+            var attributes = md.GetMethodDefinition(handle).GetCustomAttributes();
+            if (!attributes.Select(md.GetCustomAttribute).Any(attribute => AttributeName(md, attribute) == accessorAttribute))
+                return false;
+            using var carrier = DecodeCarrierDocument(md, attributes, accessorAttribute);
+            var root = carrier.RootElement;
+            return root.GetProperty("name").GetString() == propertyName
+                && root.GetProperty("kind").GetString() == "get"
+                && root.TryGetProperty("sourceAssociation", out _);
+        });
         var associated = owner.GetProperties().Where(handle =>
                 md.GetString(md.GetPropertyDefinition(handle).Name) == propertyName)
             .Select(handle => md.GetPropertyDefinition(handle).GetAccessors().Getter)
@@ -849,11 +867,18 @@ static void VerifyCovariantPropertyBridge(string producerPath)
                 .Any(attribute => AttributeName(md, attribute) ==
                     "DotKt.Runtime.CompilerServices.KotlinPropertyAccessorAttribute"),
             $"covariant property '{ownerName}.{propertyName}' MethodImpl bridge has no exact Kotlin accessor carrier");
-        var methodImplBodies = owner.GetMethodImplementations()
-            .Select(handle => md.GetMethodImplementation(handle).MethodBody)
-            .Where(handle => handle.Kind == HandleKind.MethodDefinition)
-            .Select(handle => (MethodDefinitionHandle)handle)
-            .ToArray();
+        using var bridgeCarrier = DecodeCarrierDocument(md, md.GetMethodDefinition(bridge).GetCustomAttributes(), accessorAttribute);
+        var sourceAssociation = bridgeCarrier.RootElement.GetProperty("sourceAssociation").GetString();
+        var sourceGetters = owner.GetProperties().Where(handle => md.GetString(md.GetPropertyDefinition(handle).Name) == propertyName)
+            .Select(handle => md.GetPropertyDefinition(handle).GetAccessors().Getter)
+            .Where(getter => !getter.IsNil && getter != bridge)
+            .Count(getter =>
+            {
+                using var carrier = DecodeCarrierDocument(md, md.GetMethodDefinition(getter).GetCustomAttributes(), accessorAttribute);
+                return carrier.RootElement.GetProperty("association").GetString() == sourceAssociation;
+            });
+        Require(sourceGetters == 1,
+            $"covariant property '{ownerName}.{propertyName}' bridge lost its exact source accessor association");
         Require(methodImplBodies.Contains(bridge),
             $"covariant property '{ownerName}.{propertyName}' MethodImpl is not wired to its associated bridge body; bodies: " +
             string.Join(", ", methodImplBodies.Select(handle =>
@@ -1049,19 +1074,56 @@ static void VerifyOwnershipLayerBoundary(string birPath, string cirPath)
     static bool IsMethodSlot(JsonNode? node, int slot) => node is JsonObject type
         && Text(type["t"]) == "tv" && Text(type["scope"]) == "method"
         && type["i"] is JsonValue index && index.TryGetValue<int>(out var value) && value == slot;
+    static bool IsErasedValue(JsonNode? node) =>
+        node != null && TypeNode.Parse(node.ToJsonString()) == new TypeNode.Fqn("object");
+    string MethodParameterMarker(int slot) => "dotkt$ParameterSignature$" + Convert.ToHexString(
+        SHA256.HashData(Encoding.UTF8.GetBytes(Text(cir["fileClass"]) + "|" + TypeNode.ToJson(new TypeNode.Tv("method", slot)))));
+    bool IsErasedMethodParameter(JsonNode? node, int slot) =>
+        node != null && TypeNode.Parse(node.ToJsonString()) == new TypeNode.Mod(false,
+            new TypeNode.Fqn(MethodParameterMarker(slot)), new TypeNode.Fqn("object"));
+    static bool HasSourceMethodSlot(JsonNode? attributes, int slot)
+    {
+        var carrier = (attributes as JsonArray ?? []).OfType<JsonObject>().SingleOrDefault(attribute =>
+            Text(attribute["attr"]?["name"]) == "DotKt.Runtime.CompilerServices.KotlinNullableGenericAttribute");
+        if (carrier?["args"] is not JsonArray arguments || arguments.Count != 2
+            || Text(arguments[0]?["value"]) != "bir-json/1"
+            || Text(arguments[1]?["bytes"]) is not string payload) return false;
+        return IsMethodSlot(JsonNode.Parse(Convert.FromBase64String(payload)), slot);
+    }
     var sparseLocal = primaryLocalMethods.Single(method =>
         Objects(method).Any(node => Text(node["k"]) == "callStatic" && Text(node["method"]) == "selectSecond"));
     Require(Text(sparseLocal["name"])!.EndsWith("_read", StringComparison.Ordinal)
             && sparseLocal["typeParams"] is JsonArray typeParameters && typeParameters.Count == 1,
         "sparse local-function fixture did not materialize as the expected generic read method");
-    Require(IsMethodSlot(sparseLocal["ret"], 0)
+    Require(IsErasedValue(sparseLocal["ret"])
+            && HasSourceMethodSlot(sparseLocal["retAttrs"], 0)
             && sparseLocal["params"] is JsonArray sparseParams
-            && sparseParams.OfType<JsonObject>().All(parameter => IsMethodSlot(parameter["type"], 0)),
-        "sparse lexical generic slots were not compacted into the physical local-method frame");
+            && sparseParams.Count == 1
+            && sparseParams.OfType<JsonObject>().All(parameter => IsErasedMethodParameter(parameter["type"], 0)
+                && HasSourceMethodSlot(parameter["attrs"], 0)),
+        "sparse lexical generic slots lost their erased value storage or compacted source frame");
     var selectSecondCall = Objects(sparseLocal)
         .Single(node => Text(node["k"]) == "callStatic" && Text(node["method"]) == "selectSecond");
+    var selectSecondDeclaration = (cir["methods"] as JsonArray ?? []).OfType<JsonObject>()
+        .Single(method => Text(method["name"]) == "selectSecond");
+    var declaredParameters = (selectSecondDeclaration["params"] as JsonArray ?? []).OfType<JsonObject>().ToArray();
+    Require(declaredParameters.Length == 2 && declaredParameters.Select((parameter, index) =>
+            IsErasedMethodParameter(parameter["type"], index) && HasSourceMethodSlot(parameter["attrs"], index)).All(value => value),
+        "selectSecond lost its nominal parameter identity or its distinct source generic slots");
+    var markerDefinitions = Types(Root(Path.Combine(Path.GetDirectoryName(cirPath)!, "000-dotkt-parameter-signatures.cir.json")))
+        .OfType<JsonObject>().ToArray();
+    foreach (var slot in new[] { 0, 1 })
+        Require(markerDefinitions.Count(type => Text(type["name"]) == MethodParameterMarker(slot)
+                && Text(type["vis"]) == "public" && type["typeParams"] is JsonArray { Count: 0 }) == 1,
+            $"source method slot {slot} has no unique context-free CLR modifier declaration");
     Require(selectSecondCall["sig"] is JsonArray calleeSignature
-            && calleeSignature.Count == 2 && IsMethodSlot(calleeSignature[1], 1)
+            && calleeSignature.Count == 2 && calleeSignature.All(IsErasedValue)
+            && selectSecondCall["calleeParams"] is JsonArray selectedParameters
+            && selectedParameters.Count == 2
+            && IsErasedMethodParameter(selectedParameters[0], 0)
+            && IsErasedMethodParameter(selectedParameters[1], 1)
+            && selectedParameters.Select((parameter, index) => JsonNode.DeepEquals(parameter, declaredParameters[index]["type"]))
+                .All(value => value)
             && selectSecondCall["typeArgs"] is JsonArray suppliedTypeArguments
             && suppliedTypeArguments.Count == 2 && IsMethodSlot(suppliedTypeArguments[1], 0),
         "local-method frame compaction rewrote the callee declaration frame or missed the supplied type argument");
@@ -1246,39 +1308,172 @@ static void VerifyUnsafeAccessorDll(string path)
 
     var secretAccessors = accessors.Where(pair =>
         md.GetString(pair.Definition.Name).Contains("$prop_get_secret_", StringComparison.Ordinal)).ToArray();
-    Require(secretAccessors.Length == 6, "unexpected prop_get<secret> UnsafeAccessor set");
-    Require(secretAccessors.Count(pair => md.GetTypeDefinition(pair.TypeHandle).GetGenericParameters().Count == 1) == 5,
-        "generic owner slots were not preserved on generic UnsafeAccessor holder types");
-    Require(secretAccessors.Any(pair => md.GetTypeDefinition(pair.TypeHandle).GetGenericParameters().Any(handle =>
-            md.GetGenericParameter(handle).GetConstraints().Any(constraint =>
-                TypeName(md, md.GetGenericParameterConstraint(constraint).Type) == "roundtrip.nc.PrivateDefaultBound"))),
-        "constrained owner UnsafeAccessor lost its exact generic interface constraint");
-    var identityAccessor = accessors.Single(pair =>
-        md.GetString(pair.Definition.Name).Contains("$identity", StringComparison.Ordinal));
-    Require(md.GetTypeDefinition(identityAccessor.TypeHandle).GetGenericParameters().Count == 1 &&
-            identityAccessor.Definition.GetGenericParameters().Count == 1,
-        "owner and method generic frames were not kept in their respective forms on the UnsafeAccessor");
+    Require(secretAccessors.Length == 1 && md.GetTypeDefinition(secretAccessors[0].TypeHandle).GetGenericParameters().Count == 0,
+        "the non-generic private secret getter must retain its caller-side UnsafeAccessor");
     Require(accessors.Any(pair => md.GetString(pair.Definition.Name)
             .Contains("$privateTopLevelDefaultValue", StringComparison.Ordinal)),
         "top-level private default did not route through UnsafeAccessor");
-    var genericCallableAccessor = accessors.Single(pair =>
-        md.GetString(pair.Definition.Name).Contains("$secretValue", StringComparison.Ordinal));
-    Require(md.GetTypeDefinition(genericCallableAccessor.TypeHandle).GetGenericParameters().Any(handle =>
-            md.GetGenericParameter(handle).GetConstraints().Any(constraint =>
-                TypeName(md, md.GetGenericParameterConstraint(constraint).Type) == "roundtrip.nc.PrivateDefaultBound")),
-        "generic callable-reference UnsafeAccessor lost its exact owner interface constraint");
-
     var wrappers = md.TypeDefinitions
         .Where(handle => DefinitionName(md, handle).StartsWith("dotkt$unsafe$holder$", StringComparison.Ordinal))
         .SelectMany(handle => md.GetTypeDefinition(handle).GetMethods())
         .Select(md.GetMethodDefinition)
         .Where(method => md.GetString(method.Name).EndsWith("$invoke", StringComparison.Ordinal))
         .ToArray();
-    Require(wrappers.Length == 16 && wrappers.All(method =>
+    Require(wrappers.Length == 7 && wrappers.All(method =>
             (method.Attributes & MethodAttributes.MemberAccessMask) == MethodAttributes.Assembly &&
             (method.Attributes & MethodAttributes.Static) != 0 && method.RelativeVirtualAddress != 0),
         $"generic UnsafeAccessor holders do not expose only compiler-generated internal wrappers " +
-        $"(found {wrappers.Length}, expected 16)");
+        $"(found {wrappers.Length}, expected 7)");
+}
+
+static void VerifyGenericPrivateDefaultCarriers(string producerPath, string consumerPath)
+{
+    using var producerStream = File.OpenRead(producerPath);
+    using var producerPe = new PEReader(producerStream);
+    var md = producerPe.GetMetadataReader();
+    using var consumerStream = File.OpenRead(consumerPath);
+    using var consumerPe = new PEReader(consumerStream);
+    var consumerMd = consumerPe.GetMetadataReader();
+    const string typeAttribute = "DotKt.Runtime.CompilerServices.KotlinTypeAttribute";
+    const string accessorAttribute = "DotKt.Runtime.CompilerServices.KotlinPropertyAccessorAttribute";
+    const string methodAttribute = "DotKt.Runtime.CompilerServices.KotlinSourceMethodAttribute";
+    const string identityAttribute = "DotKt.Runtime.CompilerServices.KotlinDeclarationIdentityAttribute";
+    var sourceCarriers = md.TypeDefinitions.Where(handle => HasAttribute(md, handle, typeAttribute))
+        .Select(handle =>
+        {
+            using var document = DecodeCarrierDocument(md, md.GetTypeDefinition(handle).GetCustomAttributes(), typeAttribute);
+            return (Handle: handle, Source: document.RootElement.Clone());
+        }).ToArray();
+    var consumerOperands = consumerMd.MethodDefinitions.Select(consumerMd.GetMethodDefinition)
+        .Where(method => method.RelativeVirtualAddress != 0)
+        .SelectMany(method => MethodOperands(consumerPe.GetMethodBody(method.RelativeVirtualAddress).GetILBytes() ?? []))
+        .Select(handle => handle.Kind == HandleKind.MethodSpecification
+            ? consumerMd.GetMethodSpecification((MethodSpecificationHandle)handle).Method : handle)
+        .Where(handle => handle.Kind == HandleKind.MemberReference)
+        .Select(handle => consumerMd.GetMemberReference((MemberReferenceHandle)handle)).ToArray();
+    foreach (var (sourceOwner, member, isProperty, constrained, methodArity) in new[]
+    {
+        ("GenericPrivateDefaultOwner", "secret", true, false, 0),
+        ("ConstrainedPrivateDefaultOwner", "secret", true, true, 0),
+        ("GenericPrivateMethodDefaultOwner", "secret", true, false, 0),
+        ("NestedGenericPrivateDefaultOwner.Entry", "secret", true, false, 0),
+        ("GenericClosurePrivateDefaultOwner", "secret", true, false, 0),
+        ("GenericPrivateMethodDefaultOwner", "identity", false, false, 1),
+        ("GenericPrivateCallableDefaultOwner", "secretValue", false, true, 0),
+    })
+    {
+        var sourceName = "roundtrip.nc." + sourceOwner;
+        var ownerHandle = md.TypeDefinitions.Single(handle =>
+            StripArities(DefinitionName(md, handle)).Replace('+', '.') == sourceName);
+        var owner = md.GetTypeDefinition(ownerHandle);
+        Require(owner.GetGenericParameters().Count == 1, $"{sourceName}: owner/captured generic frame was lost");
+        if (constrained)
+            Require(owner.GetGenericParameters().Any(handle => md.GetGenericParameter(handle).GetConstraints()
+                    .Any(constraint => TypeName(md, md.GetGenericParameterConstraint(constraint).Type) == "roundtrip.nc.PrivateDefaultBound")),
+                $"{sourceName}: exact source-owner interface constraint was lost");
+        var originalHandle = owner.GetMethods().Single(handle =>
+        {
+            if (!HasMethodAttribute(md, handle, identityAttribute)) return false;
+            using var document = DecodeCarrierDocument(md, md.GetMethodDefinition(handle).GetCustomAttributes(), identityAttribute);
+            return document.RootElement.GetProperty("name").GetString() == member;
+        });
+        var original = md.GetMethodDefinition(originalHandle);
+        Require((original.Attributes & MethodAttributes.MemberAccessMask) == MethodAttributes.Private
+                && original.GetGenericParameters().Count == methodArity,
+            $"{sourceName}.{member}: source private visibility or method generic frame changed");
+        var carrierHandle = sourceCarriers.Single(pair => pair.Source.GetProperty("t").GetString() == "fqn"
+            && pair.Source.GetProperty("name").GetString() == sourceName
+            && pair.Source.TryGetProperty("args", out var arguments) && arguments.GetArrayLength() == 1
+            && arguments[0].GetProperty("t").GetString() == "star").Handle;
+        var carrier = md.GetTypeDefinition(carrierHandle);
+        Require(carrier.GetGenericParameters().Count == 0 && (carrier.Attributes & TypeAttributes.Interface) != 0,
+            $"{sourceName}: default access carrier must be a context-free interface");
+        var memberAttribute = isProperty ? accessorAttribute : methodAttribute;
+        var declarationHandle = carrier.GetMethods().Single(handle =>
+        {
+            if (!HasMethodAttribute(md, handle, memberAttribute)) return false;
+            using var document = DecodeCarrierDocument(md, md.GetMethodDefinition(handle).GetCustomAttributes(), memberAttribute);
+            return document.RootElement.GetProperty("name").GetString() == member
+                && (!isProperty || document.RootElement.GetProperty("kind").GetString() == "get");
+        });
+        var declaration = md.GetMethodDefinition(declarationHandle);
+        Require((declaration.Attributes & MethodAttributes.MemberAccessMask) == MethodAttributes.Public
+                && (declaration.Attributes & MethodAttributes.Abstract) != 0
+                && declaration.GetGenericParameters().Count == methodArity,
+            $"{sourceName}.{member}: carrier declaration lost its public slot or exact method frame");
+        var row = owner.GetMethodImplementations().Select(md.GetMethodImplementation)
+            .Single(implementation => implementation.MethodDeclaration == declarationHandle);
+        Require(row.MethodBody.Kind == HandleKind.MethodDefinition,
+            $"{sourceName}.{member}: carrier slot has no owned MethodDef body");
+        var bodyHandle = (MethodDefinitionHandle)row.MethodBody;
+        var body = md.GetMethodDefinition(bodyHandle);
+        Require(body.GetDeclaringType() == ownerHandle && body.GetGenericParameters().Count == methodArity
+                && (body.Attributes & MethodAttributes.MemberAccessMask) == MethodAttributes.Private,
+            $"{sourceName}.{member}: carrier MethodImpl lost its private body or method frame");
+        var provider = new PhysicalSignatureProvider();
+        var originalSignature = original.DecodeSignature(provider, (object?)null);
+        Require(MethodOperands(producerPe.GetMethodBody(body.RelativeVirtualAddress).GetILBytes() ?? [])
+                .Select(handle => handle.Kind == HandleKind.MethodSpecification
+                    ? md.GetMethodSpecification((MethodSpecificationHandle)handle).Method : handle)
+                .Any(handle =>
+                {
+                    if (handle == originalHandle) return true;
+                    if (handle.Kind != HandleKind.MemberReference) return false;
+                    var reference = md.GetMemberReference((MemberReferenceHandle)handle);
+                    return reference.Parent.Kind == HandleKind.TypeSpecification
+                        && md.GetTypeSpecification((TypeSpecificationHandle)reference.Parent).DecodeSignature(provider, (object?)null)
+                            == DefinitionName(md, ownerHandle) + "<!0>"
+                        && md.GetString(reference.Name) == md.GetString(original.Name)
+                        && SameSignature(reference.DecodeMethodSignature(provider, (object?)null), originalSignature);
+                }),
+            $"{sourceName}.{member}: carrier body no longer calls the exact source private member");
+        var expected = declaration.DecodeSignature(provider, (object?)null);
+        Require(SameSignature(body.DecodeSignature(provider, (object?)null), expected),
+            $"{sourceName}.{member}: MethodImpl body and declaration have different physical signatures");
+        Require(consumerOperands.Any(reference => TypeName(consumerMd, reference.Parent) == DefinitionName(md, carrierHandle)
+                && reference.Parent.Kind == HandleKind.TypeReference
+                && consumerMd.GetTypeReference((TypeReferenceHandle)reference.Parent).ResolutionScope.Kind == HandleKind.AssemblyReference
+                && consumerMd.GetString(consumerMd.GetAssemblyReference((AssemblyReferenceHandle)
+                    consumerMd.GetTypeReference((TypeReferenceHandle)reference.Parent).ResolutionScope).Name)
+                    == md.GetString(md.GetAssemblyDefinition().Name)
+                && consumerMd.GetString(reference.Name) == md.GetString(declaration.Name)
+                && SameSignature(reference.DecodeMethodSignature(provider, (object?)null), expected)),
+            $"{sourceName}.{member}: consumer did not select the exact carrier slot signature");
+    }
+
+    static bool SameSignature(MethodSignature<string> left, MethodSignature<string> right) =>
+        left.Header.RawValue == right.Header.RawValue && left.GenericParameterCount == right.GenericParameterCount
+        && left.RequiredParameterCount == right.RequiredParameterCount && left.ReturnType == right.ReturnType
+        && left.ParameterTypes.SequenceEqual(right.ParameterTypes);
+}
+
+static IEnumerable<EntityHandle> MethodOperands(byte[] il)
+{
+    var opCodes = typeof(OpCodes).GetFields(BindingFlags.Public | BindingFlags.Static)
+        .Where(field => field.FieldType == typeof(OpCode)).Select(field => (OpCode)field.GetValue(null)!)
+        .ToDictionary(op => unchecked((ushort)op.Value));
+    for (var offset = 0; offset < il.Length;)
+    {
+        var first = il[offset++];
+        var key = first == 0xfe && offset < il.Length ? (ushort)(0xfe00 | il[offset++]) : first;
+        if (!opCodes.TryGetValue(key, out var op)) throw new InvalidDataException("invalid IL opcode");
+        if (op.OperandType == OperandType.InlineMethod)
+            yield return MetadataTokens.EntityHandle(BitConverter.ToInt32(il, offset));
+        var size = op.OperandType switch
+        {
+            OperandType.InlineNone => 0,
+            OperandType.ShortInlineBrTarget or OperandType.ShortInlineI or OperandType.ShortInlineVar => 1,
+            OperandType.InlineVar => 2,
+            OperandType.InlineBrTarget or OperandType.InlineField or OperandType.InlineI or OperandType.InlineMethod
+                or OperandType.InlineSig or OperandType.InlineString or OperandType.InlineTok or OperandType.InlineType
+                or OperandType.ShortInlineR => 4,
+            OperandType.InlineI8 or OperandType.InlineR => 8,
+            OperandType.InlineSwitch => 4 + checked(BitConverter.ToInt32(il, offset) * 4),
+            _ => throw new InvalidDataException("invalid IL operand"),
+        };
+        Require(size >= 0 && offset + size <= il.Length, "truncated IL operand");
+        offset += size;
+    }
 }
 
 static void VerifyLayerBoundary(string birPath, string cirPath)
@@ -1308,7 +1503,7 @@ static void VerifyLayerBoundary(string birPath, string cirPath)
     var semantic = birTypes.OfType<JsonObject>()
         .Where(t => t["kotlinCompanion"] is JsonObject)
         .ToArray();
-    Require(semantic.Length == 17, "producer BIR has an unexpected semantic companion declaration set");
+    Require(semantic.Length == 18, $"producer BIR must contain 18 semantic companion declarations, found {semantic.Length}");
     foreach (var companion in semantic)
     {
         var name = Text(companion["name"]);
@@ -1443,7 +1638,7 @@ static void VerifyDll(string path)
             root.GetProperty("physicalOwnerArity").GetInt32()));
     }
 
-    Require(carriers.Count >= 17, "producer DLL has no complete companion carrier set");
+    Require(carriers.Count >= 18, "producer DLL has no complete companion carrier set");
     Require(carriers.Any(c => c.Kind == "sidecar") && carriers.Any(c => c.Kind == "nested"),
         "producer DLL does not witness both companion carrier shapes");
 
@@ -2193,4 +2388,39 @@ static string StripArities(string metadataName) => string.Join('+', metadataName
 static void Require(bool condition, string message)
 {
     if (!condition) throw new InvalidDataException(message);
+}
+
+sealed class PhysicalSignatureProvider : ISignatureTypeProvider<string, object?>
+{
+    public string GetArrayType(string element, ArrayShape shape) =>
+        element + "[" + shape.Rank + ";" + string.Join(",", shape.Sizes) + ";" + string.Join(",", shape.LowerBounds) + "]";
+    public string GetByReferenceType(string element) => "ref " + element;
+    public string GetFunctionPointerType(MethodSignature<string> signature) =>
+        "fnptr(" + signature.Header.RawValue + ";" + signature.GenericParameterCount + ";"
+        + signature.RequiredParameterCount + ";" + string.Join(",", signature.ParameterTypes) + ")->" + signature.ReturnType;
+    public string GetGenericInstantiation(string type, ImmutableArray<string> arguments) => type + "<" + string.Join(",", arguments) + ">";
+    public string GetGenericMethodParameter(object? context, int index) => "!!" + index;
+    public string GetGenericTypeParameter(object? context, int index) => "!" + index;
+    public string GetModifiedType(string modifier, string type, bool required) =>
+        (required ? "modreq(" : "modopt(") + modifier + ")" + type;
+    public string GetPinnedType(string element) => "pinned " + element;
+    public string GetPointerType(string element) => element + "*";
+    public string GetPrimitiveType(PrimitiveTypeCode code) => code.ToString();
+    public string GetSZArrayType(string element) => element + "[]";
+    public string GetTypeFromDefinition(MetadataReader md, TypeDefinitionHandle handle, byte kind)
+    {
+        var definition = md.GetTypeDefinition(handle);
+        var parent = definition.GetDeclaringType();
+        var name = parent.IsNil ? md.GetString(definition.Namespace) : GetTypeFromDefinition(md, parent, kind);
+        return (string.IsNullOrEmpty(name) ? "" : name + (parent.IsNil ? "." : "+")) + md.GetString(definition.Name);
+    }
+    public string GetTypeFromReference(MetadataReader md, TypeReferenceHandle handle, byte kind)
+    {
+        var reference = md.GetTypeReference(handle);
+        var nested = reference.ResolutionScope.Kind == HandleKind.TypeReference;
+        var name = nested ? GetTypeFromReference(md, (TypeReferenceHandle)reference.ResolutionScope, kind) : md.GetString(reference.Namespace);
+        return (string.IsNullOrEmpty(name) ? "" : name + (nested ? "+" : ".")) + md.GetString(reference.Name);
+    }
+    public string GetTypeFromSpecification(MetadataReader md, object? context, TypeSpecificationHandle handle, byte kind) =>
+        md.GetTypeSpecification(handle).DecodeSignature(this, context);
 }
