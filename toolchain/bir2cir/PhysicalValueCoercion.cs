@@ -735,8 +735,6 @@ static class PhysicalValueCoercion
                 if (expression[key] != null) expression[key] = TypeJson.Write(actual);
             return expression;
         }
-        // When the physical return itself is generic, ret can still use the callee's declaration frame.
-        // Conversions between those slots belong on the consuming edge, whose target is in the caller's frame.
         // An object-returning Kotlin call can already carry a caller-facing generic projection in ret.
         // Make that projection explicit before its consumer inspects the physical expression result;
         // otherwise identity comparison would box its other operand while the call still unboxes to T.
@@ -749,7 +747,18 @@ static class PhysicalValueCoercion
         // identity object-to-object cast.
         var boxedResult = NeedsBox(actual, index.IsValue) && IsReferenceSlot(declared, index.IsValue);
         if (!genericObjectProjection && !boxedResult && !CollectionViewFaces.IsViewSeam(actual, declared)
-            && index.NeedsNativeProjection?.Invoke(actual, declared) != true) return expression;
+            && index.NeedsNativeProjection?.Invoke(actual, declared) != true)
+        {
+            // A resolved native expression states the stack result, not the
+            // member's open declaration frame. Even when no view conversion
+            // is necessary, close that result over the selected owner/method
+            // arguments. Consuming edges already own their caller-side target.
+            if (actual != null && Str(expression["k"]) is "clrStatic" or "clrInstance"
+                or "clrGenericStatic" or "clrGenericInstance" or "clrPropGet" or "clrStaticField")
+                foreach (var key in new[] { "sty", "ret", "dynRet" })
+                    if (expression[key] != null) expression[key] = TypeJson.Write(actual);
+            return expression;
+        }
         var physical = expression.DeepClone().AsObject();
         // The inner expression leaves the exact member/declaration result on the CLR stack. Once the caller-facing
         // view moves to the explicit outer cast, every surviving inner result stamp must describe that physical value;
@@ -766,6 +775,45 @@ static class PhysicalValueCoercion
 
     internal static void SelfTest()
     {
+        foreach (var declared in new TypeNode[] {
+            new TypeNode.Tv("type", 0),
+            new TypeNode.ByRef(new TypeNode.Tv("type", 0)),
+            new TypeNode.Nullable(new TypeNode.Tv("type", 0)),
+            new TypeNode.Mod(false, new TypeNode.Fqn("System.Runtime.CompilerServices.IsVolatile"),
+                new TypeNode.Tv("type", 0)),
+            new TypeNode.Array(new TypeNode.Tv("type", 0)),
+            new TypeNode.Fqn("NativeBox", new TypeNode[] {
+                new TypeNode.Tv("type", 0), new TypeNode.Tv("method", 0) }),
+        })
+        {
+            var ownerArguments = new TypeNode[] { new TypeNode.Tv("type", 1), new TypeNode.Tv("type", 0) };
+            var methodArguments = new TypeNode[] { new TypeNode.Tv("method", 1) };
+            var expected = ValueSlotType(Close(declared, ownerArguments, methodArguments));
+            if (expected is TypeNode.ByRef reference) expected = ValueSlotType(reference.Of);
+            var call = new JsonObject {
+                ["k"] = "clrInstance", ["method"] = "Read", ["recv"] = new JsonObject { ["k"] = "this" },
+                ["type"] = TypeJson.Write(new TypeNode.Fqn("NativeOwner", ownerArguments)),
+                ["typeArgs"] = new JsonArray(methodArguments.Select(TypeJson.Write).ToArray()),
+                ["args"] = new JsonArray(), ["ret"] = TypeJson.Write(declared),
+                ["sty"] = TypeJson.Write(declared), ["dynRet"] = TypeJson.Write(declared),
+                ["memberRef"] = new JsonObject {
+                    ["kind"] = "method", ["name"] = "Read",
+                    ["declaringType"] = TypeJson.Write(new TypeNode.Fqn("NativeOwner", ownerArguments)),
+                    ["returnType"] = TypeJson.Write(declared), ["parameterTypes"] = new JsonArray(),
+                },
+            };
+            var root = new JsonObject { ["fileClass"] = "Consumer", ["methods"] = new JsonArray(
+                new JsonObject { ["name"] = "Use", ["params"] = new JsonArray(), ["ret"] = TypeJson.Fqn("void"),
+                    ["body"] = new JsonArray(new JsonObject { ["k"] = "exprStmt", ["expr"] = call }) }) };
+            for (var iteration = 0; iteration < 2; iteration++)
+            {
+                ApplyAll(new JsonNode[] { root }, () => throw new InvalidOperationException("Unexpected Unit"), _ => false);
+                if (TypeJson.Read(call["ret"]) != expected || TypeJson.Read(call["sty"]) != expected
+                    || TypeJson.Read(call["dynRet"]) != expected
+                    || TypeJson.Read(call["memberRef"]["returnType"]) != declared)
+                    throw new InvalidOperationException("Native result lost its constructed caller frame or rewrote its open declaration");
+            }
+        }
         foreach (var kind in new[] { "newClosure", "newSam" })
         {
             var capture = new JsonObject { ["k"] = kind,
@@ -955,7 +1003,14 @@ static class PhysicalValueCoercion
             && kind is "callStatic" or "callInstance" or "constrainedCall"
                 or "clrStatic" or "clrInstance" or "clrGenericStatic" or "clrGenericInstance"
                 or "clrPropGet" or "field" or "staticField" or "clrStaticField" or "lateinitGet")
-            return Close(TypeJson.Read(member["returnType"]), OwnerArgs(member), MethodArgs(expression));
+        {
+            var result = ValueSlotType(Close(TypeJson.Read(member["returnType"]), OwnerArgs(member), MethodArgs(expression)));
+            // An ordinary native ref-return invocation consumes a value copy.
+            // Address-taking is represented separately by byrefOf, which keeps
+            // the selected member's unchanged pointer signature.
+            return kind is "clrStatic" or "clrInstance" or "clrGenericStatic" or "clrGenericInstance" or "clrPropGet"
+                && result is TypeNode.ByRef reference ? ValueSlotType(reference.Of) : result;
+        }
         if (kind is "callStatic" or "callInstance" or "constrainedCall"
             && TypeJson.Read(expression["calleeRet"]) is TypeNode selectedReturn)
             return Close(selectedReturn, CallOwner(expression)?.Args, MethodArgs(expression));
