@@ -21,6 +21,7 @@ static class ClrEventSubscriptionBinding
     sealed class Binder
     {
         readonly string _scope;
+        readonly string _phase;
         readonly ReferenceMetadataIndex _refs;
         readonly IReadOnlyDictionary<(string Owner, string Event), JsonNode> _forwardedOwners;
         readonly IReadOnlySet<string> _localTypes;
@@ -29,25 +30,46 @@ static class ClrEventSubscriptionBinding
         int _next;
 
         public List<JsonNode> MaterializedRoots { get; } = new();
+        public List<JsonNode> RemoveCallbacks { get; } = new();
 
         public Binder(
             JsonNode root,
             ReferenceMetadataIndex refs,
             IReadOnlyDictionary<(string Owner, string Event), JsonNode> forwardedOwners,
-            IReadOnlySet<string> localTypes)
+            IReadOnlySet<string> localTypes,
+            bool sourcePhase = false)
         {
             _refs = refs;
             _forwardedOwners = forwardedOwners;
             _localTypes = localTypes;
             var fileClass = root is JsonObject f ? Str(f["fileClass"]) : null;
             _scope = string.Concat((fileClass ?? "File").Select(c => char.IsLetterOrDigit(c) ? c : '_'));
+            _phase = sourcePhase ? "Source" : "Late";
             IndexScopes(root);
         }
 
         void IndexScopes(JsonNode root)
         {
-            void IndexCallable(JsonObject callable, JsonArray typeParams) =>
+            void IndexCallable(JsonObject callable, JsonArray typeParams)
+            {
                 _scopes[callable] = (typeParams, callable["typeParams"] as JsonArray ?? _empty);
+                IndexLocals(callable["body"], typeParams);
+            }
+
+            void IndexLocals(JsonNode node, JsonArray typeParams)
+            {
+                if (node is JsonObject obj)
+                {
+                    if (Str(obj["k"]) == "localFun" && obj["decl"] is JsonObject declaration)
+                    {
+                        IndexCallable(declaration, typeParams);
+                        return;
+                    }
+                    foreach (var child in obj) IndexLocals(child.Value, typeParams);
+                }
+                else if (node is JsonArray array)
+                    foreach (var child in array) IndexLocals(child, typeParams);
+            }
 
             void IndexType(JsonObject type)
             {
@@ -152,10 +174,12 @@ static class ClrEventSubscriptionBinding
             if (_refs.TryClrEventIsStatic(ownerName, eventName, out var declaredStatic))
                 isStatic = declaredStatic;
             var id = _next++;
-            var bindingKey = _scope + ":" + id;
+            var bindingKey = _scope + ":" + _phase + ":" + id;
             var handlerLocal = $"__clrEventSubscriptionHandler{id}";
             var receiverLocal = $"__clrEventSubscriptionReceiver{id}";
-            var closureName = $"dotkt${_scope}$EventRemove{id}";
+            // Source operations and operations introduced by later splicing
+            // own distinct synthesis namespaces within the same file.
+            var closureName = $"dotkt${_scope}$EventRemove{_phase}{id}";
 
             var free = FreeTypeVariables(ownerType, handlerType);
             // The remove callback is a new physical generic class. Preserve the source parameters' constraints so a
@@ -237,6 +261,7 @@ static class ClrEventSubscriptionBinding
             };
             if (free.Count > 0)
                 removeClosure["typeArgs"] = new JsonArray(free.Select(x => x.Original.DeepClone()).ToArray());
+            RemoveCallbacks.Add(removeClosure);
 
             var stmts = new JsonArray();
             if (!isStatic)
@@ -476,9 +501,30 @@ static class ClrEventSubscriptionBinding
     {
         // Preserve the objects used by module-wide declaration/frame indices.
         // Only the transient event operation is replaced, before value erasure.
-        var binder = new Binder(root, refs, forwardedOwners, localTypes);
+        var binder = new Binder(root, refs, forwardedOwners, localTypes, sourcePhase: true);
         binder.ApplyInPlace(root);
-        return binder.MaterializedRoots;
+        // Binding an outer subscription copies its handler expression, which
+        // may already contain another newly-bound subscription. Return the
+        // attached constructions of the exact callback identities we authored,
+        // not the now-detached nodes from before that copy.
+        var callbackNames = binder.RemoveCallbacks
+            .Select(callback => TypeJson.OwnerName(callback["closureType"]))
+            .ToHashSet(StringComparer.Ordinal);
+        var callbacks = new List<JsonNode>();
+        void Collect(JsonNode node)
+        {
+            if (node is JsonObject expression)
+            {
+                if (Str(expression["k"]) == "newClosure"
+                    && callbackNames.Contains(TypeJson.OwnerName(expression["closureType"])))
+                    callbacks.Add(expression);
+                foreach (var child in expression) Collect(child.Value);
+            }
+            else if (node is JsonArray array)
+                foreach (var child in array) Collect(child);
+        }
+        Collect(root);
+        return callbacks;
     }
 
     public static JsonNode Apply(

@@ -253,15 +253,20 @@ sealed class Pipeline
         // the same representation passes as every other local method call.
         var sourceEventOwners = ClrEventSubscriptionBinding.CollectForwardedOwners(birRoots);
         var sourceEventLocalTypes = SupertypeGraph.Collect(birRoots).Keys.ToHashSet(StringComparer.Ordinal);
+        var restoreEventFrames = new List<Action>();
         if (!_options.RefBuild)
         {
             foreach (var root in birRoots)
                 ClrEventImplBinding.PrepareSourceRaiseSignatures(root, refs);
             foreach (var root in birRoots)
             {
-                var subscriptions = ClrEventSubscriptionBinding.ApplySource(
+                var callbacks = ClrEventSubscriptionBinding.ApplySource(
                     root, refs, sourceEventOwners, sourceEventLocalTypes);
-                ClosureSynthesis.ApplyMaterialized(root, subscriptions, refs);
+                // Expose only the remove callback's independent declaration
+                // frame. Retain its ingredients for inline carriers and leave
+                // user handlers to the ordinary local/witness/closure passes.
+                restoreEventFrames.Add(PreparedClosureDefaultFrames.Stage(
+                    (JsonObject)root, callbacks, refs).Restore);
             }
             ClrEventImplBinding.BindLocalSubscriptionsAll(birRoots, sourceDeclarations: true);
         }
@@ -314,6 +319,7 @@ sealed class Pipeline
         foreach (var root in birRoots) ConstructorSignatureIdentity.CaptureSourceCalls(root);
         NullableRepresentationMaterialization.Apply(birRoots, isValueFqn, refs, policy: genericRepresentations);
         restoreDefaultFrames();
+        foreach (var restore in restoreEventFrames) restore();
         // Preserve selected local factory facts before per-file transformations. In a
         // stdlib self-build these declarations are local, not referenced MethodDefs.
         var localFactories = MemberCallSubstitution.CollectLocalFactories(birRoots);

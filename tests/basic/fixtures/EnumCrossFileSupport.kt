@@ -61,3 +61,40 @@ fun <V, T : EnumConstraintOnlyOwnedEvent<V>> exerciseConstraintOnlyLocalEvent(so
     source.raise(7)
     return seen
 }
+
+class EnumGenericEventHost<V> {
+    fun <T : EnumGenericOwnedEvent<V>> exercise(source: T, value: V): Int {
+        var seen = 0
+        val subscription = source.pulse.subscribe { if (it == value) seen++ }
+        source.raise(value)
+        subscription.close()
+        source.raise(value)
+        return seen
+    }
+}
+
+fun exerciseLexicalLocalEvent(): Int {
+    fun <T : EnumNamedOwnedEvent> listen(source: T): Int {
+        var seen = 0
+        val subscription = source.pulse.subscribe { seen += it }
+        source.raise(8)
+        subscription.close()
+        source.raise(10)
+        return seen
+    }
+    return listen(EnumDerivedOwnedEvent())
+}
+
+fun <V, T : EnumGenericOwnedEvent<V>> exerciseNestedLocalEvent(source: T, value: V): Int {
+    var seen = 0
+    val outer = source.pulse.subscribe { item ->
+        fun <R> same(left: R, right: R): Boolean = left == right
+        if (same(item, value)) seen++
+        val inner = source.pulse.subscribe { if (it == value) seen += 100 }
+        inner.close()
+    }
+    source.raise(value)
+    outer.close()
+    source.raise(value)
+    return seen
+}

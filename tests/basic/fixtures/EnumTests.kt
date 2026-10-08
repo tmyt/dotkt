@@ -491,6 +491,11 @@ class EnumTests {
         assertEquals(8, exerciseGenericLocalEvent(EnumNamedOwnedEvent()))
         assertEquals(5, exerciseConstraintOnlyLocalEvent(EnumConstraintOnlyOwnedEvent<String>(), "marker"))
         assertEquals(5, exerciseConstraintOnlyLocalEvent(EnumConstraintOnlyOwnedEvent<Int>(), 42))
+        assertEquals(1, EnumGenericEventHost<String>().exercise(EnumGenericOwnedEvent<String>(), "value"))
+        assertEquals(1, EnumGenericEventHost<Int>().exercise(EnumGenericOwnedEvent<Int>(), 42))
+        assertEquals(8, exerciseLexicalLocalEvent())
+        assertEquals(1, exerciseNestedLocalEvent(EnumGenericOwnedEvent<String>(), "nested"))
+        assertEquals(1, exerciseNestedLocalEvent(EnumGenericOwnedEvent<Int>(), 42))
     }
 
     @TestAttribute

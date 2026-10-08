@@ -129,8 +129,26 @@ static class ClrEventImplBinding
         var scopes = new Dictionary<JsonObject, (JsonArray TypeParams, JsonArray MethodParams)>();
         var empty = new JsonArray();
 
-        void IndexCallable(JsonObject callable, JsonArray typeParams) =>
+        void IndexCallable(JsonObject callable, JsonArray typeParams)
+        {
             scopes[callable] = (typeParams, callable["typeParams"] as JsonArray ?? empty);
+            IndexLocals(callable["body"], typeParams);
+        }
+
+        void IndexLocals(JsonNode node, JsonArray typeParams)
+        {
+            if (node is JsonObject obj)
+            {
+                if (Str(obj["k"]) == "localFun" && obj["decl"] is JsonObject declaration)
+                {
+                    IndexCallable(declaration, typeParams);
+                    return;
+                }
+                foreach (var child in obj) IndexLocals(child.Value, typeParams);
+            }
+            else if (node is JsonArray array)
+                foreach (var child in array) IndexLocals(child, typeParams);
+        }
 
         void IndexType(JsonObject type)
         {
@@ -271,10 +289,11 @@ static class ClrEventImplBinding
         LocalEventBinding RemapBindingForClosure(LocalEventBinding binding, JsonArray free) => new(
             RemapForClosure(binding.DelegateType, free),
             (TypeNode.Fqn)RemapForClosure(binding.AccessorOwner, free),
-            new JsonArray(binding.AddSignature.Select(item =>
-                TypeJson.Write(RemapForClosure(TypeJson.Read(item), free))).ToArray()),
-            new JsonArray(binding.RemoveSignature.Select(item =>
-                TypeJson.Write(RemapForClosure(TypeJson.Read(item), free))).ToArray()));
+            // Signatures belong to the selected accessor declaration, not the
+            // subscription's lexical frame. Only the constructed owner and
+            // instantiated handler move into the callback's capture frame.
+            (JsonArray)binding.AddSignature.DeepClone(),
+            (JsonArray)binding.RemoveSignature.DeepClone());
 
         var bySubscription = new Dictionary<string, LocalEventBinding>(StringComparer.Ordinal);
         void Collect(JsonNode node, JsonArray typeParams, JsonArray methodParams)
