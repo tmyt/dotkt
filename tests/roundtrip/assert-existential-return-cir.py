@@ -2,6 +2,7 @@
 """Assert exact referenced existential result projection, including star-dependent nested carriers."""
 
 import base64
+import hashlib
 import json
 import sys
 
@@ -412,8 +413,13 @@ for variant_call in variant_member_calls:
         expected_signature = []
     else:
         expected_name = "$star$render$0"
+        source_parameter = {"t": "tv", "scope": "type", "i": 0}
+        source_owner = "starprojection.ReferencedContravariantClass"
+        marker = "dotkt$ParameterSignature$" + hashlib.sha256(
+            (source_owner + "|" + json.dumps(source_parameter, separators=(",", ":"))).encode("utf-8")
+        ).hexdigest().upper()
         expected_signature = [{"t": "mod", "req": False,
-                               "m": {"t": "fqn", "name": "System.Object"},
+                               "m": {"t": "fqn", "name": marker},
                                "of": {"t": "fqn", "name": "System.Object"}}]
     if (
         variant_call.get("virtual") is not True
