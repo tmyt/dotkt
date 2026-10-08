@@ -81,6 +81,7 @@ static class FBoundStarProjectionErasure
                 ?? Enumerable.Empty<JsonObject>())
             .ToDictionary(method => method, method => (method["params"] as JsonArray)?.OfType<JsonObject>()
                 .Select(parameter => TypeJson.Read(parameter["type"])).ToArray() ?? Array.Empty<TypeNode>());
+        foreach (var root in rootList) AlignCapturedInnerBaseValues(root, BirScope.Empty, null, owners, defs, refs);
         foreach (var root in rootList) ProjectParameterDeclarations(root, owners, refs, localClrAliases);
         foreach (var owner in owners.Values.Where(o => o.Needed))
             Synthesize(owner, owners, defs, refs, baseContracts[owner.Name], aliases, sourceSignatures);
@@ -2729,6 +2730,65 @@ static class FBoundStarProjectionErasure
                 && constraints.Any(c => TypeJson.Read(c) is TypeNode constraint && ContainsOwnerTv(constraint)))
                 return true;
         return false;
+    }
+
+    // An inner value's carrier cannot inherit a CLR class. Its actual object still has every
+    // declaration-proven base, so materialize that identity-preserving crossing before value
+    // projection loses the source frame. Never recover an enclosing generic argument this way.
+    static void AlignCapturedInnerBaseValues(JsonNode node, BirScope scope, TypeNode returnType,
+        IReadOnlyDictionary<string, Owner> owners, IReadOnlyDictionary<string, JsonObject> defs,
+        ReferenceMetadataIndex refs)
+    {
+        if (node is JsonArray sequence)
+        {
+            var inner = scope.Child();
+            foreach (var child in sequence)
+            {
+                if (child == null) continue;
+                AlignCapturedInnerBaseValues(child, inner, returnType, owners, defs, refs);
+                if (child is JsonObject declaration) inner.Declare(declaration);
+            }
+            return;
+        }
+        if (node is not JsonObject obj) return;
+        if (obj["body"] is JsonArray && obj["params"] is JsonArray)
+        {
+            scope = scope.Extend(obj);
+            returnType = TypeJson.Read(obj["ret"]);
+        }
+
+        void Align(JsonNode container, string key, TypeNode targetType)
+        {
+            var value = container is JsonArray values ? values[int.Parse(key)] : container[key];
+            if (value == null || StripSourceNullability(targetType) is not TypeNode.Fqn target
+                || (target.Args?.Length ?? 0) != 0
+                || StripSourceNullability(StaticType.Surface(value, scope)) is not TypeNode.Fqn source
+                || !IsCapturedInner(source, owners, refs)
+                || ProjectConstructedArguments(source, target.Name, defs, refs) is not { Count: 0 }) return;
+            var cast = new JsonObject
+            {
+                ["k"] = "cast", ["type"] = TypeJson.Write(targetType),
+                ["sty"] = TypeJson.Write(targetType), ["e"] = value.DeepClone(),
+                ["_exactBridgeCast"] = true,
+            };
+            if (container is JsonArray arguments) arguments[int.Parse(key)] = cast;
+            else container[key] = cast;
+        }
+
+        var kind = Str(obj["k"]);
+        if (kind is "callStatic" or "callInstance" or "new" or "newClr"
+            && obj["args"] is JsonArray args
+            && (obj["sig"] ?? obj["argTypes"] ?? obj["memberSignature"]) is JsonArray signature
+            && signature.Count == args.Count)
+            for (var index = 0; index < args.Count; index++)
+                Align(args, index.ToString(), TypeJson.Read(signature[index]));
+        if (kind == "callInstance") Align(obj, "recv", TypeJson.Read(obj["ownerType"]));
+        if (kind is "return" or "returnExpr") Align(obj, "value", returnType);
+        if (kind == "var") Align(obj, "init", TypeJson.Read(obj["type"]));
+        if (kind == "setLocal" && Str(obj["name"]) is string local
+            && scope.VarTypes.TryGetValue(local, out var localType)) Align(obj, "value", localType);
+        foreach (var child in obj.Select(pair => pair.Value).ToList())
+            if (child != null) AlignCapturedInnerBaseValues(child, scope, returnType, owners, defs, refs);
     }
 
     static void Rewrite(JsonNode node, IReadOnlyDictionary<string, Owner> owners,

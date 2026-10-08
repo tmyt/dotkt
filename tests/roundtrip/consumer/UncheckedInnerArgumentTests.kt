@@ -94,4 +94,19 @@ class UncheckedInnerArgumentTests {
         val owner = InnerCastOwner("seed")
         check(owner.Middle(owner.Item(29)).Leaf().payload == "seed")
     }
+
+    @TestAttribute
+    fun innerCarrierCrossesItsDeclaredBaseWithoutNarrowingTheOuterFrame() {
+        val owner = InnerCastOwner("seed")
+        val item = owner.DerivedItem(31)
+        check(owner.throughBase(item) == 31)
+        check(InnerCastOwner(42).throughBase(item) == 31)
+        val unchecked = (item as Any) as InnerCastOwner<Int>.DerivedItem
+        check(consumeInnerBase(unchecked) == 31)
+        check(returnInnerBase(unchecked) === item)
+        var base: InnerCastBase = unchecked
+        base = unchecked
+        check(base === item)
+        check(base.seed == 31)
+    }
 }
