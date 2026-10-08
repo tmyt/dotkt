@@ -3993,13 +3993,15 @@ static partial class SuspendColdLowering
             // These source call-syntax modifiers belong to the public Kotlin
             // declaration, not to the generated cold entry. Do not restore
             // mods.suspend on an already lowered bridge.
-            foreach (var modifier in new[] { "operator", "infix" })
+            foreach (var modifier in new[] { "operator", "infix", "inline" })
                 if (Mod(_m, modifier))
                 {
                     if (method["mods"] is not JsonObject)
                         method["mods"] = new JsonObject();
                     ((JsonObject)method["mods"])[modifier] = true;
                 }
+            if (Mod(_m, "inline") && _m["inlineBir"] is JsonValue inlineBody)
+                method["inlineBir"] = inlineBody.DeepClone();
             if (_m[NullableGenericErasure.MethodTypeParameterBoundsPre] is JsonNode bounds)
                 method[NullableGenericErasure.MethodTypeParameterBoundsPre] = bounds.DeepClone();
             if (_m[NullableRepresentationTypes.MethodFrameKey] is JsonNode nullableFrame)
