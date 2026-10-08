@@ -11,6 +11,9 @@
 +"name":"DerivedPasser","kind":"class"
 +"base":{"t":"fqn","name":"PassBase","args":[{"t":"fqn","name":"Pairish","args":[{"t":"tv","scope":"type","i":0},{"t":"tv","scope":"type","i":1}]}]}
 +"k":"cast","type":{"t":"fqn","name":"Pairish$star"},"e":{"k":"callInstance","ownerType":{"t":"fqn","name":"PassBase","args":[{"t":"fqn","name":"Pairish","args":[{"t":"tv","scope":"type","i":0},{"t":"tv","scope":"type","i":1}]}]},"virtual":false,"clrOwnerResolved":true,"recv":{"k":"this"},"method":"pass","sig":[{"t":"fqn","name":"object"}],"dynRet":{"t":"fqn","name":"object"},"ret":{"t":"fqn","name":"object"},"args":[{"k":"local","name":"value"}]
-+"owner":{"t":"fqn","name":"Passer","args":[{"t":"fqn","name":"Pairish","args":[{"t":"tv","scope":"type","i":0},{"t":"tv","scope":"type","i":1}]}]},"member":"pass","arity":0,"params":[{"t":"mod","req":false,"m":{"t":"fqn","name":"Pairish","args":[{"t":"tv","scope":"type","i":0},{"t":"tv","scope":"type","i":1}]},"of":{"t":"fqn","name":"object"}}],"ret":{"t":"fqn","name":"object"}
+# The modifier belongs to Passer's source type parameter, not its constructed use argument.
+# SHA256(Passer | {"t":"tv","scope":"type","i":0}) identifies that context-free declaration.
++"owner":{"t":"fqn","name":"Passer","args":[{"t":"fqn","name":"Pairish","args":[{"t":"tv","scope":"type","i":0},{"t":"tv","scope":"type","i":1}]}]},"member":"pass","arity":0,"params":[{"t":"mod","req":false,"m":{"t":"fqn","name":"dotkt$ParameterSignature$DF96729E8504AF56AC864227766BF33DC49D1130E843EE56F5C31AC94DF35EED"},"of":{"t":"fqn","name":"object"}}],"ret":{"t":"fqn","name":"object"}
++"name":"dotkt$ParameterSignature$DF96729E8504AF56AC864227766BF33DC49D1130E843EE56F5C31AC94DF35EED","kind":"class","generated":true,"abstract":true,"vis":"public","base":null,"typeParams":[]
 -"ownerType":{"t":"fqn","name":"PassBase","args":[{"t":"fqn","name":"Pairish$star"}]}
 -"ret":{"t":"fqn","name":"Pairish","args":[{"t":"fqn","name":"Pairish"

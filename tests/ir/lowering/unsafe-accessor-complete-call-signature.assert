@@ -3,7 +3,9 @@
 # precedence and retain the complete call vector, not truncate it back to the semantic declaration arity.
 # The Kotlin generic value parameter occupies an object slot with its exact nominal method-TV modifier;
 # the appended Boolean must remain present in both the accessor and call signature.
+# The exact context-free marker is SHA256(UnsafeAccessorCompleteCallSignatureTarget | method-TV0).
 -"shapeTypes":
 +"generated":true,"static":true,"extern":true,"override":false,"virtual":false
-+"params":[{"name":"target","type":{"t":"fqn","name":"UnsafeAccessorCompleteCallSignatureTarget"}},{"name":"arg0","type":{"t":"mod","req":false,"m":{"t":"tv","scope":"method","i":0},"of":{"t":"fqn","name":"object"}}},{"name":"arg1","type":{"t":"fqn","name":"System.Boolean"}}]
-+"sig":[{"t":"fqn","name":"UnsafeAccessorCompleteCallSignatureTarget"},{"t":"mod","req":false,"m":{"t":"tv","scope":"method","i":0},"of":{"t":"fqn","name":"object"}},{"t":"fqn","name":"System.Boolean"}],"args":[{"k":"local","name":"target"}
++"params":[{"name":"target","type":{"t":"fqn","name":"UnsafeAccessorCompleteCallSignatureTarget"}},{"name":"arg0","type":{"t":"mod","req":false,"m":{"t":"fqn","name":"dotkt$ParameterSignature$CB4C962008B62CEDD73C07FD0641D9DCAFEB93C38A9BEBE5E77A37EC71CB1F04"},"of":{"t":"fqn","name":"object"}}},{"name":"arg1","type":{"t":"fqn","name":"System.Boolean"}}]
++"sig":[{"t":"fqn","name":"UnsafeAccessorCompleteCallSignatureTarget"},{"t":"mod","req":false,"m":{"t":"fqn","name":"dotkt$ParameterSignature$CB4C962008B62CEDD73C07FD0641D9DCAFEB93C38A9BEBE5E77A37EC71CB1F04"},"of":{"t":"fqn","name":"object"}},{"t":"fqn","name":"System.Boolean"}],"args":[{"k":"local","name":"target"}
++"name":"dotkt$ParameterSignature$CB4C962008B62CEDD73C07FD0641D9DCAFEB93C38A9BEBE5E77A37EC71CB1F04","kind":"class","generated":true,"abstract":true,"vis":"public","base":null,"typeParams":[]
