@@ -41,6 +41,17 @@ public static class NativeBoxApi
         second = new Box<string>("second");
         return observedFirstWrite && object.ReferenceEquals(first, second);
     }
+
+    public static bool ReplaceAliasedGeneric<T>(ref Box<T> first, ref Box<T> second, T firstValue, T secondValue)
+    {
+        first = new Box<T>(firstValue);
+        bool observedFirstWrite = object.ReferenceEquals(first, second);
+        second = new Box<T>(secondValue);
+        return observedFirstWrite && object.ReferenceEquals(first, second);
+    }
+
+    public static bool ReplaceAliasedNested(ref Box<Box<string>> first, ref Box<Box<string>> second) =>
+        ReplaceAliasedGeneric(ref first, ref second, new Box<string>("first"), new Box<string>("second"));
 }
 
 public sealed class NativeSlot<T>

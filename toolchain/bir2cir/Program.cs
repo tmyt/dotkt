@@ -1662,7 +1662,8 @@ sealed class Pipeline
                     && localTarget.Kind is "class" or "interface" && !isValueFqn(targetNative)
                     || refs.ResolveNetType(ReferenceMetadataIndex.ReflectedOwnerFqn(targetNative.Name),
                     targetNative.Args?.Length ?? 0) is { IsValueType: false } nativeType
-                    && (nativeType.IsInterface || nativeType.IsClass)));
+                    && (nativeType.IsInterface || nativeType.IsClass)),
+            exactPhysicalOwner: type => refs.ExactReflectedOwner(type.Name, type.Args?.Length ?? 0));
         foreach (var (lowered, _) in loweredRoots) FunctionSignatureIdentity.Complete(lowered);
         DelegateEntryLowering.Apply(loweredRoots.Select(file => file.Root));
 

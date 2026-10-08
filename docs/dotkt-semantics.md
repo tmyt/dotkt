@@ -108,6 +108,10 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   (using the projected `System.Tuple2` name). Kotlin-defined carrier ABI does not justify changing an existing
   CLR API's parameter types. Tests for CLR-owned constructions are separate from C# consumers of Kotlin-owned types.
   These boundaries require the actual CLR construction and do not promise that an unchecked Kotlin cast can change it.
+  An address-taken local may retain an exact native reference-type layout when every write and every managed-reference
+  consumer proves that same physical construction. This does not narrow ordinary unchecked value assignments: unknown
+  writes or conflicting reference contracts do not establish that proof. The original location is addressed directly,
+  without pointer reinterpretation, copy-in/copy-out, or reference-lifetime-dependent representation changes.
   C# exposure of Kotlin-defined types may use compiler-generated representations. This permission does not waive
   Kotlin type safety at imported native calls: an ordinary well-typed Kotlin call must not acquire a failing
   invariant CLR cast solely because its source-level and physical generic arguments differ.

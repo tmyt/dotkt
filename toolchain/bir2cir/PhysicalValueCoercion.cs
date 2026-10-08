@@ -63,6 +63,7 @@ static class PhysicalValueCoercion
         internal bool ReferenceBuild;
         internal Func<TypeNode, TypeNode, bool> NeedsDeclaredProjection;
         internal Func<TypeNode, TypeNode, bool> NeedsNativeProjection;
+        internal Func<TypeNode.Fqn, string> ExactPhysicalOwner;
         internal Func<JsonNode, TypeNode, TypeNode, JsonNode> AdaptRepresentation;
 
         Index(Func<JsonObject> unitValue) => _unitValue = unitValue;
@@ -177,7 +178,8 @@ static class PhysicalValueCoercion
         ValueTypeOracle isValue, bool referenceBuild = false,
         Func<TypeNode, TypeNode, bool> needsDeclaredProjection = null,
         Func<TypeNode, TypeNode, bool> needsNativeProjection = null,
-        Func<JsonNode, TypeNode, TypeNode, JsonNode> adaptRepresentation = null)
+        Func<JsonNode, TypeNode, TypeNode, JsonNode> adaptRepresentation = null,
+        Func<TypeNode.Fqn, string> exactPhysicalOwner = null)
     {
         var index = Index.Build(roots, unitValue);
         index.IsValue = isValue;
@@ -185,6 +187,7 @@ static class PhysicalValueCoercion
         index.NeedsDeclaredProjection = needsDeclaredProjection;
         index.NeedsNativeProjection = needsNativeProjection;
         index.AdaptRepresentation = adaptRepresentation;
+        index.ExactPhysicalOwner = exactPhysicalOwner;
         foreach (var root in roots.OfType<JsonObject>()) RewriteDocument(root, index);
     }
 
@@ -220,6 +223,7 @@ static class PhysicalValueCoercion
         if (container["ctors"] is JsonArray constructors)
             foreach (var constructor in constructors.OfType<JsonObject>())
             {
+                RefineAddressedLocalStorage(constructor, owner, index);
                 var scope = new Scope().Frame(constructor, owner, new TypeNode.Fqn("void"));
                 // Constructor delegation is executable CIR too. Its evaluation plan establishes locals consumed by
                 // the bare argument vector, so preserve the same order ilemit uses: preStmts, delegation, body.
@@ -246,6 +250,7 @@ static class PhysicalValueCoercion
         if (container["methods"] is JsonArray methods)
             foreach (var method in methods.OfType<JsonObject>())
             {
+                RefineAddressedLocalStorage(method, owner, index);
                 var scope = new Scope().Frame(method, owner, TypeJson.Read(method["ret"]));
                 if (method["body"] is JsonArray body) RewriteArray(body, scope, index);
             }
@@ -260,6 +265,7 @@ static class PhysicalValueCoercion
         // module tables by this stage, but localFun remains a declaration object until its own lowering path consumes it.
         if (obj["k"] == null && obj["params"] is JsonArray && obj["body"] is JsonArray nestedBody)
         {
+            RefineAddressedLocalStorage(obj, scope.Owner, index);
             var nestedScope = new Scope().Frame(obj, scope.Owner, TypeJson.Read(obj["ret"]));
             RewriteArray(nestedBody, nestedScope, index);
             return obj;
@@ -337,6 +343,120 @@ static class PhysicalValueCoercion
             };
         return result;
     }
+
+    // A native reference addresses the original location, not a converted value. Choose an exact local layout
+    // only when every writer and every address consumer proves that same CLR construction. This whole-frame
+    // proof adds no checks to ordinary unchecked Kotlin assignments and requires no reference-lifetime tracking.
+    // Unknown writes, conflicting reference contracts, and escaped addresses keep their existing representation.
+    static void RefineAddressedLocalStorage(JsonObject declaration, TypeNode owner, Index index)
+    {
+        if (index.ReferenceBuild) return;
+        var nodes = new List<JsonObject>();
+        void Collect(JsonNode node)
+        {
+            if (node is JsonArray array) { foreach (var item in array) Collect(item); return; }
+            if (node is not JsonObject obj || obj["params"] is JsonArray && obj["body"] is JsonArray) return;
+            nodes.Add(obj);
+            foreach (var child in obj) Collect(child.Value);
+        }
+        Collect(declaration["preStmts"]);
+        Collect(declaration["body"]);
+        Collect(declaration["baseArgs"]);
+        Collect(declaration["thisArgs"]);
+        var variables = nodes.Where(n => Str(n["k"]) == "var" && Str(n["name"]) != null)
+            .GroupBy(n => Str(n["name"]), StringComparer.Ordinal)
+            .Where(g => g.Count() == 1).ToDictionary(g => g.Key, g => g.Single(), StringComparer.Ordinal);
+        if (variables.Count == 0) return;
+        var targets = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
+        var incompatible = new HashSet<string>(StringComparer.Ordinal);
+        void Address(JsonNode value, TypeNode target)
+        {
+            if (value is not JsonObject local || Str(local["k"]) != "local" || Str(local["name"]) is not string name
+                || !variables.ContainsKey(name)) return;
+            target = NativeIdentity(target, index);
+            if (target == null || targets.TryGetValue(name, out var previous) && previous != target)
+                incompatible.Add(name);
+            else targets[name] = target;
+        }
+        void ObserveArguments(JsonArray arguments, TypeNode[] parameters)
+        {
+            if (arguments == null || parameters == null || parameters.Length != arguments.Count) return;
+            for (var i = 0; i < arguments.Count; i++)
+                if (parameters[i] is TypeNode.ByRef reference) Address(arguments[i], reference.Of);
+        }
+        ObserveArguments(declaration["thisArgs"] as JsonArray ?? declaration["baseArgs"] as JsonArray,
+            ConstructorParameterTypes(declaration));
+        foreach (var node in nodes)
+        {
+            if (node["args"] is JsonArray arguments)
+            {
+                var parameters = ParameterTypes(node);
+                if (node["invokeRef"] is JsonObject invoke)
+                    parameters = ReadTypes(invoke["parameterTypes"] as JsonArray)?.Select(p =>
+                        ValueSlotType(Close(p, OwnerArgs(invoke), MethodArgs(node)))).ToArray();
+                ObserveArguments(arguments, parameters);
+            }
+            // An explicitly retained pointer is another address consumer; its pointee cannot silently change.
+            if (Str(node["k"]) == "byrefOf")
+                Address(node["inner"], null);
+        }
+        if (targets.Count == 0) return;
+        var scope = new Scope().Frame(declaration, owner, TypeJson.Read(declaration["ret"]));
+        TypeNode Construction(JsonNode value, HashSet<string> visiting)
+        {
+            if (value is not JsonObject expression) return null;
+            var kind = Str(expression["k"]);
+            if (kind == "local" && Str(expression["name"]) is string name)
+            {
+                if (!variables.TryGetValue(name, out var variable) || !visiting.Add(name)) return null;
+                if (incompatible.Contains(name)) { visiting.Remove(name); return null; }
+                var writes = nodes.Where(n => Str(n["k"]) == "setLocal" && Str(n["name"]) == name)
+                    .Select(n => n["value"]).Prepend(variable["init"]).ToArray();
+                var types = writes.Select(w => Construction(w, visiting)).ToArray();
+                visiting.Remove(name);
+                return types.Length > 0 && types[0] != null && types.All(t => t == types[0])
+                    && (!targets.TryGetValue(name, out var referenceTarget) || referenceTarget == types[0])
+                    ? types[0] : null;
+            }
+            if (kind == "valueBlock") return Construction(expression["result"], visiting);
+            if (kind == "cast") return Construction(expression["e"], visiting);
+            if (kind == "cond")
+            {
+                var left = Construction(expression["then"], visiting);
+                return left != null && left == Construction(expression["else"], visiting) ? left : null;
+            }
+            if (kind is "new" or "newClr")
+                return NativeIdentity(TypeJson.Read((expression["memberRef"] as JsonObject)?["declaringType"])
+                    ?? TypeJson.Read(expression["type"]), index);
+            return NativeIdentity(PhysicalResult(expression, scope, index), index);
+        }
+        foreach (var (name, target) in targets)
+        {
+            var variable = variables[name];
+            var source = TypeJson.Read(variable["type"]);
+            if (incompatible.Contains(name) || target is not TypeNode.Fqn namedTarget || index.IsValue(namedTarget)
+                || source == null
+                || index.NeedsDeclaredProjection?.Invoke(source, target) != true
+                    && index.NeedsNativeProjection?.Invoke(source, target) != true
+                || Construction(new JsonObject { ["k"] = "local", ["name"] = name },
+                    new HashSet<string>(StringComparer.Ordinal)) != target) continue;
+            variable["type"] = TypeJson.Write(target);
+            foreach (var read in nodes.Where(n => Str(n["k"]) == "local" && Str(n["name"]) == name))
+                foreach (var key in new[] { "type", "sty" })
+                    if (read[key] != null) read[key] = TypeJson.Write(target);
+        }
+    }
+
+    static TypeNode NativeIdentity(TypeNode type, Index index) => type switch
+    {
+        TypeNode.Fqn f => new TypeNode.Fqn(index.ExactPhysicalOwner?.Invoke(f) ?? f.Name,
+            f.Args?.Select(a => NativeIdentity(a, index)).ToArray()),
+        TypeNode.Oblivious o => NativeIdentity(o.Of, index),
+        TypeNode.Mod m => NativeIdentity(m.Of, index),
+        TypeNode.Array a => new TypeNode.Array(NativeIdentity(a.Elem, index), a.Rank, a.SzArray),
+        TypeNode.ByRef b => new TypeNode.ByRef(NativeIdentity(b.Of, index)),
+        _ => BirTypeLowering.CanonicalPhysicalSlotType(type),
+    };
 
     static TypeNode ConstructedReferenceType(JsonNode value, IReadOnlyDictionary<string, TypeNode> fields,
         IReadOnlyDictionary<string, TypeNode> locals)
@@ -775,6 +895,7 @@ static class PhysicalValueCoercion
 
     internal static void SelfTest()
     {
+        SelfTestAddressedLocalStorage();
         foreach (var declared in new TypeNode[] {
             new TypeNode.Tv("type", 0),
             new TypeNode.ByRef(new TypeNode.Tv("type", 0)),
@@ -980,6 +1101,75 @@ static class PhysicalValueCoercion
             }
         }
         Console.WriteLine("[physical value coercion] self-test OK (native generic/value result boxing)");
+    }
+
+    static void SelfTestAddressedLocalStorage()
+    {
+        var native = new TypeNode.Fqn("OwnedBox", new TypeNode[] { new TypeNode.Fqn("System.String") });
+        var other = new TypeNode.Fqn("OwnedBox", new TypeNode[] { new TypeNode.Fqn("System.Int32") });
+        var carrier = new TypeNode.Fqn("OwnedValue");
+        JsonObject Local(string name) => new() { ["k"] = "local", ["name"] = name };
+        JsonObject New(TypeNode type) => new() { ["k"] = "new", ["type"] = TypeJson.Write(type),
+            ["args"] = new JsonArray() };
+        JsonObject Call(TypeNode type) => new() {
+            ["k"] = "clrStatic", ["typeArgs"] = new JsonArray(TypeJson.Fqn("System.String")),
+            ["args"] = new JsonArray(Local("slot"), Local("slot")),
+            ["memberRef"] = new JsonObject {
+                ["kind"] = "method", ["declaringType"] = TypeJson.Fqn("Foreign"),
+                ["returnType"] = TypeJson.Fqn("void"), ["parameterTypes"] = new JsonArray(
+                    TypeJson.Write(new TypeNode.ByRef(type)), TypeJson.Write(new TypeNode.ByRef(type))) } };
+        foreach (var mode in new[] { "exact", "same-writes", "conflicting-write", "unknown-write",
+                     "conflicting-reference", "method-frame", "address-escape", "unchecked-view", "alias-writer", "value-type",
+                     "constructor-frame", "conditional", "conditional-conflict" })
+        {
+            var variable = new JsonObject { ["k"] = "var", ["name"] = "slot", ["type"] = TypeJson.Write(carrier),
+                ["init"] = New(native) };
+            var body = new JsonArray(variable, Call(mode == "method-frame"
+                ? new TypeNode.Fqn("OwnedBox", new TypeNode[] { new TypeNode.Tv("method", 0) }) : native));
+            if (mode is "same-writes" or "conflicting-write" or "unknown-write" or "unchecked-view")
+            {
+                JsonNode value = mode == "unknown-write" ? Local("input") : New(mode is "conflicting-write" or "unchecked-view" ? other : native);
+                if (mode == "unchecked-view") value = new JsonObject { ["k"] = "cast", ["type"] = TypeJson.Write(carrier), ["e"] = value };
+                body.Add(new JsonObject { ["k"] = "setLocal", ["name"] = "slot", ["value"] = value });
+            }
+            if (mode == "conflicting-reference") body.Add(Call(carrier));
+            if (mode == "address-escape") body.Add(new JsonObject { ["k"] = "byrefOf", ["inner"] = Local("slot") });
+            if (mode == "alias-writer")
+            {
+                variable["init"] = Local("other");
+                body.Insert(0, new JsonObject { ["k"] = "var", ["name"] = "other", ["type"] = TypeJson.Write(carrier), ["init"] = New(native) });
+                var write = Call(other);
+                write["args"] = new JsonArray(Local("other"), Local("other"));
+                body.Add(write);
+            }
+            if (mode is "conditional" or "conditional-conflict")
+                variable["init"] = new JsonObject { ["k"] = "cond", ["then"] = New(native),
+                    ["else"] = New(mode == "conditional-conflict" ? other : native) };
+            var declaration = new JsonObject { ["params"] = new JsonArray(new JsonObject {
+                ["name"] = "input", ["type"] = TypeJson.Write(carrier) }), ["body"] = body };
+            if (mode == "constructor-frame")
+            {
+                body.Remove(variable);
+                declaration["body"] = new JsonArray();
+                declaration["preStmts"] = new JsonArray(variable);
+                declaration["baseArgs"] = new JsonArray(Local("slot"), Local("slot"));
+                declaration["baseCtorRef"] = new JsonObject {
+                    ["declaringType"] = TypeJson.Write(new TypeNode.Fqn("Foreign", new TypeNode[] { new TypeNode.Fqn("System.String") })),
+                    ["parameterTypes"] = new JsonArray(Enumerable.Range(0, 2).Select(_ => TypeJson.Write(
+                        new TypeNode.ByRef(new TypeNode.Fqn("OwnedBox", new TypeNode[] { new TypeNode.Tv("type", 0) })))).ToArray()) };
+            }
+            var index = Index.Build(Array.Empty<JsonNode>(), () => throw new InvalidOperationException("Unexpected Unit"));
+            index.IsValue = _ => mode == "value-type";
+            index.NeedsDeclaredProjection = (source, target) => source == carrier && target == native;
+            for (var iteration = 0; iteration < 2; iteration++)
+            {
+                RefineAddressedLocalStorage(declaration, null, index);
+                var expected = mode is "exact" or "same-writes" or "method-frame" or "constructor-frame" or "conditional" ? native : carrier;
+                if (TypeJson.Read(variable["type"]) != expected)
+                    throw new InvalidOperationException($"Native addressed storage proof failed: {mode}");
+            }
+        }
+        Console.WriteLine("[native local storage] self-test OK (whole-frame writes, exact addresses, generic frame, conflicts, escapes, unchecked views)");
     }
 
     static TypeNode ExprType(JsonNode node, Scope scope, Index index)
