@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Internal generic array resizing preserves its erased value representation.**
+  CLR-bound array results use the same Kotlin-facing carrier as their consuming slots,
+  avoiding an unintended concrete-array cast while preserving exact native signatures.
+
 - **Variant Kotlin collection and Comparable value slots use an opaque CLR representation.**
   Kotlin declaration metadata and nominal signature modifiers retain their source identity, while ordinary
   CLR slots use `object` even when the corresponding BCL interface is variant. CLR variance alone does not
