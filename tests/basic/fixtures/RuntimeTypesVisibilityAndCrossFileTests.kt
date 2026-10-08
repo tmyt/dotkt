@@ -150,6 +150,7 @@ class RuntimeTypesProtectedSuperDerived : RuntimeTypesProtectedSuperBase() {
 class RuntimeTypesSuperContext(val prefix: String)
 interface RuntimeTypesGenericMarker<T> { fun render(): String }
 class RuntimeTypesStringMarker : RuntimeTypesGenericMarker<String> { override fun render(): String = "marker" }
+class RuntimeTypesIntMarker : RuntimeTypesGenericMarker<Int> { override fun render(): String = "int" }
 private interface RuntimeTypesExistentialFlow<T>
 private interface RuntimeTypesExistentialFusibleFlow<T> : RuntimeTypesExistentialFlow<T> {
     fun fuse(): RuntimeTypesExistentialFlow<T>
@@ -253,6 +254,28 @@ class RuntimeTypesGenericProtectedSuperDerived<A, B> : RuntimeTypesGenericProtec
         { super.combine(super.echo(value), marker) }
 }
 
+open class RuntimeTypesNullableSuperBase<T> {
+    protected open fun maybe(value: T): T? = value
+}
+class RuntimeTypesNullableIntSuper : RuntimeTypesNullableSuperBase<Int>() {
+    override fun maybe(value: Int): Int? = null
+    fun lifted(): () -> Int = { super.maybe(41)!! + 1 }
+}
+class RuntimeTypesNullableStringSuper : RuntimeTypesNullableSuperBase<String>() {
+    override fun maybe(value: String): String? = null
+    fun lifted(): () -> Int = { super.maybe("four")?.length ?: -1 }
+}
+open class RuntimeTypesNestedNullableSuperBase {
+    protected open fun sum(values: List<Int?>): Int = values.size
+    protected open fun echo(values: Array<Int?>): Array<Int?> = values
+}
+class RuntimeTypesNestedNullableSuper : RuntimeTypesNestedNullableSuperBase() {
+    override fun sum(values: List<Int?>): Int = -1
+    override fun echo(values: Array<Int?>): Array<Int?> = arrayOf(0)
+    fun lifted(values: List<Int?>): () -> Int = { super.sum(values) }
+    fun liftedArray(values: Array<Int?>): () -> Array<Int?> = { super.echo(values) }
+}
+
 // ---- il-vis : visibility modifiers -> CLR access flags ------------------------------------------------------------
 class RuntimeTypesAccount(private val balance: Int) {
     private fun fee(): Int = 2
@@ -317,7 +340,19 @@ class RuntimeTypeAndSuperDispatchTests {
             assertEquals("base:value:marker",
                 RuntimeTypesGenericProtectedSuperDerived<Int, String>()
                     .liftedSuper("value", RuntimeTypesStringMarker())())
+            assertEquals("base:42:int",
+                RuntimeTypesGenericProtectedSuperDerived<String, Int>()
+                    .liftedSuper(42, RuntimeTypesIntMarker())())
         }
+        assertEquals(42, RuntimeTypesNullableIntSuper().lifted()())
+        assertEquals(4, RuntimeTypesNullableStringSuper().lifted()())
+        val nested = RuntimeTypesNestedNullableSuper()
+        assertEquals(2, nested.lifted(listOf(null, 2))())
+        val values = arrayOf<Int?>(null, 7)
+        val result = nested.liftedArray(values)()
+        assertTrue(result === values)
+        assertEquals(null, result[0])
+        assertEquals(7, result[1])
     }
 
     // #60: the star-projection smart-cast (`is Map<*,*>`/`is List<*>`/`is Iterable<*>`/`is Collection<*>`) on a

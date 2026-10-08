@@ -392,6 +392,25 @@ static class UnsafeAccessorLowering
         }
         var referencedTarget = ResolveReferencedMethodTarget(physicalTarget, identity, resolvedOwner, targetName,
             methodArity, false, declarationSignature, declarationReturn, methodTypeParams, false, refs);
+        // Selection above consumes the frontend descriptor; the helper and its
+        // direct base edge now consume the chosen declaration's actual slots.
+        // A Bound-erased frontend snapshot may still spell List<Int?> while
+        // declaration storage already spells List<object> (and object arrays).
+        if (referencedTarget != null)
+        {
+            declarationSignature = new JsonArray(referencedTarget.Parameters.Select(TypeJson.Write).ToArray());
+            declarationReturn = referencedTarget.Return;
+        }
+        else if (physicalTarget != null)
+        {
+            declarationSignature = FunctionSignatureIdentity.Signature(physicalTarget["params"] as JsonArray);
+            declarationReturn = TypeJson.Read(physicalTarget["ret"])
+                ?? throw new InvalidOperationException("Selected Kotlin super declaration has no return slot");
+        }
+        signature = new JsonArray(declarationSignature.Select(type =>
+            TypeJson.Write(SubstituteOwnerSlots(TypeJson.Read(type), ownerArgs))).ToArray());
+        declaredReturn = SubstituteOwnerSlots(declarationReturn, ownerArgs);
+        declaredReturnJson = TypeJson.Write(declaredReturn);
         var physicalParameters = referencedTarget?.TypeParams ?? PhysicalMethodTypeParams(physicalTarget, methodTypeParams);
         var forwarderTypeParams = SubstituteOwnerSlotsInDescriptors(physicalParameters, ownerArgs);
         if ((forwarderTypeParams?.Count ?? 0) != methodArity)
@@ -443,6 +462,9 @@ static class UnsafeAccessorLowering
                 ["attrs"] = new JsonArray(),
             };
             if (forwarderTypeParams != null) forwarder["typeParams"] = forwarderTypeParams;
+            // This late declaration owns the selected physical slots. Do not
+            // repeat source value erasure when its uses enter the late index.
+            StampNullableErasureOwnership(forwarder, nullableGenericReturn: null, ownershipKnown: true);
             forwarderHost.Methods.Add(forwarder);
             definition = new AccessorDefinition(name, null, (JsonArray)signature.DeepClone(), 0, methodArity);
             accessors[key] = definition;
@@ -562,7 +584,8 @@ static class UnsafeAccessorLowering
             f.Args?.Select(arg => SubstituteOwnerSlots(arg, args)).ToArray()),
         TypeNode.Nullable n => new TypeNode.Nullable(SubstituteOwnerSlots(n.Of, args)),
         TypeNode.Oblivious o => new TypeNode.Oblivious(SubstituteOwnerSlots(o.Of, args)),
-        TypeNode.Array a => new TypeNode.Array(SubstituteOwnerSlots(a.Elem, args)),
+        TypeNode.Array a => new TypeNode.Array(SubstituteOwnerSlots(a.Elem, args), a.Rank, a.SzArray),
+        TypeNode.Mod m => new TypeNode.Mod(m.Req, SubstituteOwnerSlots(m.M, args), SubstituteOwnerSlots(m.Of, args)),
         TypeNode.ByRef b => new TypeNode.ByRef(SubstituteOwnerSlots(b.Of, args)),
         TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend, SubstituteOwnerSlots(fn.Ret, args),
             fn.Params.Select(param => SubstituteOwnerSlots(param, args)).ToArray(),
