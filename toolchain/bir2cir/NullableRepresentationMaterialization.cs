@@ -663,11 +663,16 @@ static class NullableRepresentationMaterialization
                  {"t":"fqn","name":"DescriptorBox","args":[{"t":"nullable","of":{"t":"tv","scope":"type","i":1}}]}],
                "recv":{"k":"this"},"args":[{"k":"local","name":"value"}],"ret":{"t":"fqn","name":"kotlin.Unit"}}]}]}]}
         """)!.AsObject();
+        inheritedDescriptor["types"][2]["methods"][0]["body"][0][FunctionSignatureIdentity.CallKey] =
+            inheritedDescriptor["types"][2]["methods"][0]["body"][0]["memberSignature"].DeepClone();
         Apply(new[] { inheritedDescriptor }, _ => false);
         var rewrittenDescriptor = inheritedDescriptor["types"][2]["methods"][0]["body"][0];
         if (rewrittenDescriptor["memberOwnerTypeParams"] is not JsonArray { Count: 3 }
             || TypeJson.Read(rewrittenDescriptor["memberSignature"][0]) is not TypeNode.Fqn { Args: { } descriptorArguments }
-            || descriptorArguments[0] != new TypeNode.Tv("type", 2))
+            || descriptorArguments[0] != new TypeNode.Tv("type", 2)
+            || TypeJson.Read(rewrittenDescriptor[FunctionSignatureIdentity.CallKey][0]) is not
+                TypeNode.Fqn { Args: { } functionDescriptorArguments }
+            || functionDescriptorArguments[0] != new TypeNode.Tv("type", 2))
             throw new InvalidOperationException("Inherited declaration identity replaced the explicit accessed-owner frame");
         var nongenericSource = new NullableRepresentationTypes(null, null, descriptorTypes, _ => false);
         var sourceSignature = JsonNode.Parse("""

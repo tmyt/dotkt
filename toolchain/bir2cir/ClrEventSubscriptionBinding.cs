@@ -71,6 +71,31 @@ static class ClrEventSubscriptionBinding
 
         public JsonNode Apply(JsonNode root) => Walk(root, _empty, _empty);
 
+        public void ApplyInPlace(JsonNode root) => WalkInPlace(root, _empty, _empty);
+
+        void WalkInPlace(JsonNode node, JsonArray typeParams, JsonArray methodParams)
+        {
+            if (node is JsonObject obj)
+            {
+                if (_scopes.TryGetValue(obj, out var scope))
+                    (typeParams, methodParams) = scope;
+                foreach (var child in obj.ToList())
+                    WalkInPlace(child.Value, typeParams, methodParams);
+                if (Transform(obj, typeParams, methodParams) is JsonObject replacement)
+                {
+                    obj.Clear();
+                    foreach (var child in replacement.ToList())
+                    {
+                        replacement.Remove(child.Key);
+                        obj[child.Key] = child.Value;
+                    }
+                    MaterializedRoots[^1] = obj;
+                }
+            }
+            else if (node is JsonArray array)
+                foreach (var child in array.ToList()) WalkInPlace(child, typeParams, methodParams);
+        }
+
         JsonNode Walk(JsonNode node, JsonArray typeParams, JsonArray methodParams)
         {
             if (node is JsonObject obj)
@@ -199,6 +224,7 @@ static class ClrEventSubscriptionBinding
             if (free.Count > 0)
                 synthClass["typeParams"] = new JsonArray(free.Select((item, i) =>
                     ClosureTypeParameter(item, i, free, typeParams, methodParams)).ToArray());
+            ClosureSynthesis.MarkPreboundFrame(synthClass);
 
             var removeClosure = new JsonObject
             {
@@ -261,6 +287,13 @@ static class ClrEventSubscriptionBinding
         {
             var targetType = TypeJson.Read(targetTypeNode)
                 ?? throw new InvalidOperationException("bir2cir: ClrEvent.subscribe has no readable handler target type");
+            // Ordinary Kotlin function values share one carrier representation.
+            // They are not nominal delegates; selecting Action/Func from their
+            // source shape here would freeze a representation before erasure.
+            if (targetType is TypeNode.Fn { Clr: null }) return handler?.DeepClone();
+            // kotc has already selected the nominal SAM declaration; its
+            // construction will become a delegate in the ordinary synthesis pass.
+            if (handler is JsonObject sam && Str(sam["k"]) == "newSam") return sam.DeepClone();
             // A literal/callable-reference construction can use the ordinary declared-slot mechanism directly. In
             // particular, ClosureSynthesis has already turned a CLR-SAM newSam into a newClosure and marked it; wrapping
             // that construction again would bind the outer Action.Invoke pointer to the already-retargeted nominal
@@ -278,25 +311,16 @@ static class ClrEventSubscriptionBinding
                     $"bir2cir: ClrEvent.subscribe cannot convert handler {TypeNode.ToJson(sourceType)} " +
                     $"to {TypeNode.ToJson(targetType)}");
 
-            var loweredSource = (TypeNode.Fn)BirTypeLowering.LowerFnDelegate(
-                sourceFunction, refBuild: false, force: false);
-            var sourceDelegate = BirTypeLowering.DelegateFqnOf(loweredSource)
-                ?? throw new InvalidOperationException(
-                    $"bir2cir: ClrEvent.subscribe handler {TypeNode.ToJson(sourceType)} has no CLR delegate representation");
-            var conversion = new JsonObject
+            // Keep this as a value conversion until the source function's final
+            // carrier is established. Selecting its CLR Invoke pointer here
+            // would bind the pre-erasure Action/Func signature instead.
+            return new JsonObject
             {
-                ["k"] = "newBoundClrDelegate",
-                ["clrType"] = TypeJson.Write(sourceDelegate),
-                ["method"] = "Invoke",
-                ["argTypes"] = new JsonArray(loweredSource.DelegateParams.Select(TypeJson.Write).ToArray()),
-                ["virtual"] = true,
-                ["recv"] = handler?.DeepClone(),
-                // This is the source method-pointer shape. The ordinary delegate-slot materializer below changes the
-                // constructed delegate to targetType and authors the existing Unit adapter if the returns require it.
+                ["k"] = "samConvert",
+                ["type"] = TypeJson.Write(targetType),
+                ["e"] = handler?.DeepClone(),
                 ["funcType"] = TypeJson.Write(sourceFunction),
             };
-            ClrMemberResolution.MarkDelegateSlot(conversion, targetType, _refs, _localTypes);
-            return conversion;
         }
 
         static bool SamePhysicalDelegate(TypeNode left, TypeNode right)
@@ -443,6 +467,19 @@ static class ClrEventSubscriptionBinding
             fn.Ctx?.Select(c => SubstituteTypeVariables(c, ownerArgs)).ToArray()),
         _ => type,
     };
+
+    public static IReadOnlyList<JsonNode> ApplySource(
+        JsonNode root,
+        ReferenceMetadataIndex refs,
+        IReadOnlyDictionary<(string Owner, string Event), JsonNode> forwardedOwners,
+        IReadOnlySet<string> localTypes)
+    {
+        // Preserve the objects used by module-wide declaration/frame indices.
+        // Only the transient event operation is replaced, before value erasure.
+        var binder = new Binder(root, refs, forwardedOwners, localTypes);
+        binder.ApplyInPlace(root);
+        return binder.MaterializedRoots;
+    }
 
     public static JsonNode Apply(
         JsonNode root,

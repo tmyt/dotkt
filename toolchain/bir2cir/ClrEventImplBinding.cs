@@ -32,6 +32,57 @@ static class ClrEventImplBinding
         JsonArray AddSignature,
         JsonArray RemoveSignature);
 
+    // The raise shell initially carries the event handler type, not Invoke's
+    // argument vector. Establish that declaration before signature/frame
+    // indices are captured; changing it only after erasure leaves those indices
+    // describing a delegate parameter where the call passes an event payload.
+    public static void PrepareSourceRaiseSignatures(JsonNode root, ReferenceMetadataIndex refs)
+    {
+        void Prepare(JsonObject type)
+        {
+            if (type["clrEvents"] is JsonArray events && type["methods"] is JsonArray methods)
+                foreach (var backing in events.OfType<JsonObject>())
+                {
+                    if (Str(backing["k"]) != "clrEventBacking") continue;
+                    var name = Str(backing["name"]);
+                    var add = FindAccessor(methods, "add_" + name, "add");
+                    var raise = FindAccessor(methods, "raise_" + name, "raise");
+                    if (add == null || raise == null) continue;
+                    var (_, parameters) = ResolveDelegate(name, add, backing["handlerType"], refs);
+                    RewriteRaiseParameters(raise, parameters);
+                }
+            if (type["types"] is JsonArray nested)
+                foreach (var child in nested.OfType<JsonObject>()) Prepare(child);
+        }
+        if (root is JsonObject file && file["types"] is JsonArray types)
+            foreach (var type in types.OfType<JsonObject>()) Prepare(type);
+    }
+
+    public static void SelfTestSourceRaiseSignatures()
+    {
+        var root = JsonNode.Parse("""
+        {"types":[{"name":"EventSignatureFixture","typeParams":["T"],
+          "clrEvents":[{"k":"clrEventBacking","name":"pulse","handlerType":
+            {"t":"fn","suspend":false,"params":[{"t":"tv","scope":"type","i":0}],
+             "ret":{"t":"fqn","name":"kotlin.Unit"}}}],
+          "methods":[
+            {"name":"add_pulse","params":[],"body":[{"k":"clrEventAccessor","kind":"add","event":"pulse"}]},
+            {"name":"raise_pulse","params":[{"name":"value","type":{"t":"fqn","name":"Placeholder"}}],
+             "body":[{"k":"clrEventAccessor","kind":"raise","event":"pulse"}]}]}]}
+        """)!.AsObject();
+        var raise = root["types"][0]["methods"][1];
+        for (var iteration = 0; iteration < 2; iteration++)
+        {
+            PrepareSourceRaiseSignatures(root, null);
+            if (!ReferenceEquals(raise, root["types"][0]["methods"][1])
+                || raise["params"] is not JsonArray { Count: 1 }
+                || TypeJson.Read(raise["params"][0]["type"]) != new TypeNode.Tv("type", 0)
+                || Str(raise["body"][0]["k"]) != "clrEventAccessor")
+                throw new InvalidOperationException("Source event raise lost its payload signature or declaration identity");
+        }
+        Console.WriteLine("[source event raise signature] self-test OK (payload frame, declaration identity, idempotence)");
+    }
+
     public static JsonNode BindImplementations(JsonNode root, ReferenceMetadataIndex refs)
     {
         if (root is JsonObject obj && obj["types"] is JsonArray types)
@@ -65,11 +116,13 @@ static class ClrEventImplBinding
         foreach (var root in rootList) BindRaises(root, refs, signatures);
     }
 
-    // A subscription can live in a different source file from the Kotlin event declaration.  Once every
+    // A subscription can live in a different source file from the Kotlin event declaration. At the source boundary,
+    // select its synthesized shell using clrEventBacking and source constraints. Late materialized operations use
+    // the final declaration boundary instead: once every
     // `clrEventBacking` has become a concrete `clrEventDecl`, bind add/remove sites whose owner is emitted in this
     // compilation to that declaration.  Referenced events deliberately remain untouched for
     // ClrMemberResolution's EventInfo path.
-    public static void BindLocalSubscriptionsAll(IEnumerable<JsonNode> roots)
+    public static void BindLocalSubscriptionsAll(IEnumerable<JsonNode> roots, bool sourceDeclarations = false)
     {
         var rootList = roots.ToList();
         var definitions = SupertypeGraph.Collect(rootList);
@@ -104,8 +157,11 @@ static class ClrEventImplBinding
         {
             var candidates = definition.Methods.OfType<JsonObject>()
                 .Where(method => Str(method["name"]) == name
-                    && method["specialName"] is JsonValue special
-                    && special.TryGetValue<bool>(out var isSpecial) && isSpecial
+                    && (sourceDeclarations
+                        ? ReferenceEquals(FindAccessor(definition.Methods, name,
+                            name.StartsWith("add_", StringComparison.Ordinal) ? "add" : "remove"), method)
+                        : method["specialName"] is JsonValue special
+                            && special.TryGetValue<bool>(out var isSpecial) && isSpecial)
                     && method["params"] is JsonArray)
                 .ToList();
             if (candidates.Count != 1)
@@ -138,9 +194,9 @@ static class ClrEventImplBinding
                     var declarations = definition.Node["clrEvents"] as JsonArray;
                     foreach (var declaration in declarations?.OfType<JsonObject>() ?? Enumerable.Empty<JsonObject>())
                     {
-                        if (Str(declaration["k"]) != "clrEventDecl"
+                        if (Str(declaration["k"]) != (sourceDeclarations ? "clrEventBacking" : "clrEventDecl")
                             || Str(declaration["name"]) != eventName) continue;
-                        var declaredDelegate = TypeJson.Read(declaration["delegateType"])
+                        var declaredDelegate = TypeJson.Read(declaration[sourceDeclarations ? "handlerType" : "delegateType"])
                             ?? throw new InvalidOperationException(
                                 $"bir2cir: local clrEvent '{spec.Name}.{eventName}' has no concrete delegate type");
                         matches.Add(new LocalEventBinding(
@@ -381,13 +437,18 @@ static class ClrEventImplBinding
     // raise_: params := D.Invoke's params (so `field?.Invoke(args)` forwards them); body := the raise directive.
     static void RewriteRaise(JsonObject m, string fieldName, JsonNode delegateNode, List<JsonNode> invokeParamNodes)
     {
+        RewriteRaiseParameters(m, invokeParamNodes);
+        m["body"] = new JsonArray { AccessorImpl("raise", fieldName, delegateNode) };
+        m["specialName"] = true;   // ECMA-335 event-accessor convention (the .event's Fire)
+        m.Remove("overrides");
+    }
+
+    static void RewriteRaiseParameters(JsonObject m, List<JsonNode> invokeParamNodes)
+    {
         var ps = new JsonArray();
         for (int i = 0; i < invokeParamNodes.Count; i++)
             ps.Add(new JsonObject { ["name"] = "arg" + i, ["type"] = invokeParamNodes[i].DeepClone() });
         m["params"] = ps;
-        m["body"] = new JsonArray { AccessorImpl("raise", fieldName, delegateNode) };
-        m["specialName"] = true;   // ECMA-335 event-accessor convention (the .event's Fire)
-        m.Remove("overrides");
     }
 
     static JsonObject AccessorImpl(string kind, string fieldName, JsonNode delegateNode) => new()

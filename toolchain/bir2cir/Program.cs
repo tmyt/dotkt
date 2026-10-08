@@ -40,6 +40,7 @@ static class Bir2Cir
                 NullableRepresentationDemand.SelfTest();
                 NullableRepresentationTypes.SelfTest();
                 NullableRepresentationMaterialization.SelfTest();
+                ClrEventImplBinding.SelfTestSourceRaiseSignatures();
                 NullableGenericErasure.SelfTestDeclarationConstraints();
                 InnerRepresentationFrameTests.SelfTest();
                 GenericRepresentationPolicy.SelfTest();
@@ -246,6 +247,24 @@ sealed class Pipeline
         // share Kotlin types. Their forwarding declarations must participate in value erasure too;
         // after erasure, a concrete inherited fact can no longer match an object-valued generic slot.
         InheritedClassInterfaceBridge.ApplyAll(birRoots);
+        // An event handle is transient operation vocabulary, not an ordinary
+        // generic value. Select its local accessors while source owner
+        // constraints are still present, so selected accessors participate in
+        // the same representation passes as every other local method call.
+        var sourceEventOwners = ClrEventSubscriptionBinding.CollectForwardedOwners(birRoots);
+        var sourceEventLocalTypes = SupertypeGraph.Collect(birRoots).Keys.ToHashSet(StringComparer.Ordinal);
+        if (!_options.RefBuild)
+        {
+            foreach (var root in birRoots)
+                ClrEventImplBinding.PrepareSourceRaiseSignatures(root, refs);
+            foreach (var root in birRoots)
+            {
+                var subscriptions = ClrEventSubscriptionBinding.ApplySource(
+                    root, refs, sourceEventOwners, sourceEventLocalTypes);
+                ClosureSynthesis.ApplyMaterialized(root, subscriptions, refs);
+            }
+            ClrEventImplBinding.BindLocalSubscriptionsAll(birRoots, sourceDeclarations: true);
+        }
         // Snapshot source signatures after source-shaped inherited forwarders exist,
         // before any representation pass changes names or types. Their compiler-only
         // identities also own the nullable frames materialized on those new bodies.

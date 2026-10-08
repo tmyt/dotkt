@@ -487,7 +487,10 @@ class EnumTests {
         generic.raise("b")
         assertEquals("a", genericSeen)
         assertEquals(1, exerciseGenericOwnerConstraint(generic, "c"))
+        assertEquals(1, exerciseGenericOwnerConstraint(EnumGenericOwnedEvent<Int>(), 42))
+        assertEquals(8, exerciseGenericLocalEvent(EnumNamedOwnedEvent()))
         assertEquals(5, exerciseConstraintOnlyLocalEvent(EnumConstraintOnlyOwnedEvent<String>(), "marker"))
+        assertEquals(5, exerciseConstraintOnlyLocalEvent(EnumConstraintOnlyOwnedEvent<Int>(), 42))
     }
 
     @TestAttribute

@@ -410,7 +410,8 @@ static class ClosureSynthesis
                         // applications/typeArgs belong to the closure's lexical frame and may be rebound to captured
                         // class slots. Rebinding a callee `!!0` here changes its formal method parameter into an
                         // unrelated closure `!N`, corrupting the forwarder descriptor and its generic constraints.
-                        if (kv.Key is "sig" or "resolvedMemberParams" or "shapeTypes" or "paramSig"
+                        if (kv.Key is "sig" or FunctionSignatureIdentity.CallKey
+                            or "resolvedMemberParams" or "shapeTypes" or "paramSig"
                             or "delegationSig" or "memberSignature" or "memberOwnerTypeParams"
                             or "memberMethodTypeParams" or "memberReturnType" or "memberType"
                             // Transient source-frame map consumed by local CLR-event binding after this closure has

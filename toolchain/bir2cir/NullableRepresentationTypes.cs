@@ -23,6 +23,7 @@ sealed class NullableRepresentationTypes
     // These facts are expressed in the selected declaration's frame, not the lexical caller's frame.
     internal static bool IsDeclarationFrameKey(string key, string kind, JsonObject expression) => key is
         "sig" or "shapeTypes" or "paramSig" or "delegationSig"
+        or FunctionSignatureIdentity.CallKey
         or "memberOwnerTypeParams" or "memberMethodTypeParams"
         or "sharedCellTypeParams"
         or "memberReturnType" or "memberSignature" or "memberType" or "awaitResult"
