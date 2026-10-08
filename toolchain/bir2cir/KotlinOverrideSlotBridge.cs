@@ -1876,6 +1876,12 @@ static class KotlinOverrideSlotBridge
     static Fit Classify(TypeNode slot, TypeNode declared, ReferenceMetadataIndex refs, ValueTypeOracle isValue,
         bool returnPosition, bool slotReturnsValue = false)
     {
+        // Platform nullability is a source annotation, not a distinct CLR storage shape.
+        // Keep the original signature for descriptors and metadata; compare its underlying representation here.
+        if (slot is TypeNode.Oblivious platformSlot)
+            return Classify(platformSlot.Of, declared, refs, isValue, returnPosition, slotReturnsValue);
+        if (declared is TypeNode.Oblivious platformDeclaration)
+            return Classify(slot, platformDeclaration.Of, refs, isValue, returnPosition, slotReturnsValue);
         if (declared.Equals(slot)
             || BirTypeLowering.SamePhysicalSlotType(slot, declared, refs?.Aliases, isValue,
                 refs?.PhysicalTypeNames, returnPosition, nullableFrames: refs?.NullableTypeFrames,
@@ -2042,6 +2048,28 @@ static class KotlinOverrideSlotBridge
         if (!ReferenceEquals(SelectSemanticImplementation("selected-declaration"), semanticImplementation)
             || SelectSemanticImplementation("different-declaration") != null)
             throw new InvalidOperationException("Carrier-valued implementation lost its explicit source override identity");
+        semanticImplementation["name"] = "physicalAccept";
+        semanticImplementation[DeclarationRename.SourceMemberKey] = "accept";
+        if (!ReferenceEquals(SelectSemanticImplementation(null), semanticImplementation)
+            || SelectSemanticImplementation("different-declaration") != null)
+            throw new InvalidOperationException("Renamed override lost its explicit source identity on an inherited slot");
+        semanticImplementation.Remove("overrides");
+        if (SelectSemanticImplementation(null) != null)
+            throw new InvalidOperationException("Source member identity selected a body without an override edge");
+        var platformObject = new TypeNode.Oblivious(objectType);
+        var integer = new TypeNode.Fqn("System.Int32");
+        var sourceParameter = new TypeNode.Oblivious(new TypeNode.Tv("type", 0));
+        var erasedIndexer = new JsonObject { ["params"] = new JsonArray(new JsonObject {
+            ["type"] = TypeJson.Write(platformObject), ["nullableGeneric"] = TypeNode.ToJson(sourceParameter) }) };
+        if (!DeclarationRename.TryCallableSignature(erasedIndexer, out var allocationSignature, out var allocationArity)
+            || allocationArity != 0 || !allocationSignature.SequenceEqual(new[] { sourceParameter }))
+            throw new InvalidOperationException("CLR allocation selected an erased indexer signature instead of its source declaration");
+        if (!ErasureAligned(platformObject, integer)
+            || !ErasureAligned(objectType, new TypeNode.Oblivious(integer))
+            || ErasureAligned(new TypeNode.Oblivious(new TypeNode.Fqn("System.String")), integer)
+            || Classify(platformObject, integer, emptyRefs, _ => false, returnPosition: true) != Fit.Bridge
+            || Classify(platformObject, integer, emptyRefs, _ => false, returnPosition: false) != Fit.Bridge)
+            throw new InvalidOperationException("Platform-nullability wrapper hid an erased scalar override seam");
         if (!ErasureAligned(markedArgument, concreteArgument)
             || Classify(markedArgument, concreteArgument, emptyRefs, _ => false, returnPosition: false) != Fit.Bridge
             || Classify(markedArgument, concreteArgument, emptyRefs, _ => false, returnPosition: true) != Fit.Bridge)
@@ -2147,6 +2175,8 @@ static class KotlinOverrideSlotBridge
         // Exact modifiers are preserved separately on the generated adapter.
         if (slot is TypeNode.Mod modifiedSlot) return ErasureAligned(modifiedSlot.Of, declared);
         if (declared is TypeNode.Mod modifiedDeclaration) return ErasureAligned(slot, modifiedDeclaration.Of);
+        if (slot is TypeNode.Oblivious platformSlot) return ErasureAligned(platformSlot.Of, declared);
+        if (declared is TypeNode.Oblivious platformDeclaration) return ErasureAligned(slot, platformDeclaration.Of);
         if (IsBareObject(slot) || slot.Equals(declared)) return true;
         switch (slot, declared)
         {
@@ -2155,7 +2185,6 @@ static class KotlinOverrideSlotBridge
                 return !sa.Where((s, i) => !ErasureAligned(s, da[i])).Any();
             case (TypeNode.Array s, TypeNode.Array d): return ErasureAligned(s.Elem, d.Elem);
             case (TypeNode.Nullable s, TypeNode.Nullable d): return ErasureAligned(s.Of, d.Of);
-            case (TypeNode.Oblivious s, TypeNode.Oblivious d): return ErasureAligned(s.Of, d.Of);
             case (TypeNode.ByRef s, TypeNode.ByRef d): return ErasureAligned(s.Of, d.Of);
             case (TypeNode.Fn s, TypeNode.Fn d)
                 when s.Suspend == d.Suspend && s.DelegateParams.Length == d.DelegateParams.Length
@@ -2208,8 +2237,7 @@ static class KotlinOverrideSlotBridge
             // physical name; `kotlinSourceMember` is the carried frontend identity that relates those two projections.
             // The override closure below remains the independent proof that this candidate actually fills this slot.
             else if ((Str(m["name"]) != physicalName
-                      && (slotDeclarationId == null
-                          || Str(m[DeclarationRename.SourceMemberKey]) != semanticName))
+                      && Str(m[DeclarationRename.SourceMemberKey]) != semanticName)
                      || KotlinPropertyAccessors.TryIdentity(m, out _, out _)) continue;
             if (((m["typeParams"] as JsonArray)?.Count ?? 0) != methodArity) continue;
             // Generic constraints are part of a CLR MethodDef's implementation contract even when name, arity,

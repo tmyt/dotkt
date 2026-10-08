@@ -259,14 +259,17 @@ static class DeclarationRename
     // ResolveSlot serves both a declaration and its already-selected call nodes. They carry the same declaration
     // identity in different structural slots: declarations use params/typeParams, calls use sig/typeArgs. Keep that
     // vocabulary distinction explicit rather than recovering either vector from the override marker's coarse arity.
-    static bool TryCallableSignature(JsonObject node, out TypeNode[] signature, out int methodArity)
+    internal static bool TryCallableSignature(JsonObject node, out TypeNode[] signature, out int methodArity)
     {
         signature = null;
         methodArity = 0;
         if (node["params"] is JsonArray parameters)
         {
             signature = parameters.OfType<JsonObject>()
-                .Select(parameter => TypeJson.Read(parameter["type"])).ToArray();
+                // Allocation selects the Kotlin declaration, not the already-erased value slot.
+                // The erasure passes recorded the original type explicitly before changing storage.
+                .Select(parameter => (parameter["kotlinType"] ?? parameter["nullableGeneric"]) is JsonValue source
+                    ? TypeNode.Parse(source.GetValue<string>()) : TypeJson.Read(parameter["type"])).ToArray();
             methodArity = (node["typeParams"] as JsonArray)?.Count ?? 0;
             return signature.Length == parameters.Count && signature.All(type => type != null);
         }

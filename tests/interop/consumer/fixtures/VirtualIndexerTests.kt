@@ -108,10 +108,15 @@ class VirtualIndexerTests {
 
     @TestAttribute
     fun interfaceIndexersBindBothAccessors() {
-        val closed: VirtualIndexers.IGrid<Int> = ClosedVirtualInterfaceGrid()
+        val implementation = ClosedVirtualInterfaceGrid()
+        val closed: VirtualIndexers.IGrid<Int> = implementation
+        val intermediate: IntermediateVirtualGrid<Int> = implementation
         check(closed[1] == 19)
+        check(intermediate[1] == 19)
         closed[1] = 43
-        check(closed[1] == 43)
+        check(intermediate[1] == 43)
+        intermediate[1] = 61
+        check(closed[1] == 61)
         val strings: VirtualIndexers.IGrid<String> = VirtualInterfaceGrid("first")
         check(strings[1] == "first")
         strings[1] = "second"
