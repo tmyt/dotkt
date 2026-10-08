@@ -351,7 +351,69 @@ class DefaultArgInheritedConcrete(seed: String) : DefaultArgInheritedPartial(see
     override fun describe(value: String, tail: String): String = "contract:$value/$tail"
 }
 
+abstract class DefaultArgInheritedReordered<A, B>(private val seed: B) : DefaultArgInheritedContract<B> {
+    override fun inheritedValue(): B = seed
+}
+class DefaultArgInheritedReorderedConcrete<A, B>(seed: B) : DefaultArgInheritedReordered<A, B>(seed) {
+    override fun describe(value: B, tail: String): String = "reordered:$value/$tail"
+}
+
 class DefaultArgInheritedGeneric<T>(seed: T) : DefaultArgInheritedBase<T>(seed)
+
+open class DefaultArgSelectedBase<T> {
+    fun pick(value: T): String = "base:$value"
+}
+class DefaultArgSelectedDerived<A, B> : DefaultArgSelectedBase<B>() {
+    fun pick(text: String): String = "own:$text"
+}
+class DefaultArgSelectedCaller<X, Y> {
+    fun call(source: DefaultArgSelectedDerived<Y, X>, value: X): String = source.pick(value = value)
+}
+
+interface DefaultArgOpenSlot<B> { fun select(value: B): String }
+abstract class DefaultArgOpenOwner<A, B> : DefaultArgOpenSlot<B> {
+    fun select(text: A): String = "own:$text"
+}
+class DefaultArgOpenConcrete<A, B> : DefaultArgOpenOwner<A, B>() {
+    override fun select(value: B): String = "slot:$value"
+}
+class DefaultArgOpenCaller<X, Y> {
+    fun call(source: DefaultArgOpenOwner<Y, X>, value: X): String = source.select(value)
+}
+
+interface DefaultArgFrameRoot<T> {
+    val value: T
+    fun <U> convert(value: T, result: U): U
+}
+interface DefaultArgFrameMiddle<A, B> : DefaultArgFrameRoot<B>
+class DefaultArgFrameConcrete<A, B>(override val value: B) : DefaultArgFrameMiddle<A, B> {
+    override fun <U> convert(value: B, result: U): U = result
+}
+fun <X, Y, Z> defaultArgFrameCall(source: DefaultArgFrameMiddle<Y, X>, value: X, result: Z): Z {
+    check(source.value == value)
+    val bound: (X, Z) -> Z = source::convert
+    return bound(value, result)
+}
+
+class DefaultArgProjectionHolder<T>(val value: T)
+open class DefaultArgProjectionBase<T> {
+    fun take(value: DefaultArgProjectionHolder<out T>): String = "project:${value.value}"
+}
+class DefaultArgProjectionDerived<A, B> : DefaultArgProjectionBase<B>()
+fun <X, Y> defaultArgProjectedCall(
+    source: DefaultArgProjectionDerived<X, Y>, value: DefaultArgProjectionHolder<Y>,
+): String = source.take(value)
+
+interface DefaultArgDiamondRoot<T> {
+    fun pick(value: T): String
+}
+interface DefaultArgDiamondRefined<T> : DefaultArgDiamondRoot<T> {
+    override fun pick(value: T): String
+}
+abstract class DefaultArgDiamondOwner<A, B> : DefaultArgDiamondRoot<B>, DefaultArgDiamondRefined<B>
+class DefaultArgDiamondConcrete<A, B> : DefaultArgDiamondOwner<A, B>() {
+    override fun pick(value: B): String = "diamond:$value"
+}
 
 // ...and the same rule at any NESTING DEPTH. A default may itself be a call that fills a default of its own, and each
 // frame closes against the one it is spliced into, not against the call site directly — so the substitutions have to
@@ -586,9 +648,51 @@ class DefaultArgumentTests {
 
         val partial: DefaultArgInheritedPartial = DefaultArgInheritedConcrete("abstract")
         assertEquals("contract:abstract/abstract!", partial.describe())
+        assertEquals("contract:explicit/explicit!", partial.describe(value = "explicit"))
+        val bound: (String, String) -> String = partial::describe
+        assertEquals("contract:callable/tail", bound("callable", "tail"))
+        val unbound: (DefaultArgInheritedPartial, String, String) -> String = DefaultArgInheritedPartial::describe
+        assertEquals("contract:unbound/tail", unbound(partial, "unbound", "tail"))
+        val reordered: DefaultArgInheritedReordered<Int, String> = DefaultArgInheritedReorderedConcrete("generic")
+        assertEquals("reordered:generic/generic!", reordered.describe())
+        val reorderedValue: DefaultArgInheritedReordered<String, Int> = DefaultArgInheritedReorderedConcrete(42)
+        assertEquals("reordered:42/42!", reorderedValue.describe())
 
         val star: DefaultArgInheritedGeneric<*> = DefaultArgInheritedGeneric("star")
         assertEquals("base:star/7/star:7", star.describe())
+
+        val selected = DefaultArgSelectedDerived<Int, String>()
+        assertEquals("base:selected", selected.pick(value = "selected"))
+        assertEquals("own:selected", selected.pick(text = "selected"))
+        assertEquals("base:caller", DefaultArgSelectedCaller<String, Int>().call(selected, "caller"))
+        assertEquals("base:42", DefaultArgSelectedCaller<Int, String>().call(DefaultArgSelectedDerived(), 42))
+        assertEquals("slot:caller", DefaultArgOpenCaller<String, Int>().call(DefaultArgOpenConcrete(), "caller"))
+        assertEquals("slot:42", DefaultArgOpenCaller<Int, String>().call(DefaultArgOpenConcrete(), 42))
+
+        val interfaceFrame: DefaultArgFrameMiddle<Int, String> = DefaultArgFrameConcrete("property")
+        assertEquals("property", interfaceFrame.value)
+        assertEquals(42, interfaceFrame.convert("input", 42))
+        assertEquals(true, defaultArgFrameCall(interfaceFrame, "property", true))
+        val valueFrame: DefaultArgFrameMiddle<String, Int> = DefaultArgFrameConcrete(7)
+        assertEquals("method", defaultArgFrameCall(valueFrame, 7, "method"))
+
+        val projected = DefaultArgProjectionDerived<Int, String>()
+        assertEquals("project:source", defaultArgProjectedCall(projected, DefaultArgProjectionHolder("source")))
+        assertEquals("project:42", defaultArgProjectedCall(DefaultArgProjectionDerived<String, Int>(), DefaultArgProjectionHolder(42)))
+        val projectedBound: (DefaultArgProjectionHolder<out String>) -> String = projected::take
+        assertEquals("project:bound", projectedBound(DefaultArgProjectionHolder("bound")))
+        val projectedUnbound: (DefaultArgProjectionDerived<Int, String>, DefaultArgProjectionHolder<out String>) -> String =
+            DefaultArgProjectionDerived<Int, String>::take
+        assertEquals("project:unbound", projectedUnbound(projected, DefaultArgProjectionHolder("unbound")))
+
+        val diamond: DefaultArgDiamondOwner<Int, String> = DefaultArgDiamondConcrete()
+        assertEquals("diamond:source", diamond.pick("source"))
+        val diamondBound: (String) -> String = diamond::pick
+        assertEquals("diamond:bound", diamondBound("bound"))
+        val diamondUnbound: (DefaultArgDiamondOwner<Int, String>, String) -> String = DefaultArgDiamondOwner<Int, String>::pick
+        assertEquals("diamond:unbound", diamondUnbound(diamond, "unbound"))
+        val diamondValue: DefaultArgDiamondOwner<String, Int> = DefaultArgDiamondConcrete()
+        assertEquals("diamond:42", diamondValue.pick(42))
     }
 
     // #235: a constructor default that reads an earlier constructor parameter is filled at the omitting `new`,

@@ -41,6 +41,7 @@ static class Bir2Cir
                 NullableRepresentationTypes.SelfTest();
                 NullableRepresentationMaterialization.SelfTest();
                 ClrEventImplBinding.SelfTestSourceRaiseSignatures();
+                InheritedMemberOwnerBinding.SelfTestSourceDeclarations();
                 NullableGenericErasure.SelfTestDeclarationConstraints();
                 InnerRepresentationFrameTests.SelfTest();
                 GenericRepresentationPolicy.SelfTest();

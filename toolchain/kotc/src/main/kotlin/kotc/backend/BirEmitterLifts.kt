@@ -836,7 +836,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 				val liftedOwner = ownerSpec(ownerClass, boundRecv.type).toJson()
 				val liftedReferenceTypeArgs = functionReferenceTypeArgs(node, fn)
 					?: error("validated companion function reference lost its type arguments in its lifted method frame")
-				val rawCall = """{"k":"callInstance","ownerType":$liftedOwner,"virtual":$virtual,"recv":$adapterReceiver,"method":${str(fn.name.asString())}${overloadSigField(fn)}$liftedReferenceTypeArgs,"args":[$argsJson]${if (isAnySlotMethod(fn)) ""","anySlot":true""" else ""}$memberDeclarationIdentityTag}"""
+				val rawCall = """{"k":"callInstance","ownerType":$liftedOwner,"virtual":$virtual,"recv":$adapterReceiver,"method":${str(fn.name.asString())}${overloadSigField(fn)}$liftedReferenceTypeArgs,"args":[$argsJson]${if (isAnySlotMethod(fn)) ""","anySlot":true""" else ""}$memberDeclarationIdentityTag${overridesJson(fn)}}"""
 				val call = memberVisibilityStamped(fn, rawCall)
 				val body = if (liftedFuncType.ret == TypeNode.Fqn("kotlin.Unit")) """{"k":"exprStmt","expr":$call}"""
 					else """{"k":"return","value":$call}"""
@@ -887,7 +887,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 		} else owner
 		val resultType = resolvedFuncType.ret.toJson()
 		val rawCall = if (!isExternalNetType(ownerClass) || memberDeclarationIdentityTag.isNotEmpty())
-			"""{"k":"callInstance","ownerType":$callOwner,"virtual":$virtual,"recv":$recv,"method":${str(fn.name.asString())}$signature$referenceTypeArgs,"ret":$resultType,"sty":$resultType,"args":[$argsJson]${if (isAnySlotMethod(fn)) ""","anySlot":true""" else ""}$memberDeclarationIdentityTag$flagsOperationTag}"""
+			"""{"k":"callInstance","ownerType":$callOwner,"virtual":$virtual,"recv":$recv,"method":${str(fn.name.asString())}$signature$referenceTypeArgs,"ret":$resultType,"sty":$resultType,"args":[$argsJson]${if (isAnySlotMethod(fn)) ""","anySlot":true""" else ""}$memberDeclarationIdentityTag$flagsOperationTag${overridesJson(fn)}}"""
 		else {
 			// A projected CLR member without a DotKt declaration identity still needs the adapter. Emit the same neutral
 			// external-call facts as an ordinary invocation; bir2cir resolves their physical member representation.
@@ -897,7 +897,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 			val physicalOwner = (selfT as? TypeNode.Fqn)?.let { TypeNode.Fqn(physicalName, it.args) }
 				?: TypeNode.Fqn(physicalName)
 			val selectedOwner = if (externalDeclaration) callOwner else physicalOwner.toJson()
-			"""{"k":"callInstance","ownerType":$selectedOwner,"virtual":$virtual,"recv":$recv,"method":${str(fn.name.asString())}$signature$referenceTypeArgs,"argTypes":[$argTypes],"ret":$resultType,"sty":$resultType,"args":[$argsJson]${if (isAnySlotMethod(fn)) ""","anySlot":true""" else ""}$flagsOperationTag}"""
+			"""{"k":"callInstance","ownerType":$selectedOwner,"virtual":$virtual,"recv":$recv,"method":${str(fn.name.asString())}$signature$referenceTypeArgs,"argTypes":[$argTypes],"ret":$resultType,"sty":$resultType,"args":[$argsJson]${if (isAnySlotMethod(fn)) ""","anySlot":true""" else ""}$flagsOperationTag${overridesJson(fn)}}"""
 		}
 		val call = memberVisibilityStamped(fn, rawCall)
 		val body = if (resolvedFuncType.ret == TypeNode.Fqn("kotlin.Unit")) """{"k":"exprStmt","expr":$call}"""
@@ -942,7 +942,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 			} else selfT
 			val signature = overloadSigField(if (externalTarget) target else fn)
 			val resultType = liftedFnType.ret.toJson()
-			val callE = """{"k":"callInstance","ownerType":${selectedOwner.toJson()},"virtual":$virtual,"recv":{"k":"local","name":"__self"},"method":${str(fn.name.asString())}$signature$liftedReferenceTypeArgs,"ret":$resultType,"sty":$resultType,"args":[$argsJson]${if (isAnySlotMethod(fn)) ""","anySlot":true""" else ""}}"""
+			val callE = """{"k":"callInstance","ownerType":${selectedOwner.toJson()},"virtual":$virtual,"recv":{"k":"local","name":"__self"},"method":${str(fn.name.asString())}$signature$liftedReferenceTypeArgs,"ret":$resultType,"sty":$resultType,"args":[$argsJson]${if (isAnySlotMethod(fn)) ""","anySlot":true""" else ""}${overridesJson(fn)}}"""
 			val identityCallE = if (effectiveIdentityTag.isEmpty()) callE
 				else callE.dropLast(1) + effectiveIdentityTag + "}"
 			val retT = liftedFnType.ret

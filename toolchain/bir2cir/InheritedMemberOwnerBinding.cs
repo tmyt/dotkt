@@ -32,6 +32,7 @@ static class InheritedMemberOwnerBinding
         public string Name;
         public string Kind;
         public int TypeParamCount;
+        public JsonArray TypeParams;
         public TypeNode.Fqn Base;
         public TypeNode.Fqn[] Interfaces = Array.Empty<TypeNode.Fqn>();
         public JsonArray Methods;
@@ -58,7 +59,8 @@ static class InheritedMemberOwnerBinding
         var rootList = roots.ToList();
         var types = CollectTypes(rootList);
         var nativeSlots = CollectNativeSlots(types, refs);
-        foreach (var root in rootList) Walk(root, types, null, refs, null, projectOnly: true, nativeSlots);
+        var sourceDeclarations = CollectLocalDeclarations(types, sourceOnly: true);
+        foreach (var root in rootList) Walk(root, types, sourceDeclarations, refs, null, projectOnly: true, nativeSlots);
         var inherited = nativeSlots.Keys.ToHashSet();
         foreach (var root in rootList) InheritedDefaultFakeOverrideElision.ApplyNativeSlots(root, inherited);
     }
@@ -128,6 +130,87 @@ static class InheritedMemberOwnerBinding
                     SubstOwnerTvs(type, ownerArguments), signature[index])).All(match => match);
     }
 
+    // A fake inherited call can carry a constructed Kotlin signature but no
+    // primary declaration ID. Its override closure still selects the actual
+    // declaration. Consume that fact before erasure destroys the source
+    // signature correspondence; never relax physical overload matching later.
+    static void BindSourceDeclarationCall(JsonObject call, TypeNode.Fqn owner,
+        Dictionary<string, TypeDef> types, IReadOnlyDictionary<string, LocalDeclaration> declarations,
+        ReferenceMetadataIndex refs)
+    {
+        if (Str(call["k"]) is not ("callInstance" or "newBoundDelegate")
+            || Bool(call["super"]) || Str(call["method"]) is not string name
+            || ReadTypes(call["sig"] as JsonArray) is not { } signature) return;
+        KotlinPropertyAccessors.TryCallIdentity(call, out var propertyName, out var accessorKind);
+        var arity = (call["typeArgs"] as JsonArray)?.Count ?? 0;
+        // A fake override's descriptor is expressed in the accessed owner's
+        // open frame. It may also arrive already closed by that owner's
+        // construction. Both describe the exact selected declaration; neither
+        // permits matching by argument assignability after erasure.
+        var accessedArguments = types.TryGetValue(owner.Name, out var accessedType)
+            ? EffectiveArgs(owner, accessedType.TypeParamCount) : null;
+        var closedSignature = accessedArguments == null ? signature
+            : signature.Select(type => SubstOwnerTvs(type, accessedArguments)).ToArray();
+        bool Matches(JsonObject method, TypeNode.Fqn construction) =>
+            !Bool(method["fakeOverride"]) && !KotlinPropertyAccessors.IsPhysicalSlotBridge(method)
+            && (MatchesSourceMethod(method, name, arity, signature,
+                    construction.Args ?? Array.Empty<TypeNode>(), propertyName, accessorKind)
+                || MatchesSourceMethod(method, name, arity, closedSignature,
+                    construction.Args ?? Array.Empty<TypeNode>(), propertyName, accessorKind));
+        var ids = new HashSet<string>(StringComparer.Ordinal);
+        if (Str(call[DeclarationIdentityBinding.Key]) is string selectedId) ids.Add(selectedId);
+        else if (call["overrides"] is JsonArray overrides)
+            foreach (var fact in overrides.OfType<JsonObject>())
+                if (Str(fact["member"]) == (propertyName ?? name)
+                    && Str(fact["kind"]) == (accessorKind switch { "get" => "getter", "set" => "setter", _ => "method" })
+                    && Str(fact[DeclarationIdentityBinding.Key]) is string id) ids.Add(id);
+        // A real override takes precedence over its ancestry, but an unrelated
+        // overload must not shadow the declaration selected by Kotlin merely
+        // because closing the owner makes their signatures coincide.
+        if (types.TryGetValue(owner.Name, out var accessed)
+            && accessed.Methods?.OfType<JsonObject>().Any(method => Matches(method, owner)
+                && (Str(method[DeclarationIdentityBinding.Key]) is string ownId && ids.Contains(ownId)
+                    || ids.Any(id => OverridesDeclaration(method, id)))) == true) return;
+        var candidates = new List<(string Id, TypeNode.Fqn Owner, JsonObject Method, int Depth)>();
+        foreach (var reachable in ReachableTypes(owner, types, refs, sourceFrames: true))
+            foreach (var id in ids)
+                if (declarations.TryGetValue(id, out var declaration)
+                    && declaration.Owner == reachable.Type.Name && Matches(declaration.Method, reachable.Type))
+                    candidates.Add((id, reachable.Type, declaration.Method, reachable.Depth));
+        if (candidates.Count == 0) return;
+        // Override closure is not an ambiguity: a declaration explicitly
+        // refining another candidate wins even if both interfaces were listed
+        // directly. Unrelated declarations remain distinct candidates.
+        candidates = candidates.Where(candidate => !candidates.Any(other =>
+            other.Id != candidate.Id && OverridesDeclaration(other.Method, candidate.Id))).ToList();
+        if (candidates.Count == 0) return;
+        var depth = candidates.Min(candidate => candidate.Depth);
+        var nearest = candidates.Where(candidate => candidate.Depth == depth)
+            .GroupBy(candidate => (candidate.Id, SupertypeGraph.TypeKey(candidate.Owner)))
+            .Select(group => group.First()).ToList();
+        if (nearest.Count != 1) return;
+        var selected = nearest[0];
+        call["ownerType"] = TypeJson.Write(selected.Owner);
+        if (Str(call["k"]) == "newBoundDelegate") call["calleeOwner"] = TypeJson.Write(selected.Owner);
+        call[DeclarationIdentityBinding.Key] = selected.Id;
+        var parameters = (JsonArray)selected.Method["params"];
+        call["sig"] = new JsonArray(parameters.OfType<JsonObject>()
+            .Select(parameter => parameter["type"].DeepClone()).ToArray());
+        if (call[FunctionSignatureIdentity.CallKey] != null)
+            call[FunctionSignatureIdentity.CallKey] = call["sig"].DeepClone();
+        if (call["memberSignature"] != null) call["memberSignature"] = call["sig"].DeepClone();
+        if (call["memberReturnType"] != null) call["memberReturnType"] = selected.Method["ret"]?.DeepClone();
+        if (call["memberOwnerTypeParams"] != null)
+            call["memberOwnerTypeParams"] = types[selected.Owner.Name].TypeParams.DeepClone();
+        if (call["memberMethodTypeParams"] != null)
+            call["memberMethodTypeParams"] = selected.Method["typeParams"]?.DeepClone() ?? new JsonArray();
+        if (IsInterface(selected.Owner, types, refs) || Bool(selected.Method["virtual"])) call["virtual"] = true;
+    }
+
+    static bool OverridesDeclaration(JsonObject method, string id) =>
+        method["overrides"] is JsonArray overrides && overrides.OfType<JsonObject>()
+            .Any(fact => Str(fact[DeclarationIdentityBinding.Key]) == id);
+
     static void BindNativeSlotCall(JsonObject call, TypeNode.Fqn owner, Dictionary<string, TypeDef> types,
         IReadOnlyDictionary<JsonObject, NativeSlot> nativeSlots, ReferenceMetadataIndex refs)
     {
@@ -178,12 +261,14 @@ static class InheritedMemberOwnerBinding
         call["virtual"] = true;
     }
 
-    static Dictionary<string, LocalDeclaration> CollectLocalDeclarations(Dictionary<string, TypeDef> types)
+    static Dictionary<string, LocalDeclaration> CollectLocalDeclarations(Dictionary<string, TypeDef> types,
+        bool sourceOnly = false)
     {
         var candidates = new Dictionary<string, List<LocalDeclaration>>(StringComparer.Ordinal);
         foreach (var type in types.Values)
         foreach (var method in type.Methods?.OfType<JsonObject>() ?? Enumerable.Empty<JsonObject>())
         {
+            if (sourceOnly && (Bool(method["fakeOverride"]) || KotlinPropertyAccessors.IsPhysicalSlotBridge(method))) continue;
             if (Str(method[DeclarationIdentityBinding.Key]) is not string declarationId) continue;
             if (!candidates.TryGetValue(declarationId, out var declarations))
                 candidates[declarationId] = declarations = new List<LocalDeclaration>();
@@ -191,6 +276,111 @@ static class InheritedMemberOwnerBinding
         }
         return candidates.Where(candidate => candidate.Value.Count == 1)
             .ToDictionary(candidate => candidate.Key, candidate => candidate.Value[0], StringComparer.Ordinal);
+    }
+
+    public static void SelfTestSourceDeclarations()
+    {
+        var root = JsonNode.Parse("""
+        {"types":[
+          {"name":"SourceSlot","kind":"interface","typeParams":["A","B"],"methods":[
+            {"name":"pick","declarationId":"slot","virtual":true,"params":[{"name":"value","type":{"t":"tv","scope":"type","i":1}}],"ret":{"t":"tv","scope":"type","i":1}},
+            {"name":"pick","declarationId":"sibling","virtual":true,"params":[{"name":"value","type":{"t":"fqn","name":"kotlin.String"}}],"ret":{"t":"fqn","name":"kotlin.String"}}]},
+          {"name":"SourceMiddle","kind":"class","typeParams":["X","Y"],"interfaces":[{"t":"fqn","name":"SourceSlot","args":[{"t":"tv","scope":"type","i":1},{"t":"tv","scope":"type","i":0}]}],"methods":[]},
+          {"name":"SourceLeaf","kind":"class","typeParams":["P","Q"],"base":{"t":"fqn","name":"SourceMiddle","args":[{"t":"tv","scope":"type","i":1},{"t":"tv","scope":"type","i":0}]},"methods":[]}]}
+        """)!.AsObject();
+        var types = CollectTypes(new[] { root });
+        var declarations = CollectLocalDeclarations(types, sourceOnly: true);
+        var owner = new TypeNode.Fqn("SourceLeaf", new TypeNode[] {
+            new TypeNode.Fqn("kotlin.Int"), new TypeNode.Fqn("kotlin.String"),
+        });
+        var call = JsonNode.Parse("""
+        {"k":"newBoundDelegate","method":"pick","sig":[{"t":"fqn","name":"kotlin.String"}],
+          "memberSignature":[],"memberReturnType":{"t":"fqn","name":"kotlin.String"},
+          "memberOwnerTypeParams":[],"memberMethodTypeParams":[],
+          "functionCallSignature":[{"t":"fqn","name":"kotlin.String"}],
+          "overrides":[{"member":"pick","kind":"method","declarationId":"slot"}]}
+        """)!.AsObject();
+        call["ownerType"] = TypeJson.Write(owner);
+        var source = call.DeepClone();
+        BindSourceDeclarationCall(call, owner, types, declarations, null);
+        var expectedOwner = new TypeNode.Fqn("SourceSlot", owner.Args);
+        if (!JsonNode.DeepEquals(call["ownerType"], TypeJson.Write(expectedOwner))
+            || !JsonNode.DeepEquals(call["calleeOwner"], call["ownerType"])
+            || Str(call[DeclarationIdentityBinding.Key]) != "slot"
+            || TypeJson.Read(call["sig"][0]) != new TypeNode.Tv("type", 1)
+            || !JsonNode.DeepEquals(call["memberSignature"], call["sig"])
+            || !JsonNode.DeepEquals(call[FunctionSignatureIdentity.CallKey], call["sig"])
+            || TypeJson.Read(call["memberReturnType"]) != new TypeNode.Tv("type", 1)
+            || call["memberOwnerTypeParams"] is not JsonArray { Count: 2 })
+            throw new InvalidOperationException("Source inherited selection lost exact identity, construction or declaration frame");
+        var openCall = (JsonObject)source.DeepClone();
+        openCall["sig"] = new JsonArray(TypeJson.Write(new TypeNode.Tv("type", 1)));
+        BindSourceDeclarationCall(openCall, owner, types, declarations, null);
+        if (!JsonNode.DeepEquals(openCall["ownerType"], TypeJson.Write(expectedOwner))
+            || Str(openCall[DeclarationIdentityBinding.Key]) != "slot")
+            throw new InvalidOperationException("Source inherited selection lost the accessed-owner descriptor frame");
+        var own = (JsonObject)types["SourceSlot"].Methods[1].DeepClone();
+        own[DeclarationIdentityBinding.Key] = "own";
+        types[owner.Name].Methods.Add(own);
+        var ownCall = (JsonObject)source.DeepClone();
+        BindSourceDeclarationCall(ownCall, owner, types, declarations, null);
+        if (Str(ownCall[DeclarationIdentityBinding.Key]) != "slot"
+            || !JsonNode.DeepEquals(ownCall["ownerType"], TypeJson.Write(expectedOwner)))
+            throw new InvalidOperationException("Source inherited selection confused an unrelated own overload with the selected override");
+        types[owner.Name].Methods.Clear();
+        own = (JsonObject)types["SourceSlot"].Methods[0].DeepClone();
+        own[DeclarationIdentityBinding.Key] = "own";
+        own["overrides"] = new JsonArray(new JsonObject { [DeclarationIdentityBinding.Key] = "slot" });
+        types[owner.Name].Methods.Add(own);
+        ownCall = (JsonObject)source.DeepClone();
+        BindSourceDeclarationCall(ownCall, owner, types, declarations, null);
+        if (!JsonNode.DeepEquals(ownCall, source))
+            throw new InvalidOperationException("Source inherited selection displaced a real accessed-owner override");
+        types[owner.Name].Methods.Clear();
+        var missing = (JsonObject)source.DeepClone();
+        missing.Remove("overrides");
+        var unchanged = missing.DeepClone();
+        BindSourceDeclarationCall(missing, owner, types, declarations, null);
+        if (!JsonNode.DeepEquals(missing, unchanged))
+            throw new InvalidOperationException("Source inherited selection guessed a declaration without frontend facts");
+        ((JsonArray)root["types"]).Add(JsonNode.Parse("""
+        {"name":"SourceRefined","kind":"interface","typeParams":["T"],
+          "interfaces":[{"t":"fqn","name":"SourceSlot","args":[{"t":"fqn","name":"kotlin.Int"},{"t":"tv","scope":"type","i":0}]}],
+          "methods":[{"name":"pick","declarationId":"refined","virtual":true,
+            "overrides":[{"declarationId":"slot"}],
+            "params":[{"name":"value","type":{"t":"tv","scope":"type","i":0}}],
+            "ret":{"t":"tv","scope":"type","i":0}}]}
+        """));
+        ((JsonArray)root["types"]).Add(JsonNode.Parse("""
+        {"name":"SourceDiamond","kind":"class","typeParams":["A","B"],
+          "interfaces":[{"t":"fqn","name":"SourceSlot","args":[{"t":"fqn","name":"kotlin.Int"},{"t":"tv","scope":"type","i":1}]},
+            {"t":"fqn","name":"SourceRefined","args":[{"t":"tv","scope":"type","i":1}]}],"methods":[]}
+        """));
+        types = CollectTypes(new[] { root });
+        declarations = CollectLocalDeclarations(types, sourceOnly: true);
+        var diamondOwner = new TypeNode.Fqn("SourceDiamond", owner.Args);
+        var diamond = (JsonObject)source.DeepClone();
+        diamond["ownerType"] = TypeJson.Write(diamondOwner);
+        ((JsonArray)diamond["overrides"]).Add(new JsonObject {
+            ["member"] = "pick", ["kind"] = "method", [DeclarationIdentityBinding.Key] = "refined",
+        });
+        BindSourceDeclarationCall(diamond, diamondOwner, types, declarations, null);
+        if (Str(diamond[DeclarationIdentityBinding.Key]) != "refined"
+            || !JsonNode.DeepEquals(diamond["ownerType"], TypeJson.Write(new TypeNode.Fqn("SourceRefined", new[] { owner.Args[1] })))
+            || TypeJson.Read(diamond["sig"][0]) != new TypeNode.Tv("type", 0))
+            throw new InvalidOperationException("Source inherited selection lost the explicit refinement in a redundant diamond");
+        types["SourceRefined"].Methods[0].AsObject().Remove("overrides");
+        var ambiguous = (JsonObject)source.DeepClone();
+        ambiguous["ownerType"] = TypeJson.Write(diamondOwner);
+        ambiguous["overrides"] = diamond["overrides"].DeepClone();
+        unchanged = ambiguous.DeepClone();
+        BindSourceDeclarationCall(ambiguous, diamondOwner, types, declarations, null);
+        if (!JsonNode.DeepEquals(ambiguous, unchanged))
+            throw new InvalidOperationException("Source inherited selection guessed between unrelated exact declarations");
+        var projection = new TypeNode.Projection("out", new TypeNode.Tv("type", 1));
+        if (SubstOwnerTvs(projection, owner.Args) != new TypeNode.Projection("out", owner.Args[1]))
+            throw new InvalidOperationException("Source owner substitution lost a projected generic frame");
+        Console.WriteLine("[source inherited declaration] self-test OK (exact ID, reordered hierarchy, colliding signatures, real override precedence, descriptors, projections, refinement)");
     }
 
     static Dictionary<string, TypeDef> CollectTypes(IEnumerable<JsonNode> roots)
@@ -212,6 +402,7 @@ static class InheritedMemberOwnerBinding
                 Name = name,
                 Kind = Str(type["kind"]),
                 TypeParamCount = TypeParameterFrame.Count(type),
+                TypeParams = TypeParameterFrame.CloneDeclarations(type),
                 Base = TypeJson.Read(type["base"]) as TypeNode.Fqn,
                 Interfaces = (type["interfaces"] as JsonArray)?.Select(TypeJson.Read)
                     .OfType<TypeNode.Fqn>().ToArray() ?? Array.Empty<TypeNode.Fqn>(),
@@ -312,6 +503,8 @@ static class InheritedMemberOwnerBinding
         }
         if (projectOnly)
         {
+            BindSourceDeclarationCall(call, owner, types, localDeclarations, refs);
+            owner = TypeJson.Read(call[ownerSlot]) as TypeNode.Fqn ?? owner;
             BindNativeSlotCall(call, owner, types, nativeSlots, refs);
             return;
         }
@@ -757,6 +950,7 @@ static class InheritedMemberOwnerBinding
     {
         TypeNode.Tv { Scope: "type" } tv when tv.I >= 0 && tv.I < args.Length => args[tv.I],
         TypeNode.Fqn f when f.Args is not null => new TypeNode.Fqn(f.Name, f.Args.Select(a => SubstOwnerTvs(a, args)).ToArray()),
+        TypeNode.Projection p => new TypeNode.Projection(p.Variance, SubstOwnerTvs(p.Of, args)),
         TypeNode.Nullable n => SubstOwnerTvs(n.Of, args) switch {
             TypeNode.Nullable nullable => nullable,
             var inner => new TypeNode.Nullable(inner),
@@ -766,7 +960,8 @@ static class InheritedMemberOwnerBinding
         TypeNode.ByRef b => new TypeNode.ByRef(SubstOwnerTvs(b.Of, args)),
         TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend, SubstOwnerTvs(fn.Ret, args),
             fn.Params.Select(p => SubstOwnerTvs(p, args)).ToArray(),
-            fn.Recv == null ? null : SubstOwnerTvs(fn.Recv, args)),
+            fn.Recv == null ? null : SubstOwnerTvs(fn.Recv, args), fn.Clr,
+            fn.Ctx?.Select(context => SubstOwnerTvs(context, args)).ToArray()),
         _ => type,
     };
 
