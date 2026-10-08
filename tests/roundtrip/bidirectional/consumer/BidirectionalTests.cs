@@ -151,7 +151,7 @@ public class BidirectionalTests
         Assert.That(BidirectionalStaticAlpha.answer(), Is.EqualTo(42));
         Assert.That(BidirectionalStaticAlpha.answer(2), Is.EqualTo(42));
         Assert.That(BidirectionalStaticBeta.answer(), Is.EqualTo(84));
-        Assert.That(BidirectionalStaticAlpha.echo("typed"), Is.EqualTo("typed"));
+        Assert.That(BidirectionalStaticAlpha.echo<string>("typed"), Is.EqualTo("typed"));
         Assert.That(LibraryKt.bidirectionalStaticCalls(), Is.EqualTo("42:42:84:ok:7:9:11"));
 
         static MethodInfo[] Implementations(string name) => typeof(BidirectionalStaticAlpha).Assembly.GetTypes()
@@ -176,7 +176,9 @@ public class BidirectionalTests
         BidirectionalGenericStatic<int>.genericCounter = 4;
         Assert.That(BidirectionalGenericStatic<string>.genericCounter, Is.EqualTo(4),
             "generic receiver closures must share the Kotlin declaration's one storage slot");
-        Assert.That(BidirectionalGenericStatic<object>.echoGeneric(17), Is.EqualTo(17),
+        // The physical static extension wrapper exposes both receiver and source-method arguments;
+        // erased value parameters cannot supply C# type inference for either slot.
+        Assert.That(BidirectionalGenericStatic<object>.echoGeneric<object, int>(17), Is.EqualTo(17),
             "a source method type parameter must not collide with the synthetic receiver block");
         Assert.That(ReferenceConstrainedTarget<string>.referenceConstraint(), Is.EqualTo("reference"));
         Assert.That(StructConstrainedTarget<int>.structConstraint(), Is.EqualTo("struct"));

@@ -6,7 +6,8 @@ using roundtrip.suspendunitslot;
 
 public class SuspendUnitSlotTests
 {
-    private static async Task Complete(Func<UnitGate, Task<kotlin.Unit>> start)
+    // A Kotlin declaration's type-variable result is erased even on a closed CLR owner.
+    private static async Task Complete(Func<UnitGate, Task<object>> start)
     {
         var gate = new UnitGate();
         var task = start(gate);
@@ -23,7 +24,7 @@ public class SuspendUnitSlotTests
         var source = new ImmediateUnitSlot();
         Task ordinary = source.read();
         Task plainSlot = ((PlainUnitSlot)source).read();
-        Task<kotlin.Unit> generic = ((UnitSlot<kotlin.Unit>)source).read();
+        Task<object> generic = ((UnitSlot<kotlin.Unit>)source).read();
         await ordinary;
         await plainSlot;
         Assert.That(await generic, Is.SameAs(kotlin.Unit.INSTANCE));
@@ -35,7 +36,7 @@ public class SuspendUnitSlotTests
         var index = Array.FindIndex(map.InterfaceMethods, method => method.Name == "read");
         Assert.That(index, Is.GreaterThanOrEqualTo(0));
         Assert.That(map.TargetMethods[index].IsPrivate, Is.True);
-        Assert.That(map.TargetMethods[index].ReturnType, Is.EqualTo(typeof(Task<kotlin.Unit>)));
+        Assert.That(map.TargetMethods[index].ReturnType, Is.EqualTo(typeof(Task<object>)));
         Assert.That(await SuspendUnitSlotKt.observeLocal(source), Is.SameAs(kotlin.Unit.INSTANCE));
     }
 
@@ -44,7 +45,7 @@ public class SuspendUnitSlotTests
     {
         await Complete(gate => ((UnitSlot<kotlin.Unit>)new DelayedUnitSlot(gate)).read());
         await Complete(gate => ((UnitBaseSlot<kotlin.Unit>)new DelayedBaseUnitSlot(gate)).read());
-        await Complete(gate => ((MethodUnitSlot<kotlin.Unit>)new GenericMethodUnitSlot(gate)).read("method"));
+        await Complete(gate => ((MethodUnitSlot<kotlin.Unit>)new GenericMethodUnitSlot(gate)).read<string>("method"));
         await Complete(gate => ((UnitSlot<kotlin.Unit>)new InheritedOpenUnitBody(gate)).read());
         await Complete(gate => ((UnitSlot<kotlin.Unit>)new FurtherInheritedUnitBody(gate)).read());
         var gate = new UnitGate();
