@@ -3985,12 +3985,12 @@ static partial class SuspendColdLowering
             method[KotlinPropertyAccessors.SuspendSourceRetKey] = _m["ret"]?.DeepClone();
         }
 
-        // The public Task MethodDef owns the original Kotlin declaration metadata: call-syntax modifiers,
+        // The public Task MethodDef owns the original Kotlin declaration metadata: declaration modifiers,
         // pre-erasure constraints and representation frames. The generated cold entry and state machine are
         // physical details and must not publish a second Kotlin declaration carrier.
         void CarryKotlinDeclarationMetadata(JsonObject method)
         {
-            // These source call-syntax modifiers belong to the public Kotlin
+            // These source declaration modifiers belong to the public Kotlin
             // declaration, not to the generated cold entry. Do not restore
             // mods.suspend on an already lowered bridge.
             foreach (var modifier in new[] { "operator", "infix", "inline" })

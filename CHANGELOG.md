@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Suspend-inline actions retain their Kotlin semantics across DLL boundaries (#975).**
+  The public Task bridge preserves the original inline declaration and opaque body,
+  allowing suspension and non-local returns from inline actions while retaining finally behavior.
+
 - **Variant Kotlin collection and Comparable value slots use an opaque CLR representation.**
   Kotlin declaration metadata and nominal signature modifiers retain their source identity, while ordinary
   CLR slots use `object` even when the corresponding BCL interface is variant. CLR variance alone does not
