@@ -430,14 +430,18 @@ sealed partial class ReferenceMetadataIndex
         // Reified declarations may have compiler-owned physical parameters that are intentionally absent from the
         // Kotlin semantic signature. Such a carrier can still identify the declaration, but it is not a complete
         // validator for this physical call shape.
-        var semanticMatches = binding.DeclarationSemanticParams?.Length == callSignature.Count
-            && binding.DeclarationSemanticParams.Select((type, index) =>
+        // Generated physical entries and virtual members need not duplicate a complete source-declaration
+        // carrier. Their existing parameter carriers still own the pre-erasure types. Validate that exact
+        // selected declaration through the same authoritative parameter vector used by ordinary Kotlin calls.
+        var sourceParameters = KotlinDeclarationParameters(binding);
+        var semanticMatches = sourceParameters?.Length == callSignature.Count
+            && sourceParameters.Select((type, index) =>
                 SemanticDeclarationDescribesCall(type, callSignature[index])).All(matchesCall => matchesCall);
         var signatureMatches = !requiresParameterValidation || semanticMatches || physicalMatches;
         if (selectedSignature.Any(type => type == null) || !signatureMatches)
         {
-            var semanticText = binding.DeclarationSemanticParams == null ? "absent"
-                : $"({string.Join(",", binding.DeclarationSemanticParams.Select(TypeNode.ToJson))})";
+            var semanticText = sourceParameters == null ? "absent"
+                : $"({string.Join(",", sourceParameters.Select(TypeNode.ToJson))})";
             failure = $"selects '{physicalOwner}.{selected.Name}' but neither its semantic parameter signature "
                 + $"{semanticText} nor its physical parameter signature "
                 + $"({string.Join(",", selectedSignature.Select(type => type == null ? "<unresolved>" : TypeNode.ToJson(type)))}) "
