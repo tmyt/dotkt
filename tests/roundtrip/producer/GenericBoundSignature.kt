@@ -7,6 +7,10 @@ class StringBoundSink : BoundSink<String> {
     override fun accept(value: String) { latest = value }
 }
 
+class ComparableBoundBox<T : Comparable<T>> {
+    fun floor(value: T, minimum: T): T = value.coerceAtLeast(minimum)
+}
+
 fun <T : Any, C : MutableCollection<in T>> selectedBound(destination: C, value: T): String {
     destination.add(value)
     return "collection"

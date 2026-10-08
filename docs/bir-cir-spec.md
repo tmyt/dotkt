@@ -324,7 +324,10 @@ When a Kotlin type-variable value slot needs a nominal signature modifier, its d
 reachable source upper-bound graph as well as the declaration owner and variable scope/index. Distinct
 method-variable binders can have different bounds at the same index. bir2cir snapshots those source bounds
 before nullable/physical frame materialization, canonicalizes bound order without using parameter names,
-and retains the captured discriminator in generated copies and selected calls. The modifier is part of the
+and retains the captured discriminator in generated copies and selected calls. It is identical in reference
+and runtime builds: an earlier pass's authoritative saved source bounds take
+precedence over its rewritten constraints, so representation-only bound erasure cannot change the marker.
+The modifier is part of the
 physical signature; CLR generic constraints alone still do not distinguish MethodDefs. This does not allocate
 new method names or resolve a remaining physical-signature collision by automatic hash mangling.
 Generic-parameter scope and index remain part of the lowered parameter vector: `!0`, `!1`, and `!!0` are distinct

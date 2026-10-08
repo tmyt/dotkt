@@ -75,7 +75,16 @@ static class FunctionSignatureIdentity
             var frame = (current.Scope == "type" ? owner : declaration)["typeParams"] as JsonArray;
             var parameter = frame != null && current.I < frame.Count
                 ? frame[current.I] as JsonObject : null;
-            var constraints = parameter?["constraints"] as JsonArray;
+            var recorded = current.Scope == "type"
+                ? KotlinSupertypesRecord.ReadSourceBounds(owner)
+                : declaration[NullableGenericErasure.MethodTypeParameterBoundsPre] is JsonValue encoded
+                    ? JsonNode.Parse(encoded.GetValue<string>())?["bounds"] as JsonObject : null;
+            // Earlier representation passes may have moved a complete source
+            // constraint list into its authoritative hand-off. An existing list
+            // owns the truth, including an explicitly empty one; otherwise this
+            // still-source frame has not had that parameter's bounds moved.
+            var constraints = recorded?[current.I.ToString()] as JsonArray
+                ?? parameter?["constraints"] as JsonArray;
             hasBounds |= constraints is { Count: > 0 };
             var bounds = (constraints ?? new JsonArray())
                 .Select(bound => TypeJson.Write(TypeJson.Read(bound)))
@@ -146,6 +155,7 @@ static class FunctionSignatureIdentity
     internal static void SelfTest()
     {
         SelfTestConstraintIdentity();
+        SelfTestComparableParity();
         var physical = new TypeNode.Fqn("object");
         foreach (var scope in new[] { "type", "method" })
         foreach (var index in new[] { 0, 2 })
@@ -242,6 +252,39 @@ static class FunctionSignatureIdentity
         Complete(original);
         if (original["methods"][0]["params"][0].AsObject().ContainsKey(ConstraintKey))
             throw new InvalidOperationException("Source constraint routing facts leaked into CIR");
+    }
+
+    static void SelfTestComparableParity()
+    {
+        var direct = JsonNode.Parse("""
+        {"fileClass":"ComparableParity","methods":[{"name":"pick","typeParams":[{"name":"T","constraints":[
+          {"t":"fqn","name":"kotlin.Comparable","args":[{"t":"tv","scope":"method","i":0}]}]}],
+          "params":[{"name":"value","type":{"t":"tv","scope":"method","i":0}}],
+          "ret":{"t":"tv","scope":"method","i":0},"body":[]}]}
+        """).AsObject();
+        var transitive = direct.DeepClone().AsObject();
+        transitive["methods"][0]["typeParams"].AsArray().Add(new JsonObject {
+            ["name"] = "U", ["constraints"] = new JsonArray(TypeJson.Write(new TypeNode.Tv("method", 0))),
+        });
+        transitive["methods"][0]["params"][0]["type"] = TypeJson.Write(new TypeNode.Tv("method", 1));
+        var owner = JsonNode.Parse("""
+        {"fileClass":"ComparableOwnerParity","methods":[],"types":[{"kind":"class","name":"ComparableOwner",
+          "typeParams":[{"name":"T","constraints":[{"t":"fqn","name":"kotlin.Comparable","args":[
+          {"t":"tv","scope":"type","i":0}]}]}],"methods":[{"name":"pick","params":[{"name":"value",
+          "type":{"t":"tv","scope":"type","i":0}}],"ret":{"t":"tv","scope":"type","i":0},"body":[]}]}]}
+        """).AsObject();
+        string Marker(JsonObject source, bool reference)
+        {
+            var root = source.DeepClone().AsObject();
+            ComparableRepresentationLowering.Apply(new[] { root }, reference);
+            CaptureSourceConstraints(root);
+            Capture(root);
+            var declarationOwner = root["types"] is JsonArray { Count: > 0 } types ? types[0] : root;
+            return declarationOwner["methods"][0]["params"][0][PhysicalKey].GetValue<string>();
+        }
+        foreach (var root in new[] { direct, transitive, owner })
+            if (Marker(root, reference: true) != Marker(root, reference: false))
+                throw new InvalidOperationException("Comparable source bounds gave reference/runtime signature mismatch");
     }
 
     internal static JsonArray Signature(JsonArray parameters) =>

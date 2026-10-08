@@ -45,6 +45,8 @@ static class KotlinSupertypesRecord
         Read(declaration)?[NullableRepresentationFrame.MetadataKey] is JsonNode frame
             ? NullableRepresentationFrame.Read(frame) : null;
 
+    internal static JsonObject ReadSourceBounds(JsonObject declaration) => Read(declaration)?["bounds"] as JsonObject;
+
     static JsonObject Read(JsonObject declaration)
     {
         if ((declaration[PreKey] as JsonValue)?.TryGetValue<string>(out var encoded) != true)

@@ -1,9 +1,18 @@
 import NUnit.Framework.TestAttribute
 import roundtrip.genericboundsignature.BoundSink
+import roundtrip.genericboundsignature.ComparableBoundBox
 import roundtrip.genericboundsignature.StringBoundSink
 import roundtrip.genericboundsignature.selectedBound
 
 class GenericBoundSignatureRoundtripTests {
+    @TestAttribute
+    fun comparableOwnerBoundsKeepCrossDllCallsAndReferences() {
+        val owner = ComparableBoundBox<String>()
+        check(owner.floor("a", "b") == "b")
+        val floor: (String, String) -> String = owner::floor
+        check(floor("c", "d") == "d")
+    }
+
     @TestAttribute
     fun differentSourceBoundsKeepCrossDllOverloadSelection() {
         val collection = mutableListOf<String>()
