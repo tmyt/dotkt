@@ -180,10 +180,9 @@ static class FBoundStarProjectionErasure
         while (CollectNormalizedInnerFactoryReturns(rootList, owners, refs, normalizedReturns))
             foreach (var root in rootList)
                 RewriteNormalizedInnerFactoryCalls(root, normalizedReturns, owners, defs, refs);
-        // Exact bridge casts carry a pass-local guard only while this pass can still mistake them for Kotlin's erased
-        // runtime classifier operation. A post-order member binding can create one after its object was visited, so a
-        // final cleanup is the single guarantee that this implementation marker never becomes CIR.
-        foreach (var root in rootList) RemoveExactBridgeCastMarkers(root);
+        // Projection-result facts are local to this walk. Exact cast roles survive late type/member rewriting;
+        // RemoveTransientFacts consumes them only after every existential-binding pass has completed.
+        foreach (var root in rootList) RemoveProjectionMarkers(root);
         // Binding above consumes the complete Kotlin constraint graph. Only after every local call and generated
         // seam has been selected may the physical inner TypeDefs drop constraints that cannot name a star outer.
         var weakenedOwnerSlots = WeakenOwnerDependentInnerConstraints(
@@ -2797,7 +2796,6 @@ static class FBoundStarProjectionErasure
                             && !IsProvenConstructedUpcast(
                                 obj, runtimeF, defs, refs, currentThisType))))
                     obj["type"] = TypeJson.Write(new TypeNode.Fqn(runtimeCarrier));
-                obj.Remove("_exactBridgeCast");
                 foreach (var key in obj.Select(kv => kv.Key).ToList())
                 {
                     var value = obj[key];
@@ -4030,6 +4028,7 @@ static class FBoundStarProjectionErasure
         var kotlinVariantOwner = !lexicalReceiver
             && RequiresKotlinVariantCarrier(f, owners, refs);
         var erasedSmartCast = call["recv"] is JsonObject recv && Str(recv["k"]) == "cast"
+            && !Bool(recv["_exactBridgeCast"])
             && TypeJson.Read(recv["type"]) is TypeNode.Fqn { Args: { } castArgs } castF
             && castF.Name == f.Name
             && castArgs.Any(ContainsStarOrTypeVariable);
@@ -4343,21 +4342,20 @@ static class FBoundStarProjectionErasure
         if (protectExactCast) call["_exactBridgeCast"] = true;
     }
 
-    static void RemoveExactBridgeCastMarkers(JsonNode node)
+    static void RemoveProjectionMarkers(JsonNode node)
     {
         switch (node)
         {
             case JsonObject obj:
-                obj.Remove("_exactBridgeCast");
                 obj.Remove(ProjectedArrayReadKey);
                 obj.Remove(ExistentialResultProjectionKey);
                 obj.Remove(ExistentialArrayElementProjectionKey);
                 foreach (var value in obj.Select(pair => pair.Value).ToList())
-                    if (value != null) RemoveExactBridgeCastMarkers(value);
+                    if (value != null) RemoveProjectionMarkers(value);
                 break;
             case JsonArray array:
                 foreach (var value in array)
-                    if (value != null) RemoveExactBridgeCastMarkers(value);
+                    if (value != null) RemoveProjectionMarkers(value);
                 break;
         }
     }
@@ -4367,6 +4365,7 @@ static class FBoundStarProjectionErasure
         switch (node)
         {
             case JsonObject obj:
+                obj.Remove("_exactBridgeCast");
                 obj.Remove(ExactBridgeOwnerCallKey);
                 obj.Remove(ExactOuterKey);
                 obj.Remove(DelegationOuterSlotKey);
