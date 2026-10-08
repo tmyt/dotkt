@@ -440,7 +440,7 @@ dotnet "$ILEMIT_DLL" "$OUT/default-il" DefaultInterfaceConsumer \
 	--compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_RT_DLL" "$PROBE_REF" "$CONTRACTS_REF")" \
 	--runtime-refs "$(refset_join "$STDLIB_RT_DLL" "$PROBE_IMPL" "$CONTRACTS_IMPL")" \
 	--target-framework-moniker "$DOTKT_TARGET_FRAMEWORK_MONIKER" \
-	"$OUT/default-cir/default-interface-consumer.cir.json"
+	"$OUT/default-cir"/*.cir.json
 write_runtimeconfig "$OUT/default-il" DefaultInterfaceConsumer
 cp "$STDLIB_RT_DLL" "$PROBE_IMPL" "$CONTRACTS_IMPL" "$OUT/default-il/"
 default_actual="$(dotnet "$OUT/default-il/DefaultInterfaceConsumer.dll")"
@@ -455,7 +455,7 @@ dotnet "$ILEMIT_DLL" "$OUT/explicit-slot-il" ExplicitSlotProbe \
 	--compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_RT_DLL" "$PROBE_REF" "$CONTRACTS_REF")" \
 	--runtime-refs "$(refset_join "$STDLIB_RT_DLL" "$PROBE_IMPL" "$CONTRACTS_IMPL")" \
 	--target-framework-moniker "$DOTKT_TARGET_FRAMEWORK_MONIKER" \
-	"$OUT/explicit-slot-cir/explicit-slot-probe.cir.json"
+	"$OUT/explicit-slot-cir"/*.cir.json
 write_runtimeconfig "$OUT/explicit-slot-il" ExplicitSlotProbe
 cp "$STDLIB_RT_DLL" "$PROBE_IMPL" "$CONTRACTS_IMPL" "$OUT/explicit-slot-il/"
 explicit_slot_actual="$(dotnet "$OUT/explicit-slot-il/ExplicitSlotProbe.dll")"
@@ -495,7 +495,7 @@ dotnet "$ILEMIT_DLL" "$OUT/il" Consumer \
 	--compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_RT_DLL" "$PROBE_REF" "$CONTRACTS_REF")" \
 	--runtime-refs "$(refset_join "$STDLIB_RT_DLL" "$PROBE_IMPL" "$CONTRACTS_IMPL")" \
 	--target-framework-moniker "$DOTKT_TARGET_FRAMEWORK_MONIKER" \
-	"$OUT/cir/consumer.cir.json"
+	"$OUT/cir"/*.cir.json
 write_runtimeconfig "$OUT/il" Consumer
 cp "$STDLIB_RT_DLL" "$PROBE_IMPL" "$CONTRACTS_IMPL" "$OUT/il/"
 
