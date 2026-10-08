@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Unchecked generic inner values share a valid argument representation (#922).**
+  Ordinary and suspend calls retain raw inner identity across enclosing generic frames, including DLL boundaries.
+
 - **Generic nullable widening preserves CLR constraint proofs (#965).**
   Nullable representation companions retain their relation to the original type across calls,
   closures, inner owners, and suspension, while imported Kotlin declarations keep their source bounds.

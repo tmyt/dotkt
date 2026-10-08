@@ -101,6 +101,14 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   `this`, an inner class's hidden enclosing-instance slot, and compiler-generated storage for that receiver retain
   `G<T>`. kotc identifies the lexical-receiver role structurally in transient BIR; bir2cir consumes it while choosing
   the CLR representation and removes it before CIR. No generated or user source name is treated as an ABI oracle.
+- **An inner class capturing a generic enclosing frame uses that same existential interface in ordinary value slots.**
+  An unchecked cast to `Owner<T>.Item` checks the raw inner classifier, not the enclosing `T`; its result must be
+  accepted by a parameter of that source type, including across DLLs and in suspend methods. Parameters, returns,
+  fields, and nested value positions share the representation so forwarding or storing that value does not introduce
+  an enclosing-frame check. Construction, inheritance, lexical receivers, and the hidden enclosing-instance slot
+  retain their exact CLR class head; nested type arguments still use their ordinary physical value representation.
+  It does not erase ordinary invariant generic declarations that do not capture an enclosing frame, or change
+  imported CLR declaration signatures.
 - **Generic members retain owner-dependent Kotlin constraints as metadata, not CLR constraint rows.**
   For `G<in T>.f<R : T>` and constructed bounds such as `R : I<T>`, the receiver's exact CLR construction need not
   express the source view's subtype relation, particularly when Kotlin variance crosses a value-type argument.
