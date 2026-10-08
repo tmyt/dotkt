@@ -222,12 +222,11 @@ static class DeclarationIdentityBinding
                 // semantic role would make a later property resolver attempt to associate that physical name again.
                 obj.Remove("prop");
                 obj.Remove(ReferencedFactoryKey);
-                // The early, pre-representation bind must keep the authoritative identity. Suspend lowering derives
-                // the producer's independently allocated cold-entry identity (`id|cold`) from it; the ordinary late
-                // bind then replaces the provisional hot/cold spelling and consumes the fact. Removing it here made
-                // cross-module suspend calls append `$dotkt_suspend` to an already-suffixed hot MethodDef name.
-                if (!deferUnknown
-                    && (!preserveForScalarResolution || id.EndsWith("|cold", StringComparison.Ordinal)))
+                // Naming is not MethodDef binding. Keep the selected identity through the early bind so suspend
+                // lowering can derive its exact cold-entry identity, and through the late naming bind until the
+                // scalar resolver selects that MethodDef. Cold calls obey the same ownership rule as hot calls;
+                // neither may repeat overload selection from an erased parameter vector.
+                if (!deferUnknown && !preserveForScalarResolution)
                     obj.Remove(Key);
             }
             else if (node is JsonArray array)

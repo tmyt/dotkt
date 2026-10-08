@@ -3342,8 +3342,9 @@ static partial class SuspendColdLowering
             // the subsequent late existential type rewrite must not retarget it to the public carrier slot.
             if (Bool(callNode[FBoundStarProjectionErasure.ExactBridgeOwnerCallKey]))
                 call[FBoundStarProjectionErasure.ExactBridgeOwnerCallKey] = true;
-            if (!isInstance)
-                ClrMemberResolution.CarryReferencedStaticCallSignatureSnapshot(callNode, call);
+            // This is a new physical call to the selected cold declaration, not a clone of the hot call. Its
+            // complete signature below must follow the remaining representation passes, including continuation
+            // and existential erasure. The hot Kotlin-signature snapshot must not override that new ABI vector.
             // BUG Y — overload disambiguation. `<method>$dotkt_suspend` may be one of several same-named IL
             // overloads (SequenceScope.yieldAll has 3: Iterator/Iterable/Sequence), which ilemit resolves via
             // MethodsBySig on the param-type signature. Synthesize the call `sig` = the ORIGINAL call's param

@@ -7,6 +7,11 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Overloaded suspend calls keep their selected cold entry across DLLs (#976).**
+  bir2cir retains declaration identity through final MethodDef binding and uses
+  the cold call's complete physical signature, including its continuation slot,
+  instead of reusing a stale hot signature or selecting an erased overload again.
+
 - **Variant Kotlin collection and Comparable value slots use an opaque CLR representation.**
   Kotlin declaration metadata and nominal signature modifiers retain their source identity, while ordinary
   CLR slots use `object` even when the corresponding BCL interface is variant. CLR variance alone does not
