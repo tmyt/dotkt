@@ -127,7 +127,11 @@ static class GenericArrayValueLowering
         foreach (var (key, value) in obj.ToList())
         {
             if (key is "memberRef" or "kotlinType" or "retKotlinType") continue;
-            if (ClrBoundNode.IsAny(kind) && key is not ("args" or "recv")) continue;
+            // A bound call's owner, generic arguments and selected native signature
+            // remain exact. Its value-facing Kotlin result still uses the array
+            // carrier: leaving Array<T> here reintroduces a T[] check when the
+            // native stack result is later reconciled with that result stamp.
+            if (ClrBoundNode.IsAny(kind) && key is not ("args" or "recv" or "ret" or "dynRet" or "sty")) continue;
             if (key == "args" && value is JsonArray arguments)
             {
                 for (var i = 0; i < arguments.Count; i++)
@@ -364,6 +368,37 @@ static class GenericArrayValueLowering
             || !Project(construction).Equals(construction)
             || !Project(new TypeNode.Nullable(construction)).Equals(new TypeNode.Nullable(construction)))
             throw new System.InvalidOperationException("Generic array value projection changed an exact named construction");
+        foreach (var nativeResult in new TypeNode[] { array, new TypeNode.Fqn("System.Array") })
+        {
+            var nativeSignature = new JsonObject {
+                ["kind"] = "method", ["name"] = "Produce", ["genericArity"] = 1,
+                ["declaringType"] = TypeJson.Write(construction),
+                ["parameterTypes"] = new JsonArray(TypeJson.Write(array)),
+                ["returnType"] = TypeJson.Write(nativeResult),
+            };
+            var nativeCall = new JsonObject {
+                ["k"] = "clrGenericStatic", ["type"] = TypeJson.Write(construction),
+                ["method"] = "Produce", ["args"] = new JsonArray(),
+                ["typeArgs"] = new JsonArray(TypeJson.Write(array.Elem)),
+                ["argTypes"] = new JsonArray(TypeJson.Write(array)),
+                ["memberRef"] = nativeSignature,
+                ["ret"] = TypeJson.Write(array), ["dynRet"] = TypeJson.Write(array),
+                ["sty"] = TypeJson.Write(array),
+            };
+            var signatureBefore = nativeSignature.ToJsonString();
+            var document = new JsonObject { ["fileClass"] = "ResultProjection", ["methods"] = new JsonArray(
+                new JsonObject { ["name"] = "Use", ["typeParams"] = new JsonArray("T"),
+                    ["params"] = new JsonArray(), ["ret"] = TypeJson.Write(array),
+                    ["body"] = new JsonArray(new JsonObject { ["k"] = "return", ["value"] = nativeCall }) }) };
+            ApplyAll(new[] { document });
+            if (new[] { "ret", "dynRet", "sty" }.Any(key => TypeJson.Read(nativeCall[key])
+                    != new TypeNode.Fqn("System.Array"))
+                || nativeSignature.ToJsonString() != signatureBefore
+                || TypeJson.Read(nativeCall["type"]) != construction
+                || TypeJson.Read(nativeCall["argTypes"]?[0]) != array
+                || TypeJson.Read(nativeCall["typeArgs"]?[0]) != array.Elem)
+                throw new System.InvalidOperationException("Native array result projection changed the selected CLR contract");
+        }
         JsonObject Element() => new() { ["k"] = "arrayGet", ["elem"] = TypeJson.Write(array.Elem),
             ["array"] = Local("values"), ["index"] = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("int"), ["value"] = 0 } };
         foreach (var signatureKey in new[] { "sig", "shapeTypes", "argTypes", "resolvedMemberParams", "memberRef" })

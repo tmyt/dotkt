@@ -34,6 +34,25 @@ import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import NUnit.Framework.Legacy.ClassicAssert.IsNull as assertNull
 
+private interface ArrResizeNode
+private class ArrResizeItem : ArrResizeNode
+
+@Suppress("UNCHECKED_CAST")
+private fun <T : ArrResizeNode> arrResizeInternal(item: T): Int {
+    var values = arrayOfNulls<ArrResizeNode>(4) as Array<T?>
+    values[0] = item
+    check(values[0] === item)
+    val cloned = values.copyOf()
+    check(cloned !== values && cloned[0] === item)
+    values = values.copyOf(8)
+    check(values[0] === item && values[7] == null)
+    val sliced = values.copyOfRange(0, 2)
+    check(sliced[0] === item && sliced[1] == null)
+    val shrunk = values.copyOf(1)
+    check(shrunk[0] === item && shrunk.size == 1)
+    return values.size
+}
+
 // ---- #86 D2 : the OPEN forms of `Array<T?>` / `Array<T>`, exercised at a VALUE instantiation ---------------------
 // `Array<T?>` is the erased slot itself; `Array<T>` at `T = Int?` is the same physical array reached through a BARE
 // type parameter, which is what forces the instantiation to name the element's one representation.
@@ -140,6 +159,11 @@ class ArrayTests {
         for (i in 0 until 3) sum += grown[i]!!
         assertEquals(6, sum)
         assertEquals("[x, y, null]", arrayOf("x", "y").copyOf(3).toList().toString())   // reference element
+    }
+
+    @TestAttribute
+    fun boundedGenericArrayCopiesPreserveBackingComponentAndItemIdentity() {
+        assertEquals(8, arrResizeInternal(ArrResizeItem()))
     }
 
     @TestAttribute
