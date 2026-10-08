@@ -16,6 +16,26 @@ import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 
 private enum class NestedSlotEnum { VALUE }
 
+private interface NestedConstructorWitness<T> { fun read(): T }
+private class NestedConstructorString : NestedConstructorWitness<String> {
+    override fun read(): String = "capture"
+}
+private class NestedOuterWrapper<T>(val value: NestedConstructorWitness<T>, val marker: OuterGenericLeaf<Int, String>)
+private class NestedInnerWrapper<T>(val value: NestedConstructorWitness<T>, val marker: InnerGenericLeaf<Int, String>)
+private class NestedEnclosingOnlyWrapper<T>(
+    val value: NestedConstructorWitness<T>, val marker: NestedArityInterop.ConstructorInferenceOuter.Node<Int>,
+)
+private class NestedNativeWitnessWrapper<T>(val value: NativeNestedGenerics.Box<T>)
+private fun nestedOuterWrapper(value: NestedConstructorWitness<*>, marker: OuterGenericLeaf<Int, String>): NestedOuterWrapper<*> =
+    NestedOuterWrapper(value, marker)
+private fun nestedInnerWrapper(value: NestedConstructorWitness<*>, marker: InnerGenericLeaf<Int, String>): NestedInnerWrapper<*> =
+    NestedInnerWrapper(value, marker)
+private fun nestedEnclosingWrapper(
+    value: NestedConstructorWitness<*>, marker: NestedArityInterop.ConstructorInferenceOuter.Node<Int>,
+): NestedEnclosingOnlyWrapper<*> = NestedEnclosingOnlyWrapper(value, marker)
+private fun nestedNativeWitnessWrapper(value: NativeNestedGenerics.Box<*>): NestedNativeWitnessWrapper<*> =
+    NestedNativeWitnessWrapper(value)
+
 private class OuterGenericContractImpl : OuterGenericContract<Int, String>
 private class InnerGenericContractImpl : InnerGenericContract<Int, String>
 private class SameStemShapeImpl : SameStemShape
@@ -40,6 +60,21 @@ private fun returnNestedValueFromExpression(
 }
 
 class NestedArityTests {
+    @TestAttribute
+    fun projectedKotlinConstructorsKeepExactNativeDefinitionIdentities() {
+        val outer = nestedOuterWrapper(NestedConstructorString(), Oracle.OuterGenericLeaf())
+        assertEquals("capture", outer.value.read())
+        assertEquals(true, Oracle.HasOuterGenericLeaf(outer.marker))
+        val inner = nestedInnerWrapper(NestedConstructorString(), Oracle.InnerGenericLeaf())
+        assertEquals("capture", inner.value.read())
+        assertEquals(true, Oracle.HasInnerGenericLeaf(inner.marker))
+        val enclosing = nestedEnclosingWrapper(NestedConstructorString(), NestedArityInterop.ConstructorInferenceOuter.Node<Int>())
+        assertEquals("capture", enclosing.value.read())
+        assertEquals(59, enclosing.marker.Value)
+        assertEquals("native", nestedNativeWitnessWrapper(NativeNestedGenerics.Box("native")).value.Value)
+        assertEquals(42, nestedNativeWitnessWrapper(NativeNestedGenerics.Box(42)).value.Value)
+    }
+
     @TestAttribute
     fun nestedClassifiersThatDifferOnlyByArityRemainDistinct() {
         assertEquals(1, Outer.Item().Value)

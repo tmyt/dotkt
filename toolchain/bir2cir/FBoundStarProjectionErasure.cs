@@ -1129,19 +1129,45 @@ static class FBoundStarProjectionErasure
             || ProjectedConstructorTypeKey(new TypeNode.Mod(false, new TypeNode.Fqn("CtorIdentityB"), objectParameter),
                 emptyRefs, keyNames) == ProjectedConstructorTypeKey(optionalParameter, emptyRefs, keyNames))
             throw new InvalidOperationException("Projected constructor linkage lost exact modifier identity or ordering");
+        var nominalAliases = new Dictionary<string, string> {
+            ["sample.Collection"] = "System.Collections.Generic.IReadOnlyCollection",
+            ["kotlin.Any"] = "System.Object",
+        };
+        var nominalNames = new Dictionary<string, string> {
+            ["sample.Collection"] = "reference.Container+Face`1",
+        };
+        var nominalSource = new TypeNode.Fqn("sample.Collection", new TypeNode[] { new TypeNode.Fqn("kotlin.Any") });
+        var nominalModifier = new TypeNode.Mod(false, nominalSource, nominalSource);
+        if (ProjectedConstructorTypeKey(nominalModifier, nominalAliases, _ => false, nominalNames, keyNames, null)
+            != "o[g{reference.Container.Face}<n{System.Object}>](g{System.Collections.Generic.IReadOnlyCollection}<n{System.Object}>)")
+            throw new InvalidOperationException("Projected constructor key conflated a nominal modifier with its storage alias");
         var inferenceProgram = new List<int>();
         var inferenceDefinitions = new List<TypeNode.Fqn>();
-        var inferenceShape = new TypeNode.Fqn("System.Tuple`2", new TypeNode[] {
+        var inferenceLocalNames = new HashSet<string> { "InferencePair" };
+        var inferenceShape = new TypeNode.Fqn("InferencePair", new TypeNode[] {
             new TypeNode.Tv("type", 1), new TypeNode.Array(new TypeNode.Tv("type", 0), 2, false) });
         CompileConstructionInference(inferenceShape, inferenceProgram, inferenceDefinitions,
-            emptyRefs, new HashSet<string>());
-        CompileConstructionInference(new TypeNode.Fqn("System.Tuple`2", new TypeNode[] {
+            emptyRefs, inferenceLocalNames);
+        CompileConstructionInference(new TypeNode.Fqn("InferencePair", new TypeNode[] {
             new TypeNode.Fqn("System.String"), new TypeNode.Tv("type", 0) }),
-            inferenceProgram, inferenceDefinitions, emptyRefs, new HashSet<string>());
+            inferenceProgram, inferenceDefinitions, emptyRefs, inferenceLocalNames);
         if (!inferenceProgram.SequenceEqual(new[] { 3, 0, 2, 1, 1, 2, 2, 0, 1, 0, 3, 0, 2, 0, 1, 0 })
-            || inferenceDefinitions.Count != 1 || inferenceDefinitions[0].Name != "System.Tuple`2")
+            || inferenceDefinitions.Count != 1 || inferenceDefinitions[0].Name != "InferencePair")
             throw new InvalidOperationException("Constructor inference lost declaration slots, nested array rank, or exact definition reuse: "
                 + string.Join(",", inferenceProgram) + "; " + string.Join(",", inferenceDefinitions.Select(definition => definition.Name)));
+        var variantDefinition = JsonNode.Parse("""
+        {"name":"InferenceVariant","kind":"class","typeParams":[{"name":"T","variance":"out"},"NullableT"]}
+        """)!.AsObject();
+        variantDefinition[NullableRepresentationFrame.MetadataKey] = new NullableRepresentationFrame(1, new[] { 0 }).ToJson();
+        var variantProgram = new List<int>();
+        var variantDefinitions = new List<TypeNode.Fqn>();
+        CompileConstructionInference(new TypeNode.Fqn("InferenceVariant", new TypeNode[] {
+            new TypeNode.Tv("type", 0), new TypeNode.Tv("type", 1) }), variantProgram, variantDefinitions,
+            emptyRefs, new HashSet<string> { "InferenceVariant" }, new Dictionary<string, JsonObject> {
+                ["InferenceVariant"] = variantDefinition,
+            });
+        if (!variantProgram.SequenceEqual(new[] { 3, 0, 2, 0, 0 }))
+            throw new InvalidOperationException("Constructor inference treated variant source/companion arguments as exact witnesses");
         for (var pass = 0; pass < 2; pass++)
         {
             RewriteTypesOnly(inheritance, constructionOwners, new Dictionary<string, JsonObject>(), emptyRefs,
@@ -3378,7 +3404,7 @@ static class FBoundStarProjectionErasure
         var inferenceProgram = new List<int>();
         var inferenceDefinitions = new List<TypeNode.Fqn>();
         foreach (var parameter in inferenceSignature)
-            CompileConstructionInference(parameter, inferenceProgram, inferenceDefinitions, refs, localNames);
+            CompileConstructionInference(parameter, inferenceProgram, inferenceDefinitions, refs, localNames, defs);
         var intType = new TypeNode.Fqn("kotlin.Int");
         var parameterKeys = new JsonArray(signature.Select(type => (JsonNode)new JsonObject
         {
@@ -3459,14 +3485,17 @@ static class FBoundStarProjectionErasure
     // semantics from an erased ParameterInfo. Prefix opcodes: 0 ignore, 1 bind
     // owner slot, 2 array(rank,SZ,child), 3 exact generic definition(index,children).
     static void CompileConstructionInference(TypeNode type, List<int> program,
-        List<TypeNode.Fqn> definitions, ReferenceMetadataIndex refs, IReadOnlySet<string> localNames)
+        List<TypeNode.Fqn> definitions, ReferenceMetadataIndex refs, IReadOnlySet<string> localNames,
+        IReadOnlyDictionary<string, JsonObject> defs = null)
     {
+        type = InvariantConstructionWitness(type, defs, refs);
         while (type is TypeNode.Nullable or TypeNode.Oblivious or TypeNode.Projection or TypeNode.Mod)
             type = type switch {
                 TypeNode.Nullable n => n.Of, TypeNode.Oblivious o => o.Of,
                 TypeNode.Projection p => p.Of, TypeNode.Mod m => m.Of, _ => type };
         type = BirTypeLowering.LowerPhysicalType(type, refs.Aliases, refs.IsValueType,
             refs.PhysicalTypeNames, typeArg: true, localTypeNames: localNames, nullableFrames: refs.NullableTypeFrames);
+        type = InvariantConstructionWitness(type, defs, refs);
         if (type is TypeNode.Tv { Scope: "type" } variable)
         {
             program.Add(1); program.Add(variable.I);
@@ -3474,18 +3503,78 @@ static class FBoundStarProjectionErasure
         else if (type is TypeNode.Array array)
         {
             program.Add(2); program.Add(array.Rank); program.Add(array.SzArray ? 1 : 0);
-            CompileConstructionInference(array.Elem, program, definitions, refs, localNames);
+            CompileConstructionInference(array.Elem, program, definitions, refs, localNames, defs);
         }
         else if (type is TypeNode.Fqn { Args.Length: > 0 } generic)
         {
-            var definition = new TypeNode.Fqn(generic.Name);
+            // Removing arguments also removes the emitter's arity information.
+            // Runtime inference needs the exact open CLR TypeDef, not an
+            // arity-stripped source classifier. Local definitions already have
+            // authoritative symbolic identities in this compilation.
+            var definitionName = generic.Name;
+            if (!localNames.Contains(definitionName))
+            {
+                if (!definitionName.Contains('`') && !definitionName.Contains('+')
+                    && refs.TryExactPhysicalTypeName(definitionName, generic.Args.Length, out var exact))
+                    definitionName = exact ?? throw new InvalidOperationException(
+                        "Projected construction has an ambiguous generic inference definition");
+                var referenced = refs.ResolveRefType(definitionName,
+                    definitionName.Contains('`') || definitionName.Contains('+') ? 0 : generic.Args.Length);
+                if (referenced == null || !referenced.IsGenericTypeDefinition
+                    || referenced.GetGenericArguments().Length != generic.Args.Length)
+                    throw new InvalidOperationException(
+                        "Projected construction has no exact referenced generic inference definition");
+                definitionName = referenced.FullName;
+            }
+            var definition = new TypeNode.Fqn(definitionName);
             var index = definitions.FindIndex(candidate => candidate == definition);
             if (index < 0) { index = definitions.Count; definitions.Add(definition); }
             program.Add(3); program.Add(index); program.Add(generic.Args.Length);
             foreach (var argument in generic.Args)
-                CompileConstructionInference(argument, program, definitions, refs, localNames);
+                CompileConstructionInference(argument, program, definitions, refs, localNames, defs);
         }
         else program.Add(0);
+    }
+
+    // A runtime construction witnesses an owner slot only through an invariant
+    // occurrence. Covariant/contravariant children may have another legal CLR
+    // construction (e.g. emptyList<Nothing>() passed as List<Capture>), so their
+    // physical arguments must not redefine the capture. Star is a pass-local
+    // no-binding shape here; the inference compiler emits opcode 0 for it.
+    static TypeNode InvariantConstructionWitness(TypeNode type,
+        IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs)
+    {
+        TypeNode Witness(TypeNode child) => InvariantConstructionWitness(child, defs, refs);
+        switch (type)
+        {
+            case TypeNode.Projection:
+                return new TypeNode.Star();
+            case TypeNode.Fqn { Args: { Length: > 0 } } generic:
+                JsonObject local = null;
+                defs?.TryGetValue(generic.Name, out local);
+                var parameters = local?["typeParams"] as JsonArray ?? refs.OwnerTypeParamDeclarations(generic.Name);
+                var frame = local?[NullableRepresentationFrame.MetadataKey] is { } frameNode
+                    ? NullableRepresentationFrame.Read(frameNode) : null;
+                if (frame == null) refs.NullableTypeFrames.TryGetValue(generic.Name, out frame);
+                var arguments = generic.Args.Select((argument, index) => {
+                    var position = frame?.PhysicalArity == generic.Args.Length
+                        ? frame.SourcePosition(frame.PhysicalSlot(index).SourceIndex) : index;
+                    var variance = parameters != null && position < parameters.Count
+                        && parameters[position] is JsonObject parameter ? Str(parameter["variance"]) : null;
+                    return variance is "in" or "out" ? (TypeNode)new TypeNode.Star() : Witness(argument);
+                }).ToArray();
+                return new TypeNode.Fqn(generic.Name, arguments);
+            case TypeNode.Array array:
+                return new TypeNode.Array(Witness(array.Elem), array.Rank, array.SzArray);
+            case TypeNode.Nullable nullable:
+                return new TypeNode.Nullable(Witness(nullable.Of));
+            case TypeNode.Oblivious oblivious:
+                return new TypeNode.Oblivious(Witness(oblivious.Of));
+            case TypeNode.Mod modifier:
+                return new TypeNode.Mod(modifier.Req, modifier.M, Witness(modifier.Of));
+            default:
+                return type;
+        }
     }
 
     // A concrete source argument containing a projection is still a writable value type, not a hidden
@@ -3601,34 +3690,47 @@ static class FBoundStarProjectionErasure
     }
 
     static string ProjectedConstructorTypeKey(TypeNode type, ReferenceMetadataIndex refs,
-        IReadOnlySet<string> localNames)
+        IReadOnlySet<string> localNames) => ProjectedConstructorTypeKey(type, refs.Aliases, refs.IsValueType,
+            refs.PhysicalTypeNames, localNames, refs.NullableTypeFrames);
+
+    static string ProjectedConstructorTypeKey(TypeNode type, IReadOnlyDictionary<string, string> aliases,
+        ValueTypeOracle isValueType, IReadOnlyDictionary<string, string> physicalNames,
+        IReadOnlySet<string> localNames, IReadOnlyDictionary<string, NullableRepresentationFrame> nullableFrames)
     {
         while (type is TypeNode.Projection projection) type = projection.Of;
-        var physical = BirTypeLowering.LowerPhysicalType(type, refs.Aliases, refs.IsValueType,
-            refs.PhysicalTypeNames, typeArg: false, localTypeNames: localNames, nullableFrames: refs.NullableTypeFrames);
+        var physical = BirTypeLowering.LowerPhysicalType(type, aliases, isValueType,
+            physicalNames, typeArg: false, localTypeNames: localNames, nullableFrames: nullableFrames);
+        physical = BirTypeLowering.CanonicalPhysicalSlotType(physical);
+        return ProjectedConstructorPhysicalTypeKey(physical);
+    }
+
+    // Lower exactly once, then serialize the already-physical declaration.
+    // In particular a nominal alias modifier is a declaration discriminator,
+    // not an ordinary value to lower again to the alias's storage family.
+    static string ProjectedConstructorPhysicalTypeKey(TypeNode physical)
+    {
         if (physical is TypeNode.Fn function)
             physical = BirTypeLowering.DelegateFqnOf(function)
                 ?? throw new InvalidOperationException("projected constructor parameter has no CLR delegate family");
-        physical = BirTypeLowering.CanonicalPhysicalSlotType(physical);
         return physical switch
         {
             TypeNode.Tv variable => (variable.Scope == "method" ? "m" : "t") + variable.I,
-            TypeNode.ByRef byRef => "r[" + ProjectedConstructorTypeKey(byRef.Of, refs, localNames) + "]",
+            TypeNode.ByRef byRef => "r[" + ProjectedConstructorPhysicalTypeKey(byRef.Of) + "]",
             TypeNode.Array array => "a" + (array.SzArray ? "s" : "m") + array.Rank + "["
-                + ProjectedConstructorTypeKey(array.Elem, refs, localNames) + "]",
+                + ProjectedConstructorPhysicalTypeKey(array.Elem) + "]",
             TypeNode.Fqn { Args: { } arguments } fqn => "g{" + NormalizeProjectedConstructorTypeName(fqn.Name)
                 + "}<" + string.Join(",", arguments.Select(argument =>
-                    ProjectedConstructorTypeKey(argument, refs, localNames))) + ">",
+                    ProjectedConstructorPhysicalTypeKey(argument))) + ">",
             TypeNode.Fqn fqn => "n{" + NormalizeProjectedConstructorTypeName(fqn.Name) + "}",
             // LowerPhysicalType retains nullable VALUE types as the semantic nullable shell. Reflection observes the
             // corresponding System.Nullable<T> generic construction, so the structural descriptor must spell that
             // physical shell rather than collide with the non-nullable T overload.
             TypeNode.Nullable nullable => "g{System.Nullable}<"
-                + ProjectedConstructorTypeKey(nullable.Of, refs, localNames) + ">",
-            TypeNode.Oblivious oblivious => ProjectedConstructorTypeKey(oblivious.Of, refs, localNames),
+                + ProjectedConstructorPhysicalTypeKey(nullable.Of) + ">",
+            TypeNode.Oblivious oblivious => ProjectedConstructorPhysicalTypeKey(oblivious.Of),
             TypeNode.Mod modifier => (modifier.Req ? "q[" : "o[")
-                + ProjectedConstructorTypeKey(modifier.M, refs, localNames) + "]("
-                + ProjectedConstructorTypeKey(modifier.Of, refs, localNames) + ")",
+                + ProjectedConstructorPhysicalTypeKey(modifier.M) + "]("
+                + ProjectedConstructorPhysicalTypeKey(modifier.Of) + ")",
             _ => throw new NotSupportedException(
                 $"bir2cir: projected constructor parameter type `{SupertypeGraph.TypeKey(physical)}` "
                 + "has no runtime structural key"),

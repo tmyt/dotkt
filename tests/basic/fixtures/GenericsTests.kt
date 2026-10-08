@@ -407,6 +407,19 @@ private class UseSiteProjectedBoundOuter<T> {
 private fun constructFromUseSiteProjection(box: UseSiteInvariant<*>): UseSiteProjectedConstructor<*> =
     UseSiteProjectedConstructor.from(box)
 
+private class UseSiteProjectedCovariantTags<T>(val box: UseSiteInvariant<T>, val tags: List<T>)
+private fun constructCovariantTags(box: UseSiteInvariant<*>): UseSiteProjectedCovariantTags<*> =
+    UseSiteProjectedCovariantTags(box, emptyList())
+private class UseSiteOutWitness<out T>
+private class UseSiteInWitness<in T>
+private class UseSiteProjectedVariantWitnesses<T>(
+    val box: UseSiteInvariant<T>,
+    val producer: UseSiteOutWitness<T>,
+    val consumer: UseSiteInWitness<T>,
+)
+private fun constructVariantWitnesses(box: UseSiteInvariant<*>): UseSiteProjectedVariantWitnesses<*> =
+    UseSiteProjectedVariantWitnesses(box, UseSiteOutWitness<Nothing>(), UseSiteInWitness<Any?>())
+
 fun useSiteInParameter(box: UseSiteInvariant<in String>) { box.write("in") }
 fun useSiteOutResult(): UseSiteInvariant<out String> = UseSiteStringBox("out")
 fun useSiteVariantParameter(producer: Producer<out String>): String = producer.produce()
@@ -545,6 +558,19 @@ fun useSiteCallable(
 ): String = transform(box).read()
 
 class GenericsTests {
+    @TestAttribute
+    fun projectedConstructorsPreserveSelectedDeclarationsAndInvariantWitnesses() {
+        val source = UseSiteStringBox("capture")
+        assertEquals("single", UseSiteProjectedConstructor.from(source).selected)
+        assertEquals("nullable:7", UseSiteProjectedConstructor.fromNullable(source).selected)
+        assertEquals("star:1", UseSiteProjectedConstructor.fromStar(source).selected)
+        assertEquals("array:1", UseSiteProjectedConstructor.fromArray(source).selected)
+        val tagged = constructCovariantTags(source)
+        assertEquals("capture", tagged.box.read())
+        assertEquals(true, tagged.tags.isEmpty())
+        assertEquals("capture", constructVariantWitnesses(source).box.read())
+    }
+
     @TestAttribute
     fun classAndFunction() {
         val bi = Box(42)

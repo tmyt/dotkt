@@ -4,6 +4,12 @@ using System.Diagnostics.CodeAnalysis;
 
 namespace NestedArityInterop;
 
+public sealed class ConstructorInferenceOuter<T>
+{
+    public sealed class Node { public int Value => 59; }
+    public sealed class Node<U> { public int Value => 61; }
+}
+
 public sealed class Outer
 {
     public sealed class Item
