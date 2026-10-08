@@ -24,7 +24,8 @@ static class CirValueTypeBoundary
         else if (node is JsonObject obj)
         {
             if (obj.ContainsKey("t"))
-                return role == Role.Signature ? obj : TypeJson.Write(ValueType(TypeJson.Read(obj)));
+                return TypeJson.Write(role == Role.Signature
+                    ? SignatureType(TypeJson.Read(obj)) : ValueType(TypeJson.Read(obj)));
             // The declaration identity is the authoritative shape of all memberRef carriers,
             // including per-module role tables and interface-slot sets.
             if (obj.ContainsKey("declaringType")) role = Role.Signature;
@@ -73,6 +74,25 @@ static class CirValueTypeBoundary
         _ => type,
     };
 
+    // A modifier names an actual CLR type, including its closed generic frame.
+    // Normalize only that identity; value/return spellings (especially `void`)
+    // remain unchanged and local descriptors still equal their declarations.
+    static TypeNode SignatureType(TypeNode type) => type switch {
+        TypeNode.Fqn { Args: { } args } named => named with { Args = args.Select(SignatureType).ToArray() },
+        TypeNode.Array array => array with { Elem = SignatureType(array.Elem) },
+        TypeNode.Nullable nullable => nullable with { Of = SignatureType(nullable.Of) },
+        TypeNode.Oblivious oblivious => oblivious with { Of = SignatureType(oblivious.Of) },
+        TypeNode.ByRef byRef => byRef with { Of = SignatureType(byRef.Of) },
+        TypeNode.Ptr pointer => pointer with { Of = SignatureType(pointer.Of) },
+        TypeNode.Mod modifier => modifier with {
+            M = BirTypeLowering.CanonicalPhysicalSlotType(modifier.M), Of = SignatureType(modifier.Of) },
+        TypeNode.Fn function => function with {
+            Ret = SignatureType(function.Ret), Params = function.Params.Select(SignatureType).ToArray(),
+            Recv = function.Recv == null ? null : SignatureType(function.Recv),
+            Ctx = function.Ctx?.Select(SignatureType).ToArray() },
+        _ => type,
+    };
+
     public static void SelfTest()
     {
         var modified = TypeJson.Write(new TypeNode.Mod(false, new TypeNode.Fqn("Marker"), new TypeNode.Fqn("System.Object")));
@@ -105,6 +125,21 @@ static class CirValueTypeBoundary
         foreach (var value in new[] { method["body"][0]["type"], call["ret"] })
             if (TypeJson.Read(value) is not TypeNode.Fqn { Name: "System.Object" })
                 throw new InvalidOperationException("CIR value retains a signature modifier");
+        var closedModifier = new TypeNode.Mod(false,
+            new TypeNode.Fqn("System.Func`2", new TypeNode[] {
+                new TypeNode.Fqn("object"), new TypeNode.Tv("method", 1) }), new TypeNode.Fqn("object"));
+        method["clrInterfaceImpls"][0]["params"] = new JsonArray(TypeJson.Write(closedModifier));
+        call["memberRef"]["parameterTypes"] = new JsonArray(TypeJson.Write(closedModifier));
+        Apply(root);
+        var exact = closedModifier with { M = BirTypeLowering.CanonicalPhysicalSlotType(closedModifier.M) };
+        foreach (var signature in new[] { method["clrInterfaceImpls"][0]["params"][0],
+            call["memberRef"]["parameterTypes"][0] })
+            if (TypeJson.Read(signature) != exact)
+                throw new InvalidOperationException("Exact CLR linkage lost a modifier/frame or retained a primitive alias");
+        call["memberRef"]["returnType"] = TypeJson.Write(new TypeNode.Fqn("void"));
+        Apply(root);
+        if (TypeJson.Read(call["memberRef"]["returnType"]) != new TypeNode.Fqn("void"))
+            throw new InvalidOperationException("Exact CLR linkage changed its canonical void contract");
         Console.WriteLine("[CIR value types] self-test OK (declaration/linkage modifiers retained; values unmodified)");
     }
 }

@@ -108,9 +108,15 @@ static class FunctionSignatureIdentity
             Capture(root);
             if (parameter[PhysicalKey].GetValue<string>() != selectedMarker)
                 throw new InvalidOperationException("Repeated capture changed a physical discriminator");
+            var copied = root.DeepClone().AsObject();
+            copied["fileClass"] = "SignatureProbePhysicalWrapper";
+            Capture(copied);
+            if (copied["methods"][0]["params"][0][PhysicalKey].GetValue<string>() != selectedMarker)
+                throw new InvalidOperationException("A physical declaration copy acquired a different source discriminator");
             Complete(root);
+            Complete(copied);
             Complete(root);
-            var definitions = SynthDefsFile(new[] { root });
+            var definitions = SynthDefsFile(new[] { root, copied });
             if (parameter[Key] != null || parameter[PhysicalKey] != null
                 || TypeJson.Read(parameter["type"]) != signature
                 || definitions["types"].AsArray().Count != 1

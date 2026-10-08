@@ -98,6 +98,10 @@ static class NullableGenericErasure
 
     internal static void PreserveSourceFacts(JsonObject root, ValueTypeOracle isValue)
     {
+        // Inherited implementation facts select Kotlin declarations. Keep their
+        // authored signature and owner arguments before physical value erasure;
+        // bridge bodies separately consume the referenced MethodDef's CLR slots.
+        KotlinOverrideSlotBridge.PreserveInheritedSourceSignatures(root);
         RecordNullableGenericSlots(root, isValue);
         RecordSuspendFnShapes(root);
     }

@@ -334,6 +334,9 @@ sealed class Pipeline
         GenericStaticOwnerBinding.Materialize(birRoots);
         // A receiverless companion extension needs its associated Kotlin classifier in the physical member identity.
         // Consume that explicit declaration/use fact before any name-keyed index or inline payload is captured.
+        // Signature-only declarations and callable wrappers are copies of this
+        // selected declaration, not new owners of its parameter discriminator.
+        foreach (var root in birRoots) FunctionSignatureIdentity.Capture(root);
         var companionExtensionBindings = CompanionExtensionBinding.Apply(birRoots, refs);
         // #397: accessor declarations arrive in Kotlin vocabulary (source property identity + get/set role).
         // Materialize the dedicated CLR spelling once, after #389 has selected any companion-extension core/container

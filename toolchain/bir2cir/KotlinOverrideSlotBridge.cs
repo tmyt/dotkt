@@ -96,6 +96,27 @@ static class KotlinOverrideSlotBridge
         ApplyAll(roots, isValue, refs, representations, Phase.SuspendValueBridges, localTypeNames, covariantBridgedSlots, refBuild, sourceParameters, inheritedSignatures);
 
     internal sealed record InheritedSignature(TypeNode[] Parameters, TypeNode Return, TypeNode.Fqn[] Owners);
+    const string InheritedSourceSignatureKey = "inheritedSourceSignature";
+
+    internal static void PreserveInheritedSourceSignatures(JsonObject root)
+    {
+        void Visit(JsonObject declaration)
+        {
+            foreach (var fact in (declaration["inheritedClassMethods"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
+            {
+                if (fact[InheritedSourceSignatureKey] != null) continue;
+                fact[InheritedSourceSignatureKey] = new JsonObject {
+                    ["params"] = new JsonArray(ReadParameterTypes(fact).Select(TypeJson.Write).ToArray()),
+                    ["ret"] = fact["ret"]?.DeepClone(),
+                    ["owners"] = new JsonArray((fact["overrides"] as JsonArray ?? new JsonArray())
+                        .OfType<JsonObject>().Select(edge => TypeJson.Read(edge["owner"]))
+                        .OfType<TypeNode.Fqn>().Distinct().Select(TypeJson.Write).ToArray()),
+                }.ToJsonString(BirJson.Writer);
+            }
+            foreach (var nested in (declaration["types"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()) Visit(nested);
+        }
+        Visit(root);
+    }
 
     internal static IReadOnlyDictionary<JsonObject, InheritedSignature> CaptureInheritedSignatures(
         IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs)
@@ -105,10 +126,15 @@ static class KotlinOverrideSlotBridge
         foreach (var definition in definitions.Values)
             if (definition.Node["inheritedClassMethods"] is JsonArray facts)
             {
-                var owners = SupertypeGraph.Reachable(definition, definitions, refs)
-                    .Where(edge => !edge.isInterface).Select(edge => edge.spec).Distinct().ToArray();
                 foreach (var fact in facts.OfType<JsonObject>())
-                    signatures[fact] = new(ReadParameterTypes(fact), TypeJson.Read(fact["ret"]), owners);
+                {
+                    var source = JsonNode.Parse(Str(fact[InheritedSourceSignatureKey])
+                        ?? throw new InvalidOperationException("Inherited implementation has no captured Kotlin signature"),
+                        documentOptions: BirJson.DocOptions).AsObject();
+                    signatures[fact] = new(source["params"].AsArray().Select(TypeJson.Read).ToArray(),
+                        TypeJson.Read(source["ret"]), source["owners"].AsArray().Select(TypeJson.Read).OfType<TypeNode.Fqn>().ToArray());
+                    fact.Remove(InheritedSourceSignatureKey);
+                }
             }
         return signatures;
     }
@@ -299,6 +325,12 @@ static class KotlinOverrideSlotBridge
             var declParams = impl["params"] as JsonArray;
             var declRet = TypeJson.Read(impl["ret"]);
             if (declParams == null || declRet == null || declParams.Count != slotParams.Length) return;
+            var differingParameterSignature = slotSignature != null && slotSignature.Where((signature, index) =>
+                    !BirTypeLowering.SamePhysicalSlotType(signature,
+                        SupertypeGraph.SubstOwnerTvs(TypeJson.Read(
+                            FunctionSignatureIdentity.SignatureType((JsonObject)declParams[index])), ownArgs),
+                        refs.Aliases, isValue, refs.PhysicalTypeNames, returnPosition: false,
+                        nullableFrames: refs.NullableTypeFrames)).Any();
             var differingSuspendResult = IsSuspendMethod(impl)
                 && !BirTypeLowering.SamePhysicalSlotType(slotRet,
                     SupertypeGraph.SubstOwnerTvs(declRet, ownArgs), refs.Aliases, isValue,
@@ -306,6 +338,7 @@ static class KotlinOverrideSlotBridge
                     nullableFrames: refs.NullableTypeFrames);
             if (phase == Phase.SuspendValueBridges
                 && !(differingSuspendResult
+                    || IsSuspendMethod(impl) && differingParameterSignature
                     || IsSuspendMethod(impl) && (unitValueReturn || !IsVoid(slotRet)) && IsUnit(declRet)
                         && !Bool(impl[BirTypeLowering.ValueReturnKey]))) return;
             // An existing exact MethodImpl bridge already owns this obligation. Both pre-cold adapters and
@@ -378,12 +411,7 @@ static class KotlinOverrideSlotBridge
             // Kotlin calls and the class's Property row continue to name the dedicated accessor. Ordinary functions are
             // unaffected and may independently fill a same-named slot on another interface.
             var needsSignatureBridge = fit.Contains(Fit.Bridge) || retFit == Fit.Bridge
-                || slotSignature != null && slotSignature.Where((signature, index) =>
-                    !BirTypeLowering.SamePhysicalSlotType(signature,
-                        SupertypeGraph.SubstOwnerTvs(TypeJson.Read(
-                            FunctionSignatureIdentity.SignatureType((JsonObject)declParams[index])), ownArgs),
-                        refs.Aliases, isValue, refs.PhysicalTypeNames, returnPosition: false,
-                        nullableFrames: refs.NullableTypeFrames)).Any();
+                || differingParameterSignature;
             var needsExplicitPropertySlot = supIsInterface && propertyAccessor != null
                 && descriptorMember != Str(impl["name"])
                 && (cls.Kind != "class" || reimplementsInterface || overridesInheritedDefault || fillsUnmappedInheritedSlot);
@@ -518,7 +546,10 @@ static class KotlinOverrideSlotBridge
                         }
                 // Cold suspend entries share an object result, but a parameter conversion still
                 // needs its own MethodImpl there as well as on the public Task entry.
-                if (phase == Phase.SuspendValueBridges && !fit.Contains(Fit.Bridge))
+                // A signature discriminator difference also changes the cold slot,
+                // even when the underlying argument needs no value conversion.
+                if (phase == Phase.SuspendValueBridges && !fit.Contains(Fit.Bridge)
+                    && !differingParameterSignature)
                     bridge[KotlinPropertyAccessors.SuspendTaskOnlyBridgeKey] = true;
                 if (propertyAccessor == null)
                     RoundtripMetadata.AddSourceMethodIdentity(bridge, identityName);
@@ -1785,11 +1816,11 @@ static class KotlinOverrideSlotBridge
                 fill(selectedSpec, descriptorOwner, descriptorIsInterface, true, accessorKind != null ? member : sourceIdentity,
                     descriptorMember, accessorKind, slotParams, slotRet, impl, selectedSlotTypeParams,
                     slotHasDefault, slotReturnsValue && IsUnitValueSlot(slotRet), slotSignature);
-                // Flattened property override facts can name several distinct CLR obligations (a redeclared Kotlin
-                // accessor and its aliased BCL ancestor). Let each exact owner contribute its descriptor; the common
-                // Fill/AddImplDescriptor path deduplicates genuinely identical rows. Ordinary methods retain their
-                // selected-slot behavior.
-                if (accessorKind == null) break;
+                // A flattened override closure can name several distinct CLR
+                // declarations, including a redeclared ordinary interface method.
+                // Every selected declaration owns its exact signature; resolving
+                // one ancestor does not discharge the redeclaration's obligation.
+                // Fill/AddImplDescriptor deduplicates genuinely identical rows.
             }
         }
     }
@@ -1933,6 +1964,29 @@ static class KotlinOverrideSlotBridge
             throw new InvalidOperationException("Final slot binding discarded a non-provisional interface mapping");
         var objectType = new TypeNode.Fqn("System.Object");
         var emptyRefs = ReferenceMetadataIndex.Build(Array.Empty<string>());
+        var nullableSource = new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Int"));
+        var inheritedFact = new JsonObject {
+            ["member"] = "transform", ["params"] = new JsonArray(new JsonObject {
+                ["name"] = "value", ["type"] = TypeJson.Write(nullableSource) }),
+            ["ret"] = TypeJson.Write(nullableSource),
+            ["overrides"] = new JsonArray(new JsonObject {
+                ["owner"] = TypeJson.Write(new TypeNode.Fqn("SnapshotBase", new[] { nullableSource })) }),
+        };
+        var inheritedRoot = new JsonObject { ["types"] = new JsonArray(new JsonObject {
+            ["name"] = "SnapshotDerived", ["kind"] = "class", ["methods"] = new JsonArray(),
+            ["base"] = TypeJson.Write(new TypeNode.Fqn("SnapshotBase", new[] { objectType })),
+            ["inheritedClassMethods"] = new JsonArray(inheritedFact),
+        }) };
+        PreserveInheritedSourceSignatures(inheritedRoot);
+        inheritedFact["params"][0]["type"] = TypeJson.Write(objectType);
+        inheritedFact["ret"] = TypeJson.Write(objectType);
+        PreserveInheritedSourceSignatures(inheritedRoot);
+        var capturedInherited = CaptureInheritedSignatures(new[] { inheritedRoot }, emptyRefs)[inheritedFact];
+        if (!capturedInherited.Parameters.SequenceEqual(new[] { nullableSource })
+            || capturedInherited.Return != nullableSource
+            || capturedInherited.Owners.Single() != new TypeNode.Fqn("SnapshotBase", new[] { nullableSource })
+            || inheritedFact[InheritedSourceSignatureKey] != null)
+            throw new InvalidOperationException("Inherited declaration selection consumed an erased parameter or owner frame");
         var mapOwner = new TypeNode.Fqn("MapContract", new TypeNode[] { new TypeNode.Tv("type", 0) });
         var closedMapOwner = new TypeNode.Fqn("MapContract", new TypeNode[] { objectType });
         var mapBase = new Def { Name = "MapBase", Kind = "class", Arity = 1, Methods = new JsonArray() };
@@ -1992,6 +2046,11 @@ static class KotlinOverrideSlotBridge
             || Classify(markedArgument, concreteArgument, emptyRefs, _ => false, returnPosition: false) != Fit.Bridge
             || Classify(markedArgument, concreteArgument, emptyRefs, _ => false, returnPosition: true) != Fit.Bridge)
             throw new InvalidOperationException("Modified object slot lost its implementation conversion seam");
+        var extensionCallback = new TypeNode.Fn(false, concreteArgument, Array.Empty<TypeNode>(), concreteArgument);
+        var delegateCallback = new TypeNode.Fn(false, objectType, new[] { objectType }, Clr: "System.Func");
+        if (!ErasureAligned(delegateCallback, extensionCallback)
+            || ErasureAligned(new TypeNode.Fn(false, objectType, Array.Empty<TypeNode>()), extensionCallback))
+            throw new InvalidOperationException("Inherited extension callback lost its receiver-as-parameter CLR signature");
         var declaredSlot = new TypeNode.Mod(true, marker, new TypeNode.Tv("type", 0));
         if (Classify(objectType, markedArgument, null, _ => false, returnPosition: false) != Fit.Bridge
             || Classify(objectType, markedArgument, null, _ => false, returnPosition: true) != Fit.Bridge)
@@ -2099,10 +2158,10 @@ static class KotlinOverrideSlotBridge
             case (TypeNode.Oblivious s, TypeNode.Oblivious d): return ErasureAligned(s.Of, d.Of);
             case (TypeNode.ByRef s, TypeNode.ByRef d): return ErasureAligned(s.Of, d.Of);
             case (TypeNode.Fn s, TypeNode.Fn d)
-                when s.Suspend == d.Suspend && s.Params.Length == d.Params.Length && (s.Recv == null) == (d.Recv == null):
+                when s.Suspend == d.Suspend && s.DelegateParams.Length == d.DelegateParams.Length
+                    && (s.Clr == null || d.Clr == null || s.Clr == d.Clr):
                 return ErasureAligned(s.Ret, d.Ret)
-                       && !s.Params.Where((p, i) => !ErasureAligned(p, d.Params[i])).Any()
-                       && (s.Recv == null || ErasureAligned(s.Recv, d.Recv));
+                       && !s.DelegateParams.Where((p, i) => !ErasureAligned(p, d.DelegateParams[i])).Any();
             default: return false;
         }
     }

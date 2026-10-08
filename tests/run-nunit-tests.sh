@@ -330,6 +330,15 @@ for proj in "${PROJECTS[@]}"; do
 			echo "  SUSPEND WITNESS METADATA FAIL — see build/nunit-$name.suspend-witness-metadata.log"
 			tail -25 "$ROOT/build/nunit-$name.suspend-witness-metadata.log"; rc=1
 		fi
+		if python3 "$ROOT/tests/roundtrip/assert-inherited-suspend-slot-cir.py" \
+			"$ROOT/tests/roundtrip/producer/obj/$CONFIGURATION/net10.0/cir/InheritedSuspendCovariance.cir.json" \
+			"$dir/obj/$CONFIGURATION/net10.0/cir/InheritedSuspendCovarianceTests.cir.json" \
+			>"$ROOT/build/nunit-$name.inherited-suspend-slot.log" 2>&1; then
+			echo "  inherited generic suspend bodies fill exact cold and Task slots"
+		else
+			echo "  INHERITED SUSPEND SLOT FAIL — see build/nunit-$name.inherited-suspend-slot.log"
+			tail -25 "$ROOT/build/nunit-$name.inherited-suspend-slot.log"; rc=1
+		fi
 		if bash "$ROOT/tests/roundtrip/run-flags-lookalike-negative.sh" \
 			>"$ROOT/build/nunit-$name.flags-lookalike.log" 2>&1; then
 			echo "  same-FQN System.Enum/FlagsAttribute lookalikes do not project flags operations"
