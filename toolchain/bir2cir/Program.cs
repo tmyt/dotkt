@@ -1410,7 +1410,8 @@ sealed class Pipeline
             foreach (var (lowered, _) in loweredRoots)
                 ExactExternalDeclarationIdentity.Apply(lowered, refs);
 
-        CapturedGenericInvocation.PrepareLocalDeclarations(loweredRoots.Select(file => file.Root));
+        CapturedGenericInvocation.PrepareLocalDeclarations(loweredRoots.Select(file => file.Root),
+            flattenMissingOwners: _options.SubstituteStdlibBuild);
         // PHASE 3B — metadata, exact external identities, and validation over the now-stable module graph.
         foreach (var (lowered, outputName) in loweredRoots)
         {

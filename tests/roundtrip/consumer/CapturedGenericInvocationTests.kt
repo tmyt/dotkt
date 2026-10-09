@@ -68,4 +68,15 @@ class CapturedGenericInvocationTests {
         val first = First()
         check(readCapturedOverload(OverloadedLookup(first), first) === first)
     }
+    @TestAttribute fun unconstrainedParametersRetainTheCapture() {
+        check(readPlainKey(TextKey) == "plain-key")
+        val projected: PlainKey<*> = TextKey
+        check(plainTag(projected) == "plain-key")
+    }
+    @TestAttribute fun unitReturnInvokesTheSelectedMethod() {
+        val counter = KeyCounter()
+        consumeCapturedKey(counter, First())
+        consumeCapturedKey(counter, Other())
+        check(counter.count == 2)
+    }
 }

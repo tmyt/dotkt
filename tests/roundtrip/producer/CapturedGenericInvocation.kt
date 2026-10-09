@@ -43,3 +43,14 @@ class OverloadedLookup(val context: Lookup) {
     fun <E : Element> lookup(unused: String): E? = error("wrong overload: " + unused)
 }
 fun readCapturedOverload(context: OverloadedLookup, element: Element): Element? = context.lookup(element.key)
+
+interface PlainKey<T>
+object TextKey : PlainKey<String>
+fun <T> plainTag(key: PlainKey<T>): String = "plain-key"
+fun readPlainKey(key: PlainKey<*>): String = plainTag(key)
+
+class KeyCounter {
+    var count = 0
+    fun <E : Element> consume(key: Key<E>) { count += 1 }
+}
+fun consumeCapturedKey(counter: KeyCounter, element: Element) = counter.consume(element.key)

@@ -13,6 +13,8 @@ static class CapturedGenericInvocation
     static int _next;
     static Dictionary<string, List<(string Owner, JsonObject Method)>> _localDeclarations;
     static Dictionary<string, string> _localTypeNames;
+    static Dictionary<string, JsonObject> _localTypeDefinitions;
+    static bool _flattenMissingOwners;
 
     public static void PreserveSourceFacts(IReadOnlyList<JsonNode> roots, ReferenceMetadataIndex refs)
     {
@@ -37,10 +39,13 @@ static class CapturedGenericInvocation
                         || formal.Name != actual.Name || formalArgs.Length != actualArgs.Length) continue;
                     var parameters = locals.TryGetValue(formal.Name, out var local)
                         ? local.Node["typeParams"] as JsonArray : refs.OwnerTypeParamDeclarations(formal.Name);
-                    if (parameters == null || parameters.Count != formalArgs.Length) continue;
+                    var frame = local == null && refs.NullableTypeFrames.TryGetValue(formal.Name, out var referencedFrame)
+                        ? referencedFrame : null;
+                    if (parameters == null || (frame?.SourceArity ?? parameters.Count) != formalArgs.Length) continue;
                     if (!formalArgs.Select((type, slot) => type is TypeNode.Tv { Scope: "method" }
                             && actualArgs[slot] is TypeNode.Star
-                            && Str(parameters[slot]?["variance"]) is not ("in" or "out")).Any(match => match)) continue;
+                            && Str((parameters[frame?.SourcePosition(slot) ?? slot] as JsonObject)?["variance"])
+                                is not ("in" or "out")).Any(match => match)) continue;
                     obj[ArgumentKey] = i;
                     if (obj[DeclarationIdentityBinding.Key] is JsonNode identity) obj[TargetKey] = identity.DeepClone();
                     if (NodeType.Stamp(obj) is TypeNode result) obj[ResultKey] = TypeJson.Write(result);
@@ -51,14 +56,14 @@ static class CapturedGenericInvocation
         }
     }
 
-    public static void PrepareLocalDeclarations(IEnumerable<JsonNode> roots)
+    public static void PrepareLocalDeclarations(IEnumerable<JsonNode> roots, bool flattenMissingOwners)
     {
         _localDeclarations = new(StringComparer.Ordinal);
         var rootList = roots.OfType<JsonObject>().ToList();
         _localTypeNames = new(StringComparer.Ordinal);
-        var typeDefs = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
+        _flattenMissingOwners = flattenMissingOwners;
+        _localTypeDefinitions = new(StringComparer.Ordinal);
         foreach (var root in rootList) Collect(root, Str(root["fileClass"]));
-        foreach (var name in typeDefs.Keys) MetadataName(name);
         void Collect(JsonObject owner, string ownerName)
         {
             if (owner["methods"] is JsonArray methods)
@@ -72,19 +77,9 @@ static class CapturedGenericInvocation
                 foreach (var type in types.OfType<JsonObject>())
                 {
                     var name = Str(type["name"]);
-                    typeDefs[name] = type;
+                    _localTypeDefinitions[name] = type;
                     Collect(type, name);
                 }
-        }
-        string MetadataName(string name)
-        {
-            if (_localTypeNames.TryGetValue(name, out var known)) return known;
-            var definition = typeDefs[name];
-            var arity = (definition["typeParams"] as JsonArray)?.Count ?? 0;
-            var parent = Str(definition["nestedIn"]);
-            var simple = parent == null ? name : name[(name.LastIndexOf('.') + 1)..];
-            var physical = Str(definition["kind"]) == "delegate" || arity == 0 ? simple : simple + "`" + arity;
-            return _localTypeNames[name] = parent == null ? physical : MetadataName(parent) + "+" + physical;
         }
     }
 
@@ -148,7 +143,7 @@ static class CapturedGenericInvocation
                 throw new InvalidOperationException("Captured invocation argument does not match selected declaration");
             // Reflection never carries a managed address. Ordinary exact ref/out calls do not have capture facts.
             if (declarationParams.Any(HasAddress) || HasAddress(declaredReturn)
-                || declarationParams.Any(type => ByRefLike(type, refs)))
+                || declarationParams.Any(type => ByRefLike(type, refs)) || ByRefLike(declaredReturn, refs))
                 throw new NotSupportedException("Captured invocation cannot transport managed-reference arguments or results");
 
             var arity = selectedFrame.Count;
@@ -177,16 +172,17 @@ static class CapturedGenericInvocation
                 .Select(i => TypeJson.Write(new TypeNode.Tv("method", i))).ToArray());
             forward[Str(obj["k"]) is "callInstance" ? "ownerType" : Str(obj["k"]) is "callStatic" ? "owner" : "type"] = TypeJson.Write(liftedOwner);
             if (!isLocal) forward["memberRef"]["declaringType"] = TypeJson.Write(liftedOwner);
-            forward[isLocal ? "sig" : "resolvedMemberParams"] = new JsonArray(declarationParams.Select(CloseDeclaration).Select(TypeJson.Write).ToArray());
+            forward[isLocal ? "sig" : "resolvedMemberParams"] = new JsonArray(declarationParams.Select(TypeJson.Write).ToArray());
             forward["ret"] = TypeJson.Write(CloseDeclaration(declaredReturn));
             if (!isLocal) forward["resolvedMemberReturn"] = TypeJson.Write(CloseDeclaration(declaredReturn));
             forward.Remove("dynRet");
             forward["args"] = new JsonArray(declarationParams.Select((_, i) => (JsonNode)Local(i + (isInstance ? 1 : 0))).ToArray());
             if (isInstance) forward["recv"] = Local(0);
-            var name = "dotkt$captured$" + _next++;
+            string name;
+            do { name = "dotkt$captured$" + _next++; } while (emittedLocalTypes.Contains(name));
             var returnsVoid = declaredReturn is TypeNode.Fqn { Name: "void" or "System.Void" };
             var body = returnsVoid
-                ? new JsonArray(new JsonObject { ["k"] = "expr", ["e"] = forward })
+                ? new JsonArray(new JsonObject { ["k"] = "exprStmt", ["expr"] = forward })
                 : new JsonArray(new JsonObject { ["k"] = "return", ["value"] = Cast(Object, forward) });
             var thunk = new JsonObject
             {
@@ -226,11 +222,31 @@ static class CapturedGenericInvocation
                 new TypeNode.Fqn("kotlin.String"), new TypeNode.Array(new TypeNode.Fqn("kotlin.String")),
                 new TypeNode.Array(runtimeType), new TypeNode.Fqn("kotlin.Int"),
                 new TypeNode.Array(new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"))) };
-            if (!refs.TryResolveStaticMemberSignature(RuntimeOwner, Str(runtimeCall["method"]), 0, true,
+            var localRuntime = _localDeclarations.Values.SelectMany(bindings => bindings)
+                .Where(binding => binding.Owner == RuntimeOwner && Str(binding.Method["name"]) == Str(runtimeCall["method"])
+                    && (binding.Method["typeParams"] as JsonArray)?.Count is null or 0
+                    && binding.Method["params"] is JsonArray parameters && parameters.Count == RuntimeSignature.Length
+                    && parameters.OfType<JsonObject>().Select(parameter => BirTypeLowering.CanonicalPhysicalSlotType(TypeJson.Read(parameter["type"])))
+                        .SequenceEqual(RuntimeSignature.Select(BirTypeLowering.CanonicalPhysicalSlotType)))
+                .ToList();
+            if (localRuntime.Count > 1) throw new InvalidOperationException("Captured invocation runtime helper has ambiguous local declarations");
+            if (localRuntime.Count == 1)
+            {
+                runtimeCall["k"] = "callStatic";
+                runtimeCall.Remove("type");
+                runtimeCall["owner"] = TypeJson.Write(new TypeNode.Fqn(RuntimeOwner));
+                runtimeCall["sig"] = new JsonArray(((JsonArray)localRuntime[0].Method["params"]).OfType<JsonObject>()
+                    .Select(parameter => parameter["type"].DeepClone()).ToArray());
+                runtimeCall["calleeRet"] = localRuntime[0].Method["ret"].DeepClone();
+            }
+            else if (!refs.TryResolveStaticMemberSignature(RuntimeOwner, Str(runtimeCall["method"]), 0, true,
                     sourceSignature, null, out _, out var runtimeDeclaration, out var runtimeDeclaringType))
                 throw new InvalidOperationException("Captured invocation runtime helper has no exact declaration");
-            runtimeCall["memberRef"] = ClrMemberResolution.MemberRefJson(runtimeDeclaration, "method", runtimeDeclaringType, null);
-            runtimeCall["resolvedMemberReturn"] = runtimeCall["memberRef"]["returnType"].DeepClone();
+            else
+            {
+                runtimeCall["memberRef"] = ClrMemberResolution.MemberRefJson(runtimeDeclaration, "method", runtimeDeclaringType, null);
+                runtimeCall["resolvedMemberReturn"] = runtimeCall["memberRef"]["returnType"].DeepClone();
+            }
             runtimeCall.Remove("argTypes");
             ForeignStarProjectionBinding.RequireRuntimeFallback();
             var replacement = returnsVoid || result == null || IsObject(result) ? runtimeCall : Cast(result, runtimeCall);
@@ -266,17 +282,22 @@ static class CapturedGenericInvocation
         TypeNode.Tv variable => tv(variable),
         TypeNode.Fqn f => new TypeNode.Fqn(f.Name, f.Args?.Select(arg => Map(arg, tv)).ToArray()),
         TypeNode.Nullable n => new TypeNode.Nullable(Map(n.Of, tv)),
+        TypeNode.Oblivious o => new TypeNode.Oblivious(Map(o.Of, tv)),
+        TypeNode.Fn f => new TypeNode.Fn(f.Suspend, Map(f.Ret, tv), f.Params.Select(type => Map(type, tv)).ToArray(),
+            f.Recv == null ? null : Map(f.Recv, tv), f.Clr, f.Ctx?.Select(type => Map(type, tv)).ToArray()),
         TypeNode.Array a => new TypeNode.Array(Map(a.Elem, tv), a.Rank, a.SzArray),
         TypeNode.ByRef r => new TypeNode.ByRef(Map(r.Of, tv)),
         TypeNode.Ptr p => new TypeNode.Ptr(Map(p.Of, tv)),
         TypeNode.Mod m => new TypeNode.Mod(m.Req, Map(m.M, tv), Map(m.Of, tv)),
         _ => type,
     };
-    static string RuntimeKey(TypeNode type, ReferenceMetadataIndex refs) => type switch
+    static string RuntimeKey(TypeNode type, ReferenceMetadataIndex refs) => BirTypeLowering.CanonicalPhysicalSlotType(type) switch
     {
         TypeNode.Tv tv => (tv.Scope == "method" ? "m" : "t") + tv.I,
         TypeNode.Nullable n => RuntimeKey(n.Of, refs),
         TypeNode.Array a => "a" + (a.SzArray ? "s" : "m") + a.Rank + "[" + RuntimeKey(a.Elem, refs) + "]",
+        TypeNode.Fn f => RuntimeKey(BirTypeLowering.DelegateFqnOf(f)
+            ?? throw new InvalidOperationException("Captured invocation function parameter has no physical delegate"), refs),
         TypeNode.Fqn f => (f.Args is { Length: > 0 } ? "g{" : "n{") + PhysicalName(f, refs) + "}"
             + (f.Args is { Length: > 0 } args ? "<" + string.Join(",", args.Select(arg => RuntimeKey(arg, refs))) + ">" : ""),
         _ => throw new InvalidOperationException("Captured invocation has an unsupported structural parameter type"),
@@ -284,8 +305,21 @@ static class CapturedGenericInvocation
     static string PhysicalName(TypeNode.Fqn type, ReferenceMetadataIndex refs) => type.Name switch
     {
         "object" => "System.Object", "int" => "System.Int32", "string" => "System.String",
-        _ => _localTypeNames.TryGetValue(type.Name, out var local) ? local
+        _ => _localTypeDefinitions.ContainsKey(type.Name) ? LocalMetadataName(type.Name)
             : refs.TryExactPhysicalTypeName(type.Name, type.Args?.Length ?? 0, out var name) ? name : type.Name,
     };
+    static string LocalMetadataName(string name)
+    {
+        if (_localTypeNames.TryGetValue(name, out var known)) return known;
+        var definition = _localTypeDefinitions[name];
+        var arity = (definition["typeParams"] as JsonArray)?.Count ?? 0;
+        var parent = Str(definition["nestedIn"]);
+        // Runtime stdlib emission deliberately flattens nested declarations whose aliased owners have no local
+        // TypeDef. This is the existing explicit build contract, not an inference from a legacy type spelling.
+        if (parent != null && !_localTypeDefinitions.ContainsKey(parent) && _flattenMissingOwners) parent = null;
+        var simple = parent == null ? name : name[(name.LastIndexOf('.') + 1)..];
+        var physical = Str(definition["kind"]) == "delegate" || arity == 0 ? simple : simple + "`" + arity;
+        return _localTypeNames[name] = parent == null ? physical : LocalMetadataName(parent) + "+" + physical;
+    }
     static string Str(JsonNode node) => (node as JsonValue)?.TryGetValue<string>(out var value) == true ? value : null;
 }
