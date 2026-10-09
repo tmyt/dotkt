@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Generic factories retain projected argument and storage frames (#985).**
+  Carrier values preserve identity through generic factory calls, private storage,
+  and DLL-boundary reads without rechecking an erased generic construction.
+
 - **Suspend inline declarations retain their source bodies across DLL boundaries (#975).**
   Non-suspend inline actions can suspend in their caller, preserving default arguments,
   receiver ownership, nonlocal returns, and finally cleanup.

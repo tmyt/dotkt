@@ -870,6 +870,8 @@ sealed class Pipeline
         // F-BOUND STAR PROJECTION: CLR has no legal/reified `Node<*>` TypeSpec for `Node<N : Node<N>>`.
         // Materialize a deterministic non-generic existential view in bir2cir and make every closed Node<N> implement
         // it. Runs before interface-slot normalization and suspend lowering, in ref and runtime builds alike.
+        foreach (var file in staged)
+            ReferenceExistentialAbiBinding.Apply(file.Root, refs);
         var localExistentialOwners =
             FBoundStarProjectionErasure.ApplyAll(staged.Select(s => s.Root).ToList(), refs);
         // Closure/SAM synthesis ran while captures still carried their Kotlin constructed types, and suspend-lambda

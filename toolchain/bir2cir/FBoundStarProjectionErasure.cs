@@ -175,6 +175,7 @@ static class FBoundStarProjectionErasure
             owners.Values.Where(owner => owner.Needed).ToDictionary(
                 owner => owner.Name, owner => owner.ErasedName, StringComparer.Ordinal), refs, localClrAliases);
         foreach (var root in rootList) Rewrite(root, owners, defs, refs, localClrAliases: localClrAliases);
+        NormalizeProjectedFieldStorage(rootList, owners, defs, refs);
         var normalizedReturns = new NormalizedReturnBindings();
         // Method-local normalization runs after the first post-order binding walk. Revisit consumers once so a
         // projected array read that flowed through a compiler-generated nullable temporary binds its member on the
@@ -2922,7 +2923,14 @@ static class FBoundStarProjectionErasure
                         || (runtimeArgs.Any(ContainsStarOrTypeVariable)
                             && !IsProvenConstructedUpcast(
                                 obj, runtimeF, defs, refs, currentThisType))))
+                {
                     obj["type"] = TypeJson.Write(new TypeNode.Fqn(runtimeCarrier));
+                    if (runtimeKind == "cast")
+                    {
+                        obj[ExistentialResultProjectionKey] = TypeJson.Write(runtimeF);
+                        if (obj["sty"] != null) obj["sty"] = obj["type"].DeepClone();
+                    }
+                }
                 foreach (var key in obj.Select(kv => kv.Key).ToList())
                 {
                     var value = obj[key];
@@ -2976,6 +2984,7 @@ static class FBoundStarProjectionErasure
                             childBoundDeclaration, localClrAliases);
                 }
                 BindProjectedArrayRead(obj, owners, refs);
+                AlignProjectedConditional(obj, owners, refs);
                 BindProjectedArrayGenericCall(obj, owners, refs);
                 // A star-projected inner construction is replaced while visiting the receiver below this call.  Its
                 // result is the inner existential carrier, so bind the immediately-following member only after that
@@ -3273,7 +3282,8 @@ static class FBoundStarProjectionErasure
     static void BindProjectedArrayGenericCall(JsonObject call,
         IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs)
     {
-        if (Str(call["k"]) is not ("callStatic" or "callInstance") || call["sig"] is not JsonArray signature
+        if (Str(call["k"]) is not ("callStatic" or "callInstance" or "clrGenericStatic" or "clrGenericInstance")
+            || (call["sig"] ?? call["shapeTypes"] ?? call["resolvedMemberParams"]) is not JsonArray signature
             || call["args"] is not JsonArray arguments || call["typeArgs"] is not JsonArray typeArguments
             || signature.Count != arguments.Count)
             return;
@@ -3282,6 +3292,35 @@ static class FBoundStarProjectionErasure
         TypeNode physicalResult = null;
         for (var parameterIndex = 0; parameterIndex < signature.Count; parameterIndex++)
         {
+            if (TypeJson.Read(signature[parameterIndex]) is TypeNode.Tv { Scope: "method" } valueVariable
+                && valueVariable.I >= 0 && valueVariable.I < typeArguments.Count
+                && ProjectedExistentialType(arguments[parameterIndex]) != null
+                && ExpressionType(arguments[parameterIndex]) is TypeNode physicalValue
+                && IsExistentialPhysicalCarrier(physicalValue, owners, refs)
+                && StripSourceNullability(TypeJson.Read(typeArguments[valueVariable.I])) is TypeNode.Fqn logicalArgument
+                && TryExistentialCarrier(logicalArgument.Name, owners, refs, out var argumentCarrier)
+                && StripSourceNullability(physicalValue) is TypeNode.Fqn physicalArgument
+                && physicalArgument.Name == argumentCarrier)
+            {
+                var selectedOwner = TypeJson.Read(call["calleeOwner"] ?? call["ownerType"] ?? call["owner"] ?? call["type"]) as TypeNode.Fqn;
+                if (selectedOwner == null || (!refs.HasDotKtOwner(selectedOwner.Name)
+                    && !refs.IsFileClassOwner(selectedOwner.Name)
+                    && refs.DeclarationSourceParameters(Str(call[DeclarationIdentityBinding.Key])) == null
+                    && !_localMethods.ContainsKey(selectedOwner.Name + "\0" + Str(call["method"]))))
+                    continue;
+                var selectedId = Str(call[DeclarationIdentityBinding.Key]);
+                var declarationReturn = refs.DeclarationPhysicalReturn(selectedId);
+                if (declarationReturn == null && selectedId != null
+                    && _localMethods.TryGetValue(selectedOwner.Name + "\0" + Str(call["method"]), out var methods))
+                    declarationReturn = TypeJson.Read(methods.SingleOrDefault(method =>
+                        Str(method[DeclarationIdentityBinding.Key]) == selectedId)?["ret"]);
+                if (declarationReturn == null) continue;
+                typeArguments[valueVariable.I] = TypeJson.Write(physicalValue);
+                semanticResult ??= TypeJson.Read(call["ret"]);
+                physicalResult = SubstituteDeclarationTypeArguments(declarationReturn,
+                    selectedOwner.Args ?? Array.Empty<TypeNode>(), typeArguments.Select(TypeJson.Read).ToArray());
+                continue;
+            }
             if (TypeJson.Read(signature[parameterIndex]) is not TypeNode.Array signatureArray)
                 continue;
 
@@ -3333,7 +3372,15 @@ static class FBoundStarProjectionErasure
                     semanticArray.Elem is TypeNode.Projection projection
                         ? projection.Of : semanticArray.Elem);
             }
-            else AlignExistentialResult(call, physicalResult, semanticResult);
+            else
+            {
+                AlignExistentialResult(call, physicalResult,
+                    SemanticExistentialProjection(semanticResult, physicalResult, owners, refs));
+                if (physicalResult is TypeNode.Fqn { Args: { } } constructed
+                    && ContainsPhysicalExistential(constructed, owners, refs)
+                    && TryExistentialCarrier(constructed.Name, owners, refs, out var resultCarrier))
+                    call["type"] = TypeJson.Write(new TypeNode.Fqn(resultCarrier));
+            }
         }
     }
 
@@ -3850,7 +3897,7 @@ static class FBoundStarProjectionErasure
             var priorLocals = locals.Count;
             var priorProjections = projectedLocals.Count;
             Collect(declaration["body"]);
-            if (locals.Count == 0) return;
+            if (locals.Count == 0) break;
             Normalize(declaration["body"]);
             if (locals.Count == priorLocals && projectedLocals.Count == priorProjections) break;
         }
@@ -4176,10 +4223,27 @@ static class FBoundStarProjectionErasure
             var projectedResult = declarationOwnerArguments == null
                 ? null
                 : SubstituteDeclarationTypeArguments(declarationResult, declarationOwnerArguments, methodArgs);
+            if (declarationResult is TypeNode.Tv { Scope: "type" }
+                && StripSourceNullability(physicalResult) is TypeNode.Fqn { Args: null, Name: "kotlin.Any" or "object" or "System.Object" }
+                && StripSourceNullability(NodeType.Stamp(call) ?? projectedResult) is TypeNode.Fqn { Args: { } } application
+                && TryExistentialCarrier(application.Name, owners, refs, out var rawResult))
+            {
+                AlignExistentialResult(call, physicalResult, NodeType.Stamp(call) ?? projectedResult);
+                call["type"] = TypeJson.Write(new TypeNode.Fqn(rawResult));
+                return;
+            }
             if (projectedResult != null && ContainsExplicitExistential(projectedResult)
                 && IsExistentialPhysicalCarrier(physicalResult, owners, refs))
             {
                 AlignExistentialResult(call, physicalResult, projectedResult);
+                return;
+            }
+            if (projectedResult != null && ContainsExplicitExistential(projectedResult)
+                && RewriteType(projectedResult, owners, refs) is TypeNode projectedPhysical
+                && IsExistentialPhysicalCarrier(projectedPhysical, owners, refs))
+            {
+                AlignExistentialResult(call, physicalResult, projectedResult);
+                call["type"] = TypeJson.Write(projectedPhysical);
                 return;
             }
             AlignCallResult(call, physicalResult, protectExactCast: true);
@@ -4425,13 +4489,113 @@ static class FBoundStarProjectionErasure
             var elseProjection = ProjectedExistentialType(obj["else"]);
             if (thenProjection != null
                 && (obj["else"] is JsonObject elseBottom && Str(elseBottom["k"]) == "throwExpr"
-                    || thenProjection == elseProjection))
+                    || thenProjection == elseProjection
+                    || SupertypeGraph.TypeKey(thenProjection) == SupertypeGraph.TypeKey(TypeJson.Read(obj["type"]))
+                    || SupertypeGraph.TypeKey(thenProjection) == SupertypeGraph.TypeKey(ExpressionType(obj["else"]))))
                 return thenProjection;
             if (elseProjection != null
-                && obj["then"] is JsonObject thenBottom && Str(thenBottom["k"]) == "throwExpr")
+                && (obj["then"] is JsonObject thenBottom && Str(thenBottom["k"]) == "throwExpr"
+                    || SupertypeGraph.TypeKey(elseProjection) == SupertypeGraph.TypeKey(TypeJson.Read(obj["type"]))
+                    || SupertypeGraph.TypeKey(elseProjection) == SupertypeGraph.TypeKey(ExpressionType(obj["then"]))))
                 return elseProjection;
         }
         return null;
+    }
+
+    static void NormalizeProjectedFieldStorage(IEnumerable<JsonObject> roots,
+        IReadOnlyDictionary<string, Owner> owners, IReadOnlyDictionary<string, JsonObject> defs,
+        ReferenceMetadataIndex refs)
+    {
+        var projected = new Dictionary<JsonObject, TypeNode>();
+        var semanticProjections = new Dictionary<JsonObject, TypeNode>();
+        JsonObject Field(JsonObject access)
+        {
+            if (TypeJson.Read(access["ownerType"]) is not TypeNode.Fqn owner
+                || !defs.TryGetValue(owner.Name, out var definition)
+                || definition["fields"] is not JsonArray fields
+                || Str(access["name"]) is not string name) return null;
+            return fields.OfType<JsonObject>().SingleOrDefault(field => Str(field["name"]) == name);
+        }
+        void Collect(JsonNode node)
+        {
+            if (node is JsonObject obj)
+            {
+                if (Str(obj["k"]) == "setField" && Field(obj) is JsonObject field
+                    && TypeJson.Read(field["type"]) is TypeNode.Fqn { Args: { } } logical
+                    && ExpressionType(obj["value"]) is TypeNode physical
+                    && ContainsPhysicalExistential(physical, owners, refs)
+                    && SupertypeGraph.TypeKey(logical) != SupertypeGraph.TypeKey(physical)
+                    && Str(field["vis"]) == "private"
+                    && TryExistentialCarrier(logical.Name, owners, refs, out var carrier))
+                {
+                    projected[field] = new TypeNode.Fqn(carrier);
+                    semanticProjections[field] = SemanticExistentialProjection(logical, physical, owners, refs);
+                }
+                foreach (var child in obj.Select(pair => pair.Value)) Collect(child);
+            }
+            else if (node is JsonArray array)
+                foreach (var child in array) Collect(child);
+        }
+        foreach (var root in roots) Collect(root);
+        foreach (var (field, physical) in projected)
+        {
+            field["kotlinType"] ??= TypeNode.ToJson(TypeJson.Read(field["type"]));
+            field["type"] = TypeJson.Write(physical);
+        }
+        void RewriteAccess(JsonNode node)
+        {
+            if (node is JsonObject obj)
+            {
+                if (Str(obj["k"]) is "field" or "setField" && Field(obj) is JsonObject field
+                    && projected.TryGetValue(field, out var physical))
+                {
+                    if (Str(obj["k"]) == "field")
+                    {
+                        obj[ExistentialResultProjectionKey] = TypeJson.Write(semanticProjections[field]);
+                        obj["sty"] = TypeJson.Write(physical);
+                    }
+                    if (obj["memberType"] != null) obj["memberType"] = TypeJson.Write(physical);
+                }
+                foreach (var child in obj.Select(pair => pair.Value).ToList()) RewriteAccess(child);
+            }
+            else if (node is JsonArray array)
+                foreach (var child in array) RewriteAccess(child);
+        }
+        foreach (var root in roots) RewriteAccess(root);
+    }
+
+    static TypeNode SemanticExistentialProjection(TypeNode logical, TypeNode physical,
+        IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs)
+    {
+        if (logical is TypeNode.Fqn { Args: { } args } application)
+        {
+            if (physical is TypeNode.Fqn representation
+                && TryExistentialCarrier(application.Name, owners, refs, out var carrier)
+                && representation.Name == carrier)
+                return new TypeNode.Fqn(application.Name, args.Select(_ => (TypeNode)new TypeNode.Star()).ToArray());
+            if (physical is TypeNode.Fqn { Args: { } physicalArgs } constructed
+                && SameDeclarationOwner(application.Name, constructed.Name) && args.Length == physicalArgs.Length)
+                return new TypeNode.Fqn(application.Name, args.Select((argument, index) =>
+                    SemanticExistentialProjection(argument, physicalArgs[index], owners, refs)).ToArray());
+        }
+        if (logical is TypeNode.Nullable nullable)
+            return new TypeNode.Nullable(SemanticExistentialProjection(nullable.Of,
+                physical is TypeNode.Nullable physicalNullable ? physicalNullable.Of : physical, owners, refs));
+        if (logical is TypeNode.Oblivious oblivious)
+            return new TypeNode.Oblivious(SemanticExistentialProjection(oblivious.Of,
+                physical is TypeNode.Oblivious physicalOblivious ? physicalOblivious.Of : physical, owners, refs));
+        return logical;
+    }
+
+    static void AlignProjectedConditional(JsonObject expression,
+        IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs)
+    {
+        if (Str(expression["k"]) != "cond"
+            || ProjectedExistentialType(expression) is not TypeNode.Fqn semantic
+            || !TryExistentialCarrier(semantic.Name, owners, refs, out var carrier)) return;
+        expression["sty"] = TypeJson.Write(new TypeNode.Fqn(carrier));
+        expression["type"] = expression["sty"].DeepClone();
+        expression[ExistentialResultProjectionKey] = TypeJson.Write(semantic);
     }
 
     static TypeNode ProjectedArrayElement(JsonNode expression) => expression is JsonObject obj

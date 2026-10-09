@@ -209,6 +209,10 @@ sealed partial class ReferenceMetadataIndex
         id != null && _declarationById.TryGetValue(id, out var binding)
             ? binding.DeclarationSemanticParams : null;
 
+    internal TypeNode DeclarationPhysicalReturn(string id) =>
+        id != null && _declarationById.TryGetValue(id, out var binding)
+            ? binding.SuspendReturnType ?? binding.SignatureReturn : null;
+
     internal (TypeNode[] Parameters, TypeNode Return) AliasHelperSourceSignature(string id, string ownerName)
     {
         if (!_declarationById.TryGetValue(id, out var binding) || binding.IsStatic
