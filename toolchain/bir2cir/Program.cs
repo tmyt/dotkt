@@ -172,6 +172,7 @@ sealed class Pipeline
         // #395: snapshot frontend declaration identity before ANY Kotlin-to-CLR representation pass can rename,
         // move, clone, or synthesize a declaration. These are source facts, never a physical-name reverse inference.
         var declarationSemanticSignatures = DeclarationIdentityBinding.PreserveSourceFacts(birRoots);
+        GenericBoundSignatureIdentity.Capture(birRoots);
         FunctionValueRepresentation.PreserveSourceFacts(birRoots);
         CapturedGenericInvocation.PreserveSourceFacts(birRoots, refs);
         ContinuationErasure.PreserveSourceSupertypes(birRoots, refs);
@@ -1315,6 +1316,9 @@ sealed class Pipeline
         // #395: Kotlin declarations that were distinct before type lowering may now occupy one CLI signature.
         // Allocate their MethodDef names from the common runtime-physical projection and rewrite all local uses from
         // the frontend-selected declaration identity before any module-wide member binding consults declarations.
+        var genericBoundSignatures = GenericBoundSignatureIdentity.Plan(declarationCollisionProjection);
+        GenericBoundSignatureIdentity.Apply(declarationCollisionProjection, genericBoundSignatures);
+        GenericBoundSignatureIdentity.Apply(loweredRoots.Select(s => s.Root), genericBoundSignatures);
         var declarationPhysicalNames = DeclarationIdentityBinding.AllocatePhysicalNames(
             declarationCollisionProjection, out var declarationSemanticCarrierIds);
         DeclarationIdentityBinding.ApplyLocal(

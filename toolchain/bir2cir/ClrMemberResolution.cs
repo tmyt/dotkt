@@ -591,6 +591,10 @@ static partial class ClrMemberResolution
 
     static void ResolveReferencedStaticCall(JsonObject node, string context)
     {
+        // A previous binding already selected the exact MethodDef. Later passes
+        // revisit this walk to bind synthesized calls, not to select siblings
+        // again from a value signature that may have erased their distinction.
+        if (node["memberRef"] is JsonObject) return;
         // An instance call states its owner as `ownerType`; a static one as `owner`, or `calleeOwner` when a
         // lowering rebuilt the node. All three name the same thing — the type that declares the member.
         var ownerNode = (node["k"] as JsonValue)?.GetValue<string>() == "constrainedCall" ? node["iface"]

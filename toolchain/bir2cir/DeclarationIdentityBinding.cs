@@ -226,8 +226,7 @@ static class DeclarationIdentityBinding
                 // the producer's independently allocated cold-entry identity (`id|cold`) from it; the ordinary late
                 // bind then replaces the provisional hot/cold spelling and consumes the fact. Removing it here made
                 // cross-module suspend calls append `$dotkt_suspend` to an already-suffixed hot MethodDef name.
-                if (!deferUnknown
-                    && (!preserveForScalarResolution || id.EndsWith("|cold", StringComparison.Ordinal)))
+                if (!deferUnknown && !preserveForScalarResolution)
                     obj.Remove(Key);
             }
             else if (node is JsonArray array)
@@ -759,7 +758,7 @@ static class DeclarationIdentityBinding
         throw new InvalidOperationException("bir2cir: declaration-bound UnsafeAccessor has no Name argument");
     }
 
-    static string PhysicalSignature(JsonObject method)
+    internal static string PhysicalSignature(JsonObject method)
     {
         var arity = (method["typeParams"] as JsonArray)?.Count ?? 0;
         var parameters = method["params"] is JsonArray ps
