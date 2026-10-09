@@ -42,7 +42,8 @@ static class FBoundStarProjectionErasure
         public readonly Dictionary<JsonObject, (JsonObject Slot, TypeNode[] Signature)> Slots = new();
     }
 
-    public static IReadOnlyDictionary<string, string> ApplyAll(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs)
+    public static IReadOnlyDictionary<string, string> ApplyAll(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs,
+        IReadOnlyList<SharedSyntheticSynthesis.CellStorage> sharedCells = null)
     {
         OwnerConstrainedMethodLowering.Reset(refs);
         var rootList = roots.OfType<JsonObject>().ToList();
@@ -175,6 +176,12 @@ static class FBoundStarProjectionErasure
             owners.Values.Where(owner => owner.Needed).ToDictionary(
                 owner => owner.Name, owner => owner.ErasedName, StringComparer.Ordinal), refs, localClrAliases);
         foreach (var root in rootList) Rewrite(root, owners, defs, refs, localClrAliases: localClrAliases);
+        // A mutable cell's value writes now have physical types. Align its explicit storage before the existing
+        // local/return propagation below, so nullable temporaries and separate read closures see the same slot.
+        if (sharedCells is { Count: > 0 })
+            ExistentialSharedCellAlignment.ApplyAll(rootList.Cast<JsonNode>().ToList(), sharedCells,
+                owners.Values.Where(owner => owner.Needed).ToDictionary(
+                    owner => owner.Name, owner => owner.ErasedName, StringComparer.Ordinal), refs);
         var normalizedReturns = new NormalizedReturnBindings();
         // Method-local normalization runs after the first post-order binding walk. Revisit consumers once so a
         // projected array read that flowed through a compiler-generated nullable temporary binds its member on the
@@ -3835,6 +3842,18 @@ static class FBoundStarProjectionErasure
                     }
                     foreach (var value in obj.Select(pair => pair.Value).ToList())
                         if (value != null) Normalize(value);
+                    // A nullable temporary may have been considered a concrete upcast before the cell's value
+                    // slot moved. Its now-physical carrier operand cannot justify narrowing back to G<T>.
+                    if (Str(obj["k"]) == "cast" && !Bool(obj["_exactBridgeCast"])
+                        && TypeJson.Read(obj["type"]) is TypeNode.Fqn { Args: { } castArguments } castType
+                        && castArguments.Any(ContainsStarOrTypeVariable)
+                        && TryCarrier(ExpressionType(obj["e"]), out var operandCarrier)
+                        && TryExistentialCarrier(castType.Name, owners, refs, out var castCarrier)
+                        && operandCarrier.Name == castCarrier)
+                    {
+                        obj["type"] = TypeJson.Write(new TypeNode.Fqn(castCarrier));
+                        if (obj["sty"] != null) obj["sty"] = obj["type"].DeepClone();
+                    }
                     BindProjectedArrayRead(obj, owners, refs);
                     BindProjectedArrayGenericCall(obj, owners, refs);
                     BindInheritedStarMember(obj, owners, defs, refs);
@@ -3850,7 +3869,6 @@ static class FBoundStarProjectionErasure
             var priorLocals = locals.Count;
             var priorProjections = projectedLocals.Count;
             Collect(declaration["body"]);
-            if (locals.Count == 0) return;
             Normalize(declaration["body"]);
             if (locals.Count == priorLocals && projectedLocals.Count == priorProjections) break;
         }
