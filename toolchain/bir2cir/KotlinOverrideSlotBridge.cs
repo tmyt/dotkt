@@ -264,7 +264,7 @@ static class KotlinOverrideSlotBridge
                 var declT = TypeJson.Read((declParams[i] as JsonObject)?["type"]);
                 if (declT == null) { fit = null; break; }
                 fit[i] = Classify(slotParams[i], SupertypeGraph.SubstOwnerTvs(declT, ownArgs), refs, isValue,
-                    returnPosition: false);
+                    returnPosition: false, referencedSlot);
                 if (fit[i] == Fit.Foreign && SameSourceRepresentationVariables(slotParams[i],
                         SupertypeGraph.SubstOwnerTvs(declT, ownArgs), sourceMapping.OwnerFrame))
                     fit[i] = Fit.Bridge;
@@ -281,7 +281,7 @@ static class KotlinOverrideSlotBridge
             var retFit = unitValueReturn && IsVoid(declRet) && !Bool(impl[BirTypeLowering.ValueReturnKey])
                 ? Fit.Bridge
                 : Classify(slotRet, SupertypeGraph.SubstOwnerTvs(declRet, ownArgs), refs, isValue,
-                    returnPosition: true);
+                    returnPosition: true, referencedSlot);
             if (retFit == Fit.Foreign)
             {
                 if (referencedSlot && NodeType.IsNothing(declRet)) retFit = Fit.Bridge;
@@ -1585,7 +1585,7 @@ static class KotlinOverrideSlotBridge
     //   Foreign — a difference this erasure did not create (a covariantly narrowed return, a `@ClrTypeAlias` reshape).
     //             Not this pass's to reconcile, and moving it would state a type the author never wrote.
     static Fit Classify(TypeNode slot, TypeNode declared, ReferenceMetadataIndex refs, ValueTypeOracle isValue,
-        bool returnPosition)
+        bool returnPosition, bool referencedSlot = false)
     {
         if (declared.Equals(slot)
             || BirTypeLowering.SamePhysicalSlotType(slot, declared, refs?.Aliases, isValue,
@@ -1602,9 +1602,9 @@ static class KotlinOverrideSlotBridge
         // as an expression statement, so keep the decision and exact MethodImpl in the same table instead of asking
         // ilemit to discover the mismatch and synthesize a MethodDef of its own.
         if (returnPosition && IsVoid(slot)) return Fit.Bridge;
-        // Exact source carriers may state Any/Any? where the physical slot is object. Classify that boundary by
-        // its selected representation, just as when the same declaration was read from its physical signature.
-        if (LowersToObject(slot))
+        // A referenced MethodDef's source carrier can name Any/Any? for its existing object slot.
+        // Local Kotlin declarations still belong to source covariance, not CLR object-slot erasure.
+        if (IsBareObject(slot) || referencedSlot && LowersToObject(slot))
             // `Any?`/`Any` reach the same bare `object` the slot is, one lowering later — a bridge for them would
             // declare a second member with the identical CLR signature.
             return LowersToObject(declared) ? Fit.Same : Fit.Bridge;
@@ -1688,7 +1688,7 @@ static class KotlinOverrideSlotBridge
     // and the declaration part company for a reason that is not this erasure.
     static bool ErasureAligned(TypeNode slot, TypeNode declared)
     {
-        if (LowersToObject(slot) || slot.Equals(declared)) return true;
+        if (IsBareObject(slot) || slot.Equals(declared)) return true;
         switch (slot, declared)
         {
             case (TypeNode.Fqn { Args: { } sa } sf, TypeNode.Fqn { Args: { } da } df)
