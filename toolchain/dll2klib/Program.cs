@@ -8192,13 +8192,23 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
     private KType NamedCarrierClassifier(string name)
     {
         var firstNested = name.IndexOf('+');
-        if (firstNested < 0) return Named(name);
-        var outer = name[..firstNested];
+        var outer = firstNested < 0 ? name : name[..firstNested];
         var packageEnd = outer.LastIndexOf('.');
         var package = packageEnd < 0 ? "" : outer[..packageEnd];
         var outerSimple = packageEnd < 0 ? outer : outer[(packageEnd + 1)..];
-        var nested = name[(firstNested + 1)..].Split('+', StringSplitOptions.None);
-        return new KType { ClassName = _names.Class(package, nested.Prepend(outerSimple)) };
+        var rawNames = firstNested < 0
+            ? new[] { outerSimple }
+            : name[(firstNested + 1)..].Split('+', StringSplitOptions.None).Prepend(outerSimple);
+        var rawScope = package;
+        var projected = new List<string>();
+        foreach (var rawName in rawNames)
+        {
+            // An exact CLR classifier in a source carrier must use the same arity-clash projection as its
+            // TypeDef/TypeRef. Removing `N first loses which declaration the source slot names.
+            projected.Add(_arityNames.Simple(rawScope, rawName));
+            rawScope = string.IsNullOrEmpty(rawScope) ? rawName : rawScope + "." + rawName;
+        }
+        return new KType { ClassName = _names.Class(package, projected) };
     }
 
     private KType FromFunction(TypeNode.Fn function)
@@ -8331,23 +8341,10 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
         "String" => "kotlin.String",
         "Any" => "kotlin.Any",
         "Nothing" => "kotlin.Nothing",
-        // Kotlin declaration identities never carry ECMA-335's metadata-name arity suffix. KotlinType carriers are
-        // allowed to mention nested generic types, so remove every `N segment rather than only the final simple name.
-        _ => StripGenericArities(name),
+        // Kotlin classifiers are already semantic names. Exact CLR classifiers keep their metadata arity until
+        // NamedCarrierClassifier applies the same projection as an ordinary TypeDef/TypeRef.
+        _ => name,
     };
-
-    private static string StripGenericArities(string name)
-    {
-        var result = name;
-        var search = 0;
-        while ((search = result.IndexOf('`', search)) >= 0)
-        {
-            var end = search + 1;
-            while (end < result.Length && char.IsDigit(result[end])) end++;
-            result = result.Remove(search, end - search);
-        }
-        return result;
-    }
 
     private KType Named(string fqName, bool nullable = false) => new() { ClassName = _names.Class(fqName), Nullable = nullable };
     private static KType Named(int className, bool nullable = false) => new() { ClassName = className, Nullable = nullable };

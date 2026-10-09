@@ -3,5 +3,5 @@
 # precedence and retain the complete call vector, not truncate it back to the semantic declaration arity.
 -"shapeTypes":
 +"generated":true,"static":true,"extern":true,"override":false,"virtual":false
-+"params":[{"name":"target","type":{"t":"fqn","name":"UnsafeAccessorCompleteCallSignatureTarget"}},{"name":"arg0","type":{"t":"tv","scope":"method","i":0}},{"name":"arg1","type":{"t":"fqn","name":"System.Boolean"}}]
++"params":[{"name":"target","type":{"t":"fqn","name":"UnsafeAccessorCompleteCallSignatureTarget"}},{"name":"arg0","type":{"t":"tv","scope":"method","i":0}},{"name":"arg1","type":{"t":"fqn","name":"System.Boolean"},"attrs":[{"attr":{"t":"fqn","name":"DotKt.Runtime.CompilerServices.KotlinTypeAttribute"},"argTypes":[{"t":"fqn","name":"System.String"},{"t":"array","elem":{"t":"fqn","name":"System.Byte"}}],"args":[{"value":"bir-json/1","type":{"t":"fqn","name":"System.String"}},{"bytes":"eyJ0IjoiZnFuIiwibmFtZSI6ImtvdGxpbi5Cb29sZWFuIn0="}]}]}]
 +"sig":[{"t":"fqn","name":"UnsafeAccessorCompleteCallSignatureTarget"},{"t":"tv","scope":"method","i":0},{"t":"fqn","name":"System.Boolean"}],"args":[{"k":"local","name":"target"}

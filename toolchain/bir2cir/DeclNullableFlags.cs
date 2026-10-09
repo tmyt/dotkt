@@ -28,46 +28,50 @@ using DotKt.Bir;
 // Task-bridge sets its own `retNullableFlags` up-front and must win).
 static class DeclNullableFlags
 {
-    public static void Apply(JsonNode root, ValueTypeOracle isValue, Func<TypeNode.Fqn, TypeNode[]> annotationArguments)
+    public static void Apply(JsonNode root, ValueTypeOracle isValue, Func<TypeNode.Fqn, TypeNode[]> annotationArguments,
+        Func<TypeNode.Fqn, bool> hasAlias)
     {
-        if (root is JsonObject o) ApplyRec(o, isValue, annotationArguments);
+        if (root is JsonObject o) ApplyRec(o, isValue, annotationArguments, hasAlias);
     }
 
-    static void ApplyRec(JsonObject o, ValueTypeOracle isValue, Func<TypeNode.Fqn, TypeNode[]> annotationArguments)
+    static void ApplyRec(JsonObject o, ValueTypeOracle isValue, Func<TypeNode.Fqn, TypeNode[]> annotationArguments,
+        Func<TypeNode.Fqn, bool> hasAlias)
     {
         if (o["methods"] is JsonArray methods)
             foreach (var m in methods)
-                if (m is JsonObject mo) ApplyToMethod(mo, isValue, annotationArguments);
+                if (m is JsonObject mo) ApplyToMethod(mo, isValue, annotationArguments, hasAlias);
         // A ctor decl has params but no `ret` (BirEmitterDeclarations.ctor), so its params are stamped directly
         // rather than through ApplyToMethod.
         if (o["ctors"] is JsonArray ctors)
             foreach (var c in ctors)
-                if (c is JsonObject co) ApplyToDecls(co["params"], isValue, annotationArguments);
-        ApplyToDecls(o["fields"], isValue, annotationArguments);
-        ApplyToDecls(o["properties"], isValue, annotationArguments);
+                if (c is JsonObject co) ApplyToDecls(co["params"], isValue, annotationArguments, hasAlias);
+        ApplyToDecls(o["fields"], isValue, annotationArguments, hasAlias);
+        ApplyToDecls(o["properties"], isValue, annotationArguments, hasAlias);
         if (o["types"] is JsonArray types)
-            foreach (var t in types) if (t is JsonObject to) ApplyRec(to, isValue, annotationArguments);
+            foreach (var t in types) if (t is JsonObject to) ApplyRec(to, isValue, annotationArguments, hasAlias);
     }
 
-    static void ApplyToMethod(JsonObject mo, ValueTypeOracle isValue, Func<TypeNode.Fqn, TypeNode[]> annotationArguments)
+    static void ApplyToMethod(JsonObject mo, ValueTypeOracle isValue, Func<TypeNode.Fqn, TypeNode[]> annotationArguments,
+        Func<TypeNode.Fqn, bool> hasAlias)
     {
-        PreserveExactSurface(mo, "ret", "retKotlinType", "nullableGenericRet");
+        PreserveExactSurface(mo, "ret", "retKotlinType", "nullableGenericRet", hasAlias);
         if (!mo.ContainsKey("retNullableFlags")
             && TypeJson.Read(mo["ret"]) is TypeNode ret
             && NullableFlags.Compute(ret, isValue, annotationArguments: annotationArguments) is JsonArray rf)
             mo["retNullableFlags"] = rf;
-        ApplyToDecls(mo["params"], isValue, annotationArguments);
+        ApplyToDecls(mo["params"], isValue, annotationArguments, hasAlias);
     }
 
     // Stamp `nullableFlags` on each declaration in a params/fields/properties array whose Type node carries a nullable
     // reference position (and that lacks the key already).
-    static void ApplyToDecls(JsonNode arr, ValueTypeOracle isValue, Func<TypeNode.Fqn, TypeNode[]> annotationArguments)
+    static void ApplyToDecls(JsonNode arr, ValueTypeOracle isValue, Func<TypeNode.Fqn, TypeNode[]> annotationArguments,
+        Func<TypeNode.Fqn, bool> hasAlias)
     {
         if (arr is not JsonArray a) return;
         foreach (var d in a)
             if (d is JsonObject po)
             {
-                PreserveExactSurface(po, "type", "kotlinType", "nullableGeneric");
+                PreserveExactSurface(po, "type", "kotlinType", "nullableGeneric", hasAlias);
                 if (!po.ContainsKey("nullableFlags")
                 && TypeJson.Read(po["type"]) is TypeNode t
                 && NullableFlags.Compute(t, isValue, annotationArguments: annotationArguments) is JsonArray f)
@@ -77,23 +81,26 @@ static class DeclNullableFlags
 
     // Unit has no NRT byte, and function types carry only a head byte in the Kotlin NRT convention.
     // Preserve the remaining annotation-bearing subtree before reference-nullability stripping and final type
-    // lowering. Earlier representation passes preserve any changed source surface; never replace their carrier.
-    static void PreserveExactSurface(JsonObject slot, string key, string carrier, string genericCarrier)
+    // lowering. CLR type aliases also discard their Kotlin classifier, potentially mapping several Kotlin types
+    // to one CLR type. Preserve that identity explicitly rather than expecting an importer to invert the alias.
+    // Earlier representation passes preserve any changed source surface; never replace their carrier.
+    static void PreserveExactSurface(JsonObject slot, string key, string carrier, string genericCarrier,
+        Func<TypeNode.Fqn, bool> hasAlias)
     {
         if (slot[carrier] != null || slot[genericCarrier] != null) return;
-        if (TypeJson.Read(slot[key]) is TypeNode type && RequiresExactSurface(type))
+        if (TypeJson.Read(slot[key]) is TypeNode type && RequiresExactSurface(type, hasAlias))
             slot[carrier] = TypeNode.ToJson(type);
     }
 
-    static bool RequiresExactSurface(TypeNode type) => type switch
+    static bool RequiresExactSurface(TypeNode type, Func<TypeNode.Fqn, bool> hasAlias) => type switch
     {
         TypeNode.Nullable { Of: TypeNode.Fqn { Name: "kotlin.Unit", Args: null } } => true,
-        TypeNode.Nullable n => RequiresExactSurface(n.Of),
-        TypeNode.Oblivious o => RequiresExactSurface(o.Of),
-        TypeNode.Projection p => RequiresExactSurface(p.Of),
-        TypeNode.Fqn f => f.Args?.Any(RequiresExactSurface) == true,
-        TypeNode.Array a => RequiresExactSurface(a.Elem),
-        TypeNode.ByRef b => RequiresExactSurface(b.Of),
+        TypeNode.Nullable n => RequiresExactSurface(n.Of, hasAlias),
+        TypeNode.Oblivious o => RequiresExactSurface(o.Of, hasAlias),
+        TypeNode.Projection p => RequiresExactSurface(p.Of, hasAlias),
+        TypeNode.Fqn f => hasAlias(f) || f.Args?.Any(arg => RequiresExactSurface(arg, hasAlias)) == true,
+        TypeNode.Array a => RequiresExactSurface(a.Elem, hasAlias),
+        TypeNode.ByRef b => RequiresExactSurface(b.Of, hasAlias),
         TypeNode.Fn => true,
         _ => false,
     };

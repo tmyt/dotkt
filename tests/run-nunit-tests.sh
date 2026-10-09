@@ -52,7 +52,7 @@ PROJECTS=(
 declare -A EXPECTED_DISCOVERED=(
 	["tests/basic"]=670
 	["tests/coroutines"]=247
-	["tests/roundtrip/consumer"]=391
+	["tests/roundtrip/consumer"]=396
 	["tests/roundtrip/bidirectional/consumer"]=39
 	["tests/interop/consumer"]=369
 )
@@ -261,6 +261,13 @@ for proj in "${PROJECTS[@]}"; do
 	if [[ "$proj" == "tests/roundtrip/consumer" ]]; then
 		producer_dll="$ROOT/tests/roundtrip/producer/bin/$CONFIGURATION/net10.0/RoundtripProducer.dll"
 		producer_klib="$dir/obj/$CONFIGURATION/net10.0/klib/RoundtripProducer.klib"
+		if dotnet "$METADATA_INSPECTOR_DLL" --throwable-source-identity "$producer_dll" "$producer_klib" \
+			>"$ROOT/build/nunit-$name.throwable-source-identity.log" 2>&1; then
+			echo "  Kotlin alias source identity and exact CLR exception signature OK"
+		else
+			echo "  THROWABLE SOURCE IDENTITY FAIL"
+			tail -25 "$ROOT/build/nunit-$name.throwable-source-identity.log"; rc=1
+		fi
 		if dotnet "$METADATA_INSPECTOR_DLL" --klib-nonnull-bounds "$producer_klib" \
 			>"$ROOT/build/nunit-$name.nonnull-bounds.log" 2>&1; then
 			echo "  non-null and nullable generic source bounds OK"
