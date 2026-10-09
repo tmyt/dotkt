@@ -5,6 +5,16 @@ import NUnit.Framework.TestAttribute
 import roundtrip.sharedcellcarrier.*
 
 class LocalTagBox<T>(val tag: String)
+open class ParentTagBox<T>(val tag: String)
+class ChildTagBox<T>(tag: String) : ParentTagBox<T>(tag)
+
+private fun <T> replaceBaseCaptured(raw: Any): String {
+    var current: ParentTagBox<T> = ChildTagBox<T>("initial")
+    val update = { current = raw as ChildTagBox<T> }
+    update()
+    check((current as Any) === raw)
+    return current.tag
+}
 
 private fun <T> replaceCaptured(raw: Any): String {
     var current = LocalTagBox<T>("initial")
@@ -43,6 +53,11 @@ private fun <T> replaceImported(): String {
 }
 
 class SharedCellCarrierTests {
+    @TestAttribute
+    fun derivedCarrierCanFillABaseCell() {
+        check(replaceBaseCaptured<String>(ChildTagBox<Int>("derived")) == "derived")
+    }
+
     @TestAttribute
     fun capturedGenericAssignmentPreservesRawIdentity() {
         check(replaceCaptured<String>(LocalTagBox<Int>("integer")) == "integer")

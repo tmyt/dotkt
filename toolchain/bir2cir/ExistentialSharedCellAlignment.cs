@@ -31,6 +31,7 @@ static class ExistentialSharedCellAlignment
             }
         }
         foreach (var root in roots) Collect(root);
+        var types = SupertypeGraph.Collect(roots);
         var projected = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
 
         void Walk(JsonNode node, Action<JsonObject> action)
@@ -58,7 +59,7 @@ static class ExistentialSharedCellAlignment
                 || Core(NodeType.Of(write["value"])) is not TypeNode.Fqn physical) return;
             var carrier = localCarriers.GetValueOrDefault(logical.Name);
             if (carrier == null) refs.TryExistentialPhysicalOwner(logical.Name, out carrier);
-            if (carrier != null && carrier == physical.Name)
+            if (carrier != null && SupertypeGraph.Reaches(physical, new TypeNode.Fqn(carrier), types, refs))
                 projected[owner.Name] = declared switch
                 {
                     TypeNode.Nullable => new TypeNode.Nullable(new TypeNode.Fqn(carrier)),
