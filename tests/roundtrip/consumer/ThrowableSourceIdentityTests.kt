@@ -17,6 +17,14 @@ class NarrowedNullableObjectFactory : NullableObjectFactory {
     override fun <U : Any> make(value: U): String = "nullable"
 }
 
+private interface ObjectMapOwner {
+    val map: Any
+}
+
+private class NarrowedObjectMapOwner : ObjectMapOwner {
+    override val map: Map<String, Int> = mapOf("value" to 23)
+}
+
 class ThrowableSourceIdentityTests {
     @TestAttribute
     fun kotlinExceptionAliasesRetainTheirDeclaredHierarchyAcrossDlls() {
@@ -76,5 +84,7 @@ class ThrowableSourceIdentityTests {
         check(nonNull.make("text") == "non-null")
         check(nullable.make(19) == "nullable")
         check(nullable.make("text") == "nullable")
+        val owner: ObjectMapOwner = NarrowedObjectMapOwner()
+        check((owner.map as Map<String, Int>)["value"] == 23)
     }
 }

@@ -1688,7 +1688,7 @@ static class KotlinOverrideSlotBridge
     // and the declaration part company for a reason that is not this erasure.
     static bool ErasureAligned(TypeNode slot, TypeNode declared)
     {
-        if (IsBareObject(slot) || slot.Equals(declared)) return true;
+        if (LowersToObject(slot) || slot.Equals(declared)) return true;
         switch (slot, declared)
         {
             case (TypeNode.Fqn { Args: { } sa } sf, TypeNode.Fqn { Args: { } da } df)
