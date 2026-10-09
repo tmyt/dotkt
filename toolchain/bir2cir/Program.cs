@@ -400,6 +400,7 @@ sealed class Pipeline
         // suspend cold lowering can run GLOBALLY (a same-assembly cross-file suspend call keeps `owner:null`,
         // so its cold-entry callee may live in another file — the suspend-member registry spans all files).
         var staged = new List<(JsonNode Root, string OutputName)>();
+        var sharedCells = new List<SharedSyntheticSynthesis.CellStorage>();
         foreach (var bir in birFiles)
         {
             var outputName = OutputNameFor(bir.Path);
@@ -492,7 +493,7 @@ sealed class Pipeline
             // lowering can erase those facts; Kotlin `reified` remains a separate round-trip declaration fact.
             ReifiedNullabilityWitnessLowering.Apply(bir.Root, nullableWitnessDemand, refs);
             ClosureSynthesis.Apply(bir.Root, refs);
-            SharedSyntheticSynthesis.Apply(bir.Root, refs);
+            SharedSyntheticSynthesis.Apply(bir.Root, refs, sharedCells);
             // Heap ref-cell types only become declarations in the transition above. Preserve their pristine element
             // slots in the nullable-generic use index before the declaration erasure below. Otherwise a late
             // inherited protected-property read may be correctly realigned to object[] while its store into a
@@ -871,7 +872,7 @@ sealed class Pipeline
         // Materialize a deterministic non-generic existential view in bir2cir and make every closed Node<N> implement
         // it. Runs before interface-slot normalization and suspend lowering, in ref and runtime builds alike.
         var localExistentialOwners =
-            FBoundStarProjectionErasure.ApplyAll(staged.Select(s => s.Root).ToList(), refs);
+            FBoundStarProjectionErasure.ApplyAll(staged.Select(s => s.Root).ToList(), refs, sharedCells);
         // Closure/SAM synthesis ran while captures still carried their Kotlin constructed types, and suspend-lambda
         // state machines will copy those same declarations later. An erased smart cast can now deliver an existential
         // carrier to generated storage; make each capture declaration/construction/field agree on that exact physical
