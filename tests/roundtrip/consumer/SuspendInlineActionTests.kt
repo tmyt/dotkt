@@ -106,10 +106,17 @@ class SuspendInlineActionTests {
         checkReleased(guard)
 
         val memberGate = ActionGate()
-        val memberCompletion = start { MemberActions().run { memberGate.await(); "member" } }
-        check(memberCompletion.outcome == null)
+        val memberEntry = ActionGate()
+        val member = MemberActions(memberEntry)
+        val memberCompletion = start { member.guardedAction { memberGate.await(); "member" } }
+        check(memberCompletion.outcome == null && !member.guard.locked)
+        memberEntry.release()
+        check(memberCompletion.outcome == null && member.guard.locked && member.guard.heldOwner === member)
         memberGate.release()
         check(memberCompletion.outcome!!.getOrThrow() == "member")
-        check(start { MemberActions().run { 91 } }.outcome!!.getOrThrow() == 91)
+        checkReleased(member.guard)
+        val immediate = MemberActions()
+        check(start { immediate.guardedAction { 91 } }.outcome!!.getOrThrow() == 91)
+        checkReleased(immediate.guard)
     }
 }

@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Suspend inline declarations retain their source bodies across DLL boundaries (#975).**
+  Non-suspend inline actions can suspend in their caller, preserving default arguments,
+  receiver ownership, nonlocal returns, and finally cleanup.
+
 - **Unchecked generic inner values share a valid argument representation (#922).**
   Ordinary and suspend calls retain raw inner identity across enclosing generic frames, including DLL boundaries.
 

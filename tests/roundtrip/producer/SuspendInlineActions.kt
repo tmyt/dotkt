@@ -45,6 +45,17 @@ public suspend inline fun <T> ActionGuard.withGuard(owner: Any? = null, action: 
     }
 }
 
-class MemberActions {
-    public suspend inline fun <T> run(action: () -> T): T = action()
+class MemberActions(entryGate: ActionGate? = null) {
+    val guard = ActionGuard(entryGate)
+    suspend fun enterSelf() { guard.enter(this) }
+    fun leaveSelf() { guard.leave(this) }
+
+    public suspend inline fun <T> guardedAction(action: () -> T): T {
+        enterSelf()
+        try {
+            return action()
+        } finally {
+            leaveSelf()
+        }
+    }
 }
