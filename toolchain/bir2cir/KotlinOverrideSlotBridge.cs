@@ -1602,7 +1602,9 @@ static class KotlinOverrideSlotBridge
         // as an expression statement, so keep the decision and exact MethodImpl in the same table instead of asking
         // ilemit to discover the mismatch and synthesize a MethodDef of its own.
         if (returnPosition && IsVoid(slot)) return Fit.Bridge;
-        if (IsBareObject(slot))
+        // Exact source carriers may state Any/Any? where the physical slot is object. Classify that boundary by
+        // its selected representation, just as when the same declaration was read from its physical signature.
+        if (LowersToObject(slot))
             // `Any?`/`Any` reach the same bare `object` the slot is, one lowering later — a bridge for them would
             // declare a second member with the identical CLR signature.
             return LowersToObject(declared) ? Fit.Same : Fit.Bridge;

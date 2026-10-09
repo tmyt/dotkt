@@ -9,6 +9,14 @@ class OverriddenErrorReader : ErrorBase(), ErrorReader {
 
 class InheritedErrorReader : ErrorBase(), ErrorReader
 
+class NarrowedObjectFactory : ObjectFactory {
+    override fun <U : Any> make(value: U): String = "non-null"
+}
+
+class NarrowedNullableObjectFactory : NullableObjectFactory {
+    override fun <U : Any> make(value: U): String = "nullable"
+}
+
 class ThrowableSourceIdentityTests {
     @TestAttribute
     fun kotlinExceptionAliasesRetainTheirDeclaredHierarchyAcrossDlls() {
@@ -47,5 +55,26 @@ class ThrowableSourceIdentityTests {
         val inherited = InheritedErrorReader()
         check(readVirtual(inherited, error) === error)
         check(readInterface(inherited, error) === error)
+    }
+
+    @TestAttribute
+    fun aliasesInsideNativeNestedGenericTypesRetainTheNativeClassifier() {
+        val builder = System.Collections.Immutable.ImmutableArray.CreateBuilder<Throwable>()
+        val error = IllegalStateException("nested")
+        builder.Add(error)
+        val returned = echoNativeBuilder(builder)
+        check(returned === builder)
+        check(returned.Count == 1)
+        check(returned[0] === error)
+    }
+
+    @TestAttribute
+    fun sourceObjectAliasesKeepExactCovariantGenericInterfaceSlots() {
+        val nonNull: ObjectFactory = NarrowedObjectFactory()
+        val nullable: NullableObjectFactory = NarrowedNullableObjectFactory()
+        check(nonNull.make(17) == "non-null")
+        check(nonNull.make("text") == "non-null")
+        check(nullable.make(19) == "nullable")
+        check(nullable.make("text") == "nullable")
     }
 }

@@ -2198,6 +2198,13 @@ static void VerifyThrowableSourceIdentity(string dllPath, string klibPath)
                  member.ValueParameter.Single().Type })
         Require(type.HasClassName && QualifiedName(fragment, type.ClassName) == "kotlin.Throwable" && !type.Nullable,
             "constructor, property or member parameter lost its Kotlin Throwable identity");
+    var native = fragment.Package.Function.Single(function => String(fragment, function.Name) == "echoNativeBuilder");
+    foreach (var type in new[] { native.ValueParameter.Single().Type, native.ReturnType })
+        Require(type.HasClassName && QualifiedName(fragment, type.ClassName) ==
+                "System.Collections.Immutable.ImmutableArray1.Builder" && type.Argument.Count == 1 &&
+                type.Argument[0].Type.HasClassName &&
+                QualifiedName(fragment, type.Argument[0].Type.ClassName) == "kotlin.Throwable",
+            "native nested alias slot lost its arity-projected classifier or Kotlin type argument");
 }
 
 static JsonDocument DecodeCarrierDocument(

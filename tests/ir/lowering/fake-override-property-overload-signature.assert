@@ -1,3 +1,3 @@
 # A concrete same-name/same-arity sibling does not satisfy the abstract String-context accessor.
 +"name":"OverloadedDerived"
-+"name":"prop_get\u003Citem\u003E","static":false,"override":false,"virtual":true,"abstract":true,"params":[{"name":"context","type":{"t":"fqn","name":"System.String"}}]
++"name":"prop_get\u003Citem\u003E","static":false,"override":false,"virtual":true,"abstract":true,"params":[{"name":"context","type":{"t":"fqn","name":"System.String"},"attrs":[{"attr":{"t":"fqn","name":"DotKt.Runtime.CompilerServices.KotlinTypeAttribute"},"argTypes":[{"t":"fqn","name":"System.String"},{"t":"array","elem":{"t":"fqn","name":"System.Byte"}}],"args":[{"value":"bir-json/1","type":{"t":"fqn","name":"System.String"}},{"bytes":"eyJ0IjoiZnFuIiwibmFtZSI6ImtvdGxpbi5TdHJpbmcifQ=="}]}]}]

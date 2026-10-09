@@ -22,3 +22,14 @@ open class ErrorBase {
 
 fun readVirtual(reader: ErrorBase, error: Throwable): Throwable = reader.read(error)
 fun readInterface(reader: ErrorReader, error: Throwable): Throwable = reader.read(error)
+
+fun echoNativeBuilder(builder: System.Collections.Immutable.ImmutableArray1.Builder<Throwable>):
+    System.Collections.Immutable.ImmutableArray1.Builder<Throwable> = builder
+
+interface ObjectFactory {
+    fun <U : Any> make(value: U): Any
+}
+
+interface NullableObjectFactory {
+    fun <U : Any> make(value: U): Any?
+}
