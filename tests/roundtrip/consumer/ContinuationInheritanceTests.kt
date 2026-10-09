@@ -11,6 +11,12 @@ class IntChild : ProducerChild<Int>()
 class NullableChild<T> : NullableCompletionBody<T>()
 class FrameChild<T> : FrameCompletionBody<T>()
 class BoundChild<C : Continuation<String>>(target: C) : CompletionBound<C>(target)
+class ConsumerIntOuter : CompletionOuter<Int>() {
+    inner class StringChild : Body<String>()
+}
+class ConsumerStringOuter : CompletionOuter<String>() {
+    inner class IntChild : Body<Int>()
+}
 
 class ContinuationInheritanceTests {
     @TestAttribute
@@ -58,10 +64,25 @@ class ContinuationInheritanceTests {
         val slot: Continuation<Int> = frame
         slot.resumeWith(Result.success(31))
         check(frame.value == 31)
+        check(frame.storage.value == null)
         val strings = ConsumerChild<String>()
         val bound = BoundChild(strings)
         val target: Continuation<String> = bound.target
         target.resumeWith(Result.success("bound"))
         check(strings.completion!!.getOrThrow() == "bound")
+    }
+
+    @TestAttribute
+    fun innerInheritanceRetainsTheSourceIndexAcrossAnEnclosingCompanion() {
+        val outer = ConsumerIntOuter()
+        val strings = outer.StringChild()
+        val slot: Continuation<String> = strings
+        slot.resumeWith(Result.success("inner"))
+        check(strings.completion!!.getOrThrow() == "inner")
+        check(outer.storage.value == null)
+        val ints = ConsumerStringOuter().IntChild()
+        val intSlot: Continuation<Int> = ints
+        intSlot.resumeWith(Result.success(47))
+        check(ints.completion!!.getOrThrow() == 47)
     }
 }
