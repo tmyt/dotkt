@@ -12,4 +12,8 @@ private val tokenSentinel = Token<Any?>("sentinel")
 class ImportedBuffer<E> {
     val storage: Storage<Token<E>> = store(tokenSentinel as Token<E>)
 }
+class MutableImportedBuffer<E> {
+    var storage: Storage<Token<E>> = store(tokenSentinel as Token<E>)
+    fun reset() { storage = store(tokenSentinel as Token<E>) }
+}
 fun tokenSentinelObject(): Any = tokenSentinel

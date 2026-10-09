@@ -4223,7 +4223,13 @@ static class FBoundStarProjectionErasure
             var projectedResult = declarationOwnerArguments == null
                 ? null
                 : SubstituteDeclarationTypeArguments(declarationResult, declarationOwnerArguments, methodArgs);
+            // A carrier for an invariant receiver proves that its concrete owner arguments were erased. A
+            // declaration-site variant view alone does not: reading a known concrete element from Iterator<T>
+            // still needs its original checked construction unless the result itself contains a projection.
             if (declarationResult is TypeNode.Tv { Scope: "type" }
+                && (projectedResult != null && ContainsExplicitExistential(projectedResult)
+                    || IsExistentialPhysicalCarrier(ExpressionType(call["recv"]), owners, refs)
+                        && !RequiresKotlinVariantCarrier(f, owners, refs))
                 && StripSourceNullability(physicalResult) is TypeNode.Fqn { Args: null, Name: "kotlin.Any" or "object" or "System.Object" }
                 && StripSourceNullability(NodeType.Stamp(call) ?? projectedResult) is TypeNode.Fqn { Args: { } } application
                 && TryExistentialCarrier(application.Name, owners, refs, out var rawResult))
@@ -4514,7 +4520,18 @@ static class FBoundStarProjectionErasure
                 || !defs.TryGetValue(owner.Name, out var definition)
                 || definition["fields"] is not JsonArray fields
                 || Str(access["name"]) is not string name) return null;
-            return fields.OfType<JsonObject>().SingleOrDefault(field => Str(field["name"]) == name);
+            // Only accessor-routed Kotlin backing storage owns this value projection. An explicit CLR field
+            // remains a native slot, even when private; its address and exact constructed type must not move.
+            if (definition["properties"] is not JsonArray properties
+                || definition["methods"] is not JsonArray methods
+                || !properties.OfType<JsonObject>().Any(property => Str(property["name"]) == name
+                    && Str(property[KotlinPropertyAccessors.AssociationKey]) is string association
+                    && methods.OfType<JsonObject>().Any(method =>
+                        Str(method[KotlinPropertyAccessors.AssociationKey]) == association
+                        && Str(method[KotlinPropertyAccessors.KindKey]) == "get"
+                        && method["params"] is JsonArray { Count: 0 }))) return null;
+            return fields.OfType<JsonObject>().SingleOrDefault(field =>
+                Str(field["name"]) == name && !Bool(field["static"]));
         }
         void Collect(JsonNode node)
         {
@@ -4542,10 +4559,55 @@ static class FBoundStarProjectionErasure
             field["kotlinType"] ??= TypeNode.ToJson(TypeJson.Read(field["type"]));
             field["type"] = TypeJson.Write(physical);
         }
+        var setterParameters = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
+        foreach (var definition in defs.Values)
+        {
+            if (definition["fields"] is not JsonArray fields
+                || definition["properties"] is not JsonArray properties
+                || definition["methods"] is not JsonArray methods) continue;
+            foreach (var property in properties.OfType<JsonObject>())
+            {
+                if (Str(property[KotlinPropertyAccessors.AssociationKey]) is not string association) continue;
+                var accessors = methods.OfType<JsonObject>().Where(method =>
+                    Str(method[KotlinPropertyAccessors.AssociationKey]) == association).ToArray();
+                var setter = accessors.SingleOrDefault(method =>
+                    Str(method[KotlinPropertyAccessors.KindKey]) == "set");
+                if (setter?["params"] is not JsonArray { Count: 1 } parameters
+                    || parameters[0] is not JsonObject parameter
+                    || accessors.Any(method => Str(method[KotlinPropertyAccessors.KindKey]) == "get"
+                        && method["params"] is JsonArray { Count: > 0 })) continue;
+                var field = fields.OfType<JsonObject>().SingleOrDefault(candidate =>
+                    Str(candidate["name"]) == Str(property["name"]) && !Bool(candidate["static"]));
+                if (field == null || !projected.TryGetValue(field, out var physical)) continue;
+                parameter["kotlinType"] ??= TypeNode.ToJson(TypeJson.Read(parameter["type"]));
+                parameter["type"] = TypeJson.Write(physical);
+                if (Str(setter[DeclarationIdentityBinding.Key]) is string identity)
+                    setterParameters[identity] = physical;
+                RewriteParameterReads(setter["body"], Str(parameter["name"]), physical);
+            }
+        }
+        void RewriteParameterReads(JsonNode node, string name, TypeNode physical)
+        {
+            if (node is JsonObject obj)
+            {
+                if (obj["params"] is JsonArray parameters
+                    && parameters.OfType<JsonObject>().Any(parameter => Str(parameter["name"]) == name)) return;
+                if (Str(obj["k"]) == "local" && Str(obj["name"]) == name)
+                    obj["sty"] = TypeJson.Write(physical);
+                foreach (var child in obj.Select(pair => pair.Value).ToList())
+                    RewriteParameterReads(child, name, physical);
+            }
+            else if (node is JsonArray array)
+                foreach (var child in array) RewriteParameterReads(child, name, physical);
+        }
         void RewriteAccess(JsonNode node)
         {
             if (node is JsonObject obj)
             {
+                if (Str(obj["k"]) == "callInstance"
+                    && Str(obj[DeclarationIdentityBinding.Key]) is string identity
+                    && setterParameters.TryGetValue(identity, out var parameterType))
+                    obj["sig"] = new JsonArray(TypeJson.Write(parameterType));
                 if (Str(obj["k"]) is "field" or "setField" && Field(obj) is JsonObject field
                     && projected.TryGetValue(field, out var physical))
                 {

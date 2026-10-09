@@ -60,6 +60,18 @@ class ConstructorCarrierStorageTests {
     }
 
     @TestAttribute
+    fun projectedMutableStorageUsesOneReadWriteContractAcrossDlls() {
+        val imported = MutableImportedBuffer<String>()
+        check(imported.storage.value === tokenSentinelObject())
+        val replacement = Token<String>("replacement")
+        imported.storage = store(replacement)
+        check(imported.storage.value === replacement)
+        check(imported.storage.value.tag == "replacement")
+        imported.reset()
+        check(imported.storage.value === tokenSentinelObject())
+    }
+
+    @TestAttribute
     fun equalSourceTypesDoNotMergeSeparateMethodSlots() {
         verifySeparateSlots<String>()
     }
