@@ -11,3 +11,14 @@ fun Throwable.sourceMessage(): String? = message
 class ErrorHolder(var error: Throwable) {
     fun accept(error: Throwable): String? = error.message
 }
+
+interface ErrorReader {
+    fun read(error: Throwable): Throwable
+}
+
+open class ErrorBase {
+    open fun read(error: Throwable): Throwable = error
+}
+
+fun readVirtual(reader: ErrorBase, error: Throwable): Throwable = reader.read(error)
+fun readInterface(reader: ErrorReader, error: Throwable): Throwable = reader.read(error)

@@ -3,6 +3,12 @@ package roundtriptests.throwablesource
 import NUnit.Framework.TestAttribute
 import roundtrip.throwablesource.*
 
+class OverriddenErrorReader : ErrorBase(), ErrorReader {
+    override fun read(error: Throwable): Throwable = IllegalStateException("consumer:" + error.message)
+}
+
+class InheritedErrorReader : ErrorBase(), ErrorReader
+
 class ThrowableSourceIdentityTests {
     @TestAttribute
     fun kotlinExceptionAliasesRetainTheirDeclaredHierarchyAcrossDlls() {
@@ -30,5 +36,16 @@ class ThrowableSourceIdentityTests {
         holder.error = other
         check(holder.error === other)
         check(holder.accept(other) == "second")
+    }
+
+    @TestAttribute
+    fun aliasSlotsSurviveCrossDllOverridesAndInheritedInterfaceImplementations() {
+        val error = IllegalStateException("dispatch")
+        val overridden = OverriddenErrorReader()
+        check(readVirtual(overridden, error).message == "consumer:dispatch")
+        check(readInterface(overridden, error).message == "consumer:dispatch")
+        val inherited = InheritedErrorReader()
+        check(readVirtual(inherited, error) === error)
+        check(readInterface(inherited, error) === error)
     }
 }
