@@ -24,6 +24,9 @@ static class ReferenceExistentialAbiBinding
             case JsonObject call:
                 var kind = Str(call["k"]);
                 if (kind is "callInstance" or "callStatic"
+                    // Before cold lowering this node returns the Kotlin suspend result, not the public
+                    // Task wrapper's result. Only the suspend pass owns choosing that physical entry.
+                    && !Bool(call["suspendCall"])
                     && Owner(call, kind) is TypeNode.Fqn owner
                     && Str(call["method"]) is string method)
                 {
@@ -149,4 +152,7 @@ static class ReferenceExistentialAbiBinding
 
     static string Str(JsonNode node) =>
         node is JsonValue value && value.TryGetValue<string>(out var text) ? text : null;
+
+    static bool Bool(JsonNode node) =>
+        node is JsonValue value && value.TryGetValue<bool>(out var flag) && flag;
 }
