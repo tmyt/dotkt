@@ -52,7 +52,7 @@ PROJECTS=(
 declare -A EXPECTED_DISCOVERED=(
 	["tests/basic"]=670
 	["tests/coroutines"]=247
-	["tests/roundtrip/consumer"]=400
+	["tests/roundtrip/consumer"]=404
 	["tests/roundtrip/bidirectional/consumer"]=39
 	["tests/interop/consumer"]=369
 )
@@ -274,6 +274,13 @@ for proj in "${PROJECTS[@]}"; do
 		else
 			echo "  CONTINUATION SOURCE SUPERTYPES FAIL — see build/nunit-$name.continuation-source-supertypes.log"
 			tail -25 "$ROOT/build/nunit-$name.continuation-source-supertypes.log"; rc=1
+		fi
+		if dotnet "$METADATA_INSPECTOR_DLL" --suspend-inline-declarations "$producer_dll" "$producer_klib" \
+			>"$ROOT/build/nunit-$name.suspend-inline-declarations.log" 2>&1; then
+			echo "  suspend inline source carrier and declaration flags are preserved"
+		else
+			echo "  SUSPEND INLINE DECLARATIONS FAIL"
+			tail -25 "$ROOT/build/nunit-$name.suspend-inline-declarations.log"; rc=1
 		fi
 		if dotnet "$METADATA_INSPECTOR_DLL" --klib-nonnull-bounds "$producer_klib" \
 			>"$ROOT/build/nunit-$name.nonnull-bounds.log" 2>&1; then
