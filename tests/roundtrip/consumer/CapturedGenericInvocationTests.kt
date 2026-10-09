@@ -1,0 +1,71 @@
+package roundtriptests.capturedgeneric
+
+import NUnit.Framework.TestAttribute
+import kotlin.coroutines.CoroutineContext
+import roundtrip.capturedgeneric.*
+
+private fun readHere(context: CoroutineContext, element: CoroutineContext.Element): CoroutineContext.Element? = context[element.key]
+private fun lookupHere(context: Lookup, element: Element): Element? = context.lookup(element.key)
+
+private class EvaluationOrder {
+    var order = ""
+    fun receiver(context: CoroutineContext): CoroutineContext { order += "r"; return context }
+    inner class CountedElement : CoroutineContext.Element {
+        override val key: CoroutineContext.Key<*> get() { order += "k"; return FirstContextKey }
+    }
+}
+private class ThrowingElement : CoroutineContext.Element {
+    override val key: CoroutineContext.Key<*> get() = FirstContextKey
+    override fun <E : CoroutineContext.Element> get(key: CoroutineContext.Key<E>): E? = throw IllegalStateException("captured-failure")
+}
+
+class CapturedGenericInvocationTests {
+    @TestAttribute fun stdlibCapturedKeyPreservesIdentity() {
+        val first = FirstContextElement()
+        val second = SecondContextElement()
+        check(readCapturedContext(first, first) === first)
+        check(readCapturedContext(second, second) === second)
+    }
+    @TestAttribute fun stdlibCapturedKeyCanBeAbsent() {
+        check(readCapturedContext(FirstContextElement(), SecondContextElement()) == null)
+    }
+    @TestAttribute fun consumerUsesTheSameCapturedFrame() {
+        val first = FirstContextElement()
+        check(readHere(first, first) === first)
+        check(readHere(first, SecondContextElement()) == null)
+    }
+    @TestAttribute fun callerMethodFrameIsIndependent() {
+        val first = FirstContextElement()
+        check(readCapturedContextInMethod(first, first, "method-frame") === first)
+        check(readCapturedContextInMethod(first, first, 42) === first)
+    }
+    @TestAttribute fun callerOwnerAndMethodFramesAreIndependent() {
+        val first = FirstContextElement()
+        check(CapturedContextReader(12).read(first, first, "method-frame") === first)
+    }
+    @TestAttribute fun argumentEvaluationIsOnceAndInOrder() {
+        val first = FirstContextElement()
+        val evaluation = EvaluationOrder()
+        check(evaluation.receiver(first)[evaluation.CountedElement().key] === first)
+        check(evaluation.order == "rk")
+    }
+    @TestAttribute fun selectedMethodExceptionsAreNotWrapped() {
+        try { readHere(ThrowingElement(), FirstContextElement()); error("missing exception") }
+        catch (failure: IllegalStateException) { check(failure.message == "captured-failure") }
+    }
+    @TestAttribute fun sourceAndReferencedDeclarationsKeepTheirOwnFrame() {
+        val first = First()
+        check(readCapturedLocal(first, first) === first)
+        check(lookupHere(first, first) === first)
+        check(lookupHere(first, Other()) == null)
+    }
+    @TestAttribute fun selectedStaticDeclarationUsesTheCapture() {
+        val first = First()
+        check(readCapturedStatic(first, first) === first)
+        check(readCapturedStatic(first, Other()) == null)
+    }
+    @TestAttribute fun overloadSelectionDoesNotDependOnRuntimeValues() {
+        val first = First()
+        check(readCapturedOverload(OverloadedLookup(first), first) === first)
+    }
+}
