@@ -241,7 +241,8 @@ static class CapturedGenericInvocation
                 .Select(i => TypeJson.Write(new TypeNode.Tv("method", i))).ToArray());
             forward[Str(obj["k"]) is "callInstance" ? "ownerType" : Str(obj["k"]) is "callStatic" ? "owner" : "type"] = TypeJson.Write(liftedOwner);
             if (!isLocal) forward["memberRef"]["declaringType"] = TypeJson.Write(liftedOwner);
-            forward[isLocal ? "sig" : "resolvedMemberParams"] = new JsonArray(declarationParams.Select(TypeJson.Write).ToArray());
+            if (isLocal) forward["sig"] = new JsonArray(declarationParams.Select(TypeJson.Write).ToArray());
+            else forward.Remove("resolvedMemberParams");
             forward["ret"] = TypeJson.Write(CloseDeclaration(declaredReturn));
             if (!isLocal) forward["resolvedMemberReturn"] = TypeJson.Write(CloseDeclaration(declaredReturn));
             forward.Remove("dynRet");
