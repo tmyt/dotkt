@@ -54,3 +54,31 @@ class KeyCounter {
     fun <E : Element> consume(key: Key<E>) { count += 1 }
 }
 fun consumeCapturedKey(counter: KeyCounter, element: Element) = counter.consume(element.key)
+
+class PrivateKeyReader<T>(val token: T) {
+    private fun <E> tag(key: PlainKey<E>, other: T): String {
+        check(token == other)
+        return "private-key"
+    }
+    fun read(key: PlainKey<*>): String = tag(key, token)
+}
+fun <T> nullableKeyTag(key: PlainKey<T>, count: Int?): Int = count ?: 0
+fun readNullableKey(key: PlainKey<*>, count: Int?): Int = nullableKeyTag(key, count)
+object IntegerKey : PlainKey<Int>
+fun <A, B> twoKeyTag(first: PlainKey<A>, second: PlainKey<B>): String = "two-keys"
+fun readTwoKeys(first: PlainKey<*>, second: PlainKey<*>): String = twoKeyTag(first, second)
+
+open class BaseKeyReader {
+    open fun <T> read(key: PlainKey<T>): String = "base-key"
+}
+class DerivedKeyReader : BaseKeyReader() {
+    override fun <T> read(key: PlainKey<T>): String = "derived-key"
+    fun readBase(key: PlainKey<*>): String = super.read(key)
+}
+
+interface VariantKey<in A, B>
+object AnyTextKey : VariantKey<Any, String>
+fun <A, B> variantKeyTag(key: VariantKey<A, B>, values: MutableList<A>): Int = values.size
+fun readVariantKey(key: VariantKey<String, *>, values: MutableList<String>): Int = variantKeyTag(key, values)
+fun <E : Element> echoCapturedKey(key: Key<E>): Key<E> = key
+fun readCapturedKeyResult(key: Key<*>): Key<*> = echoCapturedKey(key)

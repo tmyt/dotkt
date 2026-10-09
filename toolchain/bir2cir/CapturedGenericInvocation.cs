@@ -32,6 +32,7 @@ static class CapturedGenericInvocation
                 && obj["args"] is JsonArray args
                 && (obj["sig"] ?? obj["shapeTypes"]) is JsonArray signature)
             {
+                var captures = new JsonArray();
                 for (var i = 0; i < args.Count && i < signature.Count; i++)
                 {
                     if (TypeJson.Read(signature[i]) is not TypeNode.Fqn { Args: { } formalArgs } formal
@@ -42,14 +43,20 @@ static class CapturedGenericInvocation
                     var frame = local == null && refs.NullableTypeFrames.TryGetValue(formal.Name, out var referencedFrame)
                         ? referencedFrame : null;
                     if (parameters == null || (frame?.SourceArity ?? parameters.Count) != formalArgs.Length) continue;
-                    if (!formalArgs.Select((type, slot) => type is TypeNode.Tv { Scope: "method" }
+                    var slots = formalArgs.Select((type, slot) => type is TypeNode.Tv { Scope: "method" }
                             && actualArgs[slot] is TypeNode.Star
                             && Str((parameters[frame?.SourcePosition(slot) ?? slot] as JsonObject)?["variance"])
-                                is not ("in" or "out")).Any(match => match)) continue;
-                    obj[ArgumentKey] = i;
+                                is not ("in" or "out") ? ((TypeNode.Tv)type).I : -1)
+                        .Where(slot => slot >= 0).Distinct().ToArray();
+                    if (slots.Length == 0) continue;
+                    captures.Add(new JsonObject { ["argument"] = i,
+                        ["slots"] = new JsonArray(slots.Select(slot => (JsonNode)JsonValue.Create(slot)).ToArray()) });
+                }
+                if (captures.Count > 0)
+                {
+                    obj[ArgumentKey] = captures;
                     if (obj[DeclarationIdentityBinding.Key] is JsonNode identity) obj[TargetKey] = identity.DeepClone();
                     if (NodeType.Stamp(obj) is TypeNode result) obj[ResultKey] = TypeJson.Write(result);
-                    break;
                 }
             }
             foreach (var child in obj.ToList()) Visit(child.Value);
@@ -87,7 +94,7 @@ static class CapturedGenericInvocation
     public static void Apply(JsonNode root, ReferenceMetadataIndex refs, HashSet<string> emittedLocalTypes)
     {
         var generated = new List<JsonObject>();
-        Walk(root, new JsonArray(), new JsonArray());
+        Walk(root, new JsonArray(), new JsonArray(), Str(root?["fileClass"]));
         if (root is JsonObject file && generated.Count > 0)
         {
             var types = file["types"] as JsonArray;
@@ -95,18 +102,23 @@ static class CapturedGenericInvocation
             foreach (var type in generated) { types.Add(type); emittedLocalTypes.Add(Str(type["name"])); }
         }
 
-        void Walk(JsonNode node, JsonArray ownerFrame, JsonArray methodFrame)
+        void Walk(JsonNode node, JsonArray ownerFrame, JsonArray methodFrame, string lexicalOwner)
         {
             if (node is JsonArray array)
-            { foreach (var child in array.ToList()) Walk(child, ownerFrame, methodFrame); return; }
+            { foreach (var child in array.ToList()) Walk(child, ownerFrame, methodFrame, lexicalOwner); return; }
             if (node is not JsonObject obj) return;
             if (Str(obj["kind"]) is "class" or "interface" or "struct")
+            {
                 ownerFrame = TypeParameterFrame.CloneDeclarations(obj);
+                lexicalOwner = Str(obj["name"]);
+            }
             if (obj["params"] is JsonArray && obj["body"] is JsonArray)
                 methodFrame = obj["typeParams"] as JsonArray ?? new JsonArray();
-            foreach (var child in obj.ToList()) Walk(child.Value, ownerFrame, methodFrame);
-            if (obj[ArgumentKey] is not JsonValue capture) { obj.Remove(ResultKey); return; }
-            var index = capture.GetValue<int>();
+            foreach (var child in obj.ToList()) Walk(child.Value, ownerFrame, methodFrame, lexicalOwner);
+            if (obj[ArgumentKey] is not JsonArray captures) { obj.Remove(ResultKey); return; }
+            var captureIndices = captures.OfType<JsonObject>().Select(capture => capture["argument"].GetValue<int>()).ToArray();
+            var captureSlots = captures.OfType<JsonObject>().SelectMany(capture => (JsonArray)capture["slots"])
+                .Select(slot => slot.GetValue<int>()).Distinct().ToArray();
             obj.Remove(ArgumentKey);
             var target = Str(obj[TargetKey]);
             obj.Remove(TargetKey);
@@ -139,12 +151,69 @@ static class CapturedGenericInvocation
             var declarationParams = (member["parameterTypes"] as JsonArray)?.Select(TypeJson.Read).ToArray()
                 ?? throw new InvalidOperationException("Captured invocation has no selected parameter vector");
             var declaredReturn = TypeJson.Read(member["returnType"]);
-            if (index < 0 || index >= arguments.Count || declarationParams.Length != arguments.Count)
+            if (captureIndices.Any(index => index < 0 || index >= arguments.Count)
+                || declarationParams.Length != arguments.Count)
                 throw new InvalidOperationException("Captured invocation argument does not match selected declaration");
-            // Reflection never carries a managed address. Ordinary exact ref/out calls do not have capture facts.
+            // This value-transport seam does not change managed-address storage. Calls requiring a different
+            // transport remain on their existing physical path; do not turn a compiler limitation into a new refusal.
             if (declarationParams.Any(HasAddress) || HasAddress(declaredReturn)
                 || declarationParams.Any(type => ByRefLike(type, refs)) || ByRefLike(declaredReturn, refs))
-                throw new NotSupportedException("Captured invocation cannot transport managed-reference arguments or results");
+                return;
+            // A different invariant construction already created under an approximated slot needs its own
+            // representation seam. Closing this method cannot turn e.g. IList<object> into IList<Capture>.
+            // Do not route such an existing unsupported edge through a verifier-green but uncallable thunk.
+            if (declarationParams.Where((_, index) => !captureIndices.Contains(index)).Any(type =>
+                ContainsCapturedSlot(type, captureSlots))) return;
+
+            if (obj["super"]?.GetValue<bool>() == true)
+            {
+                // A non-virtual base call must consume its own method's this. Keep that edge on the lexical owner;
+                // the reflection thunk calls a private instance forwarder, never Base.M on an arbitrary receiver.
+                if (!_localTypeDefinitions.TryGetValue(lexicalOwner, out var lexicalDefinition))
+                    throw new InvalidOperationException("Captured super invocation has no lexical owner");
+                TypeNode CloseSuper(TypeNode type) => Map(type, tv => tv.Scope == "type"
+                    ? owner.Args?[tv.I] ?? throw new InvalidOperationException("Captured super invocation has no base frame") : tv);
+                var superFrame = new JsonArray(selectedFrame.Select(parameter => (JsonNode)CloneParameter(parameter, CloseSuper)).ToArray());
+                var superParameters = declarationParams.Select(CloseSuper).ToArray();
+                var superReturn = CloseSuper(declaredReturn);
+                var superCall = (JsonObject)obj.DeepClone();
+                superCall.Remove(ClrMemberResolution.ResolvedMethodTypeParamsKey);
+                superCall.Remove("sty");
+                superCall.Remove("dynRet");
+                superCall["recv"] = new JsonObject { ["k"] = "this" };
+                superCall["typeArgs"] = new JsonArray(Enumerable.Range(0, selectedFrame.Count)
+                    .Select(slot => TypeJson.Write(new TypeNode.Tv("method", slot))).ToArray());
+                superCall["args"] = new JsonArray(superParameters.Select((_, slot) => (JsonNode)Local(slot)).ToArray());
+                superCall["ret"] = TypeJson.Write(superReturn);
+                if (!isLocal) superCall["resolvedMemberReturn"] = TypeJson.Write(superReturn);
+                var methods = (JsonArray)lexicalDefinition["methods"];
+                string superName;
+                do { superName = "dotkt$capturedSuper$" + _next++; }
+                while (methods.OfType<JsonObject>().Any(method => Str(method["name"]) == superName));
+                var superVoid = superReturn is TypeNode.Fqn { Name: "void" or "System.Void" };
+                methods.Add(new JsonObject { ["name"] = superName, ["vis"] = "private", ["static"] = false,
+                    ["override"] = false, ["virtual"] = false, ["abstract"] = false, ["objectOverride"] = false,
+                    ["typeParams"] = superFrame, ["ret"] = TypeJson.Write(superReturn),
+                    ["params"] = new JsonArray(superParameters.Select((type, slot) => (JsonNode)new JsonObject
+                        { ["name"] = "p" + slot, ["type"] = TypeJson.Write(type) }).ToArray()),
+                    ["attrs"] = new JsonArray(), ["body"] = new JsonArray(new JsonObject
+                        { ["k"] = superVoid ? "exprStmt" : "return", [superVoid ? "expr" : "value"] = superCall }) });
+                owner = new TypeNode.Fqn(lexicalOwner, ownerFrame.Count == 0 ? null
+                    : Enumerable.Range(0, ownerFrame.Count).Select(slot => (TypeNode)new TypeNode.Tv("type", slot)).ToArray());
+                declarationParams = superParameters;
+                declaredReturn = superReturn;
+                selectedFrame = superFrame;
+                isLocal = true;
+                obj["k"] = "callInstance";
+                obj["method"] = superName;
+                obj["ownerType"] = TypeJson.Write(owner);
+                obj["sig"] = new JsonArray(superParameters.Select(TypeJson.Write).ToArray());
+                obj["super"] = false;
+                obj["virtual"] = false;
+                obj.Remove("memberRef");
+                obj.Remove("resolvedMemberParams");
+                obj.Remove("resolvedMemberReturn");
+            }
 
             var arity = selectedFrame.Count;
             TypeNode LiftCaller(TypeNode type) => Map(type, tv => new TypeNode.Tv("method",
@@ -179,7 +248,7 @@ static class CapturedGenericInvocation
             forward["args"] = new JsonArray(declarationParams.Select((_, i) => (JsonNode)Local(i + (isInstance ? 1 : 0))).ToArray());
             if (isInstance) forward["recv"] = Local(0);
             string name;
-            do { name = "dotkt$captured$" + _next++; } while (emittedLocalTypes.Contains(name));
+            do { name = lexicalOwner + ".dotkt$captured$" + _next++; } while (emittedLocalTypes.Contains(name));
             var returnsVoid = declaredReturn is TypeNode.Fqn { Name: "void" or "System.Void" };
             var body = returnsVoid
                 ? new JsonArray(new JsonObject { ["k"] = "exprStmt", ["expr"] = forward })
@@ -196,6 +265,9 @@ static class CapturedGenericInvocation
             generated.Add(new JsonObject
             {
                 ["name"] = name, ["kind"] = "class", ["generated"] = true, ["vis"] = "internal",
+                // Keep the original caller's CLR lexical access. The thunk's generic frame is wholly method-owned;
+                // nesting does not invent an additional enclosing TypeDef frame or widen any source member.
+                ["nestedIn"] = lexicalOwner,
                 ["typeParams"] = new JsonArray(), ["interfaces"] = new JsonArray(), ["fields"] = new JsonArray(),
                 ["ctors"] = new JsonArray(), ["methods"] = new JsonArray(thunk), ["attrs"] = new JsonArray(),
             });
@@ -207,12 +279,14 @@ static class CapturedGenericInvocation
             var runtimeCall = new JsonObject
             {
                 ["k"] = "clrStatic", ["type"] = TypeJson.Write(new TypeNode.Fqn(RuntimeOwner)),
-                ["method"] = returnsVoid ? "starProjectionInvokeStaticHelperUnit" : "starProjectionInvokeStaticHelper",
+                ["method"] = returnsVoid ? "starProjectionInvokeCapturedHelperUnit" : "starProjectionInvokeCapturedHelper",
                 ["argTypes"] = new JsonArray(RuntimeSignature.Select(TypeJson.Write).ToArray()),
                 ["ret"] = TypeJson.Write(returnsVoid ? new TypeNode.Fqn("void") : Object),
                 ["args"] = new JsonArray(ClassRef(new TypeNode.Fqn(name)), Constant(Int, 0), Constant(String, "Invoke"),
                     Array(String, parameterTypes.Select(type => (JsonNode)Constant(String, RuntimeKey(type, refs)))),
-                    Array(Type, fallback.Select(type => (JsonNode)ClassRef(type))), Constant(Int, index + (isInstance ? 1 : 0)),
+                    Array(Type, fallback.Select(type => (JsonNode)ClassRef(type))),
+                    Array(Int, captureIndices.Select(index => (JsonNode)Constant(Int, index + (isInstance ? 1 : 0)))),
+                    Array(Int, captureSlots.Select(slot => (JsonNode)Constant(Int, slot))),
                     Array(Object, values)),
             };
             // The reference twin describes this runtime helper using trusted stdlib aliases. Select that exact
@@ -220,7 +294,7 @@ static class CapturedGenericInvocation
             var runtimeType = new TypeNode.Fqn("DotKt.Runtime.CompilerServices.StarProjectionType");
             var sourceSignature = new TypeNode[] { runtimeType, new TypeNode.Fqn("kotlin.Int"),
                 new TypeNode.Fqn("kotlin.String"), new TypeNode.Array(new TypeNode.Fqn("kotlin.String")),
-                new TypeNode.Array(runtimeType), new TypeNode.Fqn("kotlin.Int"),
+                new TypeNode.Array(runtimeType), new TypeNode.Fqn("kotlin.IntArray"), new TypeNode.Fqn("kotlin.IntArray"),
                 new TypeNode.Array(new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"))) };
             var localRuntime = _localDeclarations.Values.SelectMany(bindings => bindings)
                 .Where(binding => binding.Owner == RuntimeOwner && Str(binding.Method["name"]) == Str(runtimeCall["method"])
@@ -259,7 +333,7 @@ static class CapturedGenericInvocation
     static readonly TypeNode Int = new TypeNode.Fqn("int");
     static readonly TypeNode String = new TypeNode.Fqn("string");
     static readonly TypeNode Type = new TypeNode.Fqn("System.Type");
-    static readonly TypeNode[] RuntimeSignature = { Type, Int, String, new TypeNode.Array(String), new TypeNode.Array(Type), Int, new TypeNode.Array(Object) };
+    static readonly TypeNode[] RuntimeSignature = { Type, Int, String, new TypeNode.Array(String), new TypeNode.Array(Type), new TypeNode.Array(Int), new TypeNode.Array(Int), new TypeNode.Array(Object) };
     static JsonObject Local(int index) => new() { ["k"] = "local", ["name"] = "p" + index };
     static JsonObject Cast(TypeNode type, JsonNode value) => new() { ["k"] = "cast", ["type"] = TypeJson.Write(type), ["e"] = value };
     static JsonObject ClassRef(TypeNode type) => new() { ["k"] = "classRef", ["type"] = TypeJson.Write(type) };
@@ -269,6 +343,15 @@ static class CapturedGenericInvocation
     static bool IsObject(TypeNode type) => type is TypeNode.Fqn { Name: "object" or "System.Object" } || type is TypeNode.Nullable n && IsObject(n.Of);
     static bool HasAddress(TypeNode type) => type is TypeNode.ByRef or TypeNode.Ptr || type is TypeNode.Mod m && HasAddress(m.Of);
     static bool ByRefLike(TypeNode type, ReferenceMetadataIndex refs) => type is TypeNode.Fqn f && refs.IsByRefLikeFqn(f);
+    static bool ContainsCapturedSlot(TypeNode type, IReadOnlyList<int> slots)
+    {
+        var contains = false;
+        Map(type, variable => {
+            contains |= variable.Scope == "method" && slots.Contains(variable.I);
+            return variable;
+        });
+        return contains;
+    }
     static JsonObject CloneParameter(JsonNode parameter, Func<TypeNode, TypeNode> map)
     {
         var clone = parameter is JsonObject definition ? (JsonObject)definition.DeepClone()
@@ -294,7 +377,10 @@ static class CapturedGenericInvocation
     static string RuntimeKey(TypeNode type, ReferenceMetadataIndex refs) => BirTypeLowering.CanonicalPhysicalSlotType(type) switch
     {
         TypeNode.Tv tv => (tv.Scope == "method" ? "m" : "t") + tv.I,
-        TypeNode.Nullable n => RuntimeKey(n.Of, refs),
+        TypeNode.Nullable n => n.Of is TypeNode.Fqn f
+            && (_localTypeDefinitions.TryGetValue(f.Name, out var definition)
+                ? Str(definition["kind"]) is "struct" or "enum" : refs.IsValueType(f))
+            ? "g{System.Nullable`1}<" + RuntimeKey(n.Of, refs) + ">" : RuntimeKey(n.Of, refs),
         TypeNode.Array a => "a" + (a.SzArray ? "s" : "m") + a.Rank + "[" + RuntimeKey(a.Elem, refs) + "]",
         TypeNode.Fn f => RuntimeKey(BirTypeLowering.DelegateFqnOf(f)
             ?? throw new InvalidOperationException("Captured invocation function parameter has no physical delegate"), refs),

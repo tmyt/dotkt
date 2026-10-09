@@ -478,6 +478,57 @@ internal fun starProjectionInvokeStaticHelperUnit(
         authoredTypeArguments, receiverIndex, arguments)
 }
 
+// A captured invocation carries explicit argument witnesses and method-slot ownership. Other slots retain the
+// compiler-authored type arguments, even if variance permits a witness to expose a different physical view.
+@PublishedApi
+internal fun starProjectionInvokeCapturedHelper(
+    declaringType: StarProjectionType,
+    metadataToken: Int,
+    memberName: String,
+    parameterTypeKeys: Array<String>,
+    authoredTypeArguments: Array<StarProjectionType>,
+    capturedArgumentIndices: IntArray,
+    capturedMethodSlots: IntArray,
+    arguments: Array<Any?>,
+): Any? {
+    val method = starProjectionOpenMethod(declaringType, metadataToken, memberName,
+        authoredTypeArguments.size, parameterTypeKeys)
+    val parameters = method.getParameters()
+    if (!method.isStatic || parameters.size != arguments.size)
+        throw IllegalStateException("Projected helper declaration does not match its call")
+    val inferred = arrayOfNulls<StarProjectionType>(authoredTypeArguments.size)
+    for (index in capturedArgumentIndices) {
+        val argument = arguments[index]
+        if (argument != null)
+            starProjectionBindConstructionSlots(parameters[index].parameterType,
+                argument.starProjectionRuntimeType(), inferred, true, capturedMethodSlots)
+    }
+    val closedArguments = Array<StarProjectionType>(authoredTypeArguments.size) { slot ->
+        inferred[slot] ?: authoredTypeArguments[slot]
+    }
+    val target = if (closedArguments.isEmpty()) method else method.makeGenericMethod(closedArguments)
+    try {
+        return target.invoke(null, arguments)
+    } catch (failure: StarProjectionInvocationException) {
+        throw (failure.innerException ?: failure)
+    }
+}
+
+@PublishedApi
+internal fun starProjectionInvokeCapturedHelperUnit(
+    declaringType: StarProjectionType,
+    metadataToken: Int,
+    memberName: String,
+    parameterTypeKeys: Array<String>,
+    authoredTypeArguments: Array<StarProjectionType>,
+    capturedArgumentIndices: IntArray,
+    capturedMethodSlots: IntArray,
+    arguments: Array<Any?>,
+) {
+    starProjectionInvokeCapturedHelper(declaringType, metadataToken, memberName, parameterTypeKeys,
+        authoredTypeArguments, capturedArgumentIndices, capturedMethodSlots, arguments)
+}
+
 // A boxed generic value receiver must be written back even when its method throws. Keep the invoke result separate
 // so bir2cir can publish the mutated box before consuming (and possibly rethrowing) the result. Foreign-star
 // ref/out and ref-return signatures are refused before this runtime because object[] cannot preserve their aliasing.
@@ -625,9 +676,15 @@ private fun starProjectionBindConstructionSlots(
     actual: StarProjectionType,
     bindings: Array<StarProjectionType?>,
     methodSlots: Boolean = false,
+    allowedMethodSlots: IntArray? = null,
 ) {
     if (declaration.isGenericParameter && (declaration.declaringMethod != null) == methodSlots) {
         val slot = declaration.genericParameterPosition
+        if (allowedMethodSlots != null) {
+            var allowed = false
+            for (candidate in allowedMethodSlots) if (candidate == slot) allowed = true
+            if (!allowed) return
+        }
         val previous = bindings[slot]
         if (previous != null && previous != actual)
             throw IllegalStateException("Conflicting projected declaration type argument")
@@ -638,7 +695,7 @@ private fun starProjectionBindConstructionSlots(
         if (actual.isArray && declaration.isSzArray == actual.isSzArray
             && declaration.getArrayRank() == actual.getArrayRank())
             starProjectionBindConstructionSlots(declaration.getElementType()!!, actual.getElementType()!!,
-                bindings, methodSlots)
+                bindings, methodSlots, allowedMethodSlots)
         return
     }
     if (!declaration.isGenericType) return
@@ -650,7 +707,8 @@ private fun starProjectionBindConstructionSlots(
     if (declarationArguments.size != actualArguments.size) return
     var index = 0
     while (index < declarationArguments.size) {
-        starProjectionBindConstructionSlots(declarationArguments[index], actualArguments[index], bindings, methodSlots)
+        starProjectionBindConstructionSlots(declarationArguments[index], actualArguments[index], bindings,
+            methodSlots, allowedMethodSlots)
         index++
     }
 }
