@@ -52,7 +52,7 @@ PROJECTS=(
 declare -A EXPECTED_DISCOVERED=(
 	["tests/basic"]=670
 	["tests/coroutines"]=247
-	["tests/roundtrip/consumer"]=396
+	["tests/roundtrip/consumer"]=399
 	["tests/roundtrip/bidirectional/consumer"]=39
 	["tests/interop/consumer"]=369
 )
@@ -267,6 +267,13 @@ for proj in "${PROJECTS[@]}"; do
 		else
 			echo "  THROWABLE SOURCE IDENTITY FAIL"
 			tail -25 "$ROOT/build/nunit-$name.throwable-source-identity.log"; rc=1
+		fi
+		if dotnet "$METADATA_INSPECTOR_DLL" --continuation-source-supertypes "$producer_klib" \
+			>"$ROOT/build/nunit-$name.continuation-source-supertypes.log" 2>&1; then
+			echo "  Continuation source inheritance, member types and bounds are exact"
+		else
+			echo "  CONTINUATION SOURCE SUPERTYPES FAIL — see build/nunit-$name.continuation-source-supertypes.log"
+			tail -25 "$ROOT/build/nunit-$name.continuation-source-supertypes.log"; rc=1
 		fi
 		if dotnet "$METADATA_INSPECTOR_DLL" --klib-nonnull-bounds "$producer_klib" \
 			>"$ROOT/build/nunit-$name.nonnull-bounds.log" 2>&1; then

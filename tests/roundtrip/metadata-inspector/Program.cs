@@ -44,6 +44,13 @@ if (args.Length == 3 && args[0] == "--throwable-source-identity")
     return;
 }
 
+if (args.Length == 2 && args[0] == "--continuation-source-supertypes")
+{
+    VerifyContinuationSourceSupertypes(args[1]);
+    Console.WriteLine("Continuation source inheritance, member types and bounds: OK");
+    return;
+}
+
 if (args.Length >= 4 && args[0] == "--volatile-consumer")
 {
     foreach (var method in args.Skip(3)) VerifyVolatileMethod(args[1], args[2], method);
@@ -295,6 +302,41 @@ static void VerifyKlibClassSupertypes(string path, string className, IReadOnlyLi
         return;
     }
     throw new InvalidDataException($"KLIB class '{className}' not found");
+}
+
+static void VerifyContinuationSourceSupertypes(string path)
+{
+    using var archive = ZipFile.OpenRead(path);
+    var fragments = archive.Entries.Where(entry => entry.FullName.EndsWith(".knm", StringComparison.Ordinal))
+        .Select(entry => { using var stream = entry.Open(); return PackageFragment.Parser.ParseFrom(stream); })
+        .ToArray();
+    var fragment = fragments.Single(item => item.FqName == "roundtrip.continuationinheritance");
+    foreach (var (name, nullable) in new[] {
+        ("CompletionBody", false), ("NullableCompletionBody", true), ("FrameCompletionBody", false),
+    })
+    {
+        var declaration = Class(fragment, "roundtrip.continuationinheritance." + name);
+        Require(declaration.TypeParameter.Count == 1, $"{name} leaked its physical generic frame");
+        var sourceIndex = declaration.TypeParameter.Single().Id;
+        var edge = declaration.Supertype.Single(type => type.HasClassName &&
+            QualifiedName(fragment, type.ClassName) == "kotlin.coroutines.Continuation");
+        var method = declaration.Function.Single(function => String(fragment, function.Name) == "resumeWith");
+        Require((method.Flags & 0x30) != 0x20, $"{name}.resumeWith became abstract");
+        var result = method.ValueParameter.Single().Type;
+        Require(result.HasClassName && QualifiedName(fragment, result.ClassName) == "kotlin.Result",
+            $"{name}.resumeWith lost Result's source classifier");
+        foreach (var type in new[] { edge, result })
+            Require(type.Argument.Count == 1 &&
+                type.Argument[0].Type is { HasTypeParameter: true } argument &&
+                argument.TypeParameter == sourceIndex && argument.Nullable == nullable,
+                $"{name} has inconsistent source generic inheritance/member types");
+    }
+    var bound = Class(fragment, "roundtrip.continuationinheritance.CompletionBound")
+        .TypeParameter.Single().UpperBound.Single();
+    Require(bound.HasClassName && QualifiedName(fragment, bound.ClassName) == "kotlin.coroutines.Continuation" &&
+        bound.Argument.Count == 1 && bound.Argument[0].Type is { HasClassName: true } element &&
+        QualifiedName(fragment, element.ClassName) == "kotlin.String" && !element.Nullable,
+        "Continuation<String> type-parameter bound was erased");
 }
 
 static void VerifyKlibClassFunctionNullability(

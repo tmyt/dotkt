@@ -50,9 +50,25 @@ static class ContinuationErasure
     static IReadOnlySet<string> _continuationTypeNames = new HashSet<string>(StringComparer.Ordinal) { Cont };
     static IReadOnlySet<string> _resultTypeNames = new HashSet<string>(StringComparer.Ordinal) { ResultFqn };
 
+    // Supertype edges are source declaration facts too. Freeze them before nullable-frame allocation and
+    // other representation passes; recording only member slots leaves Continuation<T>'s inherited contract
+    // paired with a physical Continuation<object> edge when a DLL is imported again.
+    public static void PreserveSourceSupertypes(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs)
+    {
+        SetTypeNames(refs.PhysicalTypeNames);
+        foreach (var root in roots) RecordSupertypes(root);
+    }
+
     public static void Apply(JsonNode root, ReferenceMetadataIndex refs) => Apply(root, refs.PhysicalTypeNames);
 
     static void Apply(JsonNode root, IReadOnlyDictionary<string, string> physicalTypeNames)
+    {
+        SetTypeNames(physicalTypeNames);
+        RecordDeclarationSurfaces(root);
+        Walk(root, inResumeWith: false);
+    }
+
+    static void SetTypeNames(IReadOnlyDictionary<string, string> physicalTypeNames)
     {
         var continuationNames = new HashSet<string>(StringComparer.Ordinal) { Cont };
         if (physicalTypeNames.TryGetValue(Cont, out var physicalContinuation))
@@ -62,8 +78,39 @@ static class ContinuationErasure
         if (physicalTypeNames.TryGetValue(ResultFqn, out var physicalResult))
             resultNames.Add(physicalResult);
         _resultTypeNames = resultNames;
-        RecordDeclarationSurfaces(root);
-        Walk(root, inResumeWith: false);
+    }
+
+    static void RecordSupertypes(JsonNode node)
+    {
+        if (node is JsonObject declaration)
+        {
+            if (declaration["kind"] is JsonValue && declaration["k"] == null)
+            {
+                bool Moves(JsonNode edge) => TypeJson.Read(edge) is TypeNode type
+                    && !EraseType(type).Equals(type);
+                var source = new JsonObject();
+                if (Moves(declaration["base"])) source["base"] = declaration["base"].DeepClone();
+                if (declaration["interfaces"] is JsonArray interfaces)
+                {
+                    var moved = new JsonArray(interfaces.Where(Moves).Select(edge => edge.DeepClone()).ToArray());
+                    if (moved.Count > 0) source["interfaces"] = moved;
+                }
+                if (declaration["typeParams"] is JsonArray parameters)
+                {
+                    var bounds = new JsonObject();
+                    for (var index = 0; index < parameters.Count; index++)
+                        if (parameters[index] is JsonObject parameter
+                            && parameter["constraints"] is JsonArray constraints && constraints.Any(Moves))
+                            bounds[index.ToString()] = constraints.DeepClone();
+                    if (bounds.Count > 0) source["bounds"] = bounds;
+                }
+                KotlinSupertypesRecord.Merge(declaration, source);
+            }
+            foreach (var child in declaration.Select(pair => pair.Value).Where(value => value != null).ToList())
+                RecordSupertypes(child);
+        }
+        else if (node is JsonArray array)
+            foreach (var child in array.Where(value => value != null).ToList()) RecordSupertypes(child);
     }
 
     internal static void SelfTest()
@@ -84,8 +131,15 @@ static class ContinuationErasure
             var expected = Nested(any);
             var root = new JsonObject
             {
+                ["kind"] = "class",
                 ["name"] = Cont,
+                ["base"] = TypeJson.Write(original),
                 ["interfaces"] = new JsonArray(TypeJson.Write(original)),
+                ["typeParams"] = new JsonArray(new JsonObject
+                {
+                    ["name"] = "T",
+                    ["constraints"] = new JsonArray(TypeJson.Write(original), TypeJson.Fqn("probe.Unchanged")),
+                }),
                 ["overrides"] = new JsonArray(new JsonObject { ["owner"] = TypeJson.Write(original) }),
                 ["call"] = new JsonObject { ["k"] = "callStatic", ["owner"] = TypeJson.Fqn(Cont) },
             };
@@ -96,7 +150,18 @@ static class ContinuationErasure
                     ["params"] = new JsonArray(TypeJson.Write(original)),
                     ["ret"] = TypeJson.Write(original),
                 });
+            SetTypeNames(names);
+            RecordSupertypes(root);
+            var source = JsonNode.Parse(root[KotlinSupertypesRecord.PreKey].GetValue<string>());
+            if (!JsonNode.DeepEquals(source["base"], TypeJson.Write(original))
+                || !JsonNode.DeepEquals(source["interfaces"][0], TypeJson.Write(original))
+                || !JsonNode.DeepEquals(source["bounds"]["0"], root["typeParams"][0]["constraints"]))
+                throw new InvalidOperationException($"ContinuationErasure self-test: {typeName} source edges/bounds");
+            var snapshot = source.ToJsonString();
             Apply(root, names);
+            RecordSupertypes(root);
+            if (root[KotlinSupertypesRecord.PreKey].GetValue<string>() != snapshot)
+                throw new InvalidOperationException($"ContinuationErasure self-test: {typeName} earlier source precedence");
             void Equal(JsonNode actual, TypeNode wanted, string role)
             {
                 if (!JsonNode.DeepEquals(actual, TypeJson.Write(wanted)))
