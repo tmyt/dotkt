@@ -3985,21 +3985,25 @@ static partial class SuspendColdLowering
             method[KotlinPropertyAccessors.SuspendSourceRetKey] = _m["ret"]?.DeepClone();
         }
 
-        // The public Task MethodDef owns the original Kotlin declaration metadata: call-syntax modifiers,
+        // The public Task MethodDef owns the original Kotlin declaration metadata: source modifiers,
         // pre-erasure constraints and representation frames. The generated cold entry and state machine are
         // physical details and must not publish a second Kotlin declaration carrier.
         void CarryKotlinDeclarationMetadata(JsonObject method)
         {
-            // These source call-syntax modifiers belong to the public Kotlin
+            // These source modifiers belong to the public Kotlin
             // declaration, not to the generated cold entry. Do not restore
             // mods.suspend on an already lowered bridge.
-            foreach (var modifier in new[] { "operator", "infix" })
+            foreach (var modifier in new[] { "operator", "infix", "inline" })
                 if (Mod(_m, modifier))
                 {
                     if (method["mods"] is not JsonObject)
                         method["mods"] = new JsonObject();
                     ((JsonObject)method["mods"])[modifier] = true;
                 }
+            // The source declaration remains inline even though its executable Task body is a bridge.
+            // Keep the already-stashed raw BIR opaque; consumers splice that source body, not the bridge.
+            if (_m["inlineBir"] is JsonNode inlineBody)
+                method["inlineBir"] = inlineBody.DeepClone();
             if (_m[NullableGenericErasure.MethodTypeParameterBoundsPre] is JsonNode bounds)
                 method[NullableGenericErasure.MethodTypeParameterBoundsPre] = bounds.DeepClone();
             if (_m[NullableRepresentationTypes.MethodFrameKey] is JsonNode nullableFrame)

@@ -51,6 +51,13 @@ if (args.Length == 3 && args[0] == "--continuation-source-supertypes")
     return;
 }
 
+if (args.Length == 3 && args[0] == "--suspend-inline-declarations")
+{
+    VerifySuspendInlineDeclarations(args[1], args[2]);
+    Console.WriteLine("suspend inline source carrier and KLIB declaration flags: OK");
+    return;
+}
+
 if (args.Length >= 4 && args[0] == "--volatile-consumer")
 {
     foreach (var method in args.Skip(3)) VerifyVolatileMethod(args[1], args[2], method);
@@ -166,6 +173,7 @@ if (args.Length != 7)
         "  CompanionMetadataInspector --klib-inner-source-parameters <file.klib>\n" +
         "  CompanionMetadataInspector --klib-class-properties <file.klib> <class> <property[,property...]>\n" +
         "  CompanionMetadataInspector --continuation-source-supertypes <producer.dll> <producer.klib>\n" +
+        "  CompanionMetadataInspector --suspend-inline-declarations <producer.dll> <producer.klib>\n" +
         "  CompanionMetadataInspector --klib-class-functions <file.klib> <class> <function[,function...]>\n" +
         "  CompanionMetadataInspector --klib-class-supertypes <file.klib> <class> <supertype[,supertype...]>\n" +
         "  CompanionMetadataInspector --klib-class-function-nullability <file.klib> <class> <function> <return-nullable> <parameter-nullable>\n" +
@@ -303,6 +311,60 @@ static void VerifyKlibClassSupertypes(string path, string className, IReadOnlyLi
         return;
     }
     throw new InvalidDataException($"KLIB class '{className}' not found");
+}
+
+static void VerifySuspendInlineDeclarations(string dllPath, string path)
+{
+    const string package = "roundtrip.suspendinlineactions";
+    const string inlineAttribute = "DotKt.Runtime.CompilerServices.KotlinInlineAttribute";
+    const string declarationAttribute = "DotKt.Runtime.CompilerServices.KotlinDeclarationIdentityAttribute";
+    using var dll = File.OpenRead(dllPath);
+    using var pe = new PEReader(dll);
+    var md = pe.GetMetadataReader();
+    foreach (var (owner, name, parameterCount) in new[] {
+        ("SuspendInlineActionsKt", "withGuard", 3), ("MemberActions", "guardedAction", 1),
+    })
+    {
+        var type = md.TypeDefinitions.Single(handle => DefinitionName(md, handle) == package + "." + owner);
+        var methods = md.GetTypeDefinition(type).GetMethods();
+        var hot = methods.Single(handle => md.GetString(md.GetMethodDefinition(handle).Name) == name);
+        var cold = methods.Single(handle => md.GetString(md.GetMethodDefinition(handle).Name) == name + "$dotkt_suspend");
+        Require(HasMethodAttribute(md, hot, inlineAttribute), $"{owner}.{name} lost its inline carrier");
+        Require(!HasMethodAttribute(md, cold, inlineAttribute), $"{owner}.{name} cold entry became a second inline declaration");
+        using var payload = DecodeCarrierDocument(md, md.GetMethodDefinition(hot).GetCustomAttributes(), inlineAttribute);
+        using var identity = DecodeCarrierDocument(md, md.GetMethodDefinition(hot).GetCustomAttributes(), declarationAttribute);
+        Require(payload.RootElement.GetProperty("declarationId").GetString() ==
+            identity.RootElement.GetProperty("id").GetString(), $"{owner}.{name} inline source identity changed");
+        Require(payload.RootElement.GetProperty("params").GetArrayLength() == parameterCount &&
+            payload.RootElement.GetProperty("ret").GetProperty("t").GetString() == "tv" &&
+            payload.RootElement.GetProperty("body").GetArrayLength() > 0,
+            $"{owner}.{name} inline carrier is not the original generic Kotlin body");
+        var action = payload.RootElement.GetProperty("params")[parameterCount - 1].GetProperty("type");
+        Require(TypeNode.Read(action) is TypeNode.Fn {
+            Suspend: false, Params.Length: 0, Ret: TypeNode.Tv { Scope: "method", I: 0 } },
+            $"{owner}.{name} inline action is not the source non-suspend () -> T");
+    }
+    using var archive = ZipFile.OpenRead(path);
+    var fragment = archive.Entries.Where(entry => entry.FullName.EndsWith(".knm", StringComparison.Ordinal))
+        .Select(entry => { using var stream = entry.Open(); return PackageFragment.Parser.ParseFrom(stream); })
+        .Single(item => item.FqName == package);
+    var extension = fragment.Package.Function.Single(function => String(fragment, function.Name) == "withGuard");
+    var member = Class(fragment, package + ".MemberActions").Function.Single(function => String(fragment, function.Name) == "guardedAction");
+    foreach (var function in new[] { extension, member })
+    {
+        Require((function.Flags & (1 << 10)) != 0 && (function.Flags & (1 << 13)) != 0 &&
+            function.TypeParameter.Count == 1 && function.ReturnType.HasTypeParameter,
+            "suspend inline function lost its source flags or generic result in KLIB");
+        var action = function.ValueParameter.Last().Type;
+        Require(action.HasClassName && QualifiedName(fragment, action.ClassName) == "kotlin.Function0" &&
+            action.Argument.Count == 1 && action.Argument[0].Type is { HasTypeParameter: true } result &&
+            result.TypeParameter == function.TypeParameter.Single().Id,
+            "suspend inline action must project as non-suspend Function0<T>");
+    }
+    Require(extension.ReceiverType is { HasClassName: true } receiver &&
+        QualifiedName(fragment, receiver.ClassName) == package + ".ActionGuard" &&
+        extension.ValueParameter.Count == 2 && (extension.ValueParameter[0].Flags & 2) != 0,
+        "suspend inline extension lost its receiver or default owner argument");
 }
 
 static void VerifyContinuationSourceSupertypes(string dllPath, string path)
