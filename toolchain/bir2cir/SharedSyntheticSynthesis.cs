@@ -36,7 +36,10 @@ static class SharedSyntheticSynthesis
 
     static JsonObject Fqn(string name) => new() { ["t"] = "fqn", ["name"] = name };
 
-    public static void Apply(JsonNode root, ReferenceMetadataIndex refs)
+    internal readonly record struct CellStorage(string Owner, string Field, int ConstructorParameter);
+
+    public static void Apply(JsonNode root, ReferenceMetadataIndex refs,
+        ICollection<CellStorage> sharedCells = null)
     {
         if (root is not JsonObject file) return;
         var types = file["types"] as JsonArray;
@@ -82,6 +85,7 @@ static class SharedSyntheticSynthesis
                         cell[KotlinSupertypesRecord.PreKey] = frameFacts.DeepClone();
                     ClosureSynthesis.RecordCaptureLegality(cell, file, refs);
                     types.Add(cell);
+                    sharedCells?.Add(new CellStorage(spec.Name, "v", 0));
                 }
             }
             file.Remove("refTypes");
