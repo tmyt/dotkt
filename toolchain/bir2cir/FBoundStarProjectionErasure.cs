@@ -192,6 +192,16 @@ static class FBoundStarProjectionErasure
         while (CollectNormalizedInnerFactoryReturns(rootList, owners, refs, normalizedReturns))
             foreach (var root in rootList)
                 RewriteNormalizedInnerFactoryCalls(root, normalizedReturns, owners, defs, refs);
+        // Property/factory normalization can reveal a carrier after the initial cell walk. Preserve the same
+        // explicit cell contract for those late initializers, then propagate its reads to local consumers.
+        if (sharedCells is { Count: > 0 })
+        {
+            ExistentialSharedCellAlignment.ApplyAll(rootList.Cast<JsonNode>().ToList(), sharedCells,
+                owners.Values.Where(owner => owner.Needed).ToDictionary(
+                    owner => owner.Name, owner => owner.ErasedName, StringComparer.Ordinal), refs);
+            foreach (var root in rootList)
+                RewriteNormalizedInnerFactoryCalls(root, normalizedReturns, owners, defs, refs);
+        }
         // Projection-result facts are local to this walk. Exact cast roles survive late type/member rewriting;
         // RemoveTransientFacts consumes them after the late FBound rewriting passes have completed.
         foreach (var root in rootList) RemoveProjectionMarkers(root);

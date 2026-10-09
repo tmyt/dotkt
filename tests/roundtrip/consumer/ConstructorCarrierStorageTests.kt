@@ -25,6 +25,15 @@ class LocalBuffer<E> {
     val storage: Storage<PlainSegment<E>> = localStore(plainSentinel as PlainSegment<E>)
 }
 
+private class CapturedStorage<E> {
+    private val storage: Storage<Token<E>> = store(tokenSentinelObject() as Token<E>)
+    fun read(): String {
+        var value = storage.value
+        val read = { value.tag }
+        return read()
+    }
+}
+
 private fun <E> verifySeparateSlots() {
     val raw = tokenSentinelObject() as Token<E>
     val actual = Token<E>("actual")
@@ -74,5 +83,10 @@ class ConstructorCarrierStorageTests {
     @TestAttribute
     fun equalSourceTypesDoNotMergeSeparateMethodSlots() {
         verifySeparateSlots<String>()
+    }
+
+    @TestAttribute
+    fun projectedPropertyInitializerFlowsIntoSharedCell() {
+        check(CapturedStorage<String>().read() == "sentinel")
     }
 }
