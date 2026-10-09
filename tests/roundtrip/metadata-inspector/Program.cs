@@ -44,6 +44,13 @@ if (args.Length == 3 && args[0] == "--throwable-source-identity")
     return;
 }
 
+if (args.Length == 3 && args[0] == "--continuation-source-supertypes")
+{
+    VerifyContinuationSourceSupertypes(args[1], args[2]);
+    Console.WriteLine("Continuation source inheritance, member types and bounds: OK");
+    return;
+}
+
 if (args.Length >= 4 && args[0] == "--volatile-consumer")
 {
     foreach (var method in args.Skip(3)) VerifyVolatileMethod(args[1], args[2], method);
@@ -158,6 +165,7 @@ if (args.Length != 7)
         "  CompanionMetadataInspector --volatile-consumer <consumer.dll> <type> <method>...\n" +
         "  CompanionMetadataInspector --klib-inner-source-parameters <file.klib>\n" +
         "  CompanionMetadataInspector --klib-class-properties <file.klib> <class> <property[,property...]>\n" +
+        "  CompanionMetadataInspector --continuation-source-supertypes <producer.dll> <producer.klib>\n" +
         "  CompanionMetadataInspector --klib-class-functions <file.klib> <class> <function[,function...]>\n" +
         "  CompanionMetadataInspector --klib-class-supertypes <file.klib> <class> <supertype[,supertype...]>\n" +
         "  CompanionMetadataInspector --klib-class-function-nullability <file.klib> <class> <function> <return-nullable> <parameter-nullable>\n" +
@@ -295,6 +303,75 @@ static void VerifyKlibClassSupertypes(string path, string className, IReadOnlyLi
         return;
     }
     throw new InvalidDataException($"KLIB class '{className}' not found");
+}
+
+static void VerifyContinuationSourceSupertypes(string dllPath, string path)
+{
+    using var dll = File.OpenRead(dllPath);
+    using var pe = new PEReader(dll);
+    var md = pe.GetMetadataReader();
+    foreach (var name in new[] { "NullableCompletionBody", "FrameCompletionBody" })
+    {
+        var handle = md.TypeDefinitions.Single(handle => {
+            var type = md.GetTypeDefinition(handle);
+            return md.GetString(type.Namespace) == "roundtrip.continuationinheritance" &&
+                md.GetString(type.Name) == name + "`2";
+        });
+        Require(md.GetTypeDefinition(handle).GetGenericParameters().Count == 2,
+            $"{name} did not exercise physical companion-frame expansion");
+        using var source = CarrierDocument(md, handle,
+            "DotKt.Runtime.CompilerServices.KotlinSupertypesAttribute");
+        var frame = source.RootElement.GetProperty("nullableFrame");
+        Require(frame.GetProperty("sourceArity").GetInt32() == 1 &&
+            frame.GetProperty("nullable").EnumerateArray().Select(item => item.GetInt32()).SequenceEqual(new[] { 0 }),
+            $"{name} has no explicit nullable companion for source T");
+    }
+    using var archive = ZipFile.OpenRead(path);
+    var fragments = archive.Entries.Where(entry => entry.FullName.EndsWith(".knm", StringComparison.Ordinal))
+        .Select(entry => { using var stream = entry.Open(); return PackageFragment.Parser.ParseFrom(stream); })
+        .ToArray();
+    var fragment = fragments.Single(item => item.FqName == "roundtrip.continuationinheritance");
+    foreach (var (name, nullable) in new[] {
+        ("CompletionBody", false), ("NullableCompletionBody", true), ("FrameCompletionBody", false),
+        ("CompletionOuter.Body", false),
+    })
+    {
+        var declaration = Class(fragment, "roundtrip.continuationinheritance." + name);
+        Require(declaration.TypeParameter.Count == 1, $"{name} leaked its physical generic frame");
+        var sourceIndex = declaration.TypeParameter.Single().Id;
+        var edge = declaration.Supertype.Single(type => type.HasClassName &&
+            QualifiedName(fragment, type.ClassName) == "kotlin.coroutines.Continuation");
+        var method = declaration.Function.Single(function => String(fragment, function.Name) == "resumeWith");
+        Require((method.Flags & 0x30) != 0x20, $"{name}.resumeWith became abstract");
+        var result = method.ValueParameter.Single().Type;
+        Require(result.HasClassName && QualifiedName(fragment, result.ClassName) == "kotlin.Result",
+            $"{name}.resumeWith lost Result's source classifier");
+        foreach (var type in new[] { edge, result })
+            Require(type.Argument.Count == 1 &&
+                type.Argument[0].Type is { HasTypeParameter: true } argument &&
+                argument.TypeParameter == sourceIndex && argument.Nullable == nullable,
+                $"{name} has inconsistent source generic inheritance/member types");
+    }
+    var bound = Class(fragment, "roundtrip.continuationinheritance.CompletionBound")
+        .TypeParameter.Single().UpperBound.Single();
+    Require(bound.HasClassName && QualifiedName(fragment, bound.ClassName) == "kotlin.coroutines.Continuation" &&
+        bound.Argument.Count == 1 && bound.Argument[0].Type is { HasClassName: true } element &&
+        QualifiedName(fragment, element.ClassName) == "kotlin.String" && !element.Nullable,
+        "Continuation<String> type-parameter bound was erased");
+    var innerHandle = md.TypeDefinitions.Single(handle => {
+        var type = md.GetTypeDefinition(handle);
+        return md.GetString(type.Name) == "Body`1" && !type.GetDeclaringType().IsNil &&
+            md.GetString(md.GetTypeDefinition(type.GetDeclaringType()).Name) == "CompletionOuter`2";
+    });
+    Require(md.GetTypeDefinition(innerHandle).GetGenericParameters().Count == 3,
+        "inner Continuation fixture did not capture its enclosing companion");
+    using var innerSource = CarrierDocument(md, innerHandle,
+        "DotKt.Runtime.CompilerServices.KotlinSupertypesAttribute");
+    var innerFrame = innerSource.RootElement.GetProperty("nullableFrame");
+    Require(innerFrame.GetProperty("sourceArity").GetInt32() == 2 &&
+        innerFrame.GetProperty("order").EnumerateArray().Select(item => item.GetInt32())
+            .SequenceEqual(new[] { 0, 2, 1 }),
+        "inner Continuation fixture did not exercise source/physical index permutation");
 }
 
 static void VerifyKlibClassFunctionNullability(
