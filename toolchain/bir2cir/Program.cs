@@ -1245,7 +1245,8 @@ sealed class Pipeline
             // wrappers on those arguments. The reference build must query its own representation as well.
             DeclNullableFlags.Apply(substituted, isValueFqn,
                 type => BirTypeLowering.AnnotationArguments(type, refs.Aliases, isValueFqn,
-                    refs.PhysicalTypeNames, emittedLocalTypes, _options.RefBuild, refs.NullableTypeFrames));
+                    refs.PhysicalTypeNames, emittedLocalTypes, _options.RefBuild, refs.NullableTypeFrames),
+                type => refs.Aliases.ContainsKey(type.Name));
             // COMPREHENSIVE reference-nullable strip (#37/#48): remove EVERY `{t:nullable,of:<reference>}` from the whole
             // tree — decl slots AND usage positions (owner generic type-args, argTypes/typeArgs, cast/expression types)
             // that LowerNode walks as generic JSON without routing through LowerType. ilemit's MapType asserts a value

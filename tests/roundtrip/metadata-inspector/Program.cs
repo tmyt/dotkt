@@ -37,6 +37,13 @@ if (args.Length == 2 && args[0] == "--nested-type-carriers")
     return;
 }
 
+if (args.Length == 3 && args[0] == "--throwable-source-identity")
+{
+    VerifyThrowableSourceIdentity(args[1], args[2]);
+    Console.WriteLine("Kotlin alias source identity and exact CLR exception signature: OK");
+    return;
+}
+
 if (args.Length >= 4 && args[0] == "--volatile-consumer")
 {
     foreach (var method in args.Skip(3)) VerifyVolatileMethod(args[1], args[2], method);
@@ -2128,6 +2135,69 @@ static JsonDocument CarrierDocument(
     string attributeName)
 {
     return DecodeCarrierDocument(md, md.GetTypeDefinition(handle).GetCustomAttributes(), attributeName);
+}
+
+static void VerifyThrowableSourceIdentity(string dllPath, string klibPath)
+{
+    using (var pe = new PEReader(File.OpenRead(dllPath)))
+    {
+        var md = pe.GetMetadataReader();
+        var method = md.MethodDefinitions.Select(md.GetMethodDefinition)
+            .Single(method => md.GetString(method.Name) == "acceptThrowable");
+        var signature = md.GetBlobReader(method.Signature);
+        Require(!signature.ReadSignatureHeader().IsGeneric && signature.ReadCompressedInteger() == 1,
+            "acceptThrowable does not have its original single-parameter CLR signature");
+        Require(signature.ReadSignatureTypeCode() == SignatureTypeCode.String,
+            "acceptThrowable does not return CLR string");
+        Require(signature.ReadSignatureTypeCode() == SignatureTypeCode.TypeHandle &&
+                TypeName(md, signature.ReadTypeHandle()) == "System.Exception" && signature.RemainingBytes == 0,
+            "acceptThrowable no longer takes exactly CLR System.Exception");
+        var parameter = method.GetParameters().Select(md.GetParameter)
+            .Single(parameter => parameter.SequenceNumber == 1);
+        using var source = DecodeCarrierDocument(md, parameter.GetCustomAttributes(),
+            "DotKt.Runtime.CompilerServices.KotlinTypeAttribute");
+        Require(source.RootElement.GetProperty("t").GetString() == "fqn" &&
+                source.RootElement.GetProperty("name").GetString() == "kotlin.Throwable",
+            "acceptThrowable parameter carrier lost its Kotlin classifier");
+    }
+
+    using var archive = ZipFile.OpenRead(klibPath);
+    var fragments = archive.Entries.Where(entry => entry.FullName.EndsWith(".knm", StringComparison.Ordinal))
+        .Select(entry =>
+        {
+            using var stream = entry.Open();
+            return PackageFragment.Parser.ParseFrom(stream);
+        }).Where(fragment => QualifiedName(fragment, fragment.Package.PackageFqName) == "roundtrip.throwablesource")
+        .ToArray();
+    Require(fragments.Length == 1, "missing or duplicate Throwable source package");
+    var fragment = fragments[0];
+    foreach (var (name, classifier, nullable) in new[]
+    {
+        ("acceptThrowable", "kotlin.Throwable", false),
+        ("echoException", "kotlin.Exception", false),
+        ("echoRuntimeException", "kotlin.RuntimeException", false),
+        ("echoIllegalStateException", "kotlin.IllegalStateException", false),
+        ("echoNullableThrowable", "kotlin.Throwable", true),
+    })
+    {
+        var function = fragment.Package.Function.Single(function => String(fragment, function.Name) == name);
+        var type = function.ValueParameter.Single().Type;
+        Require(type.HasClassName && QualifiedName(fragment, type.ClassName) == classifier && type.Nullable == nullable,
+            $"{name} projected parameter lost {classifier} or its nullability");
+        if (name != "acceptThrowable")
+            Require(function.ReturnType.HasClassName &&
+                    QualifiedName(fragment, function.ReturnType.ClassName) == classifier &&
+                    function.ReturnType.Nullable == nullable,
+                $"{name} projected result lost {classifier} or its nullability");
+    }
+    var holder = Class(fragment, "roundtrip.throwablesource.ErrorHolder");
+    var constructor = holder.Constructor.Single();
+    var property = holder.Property.Single(property => String(fragment, property.Name) == "error");
+    var member = holder.Function.Single(function => String(fragment, function.Name) == "accept");
+    foreach (var type in new[] { constructor.ValueParameter.Single().Type, property.ReturnType,
+                 member.ValueParameter.Single().Type })
+        Require(type.HasClassName && QualifiedName(fragment, type.ClassName) == "kotlin.Throwable" && !type.Nullable,
+            "constructor, property or member parameter lost its Kotlin Throwable identity");
 }
 
 static JsonDocument DecodeCarrierDocument(
