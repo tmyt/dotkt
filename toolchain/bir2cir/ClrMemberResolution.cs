@@ -24,6 +24,7 @@ using DotKt.Bir;
 static partial class ClrMemberResolution
 {
     const string KotlinSigSnapshotId = "dotktKotlinSigId";
+    const string DeclarationIdentityBoundKey = "dotktDeclarationIdentityBound";
     static readonly Dictionary<int, JsonArray> KotlinSigSnapshots = new();
     static int _nextKotlinSigSnapshotId;
     static ReferenceMetadataIndex _refs;
@@ -545,14 +546,23 @@ static partial class ClrMemberResolution
         }
     }
 
-    // Some structural lowerings replace a callStatic with a newly-built callStatic instead of cloning the node.
-    // Carry only the scalar lookup token; the Kotlin descriptor stays in this pass's side table and is still removed
-    // before CIR emission.
-    public static void CarryReferencedStaticCallSignatureSnapshot(JsonObject source, JsonObject target)
+    // Suspend lowering replaces a hot call with a cold call and supplies its appended ABI parameter.
+    // Project the preserved descriptor in this pass's side table; only its scalar token rides the call
+    // and is removed before CIR emission.
+    public static void CarryReferencedStaticCallSignatureSnapshot(JsonObject source, JsonObject target,
+        JsonNode appendedParameter)
     {
         if ((source[KotlinSigSnapshotId] as JsonValue)?.TryGetValue<int>(out var snapshotId) == true
-            && KotlinSigSnapshots.ContainsKey(snapshotId))
-            target[KotlinSigSnapshotId] = snapshotId;
+            && KotlinSigSnapshots.TryGetValue(snapshotId, out var snapshot))
+        {
+            // The caller owns this ABI extension (the cold entry's completion parameter).
+            // A hot signature snapshot must not validate the newly selected cold MethodDef.
+            var projected = snapshot.DeepClone().AsArray();
+            projected.Add(appendedParameter.DeepClone());
+            var projectedId = ++_nextKotlinSigSnapshotId;
+            KotlinSigSnapshots.Add(projectedId, projected);
+            target[KotlinSigSnapshotId] = projectedId;
+        }
     }
 
     static void WalkReferencedStaticCalls(JsonNode node, string context)
@@ -591,10 +601,11 @@ static partial class ClrMemberResolution
 
     static void ResolveReferencedStaticCall(JsonObject node, string context)
     {
-        // A previous binding already selected the exact MethodDef. Later passes
-        // revisit this walk to bind synthesized calls, not to select siblings
-        // again from a value signature that may have erased their distinction.
-        if (node["memberRef"] is JsonObject) return;
+        // Preserve a MethodDef selected by authoritative declaration identity. Other
+        // calls still follow their existing representation-binding path: a preliminary
+        // reference-surface binding is not necessarily the final runtime binding.
+        if (node["memberRef"] is JsonObject
+            && node[DeclarationIdentityBoundKey]?.GetValue<bool>() == true) return;
         // An instance call states its owner as `ownerType`; a static one as `owner`, or `calleeOwner` when a
         // lowering rebuilt the node. All three name the same thing — the type that declares the member.
         var ownerNode = (node["k"] as JsonValue)?.GetValue<string>() == "constrainedCall" ? node["iface"]
@@ -674,6 +685,7 @@ static partial class ClrMemberResolution
             var selectedReference = MemberRefOf(selectedDeclaration, MemberRefNode.Kinds.Method,
                 callOwner, ownerFqn.Args);
             node["memberRef"] = selectedReference.Write();
+            node[DeclarationIdentityBoundKey] = true;
             StampResolvedMethodTypeParameters(node, selectedDeclaration);
             if ((node["k"] as JsonValue)?.GetValue<string>() == "constrainedCall")
                 StampResolvedMemberReturn(node, selectedDeclaration.ReturnType);
@@ -1736,6 +1748,7 @@ static partial class ClrMemberResolution
         {
             case JsonObject obj:
             {
+                obj.Remove(DeclarationIdentityBoundKey);
                 var k = (obj["k"] as JsonValue)?.TryGetValue<string>(out var ks) == true ? ks : null;
                 // Event nodes have both a local and a referenced form.  Only the referenced form carries a memberRef;
                 // the local form names an emitted synthesized accessor and must not masquerade as a foreign declaration.

@@ -587,6 +587,20 @@ static class BirTypeLowering
         if (TypeJson.Read(accessor["getRet"]) != new TypeNode.Fqn("System.Int32")
             || TypeJson.Read(accessor["setRet"]) != VoidType)
             throw new InvalidOperationException("Accessor return descriptors did not follow CLR return lowering");
+        var owner = TypeNode.Write(new TypeNode.Fqn("Box", new TypeNode[]
+        {
+            new TypeNode.Fn(false, new TypeNode.Fqn("kotlin.Unit"), Array.Empty<TypeNode>()),
+        }));
+        var call = Lower(new JsonObject
+        {
+            ["ownerType"] = owner.DeepClone(),
+            ["memberRef"] = new JsonObject { ["declaringType"] = owner, ["name"] = "selected" },
+        }, refBuild: false);
+        if (TypeJson.Read(call["ownerType"]) != TypeJson.Read(call["memberRef"]["declaringType"])
+            || TypeJson.Read(call["memberRef"]["declaringType"]) is not TypeNode.Fqn
+                { Args: [TypeNode.Fn { Clr: "System.Action" }] }
+            || call["memberRef"]["name"]?.GetValue<string>() != "selected")
+            throw new InvalidOperationException("Selected member owner lost physical function-family lowering");
     }
 
     internal static void SelfTestMethodImplMetadata()
@@ -884,7 +898,7 @@ static class BirTypeLowering
                         : LowerReturnValued(kv.Value, refBuild, here);
                 else if (kv.Key == "funcType")
                     copy[kv.Key] = LowerFuncTypeValued(kv.Value, refBuild, here);  // delegate slot -> keep sfunc as func:
-                else if ((kv.Key == "ownerType" || kv.Key == "owner") && IsTypeObject(kv.Value))
+                else if (kv.Key is "ownerType" or "owner" or "declaringType" && IsTypeObject(kv.Value))
                     copy[kv.Key] = LowerOwnerValued(kv.Value, refBuild, here);   // primitive-array owner stays kotlin.IntArray
                 else if (arrayStorage && kv.Key == "elem")
                     copy[kv.Key] = LowerTypeValued(kv.Value, refBuild, here, typeArg: false);

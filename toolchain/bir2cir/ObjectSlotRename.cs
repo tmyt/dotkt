@@ -39,6 +39,10 @@ static class ObjectSlotRename
             if ((obj["anySlot"] as JsonValue)?.GetValue<bool>() == true)
             {
                 RenameField(obj, "method");
+                // This semantic override now names the CLR Object slot, not the
+                // reference-surface declaration (whose owner can have a different
+                // representation). Its source MethodDef identity is consumed here.
+                obj.Remove(DeclarationIdentityBinding.Key);
                 // Native-array calls still need this semantic fact at the helper-allocation boundary:
                 // Object slots use native storage, not a hoisted value-class body. MemberCallSubstitution
                 // consumes it when producing objMethod; reference-build bodies are squashed instead.

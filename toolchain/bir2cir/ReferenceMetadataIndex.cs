@@ -90,6 +90,7 @@ sealed partial class ReferenceMetadataIndex
     const string KotlinTypeAttr = "DotKt.Runtime.CompilerServices.KotlinTypeAttribute";
     const string KotlinSupertypesAttr = "DotKt.Runtime.CompilerServices.KotlinSupertypesAttribute";
     const string KotlinSuspendResultAttr = "DotKt.Runtime.CompilerServices.KotlinSuspendResultAttribute";
+    const string KotlinSuspendFunctionTypeAttr = "DotKt.Runtime.CompilerServices.KotlinSuspendFunctionTypeAttribute";
     const string KotlinCompanionAttr = "DotKt.Runtime.CompilerServices.KotlinCompanionAttribute";
     const string KotlinCompanionExtensionAttr = "DotKt.Runtime.CompilerServices.KotlinCompanionExtensionAttribute";
     const string KotlinPropertyAccessorAttr = "DotKt.Runtime.CompilerServices.KotlinPropertyAccessorAttribute";
@@ -413,7 +414,13 @@ sealed partial class ReferenceMetadataIndex
         var semanticMatches = binding.DeclarationSemanticParams?.Length == callSignature.Count
             && binding.DeclarationSemanticParams.Select((type, index) =>
                 SemanticDeclarationDescribesCall(type, callSignature[index])).All(matchesCall => matchesCall);
-        var signatureMatches = !requiresParameterValidation || semanticMatches || physicalMatches;
+        // Generated cold entries retain each parameter's trusted type carrier, including suspend
+        // function shapes whose CLR value slot is object. Validate those authored facts too;
+        // do not treat object as a wildcard for a function or search a sibling overload.
+        var parameterCarriersMatch = binding.KotlinParameterTypes?.Length == callSignature.Count
+            && binding.KotlinParameterTypes.Select((type, index) =>
+                SemanticDeclarationDescribesCall(type, callSignature[index])).All(matchesCall => matchesCall);
+        var signatureMatches = !requiresParameterValidation || semanticMatches || physicalMatches || parameterCarriersMatch;
         if (selectedSignature.Any(type => type == null) || !signatureMatches)
         {
             var semanticText = binding.DeclarationSemanticParams == null ? "absent"
@@ -3647,6 +3654,13 @@ sealed partial class ReferenceMetadataIndex
             return SemanticDeclarationDescribesCall(declaration, callProjectionOnly.Of);
         if (declaration is TypeNode.Fqn df && call is TypeNode.Fqn cf)
         {
+            // A preserved source descriptor can meet an already-projected value slot. The
+            // producer's explicit existential-owner metadata establishes this equivalence;
+            // neither a carrier name convention nor an erased object slot does so.
+            if (cf.Args == null && TryExistentialPhysicalOwner(df.Name, out var declarationCarrier)
+                && declarationCarrier == cf.Name
+                || df.Args == null && TryExistentialPhysicalOwner(cf.Name, out var callCarrier)
+                && callCarrier == df.Name) return true;
             // Either signature can already carry the producer-bound metadata identity. Compare both through
             // the recorded correspondence; physical declaration versus semantic use is equally legitimate.
             var sameOwner = RecordedPhysicalTypeName(df.Name) == RecordedPhysicalTypeName(cf.Name);
@@ -5148,7 +5162,9 @@ sealed partial class ReferenceMetadataIndex
                             declarationIdentity?.NullableWitnessTypeParameterIndices,
                             dotKtAuthored
                                 ? method.GetParameters().Select(p =>
-                                    KotlinTypeOf(p.GetCustomAttributesData(), method.DeclaringType?.Assembly)
+                                    CarrierTypeOf(p.GetCustomAttributesData(), method.DeclaringType?.Assembly,
+                                        KotlinSuspendFunctionTypeAttr)
+                                    ?? KotlinTypeOf(p.GetCustomAttributesData(), method.DeclaringType?.Assembly)
                                     ?? DeclarationTypeNode(p.ParameterType)).ToArray()
                                 : null,
                             innerConstructorFactory?.Inner,
