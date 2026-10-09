@@ -27,6 +27,7 @@ static class Bir2Cir
                 AliasHelperHoist.SelfTest();
                 StdlibBindingOverlay.SelfTest();
                 DeclarationIdentityBinding.SelfTest();
+                GenericBoundSignatureIdentity.SelfTest();
                 KotlinPropertyAccessors.SelfTestAccessorSignatures();
                 LexicalDeclarationIds.SelfTest();
                 ExistentialReceiverBinding.SelfTest();
@@ -168,11 +169,11 @@ sealed class Pipeline
         // sources remain upstream-identical. Apply those exact declaration-identity bindings before any pass snapshots
         // source names or annotations. Ordinary app/library builds cannot opt into this trusted-stdlib input.
         var stdlibPhysicalParameterIndices = StdlibBindingOverlay.Apply(birRoots, _options.StdlibBindings);
+        GenericBoundSignatureIdentity.Capture(birRoots);
         ComparableRepresentationLowering.Apply(birRoots, _options.RefBuild);
         // #395: snapshot frontend declaration identity before ANY Kotlin-to-CLR representation pass can rename,
         // move, clone, or synthesize a declaration. These are source facts, never a physical-name reverse inference.
         var declarationSemanticSignatures = DeclarationIdentityBinding.PreserveSourceFacts(birRoots);
-        GenericBoundSignatureIdentity.Capture(birRoots);
         FunctionValueRepresentation.PreserveSourceFacts(birRoots);
         CapturedGenericInvocation.PreserveSourceFacts(birRoots, refs);
         ContinuationErasure.PreserveSourceSupertypes(birRoots, refs);

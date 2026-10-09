@@ -25,12 +25,15 @@ static class GenericBoundSignatureIdentity
                 if (obj["params"] is JsonArray parameters && obj["typeParams"] is JsonArray variables)
                     foreach (var parameter in parameters.OfType<JsonObject>())
                     {
-                        if (TypeJson.Read(parameter["type"]) is TypeNode.Tv { Scope: "method" } variable
-                            && variable.I < variables.Count
-                            && variables[variable.I] is JsonObject declaration
-                            && declaration["constraints"] is JsonArray bounds)
-                            parameter[BoundsKey] = new JsonArray(bounds.Select(TypeJson.Read)
-                                .Select(Encode).Select(TypeJson.Write).ToArray());
+                        var bounds = MethodVariables(TypeJson.Read(parameter["type"]))
+                            .Distinct().OrderBy(index => index)
+                            .Where(index => index >= 0 && index < variables.Count)
+                            .SelectMany(index => variables[index] is JsonObject declaration
+                                && declaration["constraints"] is JsonArray constraints
+                                ? constraints.Select(TypeJson.Read).Select(Encode)
+                                : Enumerable.Empty<TypeNode>()).ToArray();
+                        if (bounds.Length > 0)
+                            parameter[BoundsKey] = new JsonArray(bounds.Select(TypeJson.Write).ToArray());
                     }
                 foreach (var child in obj.Select(pair => pair.Value).ToArray()) Walk(child);
             }
@@ -95,7 +98,8 @@ static class GenericBoundSignatureIdentity
                         if (parameters.Count != types.Count)
                             throw new InvalidOperationException("Generic signature allocation changed parameter arity");
                         for (var index = 0; index < parameters.Count; index++)
-                            parameters[index]["type"] = types[index].DeepClone();
+                            parameters[index]["type"] = TypeJson.Write(WithBoundModifiers(
+                                TypeJson.Read(types[index]), TypeJson.Read(parameters[index]["type"])));
                     }
                     else if (Text(obj["k"]) is "callStatic" or "callInstance" or "constrainedCall"
                         or "newDelegate" or "newBoundDelegate")
@@ -127,6 +131,14 @@ static class GenericBoundSignatureIdentity
                         && !usedMarkers.Contains(name)) types.RemoveAt(index);
     }
 
+    static TypeNode WithBoundModifiers(TypeNode signature, TypeNode valueType)
+    {
+        if (signature is not TypeNode.Mod modifier) return valueType;
+        var underlying = WithBoundModifiers(modifier.Of, valueType);
+        return modifier.M is TypeNode.Fqn marker && Markers.ContainsKey(marker.Name)
+            ? new TypeNode.Mod(modifier.Req, modifier.M, underlying) : underlying;
+    }
+
     static JsonArray Project(JsonObject method)
     {
         var projected = new JsonArray();
@@ -142,6 +154,22 @@ static class GenericBoundSignatureIdentity
         }
         return projected;
     }
+
+    static IEnumerable<int> MethodVariables(TypeNode type) => type switch
+    {
+        TypeNode.Tv { Scope: "method" } variable => new[] { variable.I },
+        TypeNode.Nullable nullable => MethodVariables(nullable.Of),
+        TypeNode.Oblivious oblivious => MethodVariables(oblivious.Of),
+        TypeNode.Projection projection => MethodVariables(projection.Of),
+        TypeNode.Fqn named => named.Args?.SelectMany(MethodVariables) ?? Enumerable.Empty<int>(),
+        TypeNode.Array array => MethodVariables(array.Elem),
+        TypeNode.ByRef reference => MethodVariables(reference.Of),
+        TypeNode.Ptr pointer => MethodVariables(pointer.Of),
+        TypeNode.Mod modifier => MethodVariables(modifier.Of),
+        TypeNode.Fn function => MethodVariables(function.Ret).Concat(function.Params.SelectMany(MethodVariables))
+            .Concat(MethodVariables(function.Recv)).Concat(function.Ctx?.SelectMany(MethodVariables) ?? Enumerable.Empty<int>()),
+        _ => Enumerable.Empty<int>(),
+    };
 
     static TypeNode Encode(TypeNode type) => type switch
     {
@@ -185,4 +213,49 @@ static class GenericBoundSignatureIdentity
         && !Flag(method["abstract"]) && (method["overrides"] as JsonArray)?.Count is not > 0;
     static bool Flag(JsonNode node) => (node as JsonValue)?.TryGetValue<bool>(out var value) == true && value;
     static string Text(JsonNode node) => (node as JsonValue)?.TryGetValue<string>(out var value) == true ? value : null;
+
+    public static void SelfTest()
+    {
+        var source = JsonNode.Parse("""
+        {"fileClass":"BoundSignatureProbe","types":[],"methods":[
+          {"name":"keep","declarationId":"comparable","typeParams":[{"name":"C","constraints":[
+            {"t":"fqn","name":"kotlin.Comparable","args":[{"t":"tv","scope":"method","i":0}]}]}],
+            "params":[{"name":"value","type":{"t":"tv","scope":"method","i":0}}],
+            "ret":{"t":"tv","scope":"method","i":0},"body":[]},
+          {"name":"keep","declarationId":"sink","typeParams":[{"name":"C","constraints":[
+            {"t":"fqn","name":"Probe.Sink","args":[{"t":"tv","scope":"method","i":0}]}]}],
+            "params":[{"name":"value","type":{"t":"tv","scope":"method","i":0}}],
+            "ret":{"t":"tv","scope":"method","i":0},"body":[]}]}
+        """);
+        JsonArray ProjectMode(bool referenceBuild)
+        {
+            var root = source.DeepClone();
+            Capture(new[] { root });
+            ComparableRepresentationLowering.Apply(new[] { root }, referenceBuild);
+            var plan = Plan(new[] { root });
+            if (plan.Count != 2) throw new InvalidOperationException("Upper-bound overloads were not allocated");
+            Apply(new[] { root }, plan);
+            return new JsonArray(root["methods"].AsArray().Select(method => method["params"][0]["type"].DeepClone()).ToArray());
+        }
+        if (!JsonNode.DeepEquals(ProjectMode(true), ProjectMode(false)))
+            throw new InvalidOperationException("Source-bound signature identity differs across reference/runtime modes");
+        var tv = new TypeNode.Tv("method", 0);
+        var modified = new TypeNode.Mod(false, new TypeNode.Fqn("Probe.Marker", new TypeNode[] { tv }), tv);
+        if (SignatureValueTypes.Of(modified) != tv
+            || !MethodVariables(new TypeNode.Nullable(tv)).SequenceEqual(new[] { 0 })
+            || !MethodVariables(new TypeNode.Fqn("Probe.Box", new TypeNode[] { tv })).SequenceEqual(new[] { 0 }))
+            throw new InvalidOperationException("Signature identity leaked into a value slot or missed a nested variable");
+        var function = new TypeNode.Fn(false, new TypeNode.Fqn("void"), new TypeNode[] { tv });
+        var slot = new TypeNode.Fqn("System.Object");
+        var boundMarker = Marker("test-bound", System.Array.Empty<TypeNode>());
+        var projection = new TypeNode.Mod(false, boundMarker, new TypeNode.Mod(false, function, slot));
+        var parameter = new JsonObject {
+            ["type"] = TypeJson.Write(WithBoundModifiers(projection, slot)),
+            [FunctionSignatureIdentity.Key] = TypeJson.Write(function),
+        };
+        if (TypeJson.Read(FunctionSignatureIdentity.SignatureType(parameter))
+            is not TypeNode.Mod { M: TypeNode.Fn, Of: TypeNode.Mod { M: TypeNode.Fqn, Of: TypeNode.Fqn } })
+            throw new InvalidOperationException("Bound projection duplicated a function signature modifier");
+        Console.Error.WriteLine("[generic-bound signatures] self-test OK (source bounds, twin modes, value/signature separation)");
+    }
 }
