@@ -16,6 +16,32 @@ private fun <T> replaceBaseCaptured(raw: Any): String {
     return current.tag
 }
 
+private fun <T> readInitializedCell(raw: Any): String {
+    var current = raw as LocalTagBox<T>
+    val read = {
+        check((current as Any) === raw)
+        current.tag
+    }
+    return read()
+}
+
+private fun <T> takeExact(value: LocalTagBox<T>): String = value.tag
+
+private fun <T> exactOnlyCell(): String {
+    var current = LocalTagBox<T>("initial")
+    val update = { current = LocalTagBox<T>("changed") }
+    update()
+    return takeExact(current)
+}
+
+private fun <T> exactMixedReturn(useCell: Boolean): LocalTagBox<T> {
+    var current = LocalTagBox<T>("initial")
+    val update = { current = LocalTagBox<T>("changed") }
+    update()
+    if (useCell) return current
+    return LocalTagBox<T>("fresh")
+}
+
 private fun <T> replaceCaptured(raw: Any): String {
     var current = LocalTagBox<T>("initial")
     val update = { current = raw as LocalTagBox<T> }
@@ -53,6 +79,22 @@ private fun <T> replaceImported(): String {
 }
 
 class SharedCellCarrierTests {
+    @TestAttribute
+    fun projectedInitializerIsACellWrite() {
+        check(readInitializedCell<String>(LocalTagBox<Int>("raw")) == "raw")
+    }
+
+    @TestAttribute
+    fun exactWritesKeepExactArgumentSlots() {
+        check(exactOnlyCell<String>() == "changed")
+    }
+
+    @TestAttribute
+    fun exactWritesKeepMixedReturnSlots() {
+        check(exactMixedReturn<String>(true).tag == "changed")
+        check(exactMixedReturn<String>(false).tag == "fresh")
+    }
+
     @TestAttribute
     fun derivedCarrierCanFillABaseCell() {
         check(replaceBaseCaptured<String>(ChildTagBox<Int>("derived")) == "derived")

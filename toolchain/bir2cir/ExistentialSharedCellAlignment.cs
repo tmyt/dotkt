@@ -32,6 +32,7 @@ static class ExistentialSharedCellAlignment
         }
         foreach (var root in roots) Collect(root);
         var types = SupertypeGraph.Collect(roots);
+        var carriers = localCarriers.Values.ToHashSet(StringComparer.Ordinal);
         var projected = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
 
         void Walk(JsonNode node, Action<JsonObject> action)
@@ -47,16 +48,20 @@ static class ExistentialSharedCellAlignment
 
         void FindWrite(JsonObject write)
         {
-            if (Str(write["k"]) != "setField"
-                || TypeJson.Read(write["ownerType"]) is not TypeNode.Fqn owner
+            var kind = Str(write["k"]);
+            if (kind is not ("setField" or "new")
+                || TypeJson.Read(kind == "new" ? write["type"] : write["ownerType"]) is not TypeNode.Fqn owner
                 || !slots.TryGetValue(owner.Name, out var slot)
-                || Str(write["name"]) != slot.Field
+                || kind == "setField" && Str(write["name"]) != slot.Field
                 || !definitions.TryGetValue(owner.Name, out var declarations)
                 || declarations[0]["fields"] is not JsonArray fields) return;
             var field = fields.OfType<JsonObject>().Single(field => Str(field["name"]) == slot.Field);
             var declared = TypeJson.Read(field["type"]);
+            var value = kind == "new"
+                ? ((JsonArray)write["args"])[slot.ConstructorParameter] : write["value"];
             if (Core(declared) is not TypeNode.Fqn { Args: { Length: > 0 } } logical
-                || Core(NodeType.Of(write["value"])) is not TypeNode.Fqn physical) return;
+                || Core(NodeType.Of(value)) is not TypeNode.Fqn physical
+                || !(carriers.Contains(physical.Name) || refs.IsExistentialPhysicalOwner(physical.Name))) return;
             var carrier = localCarriers.GetValueOrDefault(logical.Name);
             if (carrier == null) refs.TryExistentialPhysicalOwner(logical.Name, out carrier);
             if (carrier != null && SupertypeGraph.Reaches(physical, new TypeNode.Fqn(carrier), types, refs))
