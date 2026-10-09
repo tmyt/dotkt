@@ -215,6 +215,7 @@ static class BirTypeLowering
         "memberSignature", "calleeParams", FunctionSignatureIdentity.Key,
         // expression / statement type positions
         "dynRet", "funcType", "typeArgs", "constraints", "recvType", "iface", "excType",
+        "_capturedGenericResult",
         "keyType", "valType", "iterType", "accessOwner", "accessorOwner", "elem",
         "samType", "closureType",
         // W1-S1 (#46): the clrGeneric* FIR-resolved member descriptor — the callee's DECLARED param types (OPEN,

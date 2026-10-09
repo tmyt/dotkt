@@ -173,6 +173,7 @@ sealed class Pipeline
         // move, clone, or synthesize a declaration. These are source facts, never a physical-name reverse inference.
         var declarationSemanticSignatures = DeclarationIdentityBinding.PreserveSourceFacts(birRoots);
         FunctionValueRepresentation.PreserveSourceFacts(birRoots);
+        CapturedGenericInvocation.PreserveSourceFacts(birRoots, refs);
         ContinuationErasure.PreserveSourceSupertypes(birRoots, refs);
         var localDeclarationIds = DeclarationIdentityBinding.CollectDeclarationIds(birRoots);
         // These are new CLR slot bodies for frontend-selected inherited implementations, not source declarations.
@@ -1409,6 +1410,8 @@ sealed class Pipeline
             foreach (var (lowered, _) in loweredRoots)
                 ExactExternalDeclarationIdentity.Apply(lowered, refs);
 
+        CapturedGenericInvocation.PrepareLocalDeclarations(loweredRoots.Select(file => file.Root),
+            flattenMissingOwners: _options.SubstituteStdlibBuild);
         // PHASE 3B — metadata, exact external identities, and validation over the now-stable module graph.
         foreach (var (lowered, outputName) in loweredRoots)
         {
@@ -1441,6 +1444,7 @@ sealed class Pipeline
             // RefBodySquash's `newClr NotImplementedException` is stamped too (its owner resolves off the BCL compile-refs).
             ClrMemberResolution.EnsurePlainCallDescriptors(lowered);
             ClrMemberResolution.Apply(lowered, refs, emittedLocalTypes);
+            CapturedGenericInvocation.Apply(lowered, refs, emittedLocalTypes);
             // Exact member resolution above selected the authoritative MethodDef and temporarily carried its CLR-only
             // generic parameter facts. Validate the call's actual method arguments in the caller's lexical frame, then
             // consume that internal carrier before CIR serialization. Generic Kotlin properties are physical accessor
