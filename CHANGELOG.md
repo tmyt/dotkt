@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Generic-bound overloads retain their selected declaration across DLLs (#981).**
+  Independent overloads use structural signature modifiers without renaming Kotlin functions or changing value
+  frames; suspend cold entries preserve the same exact binding through suspension and resumption.
+
 - **Suspend inline declarations retain their source bodies across DLL boundaries (#975).**
   Non-suspend inline actions can suspend in their caller, preserving default arguments,
   receiver ownership, nonlocal returns, and finally cleanup.
