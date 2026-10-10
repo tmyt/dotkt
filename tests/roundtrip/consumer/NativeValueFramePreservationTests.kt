@@ -6,6 +6,7 @@ import kotlin.clr.byref
 
 abstract class Anchor<S : Anchor<S>>(val tag: String)
 class Leaf<E>(tag: String) : Anchor<Leaf<E>>(tag)
+private class Stored<T>(val value: T)
 
 private fun <S : Anchor<S>> replace(value: S, replacement: S): String {
     var slot = value
@@ -21,6 +22,15 @@ private fun <T> replaceUnbounded(value: T, replacement: T): T {
     return slot
 }
 
+private fun <T> storeAndReplace(value: T, replacement: T): T {
+    val stored = Stored(value)
+    var slot = value
+    val observed = GenericFrameApi.ReplaceAndObserve<T>(byref(slot), byref(slot), replacement)
+    check((observed as Any) === (replacement as Any))
+    check((stored.value as Any) === (value as Any))
+    return slot
+}
+
 class NativeValueFramePreservationTests {
     @TestAttribute
     fun nativeRefInsideABoundedHelperPreservesItsExactSlot() {
@@ -30,5 +40,10 @@ class NativeValueFramePreservationTests {
     @TestAttribute
     fun nativeRefInsideAnUnboundedHelperPreservesItsExactSlot() {
         check(replaceUnbounded("initial", "replacement") == "replacement")
+    }
+
+    @TestAttribute
+    fun nativeRefAndKotlinStorageUseTheSameLogicalArgument() {
+        check(storeAndReplace("initial", "replacement") == "replacement")
     }
 }
