@@ -11,6 +11,8 @@ sealed class GenericRepresentationPolicy
     readonly IReadOnlyDictionary<string, string> _aliases;
     readonly ReferenceMetadataIndex _references;
     readonly HashSet<string> _localOwners;
+    readonly HashSet<JsonObject> _nativeFields = new();
+    readonly HashSet<(string Owner, string Name)> _nativeFieldNames = new();
 
     public GenericRepresentationPolicy(IReadOnlyDictionary<string, string> aliases,
         ReferenceMetadataIndex references = null, IEnumerable<JsonNode> roots = null)
@@ -25,8 +27,57 @@ sealed class GenericRepresentationPolicy
                 && name.TryGetValue<string>(out var owner)) _localOwners.Add(owner);
             foreach (var child in declaration["types"] as JsonArray ?? new JsonArray()) Collect(child);
         }
-        foreach (var root in roots ?? Array.Empty<JsonNode>()) Collect(root);
+        var inputs = (roots ?? Array.Empty<JsonNode>()).ToArray();
+        foreach (var root in inputs) Collect(root);
+        var fields = new Dictionary<(string Owner, string Name), JsonObject>();
+        void IndexFields(JsonObject declaration)
+        {
+            var owner = Text(declaration["name"]) ?? Text(declaration["fileClass"]);
+            foreach (var field in (declaration["fields"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
+                if (owner != null && Text(field["name"]) is string name)
+                    fields.Add((owner, name), field);
+            foreach (var child in (declaration["types"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
+                IndexFields(child);
+        }
+        foreach (var root in inputs.OfType<JsonObject>()) IndexFields(root);
+        void FindAddresses(JsonNode node)
+        {
+            if (node is JsonArray array)
+                foreach (var child in array) FindAddresses(child);
+            else if (node is JsonObject obj)
+            {
+                // The selected declaration supplies the managed-reference shape.
+                // Decide field layout while source bodies still exist in both
+                // reference and runtime builds, not after reference-body removal.
+                if (Text(obj["k"]) is "callStatic" or "callInstance" or "constrainedCall"
+                    && (obj["shapeTypes"] ?? obj["sig"]) is JsonArray parameters
+                    && obj["args"] is JsonArray arguments && parameters.Count == arguments.Count)
+                    for (var i = 0; i < parameters.Count; i++)
+                    {
+                        if (SignatureValueTypes.Of(TypeJson.Read(parameters[i])) is not TypeNode.ByRef
+                            || arguments[i] is not JsonObject argument) continue;
+                        var location = Text(argument["k"]) == "byrefOf" ? argument["inner"] as JsonObject : argument;
+                        if (location == null || Text(location["k"]) is not ("field" or "staticField")
+                            || TypeJson.OwnerName(location["ownerType"] ?? location["owner"]) is not string owner
+                            || Text(location["name"]) is not string name
+                            || !fields.TryGetValue((owner, name), out var declaration)
+                            || TypeJson.Read(declaration["type"]) is not TypeNode.Tv) continue;
+                        _nativeFields.Add(declaration);
+                        _nativeFieldNames.Add((owner, name));
+                    }
+                foreach (var (key, child) in obj)
+                    if (key != "attrs") FindAddresses(child);
+            }
+        }
+        foreach (var root in inputs) FindAddresses(root);
     }
+
+    internal bool IsNativeField(JsonObject node) => _nativeFields.Contains(node)
+        || Text(node["k"]) is "field" or "staticField" or "setField" or "setStaticField"
+            && TypeJson.OwnerName(node["ownerType"] ?? node["owner"]) is string owner
+            && Text(node["name"]) is string name && _nativeFieldNames.Contains((owner, name));
+
+    static string Text(JsonNode node) => (node as JsonValue)?.TryGetValue<string>(out var text) == true ? text : null;
 
     internal bool OwnsValueSlots(string owner) => owner != null && !_aliases.ContainsKey(owner)
         && (_localOwners.Contains(owner) || _references?.HasDotKtOwner(owner) == true);
@@ -50,6 +101,26 @@ sealed class GenericRepresentationPolicy
 
     public static void SelfTest()
     {
+        var fieldRoot = JsonNode.Parse("""
+        {"fileClass":"FieldFrames","types":[{"kind":"class","name":"FieldFrame","typeParams":["T"],
+          "fields":[{"name":"native","type":{"t":"tv","scope":"type","i":0}},
+                    {"name":"ordinary","type":{"t":"tv","scope":"type","i":0}}],
+          "methods":[{"name":"pass","params":[],"ret":{"t":"fqn","name":"kotlin.Unit"},"body":[
+            {"k":"callStatic","sig":[{"t":"byRef","of":{"t":"tv","scope":"method","i":0}}],
+             "typeArgs":[{"t":"tv","scope":"type","i":0}],"args":[
+              {"k":"field","ownerType":{"t":"fqn","name":"FieldFrame","args":[{"t":"tv","scope":"type","i":0}]},
+               "recv":{"k":"this"},"name":"native","memberType":{"t":"tv","scope":"type","i":0},
+               "memberOwnerTypeParams":["T"]}]}]}]}]}
+        """)!.AsObject();
+        var fieldPolicy = new GenericRepresentationPolicy(new Dictionary<string, string>(), roots: new[] { fieldRoot });
+        NullableRepresentationMaterialization.Apply(new[] { fieldRoot }, _ => false, policy: fieldPolicy);
+        var fieldOwner = fieldRoot["types"][0];
+        var addressedField = fieldOwner["methods"][0]["body"][0]["args"][0];
+        if (TypeJson.Read(fieldOwner["fields"][0]["type"]) != new TypeNode.Tv("type", 0)
+            || TypeJson.Read(fieldOwner["fields"][1]["type"]) != new TypeNode.Tv("type", 1)
+            || TypeJson.Read(addressedField["memberType"]) != new TypeNode.Tv("type", 0)
+            || ((JsonArray)addressedField["ownerType"]["args"]).Count != 2)
+            throw new InvalidOperationException("Native field allocation changed an unrelated field or lost declaration correspondence");
         var policy = new GenericRepresentationPolicy(new Dictionary<string, string> {
             ["kotlin.collections.Map"] = "System.Collections.Generic.IDictionary",
             ["kotlin.collections.Collection"] = "System.Collections.Generic.IReadOnlyCollection",

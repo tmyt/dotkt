@@ -78,6 +78,7 @@ sealed class NullableRepresentationTypes
     public TypeNode Argument(TypeNode type) => Rewrite(type, NullableGenericErasure.Pos.Argument);
     public TypeNode StorageArgument(TypeNode type) => Rewrite(type, NullableGenericErasure.Pos.Argument, storage: true);
     public bool IsStorageElement(string kind, string key) => _policy?.IsStorageElement(kind, key) == true;
+    public bool IsNativeField(JsonObject node) => _policy?.IsNativeField(node) == true;
     public TypeNode ArgumentForRole(TypeNode type, NullableRepresentationFrame.Role role) => role switch {
         NullableRepresentationFrame.Role.Ordinary => Argument(type),
         NullableRepresentationFrame.Role.Nullable => NullableArgument(type),

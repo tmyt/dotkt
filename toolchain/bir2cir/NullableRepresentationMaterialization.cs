@@ -146,7 +146,7 @@ static class NullableRepresentationMaterialization
                 PreserveEdges(owner.Declaration, mapping);
                 if (owner.Declaration["fields"] is JsonArray fields)
                     foreach (var field in fields.OfType<JsonObject>())
-                        PreserveSlot(field, "type", "nullableGeneric", mapping);
+                        if (!mapping.IsNativeField(field)) PreserveSlot(field, "type", "nullableGeneric", mapping);
                 if (owner.Declaration["ctors"] is JsonArray constructors)
                     foreach (var constructor in constructors.OfType<JsonObject>())
                         PreserveParameters(constructor, mapping);
@@ -497,7 +497,10 @@ static class NullableRepresentationMaterialization
                 }
                 if (declarationKeys.Contains(key))
                 {
-                    RewriteDescriptor(obj, key, selectedMapping, mapping);
+                    if (key == "memberType" && mapping.IsNativeField(obj)
+                        && TypeJson.Read(obj[key]) is TypeNode nativeFieldType)
+                        obj[key] = TypeJson.Write((selectedMapping ?? mapping).Argument(nativeFieldType));
+                    else RewriteDescriptor(obj, key, selectedMapping, mapping);
                     continue;
                 }
                 if (mapping.IsStorageElement(kind, key) && TypeJson.Read(obj[key]) is TypeNode storageElement)
@@ -506,6 +509,7 @@ static class NullableRepresentationMaterialization
                     continue;
                 }
                 var childPosition = key switch {
+                    "type" when kind == null && mapping.IsNativeField(obj) => NullableGenericErasure.Pos.Argument,
                     "ret" when obj[PreparedClosureDefaultFrames.ReturnArgumentKey]?.GetValue<bool>() == true
                         => NullableGenericErasure.Pos.Argument,
                     "typeArgs" => NullableGenericErasure.Pos.Argument,

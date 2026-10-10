@@ -14,6 +14,13 @@ private class NativeResultStore<T>(private val value: T) {
     fun read(): T = NativeCell<T>(value).Read()
     fun readProperty(): T = NativeCell<T>(value).Value
 }
+private class NativeFieldStore<T>(var value: T) {
+    fun replace(replacement: T): T {
+        val observed = GenericFrameApi.SetAndObserve<T>(byref(value), byref(value), replacement)
+        check(observed == value)
+        return value
+    }
+}
 
 private fun <S : Anchor<S>> replace(value: S, replacement: S): String {
     var slot = value
@@ -96,6 +103,34 @@ private class StoredCollection<T>(value: T) : AbstractMutableCollection<T>() {
 }
 
 class NativeValueFramePreservationTests {
+    @TestAttribute
+    fun nativeRefAndOutAliasTheGenericFieldItself() {
+        val text = NativeFieldStore("initial")
+        text.value = "before"
+        check(text.replace("replacement") == "replacement")
+        check(text.value == "replacement")
+        text.value = "after"
+        check(text.value == "after")
+        val number = NativeFieldStore(10)
+        check(number.replace(42) == 42)
+        check(number.value == 42)
+    }
+
+    @TestAttribute
+    fun aNativeFieldChecksOrdinaryWritesWithoutChangingKotlinCastSemantics() {
+        val slot = NativeFieldStore(Leaf<String>("initial"))
+        val incompatible = Leaf<Int>("incompatible") as Leaf<String>
+        var rejected = false
+        try {
+            slot.value = incompatible
+        } catch (_: System.InvalidCastException) {
+            rejected = true
+        }
+        check(rejected)
+        check(slot.value.tag == "initial")
+        check(slot.replace(Leaf<String>("replacement")).tag == "replacement")
+    }
+
     @TestAttribute
     fun nativeRefInsideABoundedHelperPreservesItsExactSlot() {
         check(replace(Leaf<String>("initial"), Leaf<String>("replacement")) == "replacement")

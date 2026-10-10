@@ -30,6 +30,7 @@ static class FBoundStarProjectionErasure
     const string ExactOuterKey = "outer";
     const string DelegationOuterSlotKey = "delegationOuterSlot";
     static Dictionary<string, List<JsonObject>> _localMethods = new(StringComparer.Ordinal);
+    static Dictionary<(string Owner, string Identity), JsonObject> _localDeclarations = new();
 
     sealed class Owner
     {
@@ -322,6 +323,7 @@ static class FBoundStarProjectionErasure
                 BindProjectedArrayGenericCall(obj, owners, refs);
                 BindCarrierArgumentMerge(obj, owners, defs, refs);
                 BindCarrierPropertyResult(obj, owners, refs);
+                BindLocalCarrierResult(obj, owners, refs);
                 BindInheritedStarMember(obj, owners, defs, refs);
                 if (obj["body"] is JsonArray && obj["params"] is JsonArray)
                     NormalizeInnerFactoryLocals(obj, owners, defs, refs);
@@ -1145,6 +1147,7 @@ static class FBoundStarProjectionErasure
     static Dictionary<string, List<JsonObject>> IndexLocalMethods(IEnumerable<JsonObject> roots)
     {
         var result = new Dictionary<string, List<JsonObject>>(StringComparer.Ordinal);
+        _localDeclarations = new();
         void AddMethods(JsonObject owner, string ownerName)
         {
             if (owner["methods"] is JsonArray methods)
@@ -1155,6 +1158,8 @@ static class FBoundStarProjectionErasure
                         if (!result.TryGetValue(key, out var candidates))
                             result[key] = candidates = new List<JsonObject>();
                         candidates.Add(method);
+                        if (Str(method[DeclarationIdentityBinding.Key]) is string identity)
+                            _localDeclarations.Add((ownerName, identity), method);
                     }
             if (owner["types"] is JsonArray nested)
                 foreach (var type in nested.OfType<JsonObject>())
@@ -3355,6 +3360,24 @@ static class FBoundStarProjectionErasure
             }
             else AlignExistentialResult(call, physicalResult, semanticResult);
         }
+    }
+
+    static void BindLocalCarrierResult(JsonObject call, IReadOnlyDictionary<string, Owner> owners,
+        ReferenceMetadataIndex refs)
+    {
+        if (Str(call["k"]) is not ("callStatic" or "callInstance")
+            || Str(call[DeclarationIdentityBinding.Key]) is not string identity
+            || TypeJson.Read(call["calleeOwner"] ?? call["ownerType"] ?? call["owner"]) is not TypeNode.Fqn owner
+            || !_localDeclarations.TryGetValue((owner.Name, identity), out var selected)) return;
+        // A scalar declaration result can close to an existential value through
+        // its Storage companion. Close that exact declaration before rebinding a
+        // parent member; the frontend result stamp still names the logical type.
+        var result = SubstituteDeclarationTypeArguments(TypeJson.Read(selected["ret"]),
+            owner.Args ?? Array.Empty<TypeNode>(),
+            (call["typeArgs"] as JsonArray ?? new JsonArray()).Select(TypeJson.Read).ToArray());
+        var semantic = NodeType.Stamp(call);
+        if (IsExistentialPhysicalCarrier(result, owners, refs) && semantic != null && result != semantic)
+            AlignExistentialResult(call, result, semantic);
     }
 
     static void BindCarrierPropertyResult(JsonObject call, IReadOnlyDictionary<string, Owner> owners,

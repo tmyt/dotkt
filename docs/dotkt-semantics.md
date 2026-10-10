@@ -1277,6 +1277,11 @@ parameter's element type for that local's storage lifetime. Ordinary initializat
 are checked value conversions into that type; loading it into a Kotlin value slot converts the value back
 as required. An unchecked Kotlin cast does not relax the native location's type requirement. Passing the
 same local twice preserves aliasing during the call, rather than using copy-in/copy-out temporaries.
+A generic Kotlin backing field addressed by `ref`/`out` likewise keeps its ordinary CLR type-variable slot,
+not the separate Kotlin value-storage companion. Its layout is fixed for the instance's entire lifetime,
+including ordinary property writes before and after a native call; those writes check the exact field type.
+Passing the same field as both `ref` and `out` addresses that one field, while getter/setter value conversions
+do not convert or replace the managed reference.
 Likewise, a supported `ClrRef<T>` parameter and live ref-return delegate retain their exact pointer element
 type; only the values read or written through the pointer are converted. This rule does not require tracking
 when the last native alias is used, and does not permit storing or capturing `ClrRef<T>` outside its supported forms.
