@@ -96,7 +96,9 @@ sealed class NullableRepresentationTypes
             return (frame ?? throw new InvalidOperationException("Missing nullable representation frame"))
                 .Variable(variable, storage ? NullableRepresentationFrame.Role.NullableStorage : NullableRepresentationFrame.Role.Nullable);
         }
-        if (type is TypeNode.Tv storageVariable && storage)
+        if (type is TypeNode.Tv storageVariable && (storage
+            || position == NullableGenericErasure.Pos.Slot
+                && (storageVariable.Scope == "type" ? _owner : _method)?.StorageIndices.Contains(storageVariable.I) == true))
         {
             var frame = storageVariable.Scope == "type" ? _owner : storageVariable.Scope == "method" ? _method
                 : throw new InvalidOperationException("Unknown storage representation scope");

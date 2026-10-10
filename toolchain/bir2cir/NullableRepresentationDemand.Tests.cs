@@ -229,8 +229,39 @@ static partial class NullableRepresentationDemand
             && constrainedDemand.Frame.PhysicalArity == 0,
             "inherited implementation constraints contribute method demand without importing the foreign owner's frame");
         StorageDemandSelfTest();
+        DeclarationValueDemandSelfTest();
         MetadataSelfTest();
         Console.WriteLine("[nullable representation frame] self-test OK (source correspondence, scopes, declaration/body demand, fixed point)");
+    }
+
+    static void DeclarationValueDemandSelfTest()
+    {
+        var root = JsonNode.Parse("""
+        {"fileClass":"ValueDemand","methods":[
+          {"name":"make","typeParams":["T"],"params":[{"name":"value","type":{"t":"tv","scope":"method","i":0}}],
+           "ret":{"t":"fqn","name":"ValueOwner","args":[{"t":"tv","scope":"method","i":0}]},"body":[]},
+          {"name":"identity","typeParams":["T"],"params":[{"name":"value","type":{"t":"tv","scope":"method","i":0}}],
+           "ret":{"t":"tv","scope":"method","i":0},"body":[]}],
+         "types":[
+          {"kind":"class","name":"ValueOwner","typeParams":["T"],"fields":[
+            {"name":"value","type":{"t":"tv","scope":"type","i":0}}]},
+          {"kind":"class","name":"ForeignOwner","typeParams":["T"],"fields":[
+            {"name":"value","type":{"t":"tv","scope":"type","i":0}}]}]}
+        """)!.AsObject();
+        var policy = new GenericRepresentationPolicy(new Dictionary<string, string> {
+            ["ForeignOwner"] = "NativeOwner",
+        }, roots: new[] { root });
+        var original = root.ToJsonString();
+        var demands = Collect(new[] { root }, policy: policy);
+        var value = demands.Single(owner => Text(owner.Declaration["name"]) == "ValueOwner");
+        var foreign = demands.Single(owner => Text(owner.Declaration["name"]) == "ForeignOwner");
+        var methods = demands.Single(owner => ReferenceEquals(owner.Declaration, root)).Methods;
+        if (!value.Frame.StorageIndices.SequenceEqual(new[] { 0 })
+            || !methods.Single(method => Text(method.Declaration["name"]) == "make").Frame.StorageIndices.SequenceEqual(new[] { 0 })
+            || methods.Single(method => Text(method.Declaration["name"]) == "identity").Frame.PhysicalArity != 1
+            || foreign.Frame.PhysicalArity != 1 || root.ToJsonString() != original)
+            throw new InvalidOperationException("Declaration value demand changed an unrelated or native frame");
+        Console.WriteLine("[declaration value demand] self-test OK (stored variable, factory fixed point, identity and native frames unchanged)");
     }
 
     static void StorageDemandSelfTest()

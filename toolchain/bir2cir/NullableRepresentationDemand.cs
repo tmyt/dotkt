@@ -171,6 +171,12 @@ static partial class NullableRepresentationDemand
                 foreach (var key in new[] { "fields", "properties" })
                     foreach (var slot in (owner.Declaration[key] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
                     {
+                        // A Kotlin storage declaration owns its value representation independently of
+                        // the source argument retained for native generic identity. Demand only the
+                        // directly stored variable; callers inherit that demand through this frame.
+                        if (policy?.OwnsValueSlots(Text(owner.Declaration["name"])) == true
+                            && TypeJson.Read(slot["type"]) is TypeNode.Tv variable)
+                            owner.Signature.Add(variable, RepresentationRole.Storage);
                         Scan(slot["type"], owner.Signature, typeFrames, methodFrames, localFrames, policy: policy);
                         Scan(slot["init"], owner.Body, typeFrames, methodFrames, localFrames, policy: policy);
                     }

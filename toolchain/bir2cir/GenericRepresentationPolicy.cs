@@ -9,8 +9,27 @@ using DotKt.Bir;
 sealed class GenericRepresentationPolicy
 {
     readonly IReadOnlyDictionary<string, string> _aliases;
+    readonly ReferenceMetadataIndex _references;
+    readonly HashSet<string> _localOwners;
 
-    public GenericRepresentationPolicy(IReadOnlyDictionary<string, string> aliases) => _aliases = aliases;
+    public GenericRepresentationPolicy(IReadOnlyDictionary<string, string> aliases,
+        ReferenceMetadataIndex references = null, IEnumerable<JsonNode> roots = null)
+    {
+        _aliases = aliases;
+        _references = references;
+        _localOwners = new HashSet<string>(StringComparer.Ordinal);
+        void Collect(JsonNode node)
+        {
+            if (node is not JsonObject declaration) return;
+            if (declaration["kind"] != null && declaration["name"] is JsonValue name
+                && name.TryGetValue<string>(out var owner)) _localOwners.Add(owner);
+            foreach (var child in declaration["types"] as JsonArray ?? new JsonArray()) Collect(child);
+        }
+        foreach (var root in roots ?? Array.Empty<JsonNode>()) Collect(root);
+    }
+
+    internal bool OwnsValueSlots(string owner) => owner != null && !_aliases.ContainsKey(owner)
+        && (_localOwners.Contains(owner) || _references?.HasDotKtOwner(owner) == true);
 
     public bool UsesStorageArguments(string owner) => false;
 
@@ -22,7 +41,10 @@ sealed class GenericRepresentationPolicy
     // Frame expansion must retain the source owner until declaration matching is complete. Lowering only a
     // call's type arguments here would compare CLR IReadOnlyList<T> with a selected Kotlin List<T> descriptor.
     // BirTypeLowering owns the eventual alias substitution for both positions.
-    public TypeNode ProjectArgumentHead(TypeNode.Fqn source, bool storage, NullableRepresentationFrame frame) => source;
+    public TypeNode ProjectArgumentHead(TypeNode.Fqn source, bool storage, NullableRepresentationFrame frame) =>
+        storage && OwnsValueSlots(source.Name) && source.Args is { Length: > 0 }
+            ? new TypeNode.Fqn(source.Name, source.Args.Select(_ => (TypeNode)new TypeNode.Star()).ToArray())
+            : source;
 
     public static void SelfTest()
     {

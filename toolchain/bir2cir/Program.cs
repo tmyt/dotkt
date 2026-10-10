@@ -219,7 +219,7 @@ sealed class Pipeline
         // The adapter authors source-generic applications. Include those applications in demand collection
         // so their complete physical frames are materialized with the declaration and its callers.
         if (!_options.RefBuild) SequenceElementAdapterLowering.Apply(birRoots);
-        var genericRepresentations = new GenericRepresentationPolicy(representationAliases);
+        var genericRepresentations = new GenericRepresentationPolicy(representationAliases, refs, birRoots);
         var restoreDefaultFrames = DefaultArgSplice.PrepareInlineDefaults(birRoots, refs);
         NullableRepresentationMaterialization.Apply(birRoots, isValueFqn, refs, policy: genericRepresentations);
         restoreDefaultFrames();

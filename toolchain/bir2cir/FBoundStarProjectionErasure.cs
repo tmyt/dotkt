@@ -191,6 +191,16 @@ static class FBoundStarProjectionErasure
         while (CollectNormalizedInnerFactoryReturns(rootList, owners, refs, normalizedReturns))
             foreach (var root in rootList)
                 RewriteNormalizedInnerFactoryCalls(root, normalizedReturns, owners, defs, refs);
+        // Referenced accessor normalization can reveal the physical value only after the first
+        // shared-cell walk. Its explicit storage contract must agree with that final initializer.
+        if (sharedCells is { Count: > 0 })
+        {
+            ExistentialSharedCellAlignment.ApplyAll(rootList.Cast<JsonNode>().ToList(), sharedCells,
+                owners.Values.Where(owner => owner.Needed).ToDictionary(
+                    owner => owner.Name, owner => owner.ErasedName, StringComparer.Ordinal), refs);
+            foreach (var root in rootList)
+                RewriteNormalizedInnerFactoryCalls(root, normalizedReturns, owners, defs, refs);
+        }
         // Projection-result facts are local to this walk. Exact cast roles survive late type/member rewriting;
         // RemoveTransientFacts consumes them after the late FBound rewriting passes have completed.
         foreach (var root in rootList) RemoveProjectionMarkers(root);
@@ -310,6 +320,8 @@ static class FBoundStarProjectionErasure
                         value, normalizedReturns, owners, defs, refs);
                 BindProjectedArrayRead(obj, owners, refs);
                 BindProjectedArrayGenericCall(obj, owners, refs);
+                BindCarrierArgumentMerge(obj, owners, defs, refs);
+                BindCarrierPropertyResult(obj, owners, refs);
                 BindInheritedStarMember(obj, owners, defs, refs);
                 if (obj["body"] is JsonArray && obj["params"] is JsonArray)
                     NormalizeInnerFactoryLocals(obj, owners, defs, refs);
@@ -3341,6 +3353,48 @@ static class FBoundStarProjectionErasure
                         ? projection.Of : semanticArray.Elem);
             }
             else AlignExistentialResult(call, physicalResult, semanticResult);
+        }
+    }
+
+    static void BindCarrierPropertyResult(JsonObject call, IReadOnlyDictionary<string, Owner> owners,
+        ReferenceMetadataIndex refs)
+    {
+        if (Str(call["k"]) != "callInstance"
+            || !KotlinPropertyAccessors.TryCallIdentity(call, out var property, out var accessor)
+            || accessor != "get"
+            || TypeJson.Read(call["ownerType"]) is not TypeNode.Fqn owner
+            || !refs.HasDotKtOwner(owner.Name)
+            || call["sig"] is not JsonArray signature
+            || !refs.TrySelectedMethodDeclaration(owner.Name, property, 0,
+                signature.Select(TypeJson.Read).ToArray(), NodeType.Stamp(call),
+                owner.Args ?? Array.Empty<TypeNode>(), new JsonArray(), out var selected, accessor)) return;
+        var result = SubstituteDeclarationTypeArguments(selected.PhysicalReturn,
+            owner.Args ?? Array.Empty<TypeNode>(), Array.Empty<TypeNode>());
+        var semantic = NodeType.Stamp(call);
+        if (IsExistentialPhysicalCarrier(result, owners, refs) && semantic != null
+            && !result.Equals(semantic))
+            AlignExistentialResult(call, result, semantic);
+    }
+
+    static void BindCarrierArgumentMerge(JsonObject call, IReadOnlyDictionary<string, Owner> owners,
+        IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs)
+    {
+        if (Str(call["k"]) is not ("callStatic" or "callInstance" or "clrGenericStatic" or "clrGenericInstance" or "new")
+            || (call["sig"] ?? call["shapeTypes"] ?? call["resolvedMemberParams"]) is not JsonArray signature
+            || call["args"] is not JsonArray arguments
+            || signature.Count != arguments.Count) return;
+        var owner = TypeJson.Read(call["calleeOwner"] ?? call["ownerType"] ?? call["owner"] ?? call["type"]) as TypeNode.Fqn;
+        var ownerArguments = owner?.Args ?? Array.Empty<TypeNode>();
+        var methodArguments = (call["typeArgs"] as JsonArray ?? new JsonArray()).Select(TypeJson.Read).ToArray();
+        for (var index = 0; index < arguments.Count; index++)
+        {
+            if (arguments[index] is not JsonObject merge || Str(merge["k"]) is not ("cond" or "valueBlock")
+                || StripSourceNullability(ExpressionType(merge)) is not TypeNode.Fqn semantic
+                || SubstituteDeclarationTypeArguments(TypeJson.Read(signature[index]), ownerArguments, methodArguments)
+                    is not TypeNode.Fqn physical
+                || !TryExistentialCarrier(semantic.Name, owners, refs, out var carrier)
+                || physical.Name != carrier || !IsExistentialPhysicalCarrier(physical, owners, refs)) continue;
+            RetypeCovariantResult(merge, semantic, physical, defs, refs);
         }
     }
 
