@@ -31,6 +31,13 @@ private fun <T> storeAndReplace(value: T, replacement: T): T {
     return slot
 }
 
+private fun <T> replaceAndStore(value: T, replacement: T): Stored<T> {
+    var slot = value
+    val observed = GenericFrameApi.ReplaceAndObserve<T>(byref(slot), byref(slot), replacement)
+    check((observed as Any) === (replacement as Any))
+    return Stored(slot)
+}
+
 class NativeValueFramePreservationTests {
     @TestAttribute
     fun nativeRefInsideABoundedHelperPreservesItsExactSlot() {
@@ -45,5 +52,10 @@ class NativeValueFramePreservationTests {
     @TestAttribute
     fun nativeRefAndKotlinStorageUseTheSameLogicalArgument() {
         check(storeAndReplace("initial", "replacement") == "replacement")
+    }
+
+    @TestAttribute
+    fun nativeRefInsideAGenericFactoryPreservesItsExactSlot() {
+        check(replaceAndStore("initial", "replacement").value == "replacement")
     }
 }
