@@ -17,6 +17,16 @@ private class Completion : Continuation<Unit> {
 
 class NominalAliasOverloadTests {
     @TestAttribute
+    fun collectionAndSetAliasesKeepTheirSelectedPrivateDeclaration() {
+        check(collectionAliasCalls())
+    }
+
+    @TestAttribute
+    fun explicitSharedCollectionNamesKeepTheirSelectedPrivateDeclaration() {
+        check(namedCollectionAliasCalls())
+    }
+
+    @TestAttribute
     fun signatureMarkersComposeAcrossTwoProducerDlls() {
         val values: Iterable<Int> = listOf(1)
         val sequence = sequenceOf(2)

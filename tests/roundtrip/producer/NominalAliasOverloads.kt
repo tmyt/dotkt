@@ -13,6 +13,26 @@ fun namedSequence(value: Sequence<Int>): Int = 82
 
 inline fun invokeAliasBlock(block: () -> Int): Int = block()
 
+private fun Collection<Int>.collectionRoute(): Int = 1
+private fun Set<Int>.collectionRoute(): Int = 2
+
+@ClrName("sharedCollectionRoute")
+private fun Collection<Int>.collectionLeft(): Int = 1
+@ClrName("sharedCollectionRoute")
+private fun Set<Int>.collectionRight(): Int = 2
+
+fun collectionAliasCalls(): Boolean {
+    val values: Collection<Int> = listOf(1)
+    val set: Set<Int> = setOf(2)
+    return values.collectionRoute() == 1 && set.collectionRoute() == 2
+}
+
+fun namedCollectionAliasCalls(): Boolean {
+    val values: Collection<Int> = listOf(1)
+    val set: Set<Int> = setOf(2)
+    return values.collectionLeft() == 1 && set.collectionRight() == 2
+}
+
 fun <T> Iterable<T>.keepNominal(): Iterable<T> = this
 fun <T> Sequence<T>.keepNominal(): Sequence<T> = this
 
