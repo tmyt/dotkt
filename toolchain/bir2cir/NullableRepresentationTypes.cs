@@ -19,6 +19,7 @@ sealed class NullableRepresentationTypes
     internal NullableRepresentationFrame DispatchOwnerFrame { get; }
     internal NullableRepresentationFrame ApplicationOwnerFrame { get; }
     internal NullableRepresentationFrame MethodFrame => _method;
+    internal bool NativeOwnerSlots { get; }
 
     // These facts are expressed in the selected declaration's frame, not the lexical caller's frame.
     internal static bool IsDeclarationFrameKey(string key, string kind, JsonObject expression) => key is
@@ -38,7 +39,7 @@ sealed class NullableRepresentationTypes
         IReadOnlyDictionary<string, NullableRepresentationFrame> types, ValueTypeOracle isValue,
         Func<TypeNode.Fqn, bool, NullableRepresentationFrame, TypeNode> argumentHead = null,
         GenericRepresentationPolicy policy = null, NullableRepresentationFrame dispatchOwnerFrame = null,
-        NullableRepresentationFrame applicationOwnerFrame = null)
+        NullableRepresentationFrame applicationOwnerFrame = null, bool nativeOwnerSlots = false)
     {
         _owner = owner;
         DispatchOwnerFrame = dispatchOwnerFrame ?? owner;
@@ -48,6 +49,7 @@ sealed class NullableRepresentationTypes
         _isValue = isValue;
         _argumentHead = argumentHead ?? (policy == null ? null : policy.ProjectArgumentHead);
         _policy = policy;
+        NativeOwnerSlots = nativeOwnerSlots;
     }
 
     public TypeNode[] CloseMethod(NullableRepresentationFrame declaration, IReadOnlyList<TypeNode> arguments) =>
@@ -96,8 +98,13 @@ sealed class NullableRepresentationTypes
             return (frame ?? throw new InvalidOperationException("Missing nullable representation frame"))
                 .Variable(variable, storage ? NullableRepresentationFrame.Role.NullableStorage : NullableRepresentationFrame.Role.Nullable);
         }
+        // An alias's owner variable denotes the native CLR argument even when its
+        // Kotlin helper body needs a separate storage representation. That demand
+        // must not retarget the native scalar slot; method-owned variables remain
+        // independent, and explicit storage applications still close their role.
         if (type is TypeNode.Tv storageVariable && (storage
             || position == NullableGenericErasure.Pos.Slot
+                && !(storageVariable.Scope == "type" && NativeOwnerSlots)
                 && (storageVariable.Scope == "type" ? _owner : _method)?.StorageIndices.Contains(storageVariable.I) == true))
         {
             var frame = storageVariable.Scope == "type" ? _owner : storageVariable.Scope == "method" ? _method

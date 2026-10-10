@@ -31,6 +31,8 @@ sealed class GenericRepresentationPolicy
     internal bool OwnsValueSlots(string owner) => owner != null && !_aliases.ContainsKey(owner)
         && (_localOwners.Contains(owner) || _references?.HasDotKtOwner(owner) == true);
 
+    internal bool UsesNativeOwnerSlots(string owner) => owner != null && _aliases.ContainsKey(owner);
+
     public bool UsesStorageArguments(string owner) => false;
 
     public NullableRepresentationFrame.Role ApplicationRole(string owner, NullableRepresentationFrame.Role role) =>

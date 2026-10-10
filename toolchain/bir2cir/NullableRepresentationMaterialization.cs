@@ -70,7 +70,8 @@ static class NullableRepresentationMaterialization
         NullableRepresentationTypes Mapping(NullableRepresentationFrame owner, NullableRepresentationFrame method,
             string ownerName = null) => new(owner, method, applicationTypes, isValue, argumentHead, policy,
                 ownerName == null ? owner : dispatchTypes.GetValueOrDefault(ownerName) ?? owner,
-                ownerName == null ? owner : applicationTypes.GetValueOrDefault(ownerName) ?? owner);
+                ownerName == null ? owner : applicationTypes.GetValueOrDefault(ownerName) ?? owner,
+                nativeOwnerSlots: policy?.UsesNativeOwnerSlots(ownerName) == true);
         var declarations = demands.SelectMany(owner => owner.Methods.Select(method => (owner, method)))
             .Where(pair => Text(pair.method.Declaration[DeclarationIdentityBinding.Key]) != null)
             .ToDictionary(pair => Text(pair.method.Declaration[DeclarationIdentityBinding.Key]),
@@ -79,7 +80,7 @@ static class NullableRepresentationMaterialization
         var localDeclarations = demands.SelectMany(owner => owner.Methods.Where(method => method.IsLocal)
                 .Select(method => (owner, method)))
             .ToDictionary(pair => pair.method.Declaration,
-                pair => Mapping(pair.owner.Frame, pair.method.Frame));
+                pair => Mapping(pair.owner.Frame, pair.method.Frame, Text(pair.owner.Declaration["name"])));
         foreach (var (id, frame) in importedMethods)
             if (!declarations.ContainsKey(id) && references.TryDeclarationIdentity(id, out _, out var owner, out _, out _))
                 declarations[id] = Mapping(types.GetValueOrDefault(owner) ?? empty, frame, owner);
@@ -94,7 +95,9 @@ static class NullableRepresentationMaterialization
                         : TypeJson.Read(owner.Declaration["base"]) is TypeNode.Fqn baseType
                             ? types.GetValueOrDefault(baseType.Name) : null;
                     constructorMappings[constructor] = targetFrame == null ? null
-                        : Mapping(targetFrame, empty);
+                        : Mapping(targetFrame, empty, constructor["thisArgs"] is JsonArray
+                            ? Text(owner.Declaration["name"])
+                            : TypeJson.OwnerName(owner.Declaration["base"]));
                 }
         NullableRepresentationTypes DeclarationMapping(JsonObject use)
         {
@@ -137,7 +140,8 @@ static class NullableRepresentationMaterialization
             try
             {
                 var frame = ownerFrames[owner.Declaration];
-                var mapping = Mapping(frame, empty);
+                var ownerName = Text(owner.Declaration["name"]) ?? Text(owner.Declaration["fileClass"]);
+                var mapping = Mapping(frame, empty, ownerName);
                 PreserveCompanionSourceBounds(owner.Declaration, frame, owner: true);
                 PreserveEdges(owner.Declaration, mapping);
                 if (owner.Declaration["fields"] is JsonArray fields)
@@ -158,7 +162,7 @@ static class NullableRepresentationMaterialization
                             ?? owner.Methods.FirstOrDefault(method => association != null
                                 && Text(method.Declaration["propertyAssociation"]) == association);
                         var propertyMapping = accessor == null ? mapping
-                            : Mapping(frame, methodFrames[accessor.Declaration]);
+                            : Mapping(frame, methodFrames[accessor.Declaration], ownerName);
                         PreserveSlot(property, "type", "nullableGeneric", propertyMapping);
                         Rewrite(property, propertyMapping, methods, DeclarationMapping);
                     }
@@ -173,7 +177,7 @@ static class NullableRepresentationMaterialization
                 foreach (var method in owner.Methods)
                 {
                     var methodFrame = methodFrames[method.Declaration];
-                    var methodMapping = Mapping(frame, methodFrame);
+                    var methodMapping = Mapping(frame, methodFrame, ownerName);
                     // Inherited entries describe another implementation; its defining declaration owns metadata.
                     if (method.ImplementationKey == null)
                         PreserveCompanionSourceBounds(method.Declaration, methodFrame, owner: false);
@@ -182,7 +186,7 @@ static class NullableRepresentationMaterialization
                     if (method.ImplementationKey != null)
                     {
                         PreserveCompanionSourceBounds(method.Implementation, methodFrame, owner: false);
-                        var inheritedMapping = Mapping(frame, methodFrame);
+                        var inheritedMapping = Mapping(frame, methodFrame, ownerName);
                         foreach (var key in new[] { "params", "ret" })
                         {
                             if (TypeJson.Read(method.Declaration[key]) is TypeNode type)
@@ -207,7 +211,7 @@ static class NullableRepresentationMaterialization
                     if (splitBody)
                         NullableBodyDispatch.Build(owner.Declaration, source, method.Declaration, frame, methodFrame,
                             method.Body.Method, (helper, helperFrame) => {
-                                Rewrite(helper, Mapping(frame, helperFrame), methods, DeclarationMapping);
+                                Rewrite(helper, Mapping(frame, helperFrame, ownerName), methods, DeclarationMapping);
                                 AppendParameters(helper, helperFrame);
                                 helper[NullableRepresentationTypes.MethodFrameKey] = helperFrame.ToJson().ToJsonString();
                             });
@@ -591,6 +595,32 @@ static class NullableRepresentationMaterialization
 
     public static void SelfTest()
     {
+        var nativeOwnerRoot = JsonNode.Parse("""
+        {"fileClass":"NativeOwnerSlots","types":[
+          {"kind":"class","name":"ValueStore","typeParams":["T"],"fields":[
+            {"name":"value","type":{"t":"tv","scope":"type","i":0}}]},
+          {"kind":"class","name":"NativeAlias","typeParams":["T"],"methods":[
+            {"name":"store","params":[{"name":"value","type":{"t":"tv","scope":"type","i":0}}],
+             "ret":{"t":"fqn","name":"ValueStore","args":[{"t":"tv","scope":"type","i":0}]},
+             "body":[{"k":"var","name":"nativeValue","type":{"t":"tv","scope":"type","i":0}}]},
+            {"name":"ownMethod","typeParams":["U"],
+             "params":[{"name":"value","type":{"t":"tv","scope":"method","i":0}}],
+             "ret":{"t":"fqn","name":"ValueStore","args":[{"t":"tv","scope":"method","i":0}]},"body":[]}]}]}
+        """)!.AsObject();
+        var nativePolicy = new GenericRepresentationPolicy(new Dictionary<string, string> {
+            ["NativeAlias"] = "NativeGeneric",
+        }, roots: new[] { nativeOwnerRoot });
+        Apply(new[] { nativeOwnerRoot }, _ => false, policy: nativePolicy);
+        var nativeOwner = nativeOwnerRoot["types"][1];
+        var nativeStore = nativeOwner["methods"][0];
+        if (((JsonArray)nativeOwner["typeParams"]).Count != 2
+            || TypeJson.Read(nativeStore["params"][0]["type"]) != new TypeNode.Tv("type", 0)
+            || TypeJson.Read(nativeStore["body"][0]["type"]) != new TypeNode.Tv("type", 0)
+            || !((JsonArray)nativeStore["ret"]["args"]).Select(TypeJson.Read).SequenceEqual(new TypeNode[] {
+                new TypeNode.Tv("type", 0), new TypeNode.Tv("type", 1),
+            })
+            || TypeJson.Read(nativeOwner["methods"][1]["params"][0]["type"]) != new TypeNode.Tv("method", 1))
+            throw new InvalidOperationException("Kotlin body demand changed a native owner's scalar slot or lost an independent method value frame");
         var roleFrame = new NullableRepresentationFrame(1, new[] { 0 }, storageIndices: new[] { 0 },
             nullableStorageIndices: new[] { 0 });
         var boundedSource = JsonNode.Parse("""[{"name":"T","constraints":[{"t":"fqn","name":"Bound"}]}]""")!.AsArray();
