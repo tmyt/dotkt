@@ -37,6 +37,16 @@ public interface NativeValueEcho
     T Echo<T>(T value);
 }
 
+public sealed class NativeRefCtor<T>
+{
+    public NativeRefCtor(ref T value, T replacement) => value = replacement;
+}
+
+public interface NativeBoundedValueEcho
+{
+    T Echo<T>(T value) where T : roundtrip.constructorcarrier.BoundCounter<int>;
+}
+
 public struct NativeBoundCounter : roundtrip.constructorcarrier.BoundCounter<int>
 {
     int value;

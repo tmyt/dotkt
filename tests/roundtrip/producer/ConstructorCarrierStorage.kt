@@ -7,6 +7,9 @@ interface ValueEcho {
 
 interface StoredView<T> { val value: T }
 class Storage<T>(override val value: T) : StoredView<T>
+class ExportedNativeCell<T>(@kotlin.clr.ClrField var value: T) {
+    val original: T = value
+}
 fun <T> store(value: T): Storage<T> = Storage(value)
 
 interface BoundCounter<T> {

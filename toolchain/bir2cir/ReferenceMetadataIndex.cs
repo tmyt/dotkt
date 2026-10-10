@@ -463,7 +463,7 @@ sealed partial class ReferenceMetadataIndex
             && (member.DeclarationSourceName ?? member.Name) == name
             && (member.NullableFrame?.SourceArity ?? member.MethodArity) == sourceArity
             && member.ParamCount == sourceParameters.Count).Where(member => {
-                var parameters = member.DeclarationSemanticParams ?? member.ParamTypeNodes;
+                var parameters = member.DeclarationSemanticParams ?? member.KotlinParameterTypes ?? member.ParamTypeNodes;
                 return parameters != null && parameters.Select((parameter, index) =>
                     SourceDeclarationDescribesCall(member.DeclarationSemanticParams == null
                         ? member.NullableGenericParams?[index] ?? parameter : parameter,
@@ -3013,6 +3013,18 @@ sealed partial class ReferenceMetadataIndex
     internal bool TryExactMemberClrBinding(string ownerFqn, string memberName, int methodArity,
         IReadOnlyList<TypeNode> signature, out ExactClrMemberBinding binding)
         => TryExactMemberClrBinding(ownerFqn, memberName, methodArity, signature, null, out binding);
+
+    internal bool TryDeclarationClrBinding(string id, out ExactClrMemberBinding binding)
+    {
+        binding = null;
+        if (id == null || !_declarationById.TryGetValue(id, out var declaration)
+            || declaration.Intrinsic == null && declaration.PropertyName == null && !declaration.Conv)
+            return false;
+        binding = new ExactClrMemberBinding(declaration.Intrinsic, declaration.PropertyAccess,
+            declaration.PropertyName, declaration.Conv, declaration.ConvTo, declaration.ByrefPositions,
+            declaration.CountStart, declaration.CountEnd);
+        return true;
+    }
 
     // The inherited-call route closes a referenced interface declaration at its exact use-site owner. Its authored
     // parameter vector is still owner-relative in metadata, so substitute that same constructed owner before

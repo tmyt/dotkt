@@ -1218,9 +1218,11 @@ static class MemberCallSubstitution
             ? mappedCompanionCarrier
             : memberOwnerToken;
         var companionOwnerFqn = ReferenceMetadataIndex.BareOwnerFqn(companionCarrierToken);
-        var companionHasClrBinding = refs.TryExactMemberClrBinding(
+        var selectedDeclaration = Str(node[DeclarationIdentityBinding.Key]);
+        var companionHasClrBinding = refs.TryDeclarationClrBinding(selectedDeclaration, out var exactCompanionBinding)
+            || refs.TryExactMemberClrBinding(
             companionOwnerFqn, companionMember, companionMethodArity, companionSignature,
-            out var exactCompanionBinding);
+            out exactCompanionBinding);
         ExactClrMemberBinding inheritedExactMemberBinding = null;
         JsonNode mappedCompanionRecv = null;
         if (instance && companionHasClrBinding &&
@@ -1485,7 +1487,9 @@ static class MemberCallSubstitution
         // conversion, intrinsic name, byref shape and argument adapters must never be assembled from same-arity
         // siblings. A missing declaration vector is not exact and therefore states no binding.
         var exactMemberBinding = inheritedExactMemberBinding;
-        var hasExactMemberBinding = exactMemberBinding != null || refs.TryExactMemberClrBinding(
+        var hasExactMemberBinding = exactMemberBinding != null
+            || refs.TryDeclarationClrBinding(selectedDeclaration, out exactMemberBinding)
+            || refs.TryExactMemberClrBinding(
             ownerFqn, member, companionMethodArity, companionSignature, out exactMemberBinding);
 
         // Rule Conv (numeric primitive CONVERSION): the member carries @ClrConv on the ref.dll (`kotlin.Int.toLong`,

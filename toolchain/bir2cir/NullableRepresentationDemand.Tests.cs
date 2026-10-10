@@ -126,7 +126,7 @@ static partial class NullableRepresentationDemand
         };
         static JsonObject Owner(string name, JsonNode field) => new() {
             ["kind"] = "class", ["name"] = name, ["typeParams"] = new JsonArray("T"),
-            ["fields"] = new JsonArray(new JsonObject { ["name"] = "value", ["type"] = field }),
+            ["fields"] = new JsonArray(new JsonObject { ["name"] = "value", ["vis"] = "private", ["type"] = field }),
         };
         static JsonObject Method(string id, JsonNode result, JsonArray body) => new() {
             ["name"] = id, [DeclarationIdentityBinding.Key] = id,
@@ -244,7 +244,7 @@ static partial class NullableRepresentationDemand
            "ret":{"t":"tv","scope":"method","i":0},"body":[]}],
          "types":[
           {"kind":"class","name":"ValueOwner","typeParams":["T"],"fields":[
-            {"name":"value","type":{"t":"tv","scope":"type","i":0}}]},
+            {"name":"value","vis":"private","type":{"t":"tv","scope":"type","i":0}}]},
           {"kind":"class","name":"ForeignOwner","typeParams":["T"],"fields":[
             {"name":"value","type":{"t":"tv","scope":"type","i":0}}]}]}
         """)!.AsObject();

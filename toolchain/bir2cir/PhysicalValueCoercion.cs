@@ -248,6 +248,16 @@ static class PhysicalValueCoercion
         if (container["ctors"] is JsonArray constructors)
             foreach (var constructor in constructors.OfType<JsonObject>())
             {
+                if (!index.ReferenceBuild)
+                {
+                    var prologue = constructor["preStmts"] as JsonArray ?? new JsonArray();
+                    AllocateNativeLocals((constructor["preStmts"] as JsonArray ?? new JsonArray())
+                        .Concat(constructor["thisArgs"] as JsonArray ?? constructor["baseArgs"] as JsonArray ?? new JsonArray())
+                        .Concat(constructor["body"] as JsonArray ?? new JsonArray()),
+                        (constructor["params"] as JsonArray ?? new JsonArray()).OfType<JsonObject>(),
+                        prologue);
+                    if (constructor["preStmts"] == null && prologue.Count != 0) constructor["preStmts"] = prologue;
+                }
                 var scope = new Scope().Frame(constructor, owner, new TypeNode.Fqn("void"));
                 // Constructor delegation is executable CIR too. Its evaluation plan establishes locals consumed by
                 // the bare argument vector, so preserve the same order ilemit uses: preStmts, delegation, body.
@@ -266,7 +276,8 @@ static class PhysicalValueCoercion
                 var scope = new Scope().Frame(method, owner, TypeJson.Read(method["ret"]));
                 if (method["body"] is JsonArray body)
                 {
-                    if (!index.ReferenceBuild) AllocateNativeLocals(body);
+                    if (!index.ReferenceBuild) AllocateNativeLocals(body,
+                        (method["params"] as JsonArray ?? new JsonArray()).OfType<JsonObject>(), body);
                     RewriteArray(body, scope, index);
                 }
             }
@@ -277,9 +288,13 @@ static class PhysicalValueCoercion
     // element type for its whole storage lifetime. Ordinary reads and writes are
     // reconciled by the value-flow walk below; no temporary copy or reference
     // lifetime tracking is involved, and repeated arguments name the same slot.
-    static void AllocateNativeLocals(JsonArray body)
+    internal static void AllocateNativeLocals(IEnumerable<JsonNode> body,
+        IEnumerable<JsonObject> parameterDeclarations, JsonArray prologue)
     {
         var required = new Dictionary<JsonObject, TypeNode>();
+        var parameters = parameterDeclarations.ToArray();
+        var uses = new Dictionary<JsonObject, List<JsonObject>>();
+        var names = parameters.Select(parameter => Str(parameter["name"])).ToHashSet(StringComparer.Ordinal);
         void Visit(JsonNode node, Dictionary<string, JsonObject> declarations)
         {
             if (node is JsonArray array)
@@ -290,11 +305,22 @@ static class PhysicalValueCoercion
             if (node is not JsonObject obj) return;
             // A nested declaration owns different storage, even if names repeat.
             if (obj["k"] == null && obj["params"] is JsonArray) return;
+            if (Str(obj["name"]) is string usedName)
+            {
+                names.Add(usedName);
+                if (Str(obj["k"]) is "local" or "setLocal"
+                    && declarations.TryGetValue(usedName, out var usedDeclaration))
+                {
+                    if (!uses.TryGetValue(usedDeclaration, out var references))
+                        uses[usedDeclaration] = references = new List<JsonObject>();
+                    references.Add(obj);
+                }
+            }
             if (Str(obj["k"]) is ("block" or "valueBlock" or "cond" or "try" or "tryExpr"
                     or "forRange" or "forArray" or "forIn"))
                 declarations = new Dictionary<string, JsonObject>(declarations, StringComparer.Ordinal);
             if (Str(obj["k"]) is ("callStatic" or "callInstance" or "constrainedCall"
-                    or "clrStatic" or "clrInstance" or "clrGenericStatic" or "clrGenericInstance")
+                    or "clrStatic" or "clrInstance" or "clrGenericStatic" or "clrGenericInstance" or "new" or "newClr")
                 && obj["args"] is JsonArray arguments
                 && ParameterTypes(obj) is { } parameters && parameters.Length == arguments.Count)
                 for (var i = 0; i < parameters.Length; i++)
@@ -319,9 +345,28 @@ static class PhysicalValueCoercion
             if (Str(obj["k"]) == "var" && Str(obj["name"]) is string declared)
                 declarations[declared] = obj;
         }
-        Visit(body, new Dictionary<string, JsonObject>(StringComparer.Ordinal));
+        var declarations = parameters.Where(parameter => Str(parameter["name"]) != null)
+            .ToDictionary(parameter => Str(parameter["name"]), StringComparer.Ordinal);
+        foreach (var statement in body.ToArray()) Visit(statement, declarations);
+        var prefix = new List<JsonNode>();
         foreach (var (declaration, type) in required)
-            declaration["type"] = TypeJson.Write(type);
+        {
+            if (!parameters.Contains(declaration)) { declaration["type"] = TypeJson.Write(type); continue; }
+            if (SignatureValueTypes.Of(TypeJson.Read(declaration["type"])) == type) continue;
+            // Incoming values are by value. Keep the published Kotlin value slot, but allocate its addressable
+            // local once at entry with the exact native element. All uses share this location for the whole body;
+            // this is not a per-call temporary or a pointer conversion and has no copy-out step.
+            var ordinal = 0;
+            string name;
+            do { name = "$nativeArgument$" + ordinal++; } while (!names.Add(name));
+            foreach (var reference in uses.GetValueOrDefault(declaration) ?? new List<JsonObject>())
+                reference["name"] = name;
+            prefix.Add(new JsonObject {
+                ["k"] = "var", ["name"] = name, ["type"] = TypeJson.Write(type),
+                ["init"] = new JsonObject { ["k"] = "local", ["name"] = Str(declaration["name"]) },
+            });
+        }
+        for (var i = prefix.Count - 1; i >= 0; i--) prologue.Insert(0, prefix[i]);
     }
 
     static JsonNode Rewrite(JsonNode node, Scope scope, Index index, bool resultUsed = true)
@@ -746,6 +791,16 @@ static class PhysicalValueCoercion
         var declared = TypeJson.Read(expression["ret"]) ?? TypeJson.Read(expression["dynRet"]);
         if (declared == null) return expression;
         var actual = PhysicalResult(expression, scope, index);
+        // A field read and its address denote the declared location. Keep that
+        // exact scalar result here; its consuming value edge supplies any storage
+        // conversion. Wrapping the location would make a ref argument a value.
+        if (Str(expression["k"]) is "field" or "staticField" or "lateinitGet"
+            && declared is TypeNode.Tv && actual is TypeNode.Tv && declared != actual)
+        {
+            foreach (var key in new[] { "sty", "ret", "dynRet" })
+                if (expression[key] != null) expression[key] = TypeJson.Write(actual);
+            return expression;
+        }
         // A closed generic return can be a real value even when the Kotlin Unit return stamp folded to void.
         // Keep the exact closed physical result on the call instead of asking ilemit to recover its generic frame.
         if (IsVoid(declared) && actual != null && !IsVoid(actual))
@@ -861,7 +916,9 @@ static class PhysicalValueCoercion
             parameters = ReadTypes(member["parameterTypes"] as JsonArray);
             ownerArgs = OwnerArgs(member);
         }
-        parameters ??= ReadTypes(node["sig"] as JsonArray) ?? ReadTypes(node["argTypes"] as JsonArray);
+        // NetInteropBinding carries the selected declaration here until the final MemberRef is materialized.
+        parameters ??= ReadTypes(node["resolvedMemberParams"] as JsonArray)
+            ?? ReadTypes(node["sig"] as JsonArray) ?? ReadTypes(node["argTypes"] as JsonArray);
         if (parameters == null) return null;
         var methodArgs = MethodArgs(node);
         return parameters.Select(p => Close(p, ownerArgs ?? CallOwner(node)?.Args, methodArgs)).ToArray();

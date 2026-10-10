@@ -214,7 +214,7 @@ static class NullableRepresentationMaterialization
                         NullableBodyDispatch.Build(owner.Declaration, source, method.Declaration, frame, methodFrame,
                             method.Body, (helper, helperFrame) => {
                                 Rewrite(helper, Mapping(frame, helperFrame, ownerName), methods, DeclarationMapping);
-                                AppendParameters(helper, helperFrame, policy: policy);
+                                AppendParameters(helper, helperFrame, policy: policy, bodyOnlyStorage: true);
                                 helper[NullableRepresentationTypes.MethodFrameKey] = helperFrame.ToJson().ToJsonString();
                             });
                 }
@@ -283,7 +283,7 @@ static class NullableRepresentationMaterialization
         AppendParameters(declaration, frame, "method");
 
     static void AppendParameters(JsonObject declaration, NullableRepresentationFrame frame, string scope = "method",
-        GenericRepresentationPolicy policy = null)
+        GenericRepresentationPolicy policy = null, bool bodyOnlyStorage = false)
     {
         if (frame.PhysicalArity == 0) return;
         var source = (JsonArray)declaration["typeParams"];
@@ -327,8 +327,25 @@ static class NullableRepresentationMaterialization
                     || function.Ctx?.Any(Contains) == true,
                 _ => false,
             };
-            var publishedSlot = new[] { "params", "ret", "fields", "properties" }
+            // A body-dispatch helper's storage companions are deliberately instantiated with object.
+            // Its private value signature does not turn an erased dispatch fact into a CLR constraint.
+            var publishedSlot = !bodyOnlyStorage && new[] { "params", "ret", "fields", "properties" }
                 .Any(key => Mentions(declaration[key]));
+            if (publishedSlot)
+            {
+                // The native/logical value and its storage face share the source classifier
+                // bound. Preserve that erased classifier on both: an addressed value uses
+                // the ordinary slot, including constrained dispatch on a mutable struct.
+                var ordinary = frame.Variable(new TypeNode.Tv(scope, sourceIndex),
+                    NullableRepresentationFrame.Role.Ordinary);
+                var parameter = expanded[ordinary.I] as JsonObject;
+                if (parameter == null)
+                    expanded[ordinary.I] = parameter = new JsonObject { ["name"] = expanded[ordinary.I].DeepClone() };
+                if (parameter["constraints"] is not JsonArray constraints)
+                    parameter["constraints"] = constraints = new JsonArray();
+                foreach (var bound in projected)
+                    if (!constraints.Select(TypeJson.Read).Contains(bound)) constraints.Add(TypeJson.Write(bound));
+            }
             expanded[variable.I] = new JsonObject {
                 ["name"] = expanded[variable.I].DeepClone(),
                 [publishedSlot ? "constraints" : FBoundStarProjectionErasure.ErasedInnerConstraintKey] =
@@ -562,6 +579,7 @@ static class NullableRepresentationMaterialization
                 }
                 var childPosition = key switch {
                     "type" when kind == null && mapping.IsNativeField(obj) => NullableGenericErasure.Pos.Argument,
+                    "elem" when kind == null && mapping.IsNativeField(obj) => NullableGenericErasure.Pos.Argument,
                     "ret" when obj[PreparedClosureDefaultFrames.ReturnArgumentKey]?.GetValue<bool>() == true
                         => NullableGenericErasure.Pos.Argument,
                     "typeArgs" => NullableGenericErasure.Pos.Argument,
@@ -654,7 +672,7 @@ static class NullableRepresentationMaterialization
         var nativeOwnerRoot = JsonNode.Parse("""
         {"fileClass":"NativeOwnerSlots","types":[
           {"kind":"class","name":"ValueStore","typeParams":["T"],"fields":[
-            {"name":"value","type":{"t":"tv","scope":"type","i":0}}]},
+            {"name":"value","vis":"private","type":{"t":"tv","scope":"type","i":0}}]},
           {"kind":"class","name":"NativeAlias","typeParams":["T"],"methods":[
             {"name":"store","params":[{"name":"value","type":{"t":"tv","scope":"type","i":0}}],
              "ret":{"t":"fqn","name":"ValueStore","args":[{"t":"tv","scope":"type","i":0}]},
@@ -706,7 +724,8 @@ static class NullableRepresentationMaterialization
         var carrierBound = new TypeNode.Fqn("ValueBound", new TypeNode[] { new TypeNode.Star() });
         if (TypeJson.Read(boundMethod["typeParams"][0]["constraints"][0]) != carrierBound
             || boundMethod["typeParams"][0]["constraints"].AsArray().Count != 1
-            || boundMethod["typeParams"][1]["constraints"].AsArray().Count != 2
+            || boundMethod["typeParams"][1]["constraints"].AsArray().Count != 3
+            || !boundMethod["typeParams"][1]["constraints"].AsArray().Select(TypeJson.Read).Contains(carrierBound)
             || privateBoundMethod["typeParams"][0]["constraints"] != null
             || TypeJson.Read(privateBoundMethod["typeParams"][0][FBoundStarProjectionErasure.ErasedInnerConstraintKey][0]) != carrierBound)
             throw new InvalidOperationException("Storage bound lost its physical role, narrowed a native bound, or constrained a boxed private body");
@@ -901,7 +920,7 @@ static class NullableRepresentationMaterialization
            "body":[{"k":"return","value":{"k":"local","name":"x"}}]},
           {"name":"caller","declarationId":"caller","params":[],"ret":{"t":"fqn","name":"kotlin.Unit"},
            "body":[{"k":"callStatic","declarationId":"pass","typeArgs":[{"t":"fqn","name":"kotlin.String"}]}]}],
-         "types":[{"kind":"class","name":"Box","typeParams":["T"],"fields":[{"name":"value","type":{"t":"tv","scope":"type","i":0}}]},
+         "types":[{"kind":"class","name":"Box","typeParams":["T"],"fields":[{"name":"value","vis":"private","type":{"t":"tv","scope":"type","i":0}}]},
           {"kind":"class","name":"Store","typeParams":["T"],"fields":[{"name":"box","type":{"t":"fqn","name":"Box","args":[{"t":"nullable","of":{"t":"tv","scope":"type","i":0}}]}}]},
           {"kind":"class","name":"Derived","base":{"t":"fqn","name":"Store","args":[{"t":"fqn","name":"kotlin.String"}]}}]}
         """);
@@ -926,7 +945,7 @@ static class NullableRepresentationMaterialization
         var nested = JsonNode.Parse("""
         {"kind":"class","name":"NestedStore","semanticOwner":"Store","outerTypeParamOffset":1,
          "outerTypeParamCount":1,"typeParams":["Own","T"],"fields":[
-         {"name":"own","type":{"t":"tv","scope":"type","i":0}},
+         {"name":"own","vis":"private","type":{"t":"tv","scope":"type","i":0}},
          {"name":"captured","type":{"t":"fqn","name":"Box","args":[{"t":"nullable","of":{"t":"tv","scope":"type","i":1}}]}}]}
         """);
         ((JsonArray)root["types"]).Add(nested);

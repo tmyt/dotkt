@@ -946,7 +946,7 @@ sealed class Pipeline
         // cold lowering, then has no authoritative physical binding and falls back to the erased overload set. The
         // runtime and reference builds therefore execute the same declaration transform and physical allocation.
         var suspendCalleeRet = SuspendColdLowering.ApplyAll(staged.Select(s => s.Root).ToList(), refs,
-            localTypeFqns, attributeTopLevelOwner, localExistentialOwners, isValueFqn);
+            localTypeFqns, attributeTopLevelOwner, localExistentialOwners, isValueFqn, declarationSemanticSignatures);
 
         // PHASE 1.6 — SUSPEND LAMBDA LOWERING (bundle-6 P3 wave-2b, LIVE): replace each `newSuspendLambda`
         // node with `new <mangled>_lambdaN$sm(captures..., null)` + synthesize its SuspendLambda state machine

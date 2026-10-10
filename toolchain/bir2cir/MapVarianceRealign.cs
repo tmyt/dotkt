@@ -270,7 +270,8 @@ static class MapVarianceRealign
             try
             {
                 closedArgs = factoryFrame == null ? targetArgs
-                    : factoryFrame.Close(targetArgs, argument => argument, nullableArgument);
+                    : factoryFrame.Close(targetArgs, argument => argument, nullableArgument,
+                        argument => argument, nullableArgument);
             }
             catch (ArgumentException ex)
             {

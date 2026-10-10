@@ -5,14 +5,53 @@ import NUnit.Framework.TestAttribute
 import GenericValueInterop.GenericFrameApi
 import GenericValueInterop.NativeCell
 import GenericValueInterop.NativeValueEcho
+import GenericValueInterop.NativeBoundCounter
+import GenericValueInterop.NativeRefCtor
+import GenericValueInterop.NativeBoundedValueEcho
 import kotlin.clr.byref
 import kotlin.clr.ClrRef
+import kotlin.coroutines.*
+import roundtrip.constructorcarrier.ExportedNativeCell
+import roundtrip.constructorcarrier.StoredView
+import roundtrip.constructorcarrier.BoundCounter
+import roundtrip.constructorcarrier.boundCounterCount
 
 abstract class Anchor<S : Anchor<S>>(val tag: String)
 class Leaf<E>(tag: String) : Anchor<Leaf<E>>(tag)
 private class Stored<T>(val value: T)
 private class StoredNativeValueEcho : NativeValueEcho {
     override fun <T> Echo(value: T): T = Stored(value).value
+}
+private class StoredNativeBoundedValueEcho : NativeBoundedValueEcho {
+    override fun <T : BoundCounter<Int>> Echo(value: T): T = Stored(value).value
+}
+private fun <T : BoundCounter<Int>> readBoundCounter(value: T): Int = value.count()
+private fun <T> replaceThroughConstructor(value: T, replacement: T): T {
+    var slot = value
+    NativeRefCtor<T>(byref(slot), replacement)
+    return slot
+}
+private class NativeConstructorField<T>(private var value: T) {
+    fun replace(replacement: T): T {
+        NativeRefCtor<T>(byref(value), replacement)
+        return value
+    }
+}
+private class NativeLocalFunctionField<T>(private var value: T) {
+    fun replace(replacement: T): T {
+        fun assign(destination: ClrRef<T>, next: T) { destination.value = next }
+        assign(byref(value), replacement)
+        return value
+    }
+}
+private class NativeLocationPause {
+    var pending: Continuation<Unit>? = null
+    suspend fun pause() { suspendCoroutine<Unit> { pending = it } }
+}
+private suspend fun <T> replaceAfterSuspension(value: T, replacement: T, gate: NativeLocationPause): T {
+    gate.pause()
+    GenericFrameApi.SetAndObserve<T>(byref(value), byref(value), replacement)
+    return value
 }
 private fun <T : Appendable> appendNativeBound(value: T): T {
     value.append('x')
@@ -29,6 +68,45 @@ private class NativeFieldStore<T>(var value: T) {
         return value
     }
 }
+
+private class NativeConstructorStore<T>(value: T, replacement: T) {
+    val original = Stored(value)
+    val result: Stored<T>
+    init {
+        var slot = value
+        GenericFrameApi.SetAndObserve<T>(byref(slot), byref(slot), replacement)
+        result = Stored(slot)
+    }
+}
+
+private fun <T> replaceParameter(value: T, replacement: T): T {
+    GenericFrameApi.SetAndObserve<T>(byref(value), byref(value), replacement)
+    return value
+}
+
+private fun <T, R : StoredView<T>> replaceBoundParameter(value: R, replacement: R): T {
+    val before = value.value
+    GenericFrameApi.SetAndObserve<R>(byref(value), byref(value), replacement)
+    check(value.value != before)
+    return value.value
+}
+
+private fun <T> replaceCaptured(value: T, replacement: T): T {
+    var slot = value
+    val read = { slot }
+    GenericFrameApi.SetAndObserve<T>(byref(slot), byref(slot), replacement)
+    check(read() == replacement)
+    return slot
+}
+
+private fun <R : BoundCounter<Int>> mutateBoundParameter(value: R): R {
+    GenericFrameApi.SetAndObserve<R>(byref(value), byref(value), value)
+    value.increment()
+    return value
+}
+
+private fun <T> replaceExportedField(cell: ExportedNativeCell<T>, replacement: T): T =
+    GenericFrameApi.SetAndObserve<T>(byref(cell.value), byref(cell.value), replacement)
 
 private fun <S : Anchor<S>> replace(value: S, replacement: S): String {
     var slot = value
@@ -112,6 +190,41 @@ private class StoredCollection<T>(value: T) : AbstractMutableCollection<T>() {
 
 class NativeValueFramePreservationTests {
     @TestAttribute
+    fun nativeRefInAConstructorPreservesTheOriginalStoredValue() {
+        val result = NativeConstructorStore("before", "after")
+        check(result.original.value == "before")
+        check(result.result.value == "after")
+        check(NativeConstructorStore(10, 42).result.value == 42)
+    }
+
+    @TestAttribute
+    fun nativeRefToAValueParameterUsesOneAddressableLocation() {
+        check(replaceParameter("before", "after") == "after")
+        check(replaceParameter(10, 42) == 42)
+        check(replaceBoundParameter(roundtrip.constructorcarrier.Storage("before"),
+            roundtrip.constructorcarrier.Storage("after")) == "after")
+        check(boundCounterCount(mutateBoundParameter(NativeBoundCounter(0))) == 1)
+    }
+
+    @TestAttribute
+    fun nativeRefMutatesTheSameLocationObservedByACapture() {
+        check(replaceCaptured("before", "after") == "after")
+        check(replaceCaptured(10, 42) == 42)
+    }
+
+    @TestAttribute
+    fun importedNativeFieldDoesNotUseItsPrivateStorageCompanion() {
+        val cell = ExportedNativeCell("before")
+        check(replaceExportedField(cell, "after") == "after")
+        check(cell.value == "after")
+        check(cell.original == "before")
+        val number = ExportedNativeCell(10)
+        check(replaceExportedField(number, 42) == 42)
+        check(number.value == 42)
+        check(number.original == 10)
+    }
+
+    @TestAttribute
     fun nativeGenericDispatchKeepsItsPublishedFrame() {
         val echo: NativeValueEcho = StoredNativeValueEcho()
         check(echo.Echo("hello") == "hello")
@@ -154,6 +267,40 @@ class NativeValueFramePreservationTests {
     @TestAttribute
     fun nativeRefInsideAnUnboundedHelperPreservesItsExactSlot() {
         check(replaceUnbounded("initial", "replacement") == "replacement")
+    }
+
+    @TestAttribute
+    fun aNativeConstructorAddressesTheOriginalGenericLocation() {
+        check(replaceThroughConstructor("initial", "replacement") == "replacement")
+        check(replaceThroughConstructor(10, 42) == 42)
+        check(NativeConstructorField("initial").replace("replacement") == "replacement")
+    }
+
+    @TestAttribute
+    fun aLocalFunctionAddressesTheOriginalGenericField() {
+        check(NativeLocalFunctionField("initial").replace("replacement") == "replacement")
+        check(NativeLocalFunctionField(10).replace(42) == 42)
+    }
+
+    @TestAttribute
+    fun aBoundedNativeOverrideKeepsItsPrivateStorageBodyUnconstrained() {
+        check(readBoundCounter(StoredNativeBoundedValueEcho().Echo(NativeBoundCounter(42))) == 42)
+    }
+
+    @TestAttribute
+    fun nativeRefAndOutKeepOneLocationAcrossSuspension() {
+        val gate = NativeLocationPause()
+        var completed = false
+        val block: suspend () -> Unit = {
+            check(replaceAfterSuspension("initial", "replacement", gate) == "replacement")
+        }
+        block.startCoroutine(object : Continuation<Unit> {
+            override val context: CoroutineContext = EmptyCoroutineContext
+            override fun resumeWith(result: Result<Unit>) { result.getOrThrow(); completed = true }
+        })
+        check(!completed)
+        gate.pending!!.resume(Unit)
+        check(completed)
     }
 
     @TestAttribute

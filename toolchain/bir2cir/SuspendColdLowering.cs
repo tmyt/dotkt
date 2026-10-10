@@ -71,6 +71,49 @@ static partial class SuspendColdLowering
     static ReferenceMetadataIndex _refs;
     static ValueTypeOracle _isValueFqn = _ => false;
     static IReadOnlySet<string> _localTypeFqns;
+    static (string Owner, JsonObject Method, JsonObject Source)[] _localHelperDeclarations;
+
+    static JsonObject BindAuthoredStartCall(JsonObject call, int sourceArity, TypeNode[] sourceParameters)
+    {
+        var owner = TypeJson.OwnerName(call["owner"]);
+        var name = Str(call["method"]);
+        NullableRepresentationFrame frame;
+        TypeNode[] parameters;
+        string identity;
+        if (_localTypeFqns.Contains(owner))
+        {
+            // The self-build's local declaration wins over the shipped reference twin.
+            var matches = _localHelperDeclarations.Where(entry => entry.Owner == owner
+                && Bool(entry.Method["static"])
+                && (Str(entry.Method["declarationSourceName"]) ?? Str(entry.Method["name"])) == name
+                && (NullableRepresentationTypes.DeclarationMethodFrame(entry.Method)?.SourceArity
+                    ?? (entry.Method["typeParams"] as JsonArray)?.Count ?? 0) == sourceArity
+                && entry.Source["params"] is JsonArray declared && declared.Count == sourceParameters.Length
+                && declared.Select((parameter, index) => ReferenceMetadataIndex.SourceDeclarationDescribesCall(
+                    TypeJson.Read(parameter), sourceParameters[index])).All(match => match)).ToArray();
+            if (matches.Length != 1)
+                throw new InvalidOperationException($"Compiler-authored helper '{owner}.{name}' has {matches.Length} exact local source declarations");
+            var method = matches[0].Method;
+            identity = Str(method[DeclarationIdentityBinding.Key]);
+            frame = NullableRepresentationTypes.DeclarationMethodFrame(method);
+            parameters = ((JsonArray)method["params"]).OfType<JsonObject>().Select(p => TypeJson.Read(p["type"])).ToArray();
+        }
+        else
+        {
+            var helper = _refs.AuthoredKotlinHelper(owner, name, sourceArity, sourceParameters);
+            identity = helper.DeclarationId;
+            frame = helper.NullableFrame;
+            parameters = helper.ParamTypeNodes;
+        }
+        var sourceArguments = Enumerable.Repeat(AnyTn, sourceArity).ToArray();
+        var arguments = frame == null ? sourceArguments : frame.Close(sourceArguments, type => type,
+            type => NullableGenericErasure.EraseArgument(new TypeNode.Nullable(type), _isValueFqn),
+            type => type, type => NullableGenericErasure.EraseArgument(new TypeNode.Nullable(type), _isValueFqn));
+        call[DeclarationIdentityBinding.Key] = identity;
+        call["typeArgs"] = new JsonArray(arguments.Select(Tw).ToArray());
+        call["sig"] = new JsonArray(parameters.Select(BirTypeLowering.CanonicalPhysicalSlotType).Select(Tw).ToArray());
+        return call;
+    }
 
     // APP-build gate for cold-lowering an `inline suspend fun`'s STANDALONE body. In an app build an inline suspend fun
     // is a user/kotlinx WRAPPER (e.g. `suspendCancellableCoroutine`, or the issue-#22 `mySuspend`) whose standalone body
@@ -347,11 +390,18 @@ static partial class SuspendColdLowering
     // lambda's `h()` await falls back to kotlin.Any and the value is never unboxed -> `object + int`).
     public static IReadOnlyDictionary<string, TypeNode> ApplyAll(IReadOnlyList<JsonNode> roots,
         ReferenceMetadataIndex refs, IReadOnlySet<string> localTypeFqns, bool appBuild,
-        IReadOnlyDictionary<string, string> localExistentialOwners, ValueTypeOracle isValueFqn)
+        IReadOnlyDictionary<string, string> localExistentialOwners, ValueTypeOracle isValueFqn,
+        IReadOnlyDictionary<string, JsonObject> sourceSignatures = null)
     {
         _refs = refs;   // #10: EmitAwaitPoint reads it to resolve the .NET awaitable pattern for each `.await()`.
         _isValueFqn = isValueFqn ?? (_ => false);
         _localTypeFqns = localTypeFqns;
+        _localHelperDeclarations = roots.OfType<JsonObject>().SelectMany(root =>
+            (root["methods"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()
+                .Where(method => Str(method[DeclarationIdentityBinding.Key]) is string id
+                    && sourceSignatures?.ContainsKey(id) == true)
+                .Select(method => (Str(root["fileClass"]), method,
+                    sourceSignatures[Str(method[DeclarationIdentityBinding.Key])]))).ToArray();
         _appBuild = appBuild;
         const string continuation = "kotlin.coroutines.Continuation";
         var continuationCarrier = localExistentialOwners.GetValueOrDefault(continuation);
@@ -1578,6 +1628,10 @@ static partial class SuspendColdLowering
             // flatten/hoist above already ran) and BEFORE any storage decision, because it IS the storage
             // decision for every `{k:var}`: a local that is dead across every suspension point stays a MoveNext
             // local, which is both cheaper and the only way a byref-like value can live in a suspend function.
+            // Select addressable value storage before liveness turns locals into state-machine fields.
+            // The call's declaration signature supplies the native element, just as for a non-suspend body;
+            // spilling the chosen local preserves that same location across suspension.
+            PhysicalValueCoercion.AllocateNativeLocals(body, _params, body);
             var live = SuspendLiveness.Analyze(body);
 
             FieldStorage(StateLabelField, IntTn, RoleMachinery, lives: true, across: null);
@@ -3425,41 +3479,35 @@ static partial class SuspendColdLowering
                 var elems = new JsonArray();
                 foreach (var a in invokeArgs) elems.Add(a);
                 var argArray = new JsonObject { ["k"] = "newArray", ["elem"] = Tw(AnyTn), ["elems"] = elems };
-                return new JsonObject
+                return BindAuthoredStartCall(new JsonObject
                 {
                     ["k"] = "callStatic",
                     ["owner"] = Tn(StartSuspendOwner),
                     ["method"] = "startSuspendUninterceptedOrReturnN",
-                    ["typeArgs"] = new JsonArray { Tw(AnyTn) },        // T (result) — erased
-                    // fn:Any, args:Array<Any?>, completion:Continuation<Any> — discriminates the N-arg overload.
-                    ["sig"] = new JsonArray { Tw(AnyTn), Tw(new TypeNode.Array(new TypeNode.Nullable(AnyTn))), ContAny() },
                     ["args"] = new JsonArray { recvRw, argArray, completion },
                     ["ret"] = Tw(AnyTn),
-                };
+                }, 1, new TypeNode[] { new TypeNode.Nullable(AnyTn),
+                    new TypeNode.Array(new TypeNode.Nullable(AnyTn)),
+                    new TypeNode.Fqn(ContinuationFqn, new TypeNode[] { new TypeNode.Tv("method", 0) }) });
             }
 
             // args = fn, [receiver], completion ; the helper is generic (<T> arity-0 / <R,T> arity-1), erased to Any.
             var args = new JsonArray { recvRw };
             foreach (var a in invokeArgs) args.Add(a);
             args.Add(completion);
-            var typeArgs = new JsonArray { Tw(AnyTn) };            // T (result) — erased
-            if (invokeArgs.Count == 1) typeArgs.Add(Tw(AnyTn));    // R (receiver) — erased
-            // sig discriminates the fixed-arity overloads (2/3 params): fn:Any, [receiver:Any], completion:Continuation.
-            // Structured TypeNode array (#37 m3b).
-            var sigArr = new JsonArray { Tw(AnyTn) };
-            for (var i = 0; i < invokeArgs.Count; i++) sigArr.Add(Tw(AnyTn));
-            sigArr.Add(ContAny());
+            var sourceParameters = new List<TypeNode> { new TypeNode.Nullable(AnyTn) };
+            if (invokeArgs.Count == 1) sourceParameters.Add(new TypeNode.Tv("method", 0));
+            sourceParameters.Add(new TypeNode.Fqn(ContinuationFqn,
+                new TypeNode[] { new TypeNode.Tv("method", invokeArgs.Count) }));
 
-            return new JsonObject
+            return BindAuthoredStartCall(new JsonObject
             {
                 ["k"] = "callStatic",
                 ["owner"] = Tn(StartSuspendOwner),
                 ["method"] = "startSuspendUninterceptedOrReturn",
-                ["typeArgs"] = typeArgs,
-                ["sig"] = sigArr,
                 ["args"] = args,
                 ["ret"] = Tw(AnyTn),
-            };
+            }, invokeArgs.Count + 1, sourceParameters.ToArray());
         }
 
         // ---- declaration synthesis ----

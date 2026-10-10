@@ -170,6 +170,7 @@ static partial class NullableRepresentationDemand
                 if (owner.IsRefCell)
                 {
                     if (policy?.OwnsValueSlots(Text(owner.Declaration["name"])) == true
+                        && policy.IsNativeField(owner.Declaration) != true
                         && TypeJson.Read(owner.Declaration["elem"]) is TypeNode.Tv cellVariable)
                         owner.Signature.Add(cellVariable, RepresentationRole.Storage);
                     Scan(owner.Declaration["elem"], owner.Signature, typeFrames, methodFrames, localFrames, policy: policy);
@@ -181,6 +182,7 @@ static partial class NullableRepresentationDemand
                         // the source argument retained for native generic identity. Demand only the
                         // directly stored variable; callers inherit that demand through this frame.
                         if (policy?.OwnsValueSlots(Text(owner.Declaration["name"])) == true
+                            && policy.IsNativeField(slot) != true
                             && TypeJson.Read(slot["type"]) is TypeNode.Tv variable)
                             owner.Signature.Add(variable, RepresentationRole.Storage);
                         Scan(slot["type"], owner.Signature, typeFrames, methodFrames, localFrames, policy: policy);

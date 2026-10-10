@@ -1247,6 +1247,26 @@ static partial class ClrMemberResolution
     {
         if (a is TypeNode.Oblivious ob) return Applies(ob.Of, p, ownerArgs);
         p = AliasResolve(p);
+        // dll2klib exposes a current Kotlin declaration's source arguments, even
+        // inside a native signature. Compare that projection through its explicit
+        // frame, then retain the winning CLR declaration's COMPLETE signature.
+        // Never reconstruct companion arguments from the source projection.
+        TypeNode ProjectFrame(TypeNode type) => type switch {
+            TypeNode.Fqn { Args: { } args } named => new TypeNode.Fqn(
+                _refs.PhysicalTypeNames.GetValueOrDefault(named.Name) ?? named.Name,
+                (_refs.NullableTypeFrames.TryGetValue(named.Name, out var frame)
+                    && args.Length == frame.PhysicalArity ? frame.OrdinaryArguments(args) : args)
+                    .Select(ProjectFrame).ToArray()),
+            TypeNode.ByRef reference => new TypeNode.ByRef(ProjectFrame(reference.Of)),
+            TypeNode.Array array => new TypeNode.Array(ProjectFrame(array.Elem), array.Rank, array.SzArray),
+            TypeNode.Nullable nullable => new TypeNode.Nullable(ProjectFrame(nullable.Of)),
+            TypeNode.Oblivious oblivious => new TypeNode.Oblivious(ProjectFrame(oblivious.Of)),
+            _ => type,
+        };
+        var physical = MemberSigOf(p);
+        var projected = ProjectFrame(physical);
+        if (projected != physical && SignatureValueTypes.Of(a) == SignatureValueTypes.Of(projected))
+            return MatchKind.Exact;
         // An unmanaged pointer has its own recursive signature identity. Handle it before the concrete-type fast
         // path: `MapMlc` can materialize ordinary `int*`, but the CIR spelling `void*` deliberately uses the
         // primitive token `void`, which is not a resolvable nominal TypeRef. The semantic KLIB marker and the

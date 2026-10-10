@@ -37,7 +37,20 @@ sealed class GenericRepresentationPolicy
             var owner = Text(declaration["name"]) ?? Text(declaration["fileClass"]);
             foreach (var field in (declaration["fields"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
                 if (owner != null && Text(field["name"]) is string name)
+                {
                     fields.Add((owner, name), field);
+                    // A published field is a native location even when this module never takes its address.
+                    // Property backing fields are private; compiler-generated captures are not user exports.
+                    if (Text(field["vis"]) != "private"
+                        && declaration["generated"]?.GetValue<bool>() != true
+                        && TypeJson.Read(field["type"]) is TypeNode.Tv)
+                    {
+                        _nativeFields.Add(field);
+                        _nativeFieldNames.Add((owner, name));
+                    }
+                }
+            foreach (var cell in (declaration["refTypes"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
+                if (Text(cell["name"]) is string cellOwner) fields.Add((cellOwner, "v"), cell);
             foreach (var child in (declaration["types"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
                 IndexFields(child);
         }
@@ -51,8 +64,8 @@ sealed class GenericRepresentationPolicy
                 // The selected declaration supplies the managed-reference shape.
                 // Decide field layout while source bodies still exist in both
                 // reference and runtime builds, not after reference-body removal.
-                if (Text(obj["k"]) is "callStatic" or "callInstance" or "constrainedCall"
-                    && (obj["shapeTypes"] ?? obj["sig"]) is JsonArray parameters
+                if (Text(obj["k"]) is "callStatic" or "callInstance" or "constrainedCall" or "callLocal" or "new"
+                    && (obj["shapeTypes"] ?? obj["sig"] ?? obj["memberSignature"] ?? obj["argTypes"]) is JsonArray parameters
                     && obj["args"] is JsonArray arguments && parameters.Count == arguments.Count)
                     for (var i = 0; i < parameters.Count; i++)
                     {
@@ -63,7 +76,7 @@ sealed class GenericRepresentationPolicy
                             || TypeJson.OwnerName(location["ownerType"] ?? location["owner"]) is not string owner
                             || Text(location["name"]) is not string name
                             || !fields.TryGetValue((owner, name), out var declaration)
-                            || TypeJson.Read(declaration["type"]) is not TypeNode.Tv) continue;
+                            || TypeJson.Read(declaration["type"] ?? declaration["elem"]) is not TypeNode.Tv) continue;
                         _nativeFields.Add(declaration);
                         _nativeFieldNames.Add((owner, name));
                     }
@@ -112,7 +125,7 @@ sealed class GenericRepresentationPolicy
         var fieldRoot = JsonNode.Parse("""
         {"fileClass":"FieldFrames","types":[{"kind":"class","name":"FieldFrame","typeParams":["T"],
           "fields":[{"name":"native","type":{"t":"tv","scope":"type","i":0}},
-                    {"name":"ordinary","type":{"t":"tv","scope":"type","i":0}}],
+                    {"name":"ordinary","vis":"private","type":{"t":"tv","scope":"type","i":0}}],
           "methods":[{"name":"pass","params":[],"ret":{"t":"fqn","name":"kotlin.Unit"},"body":[
             {"k":"callStatic","sig":[{"t":"byRef","of":{"t":"tv","scope":"method","i":0}}],
              "typeArgs":[{"t":"tv","scope":"type","i":0}],"args":[
