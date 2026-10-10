@@ -14,19 +14,23 @@ static class DeclarationSignatureIdentity
     const string BoundsKey = "genericParameterSignatureBounds";
     const string NominalKey = "nominalParameterSignatureIdentity";
     static readonly Dictionary<string, JsonObject> Markers = new(StringComparer.Ordinal);
+    static string MarkerOwner;
 
     public static void Capture(IEnumerable<JsonNode> roots)
     {
         Markers.Clear();
         var rootList = roots.ToArray();
-        void Walk(JsonNode node)
+        void Walk(JsonNode node, string owner)
         {
             if (node is JsonObject obj)
             {
+                if (obj["methods"] is JsonArray && Text(obj["name"]) is string declarationOwner)
+                    owner = declarationOwner;
                 if (obj["params"] is JsonArray parameters)
                     foreach (var parameter in parameters.OfType<JsonObject>())
                     {
                         if (TypeJson.Read(parameter["type"]) is not TypeNode logicalType) continue;
+                        MarkerOwner = owner;
                         parameter[NominalKey] = TypeJson.Write(Encode(logicalType));
                         var variables = obj["typeParams"] as JsonArray;
                         var bounds = MethodVariables(logicalType)
@@ -39,17 +43,29 @@ static class DeclarationSignatureIdentity
                         if (bounds.Length > 0)
                             parameter[BoundsKey] = new JsonArray(bounds.Select(TypeJson.Write).ToArray());
                     }
-                foreach (var child in obj.Select(pair => pair.Value).ToArray()) Walk(child);
+                foreach (var child in obj.Select(pair => pair.Value).ToArray()) Walk(child, owner);
             }
             else if (node is JsonArray array)
-                foreach (var child in array) Walk(child);
+                foreach (var child in array) Walk(child, owner);
         }
-        foreach (var root in rootList) Walk(root);
+        foreach (var root in rootList) Walk(root, Text((root as JsonObject)?["fileClass"]));
         if (rootList.FirstOrDefault() is JsonObject first)
         {
             if (first["types"] is not JsonArray types) first["types"] = types = new JsonArray();
             foreach (var marker in Markers.Values) types.Add(marker.DeepClone());
         }
+    }
+
+    public static void RemoveCapturedFacts(JsonNode node)
+    {
+        if (node is JsonObject obj)
+        {
+            obj.Remove(BoundsKey);
+            obj.Remove(NominalKey);
+            foreach (var child in obj.Select(pair => pair.Value)) RemoveCapturedFacts(child);
+        }
+        else if (node is JsonArray array)
+            foreach (var child in array) RemoveCapturedFacts(child);
     }
 
     public static IReadOnlyDictionary<string, JsonArray> Plan(IEnumerable<JsonNode> roots)
@@ -204,7 +220,11 @@ static class DeclarationSignatureIdentity
 
     static TypeNode Marker(string meaning, TypeNode[] arguments)
     {
-        var digest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(meaning + ":" + arguments.Length)));
+        // These are local TypeDefs, not a shared ABI vocabulary. Their authoritative
+        // source owner scopes the naming domain so unrelated libraries do not define
+        // the same private type name. Every member of one collision family shares it.
+        var digest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
+            MarkerOwner + "|" + meaning + ":" + arguments.Length)));
         var name = "DotKt.Runtime.CompilerServices.$Signature$" + digest;
         if (!Markers.ContainsKey(name))
             Markers[name] = new JsonObject {
@@ -274,6 +294,10 @@ static class DeclarationSignatureIdentity
             {"t":"fqn","name":"Probe.SecondAlias"}}],"ret":{"t":"fqn","name":"void"},"body":[]}]}
         """);
         Capture(new[] { aliases });
+        var sourceCarrier = aliases.DeepClone();
+        RemoveCapturedFacts(sourceCarrier);
+        if (sourceCarrier["methods"].AsArray().Any(method => method["params"][0][NominalKey] != null))
+            throw new InvalidOperationException("Physical signature capture leaked into a source carrier");
         foreach (var method in aliases["methods"].AsArray())
             method["params"][0]["type"] = TypeJson.Fqn("System.Object");
         var aliasPlan = Plan(new[] { aliases });
@@ -283,6 +307,6 @@ static class DeclarationSignatureIdentity
         if (aliases["methods"].AsArray().Any(method => SignatureValueTypes.Of(
                 TypeJson.Read(method["params"][0]["type"])) is not TypeNode.Fqn { Name: "System.Object" }))
             throw new InvalidOperationException("Nominal signature identity changed a CLR value slot");
-        Console.Error.WriteLine("[declaration signatures] self-test OK (source bounds, nominal aliases, twin modes, value/signature separation)");
+        Console.Error.WriteLine("[declaration signatures] self-test OK (source bounds, nominal aliases, twin modes, value/signature separation, source carriers)");
     }
 }

@@ -1173,8 +1173,10 @@ and `Sequence<T>` both project to CLR `IEnumerable<T>` without becoming the same
 collision set, `bir2cir` represents the distinguishing source types structurally with compiler-private nominal
 signature types and places them in optional custom modifiers on the corresponding
 parameter. These types describe declaration identity, not values: they do not replace generic arguments, impose new
-runtime constraints, or change parameter storage. Their structural names are deterministic; declaration order does
-not choose a winner. Nullable reference wrappers are not signature discriminators.
+runtime constraints, or change parameter storage. Their structural names are deterministic within the authoritative
+source owner's naming domain, so unrelated producers do not introduce identical private TypeDefs; declaration order
+does not choose a winner. Nullable reference wrappers are not signature discriminators. These temporary physical
+capture facts are removed before serializing a source-level inline carrier.
 
 This extends the explicit-naming contract for distinguishable source signatures without modifying their CLR value
 representation. The same rule is applied to the selected suspend cold entry and its calls. Kotlin consumers recover

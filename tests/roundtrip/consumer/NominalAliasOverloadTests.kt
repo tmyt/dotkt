@@ -3,6 +3,7 @@ package roundtriptests.nominalaliasoverloads
 import NUnit.Framework.TestAttribute
 import kotlin.coroutines.*
 import roundtrip.nominalaliasoverloads.*
+import roundtrip.nominalaliastwin.route as twinRoute
 
 private class Completion : Continuation<Unit> {
     override val context: CoroutineContext get() = EmptyCoroutineContext
@@ -15,6 +16,25 @@ private class Completion : Continuation<Unit> {
 }
 
 class NominalAliasOverloadTests {
+    @TestAttribute
+    fun signatureMarkersComposeAcrossTwoProducerDlls() {
+        val values: Iterable<Int> = listOf(1)
+        val sequence = sequenceOf(2)
+        check(route(values) == 11 && route(sequence) == 22)
+        check(twinRoute(values) == 51 && twinRoute(sequence) == 62)
+    }
+
+    @TestAttribute
+    fun explicitSharedClrNamesRetainBothNominalSourceTypes() {
+        check(namedIterable(listOf(1)) == 71)
+        check(namedSequence(sequenceOf(2)) == 82)
+    }
+
+    @TestAttribute
+    fun inlineSourceCarrierRemainsConsumableAcrossDlls() {
+        check(invokeAliasBlock { 91 } == 91)
+    }
+
     @TestAttribute
     fun sameDllCallsKeepTheirSelectedNominalDeclaration() {
         check(localAliasCalls())

@@ -1,9 +1,17 @@
 package roundtrip.nominalaliasoverloads
 
 import kotlin.coroutines.*
+import kotlin.clr.ClrName
 
 fun route(value: Iterable<Int>): Int = 11
 fun route(value: Sequence<Int>): Int = 22
+
+@ClrName("sharedNominalRoute")
+fun namedIterable(value: Iterable<Int>): Int = 71
+@ClrName("sharedNominalRoute")
+fun namedSequence(value: Sequence<Int>): Int = 82
+
+inline fun invokeAliasBlock(block: () -> Int): Int = block()
 
 fun <T> Iterable<T>.keepNominal(): Iterable<T> = this
 fun <T> Sequence<T>.keepNominal(): Sequence<T> = this

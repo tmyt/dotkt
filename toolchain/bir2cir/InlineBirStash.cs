@@ -141,6 +141,7 @@ sealed class InlineBirIndex
         var seenLifted = new HashSet<string>(StringComparer.Ordinal);
         CollectLifted(payload["body"], fileClass, generatedMethods, seenLifted, lifted);
         payload["lifted"] = lifted;
+        DeclarationSignatureIdentity.RemoveCapturedFacts(payload);
         if (Str(payload[DeclarationIdentityBinding.Key]) is string declarationIdKey
             && !ByDeclarationId.TryAdd(declarationIdKey, (JsonObject)payload.DeepClone()))
             throw new InvalidOperationException($"duplicate inline declaration identity '{declarationIdKey}'");
