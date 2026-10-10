@@ -57,6 +57,7 @@ static class Bir2Cir
                 AliasVarianceRepresentation.SelfTest();
                 ReferenceMetadataIndex.SelfTest();
                 NullableTvErasureCallRealign.SelfTest();
+                MapVarianceRealign.SelfTest();
                 DriverOptions.SelfTest();
                 return 0;
             }

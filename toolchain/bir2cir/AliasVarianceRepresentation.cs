@@ -9,15 +9,31 @@ using DotKt.Bir;
 static class AliasVarianceRepresentation
 {
     internal static bool RequiresErasure(TypeNode.Fqn application, ReferenceMetadataIndex refs,
-        JsonArray sourceParameters = null, string binding = null)
+        JsonArray sourceParameters = null, string binding = null, NullableRepresentationFrame sourceFrame = null)
     {
         if (application.Args is not { Length: > 0 } arguments) return false;
         if (binding == null && !refs.Aliases.TryGetValue(application.Name, out binding)) return false;
-        sourceParameters ??= refs.OwnerTypeParamDeclarations(application.Name);
+        if (sourceParameters == null)
+        {
+            sourceParameters = refs.OwnerTypeParamDeclarations(application.Name);
+            sourceFrame ??= refs.NullableTypeFrames.GetValueOrDefault(application.Name);
+        }
         if (sourceParameters?.Count != arguments.Length) return false;
-        var physical = refs.ResolveNetType(binding, arguments.Length);
+        var ordinary = OrdinaryParameters(sourceParameters, sourceFrame);
+        var physical = refs.ResolveNetType(binding, ordinary.Count);
         if (physical == null || !physical.IsGenericType || physical.IsValueType) return false;
-        return HasVarianceMismatch(sourceParameters, physical);
+        return HasVarianceMismatch(ordinary, physical);
+    }
+
+    // Companions describe representations of source arguments, not new CLR
+    // alias parameters. The explicit declaration frame owns this correspondence.
+    static JsonArray OrdinaryParameters(JsonArray parameters, NullableRepresentationFrame frame)
+    {
+        if (frame == null) return parameters;
+        if (parameters.Count != frame.PhysicalArity)
+            throw new InvalidOperationException("Alias variance declaration disagrees with its representation frame");
+        return new JsonArray(Enumerable.Range(0, frame.SourceArity)
+            .Select(index => parameters[frame.SourcePosition(index)]?.DeepClone()).ToArray());
     }
 
     static bool HasVarianceMismatch(JsonArray sourceParameters, Type physical)
@@ -51,6 +67,10 @@ static class AliasVarianceRepresentation
             || HasVarianceMismatch(contravariant, typeof(IComparable<>))
             || HasVarianceMismatch(invariant, typeof(System.Collections.Generic.IList<>)))
             throw new InvalidOperationException("Alias variance projection confused Kotlin and CLR variance");
+        var framedMap = JsonNode.Parse("""["$storage0", "K", "$storage1", {"name":"V","variance":"out"}]""").AsArray();
+        var mapFrame = new NullableRepresentationFrame(2, Array.Empty<int>(), new[] { 2, 0, 3, 1 }, new[] { 0, 1 });
+        if (!HasVarianceMismatch(OrdinaryParameters(framedMap, mapFrame), typeof(System.Collections.Generic.IDictionary<,>)))
+            throw new InvalidOperationException("Alias variance treated storage companions as CLR alias parameters");
         Console.WriteLine("[alias variance] self-test OK (invariant target, covariant/contravariant agreement)");
     }
 }

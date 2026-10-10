@@ -699,7 +699,15 @@ static class PhysicalValueCoercion
         var genericObjectProjection = declared is TypeNode.Tv
             && actual is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" }
             && Str(expression["k"]) is "callStatic" or "callInstance" or "constrainedCall";
-        if (!genericObjectProjection && !CollectionViewFaces.IsViewSeam(actual, declared)) return expression;
+        // A CLR invocation's result hint is caller-relative. Its exact closed
+        // memberRef may return ordinary T while the Kotlin value uses Storage(T).
+        // State that conversion explicitly, with the native result on the inner
+        // invocation; otherwise an enclosing cast appears to be an identity cast.
+        var nativeGenericProjection = declared is TypeNode.Tv && actual is TypeNode.Tv
+            && !declared.Equals(actual)
+            && Str(expression["k"]) is "clrStatic" or "clrInstance" or "clrGenericStatic" or "clrGenericInstance";
+        if (!genericObjectProjection && !nativeGenericProjection
+            && !CollectionViewFaces.IsViewSeam(actual, declared)) return expression;
         var physical = expression.DeepClone().AsObject();
         // The inner expression leaves the exact member/declaration result on the CLR stack. Once the caller-facing
         // view moves to the explicit outer cast, every surviving inner result stamp must describe that physical value;

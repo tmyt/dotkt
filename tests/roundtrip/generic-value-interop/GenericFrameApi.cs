@@ -25,3 +25,9 @@ public static class GenericFrameApi
 
     public static ref T Reference<T>(ref T value) => ref value;
 }
+
+public sealed class NativeCell<T>(T value)
+{
+    public T Value { get; } = value;
+    public T Read() => Value;
+}

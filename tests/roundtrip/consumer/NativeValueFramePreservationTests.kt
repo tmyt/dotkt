@@ -1,13 +1,19 @@
+@file:Suppress("UNCHECKED_CAST")
 package roundtriptests.nativevalueframe
 
 import NUnit.Framework.TestAttribute
 import GenericValueInterop.GenericFrameApi
+import GenericValueInterop.NativeCell
 import kotlin.clr.byref
 import kotlin.clr.ClrRef
 
 abstract class Anchor<S : Anchor<S>>(val tag: String)
 class Leaf<E>(tag: String) : Anchor<Leaf<E>>(tag)
 private class Stored<T>(val value: T)
+private class NativeResultStore<T>(private val value: T) {
+    fun read(): T = NativeCell<T>(value).Read()
+    fun readProperty(): T = NativeCell<T>(value).Value
+}
 
 private fun <S : Anchor<S>> replace(value: S, replacement: S): String {
     var slot = value
@@ -153,5 +159,27 @@ class NativeValueFramePreservationTests {
     fun aGenericKotlinHelperPassesTheExactManagedReferenceLocation() {
         check(passReference("initial", "replacement").value == "replacement")
         check(passReference(10, 42).value == 42)
+    }
+
+    @TestAttribute
+    fun aNativeResultIsConvertedToTheKotlinStorageRole() {
+        check(NativeResultStore("value").read() == "value")
+        check(NativeResultStore(42).read() == 42)
+        check(NativeResultStore("value").readProperty() == "value")
+        check(NativeResultStore(42).readProperty() == 42)
+    }
+
+    @TestAttribute
+    fun anUncheckedKotlinCastDoesNotRelaxTheNativeLocationType() {
+        // The ordinary Kotlin cast keeps its raw-classifier semantics. The
+        // subsequent native location requires the exact CLR construction.
+        val incompatible = Leaf<Int>("initial") as Leaf<String>
+        var rejected = false
+        try {
+            replaceAndStore(incompatible, Leaf<String>("replacement"))
+        } catch (_: System.InvalidCastException) {
+            rejected = true
+        }
+        check(rejected) { "an incompatible CLR construction entered a native ref location" }
     }
 }

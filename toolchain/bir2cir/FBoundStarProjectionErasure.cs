@@ -1573,7 +1573,8 @@ static class FBoundStarProjectionErasure
         var parameters = owners.TryGetValue(application.Name, out var local)
             ? local.Def?["typeParams"] as JsonArray : null;
         return AliasVarianceRepresentation.RequiresErasure(application, refs, parameters,
-            localClrAliases?.GetValueOrDefault(application.Name));
+            localClrAliases?.GetValueOrDefault(application.Name),
+            local?.Def == null ? null : KotlinSupertypesRecord.ReadNullableFrame(local.Def));
     }
 
     // CLR variance does not relate value-type instantiations, even for an interface. Kotlin permits those same
