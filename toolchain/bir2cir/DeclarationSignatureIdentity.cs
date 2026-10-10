@@ -6,28 +6,36 @@ using System.Text;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 
-// Independent Kotlin overloads can have identical
-// CLR value signatures while their generic parameter bounds remain distinct.
+// Independent Kotlin overloads can have identical CLR value signatures while
+// their nominal parameter types or generic parameter bounds remain distinct.
 // Keep the value/generic frame unchanged; state that distinction in modopt.
-static class GenericBoundSignatureIdentity
+static class DeclarationSignatureIdentity
 {
     const string BoundsKey = "genericParameterSignatureBounds";
+    const string NominalKey = "nominalParameterSignatureIdentity";
     static readonly Dictionary<string, JsonObject> Markers = new(StringComparer.Ordinal);
+    static string MarkerOwner;
 
     public static void Capture(IEnumerable<JsonNode> roots)
     {
         Markers.Clear();
         var rootList = roots.ToArray();
-        void Walk(JsonNode node)
+        void Walk(JsonNode node, string owner)
         {
             if (node is JsonObject obj)
             {
-                if (obj["params"] is JsonArray parameters && obj["typeParams"] is JsonArray variables)
+                if (obj["methods"] is JsonArray && Text(obj["name"]) is string declarationOwner)
+                    owner = declarationOwner;
+                if (obj["params"] is JsonArray parameters)
                     foreach (var parameter in parameters.OfType<JsonObject>())
                     {
-                        var bounds = MethodVariables(TypeJson.Read(parameter["type"]))
+                        if (TypeJson.Read(parameter["type"]) is not TypeNode logicalType) continue;
+                        MarkerOwner = owner;
+                        parameter[NominalKey] = TypeJson.Write(Encode(logicalType));
+                        var variables = obj["typeParams"] as JsonArray;
+                        var bounds = MethodVariables(logicalType)
                             .Distinct().OrderBy(index => index)
-                            .Where(index => index >= 0 && index < variables.Count)
+                            .Where(index => index >= 0 && variables != null && index < variables.Count)
                             .SelectMany(index => variables[index] is JsonObject declaration
                                 && declaration["constraints"] is JsonArray constraints
                                 ? constraints.Select(TypeJson.Read).Select(Encode)
@@ -35,17 +43,29 @@ static class GenericBoundSignatureIdentity
                         if (bounds.Length > 0)
                             parameter[BoundsKey] = new JsonArray(bounds.Select(TypeJson.Write).ToArray());
                     }
-                foreach (var child in obj.Select(pair => pair.Value).ToArray()) Walk(child);
+                foreach (var child in obj.Select(pair => pair.Value).ToArray()) Walk(child, owner);
             }
             else if (node is JsonArray array)
-                foreach (var child in array) Walk(child);
+                foreach (var child in array) Walk(child, owner);
         }
-        foreach (var root in rootList) Walk(root);
+        foreach (var root in rootList) Walk(root, Text((root as JsonObject)?["fileClass"]));
         if (rootList.FirstOrDefault() is JsonObject first)
         {
             if (first["types"] is not JsonArray types) first["types"] = types = new JsonArray();
             foreach (var marker in Markers.Values) types.Add(marker.DeepClone());
         }
+    }
+
+    public static void RemoveCapturedFacts(JsonNode node)
+    {
+        if (node is JsonObject obj)
+        {
+            obj.Remove(BoundsKey);
+            obj.Remove(NominalKey);
+            foreach (var child in obj.Select(pair => pair.Value)) RemoveCapturedFacts(child);
+        }
+        else if (node is JsonArray array)
+            foreach (var child in array) RemoveCapturedFacts(child);
     }
 
     public static IReadOnlyDictionary<string, JsonArray> Plan(IEnumerable<JsonNode> roots)
@@ -77,6 +97,9 @@ static class GenericBoundSignatureIdentity
             if (candidates.Length < 2 || candidates.Any(item => !Eligible(item.Method))) continue;
             var projected = candidates.Select(item => (item.Method, Parameters: Project(item.Method))).ToArray();
             if (projected.Select(item => item.Parameters.ToJsonString()).Distinct(StringComparer.Ordinal).Count()
+                != candidates.Length)
+                projected = candidates.Select(item => (item.Method, Parameters: Project(item.Method, nominal: true))).ToArray();
+            if (projected.Select(item => item.Parameters.ToJsonString()).Distinct(StringComparer.Ordinal).Count()
                 != candidates.Length) continue;
             foreach (var (method, parameters) in projected)
                 result.Add(Text(method[DeclarationIdentityBinding.Key]), parameters);
@@ -98,7 +121,7 @@ static class GenericBoundSignatureIdentity
                         if (parameters.Count != types.Count)
                             throw new InvalidOperationException("Generic signature allocation changed parameter arity");
                         for (var index = 0; index < parameters.Count; index++)
-                            parameters[index]["type"] = TypeJson.Write(WithBoundModifiers(
+                            parameters[index]["type"] = TypeJson.Write(WithIdentityModifiers(
                                 TypeJson.Read(types[index]), TypeJson.Read(parameters[index]["type"])));
                     }
                     else if (Text(obj["k"]) is "callStatic" or "callInstance" or "constrainedCall"
@@ -106,6 +129,7 @@ static class GenericBoundSignatureIdentity
                         obj["calleeParams"] = types.DeepClone();
                 }
                 obj.Remove(BoundsKey);
+                obj.Remove(NominalKey);
                 foreach (var child in obj.Select(pair => pair.Value).ToArray()) Walk(child);
             }
             else if (node is JsonArray array)
@@ -131,15 +155,15 @@ static class GenericBoundSignatureIdentity
                         && !usedMarkers.Contains(name)) types.RemoveAt(index);
     }
 
-    static TypeNode WithBoundModifiers(TypeNode signature, TypeNode valueType)
+    static TypeNode WithIdentityModifiers(TypeNode signature, TypeNode valueType)
     {
         if (signature is not TypeNode.Mod modifier) return valueType;
-        var underlying = WithBoundModifiers(modifier.Of, valueType);
+        var underlying = WithIdentityModifiers(modifier.Of, valueType);
         return modifier.M is TypeNode.Fqn marker && Markers.ContainsKey(marker.Name)
             ? new TypeNode.Mod(modifier.Req, modifier.M, underlying) : underlying;
     }
 
-    static JsonArray Project(JsonObject method)
+    static JsonArray Project(JsonObject method, bool nominal = false)
     {
         var projected = new JsonArray();
         foreach (var parameter in ((JsonArray)method["params"]).OfType<JsonObject>())
@@ -150,6 +174,8 @@ static class GenericBoundSignatureIdentity
                              .Where(bound => bound is not TypeNode.Fqn { Name: "object" or "System.Object" })
                              .OrderBy(bound => TypeJson.Write(bound).ToJsonString(), StringComparer.Ordinal))
                     type = new TypeNode.Mod(false, bound, type);
+            if (nominal && parameter[NominalKey] is JsonNode identity)
+                type = new TypeNode.Mod(false, TypeJson.Read(identity), type);
             projected.Add(TypeJson.Write(type));
         }
         return projected;
@@ -194,7 +220,11 @@ static class GenericBoundSignatureIdentity
 
     static TypeNode Marker(string meaning, TypeNode[] arguments)
     {
-        var digest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(meaning + ":" + arguments.Length)));
+        // These are local TypeDefs, not a shared ABI vocabulary. Their authoritative
+        // source owner scopes the naming domain so unrelated libraries do not define
+        // the same private type name. Every member of one collision family shares it.
+        var digest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
+            MarkerOwner + "|" + meaning + ":" + arguments.Length)));
         var name = "DotKt.Runtime.CompilerServices.$Signature$" + digest;
         if (!Markers.ContainsKey(name))
             Markers[name] = new JsonObject {
@@ -250,12 +280,33 @@ static class GenericBoundSignatureIdentity
         var boundMarker = Marker("test-bound", System.Array.Empty<TypeNode>());
         var projection = new TypeNode.Mod(false, boundMarker, new TypeNode.Mod(false, function, slot));
         var parameter = new JsonObject {
-            ["type"] = TypeJson.Write(WithBoundModifiers(projection, slot)),
+            ["type"] = TypeJson.Write(WithIdentityModifiers(projection, slot)),
             [FunctionSignatureIdentity.Key] = TypeJson.Write(function),
         };
         if (TypeJson.Read(FunctionSignatureIdentity.SignatureType(parameter))
             is not TypeNode.Mod { M: TypeNode.Fn, Of: TypeNode.Mod { M: TypeNode.Fqn, Of: TypeNode.Fqn } })
             throw new InvalidOperationException("Bound projection duplicated a function signature modifier");
-        Console.Error.WriteLine("[generic-bound signatures] self-test OK (source bounds, twin modes, value/signature separation)");
+        var aliases = JsonNode.Parse("""
+        {"fileClass":"AliasSignatureProbe","types":[],"methods":[
+          {"name":"keep","declarationId":"first","params":[{"name":"value","type":
+            {"t":"fqn","name":"Probe.FirstAlias"}}],"ret":{"t":"fqn","name":"void"},"body":[]},
+          {"name":"keep","declarationId":"second","params":[{"name":"value","type":
+            {"t":"fqn","name":"Probe.SecondAlias"}}],"ret":{"t":"fqn","name":"void"},"body":[]}]}
+        """);
+        Capture(new[] { aliases });
+        var sourceCarrier = aliases.DeepClone();
+        RemoveCapturedFacts(sourceCarrier);
+        if (sourceCarrier["methods"].AsArray().Any(method => method["params"][0][NominalKey] != null))
+            throw new InvalidOperationException("Physical signature capture leaked into a source carrier");
+        foreach (var method in aliases["methods"].AsArray())
+            method["params"][0]["type"] = TypeJson.Fqn("System.Object");
+        var aliasPlan = Plan(new[] { aliases });
+        if (aliasPlan.Count != 2)
+            throw new InvalidOperationException("Nominal aliases lost their independent signature identities");
+        Apply(new[] { aliases }, aliasPlan);
+        if (aliases["methods"].AsArray().Any(method => SignatureValueTypes.Of(
+                TypeJson.Read(method["params"][0]["type"])) is not TypeNode.Fqn { Name: "System.Object" }))
+            throw new InvalidOperationException("Nominal signature identity changed a CLR value slot");
+        Console.Error.WriteLine("[declaration signatures] self-test OK (source bounds, nominal aliases, twin modes, value/signature separation, source carriers)");
     }
 }

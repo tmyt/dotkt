@@ -1167,21 +1167,26 @@ consuming module. The set includes pairs that live in different file facades and
 MethodDefs: dll2klib merges those facades back into one Kotlin package. Ordinary declarations continue through their
 existing specialized metadata paths. Older compiler-produced artifacts are not inferred or repaired.
 
-Independent overloads distinguished by method-type-parameter upper bounds can retain the same physical name even
-when their value parameter types erase identically. In that collision set, `bir2cir` represents each bound structurally
-with compiler-private nominal signature types and places them in optional custom modifiers on the corresponding
+Independent overloads distinguished by method-type-parameter upper bounds or Kotlin nominal parameter types can
+retain the same physical name even when their value parameter types erase identically. For example, `Iterable<T>`
+and `Sequence<T>` both project to CLR `IEnumerable<T>` without becoming the same Kotlin declaration. In that
+collision set, `bir2cir` represents the distinguishing source types structurally with compiler-private nominal
+signature types and places them in optional custom modifiers on the corresponding
 parameter. These types describe declaration identity, not values: they do not replace generic arguments, impose new
-runtime constraints, or change parameter storage. Their structural names are deterministic; declaration order does
-not choose a winner. Nullable reference wrappers are not signature discriminators.
+runtime constraints, or change parameter storage. Their structural names are deterministic within the authoritative
+source owner's naming domain, so unrelated producers do not introduce identical private TypeDefs; declaration order
+does not choose a winner. Nullable reference wrappers are not signature discriminators. These temporary physical
+capture facts are removed before serializing a source-level inline carrier.
 
-This extends the explicit-naming contract only for distinguishable generic-bound signatures. The same rule is applied
-to the selected suspend cold entry and its calls. Kotlin consumers recover the original bounds from metadata and link
+This extends the explicit-naming contract for distinguishable source signatures without modifying their CLR value
+representation. The same rule is applied to the selected suspend cold entry and its calls. Kotlin consumers recover
+the original nominal types and bounds from metadata and link
 the exact selected MethodDef across DLLs. C# overload resolution does not use these modifiers to distinguish the
 otherwise equal signatures; a C# caller can therefore require distinct explicit `@ClrName` names. Ordinary CLR APIs
 are not projected into a different Kotlin type by this rule.
 
-Unresolved collisions still require distinct explicit names: for example `String`/`String?` or aliased value-parameter
-types without distinct bound signatures. An open/override family needs one slot-wide physical representation;
+Unresolved collisions still require distinct explicit names: for example `String`/`String?` or identical parameter
+types and bounds under an explicitly shared CLR name. An open/override family needs one slot-wide physical representation;
 until such a family has a complete rule, a duplicate projected signature fails closed instead of being modified or
 renamed independently. `ilemit` receives the completed signatures and names and rejects duplicates, never applying
 a late `$dupN` repair or reselecting an overload.

@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Nominal Kotlin overloads retain their distinct signatures through CLR aliases (#1001).**
+  Independent declarations such as `Iterable<T>` and `Sequence<T>` overloads share native CLR value types
+  without renaming functions or editing common source; exact calls and callable references retain selection.
+
 - **Generic-bound overloads retain their selected declaration across DLLs (#981).**
   Independent overloads use structural signature modifiers without renaming Kotlin functions or changing value
   frames; suspend cold entries preserve the same exact binding through suspension and resumption.
