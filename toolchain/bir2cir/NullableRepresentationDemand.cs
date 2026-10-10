@@ -167,7 +167,13 @@ static partial class NullableRepresentationDemand
             {
                 foreach (var key in new[] { "base", "interfaces", "typeParams" })
                     Scan(owner.Declaration[key], owner.Signature, typeFrames, methodFrames, localFrames, policy: policy);
-                if (owner.IsRefCell) Scan(owner.Declaration["elem"], owner.Signature, typeFrames, methodFrames, localFrames, policy: policy);
+                if (owner.IsRefCell)
+                {
+                    if (policy?.OwnsValueSlots(Text(owner.Declaration["name"])) == true
+                        && TypeJson.Read(owner.Declaration["elem"]) is TypeNode.Tv cellVariable)
+                        owner.Signature.Add(cellVariable, RepresentationRole.Storage);
+                    Scan(owner.Declaration["elem"], owner.Signature, typeFrames, methodFrames, localFrames, policy: policy);
+                }
                 foreach (var key in new[] { "fields", "properties" })
                     foreach (var slot in (owner.Declaration[key] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
                     {
@@ -187,6 +193,20 @@ static partial class NullableRepresentationDemand
                 }
                 foreach (var method in owner.Methods)
                 {
+                    // A Kotlin value parameter/result owns its storage role even when
+                    // there is no implementation body (notably an interface slot).
+                    // Native dispatch signatures and managed references remain exact.
+                    if (method.ImplementationKey == null && policy?.OwnsMethodValueSlots(method.Declaration) == true)
+                    {
+                        foreach (var parameter in (method.Declaration["params"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
+                            DemandMethodValue(parameter["type"]);
+                        DemandMethodValue(method.Declaration["ret"]);
+                        void DemandMethodValue(JsonNode source)
+                        {
+                            if (TypeJson.Read(source) is TypeNode.Tv { Scope: "method" } variable)
+                                method.Signature.Add(variable, RepresentationRole.Storage);
+                        }
+                    }
                     foreach (var key in new[] { "params", "ret" })
                         Scan(method.Declaration[key], method.Signature, typeFrames, methodFrames, localFrames,
                             argument: key == "ret" && method.Declaration[PreparedClosureDefaultFrames.ReturnArgumentKey]?.GetValue<bool>() == true,

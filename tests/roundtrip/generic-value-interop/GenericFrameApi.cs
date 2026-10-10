@@ -31,3 +31,16 @@ public sealed class NativeCell<T>(T value)
     public T Value { get; } = value;
     public T Read() => Value;
 }
+
+public interface NativeValueEcho
+{
+    T Echo<T>(T value);
+}
+
+public struct NativeBoundCounter : roundtrip.constructorcarrier.BoundCounter<int>
+{
+    int value;
+    public NativeBoundCounter(int initial) => value = initial;
+    public void increment() => value++;
+    public int count() => value;
+}

@@ -323,7 +323,7 @@ static class FBoundStarProjectionErasure
                 BindProjectedArrayGenericCall(obj, owners, refs);
                 BindCarrierArgumentMerge(obj, owners, defs, refs);
                 BindCarrierPropertyResult(obj, owners, refs);
-                BindLocalCarrierResult(obj, owners, refs);
+                BindDeclarationCarrierResult(obj, owners, refs);
                 BindInheritedStarMember(obj, owners, defs, refs);
                 if (obj["body"] is JsonArray && obj["params"] is JsonArray)
                     NormalizeInnerFactoryLocals(obj, owners, defs, refs);
@@ -3217,7 +3217,6 @@ static class FBoundStarProjectionErasure
     {
         if (Str(call["k"]) is not ("callInstance" or "newBoundDelegate")
             || TypeJson.Read(call["ownerType"]) is not TypeNode.Fqn selectedOwner
-            || selectedOwner.Args is { Length: > 0 }
             || ExpressionType(call["recv"]) is not TypeNode.Tv receiver) return;
 
         var declarations = receiver.Scope == "type" ? typeParameters
@@ -3234,8 +3233,9 @@ static class FBoundStarProjectionErasure
                     : tv.Scope == "method" ? methodParameters : null;
                 var key = tv.Scope + ":" + tv.I;
                 if (parameters == null || tv.I < 0 || tv.I >= parameters.Count || !seen.Add(key)
-                    || parameters[tv.I] is not JsonObject parameter
-                    || parameter["constraints"] is not JsonArray constraints) return;
+                    || parameters[tv.I] is not JsonObject parameter) return;
+                var constraints = (parameter["constraints"] as JsonArray ?? new JsonArray())
+                    .Concat(parameter[ErasedInnerConstraintKey] as JsonArray ?? new JsonArray());
                 foreach (var constraint in constraints)
                     if (TypeJson.Read(constraint) is TypeNode constraintType) Visit(constraintType);
                 return;
@@ -3362,19 +3362,22 @@ static class FBoundStarProjectionErasure
         }
     }
 
-    static void BindLocalCarrierResult(JsonObject call, IReadOnlyDictionary<string, Owner> owners,
+    static void BindDeclarationCarrierResult(JsonObject call, IReadOnlyDictionary<string, Owner> owners,
         ReferenceMetadataIndex refs)
     {
         if (Str(call["k"]) is not ("callStatic" or "callInstance")
             || Str(call[DeclarationIdentityBinding.Key]) is not string identity
-            || TypeJson.Read(call["calleeOwner"] ?? call["ownerType"] ?? call["owner"]) is not TypeNode.Fqn owner
-            || !_localDeclarations.TryGetValue((owner.Name, identity), out var selected)) return;
+            || TypeJson.Read(call["calleeOwner"] ?? call["ownerType"] ?? call["owner"]) is not TypeNode.Fqn owner) return;
+        var arguments = (call["typeArgs"] as JsonArray ?? new JsonArray()).Select(TypeJson.Read).ToArray();
+        var declaredReturn = _localDeclarations.TryGetValue((owner.Name, identity), out var selected)
+            ? TypeJson.Read(selected["ret"])
+            : refs.DeclarationIdentityReturn(identity, owner.Name, arguments.Length, Str(call["k"]) == "callStatic");
+        if (declaredReturn == null) return;
         // A scalar declaration result can close to an existential value through
         // its Storage companion. Close that exact declaration before rebinding a
         // parent member; the frontend result stamp still names the logical type.
-        var result = SubstituteDeclarationTypeArguments(TypeJson.Read(selected["ret"]),
-            owner.Args ?? Array.Empty<TypeNode>(),
-            (call["typeArgs"] as JsonArray ?? new JsonArray()).Select(TypeJson.Read).ToArray());
+        var result = SubstituteDeclarationTypeArguments(declaredReturn,
+            owner.Args ?? Array.Empty<TypeNode>(), arguments);
         var semantic = NodeType.Stamp(call);
         if (IsExistentialPhysicalCarrier(result, owners, refs) && semantic != null && result != semantic)
             AlignExistentialResult(call, result, semantic);

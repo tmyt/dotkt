@@ -4,12 +4,20 @@ package roundtriptests.nativevalueframe
 import NUnit.Framework.TestAttribute
 import GenericValueInterop.GenericFrameApi
 import GenericValueInterop.NativeCell
+import GenericValueInterop.NativeValueEcho
 import kotlin.clr.byref
 import kotlin.clr.ClrRef
 
 abstract class Anchor<S : Anchor<S>>(val tag: String)
 class Leaf<E>(tag: String) : Anchor<Leaf<E>>(tag)
 private class Stored<T>(val value: T)
+private class StoredNativeValueEcho : NativeValueEcho {
+    override fun <T> Echo(value: T): T = Stored(value).value
+}
+private fun <T : Appendable> appendNativeBound(value: T): T {
+    value.append('x')
+    return value
+}
 private class NativeResultStore<T>(private val value: T) {
     fun read(): T = NativeCell<T>(value).Read()
     fun readProperty(): T = NativeCell<T>(value).Value
@@ -103,6 +111,13 @@ private class StoredCollection<T>(value: T) : AbstractMutableCollection<T>() {
 }
 
 class NativeValueFramePreservationTests {
+    @TestAttribute
+    fun nativeGenericDispatchKeepsItsPublishedFrame() {
+        val echo: NativeValueEcho = StoredNativeValueEcho()
+        check(echo.Echo("hello") == "hello")
+        check(echo.Echo(42) == 42)
+    }
+
     @TestAttribute
     fun nativeRefAndOutAliasTheGenericFieldItself() {
         val text = NativeFieldStore("initial")
@@ -202,6 +217,13 @@ class NativeValueFramePreservationTests {
         check(NativeResultStore(42).read() == 42)
         check(NativeResultStore("value").readProperty() == "value")
         check(NativeResultStore(42).readProperty() == 42)
+    }
+
+    @TestAttribute
+    fun aStoredNativeClassBoundKeepsItsReceiverIdentity() {
+        val value = StringBuilder()
+        check(appendNativeBound(value) === value)
+        check(value.toString() == "x")
     }
 
     @TestAttribute

@@ -3,6 +3,7 @@ package roundtriptests.constructorcarrier
 
 import NUnit.Framework.TestAttribute
 import GenericValueInterop.GenericFrameApi
+import GenericValueInterop.NativeBoundCounter
 import roundtrip.constructorcarrier.*
 
 abstract class Linked<S : Linked<S>>(val prev: S?)
@@ -51,7 +52,55 @@ private fun <T> observedStore(value: T): Storage<T> {
 private fun <E> observedForward(): String =
     observedStore(tokenSentinelObject() as Token<E>).value.tag
 
+private class StoredValueEcho : ValueEcho {
+    override fun <R> echo(value: R): R = localStore(value).value
+}
+
+private fun <T> captureStoredValue(value: T): T {
+    var current = value
+    val write = { current = value }
+    write()
+    return current
+}
+
+private fun <T, R : StoredView<T>> readBoundValue(value: R): T = value.value
+private fun <T, U : StoredView<T>, R : U> readIndirectBoundValue(value: R): T = value.value
+private fun <R : BoundCounter<Int>> incrementBoundValue(value: R): R {
+    value.increment()
+    return value
+}
+
 class ConstructorCarrierStorageTests {
+    @TestAttribute
+    fun storageReceiverUsesTheReferencedGenericUpperBound() {
+        check(readBoundValue(Storage(42)) == 42)
+        val nested = Storage(Storage("hello"))
+        check(readBoundValue(nested) === nested.value)
+        check(readBoundValue(nested).value == "hello")
+        check(readIndirectBoundValue<String, StoredView<String>, Storage<String>>(Storage("hello")) == "hello")
+    }
+
+    @TestAttribute
+    fun storageUpperBoundDispatchPreservesNativeStructMutation() {
+        check(boundCounterCount(incrementBoundValue(NativeBoundCounter(0))) == 1)
+    }
+
+    @TestAttribute
+    fun genericVirtualValueFrameIsOwnedByTheReferencedDeclaration() {
+        val echo: ValueEcho = StoredValueEcho()
+        check(echo.echo("hello") == "hello")
+        check(echo.echo(42) == 42)
+        val nested = Storage(Storage("hello"))
+        check(echo.echo(nested).value.value == "hello")
+    }
+
+    @TestAttribute
+    fun genericMutableCaptureUsesTheDeclaredValueFrame() {
+        val nested = Storage(Storage("hello"))
+        check(captureStoredValue(nested) === nested)
+        check(captureStoredValue(42) == 42)
+    }
+
     @TestAttribute
     fun genericConstructorPreservesBothBranches() {
         val empty = Buffer<String>(true)

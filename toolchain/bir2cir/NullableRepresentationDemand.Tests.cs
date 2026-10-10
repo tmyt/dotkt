@@ -251,6 +251,21 @@ static partial class NullableRepresentationDemand
         var policy = new GenericRepresentationPolicy(new Dictionary<string, string> {
             ["ForeignOwner"] = "NativeOwner",
         }, roots: new[] { root });
+        var dispatch = (JsonObject)root["methods"][1].DeepClone();
+        dispatch["name"] = "dispatch";
+        dispatch["abstract"] = true;
+        dispatch["virtual"] = true;
+        var nativeDispatch = (JsonObject)dispatch.DeepClone();
+        nativeDispatch["name"] = "nativeDispatch";
+        nativeDispatch["overrides"] = new JsonArray(new JsonObject {
+            ["owner"] = TypeJson.Fqn("ForeignOwner"), ["member"] = "identity",
+        });
+        ((JsonArray)root["methods"]).Add(dispatch);
+        ((JsonArray)root["methods"]).Add(nativeDispatch);
+        var nativeIntrinsic = (JsonObject)dispatch.DeepClone();
+        nativeIntrinsic["name"] = "nativeIntrinsic";
+        nativeIntrinsic["attrs"] = new JsonArray(new JsonObject { ["attr"] = TypeJson.Fqn("kotlin.clr.ClrIntrinsic") });
+        ((JsonArray)root["methods"]).Add(nativeIntrinsic);
         var original = root.ToJsonString();
         var demands = Collect(new[] { root }, policy: policy);
         var value = demands.Single(owner => Text(owner.Declaration["name"]) == "ValueOwner");
@@ -258,10 +273,13 @@ static partial class NullableRepresentationDemand
         var methods = demands.Single(owner => ReferenceEquals(owner.Declaration, root)).Methods;
         if (!value.Frame.StorageIndices.SequenceEqual(new[] { 0 })
             || !methods.Single(method => Text(method.Declaration["name"]) == "make").Frame.StorageIndices.SequenceEqual(new[] { 0 })
-            || methods.Single(method => Text(method.Declaration["name"]) == "identity").Frame.PhysicalArity != 1
+            || !methods.Single(method => Text(method.Declaration["name"]) == "identity").Frame.StorageIndices.SequenceEqual(new[] { 0 })
+            || !methods.Single(method => Text(method.Declaration["name"]) == "dispatch").Frame.StorageIndices.SequenceEqual(new[] { 0 })
+            || methods.Single(method => Text(method.Declaration["name"]) == "nativeDispatch").Frame.PhysicalArity != 1
+            || methods.Single(method => Text(method.Declaration["name"]) == "nativeIntrinsic").Frame.PhysicalArity != 1
             || foreign.Frame.PhysicalArity != 1 || root.ToJsonString() != original)
             throw new InvalidOperationException("Declaration value demand changed an unrelated or native frame");
-        Console.WriteLine("[declaration value demand] self-test OK (stored variable, factory fixed point, identity and native frames unchanged)");
+        Console.WriteLine("[declaration value demand] self-test OK (stored variable, factory fixed point, method value slots and native owner frames)");
     }
 
     static void StorageDemandSelfTest()

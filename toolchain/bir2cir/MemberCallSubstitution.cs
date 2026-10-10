@@ -1583,7 +1583,10 @@ static class MemberCallSubstitution
         // The 2-arg add(index, e) Insert form falls through to the intrinsic.
         if (instance && kind == "interface"
             && CollectionMutationCall(node, ownerFqnNode, args, refs, ctx) is { } mutationCall)
+        {
+            BindAuthoredHelper((JsonObject)mutationCall, refs, ctx);
             return mutationCall;
+        }
 
         // Rule 1c (PRIMITIVE compareTo): `x.compareTo(y)` on a boxed kotlin.<Prim> -> `System.<Prim>.CompareTo`
         // (IComparable<T>). The boxed kotlin.* primitive is NOT emitted in the runtime (it is substituted to the BCL
@@ -1726,7 +1729,11 @@ static class MemberCallSubstitution
         else if (instance && kind == "interface"
             && (ownerFqn.StartsWith("kotlin.collections.", StringComparison.Ordinal) || ownerFqn == "kotlin.sequences.Sequence"))
         {
-            if (CollectionDefaultCall(node, ownerFqnNode, args, refs, ctx) is { } collectionCall) return collectionCall;
+            if (CollectionDefaultCall(node, ownerFqnNode, args, refs, ctx) is { } collectionCall)
+            {
+                BindAuthoredHelper((JsonObject)collectionCall, refs, ctx);
+                return collectionCall;
+            }
         }
 
         // A frontend-resolved property call may reach the general alias rules only while a specialized intrinsic,
@@ -2151,7 +2158,11 @@ static class MemberCallSubstitution
         try
         {
             physicalArguments = helper.NullableFrame == null ? arguments
-                : helper.NullableFrame.Close(arguments, argument => argument, NullablePhysicalArgument);
+                // Late alias calls already name the binding's CLR storage element.
+                // Close every helper role from that selected element, not a new
+                // projection of the enclosing Kotlin owner's unrelated value slot.
+                : helper.NullableFrame.Close(arguments, argument => argument, NullablePhysicalArgument,
+                    argument => argument, NullablePhysicalArgument);
         }
         catch (ArgumentException ex)
         {
@@ -2159,7 +2170,8 @@ static class MemberCallSubstitution
                 $"Compiler helper {TypeJson.OwnerName(call["owner"])}.{call["method"]} frame closure failed: {ex.Message}", ex);
         }
         call["typeArgs"] = new JsonArray(physicalArguments.Select(TypeJson.Write).ToArray());
-        call["sig"] = new JsonArray(helper.ParamTypeNodes.Select(TypeJson.Write).ToArray());
+        call["sig"] = new JsonArray(helper.ParamTypeNodes
+            .Select(BirTypeLowering.CanonicalPhysicalSlotType).Select(TypeJson.Write).ToArray());
         call[DeclarationIdentityBinding.Key] = helper.DeclarationId;
     }
 

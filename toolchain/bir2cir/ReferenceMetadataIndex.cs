@@ -250,6 +250,12 @@ sealed partial class ReferenceMetadataIndex
         return true;
     }
 
+    internal TypeNode DeclarationIdentityReturn(string id, string owner, int methodArity, bool isStatic) =>
+        id != null && _declarationById.TryGetValue(id, out var binding)
+            && BareOwnerFqn(binding.DeclarationPhysicalOwner ?? binding.Owner) == BareOwnerFqn(owner)
+            && binding.MethodArity == methodArity && binding.IsStatic == isStatic
+                ? binding.ReturnTypeNode : null;
+
     // UnsafeAccessorAttribute is matched by the CLR against the selected MethodDef's exact physical signature.
     // The frontend-authored declaration identity selects that MethodDef; inherited-owner binding supplies the
     // declaring TypeDef. Expose those already-indexed facts without re-resolving an overload from the use-site

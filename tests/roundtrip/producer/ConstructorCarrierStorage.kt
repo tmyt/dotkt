@@ -1,8 +1,19 @@
 @file:Suppress("UNCHECKED_CAST")
 package roundtrip.constructorcarrier
 
-class Storage<T>(val value: T)
+interface ValueEcho {
+    fun <R> echo(value: R): R
+}
+
+interface StoredView<T> { val value: T }
+class Storage<T>(override val value: T) : StoredView<T>
 fun <T> store(value: T): Storage<T> = Storage(value)
+
+interface BoundCounter<T> {
+    fun increment()
+    fun count(): Int
+}
+fun boundCounterCount(value: BoundCounter<*>): Int = value.count()
 
 class Pairing<A, B>(val first: A, val second: B)
 fun <A, B> pair(first: A, second: B): Pairing<A, B> = Pairing(first, second)

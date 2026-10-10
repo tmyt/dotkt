@@ -23,6 +23,11 @@ static class PhysicalValueCoercion
         target = SignatureValueTypes.Of(target);
         return source is TypeNode.Tv && target is TypeNode.Tv && !source.Equals(target)
         || target is TypeNode.Tv && source is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" }
+        || source is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" }
+            && IsReferenceSlot(target, index.IsValue)
+            && target is not TypeNode.Fqn { Args: null, Name: "object" or "System.Object" }
+        || source is TypeNode.Fqn carrier && target is TypeNode.Fqn native
+            && index.IsExistentialOwner(carrier) && index.IsNativeReference(native)
         || CollectionViewFaces.IsViewSeam(source, target)
         // A concrete value or generic stack slot is not a reference, even when its boxed value implements the
         // target interface. State the boxing edge before a conditional merge, store, argument or return.
@@ -55,6 +60,9 @@ static class PhysicalValueCoercion
         readonly Dictionary<string, TypeNode> _fields = new(StringComparer.Ordinal);
         readonly Func<JsonObject> _unitValue;
         internal ValueTypeOracle IsValue;
+        internal Func<TypeNode.Fqn, bool> IsReferenceOwner;
+        internal Func<TypeNode.Fqn, bool> IsExistentialOwner;
+        internal Func<TypeNode.Fqn, bool> IsNativeReference;
         internal JsonObject Document;
         internal bool ReferenceBuild;
 
@@ -117,7 +125,8 @@ static class PhysicalValueCoercion
             var wanted = ReadTypes(call["sig"] as JsonArray);
             var matches = candidates.Where(c => c.Arity == methodArgs.Length
                 && (wanted == null || (c.Parameters.Length == wanted.Length
-                    && c.Parameters.Select((p, i) => Close(p, owner.Args, methodArgs) == wanted[i]).All(x => x)))).ToList();
+                    && (c.Parameters.SequenceEqual(wanted)
+                        || c.Parameters.Select((p, i) => Close(p, owner.Args, methodArgs) == wanted[i]).All(x => x))))).ToList();
             return matches.Count == 1 ? matches[0] : null;
         }
 
@@ -161,12 +170,50 @@ static class PhysicalValueCoercion
     }
 
     public static void ApplyAll(IReadOnlyList<JsonNode> roots, Func<JsonObject> unitValue,
-        ValueTypeOracle isValue, bool referenceBuild = false)
+        ValueTypeOracle isValue, bool referenceBuild = false, Func<TypeNode.Fqn, bool> isReferenceOwner = null,
+        Func<TypeNode.Fqn, bool> isExistentialOwner = null, Func<TypeNode.Fqn, bool> isNativeReference = null)
     {
         var index = Index.Build(roots, unitValue);
         index.IsValue = isValue;
+        index.IsReferenceOwner = isReferenceOwner ?? (_ => false);
+        index.IsExistentialOwner = isExistentialOwner ?? (_ => false);
+        index.IsNativeReference = isNativeReference ?? (_ => false);
         index.ReferenceBuild = referenceBuild;
         foreach (var root in roots.OfType<JsonObject>()) RewriteDocument(root, index);
+    }
+
+    internal static void SelfTest()
+    {
+        var root = JsonNode.Parse("""
+        {"fileClass":"ValueEdges","methods":[
+          {"name":"nativeSlot","typeParams":["T"],"params":[{"name":"value","type":{"t":"tv","scope":"method","i":0}}],
+           "ret":{"t":"tv","scope":"method","i":0},"body":[]},
+          {"name":"read","typeParams":["T","P"],"params":[{"name":"value","type":{"t":"tv","scope":"method","i":0}}],
+           "ret":{"t":"tv","scope":"method","i":1},"body":[{"k":"return","value":{
+             "k":"callStatic","owner":{"t":"fqn","name":"ValueEdges"},"method":"nativeSlot",
+             "sig":[{"t":"tv","scope":"method","i":0}],"typeArgs":[{"t":"tv","scope":"method","i":0}],
+             "args":[{"k":"local","name":"value"}],"ret":{"t":"tv","scope":"method","i":1}}}]},
+          {"name":"view","params":[{"name":"value","type":{"t":"fqn","name":"System.Object"}}],
+           "ret":{"t":"fqn","name":"System.Collections.Generic.IReadOnlyList","args":[{"t":"fqn","name":"System.String"}]},
+           "body":[{"k":"return","value":{"k":"local","name":"value"}}]}]}
+        """)!.AsObject();
+        var carrierView = root["methods"][2].DeepClone().AsObject();
+        carrierView["name"] = "carrierView";
+        carrierView["params"][0]["type"] = TypeJson.Fqn("Carrier");
+        root["methods"].AsArray().Add(carrierView);
+        ApplyAll(new JsonNode[] { root }, () => throw new InvalidOperationException("Unexpected Unit conversion"), _ => false,
+            isExistentialOwner: owner => owner.Name == "Carrier",
+            isNativeReference: owner => owner.Name == "System.Collections.Generic.IReadOnlyList");
+        var result = root["methods"][1]["body"][0]["value"];
+        if (Str(result["k"]) != "cast" || TypeJson.Read(result["type"]) != new TypeNode.Tv("method", 1)
+            || TypeJson.Read(result["e"]["ret"]) != new TypeNode.Tv("method", 0))
+            throw new InvalidOperationException("Local generic value conversion lost the exact inner result slot");
+        var view = root["methods"][2]["body"][0]["value"];
+        if (Str(view["k"]) != "cast" || TypeJson.Read(view["type"]) != TypeJson.Read(root["methods"][2]["ret"]))
+            throw new InvalidOperationException("Object storage did not convert to the declared reference value slot");
+        if (Str(carrierView["body"][0]["value"]["k"]) != "cast")
+            throw new InvalidOperationException("A declared carrier value lost its checked native interface view");
+        Console.WriteLine("[physical value edges] self-test OK (local generic result, erased result, native carrier view)");
     }
 
     static void RewriteDocument(JsonObject root, Index index)
@@ -323,6 +370,22 @@ static class PhysicalValueCoercion
             if (ExprType(pointer, scope, index) is TypeNode.ByRef reference)
                 obj["elem"] = TypeJson.Write(reference.Of);
         }
+
+        // A constrained receiver uses the actual lexical location, which may
+        // retain native T even when its Kotlin value stamp used Storage(T).
+        if (Str(obj["k"]) == "constrainedCall" && TypeJson.Read(obj["recvType"]) is TypeNode.Tv
+            && ExprType(obj["recv"], scope, index) is TypeNode.Tv receiverVariable)
+            obj["recvType"] = TypeJson.Write(receiverVariable);
+
+        // A reference-only declaring class needs a class reference, not an
+        // unconstrained storage companion. Constrain the explicit converted
+        // reference instead; boxing cannot copy mutable struct state here.
+        // Object/ValueType/Enum and interfaces retain their addressable dispatch.
+        if (Str(obj["k"]) == "constrainedCall" && TypeJson.Read(obj["recvType"]) is TypeNode.Tv
+            && ResolvedMember(obj) is JsonObject receiverMember
+            && TypeJson.Read(receiverMember["declaringType"]) is TypeNode.Fqn referenceOwner
+            && index.IsReferenceOwner(referenceOwner))
+            obj["recvType"] = TypeJson.Write(referenceOwner);
 
         // Collection allocation nodes already state their exact reference-type constructor. A compiler-owned
         // single-evaluation binding can retain that type even when its Kotlin surface is existential. Do not narrow
@@ -699,14 +762,15 @@ static class PhysicalValueCoercion
         var genericObjectProjection = declared is TypeNode.Tv
             && actual is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" }
             && Str(expression["k"]) is "callStatic" or "callInstance" or "constrainedCall";
-        // A CLR invocation's result hint is caller-relative. Its exact closed
-        // memberRef may return ordinary T while the Kotlin value uses Storage(T).
+        // An invocation's result hint is caller-relative. Its exact member or
+        // local declaration may return T while the Kotlin value uses Storage(T).
         // State that conversion explicitly, with the native result on the inner
         // invocation; otherwise an enclosing cast appears to be an identity cast.
-        var nativeGenericProjection = declared is TypeNode.Tv && actual is TypeNode.Tv
+        var genericSlotProjection = declared is TypeNode.Tv && actual is TypeNode.Tv
             && !declared.Equals(actual)
-            && Str(expression["k"]) is "clrStatic" or "clrInstance" or "clrGenericStatic" or "clrGenericInstance";
-        if (!genericObjectProjection && !nativeGenericProjection
+            && Str(expression["k"]) is "clrStatic" or "clrInstance" or "clrGenericStatic" or "clrGenericInstance"
+                or "callStatic" or "callInstance" or "constrainedCall";
+        if (!genericObjectProjection && !genericSlotProjection
             && !CollectionViewFaces.IsViewSeam(actual, declared)) return expression;
         var physical = expression.DeepClone().AsObject();
         // The inner expression leaves the exact member/declaration result on the CLR stack. Once the caller-facing

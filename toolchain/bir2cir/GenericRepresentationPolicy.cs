@@ -26,6 +26,8 @@ sealed class GenericRepresentationPolicy
             if (declaration["kind"] != null && declaration["name"] is JsonValue name
                 && name.TryGetValue<string>(out var owner)) _localOwners.Add(owner);
             foreach (var child in declaration["types"] as JsonArray ?? new JsonArray()) Collect(child);
+            foreach (var cell in (declaration["refTypes"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
+                if (Text(cell["name"]) is string cellOwner) _localOwners.Add(cellOwner);
         }
         var inputs = (roots ?? Array.Empty<JsonNode>()).ToArray();
         foreach (var root in inputs) Collect(root);
@@ -84,6 +86,12 @@ sealed class GenericRepresentationPolicy
 
     internal bool UsesNativeOwnerSlots(string owner) => owner != null && _aliases.ContainsKey(owner);
 
+    internal bool OwnsMethodValueSlots(JsonObject declaration) =>
+        !(declaration["attrs"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()
+            .Any(attribute => TypeJson.OwnerName(attribute["attr"]) == "kotlin.clr.ClrIntrinsic")
+        && !(declaration["overrides"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()
+            .Any(edge => !OwnsValueSlots(TypeJson.OwnerName(edge["owner"])));
+
     public bool UsesStorageArguments(string owner) => false;
 
     public NullableRepresentationFrame.Role ApplicationRole(string owner, NullableRepresentationFrame.Role role) =>
@@ -140,14 +148,14 @@ sealed class GenericRepresentationPolicy
         """)!.AsObject();
         NullableRepresentationMaterialization.Apply(new[] { root }, _ => false, policy: policy);
         var choose = root["methods"][0];
-        if (choose[NullableRepresentationTypes.MethodFrameKey] != null
-            || ((JsonArray)choose["typeParams"]).Count != 1
+        if (((JsonArray)choose["typeParams"]).Count != 2
+            || TypeJson.Read(choose["ret"]) != new TypeNode.Tv("method", 1)
             || TypeJson.Read(choose["params"][0]["type"]) != new TypeNode.Array(new TypeNode.Tv("method", 0))
             || TypeJson.Read(choose["params"][1]["type"]) is not TypeNode.Fqn { Args: { } mapArguments }
             || mapArguments[1] != new TypeNode.Tv("method", 0))
             throw new InvalidOperationException("Binding policy changed a native array or map element's canonical representation");
         var arguments = ((JsonArray)root["methods"][1]["body"][0]["typeArgs"]).Select(TypeJson.Read).ToArray();
-        if (arguments.Length != 1 || arguments[0] is not TypeNode.Fqn { Name: "kotlin.collections.Collection" })
+        if (arguments.Length != 2 || arguments.Any(argument => argument is not TypeNode.Fqn { Name: "kotlin.collections.Collection" }))
             throw new InvalidOperationException("Frame expansion changed a collection's source declaration identity");
 
         var sourceOverride = TypeJson.Write(new TypeNode.Fqn("Outer.Inner", new TypeNode[] { new TypeNode.Tv("type", 0) }));

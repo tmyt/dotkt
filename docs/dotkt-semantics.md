@@ -2114,6 +2114,15 @@ Native delegate slots retain the selected CLR declaration's convention. For exam
 `Func<Nullable<int32>, string>` keeps that exact signature. A Kotlin `(Int?) -> String` value instead uses
 `Func<object, object>`; SAM conversion bridges these signatures without changing an authored method's slots.
 
+A directly generic Kotlin storage slot uses a separate value-storage companion while its ordinary argument
+retains the original CLR construction. A directly method-generic Kotlin parameter or result owns that companion
+in its declaration too: an abstract interface method and its implementation publish the same value frame,
+independently of the implementation body. Compiler-generated shared cells follow the same storage rule.
+A CLR override or intrinsic instead retains the selected native declaration's generic arity and signature.
+Additional representations required only by a virtual implementation belong to a private body entry; they do
+not enlarge its published dispatch slot. Source constraints and role correspondence remain explicit metadata,
+not facts reconstructed from a physical companion's index or a method's spelling.
+
 Constructed value types such as `KeyValuePair<K,V>` follow the same concrete nullable-value rule as `Int`.
 Concretely:
 

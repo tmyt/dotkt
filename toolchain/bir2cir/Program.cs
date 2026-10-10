@@ -28,6 +28,7 @@ static class Bir2Cir
                 StdlibBindingOverlay.SelfTest();
                 DeclarationIdentityBinding.SelfTest();
                 DeclarationSignatureIdentity.SelfTest();
+                PhysicalValueCoercion.SelfTest();
                 KotlinPropertyAccessors.SelfTestAccessorSignatures();
                 LexicalDeclarationIds.SelfTest();
                 ExistentialReceiverBinding.SelfTest();
@@ -1498,8 +1499,16 @@ sealed class Pipeline
         // required by the final value-flow graph only now, after every synthetic declaration and exact memberRef is
         // stable. ilemit then emits those ordinary CIR casts without recognizing the collection ABI. A metadata/ref
         // build retains declaration types and only consumes semantic comparisons in executable constructor remnants.
+        var physicalExistentialOwners = localExistentialOwners.Values.ToHashSet(StringComparer.Ordinal);
         PhysicalValueCoercion.ApplyAll(loweredRoots.Select(file => file.Root).ToList(),
-            ClrMemberResolution.UnitSingletonRead, isValueFqn, referenceBuild: _options.RefBuild);
+            ClrMemberResolution.UnitSingletonRead, isValueFqn, referenceBuild: _options.RefBuild,
+            isReferenceOwner: owner => refs.ResolveNetType(owner.Name, owner.Args?.Length ?? 0)
+                is { IsClass: true, IsValueType: false } native
+                && native.FullName is not ("System.Object" or "System.ValueType" or "System.Enum"),
+            isExistentialOwner: owner => physicalExistentialOwners.Contains(owner.Name)
+                || refs.IsExistentialPhysicalOwner(owner.Name),
+            isNativeReference: owner => refs.ResolveNetType(owner.Name, owner.Args?.Length ?? 0)
+                is { IsValueType: false });
         foreach (var (lowered, _) in loweredRoots) FunctionSignatureIdentity.Complete(lowered);
 
         // Every representation synthesis is now complete. Validate the exact MethodDef table that CIR will describe;

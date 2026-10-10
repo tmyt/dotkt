@@ -2713,7 +2713,7 @@ static class InlineSplice
     // bind `compare`). Concretize the class's own params (`tv{scope:type,i}` -> the concrete typeArgs[i]), strip the now-
     // spurious type-args off self-references to the class, and drop `typeParams` + the node's `typeArgs` -> a clean
     // non-generic class. No-op when a typeArg is itself a tv (a genuinely-generic instantiation keeps the class generic).
-    static void PruneConcreteSynthClasses(JsonNode node)
+    internal static void PruneConcreteSynthClasses(JsonNode node)
     {
         if (node is JsonObject o)
         {
@@ -2724,6 +2724,17 @@ static class InlineSplice
             {
                 SubstTypeScopeTvs(sc, ta);       // tv{scope:type,i} -> the concrete typeArgs[i]
                 StripSelfGenericArgs(sc, cname);  // Sam102<...> (self-ref) -> Sam102 (now non-generic)
+                if (Str(sc[KotlinSupertypesRecord.PreKey]) is string sourceFacts)
+                {
+                    var facts = JsonNode.Parse(sourceFacts).AsObject();
+                    var frame = KotlinSupertypesRecord.ReadNullableFrame(sc);
+                    var sourceArguments = frame == null ? ta : new JsonArray(frame.OrdinaryArguments(
+                        ta.Select(TypeJson.Read).ToArray()).Select(TypeJson.Write).ToArray());
+                    // Declaration facts use source slots, not the expanded physical frame.
+                    SubstTypeScopeTvs(facts, sourceArguments);
+                    foreach (var key in new[] { "bounds", "variances", NullableRepresentationFrame.MetadataKey }) facts.Remove(key);
+                    sc[KotlinSupertypesRecord.PreKey] = facts.ToJsonString();
+                }
                 sc.Remove("typeParams");
                 o.Remove("typeArgs");
             }
