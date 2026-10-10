@@ -17,14 +17,18 @@ using DotKt.Bir;
 // as an expression statement and read the resolved singleton afterwards; discarded calls remain ordinary void calls.
 static class PhysicalValueCoercion
 {
-    static bool NeedsConversion(TypeNode source, TypeNode target, Index index) =>
-        source is TypeNode.Tv && target is TypeNode.Tv && !source.Equals(target)
+    static bool NeedsConversion(TypeNode source, TypeNode target, Index index)
+    {
+        source = SignatureValueTypes.Of(source);
+        target = SignatureValueTypes.Of(target);
+        return source is TypeNode.Tv && target is TypeNode.Tv && !source.Equals(target)
         || target is TypeNode.Tv && source is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" }
         || CollectionViewFaces.IsViewSeam(source, target)
         // A concrete value or generic stack slot is not a reference, even when its boxed value implements the
         // target interface. State the boxing edge before a conditional merge, store, argument or return.
         || !IsVoid(source) && !IsVoid(target)
             && NeedsBox(source, index.IsValue) && IsReferenceSlot(target, index.IsValue);
+    }
 
     static bool NeedsBox(TypeNode type, ValueTypeOracle isValue) => type switch
     {
@@ -145,7 +149,7 @@ static class PhysicalValueCoercion
             if (declaration["params"] is JsonArray parameters)
                 foreach (var parameter in parameters.OfType<JsonObject>())
                     if (Str(parameter["name"]) is string name && TypeJson.Read(parameter["type"]) is TypeNode type)
-                        locals[name] = type;
+                        locals[name] = SignatureValueTypes.Of(type);
             var temporaryFields = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
             var temporaryLocals = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
             while (CollectTemporaryValues(declaration["preStmts"], temporaryFields, temporaryLocals)
@@ -577,6 +581,7 @@ static class PhysicalValueCoercion
 
     static JsonNode Coerce(JsonNode value, TypeNode target, Scope scope, Index index)
     {
+        target = SignatureValueTypes.Of(target);
         // A stamp-less conditional still has an internal verifier merge before its enclosing store/argument/return.
         // An outer cast is too late: normalize the sibling branch itself and state the merge type once an edge proves
         // it. Typed conditionals take the same path earlier through CoerceInputs.
@@ -649,10 +654,10 @@ static class PhysicalValueCoercion
         if (kind == "local" && Str(obj["name"]) is string name && scope.Locals.TryGetValue(name, out var local))
             return local;
         if (kind == "this") return scope.Owner;
-        if (PhysicalResult(obj, scope, index) is TypeNode physical) return physical;
+        if (PhysicalResult(obj, scope, index) is TypeNode physical) return SignatureValueTypes.Of(physical);
         var inferred = NodeType.Of(obj, child => ExprType(child, scope, index),
             name => BirTypeLowering.PrimArrayElem.TryGetValue(name, out var elem) ? elem : null);
-        return index.ReferenceBuild ? inferred : BirTypeLowering.CanonicalExpressionResult(inferred);
+        return SignatureValueTypes.Of(index.ReferenceBuild ? inferred : BirTypeLowering.CanonicalExpressionResult(inferred));
     }
 
     static TypeNode PhysicalResult(JsonObject expression, Scope scope, Index index)

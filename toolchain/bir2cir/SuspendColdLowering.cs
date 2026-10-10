@@ -3343,7 +3343,7 @@ static partial class SuspendColdLowering
             if (Bool(callNode[FBoundStarProjectionErasure.ExactBridgeOwnerCallKey]))
                 call[FBoundStarProjectionErasure.ExactBridgeOwnerCallKey] = true;
             if (!isInstance)
-                ClrMemberResolution.CarryReferencedStaticCallSignatureSnapshot(callNode, call);
+                ClrMemberResolution.CarryReferencedStaticCallSignatureSnapshot(callNode, call, ContAny());
             // BUG Y — overload disambiguation. `<method>$dotkt_suspend` may be one of several same-named IL
             // overloads (SequenceScope.yieldAll has 3: Iterator/Iterable/Sequence), which ilemit resolves via
             // MethodsBySig on the param-type signature. Synthesize the call `sig` = the ORIGINAL call's param

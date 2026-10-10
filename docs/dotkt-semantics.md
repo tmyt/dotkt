@@ -1157,23 +1157,34 @@ FIR nevertheless selects one exact Kotlin declaration at every call,
 property access, and callable reference.
 
 `kotc` writes that selected declaration identity into BIR. `bir2cir` lowers an isolated signature projection to find
-the declarations that actually collide, assigns each a stable compiler-reserved MethodDef name derived from its
-identity, and rewrites declarations and uses from the same map. A colliding CLR Property row receives the same stable
-physical partition because Property metadata has its own name-and-signature identity; its exact accessor association
-retains the unsuffixed Kotlin property name for round-trip. It does not search the erased overload set again.
+the declarations that actually collide. An explicit function/accessor `@ClrName` is authoritative, whether or not
+a collision occurs; function/accessor `@JvmName` has the same physical effect. Otherwise user MethodDef names stay
+unchanged: the compiler does not repair collisions with declaration-ID hashes or declaration-order suffixes.
+Declarations and uses follow the same authoritative identity map, never a fresh search of the erased overload set.
 A declaration in an erased collision set additionally carries its pre-erasure Kotlin parameter and return types in
 `[KotlinDeclarationIdentity]`; `dll2klib` uses those facts to restore the original overload set and identity in a
 consuming module. The set includes pairs that live in different file facades and therefore do not collide as CLR
 MethodDefs: dll2klib merges those facades back into one Kotlin package. Ordinary declarations continue through their
 existing specialized metadata paths. Older compiler-produced artifacts are not inferred or repaired.
 
-The compiler-reserved suffix is visible to reflection and to CLR consumers that inspect method names. It is used when
-distinct Kotlin declarations would otherwise occupy the same physical link slot, including different open owner type
-parameters that can close to the same CLR type; source order does not choose the winner. `ilemit` receives the completed
-physical names and rejects a duplicate CIR signature rather than applying a late `$dupN` rename that call sites could
-not follow. An open/override family needs one slot-wide physical allocation;
-until such a family has a complete representation rule, a duplicate projected signature fails closed instead of being
-renamed independently or silently bound to the wrong body.
+Independent overloads distinguished by method-type-parameter upper bounds can retain the same physical name even
+when their value parameter types erase identically. In that collision set, `bir2cir` represents each bound structurally
+with compiler-private nominal signature types and places them in optional custom modifiers on the corresponding
+parameter. These types describe declaration identity, not values: they do not replace generic arguments, impose new
+runtime constraints, or change parameter storage. Their structural names are deterministic; declaration order does
+not choose a winner. Nullable reference wrappers are not signature discriminators.
+
+This extends the explicit-naming contract only for distinguishable generic-bound signatures. The same rule is applied
+to the selected suspend cold entry and its calls. Kotlin consumers recover the original bounds from metadata and link
+the exact selected MethodDef across DLLs. C# overload resolution does not use these modifiers to distinguish the
+otherwise equal signatures; a C# caller can therefore require distinct explicit `@ClrName` names. Ordinary CLR APIs
+are not projected into a different Kotlin type by this rule.
+
+Unresolved collisions still require distinct explicit names: for example `String`/`String?` or aliased value-parameter
+types without distinct bound signatures. An open/override family needs one slot-wide physical representation;
+until such a family has a complete rule, a duplicate projected signature fails closed instead of being modified or
+renamed independently. `ilemit` receives the completed signatures and names and rejects duplicates, never applying
+a late `$dupN` repair or reselecting an overload.
 
 ## 7. Default arguments — a two-tier rule (native metadata, else a carried BIR expression)
 

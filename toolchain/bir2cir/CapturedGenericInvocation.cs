@@ -148,9 +148,10 @@ static class CapturedGenericInvocation
             if (selectedFrame == null) throw new InvalidOperationException("Captured invocation has no selected generic frame");
             var owner = TypeJson.Read(member["declaringType"]) as TypeNode.Fqn
                 ?? throw new InvalidOperationException("Captured invocation has no selected declaring type");
-            var declarationParams = (member["parameterTypes"] as JsonArray)?.Select(TypeJson.Read).ToArray()
+            var declarationParams = (member["parameterTypes"] as JsonArray)?.Select(TypeJson.Read)
+                .Select(SignatureValueTypes.Of).ToArray()
                 ?? throw new InvalidOperationException("Captured invocation has no selected parameter vector");
-            var declaredReturn = TypeJson.Read(member["returnType"]);
+            var declaredReturn = SignatureValueTypes.Of(TypeJson.Read(member["returnType"]));
             if (captureIndices.Any(index => index < 0 || index >= arguments.Count)
                 || declarationParams.Length != arguments.Count)
                 throw new InvalidOperationException("Captured invocation argument does not match selected declaration");

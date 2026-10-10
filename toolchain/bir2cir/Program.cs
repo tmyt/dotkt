@@ -27,6 +27,7 @@ static class Bir2Cir
                 AliasHelperHoist.SelfTest();
                 StdlibBindingOverlay.SelfTest();
                 DeclarationIdentityBinding.SelfTest();
+                GenericBoundSignatureIdentity.SelfTest();
                 KotlinPropertyAccessors.SelfTestAccessorSignatures();
                 LexicalDeclarationIds.SelfTest();
                 ExistentialReceiverBinding.SelfTest();
@@ -168,6 +169,7 @@ sealed class Pipeline
         // sources remain upstream-identical. Apply those exact declaration-identity bindings before any pass snapshots
         // source names or annotations. Ordinary app/library builds cannot opt into this trusted-stdlib input.
         var stdlibPhysicalParameterIndices = StdlibBindingOverlay.Apply(birRoots, _options.StdlibBindings);
+        GenericBoundSignatureIdentity.Capture(birRoots);
         ComparableRepresentationLowering.Apply(birRoots, _options.RefBuild);
         // #395: snapshot frontend declaration identity before ANY Kotlin-to-CLR representation pass can rename,
         // move, clone, or synthesize a declaration. These are source facts, never a physical-name reverse inference.
@@ -1315,6 +1317,9 @@ sealed class Pipeline
         // #395: Kotlin declarations that were distinct before type lowering may now occupy one CLI signature.
         // Allocate their MethodDef names from the common runtime-physical projection and rewrite all local uses from
         // the frontend-selected declaration identity before any module-wide member binding consults declarations.
+        var genericBoundSignatures = GenericBoundSignatureIdentity.Plan(declarationCollisionProjection);
+        GenericBoundSignatureIdentity.Apply(declarationCollisionProjection, genericBoundSignatures);
+        GenericBoundSignatureIdentity.Apply(loweredRoots.Select(s => s.Root), genericBoundSignatures);
         var declarationPhysicalNames = DeclarationIdentityBinding.AllocatePhysicalNames(
             declarationCollisionProjection, out var declarationSemanticCarrierIds);
         DeclarationIdentityBinding.ApplyLocal(
