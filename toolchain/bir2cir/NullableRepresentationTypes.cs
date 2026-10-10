@@ -56,6 +56,25 @@ sealed class NullableRepresentationTypes
         declaration.Close(arguments, Argument, NullableArgument, StorageArgument, NullableStorageArgument);
 
     public TypeNode Slot(TypeNode type) => Rewrite(type, NullableGenericErasure.Pos.Slot);
+
+    // Member selection uses the preserved Kotlin scalar declaration, not its
+    // implementation's storage companion. Only an explicitly recorded scalar
+    // correspondence licenses this conversion; nested/native-ref signatures
+    // remain exact physical facts.
+    internal static TypeNode BindingScalar(TypeNode physical, JsonNode sourceFact,
+        NullableRepresentationFrame owner, NullableRepresentationFrame method = null)
+    {
+        if (sourceFact is not JsonValue value || !value.TryGetValue<string>(out var encoded)
+            || TypeJson.Read(JsonNode.Parse(encoded)) is not TypeNode.Tv source) return physical;
+        var frame = source.Scope == "type" ? owner : source.Scope == "method" ? method : null;
+        return frame?.StorageIndices.Contains(source.I) == true
+            && physical == frame.Variable(source, NullableRepresentationFrame.Role.Storage)
+                ? frame.Variable(source, NullableRepresentationFrame.Role.Ordinary) : physical;
+    }
+
+    internal static NullableRepresentationFrame DeclarationMethodFrame(JsonObject declaration) =>
+        declaration[MethodFrameKey] is JsonValue value && value.TryGetValue<string>(out var encoded)
+            ? NullableRepresentationFrame.Read(JsonNode.Parse(encoded)) : null;
     public TypeNode Argument(TypeNode type) => Rewrite(type, NullableGenericErasure.Pos.Argument);
     public TypeNode StorageArgument(TypeNode type) => Rewrite(type, NullableGenericErasure.Pos.Argument, storage: true);
     public bool IsStorageElement(string kind, string key) => _policy?.IsStorageElement(kind, key) == true;
@@ -124,13 +143,24 @@ sealed class NullableRepresentationTypes
             TypeNode.Projection projection => new TypeNode.Projection(projection.Variance, Rewrite(projection.Of, position, storage)),
             TypeNode.Fqn named => Named(named, position, storage),
             TypeNode.Array array => new TypeNode.Array(Argument(array.Elem), array.Rank, array.SzArray),
-            TypeNode.ByRef byRef => new TypeNode.ByRef(Slot(byRef.Of)),
+            // A managed reference denotes an exact CLR location. Its element
+            // follows the ordinary/native argument frame, not a value slot's
+            // independently demanded storage companion.
+            TypeNode.ByRef byRef => new TypeNode.ByRef(NativeReferent(byRef.Of)),
             TypeNode.Fn function => new TypeNode.Fn(function.Suspend, Argument(function.Ret),
                 function.Params.Select(Slot).ToArray(), function.Recv == null ? null : Slot(function.Recv),
                 function.Clr, function.Ctx?.Select(Slot).ToArray()),
             _ => type,
         };
     }
+
+    TypeNode NativeReferent(TypeNode source) => source switch {
+        TypeNode.Tv => Argument(source),
+        TypeNode.Oblivious { Of: TypeNode.Tv } platform => new TypeNode.Oblivious(Argument(platform.Of)),
+        // Preserve the existing scalar nullable and constructed referent rules;
+        // ordinary T is the only new value/storage distinction at this boundary.
+        _ => Slot(source),
+    };
 
     TypeNode Named(TypeNode.Fqn source, NullableGenericErasure.Pos position, bool storage)
     {
@@ -213,8 +243,23 @@ sealed class NullableRepresentationTypes
         var roles = new NullableRepresentationTypes(roleFrame, roleFrame, roleTypes, _ => false, ProjectArgumentHead);
         var ownerSource = new TypeNode.Tv("type", 0);
         var methodSource = new TypeNode.Tv("method", 0);
+        var ownerFact = JsonValue.Create(TypeNode.ToJson(ownerSource));
+        var methodFact = JsonValue.Create(TypeNode.ToJson(methodSource));
+        Equal(BindingScalar(new TypeNode.Tv("type", 2), ownerFact, roleFrame), ownerSource,
+            "source-owned scalar selection is independent of storage");
+        Equal(BindingScalar(new TypeNode.Tv("method", 2), methodFact, roleFrame, roleFrame), methodSource,
+            "method scalar selection retains its own source frame");
+        var nativeRef = new TypeNode.ByRef(new TypeNode.Tv("type", 2));
+        Equal(BindingScalar(nativeRef, ownerFact, roleFrame), nativeRef,
+            "scalar selection does not reinterpret an exact native location");
+        Equal(BindingScalar(new TypeNode.Tv("type", 2), null, roleFrame), new TypeNode.Tv("type", 2),
+            "no source fact means no scalar reconstruction");
         Equal(roles.StorageArgument(ownerSource), new TypeNode.Tv("type", 2), "scoped owner storage argument");
         Equal(roles.StorageArgument(methodSource), new TypeNode.Tv("method", 2), "scoped method storage argument");
+        Equal(roles.Slot(new TypeNode.ByRef(methodSource)), new TypeNode.ByRef(methodSource),
+            "native ref scalar retains its logical CLR frame");
+        Equal(roles.Slot(new TypeNode.ByRef(new TypeNode.Nullable(methodSource))), new TypeNode.ByRef(obj),
+            "native ref nullable scalar retains its existing representation");
         Equal(roles.NullableStorageArgument(methodSource), new TypeNode.Tv("method", 3), "method nullable-storage argument");
         Equal(roles.StorageArgument(new TypeNode.Nullable(ownerSource)), new TypeNode.Tv("type", 3),
             "storage of nullable source chooses nullable-storage");

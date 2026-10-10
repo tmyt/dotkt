@@ -282,6 +282,9 @@ static class KotlinOverrideSlotBridge
                 ? Fit.Bridge
                 : Classify(slotRet, SupertypeGraph.SubstOwnerTvs(declRet, ownArgs), refs, isValue,
                     returnPosition: true, referencedSlot);
+            if (retFit == Fit.Foreign && SameSourceRepresentationVariables(slotRet,
+                    SupertypeGraph.SubstOwnerTvs(declRet, ownArgs), sourceMapping.OwnerFrame))
+                retFit = Fit.Bridge;
             if (retFit == Fit.Foreign)
             {
                 if (referencedSlot && NodeType.IsNothing(declRet)) retFit = Fit.Bridge;
@@ -459,6 +462,12 @@ static class KotlinOverrideSlotBridge
             // resolved descriptor and resolves nothing itself.
             var bridgeDescriptor = ImplDescriptor(descriptorSpec, descriptorMember, arity, slotSignature ?? slotParams, slotRet,
                 constructedSlotTypeParams, unitValueReturn);
+            if (referencedSlot && !supIsInterface && refs.HasDotKtOwner(semanticSpec.Name)
+                && refs.TrySelectedOverrideDeclaration(semanticSpec.Name, identityName, null, arity,
+                    slotParams, semanticSpec.Args ?? Array.Empty<TypeNode>(), slotTypeParams,
+                    semanticSpec.Args ?? Array.Empty<TypeNode>(), false, out var referenceDeclaration)
+                && referenceDeclaration.PhysicalMember != descriptorMember)
+                bridgeDescriptor["referenceMember"] = referenceDeclaration.PhysicalMember;
             AddImplDescriptor(bridge, supIsInterface ? "clrInterfaceImpls" : "clrBaseImpls", bridgeDescriptor);
             // The bridge, not its typed forwarding target, owns this exact class slot.
             if (!supIsInterface
@@ -1354,6 +1363,16 @@ static class KotlinOverrideSlotBridge
                 bool[] refused;
                 var physicalProjection = !suspendValues && accessorKind == null
                     && impl[KotlinPropertyAccessors.SuspendSourceParamsKey] is JsonArray ? ownName : null;
+                var bindingReturn = TypeJson.Read(impl["ret"]);
+                if (!suspendValues && physicalProjection == null)
+                {
+                    var methodFrame = NullableRepresentationTypes.DeclarationMethodFrame(impl);
+                    implementationSignature = implementationSignature.Select((type, index) =>
+                        NullableRepresentationTypes.BindingScalar(type, ps[index]?["nullableGeneric"],
+                            sourceMapping.OwnerFrame, methodFrame)).ToArray();
+                    bindingReturn = NullableRepresentationTypes.BindingScalar(bindingReturn,
+                        impl["nullableGenericRet"], sourceMapping.OwnerFrame, methodFrame);
+                }
                 if (suspendValues)
                 {
                     if (accessorKind != null || !refs.TrySelectedOverrideDeclaration(
@@ -1377,7 +1396,7 @@ static class KotlinOverrideSlotBridge
                             ps.Count, methodArity, implementationSignature, selectedArgs,
                             out slotRet0, out slotParams0, out refused, includeUnchanged: true)
                         : refs.TrySelectedNullableGenericSlot(spec.Name, member, isStatic: false, ps.Count, methodArity,
-                            implementationSignature, TypeJson.Read(impl["ret"]),
+                            implementationSignature, bindingReturn,
                             spec.Args ?? Array.Empty<TypeNode>(), impl["typeParams"] as JsonArray, ownArgs,
                             out slotRet0, out slotParams0, out refused,
                             out selectedPhysicalMember, out selectedSlotTypeParams, out slotReturnsValue,
@@ -1462,6 +1481,26 @@ static class KotlinOverrideSlotBridge
                     else if (refs.TryExactMemberIntrinsic(spec.Name, member, methodArity,
                             implementationSignature, spec.Args ?? Array.Empty<TypeNode>(), out var clrName))
                         descriptorMember = clrName;
+                    else if (physicalProjection == null && descriptorMember == member
+                        && refs.HasDotKtOwner(spec.Name)
+                        && !refs.TryResolveClrOwner(spec.Name, out _, out _))
+                    {
+                        // Metadata-only stdlib declarations retain Kotlin names,
+                        // while their runtime overrides adopt an intrinsic ancestor's
+                        // allocation. Resolve the same exact inherited declaration
+                        // binding; keep the Kotlin class as the MethodImpl owner.
+                        var inheritedMembers = SupertypeGraph.Reachable(new Def { Base = spec }, defs, refs)
+                            .Where(edge => edge.isInterface)
+                            .Select(edge => refs.TryExactMemberIntrinsic(edge.spec.Name, member, methodArity,
+                                implementationSignature, edge.spec.Args ?? Array.Empty<TypeNode>(),
+                                out var inheritedMember) ? inheritedMember : null)
+                            .Where(inheritedMember => inheritedMember != null)
+                            .Distinct(StringComparer.Ordinal).ToArray();
+                        if (inheritedMembers.Length > 1)
+                            throw new InvalidOperationException(
+                                $"bir2cir: referenced override '{spec.Name}.{member}`{methodArity}' inherits conflicting CLR names");
+                        if (inheritedMembers.Length == 1) descriptorMember = inheritedMembers[0];
+                    }
 
                     var loweredOwner = BirTypeLowering.LowerPhysicalType(
                         selectedDescriptorOwner, refs.Aliases, isValue, refs.PhysicalTypeNames,
@@ -1736,6 +1775,7 @@ static class KotlinOverrideSlotBridge
         IReadOnlyDictionary<JsonObject, TypeNode[]> inheritedSignatures = null)
     {
         JsonObject found = null;
+        var ownerFrame = KotlinSupertypesRecord.ReadNullableFrame(cls.Node);
         foreach (var m in methods.OfType<JsonObject>())
         {
             if (Bool(m["static"]) || KotlinPropertyAccessors.IsPhysicalSlotBridge(m)) continue;
@@ -1775,7 +1815,8 @@ static class KotlinOverrideSlotBridge
                     ?? (ps[i] as JsonObject)?["type"]);
                 var declared = t == null ? null : SupertypeGraph.SubstOwnerTvs(t, ownArgs);
                 ok = declared != null && (ErasureAligned(slotParams[i], declared)
-                    || IsCompanionScalarSeam(slotParams[i], declared));
+                    || IsCompanionScalarSeam(slotParams[i], declared)
+                    || SameSourceRepresentationVariables(slotParams[i], declared, ownerFrame));
             }
             if (!ok) continue;
             if (found != null) return null;   // ambiguous overload set: never guess which declaration owns the slot

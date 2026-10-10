@@ -14,4 +14,14 @@ public static class GenericFrameApi
             throw new InvalidOperationException("The two managed references must alias the same location.");
         return second;
     }
+
+    public static T SetAndObserve<T>(ref T first, out T second, T replacement)
+    {
+        second = replacement;
+        if (!System.Collections.Generic.EqualityComparer<T>.Default.Equals(first, replacement))
+            throw new InvalidOperationException("The ref and out arguments must alias the same location.");
+        return first;
+    }
+
+    public static ref T Reference<T>(ref T value) => ref value;
 }

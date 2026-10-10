@@ -217,8 +217,64 @@ static class PhysicalValueCoercion
             foreach (var method in methods.OfType<JsonObject>())
             {
                 var scope = new Scope().Frame(method, owner, TypeJson.Read(method["ret"]));
-                if (method["body"] is JsonArray body) RewriteArray(body, scope, index);
+                if (method["body"] is JsonArray body)
+                {
+                    if (!index.ReferenceBuild) AllocateNativeLocals(body);
+                    RewriteArray(body, scope, index);
+                }
             }
+    }
+
+    // A CLR managed reference names storage, not a converted value. A local used
+    // by an exact resolved ref/out parameter therefore keeps that parameter's
+    // element type for its whole storage lifetime. Ordinary reads and writes are
+    // reconciled by the value-flow walk below; no temporary copy or reference
+    // lifetime tracking is involved, and repeated arguments name the same slot.
+    static void AllocateNativeLocals(JsonArray body)
+    {
+        var required = new Dictionary<JsonObject, TypeNode>();
+        void Visit(JsonNode node, Dictionary<string, JsonObject> declarations)
+        {
+            if (node is JsonArray array)
+            {
+                foreach (var child in array) Visit(child, declarations);
+                return;
+            }
+            if (node is not JsonObject obj) return;
+            // A nested declaration owns different storage, even if names repeat.
+            if (obj["k"] == null && obj["params"] is JsonArray) return;
+            if (Str(obj["k"]) is ("block" or "valueBlock" or "cond" or "try" or "tryExpr"
+                    or "forRange" or "forArray" or "forIn"))
+                declarations = new Dictionary<string, JsonObject>(declarations, StringComparer.Ordinal);
+            if (Str(obj["k"]) is ("callStatic" or "callInstance" or "constrainedCall"
+                    or "clrStatic" or "clrInstance" or "clrGenericStatic" or "clrGenericInstance")
+                && obj["args"] is JsonArray arguments
+                && ParameterTypes(obj) is { } parameters && parameters.Length == arguments.Count)
+                for (var i = 0; i < parameters.Length; i++)
+                {
+                    if (SignatureValueTypes.Of(parameters[i]) is not TypeNode.ByRef reference
+                        || arguments[i] is not JsonObject argument) continue;
+                    var location = Str(argument["k"]) == "byrefOf" ? argument["inner"] as JsonObject : argument;
+                    if (location == null || Str(location["k"]) != "local"
+                        || Str(location["name"]) is not string local
+                        || !declarations.TryGetValue(local, out var declaration)) continue;
+                    // A managed-reference local already stores the pointer, not
+                    // the addressed value. Never replace it with value storage.
+                    if (SignatureValueTypes.Of(TypeJson.Read(declaration["type"])) is TypeNode.ByRef)
+                        continue;
+                    var element = SignatureValueTypes.Of(reference.Of);
+                    if (required.TryGetValue(declaration, out var previous) && previous != element)
+                        throw new InvalidOperationException(
+                            $"bir2cir: local '{local}' is required by distinct CLR managed-reference element types");
+                    required[declaration] = element;
+                }
+            foreach (var child in obj) Visit(child.Value, declarations);
+            if (Str(obj["k"]) == "var" && Str(obj["name"]) is string declared)
+                declarations[declared] = obj;
+        }
+        Visit(body, new Dictionary<string, JsonObject>(StringComparer.Ordinal));
+        foreach (var (declaration, type) in required)
+            declaration["type"] = TypeJson.Write(type);
     }
 
     static JsonNode Rewrite(JsonNode node, Scope scope, Index index, bool resultUsed = true)
@@ -255,6 +311,17 @@ static class PhysicalValueCoercion
             var rewritten = Rewrite(child.Value, childScope, index,
                 ChildUsesValue(obj, child.Key, scope, resultUsed));
             if (!ReferenceEquals(rewritten, child.Value)) obj[child.Key] = rewritten;
+        }
+
+        // Dereferences consume the pointer's exact element type. The original
+        // value stamp can name a Kotlin storage companion instead; conversions
+        // belong on the loaded/stored value, never on the managed pointer.
+        if (Str(obj["k"]) is "byrefLoad" or "byrefStore")
+        {
+            var pointer = obj["ptr"] ?? (Str(obj["local"]) is string local
+                ? new JsonObject { ["k"] = "local", ["name"] = local } : null);
+            if (ExprType(pointer, scope, index) is TypeNode.ByRef reference)
+                obj["elem"] = TypeJson.Write(reference.Of);
         }
 
         // Collection allocation nodes already state their exact reference-type constructor. A compiler-owned
