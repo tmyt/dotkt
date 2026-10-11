@@ -2210,7 +2210,7 @@ What this is observable as:
   through an explicit `Any` — `val a: Int? = 1; val b: Int? = 1` compared as `T?` through a generic slot is `false`.
 - **Narrowing null to a physical value-type slot throws** because `unbox.any` on a null reference raises
   `NullReferenceException`. A non-reified unchecked generic return and its directly initialized generic local
-  can retain the erased object until a typed consumer needs that narrowing, as described in §2a; merely storing
+  can retain the erased object until a typed consumer needs that narrowing, as described in §2; merely storing
   an unused result must not force the exception earlier. Concrete and reified cast operations still perform
   their explicitly resolved checks.
 - **Reflection loses intensionality.** `GetType()` on a value read out of an erased slot reports `Int32`, not
