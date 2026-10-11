@@ -36,6 +36,97 @@ import NUnit.Framework.Legacy.ClassicAssert.IsNull as assertNull
 
 private class ArrNullableFactory<T>(val create: () -> Array<T?>)
 
+private interface ArrBoundedNode
+private class ArrBoundedItem : ArrBoundedNode
+private interface ArrOtherBound
+private class ArrIntersectionItem : ArrBoundedNode, ArrOtherBound
+private open class ArrGenericNode<U>
+
+@Suppress("UNCHECKED_CAST")
+private fun <U, T : ArrGenericNode<U>> arrCheckConstructedBound() {
+    val raw = arrayOfNulls<ArrGenericNode<Any?>>(1)
+    val storage = raw as Array<T?>
+    check(storage === raw && storage[0] == null)
+    check(arrayOf("wrong") as Any as? Array<T> == null)
+}
+
+@Suppress("UNCHECKED_CAST")
+private fun <T> arrCheckConstructedElement() {
+    val raw = arrayOfNulls<List<Any?>>(1)
+    val storage = raw as Array<List<T>?>
+    check(storage === raw && storage[0] == null)
+    check(arrayOf("wrong") as Any as? Array<List<T>> == null)
+}
+
+@Suppress("UNCHECKED_CAST")
+private fun <T : ArrBoundedNode> arrCheckGenericCasts(item: T) {
+    val good: Any = arrayOf<ArrBoundedNode>(item)
+    val bad: Any = arrayOf("wrong")
+    val none: Any? = null
+    check((good as Array<T>) === good)
+    check((good as? Array<T>) === good)
+    check(bad as? Array<T> == null)
+    check(none as? Array<T> == null && none as Array<T>? == null)
+    var rejected = false
+    try { bad as Array<T> } catch (e: System.InvalidCastException) { rejected = true }
+    check(rejected)
+    rejected = false
+    try { none as Array<T> } catch (e: System.InvalidCastException) { rejected = true }
+    check(rejected)
+    val nested: Any = arrayOf(arrayOf<ArrBoundedNode>(item))
+    check((nested as Array<Array<T>>) === nested)
+    check(arrayOf(arrayOf("wrong")) as Any as? Array<Array<T>> == null)
+}
+
+@Suppress("UNCHECKED_CAST")
+private fun <T> arrCheckIntersection(item: T) where T : ArrBoundedNode, T : ArrOtherBound {
+    val values: Any = arrayOf<ArrBoundedNode>(item)
+    check((values as Array<T>) === values)
+}
+
+@Suppress("UNCHECKED_CAST")
+private fun <T : ArrBoundedNode, U : T> arrCheckTransitive(item: U) {
+    val values: Any = arrayOf<ArrBoundedNode>(item)
+    check((values as Array<U>) === values)
+    check(arrayOf("wrong") as Any as? Array<U> == null)
+}
+
+@Suppress("UNCHECKED_CAST")
+private fun <T> arrRejectMatrix(): Boolean {
+    val values: Any = System.Array.CreateInstance(System.Type.GetType("System.String")!!, 1, 1)
+    return values as? Array<T> == null
+}
+
+@Suppress("UNCHECKED_CAST")
+private inline fun <reified T> arrReifiedSafeCast(value: Any): Array<T>? = value as? Array<T>
+
+private var arrStoreOrder = ""
+private fun <T> arrOrderedStore(values: Array<T>, value: T) {
+    (run { arrStoreOrder += "a"; values })[run { arrStoreOrder += "i"; 0 }] = run { arrStoreOrder += "v"; value }
+}
+
+@Suppress("UNCHECKED_CAST")
+private fun <T> arrWrongComponentStore(value: T) {
+    val values = arrayOf(1.0) as Array<T>
+    values[0] = value
+}
+
+@Suppress("UNCHECKED_CAST")
+private fun <T : ArrBoundedNode> arrResizeBoundedStorage(item: T) {
+    var values = arrayOfNulls<ArrBoundedNode>(4) as Array<T?>
+    val alias = values
+    values[0] = item
+    check(alias === values && alias[0] === item)
+    values.fill(item, 1, 3)
+    check(alias[1] === item && alias[2] === item && alias[3] == null)
+    values.fill(null)
+    check(alias.all { it == null })
+    values[0] = item
+    values = values.copyOf(8)
+    check(values.size == 8 && values[0] === item && values[7] == null)
+    check(alias.size == 4 && alias[0] === item)
+}
+
 private inline fun <reified T> arrNullableFactory(size: Int): ArrNullableFactory<T> =
     ArrNullableFactory { arrayOfNulls<T>(size) }
 
@@ -80,7 +171,7 @@ class ArrBox<T>(size: Int) {
     fun elem(i: Int): ArrRef<T?> = a[i]
 }
 
-// The open declaration is physically object[] while a String instantiation remains a real string[] at runtime. The
+// The open declaration is physically System.Array while a String instantiation remains a real string[] at runtime. The
 // constructor argument and result projection are the two halves of one invariant: preserve a concrete reference
 // construction through the covariant open slot, then check-project it at the concrete read boundary.
 class ArrNullableRefHolder<T>(val values: Array<T?>) {
@@ -91,6 +182,38 @@ enum class ArraySeason { SPRING, SUMMER, AUTUMN }
 fun <T : Enum<T>> arrayEnumName(value: T): String = value.name
 
 class ArrayTests {
+    @TestAttribute
+    fun genericArrayCastsPreserveBoundsShapeAndReifiedChecks() {
+        arrCheckGenericCasts(ArrBoundedItem())
+        arrCheckIntersection(ArrIntersectionItem())
+        arrCheckTransitive<ArrBoundedNode, ArrBoundedItem>(ArrBoundedItem())
+        check(arrRejectMatrix<String>())
+        check(arrReifiedSafeCast<String>(arrayOf("ok")) != null)
+        check(arrReifiedSafeCast<String>(arrayOf(1)) == null)
+    }
+
+    @TestAttribute
+    fun genericArrayCastsEraseConstructedKotlinComponents() {
+        arrCheckConstructedBound<String, ArrGenericNode<String>>()
+        arrCheckConstructedElement<String>()
+    }
+
+    @TestAttribute
+    fun genericArrayStoresKeepComponentChecksAndEvaluationOrder() {
+        var rejected = false
+        try { arrWrongComponentStore(1) } catch (e: Exception) { rejected = true }
+        check(rejected)
+        arrStoreOrder = ""
+        val ints = arrayOf(1)
+        arrOrderedStore(ints, 2)
+        check(ints[0] == 2 && arrStoreOrder == "aiv")
+        val nullable = arrayOfNulls<Int>(1)
+        arrOrderedStore(nullable, 3)
+        check(nullable[0] == 3)
+        arrOrderedStore(nullable, null)
+        check(nullable[0] == null)
+    }
+
     @TestAttribute
     fun genericArrayConstructorUsesReifiedElement() {
         val stringBuilder: (Int, (Int) -> String) -> Array<String> = ::arrBuild
@@ -586,5 +709,10 @@ class ArrayTests {
         assertNull(s.a[2].v)            // null (reference element: chained read across the boundary)
         val rs: ArrRef<String?> = s.elem(0)
         assertNull(rs.v)                // null
+    }
+
+    @TestAttribute
+    fun boundedGenericArrayStorageKeepsIdentityAndResizes() {
+        arrResizeBoundedStorage(ArrBoundedItem())
     }
 }

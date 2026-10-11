@@ -439,7 +439,8 @@ static class FBoundStarProjectionErasure
 
     static void RewriteTypesOnly(JsonNode node, IReadOnlyDictionary<string, Owner> owners,
         IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs,
-        IReadOnlyDictionary<string, string> localClrAliases, bool boundDeclaration = false)
+        IReadOnlyDictionary<string, string> localClrAliases, bool boundDeclaration = false,
+        bool preserveArrayShape = false)
     {
         switch (node)
         {
@@ -452,6 +453,8 @@ static class FBoundStarProjectionErasure
                         || key == ExistentialArrayElementProjectionKey) continue;
                     var childBoundDeclaration = boundDeclaration
                         || IsBoundDeclarationType(obj, key, refs, localClrAliases);
+                    var childArrayShape = preserveArrayShape
+                        || IsNativeArrayDeclarationSlot(obj, key, refs, localClrAliases);
                     if (key is "argTypes" or "memberSignature" && value is JsonArray argumentTypes
                         && obj["args"] is JsonArray argumentValues)
                     {
@@ -485,12 +488,13 @@ static class FBoundStarProjectionErasure
                     if (TypeJson.Read(value) is TypeNode type)
                         obj[key] = TypeJson.Write(RewriteType(
                             type, owners, refs, childBoundDeclaration, localClrAliases,
+                            preserveArrayShape: childArrayShape,
                             preserveConstructedHead: PreservesConstructionHead(obj, key)
                                 || IsExactLexicalType(obj, key)
                                 || IsTypeDefinition(obj) && key == "base"
                                 || IsDeclarationOwnerDescriptor(obj) && key == "owner"));
                     else
-                        RewriteTypesOnly(value, owners, defs, refs, localClrAliases, childBoundDeclaration);
+                        RewriteTypesOnly(value, owners, defs, refs, localClrAliases, childBoundDeclaration, childArrayShape);
                 }
                 break;
             case JsonArray arr:
@@ -501,9 +505,10 @@ static class FBoundStarProjectionErasure
                     if (TypeJson.Read(value) is TypeNode type)
                         arr[i] = TypeJson.Write(RewriteType(
                             type, owners, refs, boundDeclaration, localClrAliases,
+                            preserveArrayShape: preserveArrayShape,
                             preserveConstructedHead: IsInterfaceDeclarationList(arr)));
                     else
-                        RewriteTypesOnly(value, owners, defs, refs, localClrAliases, boundDeclaration);
+                        RewriteTypesOnly(value, owners, defs, refs, localClrAliases, boundDeclaration, preserveArrayShape);
                 }
                 break;
         }
@@ -525,11 +530,43 @@ static class FBoundStarProjectionErasure
         if (key == "resolvedMemberParams" || key == ClrMemberResolution.ResolvedMemberReturnKey)
             return true;
         if (key == "argTypes" && ClrBoundNode.IsAny(kind)) return true;
-        return key == "memberSignature" && kind == "new"
+        if (key == "memberRef") return true;
+        // Binding factories own their exact allocation-element result. Value slots using that result are separate.
+        if (key == "ret" && (owner["attrs"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()
+            .Any(a => TypeJson.OwnerName(a["attr"]) == "kotlin.clr.ClrArrayFactory")) return true;
+        if (key == "type" && kind is "cast" or "isInst" or "isInstRef" && KotlinTypeWitness.NeedsWitness(owner)) return true;
+        return key == "memberSignature" && kind is "new" or "newClr"
             && TypeJson.Read(owner["type"]) is TypeNode.Fqn constructed
-            && (refs.TryResolveClrOwner(constructed.Name, out _, out _)
-                || localClrAliases?.ContainsKey(constructed.Name) == true);
+            && IsNativeArrayOwner(constructed, refs, localClrAliases);
     }
+
+    // Preserve only the selected native array shape. This does not make unrelated
+    // Kotlin generic values in a bridge into exact constructed CLR values.
+    static bool IsNativeArrayDeclarationSlot(JsonObject owner, string key, ReferenceMetadataIndex refs,
+        IReadOnlyDictionary<string, string> localClrAliases) =>
+        key == "typeArgs" && ClrBoundNode.IsAny(Str(owner["k"]))
+        // Collection constructions allocate a native generic container. Its
+        // element/key/value are CLR argument witnesses, not array value slots.
+        // PhysicalValueCoercion authors the conversion at each insertion edge.
+        || key == "elem" && Str(owner["k"]) is "newList" or "newSet"
+        || key is "keyType" or "valType" && Str(owner["k"]) == "newMap"
+        || key is "params" or "ret"
+        && (Bool(owner[KotlinPropertyAccessors.PhysicalSlotBridgeKey])
+                && new[] { "clrInterfaceImpls", "clrBaseImpls" }
+                    .SelectMany(slotKey => (owner[slotKey] as JsonArray)?.OfType<JsonObject>()
+                        ?? Enumerable.Empty<JsonObject>())
+                    .Any(slot => TypeJson.Read(slot["owner"]) is TypeNode.Fqn nativeOwner
+                        && IsNativeArrayOwner(nativeOwner, refs, localClrAliases))
+            || IsDeclarationOwnerDescriptor(owner)
+                && TypeJson.Read(owner["owner"]) is TypeNode.Fqn descriptorOwner
+                && IsNativeArrayOwner(descriptorOwner, refs, localClrAliases));
+
+    static bool IsNativeArrayOwner(TypeNode.Fqn owner, ReferenceMetadataIndex refs,
+        IReadOnlyDictionary<string, string> localClrAliases) =>
+        localClrAliases?.ContainsKey(owner.Name) == true
+        || refs?.TryResolveClrOwner(owner.Name, out _, out _) == true
+        || refs != null && !refs.HasDotKtOwner(owner.Name)
+            && refs.ResolveRefType(owner.Name, owner.Args?.Length ?? 0) != null;
 
     // The temporary and its initializer retain the same concrete head, but their generic arguments are
     // ordinary value slots and must receive the same projection as the construction's arguments.
@@ -1109,13 +1146,19 @@ static class FBoundStarProjectionErasure
                 if (TryVarianceProjectedArrayInitializerOwner(obj, defs, refs, out var initializerOwner)
                     && owners.TryGetValue(initializerOwner.Name, out var projectedInitializerOwner))
                     projectedInitializerOwner.Needed = true;
-                var runtimeClassifier = Str(obj["k"]) is "isInst" or "cast";
+                var runtimeClassifier = Str(obj["k"]) is "isInst" or "isInstRef" or "cast";
                 foreach (var kv in obj)
                 {
                     if (kv.Value == null || kv.Key == "name") continue;
                     if (TypeJson.Read(kv.Value) is TypeNode type)
                     {
                         MarkNeededType(type, owners, runtimeClassifier && kv.Key == "type");
+                    }
+                    else if (kv.Key is "constraints" or ErasedInnerConstraintKey && kv.Value is JsonArray bounds)
+                    {
+                        // A generic bound supplies the erased classifier of a
+                        // type-variable array cast, including private classifiers.
+                        foreach (var bound in bounds) MarkNeededType(TypeJson.Read(bound), owners, true);
                     }
                     else MarkNeeded(kv.Value, owners, defs, refs);
                 }
@@ -1771,14 +1814,14 @@ static class FBoundStarProjectionErasure
                         projected, projectedOwner.Def["typeParams"] as JsonArray);
                 MarkNeededType(p.Of, owners, false);
                 break;
-            case TypeNode.Nullable n: MarkNeededType(n.Of, owners, false); break;
-            case TypeNode.Oblivious o: MarkNeededType(o.Of, owners, false); break;
+            case TypeNode.Nullable n: MarkNeededType(n.Of, owners, runtimeClassifier); break;
+            case TypeNode.Oblivious o: MarkNeededType(o.Of, owners, runtimeClassifier); break;
             case TypeNode.Array a:
                 if (StripSourceNullability(a.Elem) is TypeNode.Fqn element
                     && owners.TryGetValue(element.Name, out var arrayOwner) && arrayOwner.Def != null
                     && HasKotlinVariantParameter(element, arrayOwner.Def["typeParams"] as JsonArray))
                     arrayOwner.Needed = true;
-                MarkNeededType(a.Elem, owners, false);
+                MarkNeededType(a.Elem, owners, runtimeClassifier);
                 break;
             case TypeNode.ByRef b: MarkNeededType(b.Of, owners, false); break;
             case TypeNode.Fn fn:
@@ -2904,7 +2947,8 @@ static class FBoundStarProjectionErasure
         JsonArray methodParameterDeclarations = null,
         TypeNode.Fqn currentThisType = null,
         bool boundDeclaration = false,
-        IReadOnlyDictionary<string, string> localClrAliases = null)
+        IReadOnlyDictionary<string, string> localClrAliases = null,
+        bool preserveArrayShape = false)
     {
         switch (node)
         {
@@ -3008,6 +3052,8 @@ static class FBoundStarProjectionErasure
                 // exact constructed source only after that physical representation is known; its stale frontend
                 // `sty` is not proof that `(x as Derived<T>) as Base<T>` still carries Derived<T> at this point.
                 var runtimeKind = Str(obj["k"]);
+                var arrayCastTarget = runtimeKind is "cast" or "isInstRef" && !Bool(obj["_exactBridgeCast"])
+                    ? TypeJson.Read(obj["type"]) : null;
                 var runtimeOperand = runtimeKind == "cast" ? obj["e"] : null;
                 var rewroteRuntimeOperand = runtimeOperand != null;
                 if (runtimeOperand != null)
@@ -3038,6 +3084,8 @@ static class FBoundStarProjectionErasure
                         || rewroteRuntimeOperand && key == "e") continue;
                     var childBoundDeclaration = boundDeclaration
                         || IsBoundDeclarationType(obj, key, refs, localClrAliases);
+                    var childArrayShape = preserveArrayShape
+                        || IsNativeArrayDeclarationSlot(obj, key, refs, localClrAliases);
                     if (key is "argTypes" or "memberSignature" && value is JsonArray argumentTypes
                         && obj["args"] is JsonArray argumentValues)
                     {
@@ -3071,6 +3119,7 @@ static class FBoundStarProjectionErasure
                     if (TypeJson.Read(value) is TypeNode type)
                         obj[key] = TypeJson.Write(RewriteType(
                             type, owners, refs, childBoundDeclaration, localClrAliases,
+                            preserveArrayShape: childArrayShape,
                             preserveConstructedHead: PreservesConstructionHead(obj, key)
                                 || IsExactLexicalType(obj, key)
                                 || IsTypeDefinition(obj) && key == "base"
@@ -3079,10 +3128,20 @@ static class FBoundStarProjectionErasure
                         Rewrite(value, owners, defs, refs,
                             childTypeParameters, childMethodParameters,
                             childTypeParameterDeclarations, childMethodParameterDeclarations, childThisType,
-                            childBoundDeclaration, localClrAliases);
+                            childBoundDeclaration, localClrAliases, childArrayShape);
                 }
                 BindProjectedArrayRead(obj, owners, refs);
                 BindProjectedArrayGenericCall(obj, owners, refs);
+                if (arrayCastTarget != null)
+                    GenericArrayStorageLowering.LowerTypeOperation(obj, arrayCastTarget,
+                        childTypeParameterDeclarations, childMethodParameterDeclarations, refs,
+                        type => type is TypeNode.Fqn { Args: { Length: > 0 } } generic
+                            && TryExistentialCarrier(generic.Name, owners, refs, out var classifier)
+                            ? new TypeNode.Fqn(classifier)
+                            : RewriteType(type, owners, refs, localClrAliases: localClrAliases),
+                        type => type is TypeNode.Fqn named && (defs.TryGetValue(named.Name, out var bound)
+                            ? Str(bound["kind"]) == "interface" : refs.IsInterfaceType(named)));
+                GenericArrayStorageLowering.LowerOperation(obj, refs);
                 // A star-projected inner construction is replaced while visiting the receiver below this call.  Its
                 // result is the inner existential carrier, so bind the immediately-following member only after that
                 // receiver seam is visible.  The initial pass above is still required for ordinary star receivers.
@@ -3103,12 +3162,13 @@ static class FBoundStarProjectionErasure
                     if (TypeJson.Read(value) is TypeNode type)
                         arr[i] = TypeJson.Write(RewriteType(
                             type, owners, refs, boundDeclaration, localClrAliases,
+                            preserveArrayShape: preserveArrayShape,
                             preserveConstructedHead: IsInterfaceDeclarationList(arr)));
                     else
                         Rewrite(value, owners, defs, refs,
                             existentialTypeParameters, existentialMethodParameters,
                             typeParameterDeclarations, methodParameterDeclarations, currentThisType,
-                            boundDeclaration, localClrAliases);
+                            boundDeclaration, localClrAliases, preserveArrayShape);
                 }
                 break;
         }
@@ -4765,6 +4825,7 @@ static class FBoundStarProjectionErasure
         {
             case JsonObject obj:
                 obj.Remove("_exactBridgeCast");
+                obj.Remove("reifiedTypeOperand");
                 obj.Remove(ExactBridgeOwnerCallKey);
                 obj.Remove(ExactOuterKey);
                 obj.Remove(DelegationOuterSlotKey);
@@ -4892,12 +4953,11 @@ static class FBoundStarProjectionErasure
     static TypeNode RewriteType(TypeNode type, IReadOnlyDictionary<string, Owner> owners,
         ReferenceMetadataIndex refs, bool boundDeclaration = false,
         IReadOnlyDictionary<string, string> localClrAliases = null,
-        bool preserveConstructedHead = false)
+        bool preserveConstructedHead = false, bool preserveArrayShape = false)
     {
         TypeNode[] Arguments(TypeNode.Fqn application)
         {
-            var nativeOwner = localClrAliases?.ContainsKey(application.Name) == true
-                || refs?.TryResolveClrOwner(application.Name, out _, out _) == true;
+            var nativeOwner = IsNativeArrayOwner(application, refs, localClrAliases);
             var frame = nativeOwner ? null : owners.TryGetValue(application.Name, out var declaration)
                 ? KotlinSupertypesRecord.ReadNullableFrame(declaration.Def)
                 : refs?.NullableTypeFrames.GetValueOrDefault(application.Name);
@@ -4906,6 +4966,8 @@ static class FBoundStarProjectionErasure
             // its value slot, and an exact lexical declaration owner.
             return application.Args.Select((argument, index) => RewriteType(
                 argument, owners, refs, boundDeclaration, localClrAliases,
+                preserveArrayShape: nativeOwner || frame != null && frame.PhysicalSlot(index).Representation
+                    is NullableRepresentationFrame.Role.Ordinary or NullableRepresentationFrame.Role.Nullable,
                 preserveConstructedHead: frame != null && frame.PhysicalSlot(index).Representation
                     is NullableRepresentationFrame.Role.Ordinary or NullableRepresentationFrame.Role.Nullable
                     // Kotlin declaration-site variance uses the nominal carrier
@@ -4980,17 +5042,20 @@ static class FBoundStarProjectionErasure
             case TypeNode.Fqn { Args: { } args } f:
                 return new TypeNode.Fqn(f.Name, Arguments(f));
             case TypeNode.Nullable n: return new TypeNode.Nullable(RewriteType(
-                n.Of, owners, refs, boundDeclaration, localClrAliases));
+                n.Of, owners, refs, boundDeclaration, localClrAliases, preserveArrayShape: preserveArrayShape));
             case TypeNode.Oblivious o: return new TypeNode.Oblivious(RewriteType(
-                o.Of, owners, refs, boundDeclaration, localClrAliases));
+                o.Of, owners, refs, boundDeclaration, localClrAliases, preserveArrayShape: preserveArrayShape));
             case TypeNode.Array a:
+                if (!boundDeclaration && !preserveArrayShape && GenericArrayStorageLowering.NeedsStorage(a))
+                    return new TypeNode.Fqn("System.Array");
                 if (!boundDeclaration && TryWritableVariantArrayElement(
                         a.Elem, owners, refs, out _, out var writableElement))
                     return new TypeNode.Array(writableElement, a.Rank, a.SzArray);
                 return new TypeNode.Array(RewriteType(
-                    a.Elem, owners, refs, boundDeclaration, localClrAliases), a.Rank, a.SzArray);
+                    a.Elem, owners, refs, boundDeclaration, localClrAliases,
+                    preserveArrayShape: preserveArrayShape), a.Rank, a.SzArray);
             case TypeNode.ByRef b: return new TypeNode.ByRef(RewriteType(
-                b.Of, owners, refs, boundDeclaration, localClrAliases));
+                b.Of, owners, refs, boundDeclaration, localClrAliases, preserveArrayShape: true));
             case TypeNode.Mod m: return new TypeNode.Mod(m.Req,
                 RewriteType(m.M, owners, refs, boundDeclaration, localClrAliases),
                 RewriteType(m.Of, owners, refs, boundDeclaration, localClrAliases));

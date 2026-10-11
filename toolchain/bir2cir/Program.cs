@@ -1514,7 +1514,7 @@ sealed class Pipeline
             isNativeReference: owner => refs.ResolveNetType(owner.Name, owner.Args?.Length ?? 0)
                 is { IsValueType: false },
             referencedCarrier: (target, source) => refs.TryExistentialPhysicalOwner(target.Name, out var carrier)
-                && carrier == source.Name);
+                && carrier == source.Name, references: refs);
         foreach (var (lowered, _) in loweredRoots) FunctionSignatureIdentity.Complete(lowered);
 
         // Every representation synthesis is now complete. Validate the exact MethodDef table that CIR will describe;

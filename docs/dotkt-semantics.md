@@ -2122,6 +2122,9 @@ A CLR override or intrinsic instead retains the selected native declaration's ge
 Additional representations required only by a virtual implementation belong to a private body entry; they do
 not enlarge its published dispatch slot. Source constraints and role correspondence remain explicit metadata,
 not facts reconstructed from a physical companion's index or a method's spelling.
+An array argument's value-storage companion is `System.Array` for both open and closed
+instantiations; its ordinary argument still names the exact native array witness. This
+keeps a separately compiled `Cargo<Array<T?>, U>` consistent with its concrete consumer.
 
 Constructed value types such as `KeyValuePair<K,V>` follow the same concrete nullable-value rule as `Int`.
 Concretely:
@@ -2130,7 +2133,8 @@ Concretely:
 |---|---|
 | `fun f(x: Int?)`, `fun f(): Int?`, `val x: Int?` | `Nullable<int32>` — the direct slot is unchanged |
 | `fun <T> f(x: T?)` | `object` — no CLR slot expresses an unconstrained `T?` |
-| Open `Box<T?>`, `Array<T?>` | `Box<N(T)>`, `N(T)[]` in the declaration's explicit frame |
+| Open `Box<T?>` | `Box<N(T)>` in the declaration's explicit frame |
+| Open Kotlin `Array<T>`, `Array<T?>` value slots | `System.Array`, retaining the allocation's runtime component |
 | `List<Int?>` / `MutableList<Int?>` | `IReadOnlyList<object>` / `IList<object>` |
 | `Map<String, Int?>`, `Pair<Int?, String>`, `Box<Int?>` | `object`, `Pair<object, string>`, `Box<object>` |
 | `Array<Int?>` | `object[]` |
@@ -2245,14 +2249,23 @@ What this is observable as, beyond the boxing already listed above:
   only instantiation whose `T[]` parameter the receiver inhabits, and for the collection because that is what
   `List<Int?>` is. The two agree by construction, which is what lets an `Array<T>` extension over an `Array<Int?>`
   hand its `List<object>` result to a declared `List<Int?>` slot.
-- **An open `Array<T?>` uses its companion element.** `N(String)[]` is `string[]` and `N(Int)[]` is `object[]`.
-  Forwarding an existing reference array therefore preserves its exact element type, without rebuilding the array
-  or relying on an invariant generic conversion. Array allocation and resize operations must obey the same frame.
-- **The `arrayOfNulls<T>(n) … as Array<T>` idiom no longer works.** `arrayOfNulls` honestly returns `Array<T?>`, which
-  has boxed nullable elements at a value-type instantiation, and `object[]` is not castable to `int32[]`.
-  Allocate the real thing instead: the array constructor
-  `Array(n) { … }` for a concrete or reified element when an initializer is available, or
-  `System.Array.CreateInstance(T::class, n)` when a zero-filled array is required.
+- **Open Kotlin arrays keep their allocation's runtime component.** An open `Array<T>` or `Array<T?>` value slot
+  uses `System.Array`; it does not force the existing allocation to have the caller's concrete `T[]` shape.
+  Element reads and writes are explicitly lowered by bir2cir. Stores retain component checks and do not acquire
+  `Array.SetValue`'s numeric-widening or null-to-default behavior. Array identity and aliases are unchanged;
+  `copyOf` creates an independent allocation and preserves the receiver's runtime component where its nullable
+  result permits it.
+- **An unchecked generic array cast checks the erased component bound, not the caller's concrete `T`.**
+  `arrayOfNulls<Node>(n) as Array<T?>` inside `fun <T : Node>` is valid internal storage. The cast checks vector
+  shape and Kotlin's representative upper bound (class bound, otherwise first interface bound), including nested
+  array shape. It does not check every intersection bound. A concrete or reified array cast still checks its
+  concrete component; exporting that `Node[]` as `Array<Item>` can therefore fail at the concrete boundary.
+- **Native array boundaries remain exact, with no manual conversion API.** CLR arguments, results, overrides,
+  nested native generic constructions and supported `ref`/`out` or live-reference locations retain the selected
+  declaration's native array shape. Crossing from open Kotlin storage checks that shape without copying or
+  changing aliases. Kotlin allocation element witnesses likewise remain exact, separate from open value slots.
+  A collection factory's native container element, key or value argument is such a witness too;
+  storing an open array in that container checks its exact array shape at the insertion edge.
 
 An array element is therefore not a special case but the most visible instance of the general rule, and a generic
 that carries an element from an array into a collection stays consistent: `fun f(xs: Array<Int?>): List<Int?> =

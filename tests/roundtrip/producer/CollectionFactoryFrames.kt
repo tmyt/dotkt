@@ -12,6 +12,8 @@ class FactoryFrameOwner<T>(private val seed: T) {
     fun <U> mixed(value: U): FactoryFrameBox<Map<T, U>> = FactoryFrameBox(mapOf(seed to value))
     fun nullable(value: T?): FactoryFrameBox<List<T?>> = FactoryFrameBox(listOf(value))
     fun arrays(values: Array<T>): FactoryFrameBox<List<Array<T>>> = FactoryFrameBox(listOf(values))
+    fun arraySet(values: Array<T>): FactoryFrameBox<Set<Array<T>>> = FactoryFrameBox(setOf(values))
+    fun arrayMap(values: Array<T>): FactoryFrameBox<Map<Array<T>, Array<T>>> = FactoryFrameBox(mapOf(values to values))
     fun functions(callback: (T) -> String): FactoryFrameBox<List<(T) -> String>> = FactoryFrameBox(listOf(callback))
     fun <U> reversed(value: U): FactoryFramePair<List<U>, List<T>> = FactoryFramePair(listOf(value), listOf(seed))
     fun mutable(): FactoryFrameBox<MutableList<T>> = FactoryFrameBox(mutableListOf(seed))

@@ -38,7 +38,7 @@ base_open = {
     "name": "roundtrip.protectedgenericowner.ReferencedProtectedGenericOwnerBase`2",
     "args": [owner_tv, nullable_tv],
 }
-physical_array = {"t": "array", "elem": nullable_tv}
+physical_array = {"t": "fqn", "name": "System.Array"}
 expected_params = [base_open, physical_array]
 
 accessor_targets = []
@@ -97,9 +97,12 @@ if constructed_frames != Counter({("System.String", "System.String"): 3, ("Syste
     raise SystemExit(f"holder calls use the wrong referenced owner frames: {constructed_frames!r}")
 
 for call in wrapper_calls:
-    physical_call_return = {"t": "array", "elem": call["owner"]["args"][1]}
-    if call.get("sig") != expected_params or call.get("ret") != physical_call_return:
+    if call.get("sig") != expected_params or call.get("ret") != physical_array:
         raise SystemExit(f"holder call and physical accessor declaration disagree: {call!r}")
+    concrete_array = {"t": "array", "elem": call["owner"]["args"][1]}
+    if not any(node.get("k") == "cast" and node.get("type") == concrete_array
+               and node.get("e") is call for node in objects(root.get("types", []))):
+        raise SystemExit(f"concrete owner result has no explicit array conversion: {call!r}")
 print(
     "referenced generic-owner direct/open/callable/value access keeps exact physical ABI "
     "and closes nullable companion results"

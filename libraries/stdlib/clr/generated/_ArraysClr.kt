@@ -698,15 +698,10 @@ private fun checkFillRangeIndexes(fromIndex: Int, toIndex: Int, size: Int) {
         throw IllegalArgumentException("fromIndex: $fromIndex > toIndex: $toIndex")
 }
 
-// Thin wrapper: Kotlin fill(element, fromIndex, toIndex) has an exclusive end index, while
-// .NET System.Array.Fill(array, value, startIndex, count) takes a count. Adapt by subtracting.
-@kotlin.clr.ClrIntrinsic("System.Array.Fill")
-private fun <T> Array<T>.nativeFill(element: T, startIndex: Int, count: Int): Unit = TODO("@Clr System.Array.Fill(T[],T,int,int)")
-
 @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
 public actual fun <T> Array<T>.fill(element: T, fromIndex: Int = 0, toIndex: Int = size): Unit {
     checkFillRangeIndexes(fromIndex, toIndex, size)
-    nativeFill(element, fromIndex, toIndex - fromIndex)
+    for (i in fromIndex until toIndex) this[i] = element
 }
 
 @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")

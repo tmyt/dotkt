@@ -774,6 +774,11 @@ static class ForeignStarProjectionBinding
         _ => false,
     };
 
+    internal static JsonObject TypeClassifierCheck(TypeNode.Fqn owner, JsonNode runtimeType,
+        ReferenceMetadataIndex refs) => OpenType(owner, refs) is string openType
+        ? Call("starProjectionHasView", new[] { Type, Type }, Bool,
+            runtimeType.DeepClone(), ClassRef(openType)) : null;
+
     static string OpenType(TypeNode.Fqn owner, ReferenceMetadataIndex refs)
     {
         var type = refs.ResolveForeignProjectionType(owner.Name, owner.Args);

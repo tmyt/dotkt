@@ -376,6 +376,12 @@ class GenericMetadataRoundtripTests {
         ClassicAssert.AreEqual(4, c.payload[0])           // 4
         ClassicAssert.IsNull(c.payload[1])                // null
         ClassicAssert.AreEqual("tag", c.tag)              // tag
+        val referencePayload = arrayOf<String?>("r", null)
+        val referenceCargo = crate(referencePayload, 9)
+        ClassicAssert.IsTrue(referenceCargo.payload === referencePayload)
+        ClassicAssert.AreEqual("r", referenceCargo.payload[0])
+        ClassicAssert.IsNull(referenceCargo.payload[1])
+        ClassicAssert.AreEqual(9, referenceCargo.tag)
     }
 
     // #86 — the same boundary for the rest of the reified-argument positions, at a VALUE argument. The producing

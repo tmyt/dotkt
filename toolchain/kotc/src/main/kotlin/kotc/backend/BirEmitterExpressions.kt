@@ -78,6 +78,14 @@ import org.jetbrains.kotlin.cli.common.messages.CompilerMessageLocation
 import java.io.File
 
 // BIR expression rendering: an IrExpression -> a BIR JSON node (extension on BirEmitter).
+// Array classifiers retain their component classifier at runtime. Unlike an
+// ordinary generic application, Array<Array<T>> therefore depends on reified T.
+private fun IrType.hasReifiedRuntimeOperand(): Boolean {
+    (classifierOrNull as? IrTypeParameterSymbol)?.let { return it.owner.isReified }
+    if (classFqName?.asString() != "kotlin.Array") return false
+    val element = ((this as? IrSimpleType)?.arguments?.singleOrNull() as? IrTypeProjection)?.type
+    return element?.hasReifiedRuntimeOperand() == true
+}
 //
 // #122: stamp the FRONTEND-RESOLVED static type `sty` (the instantiated `node.type`, incl. smart-cast refinement,
 // generic args and nullability) at this single chokepoint. bir2cir's StaticType CONSUMES it — reading an operand's
@@ -511,7 +519,7 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 		IrTypeOperator.CAST, IrTypeOperator.IMPLICIT_CAST ->
 			nullableValueUnwrapElem(node.argument.type, node.typeOperand)?.let { elem ->
 				"""{"k":"nullableValue","elem":${elem.toJson()},"e":${expr(node.argument)}}"""
-			} ?: """{"k":"cast","type":${birType(node.typeOperand).toJson()},"reifiedTypeOperand":${node.operator == IrTypeOperator.CAST && (node.typeOperand.classifierOrNull as? IrTypeParameterSymbol)?.owner?.isReified == true},"e":${expr(node.argument)}}"""
+			} ?: """{"k":"cast","type":${birType(node.typeOperand).toJson()},"reifiedTypeOperand":${node.operator == IrTypeOperator.CAST && node.typeOperand.hasReifiedRuntimeOperand()},"e":${expr(node.argument)}}"""
 		// `x as? T` -> null on mismatch. Reference T: `isinst T` (null or ref). Value T: `T?` (Nullable<T>).
 		IrTypeOperator.SAFE_CAST -> {
 			// A value primitive OR an unsigned inline-class (`UInt`/…, #126) `T` -> the value-type nullable path
@@ -519,7 +527,7 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 			// `Nullable<uint>`, not a boxed reference via `isInstRef` (same #118 class as `!!`/smart-cast).
 			val velem = node.typeOperand.takeIf { it.isPrimitiveOrUnsigned() }?.classFqName?.asString()?.let { TypeNode.Fqn(it) }
 			if (velem != null) """{"k":"safeCastValue","elem":${velem.toJson()},"e":${expr(node.argument)}}"""
-			else """{"k":"isInstRef","type":${birType(node.typeOperand).toJson()},"reifiedTypeOperand":${(node.typeOperand.classifierOrNull as? IrTypeParameterSymbol)?.owner?.isReified == true},"e":${expr(node.argument)}}"""
+			else """{"k":"isInstRef","type":${birType(node.typeOperand).toJson()},"reifiedTypeOperand":${node.typeOperand.hasReifiedRuntimeOperand()},"e":${expr(node.argument)}}"""
 		}
 		// A fun-interface SAM conversion (`Comparator { a, b -> … }`) -> a synthetic class implementing the interface
 		// (the SAM method = the lambda body), NOT a Func delegate -- a delegate has no `compare` so a call site that

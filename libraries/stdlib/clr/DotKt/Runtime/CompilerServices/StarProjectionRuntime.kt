@@ -914,7 +914,8 @@ private fun starProjectionClosedView(
     return match
 }
 
-private fun starProjectionHasView(runtimeType: StarProjectionType, openGenericType: StarProjectionType): Boolean =
+@PublishedApi
+internal fun starProjectionHasView(runtimeType: StarProjectionType, openGenericType: StarProjectionType): Boolean =
     starProjectionFirstView(runtimeType, openGenericType) != null
 
 // MutableIterable is covariant while its mutable BCL collection face is invariant. A widened or star-projected

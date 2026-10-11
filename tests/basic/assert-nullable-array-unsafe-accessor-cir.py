@@ -28,8 +28,7 @@ if len(snapshots) != 1:
 
 string_array = {"t": "array", "elem": {"t": "fqn", "name": "System.String"}}
 string_type = string_array["elem"]
-owner_array = {"t": "array", "elem": {"t": "tv", "scope": "type", "i": 1}}
-method_array = {"t": "array", "elem": {"t": "tv", "scope": "method", "i": 1}}
+storage_array = {"t": "fqn", "name": "System.Array"}
 projections = [
     node
     for node in objects(snapshots[0].get("body", []))
@@ -42,19 +41,28 @@ if len(projections) != 1:
         f"{projections!r}"
     )
 inner = projections[0]
-if inner.get("ret") != string_array or inner["owner"].get("args") != [string_type, string_type]:
-    raise SystemExit(f"UnsafeAccessor call does not close the ordinary/nullable owner frame to string[]: {inner!r}")
+if inner.get("ret") != storage_array or inner["owner"].get("args") != [string_type, string_type]:
+    raise SystemExit(f"UnsafeAccessor call lost its array storage result or closed owner frame: {inner!r}")
+if not any(node.get("k") == "cast" and node.get("type") == string_array
+           and node.get("e") is inner for node in objects(snapshots[0].get("body", []))):
+    raise SystemExit("concrete snapshot must explicitly convert the accessor's System.Array result to string[]")
 
 holder_name = inner["owner"]["name"]
 holders = [item for item in root.get("types", []) if item.get("name") == holder_name]
 if len(holders) != 1:
     raise SystemExit(f"found {len(holders)} matching UnsafeAccessor holders, expected 1")
 entries = [method for method in holders[0].get("methods", []) if method.get("name") == inner.get("method")]
-if len(entries) != 1 or entries[0].get("ret") != owner_array or len(holders[0].get("typeParams", [])) != 2:
+if len(entries) != 1 or entries[0].get("ret") != storage_array or len(holders[0].get("typeParams", [])) != 2:
     raise SystemExit(f"UnsafeAccessor wrapper disagrees with its call-site physical result: {entries!r}")
 externs = [method for method in holders[0].get("methods", []) if method.get("extern")]
-if len(externs) != 1 or externs[0].get("ret") != owner_array:
-    raise SystemExit(f"UnsafeAccessor extern must retain its owner's nullable companion result: {externs!r}")
+if len(externs) != 1 or externs[0].get("ret") != storage_array:
+    raise SystemExit(f"UnsafeAccessor extern must retain its owner's array storage result: {externs!r}")
+target_getters = [method for declaration in root.get("types", [])
+                  if declaration.get("name") == "NgProtectedArrayBase"
+                  for method in declaration.get("methods", [])
+                  if method.get("name") == "prop_get<values>"]
+if len(target_getters) != 1 or target_getters[0].get("ret") != externs[0].get("ret"):
+    raise SystemExit(f"UnsafeAccessor extern disagrees with its actual target getter: {target_getters!r}")
 expected_target = {"t": "fqn", "name": "NgProtectedArrayBase", "args": [
     {"t": "tv", "scope": "type", "i": 0}, {"t": "tv", "scope": "type", "i": 1}
 ]}
@@ -67,10 +75,12 @@ captured_projections = [
     if node.get("k") == "setField"
     and node.get("name") == "v"
     and node.get("ownerType", {}).get("name", "").startswith("dotkt$NullableTestsKt$Ref$")
-    and node.get("value", {}).get("k") == "callStatic"
-    and node["value"].get("ret") == string_array
-    and node["value"].get("owner", {}).get("args") == [string_type, string_type]
-    and node["value"].get("owner", {}).get("name", "").startswith("dotkt$unsafe$holder$")
+    and node.get("value", {}).get("k") == "cast"
+    and node["value"].get("type") == string_array
+    and node["value"].get("e", {}).get("k") == "callStatic"
+    and node["value"]["e"].get("ret") == storage_array
+    and node["value"]["e"].get("owner", {}).get("args") == [string_type, string_type]
+    and node["value"]["e"].get("owner", {}).get("name", "").startswith("dotkt$unsafe$holder$")
 ]
 if len(captured_projections) != 1:
     raise SystemExit(
@@ -88,23 +98,31 @@ method_accessors = [
     and method.get("static")
     and method.get("extern")
     and method.get("name", "").startswith("dotkt$unsafe$")
-    and method.get("ret") == method_array
+    and method.get("ret") == storage_array
     and len(method.get("typeParams", [])) == 2
 ]
 if len(method_accessors) != 1:
     raise SystemExit(f"non-generic owner must materialize one method-framed UnsafeAccessor on the closure: {method_accessors!r}")
-if method_accessors[0].get("params", [{}, {}])[1].get("type") != method_array:
+if method_accessors[0].get("params", [{}, {}])[1].get("type") != storage_array:
     raise SystemExit(f"method-framed UnsafeAccessor input disagrees with its nullable result: {method_accessors!r}")
+target_methods = [method for declaration in root.get("types", [])
+                  if declaration.get("name") == "NgProtectedMethodBase"
+                  for method in declaration.get("methods", []) if method.get("name") == "pick"]
+if (len(target_methods) != 1 or target_methods[0].get("ret") != storage_array
+        or [param.get("type") for param in target_methods[0].get("params", [])] != [storage_array]):
+    raise SystemExit(f"method-framed UnsafeAccessor disagrees with its actual target: {target_methods!r}")
 method_projections = [
     node
     for node in objects(method_closures[0].get("methods", []))
     if node.get("k") == "setField"
     and node.get("name") == "v"
-    and node.get("value", {}).get("k") == "callStatic"
-    and node["value"].get("owner", {}).get("name") == method_closures[0]["name"]
-    and node["value"].get("method") == method_accessors[0]["name"]
-    and node["value"].get("ret") == string_array
-    and node["value"].get("typeArgs") == [string_type, string_type]
+    and node.get("value", {}).get("k") == "cast"
+    and node["value"].get("type") == string_array
+    and node["value"].get("e", {}).get("k") == "callStatic"
+    and node["value"]["e"].get("owner", {}).get("name") == method_closures[0]["name"]
+    and node["value"]["e"].get("method") == method_accessors[0]["name"]
+    and node["value"]["e"].get("ret") == storage_array
+    and node["value"]["e"].get("typeArgs") == [string_type, string_type]
 ]
 if len(method_projections) != 1:
     raise SystemExit(
@@ -112,4 +130,4 @@ if len(method_projections) != 1:
         f"{method_projections!r}"
     )
 
-print("generic-owner and method-generic inherited nullable-array accessors close their nullable companion frames")
+print("nullable-array accessors retain storage ABI, closed companion frames and explicit concrete result casts")

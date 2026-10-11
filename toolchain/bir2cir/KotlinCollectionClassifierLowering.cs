@@ -30,7 +30,13 @@ static class KotlinCollectionClassifierLowering
         if (node is not JsonObject obj) return;
         foreach (var child in obj.Select(pair => pair.Value).ToArray()) Rewrite(child, names, mapStorage, ref next);
         if (Text(obj["k"]) is not ("isInst" or "isInstRef" or "cast") || obj["e"] is not JsonObject operand) return;
-        obj.Remove("reifiedTypeOperand");
+        // Array checks consume the reified component fact in the later physical
+        // array projection. A collection guard does not own that fact.
+        var operandType = TypeJson.Read(obj["type"]);
+        while (operandType is TypeNode.Nullable or TypeNode.Oblivious)
+            operandType = operandType is TypeNode.Nullable n ? n.Of : ((TypeNode.Oblivious)operandType).Of;
+        if (operandType is not TypeNode.Array)
+            obj.Remove("reifiedTypeOperand");
         var witness = obj[KotlinTypeWitness.OperandKey]?.DeepClone();
         obj.Remove(KotlinTypeWitness.OperandKey);
         if (witness == null)

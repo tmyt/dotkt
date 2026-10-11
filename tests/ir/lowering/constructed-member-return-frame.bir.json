@@ -20,22 +20,22 @@
         "name": "box",
         "type": {
           "t": "fqn", "name": "LocalResultBox",
-          "args": [{ "t": "array", "elem": { "t": "tv", "scope": "type", "i": 0 } }]
+          "args": [{ "t": "fqn", "name": "Pairish", "args": [{ "t": "tv", "scope": "type", "i": 0 }, { "t": "tv", "scope": "type", "i": 0 }] }]
         }
       }],
-      "ret": { "t": "array", "elem": { "t": "tv", "scope": "type", "i": 0 } },
+      "ret": { "t": "fqn", "name": "Pairish", "args": [{ "t": "tv", "scope": "type", "i": 0 }, { "t": "tv", "scope": "type", "i": 0 }] },
       "body": [{
         "k": "return",
         "value": {
           "k": "callInstance", "virtual": true,
           "ownerType": {
             "t": "fqn", "name": "LocalResultBox",
-            "args": [{ "t": "array", "elem": { "t": "tv", "scope": "type", "i": 0 } }]
+            "args": [{ "t": "fqn", "name": "Pairish", "args": [{ "t": "tv", "scope": "type", "i": 0 }, { "t": "tv", "scope": "type", "i": 0 }] }]
           },
           "method": "read", "sig": [],
-          "sty": { "t": "array", "elem": { "t": "tv", "scope": "type", "i": 0 } },
-          "ret": { "t": "array", "elem": { "t": "tv", "scope": "type", "i": 0 } },
-          "dynRet": { "t": "array", "elem": { "t": "tv", "scope": "type", "i": 0 } },
+          "sty": { "t": "fqn", "name": "Pairish", "args": [{ "t": "tv", "scope": "type", "i": 0 }, { "t": "tv", "scope": "type", "i": 0 }] },
+          "ret": { "t": "fqn", "name": "Pairish", "args": [{ "t": "tv", "scope": "type", "i": 0 }, { "t": "tv", "scope": "type", "i": 0 }] },
+          "dynRet": { "t": "fqn", "name": "Pairish", "args": [{ "t": "tv", "scope": "type", "i": 0 }, { "t": "tv", "scope": "type", "i": 0 }] },
           "recv": { "k": "local", "name": "box" },
           "args": []
         }

@@ -1705,6 +1705,9 @@ static class KotlinOverrideSlotBridge
         // box/unbox cast. Keep it in this override-edge-driven table: selecting the slot later from name/arity loses
         // the frontend declaration identity and misbinds same-name overloads (#355).
         if (IsNullableValueSlot(slot, declared, refs, isValue, returnPosition)) return Fit.Bridge;
+        if (slot is TypeNode.Array && declared is TypeNode.Fqn { Name: "System.Array" }
+            || declared is TypeNode.Array && slot is TypeNode.Fqn { Name: "System.Array" })
+            return Fit.Bridge;
         // Kotlin collection declarations can return a value where their aliased CLR interface slot is void
         // (`MutableCollection.add(): Boolean` -> `ICollection<T>.Add(T): void`). The bridge body already models this
         // as an expression statement, so keep the decision and exact MethodImpl in the same table instead of asking

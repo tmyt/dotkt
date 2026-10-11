@@ -145,6 +145,11 @@ sealed class NullableRepresentationTypes
             TypeNode.Oblivious oblivious => new TypeNode.Oblivious(Rewrite(oblivious.Of, position, storage)),
             TypeNode.Projection projection => new TypeNode.Projection(projection.Variance, Rewrite(projection.Of, position, storage)),
             TypeNode.Fqn named => Named(named, position, storage),
+            // The storage companion names an array value, not its allocation's
+            // exact component witness. Close it consistently for open and closed
+            // arguments; otherwise G<Array<T>> and G<Array<Int>> disagree after
+            // the former's value slot becomes System.Array.
+            TypeNode.Array { SzArray: true, Rank: 1 } when storage => new TypeNode.Fqn("System.Array"),
             TypeNode.Array array => new TypeNode.Array(Argument(array.Elem), array.Rank, array.SzArray),
             // A managed reference denotes an exact CLR location. Its element
             // follows the ordinary/native argument frame, not a value slot's
@@ -259,6 +264,15 @@ sealed class NullableRepresentationTypes
             "no source fact means no scalar reconstruction");
         Equal(roles.StorageArgument(ownerSource), new TypeNode.Tv("type", 2), "scoped owner storage argument");
         Equal(roles.StorageArgument(methodSource), new TypeNode.Tv("method", 2), "scoped method storage argument");
+        var arrayStorage = new TypeNode.Fqn("System.Array");
+        Equal(roles.StorageArgument(new TypeNode.Array(ownerSource)), arrayStorage,
+            "open array storage is independent of its component witness");
+        Equal(roles.StorageArgument(new TypeNode.Array(text)), arrayStorage,
+            "closed array storage agrees with open generic closure");
+        Equal(roles.NullableStorageArgument(new TypeNode.Array(text)), new TypeNode.Nullable(arrayStorage),
+            "nullable array storage keeps only the array's nullability");
+        Equal(roles.Argument(new TypeNode.Array(text)), new TypeNode.Array(text),
+            "ordinary array witness is still exact");
         Equal(roles.Slot(new TypeNode.ByRef(methodSource)), new TypeNode.ByRef(methodSource),
             "native ref scalar retains its logical CLR frame");
         Equal(roles.Slot(new TypeNode.ByRef(new TypeNode.Nullable(methodSource))), new TypeNode.ByRef(obj),
