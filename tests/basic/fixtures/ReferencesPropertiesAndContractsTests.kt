@@ -107,6 +107,11 @@ fun referencePropertyPrefReadK(kp: KProperty0<Int>): Int = kp.get()
 class ReferencePropertyPrefBox<T>(val value: T)
 fun <T> referencePropertyPrefRefOf(b: ReferencePropertyPrefBox<T>): KProperty0<T> = b::value   // generic context: vType is a `tv`
 class ReferencePropertyPrefMutableBox<T>(var value: T)
+class ReferencePropertyPrefPrivateSetter {
+    var value: Int = 0
+        private set
+    fun increment() { value++ }
+}
 fun <T> referencePropertyPrefCheckGeneric(initial: T, updated: T) {
     val immutable = ReferencePropertyPrefBox(initial)
     val boundRead = immutable::value
@@ -330,6 +335,12 @@ class PropertyReferenceAndAccessorTests {
         referencePropertyPrefCheckGeneric("before", "after")
         referencePropertyPrefCheckGeneric(1, 2)
         referencePropertyPrefCheckGeneric<String?>("before", null)
+        val readOnly = ReferencePropertyPrefPrivateSetter()
+        readOnly.increment()
+        assertEquals(1, readOnly::value.get())
+        assertEquals(1, (readOnly::value)())
+        assertEquals(1, ReferencePropertyPrefPrivateSetter::value.get(readOnly))
+        assertEquals(1, (ReferencePropertyPrefPrivateSetter::value)(readOnly))
         val hp: KMutableProperty1<ReferencePropertyPrefHolder, ReferencePropertyPrefPayload> = ReferencePropertyPrefHolder::pay
         val h = ReferencePropertyPrefHolder(ReferencePropertyPrefPayload("t1"))
         hp.set(h, ReferencePropertyPrefPayload("t2"))

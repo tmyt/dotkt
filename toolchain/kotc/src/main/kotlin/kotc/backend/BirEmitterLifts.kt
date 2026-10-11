@@ -1657,7 +1657,8 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 	// (mirrors JVM's `PropertyReferenceImpl.invoke() = get()`).
 	val invokeMethod = """{"name":"invoke","static":false,"override":true,"virtual":true,"params":[$readParams],"ret":${str(vType)},"body":[$readBody]${propertySlotOverrides("invoke")}}"""
 
-	val setMethod: String? = setterFn?.let {
+	val mutableReference = ifaceSpec.name == "kotlin.reflect.KMutableProperty0" || ifaceSpec.name == "kotlin.reflect.KMutableProperty1"
+	val setMethod: String? = setterFn?.takeIf { mutableReference }?.let {
 		val setBody = when {
 			companionExtension -> """{"k":"exprStmt","expr":${companionExtensionAccess(true, """{"k":"local","name":"value"}""")}}"""
 			hasExtRecv -> """{"k":"exprStmt","expr":${extAccessorCall(true, """{"k":"local","name":"value"}""")}}"""
