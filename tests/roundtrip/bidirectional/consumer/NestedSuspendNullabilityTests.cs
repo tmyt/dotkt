@@ -29,7 +29,7 @@ public class NestedSuspendNullabilityTests
         foreach (var name in new[] { "nullableBox", "nonNullBox" })
         {
             var task = Result(name);
-            Assert.That(task.Type, Is.EqualTo(typeof(Task<InvariantBox<string>>)));
+            Assert.That(task.Type, Is.EqualTo(typeof(Task<InvariantBox<string, string>>)));
             State(task, NullabilityState.NotNull);
             var box = task.GenericTypeArguments[0];
             State(box, name == "nullableBox" ? NullabilityState.Nullable : NullabilityState.NotNull);
@@ -91,11 +91,11 @@ public class NestedSuspendNullabilityTests
                 Is.EqualTo(name == "enumResult" ? typeof(Enum) : typeof(IComparable)));
             State(pair.GenericTypeArguments[0], NullabilityState.Nullable);
             State(pair.GenericTypeArguments[1], NullabilityState.NotNull);
-            Assert.That(Flags(name), Is.EqualTo(new byte[] { 1, 1, 2, 1 }));
+            Assert.That(Flags(name), Is.EqualTo(new byte[] { 1, 1, 2, 1, 2, 1 }));
         }
         State(Result("lateCollapsedNullableResult").GenericTypeArguments[0].GenericTypeArguments[1],
             NullabilityState.Nullable);
-        Assert.That(Flags("lateCollapsedNullableResult"), Is.EqualTo(new byte[] { 1, 1, 2, 2 }));
+        Assert.That(Flags("lateCollapsedNullableResult"), Is.EqualTo(new byte[] { 1, 1, 2, 2, 2, 2 }));
         State(Result("primitiveResult").GenericTypeArguments[0].GenericTypeArguments[1], NullabilityState.Nullable);
     }
 

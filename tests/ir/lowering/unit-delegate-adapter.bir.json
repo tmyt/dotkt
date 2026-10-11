@@ -11,6 +11,7 @@
     },
     {
       "name": "probe", "static": true, "override": false, "virtual": false, "vis": "public",
+      "declarationId": "lowering:unit-delegate-adapter:probe",
       "typeParams": [{
         "name": "T",
         "constraints": [{ "t": "fqn", "name": "LocalUnitCallback", "args": [{ "t": "fqn", "name": "kotlin.Int" }] }]

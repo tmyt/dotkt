@@ -21,6 +21,17 @@ static partial class ClrMemberResolution
         Check(new TypeNode.Fn(false, new TypeNode.Fqn("void"), new TypeNode[] { owner }, Clr: "System.Action"),
             new TypeNode.Fqn("System.Action`1", new TypeNode[] { owner }), true);
         Check(fn with { Clr = null }, nominal, false);
+        var sameSlot = new TypeNode.Fn(false, result, new TypeNode[] { method }, Clr: "System.Func");
+        if (HasRepresentationSlotSeam(sameSlot, sameSlot)
+            || !HasRepresentationSlotSeam(sameSlot,
+                sameSlot with { Params = new TypeNode[] { new TypeNode.Tv("method", 1) } })
+            || !HasRepresentationSlotSeam(sameSlot,
+                sameSlot with { Params = new TypeNode[] { owner } })
+            || !HasRepresentationSlotSeam(sameSlot with { Ret = method },
+                sameSlot with { Ret = new TypeNode.Tv("method", 1) })
+            || HasRepresentationSlotSeam(sameSlot with { Params = new TypeNode[] { result } },
+                sameSlot with { Params = new TypeNode[] { new TypeNode.Fqn("Other.Reference") } }))
+            throw new InvalidOperationException("Delegate adaptation lost exact native/storage variable identity");
         Console.WriteLine("[function MethodImpl slots] self-test OK (exact family, arguments, receiver and generic frames)");
 
         static void Check(TypeNode left, TypeNode right, bool expected)

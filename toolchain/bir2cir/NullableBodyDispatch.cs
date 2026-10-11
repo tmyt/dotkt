@@ -4,15 +4,23 @@ using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 
-// Keep the source dispatch slot fixed and choose nullable representations only for its private body.
+// Keep the source dispatch slot fixed and choose additional representations only for its private body.
 // Each step adds one companion to a private method, so N demands generate N helpers, not 2^N bodies.
 static class NullableBodyDispatch
 {
     public static void Build(JsonObject owner, JsonObject source, JsonObject entry,
         NullableRepresentationFrame ownerFrame, NullableRepresentationFrame entryFrame,
-        IEnumerable<int> bodyDemand, Action<JsonObject, NullableRepresentationFrame> prepare)
+        NullableRepresentationDemand.Variables bodyDemand, Action<JsonObject, NullableRepresentationFrame> prepare)
     {
-        var missing = bodyDemand.Except(entryFrame.NullableIndices).OrderBy(i => i).ToArray();
+        var roles = new[] { NullableRepresentationFrame.Role.Nullable, NullableRepresentationFrame.Role.Storage,
+            NullableRepresentationFrame.Role.NullableStorage };
+        IEnumerable<int> Declared(NullableRepresentationFrame.Role role) => role switch {
+            NullableRepresentationFrame.Role.Nullable => entryFrame.NullableIndices,
+            NullableRepresentationFrame.Role.Storage => entryFrame.StorageIndices,
+            _ => entryFrame.NullableStorageIndices,
+        };
+        var missing = roles.SelectMany(role => bodyDemand.For("method", role).Except(Declared(role))
+            .OrderBy(i => i).Select(i => (Index: i, Role: role))).ToArray();
         if (missing.Length == 0) return;
         var ownerName = Text(owner["name"]) ?? Text(owner["fileClass"]);
         var ownerType = new TypeNode.Fqn(ownerName, ownerFrame.PhysicalArity == 0 ? null
@@ -20,12 +28,14 @@ static class NullableBodyDispatch
         var methods = (JsonArray)owner["methods"];
         var names = methods.OfType<JsonObject>().Select(m => Text(m["name"])).ToHashSet(StringComparer.Ordinal);
         var chain = new List<(JsonObject Method, NullableRepresentationFrame Frame)> { (entry, entryFrame) };
-        var indices = entryFrame.NullableIndices.ToList();
-        foreach (var index in missing)
+        var indices = roles.ToDictionary(role => role, role => Declared(role).ToList());
+        foreach (var demand in missing)
         {
-            indices.Add(index);
-            var frame = new NullableRepresentationFrame(entryFrame.SourceArity, indices.OrderBy(i => i),
-                storageIndices: entryFrame.StorageIndices, nullableStorageIndices: entryFrame.NullableStorageIndices);
+            indices[demand.Role].Add(demand.Index);
+            var frame = new NullableRepresentationFrame(entryFrame.SourceArity,
+                indices[NullableRepresentationFrame.Role.Nullable].OrderBy(i => i),
+                storageIndices: indices[NullableRepresentationFrame.Role.Storage].OrderBy(i => i),
+                nullableStorageIndices: indices[NullableRepresentationFrame.Role.NullableStorage].OrderBy(i => i));
             var suffix = 0;
             string name;
             do { name = "$nullableBody$" + suffix++; } while (!names.Add(name));
@@ -34,7 +44,7 @@ static class NullableBodyDispatch
                 ["virtual"] = false, ["override"] = false, ["abstract"] = false,
                 ["params"] = source["params"].DeepClone(), ["ret"] = source["ret"].DeepClone(),
                 ["typeParams"] = source["typeParams"].DeepClone(), ["attrs"] = new JsonArray(),
-                ["body"] = index == missing[^1] ? source["body"].DeepClone() : new JsonArray(),
+                ["body"] = demand == missing[^1] ? source["body"].DeepClone() : new JsonArray(),
                 [DeclarationIdentityBinding.Key] = DeclarationIdentityBinding.PhysicalOnlyId(
                     Text(source[DeclarationIdentityBinding.Key]) ?? "nullable-body:" + ownerName, name),
             };
@@ -48,16 +58,18 @@ static class NullableBodyDispatch
         {
             var (current, currentFrame) = chain[step];
             var (target, targetFrame) = chain[step + 1];
-            var index = missing[step];
+            var (index, role) = missing[step];
             JsonObject Call(TypeNode chosen)
             {
                 var sources = Enumerable.Range(0, entryFrame.SourceArity)
                     .Select(i => (TypeNode)new TypeNode.Tv("method", i)).ToArray();
                 var arguments = targetFrame.Close(sources,
                     type => currentFrame.Variable((TypeNode.Tv)type, NullableRepresentationFrame.Role.Ordinary),
-                    type => ((TypeNode.Tv)type).I == index ? chosen : currentFrame.NullableVariable((TypeNode.Tv)type),
-                    type => currentFrame.Variable((TypeNode.Tv)type, NullableRepresentationFrame.Role.Storage),
-                    type => currentFrame.Variable((TypeNode.Tv)type, NullableRepresentationFrame.Role.NullableStorage));
+                    type => Argument((TypeNode.Tv)type, NullableRepresentationFrame.Role.Nullable),
+                    type => Argument((TypeNode.Tv)type, NullableRepresentationFrame.Role.Storage),
+                    type => Argument((TypeNode.Tv)type, NullableRepresentationFrame.Role.NullableStorage));
+                TypeNode Argument(TypeNode.Tv variable, NullableRepresentationFrame.Role requested) =>
+                    variable.I == index && requested == role ? chosen : currentFrame.Variable(variable, requested);
                 var call = new JsonObject {
                     ["k"] = "callInstance", ["ownerType"] = TypeJson.Write(ownerType), ["virtual"] = false,
                     ["recv"] = new JsonObject { ["k"] = "this" }, ["method"] = Text(target["name"]),
@@ -72,6 +84,13 @@ static class NullableBodyDispatch
                 if (source["suspend"] is JsonValue suspend && suspend.TryGetValue<bool>(out var isSuspend) && isSuspend)
                     call["suspendCall"] = true;
                 return call;
+            }
+            if (role != NullableRepresentationFrame.Role.Nullable)
+            {
+                // A private body-only value slot can carry every Kotlin value as
+                // object. Its logical argument still retains the original CLR T.
+                current["body"] = new JsonArray(new JsonObject { ["k"] = "return", ["value"] = Call(new TypeNode.Fqn("object")) });
+                continue;
             }
             current["body"] = new JsonArray(new JsonObject {
                 ["k"] = "return", ["value"] = new JsonObject {

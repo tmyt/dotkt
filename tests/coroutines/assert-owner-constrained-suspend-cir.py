@@ -47,6 +47,7 @@ assert len(constructions) == 1, constructions
 assert constructions[0]["type"]["args"] == [
     {"t": "tv", "scope": "type", "i": 0},
     {"t": "tv", "scope": "method", "i": 0},
+    {"t": "tv", "scope": "method", "i": 1},
 ], constructions[0]["type"]
 
 slots = types["OwnerSuspendSink$star"]["methods"]

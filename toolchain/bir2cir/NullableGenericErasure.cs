@@ -135,7 +135,8 @@ static class NullableGenericErasure
     {
         // This is Kotlin declaration truth captured before nullable-frame expansion. A later erasure pass
         // sees physical companion indices and must not replace that source snapshot with its own input.
-        if (method[MethodTypeParameterBoundsPre] != null) return;
+        if (method[MethodTypeParameterBoundsPre] != null
+            || method[NullableRepresentationTypes.MethodFrameKey] != null) return;
         if (method["typeParams"] is not JsonArray typeParameters) return;
         var bounds = new JsonObject();
         for (var i = 0; i < typeParameters.Count; i++)

@@ -286,6 +286,10 @@ static class RoundtripMetadata
         if (type["typeParams"] is not JsonArray parameters) return;
         var offset = type["capturedTypeParams"] is JsonArray captured ? captured.Count : 0;
         var frame = KotlinSupertypesRecord.ReadNullableFrame(type);
+        if (frame != null && offset + parameters.Count > frame.PhysicalArity)
+            throw new InvalidOperationException(
+                $"Type '{type["name"]}' has {offset + parameters.Count} physical generic parameters "
+                + $"but its declaration frame describes only {frame.PhysicalArity}");
         var variances = new JsonObject();
         for (var index = 0; index < parameters.Count; index++)
         {

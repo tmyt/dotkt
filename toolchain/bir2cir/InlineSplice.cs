@@ -41,6 +41,7 @@ static class InlineSplice
     static IReadOnlyDictionary<string, DispatchDef> _dispatchDefs;
     static JsonArray _lexicalOwnerParameters;
     static JsonArray _lexicalMethodParameters;
+    static Dictionary<JsonArray, NullableRepresentationFrame> _representationFrames;
 
     public sealed class DispatchDef
     {
@@ -69,6 +70,7 @@ static class InlineSplice
         _companionExtensions = companionExtensions;
         _lexicalOwnerParameters = null;
         _lexicalMethodParameters = null;
+        _representationFrames = new();
         _fileClassOwner = root is JsonObject ro && Str(ro["fileClass"]) is string fc ? TypeJson.Fqn(fc) : null;
         _nextLabelId = MaxLabelId(root) + 1;
         _hoist = new JsonArray();
@@ -180,6 +182,10 @@ static class InlineSplice
     {
         if (node is JsonObject o)
         {
+            if (o["typeParams"] is JsonArray parameters
+                && (NullableRepresentationTypes.DeclarationMethodFrame(o)
+                    ?? KotlinSupertypesRecord.ReadNullableFrame(o)) is { } representation)
+                _representationFrames[parameters] = representation;
             var here = DefaultArgSplice.DeclarationContext(o, context);
             // Defaults entered representation selection before inline bodies were stashed. Expanding an
             // inline body consumes that prepared graph, never source defaults in a physical caller frame.
@@ -1452,6 +1458,11 @@ static class InlineSplice
             ["body"] = invBody,
         };
         if (typeParams.Count > 0) synthClass["typeParams"] = typeParams;
+        var captureFrame = CapturedRepresentationFrame(keys);
+        if (captureFrame.RequiresMetadata)
+            KotlinSupertypesRecord.Merge(synthClass, new JsonObject {
+                [NullableRepresentationFrame.MetadataKey] = captureFrame.ToJson(),
+            });
         ClosureSynthesis.MarkPreboundFrame(synthClass);
 
         var newClosure = new JsonObject
@@ -2014,6 +2025,11 @@ static class InlineSplice
             {
                 visited.Add(key);
                 var parameters = key.scope == "type" ? _lexicalOwnerParameters : _lexicalMethodParameters;
+                if (parameters != null && _representationFrames.TryGetValue(parameters, out var frame))
+                {
+                    var slot = frame.PhysicalSlot(key.i);
+                    keys.Add((key.scope, frame.SourcePosition(slot.SourceIndex)));
+                }
                 if (parameters == null || key.i < 0 || key.i >= parameters.Count
                     || parameters[key.i] is not JsonObject declaration
                     || declaration["constraints"] is not JsonArray bounds) continue;
@@ -2025,6 +2041,33 @@ static class InlineSplice
                 CollectTvKeys(bounds, keys);
             }
         return result;
+    }
+
+    // A materialized inline carrier owns a new declaration, but not new meanings
+    // for the enclosing declaration's representation companions. Publish that
+    // correspondence explicitly so owner capture can reuse the complete frame.
+    static NullableRepresentationFrame CapturedRepresentationFrame(SortedSet<(string scope, int i)> keys)
+    {
+        var sources = new Dictionary<(string Scope, int Index), int>();
+        var slots = new List<NullableRepresentationFrame.Slot>();
+        foreach (var key in keys)
+        {
+            var parameters = key.scope == "type" ? _lexicalOwnerParameters : _lexicalMethodParameters;
+            var slot = parameters != null && _representationFrames.TryGetValue(parameters, out var frame)
+                ? frame.PhysicalSlot(key.i)
+                : new NullableRepresentationFrame.Slot(key.i, NullableRepresentationFrame.Role.Ordinary);
+            var source = (key.scope, slot.SourceIndex);
+            if (!sources.TryGetValue(source, out var index)) sources[source] = index = sources.Count;
+            slots.Add(new NullableRepresentationFrame.Slot(index, slot.Representation));
+        }
+        int[] Indices(NullableRepresentationFrame.Role role) => slots.Where(slot => slot.Representation == role)
+            .Select(slot => slot.SourceIndex).Distinct().OrderBy(index => index).ToArray();
+        var canonical = new NullableRepresentationFrame(sources.Count, Indices(NullableRepresentationFrame.Role.Nullable),
+            storageIndices: Indices(NullableRepresentationFrame.Role.Storage),
+            nullableStorageIndices: Indices(NullableRepresentationFrame.Role.NullableStorage));
+        return new NullableRepresentationFrame(sources.Count, canonical.NullableIndices,
+            slots.Select(slot => canonical.Variable(new TypeNode.Tv("type", slot.SourceIndex), slot.Representation).I),
+            canonical.StorageIndices, canonical.NullableStorageIndices);
     }
 
     static Dictionary<(string scope, int i), JsonArray> SharedCaptureConstraints(JsonObject carrier)
@@ -2713,7 +2756,7 @@ static class InlineSplice
     // bind `compare`). Concretize the class's own params (`tv{scope:type,i}` -> the concrete typeArgs[i]), strip the now-
     // spurious type-args off self-references to the class, and drop `typeParams` + the node's `typeArgs` -> a clean
     // non-generic class. No-op when a typeArg is itself a tv (a genuinely-generic instantiation keeps the class generic).
-    static void PruneConcreteSynthClasses(JsonNode node)
+    internal static void PruneConcreteSynthClasses(JsonNode node)
     {
         if (node is JsonObject o)
         {
@@ -2724,6 +2767,17 @@ static class InlineSplice
             {
                 SubstTypeScopeTvs(sc, ta);       // tv{scope:type,i} -> the concrete typeArgs[i]
                 StripSelfGenericArgs(sc, cname);  // Sam102<...> (self-ref) -> Sam102 (now non-generic)
+                if (Str(sc[KotlinSupertypesRecord.PreKey]) is string sourceFacts)
+                {
+                    var facts = JsonNode.Parse(sourceFacts).AsObject();
+                    var frame = KotlinSupertypesRecord.ReadNullableFrame(sc);
+                    var sourceArguments = frame == null ? ta : new JsonArray(frame.OrdinaryArguments(
+                        ta.Select(TypeJson.Read).ToArray()).Select(TypeJson.Write).ToArray());
+                    // Declaration facts use source slots, not the expanded physical frame.
+                    SubstTypeScopeTvs(facts, sourceArguments);
+                    foreach (var key in new[] { "bounds", "variances", NullableRepresentationFrame.MetadataKey }) facts.Remove(key);
+                    sc[KotlinSupertypesRecord.PreKey] = facts.ToJsonString();
+                }
                 sc.Remove("typeParams");
                 o.Remove("typeArgs");
             }

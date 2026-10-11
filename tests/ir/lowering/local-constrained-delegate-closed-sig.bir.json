@@ -11,6 +11,7 @@
     },
     {
       "name": "probe", "static": true, "override": false, "virtual": false, "vis": "public",
+      "declarationId": "lowering:local-constrained-delegate:probe",
       "typeParams": [{
         "name": "T",
         "constraints": [{ "t": "fqn", "name": "LocalClosedCallback", "args": [{ "t": "fqn", "name": "kotlin.Int" }] }]
@@ -21,6 +22,7 @@
         "k": "return",
         "value": {
           "k": "constrainedCall",
+          "declarationId": "lowering:local-constrained-delegate:Apply",
           "recv": { "k": "local", "name": "engine" },
           "recvType": { "t": "tv", "scope": "method", "i": 0 },
           "iface": { "t": "fqn", "name": "LocalClosedCallback", "args": [{ "t": "fqn", "name": "kotlin.Int" }] },
@@ -52,6 +54,7 @@
     "base": null, "interfaces": [], "fields": [], "ctors": [], "properties": [], "attrs": [],
     "methods": [{
       "name": "Apply", "static": false, "override": false, "virtual": true, "abstract": true, "vis": "public",
+      "declarationId": "lowering:local-constrained-delegate:Apply",
       "params": [
         { "name": "value", "type": { "t": "tv", "scope": "type", "i": 0 } },
         {

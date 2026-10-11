@@ -1271,6 +1271,21 @@ local at all, so an ordinary call emits exactly what it did before. A by-referen
 ADDRESS rather than a value — no storage holds one — so what is pinned in its place is whatever its location is
 computed from: `byref(mk().f)` evaluates `mk()` at the argument's own position and takes the address off that.
 
+CLR `ref`/`out` consumes an exact typed location, not a converted Kotlin value. When a generic Kotlin value
+uses a separate physical storage representation, a local passed by reference retains the selected CLR
+parameter's element type for that local's storage lifetime. Ordinary initialization and assignments to it
+are checked value conversions into that type; loading it into a Kotlin value slot converts the value back
+as required. An unchecked Kotlin cast does not relax the native location's type requirement. Passing the
+same local twice preserves aliasing during the call, rather than using copy-in/copy-out temporaries.
+A generic Kotlin backing field addressed by `ref`/`out` likewise keeps its ordinary CLR type-variable slot,
+not the separate Kotlin value-storage companion. Its layout is fixed for the instance's entire lifetime,
+including ordinary property writes before and after a native call; those writes check the exact field type.
+Passing the same field as both `ref` and `out` addresses that one field, while getter/setter value conversions
+do not convert or replace the managed reference.
+Likewise, a supported `ClrRef<T>` parameter and live ref-return delegate retain their exact pointer element
+type; only the values read or written through the pointer are converted. This rule does not require tracking
+when the last native alias is used, and does not permit storing or capturing `ClrRef<T>` outside its supported forms.
+
 A default is the CALLEE's expression evaluated in the CALLER's frame, so every type it mentions is closed against the
 call site's instantiation — the omitted parameter's type, the owner of a member it reads off the receiver, a type
 argument it passes on. Without that, `class G<T>(val v: T) { fun one(a: T = v) }` spliced into a non-generic caller
@@ -2098,6 +2113,15 @@ instead use the identity-preserving representation in §8e-bis.
 Native delegate slots retain the selected CLR declaration's convention. For example a native
 `Func<Nullable<int32>, string>` keeps that exact signature. A Kotlin `(Int?) -> String` value instead uses
 `Func<object, object>`; SAM conversion bridges these signatures without changing an authored method's slots.
+
+A directly generic Kotlin storage slot uses a separate value-storage companion while its ordinary argument
+retains the original CLR construction. A directly method-generic Kotlin parameter or result owns that companion
+in its declaration too: an abstract interface method and its implementation publish the same value frame,
+independently of the implementation body. Compiler-generated shared cells follow the same storage rule.
+A CLR override or intrinsic instead retains the selected native declaration's generic arity and signature.
+Additional representations required only by a virtual implementation belong to a private body entry; they do
+not enlarge its published dispatch slot. Source constraints and role correspondence remain explicit metadata,
+not facts reconstructed from a physical companion's index or a method's spelling.
 
 Constructed value types such as `KeyValuePair<K,V>` follow the same concrete nullable-value rule as `Int`.
 Concretely:

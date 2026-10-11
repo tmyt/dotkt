@@ -25,6 +25,16 @@ static class DeclarationIdentityBinding
     internal static string PhysicalOnlyId(string declarationId, string role) =>
         declarationId + PhysicalOnlySuffix + "|" + role;
 
+    internal static void MarkInheritedProjection(JsonObject method, string owner, IEnumerable<string> sourceIds)
+    {
+        var identities = sourceIds.Distinct(StringComparer.Ordinal).OrderBy(id => id, StringComparer.Ordinal).ToArray();
+        if (identities.Length == 0)
+            throw new InvalidOperationException("Inherited physical projection has no selected declaration identity");
+        method[Key] = PhysicalOnlyId(string.Join("|", identities), "inherited-slot:" + owner);
+        method["declarationSourceName"] = method["name"]!.DeepClone();
+        method["generated"] = true;
+    }
+
     // Capture Kotlin's declaration spelling before any representation pass renames accessors, companion-extension
     // cores, suspend entries, or other CLR artifacts. Later metadata must never recover this spelling from a physical
     // get_/set_ or compiler-reserved name.
@@ -591,6 +601,7 @@ static class DeclarationIdentityBinding
             if (id.Contains(PhysicalOnlySuffix, StringComparison.Ordinal))
             {
                 declaration.Remove(NullableRepresentationTypes.MethodFrameKey);
+                declaration.Remove(NullableGenericErasure.MethodTypeParameterBoundsPre);
                 declaration.Remove(Key);
                 declaration.Remove(SemanticSignatureKey);
                 declaration.Remove("declarationSourceName");
@@ -664,6 +675,14 @@ static class DeclarationIdentityBinding
                     obj.Remove("prop");
                     obj.Remove(Key);
                 }
+                else if (Str(obj["k"]) is "clrEventAdd" or "clrEventRemove")
+                {
+                    obj["accessor"] = physical;
+                    obj["sig"] = FunctionSignatureIdentity.Signature(
+                        declarationsById[id]["params"] as JsonArray
+                            ?? throw new InvalidOperationException("Local event accessor has no physical parameter signature"));
+                    obj.Remove(Key);
+                }
             }
             else if (node is JsonArray array)
                 foreach (var child in array.ToList()) if (child != null) Rewrite(child);
@@ -675,7 +694,7 @@ static class DeclarationIdentityBinding
             if (node is JsonObject obj)
             {
                 if (Str(obj["k"]) is ("callStatic" or "callInstance" or "constrainedCall"
-                    or "newDelegate" or "newBoundDelegate") && Str(obj[Key]) is string id)
+                    or "newDelegate" or "newBoundDelegate" or "clrEventAdd" or "clrEventRemove") && Str(obj[Key]) is string id)
                     throw new InvalidOperationException($"bir2cir: unresolved frontend declaration identity '{id}'");
                 foreach (var child in obj.Select(kv => kv.Value).ToList()) if (child != null) RejectUnboundUse(child);
             }
@@ -702,6 +721,23 @@ static class DeclarationIdentityBinding
 
     public static void SelfTest()
     {
+        var inherited = new JsonObject {
+            ["name"] = "inherited", ["virtual"] = true,
+            ["params"] = new JsonArray(), ["ret"] = TypeJson.Fqn("void"),
+            ["typeParams"] = new JsonArray("T", "S"),
+            [NullableGenericErasure.MethodTypeParameterBoundsPre] = "{\"bounds\":{\"0\":[]}}",
+            [NullableRepresentationTypes.MethodFrameKey] = new NullableRepresentationFrame(1,
+                Array.Empty<int>(), storageIndices: new[] { 0 }).ToJson().ToJsonString(),
+        };
+        MarkInheritedProjection(inherited, "InheritedOwner", new[] { "selected-base", "selected-base" });
+        var inheritedRoot = new JsonObject { ["fileClass"] = "InheritedOwner", ["methods"] = new JsonArray(inherited) };
+        var inheritedNames = AllocatePhysicalNames(new[] { inheritedRoot }, out var inheritedCarriers);
+        ApplyLocal(new[] { inheritedRoot }, inheritedNames, inheritedCarriers,
+            new Dictionary<string, JsonObject>(), new Dictionary<string, int[]>(), null);
+        if (inherited[Key] != null || inherited[NullableRepresentationTypes.MethodFrameKey] != null
+            || inherited[NullableGenericErasure.MethodTypeParameterBoundsPre] != null
+            || inherited["generated"]?.GetValue<bool>() != true || Str(inherited["name"]) != "inherited")
+            throw new InvalidOperationException("Inherited physical frame published an authored Kotlin declaration");
         var virtualMethod = new JsonObject {
             [Key] = "dotkt-declaration-v1:virtual-test", ["name"] = "echo", ["virtual"] = true,
             ["params"] = new JsonArray(), ["ret"] = TypeJson.Fqn("void"),

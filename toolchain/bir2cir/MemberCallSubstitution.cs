@@ -1218,9 +1218,11 @@ static class MemberCallSubstitution
             ? mappedCompanionCarrier
             : memberOwnerToken;
         var companionOwnerFqn = ReferenceMetadataIndex.BareOwnerFqn(companionCarrierToken);
-        var companionHasClrBinding = refs.TryExactMemberClrBinding(
+        var selectedDeclaration = Str(node[DeclarationIdentityBinding.Key]);
+        var companionHasClrBinding = refs.TryDeclarationClrBinding(selectedDeclaration, out var exactCompanionBinding)
+            || refs.TryExactMemberClrBinding(
             companionOwnerFqn, companionMember, companionMethodArity, companionSignature,
-            out var exactCompanionBinding);
+            out exactCompanionBinding);
         ExactClrMemberBinding inheritedExactMemberBinding = null;
         JsonNode mappedCompanionRecv = null;
         if (instance && companionHasClrBinding &&
@@ -1269,7 +1271,7 @@ static class MemberCallSubstitution
         {
             var renamedMember = Str(node["method"]);
             var directOwnerArgs = ownerFqnNode.Args ?? Array.Empty<TypeNode>();
-            var inheritedSignature = companionSignature?
+            var inheritedSignature = (refs.DeclarationOverrideParameters(selectedDeclaration) ?? companionSignature)?
                 .Select(type => SupertypeGraph.SubstOwnerTvs(type, directOwnerArgs)).ToArray();
             var inherited = new List<(TypeNode.Fqn Owner, string Member, ExactClrMemberBinding Binding)>();
             foreach (var candidate in inheritedOverrides.OfType<JsonObject>())
@@ -1325,7 +1327,8 @@ static class MemberCallSubstitution
                 inheritedExactMemberBinding = inheritedSlot.Binding;
                 companionSignature = inheritedSignature;
                 if (inheritedSignature != null)
-                    node["sig"] = new JsonArray(inheritedSignature.Select(TypeJson.Write).ToArray());
+                    node["sig"] = new JsonArray(inheritedSignature
+                        .Select(BirTypeLowering.CanonicalPhysicalSlotType).Select(TypeJson.Write).ToArray());
             }
         }
 
@@ -1485,7 +1488,9 @@ static class MemberCallSubstitution
         // conversion, intrinsic name, byref shape and argument adapters must never be assembled from same-arity
         // siblings. A missing declaration vector is not exact and therefore states no binding.
         var exactMemberBinding = inheritedExactMemberBinding;
-        var hasExactMemberBinding = exactMemberBinding != null || refs.TryExactMemberClrBinding(
+        var hasExactMemberBinding = exactMemberBinding != null
+            || refs.TryDeclarationClrBinding(selectedDeclaration, out exactMemberBinding)
+            || refs.TryExactMemberClrBinding(
             ownerFqn, member, companionMethodArity, companionSignature, out exactMemberBinding);
 
         // Rule Conv (numeric primitive CONVERSION): the member carries @ClrConv on the ref.dll (`kotlin.Int.toLong`,
@@ -1583,7 +1588,10 @@ static class MemberCallSubstitution
         // The 2-arg add(index, e) Insert form falls through to the intrinsic.
         if (instance && kind == "interface"
             && CollectionMutationCall(node, ownerFqnNode, args, refs, ctx) is { } mutationCall)
+        {
+            BindAuthoredHelper((JsonObject)mutationCall, refs, ctx);
             return mutationCall;
+        }
 
         // Rule 1c (PRIMITIVE compareTo): `x.compareTo(y)` on a boxed kotlin.<Prim> -> `System.<Prim>.CompareTo`
         // (IComparable<T>). The boxed kotlin.* primitive is NOT emitted in the runtime (it is substituted to the BCL
@@ -1726,7 +1734,11 @@ static class MemberCallSubstitution
         else if (instance && kind == "interface"
             && (ownerFqn.StartsWith("kotlin.collections.", StringComparison.Ordinal) || ownerFqn == "kotlin.sequences.Sequence"))
         {
-            if (CollectionDefaultCall(node, ownerFqnNode, args, refs, ctx) is { } collectionCall) return collectionCall;
+            if (CollectionDefaultCall(node, ownerFqnNode, args, refs, ctx) is { } collectionCall)
+            {
+                BindAuthoredHelper((JsonObject)collectionCall, refs, ctx);
+                return collectionCall;
+            }
         }
 
         // A frontend-resolved property call may reach the general alias rules only while a specialized intrinsic,
@@ -2130,7 +2142,8 @@ static class MemberCallSubstitution
         return call;
     }
 
-    static void BindAuthoredHelper(JsonObject call, ReferenceMetadataIndex refs, SubstCtx ctx)
+    internal static void BindAuthoredHelper(JsonObject call, ReferenceMetadataIndex refs, SubstCtx ctx,
+        ValueTypeOracle isValue = null)
     {
         var arguments = ((JsonArray)call["typeArgs"]).Select(TypeJson.Read).ToArray();
         var helper = refs.AuthoredKotlinHelper(TypeJson.OwnerName(call["owner"]),
@@ -2145,13 +2158,17 @@ static class MemberCallSubstitution
                 return frame.SemanticVariable(variable) is TypeNode.Nullable
                     ? variable : frame.NullableVariable((TypeNode.Tv)frame.SemanticVariable(variable));
             }
-            return NullableGenericErasure.EraseArgument(new TypeNode.Nullable(argument), _isValue);
+            return NullableGenericErasure.EraseArgument(new TypeNode.Nullable(argument), isValue ?? _isValue);
         }
         TypeNode[] physicalArguments;
         try
         {
             physicalArguments = helper.NullableFrame == null ? arguments
-                : helper.NullableFrame.Close(arguments, argument => argument, NullablePhysicalArgument);
+                // Late alias calls already name the binding's CLR storage element.
+                // Close every helper role from that selected element, not a new
+                // projection of the enclosing Kotlin owner's unrelated value slot.
+                : helper.NullableFrame.Close(arguments, argument => argument, NullablePhysicalArgument,
+                    argument => argument, NullablePhysicalArgument);
         }
         catch (ArgumentException ex)
         {
@@ -2159,7 +2176,8 @@ static class MemberCallSubstitution
                 $"Compiler helper {TypeJson.OwnerName(call["owner"])}.{call["method"]} frame closure failed: {ex.Message}", ex);
         }
         call["typeArgs"] = new JsonArray(physicalArguments.Select(TypeJson.Write).ToArray());
-        call["sig"] = new JsonArray(helper.ParamTypeNodes.Select(TypeJson.Write).ToArray());
+        call["sig"] = new JsonArray(helper.ParamTypeNodes
+            .Select(BirTypeLowering.CanonicalPhysicalSlotType).Select(TypeJson.Write).ToArray());
         call[DeclarationIdentityBinding.Key] = helper.DeclarationId;
     }
 

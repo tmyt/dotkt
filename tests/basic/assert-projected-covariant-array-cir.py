@@ -94,7 +94,9 @@ generic_reads = [
     if node.get("method") in ("firstProjectedValue", "first") and node.get("typeArgs") is not None
 ]
 if len(generic_reads) != 2 or any(
-    node.get("typeArgs") != [producer_carrier] or node.get("ret") != producer_carrier
+    node.get("typeArgs") != [producer_carrier, producer_carrier]
+    or node.get("ret") != producer_carrier
+    or node.get("calleeRet") != {"t": "tv", "scope": "method", "i": 1}
     for node in generic_reads
 ):
     raise SystemExit(f"generic projected-array reads did not close over Producer$star: {generic_reads!r}")
@@ -207,7 +209,8 @@ transient_leaks = [
 if transient_leaks:
     raise SystemExit(f"lexical-receiver BIR facts leaked into CIR: {transient_leaks[:3]!r}")
 
-owner_tv = fqn("VariantLexicalOwner", {"t": "tv", "scope": "type", "i": 0})
+owner_tv = fqn("VariantLexicalOwner", {"t": "tv", "scope": "type", "i": 0},
+               {"t": "tv", "scope": "type", "i": 1})
 reader = type_def("VariantLexicalOwner.Reader")
 outer_fields = [field for field in reader.get("fields", []) if field.get("name") == "__outer"]
 if len(outer_fields) != 1 or outer_fields[0].get("type") != owner_tv:
@@ -281,7 +284,7 @@ if covariant_carrier not in collision_locals:
     raise SystemExit(f"a user __outer local in a generated frame was mistaken for lexical this: {collision_locals!r}")
 
 invariant = method("invariantProjectedValue")
-exact_invariant = array(fqn("InvariantValue", fqn("System.String")))
+exact_invariant = array(fqn("InvariantValue", fqn("System.String"), fqn("System.String")))
 parameters = invariant.get("params", [])
 if len(parameters) != 1 or parameters[0].get("type") != exact_invariant:
     raise SystemExit(f"invariant projected element was over-erased: {parameters!r}")

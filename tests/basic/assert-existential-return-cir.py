@@ -89,6 +89,7 @@ composed_casts = [
     if node.get("k") == "cast"
 ]
 if sorted(composed_casts) != sorted([
+    "System.Object",
     "RuntimeTypesExistentialFusibleFlow$star",
     "RuntimeTypesExistentialFlow$star",
 ]):

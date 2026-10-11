@@ -311,18 +311,21 @@ static partial class ClrMemberResolution
             && SlotInvokeReturn(slot) is TypeNode slotReturn
             && slotReturn is not TypeNode.Fqn { Args: null, Name: "void" or "System.Void" })
             AdaptVoidConstruction(construction, naturalFn, slot, slotReturn);
-        else if (PhysicalFunctionShape(slot) is TypeNode.Fn slotFn
+        else if (PhysicalFunctionShape(slot, includeNominal: true) is TypeNode.Fn slotFn
             && NeedsSlotAdapter(naturalFn, slotFn))
             AdaptBoxedSlots(construction, naturalFn, slot, slotFn);
         else
             Retarget(construction, slot);
     }
 
-    static bool HasBoxedSlotSeam(TypeNode.Fn natural, TypeNode.Fn target)
+    static bool HasRepresentationSlotSeam(TypeNode.Fn natural, TypeNode.Fn target)
     {
         static bool IsObject(TypeNode type) => type is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" };
         static bool Seam(TypeNode left, TypeNode right) => !SameDelegate(left, right)
-            && (IsObject(left) || IsObject(right));
+            // Distinct physical type variables are not delegate-compatible just
+            // because they represent the same source parameter. Native witnesses
+            // and storage companions cross through the ordinary value adapter.
+            && (IsObject(left) || IsObject(right) || left is TypeNode.Tv || right is TypeNode.Tv);
         if (natural.DelegateParams.Length != target.DelegateParams.Length)
             throw new InvalidOperationException("Delegate slot parameter count differs from its construction");
         return natural.DelegateParams.Zip(target.DelegateParams, Seam).Any(seam => seam)
@@ -330,7 +333,7 @@ static partial class ClrMemberResolution
     }
 
     static bool NeedsSlotAdapter(TypeNode.Fn natural, TypeNode.Fn target) =>
-        HasBoxedSlotSeam(natural, target)
+        HasRepresentationSlotSeam(natural, target)
         || ((natural.Ret is TypeNode.Fqn { Args: null, Name: "void" or "System.Void" })
             != (target.Ret is TypeNode.Fqn { Args: null, Name: "void" or "System.Void" }));
 
@@ -448,7 +451,8 @@ static partial class ClrMemberResolution
     static void AdaptVoidConstruction(JsonObject construction, TypeNode.Fn naturalFn,
         TypeNode.Fqn slot, TypeNode slotReturn)
     {
-        if (PhysicalFunctionShape(slot) is TypeNode.Fn target && HasBoxedSlotSeam(naturalFn, target))
+        if (PhysicalFunctionShape(slot, includeNominal: true) is TypeNode.Fn target
+            && HasRepresentationSlotSeam(naturalFn, target))
         {
             AdaptBoxedSlots(construction, naturalFn, slot, target);
             return;

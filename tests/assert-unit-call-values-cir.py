@@ -51,7 +51,12 @@ if lane == "basic":
     constrained = methods["unitConstrainedValue"]["body"]
     assert not any(unit_read(node) for node in objects(constrained)), constrained
     calls = [node for node in objects(constrained) if node.get("k") == "constrainedCall"]
-    assert len(calls) == 1 and calls[0]["ret"] == {"t": "fqn", "name": "kotlin.Unit"}, calls
+    assert len(calls) == 1, calls
+    assert calls[0]["ret"] == calls[0]["calleeRet"] == {"t": "fqn", "name": "System.Object"}, calls
+    assert calls[0]["iface"] == {"t": "fqn", "name": "UnitCallSource$star"}, calls
+    projections = [node for node in objects(constrained)
+                   if node.get("k") == "cast" and node.get("e") is calls[0]]
+    assert len(projections) == 1 and projections[0]["type"] == {"t": "fqn", "name": "kotlin.Unit"}, projections
 elif lane == "consumer":
     returned = methods["referencedUnitReturn"]["body"][0]["value"]
     assert returned in blocks, returned

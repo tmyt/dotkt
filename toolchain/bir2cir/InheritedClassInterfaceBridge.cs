@@ -97,6 +97,8 @@ static class InheritedClassInterfaceBridge
                 bridge.Remove("member");
                 bridge.Remove("inheritedImplementation");
                 bridge["name"] = Str(fact["member"]);
+                if (declarationId != null)
+                    DeclarationIdentityBinding.MarkInheritedProjection(bridge, cls.Name, new[] { declarationId });
                 bridge["static"] = false;
                 bridge["override"] = false;
                 bridge["abstract"] = false;

@@ -14,6 +14,12 @@ private fun <S : Segment<S>> wrap(value: S): SegmentResult<S> = SegmentResult(va
 private fun <Unused, S : Segment<S>> wrapLater(value: S): SegmentResult<S> = SegmentResult(value)
 private fun <S : Segment<S>> deferred(value: S): () -> SegmentResult<S> = { SegmentResult(value) }
 
+private interface CapturedValue<T> { fun read(): T }
+private inline fun <T> sharedCaptured(value: T): CapturedValue<T> = object : CapturedValue<T> {
+    override fun read(): T = value
+}
+private fun <T : Any> captureNonNull(value: T?): CapturedValue<T> = sharedCaptured(value!!)
+
 private class Factory<T>(val tag: T) {
     fun <S : Segment<S>> wrap(value: S): SegmentResult<S> = SegmentResult(value)
 }
@@ -33,6 +39,11 @@ class NullableSelfBoundTests {
     fun capturedSelfBoundRetainsItsConstraint() {
         val value = Concrete(null)
         check(deferred(value)().value === value)
+        // Each inline use instantiates the declared capture frame, not a class
+        // strengthened with the other call site's generic constraints.
+        check(captureNonNull("text").read() == "text")
+        check(sharedCaptured(42).read() == 42)
+        check(sharedCaptured<String?>(null).read() == null)
     }
 
     @TestAttribute

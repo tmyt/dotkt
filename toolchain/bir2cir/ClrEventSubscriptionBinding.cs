@@ -243,6 +243,20 @@ static class ClrEventSubscriptionBinding
                 ["name"] = "kotlin.clr.EventSubscription",
                 ["args"] = new JsonArray { handlerType.DeepClone() },
             };
+            // This construction is authored after source frame materialization.
+            // Its handler is already the exact physical delegate selected by the
+            // event binding, so every storage companion closes over that same
+            // delegate; do not leave the source-arity owner on a physical ctor.
+            if (_refs.KotlinConstructorOwnerFrames.TryGetValue(
+                    TypeJson.OwnerName(subscriptionType), out var constructorFrame))
+            {
+                var handlerArgument = TypeJson.Read(handlerType);
+                TypeNode NullableHandler(TypeNode type) => NullableGenericErasure.EraseArgument(
+                    new TypeNode.Nullable(type), _refs.IsValueType);
+                subscriptionType["args"] = new JsonArray(constructorFrame.Close(
+                    new[] { handlerArgument }, type => type, NullableHandler,
+                    type => type, NullableHandler).Select(TypeJson.Write).ToArray());
+            }
             return new JsonObject
             {
                 ["k"] = "valueBlock",

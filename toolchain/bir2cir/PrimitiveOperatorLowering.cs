@@ -80,6 +80,29 @@ static class PrimitiveOperatorLowering
         "kotlin.Char", "kotlin.Byte", "kotlin.Short", "kotlin.UByte", "kotlin.UShort",
     };
 
+    internal static void SelfTest()
+    {
+        var slot = new TypeNode.Tv("method", 0);
+        foreach (var right in new TypeNode[] { slot, new TypeNode.Tv("method", 1),
+                     new TypeNode.Tv("type", 0), new TypeNode.Nullable(slot) })
+        {
+            var comparison = new JsonObject {
+                ["k"] = "callStatic", ["owner"] = TypeJson.Fqn(IntrinsicOwner), ["method"] = "EQEQEQ",
+                ["args"] = new JsonArray(
+                    new JsonObject { ["k"] = "callStatic", ["method"] = "value", ["sty"] = TypeJson.Write(slot),
+                        ["ret"] = TypeJson.Fqn("object") },
+                    new JsonObject { ["k"] = "local", ["name"] = "other", ["sty"] = TypeJson.Write(right) }),
+            };
+            var lowered = LowerIntrinsic(comparison, BirScope.Empty).AsObject();
+            var sameSlot = slot.Equals(right);
+            if ((lowered["lhs"]["k"].GetValue<string>() == "cast") != sameSlot
+                || (lowered["rhs"]["k"].GetValue<string>() == "cast") != sameSlot
+                || sameSlot && TypeJson.Read(lowered["lhs"]["type"]) != slot)
+                throw new InvalidOperationException("Identity lowering lost the selected value slot or narrowed distinct operands");
+        }
+        Console.WriteLine("[identity operand slots] self-test OK (same generic slot, distinct index/scope/nullability)");
+    }
+
     public static void Apply(JsonNode root, ReferenceMetadataIndex refs = null)
     {
         switch (root)
@@ -218,7 +241,13 @@ static class PrimitiveOperatorLowering
             var rs = StaticType.Surface(args[1], scope);
             if (ls is TypeNode.Fqn lsf && EqEqPrimFq.Contains(lsf.Name)
                 && rs is TypeNode.Fqn rsf && EqEqPrimFq.Contains(rsf.Name))
-                return new JsonObject { ["k"] = "binOp", ["op"] = "==", ["lhs"] = args[0]?.DeepClone(), ["rhs"] = args[1]?.DeepClone() };
+                // Pin the selected primitive operands before late generic value
+                // realignment can expose an object-returning physical declaration.
+                // The explicit boundary then supplies unbox.any where necessary;
+                // the emitter does not reconstruct Kotlin's comparison types.
+                return new JsonObject { ["k"] = "binOp", ["op"] = "==",
+                    ["lhs"] = new JsonObject { ["k"] = "cast", ["type"] = TypeJson.Write(ls), ["e"] = args[0]?.DeepClone() },
+                    ["rhs"] = new JsonObject { ["k"] = "cast", ["type"] = TypeJson.Write(rs), ["e"] = args[1]?.DeepClone() } };
             var lt = StaticType.Value(args[0], scope);
             var rt = StaticType.Value(args[1], scope);
             var lc = lt != null ? FaithfulHints.ClassifyColl(lt) : null;
@@ -252,7 +281,18 @@ static class PrimitiveOperatorLowering
         // Preserve identity intent until physical operand types are final. Numeric equality
         // already uses == and must not acquire reference boxing from this operation.
         if (m == "EQEQEQ" && args.Count == 2)
-            return new JsonObject { ["k"] = "binOp", ["op"] = "===", ["lhs"] = args[0]?.DeepClone(), ["rhs"] = args[1]?.DeepClone() };
+        {
+            var left = StaticType.Surface(args[0], scope);
+            var right = StaticType.Surface(args[1], scope);
+            // Equal Kotlin generic operands share one value slot even when a selected
+            // declaration physically returns object. Preserve that slot before return
+            // realignment; a nullable or different source parameter remains a reference
+            // comparison, and must not be narrowed to its counterpart.
+            JsonNode Operand(int index) => left is TypeNode.Tv && left.Equals(right)
+                ? new JsonObject { ["k"] = "cast", ["type"] = TypeJson.Write(left), ["e"] = args[index]?.DeepClone() }
+                : args[index]?.DeepClone();
+            return new JsonObject { ["k"] = "binOp", ["op"] = "===", ["lhs"] = Operand(0), ["rhs"] = Operand(1) };
+        }
         // `ieee754equals`: the ordered IEEE-754 float/double comparison (`-0.0 == 0.0`, `NaN != NaN`) -> raw CIL
         // `ceq` (`binOp ==`). For the NON-NULL direct `==` the operands already satisfy the raw CIR binOp contract. But
         // the frontend ALSO routes a DIRECT/mixed NULLABLE float `==`

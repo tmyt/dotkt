@@ -50,9 +50,9 @@ PROJECTS=(
 # Reviewed on the v0.9.8 main baseline at the start of #227. Updating a suite requires updating this number in
 # the same change, making otherwise-silent test proliferation or accidental deletion an explicit review event.
 declare -A EXPECTED_DISCOVERED=(
-	["tests/basic"]=670
+	["tests/basic"]=671
 	["tests/coroutines"]=247
-	["tests/roundtrip/consumer"]=457
+	["tests/roundtrip/consumer"]=498
 	["tests/roundtrip/bidirectional/consumer"]=39
 	["tests/interop/consumer"]=369
 )
@@ -417,11 +417,11 @@ for proj in "${PROJECTS[@]}"; do
 			tail -25 "$ROOT/build/nunit-$name.nullable-suspend-method-bound.log"; rc=1
 		fi
 		if dotnet "$METADATA_INSPECTOR_DLL" \
-			--klib-class-fake-override-nullable-method-bound "$producer_klib" \
+			--klib-class-declared-override-nullable-method-bound "$producer_klib" \
 			"starprojection.ReferencedNullableMethodImplementation" \
 			"inheritedNullableMethodBound" \
 			>"$ROOT/build/nunit-$name.nullable-inherited-method-bound.log" 2>&1; then
-			echo "  inherited fake override preserves nullable owner-dependent method bound"
+			echo "  authored override preserves nullable owner-dependent method bound"
 		else
 			echo "  NULLABLE INHERITED METHOD BOUND KLIB SHAPE FAIL — see build/nunit-$name.nullable-inherited-method-bound.log"
 			tail -25 "$ROOT/build/nunit-$name.nullable-inherited-method-bound.log"; rc=1
@@ -564,8 +564,8 @@ for proj in "${PROJECTS[@]}"; do
 	if [[ "$proj" == "tests/basic" ]]; then
 		basic_dll="$dir/bin/$CONFIGURATION/net10.0/DotKt.Tests.Basic.dll"
 		if dotnet "$METADATA_INSPECTOR_DLL" \
-			--volatile-consumer "$basic_dll" 'GenericVolatileBox`1' \
-			"prop_get<value>" "prop_set<value>" "readValueByRef" "writeValueByRef" \
+    --volatile-consumer "$basic_dll" 'GenericVolatileBox`2' \
+			"prop_get<value>" "prop_set<value>" \
 			>"$ROOT/build/nunit-$name.volatile-generic.log" 2>&1; then
 			echo "  local generic volatile field access IL OK"
 		else

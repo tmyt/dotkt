@@ -112,6 +112,45 @@ static partial class NullableTvErasureCallRealign
         return idx;
     }
 
+    // The declaration snapshot outlives source application order. Transition its constructed slots with
+    // the live declarations, before physical-use flow substitutes owner variables into those same slots.
+    public static void ProjectDeclarationApplications(DeclIndex index)
+    {
+        var order = index.SourceApplicationOrder
+            ?? throw new InvalidOperationException("Declaration applications already use physical order");
+        TypeNode Project(TypeNode type) => type switch {
+            TypeNode.Fqn named => new TypeNode.Fqn(named.Name, order.DeclarationArguments(
+                new TypeNode.Fqn(named.Name, named.Args?.Select(Project).ToArray()))),
+            TypeNode.Nullable nullable => new TypeNode.Nullable(Project(nullable.Of)),
+            TypeNode.Oblivious platform => new TypeNode.Oblivious(Project(platform.Of)),
+            TypeNode.Projection projection => new TypeNode.Projection(projection.Variance, Project(projection.Of)),
+            TypeNode.Array array => new TypeNode.Array(Project(array.Elem), array.Rank, array.SzArray),
+            TypeNode.ByRef reference => new TypeNode.ByRef(Project(reference.Of)),
+            TypeNode.Fn function => new TypeNode.Fn(function.Suspend, Project(function.Ret),
+                function.Params.Select(Project).ToArray(), function.Recv == null ? null : Project(function.Recv),
+                function.Clr, function.Ctx?.Select(Project).ToArray()),
+            _ => type,
+        };
+        var signatures = index.ByDeclarationOwner.Values.SelectMany(entries => entries.Values)
+            .Concat(index.ByOwner.Values.SelectMany(entries => entries.Values))
+            .Concat(index.TopLevel.Values)
+            .Concat(index.PropertiesByOwner.Values.SelectMany(entries => entries.Values).SelectMany(entries => entries))
+            .Concat(index.TopLevelPropertiesByOwner.Values.SelectMany(entries => entries.Values).SelectMany(entries => entries))
+            .Where(signature => signature != null).Distinct();
+        foreach (var signature in signatures)
+        {
+            signature.Ret = Project(signature.Ret);
+            signature.Params = signature.Params.Select(Project).ToArray();
+        }
+        foreach (var slots in index.Slots.Values)
+            foreach (var name in slots.Keys.ToArray())
+                if (slots[name] != null) slots[name] = Project(slots[name]);
+        foreach (var constructors in index.Ctors.Values)
+            foreach (var arity in constructors.Keys.ToArray())
+                if (constructors[arity] != null) constructors[arity] = constructors[arity].Select(Project).ToArray();
+        index.SourceApplicationOrder = null;
+    }
+
     // Admit TYPE declarations materialized after the module-wide snapshot. Shared ref cells call this before
     // NullableGenericErasure; UnsafeAccessor holders call it afterwards. The latter's callable entry carries the
     // one-shot ownership key only when synthesis selected a local declaration, so ReadSig may consult its propagated
@@ -1176,6 +1215,40 @@ static partial class NullableTvErasureCallRealign
 
     internal static void SelfTest()
     {
+        var innerDeclaration = new JsonObject {
+            ["name"] = "Outer.Middle", ["semanticOwner"] = "Outer",
+            ["mods"] = new JsonObject { ["inner"] = true }, ["outerTypeParamCount"] = 2,
+        };
+        var declarationIndex = CollectDeclaredMemberRets(new JsonNode[] { innerDeclaration });
+        var sourceApplication = new TypeNode.Fqn("Outer.Middle", new TypeNode[] {
+            new TypeNode.Tv("type", 2), new TypeNode.Tv("type", 3),
+            new TypeNode.Tv("type", 0), new TypeNode.Tv("type", 1),
+        });
+        var physicalApplication = new TypeNode.Fqn("Outer.Middle", new TypeNode[] {
+            new TypeNode.Tv("type", 0), new TypeNode.Tv("type", 1),
+            new TypeNode.Tv("type", 2), new TypeNode.Tv("type", 3),
+        });
+        var signature = new DeclSig {
+            Ret = sourceApplication,
+            Params = new TypeNode[] { new TypeNode.ByRef(TypeNode.Array.General(sourceApplication, 2)) },
+        };
+        declarationIndex.ByOwner["Leaf"] = new() { ["member"] = signature };
+        declarationIndex.ByDeclarationOwner["Leaf"] = new() { ["identity"] = signature };
+        declarationIndex.PropertiesByOwner["Leaf"] = new() { ["property"] = new() { signature } };
+        declarationIndex.TopLevel["member"] = signature;
+        declarationIndex.TopLevelPropertiesByOwner["Facade"] = new() { ["property"] = new() { signature } };
+        declarationIndex.Slots["Leaf"] = new() { ["__outer"] = sourceApplication,
+            ["value"] = new TypeNode.Tv("type", 3) };
+        declarationIndex.Ctors["Leaf"] = new() { [1] = new TypeNode[] { sourceApplication } };
+        ProjectDeclarationApplications(declarationIndex);
+        if (signature.Ret != physicalApplication
+            || signature.Params[0] != new TypeNode.ByRef(TypeNode.Array.General(physicalApplication, 2))
+            || declarationIndex.Slots["Leaf"]["__outer"] != physicalApplication
+            || declarationIndex.Slots["Leaf"]["value"] != new TypeNode.Tv("type", 3)
+            || declarationIndex.Ctors["Leaf"][1][0] != physicalApplication
+            || declarationIndex.SourceApplicationOrder != null)
+            throw new InvalidOperationException("Declaration snapshot lost physical inner order or projected a shared signature twice");
+
         var sourceFunction = new TypeNode.Fn(false, new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Int")),
             new TypeNode[] { new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Int")) });
         var physicalCallbackResult = new TypeNode.Fn(false, new TypeNode.Fqn("object"),

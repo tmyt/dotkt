@@ -88,6 +88,27 @@ static class SharedSyntheticSynthesis
                     sharedCells?.Add(new CellStorage(spec.Name, "v", 0));
                 }
             }
+            // Cell construction selects the constructor authored here, independently of the
+            // caller value's representation. Carry its open signature just like a frontend-
+            // selected constructor; final binding closes it and value flow converts the input.
+            void BindCellConstruction(JsonNode node)
+            {
+                if (ReferenceEquals(node, refTypes)) return;
+                if (node is JsonObject obj)
+                {
+                    if (Str(obj["k"]) == "new" && TypeJson.Read(obj["type"]) is TypeNode.Fqn owner
+                        && specs.TryGetValue(owner.Name, out var spec))
+                    {
+                        var positions = spec.Free.Select((key, index) => (key, index))
+                            .ToDictionary(x => x.key, x => x.index);
+                        obj["memberSignature"] = new JsonArray(RemapTvs(spec.Elem, positions));
+                    }
+                    foreach (var value in obj.Select(pair => pair.Value).ToArray()) BindCellConstruction(value);
+                }
+                else if (node is JsonArray array)
+                    foreach (var value in array) BindCellConstruction(value);
+            }
+            BindCellConstruction(file);
             file.Remove("refTypes");
         }
 

@@ -210,6 +210,19 @@ sealed partial class ReferenceMetadataIndex
         id != null && _declarationById.TryGetValue(id, out var binding)
             ? binding.DeclarationSemanticParams : null;
 
+    internal TypeNode[] DeclarationOverrideParameters(string id)
+    {
+        if (id == null || !_declarationById.TryGetValue(id, out var binding)) return null;
+        if (binding.DeclarationSemanticParams != null) return binding.DeclarationSemanticParams;
+        // Virtual families retain their source slots on the parameter carriers
+        // rather than an identity-allocated semantic signature. Consume those
+        // explicit facts; do not invert physical generic positions.
+        return binding.NullableGenericParams?.Any(parameter => parameter != null) == true
+            ? binding.ParamTypeNodes.Select((parameter, index) =>
+                binding.NullableGenericParams[index] ?? parameter).ToArray()
+            : null;
+    }
+
     internal (TypeNode[] Parameters, TypeNode Return) AliasHelperSourceSignature(string id, string ownerName)
     {
         if (!_declarationById.TryGetValue(id, out var binding) || binding.IsStatic
@@ -249,6 +262,12 @@ sealed partial class ReferenceMetadataIndex
         byrefPositions = binding.ByrefPositions;
         return true;
     }
+
+    internal TypeNode DeclarationIdentityReturn(string id, string owner, int methodArity, bool isStatic) =>
+        id != null && _declarationById.TryGetValue(id, out var binding)
+            && BareOwnerFqn(binding.DeclarationPhysicalOwner ?? binding.Owner) == BareOwnerFqn(owner)
+            && binding.MethodArity == methodArity && binding.IsStatic == isStatic
+                ? binding.ReturnTypeNode : null;
 
     // UnsafeAccessorAttribute is matched by the CLR against the selected MethodDef's exact physical signature.
     // The frontend-authored declaration identity selects that MethodDef; inherited-owner binding supplies the
@@ -414,6 +433,12 @@ sealed partial class ReferenceMetadataIndex
         var semanticMatches = binding.DeclarationSemanticParams?.Length == callSignature.Count
             && binding.DeclarationSemanticParams.Select((type, index) =>
                 SemanticDeclarationDescribesCall(type, callSignature[index])).All(matchesCall => matchesCall);
+        // The source descriptor and this call's selected-declaration signature can
+        // sit on opposite sides of frame materialization. Project the preserved
+        // descriptor through its producer-owned frame, including function value
+        // slots; never make different variable indices into matching wildcards.
+        if (!semanticMatches && binding.DeclarationSemanticParams?.Length == callSignature.Count)
+            semanticMatches = MaterializedDeclarationDescribesCall(binding, callSignature);
         // Generated cold entries retain each parameter's trusted type carrier, including suspend
         // function shapes whose CLR value slot is object. Validate those authored facts too;
         // do not treat object as a wildcard for a function or search a sibling overload.
@@ -437,6 +462,16 @@ sealed partial class ReferenceMetadataIndex
         declaringOwner = owner;
         return true;
     }
+    bool MaterializedDeclarationDescribesCall(MemberBinding binding, IReadOnlyList<TypeNode> signature)
+    {
+        var policy = new GenericRepresentationPolicy(_ownerAlias, this);
+        var types = new NullableRepresentationTypes(SourceHierarchyFrame(binding.Owner), binding.NullableFrame,
+            _ownerNullableFrames, IsValueType, policy: policy,
+            nativeOwnerSlots: policy.UsesNativeOwnerSlots(binding.Owner));
+        return binding.DeclarationSemanticParams.Length == signature.Count
+            && binding.DeclarationSemanticParams.Select((type, index) =>
+                SemanticDeclarationDescribesCall(types.Slot(type), signature[index])).All(matches => matches);
+    }
     static bool ConstructedDeclarationDescribesCall(IReadOnlyList<TypeNode> declaration,
         IReadOnlyList<TypeNode> call, TypeNode[] ownerArguments) => declaration.Count == call.Count
         && declaration.Select((type, index) => DeclarationDescribesCall(
@@ -449,15 +484,15 @@ sealed partial class ReferenceMetadataIndex
         id != null && _declarationById.TryGetValue(id, out var binding) ? binding.NullableFrame : null;
 
     internal MemberBinding AuthoredKotlinHelper(string owner, string name, int sourceArity,
-        IReadOnlyList<TypeNode> sourceParameters)
+        IReadOnlyList<TypeNode> sourceParameters, bool isStatic = true)
     {
         if (!TryMembersByBirOwner(owner, out var members))
             throw new InvalidOperationException($"Compiler-authored helper owner '{owner}' is absent");
-        var matches = members.Where(member => member.IsStatic && member.DeclarationId != null
+        var matches = members.Where(member => member.IsStatic == isStatic && member.DeclarationId != null
             && (member.DeclarationSourceName ?? member.Name) == name
             && (member.NullableFrame?.SourceArity ?? member.MethodArity) == sourceArity
             && member.ParamCount == sourceParameters.Count).Where(member => {
-                var parameters = member.DeclarationSemanticParams ?? member.ParamTypeNodes;
+                var parameters = member.DeclarationSemanticParams ?? member.KotlinParameterTypes ?? member.ParamTypeNodes;
                 return parameters != null && parameters.Select((parameter, index) =>
                     SourceDeclarationDescribesCall(member.DeclarationSemanticParams == null
                         ? member.NullableGenericParams?[index] ?? parameter : parameter,
@@ -3008,6 +3043,18 @@ sealed partial class ReferenceMetadataIndex
         IReadOnlyList<TypeNode> signature, out ExactClrMemberBinding binding)
         => TryExactMemberClrBinding(ownerFqn, memberName, methodArity, signature, null, out binding);
 
+    internal bool TryDeclarationClrBinding(string id, out ExactClrMemberBinding binding)
+    {
+        binding = null;
+        if (id == null || !_declarationById.TryGetValue(id, out var declaration)
+            || declaration.Intrinsic == null && declaration.PropertyName == null && !declaration.Conv)
+            return false;
+        binding = new ExactClrMemberBinding(declaration.Intrinsic, declaration.PropertyAccess,
+            declaration.PropertyName, declaration.Conv, declaration.ConvTo, declaration.ByrefPositions,
+            declaration.CountStart, declaration.CountEnd);
+        return true;
+    }
+
     // The inherited-call route closes a referenced interface declaration at its exact use-site owner. Its authored
     // parameter vector is still owner-relative in metadata, so substitute that same constructed owner before
     // comparing it with the already-closed call signature. Ordinary direct-owner callers retain the raw overload
@@ -3116,7 +3163,7 @@ sealed partial class ReferenceMetadataIndex
                         && (member.DeclarationSourceName ?? member.SourceMethodName ?? member.Name) == sourceMember
                     : (member.SourcePropertyName ?? member.PropertyName) == sourceMember
                         && member.AccessorKind == propertyAccessor)
-                && member.MethodArity == methodArity
+                && (member.NullableFrame?.SourceArity ?? member.MethodArity) == methodArity
                 && KotlinOverrideSlotBridge.SameMethodTypeParameterShape(
                     member.SemanticMethodTypeParams ?? member.MethodTypeParams, selectedTypeParams, ownerTypeArguments, ownerTypeArguments)
                 && MethodSignatureMatches(member, signature, resolvedReturn, ownerTypeArguments, kotlinParameters: true)
@@ -3157,7 +3204,8 @@ sealed partial class ReferenceMetadataIndex
                     ? member.SourcePropertyName == null
                         && (member.DeclarationSourceName ?? member.SourceMethodName ?? member.Name) == sourceMember
                     : member.SourcePropertyName == sourceMember && member.AccessorKind == accessorKind)
-                && member.MethodArity == methodArity
+                && (semanticConstraints ? member.NullableFrame?.SourceArity ?? member.MethodArity
+                    : member.MethodArity) == methodArity
                 && member.Suspend == selectedSuspend
                 && KotlinOverrideSlotBridge.SameMethodTypeParameterShape(
                     semanticConstraints ? member.SemanticMethodTypeParams ?? member.MethodTypeParams : member.MethodTypeParams,
@@ -4405,7 +4453,7 @@ sealed partial class ReferenceMetadataIndex
         return true;
     }
 
-    static bool MethodSignatureMatches(MemberBinding member, IReadOnlyList<TypeNode> signature,
+    bool MethodSignatureMatches(MemberBinding member, IReadOnlyList<TypeNode> signature,
         TypeNode resolvedReturn, TypeNode[] ownerTypeArguments, bool kotlinParameters = false)
     {
         if (!AccessorSignatureMatches(member, signature, ownerTypeArguments, kotlinParameters)) return false;
@@ -4419,7 +4467,12 @@ sealed partial class ReferenceMetadataIndex
         if (declared is TypeNode.Fqn { Args: null, Name: "void" or "System.Void" }
             && resolvedReturn is TypeNode.Fqn { Args: null, Name: "kotlin.Unit" })
             return true;
-        return AccessorDeclarationDescribesCall(declared, resolvedReturn);
+        return AccessorDeclarationDescribesCall(declared, resolvedReturn)
+            // The inherited implementation fact can already carry a projected
+            // classifier. The producer's recorded correspondence, not an
+            // arbitrary return-type wildcard, relates it to the Kotlin getter.
+            || declared is TypeNode.Fqn && resolvedReturn is TypeNode.Fqn
+                && SemanticDeclarationDescribesCall(declared, resolvedReturn);
     }
 
     internal static bool AccessorDeclarationDescribesCall(TypeNode declaration, TypeNode call)
@@ -5170,7 +5223,7 @@ sealed partial class ReferenceMetadataIndex
                             innerConstructorFactory?.Inner,
                             innerConstructorFactory?.Parameters,
                             innerConstructorFactory?.TypeArguments,
-                            SemanticMethodTypeParameters(method, dotKtAuthored), declarationIdentity?.NullableFrame)
+                            SemanticMethodTypeParameters(method, dotKtAuthored, declarationIdentity?.NullableFrame), declarationIdentity?.NullableFrame)
                         {
                             SignatureParameters = method.GetParameters().Select(DeclarationSignatureSlot).ToArray(),
                             SignatureReturn = DeclarationSignatureSlot(method.ReturnParameter),
@@ -5911,9 +5964,15 @@ sealed partial class ReferenceMetadataIndex
         return BirCarrier.DecodeBody(version, ReadByteArrayArg(cad.ConstructorArguments[1]));
     }
 
-    static JsonArray SemanticMethodTypeParameters(MethodInfo method, bool dotKtAuthored)
+    static JsonArray SemanticMethodTypeParameters(MethodInfo method, bool dotKtAuthored,
+        NullableRepresentationFrame frame)
     {
-        var parameters = new JsonArray(method.GetGenericArguments().Select(GenericParamDeclaration).ToArray());
+        var physicalParameters = method.GetGenericArguments();
+        var parameters = new JsonArray((frame == null
+            ? physicalParameters
+            : Enumerable.Range(0, frame.SourceArity)
+                .Select(source => physicalParameters[frame.SourcePosition(source)]))
+            .Select(GenericParamDeclaration).ToArray());
         if (!dotKtAuthored || CarrierJsonOf(method.GetCustomAttributesData(), method.DeclaringType?.Assembly,
                 "DotKt.Runtime.CompilerServices.KotlinTypeParameterBoundsAttribute") is not JsonObject payload
             || payload["bounds"] is not JsonObject bounds) return parameters;
@@ -7296,6 +7355,102 @@ sealed partial class ReferenceMetadataIndex
     internal static void SelfTest()
     {
         SelfTestSourceHierarchyFrames();
+        {
+            var index = Build(Array.Empty<string>());
+            var source = new TypeNode.Tv("method", 0);
+            index._membersByOwner["InheritedFrame"] = new List<MemberBinding> {
+                new("InheritedFrame", "echo", 1, null, false, false,
+                    Suspend: true, MethodArity: 2,
+                    ParamTypeNodes: new TypeNode[] { new TypeNode.Tv("method", 1) },
+                    NullableGenericParams: new TypeNode[] { source },
+                    ReturnTypeNode: new TypeNode.Fqn("System.Object"), SuspendReturnType: source,
+                    MethodTypeParams: new JsonArray("T", "storageT"),
+                    SemanticMethodTypeParams: new JsonArray("T"),
+                    NullableFrame: new NullableRepresentationFrame(1, Array.Empty<int>(),
+                        storageIndices: new[] { 0 })),
+            };
+            if (!index.TrySelectedOverrideDeclaration("InheritedFrame", "echo", null, 1,
+                    new TypeNode[] { source }, Array.Empty<TypeNode>(), new JsonArray("T"),
+                    Array.Empty<TypeNode>(), true, out var selected, semanticConstraints: true)
+                || selected.Parameters[0] != source
+                || selected.PhysicalParameters[0] != new TypeNode.Tv("method", 1)
+                || index.TrySelectedOverrideDeclaration("InheritedFrame", "echo", null, 1,
+                    new TypeNode[] { source }, Array.Empty<TypeNode>(), new JsonArray("T"),
+                    Array.Empty<TypeNode>(), true, out _))
+                throw new InvalidOperationException("Inherited slot selection mixed source and physical generic arities");
+            if (!index.TrySelectedMethodDeclaration("InheritedFrame", "echo", 1,
+                    new TypeNode[] { source }, source, Array.Empty<TypeNode>(), new JsonArray("T"),
+                    out var inherited)
+                || inherited.PhysicalParameters[0] != new TypeNode.Tv("method", 1)
+                || index.TrySelectedMethodDeclaration("InheritedFrame", "echo", 2,
+                    new TypeNode[] { source }, source, Array.Empty<TypeNode>(), new JsonArray("T"), out _))
+                throw new InvalidOperationException("Inherited implementation selection lost its source arity or selected physical parameter");
+            index._existentialPhysicalBySemanticOwner["Stored"] = "StoredCarrier";
+            index._membersByOwner["CarrierGetter"] = new List<MemberBinding> {
+                new("CarrierGetter", "read", 0, null, false, false,
+                    SourcePropertyName: "value", AccessorKind: "get",
+                    ParamTypeNodes: Array.Empty<TypeNode>(),
+                    NullableGenericRet: new TypeNode.Fqn("Stored", new TypeNode[] { new TypeNode.Tv("type", 0) }),
+                    ReturnTypeNode: new TypeNode.Fqn("StoredCarrier")),
+            };
+            if (!index.TrySelectedMethodDeclaration("CarrierGetter", "value", 0,
+                    Array.Empty<TypeNode>(), new TypeNode.Fqn("StoredCarrier"), new TypeNode[] { source },
+                    new JsonArray(), out _, propertyAccessor: "get")
+                || index.TrySelectedMethodDeclaration("CarrierGetter", "value", 0,
+                    Array.Empty<TypeNode>(), new TypeNode.Fqn("OtherCarrier"), new TypeNode[] { source },
+                    new JsonArray(), out _, propertyAccessor: "get"))
+                throw new InvalidOperationException("Inherited getter selection lost its recorded classifier correspondence");
+        }
+        {
+            var index = Build(Array.Empty<string>());
+            var logical = new TypeNode.Tv("type", 0);
+            var storage = new TypeNode.Tv("type", 1);
+            index._membersByOwner["NativeSlots"] = new List<MemberBinding> {
+                new("NativeSlots", "accept", 1, "Accept", true, false,
+                    ParamTypeNodes: new TypeNode[] { logical }),
+            };
+            index._declarationById["selected-value-slot"] = new MemberBinding(
+                "StoredSlots", "accept", 1, null, false, false,
+                ParamTypeNodes: new TypeNode[] { storage },
+                NullableGenericParams: new TypeNode[] { logical });
+            var call = new JsonObject {
+                ["k"] = "callInstance", ["method"] = "accept",
+                [DeclarationIdentityBinding.Key] = "selected-value-slot",
+                ["sig"] = new JsonArray(TypeJson.Write(storage)), ["args"] = new JsonArray(new JsonObject()),
+            };
+            var overrides = JsonNode.Parse("""
+            [{"owner":{"t":"fqn","name":"NativeSlots","args":[{"t":"tv","scope":"type","i":0}]},
+              "member":"accept","kind":"method","arity":1}]
+            """)!.AsArray();
+            if (DeclarationRename.ResolveSlot(call, overrides, index) != "Accept")
+                throw new InvalidOperationException("Override call selection used the storage slot instead of its selected source descriptor");
+            call.Remove(DeclarationIdentityBinding.Key);
+            if (DeclarationRename.ResolveSlot(call, overrides, index) != null)
+                throw new InvalidOperationException("Override selection equated distinct generic positions without declaration evidence");
+        }
+        {
+            var index = Build(Array.Empty<string>());
+            var source = new TypeNode.Tv("method", 0);
+            var value = new TypeNode.Fqn("kotlin.String");
+            var frame = new NullableRepresentationFrame(1, Array.Empty<int>(),
+                physicalOrder: new[] { 1, 0 }, storageIndices: new[] { 0 });
+            var binding = new MemberBinding("FrameCalls", "select", 3, null, false, true,
+                DeclarationSemanticParams: new TypeNode[] {
+                    new TypeNode.Array(new TypeNode.Fn(false, value, new TypeNode[] { source })),
+                    new TypeNode.Array(source), new TypeNode.ByRef(source),
+                }, NullableFrame: frame);
+            TypeNode[] Call(TypeNode functionArgument, TypeNode referent) => new TypeNode[] {
+                new TypeNode.Array(new TypeNode.Fn(false, value, new[] { functionArgument })),
+                new TypeNode.Array(new TypeNode.Tv("method", 1)), new TypeNode.ByRef(referent),
+            };
+            if (!index.MaterializedDeclarationDescribesCall(binding,
+                    Call(new TypeNode.Tv("method", 0), new TypeNode.Tv("method", 1)))
+                || index.MaterializedDeclarationDescribesCall(binding,
+                    Call(new TypeNode.Tv("method", 1), new TypeNode.Tv("method", 1)))
+                || index.MaterializedDeclarationDescribesCall(binding,
+                    Call(new TypeNode.Tv("method", 0), new TypeNode.Tv("method", 0))))
+                throw new InvalidOperationException("Selected declaration validation lost exact value/native frame roles");
+        }
         var sourceCharSequenceFunction = new TypeNode.Fn(false, new TypeNode.Fqn("kotlin.CharSequence"),
             new TypeNode[] { new TypeNode.Fqn("kotlin.Int") });
         var physicalCharSequenceFunction = new TypeNode.Fn(false, new TypeNode.Fqn(SharedSyntheticSynthesis.CharSeq),

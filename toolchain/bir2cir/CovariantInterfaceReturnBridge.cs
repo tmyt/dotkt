@@ -413,6 +413,7 @@ static class CovariantInterfaceReturnBridge
             ["abstract"] = false,
             ["objectOverride"] = false,
             ["vis"] = "private",
+            ["generated"] = true,
             ["params"] = bridgeParams,
             ["ret"] = TypeJson.Write(slotRet),
             ["body"] = new JsonArray(new JsonObject { ["k"] = "return", ["value"] = call }),

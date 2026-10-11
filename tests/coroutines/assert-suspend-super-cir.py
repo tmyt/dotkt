@@ -39,7 +39,7 @@ targets = {
         "SuspendDispatchSuperGeneric",
         "echo_dotkt_suspend",
         "echo$dotkt_suspend",
-        1,
+        2,
     ),
 }
 

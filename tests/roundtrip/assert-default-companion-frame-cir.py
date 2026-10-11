@@ -20,8 +20,9 @@ for declaration in closures:
     frame = json.loads(base64.b64decode(arguments[1]["bytes"]))["nullableFrame"]
     source_arities.add(frame["sourceArity"])
     assert frame["nullable"] == [0], (declaration["name"], frame)
-    assert frame["storage"] == frame["nullableStorage"] == []
-    assert len(declaration["typeParams"]) == frame["sourceArity"] + 1
+    expected_storage = {1: [], 2: [0]}[frame["sourceArity"]]
+    assert frame["storage"] == expected_storage and frame["nullableStorage"] == []
+    assert len(declaration["typeParams"]) == frame["sourceArity"] + 1 + len(expected_storage)
     assert frame["order"] == list(range(len(declaration["typeParams"])))
 assert source_arities == {1, 2}, source_arities
 print("Default closure source-to-physical frames are preserved")

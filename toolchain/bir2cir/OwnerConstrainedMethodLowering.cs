@@ -91,7 +91,125 @@ static class OwnerConstrainedMethodLowering
         if (parameter["constraints"].AsArray().Count != 1
             || TypeJson.Read(parameter["constraints"][0]) != bound)
             throw new InvalidOperationException("Non-generic physical bound was removed from its method parameter");
-        Console.WriteLine("[method bound dependencies] self-test OK (non-generic binding, storage companion, retained constraint)");
+        var inheritedMethod = JsonNode.Parse("""
+          {"typeParams":[
+            {"name":"P","constraints":[{"t":"fqn","name":"Value"}]},
+            {"name":"Y","constraints":[{"t":"fqn","name":"Other"}]},
+            {"name":"X","constraints":[{"t":"tv","scope":"type","i":0},{"t":"fqn","name":"Value"}]}]}
+          """).AsObject();
+        inheritedMethod[NullableRepresentationTypes.MethodFrameKey] =
+            new NullableRepresentationFrame(2, Array.Empty<int>(), new[] { 2, 1, 0 }, storageIndices: new[] { 0 })
+                .ToJson().ToJsonString();
+        var inheritedOwnerParameters = JsonNode.Parse("""
+          [{"name":"B","constraints":[{"t":"fqn","name":"Value"}]}]
+          """).AsArray();
+        var selectedParameters = JsonNode.Parse("""
+          [{"name":"X","constraints":[{"t":"tv","scope":"type","i":0}]},"Y"]
+          """).AsArray();
+        RecordOverride(inheritedMethod, selectedParameters, new TypeNode[] { new TypeNode.Tv("type", 0) },
+            new JsonArray("T"), inheritedOwnerParameters, type => type, sourceParameters: true);
+        var previousReferences = References;
+        try
+        {
+            References = ReferenceMetadataIndex.Build(Array.Empty<string>());
+            RewriteConstraints(inheritedMethod, new JsonObject { ["typeParams"] = inheritedOwnerParameters },
+                inheritedMethod["typeParams"].AsArray(), _ => false, type => type);
+        }
+        finally { References = previousReferences; }
+        if (inheritedMethod["typeParams"][0]["constraints"].AsArray().Count != 0
+            || inheritedMethod["typeParams"][2]["constraints"].AsArray().Count != 0
+            || TypeJson.Read(inheritedMethod["typeParams"][1]["constraints"][0]) != new TypeNode.Fqn("Other")
+            || TypeJson.Read(inheritedMethod["typeParams"][0][FBoundStarProjectionErasure.ErasedInnerConstraintKey][0])
+                != new TypeNode.Tv("type", 0))
+            throw new InvalidOperationException("Selected slot lost its transitive bound plan or weakened an unrelated parameter");
+        var materializedMethod = JsonNode.Parse("""
+          {"typeParams":["T",{"name":"P","constraints":[{"t":"array","elem":{"t":"tv","scope":"method","i":0}}]}],
+           "methodTypeParameterBoundsPre":"{\"bounds\":{\"0\":[]}}"}
+          """).AsObject();
+        materializedMethod[NullableRepresentationTypes.MethodFrameKey] =
+            new NullableRepresentationFrame(1, Array.Empty<int>(), storageIndices: new[] { 0 }).ToJson().ToJsonString();
+        var materializedSourceBounds = materializedMethod[NullableGenericErasure.MethodTypeParameterBoundsPre].DeepClone();
+        var materializedOwner = new JsonObject();
+        try
+        {
+            Record(materializedMethod, materializedOwner);
+            if (!JsonNode.DeepEquals(materializedSourceBounds, materializedMethod[NullableGenericErasure.MethodTypeParameterBoundsPre]))
+                throw new InvalidOperationException("Physical companion constraints leaked into source method bounds");
+        }
+        finally { Methods.Remove((materializedMethod, materializedOwner)); }
+        var captured = JsonNode.Parse("""
+          {"name":"Capture","generated":true,"typeParams":["P","T"]}
+          """).AsObject();
+        var method = JsonNode.Parse("""
+          {"typeParams":["T",{"name":"P","constraints":[]}],"body":[
+            {"k":"newClosure","closureType":{"t":"fqn","name":"Capture"},"typeArgs":[
+              {"t":"tv","scope":"method","i":1},{"t":"tv","scope":"method","i":0}]}]}
+          """).AsObject();
+        method["typeParams"][1][FBoundStarProjectionErasure.ErasedInnerConstraintKey] =
+            new JsonArray(TypeJson.Write(new TypeNode.Array(new TypeNode.Tv("method", 0))));
+        captured["typeParams"][0] = new JsonObject {
+            ["name"] = "P", ["constraints"] = new JsonArray(TypeJson.Write(new TypeNode.Array(new TypeNode.Tv("type", 1)))),
+        };
+        var entry = (method, new JsonObject());
+        Methods.Add(entry);
+        try
+        {
+            KotlinSupertypesRecord.Merge(captured, new JsonObject {
+                [NullableRepresentationFrame.MetadataKey] = new NullableRepresentationFrame(2,
+                    Array.Empty<int>(), new[] { 1, 0 }).ToJson(),
+            });
+            var sourceFacts = captured[KotlinSupertypesRecord.PreKey].DeepClone();
+            PropagateCapturedBounds(new Dictionary<string, JsonObject> { ["Capture"] = captured },
+                _ => false, type => type);
+            if (!JsonNode.DeepEquals(sourceFacts, captured[KotlinSupertypesRecord.PreKey]))
+                throw new InvalidOperationException("Captured physical dispatch bounds changed Kotlin source facts");
+            captured.Remove(KotlinSupertypesRecord.PreKey);
+            if (TypeJson.Read(captured["typeParams"][0][FBoundStarProjectionErasure.ErasedInnerConstraintKey][0])
+                    != new TypeNode.Array(new TypeNode.Tv("type", 1))
+                || captured["typeParams"][0]["name"].GetValue<string>() != "P"
+                || captured["typeParams"][0]["constraints"].AsArray().Count != 0)
+                throw new InvalidOperationException("Named capture slot lost its declaration-owned dispatch bound");
+            method["typeParams"][1].AsObject().Remove(FBoundStarProjectionErasure.ErasedInnerConstraintKey);
+            method["typeParams"][1]["constraints"] =
+                new JsonArray(TypeJson.Write(new TypeNode.Tv("method", 0)));
+            captured["typeParams"][0] = new JsonObject {
+                ["name"] = "P", ["constraints"] = new JsonArray(TypeJson.Write(new TypeNode.Tv("type", 1))),
+            };
+            captured.Remove(DispatchBoundsKey);
+            PropagateCapturedBounds(new Dictionary<string, JsonObject> { ["Capture"] = captured },
+                _ => false, type => type);
+            if (TypeJson.Read(captured["typeParams"][0]["constraints"][0]) != new TypeNode.Tv("type", 1))
+                throw new InvalidOperationException("Named capture slot lost its retained physical bound");
+        }
+        finally { Methods.Remove(entry); }
+        var shared = new JsonObject {
+            ["name"] = "Shared", ["generated"] = true, ["typeParams"] = new JsonArray("T"),
+        };
+        var constrainedCaller = new JsonObject {
+            ["typeParams"] = new JsonArray(new JsonObject {
+                ["name"] = "T", ["constraints"] = new JsonArray(TypeJson.Fqn("kotlin.Enum"),
+                    TypeJson.Write(new TypeNode.Tv("method", 1))),
+            }, JsonValue.Create("N")),
+            ["body"] = new JsonArray(new JsonObject {
+                ["k"] = "new", ["type"] = TypeJson.Write(new TypeNode.Fqn("Shared",
+                    new TypeNode[] { new TypeNode.Tv("method", 0) })),
+            }),
+        };
+        var unrelated = (constrainedCaller, new JsonObject());
+        Methods.Add(unrelated);
+        try
+        {
+            foreach (var carriesUncapturedVariable in new[] { true, false })
+            {
+                if (!carriesUncapturedVariable) constrainedCaller["typeParams"][0]["constraints"].AsArray().RemoveAt(1);
+                PropagateCapturedBounds(new Dictionary<string, JsonObject> { ["Shared"] = shared },
+                    _ => false, type => type);
+                if (shared["typeParams"][0] is not JsonValue)
+                    throw new InvalidOperationException("Caller strengthened an unrelated shared generated declaration");
+            }
+        }
+        finally { Methods.Remove(unrelated); }
+        Console.WriteLine("[method bound dependencies] self-test OK (non-generic binding, storage companion, retained constraint, named capture)");
     }
 
     static TypeNode MapVariables(TypeNode type, Func<TypeNode.Tv, TypeNode> map) => type switch
@@ -119,7 +237,8 @@ static class OwnerConstrainedMethodLowering
     // Called only after the Kotlin override resolver has selected the exact source slot. In particular,
     // substituting Base<T> with Base<Animal> must not hide that its method bound originally depended on T.
     internal static void RecordOverride(JsonObject implementation, JsonArray slotParameters, TypeNode[] ownerArgs,
-        JsonArray ownerParameters)
+        JsonArray ownerParameters, JsonArray implementationOwnerParameters = null,
+        Func<TypeNode.Fqn, TypeNode> storageConstraint = null, bool sourceParameters = false)
     {
         if (slotParameters == null) return;
         var rows = implementation[OverrideBoundsKey] is JsonValue encoded
@@ -129,19 +248,54 @@ static class OwnerConstrainedMethodLowering
                 foreach (var constraint in constraints)
                     if (TypeJson.Read(constraint) is TypeNode bound
                         && FBoundStarProjectionErasure.ContainsOwnerTv(bound))
-                        rows.Add(new JsonObject {
-                            ["index"] = index,
-                            ["bound"] = TypeJson.Write(SupertypeGraph.SubstOwnerTvs(bound, ownerArgs)),
-                            ["template"] = constraint.DeepClone(),
-                            ["consequences"] = new JsonArray(IndependentBounds(bound, ownerParameters)
-                                .Select(TypeJson.Write).ToArray()),
-                            ["ownerArgs"] = new JsonArray(ownerArgs.Select(TypeJson.Write).ToArray())
-                        });
+                    {
+                        var frame = ReadMethodFrame(implementation);
+                        var physicalIndex = sourceParameters && frame != null ? frame.SourcePosition(index) : index;
+                        var template = sourceParameters && frame != null
+                            ? MapVariables(bound, tv => tv.Scope == "method"
+                                ? frame.Variable(tv, NullableRepresentationFrame.Role.Ordinary) : tv)
+                            : bound;
+                        var closedBound = SupertypeGraph.SubstOwnerTvs(template, ownerArgs);
+                        // Materialization may have published a classifier constraint obtained by
+                        // following this owner-dependent bound in the implementing owner. That
+                        // consequence belongs to the same selected slot's weakening plan, not to
+                        // an independently stronger CLR method declaration.
+                        var physicalBounds = new[] { closedBound }.Concat(
+                            IndependentBounds(closedBound, implementationOwnerParameters)
+                                .OfType<TypeNode.Fqn>()
+                                .Select(type => storageConstraint == null ? type : storageConstraint(type))
+                                .Where(type => type != null)).Distinct().ToArray();
+                        var positions = frame == null ? new[] { physicalIndex } : Enumerable.Range(0, frame.PhysicalArity)
+                            .Where(position => position == physicalIndex
+                                || frame.PhysicalSlot(position).SourceIndex == frame.PhysicalSlot(physicalIndex).SourceIndex
+                                    && implementation["typeParams"][position] is JsonObject companion
+                                    && companion["constraints"] is JsonArray companionBounds
+                                    && companionBounds.Select(TypeJson.Read).Any(physicalBounds.Contains));
+                        foreach (var position in positions)
+                        foreach (var physicalBound in physicalBounds.Where(candidate =>
+                            position == physicalIndex && candidate.Equals(closedBound)
+                            || implementation["typeParams"][position] is JsonObject physicalParameter
+                                && physicalParameter["constraints"] is JsonArray physicalConstraints
+                                && physicalConstraints.Select(TypeJson.Read).Contains(candidate)))
+                            rows.Add(new JsonObject {
+                                ["index"] = position,
+                                ["bound"] = TypeJson.Write(physicalBound),
+                                ["template"] = TypeJson.Write(template),
+                                ["consequences"] = new JsonArray(IndependentBounds(template, ownerParameters)
+                                    .Select(TypeJson.Write).ToArray()),
+                                ["ownerArgs"] = new JsonArray(ownerArgs.Select(TypeJson.Write).ToArray())
+                            });
+                    }
         if (rows.Count > 0) implementation[OverrideBoundsKey] = rows.ToJsonString();
     }
 
     internal static void Record(JsonObject method, JsonObject owner)
     {
+        Methods.Add((method, owner));
+        // Materialization has already preserved this declaration's Kotlin
+        // bounds. Its live parameters now include implementation companions;
+        // their constraints belong only to the physical dispatch plan.
+        if (ReadMethodFrame(method) != null) return;
         var parameters = method["typeParams"].AsArray();
         var payload = method[NullableGenericErasure.MethodTypeParameterBoundsPre] is JsonValue encoded
             ? JsonNode.Parse(encoded.GetValue<string>()).AsObject() : new JsonObject();
@@ -151,8 +305,8 @@ static class OwnerConstrainedMethodLowering
             if (parameters[index] is JsonObject parameter && parameter["constraints"] is JsonArray constraints
                 && bounds[index.ToString()] == null)
                 bounds[index.ToString()] = constraints.DeepClone();
-        method[NullableGenericErasure.MethodTypeParameterBoundsPre] = payload.ToJsonString();
-        Methods.Add((method, owner));
+        if (bounds.Count > 0)
+            method[NullableGenericErasure.MethodTypeParameterBoundsPre] = payload.ToJsonString();
     }
 
     internal static Dictionary<string, HashSet<int>> PropagateCapturedBounds(
@@ -160,12 +314,13 @@ static class OwnerConstrainedMethodLowering
         Func<TypeNode, TypeNode> projectedBound)
     {
         var changed = new Dictionary<string, HashSet<int>>(StringComparer.Ordinal);
-        var pending = new Queue<(JsonObject Method, JsonObject Owner, JsonArray Parameters)>();
+        var pending = new Queue<(JsonObject Method, JsonObject Owner, JsonArray Parameters, JsonArray OriginalParameters)>();
         foreach (var (method, owner) in Methods)
         {
-            var parameters = method["typeParams"].DeepClone().AsArray();
+            var parameters = (method["typeParams"] as JsonArray)?.DeepClone().AsArray() ?? new JsonArray();
+            var original = (JsonArray)parameters.DeepClone();
             RewriteConstraints(method, owner, parameters, dependsOnOwner, projectedBound);
-            pending.Enqueue((method, owner, parameters));
+            pending.Enqueue((method, owner, parameters, original));
         }
         while (pending.TryDequeue(out var context))
         {
@@ -206,23 +361,53 @@ static class OwnerConstrainedMethodLowering
                             var sourceParameters = sourceTv.Scope == "method" ? context.Parameters
                                 : context.Owner["typeParams"] as JsonArray;
                             if (sourceParameters == null || sourceTv.I >= sourceParameters.Count
-                                || sourceParameters[sourceTv.I] is not JsonObject source
-                                || source[FBoundStarProjectionErasure.ErasedInnerConstraintKey] is not JsonArray erased
-                                || targetParameters[i] is not JsonObject parameter) continue;
-                            var constraints = Rebind(source["constraints"] as JsonArray ?? new JsonArray());
-                            var dispatch = Rebind(erased);
+                                || sourceParameters[sourceTv.I] is not JsonObject source) continue;
+                            var sourceConstraints = source["constraints"] as JsonArray ?? new JsonArray();
+                            var erased = source[FBoundStarProjectionErasure.ErasedInnerConstraintKey] as JsonArray;
+                            if (sourceConstraints.Count == 0 && erased == null) continue;
+                            var originalParameters = sourceTv.Scope == "method" ? context.OriginalParameters
+                                : context.Owner["typeParams"] as JsonArray;
+                            var originalConstraints = originalParameters?[sourceTv.I] is JsonObject originalParameter
+                                ? new JsonArray((originalParameter["constraints"] as JsonArray ?? new JsonArray())
+                                    .Concat(originalParameter[FBoundStarProjectionErasure.ErasedInnerConstraintKey]
+                                        as JsonArray ?? new JsonArray()).Select(bound => bound.DeepClone()).ToArray())
+                                : new JsonArray();
+                            var declaredConstraints = targetParameters[i] is JsonObject targetParameter
+                                ? targetParameter["constraints"] as JsonArray ?? new JsonArray() : new JsonArray();
+                            // A capture map rebinds an existing declaration obligation; it does not
+                            // authorize strengthening a shared inline class from one use site's bounds.
+                            var complete = true;
+                            foreach (var bound in originalConstraints)
+                                MapVariables(TypeJson.Read(bound), tv => {
+                                    if (!positions.ContainsKey((tv.Scope, tv.I))) complete = false;
+                                    return tv;
+                                });
+                            if (!complete || !Rebind(originalConstraints).Select(TypeJson.Read).ToHashSet()
+                                .SetEquals(declaredConstraints.Select(TypeJson.Read))) continue;
+                            var parameter = targetParameters[i] as JsonObject;
+                            if (parameter == null)
+                                targetParameters[i] = parameter = new JsonObject {
+                                    ["name"] = targetParameters[i]?.DeepClone(),
+                                };
+                            var constraints = Rebind(sourceConstraints);
+                            var dispatch = Rebind(erased ?? new JsonArray());
                             if (JsonNode.DeepEquals(parameter["constraints"], constraints)
-                                && JsonNode.DeepEquals(parameter[FBoundStarProjectionErasure.ErasedInnerConstraintKey], dispatch)) continue;
-                            // The construction arguments are the explicit lexical-to-generated frame relation.
-                            // Preserve the source row before replacing the copied physical obligation, even when
-                            // an override substituted a concrete bound and no owner TV remains in that row.
-                            KotlinSupertypesRecord.Merge(target, new JsonObject { ["bounds"] = new JsonObject {
-                                [i.ToString()] = parameter["constraints"]?.DeepClone() ?? new JsonArray() } });
+                                && (erased == null && parameter[FBoundStarProjectionErasure.ErasedInnerConstraintKey] == null
+                                    || JsonNode.DeepEquals(parameter[FBoundStarProjectionErasure.ErasedInnerConstraintKey], dispatch))) continue;
+                            // Only an unmaterialized row is also a Kotlin source bound.
+                            // Companion-bearing rows belong to the physical dispatch plan,
+                            // never to the source metadata carrier.
+                            if (KotlinSupertypesRecord.ReadNullableFrame(target) == null)
+                                KotlinSupertypesRecord.Merge(target, new JsonObject { ["bounds"] = new JsonObject {
+                                    [i.ToString()] = parameter["constraints"]?.DeepClone() ?? new JsonArray() } });
                             parameter["constraints"] = constraints;
-                            parameter[FBoundStarProjectionErasure.ErasedInnerConstraintKey] = dispatch;
+                            if (erased != null)
+                                parameter[FBoundStarProjectionErasure.ErasedInnerConstraintKey] = dispatch;
+                            else parameter.Remove(FBoundStarProjectionErasure.ErasedInnerConstraintKey);
                             var plans = target[DispatchBoundsKey] is JsonValue encoded
                                 ? JsonNode.Parse(encoded.GetValue<string>()).AsObject() : new JsonObject();
-                            plans[i.ToString()] = dispatch.DeepClone();
+                            if (erased != null) plans[i.ToString()] = dispatch.DeepClone();
+                            else plans.Remove(i.ToString());
                             target[DispatchBoundsKey] = plans.ToJsonString();
                             if (!changed.TryGetValue(constructed.Name, out var slots))
                                 changed[constructed.Name] = slots = new HashSet<int>();
@@ -231,7 +416,10 @@ static class OwnerConstrainedMethodLowering
                         }
                         if (targetChanged && target["methods"] is JsonArray methods)
                             foreach (var method in methods.OfType<JsonObject>())
-                                pending.Enqueue((method, target, method["typeParams"] as JsonArray ?? new JsonArray()));
+                            {
+                                var parameters = method["typeParams"] as JsonArray ?? new JsonArray();
+                                pending.Enqueue((method, target, parameters, (JsonArray)parameters.DeepClone()));
+                            }
                     }
                 }
                 foreach (var child in obj) if (child.Value != null) Walk(child.Value);

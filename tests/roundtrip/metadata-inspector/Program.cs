@@ -122,10 +122,10 @@ if (args.Length == 4 && args[0] == "--klib-package-nullable-method-bound")
     return;
 }
 
-if (args.Length == 4 && args[0] == "--klib-class-fake-override-nullable-method-bound")
+if (args.Length == 4 && args[0] == "--klib-class-declared-override-nullable-method-bound")
 {
-    VerifyKlibClassFakeOverrideNullableMethodBound(args[1], args[2], args[3]);
-    Console.WriteLine("KLIB class fake-override nullable method bound: OK");
+    VerifyKlibClassDeclaredOverrideNullableMethodBound(args[1], args[2], args[3]);
+    Console.WriteLine("KLIB class declared-override nullable method bound: OK");
     return;
 }
 
@@ -179,7 +179,7 @@ if (args.Length != 7)
         "  CompanionMetadataInspector --klib-class-function-nullability <file.klib> <class> <function> <return-nullable> <parameter-nullable>\n" +
         "  CompanionMetadataInspector --klib-package-properties <file.klib> <package> <property[,property...]>\n" +
         "  CompanionMetadataInspector --klib-package-nullable-method-bound <file.klib> <package> <function>\n" +
-        "  CompanionMetadataInspector --klib-class-fake-override-nullable-method-bound <file.klib> <class> <function>\n" +
+        "  CompanionMetadataInspector --klib-class-declared-override-nullable-method-bound <file.klib> <class> <function>\n" +
         "  CompanionMetadataInspector --klib-csharp-extension-shape <file.klib> <package> <class> <function>\n" +
         "  CompanionMetadataInspector --klib-flags-enum <file.klib> <class> <file.bir.json> <file.cir.json>\n" +
         "  CompanionMetadataInspector --klib-no-flags-enum <file.klib> <class>\n" +
@@ -372,20 +372,25 @@ static void VerifyContinuationSourceSupertypes(string dllPath, string path)
     using var dll = File.OpenRead(dllPath);
     using var pe = new PEReader(dll);
     var md = pe.GetMetadataReader();
-    foreach (var name in new[] { "NullableCompletionBody", "FrameCompletionBody" })
+    foreach (var (name, physicalArity) in new[] { ("NullableCompletionBody", 2), ("FrameCompletionBody", 3) })
     {
         var handle = md.TypeDefinitions.Single(handle => {
             var type = md.GetTypeDefinition(handle);
             return md.GetString(type.Namespace) == "roundtrip.continuationinheritance" &&
-                md.GetString(type.Name) == name + "`2";
+                md.GetString(type.Name) == name + "`" + physicalArity;
         });
-        Require(md.GetTypeDefinition(handle).GetGenericParameters().Count == 2,
+        Require(md.GetTypeDefinition(handle).GetGenericParameters().Count == physicalArity,
             $"{name} did not exercise physical companion-frame expansion");
         using var source = CarrierDocument(md, handle,
             "DotKt.Runtime.CompilerServices.KotlinSupertypesAttribute");
         var frame = source.RootElement.GetProperty("nullableFrame");
         Require(frame.GetProperty("sourceArity").GetInt32() == 1 &&
-            frame.GetProperty("nullable").EnumerateArray().Select(item => item.GetInt32()).SequenceEqual(new[] { 0 }),
+            frame.GetProperty("nullable").EnumerateArray().Select(item => item.GetInt32()).SequenceEqual(new[] { 0 }) &&
+            frame.GetProperty("storage").GetArrayLength() == 0 &&
+            frame.GetProperty("nullableStorage").EnumerateArray().Select(item => item.GetInt32())
+                .SequenceEqual(physicalArity == 2 ? Array.Empty<int>() : new[] { 0 }) &&
+            frame.GetProperty("order").EnumerateArray().Select(item => item.GetInt32())
+                .SequenceEqual(Enumerable.Range(0, physicalArity)),
             $"{name} has no explicit nullable companion for source T");
     }
     using var archive = ZipFile.OpenRead(path);
@@ -423,16 +428,21 @@ static void VerifyContinuationSourceSupertypes(string dllPath, string path)
     var innerHandle = md.TypeDefinitions.Single(handle => {
         var type = md.GetTypeDefinition(handle);
         return md.GetString(type.Name) == "Body`1" && !type.GetDeclaringType().IsNil &&
-            md.GetString(md.GetTypeDefinition(type.GetDeclaringType()).Name) == "CompletionOuter`2";
+            md.GetString(md.GetTypeDefinition(type.GetDeclaringType()).Name) == "CompletionOuter`3";
     });
-    Require(md.GetTypeDefinition(innerHandle).GetGenericParameters().Count == 3,
+    Require(md.GetTypeDefinition(innerHandle).GetGenericParameters().Count == 4,
         "inner Continuation fixture did not capture its enclosing companion");
     using var innerSource = CarrierDocument(md, innerHandle,
         "DotKt.Runtime.CompilerServices.KotlinSupertypesAttribute");
     var innerFrame = innerSource.RootElement.GetProperty("nullableFrame");
     Require(innerFrame.GetProperty("sourceArity").GetInt32() == 2 &&
+        innerFrame.GetProperty("nullable").EnumerateArray().Select(item => item.GetInt32())
+            .SequenceEqual(new[] { 0 }) &&
+        innerFrame.GetProperty("storage").GetArrayLength() == 0 &&
+        innerFrame.GetProperty("nullableStorage").EnumerateArray().Select(item => item.GetInt32())
+            .SequenceEqual(new[] { 0 }) &&
         innerFrame.GetProperty("order").EnumerateArray().Select(item => item.GetInt32())
-            .SequenceEqual(new[] { 0, 2, 1 }),
+            .SequenceEqual(new[] { 0, 2, 3, 1 }),
         "inner Continuation fixture did not exercise source/physical index permutation");
 }
 
@@ -881,7 +891,7 @@ static void VerifyKlibPackageNullableMethodBound(string path, string packageName
         $"{packageName}.{functionName} E bound must be nullable T");
 }
 
-static void VerifyKlibClassFakeOverrideNullableMethodBound(
+static void VerifyKlibClassDeclaredOverrideNullableMethodBound(
     string path,
     string className,
     string functionName)
@@ -899,19 +909,21 @@ static void VerifyKlibClassFakeOverrideNullableMethodBound(
             QualifiedName(fragment, candidate.FqName) == className);
         if (declaration is null) continue;
         var functions = declaration.Function.Where(function =>
-                String(fragment, function.Name) == functionName && ((function.Flags >> 6) & 3) == 1)
+                String(fragment, function.Name) == functionName)
             .ToArray();
         Require(functions.Length == 1,
-            $"expected one fake override '{className}.{functionName}', found {functions.Length}");
+            $"expected one authored override '{className}.{functionName}', found {functions.Length}");
         var function = functions[0];
+        Require(((function.Flags >> 6) & 3) == 0,
+            $"{className}.{functionName} authored override was projected as a fake override");
         Require(function.TypeParameter.Count == 1,
-            $"{className}.{functionName} fake override must have one method type parameter");
+            $"{className}.{functionName} authored override must have one method type parameter");
         var dependent = function.TypeParameter[0];
         Require(dependent.UpperBound.Count == 1,
-            $"{className}.{functionName} fake override must have exactly one upper bound");
+            $"{className}.{functionName} authored override must have exactly one upper bound");
         var bound = dependent.UpperBound[0];
         Require(bound.HasTypeParameter && bound.TypeParameter == 0 && bound.Nullable,
-            $"{className}.{functionName} fake-override bound must be nullable owner T");
+            $"{className}.{functionName} authored override bound must be nullable owner T");
         return;
     }
     throw new InvalidDataException($"class '{className}' not found in KLIB");
@@ -1052,12 +1064,12 @@ static void VerifyReverseEnumeratorBridge(string producerPath)
     // The implementer's two halves. `TrackedBag` is the cross-module fixture; its `iterator()` is Kotlin's only
     // iteration member, so both CLR enumerable slots exist solely because bir2cir stated them.
     var bagHandle = md.TypeDefinitions.Single(handle =>
-        md.GetString(md.GetTypeDefinition(handle).Name) == "TrackedBag`1");
+        md.GetString(md.GetTypeDefinition(handle).Name) == "TrackedBag`2");
     var bag = md.GetTypeDefinition(bagHandle);
     foreach (var name in new[] { "GetEnumerator", "dotkt$NonGenericGetEnumerator" })
         Require(bag.GetMethods().Any(handle => md.GetString(md.GetMethodDefinition(handle).Name) == name),
-            $"'TrackedBag`1' is missing the synthesized '{name}'");
-    RequireMethodImpls(bagHandle, "TrackedBag`1", new[]
+            $"'TrackedBag`2' is missing the synthesized '{name}'");
+    RequireMethodImpls(bagHandle, "TrackedBag`2", new[]
     {
         (enumerableT, "GetEnumerator"), (enumerable, "GetEnumerator"),
     });
@@ -1198,18 +1210,22 @@ static void VerifyOwnershipLayerBoundary(string birPath, string cirPath)
     var sparseLocal = primaryLocalMethods.Single(method =>
         Objects(method).Any(node => Text(node["k"]) == "callStatic" && Text(node["method"]) == "selectSecond"));
     Require(Text(sparseLocal["name"])!.EndsWith("_read", StringComparison.Ordinal)
-            && sparseLocal["typeParams"] is JsonArray typeParameters && typeParameters.Count == 1,
+            && sparseLocal["typeParams"] is JsonArray typeParameters && typeParameters.Count == 2,
         "sparse local-function fixture did not materialize as the expected generic read method");
-    Require(IsMethodSlot(sparseLocal["ret"], 0)
+    Require(IsMethodSlot(sparseLocal["ret"], 1)
             && sparseLocal["params"] is JsonArray sparseParams
-            && sparseParams.OfType<JsonObject>().All(parameter => IsMethodSlot(parameter["type"], 0)),
+            && sparseParams.OfType<JsonObject>().All(parameter => IsMethodSlot(parameter["type"], 1)),
         "sparse lexical generic slots were not compacted into the physical local-method frame");
     var selectSecondCall = Objects(sparseLocal)
         .Single(node => Text(node["k"]) == "callStatic" && Text(node["method"]) == "selectSecond");
     Require(selectSecondCall["sig"] is JsonArray calleeSignature
-            && calleeSignature.Count == 2 && IsMethodSlot(calleeSignature[1], 1)
+            && calleeSignature.Count == 2 && IsMethodSlot(calleeSignature[0], 2)
+            && IsMethodSlot(calleeSignature[1], 3)
             && selectSecondCall["typeArgs"] is JsonArray suppliedTypeArguments
-            && suppliedTypeArguments.Count == 2 && IsMethodSlot(suppliedTypeArguments[1], 0),
+            && suppliedTypeArguments.Count == 4 && IsMethodSlot(suppliedTypeArguments[1], 0)
+            && IsMethodSlot(suppliedTypeArguments[3], 1)
+            && Text(suppliedTypeArguments[0]?["name"]) == "kotlin.Unit"
+            && Text(suppliedTypeArguments[2]?["name"]) == "kotlin.Unit",
         "local-method frame compaction rewrote the callee declaration frame or missed the supplied type argument");
 }
 
@@ -1268,7 +1284,7 @@ static void VerifyOwnershipDll(string path)
     Require(ownerChildren.Any(h => md.GetString(md.GetTypeDefinition(h).Name).Split('`')[0] == "Nested"),
         "ordinary Kotlin nested class is not a CLR nested TypeDef of Owner");
     var inner = ownerChildren.Single(h => md.GetString(md.GetTypeDefinition(h).Name).Split('`')[0] == "Inner");
-    Require(md.GetTypeDefinition(inner).GetGenericParameters().Count == 1,
+    Require(md.GetTypeDefinition(inner).GetGenericParameters().Count == 2,
         "inner class did not re-declare the generic owner's capture slot");
 
     var shadowOwner = md.TypeDefinitions.Single(h =>
@@ -1278,7 +1294,7 @@ static void VerifyOwnershipDll(string path)
     var shadowParameters = md.GetTypeDefinition(shadowEntry).GetGenericParameters()
         .Select(h => md.GetString(md.GetGenericParameter(h).Name))
         .ToArray();
-    Require(shadowParameters.Length == 2 && shadowParameters.Distinct(StringComparer.Ordinal).Count() == 2,
+    Require(shadowParameters.Length == 4 && shadowParameters.Distinct(StringComparer.Ordinal).Count() == 4,
         "shadowed inner type-parameter names collapsed distinct CLR generic slots");
     Require(shadowParameters[0].StartsWith("dotkt$outer", StringComparison.Ordinal),
         "captured outer generic slot does not use its compiler-owned physical name");
@@ -1291,7 +1307,7 @@ static void VerifyOwnershipDll(string path)
     var sparseSuspendSm = md.GetTypeDefinition(sparseSuspendOwner).GetNestedTypes().Single(h =>
         md.GetString(md.GetTypeDefinition(h).Name).Contains("$sm", StringComparison.Ordinal));
     var sparseSuspendParams = md.GetTypeDefinition(sparseSuspendSm).GetGenericParameters().ToArray();
-    Require(sparseSuspendParams.Length == 2,
+    Require(sparseSuspendParams.Length == 3,
         "generic-owner suspend lambda did not capture the complete owner parameter prefix");
     var sparseCapturedBounds = md.GetGenericParameter(sparseSuspendParams[0]).GetConstraints()
         .Select(handle => TypeName(md, md.GetGenericParameterConstraint(handle).Type)).ToArray();
@@ -1302,7 +1318,7 @@ static void VerifyOwnershipDll(string path)
         StripArities(DefinitionName(md, h)) == "roundtrip.ownership.NestedOwnershipKt");
     var sparseMethodSm = md.GetTypeDefinition(ownershipFacade).GetNestedTypes().Single(h =>
         md.GetString(md.GetTypeDefinition(h).Name).Contains("sparseGenericSuspend", StringComparison.Ordinal));
-    Require(md.GetTypeDefinition(sparseMethodSm).GetGenericParameters().Count == 1,
+    Require(md.GetTypeDefinition(sparseMethodSm).GetGenericParameters().Count == 2,
         "sparse generic-method suspend lambda did not compact its free method slot");
     foreach (var lexicalOwnerName in new[] {
                  "roundtrip.ownership.AccessorOwner",
@@ -1346,7 +1362,7 @@ static void VerifyOwnershipDll(string path)
     Require((capturedAccessor.Attributes & MethodAttributes.MemberAccessMask) == MethodAttributes.Private &&
             (capturedAccessor.Attributes & MethodAttributes.Static) != 0 && capturedAccessor.RelativeVirtualAddress == 0,
         "captured-owner caller did not receive a private static extern UnsafeAccessor");
-    Require(md.GetTypeDefinition(capturedCaller).GetGenericParameters().Count == 1,
+    Require(md.GetTypeDefinition(capturedCaller).GetGenericParameters().Count == 2,
         "captured-owner UnsafeAccessor host lost its enclosing generic frame");
 
     var facade = md.TypeDefinitions.Single(h => DefinitionName(md, h) == "roundtrip.ownership.NestedOwnershipKt");
@@ -1393,7 +1409,7 @@ static void VerifyUnsafeAccessorDll(string path, string producerPath)
     var secretAccessors = accessors.Where(pair =>
         md.GetString(pair.Definition.Name).Contains("$prop_get_secret_", StringComparison.Ordinal)).ToArray();
     Require(secretAccessors.Length == 5, "unexpected prop_get<secret> UnsafeAccessor set");
-    Require(secretAccessors.Count(pair => md.GetTypeDefinition(pair.TypeHandle).GetGenericParameters().Count == 1) == 4,
+    Require(secretAccessors.Count(pair => md.GetTypeDefinition(pair.TypeHandle).GetGenericParameters().Count == 2) == 4,
         "generic owner slots were not preserved on generic UnsafeAccessor holder types");
     // The captured inner default now uses its public carrier slot, not a private concrete getter accessor.
     // Select that slot from trusted source metadata rather than assuming its compiler-generated physical name.
@@ -1428,8 +1444,8 @@ static void VerifyUnsafeAccessorDll(string path, string producerPath)
         "constrained owner UnsafeAccessor lost its exact generic interface constraint");
     var identityAccessor = accessors.Single(pair =>
         md.GetString(pair.Definition.Name).Contains("$identity", StringComparison.Ordinal));
-    Require(md.GetTypeDefinition(identityAccessor.TypeHandle).GetGenericParameters().Count == 1 &&
-            identityAccessor.Definition.GetGenericParameters().Count == 1,
+    Require(md.GetTypeDefinition(identityAccessor.TypeHandle).GetGenericParameters().Count == 2 &&
+            identityAccessor.Definition.GetGenericParameters().Count == 2,
         "owner and method generic frames were not kept in their respective forms on the UnsafeAccessor");
     Require(accessors.Any(pair => md.GetString(pair.Definition.Name)
             .Contains("$privateTopLevelDefaultValue", StringComparison.Ordinal)),

@@ -11,6 +11,7 @@ static class InnerRepresentationFrameTests
         ApplicationCorrespondence();
         DeclarationArgumentOrder();
         SourceCarrierIdentity();
+        SyntheticOwnerFrames();
         // Declarations use enclosing-first variables; Kotlin inner applications use own-first arguments.
         var root = JsonNode.Parse("""
         {"fileClass":"InnerFrameProbe","types":[
@@ -36,6 +37,47 @@ static class InnerRepresentationFrameTests
             .Select(index => (TypeNode)new TypeNode.Tv("type", index)).ToArray());
         if (owner != expected)
             throw new InvalidOperationException($"Inner self field lost physical frame: {TypeJson.Write(owner)}; expected {TypeJson.Write(expected)}; after materialization: {materializedOwner}");
+    }
+
+    static void SyntheticOwnerFrames()
+    {
+        foreach (var scenario in new[] { "lexical", "shared", "splitRoles", "permuted" })
+        {
+            var ownerFrame = new NullableRepresentationFrame(1, Array.Empty<int>(),
+                physicalOrder: scenario == "permuted" ? new[] { 1, 0 } : null,
+                storageIndices: new[] { 0 });
+            var captureFrame = new NullableRepresentationFrame(1, Array.Empty<int>(), storageIndices: new[] { 0 });
+            var owner = JsonNode.Parse("""
+            {"name":"CaptureOwner","kind":"class","typeParams":["O","P"]}
+            """)!.AsObject();
+            var synthetic = JsonNode.Parse("""
+            {"name":"CaptureClosure","semanticOwner":"CaptureOwner","typeParams":["M","PM"]}
+            """)!.AsObject();
+            KotlinSupertypesRecord.Merge(owner, new JsonObject { [NullableRepresentationFrame.MetadataKey] = ownerFrame.ToJson() });
+            KotlinSupertypesRecord.Merge(synthetic, new JsonObject { [NullableRepresentationFrame.MetadataKey] = captureFrame.ToJson() });
+            var args = scenario switch {
+                "shared" => new[] { new TypeNode.Tv("type", 0), new TypeNode.Tv("type", 1) },
+                "splitRoles" => new[] { new TypeNode.Tv("type", 0), new TypeNode.Tv("method", 1) },
+                "permuted" => new[] { new TypeNode.Tv("type", 1), new TypeNode.Tv("type", 0) },
+                _ => new[] { new TypeNode.Tv("method", 0), new TypeNode.Tv("method", 1) },
+            };
+            var call = new JsonObject { ["k"] = "newClosure", ["synthClass"] = synthetic,
+                ["typeArgs"] = new JsonArray(args.Select(TypeJson.Write).ToArray()) };
+            var root = new JsonObject { ["fileClass"] = "CaptureFile", ["types"] = new JsonArray(owner),
+                ["methods"] = new JsonArray(new JsonObject { ["body"] = new JsonArray(call) }) };
+            TypeOwnershipLowering.PrepareOwnershipFacts(new[] { root });
+            var frame = KotlinSupertypesRecord.ReadNullableFrame(synthetic)!;
+            var shared = scenario is "shared" or "permuted";
+            var order = shared ? ownerFrame.PhysicalOrder.ToArray() : new[] { 0, 2, 1, 3 };
+            if (frame.SourceArity != (shared ? 1 : 2) || !frame.PhysicalOrder.SequenceEqual(order)
+                || frame.PhysicalArity != ((JsonArray)synthetic["typeParams"]!).Count
+                || frame.PhysicalArity != ((JsonArray)call["typeArgs"]!).Count)
+                throw new InvalidOperationException($"Synthetic owner frame lost exact source roles: {scenario}");
+            var stable = root.ToJsonString();
+            TypeOwnershipLowering.PrepareOwnershipFacts(new[] { root });
+            if (root.ToJsonString() != stable)
+                throw new InvalidOperationException($"Synthetic owner preparation expanded an already-complete frame: {scenario}");
+        }
     }
 
     static void DeclarationArgumentOrder()
