@@ -3327,7 +3327,6 @@ internal sealed class AssemblyScanner : IDisposable
 
         EntityHandle owner;
         string methodName;
-        MethodSignature<KType>? referenceSignature = null;
         if (declarationEntity.Kind == HandleKind.MethodDefinition)
         {
             var method = reader.GetMethodDefinition((MethodDefinitionHandle)declarationEntity);
@@ -3340,7 +3339,6 @@ internal sealed class AssemblyScanner : IDisposable
             if (member.GetKind() != MemberReferenceKind.Method) return false;
             owner = member.Parent;
             methodName = reader.GetString(member.Name);
-            referenceSignature = member.DecodeMethodSignature(sourceSignatures, sourceContext);
         }
         else
         {
@@ -3363,7 +3361,6 @@ internal sealed class AssemblyScanner : IDisposable
             .Where(argument => argument.Type is not null)
             .Select(argument => argument.Type!.Clone())
             .ToImmutableArray();
-        var resolvedArguments = declarationArguments;
         declarationReader = resolvedOwner.Reader;
         declarationSignatures = DecoderFor(
             declarationReader, names, currentSignatures, resolvedOwner.DefinitionPath);
@@ -3399,8 +3396,8 @@ internal sealed class AssemblyScanner : IDisposable
             var candidate = declarationReader.GetMethodDefinition(candidateHandle);
             if (!StringComparer.Ordinal.Equals(declarationReader.GetString(candidate.Name), methodName))
                 continue;
-            if (referenceSignature is not null &&
-                candidate.GetGenericParameters().Count != referenceSignature.Value.GenericParameterCount)
+            if (referenceIdentity is { } reference &&
+                candidate.GetGenericParameters().Count != reference.GenericParameterCount)
                 continue;
             var candidateContext = InheritedContext(declarationReader, candidateHandle, candidate);
             if (referenceIdentity is { } expectedIdentity)
@@ -3412,21 +3409,10 @@ internal sealed class AssemblyScanner : IDisposable
                     || !actualIdentity.ParameterTypes.SequenceEqual(expectedIdentity.ParameterTypes))
                     continue;
             }
-            var candidateSignature = candidate.DecodeSignature(declarationSignatures, candidateContext);
-            if (referenceSignature is not null)
-            {
-                // VAR positions in a MemberRef signature belong to its parent
-                // interface, not to the type containing the MethodImpl.
-                var expectedReturn = SubstituteTypeParameters(referenceSignature.Value.ReturnType, resolvedArguments);
-                var expectedParameters = referenceSignature.Value.ParameterTypes
-                    .Select(type => SubstituteTypeParameters(type, resolvedArguments)).ToArray();
-                var actualReturn = SubstituteTypeParameters(candidateSignature.ReturnType, resolvedArguments);
-                var actualParameters = candidateSignature.ParameterTypes
-                    .Select(type => SubstituteTypeParameters(type, resolvedArguments)).ToArray();
-                if (!actualReturn.Equals(expectedReturn) ||
-                    !actualParameters.SequenceEqual(expectedParameters))
-                    continue;
-            }
+            // MethodImpl selects a CLR declaration, before its Kotlin projection.
+            // A MemberRef has no declaration method frame: comparing projected
+            // KTypes would mistake physical companion slots for source variables.
+            // The exact raw signature above retains generic positions and modifiers.
             candidates.Add(candidateHandle);
         }
         if (candidates.Count != 1) return false;
