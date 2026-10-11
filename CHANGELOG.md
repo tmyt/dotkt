@@ -528,7 +528,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   bir2cir carries the exact field identity through inline materialization and state-machine lowering, so a legal
   `__outer` lambda parameter cannot alias an enclosing-instance capture or produce invalid IL.
 
-- **CLR delegates retain nominal identity in Kotlin imports (#681).** dll2klib initially projects noncanonical CLR
+- **CLR delegates retain nominal identity in Kotlin imports (#681).** dll2klib initially projected each noncanonical CLR
   delegate as a callable Kotlin `fun interface` instead of collapsing its `Invoke` shape to `FunctionN`. Exact delegate
   types now participate in overloads and override slots, including `SynchronizationContext.Post`, while ordinary SAM
   construction and invocation lower through bir2cir to the referenced delegate constructor and `Invoke` MethodDef.
