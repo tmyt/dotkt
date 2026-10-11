@@ -799,21 +799,15 @@ static class MemberCallSubstitution
         {
             if (arrKind == "sized")                                             // arrayOfNulls<T>(size) -> newArraySized
             {
-                var elemT = TypeArgAt(typeArgs, 0);
-                if (elemT == null || args.Count < 1) return null;
-                // `arrayOfNulls<T>` returns `Array<T?>` — the element is the NULLABLE form of the type argument, NOT the
-                // bare T, and the call's typeArgs[0] is the non-null T (`kotlin.Int`). Wrapping it in `Nullable` states
-                // that, and `CanonicalArrayElem` then gives it its ONE physical form (#86 D2): `object` for a
-                // possibly-value element (an open `T` or a value `Int`/`Boolean` — the array is `object[]` either way,
-                // so an open body and a value instantiation of it meet), and the bare element for a reference `T`
-                // (`arrayOfNulls<String>` is a `string[]`; ReferenceNullableStrip drops the `?` there anyway). Skip an
-                // already-nullable typeArg (`arrayOfNulls<Int?>`) to avoid a malformed `Nullable(Nullable)` double-wrap.
-                var elemNode = TypeJson.Read(elemT);
-                var nullableElem = elemNode is TypeNode.Nullable ? elemNode : new TypeNode.Nullable(elemNode);
+                var resultElement = ArrayConstructionLowering.ArrayElementOf(TypeJson.Read(node["ret"]));
+                if (resultElement == null || args.Count < 1) return null;
+                // The selected result already owns its nullable representation frame.
+                // Re-wrapping the ordinary type argument would erase its allocated
+                // nullable companion and make the allocation disagree with that slot.
                 return new JsonObject
                 {
                     ["k"] = "newArraySized",
-                    ["elem"] = TypeJson.Write(CanonicalArrayElem(nullableElem)),
+                    ["elem"] = TypeJson.Write(CanonicalArrayElem(resultElement)),
                     ["size"] = args[0].DeepClone(),
                 };
             }

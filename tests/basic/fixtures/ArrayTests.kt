@@ -34,6 +34,17 @@ import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import NUnit.Framework.Legacy.ClassicAssert.IsNull as assertNull
 
+private class ArrNullableFactory<T>(val create: () -> Array<T?>)
+
+private inline fun <reified T> arrNullableFactory(size: Int): ArrNullableFactory<T> =
+    ArrNullableFactory { arrayOfNulls<T>(size) }
+
+private inline fun <reified T> arrNullableLambda(size: Int): () -> Array<T?> =
+    { arrayOfNulls<T>(size) }
+
+private inline fun <reified T> arrForwardNullableLambda(size: Int): () -> Array<T?> =
+    arrNullableLambda<T>(size)
+
 private fun <T> arrInsertIntoGenericDeque(values: ArrayDeque<T>, value: T) {
     values.add(0, value)
 }
@@ -201,6 +212,26 @@ class ArrayTests {
         val v = listOf(10, 20, 30)
         assertEquals(10, v.firstOrNull() ?: -1)                                       // 10 (value-type firstOrNull)
         assertEquals(30, v.lastOrNull() ?: -1)                                        // 30
+    }
+
+    @TestAttribute
+    fun reifiedNullableArrayFactoriesPreserveTheirElementFrame() {
+        val strings = arrNullableFactory<String>(2).create()
+        assertEquals(2, strings.size)
+        assertNull(strings[1])
+        strings[0] = "item"
+        assertEquals("item", strings[0])
+
+        val integers = arrForwardNullableLambda<Int>(3)()
+        assertEquals(3, integers.size)
+        assertNull(integers[2])
+        integers[0] = 17
+        assertEquals(17, integers[0])
+
+        val nullableIntegers = arrNullableLambda<Int?>(2)()
+        assertNull(nullableIntegers[0])
+        nullableIntegers[1] = 23
+        assertEquals(23, nullableIntegers[1])
     }
 
     @TestAttribute
