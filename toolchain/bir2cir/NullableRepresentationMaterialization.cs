@@ -223,6 +223,7 @@ static class NullableRepresentationMaterialization
                     if (splitBody)
                         NullableBodyDispatch.Build(owner.Declaration, source, method.Declaration, frame, methodFrame,
                             method.Body, (helper, helperFrame) => {
+                                PreserveCompanionSourceBounds(helper, helperFrame, owner: false);
                                 Rewrite(helper, Mapping(frame, helperFrame, ownerName), methods, DeclarationMapping);
                                 AppendParameters(helper, helperFrame, policy: policy, bodyOnlyStorage: true,
                                     enclosingParameters: owner.Declaration["typeParams"] as JsonArray, enclosingFrame: frame);

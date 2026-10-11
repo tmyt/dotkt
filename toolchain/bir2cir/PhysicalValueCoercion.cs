@@ -30,6 +30,7 @@ static class PhysicalValueCoercion
             && index.IsExistentialOwner(carrier)
             && (index.IsNativeReference(native) || index.HasDeclaredCarrier(native, carrier))
         || CollectionViewFaces.IsViewSeam(source, target)
+        || source is TypeNode.Fqn { Name: "System.Array" } && target is TypeNode.Array
         // A concrete value or generic stack slot is not a reference, even when its boxed value implements the
         // target interface. State the boxing edge before a conditional merge, store, argument or return.
         || !IsVoid(source) && !IsVoid(target)
@@ -70,6 +71,7 @@ static class PhysicalValueCoercion
         internal Func<TypeNode.Fqn, TypeNode.Fqn, bool> ReferencedCarrier;
         internal JsonObject Document;
         internal bool ReferenceBuild;
+        internal ReferenceMetadataIndex References;
 
         Index(Func<JsonObject> unitValue) => _unitValue = unitValue;
         internal JsonObject UnitValue() => _unitValue();
@@ -204,7 +206,7 @@ static class PhysicalValueCoercion
     public static void ApplyAll(IReadOnlyList<JsonNode> roots, Func<JsonObject> unitValue,
         ValueTypeOracle isValue, bool referenceBuild = false, Func<TypeNode.Fqn, bool> isReferenceOwner = null,
         Func<TypeNode.Fqn, bool> isExistentialOwner = null, Func<TypeNode.Fqn, bool> isNativeReference = null,
-        Func<TypeNode.Fqn, TypeNode.Fqn, bool> referencedCarrier = null)
+        Func<TypeNode.Fqn, TypeNode.Fqn, bool> referencedCarrier = null, ReferenceMetadataIndex references = null)
     {
         var index = Index.Build(roots, unitValue);
         index.IsValue = isValue;
@@ -213,6 +215,7 @@ static class PhysicalValueCoercion
         index.IsNativeReference = isNativeReference ?? (_ => false);
         index.ReferencedCarrier = referencedCarrier;
         index.ReferenceBuild = referenceBuild;
+        index.References = references;
         foreach (var root in roots.OfType<JsonObject>()) RewriteDocument(root, index);
     }
 
@@ -527,6 +530,13 @@ static class PhysicalValueCoercion
                 ChildUsesValue(obj, child.Key, scope, resultUsed));
             if (!ReferenceEquals(rewritten, child.Value)) obj[child.Key] = rewritten;
         }
+
+        // Late value blocks can lack a result stamp. The lexical storage and
+        // resolved member slots above are authoritative for their array value.
+        if (index.References != null && obj["array"] != null
+            && GenericArrayStorageLowering.LowerOperation(obj, index.References,
+                ExprType(obj["array"], scope, index)))
+            return Rewrite(obj, scope, index, resultUsed);
 
         // Dereferences consume the pointer's exact element type. The original
         // value stamp can name a Kotlin storage companion instead; conversions
@@ -957,7 +967,9 @@ static class PhysicalValueCoercion
             && !declared.Equals(actual)
             && Str(expression["k"]) is "clrStatic" or "clrInstance" or "clrGenericStatic" or "clrGenericInstance"
                 or "callStatic" or "callInstance" or "constrainedCall";
-        if (!genericObjectProjection && !genericSlotProjection
+        var arrayStorageProjection = SignatureValueTypes.Of(actual) is TypeNode.Fqn { Name: "System.Array" }
+            && SignatureValueTypes.Of(declared) is TypeNode.Array;
+        if (!genericObjectProjection && !genericSlotProjection && !arrayStorageProjection
             && !CollectionViewFaces.IsViewSeam(actual, declared)) return expression;
         var physical = expression.DeepClone().AsObject();
         // The inner expression leaves the exact member/declaration result on the CLR stack. Once the caller-facing

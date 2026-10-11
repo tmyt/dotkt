@@ -66,6 +66,18 @@ static partial class ClrMemberResolution
     internal static JsonNode FieldRefJson(FieldInfo field, Type openOwner, TypeNode[] ownerArgs)
         => FieldRefOf(field, openOwner, ownerArgs).Write();
 
+    internal static JsonNode ArrayStorageMethodRef(ReferenceMetadataIndex refs, string name, string[] parameters,
+        string ownerName = "System.Array", bool isStatic = false)
+    {
+        _refs = refs;
+        var owner = refs.ResolveRefType(ownerName);
+        var method = owner.GetMethods((isStatic ? BindingFlags.Static : BindingFlags.Instance)
+                | BindingFlags.Public | BindingFlags.DeclaredOnly)
+            .Single(m => m.Name == name && m.GetParameters().Select(p => p.ParameterType.FullName)
+                .SequenceEqual(parameters));
+        return MemberRefJson(method, "method", owner, null);
+    }
+
     // A member reflected off a CONSTRUCTED generic type reports its signature ALREADY SUBSTITUTED —
     // `ITransformer<string>.Transform` says `string Transform(string)` where the declaration says
     // `T Transform(T)`. A reference carries the OPEN declared signature (ECMA II.9.8: instantiation rides on

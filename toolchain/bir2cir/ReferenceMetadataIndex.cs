@@ -5287,14 +5287,14 @@ sealed partial class ReferenceMetadataIndex
                                 // ALSO key by name|<full ParamKey signature> so a call resolves the EXACT overload
                                 // (sqrt(Double)->System.Math.Sqrt, sqrt(Float)->System.MathF.Sqrt) and a non-intrinsic
                                 // sibling (Double.pow(Int)) misses -> falls through to its real Kotlin body.
-                                metadata.TopLevelIntrinsicsBySig.TryAdd((method.Name, SigKeyOf(ps)), intrinsic);
+                                metadata.TopLevelIntrinsicsBySig.TryAdd((method.Name, ArrayBindingSigKeyOf(ps)), intrinsic);
                                 if (byrefPositions.Length > 0) metadata.TopLevelIntrinsicByref.TryAdd(method.Name, byrefPositions);
                             }
                             else if (ps.Length >= 1)
                                 // Key by name|<full ParamKey signature> (receiver-first, mirroring TopLevelIntrinsicsBySig)
                                 // so a call resolves the EXACT overload — `substring(Int)`@ClrIntrinsic does NOT capture a
                                 // same-count non-intrinsic sibling `substring(IntRange)` (which then falls to its Kotlin body).
-                                metadata.ExtMemberIntrinsics.TryAdd((method.Name, SigKeyOf(ps)), intrinsic);
+                                metadata.ExtMemberIntrinsics.TryAdd((method.Name, ArrayBindingSigKeyOf(ps)), intrinsic);
                         }
                         // A NON-intrinsic top-level fun (a real Kotlin body in a file-class) -> index it by name so an APP
                         // build can attribute a referenced `callStatic owner=null` to this file-class (disambiguated by the
@@ -7195,6 +7195,14 @@ sealed partial class ReferenceMetadataIndex
     // (sqrt(Double) vs sqrt(Float); pow(Double,Double) intrinsic vs pow(Double,Int) real-body).
     static SignatureKey SigKeyOf(ParameterInfo[] ps, bool relaxed = false) =>
         new(ps.Select(p => ParamKey(p.ParameterType, relaxed)));
+
+    // A binding is selected in Kotlin vocabulary. An open array's System.Array
+    // value storage does not replace its explicitly recorded source classifier.
+    static SignatureKey ArrayBindingSigKeyOf(ParameterInfo[] parameters) =>
+        new(parameters.Select(parameter => parameter.ParameterType.FullName == "System.Array"
+            && KotlinTypeOf(parameter.GetCustomAttributesData(), parameter.Member.DeclaringType?.Assembly)
+                is TypeNode.Array sourceArray
+            ? ParamKey(sourceArray) : ParamKey(parameter.ParameterType, relaxed: false)));
 
     /// A signature key with every nominal position that cannot be folded collapsed to [TypeKeyKind.Reference]. The two sides of a
     /// @KotlinDefault lookup describe the same parameter in DIFFERENT spaces — a call site carries kotc's pre-lowering
