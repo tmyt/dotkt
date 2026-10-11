@@ -22,3 +22,16 @@ fun <T> checkFunctionSlots(slot: FunctionSlot<T>, body: FunctionBody<T>, value: 
     slot.consume(value) { check(it == value); called = true }
     check(called)
 }
+
+interface GenericCallbackSlot<T> {
+    fun complete(value: T, token: Any? = null): Any?
+    fun <R : T> complete(value: R, token: Any?, callback: ((Throwable, R, Any) -> Unit)?): Any?
+}
+
+open class GenericCallbackBody<T> : GenericCallbackSlot<T> {
+    override fun complete(value: T, token: Any?): Any? = token
+    override fun <R : T> complete(value: R, token: Any?, callback: ((Throwable, R, Any) -> Unit)?): Any? {
+        callback?.invoke(IllegalStateException("callback"), value, token ?: "none")
+        return value
+    }
+}
