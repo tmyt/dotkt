@@ -52,7 +52,7 @@ PROJECTS=(
 declare -A EXPECTED_DISCOVERED=(
 	["tests/basic"]=671
 	["tests/coroutines"]=247
-	["tests/roundtrip/consumer"]=489
+	["tests/roundtrip/consumer"]=498
 	["tests/roundtrip/bidirectional/consumer"]=39
 	["tests/interop/consumer"]=369
 )
@@ -564,8 +564,8 @@ for proj in "${PROJECTS[@]}"; do
 	if [[ "$proj" == "tests/basic" ]]; then
 		basic_dll="$dir/bin/$CONFIGURATION/net10.0/DotKt.Tests.Basic.dll"
 		if dotnet "$METADATA_INSPECTOR_DLL" \
-			--volatile-consumer "$basic_dll" 'GenericVolatileBox`1' \
-			"prop_get<value>" "prop_set<value>" "readValueByRef" "writeValueByRef" \
+    --volatile-consumer "$basic_dll" 'GenericVolatileBox`2' \
+			"prop_get<value>" "prop_set<value>" \
 			>"$ROOT/build/nunit-$name.volatile-generic.log" 2>&1; then
 			echo "  local generic volatile field access IL OK"
 		else

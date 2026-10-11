@@ -29,6 +29,7 @@ static class Bir2Cir
                 DeclarationIdentityBinding.SelfTest();
                 DeclarationSignatureIdentity.SelfTest();
                 PhysicalValueCoercion.SelfTest();
+                PrimitiveOperatorLowering.SelfTest();
                 KotlinPropertyAccessors.SelfTestAccessorSignatures();
                 LexicalDeclarationIds.SelfTest();
                 ExistentialReceiverBinding.SelfTest();
@@ -1091,7 +1092,7 @@ sealed class Pipeline
         // locally only through a fake override and has nothing to bind to across an assembly boundary.
         if (!_options.RefBuild)
             ConstrainedTypeParameterReceiverBinding.ApplyAll(
-                staged.Select(s => s.Root).ToList(), isValueFqn, refs);
+                staged.Select(s => s.Root).ToList(), isValueFqn, refs, localExistentialOwners);
 
         // Safe-call and other receiver normalization can postpone a projected type-parameter call until constrained
         // dispatch is selected above. Its exact source constraint is now present again; bind that remaining foreign
@@ -1511,7 +1512,9 @@ sealed class Pipeline
             isExistentialOwner: owner => physicalExistentialOwners.Contains(owner.Name)
                 || refs.IsExistentialPhysicalOwner(owner.Name),
             isNativeReference: owner => refs.ResolveNetType(owner.Name, owner.Args?.Length ?? 0)
-                is { IsValueType: false });
+                is { IsValueType: false },
+            referencedCarrier: (target, source) => refs.TryExistentialPhysicalOwner(target.Name, out var carrier)
+                && carrier == source.Name);
         foreach (var (lowered, _) in loweredRoots) FunctionSignatureIdentity.Complete(lowered);
 
         // Every representation synthesis is now complete. Validate the exact MethodDef table that CIR will describe;

@@ -117,6 +117,7 @@
     },
     {
       "name": "exerciseDeclarationRelativeOwnerCall",
+      "declarationId": "lowering:exact-intrinsic:exerciseDeclarationRelativeOwnerCall",
       "static": true,
       "override": false,
       "virtual": false,

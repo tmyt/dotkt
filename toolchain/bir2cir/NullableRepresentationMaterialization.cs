@@ -93,7 +93,8 @@ static class NullableRepresentationMaterialization
                 {
                     var targetFrame = constructor["thisArgs"] is JsonArray ? owner.Frame
                         : TypeJson.Read(owner.Declaration["base"]) is TypeNode.Fqn baseType
-                            ? types.GetValueOrDefault(baseType.Name) : null;
+                            ? types.GetValueOrDefault(baseType.Name)
+                                ?? references?.KotlinConstructorOwnerFrames.GetValueOrDefault(baseType.Name) : null;
                     constructorMappings[constructor] = targetFrame == null ? null
                         : Mapping(targetFrame, empty, constructor["thisArgs"] is JsonArray
                             ? Text(owner.Declaration["name"])
@@ -178,6 +179,14 @@ static class NullableRepresentationMaterialization
                 {
                     var methodFrame = methodFrames[method.Declaration];
                     var methodMapping = Mapping(frame, methodFrame, ownerName);
+                    // A Kotlin inherited view has no authored declaration identity.
+                    // Its CLR row may still need companions; identify that row from
+                    // the stated override edges without publishing a new Kotlin declaration.
+                    if (methodFrame.RequiresMetadata && method.Declaration["fakeOverride"]?.GetValue<bool>() == true
+                        && method.Declaration[DeclarationIdentityBinding.Key] == null)
+                        DeclarationIdentityBinding.MarkInheritedProjection(method.Declaration, ownerName,
+                            method.Declaration["overrides"].AsArray().OfType<JsonObject>()
+                                .Select(edge => Text(edge[DeclarationIdentityBinding.Key])).Where(id => id != null));
                     // Inherited entries describe another implementation; its defining declaration owns metadata.
                     if (method.ImplementationKey == null)
                         PreserveCompanionSourceBounds(method.Declaration, methodFrame, owner: false);
@@ -519,7 +528,9 @@ static class NullableRepresentationMaterialization
                     capturedFrame = captureFrame;
                     // These are the synthetic declaration's bounds, not stronger bounds of an
                     // arbitrary caller that happens to instantiate the same generated type.
-                    capturedStorageBounds = CaptureStorageBounds(captureParameters, captures, captureFrame, mapping);
+                    // Suspend payloads keep bare capture names separately from their bound declarations.
+                    capturedStorageBounds = CaptureStorageBounds(kind == "newSuspendLambda"
+                        ? obj["typeParamDecls"] as JsonArray : captureParameters, captures, captureFrame, mapping);
                     if (kind is "newSam" or "newClosure")
                         PreserveCompanionSourceBounds(synthetic, captureFrame, owner: true);
                     closedArguments = new JsonArray(mapping.CloseMethod(captureFrame, captures).Select(TypeJson.Write).ToArray());
@@ -590,6 +601,11 @@ static class NullableRepresentationMaterialization
                     obj[key] = TypeJson.Write(mapping.StorageArgument(storageElement));
                     continue;
                 }
+                if (key == "constraints")
+                {
+                    RewriteDescriptor(obj, key, mapping, mapping);
+                    continue;
+                }
                 var childPosition = key switch {
                     "type" when kind == null && mapping.IsNativeField(obj) => NullableGenericErasure.Pos.Argument,
                     "elem" when kind == null && mapping.IsNativeField(obj) => NullableGenericErasure.Pos.Argument,
@@ -657,7 +673,7 @@ static class NullableRepresentationMaterialization
             var visited = new HashSet<int>();
             IEnumerable<TypeNode> Bounds(int index)
             {
-                if (!visited.Add(index) || parameters[index] is not JsonObject parameter
+                if (!visited.Add(index) || parameters?[index] is not JsonObject parameter
                     || parameter["constraints"] is not JsonArray constraints) yield break;
                 foreach (var bound in constraints.Select(TypeJson.Read))
                     if (bound is TypeNode.Tv variable)
@@ -707,15 +723,20 @@ static class NullableRepresentationMaterialization
     {
         var mapper = declaration ?? lexical;
         var position = declaration == null ? NullableGenericErasure.Pos.Bound : NullableGenericErasure.Pos.Slot;
-        JsonNode Map(JsonNode value)
+        JsonNode Map(JsonNode value, NullableGenericErasure.Pos location, bool constraint = false)
         {
-            if (TypeJson.Read(value) is TypeNode type) return TypeJson.Write(mapper.Rewrite(type, position));
-            if (value is JsonArray array) return new JsonArray(array.Select(Map).ToArray());
+            // A direct T : U edge relates the ordinary generic variables, not
+            // the value-slot storage companion of U. Nullable bounds still use
+            // the existing scalar erasure; T : U? is not a CLR Nullable<U> constraint.
+            if (TypeJson.Read(value) is TypeNode type) return TypeJson.Write(mapper.Rewrite(type,
+                constraint && type is TypeNode.Tv ? NullableGenericErasure.Pos.Argument : location));
+            if (value is JsonArray array) return new JsonArray(array.Select(child => Map(child, location, constraint)).ToArray());
             if (value is JsonObject obj) return new JsonObject(obj.Select(pair =>
-                new KeyValuePair<string, JsonNode>(pair.Key, Map(pair.Value))));
+                new KeyValuePair<string, JsonNode>(pair.Key, Map(pair.Value, location,
+                    pair.Key == "constraints" && declaration != null))));
             return value?.DeepClone();
         }
-        node[key] = Map(node[key]);
+        node[key] = Map(node[key], position, key == "constraints" && declaration != null);
         var frame = key is "memberOwnerTypeParams" or "sharedCellTypeParams" ? declaration?.OwnerFrame
             : key == "memberMethodTypeParams" ? declaration?.MethodFrame : null;
         if (frame != null && node[key] is JsonArray parameters)
@@ -784,6 +805,23 @@ static class NullableRepresentationMaterialization
             || TypeJson.Read(physicalParameters[0]?["constraints"]?[1]) != new TypeNode.Tv("method", 1)
             || physicalParameters.Skip(1).Any(parameter => parameter is not JsonValue))
             throw new InvalidOperationException("Representation companion inherited unsupported source constraints");
+        var constraintFrame = new NullableRepresentationFrame(2, new[] { 0 },
+            physicalOrder: new[] { 3, 1, 2, 0 }, storageIndices: new[] { 0 });
+        var constraintMapping = new NullableRepresentationTypes(null, constraintFrame,
+            new Dictionary<string, NullableRepresentationFrame>(), _ => false);
+        var constraints = JsonNode.Parse("""
+          {"constraints":[{"t":"tv","scope":"method","i":0},
+            {"t":"nullable","of":{"t":"tv","scope":"method","i":0}}]}
+          """)!.AsObject();
+        var foreignConstraints = (JsonObject)constraints.DeepClone();
+        RewriteDescriptor(constraints, "constraints", constraintMapping, constraintMapping);
+        RewriteDescriptor(foreignConstraints, "constraints", null, constraintMapping);
+        if (TypeJson.Read(constraints["constraints"][0]) != constraintFrame.Variable(new TypeNode.Tv("method", 0),
+                NullableRepresentationFrame.Role.Ordinary)
+            || TypeJson.Read(constraints["constraints"][1]) != new TypeNode.Fqn("object")
+            || TypeJson.Read(foreignConstraints["constraints"][0]) != new TypeNode.Tv("method", 0)
+            || TypeJson.Read(foreignConstraints["constraints"][1]) != new TypeNode.Nullable(new TypeNode.Tv("method", 0)))
+            throw new InvalidOperationException("Owned direct constraints adopted storage roles or changed a foreign declaration frame");
         var boundPolicy = new GenericRepresentationPolicy(new Dictionary<string, string> {
             ["NativeBound"] = "NativeBound",
         }, roots: new[] { JsonNode.Parse("""
@@ -957,11 +995,16 @@ static class NullableRepresentationMaterialization
         var sourceSignature = JsonNode.Parse("""
         {"sig":[{"t":"fqn","name":"ImportedStore","args":[{"t":"fqn","name":"kotlin.String"}]}]}
         """)!.AsObject();
+        sourceSignature["delegationSig"] = sourceSignature["sig"].DeepClone();
         var foreignSignature = (JsonObject)sourceSignature.DeepClone();
         RewriteDescriptor(sourceSignature, "sig", nongenericSource, nongenericSource);
         RewriteDescriptor(foreignSignature, "sig", null, nongenericSource);
+        RewriteDescriptor(sourceSignature, "delegationSig", nongenericSource, nongenericSource);
+        RewriteDescriptor(foreignSignature, "delegationSig", null, nongenericSource);
         if (TypeJson.Read(sourceSignature["sig"][0]) is not TypeNode.Fqn { Args.Length: 2 }
-            || TypeJson.Read(foreignSignature["sig"][0]) is not TypeNode.Fqn { Args.Length: 1 })
+            || TypeJson.Read(foreignSignature["sig"][0]) is not TypeNode.Fqn { Args.Length: 1 }
+            || TypeJson.Read(sourceSignature["delegationSig"][0]) is not TypeNode.Fqn { Args.Length: 2 }
+            || TypeJson.Read(foreignSignature["delegationSig"][0]) is not TypeNode.Fqn { Args.Length: 1 })
             throw new InvalidOperationException("Nongeneric Kotlin and foreign CLR signature frames were conflated");
         var carrierRoot = (JsonObject)JsonNode.Parse("""
         {"fileClass":"CarrierProbe","methods":[{"name":"use","params":[{"name":"value","type":

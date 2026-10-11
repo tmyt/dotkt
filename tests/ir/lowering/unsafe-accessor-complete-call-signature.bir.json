@@ -15,6 +15,7 @@
       "methods": [
         {
           "name": "hiddenGeneric",
+          "declarationId": "lowering:unsafe-accessor:hiddenGeneric",
           "typeParams": ["T"],
           "static": false,
           "override": false,
@@ -51,6 +52,7 @@
           "k": "exprStmt",
           "expr": {
             "k": "callInstance",
+            "declarationId": "lowering:unsafe-accessor:hiddenGeneric",
             "ownerType": { "t": "fqn", "name": "UnsafeAccessorCompleteCallSignatureTarget" },
             "recv": { "k": "local", "name": "target" },
             "method": "hiddenGeneric",

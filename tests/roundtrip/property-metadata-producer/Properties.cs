@@ -10,9 +10,9 @@ public class CarrierMix<X, Y> : CarrierBase<Y>, IValue<int> where Y : notnull
     int IValue<int>.Value => 17;
 }
 
-public class InnerMix : Outer<string>.Base<int>, IValue<int>
+public class InnerMix : Outer<string, string>.Base<int>, IValue<int>
 {
-    public InnerMix() : base(new Outer<string>("outer")) { }
+    public InnerMix() : base(new Outer<string, string>("outer")) { }
     int IValue<int>.Value => 17;
 }
 

@@ -3163,7 +3163,7 @@ sealed partial class ReferenceMetadataIndex
                         && (member.DeclarationSourceName ?? member.SourceMethodName ?? member.Name) == sourceMember
                     : (member.SourcePropertyName ?? member.PropertyName) == sourceMember
                         && member.AccessorKind == propertyAccessor)
-                && member.MethodArity == methodArity
+                && (member.NullableFrame?.SourceArity ?? member.MethodArity) == methodArity
                 && KotlinOverrideSlotBridge.SameMethodTypeParameterShape(
                     member.SemanticMethodTypeParams ?? member.MethodTypeParams, selectedTypeParams, ownerTypeArguments, ownerTypeArguments)
                 && MethodSignatureMatches(member, signature, resolvedReturn, ownerTypeArguments, kotlinParameters: true)
@@ -3204,7 +3204,8 @@ sealed partial class ReferenceMetadataIndex
                     ? member.SourcePropertyName == null
                         && (member.DeclarationSourceName ?? member.SourceMethodName ?? member.Name) == sourceMember
                     : member.SourcePropertyName == sourceMember && member.AccessorKind == accessorKind)
-                && member.MethodArity == methodArity
+                && (semanticConstraints ? member.NullableFrame?.SourceArity ?? member.MethodArity
+                    : member.MethodArity) == methodArity
                 && member.Suspend == selectedSuspend
                 && KotlinOverrideSlotBridge.SameMethodTypeParameterShape(
                     semanticConstraints ? member.SemanticMethodTypeParams ?? member.MethodTypeParams : member.MethodTypeParams,
@@ -4452,7 +4453,7 @@ sealed partial class ReferenceMetadataIndex
         return true;
     }
 
-    static bool MethodSignatureMatches(MemberBinding member, IReadOnlyList<TypeNode> signature,
+    bool MethodSignatureMatches(MemberBinding member, IReadOnlyList<TypeNode> signature,
         TypeNode resolvedReturn, TypeNode[] ownerTypeArguments, bool kotlinParameters = false)
     {
         if (!AccessorSignatureMatches(member, signature, ownerTypeArguments, kotlinParameters)) return false;
@@ -4466,7 +4467,12 @@ sealed partial class ReferenceMetadataIndex
         if (declared is TypeNode.Fqn { Args: null, Name: "void" or "System.Void" }
             && resolvedReturn is TypeNode.Fqn { Args: null, Name: "kotlin.Unit" })
             return true;
-        return AccessorDeclarationDescribesCall(declared, resolvedReturn);
+        return AccessorDeclarationDescribesCall(declared, resolvedReturn)
+            // The inherited implementation fact can already carry a projected
+            // classifier. The producer's recorded correspondence, not an
+            // arbitrary return-type wildcard, relates it to the Kotlin getter.
+            || declared is TypeNode.Fqn && resolvedReturn is TypeNode.Fqn
+                && SemanticDeclarationDescribesCall(declared, resolvedReturn);
     }
 
     internal static bool AccessorDeclarationDescribesCall(TypeNode declaration, TypeNode call)
@@ -5217,7 +5223,7 @@ sealed partial class ReferenceMetadataIndex
                             innerConstructorFactory?.Inner,
                             innerConstructorFactory?.Parameters,
                             innerConstructorFactory?.TypeArguments,
-                            SemanticMethodTypeParameters(method, dotKtAuthored), declarationIdentity?.NullableFrame)
+                            SemanticMethodTypeParameters(method, dotKtAuthored, declarationIdentity?.NullableFrame), declarationIdentity?.NullableFrame)
                         {
                             SignatureParameters = method.GetParameters().Select(DeclarationSignatureSlot).ToArray(),
                             SignatureReturn = DeclarationSignatureSlot(method.ReturnParameter),
@@ -5958,9 +5964,15 @@ sealed partial class ReferenceMetadataIndex
         return BirCarrier.DecodeBody(version, ReadByteArrayArg(cad.ConstructorArguments[1]));
     }
 
-    static JsonArray SemanticMethodTypeParameters(MethodInfo method, bool dotKtAuthored)
+    static JsonArray SemanticMethodTypeParameters(MethodInfo method, bool dotKtAuthored,
+        NullableRepresentationFrame frame)
     {
-        var parameters = new JsonArray(method.GetGenericArguments().Select(GenericParamDeclaration).ToArray());
+        var physicalParameters = method.GetGenericArguments();
+        var parameters = new JsonArray((frame == null
+            ? physicalParameters
+            : Enumerable.Range(0, frame.SourceArity)
+                .Select(source => physicalParameters[frame.SourcePosition(source)]))
+            .Select(GenericParamDeclaration).ToArray());
         if (!dotKtAuthored || CarrierJsonOf(method.GetCustomAttributesData(), method.DeclaringType?.Assembly,
                 "DotKt.Runtime.CompilerServices.KotlinTypeParameterBoundsAttribute") is not JsonObject payload
             || payload["bounds"] is not JsonObject bounds) return parameters;
@@ -7343,6 +7355,52 @@ sealed partial class ReferenceMetadataIndex
     internal static void SelfTest()
     {
         SelfTestSourceHierarchyFrames();
+        {
+            var index = Build(Array.Empty<string>());
+            var source = new TypeNode.Tv("method", 0);
+            index._membersByOwner["InheritedFrame"] = new List<MemberBinding> {
+                new("InheritedFrame", "echo", 1, null, false, false,
+                    Suspend: true, MethodArity: 2,
+                    ParamTypeNodes: new TypeNode[] { new TypeNode.Tv("method", 1) },
+                    NullableGenericParams: new TypeNode[] { source },
+                    ReturnTypeNode: new TypeNode.Fqn("System.Object"), SuspendReturnType: source,
+                    MethodTypeParams: new JsonArray("T", "storageT"),
+                    SemanticMethodTypeParams: new JsonArray("T"),
+                    NullableFrame: new NullableRepresentationFrame(1, Array.Empty<int>(),
+                        storageIndices: new[] { 0 })),
+            };
+            if (!index.TrySelectedOverrideDeclaration("InheritedFrame", "echo", null, 1,
+                    new TypeNode[] { source }, Array.Empty<TypeNode>(), new JsonArray("T"),
+                    Array.Empty<TypeNode>(), true, out var selected, semanticConstraints: true)
+                || selected.Parameters[0] != source
+                || selected.PhysicalParameters[0] != new TypeNode.Tv("method", 1)
+                || index.TrySelectedOverrideDeclaration("InheritedFrame", "echo", null, 1,
+                    new TypeNode[] { source }, Array.Empty<TypeNode>(), new JsonArray("T"),
+                    Array.Empty<TypeNode>(), true, out _))
+                throw new InvalidOperationException("Inherited slot selection mixed source and physical generic arities");
+            if (!index.TrySelectedMethodDeclaration("InheritedFrame", "echo", 1,
+                    new TypeNode[] { source }, source, Array.Empty<TypeNode>(), new JsonArray("T"),
+                    out var inherited)
+                || inherited.PhysicalParameters[0] != new TypeNode.Tv("method", 1)
+                || index.TrySelectedMethodDeclaration("InheritedFrame", "echo", 2,
+                    new TypeNode[] { source }, source, Array.Empty<TypeNode>(), new JsonArray("T"), out _))
+                throw new InvalidOperationException("Inherited implementation selection lost its source arity or selected physical parameter");
+            index._existentialPhysicalBySemanticOwner["Stored"] = "StoredCarrier";
+            index._membersByOwner["CarrierGetter"] = new List<MemberBinding> {
+                new("CarrierGetter", "read", 0, null, false, false,
+                    SourcePropertyName: "value", AccessorKind: "get",
+                    ParamTypeNodes: Array.Empty<TypeNode>(),
+                    NullableGenericRet: new TypeNode.Fqn("Stored", new TypeNode[] { new TypeNode.Tv("type", 0) }),
+                    ReturnTypeNode: new TypeNode.Fqn("StoredCarrier")),
+            };
+            if (!index.TrySelectedMethodDeclaration("CarrierGetter", "value", 0,
+                    Array.Empty<TypeNode>(), new TypeNode.Fqn("StoredCarrier"), new TypeNode[] { source },
+                    new JsonArray(), out _, propertyAccessor: "get")
+                || index.TrySelectedMethodDeclaration("CarrierGetter", "value", 0,
+                    Array.Empty<TypeNode>(), new TypeNode.Fqn("OtherCarrier"), new TypeNode[] { source },
+                    new JsonArray(), out _, propertyAccessor: "get"))
+                throw new InvalidOperationException("Inherited getter selection lost its recorded classifier correspondence");
+        }
         {
             var index = Build(Array.Empty<string>());
             var logical = new TypeNode.Tv("type", 0);

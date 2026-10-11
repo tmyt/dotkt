@@ -3425,7 +3425,12 @@ static partial class SuspendColdLowering
             // every referenced non-zero-argument suspend member ambiguous or unlinkable once CIR signature
             // consumption became exact — and `shapeTypes` was the one spelling still missing, so a cross-module
             // GENERIC suspend member call resolved to `<name>$dotkt_suspend(Continuation)` and did not link at all.
-            var sigArr = callNode["sig"] is JsonArray os
+            // A selected inherited declaration may use a storage companion
+            // where the source signature still names its logical variable.
+            // Its exact MethodDef snapshot owns the cold parameter vector too.
+            var sigArr = callNode["calleeParams"] is JsonArray selectedSignature
+                ? (JsonArray)selectedSignature.DeepClone()
+                : callNode["sig"] is JsonArray os
                 ? (JsonArray)os.DeepClone()
                 : callNode["argTypes"] is JsonArray oat
                     ? (JsonArray)oat.DeepClone()
@@ -3434,6 +3439,8 @@ static partial class SuspendColdLowering
                         : new JsonArray();
             sigArr.Add(ContAny());
             call["sig"] = sigArr;
+            if (callNode["calleeParams"] is JsonArray)
+                call["calleeParams"] = sigArr.DeepClone();
             return call;
         }
 

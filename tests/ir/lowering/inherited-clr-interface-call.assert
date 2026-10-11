@@ -3,15 +3,16 @@
 +"type":{"t":"fqn","name":"System.IDisposable"},"method":"Dispose"
 +"declaringType":{"t":"fqn","name":"System.IDisposable"},"name":"Dispose"
 
-# A generic override owner and its signature are in ArrayDeque's frame. Both must close to String before routing.
-+"type":{"t":"fqn","name":"System.Collections.Generic.IList","args":[{"t":"fqn","name":"System.String"}]},"method":"Insert"
-+"declaringType":{"t":"fqn","name":"System.Collections.Generic.IList\u00601","args":[{"t":"fqn","name":"System.String"}]},"name":"Insert"
+# A Kotlin collection's declaration now has distinct source/storage roles. Both arguments close to String,
+# while its MemberRef retains the declaration's storage parameter rather than guessing a CLR interface slot.
++"ownerType":{"t":"fqn","name":"kotlin.collections.ArrayDeque\u00602","args":[{"t":"fqn","name":"System.String"},{"t":"fqn","name":"System.String"}]}
++"declaringType":{"t":"fqn","name":"kotlin.collections.ArrayDeque\u00602","args":[{"t":"fqn","name":"System.String"},{"t":"fqn","name":"System.String"}]},"name":"add"
++"parameterTypes":[{"t":"fqn","name":"System.Int32"},{"t":"tv","scope":"type","i":1}]
 
-# The MutableList/MutableCollection faces coalesce to one binding, then retain Kotlin add's Boolean semantics.
-+"owner":{"t":"fqn","name":"kotlin.collections.ClrCollectionDefaultsKt"},"method":"clrCollAdd"
-+"typeArgs":[{"t":"fqn","name":"System.String"}]
+# The one-argument add retains the selected Kotlin method's Boolean result and exact storage parameter.
++"name":"add","genericArity":0,"returnType":{"t":"fqn","name":"System.Boolean"},"callingConvention":"instance","parameterTypes":[{"t":"tv","scope":"type","i":1}]
 
 # A local subclass with no declaration of its own still needs the inherited external interface slot.
 +"type":{"t":"fqn","name":"System.Collections.Generic.ICollection","args":[{"t":"fqn","name":"System.Int32"}]},"method":"Clear"
 +"declaringType":{"t":"fqn","name":"System.Collections.Generic.ICollection\u00601","args":[{"t":"fqn","name":"System.Int32"}]},"name":"Clear"
--"k":"callInstance"
+-"method":"clrCollAdd"

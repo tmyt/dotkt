@@ -59,6 +59,7 @@ static class PhysicalValueCoercion
     {
         readonly Dictionary<string, List<MethodShape>> _methods = new(StringComparer.Ordinal);
         readonly Dictionary<string, TypeNode> _fields = new(StringComparer.Ordinal);
+        readonly Dictionary<string, TypeNode[]> _closureConstructors = new(StringComparer.Ordinal);
         readonly HashSet<string> _nonGenericClasses = new(StringComparer.Ordinal);
         readonly HashSet<(string Class, string Carrier)> _declaredCarriers = new();
         readonly Func<JsonObject> _unitValue;
@@ -66,13 +67,15 @@ static class PhysicalValueCoercion
         internal Func<TypeNode.Fqn, bool> IsReferenceOwner;
         internal Func<TypeNode.Fqn, bool> IsExistentialOwner;
         internal Func<TypeNode.Fqn, bool> IsNativeReference;
+        internal Func<TypeNode.Fqn, TypeNode.Fqn, bool> ReferencedCarrier;
         internal JsonObject Document;
         internal bool ReferenceBuild;
 
         Index(Func<JsonObject> unitValue) => _unitValue = unitValue;
         internal JsonObject UnitValue() => _unitValue();
         internal bool HasDeclaredCarrier(TypeNode.Fqn target, TypeNode.Fqn source) =>
-            _declaredCarriers.Contains((target.Name, source.Name));
+            _declaredCarriers.Contains((target.Name, source.Name))
+            || ReferencedCarrier?.Invoke(target, source) == true;
 
         internal static Index Build(IReadOnlyList<JsonNode> roots, Func<JsonObject> unitValue)
         {
@@ -90,6 +93,13 @@ static class PhysicalValueCoercion
         void AddType(JsonObject type)
         {
             var owner = Str(type["name"]);
+            // newClosure names an already allocated closure definition. Its
+            // one constructor supplies the capture slots; fields and source
+            // capture stamps are not a substitute for that physical signature.
+            if (owner != null && type["ctors"] is JsonArray { Count: 1 } constructors
+                && constructors[0]?["params"] is JsonArray constructorParameters)
+                _closureConstructors[owner] = constructorParameters.OfType<JsonObject>()
+                    .Select(parameter => TypeJson.Read(parameter["type"])).ToArray();
             if (owner != null && Str(type["kind"]) == "class" && TypeParameterFrame.Count(type) == 0)
                 _nonGenericClasses.Add(owner);
             if (owner != null && Str(type["kind"]) == "class")
@@ -125,6 +135,14 @@ static class PhysicalValueCoercion
 
         internal TypeNode Field(string owner, string name)
             => owner != null && name != null && _fields.TryGetValue(Key(owner, name), out var type) ? type : null;
+
+        internal TypeNode[] ClosureParameters(JsonObject expression)
+        {
+            if (TypeJson.Read(expression["closureType"]) is not TypeNode.Fqn owner
+                || !_closureConstructors.TryGetValue(owner.Name, out var parameters)) return null;
+            var arguments = ReadTypes(expression["typeArgs"] as JsonArray) ?? owner.Args;
+            return parameters.Select(parameter => Close(parameter, arguments, null)).ToArray();
+        }
 
         internal MethodShape Method(JsonObject call)
         {
@@ -185,13 +203,15 @@ static class PhysicalValueCoercion
 
     public static void ApplyAll(IReadOnlyList<JsonNode> roots, Func<JsonObject> unitValue,
         ValueTypeOracle isValue, bool referenceBuild = false, Func<TypeNode.Fqn, bool> isReferenceOwner = null,
-        Func<TypeNode.Fqn, bool> isExistentialOwner = null, Func<TypeNode.Fqn, bool> isNativeReference = null)
+        Func<TypeNode.Fqn, bool> isExistentialOwner = null, Func<TypeNode.Fqn, bool> isNativeReference = null,
+        Func<TypeNode.Fqn, TypeNode.Fqn, bool> referencedCarrier = null)
     {
         var index = Index.Build(roots, unitValue);
         index.IsValue = isValue;
         index.IsReferenceOwner = isReferenceOwner ?? (_ => false);
         index.IsExistentialOwner = isExistentialOwner ?? (_ => false);
         index.IsNativeReference = isNativeReference ?? (_ => false);
+        index.ReferencedCarrier = referencedCarrier;
         index.ReferenceBuild = referenceBuild;
         foreach (var root in roots.OfType<JsonObject>()) RewriteDocument(root, index);
     }
@@ -243,6 +263,10 @@ static class PhysicalValueCoercion
         unrelatedView["name"] = "unrelatedView";
         unrelatedView["ret"] = TypeJson.Write(new TypeNode.Fqn("UnrelatedOwner", new TypeNode[] { new TypeNode.Tv("method", 0) }));
         root["methods"].AsArray().Add(unrelatedView);
+        var referencedView = exactLocalView.DeepClone().AsObject();
+        referencedView["name"] = "referencedView";
+        referencedView["ret"] = TypeJson.Fqn("ReferencedOwner");
+        root["methods"].AsArray().Add(referencedView);
         var localReceiver = JsonNode.Parse("""
           {"name":"localReceiver","typeParams":["P"],
            "params":[{"name":"value","type":{"t":"tv","scope":"method","i":0}}],
@@ -253,9 +277,24 @@ static class PhysicalValueCoercion
              "ret":{"t":"fqn","name":"System.Int32"}}}]}
           """).AsObject();
         root["methods"].AsArray().Add(localReceiver);
+        root["types"].AsArray().Add(JsonNode.Parse("""
+          {"name":"CapturedValue","kind":"class","typeParams":["T"],
+           "ctors":[{"params":[{"name":"value","type":{"t":"tv","scope":"type","i":0}}],"body":[]}]}
+          """));
+        var closureCapture = JsonNode.Parse("""
+          {"name":"closureCapture","typeParams":["T","P"],
+           "params":[{"name":"value","type":{"t":"tv","scope":"method","i":1}}],
+           "ret":{"t":"fqn","name":"void"},"body":[
+             {"k":"expr","e":{"k":"newClosure","closureType":{"t":"fqn","name":"CapturedValue"},
+               "typeArgs":[{"t":"tv","scope":"method","i":0}],"captures":[{"k":"local","name":"value"}]}},
+             {"k":"expr","e":{"k":"newClosure","closureType":{"t":"fqn","name":"CapturedValue"},
+               "typeArgs":[{"t":"tv","scope":"method","i":1}],"captures":[{"k":"local","name":"value"}]}}]}
+          """).AsObject();
+        root["methods"].AsArray().Add(closureCapture);
         ApplyAll(new JsonNode[] { root }, () => throw new InvalidOperationException("Unexpected Unit conversion"), _ => false,
             isExistentialOwner: owner => owner.Name == "Carrier",
-            isNativeReference: owner => owner.Name == "System.Collections.Generic.IReadOnlyList");
+            isNativeReference: owner => owner.Name == "System.Collections.Generic.IReadOnlyList",
+            referencedCarrier: (target, source) => target.Name == "ReferencedOwner" && source.Name == "Carrier");
         var result = root["methods"][1]["body"][0]["value"];
         if (Str(result["k"]) != "cast" || TypeJson.Read(result["type"]) != new TypeNode.Tv("method", 1)
             || TypeJson.Read(result["e"]["ret"]) != new TypeNode.Tv("method", 0))
@@ -269,6 +308,9 @@ static class PhysicalValueCoercion
             || TypeJson.Read(exactLocalView["body"][0]["value"]["type"]) != TypeJson.Read(exactLocalView["ret"])
             || Str(unrelatedView["body"][0]["value"]["k"]) != "local")
             throw new InvalidOperationException("Local carrier conversion guessed a class or discarded the exact declaration closure");
+        if (Str(referencedView["body"][0]["value"]["k"]) != "cast"
+            || TypeJson.Read(referencedView["body"][0]["value"]["type"]) != TypeJson.Read(referencedView["ret"]))
+            throw new InvalidOperationException("A referenced carrier lost its recorded target declaration");
         if (Str(blockLocalView["body"][0]["value"]["result"]["k"]) != "cast"
             || TypeJson.Read(blockLocalView["body"][0]["value"]["result"]["type"])
                 != TypeJson.Read(blockLocalView["ret"]))
@@ -278,6 +320,11 @@ static class PhysicalValueCoercion
             || Str(referenceCall["recv"]["k"]) != "cast"
             || TypeJson.Read(referenceCall["recv"]["type"]) != new TypeNode.Fqn("PlainOwner"))
             throw new InvalidOperationException("A local non-generic declaring class lost its explicit reference receiver");
+        var captures = closureCapture["body"][0]["e"]["captures"];
+        if (Str(captures[0]["k"]) != "cast"
+            || TypeJson.Read(captures[0]["type"]) != new TypeNode.Tv("method", 0)
+            || Str(closureCapture["body"][1]["e"]["captures"][0]["k"]) != "local")
+            throw new InvalidOperationException("Closure captures did not use the exact allocated constructor frame");
         var unusedParameters = JsonNode.Parse("""
           [{"name":"<unused var>","type":{"t":"fqn","name":"object"}},
            {"name":"<unused var>","type":{"t":"fqn","name":"object"}}]
@@ -701,6 +748,9 @@ static class PhysicalValueCoercion
                 break;
             case "new": case "newClr":
                 CoerceConstructorArguments(node, scope, index);
+                break;
+            case "newClosure":
+                CoerceVector(node["captures"] as JsonArray, index.ClosureParameters(node), scope, index);
                 break;
             case "delegateInvoke":
                 CoerceDelegateArguments(node, scope, index);

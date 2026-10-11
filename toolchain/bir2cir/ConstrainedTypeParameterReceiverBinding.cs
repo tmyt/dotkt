@@ -76,11 +76,13 @@ static class ConstrainedTypeParameterReceiverBinding
     }
 
     // PHASE 2 — author the constrained dispatch over the now-declaring, now-constructed owner.
-    public static void ApplyAll(IEnumerable<JsonNode> roots, ValueTypeOracle isValue, ReferenceMetadataIndex refs)
+    public static void ApplyAll(IEnumerable<JsonNode> roots, ValueTypeOracle isValue, ReferenceMetadataIndex refs,
+        IReadOnlyDictionary<string, string> localExistentialOwners = null)
     {
         var rootList = roots.ToList();
         var arity = CollectTypeArity(rootList);
-        foreach (var root in rootList) BindFile(root, arity, close: false, isValue, refs: refs);
+        foreach (var root in rootList) BindFile(root, arity, close: false, isValue, refs: refs,
+            localExistentialOwners: localExistentialOwners);
     }
 
     // A CLR property cannot be classified as an accessor rather than a public field until ClrMemberResolution has
@@ -120,53 +122,74 @@ static class ConstrainedTypeParameterReceiverBinding
     }
 
     static void BindFile(JsonNode root, Dictionary<string, int> arity, bool close,
-        ValueTypeOracle isValue = null, bool resolvedPropertiesOnly = false, ReferenceMetadataIndex refs = null)
+        ValueTypeOracle isValue = null, bool resolvedPropertiesOnly = false, ReferenceMetadataIndex refs = null,
+        IReadOnlyDictionary<string, string> localExistentialOwners = null)
     {
         if (root is not JsonObject file) return;
         var noTypeParams = new JsonArray();
         if (file["methods"] is JsonArray methods)
             foreach (var method in methods.OfType<JsonObject>())
-                BindMethod(method, noTypeParams, arity, close, isValue, resolvedPropertiesOnly, refs);
-        BindAccessors(file["properties"] as JsonArray, noTypeParams, arity, close, isValue, resolvedPropertiesOnly, refs);
+                BindMethod(method, noTypeParams, arity, close, isValue, resolvedPropertiesOnly, refs,
+                    localExistentialOwners: localExistentialOwners);
+        BindAccessors(file["properties"] as JsonArray, noTypeParams, arity, close, isValue, resolvedPropertiesOnly, refs,
+            localExistentialOwners);
         if (file["types"] is JsonArray declared)
             foreach (var type in declared.OfType<JsonObject>())
-                BindType(type, arity, close, isValue, resolvedPropertiesOnly, refs);
+                BindType(type, arity, close, isValue, resolvedPropertiesOnly, refs, localExistentialOwners);
     }
 
     static void BindType(JsonObject type, Dictionary<string, int> arity, bool close,
-        ValueTypeOracle isValue, bool resolvedPropertiesOnly, ReferenceMetadataIndex refs)
+        ValueTypeOracle isValue, bool resolvedPropertiesOnly, ReferenceMetadataIndex refs,
+        IReadOnlyDictionary<string, string> localExistentialOwners = null)
     {
         var typeParams = CloneTypeParametersWithErasedSourceBounds(type);
         if (type["ctors"] is JsonArray ctors)
             foreach (var ctor in ctors.OfType<JsonObject>())
-                BindMethod(ctor, typeParams, arity, close, isValue, resolvedPropertiesOnly, refs);
+                BindMethod(ctor, typeParams, arity, close, isValue, resolvedPropertiesOnly, refs,
+                    localExistentialOwners: localExistentialOwners);
         if (type["methods"] is JsonArray methods)
             foreach (var method in methods.OfType<JsonObject>())
-                BindMethod(method, typeParams, arity, close, isValue, resolvedPropertiesOnly, refs);
+                BindMethod(method, typeParams, arity, close, isValue, resolvedPropertiesOnly, refs,
+                    localExistentialOwners: localExistentialOwners);
         // A property ACCESSOR body is executable code like any other, and `class H<T : Tagged>(val item: T) { val v
         // get() = item.tag() }` reaches this pass only through here — BIR keeps accessors under `properties`, not
         // `methods`.
-        BindAccessors(type["properties"] as JsonArray, typeParams, arity, close, isValue, resolvedPropertiesOnly, refs);
+        BindAccessors(type["properties"] as JsonArray, typeParams, arity, close, isValue, resolvedPropertiesOnly, refs,
+            localExistentialOwners);
         if (type["types"] is JsonArray nested)
             foreach (var child in nested.OfType<JsonObject>())
-                BindType(child, arity, close, isValue, resolvedPropertiesOnly, refs);
+                BindType(child, arity, close, isValue, resolvedPropertiesOnly, refs, localExistentialOwners);
     }
 
     static void BindAccessors(JsonArray properties, JsonArray typeParams, Dictionary<string, int> arity, bool close,
-        ValueTypeOracle isValue, bool resolvedPropertiesOnly, ReferenceMetadataIndex refs)
+        ValueTypeOracle isValue, bool resolvedPropertiesOnly, ReferenceMetadataIndex refs,
+        IReadOnlyDictionary<string, string> localExistentialOwners = null)
     {
         if (properties == null) return;
         foreach (var property in properties.OfType<JsonObject>())
             foreach (var slot in new[] { "getter", "setter" })
                 if (property[slot] is JsonObject accessor)
-                    BindMethod(accessor, typeParams, arity, close, isValue, resolvedPropertiesOnly, refs);
+                    BindMethod(accessor, typeParams, arity, close, isValue, resolvedPropertiesOnly, refs,
+                        localExistentialOwners: localExistentialOwners);
     }
 
     static void BindMethod(JsonObject method, JsonArray typeParams, Dictionary<string, int> arity, bool close,
         ValueTypeOracle isValue, bool resolvedPropertiesOnly, ReferenceMetadataIndex refs,
-        JsonArray methodParametersOverride = null)
+        JsonArray methodParametersOverride = null, IReadOnlyDictionary<string, string> localExistentialOwners = null)
     {
+        TypeNode.Fqn AllocatedDispatchOwner(TypeNode.Fqn selected) =>
+            localExistentialOwners != null && localExistentialOwners.TryGetValue(selected.Name, out var carrier)
+                ? new TypeNode.Fqn(carrier)
+                : refs?.TryExistentialPhysicalOwner(selected.Name, out var referencedCarrier) == true
+                    ? new TypeNode.Fqn(referencedCarrier) : null;
         var methodParams = methodParametersOverride ?? CloneMethodParametersWithErasedSourceBounds(method);
+        // A storage companion can retain only the allocated existential owner,
+        // rather than the ordinary source parameter's constructed CLR bound.
+        // The allocation map and that companion's actual constraint jointly
+        // select the route; neither a physical name nor a sibling slot is inferred.
+        bool HasAllocatedCarrierConstraint(TypeNode.Tv receiver, TypeNode.Fqn selected) =>
+            AllocatedDispatchOwner(selected) is TypeNode.Fqn carrier
+            && ConstraintAt(receiver, carrier.Name, typeParams, methodParams, out _) != null;
         // The declaration's local/param type environment, for a receiver read that carries no frontend `sty`
         // stamp (a bir2cir-synthesized temp). A name declared twice with DIFFERENT types is dropped rather than
         // resolved last-wins — this pass never guesses which declaration a read refers to.
@@ -260,25 +283,31 @@ static class ConstrainedTypeParameterReceiverBinding
                         // expression can be a field/property/call result whose surface stamp no longer exposes the
                         // type variable after earlier rewrites, so do not re-infer what the node already owns.
                         && TypeJson.Read(call["recvType"]) is TypeNode.Tv constrainedTv
-                        && ConstraintAtPhysical(
+                        && (ConstraintAtPhysical(
                             constrainedTv, constrainedIface.Name, typeParams, methodParams, refs,
                             out var existingConstraintErased)
                             is TypeNode.Fqn existingSourceConstraint
-                        && existingConstraintErased)
+                            && existingConstraintErased
+                            || HasAllocatedCarrierConstraint(constrainedTv, constrainedIface)))
                     {
-                        var projectedForeign = ProjectedForeignConstraint(existingSourceConstraint, refs);
+                        var projectedForeign = ProjectedForeignConstraint(
+                            ConstraintAtPhysical(constrainedTv, constrainedIface.Name,
+                                typeParams, methodParams, refs, out _), refs);
+                        var localDispatch = AllocatedDispatchOwner(constrainedIface);
+                        var dispatchOwner = localDispatch ?? projectedForeign ?? constrainedIface;
                         if (projectedForeign == null)
                             call["recv"] = new JsonObject
                             {
                                 ["k"] = "cast",
-                                ["type"] = TypeJson.Write(constrainedIface),
+                                ["type"] = TypeJson.Write(dispatchOwner),
                                 ["e"] = constrainedRecv.DeepClone(),
                             };
-                        call["k"] = "clrInstance";
-                        call["type"] = TypeJson.Write(projectedForeign ?? constrainedIface);
+                        call["k"] = localDispatch == null ? "clrInstance" : "callInstance";
+                        call[localDispatch == null ? "type" : "ownerType"] = TypeJson.Write(dispatchOwner);
+                        if (localDispatch != null) call["virtual"] = true;
                         call.Remove("recvType");
                         call.Remove("iface");
-                        kind = "clrInstance";
+                        kind = localDispatch == null ? "clrInstance" : "callInstance";
                     }
                     // A CLR property has not yet been classified as accessor versus field here, but its direct
                     // semantic/physical owner is still available. Preserve whether that selected route was one of
@@ -351,7 +380,8 @@ static class ConstrainedTypeParameterReceiverBinding
                                     out selectedConstraintWasErasedByPhysical);
                             var selectedConstraintWasErased = Bool(call[ErasedConstraintDispatchKey])
                                 || selectedConstraintWasErasedByPhysical
-                                || ConstraintDispatchWasErased(tv, iface.Name, typeParams, methodParams);
+                                || ConstraintDispatchWasErased(tv, iface.Name, typeParams, methodParams)
+                                || HasAllocatedCarrierConstraint(tv, iface);
                             call.Remove(ErasedConstraintDispatchKey);
                             if (selectedConstraintWasErased)
                             {
@@ -375,10 +405,15 @@ static class ConstrainedTypeParameterReceiverBinding
                                     // bound mentions a star outer cannot carry that relation as a CLR GenericParamConstraint.
                                     // Convert the value to the already-selected bound explicitly; constrained. would ask
                                     // the verifier to prove a relation deliberately absent from the physical declaration.
+                                    // A synthesized local view is already the declared physical obligation.
+                                    // Use that allocated owner, not a fictitious G<*> TypeSpec. The existing
+                                    // existential member binder consumes the selected member identity later.
+                                    var dispatchOwner = AllocatedDispatchOwner(iface) ?? iface;
+                                    call["ownerType"] = TypeJson.Write(dispatchOwner);
                                     call["recv"] = new JsonObject
                                     {
                                         ["k"] = "cast",
-                                        ["type"] = TypeJson.Write(iface),
+                                        ["type"] = TypeJson.Write(dispatchOwner),
                                         ["e"] = recv.DeepClone(),
                                     };
                                 }

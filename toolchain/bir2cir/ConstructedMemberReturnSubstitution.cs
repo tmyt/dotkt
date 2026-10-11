@@ -24,8 +24,13 @@ static class ConstructedMemberReturnSubstitution
     // projection leaves this to ApplyAll after inner application arguments have their physical declaration order.
     internal static void ApplyCall(JsonObject obj)
     {
-        if (Str(obj["k"]) != "callInstance"
-            || TypeJson.Read(obj["ownerType"]) is not TypeNode.Fqn { Args: { } args }) return;
+        var kind = Str(obj["k"]);
+        var owner = kind switch {
+            "callInstance" => obj["ownerType"],
+            "clrInstance" or "clrGenericInstance" or "clrPropGet" => obj["type"],
+            _ => null,
+        };
+        if (TypeJson.Read(owner) is not TypeNode.Fqn { Args: { } args }) return;
         var changed = RewriteSlot(obj, "ret", args) | RewriteSlot(obj, "dynRet", args);
         if (changed) NodeType.DropStampIfStale(obj);
     }
