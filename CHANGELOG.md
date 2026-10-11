@@ -5,7 +5,64 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+## 0.9.13-beta2 (2026-10-12)
+
+### Release highlights
+
+- **kotlinx.coroutines reaches consumer smoke testing with unchanged upstream common source.**
+  A separately built atomicfu/coroutines stack passes all eleven smoke categories: `runBlocking`,
+  `launch`/join, `async`/await, asynchronous delay/resumption, cancellation and exception propagation,
+  context/continuation interception, dispatcher replacement, Channel, Flow, cleanup across suspension,
+  and atomicfu scalar/array operations. Public `suspendCancellableCoroutine` consumer calls also pass
+  immediate completion, real suspension/resumption, and cancellation checks. All four complete DLLs
+  from that validation pass ILVerify. The five DotKt packages do not bundle these downstream libraries.
+- This prerelease is for downstream real-application testing. WinUI application integration has not
+  yet been validated; smoke success is not a claim that every coroutine or platform scenario works.
+- All five DotKt packages and SDK defaults are updated together to `0.9.13-beta2`; the embedded Kotlin
+  compiler remains **2.4.10**. Compiler-generated internal artifacts from older versions are unsupported.
+
 ### Toolchain
+
+- **Generic value slots remain separate from logical declaration frames (#985).**
+  Demanded nullable/value-storage companions follow their declaration roles through construction,
+  calls, captures and native boundaries, fixing the BufferedChannel constructor's incompatible value edge.
+
+- **Sized array factories retain their selected nullable element frame (#1006).**
+  Open reified closures allocate the array element already established by their materialized result,
+  rather than reconstructing an object array from the ordinary type argument.
+
+- **Interface implementations resolve by their exact CLR declaration signature (#1008).**
+  DLL-to-KLIB import preserves generic callback MethodImpl declarations without inventing closed signatures,
+  allowing ordinary consumers of CancellableContinuationImpl and independent equivalent interfaces.
+
+- **Bounded generic arrays preserve erased Kotlin storage and exact native boundaries (#854).**
+  Unchecked casts retain array identity and checked element access, while CLR array calls retain their
+  exact native element witness. This allows upstream ThreadSafeHeap storage and resize without common edits.
+
+- **Property references publish their resolved Kotlin override facts (#1004).**
+  Generated get/invoke/set methods retain the inherited interface declaration closure; references to a
+  property with an inaccessible setter remain read-only instead of acquiring an invalid setter slot.
+
+- **Captured invariant generic calls preserve the actual captured argument (#984).**
+  Typed forwarding uses the selected declaration and explicit runtime witnesses instead of substituting
+  an upper bound as an incompatible constructed generic argument, including across DLL boundaries.
+
+- **Projected values keep the mutable capture cell's storage representation (#991).**
+  Initializers, writes and nullable reads share the same carrier without changing the cell's generic frame,
+  including derived values stored through base-typed cells and multiple closures sharing a local.
+
+- **Continuation source inheritance survives physical coroutine ABI erasure (#722).**
+  DLL metadata retains original supertypes and generic bounds so a consumer sees consistent
+  Continuation<T> inheritance and Result<T> methods instead of a false abstract implementation obligation.
+
+- **Kotlin alias classifiers survive DLL imports (#727).**
+  Parameters, returns and member slots retain Kotlin source identities such as Throwable while still
+  using their exact native CLR signatures, preserving exception inheritance and override selection.
+
+- **Kotlin function variance and CLR delegate identity have separate representations (#909).**
+  Ordinary Kotlin functions retain identity through type-safe argument/result adaptation. CLR Func/Action
+  are nominal SAM types like other delegates, preserving their exact overload and override signatures;
+  CLR overrides must use the nominal delegate type rather than a Kotlin function type.
 
 - **Published inline generic carriers are callable across DLLs (#1013).**
   Existential views inherit their declaration's effective CLR accessibility,
@@ -471,12 +528,12 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   bir2cir carries the exact field identity through inline materialization and state-machine lowering, so a legal
   `__outer` lambda parameter cannot alias an enclosing-instance capture or produce invalid IL.
 
-- **CLR delegates now retain nominal identity in Kotlin imports (#681).** dll2klib projects every noncanonical CLR
+- **CLR delegates retain nominal identity in Kotlin imports (#681).** dll2klib initially projected each noncanonical CLR
   delegate as a callable Kotlin `fun interface` instead of collapsing its `Invoke` shape to `FunctionN`. Exact delegate
   types now participate in overloads and override slots, including `SynchronizationContext.Post`, while ordinary SAM
   construction and invocation lower through bir2cir to the referenced delegate constructor and `Invoke` MethodDef.
-  Recursive delegate graphs are naturally finite, and only the canonical `Action`/`Func` and wide `KAction`/`KFunc`
-  families remain Kotlin function types.
+  Recursive delegate graphs are naturally finite. The nominal projection is also extended to CLR `Action`/`Func`
+  by #909; compiler-owned wide `KAction`/`KFunc` families remain internal Kotlin function representations.
 
 - **Suspend lambdas can assign a suspending result through a captured mutable local (#678).** The suspend operand
   planner now types bare capture reads from the lambda's explicit capture declarations, so preserving receiver-before-
