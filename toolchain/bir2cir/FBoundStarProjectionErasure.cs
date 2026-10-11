@@ -943,6 +943,16 @@ static class FBoundStarProjectionErasure
         if (ConstructionHasHiddenWitness(companionProjection, owners, refs)
             || !ConstructionHasHiddenWitness(hiddenWitness, owners, refs))
             throw new InvalidOperationException("Projected constructor inferred a known companion or lost a hidden native witness");
+        owners["Variant"] = new Owner { Name = "Variant", ErasedName = "VariantView", Needed = true,
+            Def = JsonNode.Parse("""
+              {"kind":"class","typeParams":[{"name":"T","variance":"out"}]}
+              """).AsObject() };
+        var variant = new TypeNode.Fqn("Variant", new TypeNode[] { variable });
+        var variantArguments = construction with { Args = Enumerable.Repeat<TypeNode>(variant, 4).ToArray() };
+        if (((TypeNode.Fqn)RewriteType(variantArguments, owners, refs, preserveConstructedHead: true))
+                .Args.Any(argument => argument != new TypeNode.Fqn("VariantView"))
+            || RewriteType(variant, owners, refs, preserveConstructedHead: true) != variant)
+            throw new InvalidOperationException("A nested variant witness regained a concrete head or changed its exact constructor");
         var materialized = new JsonObject {
             ["typeParams"] = new JsonArray("T", new JsonObject {
                 ["name"] = "U", ["constraints"] = new JsonArray(TypeJson.Write(
@@ -4897,7 +4907,12 @@ static class FBoundStarProjectionErasure
             return application.Args.Select((argument, index) => RewriteType(
                 argument, owners, refs, boundDeclaration, localClrAliases,
                 preserveConstructedHead: frame != null && frame.PhysicalSlot(index).Representation
-                    is NullableRepresentationFrame.Role.Ordinary or NullableRepresentationFrame.Role.Nullable)).ToArray();
+                    is NullableRepresentationFrame.Role.Ordinary or NullableRepresentationFrame.Role.Nullable
+                    // Kotlin declaration-site variance uses the nominal carrier
+                    // even as a nested witness. Keeping its concrete head here
+                    // would disagree with the argument's allocated value type.
+                    && !(StripSourceNullability(argument) is TypeNode.Fqn variant
+                        && ProjectionCanChangeConstruction(variant, owners, refs)))).ToArray();
         }
         switch (type)
         {

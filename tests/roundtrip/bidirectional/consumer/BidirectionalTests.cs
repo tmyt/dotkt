@@ -150,7 +150,7 @@ public class BidirectionalTests
         Assert.That(BidirectionalStaticAlpha.answer(), Is.EqualTo(42));
         Assert.That(BidirectionalStaticAlpha.answer(2), Is.EqualTo(42));
         Assert.That(BidirectionalStaticBeta.answer(), Is.EqualTo(84));
-        Assert.That(BidirectionalStaticAlpha.echo("typed"), Is.EqualTo("typed"));
+        Assert.That(BidirectionalStaticAlpha.echo<string, string>("typed"), Is.EqualTo("typed"));
         Assert.That(LibraryKt.bidirectionalStaticCalls(), Is.EqualTo("42:42:84:ok:7:9:11"));
 
         static MethodInfo[] Implementations(string name) => typeof(BidirectionalStaticAlpha).Assembly.GetTypes()
@@ -175,7 +175,7 @@ public class BidirectionalTests
         BidirectionalGenericStatic<int>.genericCounter = 4;
         Assert.That(BidirectionalGenericStatic<string>.genericCounter, Is.EqualTo(4),
             "generic receiver closures must share the Kotlin declaration's one storage slot");
-        Assert.That(BidirectionalGenericStatic<object>.echoGeneric(17), Is.EqualTo(17),
+        Assert.That(BidirectionalGenericStatic<object>.echoGeneric<object, int, int>(17), Is.EqualTo(17),
             "a source method type parameter must not collide with the synthetic receiver block");
         Assert.That(ReferenceConstrainedTarget<string>.referenceConstraint(), Is.EqualTo("reference"));
         Assert.That(StructConstrainedTarget<int>.structConstraint(), Is.EqualTo("struct"));
@@ -296,8 +296,8 @@ public class BidirectionalTests
     [Test]
     public void KotlinCompanionOfAGenericOwnerIsOneObjectAcrossClosedInstantiations()
     {
-        object fromInt = BidirectionalGenericCompanionHost<int>.Companion;
-        object fromString = BidirectionalGenericCompanionHost<string>.Companion;
+        object fromInt = BidirectionalGenericCompanionHost<int, int>.Companion;
+        object fromString = BidirectionalGenericCompanionHost<string, string>.Companion;
         Assert.That(ReferenceEquals(fromInt, fromString), Is.True,
             "a generic owner's companion must be one object for every closed instantiation");
 
@@ -305,20 +305,20 @@ public class BidirectionalTests
         var carrier = fromInt.GetType();
         Assert.That(carrier.DeclaringType, Is.Null, "the carrier of a generic owner must not be nested in it");
         Assert.That(carrier.GetGenericArguments(), Is.Empty, "the carrier must declare no generic parameters");
-        Assert.That(typeof(BidirectionalGenericCompanionHost<int>).GetField("Companion")!.IsInitOnly, Is.True,
+        Assert.That(typeof(BidirectionalGenericCompanionHost<int, int>).GetField("Companion")!.IsInitOnly, Is.True,
             "the C# companion accessor must not be replaceable");
         Assert.That(carrier.GetField("$INSTANCE")!.IsInitOnly, Is.True,
             "the singleton store must not be replaceable");
 
-        BidirectionalGenericCompanionHost<int>.Companion.opened = 5;
-        Assert.That(BidirectionalGenericCompanionHost<string>.Companion.opened, Is.EqualTo(5),
+        BidirectionalGenericCompanionHost<int, int>.Companion.opened = 5;
+        Assert.That(BidirectionalGenericCompanionHost<string, string>.Companion.opened, Is.EqualTo(5),
             "companion state must be shared across closed instantiations");
-        BidirectionalGenericCompanionHost<string>.Companion.opened = 0;
+        BidirectionalGenericCompanionHost<string, string>.Companion.opened = 0;
 
         // Hoisting costs the carrier CLR nested access to the owner's private members; Kotlin's lexical access
         // must survive that unchanged.
         Assert.That(
-            BidirectionalGenericCompanionHost<int>.Companion.peek(new BidirectionalGenericCompanionHost<int>(1)),
+            BidirectionalGenericCompanionHost<int, int>.Companion.peek(new BidirectionalGenericCompanionHost<int, int>(1)),
             Is.EqualTo(7));
     }
 }

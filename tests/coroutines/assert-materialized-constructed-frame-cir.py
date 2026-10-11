@@ -46,6 +46,7 @@ mixed_box = {
             "args": [owner_t],
         },
         owner_t,
+        {"t": "tv", "scope": "type", "i": 1},
     ],
 }
 
@@ -65,9 +66,9 @@ for state_machine_name, box_name, expected in (
 
     state_machine = state_machines[0]
     frame = state_machine.get("capturedTypeParams", []) + state_machine.get("typeParams", [])
-    if len(frame) != 1:
+    if frame != ["dotkt$outer0", "dotkt$outer1"]:
         raise SystemExit(
-            f"CIR: {state_machine_name} does not declare exactly its enclosing owner's T"
+            f"CIR: {state_machine_name} does not capture its enclosing owner's native/storage frame"
         )
 
     constructions = [

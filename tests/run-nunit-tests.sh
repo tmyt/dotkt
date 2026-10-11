@@ -417,11 +417,11 @@ for proj in "${PROJECTS[@]}"; do
 			tail -25 "$ROOT/build/nunit-$name.nullable-suspend-method-bound.log"; rc=1
 		fi
 		if dotnet "$METADATA_INSPECTOR_DLL" \
-			--klib-class-fake-override-nullable-method-bound "$producer_klib" \
+			--klib-class-declared-override-nullable-method-bound "$producer_klib" \
 			"starprojection.ReferencedNullableMethodImplementation" \
 			"inheritedNullableMethodBound" \
 			>"$ROOT/build/nunit-$name.nullable-inherited-method-bound.log" 2>&1; then
-			echo "  inherited fake override preserves nullable owner-dependent method bound"
+			echo "  authored override preserves nullable owner-dependent method bound"
 		else
 			echo "  NULLABLE INHERITED METHOD BOUND KLIB SHAPE FAIL — see build/nunit-$name.nullable-inherited-method-bound.log"
 			tail -25 "$ROOT/build/nunit-$name.nullable-inherited-method-bound.log"; rc=1

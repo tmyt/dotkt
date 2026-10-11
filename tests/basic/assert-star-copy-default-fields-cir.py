@@ -216,7 +216,7 @@ if len(inherited_helpers) != 1:
 exact_nested = {
     "t": "fqn",
     "name": "DefaultArgStarNested",
-    "args": [{"t": "fqn", "name": "System.String"}],
+    "args": [{"t": "fqn", "name": "System.String"}] * 2,
 }
 inherited_locals = [
     node

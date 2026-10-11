@@ -10,10 +10,17 @@ public class PhysicalNrtPositionsTests
     private static void AssertPair(NullabilityInfo info, NullabilityState second)
     {
         Assert.That(info.ReadState, Is.EqualTo(NullabilityState.NotNull));
-        Assert.That(info.GenericTypeArguments.Length, Is.EqualTo(2));
+        Assert.That(info.GenericTypeArguments.Length, Is.EqualTo(4));
         Assert.That(info.GenericTypeArguments[0].Type, Is.EqualTo(typeof(IComparable)));
         Assert.That(info.GenericTypeArguments[0].ReadState, Is.EqualTo(NullabilityState.Nullable));
         Assert.That(info.GenericTypeArguments[1].ReadState, Is.EqualTo(second));
+        for (var index = 0; index < 2; index++)
+        {
+            Assert.That(info.GenericTypeArguments[index + 2].Type,
+                Is.EqualTo(info.GenericTypeArguments[index].Type));
+            Assert.That(info.GenericTypeArguments[index + 2].ReadState,
+                Is.EqualTo(info.GenericTypeArguments[index].ReadState));
+        }
     }
 
     [Test]
@@ -61,12 +68,19 @@ public class PhysicalNrtPositionsTests
         var method = typeof(StringNrtExchange).GetMethod("exchange")!;
         foreach (var info in new[] { Context.Create(method.ReturnParameter), Context.Create(method.GetParameters()[0]) })
         {
-            Assert.That(info.GenericTypeArguments.Length, Is.EqualTo(3));
+            Assert.That(info.GenericTypeArguments.Length, Is.EqualTo(6));
             Assert.That(info.GenericTypeArguments[0].Type, Is.EqualTo(typeof(string)));
             Assert.That(info.GenericTypeArguments[0].ReadState, Is.EqualTo(NullabilityState.Nullable));
             Assert.That(info.GenericTypeArguments[1].Type, Is.EqualTo(typeof(IComparable)));
             Assert.That(info.GenericTypeArguments[1].ReadState, Is.EqualTo(NullabilityState.Nullable));
             Assert.That(info.GenericTypeArguments[2].ReadState, Is.EqualTo(NullabilityState.NotNull));
+            for (var index = 0; index < 3; index++)
+            {
+                Assert.That(info.GenericTypeArguments[index + 3].Type,
+                    Is.EqualTo(info.GenericTypeArguments[index].Type));
+                Assert.That(info.GenericTypeArguments[index + 3].ReadState,
+                    Is.EqualTo(info.GenericTypeArguments[index].ReadState));
+            }
         }
     }
 }

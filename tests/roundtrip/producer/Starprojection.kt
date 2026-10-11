@@ -381,8 +381,8 @@ open class ReferencedCapturedNullableOuter<T, U : T?> {
 }
 
 interface ReferencedNullableMethodContract<T> {
-    // The covariant implementation return requires a real CLR MethodImpl, keeping the dll2klib fake-override path
-    // under test even when an exact public implementation can satisfy an interface slot implicitly.
+    // The covariant implementation return requires a real CLR MethodImpl. Its bridge must not replace the
+    // authored override's declaration identity or nullable owner-dependent method bound in KLIB.
     fun <E : T?> inheritedNullableMethodBound(value: E): Any
 }
 

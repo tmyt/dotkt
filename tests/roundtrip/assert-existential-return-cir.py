@@ -104,6 +104,7 @@ composed_casts = [
     if node.get("k") == "cast"
 ]
 if sorted(composed_casts) != sorted([
+    "System.Object",
     "starprojection.ReferencedExistentialFusibleFlow$star",
     "starprojection.ReferencedExistentialFlow$star",
 ]):
@@ -250,8 +251,8 @@ for method_name, mixed_call in mixed_calls.items():
 
 exact_nested = {
     "t": "fqn",
-    "name": "starprojection.ReferencedStarNested`1",
-    "args": [{"t": "fqn", "name": "System.String"}],
+    "name": "starprojection.ReferencedStarNested`2",
+    "args": [{"t": "fqn", "name": "System.String"}] * 2,
 }
 for source_name, projected_type in {
     "capturedNested": nested_carrier,
@@ -332,13 +333,13 @@ variant_constructions = [
     for node in objects(body)
     if node.get("k") == "new"
     and node.get("type", {}).get("name") in {
-        "starprojection.ReferencedCovariantArrayClass`1",
+        "starprojection.ReferencedCovariantArrayClass`2",
         "starprojection.ReferencedContravariantClass`1",
     }
 ]
 expected_constructions = {
-    ("starprojection.ReferencedCovariantArrayClass`1", "System.Int32"),
-    ("starprojection.ReferencedCovariantArrayClass`1", "System.String"),
+    ("starprojection.ReferencedCovariantArrayClass`2", "System.Int32"),
+    ("starprojection.ReferencedCovariantArrayClass`2", "System.String"),
     ("starprojection.ReferencedContravariantClass`1", "System.Object"),
 }
 observed_constructions = {
@@ -349,6 +350,11 @@ if observed_constructions != expected_constructions:
     raise SystemExit(
         f"referenced variant class constructors lost their exact constructed heads: {observed_constructions!r}"
     )
+for construction in variant_constructions:
+    arguments = construction["type"]["args"]
+    expected_arity = 2 if construction["type"]["name"].endswith("`2") else 1
+    if len(arguments) != expected_arity or any(argument != arguments[0] for argument in arguments):
+        raise SystemExit(f"referenced constructor native/storage witnesses disagree: {construction!r}")
 
 variant_member_calls = [
     node

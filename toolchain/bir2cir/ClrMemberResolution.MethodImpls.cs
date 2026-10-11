@@ -81,6 +81,9 @@ static partial class ClrMemberResolution
     static bool ExternalMethodImplSlotMatches(MethodInfo candidate, Type open, TypeNode[] ownerArgs,
         IReadOnlyList<TypeNode> parameters, TypeNode ret)
     {
+        // Reflection may express an inherited member in the receiver's frame.
+        // Substitute the declaration's own signature through the declaring edge once.
+        candidate = (MethodInfo)OpenDeclarationOf(candidate);
         var declarer = DeclaringTypeRef(candidate, open, ownerArgs ?? Array.Empty<TypeNode>()) as TypeNode.Fqn;
         var declaringArgs = declarer?.Args ?? Array.Empty<TypeNode>();
         var candidateParameters = RefParamsOf(candidate)
