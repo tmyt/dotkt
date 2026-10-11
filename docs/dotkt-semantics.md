@@ -231,22 +231,16 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   SAM, and suspend-lambda bodies. The hidden argument is added only after Kotlin semantic factories/intrinsics have
   consumed the source-visible argument vector. Non-null values still use the ordinary CLR `isinst` against the
   underlying runtime type.
-- **Corollary — an UNCHECKED generic cast (`as T`, incl. `@Suppress("UNCHECKED_CAST")`) is checked
-  EAGERLY at the cast site, not erased.** kotc emits every `x as T` (including a smart-cast) as a
-  plain `cast` BIR node regardless of whether `T` is reified (`BirEmitterExpressions.kt:226-229`);
-  ilemit lowers it to `unbox.any`/`castclass !!T` at that exact IL offset
-  (`Emitter.Expressions.cs:539-558`) — because CLR generics are reified, that instruction is a REAL,
-  immediate check. On the JVM the same cast is ERASED: it is either a no-op (`(List<String>)
-  listOf(1, 2, 3)` succeeds silently; a `ClassCastException` fires only when an element is later USED
-  as `String`) or, inside a generic function, performs **no check in the callee at all**
-  (`fun <T> f(x: Any?) = x as T` never faults on the cast itself). On DotKt both throw
-  `InvalidCastException` **immediately** — `listOf(1, 2, 3) as List<String>` throws on the cast line,
-  and `f<String>(42)` throws INSIDE `f`, not at `f`'s call site. Code that relied on JVM
-  erasure/heap-pollution tolerance (a common `@Suppress("UNCHECKED_CAST")` pattern) fails earlier and
-  in a different place on the CLR. **Edge case:** a non-null `String` variable holding `null` via an
-  unchecked cast still renders as `""` in string concatenation (`String.Concat` treats a null
-  reference as empty), whereas a genuinely-nullable `String?` holding `null` renders `"null"` — same
-  value, different textual result, depending on how the null got there.
+- **An unchecked generic return need not narrow before its value is used.** For a final method
+  returning `Any? as T` with a non-reified, unbounded type parameter, bir2cir uses an `object`
+  result and retains the source `T` in Kotlin metadata. A directly initialized generic local
+  likewise keeps that erased value until a typed consumer requires a conversion. This applies
+  to both class- and method-scoped value-storage companions: a storage companion is not a
+  nullable companion and must not overwrite the explicit deferred result. A null or wrong-type
+  value that is never consumed must not acquire an early `unbox.any` or `castclass` merely
+  because the CLR retains physical generic arguments. Concrete typed consumers still narrow
+  explicitly, and those CLR conversions can fail. Reified Kotlin checks remain governed by
+  their separate type witnesses; ilemit only emits the conversions already resolved in CIR.
 - Deep dive: §3 (inline).
 
 ## 2b. `tailrec` IS tail-call optimized — deep tail recursion runs in constant stack (matches Kotlin/JVM)
@@ -2214,9 +2208,11 @@ What this is observable as:
 - **`===` on two boxed values is `false`** even when they are equal, because each crossing produces a fresh box and
   the CLR has no small-integer cache. This is the same rule as §5a-bis, reached through the erasure instead of
   through an explicit `Any` — `val a: Int? = 1; val b: Int? = 1` compared as `T?` through a generic slot is `false`.
-- **`null as T` throws AT THE CAST** when `T` is a value type, not at the first use, because the narrowing is a real
-  `unbox.any` on a null reference (`NullReferenceException`). Kotlin/JVM defers it to the first use; the Kotlin
-  contract does not specify where an unchecked cast fails, and failing at the cast is the more locatable of the two.
+- **Narrowing null to a physical value-type slot throws** because `unbox.any` on a null reference raises
+  `NullReferenceException`. A non-reified unchecked generic return and its directly initialized generic local
+  can retain the erased object until a typed consumer needs that narrowing, as described in §2a; merely storing
+  an unused result must not force the exception earlier. Concrete and reified cast operations still perform
+  their explicitly resolved checks.
 - **Reflection loses intensionality.** `GetType()` on a value read out of an erased slot reports `Int32`, not
   `Nullable<Int32>` (the CLR has no boxed `Nullable<V>` — that is the same collapse the representation relies on),
   and an absent value has no object to ask at all. The semantic type comes from the DotKt metadata, not from

@@ -24,6 +24,7 @@ private class DeferredMethodStorageReader {
 
     private fun <T> consume(value: T): Int = value.hashCode()
 
+    // The value parameter demands the caller's method-scoped storage companion.
     fun <T> readWhenRequested(seed: T, use: Boolean, raw: Any?): Int {
         val value = read<T>(raw)
         if (!use) return 7

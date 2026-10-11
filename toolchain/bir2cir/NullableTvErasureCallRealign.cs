@@ -1218,10 +1218,13 @@ static partial class NullableTvErasureCallRealign
     {
         var roleFrame = new NullableRepresentationFrame(1, new[] { 0 }, new[] { 2, 0, 3, 1 },
             storageIndices: new[] { 0 }, nullableStorageIndices: new[] { 0 });
-        var roleContext = new Ctx { OwnerNullableFrame = roleFrame, MethodNullableFrame = roleFrame };
+        var methodRoleFrame = new NullableRepresentationFrame(1, new[] { 0 }, new[] { 1, 3, 0, 2 },
+            storageIndices: new[] { 0 }, nullableStorageIndices: new[] { 0 });
+        var roleContext = new Ctx { OwnerNullableFrame = roleFrame, MethodNullableFrame = methodRoleFrame };
         foreach (var scope in new[] { "type", "method" })
             foreach (var role in Enum.GetValues<NullableRepresentationFrame.Role>())
-                if (roleContext.IsNullableCompanion(roleFrame.Variable(new TypeNode.Tv(scope, 0), role))
+                if (roleContext.IsNullableCompanion((scope == "type" ? roleFrame : methodRoleFrame)
+                        .Variable(new TypeNode.Tv(scope, 0), role))
                     != (role is NullableRepresentationFrame.Role.Nullable or NullableRepresentationFrame.Role.NullableStorage))
                     throw new InvalidOperationException("Nullable result realignment confused a storage companion with a nullable slot");
 
