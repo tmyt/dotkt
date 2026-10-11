@@ -12,9 +12,8 @@ using DotKt.Bir;
 // for each type param the callee places inside an INVARIANT constructed collection generic, realign the CALL's `typeArg`
 // to the corresponding type-argument of the ACTUAL argument's declared type, overriding the `kotlin.Any` approximation.
 //
-// #37 m1: FULLY POSITIONAL. kotc's `sig` now collapses every type var to `gp:T` (indistinguishable by name), so the
-// realignment keys on the callee's STRUCTURED param TYPES (a `Tv` in an invariant-collection param names the type-param
-// INDEX via its `i`), matched positionally against the actual arg's structured type — never a `gp:NAME` string match.
+// The selected declaration supplies the formal parameter vector. Constructed arguments are matched by
+// source parameter and representation role: Map and MutableMap can have different companion layouts.
 static class MapVarianceRealign
 {
     // The invariant BCL collection generics (their @ClrTypeAlias Kotlin FQNs). Type params here do NOT lift via CLR
@@ -27,8 +26,8 @@ static class MapVarianceRealign
         "kotlin.collections.HashSet", "kotlin.collections.LinkedHashSet",
     };
 
-    // funName|typeParamCount -> the callee's ORDERED param TYPES (structured), aggregated across every input BIR file
-    // (a same-assembly cross-file call keeps `owner:null`, so the callee may live in another input). First-wins.
+    // The frontend-selected declaration owns this vector. A physical generic
+    // arity is not an overload identity and does not state companion roles.
     public static Dictionary<string, TypeNode[]> CollectCalleeTypeParams(IEnumerable<JsonNode> roots)
     {
         var map = new Dictionary<string, TypeNode[]>(StringComparer.Ordinal);
@@ -51,28 +50,45 @@ static class MapVarianceRealign
         foreach (var m in arr)
         {
             if (m is not JsonObject mo) continue;
-            if (Str(mo["name"]) is not string name) continue;
+            if (Str(mo[DeclarationIdentityBinding.Key]) is not string id) continue;
             if (mo["typeParams"] is not JsonArray tps || tps.Count == 0) continue;
             var paramTypes = (mo["params"] as JsonArray ?? new JsonArray())
                 .Select(p => (p as JsonObject) is JsonObject po ? TypeJson.Read(po["type"]) : null).ToArray();
-            map.TryAdd(name + "|" + tps.Count, paramTypes);
+            if (map.TryGetValue(id, out var previous) && !previous.SequenceEqual(paramTypes))
+                throw new InvalidOperationException("Collection realignment has conflicting selected declaration signatures");
+            map[id] = paramTypes;
         }
     }
 
     public static void Apply(JsonNode root, IReadOnlyDictionary<string, TypeNode[]> calleeTypeParams, ReferenceMetadataIndex refs)
     {
+        var typeFrames = refs == null ? new Dictionary<string, NullableRepresentationFrame>(StringComparer.Ordinal)
+            : new Dictionary<string, NullableRepresentationFrame>(refs.NullableTypeFrames, StringComparer.Ordinal);
+        foreach (var definition in SupertypeGraph.Collect(new[] { root }).Values)
+        {
+            var frame = KotlinSupertypesRecord.ReadNullableFrame(definition.Node);
+            if (frame == null) typeFrames.Remove(definition.Name);
+            else typeFrames[definition.Name] = frame;
+        }
+        Apply(root, calleeTypeParams, refs, typeFrames);
+    }
+
+    static void Apply(JsonNode root, IReadOnlyDictionary<string, TypeNode[]> calleeTypeParams, ReferenceMetadataIndex refs,
+        IReadOnlyDictionary<string, NullableRepresentationFrame> typeFrames)
+    {
         if (root is not JsonObject o) return;
         var ownerFrame = Str(o[KotlinSupertypesRecord.PreKey]) is string facts
             && JsonNode.Parse(facts)?[NullableRepresentationFrame.MetadataKey] is JsonNode frame
             ? NullableRepresentationFrame.Read(frame) : null;
-        ProcessMethods(o["methods"], calleeTypeParams, refs, ownerFrame);
+        ProcessMethods(o["methods"], calleeTypeParams, refs, ownerFrame, typeFrames);
         if (o["types"] is JsonArray types)
             foreach (var t in types)
-                if (t != null) Apply(t, calleeTypeParams, refs);
+                if (t != null) Apply(t, calleeTypeParams, refs, typeFrames);
     }
 
     static void ProcessMethods(JsonNode methods, IReadOnlyDictionary<string, TypeNode[]> calleeTypeParams,
-        ReferenceMetadataIndex refs, NullableRepresentationFrame ownerFrame)
+        ReferenceMetadataIndex refs, NullableRepresentationFrame ownerFrame,
+        IReadOnlyDictionary<string, NullableRepresentationFrame> typeFrames)
     {
         if (methods is not JsonArray arr) return;
         foreach (var m in arr)
@@ -115,7 +131,7 @@ static class MapVarianceRealign
                 // physical source type. The latter has no CLR value-type covariance, and its sole Kotlin operation
                 // is routed through an erased receiver by MemberCallSubstitution.
                 RealignVarTypes(body, env, aliases, constraints);
-                Walk(body, env, calleeTypeParams, aliases, constraints, refs, NullableArgument);
+                Walk(body, env, calleeTypeParams, aliases, constraints, refs, NullableArgument, typeFrames);
             }
         }
     }
@@ -187,23 +203,24 @@ static class MapVarianceRealign
 
     static void Walk(JsonNode node, Dictionary<string, TypeNode> env, IReadOnlyDictionary<string, TypeNode[]> calleeTypeParams,
         IReadOnlyDictionary<string, string> aliases, IReadOnlyDictionary<int, TypeNode> constraints, ReferenceMetadataIndex refs,
-        System.Func<TypeNode, TypeNode> nullableArgument)
+        System.Func<TypeNode, TypeNode> nullableArgument,
+        IReadOnlyDictionary<string, NullableRepresentationFrame> typeFrames)
     {
         if (node is JsonObject o)
         {
             var k = Str(o["k"]);
             if (k == "callStatic" || k == "callInstance")
-                Realign(o, env, calleeTypeParams);
+                Realign(o, env, calleeTypeParams, typeFrames);
             if (k == "callInstance")
                 OwnerVarianceRealign(o, env, aliases, constraints);
             if (k == "new")
                 RealignFactoryCtorArgTypes(o, refs, nullableArgument);
             foreach (var kv in o)
-                if (kv.Value != null) Walk(kv.Value, env, calleeTypeParams, aliases, constraints, refs, nullableArgument);
+                if (kv.Value != null) Walk(kv.Value, env, calleeTypeParams, aliases, constraints, refs, nullableArgument, typeFrames);
         }
         else if (node is JsonArray a)
             foreach (var it in a)
-                if (it != null) Walk(it, env, calleeTypeParams, aliases, constraints, refs, nullableArgument);
+                if (it != null) Walk(it, env, calleeTypeParams, aliases, constraints, refs, nullableArgument, typeFrames);
     }
 
     // CONSTRUCTION-ARGUMENT covariance realign (il-bymap regression, klib migration #80): a collection-factory
@@ -253,7 +270,8 @@ static class MapVarianceRealign
             try
             {
                 closedArgs = factoryFrame == null ? targetArgs
-                    : factoryFrame.Close(targetArgs, argument => argument, nullableArgument);
+                    : factoryFrame.Close(targetArgs, argument => argument, nullableArgument,
+                        argument => argument, nullableArgument);
             }
             catch (ArgumentException ex)
             {
@@ -308,14 +326,13 @@ static class MapVarianceRealign
         return name;
     }
 
-    static void Realign(JsonObject call, Dictionary<string, TypeNode> env, IReadOnlyDictionary<string, TypeNode[]> calleeTypeParams)
+    static void Realign(JsonObject call, Dictionary<string, TypeNode> env, IReadOnlyDictionary<string, TypeNode[]> calleeTypeParams,
+        IReadOnlyDictionary<string, NullableRepresentationFrame> typeFrames)
     {
         if (call["typeArgs"] is not JsonArray typeArgs || typeArgs.Count == 0) return;
-        if (Str(call["method"]) is not string method) return;
+        if (Str(call[DeclarationIdentityBinding.Key]) is not string id) return;
         if (call["args"] is not JsonArray args) return;
-        // The callee's ordered param TYPES (keyed by name|typeParamCount == typeArgs.Count). A `Tv` inside an
-        // invariant-collection param names the type-param INDEX (its `i`); the actual arg pins that typeArg.
-        if (!calleeTypeParams.TryGetValue(method + "|" + typeArgs.Count, out var paramTypes)) return;
+        if (!calleeTypeParams.TryGetValue(id, out var paramTypes)) return;
 
         var count = Math.Min(paramTypes.Length, args.Count);
         Dictionary<int, TypeNode> subst = null;
@@ -323,15 +340,30 @@ static class MapVarianceRealign
         {
             if (paramTypes[i] is not TypeNode pt || InvariantGenericArgs(pt) is not TypeNode[] sigGps) continue;
             if (ActualArgType(args[i], env) is not TypeNode actual || InvariantGenericArgs(actual) is not TypeNode[] actualGps) continue;
-            var n = Math.Min(sigGps.Length, actualGps.Length);
-            for (var j = 0; j < n; j++)
-                if (sigGps[j] is TypeNode.Tv tv && actualGps[j] is not TypeNode.Tv && tv.I >= 0 && tv.I < typeArgs.Count)
-                    (subst ??= new Dictionary<int, TypeNode>())[tv.I] = actualGps[j];
+            var formal = ArgumentRoles((TypeNode.Fqn)pt, sigGps, typeFrames);
+            var concrete = ArgumentRoles((TypeNode.Fqn)actual, actualGps, typeFrames);
+            foreach (var (role, parameter) in formal)
+                if (parameter is TypeNode.Tv { Scope: "method" } tv
+                    && concrete.TryGetValue(role, out var argument) && argument is not TypeNode.Tv
+                    && tv.I >= 0 && tv.I < typeArgs.Count)
+                    (subst ??= new Dictionary<int, TypeNode>())[tv.I] = argument;
         }
         if (subst == null) return;
         foreach (var (idx, concrete) in subst)
             if (!(TypeJson.Read(typeArgs[idx]) is TypeNode cur && cur == concrete))   // already aligned -> no-op
                 typeArgs[idx] = TypeJson.Write(concrete);
+    }
+
+    static Dictionary<NullableRepresentationFrame.Slot, TypeNode> ArgumentRoles(TypeNode.Fqn owner, TypeNode[] arguments,
+        IReadOnlyDictionary<string, NullableRepresentationFrame> frames)
+    {
+        frames.TryGetValue(owner.Name, out var frame);
+        if (frame != null && frame.PhysicalArity != arguments.Length)
+            throw new InvalidOperationException("Collection arguments disagree with their declaration-owned frame");
+        return arguments.Select((argument, index) => (argument,
+                slot: frame?.PhysicalSlot(index)
+                    ?? new NullableRepresentationFrame.Slot(index, NullableRepresentationFrame.Role.Ordinary)))
+            .ToDictionary(pair => pair.slot, pair => pair.argument);
     }
 
     // The generic type-argument tokens of a type whose head is an INVARIANT collection generic, e.g.
@@ -361,6 +393,69 @@ static class MapVarianceRealign
         TypeNode.Fqn { Args: null } f => f.Name is "kotlin.Any" or "object",
         _ => false,
     };
+
+    internal static void SelfTest()
+    {
+        TypeNode M(int index) => new TypeNode.Tv("method", index);
+        var text = new TypeNode.Fqn("kotlin.String", null);
+        var any = new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any", null));
+        var mapFrame = new NullableRepresentationFrame(2, Array.Empty<int>(), storageIndices: new[] { 0, 1 });
+        var mutableFrame = new NullableRepresentationFrame(2, new[] { 1 }, storageIndices: new[] { 0, 1 });
+        var frames = new Dictionary<string, NullableRepresentationFrame>(StringComparer.Ordinal)
+        {
+            ["kotlin.collections.Map"] = mapFrame,
+            ["kotlin.collections.MutableMap"] = mutableFrame,
+        };
+        JsonObject Declaration(string id, TypeNode parameter) => new()
+        {
+            ["name"] = "sameName", [DeclarationIdentityBinding.Key] = id,
+            ["typeParams"] = new JsonArray(new JsonObject(), new JsonObject(), new JsonObject(), new JsonObject()),
+            ["params"] = new JsonArray(new JsonObject { ["name"] = "map", ["type"] = TypeJson.Write(parameter) }),
+        };
+        var formals = new TypeNode[] { M(0), M(1), M(2), M(3) };
+        var selected = new TypeNode.Fqn("kotlin.collections.Map", formals);
+        var unrelated = new TypeNode.Fqn("kotlin.collections.Map", new TypeNode[] { M(3), M(2), M(1), M(0) });
+        var declarations = CollectCalleeTypeParams(new[] { new JsonObject
+        {
+            ["methods"] = new JsonArray(Declaration("unrelated", unrelated), Declaration("selected", selected)),
+        } });
+        JsonObject Call() => new()
+        {
+            ["k"] = "callStatic", ["method"] = "sameName", [DeclarationIdentityBinding.Key] = "selected",
+            ["typeArgs"] = new JsonArray(TypeJson.Write(any), TypeJson.Write(M(0)), TypeJson.Write(any), TypeJson.Write(M(2))),
+            ["args"] = new JsonArray(new JsonObject { ["k"] = "local", ["name"] = "map" }),
+        };
+        var env = new Dictionary<string, TypeNode>(StringComparer.Ordinal)
+        {
+            ["map"] = new TypeNode.Fqn("kotlin.collections.MutableMap", new TypeNode[] { text, M(0), M(1), text, M(2) }),
+        };
+        void AssertCall(JsonObject call)
+        {
+            var actual = call["typeArgs"].AsArray().Select(TypeJson.Read).ToArray();
+            if (!actual.SequenceEqual(new TypeNode[] { text, M(0), text, M(2) }))
+                throw new InvalidOperationException("Collection realignment confused source or companion roles");
+        }
+        var call = Call();
+        Realign(call, env, declarations, frames);
+        AssertCall(call);
+
+        // A nested owner may place companions before ordinary arguments. Role identity, not
+        // matching vector offsets, still identifies the key and value representations.
+        frames["kotlin.collections.MutableMap"] = new NullableRepresentationFrame(2, new[] { 1 },
+            new[] { 4, 0, 2, 3, 1 }, new[] { 0, 1 });
+        env["map"] = new TypeNode.Fqn("kotlin.collections.MutableMap", new TypeNode[] { M(2), text, M(1), text, M(0) });
+        call = Call();
+        Realign(call, env, declarations, frames);
+        AssertCall(call);
+
+        // An owner's !0 is not the call's !!0. It cannot bind a method argument.
+        declarations["selected"] = new TypeNode[] { new TypeNode.Fqn("kotlin.collections.Map",
+            new TypeNode[] { new TypeNode.Tv("type", 0), M(1), M(2), M(3) }) };
+        call = Call();
+        Realign(call, env, declarations, frames);
+        if (TypeJson.Read(call["typeArgs"][0]) != any)
+            throw new InvalidOperationException("Collection realignment rebound an owner variable as a method variable");
+    }
 
     static string Str(JsonNode n) => (n as JsonValue)?.TryGetValue<string>(out var s) == true ? s : null;
 }

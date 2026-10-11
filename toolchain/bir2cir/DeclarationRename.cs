@@ -19,15 +19,20 @@ static class DeclarationRename
 
     // Recursively consume every `overrides` marker. Calls and ordinary functions may adopt the resolved CLR slot;
     // accessor declarations keep their dedicated name while receiving override flags and an explicit base slot.
-    public static void Apply(JsonNode root, ReferenceMetadataIndex refs) => Walk(root, refs, false);
+    public static void Apply(JsonNode root, ReferenceMetadataIndex refs) => Walk(root, refs, false, null);
 
-    static void Walk(JsonNode node, ReferenceMetadataIndex refs, bool inIface)
+    static void Walk(JsonNode node, ReferenceMetadataIndex refs, bool inIface, NullableRepresentationFrame ownerFrame)
     {
         if (node is JsonObject obj)
         {
             // Track whether we're inside an INTERFACE type def: kotc's ifaceMethod hardcodes `override:false` for
             // interface members (even ones that bind a CLR slot), so bir2cir must NOT stamp override:true there.
-            if ((obj["kind"] as JsonValue)?.GetValue<string>() is string k) inIface = k == "interface";
+            if ((obj["kind"] as JsonValue)?.GetValue<string>() is string k)
+            {
+                inIface = k == "interface";
+                if (k is "class" or "interface" or "struct" or "enum")
+                    ownerFrame = KotlinSupertypesRecord.ReadNullableFrame(obj);
+            }
             if (obj["overrides"] is JsonArray ovs)
             {
                 // Property rows retain only their semantic association here. Their exact physical getter/setter links
@@ -38,7 +43,7 @@ static class DeclarationRename
                 var semanticPropertyDeclaration = obj.ContainsKey("name")
                     && KotlinPropertyAccessors.TryIdentity(obj, out _, out _);
                 if (obj[KotlinPropertyAccessors.PropertyRolesKey] is not JsonArray && !semanticPropertyCall
-                    && ResolveSlot(obj, ovs, refs) is string slot)
+                    && ResolveSlot(obj, ovs, refs, ownerFrame) is string slot)
                 {
                     if ((obj["k"] as JsonValue)?.GetValue<string>() == "callInstance")
                     {
@@ -114,10 +119,10 @@ static class DeclarationRename
                     }
                 }
             }
-            foreach (var kv in obj) if (kv.Value != null) Walk(kv.Value, refs, inIface);
+            foreach (var kv in obj) if (kv.Value != null) Walk(kv.Value, refs, inIface, ownerFrame);
         }
         else if (node is JsonArray arr)
-            foreach (var it in arr) if (it != null) Walk(it, refs, inIface);
+            foreach (var it in arr) if (it != null) Walk(it, refs, inIface, ownerFrame);
     }
 
     // #73 M4-c — the .NET base CLASS owner FQN in an accessor's override closure (a virtual property whose declaring
@@ -189,7 +194,8 @@ static class DeclarationRename
     // referenced Property/MethodSemantics association; ordinary methods use source name + method generic arity + the
     // complete parameter vector in the override owner's constructed frame.
     // null = no CLR-bound member in the closure (leave the kotc name).
-    internal static string ResolveSlot(JsonObject declaration, JsonArray ovs, ReferenceMetadataIndex refs)
+    internal static string ResolveSlot(JsonObject declaration, JsonArray ovs, ReferenceMetadataIndex refs,
+        NullableRepresentationFrame ownerFrame = null)
     {
         foreach (var o in ovs)
         {
@@ -211,6 +217,18 @@ static class DeclarationRename
             }
             if (!TryCallableSignature(declaration, out var signature, out var methodArity)
                 || signature.Length != arity) continue;
+            // A call's physical value vector may already use storage companions.
+            // Override selection still owns the pristine selected Kotlin descriptor.
+            if (declaration["k"]?.GetValue<string>() == "callInstance"
+                && refs.DeclarationOverrideParameters(declaration[DeclarationIdentityBinding.Key]?.GetValue<string>())
+                    is { } sourceParameters)
+                signature = sourceParameters;
+            if (declaration["params"] is JsonArray parameters)
+            {
+                var methodFrame = NullableRepresentationTypes.DeclarationMethodFrame(declaration);
+                signature = signature.Select((type, index) => NullableRepresentationTypes.BindingScalar(type,
+                    parameters[index]?["nullableGeneric"], ownerFrame, methodFrame)).ToArray();
+            }
             if (refs.TryProjectedIndexerSlot(ownerSpec, member, methodArity, signature, out var indexerSlot, out _))
                 return indexerSlot;
             // A declaration's params live in the declaring type's frame, so close the referenced ancestor into that

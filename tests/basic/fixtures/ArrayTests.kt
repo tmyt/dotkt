@@ -34,6 +34,10 @@ import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import NUnit.Framework.Legacy.ClassicAssert.IsNull as assertNull
 
+private fun <T> arrInsertIntoGenericDeque(values: ArrayDeque<T>, value: T) {
+    values.add(0, value)
+}
+
 // ---- #86 D2 : the OPEN forms of `Array<T?>` / `Array<T>`, exercised at a VALUE instantiation ---------------------
 // `Array<T?>` is the erased slot itself; `Array<T>` at `T = Int?` is the same physical array reached through a BARE
 // type parameter, which is what forces the instantiation to name the element's one representation.
@@ -439,6 +443,16 @@ class ArrayTests {
         val withEffect = intArrayOf(1, *run { spreadReads = spreadReads + 1; middle }, 4)
         assertEquals(1, spreadReads)
         assertEquals("[1, 2, 3, 4]", withEffect.toList().toString())
+    }
+
+    @TestAttribute
+    fun genericDequeInsertionUsesTheSelectedSlot() {
+        val words = ArrayDeque<String>()
+        arrInsertIntoGenericDeque(words, "selected")
+        assertEquals("selected", words[0])
+        val numbers = ArrayDeque<Int>()
+        arrInsertIntoGenericDeque(numbers, 42)
+        assertEquals(42, numbers[0])
     }
 
     @TestAttribute

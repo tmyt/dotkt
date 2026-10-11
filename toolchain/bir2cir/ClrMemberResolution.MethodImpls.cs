@@ -31,6 +31,11 @@ static partial class ClrMemberResolution
             || _localTypes.Contains(ownerSpec.Name)) return;
         var name = (descriptor["member"] as JsonValue)?.TryGetValue<string>(out var member) == true
             ? member : null;
+        // A metadata-only Kotlin declaration can retain its source MethodDef
+        // name while the runtime declaration adopts its selected CLR override
+        // allocation. The slot pass carries both identities explicitly.
+        var referenceName = (descriptor["referenceMember"] as JsonValue)?.TryGetValue<string>(out var sourceMember) == true
+            ? sourceMember : name;
         var arity = (descriptor["arity"] as JsonValue)?.TryGetValue<int>(out var genericArity) == true
             ? genericArity : -1;
         var rawReturn = TypeJson.Read(descriptor["ret"]);
@@ -53,7 +58,7 @@ static partial class ClrMemberResolution
         // intermediate base.
         const BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
         var candidates = open.GetMethods(flags)
-            .Where(method => method.Name == name && method.IsVirtual
+            .Where(method => method.Name == referenceName && method.IsVirtual
                 && method.GetGenericArguments().Length == arity
                 && method.GetParameters().Length == parameters.Count
                 && (method.IsPublic || method.IsFamily || method.IsFamilyOrAssembly))
@@ -69,6 +74,8 @@ static partial class ClrMemberResolution
         var winner = matches[0];
         descriptor["memberRef"] = MemberRefJson(
             winner, MemberRefNode.Kinds.Method, open, ownerSpec.Args ?? Array.Empty<TypeNode>());
+        descriptor["memberRef"]["name"] = name;
+        descriptor.Remove("referenceMember");
     }
 
     static bool ExternalMethodImplSlotMatches(MethodInfo candidate, Type open, TypeNode[] ownerArgs,

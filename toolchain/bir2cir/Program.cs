@@ -28,6 +28,7 @@ static class Bir2Cir
                 StdlibBindingOverlay.SelfTest();
                 DeclarationIdentityBinding.SelfTest();
                 DeclarationSignatureIdentity.SelfTest();
+                PhysicalValueCoercion.SelfTest();
                 KotlinPropertyAccessors.SelfTestAccessorSignatures();
                 LexicalDeclarationIds.SelfTest();
                 ExistentialReceiverBinding.SelfTest();
@@ -37,6 +38,7 @@ static class Bir2Cir
                 NullableRepresentationDemand.SelfTest();
                 NullableRepresentationTypes.SelfTest();
                 NullableRepresentationMaterialization.SelfTest();
+                EnumIntrinsicLowering.SelfTest();
                 InnerRepresentationFrameTests.SelfTest();
                 GenericRepresentationPolicy.SelfTest();
                 BirTypeLowering.SelfTestSlotReturns();
@@ -57,6 +59,7 @@ static class Bir2Cir
                 AliasVarianceRepresentation.SelfTest();
                 ReferenceMetadataIndex.SelfTest();
                 NullableTvErasureCallRealign.SelfTest();
+                MapVarianceRealign.SelfTest();
                 DriverOptions.SelfTest();
                 return 0;
             }
@@ -219,9 +222,10 @@ sealed class Pipeline
         // The adapter authors source-generic applications. Include those applications in demand collection
         // so their complete physical frames are materialized with the declaration and its callers.
         if (!_options.RefBuild) SequenceElementAdapterLowering.Apply(birRoots);
-        var genericRepresentations = new GenericRepresentationPolicy(representationAliases);
+        var genericRepresentations = new GenericRepresentationPolicy(representationAliases, refs, birRoots);
         var restoreDefaultFrames = DefaultArgSplice.PrepareInlineDefaults(birRoots, refs);
-        NullableRepresentationMaterialization.Apply(birRoots, isValueFqn, refs, policy: genericRepresentations);
+        var representationMethodFrames = NullableRepresentationMaterialization.Apply(
+            birRoots, isValueFqn, refs, policy: genericRepresentations);
         restoreDefaultFrames();
         // Preserve selected local factory facts before per-file transformations. In a
         // stdlib self-build these declarations are local, not referenced MethodDefs.
@@ -547,7 +551,7 @@ sealed class Pipeline
             // self-build keeps the filler body — see
             // EnumIntrinsicLowering).
             EnumIntrinsicLowering.Apply(
-                bir.Root, localRichEnums, localTopLevelFns, attributeTopLevelOwner, refs);
+                bir.Root, localRichEnums, localTopLevelFns, attributeTopLevelOwner, refs, representationMethodFrames);
             // ENUM ENTRY VALUES: kotc preserves owner + entry-name Kotlin identity. Resolve a referenced rich enum's
             // carrier-mapped singleton field, or a CLR enum's potentially sparse/negative/aliased physical constant,
             // from the exact compile reference here.
@@ -870,6 +874,7 @@ sealed class Pipeline
         var overrideSourceParameters = KotlinOverrideSlotBridge.CaptureSourceParameters(staged.Select(s => s.Root));
         TypeOwnershipLowering.RecordNestedSourceTypes(staged.Select(s => s.Root).ToList(), refs);
         TypeOwnershipLowering.ProjectInnerApplications(staged.Select(s => s.Root).ToList(), refs);
+        NullableTvErasureCallRealign.ProjectDeclarationApplications(nullableTvDeclRets);
 
         // F-BOUND STAR PROJECTION: CLR has no legal/reified `Node<*>` TypeSpec for `Node<N : Node<N>>`.
         // Materialize a deterministic non-generic existential view in bir2cir and make every closed Node<N> implement
@@ -944,7 +949,7 @@ sealed class Pipeline
         // cold lowering, then has no authoritative physical binding and falls back to the erased overload set. The
         // runtime and reference builds therefore execute the same declaration transform and physical allocation.
         var suspendCalleeRet = SuspendColdLowering.ApplyAll(staged.Select(s => s.Root).ToList(), refs,
-            localTypeFqns, attributeTopLevelOwner, localExistentialOwners, isValueFqn);
+            localTypeFqns, attributeTopLevelOwner, localExistentialOwners, isValueFqn, declarationSemanticSignatures);
 
         // PHASE 1.6 — SUSPEND LAMBDA LOWERING (bundle-6 P3 wave-2b, LIVE): replace each `newSuspendLambda`
         // node with `new <mangled>_lambdaN$sm(captures..., null)` + synthesize its SuspendLambda state machine
@@ -1497,8 +1502,16 @@ sealed class Pipeline
         // required by the final value-flow graph only now, after every synthetic declaration and exact memberRef is
         // stable. ilemit then emits those ordinary CIR casts without recognizing the collection ABI. A metadata/ref
         // build retains declaration types and only consumes semantic comparisons in executable constructor remnants.
+        var physicalExistentialOwners = localExistentialOwners.Values.ToHashSet(StringComparer.Ordinal);
         PhysicalValueCoercion.ApplyAll(loweredRoots.Select(file => file.Root).ToList(),
-            ClrMemberResolution.UnitSingletonRead, isValueFqn, referenceBuild: _options.RefBuild);
+            ClrMemberResolution.UnitSingletonRead, isValueFqn, referenceBuild: _options.RefBuild,
+            isReferenceOwner: owner => refs.ResolveNetType(owner.Name, owner.Args?.Length ?? 0)
+                is { IsClass: true, IsValueType: false } native
+                && native.FullName is not ("System.Object" or "System.ValueType" or "System.Enum"),
+            isExistentialOwner: owner => physicalExistentialOwners.Contains(owner.Name)
+                || refs.IsExistentialPhysicalOwner(owner.Name),
+            isNativeReference: owner => refs.ResolveNetType(owner.Name, owner.Args?.Length ?? 0)
+                is { IsValueType: false });
         foreach (var (lowered, _) in loweredRoots) FunctionSignatureIdentity.Complete(lowered);
 
         // Every representation synthesis is now complete. Validate the exact MethodDef table that CIR will describe;

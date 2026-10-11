@@ -664,6 +664,14 @@ static class DeclarationIdentityBinding
                     obj.Remove("prop");
                     obj.Remove(Key);
                 }
+                else if (Str(obj["k"]) is "clrEventAdd" or "clrEventRemove")
+                {
+                    obj["accessor"] = physical;
+                    obj["sig"] = FunctionSignatureIdentity.Signature(
+                        declarationsById[id]["params"] as JsonArray
+                            ?? throw new InvalidOperationException("Local event accessor has no physical parameter signature"));
+                    obj.Remove(Key);
+                }
             }
             else if (node is JsonArray array)
                 foreach (var child in array.ToList()) if (child != null) Rewrite(child);
@@ -675,7 +683,7 @@ static class DeclarationIdentityBinding
             if (node is JsonObject obj)
             {
                 if (Str(obj["k"]) is ("callStatic" or "callInstance" or "constrainedCall"
-                    or "newDelegate" or "newBoundDelegate") && Str(obj[Key]) is string id)
+                    or "newDelegate" or "newBoundDelegate" or "clrEventAdd" or "clrEventRemove") && Str(obj[Key]) is string id)
                     throw new InvalidOperationException($"bir2cir: unresolved frontend declaration identity '{id}'");
                 foreach (var child in obj.Select(kv => kv.Value).ToList()) if (child != null) RejectUnboundUse(child);
             }

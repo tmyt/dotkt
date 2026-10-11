@@ -212,6 +212,7 @@ class GenericMutableCaptureTests {
     @TestAttribute
     fun localClassReferencesRetainCapturedArgumentsWithoutCells() {
         LocalReferenceOwner("owner", true).verify(42)
+        LocalReferenceOwner(3, "owner").verify("captured")
     }
 
     @TestAttribute

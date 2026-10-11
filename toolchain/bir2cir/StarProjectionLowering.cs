@@ -124,11 +124,12 @@ static class StarProjectionLowering
     }
 
     static void Apply(JsonNode node, ReferenceMetadataIndex refs,
-        IReadOnlyDictionary<string, TypeNode.Fqn> closedViews)
+        IReadOnlyDictionary<string, TypeNode.Fqn> closedViews, MemberCallSubstitution.SubstCtx context = null)
     {
         if (node is JsonObject obj)
         {
-            AdaptProjectedCollectionArguments(obj);
+            context = (context ?? new MemberCallSubstitution.SubstCtx()).Extend(obj);
+            AdaptProjectedCollectionArguments(obj, refs, context);
             if (Str(obj["k"]) == "callInstance"
                 && IsIdentityCollection(obj["ownerType"], out var collectionKind, out _)
                 && collectionKind is 0 or 1 or 2 or 5
@@ -137,7 +138,7 @@ static class StarProjectionLowering
             {
                 UsedRuntimeFallback = true;
                 Replace(obj, collectionCount);
-                foreach (var child in obj.Select(kv => kv.Value).Where(v => v != null).ToList()) Apply(child, refs, closedViews);
+                foreach (var child in obj.Select(kv => kv.Value).Where(v => v != null).ToList()) Apply(child, refs, closedViews, context);
                 return;
             }
             if (Str(obj["k"]) == "callInstance"
@@ -147,7 +148,7 @@ static class StarProjectionLowering
             {
                 UsedRuntimeFallback = true;
                 Replace(obj, listMember);
-                foreach (var child in obj.Select(kv => kv.Value).Where(v => v != null).ToList()) Apply(child, refs, closedViews);
+                foreach (var child in obj.Select(kv => kv.Value).Where(v => v != null).ToList()) Apply(child, refs, closedViews, context);
                 return;
             }
             // The overlapping Collection/Set classifiers use their compiler-owned nominal identity for emitted Kotlin
@@ -158,11 +159,11 @@ static class StarProjectionLowering
                 && obj["recv"] is JsonObject identityRecv && Str(identityRecv["k"]) == "cast"
                 && IsIdentityCollection(identityRecv["type"], out var identityKind, out _)
                 && !HasConcreteTypeArguments(identityRecv["type"])
-                && LowerIdentityMember(obj, identityRecv, identityKind) is JsonObject identityMember)
+                && LowerIdentityMember(obj, identityRecv, identityKind, refs, context) is JsonObject identityMember)
             {
                 UsedRuntimeFallback = true;
                 Replace(obj, identityMember);
-                foreach (var child in obj.Select(kv => kv.Value).Where(v => v != null).ToList()) Apply(child, refs, closedViews);
+                foreach (var child in obj.Select(kv => kv.Value).Where(v => v != null).ToList()) Apply(child, refs, closedViews, context);
                 return;
             }
             // Smart-cast member access: `callInstance` on a star-collection alias whose receiver is a `cast` to that
@@ -171,14 +172,14 @@ static class StarProjectionLowering
                 && IsStarCollection(obj["ownerType"], out _)
                 && obj["recv"] is JsonObject recv && Str(recv["k"]) == "cast"
                 && IsStarCollection(recv["type"], out var recvIface)
-                && LowerMember(obj, recv, recvIface, IsMutableStarCollection(obj["ownerType"])) is JsonObject rewritten)
+                && LowerMember(obj, recv, recvIface, IsMutableStarCollection(obj["ownerType"]), refs, context) is JsonObject rewritten)
             {
                 foreach (var kv in rewritten) obj[kv.Key] = kv.Value?.DeepClone();
                 foreach (var stale in obj.Select(kv => kv.Key).Where(k => !rewritten.ContainsKey(k)).ToList())
                     obj.Remove(stale);
                 // The rewritten node's recv/args are already final; recurse only into them (not the stale members).
-                if (obj["recv"] != null) Apply(obj["recv"], refs, closedViews);
-                if (obj["args"] is JsonArray ra) foreach (var a in ra) if (a != null) Apply(a, refs, closedViews);
+                if (obj["recv"] != null) Apply(obj["recv"], refs, closedViews, context);
+                if (obj["args"] is JsonArray ra) foreach (var a in ra) if (a != null) Apply(a, refs, closedViews, context);
                 return;
             }
             // Iterable safe casts use the same erased enumeration protocol as their tests. They need no
@@ -210,10 +211,10 @@ static class StarProjectionLowering
                 Replace(obj, LowerIdentityClassifier(kind, operand, classifierKind,
                     nullable || Flag(obj["nullMatches"]), obj["type"]));
             }
-            foreach (var kv in obj) if (kv.Value != null) Apply(kv.Value, refs, closedViews);
+            foreach (var kv in obj) if (kv.Value != null) Apply(kv.Value, refs, closedViews, context);
         }
         else if (node is JsonArray arr)
-            foreach (var it in arr) if (it != null) Apply(it, refs, closedViews);
+            foreach (var it in arr) if (it != null) Apply(it, refs, closedViews, context);
     }
 
     // Kotlin collection covariance permits a star-projected value to fill a Collection<T> parameter selected by
@@ -221,7 +222,8 @@ static class StarProjectionLowering
     // cannot be cast to IReadOnlyCollection<object>. Materialize the compiler/runtime-owned live view while both the
     // source projection and the selected Kotlin parameter are still explicit. This is a rule for every Collection
     // argument edge, not for any particular extension such as `plus`.
-    static void AdaptProjectedCollectionArguments(JsonObject call)
+    static void AdaptProjectedCollectionArguments(JsonObject call, ReferenceMetadataIndex refs,
+        MemberCallSubstitution.SubstCtx context)
     {
         var kind = Str(call["k"]);
         if (kind is not ("callStatic" or "callInstance")) return;
@@ -286,7 +288,7 @@ static class StarProjectionLowering
                     ? new JsonObject { ["k"] = "classRef", ["type"] = TypeJson.Write(sourceSet) }
                     : new JsonObject { ["k"] = "const", ["type"] = TypeJson.Write(AnyN), ["value"] = null });
             }
-            arguments[index] = new JsonObject
+            var projected = new JsonObject
             {
                 ["k"] = "callStatic",
                 ["owner"] = TypeJson.Fqn("kotlin.collections.ClrCollectionDefaultsKt"),
@@ -296,6 +298,8 @@ static class StarProjectionLowering
                 ["ret"] = TypeJson.Write(helperReturn),
                 ["args"] = helperArguments,
             };
+            MemberCallSubstitution.BindAuthoredHelper(projected, refs, context, refs.IsValueType);
+            arguments[index] = projected;
         }
     }
 
@@ -368,7 +372,8 @@ static class StarProjectionLowering
         return call;
     }
 
-    static JsonObject LowerIdentityMember(JsonObject call, JsonObject cast, int classifierKind)
+    static JsonObject LowerIdentityMember(JsonObject call, JsonObject cast, int classifierKind,
+        ReferenceMetadataIndex refs, MemberCallSubstitution.SubstCtx context)
     {
         var checkedReceiver = LowerIdentityClassifier("cast", cast["e"], classifierKind, nullable: false, cast["type"]);
         var member = Str(call["method"]);
@@ -388,7 +393,7 @@ static class StarProjectionLowering
                 return Count();
             case "isEmpty":
                 return CollectionHelper(MemberCallSubstitution.ProjectedIsEmptyHelper(
-                    IdentityKind.Single(pair => pair.Value == classifierKind).Key), Bool, checkedReceiver);
+                    IdentityKind.Single(pair => pair.Value == classifierKind).Key), Bool, refs, context, checkedReceiver);
             case "iterator":
                 if (classifierKind is 2 or 4 or 5)
                     return new JsonObject
@@ -479,16 +484,21 @@ static class StarProjectionLowering
         ["args"] = new JsonArray(args),
     };
 
-    static JsonObject CollectionHelper(string method, TypeNode result, params JsonNode[] args) => new()
+    static JsonObject CollectionHelper(string method, TypeNode result, ReferenceMetadataIndex refs,
+        MemberCallSubstitution.SubstCtx context, params JsonNode[] args)
     {
-        ["k"] = "callStatic",
-        ["owner"] = TypeJson.Fqn("kotlin.collections.ClrCollectionDefaultsKt"),
-        ["method"] = method,
-        ["sig"] = new JsonArray(TypeJson.Write(Any)),
-        ["typeArgs"] = new JsonArray(TypeJson.Write(AnyN)),
-        ["ret"] = TypeJson.Write(result),
-        ["args"] = new JsonArray(args),
-    };
+        var call = new JsonObject {
+            ["k"] = "callStatic",
+            ["owner"] = TypeJson.Fqn("kotlin.collections.ClrCollectionDefaultsKt"),
+            ["method"] = method,
+            ["sig"] = new JsonArray(TypeJson.Write(Any)),
+            ["typeArgs"] = new JsonArray(TypeJson.Write(AnyN)),
+            ["ret"] = TypeJson.Write(result),
+            ["args"] = new JsonArray(args),
+        };
+        MemberCallSubstitution.BindAuthoredHelper(call, refs, context, refs.IsValueType);
+        return call;
+    }
 
     static JsonObject ClassRef(string openType) => new()
     {
@@ -523,7 +533,8 @@ static class StarProjectionLowering
         return read is TypeNode.Fqn f && f.Name == "kotlin.collections.MutableIterable";
     }
 
-    static JsonObject LowerMember(JsonObject call, JsonObject cast, string iface, bool mutable)
+    static JsonObject LowerMember(JsonObject call, JsonObject cast, string iface, bool mutable,
+        ReferenceMetadataIndex refs, MemberCallSubstitution.SubstCtx context)
     {
         var recvInner = cast["e"];
         JsonObject CastTo(string toIface) => new() { ["k"] = "cast", ["type"] = TypeJson.Fqn(toIface), ["e"] = recvInner.DeepClone() };
@@ -538,7 +549,7 @@ static class StarProjectionLowering
             case "isEmpty":
                 // The non-generic facade has no IsEmpty slot, but a Kotlin implementer may override it. Preserve the
                 // explicit star cast and let the compiler-owned capability dispatcher select the override or Count.
-                return CollectionHelper("clrProjectedCollIsEmpty", Bool, CastTo(iface));
+                return CollectionHelper("clrProjectedCollIsEmpty", Bool, refs, context, CastTo(iface));
             case "iterator":
                 if (mutable)
                     // Keep the original star cast observable before entering the erased helper. Passing recvInner
