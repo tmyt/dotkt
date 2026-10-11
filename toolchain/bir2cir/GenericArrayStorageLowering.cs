@@ -196,6 +196,9 @@ static class GenericArrayStorageLowering
                         "System.Type", Array.Empty<string>()), new HashSet<TypeNode.Tv>(variables)), ["else"] = Bool(false),
                 };
             if (expected is TypeNode.Fqn { Name: "kotlin.Any" or "System.Object" or "object", Args: null }) return Bool(true);
+            if (expected is TypeNode.Fqn { Args: { Length: > 0 } } generic
+                && ForeignStarProjectionBinding.TypeClassifierCheck(generic, actualType, refs) is { } foreignCheck)
+                return foreignCheck;
             var classifier = projectBound(expected);
             return RuntimeCall(refs, "System.Type", "IsAssignableFrom", new JsonObject {
                 ["k"] = "classRef", ["type"] = TypeJson.Write(classifier),
@@ -291,24 +294,17 @@ static class GenericArrayStorageLowering
         var body = new JsonArray(Var(Text(loop["var"]), TypeJson.Read(loop["elem"]),
             Read(refs, Local(arrayName, arrayType), Local(indexName, intType), TypeJson.Read(loop["elem"]))));
         foreach (var statement in loop["body"] as JsonArray ?? new JsonArray()) body.Add(statement?.DeepClone());
-        // Advance in the condition so a labelled continue still advances exactly once.
-        var condition = new JsonObject {
-            ["k"] = "valueBlock", ["type"] = Type("System.Boolean"),
-            ["stmts"] = new JsonArray(new JsonObject {
-                ["k"] = "setLocal", ["name"] = indexName,
-                ["value"] = new JsonObject { ["k"] = "binOp", ["op"] = "+",
-                    ["lhs"] = Local(indexName, intType), ["rhs"] = Int(1) },
-            }),
-            ["result"] = new JsonObject { ["k"] = "binOp", ["op"] = "<",
-                ["lhs"] = Local(indexName, intType), ["rhs"] = Local(lengthName, intType) },
-        };
+        // Counted loops already own continue/increment and suspend flattening.
+        // Keep that control-flow contract rather than introducing a structured
+        // while whose suspending body could be hoisted out of the loop.
         return new JsonObject {
             ["k"] = "block", ["body"] = new JsonArray(
-                Var(arrayName, arrayType, receiver.DeepClone()), Var(indexName, intType, Int(-1)),
+                Var(arrayName, arrayType, receiver.DeepClone()),
                 Var(lengthName, intType, Call(refs, "get_Length", Local(arrayName, arrayType),
                     "System.Int32", Array.Empty<string>())),
-                new JsonObject { ["k"] = "while", ["label"] = loop["label"]?.DeepClone(),
-                    ["cond"] = condition, ["body"] = body }),
+                new JsonObject { ["k"] = "for", ["label"] = loop["label"]?.DeepClone(),
+                    ["var"] = indexName, ["from"] = Int(0), ["to"] = Local(lengthName, intType),
+                    ["cmp"] = "<", ["step"] = 1, ["body"] = body }),
         };
     }
 }

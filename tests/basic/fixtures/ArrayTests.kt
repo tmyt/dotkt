@@ -40,6 +40,23 @@ private interface ArrBoundedNode
 private class ArrBoundedItem : ArrBoundedNode
 private interface ArrOtherBound
 private class ArrIntersectionItem : ArrBoundedNode, ArrOtherBound
+private open class ArrGenericNode<U>
+
+@Suppress("UNCHECKED_CAST")
+private fun <U, T : ArrGenericNode<U>> arrCheckConstructedBound() {
+    val raw = arrayOfNulls<ArrGenericNode<Any?>>(1)
+    val storage = raw as Array<T?>
+    check(storage === raw && storage[0] == null)
+    check(arrayOf("wrong") as Any as? Array<T> == null)
+}
+
+@Suppress("UNCHECKED_CAST")
+private fun <T> arrCheckConstructedElement() {
+    val raw = arrayOfNulls<List<Any?>>(1)
+    val storage = raw as Array<List<T>?>
+    check(storage === raw && storage[0] == null)
+    check(arrayOf("wrong") as Any as? Array<List<T>> == null)
+}
 
 @Suppress("UNCHECKED_CAST")
 private fun <T : ArrBoundedNode> arrCheckGenericCasts(item: T) {
@@ -100,6 +117,11 @@ private fun <T : ArrBoundedNode> arrResizeBoundedStorage(item: T) {
     val alias = values
     values[0] = item
     check(alias === values && alias[0] === item)
+    values.fill(item, 1, 3)
+    check(alias[1] === item && alias[2] === item && alias[3] == null)
+    values.fill(null)
+    check(alias.all { it == null })
+    values[0] = item
     values = values.copyOf(8)
     check(values.size == 8 && values[0] === item && values[7] == null)
     check(alias.size == 4 && alias[0] === item)
@@ -168,6 +190,12 @@ class ArrayTests {
         check(arrRejectMatrix<String>())
         check(arrReifiedSafeCast<String>(arrayOf("ok")) != null)
         check(arrReifiedSafeCast<String>(arrayOf(1)) == null)
+    }
+
+    @TestAttribute
+    fun genericArrayCastsEraseConstructedKotlinComponents() {
+        arrCheckConstructedBound<String, ArrGenericNode<String>>()
+        arrCheckConstructedElement<String>()
     }
 
     @TestAttribute

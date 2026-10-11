@@ -29,6 +29,17 @@ suspend fun suspendLoopSumArray(xs: IntArray): Int {
     return acc
 }
 
+suspend fun <T> suspendLoopFilteredArray(xs: Array<T>, skip: T, stop: T): List<T> {
+    val result = mutableListOf<T>()
+    outer@ for (value in xs) {
+        Task.Delay(1).await()
+        if (value == skip) continue@outer
+        if (value == stop) break@outer
+        result.add(value)
+    }
+    return result
+}
+
 suspend fun suspendLoopSumList(xs: List<Int>): Int {
     var acc = 0
     xs.forEach { x ->
@@ -116,6 +127,12 @@ class SuspendLoopRecordingCollector<T> : SuspendLoopFlowCollector<T> {
 class SuspendLoopTests {
     @TestAttribute
     fun spliceLocalSpillAcrossResume() {
+        assertEquals(listOf("a", "b"), blockOn {
+            suspendLoopFilteredArray(arrayOf("a", "skip", "b", "stop", "late"), "skip", "stop")
+        })
+        assertEquals(listOf(1, 2), blockOn {
+            suspendLoopFilteredArray(arrayOf(1, 0, 2, -1, 9), 0, -1)
+        })
         assertEquals(12, blockOn { suspendLoopSumArray(intArrayOf(1, 2, 3)) })            // 12  (2 + 4 + 6)
         assertEquals(18, blockOn { suspendLoopSumList(listOf(4, 5)) })                    // 18  (8 + 10)
         assertEquals(6, blockOn { suspendLoopSumUntilNeg(intArrayOf(1, 0, 2, -1, 9)) })   // 6   (2 + skip + 4 + break)
