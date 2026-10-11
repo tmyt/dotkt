@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Published inline generic carriers are callable across DLLs (#1013).**
+  Existential views inherit their declaration's effective CLR accessibility,
+  including `@PublishedApi`, without changing Kotlin source visibility.
+
 - **Unused unchecked generic results retain their erased storage (#1011).**
   Value-storage companions no longer force an early unbox during Channel receiver
   cancellation; narrowing remains at the first typed consumer.

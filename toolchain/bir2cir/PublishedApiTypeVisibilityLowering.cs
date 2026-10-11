@@ -21,8 +21,17 @@ static class PublishedApiTypeVisibilityLowering
 
     static void Apply(JsonObject type)
     {
-        if (type["vis"]?.GetValue<string>() == "internal" && HasMarker(type))
-            type["vis"] = "public";
+        if (ResolveVisibility(type) is { } visibility)
+            type["vis"] = visibility;
+    }
+
+    // Synthesized representations must use the same effective accessibility as their source declaration,
+    // even when they are allocated before the final TypeDef visibility pass. Do not copy semantic annotations
+    // onto a representation solely to make that later pass recognize it.
+    internal static string ResolveVisibility(JsonObject type)
+    {
+        var visibility = type["vis"]?.GetValue<string>();
+        return visibility == "internal" && HasMarker(type) ? "public" : visibility;
     }
 
     static bool HasMarker(JsonObject type) =>
