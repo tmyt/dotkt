@@ -402,16 +402,48 @@ static class TypeOwnershipLowering
                     $"synthetic type '{Str(synth["name"])}' has {typeParams.Count} parameters but " +
                     $"{typeArgs.Count} construction arguments");
 
+            var ownerFrame = KotlinSupertypesRecord.ReadNullableFrame(ownerType)
+                ?? new NullableRepresentationFrame(ownerParams.Count, Array.Empty<int>());
+            var captureFrame = KotlinSupertypesRecord.ReadNullableFrame(synth)
+                ?? new NullableRepresentationFrame(typeParams.Count, Array.Empty<int>());
+            if (ownerFrame.PhysicalArity != ownerParams.Count || captureFrame.PhysicalArity != typeParams.Count)
+                throw new InvalidOperationException($"Synthetic owner capture '{Str(synth["name"])}' has an incomplete declaration frame");
+
             static bool IsOwnerSlot(JsonNode arg, int slot) =>
                 arg is JsonObject tv && Str(tv["t"]) == "tv" && Str(tv["scope"]) == "type"
                 && tv["i"] is JsonValue index && index.TryGetValue<int>(out var value) && value == slot;
+
+            // Reuse a captured source parameter only when every already-shared
+            // representation names the same explicit owner slot. Equal argument
+            // spellings alone cannot merge independently-owned generic roles.
+            var sourceMap = new int[captureFrame.SourceArity];
+            var reusedSources = new HashSet<int>();
+            var sourceArity = ownerFrame.SourceArity;
+            for (var source = 0; source < captureFrame.SourceArity; source++)
+            {
+                var capturedSlots = Enumerable.Range(0, captureFrame.PhysicalArity)
+                    .Where(index => captureFrame.PhysicalSlot(index).SourceIndex == source).ToArray();
+                var shared = Enumerable.Range(0, ownerFrame.SourceArity).FirstOrDefault(candidate =>
+                    !reusedSources.Contains(candidate)
+                    && IsOwnerSlot(typeArgs[captureFrame.SourcePosition(source)], ownerFrame.SourcePosition(candidate))
+                    && capturedSlots.All(index => {
+                        var role = captureFrame.PhysicalSlot(index).Representation;
+                        var ownerSlot = Enumerable.Range(0, ownerFrame.PhysicalArity).FirstOrDefault(slot =>
+                            ownerFrame.PhysicalSlot(slot) == new NullableRepresentationFrame.Slot(candidate, role), -1);
+                        return ownerSlot < 0 || IsOwnerSlot(typeArgs[index], ownerSlot);
+                    }), -1);
+                sourceMap[source] = shared < 0 ? sourceArity++ : shared;
+                if (shared >= 0) reusedSources.Add(shared);
+            }
 
             var consumed = new HashSet<int>();
             var ownerSource = new List<(int Slot, int Existing)>();
             for (var slot = 0; slot < ownerParams.Count; slot++)
             {
                 var existing = Enumerable.Range(0, typeArgs.Count)
-                    .FirstOrDefault(index => !consumed.Contains(index) && IsOwnerSlot(typeArgs[index], slot), -1);
+                    .FirstOrDefault(index => !consumed.Contains(index) && IsOwnerSlot(typeArgs[index], slot)
+                        && sourceMap[captureFrame.PhysicalSlot(index).SourceIndex] == ownerFrame.PhysicalSlot(slot).SourceIndex
+                        && captureFrame.PhysicalSlot(index).Representation == ownerFrame.PhysicalSlot(slot).Representation, -1);
                 ownerSource.Add((slot, existing));
                 if (existing >= 0) consumed.Add(existing);
             }
@@ -450,6 +482,24 @@ static class TypeOwnershipLowering
             synth["typeParams"] = normalizedParams;
             synth["outerTypeParamCount"] = ownerParams.Count;
             node["typeArgs"] = normalizedArgs;
+            var slots = Enumerable.Range(0, ownerFrame.PhysicalArity).Select(ownerFrame.PhysicalSlot)
+                .Concat(remaining.Select(index => {
+                    var slot = captureFrame.PhysicalSlot(index);
+                    return new NullableRepresentationFrame.Slot(sourceMap[slot.SourceIndex], slot.Representation);
+                })).ToArray();
+            int[] Indices(NullableRepresentationFrame.Role role) => slots.Where(slot => slot.Representation == role)
+                .Select(slot => slot.SourceIndex).Distinct().OrderBy(index => index).ToArray();
+            var nullable = Indices(NullableRepresentationFrame.Role.Nullable);
+            var storage = Indices(NullableRepresentationFrame.Role.Storage);
+            var nullableStorage = Indices(NullableRepresentationFrame.Role.NullableStorage);
+            var canonical = new NullableRepresentationFrame(sourceArity, nullable,
+                storageIndices: storage, nullableStorageIndices: nullableStorage);
+            var physicalOrder = slots.Select(slot => canonical.Variable(
+                new TypeNode.Tv("type", slot.SourceIndex), slot.Representation).I).ToArray();
+            var normalizedFrame = new NullableRepresentationFrame(sourceArity, nullable, physicalOrder,
+                storage, nullableStorage);
+            if (normalizedFrame.RequiresMetadata || KotlinSupertypesRecord.ReadNullableFrame(synth) != null)
+                KotlinSupertypesRecord.RebaseCapturedFrame(synth, normalizedFrame, sourceMap, ownerType);
         }
 
         void Rewrite(JsonNode node)

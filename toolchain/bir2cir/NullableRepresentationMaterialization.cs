@@ -8,7 +8,7 @@ using DotKt.Bir;
 // specialization is separate: it must not grow a published virtual slot. Runs after the Kotlin declaration snapshot.
 static class NullableRepresentationMaterialization
 {
-    public static void Apply(IEnumerable<JsonNode> inputs, ValueTypeOracle isValue, ReferenceMetadataIndex references = null,
+    public static IReadOnlyDictionary<string, NullableRepresentationFrame> Apply(IEnumerable<JsonNode> inputs, ValueTypeOracle isValue, ReferenceMetadataIndex references = null,
         Func<TypeNode.Fqn, bool, NullableRepresentationFrame, TypeNode> argumentHead = null,
         GenericRepresentationPolicy policy = null)
     {
@@ -207,14 +207,16 @@ static class NullableRepresentationMaterialization
                     var source = splitBody ? (JsonObject)method.Declaration.DeepClone() : null;
                     if (splitBody) method.Declaration["body"] = new JsonArray();
                     Rewrite(method.Declaration, methodMapping, methods, DeclarationMapping);
-                    AppendParameters(method.Declaration, methodFrame, policy: policy);
+                    AppendParameters(method.Declaration, methodFrame, policy: policy,
+                        enclosingParameters: owner.Declaration["typeParams"] as JsonArray, enclosingFrame: frame);
                     if (methodFrame.RequiresMetadata)
                         method.Declaration[NullableRepresentationTypes.MethodFrameKey] = methodFrame.ToJson().ToJsonString();
                     if (splitBody)
                         NullableBodyDispatch.Build(owner.Declaration, source, method.Declaration, frame, methodFrame,
                             method.Body, (helper, helperFrame) => {
                                 Rewrite(helper, Mapping(frame, helperFrame, ownerName), methods, DeclarationMapping);
-                                AppendParameters(helper, helperFrame, policy: policy, bodyOnlyStorage: true);
+                                AppendParameters(helper, helperFrame, policy: policy, bodyOnlyStorage: true,
+                                    enclosingParameters: owner.Declaration["typeParams"] as JsonArray, enclosingFrame: frame);
                                 helper[NullableRepresentationTypes.MethodFrameKey] = helperFrame.ToJson().ToJsonString();
                             });
                 }
@@ -233,6 +235,7 @@ static class NullableRepresentationMaterialization
                 throw new InvalidOperationException($"Nullable owner {Text(owner.Declaration["name"]) ?? Text(owner.Declaration["fileClass"])}: {error.Message}", error);
             }
         }
+        return methods;
     }
 
     static void PreserveParameters(JsonObject declaration, NullableRepresentationTypes mapping)
@@ -283,14 +286,15 @@ static class NullableRepresentationMaterialization
         AppendParameters(declaration, frame, "method");
 
     static void AppendParameters(JsonObject declaration, NullableRepresentationFrame frame, string scope = "method",
-        GenericRepresentationPolicy policy = null, bool bodyOnlyStorage = false)
+        GenericRepresentationPolicy policy = null, bool bodyOnlyStorage = false,
+        JsonArray enclosingParameters = null, NullableRepresentationFrame enclosingFrame = null)
     {
         if (frame.PhysicalArity == 0) return;
         var source = (JsonArray)declaration["typeParams"];
         var expanded = ExpandParameters(source, frame, scope);
         // A Kotlin generic bound describes an erased classifier, not the original closed CLR construction.
         // Its storage representation implements the same existential interface even when the source arguments
-        // have been unchecked-cast. Native generic bounds are not projected by this rule.
+        // have been unchecked-cast. Native bounds retain their exact CLR construction.
         foreach (var sourceIndex in frame.StorageIndices)
         {
             var seen = new HashSet<int>();
@@ -304,12 +308,17 @@ static class NullableRepresentationMaterialization
                         var slot = frame.PhysicalSlot(variable.I);
                         foreach (var inherited in Bounds(slot.SourceIndex)) yield return inherited;
                     }
+                    else if (bound is TypeNode.Tv { Scope: "type" } enclosing && scope == "method"
+                        && enclosingFrame != null && enclosingParameters != null)
+                    {
+                        var sourceVariable = new TypeNode.Tv("type", enclosingFrame.PhysicalSlot(enclosing.I).SourceIndex);
+                        foreach (var inherited in OwnerConstrainedMethodLowering.IndependentBounds(
+                                     sourceVariable, enclosingParameters)) yield return inherited;
+                    }
                     else if (bound != null) yield return bound;
             }
             var projected = Bounds(sourceIndex).OfType<TypeNode.Fqn>()
-                .Where(bound => bound.Args is { Length: > 0 } && policy?.OwnsValueSlots(bound.Name) == true)
-                .Select(bound => (TypeNode)new TypeNode.Fqn(bound.Name,
-                    bound.Args.Select(_ => (TypeNode)new TypeNode.Star()).ToArray())).Distinct().ToArray();
+                .Select(bound => policy?.StorageConstraint(bound)).Where(bound => bound != null).Distinct().ToArray();
             if (projected.Length == 0) continue;
             var variable = frame.Variable(new TypeNode.Tv(scope, sourceIndex), NullableRepresentationFrame.Role.Storage);
             bool Mentions(JsonNode node) => TypeJson.Read(node) is TypeNode type ? Contains(type)
@@ -329,7 +338,7 @@ static class NullableRepresentationMaterialization
             };
             // A body-dispatch helper's storage companions are deliberately instantiated with object.
             // Its private value signature does not turn an erased dispatch fact into a CLR constraint.
-            var publishedSlot = !bodyOnlyStorage && new[] { "params", "ret", "fields", "properties" }
+            var publishedSlot = !bodyOnlyStorage && new[] { "params", "ret", "fields", "properties", "base", "interfaces" }
                 .Any(key => Mentions(declaration[key]));
             if (publishedSlot)
             {
@@ -441,6 +450,7 @@ static class NullableRepresentationMaterialization
             JsonArray closedDispatchArguments = null;
             JsonArray closedDispatchOwnerArguments = null;
             NullableRepresentationFrame capturedFrame = null;
+            Dictionary<int, TypeNode[]> capturedStorageBounds = null;
             if (kind is "newClosure" or "newSam" && obj["synthClass"] == null
                 && obj["typeArgs"] is JsonArray syntheticArguments
                 && TypeJson.OwnerName(obj["closureType"] ?? obj["samType"]) is string syntheticOwner)
@@ -507,6 +517,9 @@ static class NullableRepresentationMaterialization
                 if (captureFrame.RequiresMetadata)
                 {
                     capturedFrame = captureFrame;
+                    // These are the synthetic declaration's bounds, not stronger bounds of an
+                    // arbitrary caller that happens to instantiate the same generated type.
+                    capturedStorageBounds = CaptureStorageBounds(captureParameters, captures, captureFrame, mapping);
                     if (kind is "newSam" or "newClosure")
                         PreserveCompanionSourceBounds(synthetic, captureFrame, owner: true);
                     closedArguments = new JsonArray(mapping.CloseMethod(captureFrame, captures).Select(TypeJson.Write).ToArray());
@@ -599,6 +612,22 @@ static class NullableRepresentationMaterialization
                 // explicit capture arguments. Add already-materialized bounds after the lexical rewrite.
                 var declarations = kind == "newSuspendLambda"
                     ? obj["typeParamDecls"] as JsonArray : synthetic["typeParams"] as JsonArray;
+                if (declarations != null && capturedStorageBounds != null)
+                    foreach (var (index, bounds) in capturedStorageBounds)
+                    {
+                        declarations[index] = new JsonObject {
+                            ["name"] = declarations[index]?.DeepClone(),
+                            ["constraints"] = new JsonArray(bounds.Select(TypeJson.Write).ToArray()),
+                        };
+                        var ordinary = capturedFrame.SourcePosition(capturedFrame.PhysicalSlot(index).SourceIndex);
+                        var declaration = declarations[ordinary] as JsonObject;
+                        if (declaration == null)
+                            declarations[ordinary] = declaration = new JsonObject { ["name"] = declarations[ordinary]?.DeepClone() };
+                        if (declaration["constraints"] is not JsonArray constraints)
+                            declaration["constraints"] = constraints = new JsonArray();
+                        foreach (var bound in bounds)
+                            if (!constraints.Select(TypeJson.Read).Contains(bound)) constraints.Add(TypeJson.Write(bound));
+                    }
                 if (declarations != null)
                     foreach (var sourceIndex in capturedFrame.NullableIndices)
                     {
@@ -617,6 +646,35 @@ static class NullableRepresentationMaterialization
             }
             if (closureReturn != null) obj["synthClass"]["ret"] = TypeJson.Write(closureReturn);
         }
+    }
+
+    static Dictionary<int, TypeNode[]> CaptureStorageBounds(JsonArray parameters, TypeNode[] captures,
+        NullableRepresentationFrame frame, NullableRepresentationTypes mapping)
+    {
+        var result = new Dictionary<int, TypeNode[]>();
+        foreach (var sourceIndex in frame.StorageIndices)
+        {
+            var visited = new HashSet<int>();
+            IEnumerable<TypeNode> Bounds(int index)
+            {
+                if (!visited.Add(index) || parameters[index] is not JsonObject parameter
+                    || parameter["constraints"] is not JsonArray constraints) yield break;
+                foreach (var bound in constraints.Select(TypeJson.Read))
+                    if (bound is TypeNode.Tv variable)
+                    {
+                        var capturedIndex = Array.IndexOf(captures, variable);
+                        if (capturedIndex >= 0)
+                            foreach (var inherited in Bounds(capturedIndex)) yield return inherited;
+                    }
+                    else if (bound != null) yield return bound;
+            }
+            var bounds = Bounds(sourceIndex).OfType<TypeNode.Fqn>()
+                .Select(mapping.StorageConstraint).Where(bound => bound != null).Distinct().ToArray();
+            if (bounds.Length > 0)
+                result[frame.Variable(new TypeNode.Tv("type", sourceIndex),
+                    NullableRepresentationFrame.Role.Storage).I] = bounds;
+        }
+        return result;
     }
 
     static NullableRepresentationFrame CaptureFrame(TypeNode[] captures, NullableRepresentationTypes mapping)
@@ -669,6 +727,28 @@ static class NullableRepresentationMaterialization
 
     public static void SelfTest()
     {
+        var inheritedStorage = JsonNode.Parse("""
+          {"types":[
+            {"kind":"class","name":"StorageBody","methods":[
+              {"name":"identity","typeParams":["T"],
+               "params":[{"name":"value","type":{"t":"tv","scope":"method","i":0}}],
+               "ret":{"t":"tv","scope":"method","i":0}}]},
+            {"kind":"class","name":"StorageUser","inheritedClassMethods":[
+              {"member":"identity","typeParams":["T"],
+               "params":[{"name":"value","type":{"t":"tv","scope":"method","i":0}}],
+               "ret":{"t":"tv","scope":"method","i":0},
+               "inheritedImplementation":{"owner":{"t":"fqn","name":"StorageBody"},
+                 "member":"identity","kind":"method","arity":1,"typeParams":["T"]}}]}]}
+          """).AsObject();
+        Apply(new[] { inheritedStorage }, _ => false, policy: new GenericRepresentationPolicy(
+            new Dictionary<string, string>(), roots: new[] { inheritedStorage }));
+        var storageBody = inheritedStorage["types"][0]["methods"][0];
+        var inheritedStorageFact = inheritedStorage["types"][1]["inheritedClassMethods"][0];
+        if (storageBody["typeParams"].AsArray().Count != 2
+            || inheritedStorageFact["inheritedImplementation"]["arity"].GetValue<int>() != 2
+            || !JsonNode.DeepEquals(storageBody["params"], inheritedStorageFact["params"])
+            || !JsonNode.DeepEquals(storageBody["ret"], inheritedStorageFact["ret"]))
+            throw new InvalidOperationException("Inherited implementation lost its Kotlin value-storage signature frame");
         var nativeOwnerRoot = JsonNode.Parse("""
         {"fileClass":"NativeOwnerSlots","types":[
           {"kind":"class","name":"ValueStore","typeParams":["T"],"fields":[
@@ -719,17 +799,54 @@ static class NullableRepresentationMaterialization
         var boundFrame = new NullableRepresentationFrame(1, Array.Empty<int>(), new[] { 1, 0 }, storageIndices: new[] { 0 });
         var privateBoundMethod = (JsonObject)boundMethod.DeepClone();
         privateBoundMethod["params"] = new JsonArray();
+        var boundOwner = (JsonObject)privateBoundMethod.DeepClone();
+        boundOwner["base"] = TypeJson.Write(new TypeNode.Fqn("Base", new TypeNode[] { new TypeNode.Tv("type", 0) }));
         AppendParameters(boundMethod, boundFrame, policy: boundPolicy);
         AppendParameters(privateBoundMethod, boundFrame, policy: boundPolicy);
+        AppendParameters(boundOwner, boundFrame, "type", policy: boundPolicy);
         var carrierBound = new TypeNode.Fqn("ValueBound", new TypeNode[] { new TypeNode.Star() });
         if (TypeJson.Read(boundMethod["typeParams"][0]["constraints"][0]) != carrierBound
-            || boundMethod["typeParams"][0]["constraints"].AsArray().Count != 1
+            || boundMethod["typeParams"][0]["constraints"].AsArray().Count != 2
+            || !boundMethod["typeParams"][0]["constraints"].AsArray().Select(TypeJson.Read).Contains(
+                new TypeNode.Fqn("NativeBound", new TypeNode[] { new TypeNode.Fqn("kotlin.Int") }))
             || boundMethod["typeParams"][1]["constraints"].AsArray().Count != 3
             || !boundMethod["typeParams"][1]["constraints"].AsArray().Select(TypeJson.Read).Contains(carrierBound)
             || privateBoundMethod["typeParams"][0]["constraints"] != null
+            || !boundOwner["typeParams"][0]["constraints"].AsArray().Select(TypeJson.Read).Contains(carrierBound)
             || TypeJson.Read(privateBoundMethod["typeParams"][0][FBoundStarProjectionErasure.ErasedInnerConstraintKey][0]) != carrierBound)
             throw new InvalidOperationException("Storage bound lost its physical role, narrowed a native bound, or constrained a boxed private body");
+        var scalarBoundPolicy = new GenericRepresentationPolicy(new Dictionary<string, string>(), roots: new[] {
+            JsonNode.Parse("""{"types":[{"kind":"interface","name":"ScalarBound"}]}""") });
+        var scalarBoundMethod = JsonNode.Parse("""
+          {"typeParams":[{"name":"T","constraints":[{"t":"fqn","name":"ScalarBound"}]}],
+           "params":[{"name":"value","type":{"t":"tv","scope":"method","i":1}}]}
+          """).AsObject();
+        var scalarBodyHelper = (JsonObject)scalarBoundMethod.DeepClone();
+        var scalarFrame = new NullableRepresentationFrame(1, Array.Empty<int>(), storageIndices: new[] { 0 });
+        AppendParameters(scalarBoundMethod, scalarFrame, policy: scalarBoundPolicy);
+        AppendParameters(scalarBodyHelper, scalarFrame, policy: scalarBoundPolicy, bodyOnlyStorage: true);
+        var scalarBound = new TypeNode.Fqn("ScalarBound");
+        if (TypeJson.Read(scalarBoundMethod["typeParams"][1]["constraints"][0]) != scalarBound
+            || scalarBodyHelper["typeParams"][1]["constraints"] != null
+            || TypeJson.Read(scalarBodyHelper["typeParams"][1][FBoundStarProjectionErasure.ErasedInnerConstraintKey][0]) != scalarBound)
+            throw new InvalidOperationException("Non-generic classifier bound disappeared from the storage role or constrained an object-only helper");
         var reordered = new NullableRepresentationFrame(1, new[] { 0 }, new[] { 1, 0 });
+        var enclosingBound = JsonNode.Parse("""
+          [{"name":"T","constraints":[{"t":"fqn","name":"ScalarBound"}]}]
+          """).AsArray();
+        var ownerBoundMethod = JsonNode.Parse("""
+          {"typeParams":[{"name":"R","constraints":[{"t":"tv","scope":"type","i":1}]}],
+           "params":[{"name":"value","type":{"t":"tv","scope":"method","i":1}}]}
+          """).AsObject();
+        var ownerBoundHelper = ownerBoundMethod.DeepClone().AsObject();
+        AppendParameters(ownerBoundMethod, scalarFrame, policy: scalarBoundPolicy,
+            enclosingParameters: enclosingBound, enclosingFrame: reordered);
+        AppendParameters(ownerBoundHelper, scalarFrame, policy: scalarBoundPolicy, bodyOnlyStorage: true,
+            enclosingParameters: enclosingBound, enclosingFrame: reordered);
+        if (TypeJson.Read(ownerBoundMethod["typeParams"][1]["constraints"][0]) != scalarBound
+            || ownerBoundHelper["typeParams"][1]["constraints"] != null
+            || TypeJson.Read(ownerBoundHelper["typeParams"][1][FBoundStarProjectionErasure.ErasedInnerConstraintKey][0]) != scalarBound)
+            throw new InvalidOperationException("Transitive owner bound lost its declaration frame or constrained an object-only helper");
         var ownerParameters = ExpandParameters(new JsonArray("T"), reordered, "type");
         if (TypeJson.Read(ownerParameters[1]?["constraints"]?[0]) != new TypeNode.Tv("type", 0))
             throw new InvalidOperationException("Nullable companion constraint lost its physical owner frame");
@@ -758,6 +875,15 @@ static class NullableRepresentationMaterialization
             new TypeNode.Tv("method", 2), new TypeNode.Tv("type", 2),
             new TypeNode.Tv("method", 3), new TypeNode.Tv("type", 3),
         })) throw new InvalidOperationException("Synthetic capture lost scoped representation roles or their physical order");
+        var declaredCaptureMapping = new NullableRepresentationTypes(roleFrame, roleFrame,
+            new Dictionary<string, NullableRepresentationFrame>(), _ => false, policy: scalarBoundPolicy);
+        var declaredCaptureBounds = CaptureStorageBounds(enclosingBound,
+            new TypeNode[] { new TypeNode.Tv("method", 0) }, roleFrame, declaredCaptureMapping);
+        if (declaredCaptureBounds.Count != 1 || !declaredCaptureBounds[2].SequenceEqual(new[] { scalarBound }))
+            throw new InvalidOperationException("Captured storage companion lost its own declaration's classifier bound");
+        if (CaptureStorageBounds(new JsonArray("T"), new TypeNode[] { new TypeNode.Tv("method", 0) },
+            roleFrame, declaredCaptureMapping).Count != 0)
+            throw new InvalidOperationException("Unbounded capture acquired constraints from its caller");
         var dispatchFrame = new NullableRepresentationFrame(1, Array.Empty<int>(), new[] { 1, 0 }, storageIndices: new[] { 0 });
         var specializedSam = new JsonObject {
             ["name"] = "SpecializedSam", ["typeParams"] = new JsonArray("P", "T"),

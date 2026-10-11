@@ -30,7 +30,9 @@ static class ClrEventImplBinding
         TypeNode DelegateType,
         TypeNode.Fqn AccessorOwner,
         JsonArray AddSignature,
-        JsonArray RemoveSignature);
+        JsonArray RemoveSignature,
+        string AddIdentity,
+        string RemoveIdentity);
 
     public static JsonNode BindImplementations(JsonNode root, ReferenceMetadataIndex refs)
     {
@@ -100,7 +102,7 @@ static class ClrEventImplBinding
                 foreach (var type in types.OfType<JsonObject>()) IndexType(type);
         }
 
-        JsonArray AccessorSignature(SupertypeGraph.Def definition, string name)
+        (JsonArray Signature, string Identity) AccessorSignature(SupertypeGraph.Def definition, string name)
         {
             var candidates = definition.Methods.OfType<JsonObject>()
                 .Where(method => Str(method["name"]) == name
@@ -112,7 +114,14 @@ static class ClrEventImplBinding
                 throw new InvalidOperationException(
                     $"bir2cir: synthesized local event accessor '{definition.Name}.{name}' resolves to "
                     + $"{candidates.Count} declarations");
-            return FunctionSignatureIdentity.Signature((JsonArray)candidates[0]["params"]);
+            var selected = candidates[0];
+            // These are compiler-authored physical accessors, not additional
+            // Kotlin callable declarations. State their identity at selection
+            // so subsequent carrier/collision projection preserves this edge.
+            selected[DeclarationIdentityBinding.Key] ??= DeclarationIdentityBinding.PhysicalOnlyId(
+                "clr-event-accessor:" + new JsonArray(definition.Name, name).ToJsonString(), "accessor");
+            return (FunctionSignatureIdentity.Signature((JsonArray)selected["params"]),
+                Str(selected[DeclarationIdentityBinding.Key]));
         }
 
         LocalEventBinding ResolveFromOwner(TypeNode.Fqn owner, string eventName)
@@ -143,11 +152,12 @@ static class ClrEventImplBinding
                         var declaredDelegate = TypeJson.Read(declaration["delegateType"])
                             ?? throw new InvalidOperationException(
                                 $"bir2cir: local clrEvent '{spec.Name}.{eventName}' has no concrete delegate type");
+                        var add = AccessorSignature(definition, "add_" + eventName);
+                        var remove = AccessorSignature(definition, "remove_" + eventName);
                         matches.Add(new LocalEventBinding(
                             SupertypeGraph.SubstOwnerTvs(declaredDelegate, ownerArgs),
                             spec,
-                            AccessorSignature(definition, "add_" + eventName),
-                            AccessorSignature(definition, "remove_" + eventName)));
+                            add.Signature, remove.Signature, add.Identity, remove.Identity));
                     }
                     foreach (var parent in definition.Interfaces)
                         if (SupertypeGraph.SubstOwnerTvs(parent, ownerArgs) is TypeNode.Fqn constructed)
@@ -218,7 +228,8 @@ static class ClrEventImplBinding
             new JsonArray(binding.AddSignature.Select(item =>
                 TypeJson.Write(RemapForClosure(TypeJson.Read(item), free))).ToArray()),
             new JsonArray(binding.RemoveSignature.Select(item =>
-                TypeJson.Write(RemapForClosure(TypeJson.Read(item), free))).ToArray()));
+                TypeJson.Write(RemapForClosure(TypeJson.Read(item), free))).ToArray()),
+            binding.AddIdentity, binding.RemoveIdentity);
 
         var bySubscription = new Dictionary<string, LocalEventBinding>(StringComparer.Ordinal);
         void Collect(JsonNode node, JsonArray typeParams, JsonArray methodParams)
@@ -265,6 +276,8 @@ static class ClrEventImplBinding
                             ?? throw new InvalidOperationException($"bir2cir: local {kind} is missing its event name");
                         obj["accessor"] = (kind == "clrEventAdd" ? "add_" : "remove_") + eventName;
                         obj["accessorOwner"] = TypeJson.Write(binding.AccessorOwner);
+                        obj[DeclarationIdentityBinding.Key] = kind == "clrEventAdd"
+                            ? binding.AddIdentity : binding.RemoveIdentity;
                         obj["delegateType"] = TypeJson.Write(binding.DelegateType);
                         obj["sig"] = (kind == "clrEventAdd"
                             ? binding.AddSignature : binding.RemoveSignature).DeepClone();

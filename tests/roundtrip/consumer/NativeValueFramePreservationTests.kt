@@ -19,6 +19,71 @@ import roundtrip.constructorcarrier.boundCounterCount
 abstract class Anchor<S : Anchor<S>>(val tag: String)
 class Leaf<E>(tag: String) : Anchor<Leaf<E>>(tag)
 private class Stored<T>(val value: T)
+private class StoredMarker<T>(val text: String)
+private fun <T> consumeStoredMarker(value: StoredMarker<T>): String = value.text
+private fun <T> forwardStoredMarker(value: StoredMarker<T>): String =
+    consumeStoredMarker(Stored(value).value)
+private inline fun <T> readStored(value: T): T = Stored(value).value
+private fun <T> forwardInlineStoredMarker(value: StoredMarker<T>): String =
+    consumeStoredMarker(readStored(value))
+private class StoredMarkerOwner<T> {
+    private val stored = Stored(StoredMarker<T>("stored"))
+    private fun consume(value: StoredMarker<T>): String = value.text
+    fun read(): String = consume(stored.value)
+}
+private fun invokeStoredBlock(block: () -> String): String = block()
+private inline fun invokeInlineStoredBlock(crossinline block: () -> String): String =
+    invokeStoredBlock { block() }
+private class NullableStoredMarkerOwner<T>(private val value: T) {
+    private val values = System.Collections.Generic.List<T?>()
+    private fun append(value: T?): String {
+        values.Add(value)
+        return values.Count.toString()
+    }
+    fun read(): String = invokeInlineStoredBlock { append(value) }
+    suspend fun readSuspend(): String = invokeInlineStoredBlock { append(value) }
+}
+private fun readStoredImmediately(block: suspend () -> String): String {
+    var observed = "not resumed"
+    block.startCoroutine(object : Continuation<String> {
+        override val context: CoroutineContext get() = EmptyCoroutineContext
+        override fun resumeWith(result: Result<String>) { observed = result.getOrThrow() }
+    })
+    return observed
+}
+private abstract class InheritedStorageParent<P : InheritedStorageParent<P>> {
+    private val value: P = this as P
+    private val nullableValues = System.Collections.Generic.List<P?>()
+    fun readStoredValue(): P = value
+}
+private abstract class InheritedStorageChild<C : InheritedStorageChild<C>> : InheritedStorageParent<C>() {
+    fun read(): C = readStoredValue()
+}
+private class InheritedStorageLeaf : InheritedStorageChild<InheritedStorageLeaf>()
+private interface StoredSink<T> {
+    fun put(value: T)
+    suspend fun send(value: T)
+    suspend fun echo(value: T): T
+}
+private interface StoredProducer<T> : StoredSink<T>
+private open class StoredSinkParent<T>(private var value: T) : StoredSink<T> {
+    override fun put(value: T) { this.value = value }
+    override suspend fun send(value: T) { this.value = value }
+    override suspend fun echo(value: T): T = value
+    fun read(): T = value
+}
+private class StoredSinkChild<T>(value: T) : StoredSinkParent<T>(value), StoredProducer<T>
+private fun <T> replaceStoredMarker(slot: ClrRef<StoredMarker<T>>, value: StoredMarker<T>) {
+    slot.value = value
+}
+private fun <T> replaceStoredMarkerLocal(value: StoredMarker<T>, replacement: StoredMarker<T>): String {
+    var slot = value
+    replaceStoredMarker(byref(slot), replacement)
+    return slot.text
+}
+private interface PlainStoredBound { fun count(): Int }
+private class PlainStoredCounter : PlainStoredBound { override fun count(): Int = 17 }
+private fun <T : PlainStoredBound> readPlainStoredBound(value: T): Int = Stored(value).value.count()
 private class StoredNativeValueEcho : NativeValueEcho {
     override fun <T> Echo(value: T): T = Stored(value).value
 }
@@ -371,6 +436,48 @@ class NativeValueFramePreservationTests {
         val value = StringBuilder()
         check(appendNativeBound(value) === value)
         check(value.toString() == "x")
+    }
+
+    @TestAttribute
+    fun aStoredValuePreservesItsNonGenericKotlinBound() {
+        check(readPlainStoredBound(PlainStoredCounter()) == 17)
+    }
+
+    @TestAttribute
+    fun aStoredConstructedValueReachesItsSelectedDeclarationWithoutChangingRefStorage() {
+        check(forwardStoredMarker(StoredMarker<String>("text")) == "text")
+        check(forwardStoredMarker(StoredMarker<Int>("value")) == "value")
+        check(forwardInlineStoredMarker(StoredMarker<String>("inline text")) == "inline text")
+        check(forwardInlineStoredMarker(StoredMarker<Int>("inline value")) == "inline value")
+        check(StoredMarkerOwner<String>().read() == "stored")
+        check(StoredMarkerOwner<Int>().read() == "stored")
+        check(NullableStoredMarkerOwner("text").read() == "1")
+        check(NullableStoredMarkerOwner(42).read() == "1")
+        check(readStoredImmediately { NullableStoredMarkerOwner("text").readSuspend() } == "1")
+        check(readStoredImmediately { NullableStoredMarkerOwner(42).readSuspend() } == "1")
+        val inherited = InheritedStorageLeaf()
+        check(inherited.read() === inherited)
+        check(replaceStoredMarkerLocal(StoredMarker<String>("before"), StoredMarker<String>("after")) == "after")
+        check(replaceStoredMarkerLocal(StoredMarker<Int>("before"), StoredMarker<Int>("after")) == "after")
+    }
+
+    @TestAttribute
+    fun inheritedSuspendDeclarationsFillEveryPhysicalInterfaceSlot() {
+        val strings = StoredSinkChild("before")
+        val producer: StoredProducer<String> = strings
+        producer.put("middle")
+        check(strings.read() == "middle")
+        check(readStoredImmediately {
+            producer.send(producer.echo("after"))
+            strings.read()
+        } == "after")
+        val values = StoredSinkChild(1)
+        val valueProducer: StoredProducer<Int> = values
+        valueProducer.put(2)
+        check(readStoredImmediately {
+            valueProducer.send(valueProducer.echo(3))
+            values.read().toString()
+        } == "3")
     }
 
     @TestAttribute

@@ -38,6 +38,7 @@ static class Bir2Cir
                 NullableRepresentationDemand.SelfTest();
                 NullableRepresentationTypes.SelfTest();
                 NullableRepresentationMaterialization.SelfTest();
+                EnumIntrinsicLowering.SelfTest();
                 InnerRepresentationFrameTests.SelfTest();
                 GenericRepresentationPolicy.SelfTest();
                 BirTypeLowering.SelfTestSlotReturns();
@@ -223,7 +224,8 @@ sealed class Pipeline
         if (!_options.RefBuild) SequenceElementAdapterLowering.Apply(birRoots);
         var genericRepresentations = new GenericRepresentationPolicy(representationAliases, refs, birRoots);
         var restoreDefaultFrames = DefaultArgSplice.PrepareInlineDefaults(birRoots, refs);
-        NullableRepresentationMaterialization.Apply(birRoots, isValueFqn, refs, policy: genericRepresentations);
+        var representationMethodFrames = NullableRepresentationMaterialization.Apply(
+            birRoots, isValueFqn, refs, policy: genericRepresentations);
         restoreDefaultFrames();
         // Preserve selected local factory facts before per-file transformations. In a
         // stdlib self-build these declarations are local, not referenced MethodDefs.
@@ -549,7 +551,7 @@ sealed class Pipeline
             // self-build keeps the filler body — see
             // EnumIntrinsicLowering).
             EnumIntrinsicLowering.Apply(
-                bir.Root, localRichEnums, localTopLevelFns, attributeTopLevelOwner, refs);
+                bir.Root, localRichEnums, localTopLevelFns, attributeTopLevelOwner, refs, representationMethodFrames);
             // ENUM ENTRY VALUES: kotc preserves owner + entry-name Kotlin identity. Resolve a referenced rich enum's
             // carrier-mapped singleton field, or a CLR enum's potentially sparse/negative/aliased physical constant,
             // from the exact compile reference here.
@@ -872,6 +874,7 @@ sealed class Pipeline
         var overrideSourceParameters = KotlinOverrideSlotBridge.CaptureSourceParameters(staged.Select(s => s.Root));
         TypeOwnershipLowering.RecordNestedSourceTypes(staged.Select(s => s.Root).ToList(), refs);
         TypeOwnershipLowering.ProjectInnerApplications(staged.Select(s => s.Root).ToList(), refs);
+        NullableTvErasureCallRealign.ProjectDeclarationApplications(nullableTvDeclRets);
 
         // F-BOUND STAR PROJECTION: CLR has no legal/reified `Node<*>` TypeSpec for `Node<N : Node<N>>`.
         // Materialize a deterministic non-generic existential view in bir2cir and make every closed Node<N> implement

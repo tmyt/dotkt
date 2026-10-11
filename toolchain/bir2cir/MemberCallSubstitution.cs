@@ -1271,7 +1271,7 @@ static class MemberCallSubstitution
         {
             var renamedMember = Str(node["method"]);
             var directOwnerArgs = ownerFqnNode.Args ?? Array.Empty<TypeNode>();
-            var inheritedSignature = companionSignature?
+            var inheritedSignature = (refs.DeclarationOverrideParameters(selectedDeclaration) ?? companionSignature)?
                 .Select(type => SupertypeGraph.SubstOwnerTvs(type, directOwnerArgs)).ToArray();
             var inherited = new List<(TypeNode.Fqn Owner, string Member, ExactClrMemberBinding Binding)>();
             foreach (var candidate in inheritedOverrides.OfType<JsonObject>())
@@ -1327,7 +1327,8 @@ static class MemberCallSubstitution
                 inheritedExactMemberBinding = inheritedSlot.Binding;
                 companionSignature = inheritedSignature;
                 if (inheritedSignature != null)
-                    node["sig"] = new JsonArray(inheritedSignature.Select(TypeJson.Write).ToArray());
+                    node["sig"] = new JsonArray(inheritedSignature
+                        .Select(BirTypeLowering.CanonicalPhysicalSlotType).Select(TypeJson.Write).ToArray());
             }
         }
 
@@ -2141,7 +2142,8 @@ static class MemberCallSubstitution
         return call;
     }
 
-    static void BindAuthoredHelper(JsonObject call, ReferenceMetadataIndex refs, SubstCtx ctx)
+    internal static void BindAuthoredHelper(JsonObject call, ReferenceMetadataIndex refs, SubstCtx ctx,
+        ValueTypeOracle isValue = null)
     {
         var arguments = ((JsonArray)call["typeArgs"]).Select(TypeJson.Read).ToArray();
         var helper = refs.AuthoredKotlinHelper(TypeJson.OwnerName(call["owner"]),
@@ -2156,7 +2158,7 @@ static class MemberCallSubstitution
                 return frame.SemanticVariable(variable) is TypeNode.Nullable
                     ? variable : frame.NullableVariable((TypeNode.Tv)frame.SemanticVariable(variable));
             }
-            return NullableGenericErasure.EraseArgument(new TypeNode.Nullable(argument), _isValue);
+            return NullableGenericErasure.EraseArgument(new TypeNode.Nullable(argument), isValue ?? _isValue);
         }
         TypeNode[] physicalArguments;
         try

@@ -27,7 +27,8 @@ static class PhysicalValueCoercion
             && IsReferenceSlot(target, index.IsValue)
             && target is not TypeNode.Fqn { Args: null, Name: "object" or "System.Object" }
         || source is TypeNode.Fqn carrier && target is TypeNode.Fqn native
-            && index.IsExistentialOwner(carrier) && index.IsNativeReference(native)
+            && index.IsExistentialOwner(carrier)
+            && (index.IsNativeReference(native) || index.HasDeclaredCarrier(native, carrier))
         || CollectionViewFaces.IsViewSeam(source, target)
         // A concrete value or generic stack slot is not a reference, even when its boxed value implements the
         // target interface. State the boxing edge before a conditional merge, store, argument or return.
@@ -58,6 +59,8 @@ static class PhysicalValueCoercion
     {
         readonly Dictionary<string, List<MethodShape>> _methods = new(StringComparer.Ordinal);
         readonly Dictionary<string, TypeNode> _fields = new(StringComparer.Ordinal);
+        readonly HashSet<string> _nonGenericClasses = new(StringComparer.Ordinal);
+        readonly HashSet<(string Class, string Carrier)> _declaredCarriers = new();
         readonly Func<JsonObject> _unitValue;
         internal ValueTypeOracle IsValue;
         internal Func<TypeNode.Fqn, bool> IsReferenceOwner;
@@ -68,6 +71,8 @@ static class PhysicalValueCoercion
 
         Index(Func<JsonObject> unitValue) => _unitValue = unitValue;
         internal JsonObject UnitValue() => _unitValue();
+        internal bool HasDeclaredCarrier(TypeNode.Fqn target, TypeNode.Fqn source) =>
+            _declaredCarriers.Contains((target.Name, source.Name));
 
         internal static Index Build(IReadOnlyList<JsonNode> roots, Func<JsonObject> unitValue)
         {
@@ -85,6 +90,12 @@ static class PhysicalValueCoercion
         void AddType(JsonObject type)
         {
             var owner = Str(type["name"]);
+            if (owner != null && Str(type["kind"]) == "class" && TypeParameterFrame.Count(type) == 0)
+                _nonGenericClasses.Add(owner);
+            if (owner != null && Str(type["kind"]) == "class")
+                foreach (var edge in type["interfaces"] as JsonArray ?? new JsonArray())
+                    if (TypeJson.Read(edge) is TypeNode.Fqn { Args: null } implemented)
+                        _declaredCarriers.Add((owner, implemented.Name));
             AddMembers(owner, type);
             if (type["types"] is JsonArray nested)
                 foreach (var child in nested.OfType<JsonObject>()) AddType(child);
@@ -131,6 +142,9 @@ static class PhysicalValueCoercion
         }
 
         static string Key(string owner, string name) => owner + "\u0000" + name;
+
+        internal bool ExactReferenceOwner(TypeNode.Fqn owner) => IsReferenceOwner(owner)
+            || _nonGenericClasses.Contains(owner.Name) && !IsValue(owner);
     }
 
     sealed class Scope
@@ -201,6 +215,44 @@ static class PhysicalValueCoercion
         carrierView["name"] = "carrierView";
         carrierView["params"][0]["type"] = TypeJson.Fqn("Carrier");
         root["methods"].AsArray().Add(carrierView);
+        root["types"] = new JsonArray(new JsonObject { ["name"] = "PlainOwner", ["kind"] = "class" });
+        root["types"].AsArray().Add(new JsonObject {
+            ["name"] = "GenericOwner", ["kind"] = "class", ["typeParams"] = new JsonArray("T"),
+            ["interfaces"] = new JsonArray(TypeJson.Fqn("Carrier")),
+        });
+        root["types"].AsArray().Add(new JsonObject {
+            ["name"] = "UnrelatedOwner", ["kind"] = "class", ["typeParams"] = new JsonArray("T"),
+        });
+        var exactLocalView = carrierView.DeepClone().AsObject();
+        exactLocalView["name"] = "exactLocalView";
+        exactLocalView["typeParams"] = new JsonArray("T");
+        exactLocalView["ret"] = TypeJson.Write(new TypeNode.Fqn("GenericOwner", new TypeNode[] { new TypeNode.Tv("method", 0) }));
+        root["methods"].AsArray().Add(exactLocalView);
+        var blockLocalView = exactLocalView.DeepClone().AsObject();
+        blockLocalView["name"] = "blockLocalView";
+        blockLocalView["body"][0]["value"] = new JsonObject {
+            ["k"] = "valueBlock", ["type"] = blockLocalView["ret"].DeepClone(),
+            ["stmts"] = new JsonArray(new JsonObject {
+                ["k"] = "var", ["name"] = "stored", ["type"] = TypeJson.Fqn("Carrier"),
+                ["init"] = new JsonObject { ["k"] = "local", ["name"] = "value" },
+            }),
+            ["result"] = new JsonObject { ["k"] = "local", ["name"] = "stored" },
+        };
+        root["methods"].AsArray().Add(blockLocalView);
+        var unrelatedView = exactLocalView.DeepClone().AsObject();
+        unrelatedView["name"] = "unrelatedView";
+        unrelatedView["ret"] = TypeJson.Write(new TypeNode.Fqn("UnrelatedOwner", new TypeNode[] { new TypeNode.Tv("method", 0) }));
+        root["methods"].AsArray().Add(unrelatedView);
+        var localReceiver = JsonNode.Parse("""
+          {"name":"localReceiver","typeParams":["P"],
+           "params":[{"name":"value","type":{"t":"tv","scope":"method","i":0}}],
+           "ret":{"t":"fqn","name":"System.Int32"},"body":[{"k":"return","value":{
+             "k":"constrainedCall","iface":{"t":"fqn","name":"PlainOwner"},
+             "recvType":{"t":"tv","scope":"method","i":0},"method":"Read",
+             "recv":{"k":"local","name":"value"},"sig":[],"args":[],
+             "ret":{"t":"fqn","name":"System.Int32"}}}]}
+          """).AsObject();
+        root["methods"].AsArray().Add(localReceiver);
         ApplyAll(new JsonNode[] { root }, () => throw new InvalidOperationException("Unexpected Unit conversion"), _ => false,
             isExistentialOwner: owner => owner.Name == "Carrier",
             isNativeReference: owner => owner.Name == "System.Collections.Generic.IReadOnlyList");
@@ -213,6 +265,29 @@ static class PhysicalValueCoercion
             throw new InvalidOperationException("Object storage did not convert to the declared reference value slot");
         if (Str(carrierView["body"][0]["value"]["k"]) != "cast")
             throw new InvalidOperationException("A declared carrier value lost its checked native interface view");
+        if (Str(exactLocalView["body"][0]["value"]["k"]) != "cast"
+            || TypeJson.Read(exactLocalView["body"][0]["value"]["type"]) != TypeJson.Read(exactLocalView["ret"])
+            || Str(unrelatedView["body"][0]["value"]["k"]) != "local")
+            throw new InvalidOperationException("Local carrier conversion guessed a class or discarded the exact declaration closure");
+        if (Str(blockLocalView["body"][0]["value"]["result"]["k"]) != "cast"
+            || TypeJson.Read(blockLocalView["body"][0]["value"]["result"]["type"])
+                != TypeJson.Read(blockLocalView["ret"]))
+            throw new InvalidOperationException("A value block concealed its physical result from the declared value slot");
+        var referenceCall = localReceiver["body"][0]["value"];
+        if (TypeJson.Read(referenceCall["recvType"]) != new TypeNode.Fqn("PlainOwner")
+            || Str(referenceCall["recv"]["k"]) != "cast"
+            || TypeJson.Read(referenceCall["recv"]["type"]) != new TypeNode.Fqn("PlainOwner"))
+            throw new InvalidOperationException("A local non-generic declaring class lost its explicit reference receiver");
+        var unusedParameters = JsonNode.Parse("""
+          [{"name":"<unused var>","type":{"t":"fqn","name":"object"}},
+           {"name":"<unused var>","type":{"t":"fqn","name":"object"}}]
+          """)!.AsArray().OfType<JsonObject>().ToArray();
+        var emptyBody = new JsonArray();
+        var unchanged = new JsonArray(unusedParameters.Select(parameter => parameter.DeepClone()).ToArray()).ToJsonString();
+        AllocateNativeLocals(emptyBody, unusedParameters, emptyBody);
+        if (emptyBody.Count != 0 || unchanged != new JsonArray(
+                unusedParameters.Select(parameter => parameter.DeepClone()).ToArray()).ToJsonString())
+            throw new InvalidOperationException("Unused anonymous parameters acquired addressable storage");
         Console.WriteLine("[physical value edges] self-test OK (local generic result, erased result, native carrier view)");
     }
 
@@ -345,8 +420,9 @@ static class PhysicalValueCoercion
             if (Str(obj["k"]) == "var" && Str(obj["name"]) is string declared)
                 declarations[declared] = obj;
         }
-        var declarations = parameters.Where(parameter => Str(parameter["name"]) != null)
-            .ToDictionary(parameter => Str(parameter["name"]), StringComparer.Ordinal);
+        var declarations = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
+        foreach (var parameter in parameters)
+            if (Str(parameter["name"]) is string name) declarations[name] = parameter;
         foreach (var statement in body.ToArray()) Visit(statement, declarations);
         var prefix = new List<JsonNode>();
         foreach (var (declaration, type) in required)
@@ -427,10 +503,13 @@ static class PhysicalValueCoercion
         // reference instead; boxing cannot copy mutable struct state here.
         // Object/ValueType/Enum and interfaces retain their addressable dispatch.
         if (Str(obj["k"]) == "constrainedCall" && TypeJson.Read(obj["recvType"]) is TypeNode.Tv
-            && ResolvedMember(obj) is JsonObject receiverMember
-            && TypeJson.Read(receiverMember["declaringType"]) is TypeNode.Fqn referenceOwner
-            && index.IsReferenceOwner(referenceOwner))
+            && (TypeJson.Read(ResolvedMember(obj)?["declaringType"]) ?? TypeJson.Read(obj["iface"]))
+                is TypeNode.Fqn referenceOwner
+            && index.ExactReferenceOwner(referenceOwner))
+        {
             obj["recvType"] = TypeJson.Write(referenceOwner);
+            CoerceSlot(obj, "recv", referenceOwner, scope, index);
+        }
 
         // Collection allocation nodes already state their exact reference-type constructor. A compiler-owned
         // single-evaluation binding can retain that type even when its Kotlin surface is existential. Do not narrow
@@ -612,6 +691,9 @@ static class PhysicalValueCoercion
                 break;
             case "return": case "returnExpr":
                 CoerceSlot(node, "value", scope.Return, scope, index);
+                break;
+            case "valueBlock":
+                CoerceSlot(node, "result", TypeJson.Read(node["type"]), scope, index);
                 break;
             case "callStatic": case "callInstance": case "constrainedCall":
             case "clrStatic": case "clrInstance": case "clrGenericStatic": case "clrGenericInstance":

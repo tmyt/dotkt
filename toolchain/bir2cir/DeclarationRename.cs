@@ -217,6 +217,12 @@ static class DeclarationRename
             }
             if (!TryCallableSignature(declaration, out var signature, out var methodArity)
                 || signature.Length != arity) continue;
+            // A call's physical value vector may already use storage companions.
+            // Override selection still owns the pristine selected Kotlin descriptor.
+            if (declaration["k"]?.GetValue<string>() == "callInstance"
+                && refs.DeclarationOverrideParameters(declaration[DeclarationIdentityBinding.Key]?.GetValue<string>())
+                    is { } sourceParameters)
+                signature = sourceParameters;
             if (declaration["params"] is JsonArray parameters)
             {
                 var methodFrame = NullableRepresentationTypes.DeclarationMethodFrame(declaration);

@@ -685,7 +685,7 @@ static class FBoundStarProjectionErasure
         }
     }
 
-    static bool IsSourceGeneric(JsonObject def)
+    internal static bool IsSourceGeneric(JsonObject def)
     {
         // Lifted/local compiler artifacts are not part of the Kotlin ABI and cannot be named by a
         // downstream star-projected use.  Attaching an existential interface to them also turns
@@ -2882,6 +2882,7 @@ static class FBoundStarProjectionErasure
                 BindProjectedConstraintMember(obj, typeParameterDeclarations, methodParameterDeclarations,
                     defs, refs);
                 BindInheritedStarMember(obj, owners, defs, refs);
+                BindLocalEventAccessor(obj, owners, defs, refs);
                 if (!projectedArrayRead)
                     BindProjectedArrayRead(obj, owners, refs);
                 BindProjectedArrayGenericCall(obj, owners, refs);
@@ -4201,6 +4202,28 @@ static class FBoundStarProjectionErasure
             ReferenceMetadataIndex.BareOwnerFqn(left).Replace('+', '.'),
             ReferenceMetadataIndex.BareOwnerFqn(right).Replace('+', '.'),
             StringComparison.Ordinal);
+    }
+
+    static void BindLocalEventAccessor(JsonObject node, IReadOnlyDictionary<string, Owner> owners,
+        IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs)
+    {
+        if (Str(node["k"]) is not ("clrEventAdd" or "clrEventRemove") || !Bool(node["localAccessor"])) return;
+        // Local event binding already selected this accessor and its declaration
+        // signature. Project that edge by the same allocated-slot rule as an
+        // ordinary call, before rewriting away the constructed source owner.
+        var call = new JsonObject {
+            ["k"] = "callInstance", ["ownerType"] = node["accessorOwner"]?.DeepClone(),
+            [DeclarationIdentityBinding.Key] = node[DeclarationIdentityBinding.Key]?.DeepClone(),
+            ["method"] = node["accessor"]?.DeepClone(), ["sig"] = node["sig"]?.DeepClone(),
+            ["recv"] = node["recv"]?.DeepClone(),
+            ["args"] = new JsonArray(node["handler"]?.DeepClone()),
+            ["ret"] = TypeJson.Write(new TypeNode.Fqn("kotlin.Unit")),
+        };
+        BindInheritedStarMember(call, owners, defs, refs, alignResult: false);
+        node["accessorOwner"] = call["ownerType"]?.DeepClone();
+        node["accessor"] = call["method"]?.DeepClone();
+        node["sig"] = call["sig"]?.DeepClone();
+        node[DeclarationIdentityBinding.Key] = call[DeclarationIdentityBinding.Key]?.DeepClone();
     }
 
     // A star smart-cast keeps the receiver's most-derived Kotlin type (`ComparableRange<*>.isEmpty`) even when the

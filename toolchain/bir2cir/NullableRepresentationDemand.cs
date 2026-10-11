@@ -198,7 +198,7 @@ static partial class NullableRepresentationDemand
                     // A Kotlin value parameter/result owns its storage role even when
                     // there is no implementation body (notably an interface slot).
                     // Native dispatch signatures and managed references remain exact.
-                    if (method.ImplementationKey == null && policy?.OwnsMethodValueSlots(method.Declaration) == true)
+                    if (policy?.OwnsMethodValueSlots(method.Declaration) == true)
                     {
                         foreach (var parameter in (method.Declaration["params"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
                             DemandMethodValue(parameter["type"]);

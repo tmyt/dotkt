@@ -73,9 +73,10 @@ static partial class SuspendColdLowering
     static IReadOnlySet<string> _localTypeFqns;
     static (string Owner, JsonObject Method, JsonObject Source)[] _localHelperDeclarations;
 
-    static JsonObject BindAuthoredStartCall(JsonObject call, int sourceArity, TypeNode[] sourceParameters)
+    static JsonObject BindAuthoredCall(JsonObject call, int sourceArity, TypeNode[] sourceParameters)
     {
-        var owner = TypeJson.OwnerName(call["owner"]);
+        var isStatic = Str(call["k"]) == "callStatic";
+        var owner = TypeJson.OwnerName(isStatic ? call["owner"] : call["ownerType"]);
         var name = Str(call["method"]);
         NullableRepresentationFrame frame;
         TypeNode[] parameters;
@@ -84,7 +85,7 @@ static partial class SuspendColdLowering
         {
             // The self-build's local declaration wins over the shipped reference twin.
             var matches = _localHelperDeclarations.Where(entry => entry.Owner == owner
-                && Bool(entry.Method["static"])
+                && Bool(entry.Method["static"]) == isStatic
                 && (Str(entry.Method["declarationSourceName"]) ?? Str(entry.Method["name"])) == name
                 && (NullableRepresentationTypes.DeclarationMethodFrame(entry.Method)?.SourceArity
                     ?? (entry.Method["typeParams"] as JsonArray)?.Count ?? 0) == sourceArity
@@ -100,12 +101,13 @@ static partial class SuspendColdLowering
         }
         else
         {
-            var helper = _refs.AuthoredKotlinHelper(owner, name, sourceArity, sourceParameters);
+            var helper = _refs.AuthoredKotlinHelper(owner, name, sourceArity, sourceParameters, isStatic);
             identity = helper.DeclarationId;
             frame = helper.NullableFrame;
             parameters = helper.ParamTypeNodes;
         }
-        var sourceArguments = Enumerable.Repeat(AnyTn, sourceArity).ToArray();
+        var sourceArguments = call["typeArgs"] is JsonArray supplied
+            ? supplied.Select(TypeJson.Read).ToArray() : Enumerable.Repeat(AnyTn, sourceArity).ToArray();
         var arguments = frame == null ? sourceArguments : frame.Close(sourceArguments, type => type,
             type => NullableGenericErasure.EraseArgument(new TypeNode.Nullable(type), _isValueFqn),
             type => type, type => NullableGenericErasure.EraseArgument(new TypeNode.Nullable(type), _isValueFqn));
@@ -200,7 +202,7 @@ static partial class SuspendColdLowering
             call["k"] = "callStatic";
             call["owner"] = Tn(semanticOwner);
         }
-        return call;
+        return BindAuthoredCall(call, typeArgs.Count, sig.Select(TypeJson.Read).ToArray());
     }
     static bool IsUnitTn(TypeNode t) => t is TypeNode.Fqn { Args: null, Name: "void" or "kotlin.Unit" };
 
@@ -396,12 +398,19 @@ static partial class SuspendColdLowering
         _refs = refs;   // #10: EmitAwaitPoint reads it to resolve the .NET awaitable pattern for each `.await()`.
         _isValueFqn = isValueFqn ?? (_ => false);
         _localTypeFqns = localTypeFqns;
-        _localHelperDeclarations = roots.OfType<JsonObject>().SelectMany(root =>
-            (root["methods"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()
-                .Where(method => Str(method[DeclarationIdentityBinding.Key]) is string id
-                    && sourceSignatures?.ContainsKey(id) == true)
-                .Select(method => (Str(root["fileClass"]), method,
-                    sourceSignatures[Str(method[DeclarationIdentityBinding.Key])]))).ToArray();
+        var helperDeclarations = new List<(string Owner, JsonObject Method, JsonObject Source)>();
+        void CollectHelperDeclarations(JsonObject declaration)
+        {
+            var owner = Str(declaration["name"]) ?? Str(declaration["fileClass"]);
+            foreach (var method in (declaration["methods"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
+                if (Str(method[DeclarationIdentityBinding.Key]) is string id
+                    && sourceSignatures?.TryGetValue(id, out var source) == true)
+                    helperDeclarations.Add((owner, method, source));
+            foreach (var child in (declaration["types"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
+                CollectHelperDeclarations(child);
+        }
+        foreach (var root in roots.OfType<JsonObject>()) CollectHelperDeclarations(root);
+        _localHelperDeclarations = helperDeclarations.ToArray();
         _appBuild = appBuild;
         const string continuation = "kotlin.coroutines.Continuation";
         var continuationCarrier = localExistentialOwners.GetValueOrDefault(continuation);
@@ -3479,7 +3488,7 @@ static partial class SuspendColdLowering
                 var elems = new JsonArray();
                 foreach (var a in invokeArgs) elems.Add(a);
                 var argArray = new JsonObject { ["k"] = "newArray", ["elem"] = Tw(AnyTn), ["elems"] = elems };
-                return BindAuthoredStartCall(new JsonObject
+                return BindAuthoredCall(new JsonObject
                 {
                     ["k"] = "callStatic",
                     ["owner"] = Tn(StartSuspendOwner),
@@ -3500,7 +3509,7 @@ static partial class SuspendColdLowering
             sourceParameters.Add(new TypeNode.Fqn(ContinuationFqn,
                 new TypeNode[] { new TypeNode.Tv("method", invokeArgs.Count) }));
 
-            return BindAuthoredStartCall(new JsonObject
+            return BindAuthoredCall(new JsonObject
             {
                 ["k"] = "callStatic",
                 ["owner"] = Tn(StartSuspendOwner),

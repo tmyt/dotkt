@@ -77,6 +77,8 @@ sealed class NullableRepresentationTypes
             ? NullableRepresentationFrame.Read(JsonNode.Parse(encoded)) : null;
     public TypeNode Argument(TypeNode type) => Rewrite(type, NullableGenericErasure.Pos.Argument);
     public TypeNode StorageArgument(TypeNode type) => Rewrite(type, NullableGenericErasure.Pos.Argument, storage: true);
+    internal TypeNode StorageConstraint(TypeNode.Fqn bound) =>
+        _policy?.StorageConstraint(bound) is { } constraint ? Argument(constraint) : null;
     public bool IsStorageElement(string kind, string key) => _policy?.IsStorageElement(kind, key) == true;
     public bool IsNativeField(JsonObject node) => _policy?.IsNativeField(node) == true;
     public TypeNode ArgumentForRole(TypeNode type, NullableRepresentationFrame.Role role) => role switch {

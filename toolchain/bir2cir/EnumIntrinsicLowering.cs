@@ -40,24 +40,26 @@ static class EnumIntrinsicLowering
     }
 
     public static void Apply(JsonNode root, ISet<string> richEnums, ISet<string> localTopLevelFns, bool appBuild,
-        ReferenceMetadataIndex refs)
-        => Walk(root, richEnums, localTopLevelFns, appBuild, refs);
+        ReferenceMetadataIndex refs, IReadOnlyDictionary<string, NullableRepresentationFrame> methodFrames)
+        => Walk(root, richEnums, localTopLevelFns, appBuild, refs, methodFrames);
 
-    static void Walk(JsonNode node, ISet<string> rich, ISet<string> local, bool app, ReferenceMetadataIndex refs)
+    static void Walk(JsonNode node, ISet<string> rich, ISet<string> local, bool app, ReferenceMetadataIndex refs,
+        IReadOnlyDictionary<string, NullableRepresentationFrame> methodFrames)
     {
         switch (node)
         {
             case JsonObject obj:
-                Rewrite(obj, rich, local, app, refs);
-                foreach (var kv in obj) if (kv.Value != null) Walk(kv.Value, rich, local, app, refs);
+                Rewrite(obj, rich, local, app, refs, methodFrames);
+                foreach (var kv in obj) if (kv.Value != null) Walk(kv.Value, rich, local, app, refs, methodFrames);
                 break;
             case JsonArray arr:
-                foreach (var it in arr) if (it != null) Walk(it, rich, local, app, refs);
+                foreach (var it in arr) if (it != null) Walk(it, rich, local, app, refs, methodFrames);
                 break;
         }
     }
 
-    static void Rewrite(JsonObject o, ISet<string> rich, ISet<string> local, bool app, ReferenceMetadataIndex refs)
+    static void Rewrite(JsonObject o, ISet<string> rich, ISet<string> local, bool app, ReferenceMetadataIndex refs,
+        IReadOnlyDictionary<string, NullableRepresentationFrame> methodFrames)
     {
         // A referenced rich enum is projected into KLIB as an enum, so kotc faithfully emits the ordinary enum
         // semantic nodes for its synthesized values()/valueOf() declarations. The trusted producer carrier is the
@@ -112,7 +114,12 @@ static class EnumIntrinsicLowering
         if (Str(o["k"]) != "callStatic" || o["owner"] != null) return;
         var method = Str(o["method"]);
         if (method == null || !Names.Contains(method)) return;
-        if (o["typeArgs"] is not JsonArray ta || ta.Count != 1) return;
+        if (o["typeArgs"] is not JsonArray ta) return;
+        var declarationId = Str(o[DeclarationIdentityBinding.Key]);
+        var frame = declarationId == null ? null : methodFrames.GetValueOrDefault(declarationId)
+            ?? refs.NullableMethodFrame(declarationId);
+        var tArg = SourceArgument(ta, frame);
+        if (tArg == null) return;
         var args = o["args"] as JsonArray ?? new JsonArray();
         var isValueOf = method == "enumValueOf";
         var isEntries = method is "enumEntries" or "enumEntriesIntrinsic";
@@ -126,7 +133,6 @@ static class EnumIntrinsicLowering
         // (invalid IL) — its filler body stays; only App-build call sites are intercepted.
         if (isEntries && !app) return;
 
-        var tArg = ta[0];
         var richName = TypeJson.Read(tArg) is TypeNode.Fqn f ? f.Name : null;
         var isLocalRich = richName != null && rich.Contains(richName);
         string mappedValuesApi = null;
@@ -148,6 +154,30 @@ static class EnumIntrinsicLowering
             repl = new JsonObject { ["k"] = "enumValues", ["type"] = tArg?.DeepClone() };
 
         Replace(o, repl);
+    }
+
+    // Companions are CLR representations of the selected method's source parameter, not additional
+    // enum parameters. Read its ordinary role through the declaration frame, never by physical position.
+    static JsonNode SourceArgument(JsonArray arguments, NullableRepresentationFrame frame)
+        => frame == null ? arguments.Count == 1 ? arguments[0] : null
+            : frame.SourceArity == 1 && arguments.Count == frame.PhysicalArity
+                ? arguments[frame.Variable(new TypeNode.Tv("method", 0), NullableRepresentationFrame.Role.Ordinary).I]
+                : null;
+
+    internal static void SelfTest()
+    {
+        var ordinary = TypeJson.Fqn("EnumType");
+        var companion = TypeJson.Fqn("StorageType");
+        var frame = new NullableRepresentationFrame(1, System.Array.Empty<int>(),
+            physicalOrder: new[] { 1, 0 }, storageIndices: new[] { 0 });
+        var arguments = new JsonArray(companion, ordinary);
+        if (!ReferenceEquals(SourceArgument(arguments, frame), ordinary)
+            || SourceArgument(arguments, null) != null
+            || SourceArgument(new JsonArray(TypeJson.Fqn("EnumType")), frame) != null
+            || NodeType.Of(new JsonObject { ["k"] = "enumParse", ["type"] = ordinary.DeepClone() })
+                != TypeJson.Read(ordinary))
+            throw new System.InvalidOperationException("Enum intrinsic lost its selected source argument frame");
+        System.Console.WriteLine("[enum intrinsic frame] self-test OK (ordinary role, physical permutation, exact arity)");
     }
 
     static void Replace(JsonObject target, JsonNode replacement)
