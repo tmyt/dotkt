@@ -5,6 +5,22 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+## 0.9.13-beta2 (2026-10-12)
+
+### Release highlights
+
+- **kotlinx.coroutines reaches consumer smoke testing with unchanged upstream common source.**
+  A separately built atomicfu/coroutines stack passes all eleven smoke categories: `runBlocking`,
+  `launch`/join, `async`/await, asynchronous delay/resumption, cancellation and exception propagation,
+  context/continuation interception, dispatcher replacement, Channel, Flow, cleanup across suspension,
+  and atomicfu scalar/array operations. Public `suspendCancellableCoroutine` consumer calls also pass
+  immediate completion, real suspension/resumption, and cancellation checks. All four complete DLLs
+  from that validation pass ILVerify. The five DotKt packages do not bundle these downstream libraries.
+- This prerelease is for downstream real-application testing. WinUI application integration has not
+  yet been validated; smoke success is not a claim that every coroutine or platform scenario works.
+- All five DotKt packages and SDK defaults are updated together to `0.9.13-beta2`; the embedded Kotlin
+  compiler remains **2.4.10**. Compiler-generated artifact compatibility across releases is not guaranteed.
+
 ### Toolchain
 
 - **Published inline generic carriers are callable across DLLs (#1013).**
