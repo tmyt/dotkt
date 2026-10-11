@@ -42,6 +42,17 @@ internal annotation class RuntimeTypesInternalAnnotation
 annotation class RuntimeTypesPublicAnnotation
 @PublishedApi internal annotation class RuntimeTypesPublishedAnnotation
 @PublishedApi internal class RuntimeTypesPublishedClass
+@PublishedApi internal class RuntimeTypesPublishedGeneric<T>(val value: T)
+internal class RuntimeTypesInternalGeneric<T>(val value: T)
+private class RuntimeTypesPrivateGeneric<T>(val value: T)
+
+// Require each existential representation independently of its source declaration's visibility.
+private fun runtimeTypesVisibilityViews(
+    publishedView: RuntimeTypesPublishedGeneric<*>,
+    internalView: RuntimeTypesInternalGeneric<*>,
+    privateView: RuntimeTypesPrivateGeneric<*>
+) { }
+
 @PublishedApi internal object RuntimeTypesPublishedObject
 @PublishedApi internal enum class RuntimeTypesPublishedEnum { Value }
 @PublishedApi internal enum class RuntimeTypesPublishedRichEnum(val code: Int) {
@@ -391,6 +402,9 @@ class StarProjectionAndVisibilityTests {
         assertTrue(Type.GetType("RuntimeTypesPublicAnnotation")!!.IsPublic)
         assertTrue(Type.GetType("RuntimeTypesPublishedAnnotation")!!.IsPublic)
         assertTrue(Type.GetType("RuntimeTypesPublishedClass")!!.IsPublic)
+        assertTrue(Type.GetType("RuntimeTypesPublishedGeneric\$star")!!.IsPublic)
+        assertTrue(Type.GetType("RuntimeTypesInternalGeneric\$star")!!.IsNotPublic)
+        assertTrue(Type.GetType("RuntimeTypesPrivateGeneric\$star")!!.IsNotPublic)
         assertTrue(Type.GetType("RuntimeTypesPublishedObject")!!.IsPublic)
         assertTrue(Type.GetType("RuntimeTypesPublishedEnum")!!.IsPublic)
         assertTrue(Type.GetType("RuntimeTypesPublishedRichEnum")!!.IsPublic)

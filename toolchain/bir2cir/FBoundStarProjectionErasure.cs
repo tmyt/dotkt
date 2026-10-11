@@ -1954,7 +1954,8 @@ static class FBoundStarProjectionErasure
             ["properties"] = new JsonArray(),
             ["attrs"] = new JsonArray(),
         };
-        if (owner.Def["vis"] != null) erased["vis"] = owner.Def["vis"].DeepClone();
+        if (PublishedApiTypeVisibilityLowering.ResolveVisibility(owner.Def) is { } visibility)
+            erased["vis"] = visibility;
         rootTypes.Add(erased);
 
         var ownerIfaces = owner.Def["interfaces"] as JsonArray;
