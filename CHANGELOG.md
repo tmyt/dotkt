@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Unused unchecked generic results retain their erased storage (#1011).**
+  Value-storage companions no longer force an early unbox during Channel receiver
+  cancellation; narrowing remains at the first typed consumer.
+
 - **Nominal Kotlin overloads retain their distinct signatures through CLR aliases (#1001).**
   Independent declarations such as `Iterable<T>` and `Sequence<T>` overloads share native CLR value types
   without renaming functions or editing common source; exact calls and callable references retain selection.
