@@ -1476,6 +1476,25 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 
 	val ifaceSpec = birType(node.type) as TypeNode.Fqn
 	val ifaceArgs = ifaceSpec.args.orEmpty()
+	val propertyInterface = node.type.classifierOrNull?.owner as IrClass
+	// Synthesized implementations must carry the same resolved override facts as authored methods.
+	fun propertySlotOverrides(member: String): String {
+		val slot = propertyInterface.declarations.filterIsInstance<IrSimpleFunction>()
+			.single { it.name.asString() == member }
+		val declarations = LinkedHashSet<IrSimpleFunction>()
+		fun collect(declaration: IrSimpleFunction) {
+			if (declarations.add(declaration)) declaration.overriddenSymbols.forEach { collect(it.owner) }
+		}
+		collect(slot)
+		val edges = declarations.map { declaration ->
+			val owner = declaration.parent as IrClass
+			val ownerType = if (owner === propertyInterface) ifaceSpec else
+				birType(correspondingSupertypeInstantiation(node.type, owner)
+					?: error("property reference slot '$member' has no resolved supertype instantiation"))
+			"""{"owner":${ownerType.toJson()},"member":${str(declaration.name.asString())},"kind":"method","arity":${emittedParamCount(declaration)}${declarationIdField(declaration)}}"""
+		}
+		return ""","overrides":[${edges.joinToString(",")}]"""
+	}
 	val arity0 = ifaceSpec.name == "kotlin.reflect.KProperty0" || ifaceSpec.name == "kotlin.reflect.KMutableProperty0"
 	val vType = ifaceArgs.lastOrNull() ?: OBJ
 	val recvTypeNode = ifaceArgs.getOrNull(0).takeIf { !arity0 }   // KProperty1/KMutableProperty1's T (unbound only)
@@ -1630,15 +1649,16 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 		else -> """{"k":"return","value":${accessorCall(false, null)}}"""
 	}
 	val readParams = if (unbound) """{"name":"receiver","type":${str(recvTypeNode ?: OBJ)}}""" else ""
-	val getMethod = """{"name":"get","static":false,"override":true,"virtual":true,"params":[$readParams],"ret":${str(vType)},"body":[$readBody]}"""
+	val getMethod = """{"name":"get","static":false,"override":true,"virtual":true,"params":[$readParams],"ret":${str(vType)},"body":[$readBody]${propertySlotOverrides("get")}}"""
 	// KProperty0/KProperty1's declared supertype `() -> V`/`(T) -> V` gives them a REAL fake-overridden `invoke`
 	// abstract member (confirmed in the compiled BIR: `interfaces` drops the FunctionN supertype — a Kotlin
 	// function type has no faithful CLR interface base — but the interface's OWN `methods` still carries the
 	// fake override AS ITS OWN abstract slot). So the lifted class must implement it too, same body as `get`
 	// (mirrors JVM's `PropertyReferenceImpl.invoke() = get()`).
-	val invokeMethod = """{"name":"invoke","static":false,"override":true,"virtual":true,"params":[$readParams],"ret":${str(vType)},"body":[$readBody]}"""
+	val invokeMethod = """{"name":"invoke","static":false,"override":true,"virtual":true,"params":[$readParams],"ret":${str(vType)},"body":[$readBody]${propertySlotOverrides("invoke")}}"""
 
-	val setMethod: String? = setterFn?.let {
+	val mutableReference = ifaceSpec.name == "kotlin.reflect.KMutableProperty0" || ifaceSpec.name == "kotlin.reflect.KMutableProperty1"
+	val setMethod: String? = setterFn?.takeIf { mutableReference }?.let {
 		val setBody = when {
 			companionExtension -> """{"k":"exprStmt","expr":${companionExtensionAccess(true, """{"k":"local","name":"value"}""")}}"""
 			hasExtRecv -> """{"k":"exprStmt","expr":${extAccessorCall(true, """{"k":"local","name":"value"}""")}}"""
@@ -1654,7 +1674,7 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 		}
 		val setParams = (if (unbound) """{"name":"receiver","type":${str(recvTypeNode ?: OBJ)}},""" else "") +
 			"""{"name":"value","type":${str(vType)}}"""
-		"""{"name":"set","static":false,"override":true,"virtual":true,"params":[$setParams],"ret":${str(TypeNode.Fqn("kotlin.Unit"))},"body":[$setBody]}"""
+		"""{"name":"set","static":false,"override":true,"virtual":true,"params":[$setParams],"ret":${str(TypeNode.Fqn("kotlin.Unit"))},"body":[$setBody]${propertySlotOverrides("set")}}"""
 	}
 
 	// KCallable.name + KAnnotatedElement.annotations are NOT re-synthesized here: the lifted class extends the real
