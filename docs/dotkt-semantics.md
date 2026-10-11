@@ -2122,6 +2122,9 @@ A CLR override or intrinsic instead retains the selected native declaration's ge
 Additional representations required only by a virtual implementation belong to a private body entry; they do
 not enlarge its published dispatch slot. Source constraints and role correspondence remain explicit metadata,
 not facts reconstructed from a physical companion's index or a method's spelling.
+An array argument's value-storage companion is `System.Array` for both open and closed
+instantiations; its ordinary argument still names the exact native array witness. This
+keeps a separately compiled `Cargo<Array<T?>, U>` consistent with its concrete consumer.
 
 Constructed value types such as `KeyValuePair<K,V>` follow the same concrete nullable-value rule as `Int`.
 Concretely:
@@ -2261,6 +2264,8 @@ What this is observable as, beyond the boxing already listed above:
   nested native generic constructions and supported `ref`/`out` or live-reference locations retain the selected
   declaration's native array shape. Crossing from open Kotlin storage checks that shape without copying or
   changing aliases. Kotlin allocation element witnesses likewise remain exact, separate from open value slots.
+  A collection factory's native container element, key or value argument is such a witness too;
+  storing an open array in that container checks its exact array shape at the insertion edge.
 
 An array element is therefore not a special case but the most visible instance of the general rule, and a generic
 that carries an element from an array into a collection stays consistent: `fun f(xs: Array<Int?>): List<Int?> =

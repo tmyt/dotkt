@@ -42,6 +42,13 @@ class CollectionFactoryFrameTests {
         val stored = FactoryFrameOwner(7).arrays(values).value[0]
         check(stored === values && stored[0] == 7)
         check(FactoryFrameOwner("a").arrays(arrayOf("b")).value[0][0] == "b")
+        val owner = FactoryFrameOwner(7)
+        check(owner.arraySet(values).value.single() === values)
+        check(owner.arrayMap(values).value[values] === values)
+        val references = arrayOf("b")
+        val referenceOwner = FactoryFrameOwner("a")
+        check(referenceOwner.arraySet(references).value.single() === references)
+        check(referenceOwner.arrayMap(references).value[references] === references)
     }
 
     @TestAttribute fun functionElementsKeepTheirParameterFrame() {

@@ -545,6 +545,11 @@ static class FBoundStarProjectionErasure
     static bool IsNativeArrayDeclarationSlot(JsonObject owner, string key, ReferenceMetadataIndex refs,
         IReadOnlyDictionary<string, string> localClrAliases) =>
         key == "typeArgs" && ClrBoundNode.IsAny(Str(owner["k"]))
+        // Collection constructions allocate a native generic container. Its
+        // element/key/value are CLR argument witnesses, not array value slots.
+        // PhysicalValueCoercion authors the conversion at each insertion edge.
+        || key == "elem" && Str(owner["k"]) is "newList" or "newSet"
+        || key is "keyType" or "valType" && Str(owner["k"]) == "newMap"
         || key is "params" or "ret"
         && (Bool(owner[KotlinPropertyAccessors.PhysicalSlotBridgeKey])
                 && new[] { "clrInterfaceImpls", "clrBaseImpls" }

@@ -43,7 +43,7 @@ if len(accessors) != 1:
 
 accessor = accessors[0]
 base = {"t": "fqn", "name": "roundtrip.protectedmethodgeneric.ReferencedProtectedMethodGenericBase"}
-physical_array = {"t": "array", "elem": {"t": "tv", "scope": "method", "i": 1}}
+physical_array = {"t": "fqn", "name": "System.Array"}
 string_type = {"t": "fqn", "name": "System.String"}
 call_array = {"t": "array", "elem": string_type}
 expected_params = [base, physical_array]
@@ -75,8 +75,11 @@ if (
     call.get("sig") != expected_params
     or len(call.get("args", [])) != 2
     or call.get("typeArgs") != [string_type, string_type]
-    or call.get("ret") != call_array
+    or call.get("ret") != physical_array
 ):
     raise SystemExit(f"UnsafeAccessor call and declaration are not arity/type coherent: {call!r}")
+if not any(node.get("k") == "cast" and node.get("type") == call_array
+           and node.get("e") is call for node in objects(closures[0].get("methods", []))):
+    raise SystemExit("concrete method-generic result must explicitly convert System.Array to string[]")
 
 print("referenced method-generic UnsafeAccessor retains target and value-parameter slots")
