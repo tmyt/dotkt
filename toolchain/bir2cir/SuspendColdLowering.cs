@@ -1673,6 +1673,9 @@ static partial class SuspendColdLowering
             if (_needSuspendGuard) invoke.Add(SetField(SuspendingField, BoolConst(false)));
             foreach (var (state, label) in _dispatch)
                 invoke.Add(BrIf(BinEq(FieldOf(StateLabelField, IntTn), IntConst(state)), true, label));
+            // A failed first resume completes without entering the body or its handlers. Later resumes
+            // jump past this entry check to their own failure check inside the resumed user region.
+            invoke.Add(new JsonObject { ["k"] = "exprStmt", ["expr"] = ThrowOnFailure() });
             foreach (var st in bodyOut) invoke.Add(st);
 
             // #82 — tripwire: every `{k:local}`/`{k:setLocal}` in the emitted invokeSuspend must resolve to the
