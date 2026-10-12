@@ -19,6 +19,22 @@ class InitialResumeCompletion : Continuation<Unit> {
 
 class InitialResumeFailureTests {
     @TestAttribute
+    fun initialFailurePrecedesSequenceBody() {
+        var entered = false
+        val completion = InitialResumeCompletion()
+        val cause = IllegalStateException("failure before sequence body")
+        val body: suspend () -> Unit = {
+            for (value in sequenceOf(1)) entered = true
+        }
+
+        body.createCoroutineUnintercepted(completion).resumeWith(Result.failure(cause))
+
+        assertEquals(false, entered)
+        assertEquals(1, completion.calls)
+        assertEquals(true, completion.failure === cause)
+    }
+
+    @TestAttribute
     fun failureBeforeNonSuspendingBodyPreservesException() {
         var entered = false
         val completion = InitialResumeCompletion()

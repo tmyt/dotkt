@@ -1580,7 +1580,9 @@ static partial class SuspendColdLowering
                     foreach (var p in _params)
                         FieldStorage(Str(p["name"]), TypeJson.Read(p["type"]), RoleParam, lives: true, across: null);
                     var msg = $"{_smType}: {reason} — this suspend lambda is not supported by bir2cir's cold-lowering.";
-                    newTypes.Add(SmTypeLambda(UnsupportedThrowBody(msg)));
+                    var stubBody = UnsupportedThrowBody(msg);
+                    stubBody.Insert(0, new JsonObject { ["k"] = "exprStmt", ["expr"] = ThrowOnFailure() });
+                    newTypes.Add(SmTypeLambda(stubBody));
                     return;
                 }
                 Console.Error.WriteLine(
