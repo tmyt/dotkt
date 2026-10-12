@@ -5,6 +5,21 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+## 0.9.13-beta3 (2026-10-12)
+
+### Toolchain
+
+- **Non-inner classifiers under generic Kotlin owners use valid CLR nesting (#1018, #1019).**
+  Their physical parent is the existing non-generic static carrier, while explicit metadata
+  preserves Kotlin source paths, visibility and generic declaration frames across DLL imports.
+  Real inner classes and generated capturing frames keep their original owners. This fixes
+  Roslyn's stack overflow when importing the separately built kotlinx.coroutines library.
+  The stdlib-runtime emitter now also honors the exact nesting already specified by CIR.
+- All five packages and SDK defaults are updated together to `0.9.13-beta3`; the embedded
+  Kotlin compiler remains **2.4.10**. Rebuild dependent Kotlin-produced DLLs with this toolchain;
+  compatibility with older compiler-generated artifacts is not guaranteed. Downstream
+  atomicfu/coroutines libraries are not bundled. WinUI application acceptance remains downstream.
+
 ## 0.9.13-beta2 (2026-10-12)
 
 ### Release highlights
