@@ -5,6 +5,17 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+## 0.9.13-beta4 (2026-10-12)
+
+### Release validation
+
+- All five packages and SDK defaults are updated together to `0.9.13-beta4`; the embedded
+  Kotlin compiler remains **2.4.10**. Separately rebuilt atomicfu/coroutines and UI integration
+  pass thirteen smoke groups, cancellation/start-mode controls and whole-DLL ILVerify with the
+  candidate packaged SDK. The UI queue is deterministic on Linux; Windows application acceptance
+  remains downstream. These downstream libraries are not bundled, and older compiler-generated
+  artifacts remain unsupported.
+
 ### Toolchain
 
 - Preserve failure on the first resume of a suspend state machine before entering its body (#1023).
