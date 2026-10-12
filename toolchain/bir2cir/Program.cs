@@ -1404,6 +1404,12 @@ sealed class Pipeline
             // any member binding below can mistake a local construction for a reference to another assembly.
             emittedLocalTypes.Add(ReverseEnumeratorBridgeSynthesis.AdapterName);
 
+        // Final member/value binding must share the complete emission-unit ownership inventory,
+        // including late collection carriers. Canonical runtime templates remain owned by the stdlib.
+        refs.SetLocalEmittedTypes(localTypeFqns.Concat(emittedLocalTypes)
+            .Except(externalCanonicalTypes, StringComparer.Ordinal)
+            .ToHashSet(StringComparer.Ordinal));
+
         // Late synthesis above authors ordinary calls as part of new bridge bodies. Bind those calls only after every
         // root has reached its final representation, then resolve local-owner calls inherited from external bases.
         ClrMemberResolution.ResolveInheritedExternalCalls(loweredRoots.Select(s => s.Root), refs);

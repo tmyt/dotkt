@@ -5,6 +5,13 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+### Toolchain
+
+- Keep synthesized helper types owned by their emitting module during final CLR binding (#1021).
+  Suspend consumers can reference multiple independently built suspend libraries without confusing
+  their internal continuation helpers with the consumer's own type. Canonical stdlib helpers retain
+  their runtime ownership, and genuinely ambiguous external type references are still rejected.
+
 ## 0.9.13-beta3 (2026-10-12)
 
 ### Toolchain
