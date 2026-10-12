@@ -25,6 +25,13 @@ static class GenericStaticOwnerBinding
             .Select(type => Str(type["name"]))
             .Where(name => name != null)
             .ToHashSet(StringComparer.Ordinal);
+        var nestedDeclarations = rootObjects
+            .SelectMany(root => (root["types"] as JsonArray)?.OfType<JsonObject>() ?? [])
+            .Where(type => Str(type["semanticOwner"]) != null
+                && !Bool(type["generated"])
+                && !Bool(type["mods"]?["inner"]))
+            .GroupBy(type => Str(type["semanticOwner"]), StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.ToArray(), StringComparer.Ordinal);
         var carrierOwners = rootObjects
             .SelectMany(root => (root["types"] as JsonArray)?.OfType<JsonObject>() ?? [])
             .Where(type => TypeParameterFrame.Count(type) > 0 &&
@@ -68,12 +75,17 @@ static class GenericStaticOwnerBinding
                     .Where(f => Bool(f["static"]) && Bool(f["kotlinStatic"])).ToArray() ?? [];
                 var methods = (owner["methods"] as JsonArray)?.OfType<JsonObject>()
                     .Where(m => Bool(m["static"]) && Bool(m["kotlinStatic"])).ToArray() ?? [];
-                if (fields.Length == 0 && methods.Length == 0) continue;
+                var nestedTypes = nestedDeclarations.GetValueOrDefault(ownerName) ?? [];
+                if (fields.Length == 0 && methods.Length == 0 && nestedTypes.Length == 0) continue;
                 var hasRuntimeInitializer = fields.Any(field => !Bool(field["const"]) && field["init"] != null);
 
                 var carrierName = ownerName + Marker;
                 if (!names.Add(carrierName))
                     throw new InvalidOperationException($"reserved generic-static carrier '{carrierName}' is already declared");
+
+                // A non-inner Kotlin classifier does not capture the enclosing generic frame. Its CLR home is the
+                // same non-generic static surface, not G<T>, even when it declares type parameters of its own.
+                foreach (var nestedType in nestedTypes) nestedType["semanticOwner"] = carrierName;
 
                 // A lifted local/anonymous type inside a Kotlin-static member is semantically owned by G, but cannot
                 // capture G's T. kotc states that fact explicitly; now that this pass has selected the non-generic

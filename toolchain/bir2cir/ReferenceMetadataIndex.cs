@@ -4872,6 +4872,14 @@ sealed partial class ReferenceMetadataIndex
                     kv => StripGenericArity(DottedFqn(kv.Key)),
                     StringComparer.Ordinal);
 
+            string StaticNestedSourceName(Type type)
+            {
+                var physical = StripGenericArity(DottedFqn(type.FullName ?? type.Name));
+                if (semanticOwnerByStaticCarrier.TryGetValue(physical, out var semantic)) return semantic;
+                return type.DeclaringType == null ? physical
+                    : StaticNestedSourceName(type.DeclaringType) + "." + StripGenericArity(type.Name);
+            }
+
             foreach (var type in types)
             {
                 try
@@ -4896,7 +4904,7 @@ sealed partial class ReferenceMetadataIndex
                         var declarations = types.Where(candidate =>
                         {
                             if (HasAttribute(candidate.GetCustomAttributesData(), CompilerGeneratedAttr)) return false;
-                            var candidateName = StripGenericArity(DottedFqn(candidate.FullName ?? candidate.Name));
+                            var candidateName = StaticNestedSourceName(candidate);
                             return candidateName == semantic
                                 && candidate.GetGenericArguments().Length == existentialArgs.Length;
                         }).ToArray();
@@ -4922,6 +4930,7 @@ sealed partial class ReferenceMetadataIndex
                         // trusted DotKt declaration; keep the exact arity-bearing metadata identity as the value.
                         metadata.PhysicalTypeBySemanticName[ownerFqn] = physicalName;
                         metadata.PhysicalTypeBySemanticName[DottedFqn(ownerFqn)] = physicalName;
+                        metadata.PhysicalTypeBySemanticName[StaticNestedSourceName(type)] = physicalName;
                     }
                     if (dotKtAuthored && AttrInt32(type.GetCustomAttributesData(), KotlinInnerAttr) is int capturedCount)
                     {

@@ -1716,6 +1716,8 @@ internal sealed class AssemblyScanner : IDisposable
                         $"multiple visible CLR types project Kotlin class '{projectedName}'");
                 AddCompanion(handle, klass, fragment, names, signatures);
                 ReadNestedClasses(handle, klass, fragment, names, signatures);
+                if (_genericStaticCarrierByOwner.TryGetValue(handle, out var staticCarrier))
+                    ReadNestedClasses(staticCarrier, klass, fragment, names, signatures);
                 ReadCSharpExtensions(handle, def, fragment.Package, names, signatures);
                 ReadCSharp14StaticExtensions(handle, fragment.Package, names, signatures);
             }
@@ -5035,6 +5037,8 @@ internal sealed class AssemblyScanner : IDisposable
             fragment.ClassName.Add(child.FqName);
             AddCompanion(childHandle, child, fragment, names, signatures);
             ReadNestedClasses(childHandle, child, fragment, names, signatures);
+            if (_genericStaticCarrierByOwner.TryGetValue(childHandle, out var staticCarrier))
+                ReadNestedClasses(staticCarrier, child, fragment, names, signatures);
         }
     }
 
@@ -6761,25 +6765,7 @@ internal sealed class AssemblyScanner : IDisposable
     }
 
     private (string Package, IReadOnlyList<string> Chain) KotlinDefinitionPath(TypeDefinitionHandle handle)
-    {
-        var handles = new Stack<TypeDefinitionHandle>();
-        for (var current = handle; !current.IsNil;)
-        {
-            handles.Push(current);
-            current = _md.GetTypeDefinition(current).GetDeclaringType();
-        }
-        var outer = _md.GetTypeDefinition(handles.Peek());
-        var package = _md.GetString(outer.Namespace);
-        var rawScope = package;
-        var chain = new List<string>();
-        foreach (var current in handles)
-        {
-            var metadataName = _md.GetString(_md.GetTypeDefinition(current).Name);
-            chain.Add(_arityNames.Simple(rawScope, metadataName));
-            rawScope = string.IsNullOrEmpty(rawScope) ? metadataName : rawScope + "." + metadataName;
-        }
-        return (package, chain);
-    }
+        => SignatureDecoderSeeds.DefinitionKotlinPath(_md, _arityNames, handle);
 
     private int CompanionClassName(
         TypeDefinitionHandle handle,
@@ -7402,6 +7388,68 @@ internal sealed record SignatureDecoderSeeds(
     ImmutableDictionary<string, TypeDefinitionHandle> DelegateDefinitions,
     ImmutableHashSet<string> ValueTypeNames)
 {
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<MetadataReader,
+        Dictionary<TypeDefinitionHandle, TypeDefinitionHandle>> StaticTypeOwners = new();
+    // These indexes are immutable per assembly. Do not rescan the full metadata universe per projected signature.
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<MetadataReader,
+        MetadataAttributes> ReaderAttributes = new();
+    internal static MetadataAttributes Attributes(MetadataReader reader) =>
+        ReaderAttributes.GetValue(reader, value => new MetadataAttributes(value));
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<MetadataReader,
+        Dictionary<string, EntityHandle>> PhysicalTypes = new();
+    internal static EntityHandle PhysicalType(MetadataReader reader, string name) =>
+        PhysicalTypes.GetValue(reader, value =>
+        {
+            string DefinitionName(TypeDefinitionHandle handle)
+            {
+                var type = value.GetTypeDefinition(handle);
+                var parent = type.GetDeclaringType();
+                return parent.IsNil
+                    ? string.IsNullOrEmpty(value.GetString(type.Namespace)) ? value.GetString(type.Name)
+                        : value.GetString(type.Namespace) + "." + value.GetString(type.Name)
+                    : DefinitionName(parent) + "+" + value.GetString(type.Name);
+            }
+            var names = value.TypeDefinitions.ToDictionary(DefinitionName, handle => (EntityHandle)handle,
+                StringComparer.Ordinal);
+            string ReferenceName(TypeReferenceHandle handle)
+            {
+                var type = value.GetTypeReference(handle);
+                return type.ResolutionScope.Kind == HandleKind.TypeReference
+                    ? ReferenceName((TypeReferenceHandle)type.ResolutionScope) + "+" + value.GetString(type.Name)
+                    : string.IsNullOrEmpty(value.GetString(type.Namespace)) ? value.GetString(type.Name)
+                        : value.GetString(type.Namespace) + "." + value.GetString(type.Name);
+            }
+            foreach (var handle in value.TypeReferences)
+                names.TryAdd(ReferenceName(handle), handle);
+            return names;
+        }).GetValueOrDefault(name);
+
+    private static Dictionary<TypeDefinitionHandle, TypeDefinitionHandle> DiscoverStaticTypeOwners(MetadataReader reader)
+    {
+        var attrs = Attributes(reader);
+        var carriers = new Dictionary<TypeDefinitionHandle, string>();
+        foreach (var handle in reader.TypeDefinitions)
+        {
+            using var payload = attrs.CarrierDocument(handle, MetadataAttributes.DotKtNs + "KotlinStaticCarrierAttribute");
+            if (payload?.RootElement.TryGetProperty("owner", out var owner) == true)
+                carriers.Add(handle, owner.GetString()!);
+        }
+        string SourceName(TypeDefinitionHandle handle)
+        {
+            if (carriers.TryGetValue(handle, out var owner)) return owner;
+            var definition = reader.GetTypeDefinition(handle);
+            var name = reader.GetString(definition.Name).Split('`')[0];
+            var parent = definition.GetDeclaringType();
+            var prefix = parent.IsNil ? reader.GetString(definition.Namespace) : SourceName(parent);
+            return string.IsNullOrEmpty(prefix) ? name : prefix + "." + name;
+        }
+        var definitions = reader.TypeDefinitions.Where(handle => !carriers.ContainsKey(handle))
+            .GroupBy(SourceName, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.ToArray(), StringComparer.Ordinal);
+        // The trusted carrier states its semantic owner explicitly; no physical-name convention is interpreted.
+        return carriers.ToDictionary(pair => pair.Key, pair =>
+            definitions[pair.Value].Single(handle => reader.GetTypeDefinition(handle).GetGenericParameters().Count > 0));
+    }
     // The Kotlin primitives, plus `kotlin.Unit`: Unit is physically a CLR class, but it is also the name ECMA `void`
     // decodes to, so it holds no NRT byte and takes no annotation. bir2cir's [NullableFlags] writer implements the
     // same rule from the other side. This intentional DotKt deviation is recorded in docs/dotkt-semantics.md § 9.
@@ -7444,10 +7492,17 @@ internal sealed record SignatureDecoderSeeds(
         var package = reader.GetString(reader.GetTypeDefinition(handles.Peek()).Namespace);
         var rawScope = package;
         var names = new List<string>();
+        var staticOwners = StaticTypeOwners.GetValue(reader, DiscoverStaticTypeOwners);
         foreach (var current in handles)
         {
             var metadataName = reader.GetString(reader.GetTypeDefinition(current).Name);
-            names.Add(arityNames.Simple(rawScope, metadataName));
+            if (staticOwners.TryGetValue(current, out var owner))
+            {
+                var sourceOwner = DefinitionKotlinPath(reader, arityNames, owner);
+                package = sourceOwner.Package;
+                names = sourceOwner.Names.ToList();
+            }
+            else names.Add(arityNames.Simple(rawScope, metadataName));
             rawScope = string.IsNullOrEmpty(rawScope) ? metadataName : rawScope + "." + metadataName;
         }
         return (package, names);
@@ -8177,6 +8232,13 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
     // name creates a different Kotlin classifier even when its rendered text looks similar.
     private KType NamedCarrierClassifier(string name)
     {
+        var physical = SignatureDecoderSeeds.PhysicalType(_md, name);
+        if (!physical.IsNil && _publicTypeCatalog.TryResolveDefinition(_md, physical, out var definition)
+            && SignatureDecoderSeeds.Attributes(definition.Reader).IsDotKtAssembly)
+        {
+            var source = DefinitionKotlinPath(definition.Reader, definition.Handle);
+            return Named(_names.Class(source.Package, source.Names));
+        }
         var firstNested = name.IndexOf('+');
         var outer = firstNested < 0 ? name : name[..firstNested];
         var packageEnd = outer.LastIndexOf('.');
@@ -8369,6 +8431,13 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
     {
         if (_companionCatalog.TryResolve(_md, handle, out var externalCompanion))
             return ExternalCompanion(externalCompanion, platform);
+        if (_publicTypeCatalog.TryResolveDefinition(_md, handle, out var definition)
+            && SignatureDecoderSeeds.Attributes(definition.Reader).IsDotKtAssembly)
+        {
+            var source = DefinitionKotlinPath(definition.Reader, definition.Handle);
+            var sourceClass = _names.Class(source.Package, source.Names);
+            return platform ? Platform(sourceClass) : Named(sourceClass);
+        }
         var name = ReferenceKotlinName(_md, handle);
         var className = ReferenceKotlinClassName(_md, handle);
         var metadataFull = ReferenceMetadataName(_md, handle);
