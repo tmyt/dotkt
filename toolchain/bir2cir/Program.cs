@@ -231,11 +231,12 @@ sealed class Pipeline
         // Preserve selected local factory facts before per-file transformations. In a
         // stdlib self-build these declarations are local, not referenced MethodDefs.
         var localFactories = MemberCallSubstitution.CollectLocalFactories(birRoots);
-        var companionRepresentations = CompanionRepresentationLowering.Apply(birRoots);
         // CLR multiplies static storage and .cctors on a generic TypeDef per constructed type. Kotlin companion-block
         // statics are one declaration independent of the owner's T, so materialize their non-generic carrier before
         // any module-wide declaration index is captured.
         GenericStaticOwnerBinding.Materialize(birRoots);
+        // Companion metadata must freeze its owner's physical path after static nested classifiers are placed.
+        var companionRepresentations = CompanionRepresentationLowering.Apply(birRoots);
         // A receiverless companion extension needs its associated Kotlin classifier in the physical member identity.
         // Consume that explicit declaration/use fact before any name-keyed index or inline payload is captured.
         var companionExtensionBindings = CompanionExtensionBinding.Apply(birRoots, refs);

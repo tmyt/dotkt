@@ -128,7 +128,13 @@ static class CompanionRepresentationLowering
             if (association != null)
                 return new(association.SemanticName, association.PhysicalName, association);
         }
-        if (!bindExternal || Str((value["ownerType"] as JsonObject)?["name"]) is not string physicalOwner) return null;
+        if (!bindExternal) return null;
+        // The source owner can differ from its CLR nesting after static-classifier placement. Bind the companion's
+        // explicit identity, rather than requiring its containing source classifier to already be a physical token.
+        if (semantic != null && (refs.TryCompanionPhysicalOwner(semantic, out var selectedCarrier) ||
+            refs.TryCompanionMetadataCarrier(semantic, out selectedCarrier)))
+            return new(semantic, selectedCarrier);
+        if (Str((value["ownerType"] as JsonObject)?["name"]) is not string physicalOwner) return null;
         if (refs.TryCompanionMetadataCarrier(physicalOwner, out var carrier) ||
             refs.TryCompanionCarrierByPhysicalOwner(physicalOwner, out carrier))
             return new(semantic, carrier);

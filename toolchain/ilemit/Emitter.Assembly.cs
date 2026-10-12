@@ -74,14 +74,22 @@ sealed partial class Emitter
         // nullable metadata attributes resolve from the target BCL and are never redefined in user assemblies.
 
         // Pass 1: DefineType for every file-static-class and every user class.
+        var pendingTypes = files
+            .Where(file => file.TryGetProperty("types", out _))
+            .SelectMany(file => file.GetProperty("types").EnumerateArray())
+            .ToList();
+        var nestedOwners = pendingTypes.Where(type => type.TryGetProperty("nestedIn", out _))
+            .Select(type => type.GetProperty("nestedIn").GetString()).ToHashSet(StringComparer.Ordinal);
         foreach (var file in files)
         {
             var fileClass = file.GetProperty("fileClass").GetString();
             // Create the file class if it has methods OR top-level static fields — a file that only declares
             // top-level `val`/`var`s (no functions) still needs its class so OTHER files can reference those
             // fields (`StateKt.counter`); otherwise cross-file top-level property access fails (item 11).
+            // A facade that owns nested CIR declarations is also a physical parent, even with no members of its own.
             if (file.GetProperty("methods").GetArrayLength() > 0 ||
-                (file.TryGetProperty("fields", out var ffl) && ffl.GetArrayLength() > 0))
+                (file.TryGetProperty("fields", out var ffl) && ffl.GetArrayLength() > 0) ||
+                nestedOwners.Contains(fileClass))
                 _types[fileClass] = new TypeInfo
                 {
                     TB = _mod.DefineType(fileClass, TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.Abstract),
@@ -92,21 +100,13 @@ sealed partial class Emitter
         // CIR nesting is declarative: a child may precede its enclosing declaration (for example when kotc emits a
         // rich-enum companion before the rich enum class). Define enclosing builders first so `nestedIn` is honored
         // independently of source/file order instead of silently degrading the child to a dotted top-level type.
-        var pendingTypes = files
-            .Where(file => file.TryGetProperty("types", out _))
-            .SelectMany(file => file.GetProperty("types").EnumerateArray())
-            .ToList();
         while (pendingTypes.Count > 0)
         {
             var progressed = false;
             foreach (var t in pendingTypes.ToArray())
             {
                 if (t.TryGetProperty("nestedIn", out var pendingParent) &&
-                    !_types.ContainsKey(pendingParent.GetString()) &&
-                    // The runtime stdlib substitutes several Kotlin owners with BCL types, so their declarations are
-                    // intentionally absent from this emission unit. Preserve that pre-#275 stdlib-only dotted TypeDef
-                    // shape explicitly; application/reference-library emission must always realize declared nesting.
-                    !_stdlibRuntime)
+                    !_types.ContainsKey(pendingParent.GetString()))
                     continue;
                 pendingTypes.Remove(t);
                 progressed = true;

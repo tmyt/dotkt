@@ -108,7 +108,7 @@ run_rejected bir2cir "$RICH_ENUM_GENERIC_API_DLL" 'KotlinRichEnum.*values/valueO
 
 build_fixture ExtraStaticCarrierPayload EXTRA_STATIC_CARRIER_PAYLOAD
 EXTRA_STATIC_PAYLOAD="$WORK/ExtraStaticCarrierPayload/bin/ExtraStaticCarrierPayload.dll"
-run_rejected dll2klib "$EXTRA_STATIC_PAYLOAD" 'payload must contain exactly one'
+run_rejected dll2klib "$EXTRA_STATIC_PAYLOAD" 'KotlinStaticCarrier payload contains an unexpected property'
 run_rejected bir2cir "$EXTRA_STATIC_PAYLOAD" 'malformed trusted.*KotlinStaticCarrier'
 
 build_fixture InstanceStaticCarrierMember INSTANCE_STATIC_CARRIER_MEMBER

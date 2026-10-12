@@ -266,14 +266,12 @@ sealed partial class Emitter
         _supportedOsPlatform = string.IsNullOrWhiteSpace(supportedOsPlatform) ? null : supportedOsPlatform;
         _methodRetType = Bcl("System.Void");
         _stdlibAssembly = mode != BuildStdlibMode.App;       // both the metadata and runtime twins are stdlib artifacts
-        _stdlibRuntime = mode == BuildStdlibMode.Runtime;
     }
 
     // A call to a generic method `fun <T> id(x:T)` carries `typeArgs` -> instantiate it (MakeGenericMethod).
     // `retType`/`paramTypes` give the SUBSTITUTED (concrete) signature, since the instantiation's own reflection
     // still reports `!!0` (and throws pre-bake) — needed so value args to `object`/concrete params get boxed.
     readonly bool _stdlibAssembly;
-    readonly bool _stdlibRuntime;
 
     // Whether the current FindReflectedMethodBySig owner is a CONSTRUCTED generic type — set per-lookup, read by the
     // `gp:` structural case (a `gp:T` token matches a concrete arg when the owner instantiation already bound it).

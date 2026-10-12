@@ -25,6 +25,14 @@ static class GenericStaticOwnerBinding
             .Select(type => Str(type["name"]))
             .Where(name => name != null)
             .ToHashSet(StringComparer.Ordinal);
+        var nestedDeclarations = rootObjects
+            .SelectMany(root => (root["types"] as JsonArray)?.OfType<JsonObject>() ?? [])
+            .Where(type => Str(type["semanticOwner"]) != null
+                && !Bool(type["generated"])
+                && type["kotlinCompanion"] == null && type["companionCarrier"] == null
+                && !Bool(type["mods"]?["inner"]))
+            .GroupBy(type => Str(type["semanticOwner"]), StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.ToArray(), StringComparer.Ordinal);
         var carrierOwners = rootObjects
             .SelectMany(root => (root["types"] as JsonArray)?.OfType<JsonObject>() ?? [])
             .Where(type => TypeParameterFrame.Count(type) > 0 &&
@@ -68,12 +76,30 @@ static class GenericStaticOwnerBinding
                     .Where(f => Bool(f["static"]) && Bool(f["kotlinStatic"])).ToArray() ?? [];
                 var methods = (owner["methods"] as JsonArray)?.OfType<JsonObject>()
                     .Where(m => Bool(m["static"]) && Bool(m["kotlinStatic"])).ToArray() ?? [];
-                if (fields.Length == 0 && methods.Length == 0) continue;
+                var nestedTypes = nestedDeclarations.GetValueOrDefault(ownerName) ?? [];
+                if (fields.Length == 0 && methods.Length == 0 && nestedTypes.Length == 0) continue;
                 var hasRuntimeInitializer = fields.Any(field => !Bool(field["const"]) && field["init"] != null);
 
                 var carrierName = ownerName + Marker;
                 if (!names.Add(carrierName))
                     throw new InvalidOperationException($"reserved generic-static carrier '{carrierName}' is already declared");
+
+                // A non-inner Kotlin classifier does not capture the enclosing generic frame. Its CLR home is the
+                // same non-generic static surface, not G<T>, even when it declares type parameters of its own.
+                var protectedNested = new JsonArray();
+                foreach (var nestedType in nestedTypes)
+                {
+                    nestedType["nestedIn"] = carrierName;
+                    // The old generic owner is no longer a CLR enclosing type. Keep source-private classifiers
+                    // assembly-only so that owner and its implementation helpers can still construct/use them.
+                    if (Str(nestedType["vis"]) == "private") nestedType["vis"] = "internal";
+                    if (Str(nestedType["vis"]) is "protected" or "protectedInternal")
+                    {
+                        var name = Str(nestedType["name"]);
+                        protectedNested.Add(name[(name.LastIndexOf('.') + 1)..]);
+                        nestedType["vis"] = "public";
+                    }
+                }
 
                 // A lifted local/anonymous type inside a Kotlin-static member is semantically owned by G, but cannot
                 // capture G's T. kotc states that fact explicitly; now that this pass has selected the non-generic
@@ -160,6 +186,8 @@ static class GenericStaticOwnerBinding
                     ["attrs"] = new JsonArray(),
                     ["staticCarrier"] = new JsonObject { ["owner"] = ownerName },
                 };
+                if (protectedNested.Count > 0)
+                    carrier["staticCarrier"]!["protectedNested"] = protectedNested;
                 types.Add(carrier);
             }
         }
@@ -309,6 +337,9 @@ static class GenericStaticOwnerBinding
         foreach (var key in keys)
         {
             if (TypeJson.Read(node[key]) is not TypeNode.Fqn owner) continue;
+            // A constructed owner is an already-selected CLR frame (for example an instance method's lifted local
+            // helper), not the receiverless Kotlin static surface. Creating a nesting carrier does not move it.
+            if (owner.Args is { Length: > 0 }) continue;
             var bare = owner.Name;
             if (!local.TryGetValue(bare, out var carrier) && !refs.TryGenericStaticCarrier(bare, out carrier))
             {
