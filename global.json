@@ -1,6 +1,6 @@
 {
   "msbuild-sdks": {
-    "DotKt.Sdk": "0.9.13-beta4",
-    "DotKt.Sdk.Mpp": "0.9.13-beta4"
+    "DotKt.Sdk": "0.9.13",
+    "DotKt.Sdk.Mpp": "0.9.13"
   }
 }
