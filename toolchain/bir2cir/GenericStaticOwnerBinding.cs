@@ -29,6 +29,7 @@ static class GenericStaticOwnerBinding
             .SelectMany(root => (root["types"] as JsonArray)?.OfType<JsonObject>() ?? [])
             .Where(type => Str(type["semanticOwner"]) != null
                 && !Bool(type["generated"])
+                && type["kotlinCompanion"] == null && type["companionCarrier"] == null
                 && !Bool(type["mods"]?["inner"]))
             .GroupBy(type => Str(type["semanticOwner"]), StringComparer.Ordinal)
             .ToDictionary(group => group.Key, group => group.ToArray(), StringComparer.Ordinal);
@@ -85,7 +86,20 @@ static class GenericStaticOwnerBinding
 
                 // A non-inner Kotlin classifier does not capture the enclosing generic frame. Its CLR home is the
                 // same non-generic static surface, not G<T>, even when it declares type parameters of its own.
-                foreach (var nestedType in nestedTypes) nestedType["semanticOwner"] = carrierName;
+                var protectedNested = new JsonArray();
+                foreach (var nestedType in nestedTypes)
+                {
+                    nestedType["nestedIn"] = carrierName;
+                    // The old generic owner is no longer a CLR enclosing type. Keep source-private classifiers
+                    // assembly-only so that owner and its implementation helpers can still construct/use them.
+                    if (Str(nestedType["vis"]) == "private") nestedType["vis"] = "internal";
+                    if (Str(nestedType["vis"]) is "protected" or "protectedInternal")
+                    {
+                        var name = Str(nestedType["name"]);
+                        protectedNested.Add(name[(name.LastIndexOf('.') + 1)..]);
+                        nestedType["vis"] = "public";
+                    }
+                }
 
                 // A lifted local/anonymous type inside a Kotlin-static member is semantically owned by G, but cannot
                 // capture G's T. kotc states that fact explicitly; now that this pass has selected the non-generic
@@ -172,6 +186,8 @@ static class GenericStaticOwnerBinding
                     ["attrs"] = new JsonArray(),
                     ["staticCarrier"] = new JsonObject { ["owner"] = ownerName },
                 };
+                if (protectedNested.Count > 0)
+                    carrier["staticCarrier"]!["protectedNested"] = protectedNested;
                 types.Add(carrier);
             }
         }

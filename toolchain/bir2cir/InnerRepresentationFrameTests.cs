@@ -54,7 +54,8 @@ static class InnerRepresentationFrameTests
         GenericStaticOwnerBinding.Materialize(new[] { root });
         var types = (JsonArray)root["types"]!;
         var carrier = types.OfType<JsonObject>().Single(type => type["staticCarrier"] != null);
-        if (types[1]!["semanticOwner"]!.GetValue<string>() != carrier["name"]!.GetValue<string>()
+        if (types[1]!["nestedIn"]!.GetValue<string>() != carrier["name"]!.GetValue<string>()
+            || types[1]!["semanticOwner"]!.GetValue<string>() != "Owner"
             || types[1]!["typeParams"]!.AsArray().Count != 1
             || types[2]!["semanticOwner"]!.GetValue<string>() != "Owner"
             || types[3]!["semanticOwner"]!.GetValue<string>() != "Owner"

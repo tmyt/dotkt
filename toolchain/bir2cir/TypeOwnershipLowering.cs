@@ -640,7 +640,7 @@ static class TypeOwnershipLowering
                 if (!declaredTypes.Contains(owner) && !fileClasses.Contains(owner))
                     throw new InvalidOperationException(
                         $"Kotlin type '{name}' has missing semantic owner '{owner}' in this emission unit");
-                type["nestedIn"] = owner;
+                type["nestedIn"] ??= owner;
                 type.Remove("semanticOwner");
             }
 

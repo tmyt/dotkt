@@ -22,5 +22,23 @@ class StaticNestedGenericOwnerTests {
         val value = OwnerValue()
         val owner = StaticNestedOwner(value)
         ClassicAssert.IsTrue(owner.Captured().outer() === value)
+        ClassicAssert.AreEqual(45, owner.privateNestedValue())
+        ClassicAssert.AreEqual(46, roundtrip.staticnested.StaticNestedDerived().protectedNestedValue())
+        ClassicAssert.AreEqual(47, ProtectedNestedConsumer().read())
+        ClassicAssert.AreEqual(48, StaticNestedOwner.WithCompanion.value())
+        val leaf: StaticNestedOwner.Box.Leaf = roundtrip.staticnested.makeStaticLeaf()
+        ClassicAssert.IsNotNull(leaf)
+        ClassicAssert.IsTrue(roundtrip.staticnested.echoStaticEntry(entry) === entry)
+        val relayed: StaticNestedOwner.Closed = mpp.app.staticNestedField
+        ClassicAssert.AreEqual(42, relayed.marker())
+        ClassicAssert.AreEqual(49, DerivedFailed().marker())
     }
+}
+
+private class DerivedFailed : StaticNestedOwner.Failed() {
+    override fun marker(): Int = 49
+}
+
+private class ProtectedNestedConsumer : StaticNestedOwner<OwnerValue>(OwnerValue()) {
+    fun read(): Int = ProtectedValue(47).value
 }

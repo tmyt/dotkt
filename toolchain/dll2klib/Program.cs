@@ -1464,6 +1464,7 @@ internal sealed class AssemblyScanner : IDisposable
     private readonly HashSet<TypeDefinitionHandle> _existentialCarriers = new();
     private readonly Dictionary<TypeDefinitionHandle, TypeDefinitionHandle> _genericStaticCarriers = new();
     private readonly Dictionary<TypeDefinitionHandle, TypeDefinitionHandle> _genericStaticCarrierByOwner = new();
+    private readonly HashSet<TypeDefinitionHandle> _protectedStaticNested = new();
     private readonly Dictionary<TypeDefinitionHandle, TypeDefinitionHandle> _liftedCompanions = new();
     private readonly Dictionary<TypeDefinitionHandle, CompanionCarrier> _companionsByOwner = new();
     private readonly HashSet<FieldDefinitionHandle> _singletonInstanceFields = new();
@@ -1632,12 +1633,12 @@ internal sealed class AssemblyScanner : IDisposable
                 handle, MetadataAttributes.DotKtNs + "KotlinStaticCarrierAttribute");
             if (payload == null) continue;
             if (payload.RootElement.ValueKind != System.Text.Json.JsonValueKind.Object ||
-                payload.RootElement.EnumerateObject().Count() != 1 ||
+                payload.RootElement.EnumerateObject().Any(property => property.Name is not ("owner" or "protectedNested")) ||
                 !payload.RootElement.TryGetProperty("owner", out var ownerElement) ||
                 ownerElement.ValueKind != System.Text.Json.JsonValueKind.String ||
                 ownerElement.GetString() is not string ownerName || string.IsNullOrEmpty(ownerName))
                 throw new InvalidDataException(
-                    "KotlinStaticCarrier payload must contain exactly one non-empty string 'owner'");
+                    "KotlinStaticCarrier payload requires a non-empty string 'owner'");
             var definition = md.GetTypeDefinition(handle);
             if ((definition.Attributes & TypeAttributes.VisibilityMask) != TypeAttributes.Public)
                 throw new InvalidDataException(
@@ -1650,6 +1651,16 @@ internal sealed class AssemblyScanner : IDisposable
                 throw new InvalidDataException(
                     $"malformed KotlinStaticCarrier '{MetadataTypeName(handle)}' for '{ownerName}'");
             ValidateGenericStaticCarrierMembers(handle);
+            if (payload.RootElement.TryGetProperty("protectedNested", out var protectedNested))
+            {
+                foreach (var name in protectedNested.EnumerateArray().Select(item => item.GetString()))
+                {
+                    var child = definition.GetNestedTypes().Single(candidate =>
+                        StripArity(md.GetString(md.GetTypeDefinition(candidate).Name)) == name);
+                    if (!_protectedStaticNested.Add(child))
+                        throw new InvalidDataException("duplicate protected static nested classifier");
+                }
+            }
             if (!_genericStaticCarriers.TryAdd(handle, ownerMatches[0]) ||
                 !_genericStaticCarrierByOwner.TryAdd(ownerMatches[0], handle))
                 throw new InvalidDataException($"multiple KotlinStaticCarrier declarations for '{ownerName}'");
@@ -2115,7 +2126,8 @@ internal sealed class AssemblyScanner : IDisposable
                 isInner: isKotlinInner),
         };
         var clrVisibility = def.Attributes & TypeAttributes.VisibilityMask;
-        if (clrVisibility is TypeAttributes.NestedFamily or TypeAttributes.NestedFamORAssem)
+        if (clrVisibility is TypeAttributes.NestedFamily or TypeAttributes.NestedFamORAssem
+            || _protectedStaticNested.Contains(handle))
             result.Flags = Flags.AsProtected(result.Flags);
         result.ClassAnnotation.Add(ClrExternalAnnotation(names, handle));
         result.Flags |= 1;
@@ -7832,6 +7844,9 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
     (string Package, IReadOnlyList<string> Names) ReferenceKotlinPath(
         MetadataReader reader, TypeReferenceHandle handle)
     {
+        if (_publicTypeCatalog.TryResolveDefinition(reader, handle, out var definition)
+            && SignatureDecoderSeeds.Attributes(definition.Reader).IsDotKtAssembly)
+            return DefinitionKotlinPath(definition.Reader, definition.Handle);
         var metadataNames = new Stack<string>();
         var current = handle;
         var package = "";
@@ -8431,13 +8446,6 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
     {
         if (_companionCatalog.TryResolve(_md, handle, out var externalCompanion))
             return ExternalCompanion(externalCompanion, platform);
-        if (_publicTypeCatalog.TryResolveDefinition(_md, handle, out var definition)
-            && SignatureDecoderSeeds.Attributes(definition.Reader).IsDotKtAssembly)
-        {
-            var source = DefinitionKotlinPath(definition.Reader, definition.Handle);
-            var sourceClass = _names.Class(source.Package, source.Names);
-            return platform ? Platform(sourceClass) : Named(sourceClass);
-        }
         var name = ReferenceKotlinName(_md, handle);
         var className = ReferenceKotlinClassName(_md, handle);
         var metadataFull = ReferenceMetadataName(_md, handle);

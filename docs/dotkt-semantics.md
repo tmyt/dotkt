@@ -1611,6 +1611,12 @@ initializer; constructing another closed `Box<U>` cannot run it again. `Box.coun
 Kotlin source says. A local or anonymous implementation type declared inside such a static member is likewise nested
 under the non-generic carrier and does not capture the semantic owner's type-parameter frame.
 
+Non-`inner` classifiers declared in a generic class are placed under that same non-generic carrier: they do not
+capture the enclosing type parameters either. Kotlin consumers retain the original source nesting through explicit
+carrier metadata; C# consumers see the physical carrier instead of `Box<T>.Nested`. Private classifiers moved this
+way use assembly visibility, and protected classifiers use public CLR visibility while retaining protected Kotlin
+visibility. Actual `inner` classes keep their enclosing generic frame.
+
 **Constants.** A Kotlin `const val` declaration is emitted as a CLR `static literal` field with an ECMA-335 Constant
 row. This is declaration metadata, not an executable initializer: dll2klib restores `IS_CONST`, `HAS_CONSTANT`, and
 the compile-time value so a second Kotlin module can use the declaration in another constant expression.

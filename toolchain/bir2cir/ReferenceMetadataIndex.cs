@@ -4838,10 +4838,26 @@ sealed partial class ReferenceMetadataIndex
             foreach (var companion in singletonCompanionCarriers)
                 metadata.SingletonCompanionCarrierBySemanticOwner.Add(companion.Key, companion.Value);
 
+            var semanticOwnerByStaticCarrier = new Dictionary<string, string>(StringComparer.Ordinal);
+            if (dotKtAuthored)
+                foreach (var carrierType in types)
+                    if (TrustedStaticCarrierPayload(carrierType, asm) is JsonObject payload)
+                        semanticOwnerByStaticCarrier.Add(StripGenericArity(DottedFqn(carrierType.FullName ?? carrierType.Name)),
+                            StripGenericArity(DottedFqn(payload["owner"].GetValue<string>())));
+
+            string StaticNestedSourceName(Type type)
+            {
+                var physical = StripGenericArity(DottedFqn(type.FullName ?? type.Name));
+                if (semanticOwnerByStaticCarrier.TryGetValue(physical, out var semantic)) return semantic;
+                return type.DeclaringType == null ? physical
+                    : StaticNestedSourceName(type.DeclaringType) + "." + StripGenericArity(type.Name);
+            }
+
             if (dotKtAuthored)
             {
-                var bySemanticName = types.GroupBy(
-                        t => StripGenericArity(DottedFqn(t.FullName ?? t.Name)), StringComparer.Ordinal)
+                var bySemanticName = types.Where(type => !semanticOwnerByStaticCarrier.ContainsKey(
+                        StripGenericArity(DottedFqn(type.FullName ?? type.Name))))
+                    .GroupBy(StaticNestedSourceName, StringComparer.Ordinal)
                     .ToDictionary(group => group.Key, group => group.ToArray(), StringComparer.Ordinal);
                 foreach (var carrierType in types)
                 {
@@ -4864,20 +4880,6 @@ sealed partial class ReferenceMetadataIndex
                         throw new MalformedTrustedStaticCarrierException(
                             $"duplicate trusted [KotlinStaticCarrier] for semantic owner '{semanticOwner}'");
                 }
-            }
-
-            var semanticOwnerByStaticCarrier = metadata.GenericStaticCarrierBySemanticOwner
-                .ToDictionary(
-                    kv => StripGenericArity(DottedFqn(kv.Value)),
-                    kv => StripGenericArity(DottedFqn(kv.Key)),
-                    StringComparer.Ordinal);
-
-            string StaticNestedSourceName(Type type)
-            {
-                var physical = StripGenericArity(DottedFqn(type.FullName ?? type.Name));
-                if (semanticOwnerByStaticCarrier.TryGetValue(physical, out var semantic)) return semantic;
-                return type.DeclaringType == null ? physical
-                    : StaticNestedSourceName(type.DeclaringType) + "." + StripGenericArity(type.Name);
             }
 
             foreach (var type in types)
@@ -4930,7 +4932,9 @@ sealed partial class ReferenceMetadataIndex
                         // trusted DotKt declaration; keep the exact arity-bearing metadata identity as the value.
                         metadata.PhysicalTypeBySemanticName[ownerFqn] = physicalName;
                         metadata.PhysicalTypeBySemanticName[DottedFqn(ownerFqn)] = physicalName;
-                        metadata.PhysicalTypeBySemanticName[StaticNestedSourceName(type)] = physicalName;
+                        var sourceName = StaticNestedSourceName(type);
+                        if (sourceName != StripGenericArity(DottedFqn(ownerFqn)))
+                            metadata.PhysicalTypeBySemanticName[sourceName] = physicalName;
                     }
                     if (dotKtAuthored && AttrInt32(type.GetCustomAttributesData(), KotlinInnerAttr) is int capturedCount)
                     {
@@ -6775,9 +6779,19 @@ sealed partial class ReferenceMetadataIndex
             if (attr.NamedArguments.Count != 0)
                 throw new FormatException("named arguments are forbidden");
             if (BirCarrier.DecodeBody(version, ReadByteArrayArg(attr.ConstructorArguments[1])) is not JsonObject payload ||
-                payload.Count != 1 || payload["owner"] is not JsonValue ownerValue ||
+                payload.Any(pair => pair.Key is not ("owner" or "protectedNested")) || payload["owner"] is not JsonValue ownerValue ||
                 !ownerValue.TryGetValue<string>(out var owner) || string.IsNullOrEmpty(owner))
-                throw new FormatException("expected exactly one non-empty string 'owner'");
+                throw new FormatException("expected a non-empty string 'owner'");
+            if (payload["protectedNested"] is JsonNode protectedNode)
+            {
+                if (protectedNode is not JsonArray names || names.Any(name =>
+                    name is not JsonValue value || !value.TryGetValue<string>(out var text) || string.IsNullOrEmpty(text))
+                    || names.Select(name => name.GetValue<string>()).Distinct(StringComparer.Ordinal).Count() != names.Count)
+                    throw new FormatException("expected distinct protected nested classifier names");
+                foreach (var name in names.Select(name => name.GetValue<string>()))
+                    if (carrierType.GetNestedTypes(BindingFlags.Public).Count(type => StripGenericArity(type.Name) == name) != 1)
+                        throw new FormatException("protected nested classifier is not a unique public declaration");
+            }
             return payload;
         }
         catch (MalformedTrustedStaticCarrierException) { throw; }
