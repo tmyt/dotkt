@@ -94,8 +94,9 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   name has no meaning and is chosen collision-free.
 - **Unchecked generic casts test the raw Kotlin classifier, including concrete type arguments.**
   `value as G<Any>` and `value as? G<Any>` do not test a closed CLR `G<object>` construction. Their runtime
-  checks use the declaration's existential interface and preserve object identity. A statically proven
-  constructed upcast retains its exact CLR edge instead, including an ordinary non-generic subclass of `G<X>`.
+  checks use the declaration's existential interface and preserve object identity. A cast along an exact
+  constructed inheritance edge retains its closed CLR target instead, including a non-generic subclass of `G<X>`
+  and a downcast whose source establishes the target's inherited type arguments.
 - **Declaration-site variance on a Kotlin class or interface uses the same nominal existential value representation.**
   CLR classes are invariant, and CLR interface variance does not relate value-type instantiations. Kotlin permits
   both conversions, so every ordinary parameter, return,

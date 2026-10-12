@@ -9,7 +9,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 - Lower unchecked generic casts with concrete type arguments through their Kotlin raw classifier (#1022).
   This fixes `StateFlow.first()` slot dispatch without changing upstream common source; safe casts preserve
-  object identity and return null for an unrelated classifier, while proven constructed upcasts stay exact.
+  object identity and return null for an unrelated classifier, while casts along exact constructed inheritance edges stay exact.
 - Keep synthesized helper types owned by their emitting module during final CLR binding (#1021).
   Suspend consumers can reference multiple independently built suspend libraries without confusing
   their internal continuation helpers with the consumer's own type. Canonical stdlib helpers retain
