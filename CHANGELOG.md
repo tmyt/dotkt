@@ -5,6 +5,20 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+## 0.9.13 (2026-10-13)
+
+### Release highlights
+
+- Promote `0.9.13-beta4` to the stable release without additional compiler, standard-library,
+  common-source or interop changes. All fixes validated during the prereleases are included.
+- Separately built kotlinx.coroutines and UI integration preserve upstream common sources and
+  pass the coroutine consumer and thirteen-group UI-adapter smoke checks, including StateFlow,
+  cancellation, dispatcher confinement and Task await integration. The automated UI queue is
+  deterministic on Linux; Windows application acceptance remains downstream.
+- All five packages and SDK defaults use `0.9.13`; Kotlin remains **2.4.10**. Atomicfu,
+  kotlinx.coroutines and UI libraries are not bundled. Rebuild dependent Kotlin-produced DLLs
+  with this release toolchain; older compiler-generated artifacts remain unsupported.
+
 ## 0.9.13-beta4 (2026-10-12)
 
 ### Release validation
