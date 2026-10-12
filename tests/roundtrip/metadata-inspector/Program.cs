@@ -1300,8 +1300,16 @@ static void VerifyOwnershipDll(string path)
     var owner = md.TypeDefinitions.Single(h => StripArities(DefinitionName(md, h)) == "roundtrip.ownership.Owner");
     var ownerDef = md.GetTypeDefinition(owner);
     var ownerChildren = ownerDef.GetNestedTypes().ToArray();
-    Require(ownerChildren.Any(h => md.GetString(md.GetTypeDefinition(h).Name).Split('`')[0] == "Nested"),
-        "ordinary Kotlin nested class is not a CLR nested TypeDef of Owner");
+    var staticOwner = md.TypeDefinitions.Single(h =>
+        HasCarrierOwner(md, h, StaticCarrierAttribute, "roundtrip.ownership.Owner"));
+    Require(md.GetTypeDefinition(staticOwner).GetGenericParameters().Count == 0,
+        "generic Owner's static carrier captures an unrelated type parameter");
+    var nested = md.GetTypeDefinition(staticOwner).GetNestedTypes().Single(h =>
+        md.GetString(md.GetTypeDefinition(h).Name).Split('`')[0] == "Nested");
+    Require(md.GetTypeDefinition(nested).GetGenericParameters().Count == 0,
+        "ordinary Kotlin nested class captures the generic source owner's frame");
+    Require(!ownerChildren.Any(h => md.GetString(md.GetTypeDefinition(h).Name).Split('`')[0] == "Nested"),
+        "non-inner Nested remains physically enclosed by generic Owner");
     var inner = ownerChildren.Single(h => md.GetString(md.GetTypeDefinition(h).Name).Split('`')[0] == "Inner");
     Require(md.GetTypeDefinition(inner).GetGenericParameters().Count == 2,
         "inner class did not re-declare the generic owner's capture slot");

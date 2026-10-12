@@ -1633,8 +1633,9 @@ internal sealed class AssemblyScanner : IDisposable
                 handle, MetadataAttributes.DotKtNs + "KotlinStaticCarrierAttribute");
             if (payload == null) continue;
             if (payload.RootElement.ValueKind != System.Text.Json.JsonValueKind.Object ||
-                payload.RootElement.EnumerateObject().Any(property => property.Name is not ("owner" or "protectedNested")) ||
-                !payload.RootElement.TryGetProperty("owner", out var ownerElement) ||
+                payload.RootElement.EnumerateObject().Any(property => property.Name is not ("owner" or "protectedNested")))
+                throw new InvalidDataException("KotlinStaticCarrier payload contains an unexpected property");
+            if (!payload.RootElement.TryGetProperty("owner", out var ownerElement) ||
                 ownerElement.ValueKind != System.Text.Json.JsonValueKind.String ||
                 ownerElement.GetString() is not string ownerName || string.IsNullOrEmpty(ownerName))
                 throw new InvalidDataException(
@@ -7460,7 +7461,14 @@ internal sealed record SignatureDecoderSeeds(
             .ToDictionary(group => group.Key, group => group.ToArray(), StringComparer.Ordinal);
         // The trusted carrier states its semantic owner explicitly; no physical-name convention is interpreted.
         return carriers.ToDictionary(pair => pair.Key, pair =>
-            definitions[pair.Value].Single(handle => reader.GetTypeDefinition(handle).GetGenericParameters().Count > 0));
+        {
+            var owners = definitions.GetValueOrDefault(pair.Value, [])
+                .Where(handle => reader.GetTypeDefinition(handle).GetGenericParameters().Count > 0).ToArray();
+            if (owners.Length != 1)
+                throw new InvalidDataException(
+                    $"malformed KotlinStaticCarrier: '{pair.Value}' must identify one generic declaration");
+            return owners[0];
+        });
     }
     // The Kotlin primitives, plus `kotlin.Unit`: Unit is physically a CLR class, but it is also the name ECMA `void`
     // decodes to, so it holds no NRT byte and takes no annotation. bir2cir's [NullableFlags] writer implements the
