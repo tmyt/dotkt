@@ -3055,7 +3055,7 @@ static class FBoundStarProjectionErasure
                 var runtimeKind = Str(obj["k"]);
                 var arrayCastTarget = runtimeKind is "cast" or "isInstRef" && !Bool(obj["_exactBridgeCast"])
                     ? TypeJson.Read(obj["type"]) : null;
-                var runtimeOperand = runtimeKind == "cast" ? obj["e"] : null;
+                var runtimeOperand = runtimeKind is "cast" or "isInstRef" ? obj["e"] : null;
                 var rewroteRuntimeOperand = runtimeOperand != null;
                 if (runtimeOperand != null)
                     Rewrite(runtimeOperand, owners, defs, refs,
@@ -3063,18 +3063,17 @@ static class FBoundStarProjectionErasure
                         childTypeParameterDeclarations, childMethodParameterDeclarations, childThisType,
                         boundDeclaration, localClrAliases);
                 // Kotlin `is G<X>` is a raw-classifier check, and a true `as G<*>` also has no closed CLR target.
-                // An `as G<T>` from an otherwise-unrelated source likewise cannot test T on the CLR and uses the
-                // existential carrier. Do not confuse that erased runtime check with a statically proven constructed
+                // An unchecked `as G<X>` cannot test its generic arguments, even when X is a concrete type such as
+                // Any, and uses the existential carrier. Do not confuse that raw check with a proven constructed
                 // upcast, though: `Derived<T> as Base<T>` already has an exact CLR edge. Erasing that target leaves a
                 // Base$star value at later Base<T> call/return slots and makes otherwise ordinary generic code
                 // unverifiable.
-                if (!Bool(obj["_exactBridgeCast"]) && runtimeKind is "isInst" or "cast"
-                    && TypeJson.Read(obj["type"]) is TypeNode.Fqn { Args: { } runtimeArgs } runtimeF
+                if (!Bool(obj["_exactBridgeCast"]) && runtimeKind is "isInst" or "isInstRef" or "cast"
+                    && TypeJson.Read(obj["type"]) is TypeNode.Fqn { Args: { } } runtimeF
                     && TryExistentialCarrier(runtimeF.Name, owners, refs, out var runtimeCarrier)
                     && (runtimeKind == "isInst"
-                        || (runtimeArgs.Any(ContainsStarOrTypeVariable)
-                            && !IsProvenConstructedUpcast(
-                                obj, runtimeF, defs, refs, currentThisType))))
+                        || !IsProvenConstructedUpcast(
+                            obj, runtimeF, defs, refs, currentThisType)))
                     obj["type"] = TypeJson.Write(new TypeNode.Fqn(runtimeCarrier));
                 foreach (var key in obj.Select(kv => kv.Key).ToList())
                 {
@@ -4084,9 +4083,8 @@ static class FBoundStarProjectionErasure
                         if (value != null) Normalize(value);
                     // A nullable temporary may have been considered a concrete upcast before the cell's value
                     // slot moved. Its now-physical carrier operand cannot justify narrowing back to G<T>.
-                    if (Str(obj["k"]) == "cast" && !Bool(obj["_exactBridgeCast"])
-                        && TypeJson.Read(obj["type"]) is TypeNode.Fqn { Args: { } castArguments } castType
-                        && castArguments.Any(ContainsStarOrTypeVariable)
+                    if (Str(obj["k"]) is "cast" or "isInstRef" && !Bool(obj["_exactBridgeCast"])
+                        && TypeJson.Read(obj["type"]) is TypeNode.Fqn { Args: { } } castType
                         && TryCarrier(ExpressionType(obj["e"]), out var operandCarrier)
                         && TryExistentialCarrier(castType.Name, owners, refs, out var castCarrier)
                         && operandCarrier.Name == castCarrier)
@@ -4278,9 +4276,10 @@ static class FBoundStarProjectionErasure
             _ => TypeJson.Read(operand?["sty"]) ?? TypeJson.Read(operand?["type"]),
         };
         if (target.Args is not { } targetArguments || targetArguments.Any(ContainsExplicitExistential)
-            || StripSourceNullability(sourceType)
-                is not TypeNode.Fqn { Args: { } sourceArguments } source)
+            || StripSourceNullability(sourceType) is not TypeNode.Fqn source)
             return false;
+
+        var sourceArguments = source.Args ?? Array.Empty<TypeNode>();
 
         if (SameDeclarationOwner(source.Name, target.Name))
             return sourceArguments.Length == targetArguments.Length
