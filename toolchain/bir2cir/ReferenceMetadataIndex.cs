@@ -887,7 +887,20 @@ sealed partial class ReferenceMetadataIndex
             foreach (var kv in asm.DotKt.ExactPhysicalTypeByDottedName)
                 AddExactPhysicalTypeName(_exactPhysicalTypeByDottedName, kv.Key, kv.Value);
             foreach (var kv in asm.DotKt.PhysicalTypeBySemanticName)
+            {
                 _physicalTypeBySemanticName.TryAdd(kv.Key, kv.Value);
+                // A relocated declaration may already be named by its exact CLR identity when a containing
+                // collection slot is projected. Both identities retain the same trusted existential contract.
+                if (asm.DotKt.ExistentialPhysicalBySemanticOwner.TryGetValue(
+                        StripGenericArity(DottedFqn(kv.Key)), out var existential))
+                {
+                    var declaration = StripGenericArity(DottedFqn(kv.Value));
+                    var carrier = StripGenericArity(DottedFqn(existential));
+                    if (!_existentialPhysicalBySemanticOwner.TryAdd(declaration, carrier)
+                        && _existentialPhysicalBySemanticOwner[declaration] != carrier)
+                        throw new InvalidOperationException($"conflicting Kotlin existential ABI for '{declaration}'");
+                }
+            }
             foreach (var kv in asm.DotKt.InnerCapturedCount)
                 _innerCapturedCount.TryAdd(kv.Key, kv.Value);
             foreach (var kv in asm.DotKt.InnerSemanticOwner)
@@ -4749,6 +4762,8 @@ sealed partial class ReferenceMetadataIndex
         if (HasExactOwnerPunctuation(ownerFqn))
             return _membersByPhysicalOwner.TryGetValue(ownerFqn, out members);
         if (_membersByOwner.TryGetValue(ownerFqn, out members)) return true;
+        if (_physicalTypeBySemanticName.TryGetValue(ownerFqn, out var recorded)
+            && _membersByPhysicalOwner.TryGetValue(recorded, out members)) return true;
         var matches = _membersByOwner.Where(kv => DottedFqn(kv.Key) == ownerFqn).Take(2).ToList();
         if (matches.Count == 1)
         {
@@ -4934,7 +4949,12 @@ sealed partial class ReferenceMetadataIndex
                         metadata.PhysicalTypeBySemanticName[DottedFqn(ownerFqn)] = physicalName;
                         var sourceName = StaticNestedSourceName(type);
                         if (sourceName != StripGenericArity(DottedFqn(ownerFqn)))
+                        {
                             metadata.PhysicalTypeBySemanticName[sourceName] = physicalName;
+                            metadata.DotKtOwners.Add(sourceName);
+                            AddExactPhysicalTypeName(metadata.ExactPhysicalTypeByDottedName,
+                                OwnerIdentity(sourceName, type.GetGenericArguments().Length), physicalName);
+                        }
                     }
                     if (dotKtAuthored && AttrInt32(type.GetCustomAttributesData(), KotlinInnerAttr) is int capturedCount)
                     {
@@ -5022,6 +5042,8 @@ sealed partial class ReferenceMetadataIndex
                         var typeParamDeclarations = new JsonArray(declarations).ToJsonString();
                         metadata.TypeParamDeclarations[ownerFqn] = typeParamDeclarations;
                         metadata.TypeParamDeclarations[DottedFqn(ownerFqn)] = typeParamDeclarations;
+                        if (dotKtAuthored && !HasAttribute(type.GetCustomAttributesData(), CompilerGeneratedAttr))
+                            metadata.TypeParamDeclarations[StaticNestedSourceName(type)] = typeParamDeclarations;
                         // The struct-ness ORACLE for a TYPE VARIABLE (#37/#48): record each type-param's CLR constraint
                         // class from GenericParameterAttributes so a `T?` on a struct-constrained param stays Nullable<T>.
                         metadata.TypeParamConstraints[ownerFqn] = gargs.Select(GenericParamConstraintClass).ToArray();

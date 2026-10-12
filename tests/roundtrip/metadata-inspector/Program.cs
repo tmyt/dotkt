@@ -23,6 +23,13 @@ const int IsInfixFunctionFlag = 1 << 9;
 // names. Star-projection existential association is metadata-authoritative and does not depend on this spelling.
 const string HoistedMarker = "$companion$";
 
+if (args.Length == 3 && args[0] == "--ownership-layer-boundary")
+{
+    VerifyOwnershipLayerBoundary(args[1], args[2]);
+    Console.WriteLine("source ownership and physical nesting: OK");
+    return;
+}
+
 if (args.Length == 2 && args[0] == "--klib-nonnull-bounds")
 {
     VerifyNonNullBounds(args[1]);
@@ -1153,6 +1160,15 @@ static void VerifyOwnershipLayerBoundary(string birPath, string cirPath)
 
     var cirTypes = Types(cir).OfType<JsonObject>()
         .ToDictionary(t => Text(t["name"])!, StringComparer.Ordinal);
+    var staticOwners = new Dictionary<string, string>(StringComparer.Ordinal);
+    foreach (var type in cirTypes.Values)
+        foreach (var attribute in (type["attrs"] as JsonArray ?? []).OfType<JsonObject>())
+            if (Text(attribute["attr"]?["name"]) == StaticCarrierAttribute)
+            {
+                var payload = BirCarrier.DecodeBody(Text(attribute["args"]?[0]?["value"])!,
+                    Convert.FromBase64String(Text(attribute["args"]?[1]?["bytes"])!));
+                staticOwners.Add(Text(payload["owner"])!, Text(type["name"])!);
+            }
     var cirRichEnum = cirTypes["roundtrip.ownership.OwnedRichEnum"];
     Require(cirRichEnum["richEnum"] is null && cirRichEnum["enumRich"] is null,
         "CIR retained the consumed rich-enum semantic hand-off instead of only its trusted attribute");
@@ -1161,8 +1177,11 @@ static void VerifyOwnershipLayerBoundary(string birPath, string cirPath)
         var name = Text(semantic["name"])!;
         var owner = Text(semantic["semanticOwner"])!;
         Require(cirTypes.TryGetValue(name, out var physical), $"CIR lost semantic child {name}");
-        Require(Text(physical!["nestedIn"]) == owner,
-            $"bir2cir did not nest {name} under semantic owner {owner}");
+        var expectedOwner = semantic["generated"]?.GetValue<bool>() != true
+            && semantic["mods"]?["inner"]?.GetValue<bool>() != true
+            && staticOwners.TryGetValue(owner, out var carrier) ? carrier : owner;
+        Require(Text(physical!["nestedIn"]) == expectedOwner,
+            $"bir2cir did not nest {name} under its physical owner {expectedOwner}");
         Require(physical["semanticOwner"] is null,
             $"CIR retained BIR-only semanticOwner on {name}");
     }

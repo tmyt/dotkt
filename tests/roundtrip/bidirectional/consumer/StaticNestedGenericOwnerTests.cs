@@ -19,5 +19,10 @@ public class StaticNestedGenericOwnerClrTests
         Assert.That(closed.IsGenericType, Is.False);
         Assert.That(closed.DeclaringType!.IsGenericType, Is.False);
         Assert.That(closed.BaseType!.DeclaringType, Is.EqualTo(closed.DeclaringType));
+        var runtimeEntry = typeof(kotlin.collections.ClrMapDefaultsKt).Assembly
+            .GetType("kotlin.collections.MutableMap$dotkt_statics", throwOnError: true)!.GetNestedTypes()
+            .Single(type => type.IsGenericTypeDefinition && type.Name.Split('`')[0] == "MutableEntry");
+        Assert.That(runtimeEntry.IsNested, Is.True);
+        Assert.That(runtimeEntry.DeclaringType!.IsGenericType, Is.False);
     }
 }
