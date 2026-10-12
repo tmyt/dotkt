@@ -1181,12 +1181,6 @@ sealed class Pipeline
             : Enumerable.Empty<string>())
             .ToHashSet(StringComparer.Ordinal);
 
-        // Every later metadata lookup must share the final emission-unit ownership inventory,
-        // including synthesized types. Canonical runtime templates remain owned by the stdlib.
-        refs.SetLocalEmittedTypes(localTypeFqns.Concat(emittedLocalTypes)
-            .Except(externalCanonicalTypes, StringComparer.Ordinal)
-            .ToHashSet(StringComparer.Ordinal));
-
         // STAR-PROJECTION BOUND index (#2): the in-assembly generic type-param BOUNDS (`interface Key<E : Element>`
         // -> {Key: [Element]}), collected across ALL staged roots (a `Key<*>` use may live in a sibling file from Key's
         // declaration). Feeds StarProjectionBoundLowering so a `Key<object>` (kotc's star-projection erasure) is
@@ -1409,6 +1403,12 @@ sealed class Pipeline
             // The adapter is declared by THIS emission unit, later than the initial inventory, so record it before
             // any member binding below can mistake a local construction for a reference to another assembly.
             emittedLocalTypes.Add(ReverseEnumeratorBridgeSynthesis.AdapterName);
+
+        // Final member/value binding must share the complete emission-unit ownership inventory,
+        // including late collection carriers. Canonical runtime templates remain owned by the stdlib.
+        refs.SetLocalEmittedTypes(localTypeFqns.Concat(emittedLocalTypes)
+            .Except(externalCanonicalTypes, StringComparer.Ordinal)
+            .ToHashSet(StringComparer.Ordinal));
 
         // Late synthesis above authors ordinary calls as part of new bridge bodies. Bind those calls only after every
         // root has reached its final representation, then resolve local-owner calls inherited from external bases.
