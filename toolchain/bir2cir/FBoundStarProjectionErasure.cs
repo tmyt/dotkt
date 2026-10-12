@@ -3065,7 +3065,7 @@ static class FBoundStarProjectionErasure
                 // Kotlin `is G<X>` is a raw-classifier check, and a true `as G<*>` also has no closed CLR target.
                 // An unchecked `as G<X>` cannot test its generic arguments, even when X is a concrete type such as
                 // Any, and uses the existential carrier. Do not confuse that raw check with a proven constructed
-                // inheritance cast, though: `Derived<T> as Base<T>` already has an exact CLR edge. Erasing that target leaves a
+                // upcast, though: `Derived<T> as Base<T>` already has an exact CLR edge. Erasing that target leaves a
                 // Base$star value at later Base<T> call/return slots and makes otherwise ordinary generic code
                 // unverifiable.
                 var runtimeTarget = TypeJson.Read(obj["type"]);
@@ -3073,10 +3073,15 @@ static class FBoundStarProjectionErasure
                     && StripSourceNullability(runtimeTarget) is TypeNode.Fqn { Args: { } } runtimeF
                     && TryExistentialCarrier(runtimeF.Name, owners, refs, out var runtimeCarrier)
                     && (runtimeKind == "isInst"
-                        || !HasExactConstructedCastEdge(
+                        || !IsProvenConstructedUpcast(
                             obj, runtimeF, defs, refs, currentThisType)))
+                {
                     obj["type"] = TypeJson.Write(ReplaceProjectionCore(
                         runtimeTarget, runtimeF, new TypeNode.Fqn(runtimeCarrier)));
+                    if (runtimeKind is "cast" or "isInstRef" && TypeJson.Read(obj["sty"]) is TypeNode resultStamp)
+                        obj["sty"] = TypeJson.Write(ReplaceProjectionCore(
+                            resultStamp, runtimeF, new TypeNode.Fqn(runtimeCarrier)));
+                }
                 foreach (var key in obj.Select(kv => kv.Key).ToList())
                 {
                     var value = obj[key];
@@ -4267,7 +4272,7 @@ static class FBoundStarProjectionErasure
         _ => type,
     };
 
-    static bool HasExactConstructedCastEdge(JsonObject cast, TypeNode.Fqn target,
+    static bool IsProvenConstructedUpcast(JsonObject cast, TypeNode.Fqn target,
         IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs,
         TypeNode.Fqn currentThisType)
     {
@@ -4292,17 +4297,9 @@ static class FBoundStarProjectionErasure
                     .SequenceEqual(targetArguments.Select(SupertypeGraph.TypeKey));
 
         var projected = ProjectConstructedArguments(source, target.Name, defs, refs);
-        if (projected != null && projected.Count == targetArguments.Length
+        return projected != null && projected.Count == targetArguments.Length
             && projected.Select(SupertypeGraph.TypeKey)
-                .SequenceEqual(targetArguments.Select(SupertypeGraph.TypeKey)))
-            return true;
-
-        // A downcast along the same constructed edge also keeps its exact CLR target: the source already
-        // establishes these arguments. A carrier operand or an unrelated construction supplies no such proof.
-        var projectedSource = ProjectConstructedArguments(target, source.Name, defs, refs);
-        return projectedSource != null && projectedSource.Count == sourceArguments.Length
-            && projectedSource.Select(SupertypeGraph.TypeKey)
-                .SequenceEqual(sourceArguments.Select(SupertypeGraph.TypeKey));
+                .SequenceEqual(targetArguments.Select(SupertypeGraph.TypeKey));
     }
 
     // Project through the declarations that actually own the relation. `defs` includes lifted local/object types
