@@ -63,6 +63,7 @@ static class PhysicalValueCoercion
         readonly Dictionary<string, TypeNode[]> _closureConstructors = new(StringComparer.Ordinal);
         readonly HashSet<string> _nonGenericClasses = new(StringComparer.Ordinal);
         readonly HashSet<(string Class, string Carrier)> _declaredCarriers = new();
+        IReadOnlyDictionary<string, SupertypeGraph.Def> _types;
         readonly Func<JsonObject> _unitValue;
         internal ValueTypeOracle IsValue;
         internal Func<TypeNode.Fqn, bool> IsReferenceOwner;
@@ -77,11 +78,16 @@ static class PhysicalValueCoercion
         internal JsonObject UnitValue() => _unitValue();
         internal bool HasDeclaredCarrier(TypeNode.Fqn target, TypeNode.Fqn source) =>
             _declaredCarriers.Contains((target.Name, source.Name))
-            || ReferencedCarrier?.Invoke(target, source) == true;
+            || ReferencedCarrier?.Invoke(target, source) == true
+            || _declaredCarriers.Any(edge => edge.Class == target.Name
+                && SupertypeGraph.Reaches(source, new TypeNode.Fqn(edge.Carrier), _types, References))
+            || References?.TryExistentialPhysicalOwner(target.Name, out var carrier) == true
+                && SupertypeGraph.Reaches(source, new TypeNode.Fqn(carrier), _types, References);
 
         internal static Index Build(IReadOnlyList<JsonNode> roots, Func<JsonObject> unitValue)
         {
             var result = new Index(unitValue);
+            result._types = SupertypeGraph.Collect(roots);
             foreach (var root in roots.OfType<JsonObject>())
             {
                 var fileOwner = Str(root["fileClass"]);
@@ -104,7 +110,7 @@ static class PhysicalValueCoercion
                     .Select(parameter => TypeJson.Read(parameter["type"])).ToArray();
             if (owner != null && Str(type["kind"]) == "class" && TypeParameterFrame.Count(type) == 0)
                 _nonGenericClasses.Add(owner);
-            if (owner != null && Str(type["kind"]) == "class")
+            if (owner != null && Str(type["kind"]) is "class" or "interface")
                 foreach (var edge in type["interfaces"] as JsonArray ?? new JsonArray())
                     if (TypeJson.Read(edge) is TypeNode.Fqn { Args: null } implemented)
                         _declaredCarriers.Add((owner, implemented.Name));
@@ -246,11 +252,24 @@ static class PhysicalValueCoercion
         root["types"].AsArray().Add(new JsonObject {
             ["name"] = "UnrelatedOwner", ["kind"] = "class", ["typeParams"] = new JsonArray("T"),
         });
+        root["types"].AsArray().Add(new JsonObject {
+            ["name"] = "InterfaceOwner", ["kind"] = "interface", ["typeParams"] = new JsonArray("T"),
+            ["interfaces"] = new JsonArray(TypeJson.Fqn("Carrier")),
+        });
+        root["types"].AsArray().Add(new JsonObject {
+            ["name"] = "DerivedCarrier", ["kind"] = "interface",
+            ["interfaces"] = new JsonArray(TypeJson.Fqn("Carrier")),
+        });
         var exactLocalView = carrierView.DeepClone().AsObject();
         exactLocalView["name"] = "exactLocalView";
         exactLocalView["typeParams"] = new JsonArray("T");
         exactLocalView["ret"] = TypeJson.Write(new TypeNode.Fqn("GenericOwner", new TypeNode[] { new TypeNode.Tv("method", 0) }));
         root["methods"].AsArray().Add(exactLocalView);
+        var interfaceView = exactLocalView.DeepClone().AsObject();
+        interfaceView["name"] = "interfaceView";
+        interfaceView["params"][0]["type"] = TypeJson.Fqn("DerivedCarrier");
+        interfaceView["ret"] = TypeJson.Write(new TypeNode.Fqn("InterfaceOwner", new TypeNode[] { new TypeNode.Tv("method", 0) }));
+        root["methods"].AsArray().Add(interfaceView);
         var blockLocalView = exactLocalView.DeepClone().AsObject();
         blockLocalView["name"] = "blockLocalView";
         blockLocalView["body"][0]["value"] = new JsonObject {
@@ -295,7 +314,7 @@ static class PhysicalValueCoercion
           """).AsObject();
         root["methods"].AsArray().Add(closureCapture);
         ApplyAll(new JsonNode[] { root }, () => throw new InvalidOperationException("Unexpected Unit conversion"), _ => false,
-            isExistentialOwner: owner => owner.Name == "Carrier",
+            isExistentialOwner: owner => owner.Name is "Carrier" or "DerivedCarrier",
             isNativeReference: owner => owner.Name == "System.Collections.Generic.IReadOnlyList",
             referencedCarrier: (target, source) => target.Name == "ReferencedOwner" && source.Name == "Carrier");
         var result = root["methods"][1]["body"][0]["value"];
@@ -314,6 +333,9 @@ static class PhysicalValueCoercion
         if (Str(referencedView["body"][0]["value"]["k"]) != "cast"
             || TypeJson.Read(referencedView["body"][0]["value"]["type"]) != TypeJson.Read(referencedView["ret"]))
             throw new InvalidOperationException("A referenced carrier lost its recorded target declaration");
+        if (Str(interfaceView["body"][0]["value"]["k"]) != "cast"
+            || TypeJson.Read(interfaceView["body"][0]["value"]["type"]) != TypeJson.Read(interfaceView["ret"]))
+            throw new InvalidOperationException("A derived carrier lost its declared generic interface value slot");
         if (Str(blockLocalView["body"][0]["value"]["result"]["k"]) != "cast"
             || TypeJson.Read(blockLocalView["body"][0]["value"]["result"]["type"])
                 != TypeJson.Read(blockLocalView["ret"]))

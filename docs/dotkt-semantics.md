@@ -92,6 +92,10 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   arbitrary arity and mixed masks such as `Pair<*, String>`, and is hidden when the DLL is re-imported. Trusted
   `[KotlinType]` metadata records the semantic owner and projected declaration types; the carrier's allocated CLR
   name has no meaning and is chosen collision-free.
+- **Unchecked generic casts test the raw Kotlin classifier, including concrete type arguments.**
+  `value as G<Any>` and `value as? G<Any>` do not test a closed CLR `G<object>` construction. Their runtime
+  checks use the declaration's existential interface and preserve object identity. A statically proven
+  constructed upcast retains its exact CLR edge instead, including an ordinary non-generic subclass of `G<X>`.
 - **Declaration-site variance on a Kotlin class or interface uses the same nominal existential value representation.**
   CLR classes are invariant, and CLR interface variance does not relate value-type instantiations. Kotlin permits
   both conversions, so every ordinary parameter, return,
