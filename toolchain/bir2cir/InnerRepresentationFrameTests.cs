@@ -62,6 +62,12 @@ static class InnerRepresentationFrameTests
             || types[5]!["semanticOwner"]!.GetValue<string>() != "Plain"
             || TypeParameterFrame.Count(carrier) != 0)
             throw new InvalidOperationException("Static nesting changed Kotlin frames or captured implementation ownership");
+        var constructedOwner = TypeJson.Write(new TypeNode.Fqn("Owner", new TypeNode[] { new TypeNode.Tv("type", 0) }));
+        var helperCall = new JsonObject { ["k"] = "callStatic", ["owner"] = constructedOwner.DeepClone() };
+        root["body"] = new JsonArray(helperCall);
+        GenericStaticOwnerBinding.ApplyAll(new[] { root }, null);
+        if (!JsonNode.DeepEquals(helperCall["owner"], constructedOwner))
+            throw new InvalidOperationException("Static nesting retargeted a constructed generic method owner");
     }
 
     static void SyntheticOwnerFrames()

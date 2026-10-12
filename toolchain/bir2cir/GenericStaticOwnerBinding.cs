@@ -337,6 +337,9 @@ static class GenericStaticOwnerBinding
         foreach (var key in keys)
         {
             if (TypeJson.Read(node[key]) is not TypeNode.Fqn owner) continue;
+            // A constructed owner is an already-selected CLR frame (for example an instance method's lifted local
+            // helper), not the receiverless Kotlin static surface. Creating a nesting carrier does not move it.
+            if (owner.Args is { Length: > 0 }) continue;
             var bare = owner.Name;
             if (!local.TryGetValue(bare, out var carrier) && !refs.TryGenericStaticCarrier(bare, out carrier))
             {

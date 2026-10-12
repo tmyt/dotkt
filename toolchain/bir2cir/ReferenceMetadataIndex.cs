@@ -5007,6 +5007,10 @@ sealed partial class ReferenceMetadataIndex
                             metadata.NullableFrames[ownerFqn] = frame;
                             metadata.NullableFrames[DottedFqn(ownerFqn)] = frame;
                             metadata.NullableFrames[exactPhysicalOwner] = frame;
+                            // Frame materialization precedes physical type-name binding. A relocated classifier's
+                            // source identity must select the same producer-authored frame as its CLR TypeDef.
+                            if (!HasAttribute(type.GetCustomAttributesData(), CompilerGeneratedAttr))
+                                metadata.NullableFrames[StaticNestedSourceName(type)] = frame;
                         }
                         metadata.TypeArity[ownerFqn] = gargs.Length;
                         metadata.TypeArity[DottedFqn(ownerFqn)] = gargs.Length;
