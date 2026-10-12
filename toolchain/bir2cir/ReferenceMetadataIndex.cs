@@ -889,6 +889,14 @@ sealed partial class ReferenceMetadataIndex
             foreach (var kv in asm.DotKt.PhysicalTypeBySemanticName)
             {
                 _physicalTypeBySemanticName.TryAdd(kv.Key, kv.Value);
+                if (asm.DotKt.GenericStaticCarrierBySemanticOwner.TryGetValue(
+                        StripGenericArity(DottedFqn(kv.Key)), out var staticCarrier))
+                {
+                    var declaration = StripGenericArity(DottedFqn(kv.Value));
+                    if (!_genericStaticCarrierBySemanticOwner.TryAdd(declaration, staticCarrier)
+                        && _genericStaticCarrierBySemanticOwner[declaration] != staticCarrier)
+                        throw new InvalidOperationException($"conflicting generic-static carrier for '{declaration}'");
+                }
                 // A relocated declaration may already be named by its exact CLR identity when a containing
                 // collection slot is projected. Both identities retain the same trusted existential contract.
                 if (asm.DotKt.ExistentialPhysicalBySemanticOwner.TryGetValue(
