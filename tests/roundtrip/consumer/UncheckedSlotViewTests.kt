@@ -23,6 +23,11 @@ class UncheckedSlotViewTests {
         check(slot.allocate(owner))
         check(slot.free(owner) == 1)
         check(owner.allocations == 1)
+        val nullable = raw as Slot<Any>?
+        check(nullable === raw)
+        check(nullable!!.allocate(owner))
+        val empty: Any? = null
+        check((empty as Slot<Any>?) == null)
     }
 
     @TestAttribute
@@ -37,5 +42,12 @@ class UncheckedSlotViewTests {
         check(slot.free(owner) == 1)
         val unrelated: Any = owner
         check((unrelated as? Slot<Any>) == null)
+        val nullable = raw as? Slot<Any>?
+        check(nullable != null)
+        check(nullable === raw)
+        check(nullable.allocate(owner))
+        check((unrelated as? Slot<Any>?) == null)
+        val empty: Any? = null
+        check((empty as? Slot<Any>?) == null)
     }
 }

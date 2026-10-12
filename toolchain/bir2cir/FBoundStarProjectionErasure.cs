@@ -3068,13 +3068,15 @@ static class FBoundStarProjectionErasure
                 // upcast, though: `Derived<T> as Base<T>` already has an exact CLR edge. Erasing that target leaves a
                 // Base$star value at later Base<T> call/return slots and makes otherwise ordinary generic code
                 // unverifiable.
+                var runtimeTarget = TypeJson.Read(obj["type"]);
                 if (!Bool(obj["_exactBridgeCast"]) && runtimeKind is "isInst" or "isInstRef" or "cast"
-                    && TypeJson.Read(obj["type"]) is TypeNode.Fqn { Args: { } } runtimeF
+                    && StripSourceNullability(runtimeTarget) is TypeNode.Fqn { Args: { } } runtimeF
                     && TryExistentialCarrier(runtimeF.Name, owners, refs, out var runtimeCarrier)
                     && (runtimeKind == "isInst"
                         || !IsProvenConstructedUpcast(
                             obj, runtimeF, defs, refs, currentThisType)))
-                    obj["type"] = TypeJson.Write(new TypeNode.Fqn(runtimeCarrier));
+                    obj["type"] = TypeJson.Write(ReplaceProjectionCore(
+                        runtimeTarget, runtimeF, new TypeNode.Fqn(runtimeCarrier)));
                 foreach (var key in obj.Select(kv => kv.Key).ToList())
                 {
                     var value = obj[key];
@@ -4083,13 +4085,15 @@ static class FBoundStarProjectionErasure
                         if (value != null) Normalize(value);
                     // A nullable temporary may have been considered a concrete upcast before the cell's value
                     // slot moved. Its now-physical carrier operand cannot justify narrowing back to G<T>.
+                    var castTarget = TypeJson.Read(obj["type"]);
                     if (Str(obj["k"]) is "cast" or "isInstRef" && !Bool(obj["_exactBridgeCast"])
-                        && TypeJson.Read(obj["type"]) is TypeNode.Fqn { Args: { } } castType
+                        && StripSourceNullability(castTarget) is TypeNode.Fqn { Args: { } } castType
                         && TryCarrier(ExpressionType(obj["e"]), out var operandCarrier)
                         && TryExistentialCarrier(castType.Name, owners, refs, out var castCarrier)
                         && operandCarrier.Name == castCarrier)
                     {
-                        obj["type"] = TypeJson.Write(new TypeNode.Fqn(castCarrier));
+                        obj["type"] = TypeJson.Write(ReplaceProjectionCore(
+                            castTarget, castType, new TypeNode.Fqn(castCarrier)));
                         if (obj["sty"] != null) obj["sty"] = obj["type"].DeepClone();
                     }
                     BindProjectedArrayRead(obj, owners, refs);
@@ -4211,7 +4215,8 @@ static class FBoundStarProjectionErasure
         if (Str(obj["k"]) is "newArray" or "newArrayInit" or "newArraySized" or "spreadConcat"
             && TypeJson.Read(obj["elem"]) is TypeNode element)
             return new TypeNode.Array(element);
-        return TypeJson.Read(obj["sty"]) ?? TypeJson.Read(obj["ret"]) ?? TypeJson.Read(obj["type"]);
+        return TypeJson.Read(obj["sty"]) ?? TypeJson.Read(obj["ret"]) ?? TypeJson.Read(obj["type"])
+            ?? (Str(obj["k"]) is "valueBlock" or "cond" ? NodeType.Of(obj, ExpressionType) : null);
     }
 
     static void MarkWritableVariantArrayLoopVariable(
@@ -4492,7 +4497,7 @@ static class FBoundStarProjectionErasure
             && castF.Name == f.Name
             && castArgs.Any(ContainsStarOrTypeVariable);
         var existentialReceiver = projectedReceiver != null
-            || ExpressionType(call["recv"]) is TypeNode.Fqn receiverType
+            || StripSourceNullability(ExpressionType(call["recv"])) is TypeNode.Fqn receiverType
                 && (owners.Values.Any(owner => owner.ErasedName == receiverType.Name)
                     || refs.IsExistentialPhysicalOwner(receiverType.Name));
         if (!starOwner && !erasedSmartCast && !existentialReceiver && !kotlinVariantOwner) return;
