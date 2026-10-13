@@ -47,6 +47,11 @@ There is no runtime alias TypeDef, dummy class, or type-forwarding/legacy recove
 continues to exclude its DLLs from projection because its dedicated frontend KLIB owns `kotlin.*`.
 
 ### Carrier envelopes
+- `KotlinTypeVisibilityAttribute(string version, byte[] content)` preserves a type declaration's
+  source visibility when bir2cir widens its physical CLR accessibility. Its `bir-json/1` payload is
+  `{visibility}` in Kotlin visibility vocabulary. dll2klib restores standard KLIB class visibility
+  from this trusted TypeDef carrier; it does not omit the declaration needed by public inline bodies.
+  Ordinary CLR declarations without this carrier retain their ECMA-335 accessibility projection.
 - **STATUS (#37 m6): LANDED.** The carrier attributes stamp `(string version, byte[] content)`. `version` is a
   `codec/schema-version` identifier; only `"bir-json/1"` is defined today. `content` is the codec-encoded body
   (today `UTF8(json)`). The dispatch shape leaves room for other codecs without reserving a particular identifier.

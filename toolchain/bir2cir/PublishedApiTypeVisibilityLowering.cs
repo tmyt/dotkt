@@ -22,7 +22,13 @@ static class PublishedApiTypeVisibilityLowering
     static void Apply(JsonObject type)
     {
         if (ResolveVisibility(type) is { } visibility)
+        {
+            if (visibility != type["vis"]?.GetValue<string>())
+                RoundtripMetadata.PreserveTypeVisibility(type);
             type["vis"] = visibility;
+        }
+        if (type["types"] is JsonArray nested)
+            foreach (var child in nested.OfType<JsonObject>()) Apply(child);
     }
 
     // Synthesized representations must use the same effective accessibility as their source declaration,

@@ -1492,6 +1492,9 @@ internal sealed class AssemblyScanner : IDisposable
         _attrs = new MetadataAttributes(md);
         _typeAliases = new KotlinTypeAliasMetadata(md, _attrs);
         _attrs.ValidateCarrierTargets(
+            MetadataAttributes.DotKtNs + "KotlinTypeVisibilityAttribute",
+            HandleKind.TypeDefinition);
+        _attrs.ValidateCarrierTargets(
             MetadataAttributes.DotKtNs + "KotlinCompanionExtensionAttribute",
             HandleKind.MethodDefinition,
             HandleKind.FieldDefinition);
@@ -2137,6 +2140,20 @@ internal sealed class AssemblyScanner : IDisposable
         if (clrVisibility is TypeAttributes.NestedFamily or TypeAttributes.NestedFamORAssem
             || _protectedStaticNested.Contains(handle))
             result.Flags = Flags.AsProtected(result.Flags);
+        using (var sourceVisibility = _attrs.CarrierDocument(
+            handle, MetadataAttributes.DotKtNs + "KotlinTypeVisibilityAttribute"))
+            if (sourceVisibility is not null)
+            {
+                var visibility = sourceVisibility.RootElement.GetProperty("visibility").GetString();
+                result.Flags = (result.Flags & ~0xE) | (visibility switch
+                {
+                    "internal" => 0,
+                    "private" => 2,
+                    "protected" => 4,
+                    "public" => 6,
+                    _ => throw new InvalidDataException($"invalid Kotlin type visibility '{visibility}'"),
+                });
+            }
         result.ClassAnnotation.Add(ClrExternalAnnotation(names, handle));
         result.Flags |= 1;
 

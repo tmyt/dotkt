@@ -70,11 +70,17 @@ static class RoundtripMetadata
     internal const string AKNullableGen  = Ns + "KotlinNullableGenericAttribute";
     const string AKCollIdentity = Ns + "KotlinCollectionIdentityAttribute";
     const string AKType         = Ns + "KotlinTypeAttribute";
+    const string AKTypeVisibility = Ns + "KotlinTypeVisibilityAttribute";
     const string AKTypeAlias    = Ns + "KotlinTypeAliasAttribute";
     const string AKSupertypes   = Ns + "KotlinSupertypesAttribute";
     const string AKTypeParameterBounds = Ns + "KotlinTypeParameterBoundsAttribute";
     const string ANullable      = ClrNs + "NullableAttribute";
     const string ANullableCtx   = ClrNs + "NullableContextAttribute";
+
+    // Physical accessibility may be wider than Kotlin declaration visibility for the cross-module inline ABI.
+    // Preserve the declaration-owned fact at that representation boundary, before replacing CIR's `vis`.
+    public static void PreserveTypeVisibility(JsonObject type) =>
+        Append(type, JsonCarrierAttr(AKTypeVisibility, new JsonObject { ["visibility"] = type["vis"]!.DeepClone() }));
 
     // Declaration metadata is opaque to every physical representation pass. Encode it at the input boundary,
     // before any traversal can confuse a Kotlin alias's classifier or parameter with an executable CLR slot.
@@ -915,6 +921,7 @@ static class RoundtripMetadata
             AttrClass(AKNullableGen, Ctor(Param("System.String"), Param(ByteArrayType()))),  // #18/#147 — pre-erasure `Holder<T?>` declaration slot
             AttrClass(AKCollIdentity, Ctor(Param("System.String"), Param(ByteArrayType()))), // #29 — carrier of a pre-collapse `Box<List<T>>` collection identity
             AttrClass(AKType, Ctor(Param("System.String"), Param(ByteArrayType()))),         // compiler-synthesized CLR type -> original Kotlin TypeNode
+            AttrClass(AKTypeVisibility, Ctor(Param("System.String"), Param(ByteArrayType()))), // source visibility before physical accessibility promotion
             AttrClass(AKSupertypes, Ctor(Param("System.String"), Param(ByteArrayType()))),   // #86 — pre-erasure supertype edges + type-parameter bounds
             AttrClass(AKTypeParameterBounds, Ctor(Param("System.String"), Param(ByteArrayType()))), // pre-erasure MethodDef type-parameter bounds
         };

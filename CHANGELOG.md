@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- Preserve source-internal visibility of `@PublishedApi` types across DLL imports while retaining
+  public CLR accessibility for cross-module inline bodies (#1016).
+
 - Preserve Kotlin typealias declarations across DLL boundaries using assembly-level
   `KotlinTypeAlias` metadata, including actual aliases and alias-only source files (#1030).
 
