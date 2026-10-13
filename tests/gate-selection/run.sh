@@ -37,7 +37,7 @@ assert_suites packaged-notices THIRD-PARTY-NOTICES.md packagedsdk
 assert_suites unrelated-broad-change build-logic/unknown.input "$FULL_SUITES"
 assert_suites compiler-full toolchain/bir-common/TypeNode.cs "$FULL_SUITES"
 assert_suites stdlib-source libraries/stdlib/common/src/generated/_Arrays.kt "$FULL_SUITES"
-assert_suites stdlib-snapshot-test tests/stdlib-common-upstream/upstream-v2.4.10.sha256 stdlib_upstream
+assert_suites stdlib-snapshot-test tests/stdlib-common-upstream/upstream-v2.4.21.sha256 stdlib_upstream
 assert_suites ilverify-harness tests/ilverify/test_harness.py compiler_tests
 verifier_suites="compiler_tests csharp14 pinvoke dll2klib packagedsdk"
 assert_suites shared-ilverify tests/run-ilverify.sh "$verifier_suites"

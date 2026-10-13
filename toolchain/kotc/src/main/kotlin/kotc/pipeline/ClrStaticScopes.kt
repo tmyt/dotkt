@@ -150,6 +150,7 @@ fun FirSession.buildClrFirFromKtFiles(files: Collection<KtFile>) = (firProvider 
 }
 
 /** A static use references its resolved declaration, not an instance override on the written qualifier. */
+@OptIn(org.jetbrains.kotlin.fir.types.ResolvedQualifierTypeAccess::class)
 fun normalizeClrStaticReceivers(session: FirSession, files: List<FirFile>) {
 	for (file in files) file.accept(object : FirDefaultVisitorVoid() {
 		override fun visitElement(element: FirElement) {
@@ -169,8 +170,8 @@ fun normalizeClrStaticReceivers(session: FirSession, files: List<FirFile>) {
 			if (!callable.isStatic) return
 			val receiver = qualifiedAccessExpression.dispatchReceiver as? FirResolvedQualifier ?: return
 			val ownerId = callable.callableId?.classId ?: return
-			if (receiver.classId == ownerId) return
-			val receiverClass = receiver.symbol?.fullyExpandedClass(session) ?: return
+			if (receiver.qualifierSymbol?.classId == ownerId) return
+			val receiverClass = receiver.qualifierSymbol?.fullyExpandedClass(session) ?: return
 			if (receiverClass.classId == ownerId) return
 			val ownerType = lookupSuperTypes(receiverClass.fir, lookupInterfaces = false, deep = true,
 				useSiteSession = session, substituteTypes = true).single { it.lookupTag.classId == ownerId }
@@ -184,10 +185,12 @@ fun normalizeClrStaticReceivers(session: FirSession, files: List<FirFile>) {
 			val owner = session.symbolProvider.getClassLikeSymbolByClassId(ownerId) ?: error("Missing static declaration owner $ownerId")
 			val resolvedOwner = buildResolvedQualifier {
 				source = receiver.source
+				// Preserve the qualifier's FIR type verbatim; its class identity comes from qualifierSymbol,
+				// not this type (which can be Unit or a companion object even for a static access).
 				coneTypeOrNull = receiver.resolvedType
 				packageFqName = ownerId.packageFqName
 				relativeClassFqName = ownerId.relativeClassName
-				symbol = owner
+				qualifierSymbol = owner
 				resolvedToCompanionObject = false
 			}
 			qualifiedAccessExpression.replaceDispatchReceiver(resolvedOwner)

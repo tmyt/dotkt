@@ -1,5 +1,5 @@
 @file:Suppress("DEPRECATION")
-@file:OptIn(org.jetbrains.kotlin.compiler.plugin.ExperimentalCompilerApi::class, org.jetbrains.kotlin.K1Deprecation::class)
+@file:OptIn(org.jetbrains.kotlin.compiler.plugin.ExperimentalCompilerApi::class, org.jetbrains.kotlin.K1Deprecation::class, org.jetbrains.kotlin.CoreEnvironmentDeprecation::class)
 
 package kotc.pipeline
 
@@ -10,7 +10,7 @@ import org.jetbrains.kotlin.cli.common.diagnosticsCollector
 import org.jetbrains.kotlin.cli.common.fileBelongsToModuleForPsi
 import org.jetbrains.kotlin.cli.common.fir.FirDiagnosticsCompilerResultsReporter
 import org.jetbrains.kotlin.cli.common.isCommonSourceForPsi
-import org.jetbrains.kotlin.cli.common.messages.AnalyzerWithCompilerReport
+import org.jetbrains.kotlin.cli.common.messages.SyntaxErrorReporter
 import org.jetbrains.kotlin.cli.common.prepareNativeSessions
 import org.jetbrains.kotlin.cli.jvm.compiler.EnvironmentConfigFiles
 import org.jetbrains.kotlin.cli.jvm.compiler.KotlinCoreEnvironment
@@ -24,7 +24,6 @@ import org.jetbrains.kotlin.cli.pipeline.PipelinePhase
 import org.jetbrains.kotlin.cli.pipeline.metadata.MetadataFrontendPipelineArtifact
 import org.jetbrains.kotlin.compiler.plugin.getCompilerExtensions
 import org.jetbrains.kotlin.config.CommonConfigurationKeys
-import org.jetbrains.kotlin.config.messageCollector
 import org.jetbrains.kotlin.config.moduleName
 import org.jetbrains.kotlin.fir.DependencyListForCliModule
 import org.jetbrains.kotlin.fir.extensions.FirExtensionRegistrar
@@ -57,7 +56,7 @@ object ClrStdlibFrontendPipelinePhase : PipelinePhase<ConfigurationPipelineArtif
 		)
 		val ktFiles = environment.getSourceFiles()
 		for (ktFile in ktFiles) {
-			AnalyzerWithCompilerReport.reportSyntaxErrors(ktFile, diagnosticsReporter)
+			SyntaxErrorReporter.reportSyntaxErrors(ktFile, diagnosticsReporter)
 		}
 		val extensionRegistrars = configuration.getCompilerExtensions(FirExtensionRegistrar) + ClrStaticStatusRegistrar
 		val sessionsWithSources = prepareNativeSessions(
@@ -92,11 +91,7 @@ object ClrStdlibFrontendPipelinePhase : PipelinePhase<ConfigurationPipelineArtif
 		}
 		outputs.runPlatformCheckers(diagnosticsReporter)
 		checkKotlinPackageUsageForPsi(configuration, ktFiles)
-		FirDiagnosticsCompilerResultsReporter.reportToMessageCollector(
-			diagnosticsReporter,
-			configuration.messageCollector,
-			configuration.getBoolean(CLIConfigurationKeys.RENDER_DIAGNOSTIC_INTERNAL_NAME),
-		)
+		FirDiagnosticsCompilerResultsReporter.reportToMessageCollector(diagnosticsReporter, configuration)
 		return MetadataFrontendPipelineArtifact(
 			AllModulesFrontendOutput(outputs),
 			configuration,

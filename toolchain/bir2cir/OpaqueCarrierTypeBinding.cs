@@ -76,7 +76,7 @@ static class OpaqueCarrierTypeBinding
 
         foreach (var root in roots)
         {
-            if (physicalBySemantic.Count > 0) RewriteCarrierSlots(root, physicalBySemantic);
+            if (nestedPhysical.Count > 0) RewriteCarrierSlots(root, nestedPhysical);
             BindSourceRecords(root, nestedPhysical, refs);
         }
         if (semanticSignatures != null)

@@ -1,5 +1,5 @@
 @file:Suppress("DEPRECATION")
-@file:OptIn(org.jetbrains.kotlin.K1Deprecation::class)
+@file:OptIn(org.jetbrains.kotlin.K1Deprecation::class, org.jetbrains.kotlin.CoreEnvironmentDeprecation::class)
 
 package kotc.pipeline
 
@@ -11,11 +11,11 @@ import org.jetbrains.kotlin.cli.common.diagnosticsCollector
 import org.jetbrains.kotlin.cli.common.fileBelongsToModuleForPsi
 import org.jetbrains.kotlin.cli.common.fir.FirDiagnosticsCompilerResultsReporter
 import org.jetbrains.kotlin.cli.common.isCommonSourceForPsi
-import org.jetbrains.kotlin.cli.common.messages.AnalyzerWithCompilerReport
+import org.jetbrains.kotlin.cli.common.messages.SyntaxErrorReporter
 import org.jetbrains.kotlin.cli.common.SessionConstructionUtils
 import org.jetbrains.kotlin.cli.jvm.compiler.EnvironmentConfigFiles
 import org.jetbrains.kotlin.cli.jvm.compiler.KotlinCoreEnvironment
-import org.jetbrains.kotlin.cli.jvm.compiler.createContextForIncrementalCompilation
+import org.jetbrains.kotlin.cli.jvm.compiler.prepareIncrementalCompilationContextAndLibrariesScope
 import org.jetbrains.kotlin.cli.jvm.compiler.toVfsBasedProjectEnvironment
 import org.jetbrains.kotlin.cli.jvm.config.JvmClasspathRoot
 import org.jetbrains.kotlin.cli.jvm.config.K2MetadataConfigurationKeys
@@ -30,7 +30,6 @@ import org.jetbrains.kotlin.cli.pipeline.metadata.MetadataFrontendPipelineArtifa
 import org.jetbrains.kotlin.compiler.plugin.getCompilerExtensions
 import org.jetbrains.kotlin.config.CommonConfigurationKeys
 import org.jetbrains.kotlin.config.languageVersionSettings
-import org.jetbrains.kotlin.config.messageCollector
 import org.jetbrains.kotlin.config.moduleName
 import org.jetbrains.kotlin.config.targetPlatform
 import org.jetbrains.kotlin.fir.DependencyListForCliModule
@@ -49,7 +48,7 @@ import org.jetbrains.kotlin.platform.CommonPlatforms
 import java.io.File
 
 /**
- * Fork of the stock `MetadataFrontendPipelinePhase` (2.4.10) -- PSI-only, non-light-tree branch,
+ * Fork of the stock `MetadataFrontendPipelinePhase` (2.4.21) -- PSI-only, non-light-tree branch,
  * matching the rest of kotc, which never sets [CommonConfigurationKeys.USE_LIGHT_TREE] -- needed for
  * TWO reasons:
  *  1. The stock phase builds its FIR sessions internally via `prepareMetadataSessions` and only returns
@@ -64,7 +63,7 @@ import java.io.File
  *
  * `prepareMetadataSessions` itself IS public CLI API (`org.jetbrains.kotlin.cli.common`), so this
  * reimplements only the thin CLI glue around it plus its (now flag-parameterised) session-preparation
- * body (kept in sync with the stock 2.4.10 non-light-tree branch: `loadMetadataKlibs`,
+ * body (kept in sync with the stock 2.4.21 non-light-tree branch: `loadMetadataKlibs`,
  * `toVfsBasedProjectEnvironment`, `getCompilerExtensions`), not Kotlin-core session-construction logic.
  */
 object ClrAppFrontendPipelinePhase : PipelinePhase<ConfigurationPipelineArtifact, MetadataFrontendPipelineArtifact>(
@@ -74,7 +73,6 @@ object ClrAppFrontendPipelinePhase : PipelinePhase<ConfigurationPipelineArtifact
 	override fun executePhase(input: ConfigurationPipelineArtifact): MetadataFrontendPipelineArtifact {
 		val (configuration, rootDisposable) = input
 		val diagnosticsReporter = configuration.diagnosticsCollector
-		val messageCollector = configuration.messageCollector
 		val rootModuleName = Name.special("<${configuration.moduleName!!}>")
 
 		val libraryList = DependencyListForCliModule.build(rootModuleName) {
@@ -85,7 +83,7 @@ object ClrAppFrontendPipelinePhase : PipelinePhase<ConfigurationPipelineArtifact
 			dependsOnDependencies(refinedPaths.map { it.absolutePath })
 		}
 
-		// 2.4.10's stock metadata frontend (MetadataFrontendPipelinePhase) does exactly this: load the
+		// 2.4.21's stock metadata frontend (MetadataFrontendPipelinePhase) does exactly this: load the
 		// classpath klibs via the KlibLoader entry point rather than resolveSingleFileKlib. This subsumed
 		// kotc's old KT-63573 manual-resolution workaround (its own comment predicted the migration).
 		val klibs: List<KotlinLibrary> = loadMetadataKlibs(
@@ -101,24 +99,15 @@ object ClrAppFrontendPipelinePhase : PipelinePhase<ConfigurationPipelineArtifact
 			EnvironmentConfigFiles.METADATA_CONFIG_FILES,
 		)
 		val projectEnvironment = environment.toVfsBasedProjectEnvironment()
-		var librariesScope = projectEnvironment.getSearchScopeForProjectLibraries()
+		val (librariesScope, incrementalCompilationContext) = prepareIncrementalCompilationContextAndLibrariesScope(
+			configuration, projectEnvironment, incrementalExcludesScope = null,
+		)
 		val extensionRegistrars = configuration.getCompilerExtensions(FirExtensionRegistrar) + ClrStaticStatusRegistrar
 		val ktFiles = environment.getSourceFiles()
 		val sourceFiles = ktFiles.map { KtPsiSourceFile(it) }
 
 		for (ktFile in ktFiles) {
-			AnalyzerWithCompilerReport.reportSyntaxErrors(ktFile, diagnosticsReporter)
-		}
-
-		val sourceScope =
-			projectEnvironment.getSearchScopeByPsiFiles(ktFiles) + projectEnvironment.getSearchScopeForProjectJavaSources()
-		val providerAndScopeForIncrementalCompilation = createContextForIncrementalCompilation(
-			projectEnvironment,
-			configuration,
-			sourceScope,
-		)
-		providerAndScopeForIncrementalCompilation?.precompiledBinariesFileScope?.let {
-			librariesScope -= it
+			SyntaxErrorReporter.reportSyntaxErrors(ktFile, diagnosticsReporter)
 		}
 
 		// This inlines the body of the stock `prepareMetadataSessions` (all public symbols) for ONE reason:
@@ -135,7 +124,7 @@ object ClrAppFrontendPipelinePhase : PipelinePhase<ConfigurationPipelineArtifact
 		// (common module + platform-module-depends-on-common). Downstream Fir2Ir actualization + BIR emit
 		// already handle the multi-session output — the stdlib self-build uses the same two tail phases.
 		// The block below is a verbatim copy of `prepareMetadataSessions` (upstream
-		// `compiler/cli/.../common/FirSessionConstructionUtils.kt`, 2.4.10) with the sole `metadataCompilationMode`
+		// `compiler/cli/.../common/FirSessionConstructionUtils.kt`, 2.4.21) with the sole `metadataCompilationMode`
 		// literal parameterised — keep it in sync on a frontend bump. NOTE: `-Xfragments` app builds (an HMPP
 		// module structure rather than `-Xcommon-sources`) are NOT wired here yet — `hasCommonSources` would be
 		// false and force single-session; widening the guard to also cover an HMPP structure is a follow-up.
@@ -179,15 +168,15 @@ object ClrAppFrontendPipelinePhase : PipelinePhase<ConfigurationPipelineArtifact
 					metadataContext,
 				).also(::installClrStaticDeserialization)
 			},
-			createSourceSession = { _, moduleData, isForLeafHmppModule, sessionConfigurator ->
+			createSourceSession = { moduleData, kmpModuleKind, sessionConfigurator ->
 				sessionFactory.createSourceSession(
 					moduleData,
 					projectEnvironment,
-					incrementalCompilationContext = providerAndScopeForIncrementalCompilation,
+					incrementalCompilationContext,
 					extensionRegistrars,
 					configuration,
 					metadataContext,
-					isForLeafHmppModule,
+					kmpModuleKind,
 					init = sessionConfigurator,
 				)
 			},
@@ -220,8 +209,7 @@ object ClrAppFrontendPipelinePhase : PipelinePhase<ConfigurationPipelineArtifact
 		outputs.runPlatformCheckers(diagnosticsReporter)
 		checkKotlinPackageUsageForPsi(configuration, sourceFiles.asKtFilesList())
 
-		val renderDiagnosticNames = configuration.getBoolean(CLIConfigurationKeys.RENDER_DIAGNOSTIC_INTERNAL_NAME)
-		FirDiagnosticsCompilerResultsReporter.reportToMessageCollector(diagnosticsReporter, messageCollector, renderDiagnosticNames)
+		FirDiagnosticsCompilerResultsReporter.reportToMessageCollector(diagnosticsReporter, configuration)
 		return MetadataFrontendPipelineArtifact(
 			AllModulesFrontendOutput(outputs),
 			configuration,

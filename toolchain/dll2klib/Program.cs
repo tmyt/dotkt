@@ -338,7 +338,7 @@ internal static class Program
 
     private static byte[] Manifest(string uniqueName) => System.Text.Encoding.UTF8.GetBytes(
         "abi_version=2.4.0\n" +
-        "compiler_version=2.4.10\n" +
+        "compiler_version=2.4.21\n" +
         "ir_signature_versions=1,2\n" +
         "metadata_version=2.4.0\n" +
         $"unique_name={uniqueName}\n");

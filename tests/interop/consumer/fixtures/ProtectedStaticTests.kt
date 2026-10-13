@@ -52,7 +52,7 @@ private class ProtectedStaticGenericMiddleChild : GenericStringLeaf() {
 }
 private class ProtectedStaticGenericChild<T> : GenericBase<T>() {
     fun roundtrip(value: T): T {
-        val store: (T) -> T = ProtectedStaticGenericChild<T>::Store
+        val store: (T) -> T = ProtectedStaticGenericChild::Store
         return store(value)
     }
 }

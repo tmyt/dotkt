@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd -- "$(dirname -- "$0")/../.." && pwd -P)"
 COMMON="$ROOT/libraries/stdlib/common"
-EXPECTED_VERSION="2.4.10"
+EXPECTED_VERSION="2.4.21"
 MANIFEST="$ROOT/tests/stdlib-common-upstream/upstream-v${EXPECTED_VERSION}.sha256"
 CONFIGURED_VERSION="$(sed -n 's:.*<DotKtKotlinVersion>\([^<]*\)</DotKtKotlinVersion>.*:\1:p' "$ROOT/packaging/DotKt.Versions.props")"
 

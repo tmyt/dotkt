@@ -1,5 +1,5 @@
 plugins {
-	kotlin("jvm") version "2.4.10"
+	kotlin("jvm") version "2.4.21"
 	application
 }
 
@@ -10,7 +10,7 @@ repositories {
 dependencies {
 	// The whole point: reuse the official frontend (Configuration / FIR / Fir2Ir).
 	// We only own the backend (Kotlin IR -> C#) on top of this.
-	implementation("org.jetbrains.kotlin:kotlin-compiler-embeddable:2.4.10")
+	implementation("org.jetbrains.kotlin:kotlin-compiler-embeddable:2.4.21")
 
 	testImplementation(kotlin("test"))
 }

@@ -200,4 +200,6 @@ stdlib_fragment_args() {
 	done
 }
 # The stdlib compile's opt-ins + frontend flags (identical for the ref and rt builds).
-STDLIB_OPTIN="-opt-in=kotlin.ExperimentalUnsignedTypes,kotlin.experimental.ExperimentalTypeInference,kotlin.contracts.ExperimentalContracts,kotlin.ExperimentalMultiplatform,kotlin.ExperimentalStdlibApi,kotlin.ExperimentalSubclassOptIn,kotlin.io.encoding.ExperimentalEncodingApi,kotlin.time.ExperimentalTime,kotlin.uuid.ExperimentalUuidApi"
+# The 2.4.21 stdlib sources already use square-bracket destructuring, whose language feature is
+# still preview in the 2.4 compiler. Enable it only for stdlib self-builds, not ordinary app sources.
+STDLIB_OPTIN="-opt-in=kotlin.ExperimentalUnsignedTypes,kotlin.experimental.ExperimentalTypeInference,kotlin.contracts.ExperimentalContracts,kotlin.ExperimentalMultiplatform,kotlin.ExperimentalStdlibApi,kotlin.ExperimentalSubclassOptIn,kotlin.io.encoding.ExperimentalEncodingApi,kotlin.time.ExperimentalTime,kotlin.uuid.ExperimentalUuidApi -Xname-based-destructuring=complete"
