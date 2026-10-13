@@ -261,6 +261,15 @@ for proj in "${PROJECTS[@]}"; do
 	if [[ "$proj" == "tests/roundtrip/consumer" ]]; then
 		producer_dll="$ROOT/tests/roundtrip/producer/bin/$CONFIGURATION/net10.0/RoundtripProducer.dll"
 		producer_klib="$dir/obj/$CONFIGURATION/net10.0/klib/RoundtripProducer.klib"
+		if dotnet "$METADATA_INSPECTOR_DLL" --type-declaration-visibility "$producer_dll" "$producer_klib" \
+			>"$ROOT/build/nunit-$name.type-visibility.log" 2>&1 \
+			&& bash "$ROOT/tests/roundtrip/assert-published-api-visibility.sh" "$dir/obj/$CONFIGURATION/net10.0/klib" \
+			>>"$ROOT/build/nunit-$name.type-visibility.log" 2>&1; then
+			echo "  PublishedApi types retain source visibility and public inline ABI"
+		else
+			echo "  TYPE VISIBILITY FAIL"
+			tail -25 "$ROOT/build/nunit-$name.type-visibility.log"; rc=1
+		fi
 		for alias_producer in RoundtripProducer RoundtripProducerMpp; do
 			if dotnet "$METADATA_INSPECTOR_DLL" --typealias-declarations \
 				"$dir/bin/$CONFIGURATION/net10.0/$alias_producer.dll" \
