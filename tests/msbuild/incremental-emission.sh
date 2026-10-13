@@ -16,6 +16,7 @@ write_kotlin_project() {
     <OutputType>Exe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>disable</Nullable>
+    <TargetsTriggeredByCompilation>AssertExistingCompilationHook</TargetsTriggeredByCompilation>
   </PropertyGroup>
 EOF
 	if [[ "$sdk" == Microsoft.NET.Sdk ]]; then
@@ -24,7 +25,13 @@ EOF
 	if [[ -n "$reference" ]]; then
 		printf '  <ItemGroup><ProjectReference Include="%s" /></ItemGroup>\n' "$reference" >> "$path"
 	fi
-	printf '</Project>\n' >> "$path"
+	cat >> "$path" <<'EOF'
+  <Target Name="AssertExistingCompilationHook">
+    <GetAssemblyIdentity AssemblyFiles="@(IntermediateAssembly)" />
+    <Error Condition="Exists('$(MSBuildProjectDirectory)/fail-hook')" Text="Intentional existing hook failure" />
+  </Target>
+</Project>
+EOF
 }
 write_kotlin_project "$work/producer/Probe.ktproj" ""
 write_kotlin_project "$work/kotlin-consumer/Consumer.ktproj" "../producer/Probe.ktproj"
@@ -93,7 +100,9 @@ for mutation in revision nullable; do
 	[[ "$(file_state "$obj/bir/.stamp")" == "$bir_state" ]]
 	[[ "$(file_state "$obj/cir/.stamp")" == "$cir_state" ]]
 	grep -q 'DotKt: emitting CIL' "$work/$mutation.log"
-	! grep -Eq 'DotKt: (compiling|lowering)' "$work/$mutation.log"
+	if grep -Eq 'DotKt: (compiling|lowering)' "$work/$mutation.log"; then
+		echo "C#-only change reran Kotlin compilation/lowering"; exit 1
+	fi
 	assert_output "$producer_dll" "PASS incremental Kotlin entry point: 42"
 	# Resolve a top-level Kotlin declaration through the emitted metadata, not a C# facade spelling.
 	build "$kotlin_consumer" "$mutation-kotlin" second
@@ -106,20 +115,36 @@ for mutation in revision nullable; do
 	[[ "$(file_state "$obj/Probe.dll")" == "$dll_state" ]]
 	[[ "$(file_state "$producer_dll")" == "$bin_state" ]]
 	[[ "$(file_state "$csharp_dll")" == "$cs_state" ]]
-	! grep -Eq 'DotKt: (projecting|compiling|lowering|emitting)|/csc\.dll' "$work/$mutation-noop.log"
+	if grep -Eq 'DotKt: (projecting|compiling|lowering|emitting)|/csc\.dll' "$work/$mutation-noop.log"; then
+		echo "No-op build invoked a compiler stage"; exit 1
+	fi
 	grep -q 'Skipping target "CoreCompile"' "$work/$mutation-noop.log"
 	assert_runtime
 	echo "PASS incremental-emission:$mutation (metadata, runtime, C# no-op)"
 done
 
+# A failed existing compilation hook must not make a successful unchanged retry publish its placeholder.
+touch "$work/producer/fail-hook"
+if build "$producer" failed-hook third > "$work/failed-hook-expected.log" 2>&1; then
+	echo "Expected existing compilation hook to fail"; exit 1
+fi
+grep -q 'Intentional existing hook failure' "$work/failed-hook.log"
+rm "$work/producer/fail-hook"
+build "$producer" hook-retry third
+grep -q 'Skipping target "CoreCompile"' "$work/hook-retry.log"
+grep -q 'DotKt: emitting CIL' "$work/hook-retry.log"
+assert_output "$producer_dll" "PASS incremental Kotlin entry point: 42"
+[[ "$(file_state "$obj/cir/.stamp")" == "$cir_state" ]]
+echo "PASS incremental-emission:failed-hook-retry"
+
 # A missing emitted assembly must invalidate the emitter even though CIR is unchanged.
 rm -f "$obj/Probe.dll"
-build "$producer" deleted-output second
+build "$producer" deleted-output third
 assert_output "$producer_dll" "PASS incremental Kotlin entry point: 42"
 grep -q 'DotKt: emitting CIL' "$work/deleted-output.log"
 [[ "$(file_state "$obj/cir/.stamp")" == "$cir_state" ]]
 dotnet clean "$producer" -v:q --nologo > "$work/clean.log" 2>&1
-[[ ! -e "$obj/Probe.dll" && ! -e "$obj/bir" && ! -e "$obj/cir" ]]
-build "$producer" after-clean second
+[[ ! -e "$obj/Probe.dll" && ! -e "$obj/bir" && ! -e "$obj/cir" && ! -e "$obj/dotkt-ilemit.stamp" ]]
+build "$producer" after-clean third
 assert_output "$producer_dll" "PASS incremental Kotlin entry point: 42"
 echo "PASS incremental-emission:deleted-output-and-clean"
