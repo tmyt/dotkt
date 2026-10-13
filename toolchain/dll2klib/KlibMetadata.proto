@@ -98,6 +98,7 @@ message TypeParameter {
   optional bool reified = 3 [default = false];
   optional Variance variance = 4 [default = INV];
   repeated Type upper_bound = 5;
+  repeated Annotation type_parameter_annotation = 170;
 }
 
 message ValueParameter {

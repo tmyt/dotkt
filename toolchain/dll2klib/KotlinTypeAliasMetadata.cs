@@ -55,6 +55,7 @@ internal sealed class KotlinTypeAliasMetadata
                     },
                 };
                 projected.UpperBound.Add(Objects(parameter, "bounds").Select(bound => Type(bound, names)));
+                projected.TypeParameterAnnotation.Add(Objects(parameter, "annotations").Select(annotation => ReadAnnotation(annotation, names)));
                 alias.TypeParameter.Add(projected);
             }
             alias.Annotation.Add(Objects(declaration, "annotations").Select(annotation => ReadAnnotation(annotation, names)));

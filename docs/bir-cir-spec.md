@@ -22,7 +22,7 @@ are defined. Declaration metadata survives reference-body stripping.
 The declaration schema is [kotlin-typealias.schema.json](kotlin-typealias.schema.json).
 Each payload has `packageName`, `ownerPath` (empty for top-level aliases), `name`, `visibility`,
 `typeParameters`, `underlyingType`, `expandedType`, and `annotations`. Each parameter has an explicit
-declaration-local `id`, `name`, `variance` (`inv`, `in`, `out`), and `bounds`. IDs never address a CLR
+declaration-local `id`, `name`, `variance` (`inv`, `in`, `out`), `bounds`, and retained `annotations`. IDs never address a CLR
 type/method frame. Classifier identities are structured `{packageName,ownerPath,name}`; the owner path
 retains Kotlin nesting rather than a physical carrier name.
 

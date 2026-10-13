@@ -22,10 +22,11 @@
       "properties": {"packageName": {"type": "string"}, "ownerPath": {"$ref": "#/$defs/path"}, "name": {"type": "string", "minLength": 1}}
     },
     "parameter": {
-      "type": "object", "required": ["id", "name", "variance", "bounds"], "additionalProperties": false,
+      "type": "object", "required": ["id", "name", "variance", "bounds", "annotations"], "additionalProperties": false,
       "properties": {
         "id": {"type": "integer", "minimum": 0}, "name": {"type": "string", "minLength": 1},
-        "variance": {"enum": ["inv", "in", "out"]}, "bounds": {"type": "array", "items": {"$ref": "#/$defs/type"}}
+        "variance": {"enum": ["inv", "in", "out"]}, "bounds": {"type": "array", "items": {"$ref": "#/$defs/type"}},
+        "annotations": {"$ref": "#/$defs/annotations"}
       }
     },
     "type": {

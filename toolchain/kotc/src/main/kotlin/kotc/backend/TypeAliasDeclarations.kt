@@ -92,6 +92,8 @@ internal object TypeAliasDeclarations {
                         "variance" to parameter.variance.name.lowercase(),
                         "bounds" to (parameter.upperBoundList + parameter.upperBoundIdList.map { types[it] })
                             .map { type(it, types) },
+                        "annotations" to (0 until parameter.getExtensionCount(KlibMetadataProtoBuf.typeParameterAnnotation))
+                            .map { annotation(parameter.getExtension(KlibMetadataProtoBuf.typeParameterAnnotation, it)) },
                     )
                 },
                 "underlyingType" to type(if (alias.hasUnderlyingType()) alias.underlyingType else types[alias.underlyingTypeId], types),

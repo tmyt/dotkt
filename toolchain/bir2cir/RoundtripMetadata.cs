@@ -633,13 +633,15 @@ static class RoundtripMetadata
     // `System.Runtime.CompilerServices.Nullable{,Context}`) — both compile-time-only, ref-side facts that must NOT ship
     // on DotKt.Stdlib.dll (the never-metadata-read runtime assembly, substituted away at app-emit) — AND the user's own
     // annotations (kotlin.Deprecated / SinceKotlin / InlineOnly / PublishedApi / …). The predicate must preserve those
-    // user annotations and drop only compiler-internal carriers that have no runtime stdlib meaning.
+    // user annotations and drop only compiler-internal declaration-slot carriers that have no runtime stdlib meaning.
+    // Assembly-level alias declaration metadata is a separate contract and survives in both stdlib twins; the
+    // frontend KLIB is still authoritative, and dll2klib excludes both marked stdlib assemblies from projection.
     // ---------------------------------------------------------------------------------------------------------------
     public static void StripRuntimeAttrs(JsonNode root)
     {
         if (root is not JsonObject o) return;
         // FBoundStarProjectionErasure's pass-local hand-off is consumed only by Stamp in metadata-bearing builds.
-        // The runtime build deliberately emits no round-trip attribute, but must still discard the temporary fact.
+        // The runtime build deliberately emits no declaration-slot round-trip attribute, but must discard this temporary fact.
         o.Remove("kotlinType");
         o.Remove("retKotlinType");
         o.Remove(KotlinSupertypesRecord.PreKey);

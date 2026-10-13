@@ -133,11 +133,12 @@ def validate_aliases(value, path, report):
 
         for index, parameter in enumerate(parameters):
             p = f"{where}/typeParameters[{index}]"
-            if shape(parameter, p, ("id", "name", "variance", "bounds")):
+            if shape(parameter, p, ("id", "name", "variance", "bounds", "annotations")):
                 text(parameter["name"], p + "/name", True)
                 if parameter["variance"] not in ("inv", "in", "out"):
                     error(p + "/variance", "unknown Kotlin parameter variance")
                 sequence(parameter["bounds"], p + "/bounds", type_node)
+                sequence(parameter["annotations"], p + "/annotations", annotation)
         type_node(node["underlyingType"], where + "/underlyingType")
         type_node(node["expandedType"], where + "/expandedType")
         sequence(node["annotations"], where + "/annotations", annotation)

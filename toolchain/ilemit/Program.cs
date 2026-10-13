@@ -118,7 +118,7 @@ static class IlEmit
             var fc = node["fileClass"]?.GetValue<string>() ?? "";
             if (fc.Length > 0 && byFc.TryGetValue(fc, out var acc))
             {
-                foreach (var key in new[] { "methods", "fields", "properties", "types" })
+                foreach (var key in new[] { "methods", "fields", "properties", "types", "assemblyAttrs" })
                     if (node[key] is System.Text.Json.Nodes.JsonArray src && src.Count > 0)
                     {
                         if (acc[key] is System.Text.Json.Nodes.JsonArray dst)

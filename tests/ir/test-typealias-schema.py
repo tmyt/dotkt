@@ -12,7 +12,7 @@ class TypeAliasSchemaTests(unittest.TestCase):
     def setUp(self):
         self.alias = {
             "packageName": "sample", "ownerPath": [], "name": "Values", "visibility": "public",
-            "typeParameters": [{"id": 0, "name": "T", "variance": "inv", "bounds": []}],
+            "typeParameters": [{"id": 0, "name": "T", "variance": "inv", "bounds": [], "annotations": []}],
             "underlyingType": {"kind": "parameter", "id": 0, "nullable": False, "suspend": False,
                                "definitelyNotNull": False, "arguments": [], "annotations": []},
             "annotations": [],

@@ -5,10 +5,12 @@ import kotlin.coroutines.*
 import roundtrip.aliases.*
 import roundtrip.aliases.only.OnlyText
 import roundtrip.actualalias.Cancellation as ActualCancellation
+import roundtrip.actualalias.CommonCancellation
 
 private fun isAlias(error: Throwable): Boolean = error is Cancellation
 private fun isCanonical(error: Throwable): Boolean = error is kotlin.coroutines.cancellation.CancellationException
 private fun isActualAlias(error: Throwable): Boolean = error is ActualCancellation
+private fun isCommonAlias(error: Throwable): Boolean = error is CommonCancellation
 private fun isArgumentError(error: Throwable): Boolean = error is IllegalArgumentException
 
 class TypeAliasTests {
@@ -36,6 +38,7 @@ class TypeAliasTests {
     fun actualAliasResolvesWithoutItsExpectClass() {
         val error: Throwable = ActualCancellation("actual")
         check(isActualAlias(error))
+        check(isCommonAlias(error))
         check(isAlias(error))
         var caught = false
         try { throw error } catch (cancelled: ActualCancellation) { caught = true }
