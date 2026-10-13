@@ -128,7 +128,7 @@ fi
 rm -rf "$incr"
 
 # C#-only incremental invalidation must not publish its placeholder over Kotlin code (#963).
-bash "$ROOT/tests/msbuild/incremental-emission.sh" "$WORK/incremental-emission"
+bash "$ROOT/tests/msbuild/incremental-emission.sh" "$WORK/incremental-emission" || fail=1
 
 # #467 + #592: every compiler-produced intermediate follows $(IntermediateOutputPath), not the project-wide
 # $(BaseIntermediateOutputPath). Build one project as Debug and Release CONCURRENTLY while each configuration selects

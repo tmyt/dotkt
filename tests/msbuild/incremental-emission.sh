@@ -6,6 +6,7 @@ work="${1:?scratch directory required}"
 sdk="${2:-Microsoft.NET.Sdk}"
 nuget_config="${3:-}"
 trap 'echo "FAIL incremental-emission at line $LINENO; logs: $work" >&2' ERR
+rm -f "$work/producer/fail-hook"
 mkdir -p "$work/producer" "$work/kotlin-consumer" "$work/csharp-consumer"
 
 write_kotlin_project() {
