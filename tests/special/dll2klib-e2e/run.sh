@@ -397,7 +397,7 @@ for member in Pick Number Updated; do
 	grep -q "unresolved reference.*$member" "$explicit_direct_log" \
 		|| die "explicit $member class API was rejected for an unexpected reason"
 done
-grep -q "explicit-slot-direct-call.kt:12:27: error: unresolved reference.*receiver type mismatch" \
+grep -q "explicit-slot-direct-call.kt:12:27: error: candidate .*\\.get(.*is inapplicable because of a receiver type mismatch" \
 	"$explicit_direct_log" \
 	|| die "explicit indexer class API was rejected for an unexpected reason"
 
