@@ -25,7 +25,9 @@ internal static class CharSequenceSupertypeInspector
             ("Text", Fqn(Package + ".Slot", character.DeepClone()), false),
             ("NullableText", Fqn(Package + ".Slot", nullableCharacter), false),
             ("NestedText", Fqn(Package + ".Slot", Fqn(Package + ".Slot", character.DeepClone())), false),
-            ("DerivedText", Fqn(Package + ".Base", character.DeepClone()), true) })
+            ("DerivedText", Fqn(Package + ".Base", character.DeepClone()), true),
+            ("MixedText", Fqn(Package + ".PairSlot", character.DeepClone(),
+                new JsonObject { ["t"] = "nullable", ["of"] = Fqn("kotlin.Int") }), false) })
         {
             var definition = md.TypeDefinitions.Select(md.GetTypeDefinition).Single(type =>
                 md.GetString(type.Namespace) == Package && md.GetString(type.Name) == typeName);
@@ -50,15 +52,30 @@ internal static class CharSequenceSupertypeInspector
             VerifyType(fragment, projected, edge);
         }
         var control = fragment.Class.Single(klass => Name(fragment, klass.FqName) == Package + ".UnchangedText");
+        // These untouched edges keep the normal physical-signature projection; only corrected source edges
+        // above are reconstructed from an exact Kotlin TypeNode and must have no platform bounds.
         VerifyType(fragment, control.Supertype.Single(type => type.HasClassName &&
-            Name(fragment, type.ClassName) == Package + ".Slot"), Fqn(Package + ".Slot", Fqn("kotlin.String")));
+            Name(fragment, type.ClassName) == Package + ".Slot"), Fqn(Package + ".Slot", Fqn("kotlin.String")), false);
+        var unchanged = md.TypeDefinitions.Select(md.GetTypeDefinition).Single(type =>
+            md.GetString(type.Namespace) == Package && md.GetString(type.Name) == "UnchangedText");
+        Require(!unchanged.GetCustomAttributes().Select(md.GetCustomAttribute).Any(attribute =>
+            attribute.Constructor.Kind == HandleKind.MethodDefinition &&
+            md.GetString(md.GetTypeDefinition(md.GetMethodDefinition((MethodDefinitionHandle)attribute.Constructor)
+                .GetDeclaringType()).Name) == Carrier), "unchanged edge acquired a correction carrier");
+        var mixed = fragment.Class.Single(klass => Name(fragment, klass.FqName) == Package + ".MixedText");
+        VerifyType(fragment, mixed.Supertype.Single(type => type.HasClassName &&
+            Name(fragment, type.ClassName) == Package + ".Marker"), Fqn(Package + ".Marker", Fqn("kotlin.String")), false);
     }
 
-    static void VerifyType(PackageFragment fragment, DotKt.Klib.Metadata.Type actual, JsonNode expected)
+    static void VerifyType(PackageFragment fragment, DotKt.Klib.Metadata.Type actual, JsonNode expected,
+        bool sourceCorrection = true)
     {
         var nullable = expected["t"]!.GetValue<string>() == "nullable";
         if (nullable) expected = expected["of"]!;
         Require(actual.Nullable == nullable, "KLIB nullability changed");
+        if (sourceCorrection)
+            Require(!actual.HasFlexibleTypeCapabilitiesId && actual.FlexibleUpperBound == null,
+                "Kotlin source correction acquired a platform bound");
         Require(actual.HasClassName && Name(fragment, actual.ClassName) == expected["name"]!.GetValue<string>(),
             "KLIB Kotlin classifier identity changed");
         var arguments = expected["args"] as JsonArray;
@@ -67,7 +84,7 @@ internal static class CharSequenceSupertypeInspector
         {
             Require(actual.Argument[index].Projection == DotKt.Klib.Metadata.Type.Types.Argument.Types.Projection.Inv,
                 "KLIB projection changed");
-            VerifyType(fragment, actual.Argument[index].Type, arguments![index]!);
+            VerifyType(fragment, actual.Argument[index].Type, arguments![index]!, sourceCorrection);
         }
     }
 
