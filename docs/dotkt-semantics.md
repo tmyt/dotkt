@@ -1131,6 +1131,7 @@ runtime.
 
 | Kotlin construct | carrier |
 |---|---|
+| Kotlin `typealias`, including an actual alias | Assembly-level `[KotlinTypeAlias("bir-json/1", bytes)]` retains the actualized declaration, original visibility, alias-owned parameters, underlying and expanded Kotlin types, and annotations. An alias has no CLR TypeDef or facade; `is`, `catch`, construction and calls use the expanded type's existing runtime identity. Alias-only packages survive DLL-to-KLIB projection. The stdlib frontend KLIB remains authoritative; stdlib-marked DLLs are not projected a second time. |
 | `infix` / `operator` | `[KotlinFunction(Infix\|Operator)]` |
 | `suspend` (a `suspend fun`) | `[KotlinFunction(Suspend)]` (+ `Task<T>`→`T` unwrap) |
 | a `suspend (…) -> T` **function TYPE** (parameter / return / property / field) | `[KotlinSuspendFunctionType("bir-json/1", bytes)]` carries the structured pre-erasure `fn` node because the CLR slot itself erases to `object`. bir2cir records it, ilemit stamps it, dll2klib reads it, and kotc restores `kotlin.coroutines.SuspendFunctionN`. All four positions are covered by the roundtrip NUnit suite. |

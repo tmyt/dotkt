@@ -7,6 +7,46 @@
 > codec-agnostic, single-source. **BIR contains NO stringly-typed compound tokens — types are nodes.**
 
 ## 0. Envelope & versioning
+
+### Kotlin alias declarations
+
+BIR roots carry `typeAliases`, a list of this module's actualized Kotlin alias declarations. An alias-only
+file still produces BIR, but owns no executable file facade. Before any physical representation traversal,
+bir2cir consumes the list and encodes each declaration as an ordinary CIR `assemblyAttrs` application of
+`DotKt.Runtime.CompilerServices.KotlinTypeAliasAttribute(string version, byte[] content)`. Its embedded
+definition is internal, sealed, compiler-generated, and has assembly-only `AttributeUsage` with
+`AllowMultiple=true` and `Inherited=false`. The version is `bir-json/1`; content is structured UTF-8 JSON,
+not protobuf or a serialized KLIB. ilemit applies assembly attributes literally after their constructors
+are defined. Declaration metadata survives reference-body stripping.
+
+The declaration schema is [kotlin-typealias.schema.json](kotlin-typealias.schema.json).
+Each payload has `packageName`, `ownerPath` (empty for top-level aliases), `name`, `visibility`,
+`typeParameters`, `underlyingType`, `expandedType`, and `annotations`. Each parameter has an explicit
+declaration-local `id`, `name`, `variance` (`inv`, `in`, `out`), and `bounds`. IDs never address a CLR
+type/method frame. Classifier identities are structured `{packageName,ownerPath,name}`; the owner path
+retains Kotlin nesting rather than a physical carrier name.
+
+Alias declaration types are metadata vocabulary, not executable §1 type slots. They retain the frontend's
+distinction between `kind:class`, `kind:alias` (each carrying `classifier`) and `kind:parameter` (carrying
+`id`). Every node carries `nullable`, `suspend`, `definitelyNotNull`, `arguments`, and `annotations`.
+Arguments have `variance` (`inv`, `in`, `out`, `star`), plus `type` except for `star`. Optional `outerType`,
+`abbreviatedType`, and `flexibleUpperBound` retain their complete structure; the last also carries
+`flexibleCapabilities`. Kotlin function classifiers and their argument order are preserved with their
+suspend flag and extension/context type annotations; they are not converted to CLR delegates.
+
+Annotations contain a structured `classifier` and named `arguments`. Each value carries `kind` and
+`unsigned`: integral/boolean/char constants use an integer `value`, strings use a string `value`, floating
+constants use signed integer IEEE `bits` (including NaN/infinity), class literals use `classifier` and
+`arrayDimensions`, enum constants use `classifier` and `name`, nested annotations use an annotation
+`value`, and arrays use a list of constant `value` nodes. dll2klib authors ordinary standard KLIB
+TypeAlias rows from these facts, including packages with no visible TypeDefs. Non-public visibility is
+not promoted; aliases below source-invisible owners are absent from that owner's public projection.
+Imported aliases are not re-exported, and no corresponding actualized expect class is resurrected.
+
+There is no runtime alias TypeDef, dummy class, or type-forwarding/legacy recovery path. The stdlib marker
+continues to exclude its DLLs from projection because its dedicated frontend KLIB owns `kotlin.*`.
+
+### Carrier envelopes
 - **STATUS (#37 m6): LANDED.** The carrier attributes stamp `(string version, byte[] content)`. `version` is a
   `codec/schema-version` identifier; only `"bir-json/1"` is defined today. `content` is the codec-encoded body
   (today `UTF8(json)`). The dispatch shape leaves room for other codecs without reserving a particular identifier.

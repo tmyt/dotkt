@@ -21,6 +21,7 @@
 # the decoded carrier BODY is itself a node/type that also appears inline in the emitting
 # method's body (validated here). See spec §7.
 import json, re, sys, glob, os
+from typealias_schema import validate_aliases
 
 TYPE_TAGS = {"fqn", "tv", "star", "projection", "fn", "nullable", "oblivious", "array", "byRef", "ptr", "mod"}
 
@@ -1274,6 +1275,11 @@ class V:
             clr_owner = o.get("k") in CLR_OWNER_KINDS
             for key, val in o.items():
                 p = path + "/" + key
+                if key == "typeAliases":
+                    if path != "" or not f.endswith(".bir.json"):
+                        self.err(f, p, "typeAliases are a BIR root declaration fact and must be consumed before CIR")
+                    validate_aliases(val, p, lambda where, message: self.err(f, where, message))
+                    continue
                 child_role = "signature" if role == "signature" and "t" in o else None
                 if key in ("methods", "ctors") and (path == "" or is_type_decl):
                     child_role = "declaration"

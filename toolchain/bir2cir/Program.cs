@@ -129,6 +129,7 @@ sealed class Pipeline
             var path = Path.GetFullPath(input);
             var json = File.ReadAllText(path);
             var root = JsonNode.Parse(json, documentOptions: BirJson.DocOptions) ?? throw new UsageException($"bir2cir: invalid JSON root: {path}");
+            RoundtripMetadata.FreezeTypeAliases(root);
             files.Add(new BirFile(
                 path,
                 json,
@@ -1552,7 +1553,7 @@ sealed class Pipeline
         {
             // A file whose ENTIRE content was @ClrTypeAlias types (e.g. Primitives.kt, Comparable.kt) is now empty after
             // AliasHelperHoist dropped them — emit no CIR file for it (an empty file-class would be a pointless empty
-            // static type in the assembly). Skips only when types AND methods AND fields are all empty; never in ref.
+            // static type in the assembly). Assembly declaration metadata also keeps a root alive; never skip in ref.
             if (!_options.RefBuild && IsEmptyCir(lowered)) continue;
             files.Add(new CirFile(outputName, lowered.ToJsonString(JsonOptions.Indented)));
         }
@@ -1575,15 +1576,18 @@ sealed class Pipeline
 
         // #71 S2: emit the embedded round-trip attribute-class defs ONCE per assembly, as a dedicated synthetic CIR
         // file (glob-sorted first via the `000-` prefix so its TypeDefs precede the user types, minimizing dump churn).
-        // ilemit defines them like any type (no EnsureKotlinAttrs). Ref + app only — the runtime build stamps nothing.
-        if (!_options.SubstituteStdlibBuild)
+        // Alias declarations also survive in a stdlib runtime assembly; projection still excludes that assembly
+        // by its explicit stdlib marker. Only the assembly-alias carrier is needed on that metadata-stripped path.
+        if (!_options.SubstituteStdlibBuild || birRoots.OfType<JsonObject>().Any(root =>
+                root["assemblyAttrs"] is JsonArray { Count: > 0 }))
         {
             const string synthName = "000-dotkt-roundtrip-attrs.cir.json";
             // A real source file must never map to the reserved synthetic name — the two CirFiles would clobber on disk
             // and every Kotlin stamp would then silently vanish (its attr class absent -> BuildCab skips).
             if (files.Any(f => f.OutputName == synthName))
                 throw new InvalidOperationException($"bir2cir: reserved synthetic CIR name '{synthName}' collides with an input file");
-            var attributeDefinitions = RoundtripMetadata.SynthDefsFile(refs);
+            var attributeDefinitions = RoundtripMetadata.SynthDefsFile(refs, aliasesOnly: _options.SubstituteStdlibBuild);
+            ClrMemberResolution.ResolveAttributeCtors(attributeDefinitions, refs);
             if (fixedMemberTable != null) attributeDefinitions["wellKnownRefs"] = fixedMemberTable.DeepClone();
             files.Insert(0, new CirFile(synthName, attributeDefinitions.ToJsonString(JsonOptions.Indented)));
         }
@@ -1613,7 +1617,7 @@ sealed class Pipeline
     {
         if (root is not JsonObject o) return false;
         static bool Empty(JsonNode n) => n is not JsonArray a || a.Count == 0;
-        return Empty(o["types"]) && Empty(o["methods"]) && Empty(o["fields"]);
+        return Empty(o["types"]) && Empty(o["methods"]) && Empty(o["fields"]) && Empty(o["assemblyAttrs"]);
     }
 
     // True iff this file declares a type whose `interfaces` names the synthetic `dotkt$CharSequence` — i.e. a user

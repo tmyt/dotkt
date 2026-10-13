@@ -155,6 +155,22 @@ internal sealed class MetadataAttributes
         }
     }
 
+    // Assembly alias metadata intentionally permits multiple applications: one exact carrier per declaration.
+    public IReadOnlyList<System.Text.Json.Nodes.JsonNode> CarrierBodies(EntityHandle owner, string name)
+    {
+        var result = new List<System.Text.Json.Nodes.JsonNode>();
+        foreach (var handle in _md.GetCustomAttributes(owner))
+        {
+            var attribute = _md.GetCustomAttribute(handle);
+            if (!IsExactTrustedCarrier(attribute, name)) continue;
+            var decoded = Decode(name, attribute.Value);
+            if (decoded.StringValue is not { } version || decoded.BytesValue is not { } bytes)
+                throw new InvalidDataException($"[{name}] requires (version, byte[]) arguments");
+            result.Add(BirCarrier.DecodeBody(version, bytes));
+        }
+        return result;
+    }
+
     public TypeNode? CarrierType(EntityHandle owner, string name)
     {
         var attr = Find(owner, name);

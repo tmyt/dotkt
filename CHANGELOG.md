@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- Preserve Kotlin typealias declarations across DLL boundaries using assembly-level
+  `KotlinTypeAlias` metadata, including actual aliases and alias-only source files (#1030).
+
 - Upgrade the Kotlin compiler, standard-library source baseline and SDK defaults to **2.4.21** (#1031).
   Common stdlib sources match the upstream tag exactly; CLR adaptations remain outside common.
   Keep top-level classifiers semantic inside inline/default carriers when binding nested producer types,

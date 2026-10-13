@@ -34,12 +34,13 @@ object ClrBackendPhase : PipelinePhase<kotc.pipeline.ClrFir2IrPipelineArtifact, 
 	postActions = setOf(CheckCompilationErrors.CheckDiagnosticCollector),
 ) {
 	override fun executePhase(input: kotc.pipeline.ClrFir2IrPipelineArtifact): ClrBackendArtifact {
-		return emit(input.result, input.configuration)
+		return emit(input.result, input.configuration, input.typeAliases)
 	}
 }
 
 @OptIn(org.jetbrains.kotlin.config.MessageCollectorAccess::class)
-private fun emit(result: Fir2IrActualizedResult, configuration: CompilerConfiguration): ClrBackendArtifact {
+private fun emit(result: Fir2IrActualizedResult, configuration: CompilerConfiguration,
+    typeAliases: Map<String, List<String>>): ClrBackendArtifact {
 		val moduleFragment = result.irModuleFragment
 		val outputDir = configuration?.get(JVMConfigurationKeys.OUTPUT_DIRECTORY)
 			?: configuration?.get(CLIConfigurationKeys.METADATA_DESTINATION_DIRECTORY)
@@ -71,7 +72,7 @@ private fun emit(result: Fir2IrActualizedResult, configuration: CompilerConfigur
 			val seen = usedNames.merge(baseName, 1) { a, b -> a + b }!!
 			if (seen > 1) baseName = "${baseName}__$seen"
 			val birJson = try {
-				bir.emitFile(irFile)
+				bir.emitFile(irFile, typeAliases[File(irFile.fileEntry.name).canonicalPath].orEmpty())
 			} catch (e: Throwable) {
 				crashed = true
 				messageCollector?.report(
