@@ -150,6 +150,8 @@ sealed class Pipeline
         switch (node)
         {
             case JsonObject o:
+                if ((o["kind"] as JsonValue)?.GetValue<string>() is "class" or "interface" or "struct" or "enum")
+                    KotlinSupertypesRecord.PreserveRewrittenEdges(o, SubstituteCharSeqIdentity);
                 // Selecting the fixed CharSequence bridge consumes the source declaration binding as well as
                 // its owner. The generated bridge owns these slots; the original Kotlin MethodDef identity must
                 // not be looked up on that different physical declaration by later access/binding passes.
