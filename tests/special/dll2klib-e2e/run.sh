@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # End-to-end regression test for projecting a CLR reference assembly directly to a
-# standard Kotlin 2.4.10 KLIB, with no dll2klib JSON and no kotc declaration
+# standard Kotlin 2.4.21 KLIB, with no dll2klib JSON and no kotc declaration
 # generation extension: CLR ref.dll -> .klib -> kotc -> BIR -> bir2cir -> ilemit.
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 SCRIPT_NAME=dll2klib-e2e
@@ -397,7 +397,7 @@ for member in Pick Number Updated; do
 	grep -q "unresolved reference.*$member" "$explicit_direct_log" \
 		|| die "explicit $member class API was rejected for an unexpected reason"
 done
-grep -q "explicit-slot-direct-call.kt:12:27: error: unresolved reference.*receiver type mismatch" \
+grep -q "explicit-slot-direct-call.kt:12:27: error: candidate .*\\.get(.*is inapplicable because of a receiver type mismatch" \
 	"$explicit_direct_log" \
 	|| die "explicit indexer class API was rejected for an unexpected reason"
 

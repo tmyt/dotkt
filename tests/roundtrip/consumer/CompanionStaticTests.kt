@@ -123,7 +123,7 @@ class CompanionStaticRoundtripTests {
         assertEquals(9, Box.get_collidingAccessor())
         assertEquals("echo", Box.echoNullable("echo"))
         assertEquals(null, Box.echoNullable<String>(null))
-        val echoNullable: (String?) -> String? = Box<String>::echoNullable
+        val echoNullable: (String?) -> String? = Box::echoNullable
         assertEquals("reference", echoNullable("reference"))
         assertEquals(null, echoNullable(null))
         Box.count = 3
@@ -138,13 +138,13 @@ class CompanionStaticRoundtripTests {
         assertEquals(3, Box.count)
         Box.count = 0
 
-        val code = Box<String>::CODE
+        val code = Box::CODE
         assertEquals("generic-box", code.get())
-        val nan = Box<String>::NAN
+        val nan = Box::NAN
         assertTrue(nan.get().isNaN())
-        val big = Box<String>::BIG
+        val big = Box::BIG
         assertEquals(4_000_000_000u, big.get())
-        val later = Box<String>::later
+        val later = Box::later
         var notInitialized = false
         try { later.get() } catch (e: UninitializedPropertyAccessException) { notInitialized = true }
         assertTrue(notInitialized)
@@ -153,7 +153,7 @@ class CompanionStaticRoundtripTests {
         assertEquals("ready", later.get())
 
         assertEquals(10, runCrossModuleSuspend { Box.suspendedMake(7) })
-        val suspendedMake: suspend (Int) -> Int = Box<Int>::suspendedMake
+        val suspendedMake: suspend (Int) -> Int = Box::suspendedMake
         assertEquals(12, runCrossModuleSuspend { suspendedMake(9) })
 
         Counter.volatileLater = "volatile-ready"

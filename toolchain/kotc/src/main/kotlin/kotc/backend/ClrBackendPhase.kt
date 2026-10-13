@@ -38,6 +38,7 @@ object ClrBackendPhase : PipelinePhase<kotc.pipeline.ClrFir2IrPipelineArtifact, 
 	}
 }
 
+@OptIn(org.jetbrains.kotlin.config.MessageCollectorAccess::class)
 private fun emit(result: Fir2IrActualizedResult, configuration: CompilerConfiguration): ClrBackendArtifact {
 		val moduleFragment = result.irModuleFragment
 		val outputDir = configuration?.get(JVMConfigurationKeys.OUTPUT_DIRECTORY)

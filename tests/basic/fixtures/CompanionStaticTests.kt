@@ -237,7 +237,7 @@ class CompanionStaticTests {
         assertEquals("box", CompanionBox.make())
         assertEquals("echo", CompanionBox.echoNullable("echo"))
         assertEquals(null, CompanionBox.echoNullable<String>(null))
-        val echoNullable: (String?) -> String? = CompanionBox<String>::echoNullable
+        val echoNullable: (String?) -> String? = CompanionBox::echoNullable
         assertEquals("reference", echoNullable("reference"))
         assertEquals(null, echoNullable(null))
         assertEquals(42, CompanionBox.lambdaFactory()())
@@ -255,9 +255,9 @@ class CompanionStaticTests {
 
         // Literal and lateinit field nodes use the same generated non-generic CLR carrier as ordinary
         // generic-owner statics, including the lifted field read inside a callable property reference.
-        val code = CompanionBox<String>::CODE
+        val code = CompanionBox::CODE
         assertEquals("generic-box", code.get())
-        val later = CompanionBox<String>::later
+        val later = CompanionBox::later
         var notInitialized = false
         try { later.get() } catch (e: UninitializedPropertyAccessException) { notInitialized = true }
         assertTrue(notInitialized)

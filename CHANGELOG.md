@@ -5,6 +5,13 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+### Toolchain
+
+- Upgrade the Kotlin compiler, standard-library source baseline and SDK defaults to **2.4.21** (#1031).
+  Common stdlib sources match the upstream tag exactly; CLR adaptations remain outside common.
+  Keep top-level classifiers semantic inside inline/default carriers when binding nested producer types,
+  so the new inline `allDistinctBy` APIs preserve their CLR collection representation.
+
 ## 0.9.13 (2026-10-13)
 
 ### Release highlights

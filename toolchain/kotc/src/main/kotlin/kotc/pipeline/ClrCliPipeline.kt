@@ -51,6 +51,7 @@ object ClrMetadataConfigurationPipelinePhase : AbstractConfigurationPhase<K2Meta
 }
 
 object ClrMetadataConfigurationUpdater : ConfigurationUpdater<K2MetadataCompilerArguments>() {
+	@OptIn(org.jetbrains.kotlin.config.MessageCollectorAccess::class)
 	override fun fillConfiguration(
 		input: ArgumentsPipelineArtifact<K2MetadataCompilerArguments>,
 		configuration: CompilerConfiguration,

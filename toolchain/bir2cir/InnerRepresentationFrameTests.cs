@@ -183,6 +183,17 @@ static class InnerRepresentationFrameTests
         root["fields"]![0]!["nullableGeneric"] = TypeNode.ToJson(source);
         var outer = new TypeNode.Fqn("Sample.Outer", new TypeNode[] { new TypeNode.Tv("method", 0) });
         var signature = new JsonObject { ["params"] = new JsonArray(TypeJson.Write(source), TypeJson.Write(outer)) };
+        var executable = new JsonObject {
+            ["params"] = new JsonArray(TypeJson.Write(source)),
+            ["body"] = new JsonArray(TypeJson.Write(source), TypeJson.Write(outer)),
+        };
+        root["inlineBir"] = Convert.ToBase64String(BirCarrier.EncodeBody(BirCarrier.JsonV1, executable));
+        root["suspendResult"] = executable.ToJsonString();
+        var defaultArgument = new JsonObject { ["value"] = executable.ToJsonString() };
+        root["attrs"] = new JsonArray(new JsonObject {
+            ["attr"] = TypeJson.Fqn("kotlin.clr.KotlinDefault"),
+            ["args"] = new JsonArray(new JsonObject { ["value"] = BirCarrier.JsonV1 }, defaultArgument),
+        });
         OpaqueCarrierTypeBinding.ApplyAll(new[] { root }, ReferenceMetadataIndex.Build(Array.Empty<string>()),
             new Dictionary<string, JsonObject> { ["declaration"] = signature });
         var expected = new TypeNode.Fqn("Sample.Outer`1+Inner`2", source.Args);
@@ -191,5 +202,13 @@ static class InnerRepresentationFrameTests
             throw new InvalidOperationException("Source carriers lost nested identity or changed source argument order");
         if (TypeJson.Read(signature["params"]![1]) != outer)
             throw new InvalidOperationException("Source carriers unnecessarily changed a top-level classifier");
+        var inline = BirCarrier.DecodeBody(BirCarrier.JsonV1,
+            Convert.FromBase64String(root["inlineBir"]!.GetValue<string>()));
+        foreach (var payload in new[] { inline, JsonNode.Parse(root["suspendResult"]!.GetValue<string>()),
+            JsonNode.Parse(defaultArgument["value"]!.GetValue<string>()) })
+            if (TypeJson.Read(payload!["body"]![0]) != expected || TypeJson.Read(payload["body"]![1]) != outer)
+                throw new InvalidOperationException("Executable carriers must bind nested identities without retargeting their top-level owners");
+        if (TypeJson.Read(inline["params"]![0]) != source)
+            throw new InvalidOperationException("Inline overload signatures must remain semantic");
     }
 }

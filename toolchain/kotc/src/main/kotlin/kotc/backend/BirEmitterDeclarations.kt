@@ -2070,8 +2070,8 @@ internal fun BirEmitter.method(fn: IrSimpleFunction, static: Boolean, semanticOw
 		val generatedOwner = fn.parent as? IrClass
 		activeGeneratedEqualsFieldRead = fn.name.asString() == "equals" && when (fn.origin) {
 			IrDeclarationOrigin.GENERATED_DATA_CLASS_MEMBER -> generatedOwner?.isData == true
-			IrDeclarationOrigin.GENERATED_SINGLE_FIELD_VALUE_CLASS_MEMBER,
-			IrDeclarationOrigin.GENERATED_MULTI_FIELD_VALUE_CLASS_MEMBER -> generatedOwner?.isValue == true
+			IrDeclarationOrigin.GENERATED_INLINE_CLASS_MEMBER,
+			IrDeclarationOrigin.GENERATED_FULL_VALUE_CLASS_MEMBER -> generatedOwner?.isValue == true
 			else -> false
 		}
 		try {
