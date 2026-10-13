@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dotkt/kotlin-typealias.schema.json",
+  "title": "Actualized Kotlin alias declaration (bir-json/1)",
+  "type": "object",
+  "required": ["packageName", "ownerPath", "name", "visibility", "typeParameters", "underlyingType", "expandedType", "annotations"],
+  "additionalProperties": false,
+  "properties": {
+    "packageName": {"type": "string"},
+    "ownerPath": {"$ref": "#/$defs/path"},
+    "name": {"type": "string", "minLength": 1},
+    "visibility": {"enum": ["public", "protected", "internal", "private", "private_to_this", "local"]},
+    "typeParameters": {"type": "array", "items": {"$ref": "#/$defs/parameter"}},
+    "underlyingType": {"$ref": "#/$defs/type"},
+    "expandedType": {"$ref": "#/$defs/type"},
+    "annotations": {"$ref": "#/$defs/annotations"}
+  },
+  "$defs": {
+    "path": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "classifier": {
+      "type": "object", "required": ["packageName", "ownerPath", "name"], "additionalProperties": false,
+      "properties": {"packageName": {"type": "string"}, "ownerPath": {"$ref": "#/$defs/path"}, "name": {"type": "string", "minLength": 1}}
+    },
+    "parameter": {
+      "type": "object", "required": ["id", "name", "variance", "bounds", "annotations"], "additionalProperties": false,
+      "properties": {
+        "id": {"type": "integer", "minimum": 0}, "name": {"type": "string", "minLength": 1},
+        "variance": {"enum": ["inv", "in", "out"]}, "bounds": {"type": "array", "items": {"$ref": "#/$defs/type"}},
+        "annotations": {"$ref": "#/$defs/annotations"}
+      }
+    },
+    "type": {
+      "type": "object",
+      "required": ["kind", "nullable", "suspend", "definitelyNotNull", "arguments", "annotations"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {"enum": ["class", "alias", "parameter"]},
+        "classifier": {"$ref": "#/$defs/classifier"}, "id": {"type": "integer", "minimum": 0},
+        "nullable": {"type": "boolean"}, "suspend": {"type": "boolean"}, "definitelyNotNull": {"type": "boolean"},
+        "arguments": {"type": "array", "items": {"$ref": "#/$defs/argument"}},
+        "annotations": {"$ref": "#/$defs/annotations"},
+        "outerType": {"$ref": "#/$defs/type"}, "abbreviatedType": {"$ref": "#/$defs/type"},
+        "flexibleUpperBound": {"$ref": "#/$defs/type"}, "flexibleCapabilities": {"type": "string"}
+      },
+      "allOf": [
+        {"if": {"properties": {"kind": {"const": "parameter"}}}, "then": {"required": ["id"], "not": {"required": ["classifier"]}}, "else": {"required": ["classifier"], "not": {"required": ["id"]}}},
+        {"if": {"required": ["flexibleUpperBound"]}, "then": {"required": ["flexibleCapabilities"]}}
+      ]
+    },
+    "argument": {
+      "type": "object", "required": ["variance"], "additionalProperties": false,
+      "properties": {"variance": {"enum": ["inv", "in", "out", "star"]}, "type": {"$ref": "#/$defs/type"}},
+      "allOf": [{"if": {"properties": {"variance": {"const": "star"}}}, "then": {"not": {"required": ["type"]}}, "else": {"required": ["type"]}}]
+    },
+    "annotations": {"type": "array", "items": {"$ref": "#/$defs/annotation"}},
+    "annotation": {
+      "type": "object", "required": ["classifier", "arguments"], "additionalProperties": false,
+      "properties": {
+        "classifier": {"$ref": "#/$defs/classifier"},
+        "arguments": {"type": "array", "items": {
+          "type": "object", "required": ["name", "value"], "additionalProperties": false,
+          "properties": {"name": {"type": "string", "minLength": 1}, "value": {"$ref": "#/$defs/value"}}
+        }}
+      }
+    },
+    "value": {
+      "type": "object", "required": ["kind", "unsigned"],
+      "unevaluatedProperties": false,
+      "properties": {"unsigned": {"type": "boolean"}},
+      "oneOf": [
+        {"properties": {"kind": {"enum": ["byte", "char", "short", "int", "long", "boolean"]}, "value": {"type": "integer"}}, "required": ["value"]},
+        {"properties": {"kind": {"const": "string"}, "value": {"type": "string"}}, "required": ["value"]},
+        {"properties": {"kind": {"enum": ["float", "double"]}, "bits": {"type": "integer"}}, "required": ["bits"]},
+        {"properties": {"kind": {"const": "class"}, "classifier": {"$ref": "#/$defs/classifier"}, "arrayDimensions": {"type": "integer", "minimum": 0}}, "required": ["classifier", "arrayDimensions"]},
+        {"properties": {"kind": {"const": "enum"}, "classifier": {"$ref": "#/$defs/classifier"}, "name": {"type": "string", "minLength": 1}}, "required": ["classifier", "name"]},
+        {"properties": {"kind": {"const": "annotation"}, "value": {"$ref": "#/$defs/annotation"}}, "required": ["value"]},
+        {"properties": {"kind": {"const": "array"}, "value": {"type": "array", "items": {"$ref": "#/$defs/value"}}}, "required": ["value"]}
+      ]
+    }
+  }
+}

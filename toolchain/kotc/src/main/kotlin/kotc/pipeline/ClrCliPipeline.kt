@@ -102,10 +102,11 @@ private class ClrPlatformLanguageVersionSettings(
 class ClrFir2IrPipelineArtifact(
 	override val result: Fir2IrActualizedResult,
 	override val configuration: org.jetbrains.kotlin.config.CompilerConfiguration,
+	val typeAliases: Map<String, List<String>> = emptyMap(),
 ) : Fir2IrPipelineArtifact() {
 	@OptIn(PipelineArtifact.CliPipelineInternals::class)
 	override fun withCompilerConfiguration(newConfiguration: org.jetbrains.kotlin.config.CompilerConfiguration): ClrFir2IrPipelineArtifact =
-		ClrFir2IrPipelineArtifact(result, newConfiguration)
+		ClrFir2IrPipelineArtifact(result, newConfiguration, typeAliases)
 }
 
 object ClrCommonFir2IrPipelinePhase : PipelinePhase<MetadataFrontendPipelineArtifact, ClrFir2IrPipelineArtifact>(
@@ -135,7 +136,8 @@ object ClrCommonFir2IrPipelinePhase : PipelinePhase<MetadataFrontendPipelineArti
 		kotc.frontend.ClrStaticOwners.convertTypes { type ->
 			with(fir2IrResult.components.typeConverter) { type.toIrType() }
 		}
-		return ClrFir2IrPipelineArtifact(fir2IrResult, input.configuration)
+		return ClrFir2IrPipelineArtifact(fir2IrResult, input.configuration,
+			kotc.backend.TypeAliasDeclarations.collect(input, fir2IrResult))
 	}
 }
 

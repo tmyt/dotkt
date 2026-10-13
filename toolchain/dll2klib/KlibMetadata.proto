@@ -58,6 +58,10 @@ message Annotation {
       optional int32 string_value = 5;
       optional int32 class_id = 6;
       optional int32 enum_value_id = 7;
+      optional Annotation annotation = 8;
+      repeated Value array_element = 9;
+      optional int32 flags = 10;
+      optional int32 array_dimension_count = 11;
     }
     required int32 name_id = 1;
     required Value value = 2;
@@ -79,6 +83,9 @@ message Type {
   optional Type flexible_upper_bound = 5;
   optional int32 class_name = 6;
   optional int32 type_parameter = 7;
+  optional Type outer_type = 10;
+  optional int32 type_alias_name = 12;
+  optional Type abbreviated_type = 13;
   // KlibMetadataProtoBuf.type_annotation extension. Declaring the extension
   // number as an ordinary field is wire-equivalent for the Kotlin reader.
   repeated Annotation type_annotation = 170;
@@ -91,6 +98,7 @@ message TypeParameter {
   optional bool reified = 3 [default = false];
   optional Variance variance = 4 [default = INV];
   repeated Type upper_bound = 5;
+  repeated Annotation type_parameter_annotation = 170;
 }
 
 message ValueParameter {
@@ -99,6 +107,15 @@ message ValueParameter {
   optional Type type = 3;
   optional Type vararg_element_type = 4;
   repeated Annotation parameter_annotation = 170;
+}
+
+message TypeAlias {
+  optional int32 flags = 1 [default = 6];
+  required int32 name = 2;
+  repeated TypeParameter type_parameter = 3;
+  optional Type underlying_type = 4;
+  optional Type expanded_type = 6;
+  repeated Annotation annotation = 8;
 }
 
 message Constructor {
@@ -144,6 +161,7 @@ message Class {
   repeated Constructor constructor = 8;
   repeated Function function = 9;
   repeated Property property = 10;
+  repeated TypeAlias type_alias = 11;
   repeated EnumEntry enum_entry = 13;
   repeated int32 sealed_subclass_fq_name = 16 [packed = true];
   optional int32 inline_class_underlying_property_name = 17;
@@ -158,6 +176,7 @@ message EnumEntry {
 message Package {
   repeated Function function = 3;
   repeated Property property = 4;
+  repeated TypeAlias type_alias = 5;
   optional int32 package_fq_name = 171;
 }
 

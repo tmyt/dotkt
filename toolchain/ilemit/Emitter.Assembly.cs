@@ -853,8 +853,21 @@ sealed partial class Emitter
                 }
         }
 
+        // Assembly attributes are literal CIR descriptions. PersistedAssemblyBuilder captures a local builder's
+        // still-unassigned MethodDef token when SetCustomAttribute is called, producing token 0x06000000. Defer
+        // those rows until GenerateMetadata assigns the local tokens; external constructors use the ordinary API.
+        var localAssemblyAttrs = new List<EncodedAttribute>();
+        foreach (var file in files)
+            if (file.TryGetProperty("assemblyAttrs", out var assemblyAttrs))
+                foreach (var attribute in assemblyAttrs.EnumerateArray())
+                {
+                    var encoded = BuildAttribute(attribute);
+                    if (encoded == null) continue;
+                    if (encoded.Constructor is ConstructorBuilder) localAssemblyAttrs.Add(encoded);
+                    else ab.SetCustomAttribute(encoded.Constructor, encoded.Blob);
+                }
         T("save: writing PE");
-        Save(ab, entry);
+        Save(ab, entry, localAssemblyAttrs);
         T("save: done");
     }
 
@@ -1335,11 +1348,14 @@ sealed partial class Emitter
         return (f.Name, ConstructedType(ResolveType(reflectedName), args));
     }
 
-    void Save(PersistedAssemblyBuilder ab, MethodBuilder entry)
+    void Save(PersistedAssemblyBuilder ab, MethodBuilder entry, IReadOnlyList<EncodedAttribute> localAssemblyAttrs)
     {
         // How much of what these documents carry this build put through the parity check. A measurement, not
         // the gate — the enforcement is at the call sites, which compare before every legacy resolution.
         MetadataBuilder metadata = ab.GenerateMetadata(out BlobBuilder ilStream, out BlobBuilder fieldData);
+        foreach (var attribute in localAssemblyAttrs)
+            metadata.AddCustomAttribute(MetadataTokens.EntityHandle(0x20000001),
+                MetadataTokens.EntityHandle(attribute.Constructor.MetadataToken), metadata.GetOrAddBlob(attribute.Blob));
         var peHeader = new PEHeaderBuilder(imageCharacteristics: Characteristics.ExecutableImage | Characteristics.Dll);
         var peBuilder = new ManagedPEBuilder(
             peHeader, new MetadataRootBuilder(metadata), ilStream,

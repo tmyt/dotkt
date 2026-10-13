@@ -1454,6 +1454,7 @@ internal sealed class AssemblyScanner : IDisposable
     private readonly MetadataReader _md;
     private readonly string _definitionPath;
     private readonly MetadataAttributes _attrs;
+    private readonly KotlinTypeAliasMetadata _typeAliases;
     private readonly ArityNames _arityNames;
     private readonly DelegateReferenceCatalog _delegateCatalog;
     private readonly CompanionReferenceCatalog _companionCatalog;
@@ -1489,6 +1490,7 @@ internal sealed class AssemblyScanner : IDisposable
         _definitionPath = Path.GetFullPath(definitionPath);
         _md = md;
         _attrs = new MetadataAttributes(md);
+        _typeAliases = new KotlinTypeAliasMetadata(md, _attrs);
         _attrs.ValidateCarrierTargets(
             MetadataAttributes.DotKtNs + "KotlinCompanionExtensionAttribute",
             HandleKind.MethodDefinition,
@@ -1684,19 +1686,22 @@ internal sealed class AssemblyScanner : IDisposable
             .Where(x => !_existentialCarriers.Contains(x.Handle))
             .Where(x => !_genericStaticCarriers.ContainsKey(x.Handle))
             .Where(x => _md.GetString(x.Definition.Name) != "<Module>")
-            .GroupBy(x => _md.GetString(x.Definition.Namespace), StringComparer.Ordinal);
+            .GroupBy(x => _md.GetString(x.Definition.Namespace), StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.ToArray(), StringComparer.Ordinal);
 
         var result = new List<Fragment>();
-        foreach (var package in visible.OrderBy(x => x.Key, StringComparer.Ordinal))
+        foreach (var packageName in visible.Keys.Concat(_typeAliases.Packages).Distinct(StringComparer.Ordinal)
+            .OrderBy(name => name, StringComparer.Ordinal))
         {
+            var package = visible.GetValueOrDefault(packageName) ?? [];
             var names = new NameTable();
             var fragment = new PackageFragment
             {
                 Package = new Package(),
                 IsEmpty = false,
-                FqName = package.Key,
+                FqName = packageName,
             };
-            fragment.Package.PackageFqName = names.Package(package.Key);
+            fragment.Package.PackageFqName = names.Package(packageName);
             var signatures = new SignatureDecoder(
                 _md, names, _attrs, _arityNames, _delegateCatalog, _companionCatalog, _innerCatalog,
                 _signatureSeeds,
@@ -1746,12 +1751,14 @@ internal sealed class AssemblyScanner : IDisposable
                 }
             }
             MarkLowPriorityDelegateOverloads(fragment.Package.Function, names);
+            _typeAliases.Project(packageName, fragment, names);
             fragment.Strings = names.Strings;
             fragment.QualifiedNames = names.QualifiedNames;
             if (fragment.Class.Count != 0 ||
                 fragment.Package.Function.Count != 0 ||
-                fragment.Package.Property.Count != 0)
-                result.Add(new Fragment(package.Key, fragment));
+                fragment.Package.Property.Count != 0 ||
+                fragment.Package.TypeAlias.Count != 0)
+                result.Add(new Fragment(packageName, fragment));
         }
         // The KLIB reader probes root_package while resolving ordinary source,
         // even when this assembly has no root-package declarations. A packed

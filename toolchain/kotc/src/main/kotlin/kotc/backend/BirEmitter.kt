@@ -983,7 +983,7 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 	// (driven by the ref.dll @ClrTypeAlias index) DROPS the alias type def (hoisting a class's rule-3 members into the
 	// dotkt$ClrH_* helper; an interface/object alias is dropped with no helper). The drop is a no-op in the REFERENCE
 	// build (AliasHelperHoist is skipped there), so the ref assembly keeps the pure-Kotlin @ClrTypeAlias shapes verbatim.
-	fun emitFile(file: IrFile): String {
+	fun emitFile(file: IrFile, typeAliases: List<String> = emptyList()): String {
 		fileEntry = file.fileEntry
 		// Per-FILE lifted state. One BirEmitter instance processes every file in turn, so these MUST be reset here —
 		// otherwise each file's BIR accumulates the previous files' lifted lambdas/types, duplicating them into every
@@ -1035,10 +1035,8 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 		// Only USER properties (origin DEFINED) — a consuming module's FIR also holds external top-level properties
 		// loaded from reference KLIBs; those are the library's, not ours to emit.
 		val topProps = file.declarations.filterIsInstance<IrProperty>().filter { it.origin.toString() == "DEFINED" }
-		// A genuinely empty file emits nothing. (An "alias-only" file — e.g. String.kt / Primitives.kt / Comparable.kt —
-		// is NOT empty: its @ClrTypeAlias type flows through `classes`/`interfaces` above and is emitted as an
-		// ordinary type below, then dropped/hoisted by bir2cir's AliasHelperHoist. No special branch is needed.)
-		if (functions.isEmpty() && classes.isEmpty() && objects.isEmpty() && interfaces.isEmpty() && enums.isEmpty() && annClasses.isEmpty() && topProps.isEmpty())
+		// A source file containing only Kotlin alias declarations still owns a metadata surface.
+		if (functions.isEmpty() && classes.isEmpty() && objects.isEmpty() && interfaces.isEmpty() && enums.isEmpty() && annClasses.isEmpty() && topProps.isEmpty() && typeAliases.isEmpty())
 			return ""
 		val className = fileClassName(file)
 		fileClass = className
@@ -1151,7 +1149,7 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 		// declaration string is identical, while deliberately retaining same-name/different-body entries for a loud
 		// downstream collision.
 		val types = (typeDefs + liftedTypes).distinct().joinToString(",")
-		return """{"fileClass":${str(className)},"hasMain":$hasMain,"fields":[${statFields.joinToString(",")}],"methods":[$methods],"properties":[$topPropRecords],"types":[$types],"refTypes":[${refTypesJson()}]}"""
+		return """{"fileClass":${str(className)},"hasMain":$hasMain,"fields":[${statFields.joinToString(",")}],"methods":[$methods],"properties":[$topPropRecords],"types":[$types],"refTypes":[${refTypesJson()}],"typeAliases":[${typeAliases.joinToString(",")}]}"""
 	}
 
 	/** Emit a flattened `inner class`: it captures the enclosing instance as a leading `__outer` ctor param/field. */

@@ -23,7 +23,7 @@ static partial class ClrMemberResolution
     // is how 496 of them went unresolved while the walk looked convincingly complete: `attrs` covers a type, a
     // member and a parameter, and a return is none of those. Naming the carriers is what makes the next one an
     // entry here rather than a silent omission.
-    static readonly string[] AttributeCarriers = { "attrs", "retAttrs" };
+    static readonly string[] AttributeCarriers = { "attrs", "retAttrs", "assemblyAttrs" };
 
     /// <summary>
     /// Resolve every applied EXTERNAL attribute's constructor and stamp it. Runs over the whole document

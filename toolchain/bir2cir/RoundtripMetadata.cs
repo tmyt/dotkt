@@ -12,7 +12,8 @@ using DotKt.Bir;
 // collapse) now lives HERE, the Kotlin<->CLR layer.
 //
 // Runs in the ref (metadata) + app builds — the two that carry the round-trip surface — and is SKIPPED in the runtime
-// build (`!SubstituteStdlibBuild`), the gate that REPLACES ilemit's deleted `_stripMetadata`. Reads the already-
+// build (`!SubstituteStdlibBuild`), except assembly-level alias declarations, which are encoded at the input
+// boundary and survive in both stdlib twins. This gate REPLACES ilemit's deleted `_stripMetadata`. Reads the already-
 // materialized facts (post-BirTypeLowering): mods(infix/operator/suspend/inline/fun/sealed), suspendBridge,
 // retNullableFlags/nullableFlags (DeclNullableFlags), retSuspendFnType/suspendFnType (BirTypeLowering's suspend-fn-type
 // erasure records the pre-erasure shape as this fact), readOnly, and the S1 `inlineBir` carrier string.
@@ -69,10 +70,23 @@ static class RoundtripMetadata
     internal const string AKNullableGen  = Ns + "KotlinNullableGenericAttribute";
     const string AKCollIdentity = Ns + "KotlinCollectionIdentityAttribute";
     const string AKType         = Ns + "KotlinTypeAttribute";
+    const string AKTypeAlias    = Ns + "KotlinTypeAliasAttribute";
     const string AKSupertypes   = Ns + "KotlinSupertypesAttribute";
     const string AKTypeParameterBounds = Ns + "KotlinTypeParameterBoundsAttribute";
     const string ANullable      = ClrNs + "NullableAttribute";
     const string ANullableCtx   = ClrNs + "NullableContextAttribute";
+
+    // Declaration metadata is opaque to every physical representation pass. Encode it at the input boundary,
+    // before any traversal can confuse a Kotlin alias's classifier or parameter with an executable CLR slot.
+    public static void FreezeTypeAliases(JsonNode root)
+    {
+        if (root is not JsonObject file || file["typeAliases"] is not JsonArray aliases) return;
+        file.Remove("typeAliases");
+        if (aliases.Count == 0) return;
+        var attrs = file["assemblyAttrs"] as JsonArray ?? new JsonArray();
+        file["assemblyAttrs"] = attrs;
+        foreach (var alias in aliases) attrs.Add(JsonCarrierAttr(AKTypeAlias, alias));
+    }
 
     // ---------------------------------------------------------------------------------------------------------------
     // STAMP one lowered CIR file: add `attrs`/`retAttrs` entries derived from the decls' round-trip facts.
@@ -619,13 +633,15 @@ static class RoundtripMetadata
     // `System.Runtime.CompilerServices.Nullable{,Context}`) — both compile-time-only, ref-side facts that must NOT ship
     // on DotKt.Stdlib.dll (the never-metadata-read runtime assembly, substituted away at app-emit) — AND the user's own
     // annotations (kotlin.Deprecated / SinceKotlin / InlineOnly / PublishedApi / …). The predicate must preserve those
-    // user annotations and drop only compiler-internal carriers that have no runtime stdlib meaning.
+    // user annotations and drop only compiler-internal declaration-slot carriers that have no runtime stdlib meaning.
+    // Assembly-level alias declaration metadata is a separate contract and survives in both stdlib twins; the
+    // frontend KLIB is still authoritative, and dll2klib excludes both marked stdlib assemblies from projection.
     // ---------------------------------------------------------------------------------------------------------------
     public static void StripRuntimeAttrs(JsonNode root)
     {
         if (root is not JsonObject o) return;
         // FBoundStarProjectionErasure's pass-local hand-off is consumed only by Stamp in metadata-bearing builds.
-        // The runtime build deliberately emits no round-trip attribute, but must still discard the temporary fact.
+        // The runtime build deliberately emits no declaration-slot round-trip attribute, but must discard this temporary fact.
         o.Remove("kotlinType");
         o.Remove("retKotlinType");
         o.Remove(KotlinSupertypesRecord.PreKey);
@@ -858,13 +874,14 @@ static class RoundtripMetadata
     // NO name (a named ctor param would mint Param rows the embedded attrs never had); the empty body chains to
     // Attribute()'s protected ctor.
     // ---------------------------------------------------------------------------------------------------------------
-    public static JsonObject SynthDefsFile(ReferenceMetadataIndex refs)
+    public static JsonObject SynthDefsFile(ReferenceMetadataIndex refs, bool aliasesOnly = false)
     {
         // Resolve the shared base delegation BEFORE any ctor is built, so every synthesized class states the
         // member it delegates to rather than describing it.
         _attributeBaseCtorRef = ClrMemberResolution.ParameterlessBaseCtorRef(refs, "System.Attribute");
         var types = new JsonArray
         {
+            TypeAliasAttributeDefinition(),
             AttrClass(AKFunction, Ctor(Param("System.Int32"))),
             AttrClass(AKFileClass, Ctor()),
             AttrClass(AKInline, Ctor(Param("System.String"), Param(ByteArrayType()))),
@@ -901,6 +918,7 @@ static class RoundtripMetadata
             AttrClass(AKSupertypes, Ctor(Param("System.String"), Param(ByteArrayType()))),   // #86 — pre-erasure supertype edges + type-parameter bounds
             AttrClass(AKTypeParameterBounds, Ctor(Param("System.String"), Param(ByteArrayType()))), // pre-erasure MethodDef type-parameter bounds
         };
+        if (aliasesOnly) types = new JsonArray(TypeAliasAttributeDefinition());
         return new JsonObject
         {
             ["fileClass"] = "",     // no top-level funs/fields -> ilemit defines no file-class type for this file
@@ -909,6 +927,25 @@ static class RoundtripMetadata
             ["fields"] = new JsonArray(),
             ["types"] = types,
         };
+    }
+
+    static JsonObject TypeAliasAttributeDefinition()
+    {
+        var definition = AttrClass(AKTypeAlias, Ctor(Param("System.String"), Param(ByteArrayType())));
+        definition["attrs"] = new JsonArray(new JsonObject
+        {
+            ["attr"] = Fqn("System.AttributeUsageAttribute"),
+            ["attrExternal"] = true,
+            ["attrAssembly"] = "System.Runtime",
+            ["argTypes"] = new JsonArray(Fqn("System.AttributeTargets")),
+            ["args"] = new JsonArray(new JsonObject { ["type"] = Fqn("System.AttributeTargets"), ["value"] = 1 }),
+            ["namedArgs"] = new JsonArray(
+                new JsonObject { ["kind"] = "property", ["name"] = "AllowMultiple", ["type"] = Fqn("System.Boolean"),
+                    ["value"] = new JsonObject { ["type"] = Fqn("System.Boolean"), ["value"] = true } },
+                new JsonObject { ["kind"] = "property", ["name"] = "Inherited", ["type"] = Fqn("System.Boolean"),
+                    ["value"] = new JsonObject { ["type"] = Fqn("System.Boolean"), ["value"] = false } }),
+        });
+        return definition;
     }
 
     static JsonObject AttrClass(string fqn, params JsonObject[] ctors)
