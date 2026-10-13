@@ -2,7 +2,7 @@
 # The producer is a DLL, never frontend source or a friend module. Public inline execution is checked by NUnit;
 # these isolated frontend consumers must reject direct access specifically for Kotlin internal visibility.
 source "$(cd -- "$(dirname -- "$0")/../.." && pwd -P)/scripts/lib.sh"
-[[ $# == 1 ]] || usage_error "expected the consumer's reference KLIB directory"
+[[ $# == 1 ]] || die "expected the consumer's reference KLIB directory"
 classpath="$FE_KLIB"
 case "${OS:-}" in Windows_NT) separator=';' ;; *) separator=':' ;; esac
 while IFS= read -r klib; do classpath+="$separator$klib"; done \
@@ -16,7 +16,7 @@ for source in "$ROOT/tests/roundtrip/visibility/"*.kt; do
         >"$work/$name.log" 2>&1; then
         die "$name: source-internal declaration was accepted"
     fi
-    if ! rg -qi "cannot access.*internal" "$work/$name.log"; then
+    if ! grep -Eqi "cannot access.*internal" "$work/$name.log"; then
         tail -20 "$work/$name.log"
         die "$name: failure did not establish internal visibility"
     fi

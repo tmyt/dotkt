@@ -2151,7 +2151,6 @@ internal sealed class AssemblyScanner : IDisposable
                     "private" => 2,
                     "protected" => 4,
                     "public" => 6,
-                    "protectedInternal" => 4,
                     _ => throw new InvalidDataException($"invalid Kotlin type visibility '{visibility}'"),
                 });
             }
