@@ -261,6 +261,17 @@ for proj in "${PROJECTS[@]}"; do
 	if [[ "$proj" == "tests/roundtrip/consumer" ]]; then
 		producer_dll="$ROOT/tests/roundtrip/producer/bin/$CONFIGURATION/net10.0/RoundtripProducer.dll"
 		producer_klib="$dir/obj/$CONFIGURATION/net10.0/klib/RoundtripProducer.klib"
+		for alias_producer in RoundtripProducer RoundtripProducerMpp; do
+			if dotnet "$METADATA_INSPECTOR_DLL" --typealias-declarations \
+				"$dir/bin/$CONFIGURATION/net10.0/$alias_producer.dll" \
+				"$dir/obj/$CONFIGURATION/net10.0/klib/$alias_producer.klib" \
+				>"$ROOT/build/nunit-$name.$alias_producer.typealiases.log" 2>&1; then
+				echo "  $alias_producer assembly typealias carriers and KLIB declarations OK"
+			else
+				echo "  TYPEALIAS METADATA FAIL"
+				tail -25 "$ROOT/build/nunit-$name.$alias_producer.typealiases.log"; rc=1
+			fi
+		done
 		if dotnet "$METADATA_INSPECTOR_DLL" --throwable-source-identity "$producer_dll" "$producer_klib" \
 			>"$ROOT/build/nunit-$name.throwable-source-identity.log" 2>&1; then
 			echo "  Kotlin alias source identity and exact CLR exception signature OK"

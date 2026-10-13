@@ -30,6 +30,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT" || exit 1
 PY="${PYTHON:-python3}"
 
+"$PY" tests/ir/test-typealias-schema.py || exit 1
+
 globs=()
 [ -d build/clr-stdlib/bir ] && globs+=("build/clr-stdlib/bir/*.bir.json")
 [ -d build/clr-stdlib/cir ] && globs+=("build/clr-stdlib/cir/*.cir.json")
