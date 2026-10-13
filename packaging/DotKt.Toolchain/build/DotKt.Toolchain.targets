@@ -234,6 +234,9 @@
           DependsOnTargets="DotKtInitializeIntermediatePaths;KotlinCompile">
     <PropertyGroup>
       <StartupObject Condition="'$(StartupObject)' != '' or '$(OutputType)' == 'Exe'">_DotKtPlaceholder</StartupObject>
+      <!-- CoreCompile invokes this hook only when its Csc task runs, not when the target is up-to-date.
+           Preserve existing hooks, then invalidate the assembly that Csc has just replaced with a placeholder. -->
+      <TargetsTriggeredByCompilation>$(TargetsTriggeredByCompilation);DotKtInvalidatePlaceholderAssembly</TargetsTriggeredByCompilation>
     </PropertyGroup>
     <MakeDir Directories="$(DotKtIntermediateBirPath)" />
     <!-- WriteOnlyWhenDifferent (#134): the placeholder body is a CONSTANT, so keep its mtime stable across no-op
@@ -244,6 +247,10 @@
     <ItemGroup>
       <Compile Include="$(DotKtIntermediateBirPath)/_DotKtPlaceholder.cs" />
     </ItemGroup>
+  </Target>
+
+  <Target Name="DotKtInvalidatePlaceholderAssembly" Condition="'$(SkipCompilerExecution)' != 'true'">
+    <Delete Files="@(IntermediateAssembly)" />
   </Target>
 
   <Target Name="DotKtComputeBir2CirModeStamp" DependsOnTargets="DotKtInitializeIntermediatePaths">
@@ -299,11 +306,11 @@
   <!-- After CoreCompile, overwrite csc's (placeholder) assembly with one emitted directly as CIL from CIR. The exact
        compile reference set owns external metadata identities; copy-local refs only disambiguate runtime twins and
        provide deployable implementations. -->
-  <!-- Incremental (#134): re-emit ONLY when the CIR changed ($(DotKtIntermediateCirPath)/.stamp), the ilemit tool changed, or a
-       runtime reference dll changed (a cross-into dependency's new build). Output is the emitted assembly in obj/;
-       on a no-op build CoreCompile leaves it untouched (the placeholder .cs is now WriteOnlyWhenDifferent) so it
-       stays newer than the CIR stamp and ilemit skips — the emitted dll's timestamp no longer churns every build,
-       so a downstream C# ProjectReference stops rebuilding. DotKtResolveReferenceSets is a dependency so the
+  <!-- Incremental: re-emit when CIR, the tool or references change, or when Csc replaces the shared obj DLL.
+       The compilation hook deletes only that placeholder output, so an arbitrary C#-only input change cannot
+       masquerade as completed Kotlin emission. On a true no-op CoreCompile skips the hook, retaining the Kotlin
+       DLL and its timestamp so both ilemit and downstream C# ProjectReferences stay up-to-date.
+       DotKtResolveReferenceSets is a dependency so the
        @(_DotKtRuntimeReference) items exist when these Inputs are evaluated. -->
   <Target Name="DotKtIlEmit" AfterTargets="CoreCompile" DependsOnTargets="DotKtBir2Cir;DotKtResolveReferenceSets"
           Inputs="$(DotKtIntermediateCirPath)/.stamp;$(DotKtIlEmit);@(_DotKtCompileReference);@(_DotKtRuntimeReference)"

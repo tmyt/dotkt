@@ -4,12 +4,14 @@
 # from real .nupkgs in a NuGet feed. `tests/msbuild/run.sh` uses the IN-REPO dev entry (eng/KotlinClr.targets,
 # hard-coded tool paths) and never restores a nupkg, so packaging-only bugs slip past it — 0.9.5 shipped
 # broken twice for exactly this reason (#131 stale SDK version, #132 a Library's non-copy-local reference
-# never reaching bir2cir/ilemit). This suite packs the 5 nupkgs to a local feed and drives NINE isolated
+# never reaching bir2cir/ilemit). This suite packs the 5 nupkgs to a local feed and drives isolated
 # scenarios through `dotnet build`/`dotnet run` from that feed only:
 #   toolchain-assembly-identity — directly opens the three CLR executables shipped inside DotKt.Toolchain and
 #              requires their assembly, file, and informational versions to match DotKt.Versions.props.
 #   exe      — a plain `Sdk="DotKt.Sdk"` Exe under a punctuation/whitespace-containing path: build + RUN, assert
 #              stdout, and prove each >8191-byte compiler argument set travels through a packaged response file.
+#   incremental-emission — C#-only recompilation retains Kotlin execution/metadata and separate consumers;
+#              true no-op rebuilds preserve DLL timestamps and skip downstream C# compilation.
 #   multi-target-klib-references — one parallel two-TFM producer plus matching C# and DotKt consumers: preserve
 #              target-specific references/sources/KLIB ownership, metadata, runtime/IL validity and independent
 #              no-op/deletion behavior; also pin the unsupported-TFM restore diagnostic.
@@ -45,7 +47,7 @@ source "$ROOT/scripts/lib.sh"
 
 usage() { cat <<EOF
 usage: $SCRIPT_NAME
-Packs the 5 nupkgs to build/nuget-feed and drives 9 packaged SDK/template scenarios from that feed only.
+Packs the 5 nupkgs to build/nuget-feed and drives packaged SDK/template scenarios from that feed only.
 Green (exit 0) = no fail name outside XFAIL_PKG and no stale entry inside it.
 EOF
 }
@@ -1436,8 +1438,19 @@ EOF
 }
 selftest
 
+case_incremental_emission() {
+	local d="$WS/incremental-emission"
+	if bash "$ROOT/tests/msbuild/incremental-emission.sh" "$d" "DotKt.Sdk/$VER" "$NUGET_CONFIG" \
+			>"$WS/incremental-emission.log" 2>&1; then
+		pass incremental-emission
+	else
+		fail incremental-emission "Kotlin DLL ownership regression" "$(tail -40 "$WS/incremental-emission.log")"
+	fi
+}
+
 case_toolchain_assembly_identity
 case_exe
+case_incremental_emission
 case_multitarget_klib_references
 case_library
 case_csharp_consumer
