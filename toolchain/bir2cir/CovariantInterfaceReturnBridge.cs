@@ -27,7 +27,7 @@ static class CovariantInterfaceReturnBridge
 
     public static IReadOnlySet<BridgedSlot> ApplyAll(IEnumerable<JsonNode> roots,
         ReferenceMetadataIndex refs, ValueTypeOracle isValue, GenericRepresentationPolicy representations,
-        IReadOnlyDictionary<JsonObject, TypeNode[]> sourceParameters)
+        IReadOnlyDictionary<JsonObject, TypeNode[]> sourceParameters, Action<JsonObject> onMaterialized = null)
     {
         var defs = Collect(roots);
         var bridgedSlots = new HashSet<BridgedSlot>();
@@ -35,7 +35,7 @@ static class CovariantInterfaceReturnBridge
         // covariant return differs from the base-interface slot. Treat interfaces and classes uniformly here: the
         // frontend override edge selects the declaration, and this pass only materializes its CLR representation.
         foreach (var cls in defs.Values.Where(d => d.Kind is "class" or "interface"))
-            ApplyClass(cls, defs, refs, isValue, representations, bridgedSlots, sourceParameters);
+            ApplyClass(cls, defs, refs, isValue, representations, bridgedSlots, sourceParameters, onMaterialized);
         return bridgedSlots;
     }
 
@@ -68,7 +68,8 @@ static class CovariantInterfaceReturnBridge
 
     static void ApplyClass(Def cls, IReadOnlyDictionary<string, Def> defs,
         ReferenceMetadataIndex refs, ValueTypeOracle isValue, GenericRepresentationPolicy representations,
-        ISet<BridgedSlot> bridgedSlots, IReadOnlyDictionary<JsonObject, TypeNode[]> sourceParameters)
+        ISet<BridgedSlot> bridgedSlots, IReadOnlyDictionary<JsonObject, TypeNode[]> sourceParameters,
+        Action<JsonObject> onMaterialized)
     {
         if (cls.Node["methods"] is not JsonArray methods) return;
         var bridges = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
@@ -146,6 +147,7 @@ static class CovariantInterfaceReturnBridge
                         $"dotkt$covar${SafeName(name)}${bridgeOrdinal++}", unitValueReturn);
                     bridges[key] = bridge;
                     methods.Add(bridge);
+                    onMaterialized?.Invoke(bridge);
                     if (propertyName != null)
                     {
                         var sourceAssociation = Str(implementation[KotlinPropertyAccessors.AssociationKey]);
@@ -170,7 +172,7 @@ static class CovariantInterfaceReturnBridge
         }
 
         ApplyReferencedInterfaces(cls, defs, refs, isValue, representations, methods, bridges,
-            bridgedSlots, ref bridgeOrdinal, sourceParameters);
+            bridgedSlots, ref bridgeOrdinal, sourceParameters, onMaterialized);
     }
 
     // A referenced interface contributes no MethodDef nodes to the staged BIR. The frontend override edge still
@@ -180,7 +182,8 @@ static class CovariantInterfaceReturnBridge
     static void ApplyReferencedInterfaces(Def cls, IReadOnlyDictionary<string, Def> defs,
         ReferenceMetadataIndex refs, ValueTypeOracle isValue, GenericRepresentationPolicy representations, JsonArray methods,
         Dictionary<string, JsonObject> bridges, ISet<BridgedSlot> bridgedSlots,
-        ref int bridgeOrdinal, IReadOnlyDictionary<JsonObject, TypeNode[]> sourceParameters)
+        ref int bridgeOrdinal, IReadOnlyDictionary<JsonObject, TypeNode[]> sourceParameters,
+        Action<JsonObject> onMaterialized)
     {
         if (refs == null) return;
         var ownArgs = ClassOwnArgs(cls);
@@ -312,6 +315,7 @@ static class CovariantInterfaceReturnBridge
                         $"dotkt$covar${SafeName(implementationName)}${bridgeOrdinal++}", unitValueReturn);
                     bridges[key] = bridge;
                     methods.Add(bridge);
+                    onMaterialized?.Invoke(bridge);
                     if (accessorKind != null)
                     {
                         var sourceAssociation = Str(implementation[KotlinPropertyAccessors.AssociationKey]);

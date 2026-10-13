@@ -6,8 +6,12 @@ class Text : Slot<CharSequence> {
     override fun read(): CharSequence = "ok"
 }
 
-class NullableText : Slot<CharSequence?> {
-    override fun read(): CharSequence? = null
+class NullableText(private val present: Boolean = false) : Slot<CharSequence?> {
+    var reads = 0
+    override fun read(): CharSequence? {
+        reads++
+        return if (present) "nullable" else null
+    }
 }
 
 class NestedText : Slot<Slot<CharSequence>> {
@@ -15,7 +19,7 @@ class NestedText : Slot<Slot<CharSequence>> {
 }
 
 open class Base<T>(val value: T)
-class DerivedText : Base<CharSequence>("base")
+class DerivedText(value: String = "base") : Base<CharSequence>(value)
 
 class UnchangedText : Slot<String> {
     override fun read(): String = "unchanged"

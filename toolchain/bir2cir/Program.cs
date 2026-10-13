@@ -905,7 +905,8 @@ sealed class Pipeline
         // private forwarding bridge with the interface slot's exact return. The bridge carries a resolved
         // `clrInterfaceImpls` instruction; ilemit only consumes that instruction and does not infer covariance.
         var covariantBridgedSlots = CovariantInterfaceReturnBridge.ApplyAll(
-            staged.Select(s => s.Root).ToList(), refs, isValueFqn, genericRepresentations, overrideSourceParameters);
+            staged.Select(s => s.Root).ToList(), refs, isValueFqn, genericRepresentations, overrideSourceParameters,
+            _options.RefBuild ? null : StringCharSequenceBridge.ApplyMaterializedReturns);
 
         // Covariant bridges own their exact cold and Task slots. Prepare only the remaining suspend-result
         // obligations, so both passes cannot claim the same interface MethodImpl.

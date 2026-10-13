@@ -13,8 +13,14 @@ class CharSequenceSupertypeTests {
 
     @TestAttribute
     fun importedNullableSupertypeRetainsNullabilityAndKotlinIdentity() {
-        val slot: Slot<CharSequence?> = NullableText()
+        val empty = NullableText()
+        val slot: Slot<CharSequence?> = empty
         check(slot.read() == null)
+        check(empty.reads == 1)
+        val present = NullableText(true)
+        val nonNull: Slot<CharSequence?> = present
+        check(nonNull.read().toString() == "nullable")
+        check(present.reads == 1)
     }
 
     @TestAttribute
@@ -28,6 +34,7 @@ class CharSequenceSupertypeTests {
         val base: Base<CharSequence> = DerivedText()
         check(base.value.toString() == "base")
         check(DerivedText().value.toString() == "base")
+        check(DerivedText("argument").value.toString() == "argument")
     }
 
     @TestAttribute

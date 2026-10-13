@@ -8,7 +8,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 ### Toolchain
 
 - Preserve Kotlin classifier identity in public constructed supertypes before CLR identity substitution,
-  so DLL consumers retain contracts such as `Slot<CharSequence>` (#721).
+  so DLL consumers retain contracts such as `Slot<CharSequence>` (#721). Apply String-to-CharSequence
+  adapters at exact-return bridge and constructor-delegation boundaries, preserving null and single evaluation,
+  and keep native String conditional joins consistent with their branches.
 
 - Preserve source-internal visibility of `@PublishedApi` types across DLL imports while retaining
   public CLR accessibility for cross-module inline bodies (#1016).
