@@ -83,25 +83,29 @@ static class StringCharSequenceBridge
     {
         public readonly Dictionary<string, TypeNode> Vars;
         public readonly TypeNode RetType;
+        public readonly TypeNode.Fqn BaseType;
         public Env() { Vars = new(StringComparer.Ordinal); RetType = null; }
-        Env(Dictionary<string, TypeNode> vars, TypeNode retType) { Vars = vars; RetType = retType; }
+        Env(Dictionary<string, TypeNode> vars, TypeNode retType, TypeNode.Fqn baseType)
+        { Vars = vars; RetType = retType; BaseType = baseType; }
 
-        // A declaration node (has a `params` array — methods/lambdas always emit one, even empty) opens a child scope
-        // seeded with its params and return type. A non-decl node (call/expr — no `params`) returns `this` unchanged.
+        // A type declaration owns its constructed base. A method/lambda/constructor declaration opens a parameter
+        // scope (even for an empty params array) while retaining that base; ordinary expression nodes keep the scope.
         public Env WithDecl(JsonObject decl)
         {
+            if (Str(decl["kind"]) is "class" or "interface" or "struct" or "enum")
+                return new Env(Vars, RetType, TypeJson.Read(decl["base"]) as TypeNode.Fqn);
             if (decl["params"] is not JsonArray ps) return this;
             var vars = new Dictionary<string, TypeNode>(Vars, StringComparer.Ordinal);
             foreach (var p in ps)
                 if (p is JsonObject po && Str(po["name"]) is string pn && TypeJson.Read(po["type"]) is TypeNode pt)
                     vars[pn] = pt;
-            return new Env(vars, TypeJson.Read(decl["ret"]) ?? RetType);
+            return new Env(vars, TypeJson.Read(decl["ret"]) ?? RetType, BaseType);
         }
 
         public Env WithVar(string name, TypeNode type)
         {
             var vars = new Dictionary<string, TypeNode>(Vars, StringComparer.Ordinal) { [name] = type };
-            return new Env(vars, RetType);
+            return new Env(vars, RetType, BaseType);
         }
     }
 
@@ -124,18 +128,37 @@ static class StringCharSequenceBridge
         var walked = Walk(root, new Env());
         // Emit the app-local adapter type into this file's `types` if a wrap fired here and no other file already got
         // it (one per assembly). ilemit resolves a wrap in a sibling file against it via the assembly-wide `_types`.
-        if (_fired && !_adapterEmitted && walked is JsonObject fileObj)
+        if (_fired && walked is JsonObject fileObj) EmitAdapter(fileObj);
+        materializedDelegateAdapters = _materializedDelegateAdapters;
+        return walked;
+    }
+
+    static void EmitAdapter(JsonObject fileObj)
+    {
+        if (!_adapterEmitted)
         {
             var types = fileObj["types"] as JsonArray;
             if (types == null) { types = new JsonArray(); fileObj["types"] = types; }
             types.Add(JsonNode.Parse(AdapterTypeJson));
             _adapterEmitted = true;
         }
-        materializedDelegateAdapters = _materializedDelegateAdapters;
-        return walked;
     }
 
-    static JsonNode Walk(JsonNode node, Env env)
+    // Exact-return bridges are created after the main file walk. Adapt only their newly materialized returns,
+    // using the same conversion rule and adapter declaration as source returns; do not sweep existing bodies.
+    public static void ApplyMaterializedReturns(JsonObject method)
+    {
+        if (!IsCharSeqT(TypeJson.Read(method["ret"])) || method["body"] is not JsonArray body) return;
+        _fired = false;
+        method["body"] = WalkArray(body, new Env().WithDecl(method), returnsOnly: true);
+        MaterializedExecutable.Normalize(method);
+        if (!_fired) return;
+        JsonNode root = method;
+        while (root.Parent != null) root = root.Parent;
+        EmitAdapter((JsonObject)root);
+    }
+
+    static JsonNode Walk(JsonNode node, Env env, bool returnsOnly = false)
     {
         if (node is JsonObject obj)
         {
@@ -152,12 +175,18 @@ static class StringCharSequenceBridge
                         resultEnv = resultEnv.WithVar(sn, st);
             var copy = new JsonObject();
             foreach (var kv in obj)
-                copy[kv.Key] = kv.Value is JsonArray arr ? WalkArray(arr, childEnv)
+                copy[kv.Key] = kv.Value is JsonArray arr ? WalkArray(arr, childEnv, returnsOnly)
                              : kv.Value == null ? null
-                             : Walk(kv.Value, kv.Key == "result" ? resultEnv : childEnv);
+                             : Walk(kv.Value, kv.Key == "result" ? resultEnv : childEnv, returnsOnly);
+            if (returnsOnly)
+            {
+                if (Str(copy["k"]) == "return") WrapReturn(copy, env);
+                return copy;
+            }
+            WrapDelegationArgs(copy, childEnv);
             return Transform(copy, env);   // this node's own coercion sites use its ENCLOSING env
         }
-        if (node is JsonArray topArr) return WalkArray(topArr, env);
+        if (node is JsonArray topArr) return WalkArray(topArr, env, returnsOnly);
         return node.DeepClone();
     }
 
@@ -165,13 +194,13 @@ static class StringCharSequenceBridge
     // statement's read of that local resolves its static type (a `var`'s own init is walked BEFORE the var is added,
     // so `val x = <x>` can't see itself). Non-body arrays (args/params/…) contain no `var` nodes, so this is a no-op
     // for them.
-    static JsonArray WalkArray(JsonArray arr, Env env)
+    static JsonArray WalkArray(JsonArray arr, Env env, bool returnsOnly = false)
     {
         var copy = new JsonArray();
         var cur = env;
         foreach (var item in arr)
         {
-            var walked = item == null ? null : Walk(item, cur);
+            var walked = item == null ? null : Walk(item, cur, returnsOnly);
             copy.Add(walked);
             if (walked is JsonObject wo && Str(wo["k"]) == "var"
                 && Str(wo["name"]) is string vn && TypeJson.Read(wo["type"]) is TypeNode vt)
@@ -208,6 +237,22 @@ static class StringCharSequenceBridge
                 return WrapCast(node, env) ?? node;
             default:
                 return node;
+        }
+    }
+
+    static void WrapDelegationArgs(JsonObject constructor, Env env)
+    {
+        if (constructor["delegationSig"] is not JsonArray signature) return;
+        var arguments = constructor["thisArgs"] as JsonArray ?? constructor["baseArgs"] as JsonArray;
+        if (arguments == null) return;
+        var ownerArgs = constructor["thisArgs"] is JsonArray ? Array.Empty<TypeNode>()
+            : env.BaseType?.Args ?? Array.Empty<TypeNode>();
+        for (var i = 0; i < Math.Min(arguments.Count, signature.Count); i++)
+        {
+            var slot = SubstCallTvs(TypeJson.Read(signature[i]), ownerArgs, Array.Empty<TypeNode>());
+            if (!IsCharSeqT(slot) || arguments[i] is not JsonNode argument) continue;
+            var converted = CoerceCharSeqArg(argument, env, nonNullSlot: slot is TypeNode.Fqn);
+            if (!ReferenceEquals(argument, converted)) arguments[i] = converted;
         }
     }
 

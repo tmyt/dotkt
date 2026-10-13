@@ -286,6 +286,19 @@ static class CharSeqStringLowering
             case "callStatic":
                 LowerLocalCall(node, env);
                 return node;
+            case "cond":
+                // The conditional's join must agree with the chosen scalar String representation, not retain
+                // a synthetic interface type above String/null branches. Coerce each branch into that same slot.
+                if (TypeJson.Read(node["type"]) is TypeNode.Fqn { Name: CharSeq }
+                    or TypeNode.Nullable { Of: TypeNode.Fqn { Name: CharSeq } })
+                {
+                    var nullableTarget = TypeJson.Read(node["type"]) is TypeNode.Nullable;
+                    node["type"] = LowerSlot(node["type"]);
+                    foreach (var branch in new[] { "then", "else" })
+                        if (node[branch] is JsonNode value && CoerceOrNull(value, env, nullableTarget) is JsonNode converted)
+                            node[branch] = converted;
+                }
+                return node;
             case "return":
                 if (env.RetCharSeq is TypeNode ret && node["value"] is JsonNode rvv
                     && CoerceOrNull(rvv, env, ret is TypeNode.Nullable) is JsonNode rw)

@@ -11,6 +11,27 @@ static class KotlinSupertypesRecord
 {
     internal const string PreKey = "kotlinSupertypesPre";
 
+    // A physical identity substitution must preserve every source edge it changes, including nested arguments.
+    // Probe the same rewrite on a detached copy rather than restating its type-selection rules here.
+    public static void PreserveRewrittenEdges(JsonObject declaration, Action<JsonNode> rewrite)
+    {
+        bool Changes(JsonNode edge)
+        {
+            if (edge is null) return false;
+            var physical = edge.DeepClone();
+            rewrite(physical);
+            return !JsonNode.DeepEquals(edge, physical);
+        }
+        var source = new JsonObject();
+        if (Changes(declaration["base"])) source["base"] = declaration["base"].DeepClone();
+        if (declaration["interfaces"] is JsonArray interfaces)
+        {
+            var changed = new JsonArray(interfaces.Where(Changes).Select(edge => edge.DeepClone()).ToArray());
+            if (changed.Count > 0) source["interfaces"] = changed;
+        }
+        Merge(declaration, source);
+    }
+
     public static void Merge(JsonObject declaration, JsonObject additions)
     {
         if (additions.Count == 0) return;

@@ -23,6 +23,13 @@ const int IsInfixFunctionFlag = 1 << 9;
 // names. Star-projection existential association is metadata-authoritative and does not depend on this spelling.
 const string HoistedMarker = "$companion$";
 
+if (args.Length == 3 && args[0] == "--charsequence-supertypes")
+{
+    CharSequenceSupertypeInspector.Verify(args[1], args[2]);
+    Console.WriteLine("Kotlin supertype classifier identities in saved PE and KLIB: OK");
+    return;
+}
+
 if (args.Length == 3 && args[0] == "--type-declaration-visibility")
 {
     TypeVisibilityMetadataInspector.Verify(args[1], args[2]);

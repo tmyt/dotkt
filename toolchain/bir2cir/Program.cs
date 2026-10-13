@@ -150,6 +150,8 @@ sealed class Pipeline
         switch (node)
         {
             case JsonObject o:
+                if ((o["kind"] as JsonValue)?.GetValue<string>() is "class" or "interface" or "struct" or "enum")
+                    KotlinSupertypesRecord.PreserveRewrittenEdges(o, SubstituteCharSeqIdentity);
                 // Selecting the fixed CharSequence bridge consumes the source declaration binding as well as
                 // its owner. The generated bridge owns these slots; the original Kotlin MethodDef identity must
                 // not be looked up on that different physical declaration by later access/binding passes.
@@ -903,7 +905,8 @@ sealed class Pipeline
         // private forwarding bridge with the interface slot's exact return. The bridge carries a resolved
         // `clrInterfaceImpls` instruction; ilemit only consumes that instruction and does not infer covariance.
         var covariantBridgedSlots = CovariantInterfaceReturnBridge.ApplyAll(
-            staged.Select(s => s.Root).ToList(), refs, isValueFqn, genericRepresentations, overrideSourceParameters);
+            staged.Select(s => s.Root).ToList(), refs, isValueFqn, genericRepresentations, overrideSourceParameters,
+            _options.RefBuild ? null : StringCharSequenceBridge.ApplyMaterializedReturns);
 
         // Covariant bridges own their exact cold and Task slots. Prepare only the remaining suspend-result
         // obligations, so both passes cannot claim the same interface MethodImpl.
