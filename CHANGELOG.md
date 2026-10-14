@@ -5,6 +5,17 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+## 0.9.14 (2026-10-14)
+
+### Release highlights
+
+- All five packages and SDK defaults use `0.9.14`, with the embedded Kotlin compiler and
+  upstream-aligned common standard-library sources updated to **2.4.21**.
+- Preserve Kotlin declarations across DLL imports and C#-only incremental builds, including
+  typealiases, source visibility, constructed supertypes and function overload priority.
+- Rebuild dependent Kotlin-produced DLLs with this toolchain; older compiler-generated artifacts
+  remain unsupported. Atomicfu, kotlinx.coroutines and UI integration libraries are not bundled.
+
 ### Toolchain
 
 - Preserve source-declared Kotlin function overload priority across DLL imports, including materialized
