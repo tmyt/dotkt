@@ -7,6 +7,8 @@
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import OutRef.Calc
+import OutRef.Counter
+import OutRef.ICounter
 import Probe.Box
 import Probe.BoxHolder
 import kotlin.clr.byref
@@ -85,6 +87,11 @@ private fun byRefReturnBeforeTransfer(c: Calc, stop: Boolean): Int {
         live = 40
         2
     })
+}
+private fun <T : ICounter> byRefNativeReceiverBeforeTransfer(first: T, stop: Boolean): Int {
+    var receiver = first
+    val result = receiver.Apply(if (stop) return 9 else 2)
+    return result * 10 + receiver.Read()
 }
 
 class ByRefParameterTests {
@@ -229,6 +236,8 @@ class ByRefParameterTests {
 
     @TestAttribute
     fun outref() {
+        assertEquals(9, byRefNativeReceiverBeforeTransfer(Counter(7), true))
+        assertEquals(99, byRefNativeReceiverBeforeTransfer(Counter(7), false))
         // The earlier ordinary use of a ref-returning CLR call is a VALUE COPY, not a saved managed pointer.
         // Its value is captured before the later operand either returns or writes through a supported live ref.
         val ordered = Calc()

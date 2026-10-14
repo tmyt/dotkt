@@ -24,6 +24,11 @@ private class OperandReceiver {
 private fun operandReceiver(): OperandReceiver { operandTrace += "r"; return OperandReceiver() }
 private interface OperandAction { fun apply(value: Int): Int }
 private class OperandActionValue : OperandAction { override fun apply(value: Int): Int = value + 1 }
+private class OperandActionOther : OperandAction { override fun apply(value: Int): Int = value + 20 }
+private fun <T : OperandAction> operandMutableGenericReceiver(first: T, other: T, stop: Boolean): Int {
+    var receiver = first
+    return receiver.apply(if (stop) return 9 else { receiver = other; 2 })
+}
 private fun <T : OperandAction> operandGenericReceiver(receiver: T, stop: Boolean): Int {
     return receiver.apply(if (stop) return 9 else operandMark("b", 2))
 }
@@ -72,6 +77,45 @@ private fun operandLoop(): Int {
         sum += operandPair(operandMark("a", i), if (i == 1) continue else if (i == 3) break else operandMark("b", i))
     }
     return sum
+}
+private fun operandLoopCondition(stop: Boolean): Int {
+    var iterations = 0
+    while (operandPair(operandMark("a", 0), if (stop) return 9 else if (++iterations < 3) 1 else 0) == 1) {}
+    return iterations
+}
+private fun operandExceptionValue(error: Exception, value: Int): Int = value
+private fun operandCatch(stop: Boolean): Int {
+    try { throw Exception() }
+    catch (error: Exception) { operandExceptionValue(error, if (stop) return 9 else 1) }
+    return 0
+}
+private fun operandLoopLocal(stop: Boolean): Int {
+    for (value in intArrayOf(1)) operandPair(value, if (stop) return 9 else 2)
+    return 0
+}
+private fun operandSource(first: Int, second: Any): IntArray = intArrayOf(first)
+private fun operandLoopSource(stop: Boolean): Int {
+    for (value in operandSource(operandMark("a", 1), if (stop) return 9 else Unit)) {}
+    return 0
+}
+private fun operandListSource(first: Int, second: Any): List<Int> = listOf(first)
+private fun operandListLoop(stop: Boolean): Int {
+    for (value in operandListSource(operandMark("a", 1), if (stop) return 9 else Unit))
+        operandPair(value, if (stop) return 9 else 2)
+    return 0
+}
+private fun interface OperandValue { fun get(): Any? }
+private fun operandConsumeSam(value: OperandValue, second: Any) { check(value.get() == "ok") }
+private fun <T> operandGenericSam(value: T, stop: Boolean): Int {
+    operandConsumeSam(OperandValue { value }, if (stop) return 9 else Unit)
+    return 0
+}
+private open class OperandBase(first: Int, second: Int) { val sum = first + second }
+private class OperandDerived : OperandBase(operandMark("a", 1), try { operandMark("b", 2) } catch (error: Exception) { 3 })
+private class OperandDelegated {
+    val sum: Int
+    constructor(first: Int, second: Int) { sum = first + second }
+    constructor() : this(operandMark("a", 1), try { operandMark("b", 2) } catch (error: Exception) { 3 })
 }
 private fun operandRefCall(value: ClrRef<Int>, add: Int): Int { value.value += add; return value.value }
 private fun operandRef(stop: Boolean): Int {
@@ -137,6 +181,8 @@ class OperandControlTransferTests {
         operandTrace = ""; assertEquals(22, operandInlineBlock(false)); assertEquals("abdecc", operandTrace)
         operandTrace = ""; assertEquals(9, operandGenericReceiver(OperandActionValue(), true)); assertEquals("", operandTrace)
         operandTrace = ""; assertEquals(3, operandGenericReceiver(OperandActionValue(), false)); assertEquals("b", operandTrace)
+        assertEquals(9, operandMutableGenericReceiver<OperandAction>(OperandActionValue(), OperandActionOther(), true))
+        assertEquals(3, operandMutableGenericReceiver<OperandAction>(OperandActionValue(), OperandActionOther(), false))
     }
     @TestAttribute fun arithmeticAndArrayStoreOperandsKeepTheirOrder() {
         operandTrace = ""; assertEquals(9, operandArithmetic(true)); assertEquals("a", operandTrace)
@@ -147,6 +193,10 @@ class OperandControlTransferTests {
     @TestAttribute fun constructionAndConcatenationDoNotLeaveTheirAccumulatorsLive() {
         operandTrace = ""; assertEquals(9, operandConstruction(true)); assertEquals("a", operandTrace)
         operandTrace = ""; assertEquals(6, operandConstruction(false)); assertEquals("abd", operandTrace)
+        operandTrace = ""; assertEquals(3, OperandDerived().sum); assertEquals("ab", operandTrace)
+        operandTrace = ""; assertEquals(3, OperandDelegated().sum); assertEquals("ab", operandTrace)
+        assertEquals(9, operandGenericSam("ok", true))
+        assertEquals(0, operandGenericSam("ok", false))
         operandTrace = ""; assertEquals("early", operandConcat(true)); assertEquals("", operandTrace)
         operandTrace = ""; assertEquals("prefix2", operandConcat(false)); assertEquals("b", operandTrace)
     }
@@ -158,6 +208,14 @@ class OperandControlTransferTests {
         while (operandPair(operandMark("x", 0), if (++i < 3) 1 else 0) == 1) {}
         assertEquals(3, i)
         assertEquals("aabcaxcxcxc", operandTrace)
+        operandTrace = ""; assertEquals(9, operandLoopCondition(true)); assertEquals("a", operandTrace)
+        operandTrace = ""; assertEquals(3, operandLoopCondition(false)); assertEquals("acacac", operandTrace)
+        assertEquals(9, operandCatch(true)); assertEquals(0, operandCatch(false))
+        assertEquals(9, operandLoopLocal(true)); assertEquals(0, operandLoopLocal(false))
+        operandTrace = ""; assertEquals(9, operandLoopSource(true)); assertEquals("a", operandTrace)
+        operandTrace = ""; assertEquals(0, operandLoopSource(false)); assertEquals("a", operandTrace)
+        operandTrace = ""; assertEquals(9, operandListLoop(true)); assertEquals("a", operandTrace)
+        operandTrace = ""; assertEquals(0, operandListLoop(false)); assertEquals("ac", operandTrace)
     }
     @TestAttribute fun earlierLocalReadsAreSnapshotsBeforeLaterOperandWrites() {
         var value = 1

@@ -1529,7 +1529,7 @@ sealed class Pipeline
         {
             var physicalResultType = PhysicalValueCoercion.ResultTypeOracle(loweredRoots.Select(file => file.Root).ToList());
             foreach (var (lowered, _) in loweredRoots)
-                PhysicalOperandNormalization.Apply(lowered, isValueFqn, physicalResultType);
+                PhysicalOperandNormalization.Apply(lowered, isValueFqn, physicalResultType, refs);
         }
 
         // Every representation synthesis is now complete. Validate the exact MethodDef table that CIR will describe;

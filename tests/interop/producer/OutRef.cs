@@ -2,6 +2,13 @@
 // from Kotlin via byref / value-copy / live-ref. Own namespace (OutRef) — the case's original `namespace P`
 // collided with netattr/selfref once they share this single producer assembly.
 namespace OutRef {
+    public interface ICounter { int Apply(int value); int Read(); }
+    public struct Counter : ICounter {
+        private int total;
+        public Counter(int initial) => total = initial;
+        public int Apply(int value) => total += value;
+        public int Read() => total;
+    }
     public class Calc {
         public static string SelfOrder = "";
         public int SelfCalls;

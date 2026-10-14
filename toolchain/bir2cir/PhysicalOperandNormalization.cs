@@ -18,11 +18,16 @@ static class PhysicalOperandNormalization
     static int _tmp;
     static ValueTypeOracle _isValue = _ => false;
     static Func<JsonNode, BirScope, TypeNode> _typeOf;
+    static JsonNode _isValueTypeRef;
 
-    public static void Apply(JsonNode root, ValueTypeOracle isValue, Func<JsonNode, BirScope, TypeNode> typeOf)
+    public static void Apply(JsonNode root, ValueTypeOracle isValue, Func<JsonNode, BirScope, TypeNode> typeOf,
+        ReferenceMetadataIndex refs)
     {
         _isValue = isValue ?? (_ => false);
         _typeOf = typeOf;
+        var typeOwner = refs.ResolveRefType("System.Type");
+        _isValueTypeRef = ClrMemberResolution.MemberRefJson(typeOwner.GetProperty("IsValueType").GetMethod,
+            "method", typeOwner, null);
         Walk(root, BirScope.Empty);
     }
 
@@ -38,13 +43,13 @@ static class PhysicalOperandNormalization
     // Anything else (including a load that merely dereferences, so `arrayGet`/`field` too) is spilled to a temp by
     // SpillIfNeeded, which is what preserves left-to-right order.
     //
-    // Not a restatement of Q2 (droppable) or Q3 (resume-stable): this one asks about ORDER against a hoisted try,
+    // Not a restatement of Q2 (droppable) or Q3 (resume-stable): this one asks about ORDER across a stack boundary,
     // not about skipping an evaluation or about surviving a resume, and the three land differently per kind.
     static readonly HashSet<string> StackNeutralKinds = new(StringComparer.Ordinal) { "const", "this" };
 
     // Value-list keys whose elements ilemit evaluates while a construction receiver (and, for an array, its index)
     // is already on the CLR stack. These are deliberately keyed by NODE KIND: arrays such as `sig`, `argTypes`,
-    // `typeArgs`, and declaration `params` are type/signature vocabulary, not ordered value operands. A try in even
+    // `typeArgs`, and declaration `params` are type/signature vocabulary, not ordered value operands. A boundary in even
     // the FIRST listed element therefore starts non-empty and must move. `newMap.entries` is handled separately below
     // because each entry contributes two ordered operands (`key`, then `value`).
     static readonly Dictionary<string, string> ConstructionValueLists = new(StringComparer.Ordinal)
@@ -79,10 +84,10 @@ static class PhysicalOperandNormalization
 
     static string K(JsonNode n) => (n as JsonObject)?["k"] is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;
 
-    // Post-order whole-tree walk: normalize INNER statement lists first (so a hoisted try-valueBlock's
+    // Post-order whole-tree walk: normalize INNER statement lists first (so a materialized valueBlock's
     // stmts are already internally normalized), then this node's own statement lists. A declaration node
     // extends the scope with its params, and a statement sequence records each `var` for its SUBSEQUENT
-    // siblings only (lexical block scoping) — the environment GuessType types a spilled temp from.
+    // siblings only (lexical block scoping) — the physical result oracle reads this declared environment.
     static void Walk(JsonNode node, BirScope scope)
     {
         if (node is JsonObject obj)
@@ -100,8 +105,11 @@ static class PhysicalOperandNormalization
             var child = scope.Extend(obj);
             foreach (var kv in obj)
                 if (kv.Value != null)
-                    Walk(kv.Value, K(obj) == "valueBlock" && kv.Key == "result" ? BlockScope(obj, child) : child);
+                    Walk(kv.Value, kv.Key == "body" ? BodyScope(obj, child)
+                        : K(obj) == "valueBlock" && kv.Key == "result" ? BlockScope(obj, child) : child);
             NormalizeLists(obj, child);
+            NormalizeDelegation(obj, "baseArgs", child);
+            NormalizeDelegation(obj, "thisArgs", child);
             // Conditions remain at their evaluation site (including each loop iteration and guarded when arm).
             // Only their eager operands move, inside a valueBlock at that site, never into an enclosing statement.
             if (K(obj) is "if" or "while" or "dowhile" or "brIf" or "cond")
@@ -134,11 +142,50 @@ static class PhysicalOperandNormalization
     static void NormalizeLists(JsonObject obj, BirScope scope)
     {
         foreach (var key in StmtListKeys)
-            if (obj[key] is JsonArray a) obj[key] = HoistList(a, scope);
-        if (obj["catches"] is JsonArray catches)
-            foreach (var c in catches) if (c is JsonObject co && co["body"] is JsonArray cb) co["body"] = HoistList(cb, scope);
-        if (obj["branches"] is JsonArray branches)
-            foreach (var b in branches) if (b is JsonObject bo && bo["body"] is JsonArray bb) bo["body"] = HoistList(bb, scope);
+            if (obj[key] is JsonArray a) obj[key] = HoistList(a, key == "body" ? BodyScope(obj, scope) : scope);
+    }
+
+    // Catch and structured-loop locals are declarations too, scoped to their bodies rather than the input
+    // expression. Their exact CLR type is authored by the node; range/repeat counters have the CIR Int32 contract.
+    static BirScope BodyScope(JsonObject obj, BirScope outer)
+    {
+        var scope = outer;
+        if (obj["preStmts"] is JsonArray prefix)
+        {
+            scope = outer.Child();
+            foreach (var statement in prefix.OfType<JsonObject>()) scope.Declare(statement);
+        }
+        var type = TypeJson.Read(obj["excType"]) ?? (K(obj) switch
+        {
+            "forArray" or "forEachInline" => TypeJson.Read(obj["elem"]),
+            "forRange" or "repeatInline" => new TypeNode.Fqn("System.Int32"),
+            _ => null,
+        });
+        if (type != null && obj["var"] is JsonValue variable && variable.TryGetValue<string>(out var name))
+        {
+            if (ReferenceEquals(scope, outer)) scope = outer.Child();
+            scope.VarTypes[name] = type;
+        }
+        return scope;
+    }
+
+    // Delegation operands follow an implicit uninitialized this on the emitter's stack. Evaluate hazardous
+    // arguments in the existing preStmts lane BEFORE that prefix; never materialize uninitialized this itself.
+    static void NormalizeDelegation(JsonObject obj, string key, BirScope outer)
+    {
+        if (obj[key] is not JsonArray args) return;
+        var pre = new List<JsonNode>();
+        var signature = (obj["baseCtorRef"] as JsonObject)?["parameterTypes"] as JsonArray
+            ?? obj["delegationSig"] as JsonArray;
+        HoistOrdered(args.Count, i => args[i], (i, value) => args[i] = value, atEmpty: false, pre,
+            BodyScope(obj, outer),
+            isLocation: i => signature != null && i < signature.Count && TypeJson.Read(signature[i]) is TypeNode.ByRef,
+            locationType: i => signature != null && i < signature.Count && TypeJson.Read(signature[i]) is TypeNode.ByRef byref
+                ? byref.Of : null);
+        if (pre.Count == 0) return;
+        var prefix = obj["preStmts"] as JsonArray ?? new JsonArray();
+        foreach (var statement in pre) prefix.Add(statement);
+        obj["preStmts"] = prefix;
     }
 
     // Rebuild a statement list: for each statement, materialize hazardous ordered operands from its
@@ -179,6 +226,10 @@ static class PhysicalOperandNormalization
             case "throw": HoistChild(stmt, "value", pre, scope); break;
             case "exprStmt": HoistChild(stmt, "expr", pre, scope); break;
             case "setField": HoistNamedSlots(stmt, new[] { "recv", "value" }, atEmpty: true, pre, scope); break;
+            case "forArray": HoistChild(stmt, "array", pre, scope); break;
+            case "forRange": HoistChild(stmt, "range", pre, scope); break;
+            case "forEachInline": HoistChild(stmt, "src", pre, scope); break;
+            case "repeatInline": HoistChild(stmt, "count", pre, scope); break;
         }
     }
 
@@ -317,7 +368,8 @@ static class PhysicalOperandNormalization
             return signature != null && arg < signature.Count && TypeJson.Read(signature[arg]) is TypeNode.ByRef byref
                 ? byref.Of : null;
         }
-        HoistOrdered(n, Get, Set, atEmpty, pre, scope, isLocation: IsLocation, locationType: LocationType);
+        HoistOrdered(n, Get, Set, atEmpty, pre, scope, isLocation: IsLocation, locationType: LocationType,
+            isReceiver: i => hasRecv && i == 0);
     }
 
     static TypeNode ReceiverType(JsonObject o) =>
@@ -331,7 +383,8 @@ static class PhysicalOperandNormalization
         HoistOrdered(present.Length, i => o[present[i]], (i, v) => o[present[i]] = v,
             atEmpty: atEmpty && !HasImplicitPrefix(o), pre, scope,
             isLocation: i => preserveFirstLocation && i == 0,
-            locationType: i => preserveFirstLocation && i == 0 ? ReceiverType(o) : null);
+            locationType: i => preserveFirstLocation && i == 0 ? ReceiverType(o) : null,
+            isReceiver: i => preserveFirstLocation && i == 0);
     }
 
     // These value slots follow emitter-authored operands: the enum Type token, or a named managed pointer.
@@ -339,7 +392,7 @@ static class PhysicalOperandNormalization
         || K(o) == "byrefStore" && o["ptr"] == null;
 
     // Dictionary construction evaluates entry 0 key, entry 0 value, entry 1 key, entry 1 value, ... while the
-    // dictionary receiver is live on the stack. Flatten that exact stream so a try-valued key/value hoists and every
+    // dictionary receiver is live on the stack. Flatten that stream so a boundary-valued key/value moves and every
     // side-effecting value before a later hoist spills in Kotlin order. Treating an entry object as one operand would
     // lose the key-before-value boundary and would ask SpillType to type a schema container rather than an expression.
     static void HoistMapEntries(JsonArray entries, List<JsonNode> pre, BirScope scope)
@@ -375,7 +428,8 @@ static class PhysicalOperandNormalization
     // precedes a slot which hoists must itself be spilled (if side-effecting) so relative order holds.
     static void HoistOrdered(int n, Func<int, JsonNode> get, Action<int, JsonNode> set, bool atEmpty,
                              List<JsonNode> pre, BirScope scope, bool spillAllAfterHoist = false,
-                             Func<int, bool> isLocation = null, Func<int, TypeNode> locationType = null)
+                             Func<int, bool> isLocation = null, Func<int, TypeNode> locationType = null,
+                             Func<int, bool> isReceiver = null)
     {
         var lastHoist = -1;
         for (var i = 0; i < n; i++) if (WillHoist(get(i), i == 0 && atEmpty)) lastHoist = i;
@@ -386,12 +440,12 @@ static class PhysicalOperandNormalization
             var addressedType = location ? locationType?.Invoke(i) : null;
             set(i, null);
             if (location && lastHoist >= i)
-                node = MaterializeAddress(node, addressedType, pre, scope);
+                node = MaterializeAddress(node, addressedType, pre, scope, isReceiver?.Invoke(i) == true);
             var resolved = HoistExpr(node, pre, i == 0 && atEmpty, scope);
             // Ordinary operators/calls only need the prefix: evaluation resumes in their slots after the hoisted
             // block. A construction is different — its emitter consumes each value immediately through stelem/Add/
             // set_Item, while the Kotlin factory/vararg call evaluated EVERY source argument before that body began.
-            // Once any protected region moves, materialize the whole non-neutral stream before construction so a
+            // Once any stack boundary moves, materialize the whole non-neutral stream before construction so a
             // suffix expression cannot slide behind an earlier element's user-observable hash/equality operation.
             if (!location && lastHoist >= 0 && (spillAllAfterHoist || i < lastHoist))
                 resolved = SpillIfNeeded(resolved, pre, scope);
@@ -403,19 +457,51 @@ static class PhysicalOperandNormalization
     // expression is not enough when those operands are mutable locals: taking the address later would select a
     // different element. An ordinary rvalue first gets the same value temporary EmitAddr would otherwise make;
     // lvalues and ref-returning expressions go directly into a typed managed-reference local.
-    static JsonNode MaterializeAddress(JsonNode location, TypeNode declaredType, List<JsonNode> pre, BirScope scope)
+    static JsonNode MaterializeAddress(JsonNode location, TypeNode declaredType, List<JsonNode> pre, BirScope scope,
+        bool receiver)
     {
         var resolved = HoistExpr(location, pre, atEmpty: true, scope);
         var type = _typeOf(resolved, scope) ?? declaredType
             ?? throw new InvalidOperationException("bir2cir: an ordered address operand has no declared element type");
-        if (!CallEvalLowering.IsLvalueFormer(resolved) && type is not TypeNode.ByRef)
+        if (!CallEvalLowering.IsLvalueFormer(resolved) && type is not TypeNode.ByRef
+            || receiver && type is TypeNode.Fqn concrete && !_isValue(concrete))
             resolved = SpillIfNeeded(resolved, pre, scope);
         var byref = type is TypeNode.ByRef ? type : new TypeNode.ByRef(type);
+        JsonNode address = new JsonObject { ["k"] = "byrefOf", ["inner"] = resolved.DeepClone() };
+        if (receiver && type is TypeNode.Tv)
+        {
+            // constrained. needs an address for both reference and value instantiations. A native value receiver
+            // must keep its original storage, but a reference receiver must snapshot its VALUE before later writes.
+            // Type.IsValueType is exact, including Nullable<T>; boxed default null would conflate it with a class.
+            // Keep this physical decision in CIR using an authored memberRef and existing managed-reference slots.
+            var snapshot = "dotkt$receiver" + System.Threading.Interlocked.Increment(ref _tmp);
+            pre.Add(new JsonObject { ["k"] = "var", ["name"] = snapshot, ["type"] = TypeJson.Write(type) });
+            address = new JsonObject
+            {
+                ["k"] = "cond", ["type"] = TypeJson.Write(byref),
+                ["cond"] = new JsonObject
+                {
+                    ["k"] = "clrInstance", ["type"] = TypeJson.Fqn("System.Type"), ["method"] = "get_IsValueType",
+                    ["recv"] = new JsonObject { ["k"] = "classRef", ["type"] = TypeJson.Write(type) },
+                    ["args"] = new JsonArray(), ["argTypes"] = new JsonArray(),
+                    ["ret"] = TypeJson.Fqn("System.Boolean"), ["dispatch"] = "callvirt",
+                    ["memberRef"] = _isValueTypeRef.DeepClone(),
+                },
+                ["then"] = address,
+                ["else"] = new JsonObject
+                {
+                    ["k"] = "valueBlock",
+                    ["stmts"] = new JsonArray(new JsonObject { ["k"] = "setLocal", ["name"] = snapshot,
+                        ["value"] = resolved.DeepClone() }),
+                    ["result"] = new JsonObject { ["k"] = "byrefOf", ["inner"] = new JsonObject { ["k"] = "local", ["name"] = snapshot } },
+                },
+            };
+        }
         var name = "dotkt$address" + System.Threading.Interlocked.Increment(ref _tmp);
         pre.Add(new JsonObject
         {
             ["k"] = "var", ["name"] = name, ["type"] = TypeJson.Write(byref),
-            ["init"] = new JsonObject { ["k"] = "byrefOf", ["inner"] = resolved.DeepClone() },
+            ["init"] = address,
         });
         // The operand remains a LOCATION of the original element type. In a value slot this loads that value;
         // in an address slot ilemit's existing byrefLoad address form reads the saved pointer. Later receiver
@@ -437,8 +523,7 @@ static class PhysicalOperandNormalization
         return new JsonObject { ["k"] = "local", ["name"] = tmp, ["sty"] = type.DeepClone() };
     }
 
-    // Would HoistExpr append any preceding statement for this subtree? (i.e. does it contain a
-    // try-valueBlock that will be hoisted from a non-empty-stack position.)
+    // Would HoistExpr append any preceding statement for this subtree at its current stack position?
     static bool WillHoist(JsonNode node, bool atEmpty)
     {
         if (node is not JsonObject o) return false;

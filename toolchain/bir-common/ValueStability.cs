@@ -39,7 +39,7 @@
 // WORKED EXAMPLE, because these look like disagreements and are not. `arrayGet` and `arrayLen`:
 //   * Q2: NEITHER is droppable — an element load and a length load both dereference, so both can throw
 //     (NullReferenceException, IndexOutOfRangeException). Throwing is observable.
-//   * Q4: NEITHER is stack-neutral — both can throw, so their order relative to a hoisted try's side effects
+//   * Q4: NEITHER is stack-neutral — both can throw, so their order relative to a moved operand's side effects
 //     is observable and they are spilled rather than left in place.
 //   * Q5: `arrayGet` IS an lvalue former (it names an element slot, and `byref(a[i])` takes that slot's
 //     address); `arrayLen` is not — it produces a value, and no storage holds it.

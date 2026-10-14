@@ -376,6 +376,10 @@ static class PhysicalValueCoercion
             if (node is JsonObject call && Str(call["k"]) is "callStatic" or "callInstance" or "constrainedCall"
                 && TypeJson.Read(call["calleeRet"]) is TypeNode declared)
                 return SignatureValueTypes.Of(Close(declared, CallOwner(call)?.Args, MethodArgs(call)));
+            if (node is JsonObject construction && Str(construction["k"]) == "newSam"
+                && TypeJson.Read(construction["samType"]) is TypeNode.Fqn implementation)
+                return construction["typeArgs"] is JsonArray args && args.Count > 0
+                    ? new TypeNode.Fqn(implementation.Name, args.Select(TypeJson.Read).ToArray()) : implementation;
             var result = ConstructedReferenceType(node, fields, scope.VarTypes)
                 ?? ExprType(node, new Scope(locals: scope.VarTypes), index);
             // A plain clrStatic/clrInstance expression copies a ref return; byrefOf is the distinct physical
