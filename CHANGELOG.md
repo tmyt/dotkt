@@ -5,6 +5,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Normalize physical ordered operands before control transfers, so a return in a later argument,
+  receiver-dependent call, operator or construction leaves no earlier values on the CLR stack (#710).
+  Preserve single evaluation, left-to-right order and conditional/loop evaluation sites in bir2cir.
+
 ## 0.9.14 (2026-10-14)
 
 ### Release highlights

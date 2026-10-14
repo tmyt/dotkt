@@ -17,7 +17,8 @@
 //                       CallEvalLowering of a plan binding with no reader, and by KClassMemberBinding of the
 //                       receiver its `value::class` const-fold folds away.
 //   Q4  STACK-NEUTRAL — may it stay in its operand slot when a LATER sibling hoists out of the expression?
-//                       TryValueOperandHoist (`StackNeutralKinds`/`IsStackNeutral`).
+//                       PhysicalOperandNormalization (`StackNeutralKinds`/`IsStackNeutral`). Plain local reads
+//                       must be snapshotted: a later operand can write the local before its value is consumed.
 //   Q5  LVALUE FORMER — does it DESIGNATE storage without evaluating anything itself?
 //                       CallEvalLowering (`IsLvalueFormer`).
 //
@@ -38,7 +39,7 @@
 // WORKED EXAMPLE, because these look like disagreements and are not. `arrayGet` and `arrayLen`:
 //   * Q2: NEITHER is droppable — an element load and a length load both dereference, so both can throw
 //     (NullReferenceException, IndexOutOfRangeException). Throwing is observable.
-//   * Q4: NEITHER is stack-neutral — both can throw, so their order relative to a hoisted try's side effects
+//   * Q4: NEITHER is stack-neutral — both can throw, so their order relative to a moved operand's side effects
 //     is observable and they are spilled rather than left in place.
 //   * Q5: `arrayGet` IS an lvalue former (it names an element slot, and `byref(a[i])` takes that slot's
 //     address); `arrayLen` is not — it produces a value, and no storage holds it.

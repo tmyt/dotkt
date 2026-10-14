@@ -7,6 +7,8 @@
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import OutRef.Calc
+import OutRef.Counter
+import OutRef.ICounter
 import Probe.Box
 import Probe.BoxHolder
 import kotlin.clr.byref
@@ -77,6 +79,20 @@ object BrHold { var a = 1; var b = 2 }
 // The location's impure operand is an INLINE-SPLICED block, which carries no type stamp of its own — its type is its
 // result's. An untyped pin would abort the build on source the frontend accepted.
 private fun byRefOrderCallSplicedOperand(): Int = byRefOrderTake(byref(run { byRefOrderMk() }.n))
+
+private fun byRefOrderedValues(first: Int, second: Int): Int = first + second
+private fun byRefReturnBeforeTransfer(c: Calc, stop: Boolean): Int {
+    return byRefOrderedValues(c.Slot(0), if (stop) return 9 else {
+        var live by byref(c.Slot(0))
+        live = 40
+        2
+    })
+}
+private fun <T : ICounter> byRefNativeReceiverBeforeTransfer(first: T, stop: Boolean): Int {
+    var receiver = first
+    val result = receiver.Apply(if (stop) return 9 else 2)
+    return result * 10 + receiver.Read()
+}
 
 class ByRefParameterTests {
     @TestAttribute
@@ -220,6 +236,16 @@ class ByRefParameterTests {
 
     @TestAttribute
     fun outref() {
+        assertEquals(9, byRefNativeReceiverBeforeTransfer(Counter(7), true))
+        assertEquals(99, byRefNativeReceiverBeforeTransfer(Counter(7), false))
+        // The earlier ordinary use of a ref-returning CLR call is a VALUE COPY, not a saved managed pointer.
+        // Its value is captured before the later operand either returns or writes through a supported live ref.
+        val ordered = Calc()
+        assertEquals(9, byRefReturnBeforeTransfer(ordered, true))
+        assertEquals(10, ordered.Slot(0))
+        assertEquals(12, byRefReturnBeforeTransfer(ordered, false))
+        assertEquals(40, ordered.Slot(0))
+
         val c = Calc()
         var q = -1
         val ok = c.TryDivide(10, 2, byref(q))               // out -> writes q=5

@@ -17,11 +17,8 @@
             "k": "binOp",
             "op": "+",
             "lhs": {
-              "k": "callStatic",
-              "owner": { "t": "fqn", "name": "RejectUntypedHoistKt" },
-              "method": "sideEffect",
-              "sig": [],
-              "args": []
+              "k": "local",
+              "name": "undeclaredOperand"
             },
             "rhs": {
               "k": "valueBlock",

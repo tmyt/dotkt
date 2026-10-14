@@ -889,8 +889,17 @@ which is every construction whose mapped-away argument is a literal, so the `Has
 
 Because this producer runs ~240 passes after `CallEvalLowering.Apply`, the block it mints is NOT folded by
 `MergeNestedResult` and may nest inside another block's `result`. Consumers recurse, so nesting is tolerated rather
-than normalized here; what is NOT tolerated is a `try` inside such a block reaching an operand slot, which
-`TryValueOperandHoist` hoists (it searches a block's inline statements for one, not just its top level).
+than normalized here. At final CIR admission, after suspend lowering and physical value coercions,
+`PhysicalOperandNormalization` gives returns, loop transfers and protected-region entries
+inside ordered operands an empty physical evaluation stack. It materializes each hazardous operand as a whole,
+snapshots preceding values in order, and keeps conditional/loop prefixes at their guarded or repeated evaluation
+site. Managed-reference argument locations and native value receivers retain storage identity rather than becoming
+copied value temporaries. Generic receivers use the exact CLR `Type.IsValueType` fact: value instantiations retain
+their address, while reference instantiations snapshot the receiver value before later operands can reassign it.
+Catch/structured-loop declarations scope spill typing to their bodies, and constructor delegation operands use
+`preStmts` before the implicit `this` stack prefix. Nested declarations own a separate evaluation stack.
+Spill slots use the current authored CLR call/constructor contracts and lexical declarations, not earlier Kotlin
+result stamps. Compiler-created address temporaries therefore never enter semantic suspension hoisting.
 
 **Phase.** `callEval`, `bindRef` and `delegationBindings` are BIR-only; `preStmts` is CIR-only. `CallEvalLowering`
 asserts the split at its own exit, and `scripts/verify-schema.py` enforces it structurally on both documents. Stage 0's

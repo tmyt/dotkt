@@ -1,0 +1,6 @@
+# A missing source sty does not erase the exact current declaration's physical result contract.
+# Both operands are materialized before the return's binOp; the call is stored in a typed Int32 local.
++"body":[{"k":"var","name":"dotkt$hoist
++"type":{"t":"fqn","name":"System.Int32"},"init":{"k":"callStatic"
++"name":"sideEffect","static":true,"params":[],"ret":{"t":"fqn","name":"System.Int32"}
++"result":{"k":"local","name":"dotkt_tryval0"}
