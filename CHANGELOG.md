@@ -5,6 +5,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Fix verifier-invalid loop break/continue across protected regions, including nested/labeled loops and finally
+  cleanup that overrides a pending transfer or exception. Physical branch ownership is resolved in bir2cir (#707).
+
 - Normalize physical ordered operands before control transfers, so a return in a later argument,
   receiver-dependent call, operator or construction leaves no earlier values on the CLR stack (#710).
   Preserve single evaluation, left-to-right order and conditional/loop evaluation sites in bir2cir.

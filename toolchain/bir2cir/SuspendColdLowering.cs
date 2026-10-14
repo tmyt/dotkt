@@ -1612,6 +1612,14 @@ static partial class SuspendColdLowering
             {
                 _label = MaxLabelId(body) + 1000;
                 body = FlattenSuspendingLoops(body);
+                // Establish cleanup replacement BEFORE an enclosing suspending finally records its completion.
+                // Recording at an original return/break inside an escaping inner finally would leave stale outer
+                // flags when that inner cleanup cancels the transfer. Ordinary cleanup continuations commit only
+                // after the crossed inner cleanups have completed. Keep retained source bodies untouched.
+                body = (JsonArray)body.DeepClone();
+                EscapingFinallyLowering.Apply(new[] { body }, Tw(IsUnitTn(_resultType) ? AnyTn : _resultType), _refs,
+                    physicalMembers: false);
+                _label = Math.Max(_label, MaxLabelId(body) + 1000);
                 body = HoistSuspendingCatches(body);
             }
             // BUG 1: does the body contain a try whose finally spans a suspension? If so, the finally must be

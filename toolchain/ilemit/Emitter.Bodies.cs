@@ -237,20 +237,6 @@ sealed partial class Emitter
         return false;
     }
 
-    // The CFG-`label` ids physically declared within a subtree — a `try`'s region label-set, used to decide whether
-    // a `goto` leaves the protected region (→ must be `leave`, not `br`). Mirrors PrescanCfgLabels' structural walk.
-    static void CollectLabelIds(JsonElement node, HashSet<int> into)
-    {
-        if (node.ValueKind == JsonValueKind.Object)
-        {
-            if (node.TryGetProperty("k", out var k) && k.GetString() == "label")
-                into.Add(node.GetProperty("id").GetInt32());
-            foreach (var p in node.EnumerateObject()) CollectLabelIds(p.Value, into);
-        }
-        else if (node.ValueKind == JsonValueKind.Array)
-            foreach (var x in node.EnumerateArray()) CollectLabelIds(x, into);
-    }
-
     // Does this statement list ALWAYS return/throw (no fall-through)? Used to decide if a `try`'s fall-through path
     // is reachable (and thus whether to emit a `br` over the trailing ret).
     static bool StmtsAlwaysReturn(JsonElement arr)
@@ -283,16 +269,15 @@ sealed partial class Emitter
     }
 
 
-    // The loop a break/continue targets: the innermost, or the one whose Kotlin label matches.
+    // CIR already selected the exact physical loop. Resolve only its local emission anchors.
     (Label cont, Label brk) TargetLoop(JsonElement s)
     {
-        string label = s.TryGetProperty("label", out var l) && l.ValueKind == JsonValueKind.String ? l.GetString() : null;
-        for (int i = _loops.Count - 1; i >= 0; i--)
-            if (label == null || _loops[i].label == label) return (_loops[i].cont, _loops[i].brk);
-        throw new NotSupportedException("break/continue with no matching loop");
+        var id = LoopId(s);
+        var loop = _loops.Single(loop => loop.id == id);
+        return (loop.cont, loop.brk);
     }
 
-    static string LoopLabel(JsonElement s) => s.TryGetProperty("label", out var l) && l.ValueKind == JsonValueKind.String ? l.GetString() : null;
+    static int LoopId(JsonElement s) => s.GetProperty("loopId").GetInt32();
 
     // Emit `value` COERCED to the store target's type — the ONE shared RHS coercion for every store site
     // (var init, setLocal into a local/arg, setField/setFieldExpr via setter or field, staticFieldSet):

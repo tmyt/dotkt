@@ -326,10 +326,9 @@ This is the single most surprising deviation, so it gets the most detail.
   `return@repeat` acts as `continue`. (A non-literal action — e.g. `repeat(n, ::fn)` — still falls through to the
   delegate loop `RepeatInlineLowering`, which does not honor a non-local return; but Kotlin only permits a non-literal
   argument for a `noinline` param, and `repeat`'s action is not `noinline`, so this shape is a callable reference only.)
-  - **Edge (loud, not silent):** a `return@repeat` inside a `try`/`finally` in the repeat body branches out of the
-    protected region (`goto`, not `leave`) → `ilverify`/JIT rejects it. This is the general inline-splice hazard (it also
-    affects a mid-body `return` in a user same-module inline fn), not specific to `repeat`; use a `for` loop if you need a
-    labeled early-exit out of a `try` inside the loop.
+  - Protected-region exits, including `return@repeat`, are resolved by bir2cir after splicing. An exit runs
+    exactly the finally cleanups it crosses; a loop wholly inside a try/catch/finally stays in that region.
+    Cleanup may replace the pending transfer or exception with its own loop exit, including across a suspension.
 
 ## 4. `suspend fun` = an async `Task<T>` function; hot, not cold
 

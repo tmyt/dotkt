@@ -502,7 +502,7 @@ sealed partial class Emitter
                 var en = _il.DeclareLocal(ReturnTypeOf(enumerableGet)); _il.Emit(OpCodes.Stloc, en);
                 var lv = _il.DeclareLocal(elem); _locals[e.GetProperty("var").GetString()] = lv;
                 var start = _il.DefineLabel(); var end = _il.DefineLabel();
-                _loops.Add((LoopLabel(e), start, end));
+                _loops.Add((LoopId(e), start, end));
                 _il.MarkLabel(start);
                 _il.Emit(OpCodes.Ldloc, en);
                 EmitMethod(_il, OpCodes.Callvirt, RequiredRef<MethodInfo>(e, "moveNextRef", "forEachInline"));
@@ -639,7 +639,7 @@ sealed partial class Emitter
                 _il.Emit(OpCodes.Ldc_I4_0); _il.Emit(OpCodes.Stloc, lv);
                 var cnt = _il.DeclareLocal(Bcl("System.Int32")); EmitExpr(e.GetProperty("count")); _il.Emit(OpCodes.Stloc, cnt);
                 var start = _il.DefineLabel(); var end = _il.DefineLabel();
-                _loops.Add((LoopLabel(e), start, end));
+                _loops.Add((LoopId(e), start, end));
                 _il.MarkLabel(start);
                 _il.Emit(OpCodes.Ldloc, lv); _il.Emit(OpCodes.Ldloc, cnt); _il.Emit(OpCodes.Bge, end);
                 foreach (var b in e.GetProperty("body").EnumerateArray()) EmitStmt(b);

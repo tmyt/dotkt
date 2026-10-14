@@ -1532,6 +1532,8 @@ sealed class Pipeline
                 PhysicalOperandNormalization.Apply(lowered, isValueFqn, physicalResultType, refs);
         }
 
+        foreach (var (lowered, _) in loweredRoots) ProtectedRegionTransfers.Apply(lowered, refs);
+
         // Every representation synthesis is now complete. Validate the exact MethodDef table that CIR will describe;
         // do not defer a generated/user collision to ilemit and do not invent a late name after calls are bound.
         DeclarationIdentityBinding.ValidateFinalPhysicalNames(loweredRoots.Select(file => file.Root));
