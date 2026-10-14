@@ -579,7 +579,7 @@ static partial class SuspendColdLowering
                 case JsonObject o:
                     var k = Str(o["k"]);
                     if (k != null && NestedScopeKinds.Contains(k)) return false;
-                    if (k == "return") return true;
+                    if (k is "return" or "returnExpr") return true;
                     foreach (var kv in o) if (kv.Value != null && HasFunctionReturn(kv.Value)) return true;
                     return false;
                 case JsonArray a:
@@ -601,7 +601,9 @@ static partial class SuspendColdLowering
                     result.Add(new JsonObject
                     {
                         ["k"] = "setLocal", ["name"] = returnValueName,
-                        ["value"] = o["value"]?.DeepClone() ?? DefaultOf(returnValueType),
+                        ["value"] = o["value"] != null
+                            ? RouteReturnsNode(o["value"], returningName, returnValueName, returnValueType, routeLabel)
+                            : DefaultOf(returnValueType),
                     });
                     result.Add(new JsonObject
                     {
@@ -622,6 +624,11 @@ static partial class SuspendColdLowering
             {
                 var k = Str(o["k"]);
                 if (k != null && NestedScopeKinds.Contains(k)) return o.DeepClone();
+                if (k == "returnExpr")
+                    return new JsonObject { ["k"] = "valueBlock",
+                        ["stmts"] = RouteFunctionReturns(new JsonArray(new JsonObject { ["k"] = "return",
+                            ["value"] = o["value"]?.DeepClone() }), returningName, returnValueName, returnValueType, routeLabel),
+                        ["result"] = new JsonObject { ["k"] = "throwExpr", ["value"] = NullConst(AnyTn) } };
                 var copy = new JsonObject();
                 foreach (var kv in o)
                 {

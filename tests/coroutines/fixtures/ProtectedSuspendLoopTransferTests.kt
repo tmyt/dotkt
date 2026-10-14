@@ -83,6 +83,48 @@ suspend fun protectedSuspendOverrideTrace(): String {
 
 class ProtectedSuspendLoopTransferTests {
     @TestAttribute
+    fun innerCleanupCancelsCompletionBeforeOuterSuspendingCleanup() {
+        suspend fun replaceReturn(): Int {
+            try {
+                for (index in 0..1) {
+                    try { if (index == 0) return 1 }
+                    finally { if (index == 0) continue }
+                }
+            } finally { Task.Delay(1).await() }
+            return 2
+        }
+        suspend fun replaceBreak(): String {
+            var trace = ""
+            outer@ for (outer in 0..1) {
+                try {
+                    for (inner in 0..1) {
+                        try { if (inner == 0) break@outer }
+                        finally { if (inner == 0) continue }
+                        trace += "b"
+                    }
+                } finally { Task.Delay(1).await(); trace += "f" }
+                trace += "a"
+            }
+            return trace
+        }
+        assertEquals(2, blockOn { replaceReturn() })
+        assertEquals("bfabfa", blockOn { replaceBreak() })
+    }
+
+    @TestAttribute
+    fun expressionReturnIsCanceledBySuspendingLoopCleanup() {
+        suspend fun drive(): Int {
+            for (index in 0..1) {
+                try {
+                    val ignored = if (index == 0) return 17 else 0
+                } finally { Task.Delay(1).await(); break }
+            }
+            return 19
+        }
+        assertEquals(19, blockOn { drive() })
+    }
+
+    @TestAttribute
     fun continueAndBreakCleanupReallySuspendBeforeResuming() {
         for (continueFirst in listOf(false, true)) {
             val gate = TaskCompletionSource1<Int>()

@@ -24,7 +24,8 @@ static class ProtectedRegionTransfers
             if (TypeJson.IsType(obj)) return;
             if (obj["params"] is JsonArray && obj["body"] is JsonArray body)
             {
-                var parts = new[] { obj["preStmts"] as JsonArray, body }.Where(a => a != null).ToArray();
+                var parts = new[] { obj["preStmts"] as JsonArray, obj["baseArgs"] as JsonArray,
+                    obj["thisArgs"] as JsonArray, body }.Where(a => a != null).ToArray();
                 var returnType = constructors ? TypeJson.Fqn("void") : obj["ret"]
                     ?? throw new InvalidOperationException("bir2cir: executable method lacks its declared physical return type");
                 Process(parts, returnType, refs);
@@ -52,7 +53,7 @@ static class ProtectedRegionTransfers
         EscapingFinallyLowering.Apply(parts, returnType, refs);
         foreach (var edge in Edges(parts))
         {
-            if (K(edge.Node) == "return") continue;
+            if (K(edge.Node) is "return" or "returnExpr") continue;
             if (!IsPrefix(edge.Target, edge.Source))
                 throw new InvalidOperationException("bir2cir: control transfer enters a different protected region");
             edge.Node["leave"] = edge.Source.Length != edge.Target.Length;
@@ -110,7 +111,7 @@ static class ProtectedRegionTransfers
                 target = loop.Region;
                 loopId = loop.Id;
             }
-            else if (kind == "return") target = Array.Empty<JsonArray>();
+            else if (kind is "return" or "returnExpr") target = Array.Empty<JsonArray>();
             if (target != null) edges.Add(new(obj, region, target, loopId));
         }
         if (kind == "try")

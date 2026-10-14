@@ -2,9 +2,64 @@ import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
 
+private open class ProtectedLoopBase(val total: Int)
+private class ProtectedLoopDerived : ProtectedLoopBase(run {
+    var total = 0
+    for (index in 0..3) total += index
+    total
+})
+private class ProtectedLoopDelegating(val total: Int) {
+    constructor() : this(run {
+        var total = 0
+        for (index in 0..3) {
+            try {
+                if (index == 0) continue
+                if (index == 2) break
+                total += index
+            } finally { total += 10 }
+        }
+        total
+    })
+}
+
 // Physical branch ownership: a local loop jump must stay in its handler; an outward one must unwind precisely
 // the regions it exits. Cleanup itself may replace a pending loop jump, return, or exception.
 class ProtectedLoopTransferTests {
+    @TestAttribute
+    fun constructorArgumentLoopsHaveTheirOwnPhysicalTargets() {
+        assertEquals(6, ProtectedLoopDerived().total)
+        assertEquals(31, ProtectedLoopDelegating().total)
+    }
+
+    @TestAttribute
+    fun expressionReturnCanReplaceAndBeReplacedByLoopCompletion() {
+        fun replaceBreak(): Int {
+            for (index in 0..1) {
+                try { break } finally {
+                    val ignored = if (index == 0) return 17 else 0
+                }
+            }
+            return 19
+        }
+        var trace = ""
+        fun replaceReturn(stop: Boolean): Int {
+            for (index in 0..1) {
+                try {
+                    val ignored = if (index == 0) return 7 else 0
+                } finally {
+                    trace += "f"
+                    if (stop) break
+                    if (index == 0) continue
+                }
+            }
+            return 9
+        }
+        assertEquals(17, replaceBreak())
+        assertEquals(9, replaceReturn(false))
+        assertEquals(9, replaceReturn(true))
+        assertEquals("fff", trace)
+    }
+
     @TestAttribute
     fun originalWitness() {
         var trace = ""

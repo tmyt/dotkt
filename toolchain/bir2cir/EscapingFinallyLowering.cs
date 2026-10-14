@@ -12,7 +12,7 @@ static class EscapingFinallyLowering
 {
     static int _tmp;
 
-    public static void Apply(JsonArray[] parts, JsonNode returnType, ReferenceMetadataIndex refs)
+    public static void Apply(JsonArray[] parts, JsonNode returnType, ReferenceMetadataIndex refs, bool physicalMembers = true)
     {
         // Recompute physical ownership after each innermost rewrite: an outer handler may contain the newly
         // authored continuation of an inner cleanup. The finite list of original try nodes bounds this work.
@@ -24,7 +24,7 @@ static class EscapingFinallyLowering
             if (statement["finally"] is not JsonArray finallyBody) continue;
             var edges = Edges(parts);
             if (!edges.Any(edge => edge.Source.Contains(finallyBody) && !edge.Target.Contains(finallyBody))) continue;
-            Rewrite(statement, finallyBody, edges, returnType, refs, nextLabel++);
+            Rewrite(statement, finallyBody, edges, returnType, refs, nextLabel++, physicalMembers);
         }
     }
 
@@ -54,7 +54,7 @@ static class EscapingFinallyLowering
     }
 
     static void Rewrite(JsonObject statement, JsonArray finallyBody, List<Edge> edges, JsonNode returnType,
-        ReferenceMetadataIndex refs, int cleanupLabel)
+        ReferenceMetadataIndex refs, int cleanupLabel, bool physicalMembers)
     {
         var id = System.Threading.Interlocked.Increment(ref _tmp);
         var state = "cir$completion" + id;
@@ -71,6 +71,8 @@ static class EscapingFinallyLowering
         foreach (var edge in edges.Where(edge => edge.Source.Any(owned.Contains) && !edge.Target.Any(owned.Contains)).AsEnumerable().Reverse())
         {
             var original = (JsonObject)edge.Node.DeepClone();
+            var expressionReturn = K(original) == "returnExpr";
+            if (expressionReturn) original["k"] = "return";
             var pre = new JsonArray();
             if (K(original) == "return" && original["value"] is JsonNode value)
             {
@@ -91,10 +93,13 @@ static class EscapingFinallyLowering
             {
                 var condition = original["cond"].DeepClone();
                 if (!original["on"].GetValue<bool>())
-                    condition = new JsonObject { ["k"] = "unOp", ["op"] = "!", ["e"] = condition };
+                    condition = new JsonObject { ["k"] = "unaryOp", ["op"] = "!", ["e"] = condition };
                 Replace(edge.Node, If(condition, pre));
                 original.Remove("cond"); original.Remove("on"); original["k"] = "goto";
             }
+            else if (expressionReturn) Replace(edge.Node, new JsonObject { ["k"] = "valueBlock", ["stmts"] = pre,
+                ["result"] = new JsonObject { ["k"] = "throwExpr", ["value"] = new JsonObject { ["k"] = "const",
+                    ["type"] = TypeJson.Fqn("System.Exception"), ["value"] = null } } });
             else Replace(edge.Node, new JsonObject { ["k"] = "block", ["body"] = pre });
             continuations.Add(If(new JsonObject { ["k"] = "binOp", ["op"] = "==", ["lhs"] = Local(state),
                 ["rhs"] = Number(continuation) }, new JsonArray(original)));
@@ -110,37 +115,49 @@ static class EscapingFinallyLowering
         if (hasResult) body.Add(new JsonObject { ["k"] = "var", ["name"] = result, ["type"] = returnType.DeepClone() });
         body.Add(new JsonObject { ["k"] = "try", ["body"] = originalBody,
             ["catches"] = new JsonArray(new JsonObject { ["excType"] = TypeJson.Fqn("System.Exception"), ["var"] = caught,
-                ["body"] = new JsonArray(Set(exception, Capture(caught, refs))) }) });
+                ["body"] = new JsonArray(Set(exception, Capture(caught, refs, physicalMembers))) }) });
         body.Add(new JsonObject { ["k"] = "label", ["id"] = cleanupLabel });
         foreach (var cleanup in finallyBody) body.Add(cleanup.DeepClone());
         body.Add(If(new JsonObject { ["k"] = "binOp", ["op"] = "!=", ["lhs"] = Local(exception),
             ["rhs"] = new JsonObject { ["k"] = "const", ["type"] = exceptionType.DeepClone(), ["value"] = null } },
-            new JsonArray(Rethrow(exception, refs))));
+            new JsonArray(Rethrow(exception, refs, physicalMembers))));
         foreach (var continuation in continuations) body.Add(continuation.DeepClone());
         Replace(statement, new JsonObject { ["k"] = "block", ["body"] = body });
     }
 
-    static JsonObject Capture(string exception, ReferenceMetadataIndex refs)
+    static JsonObject Capture(string exception, ReferenceMetadataIndex refs, bool physicalMembers)
     {
+        // The pre-suspend use still precedes ordinary CLR member resolution. Author its explicit CLR call
+        // vocabulary there; the existing member-resolution phase binds it together with the surrounding body.
+        var call = new JsonObject { ["k"] = "clrStatic",
+            ["type"] = TypeJson.Fqn("System.Runtime.ExceptionServices.ExceptionDispatchInfo"),
+            ["method"] = "Capture", ["args"] = new JsonArray(Local(exception)),
+            ["argTypes"] = new JsonArray(TypeJson.Fqn("System.Exception")),
+            ["ret"] = TypeJson.Fqn("System.Runtime.ExceptionServices.ExceptionDispatchInfo") };
+        if (!physicalMembers) return call;
         var owner = refs.ResolveRefType("System.Runtime.ExceptionServices.ExceptionDispatchInfo");
         var capture = owner.GetMethods(BindingFlags.Public | BindingFlags.Static).Single(method => method.Name == "Capture"
             && method.GetParameters().Length == 1 && method.GetParameters()[0].ParameterType.FullName == "System.Exception");
-        return new JsonObject { ["k"] = "clrStatic", ["type"] = TypeJson.Fqn(owner.FullName),
-            ["method"] = "Capture", ["args"] = new JsonArray(Local(exception)),
-            ["argTypes"] = new JsonArray(TypeJson.Fqn("System.Exception")), ["ret"] = TypeJson.Fqn(owner.FullName),
-            ["memberRef"] = ClrMemberResolution.MemberRefJson(capture, "method", owner, null) };
+        call["memberRef"] = ClrMemberResolution.MemberRefJson(capture, "method", owner, null);
+        return call;
     }
 
-    static JsonObject Rethrow(string exception, ReferenceMetadataIndex refs)
+    static JsonObject Rethrow(string exception, ReferenceMetadataIndex refs, bool physicalMembers)
     {
-        var owner = refs.ResolveRefType("System.Runtime.ExceptionServices.ExceptionDispatchInfo");
-        var throwMethod = owner.GetMethods(BindingFlags.Public | BindingFlags.Instance).Single(method => method.Name == "Throw"
-            && method.GetParameters().Length == 0);
+        var call = new JsonObject { ["k"] = "clrInstance",
+            ["type"] = TypeJson.Fqn("System.Runtime.ExceptionServices.ExceptionDispatchInfo"),
+            ["method"] = "Throw", ["recv"] = Local(exception),
+            ["args"] = new JsonArray(), ["argTypes"] = new JsonArray(), ["ret"] = TypeJson.Fqn("void") };
+        if (physicalMembers)
+        {
+            var owner = refs.ResolveRefType("System.Runtime.ExceptionServices.ExceptionDispatchInfo");
+            var throwMethod = owner.GetMethods(BindingFlags.Public | BindingFlags.Instance).Single(method => method.Name == "Throw"
+                && method.GetParameters().Length == 0);
+            call["dispatch"] = "callvirt";
+            call["memberRef"] = ClrMemberResolution.MemberRefJson(throwMethod, "method", owner, null);
+        }
         return new JsonObject { ["k"] = "block", ["body"] = new JsonArray(
-            new JsonObject { ["k"] = "exprStmt", ["expr"] = new JsonObject { ["k"] = "clrInstance",
-                ["type"] = TypeJson.Fqn(owner.FullName), ["method"] = "Throw", ["recv"] = Local(exception),
-                ["args"] = new JsonArray(), ["argTypes"] = new JsonArray(), ["ret"] = TypeJson.Fqn("void"),
-                ["dispatch"] = "callvirt", ["memberRef"] = ClrMemberResolution.MemberRefJson(throwMethod, "method", owner, null) } },
+            new JsonObject { ["k"] = "exprStmt", ["expr"] = call },
             new JsonObject { ["k"] = "throw", ["value"] = new JsonObject { ["k"] = "const",
                 ["type"] = TypeJson.Fqn("System.Exception"), ["value"] = null } }) };
     }
