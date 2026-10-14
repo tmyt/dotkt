@@ -89,7 +89,19 @@ internal static class OverloadPriorityInspector
             if (method.RelativeVirtualAddress != 0)
             {
                 var il = pe.GetMethodBody(method.RelativeVirtualAddress).GetILBytes()!;
-                Require(il.Length > 0 && il[^1] == 0x7a, "reference priority method retained executable source body");
+                // The emitter appends an unreachable return epilogue after the throw statement.
+                // Require the complete reachable body to be the metadata-only stub, not its last byte.
+                Require(il.Length >= 6 && il[0] == 0x73 && il[5] == 0x7a,
+                    "reference priority method retained executable source body");
+                var constructor = System.Reflection.Metadata.Ecma335.MetadataTokens.EntityHandle(
+                    BitConverter.ToInt32(il, 1));
+                Require(constructor.Kind == HandleKind.MemberReference, "invalid reference throw constructor");
+                var member = metadata.GetMemberReference((MemberReferenceHandle)constructor);
+                Require(metadata.GetString(member.Name) == ".ctor" && member.Parent.Kind == HandleKind.TypeReference,
+                    "invalid reference throw constructor");
+                var exception = metadata.GetTypeReference((TypeReferenceHandle)member.Parent);
+                Require(metadata.GetString(exception.Namespace) == "System" &&
+                    metadata.GetString(exception.Name) == "NotImplementedException", "reference body is not the throw stub");
             }
             count++;
         }

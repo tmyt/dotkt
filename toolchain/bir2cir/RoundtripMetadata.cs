@@ -483,7 +483,7 @@ static class RoundtripMetadata
         declaration["attrs"] is JsonArray attrs && attrs.OfType<JsonObject>().Any(attribute =>
             TypeJson.OwnerName(attribute["attr"]) == attributeName);
 
-    // A materialized source function keeps this resolution fact; physical helpers do not inherit it.
+    // Copy this source resolution fact independently of unrelated declaration attributes.
     public static void CopySourceOverloadPriority(JsonObject source, JsonObject target)
     {
         if (source["attrs"] is not JsonArray attributes) return;

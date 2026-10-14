@@ -25,6 +25,7 @@ CACHE="$ROOT/build/test-package-cache"
 CONFIGURATION="Debug"
 METADATA_INSPECTOR_PROJECT="$ROOT/tests/roundtrip/metadata-inspector/CompanionMetadataInspector.csproj"
 METADATA_INSPECTOR_DLL="$ROOT/tests/roundtrip/metadata-inspector/bin/$CONFIGURATION/net10.0/CompanionMetadataInspector.dll"
+STDLIB_REF_DLL="$ROOT/build/clr-stdlib/dll/DotKt.Private.Stdlib.dll"
 
 # --- the suite projects to build / test / ilverify. Verdict is per-project `dotnet test` $? + exact discovery
 #     count + ilverify (see TASK 2). ---------------------------------------------------------------------------
