@@ -240,8 +240,8 @@ sealed partial class Emitter
     // Active return epilogues: a CIR return inside stores to its result local and leaves to the end label.
     // Loop/CFG transfer opcodes are supplied by CIR, not inferred from this stack.
     readonly Stack<(LocalBuilder result, Label end)> _tryStack = new();
-    // active loops: break/continue target the innermost (or the one matching the Kotlin label).
-    readonly List<(string label, Label cont, Label brk)> _loops = new();
+    // Active physical loop anchors, keyed only by the exact CIR-authored identity.
+    readonly List<(int id, Label cont, Label brk)> _loops = new();
     // CFG block-IR labels: `label`/`goto`/`brIf` (E-0.5). Forward references need every label defined up-front,
     // so EmitMethodBody/EmitCtorBody prescans the whole body. id -> IL Label. See docs/bir-cir-spec.md.
     Dictionary<int, Label> _cfgLabels;

@@ -7,8 +7,9 @@ using DotKt.Bir;
 // ilemit consumes the mandatory `leave` bit without recovering Kotlin semantics or inspecting region membership.
 static class ProtectedRegionTransfers
 {
-    internal sealed record Edge(JsonObject Node, JsonArray[] Source, JsonArray[] Target);
-    sealed record Loop(string Label, JsonArray[] Region);
+    internal sealed record Edge(JsonObject Node, JsonArray[] Source, JsonArray[] Target, int? LoopId = null);
+    sealed record Loop(string Label, JsonArray[] Region, int Id);
+    static int _loopId;
     static readonly HashSet<string> Loops = new() { "for", "forArray", "forRange", "forEachInline", "repeatInline", "while", "dowhile" };
 
     public static void Apply(JsonNode root, ReferenceMetadataIndex refs)
@@ -16,7 +17,7 @@ static class ProtectedRegionTransfers
         WalkFrames(root, refs);
     }
 
-    static void WalkFrames(JsonNode node, ReferenceMetadataIndex refs, bool inFrame = false)
+    static void WalkFrames(JsonNode node, ReferenceMetadataIndex refs, bool inFrame = false, bool constructors = false)
     {
         if (node is JsonObject obj)
         {
@@ -24,9 +25,11 @@ static class ProtectedRegionTransfers
             if (obj["params"] is JsonArray && obj["body"] is JsonArray body)
             {
                 var parts = new[] { obj["preStmts"] as JsonArray, body }.Where(a => a != null).ToArray();
-                Process(parts, obj["ret"] ?? TypeJson.Fqn("void"), refs);
+                var returnType = constructors ? TypeJson.Fqn("void") : obj["ret"]
+                    ?? throw new InvalidOperationException("bir2cir: executable method lacks its declared physical return type");
+                Process(parts, returnType, refs);
                 foreach (var child in obj.ToArray())
-                    if (child.Value != null) WalkFrames(child.Value, refs, true);
+                    if (child.Value != null) WalkFrames(child.Value, refs, true, child.Key == "ctors");
                 return;
             }
             // Static field initializers execute in a synthesized type initializer, not in a serialized method.
@@ -37,10 +40,11 @@ static class ProtectedRegionTransfers
                 Process(new[] { holder }, TypeJson.Fqn("void"), refs);
                 obj["init"] = holder[0].DeepClone();
             }
-            foreach (var child in obj.ToArray()) if (child.Value != null) WalkFrames(child.Value, refs, inFrame || child.Key == "init");
+            foreach (var child in obj.ToArray()) if (child.Value != null)
+                WalkFrames(child.Value, refs, inFrame || child.Key == "init", child.Key == "ctors");
         }
         else if (node is JsonArray array)
-            foreach (var child in array.ToArray()) if (child != null) WalkFrames(child, refs, inFrame);
+            foreach (var child in array.ToArray()) if (child != null) WalkFrames(child, refs, inFrame, constructors);
     }
 
     static void Process(JsonArray[] parts, JsonNode returnType, ReferenceMetadataIndex refs)
@@ -52,7 +56,24 @@ static class ProtectedRegionTransfers
             if (!IsPrefix(edge.Target, edge.Source))
                 throw new InvalidOperationException("bir2cir: control transfer enters a different protected region");
             edge.Node["leave"] = edge.Source.Length != edge.Target.Length;
+            if (edge.LoopId is int id)
+            {
+                edge.Node["loopId"] = id;
+                edge.Node.Remove("label");
+            }
         }
+        foreach (var part in parts) DropLoopLabels(part);
+    }
+
+    static void DropLoopLabels(JsonNode node)
+    {
+        if (node is JsonObject obj)
+        {
+            if (obj["params"] is JsonArray && obj["body"] is JsonArray) return;
+            if (Loops.Contains(K(obj) ?? "")) obj.Remove("label");
+            foreach (var child in obj) DropLoopLabels(child.Value);
+        }
+        else if (node is JsonArray array) foreach (var child in array) DropLoopLabels(child);
     }
 
     internal static List<Edge> Edges(IEnumerable<JsonArray> parts)
@@ -80,14 +101,17 @@ static class ProtectedRegionTransfers
         if (edges != null)
         {
             JsonArray[] target = null;
+            int? loopId = null;
             if (kind is "goto" or "brIf") target = labels[obj["id"].GetValue<int>()];
             else if (kind is "break" or "continue")
             {
                 var label = Str(obj["label"]);
-                target = loops.Last(loop => label == null || loop.Label == label).Region;
+                var loop = loops.Last(loop => label == null || loop.Label == label);
+                target = loop.Region;
+                loopId = loop.Id;
             }
             else if (kind == "return") target = Array.Empty<JsonArray>();
-            if (target != null) edges.Add(new(obj, region, target));
+            if (target != null) edges.Add(new(obj, region, target, loopId));
         }
         if (kind == "try")
         {
@@ -99,8 +123,9 @@ static class ProtectedRegionTransfers
         }
         if (Loops.Contains(kind ?? ""))
         {
+            if (edges == null) obj["loopId"] = System.Threading.Interlocked.Increment(ref _loopId);
             foreach (var child in obj) if (child.Key != "body" && child.Value != null) Visit(child.Value, region, loops, labels, edges);
-            loops.Add(new(Str(obj["label"]), region));
+            loops.Add(new(Str(obj["label"]), region, obj["loopId"].GetValue<int>()));
             Visit(obj["body"], region, loops, labels, edges);
             loops.RemoveAt(loops.Count - 1);
             return;

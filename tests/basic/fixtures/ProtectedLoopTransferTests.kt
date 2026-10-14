@@ -90,13 +90,15 @@ class ProtectedLoopTransferTests {
             var index = 0
             do {
                 index++
-                if (index == 1) continue
-                if (index == 3) break
-                trace += "f"
+                try {
+                    if (index == 1) continue
+                    if (index == 3) break
+                    trace += "f"
+                } finally { trace += "i" }
             } while (index < 4)
             trace += "e"
         }
-        assertEquals("tcfe", trace)
+        assertEquals("tcifiie", trace)
     }
 
     @TestAttribute
@@ -125,17 +127,44 @@ class ProtectedLoopTransferTests {
             for (index in 0..2) {
                 try {
                     trace += "t"
-                    if (index == 1) throw failure
+                    if (index == 2) throw failure
                 } finally {
                     trace += "f"
                     if (index == 0) continue
-                    if (index == 2) break
+                    if (index == 3) break
                 }
-                trace += "unreachable"
+                trace += "v"
             }
         } catch (caught: IllegalStateException) { observed = caught }
         assertTrue(observed === failure)
-        assertEquals("tftf", trace)
+        assertEquals("tftfvtf", trace)
+    }
+
+    @TestAttribute
+    fun cleanupFailureBypassesSourceCatchAndInlineLoopExit() {
+        var trace = ""
+        val failure = IllegalStateException("cleanup")
+        var observed: Throwable? = null
+        try {
+            for (index in 0..2) {
+                try { trace += "b" } catch (caught: IllegalStateException) { trace += "wrong" }
+                finally {
+                    trace += "f"
+                    if (index == 0) continue
+                    throw failure
+                }
+            }
+        } catch (caught: IllegalStateException) { observed = caught }
+        assertTrue(observed === failure)
+        assertEquals("bfbf", trace)
+        trace = ""
+        repeat(4) { index ->
+            try {
+                if (index == 0) return@repeat
+                trace += "b"
+            } finally { trace += "f" }
+        }
+        assertEquals("fbfbfbf", trace)
     }
 
     @TestAttribute
@@ -155,6 +184,19 @@ class ProtectedLoopTransferTests {
         }
         assertEquals(9, drive())
         assertEquals("ioio", trace)
+        fun routed(stop: Boolean): Int {
+            for (index in 0..0) {
+                try { return 17 } finally {
+                    trace += "f"
+                    if (stop) break
+                }
+            }
+            return 19
+        }
+        trace = ""
+        assertEquals(17, routed(false))
+        assertEquals(19, routed(true))
+        assertEquals("ff", trace)
     }
 
     @TestAttribute

@@ -62,7 +62,7 @@ static class EscapingFinallyLowering
         var caught = "cir$caught" + id;
         var result = "cir$return" + id;
         var intType = TypeJson.Fqn("System.Int32");
-        var exceptionType = TypeJson.Fqn("System.Exception");
+        var exceptionType = TypeJson.Fqn("System.Runtime.ExceptionServices.ExceptionDispatchInfo");
         var continuations = new JsonArray();
         bool hasResult = false;
         var owned = new HashSet<JsonArray> { (JsonArray)statement["body"] };
@@ -109,8 +109,8 @@ static class EscapingFinallyLowering
                 ["init"] = new JsonObject { ["k"] = "const", ["type"] = exceptionType.DeepClone(), ["value"] = null } });
         if (hasResult) body.Add(new JsonObject { ["k"] = "var", ["name"] = result, ["type"] = returnType.DeepClone() });
         body.Add(new JsonObject { ["k"] = "try", ["body"] = originalBody,
-            ["catches"] = new JsonArray(new JsonObject { ["excType"] = exceptionType.DeepClone(), ["var"] = caught,
-                ["body"] = new JsonArray(Set(exception, Local(caught))) }) });
+            ["catches"] = new JsonArray(new JsonObject { ["excType"] = TypeJson.Fqn("System.Exception"), ["var"] = caught,
+                ["body"] = new JsonArray(Set(exception, Capture(caught, refs))) }) });
         body.Add(new JsonObject { ["k"] = "label", ["id"] = cleanupLabel });
         foreach (var cleanup in finallyBody) body.Add(cleanup.DeepClone());
         body.Add(If(new JsonObject { ["k"] = "binOp", ["op"] = "!=", ["lhs"] = Local(exception),
@@ -120,23 +120,29 @@ static class EscapingFinallyLowering
         Replace(statement, new JsonObject { ["k"] = "block", ["body"] = body });
     }
 
-    static JsonObject Rethrow(string exception, ReferenceMetadataIndex refs)
+    static JsonObject Capture(string exception, ReferenceMetadataIndex refs)
     {
         var owner = refs.ResolveRefType("System.Runtime.ExceptionServices.ExceptionDispatchInfo");
         var capture = owner.GetMethods(BindingFlags.Public | BindingFlags.Static).Single(method => method.Name == "Capture"
             && method.GetParameters().Length == 1 && method.GetParameters()[0].ParameterType.FullName == "System.Exception");
-        var throwMethod = owner.GetMethods(BindingFlags.Public | BindingFlags.Instance).Single(method => method.Name == "Throw"
-            && method.GetParameters().Length == 0);
-        var receiver = new JsonObject { ["k"] = "clrStatic", ["type"] = TypeJson.Fqn(owner.FullName),
+        return new JsonObject { ["k"] = "clrStatic", ["type"] = TypeJson.Fqn(owner.FullName),
             ["method"] = "Capture", ["args"] = new JsonArray(Local(exception)),
             ["argTypes"] = new JsonArray(TypeJson.Fqn("System.Exception")), ["ret"] = TypeJson.Fqn(owner.FullName),
             ["memberRef"] = ClrMemberResolution.MemberRefJson(capture, "method", owner, null) };
+    }
+
+    static JsonObject Rethrow(string exception, ReferenceMetadataIndex refs)
+    {
+        var owner = refs.ResolveRefType("System.Runtime.ExceptionServices.ExceptionDispatchInfo");
+        var throwMethod = owner.GetMethods(BindingFlags.Public | BindingFlags.Instance).Single(method => method.Name == "Throw"
+            && method.GetParameters().Length == 0);
         return new JsonObject { ["k"] = "block", ["body"] = new JsonArray(
             new JsonObject { ["k"] = "exprStmt", ["expr"] = new JsonObject { ["k"] = "clrInstance",
-                ["type"] = TypeJson.Fqn(owner.FullName), ["method"] = "Throw", ["recv"] = receiver,
+                ["type"] = TypeJson.Fqn(owner.FullName), ["method"] = "Throw", ["recv"] = Local(exception),
                 ["args"] = new JsonArray(), ["argTypes"] = new JsonArray(), ["ret"] = TypeJson.Fqn("void"),
                 ["dispatch"] = "callvirt", ["memberRef"] = ClrMemberResolution.MemberRefJson(throwMethod, "method", owner, null) } },
-            new JsonObject { ["k"] = "throw", ["value"] = Local(exception) }) };
+            new JsonObject { ["k"] = "throw", ["value"] = new JsonObject { ["k"] = "const",
+                ["type"] = TypeJson.Fqn("System.Exception"), ["value"] = null } }) };
     }
 
     static JsonObject Local(string name) => new() { ["k"] = "local", ["name"] = name };

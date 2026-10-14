@@ -176,7 +176,7 @@ sealed partial class Emitter
             case "while":
             {
                 var start = _il.DefineLabel(); var end = _il.DefineLabel();
-                _loops.Add((LoopLabel(s), start, end));   // continue -> re-check, break -> end
+                _loops.Add((LoopId(s), start, end));   // continue -> re-check, break -> end
                 _il.MarkLabel(start);
                 EmitExpr(s.GetProperty("cond")); _il.Emit(OpCodes.Brfalse, end);
                 foreach (var b in s.GetProperty("body").EnumerateArray()) EmitStmt(b);
@@ -208,7 +208,7 @@ sealed partial class Emitter
                 _locals[s.GetProperty("var").GetString()] = local;
                 EmitExpr(s.GetProperty("from")); _il.Emit(OpCodes.Stloc, local);
                 var start = _il.DefineLabel(); var cont = _il.DefineLabel(); var end = _il.DefineLabel();
-                _loops.Add((LoopLabel(s), cont, end));   // continue -> increment, break -> end
+                _loops.Add((LoopId(s), cont, end));   // continue -> increment, break -> end
                 _il.MarkLabel(start);
                 _il.Emit(OpCodes.Ldloc, local);
                 EmitExpr(s.GetProperty("to"));
@@ -231,7 +231,7 @@ sealed partial class Emitter
             case "dowhile":
             {
                 var start = _il.DefineLabel(); var cont = _il.DefineLabel(); var end = _il.DefineLabel();
-                _loops.Add((LoopLabel(s), cont, end));
+                _loops.Add((LoopId(s), cont, end));
                 _il.MarkLabel(start);
                 foreach (var b in s.GetProperty("body").EnumerateArray()) EmitStmt(b);
                 _il.MarkLabel(cont);
@@ -251,7 +251,7 @@ sealed partial class Emitter
                 var lv = _il.DeclareLocal(elem);
                 _locals[s.GetProperty("var").GetString()] = lv;
                 var start = _il.DefineLabel(); var cont = _il.DefineLabel(); var end = _il.DefineLabel();
-                _loops.Add((LoopLabel(s), cont, end));
+                _loops.Add((LoopId(s), cont, end));
                 _il.MarkLabel(start);
                 _il.Emit(OpCodes.Ldloc, idx); _il.Emit(OpCodes.Ldloc, arr); _il.Emit(OpCodes.Ldlen); _il.Emit(OpCodes.Conv_I4);
                 _il.Emit(OpCodes.Bge, end);
@@ -281,7 +281,7 @@ sealed partial class Emitter
                 _il.Emit(OpCodes.Ldloc, rngLocal); EmitMethod(_il, OpCodes.Callvirt, prog.Methods[s.GetProperty("stepM").GetString()]); _il.Emit(OpCodes.Stloc, step);
                 var start = _il.DefineLabel(); var cont = _il.DefineLabel(); var end = _il.DefineLabel();
                 var neg = _il.DefineLabel(); var bodyL = _il.DefineLabel();
-                _loops.Add((LoopLabel(s), cont, end));
+                _loops.Add((LoopId(s), cont, end));
                 _il.MarkLabel(start);
                 // exit test: step >= 0 ? (i > last) : (i < last)
                 _il.Emit(OpCodes.Ldloc, step); _il.Emit(OpCodes.Ldc_I4_0); _il.Emit(OpCodes.Blt, neg);

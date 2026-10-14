@@ -696,6 +696,10 @@
     },
     "nodeByKind": {
       "$comment": "Representative canonical shapes; the validator pins the full per-kind field set. Canonical field vocabulary below.",
+      "properties": {
+        "leave": { "type": "boolean", "$comment": "CIR-only mandatory physical opcode fact on break/continue/goto/brIf. Authored by bir2cir from final exact region ownership; never inferred by ilemit." },
+        "loopId": { "type": "integer", "$comment": "CIR-only exact physical loop identity, mandatory on structured loops and their break/continue edges. Replaces Kotlin label selection at the emission boundary." }
+      },
       "oneOf": [
         { "properties": { "k": { "const": "local" }, "name": { "type": "string" } }, "required": ["name"] },
         { "properties": { "k": { "const": "const" }, "type": { "$ref": "#/$defs/type" }, "value": {} }, "required": ["type"] },

@@ -392,6 +392,8 @@ Control flow: the structured `for*` family and the CFG `label`/`brIf`/`goto` whi
 `for*` may remain as a kotc-emit sugar that bir2cir lowers. [finalize in impl]
 
 Every executable CIR `break`, `continue`, `goto`, and `brIf` states a mandatory Boolean `leave` fact.
+Structured loops and their `break`/`continue` edges carry the same exact integer `loopId`; bir2cir consumes
+Kotlin lexical loop labels into this identity, and ilemit binds only its physical continue/break anchors.
 `bir2cir` assigns each destination its exact try-body/catch/finally region path after all physical operand
 normalization; an edge leaving that path uses `leave:true`, and one staying in the same region uses `false`.
 `ilemit` consumes this fact mechanically, including expanding conditional leave into an inverted branch over

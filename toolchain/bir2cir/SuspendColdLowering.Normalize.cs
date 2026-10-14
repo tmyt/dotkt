@@ -433,7 +433,7 @@ static partial class SuspendColdLowering
         //
         //   try { PROTECTED } finally { FIN }
         //
-        // into an exception/return route:
+        // into an exception/return/loop-exit route:
         //
         //   var pending: Throwable? = null
         //   try { PROTECTED' } catch (t: Throwable) { pending = t }
@@ -441,9 +441,10 @@ static partial class SuspendColdLowering
         //   FIN
         //   if (pending != null) throw pending
         //   if (returning) return returnValue
+        //   if (loopExit) goto savedTarget
         //
-        // PROTECTED' rewrites function returns to save their value and leave to `route`; ilemit emits that goto as
-        // `leave` because the target label is outside the protected region. FIN's own return/throw is deliberately
+        // PROTECTED' saves function returns and outward CFG destinations before jumping to `route`; final physical
+        // transfer lowering states that edge's leave opcode. FIN's own return/throw/loop exit is deliberately
         // untouched and therefore overrides the pending outcome, exactly as Kotlin finally does. All route state is
         // declared as ordinary BIR vars; each is written before the protected region and read after it, so the
         // liveness-driven storage gate gives it an SM field on exactly the paths where the region suspends.
@@ -455,6 +456,15 @@ static partial class SuspendColdLowering
             var routeLabel = NextLabel();
             var throwable = new TypeNode.Fqn("kotlin.Throwable");
             result.Add(Var(pendingName, Tw(new TypeNode.Nullable(throwable)), NullConst(new TypeNode.Nullable(throwable))));
+
+            // Suspending loops were flattened before handler normalization, so a loop exit is an ordinary goto
+            // (or brIf) to a label outside PROTECTED. Keep local CFG edges untouched: they do not run this finally.
+            var localLabels = new HashSet<int>();
+            CollectProtectedLabels(protectedBody, localLabels);
+            var outgoing = new Dictionary<int, int>();
+            var loopExitName = "__loopExit$" + kc;
+            protectedBody = RouteProtectedLoopExits(protectedBody, localLabels, outgoing, loopExitName, routeLabel);
+            if (outgoing.Count > 0) result.Add(Var(loopExitName, Tw(IntTn), IntConst(0)));
 
             var hasReturn = HasFunctionReturn(protectedBody);
             string returningName = null;
@@ -511,6 +521,55 @@ static partial class SuspendColdLowering
                 result.Add(new JsonObject { ["k"] = "return", ["value"] = LocalOf(returnValueName) });
                 result.Add(Label(noReturn));
             }
+            foreach (var (target, completion) in outgoing)
+            {
+                var next = NextLabel();
+                result.Add(BrIf(Bin("==", LocalOf(loopExitName), IntConst(completion)), false, next));
+                result.Add(Goto(target));
+                result.Add(Label(next));
+            }
+        }
+
+        static void CollectProtectedLabels(JsonNode node, HashSet<int> labels)
+        {
+            if (node is JsonObject obj)
+            {
+                var kind = Str(obj["k"]);
+                if (kind != null && NestedScopeKinds.Contains(kind)) return;
+                if (kind == "label") labels.Add(obj["id"].GetValue<int>());
+                foreach (var child in obj) CollectProtectedLabels(child.Value, labels);
+            }
+            else if (node is JsonArray array)
+                foreach (var child in array) CollectProtectedLabels(child, labels);
+        }
+
+        JsonArray RouteProtectedLoopExits(JsonArray body, HashSet<int> localLabels,
+            Dictionary<int, int> outgoing, string completionName, int routeLabel)
+        {
+            JsonNode Rewrite(JsonNode node)
+            {
+                if (node is JsonArray array)
+                    return new JsonArray(array.Select(Rewrite).ToArray());
+                if (node is not JsonObject obj) return node?.DeepClone();
+                var kind = Str(obj["k"]);
+                if (kind != null && NestedScopeKinds.Contains(kind)) return obj.DeepClone();
+                if (kind is "goto" or "brIf" && obj["id"]?.GetValue<int>() is int target && !localLabels.Contains(target))
+                {
+                    if (!outgoing.TryGetValue(target, out var completion))
+                        outgoing.Add(target, completion = outgoing.Count + 1);
+                    var stmts = new JsonArray();
+                    var skip = kind == "brIf" ? NextLabel() : -1;
+                    if (kind == "brIf") stmts.Add(BrIf(Rewrite(obj["cond"]), !obj["on"].GetValue<bool>(), skip));
+                    stmts.Add(new JsonObject { ["k"] = "setLocal", ["name"] = completionName, ["value"] = IntConst(completion) });
+                    stmts.Add(Goto(routeLabel));
+                    if (kind == "brIf") stmts.Add(Label(skip));
+                    return new JsonObject { ["k"] = "block", ["body"] = stmts };
+                }
+                var copy = new JsonObject();
+                foreach (var child in obj) copy[child.Key] = Rewrite(child.Value);
+                return copy;
+            }
+            return (JsonArray)Rewrite(body);
         }
 
         static bool HasFunctionReturn(JsonNode n)
