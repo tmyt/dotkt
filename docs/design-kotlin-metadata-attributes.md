@@ -19,6 +19,7 @@ Only Kotlin facts that plain .NET metadata cannot express or cannot express with
 | `infix fun` | ordinary method | no (pure call-syntax modifier) | `[KotlinFunction(Infix)]` |
 | `operator fun` | CLR `op_*` when the operator has a CLR ABI equivalent; otherwise ordinary method | no for ordinary methods; CLR `op_*` names are recoverable but still need Kotlin operator status for Kotlin re-consumption | `[KotlinFunction(Operator)]` |
 | `suspend fun` | `Task<T>`-returning method | no (the Task ABI hides the suspend-ness) | `[KotlinFunction(Suspend)]` |
+| source `@LowPriorityInOverloadResolution` on a function | ordinary source-function MethodDef, including a public suspend Task bridge | no | `[KotlinFunction(LowPriority)]`, restored as the standard Kotlin function annotation |
 | top-level `fun` | static method of a `<File>Kt` class | no (.NET has no top-level functions) | `[KotlinFileClass]` on the file class |
 | named/default `companion object` | compiler-reserved singleton carrier, nested in a non-generic owner and hoisted beside a generic one | no; CLR nesting does not record the source companion association/name | `[KotlinCompanion(version, bytes)]` on the physical carrier type |
 | `class C { companion { … } }` member | a real static member of `C` | **yes** — a CLR static member IS the shape (`IS_STATIC_FUNCTION`/`IS_STATIC_PROPERTY`) | (none) |
@@ -40,6 +41,13 @@ Only Kotlin facts that plain .NET metadata cannot express or cannot express with
 The attributes are **compiler-EMBEDDED per-assembly** as internal `DotKt.Runtime.CompilerServices.*` types (like csc's
 own `NullableAttribute`/`IsReadOnlyAttribute`) — there is **no referenced `DotKt.Runtime` DLL** (that runtime is
 ELIMINATED; the real CLR stdlib superseded it). They are metadata-only, never executed ([[dotkt-naming-and-runtime-split]]).
+
+`KotlinFunction` composes the declaration facts `Infix=1`, `Operator=2`, `Suspend=4`, and `LowPriority=8`.
+`bir2cir` consumes the source priority annotation into that flag; `ilemit` emits the authored carrier unchanged.
+`dll2klib` restores the standard `kotlin.internal.LowPriorityInOverloadResolution` annotation and
+`HAS_ANNOTATIONS` on each projected source function, without interpreting names or repeating overload resolution.
+Physical cold entries and state-machine helpers are not additional source declarations. This source fact is
+independent of the projection policy that assigns low priority to synthetic foreign-CLR overload views.
 
 ### Provenance
 
