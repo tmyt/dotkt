@@ -391,6 +391,15 @@ Control flow: the structured `for*` family and the CFG `label`/`brIf`/`goto` whi
 (mid-migration, audit D8) — the freeze picks the CFG form as canonical for lowered output; the structured
 `for*` may remain as a kotc-emit sugar that bir2cir lowers. [finalize in impl]
 
+Every executable CIR `break`, `continue`, `goto`, and `brIf` states a mandatory Boolean `leave` fact.
+`bir2cir` assigns each destination its exact try-body/catch/finally region path after all physical operand
+normalization; an edge leaving that path uses `leave:true`, and one staying in the same region uses `false`.
+`ilemit` consumes this fact mechanically, including expanding conditional leave into an inverted branch over
+an unconditional leave. The field is CIR-only; Kotlin BIR does not choose CLR opcodes. A finally containing an
+outward transfer is lowered by bir2cir into one ordinary cleanup site with a pending exception/continuation;
+the cleanup may override that completion, or fall through and resume it. Exceptions retain their identity and
+original stack through `ExceptionDispatchInfo`. Other finally handlers retain their native CLR form.
+
 ### 2.1 Declaration modifiers — structured `mods` (replaces string-concat fragments, audit D7)
 Today a decl's modifiers are **order-dependent string-concatenated fragments** (`$inlineFlag$kmods`, the
 meta `final,inline,ext,suspend,infix,operator` comma string) — a stringly-typed set that drifts on ordering

@@ -1104,6 +1104,11 @@ class V:
                         self.err(f, path, f"{member_fact} is a BIR frontend access fact and must be consumed before CIR")
             if f.endswith(".bir.json") and "preStmts" in o:
                 self.err(f, path, "preStmts is the bir2cir-authored lowering of a delegation plan and must not appear in BIR")
+            if "leave" in o and (f.endswith(".bir.json") or o.get("k") not in ("break", "continue", "goto", "brIf")
+                                 or not isinstance(o["leave"], bool)):
+                self.err(f, path, "leave must be a Boolean CIR-only physical control-transfer fact")
+            if f.endswith(".cir.json") and o.get("k") in ("break", "continue", "goto", "brIf") and "leave" not in o:
+                self.err(f, path, "CIR control transfer must state its physical leave fact")
             if f.endswith(".bir.json"):
                 for property_descriptor in ("getSig", "setSig", "getMethodArity", "setMethodArity"):
                     if property_descriptor in o:

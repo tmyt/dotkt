@@ -237,20 +237,6 @@ sealed partial class Emitter
         return false;
     }
 
-    // The CFG-`label` ids physically declared within a subtree — a `try`'s region label-set, used to decide whether
-    // a `goto` leaves the protected region (→ must be `leave`, not `br`). Mirrors PrescanCfgLabels' structural walk.
-    static void CollectLabelIds(JsonElement node, HashSet<int> into)
-    {
-        if (node.ValueKind == JsonValueKind.Object)
-        {
-            if (node.TryGetProperty("k", out var k) && k.GetString() == "label")
-                into.Add(node.GetProperty("id").GetInt32());
-            foreach (var p in node.EnumerateObject()) CollectLabelIds(p.Value, into);
-        }
-        else if (node.ValueKind == JsonValueKind.Array)
-            foreach (var x in node.EnumerateArray()) CollectLabelIds(x, into);
-    }
-
     // Does this statement list ALWAYS return/throw (no fall-through)? Used to decide if a `try`'s fall-through path
     // is reachable (and thus whether to emit a `br` over the trailing ret).
     static bool StmtsAlwaysReturn(JsonElement arr)

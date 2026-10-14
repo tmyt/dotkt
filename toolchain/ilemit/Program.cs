@@ -237,9 +237,9 @@ sealed partial class Emitter
     // name/arity after the exact CIR signature has already selected it.
     readonly Dictionary<MethodInfo, MethodInfo> _anchoredMethodDefinitions =
         new(ReferenceEqualityComparer.Instance);
-    // active try blocks: a `return` inside stores to the result local and leaves to the end label. `labels` = the
-    // CFG-`label` ids declared physically inside this protected region, so a `goto` that exits it emits `leave` not `br`.
-    readonly Stack<(LocalBuilder result, Label end, HashSet<int> labels)> _tryStack = new();
+    // Active return epilogues: a CIR return inside stores to its result local and leaves to the end label.
+    // Loop/CFG transfer opcodes are supplied by CIR, not inferred from this stack.
+    readonly Stack<(LocalBuilder result, Label end)> _tryStack = new();
     // active loops: break/continue target the innermost (or the one matching the Kotlin label).
     readonly List<(string label, Label cont, Label brk)> _loops = new();
     // CFG block-IR labels: `label`/`goto`/`brIf` (E-0.5). Forward references need every label defined up-front,
