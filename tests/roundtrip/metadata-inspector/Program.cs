@@ -23,6 +23,14 @@ const int IsInfixFunctionFlag = 1 << 9;
 // names. Star-projection existential association is metadata-authoritative and does not depend on this spelling.
 const string HoistedMarker = "$companion$";
 
+if (args.Length is 3 or 4 && args[0] == "--overload-priority")
+{
+    OverloadPriorityInspector.Verify(args[1], args[2]);
+    if (args.Length == 4) OverloadPriorityInspector.VerifyReference(args[3]);
+    Console.WriteLine("source function priority in PE and KLIB: OK");
+    return;
+}
+
 if (args.Length == 3 && args[0] == "--charsequence-supertypes")
 {
     CharSequenceSupertypeInspector.Verify(args[1], args[2]);
