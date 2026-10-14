@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- Preserve source-declared Kotlin function overload priority across DLL imports, including materialized
+  suspend bridges, so alias constructors/factories and ordinary overloads retain their source selection (#1038).
+
 - Keep Kotlin code and metadata intact after C#-only incremental recompilation, while unchanged
   builds preserve DLL timestamps and skip emission and downstream C# compilation (#963).
 

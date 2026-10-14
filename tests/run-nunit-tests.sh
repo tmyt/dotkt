@@ -25,6 +25,7 @@ CACHE="$ROOT/build/test-package-cache"
 CONFIGURATION="Debug"
 METADATA_INSPECTOR_PROJECT="$ROOT/tests/roundtrip/metadata-inspector/CompanionMetadataInspector.csproj"
 METADATA_INSPECTOR_DLL="$ROOT/tests/roundtrip/metadata-inspector/bin/$CONFIGURATION/net10.0/CompanionMetadataInspector.dll"
+STDLIB_REF_DLL="$ROOT/build/clr-stdlib/dll/DotKt.Private.Stdlib.dll"
 
 # --- the suite projects to build / test / ilverify. Verdict is per-project `dotnet test` $? + exact discovery
 #     count + ilverify (see TASK 2). ---------------------------------------------------------------------------
@@ -52,7 +53,7 @@ PROJECTS=(
 declare -A EXPECTED_DISCOVERED=(
 	["tests/basic"]=686
 	["tests/coroutines"]=253
-	["tests/roundtrip/consumer"]=519
+	["tests/roundtrip/consumer"]=524
 	["tests/roundtrip/bidirectional/consumer"]=40
 	["tests/interop/consumer"]=370
 )
@@ -261,6 +262,13 @@ for proj in "${PROJECTS[@]}"; do
 	if [[ "$proj" == "tests/roundtrip/consumer" ]]; then
 		producer_dll="$ROOT/tests/roundtrip/producer/bin/$CONFIGURATION/net10.0/RoundtripProducer.dll"
 		producer_klib="$dir/obj/$CONFIGURATION/net10.0/klib/RoundtripProducer.klib"
+		if dotnet "$METADATA_INSPECTOR_DLL" --overload-priority "$producer_dll" "$producer_klib" "$STDLIB_REF_DLL" \
+			>"$ROOT/build/nunit-$name.overload-priority.log" 2>&1; then
+			echo "  source function priority survives PE/KLIB projection and reference body stripping"
+		else
+			echo "  SOURCE OVERLOAD PRIORITY FAIL"
+			tail -25 "$ROOT/build/nunit-$name.overload-priority.log"; rc=1
+		fi
 		if dotnet "$METADATA_INSPECTOR_DLL" --charsequence-supertypes "$producer_dll" "$producer_klib" \
 			>"$ROOT/build/nunit-$name.charsequence-supertypes.log" 2>&1; then
 			echo "  Kotlin public supertype classifier identity preserved across DLL imports"

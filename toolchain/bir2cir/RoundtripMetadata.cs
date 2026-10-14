@@ -35,6 +35,7 @@ static class RoundtripMetadata
     const string Ns = "DotKt.Runtime.CompilerServices.";
     const string ClrNs = "System.Runtime.CompilerServices.";
     const string AKFunction     = Ns + "KotlinFunctionAttribute";
+    const string SourceLowPriority = "kotlin.internal.LowPriorityInOverloadResolution";
     const string AKFileClass    = Ns + "KotlinFileClassAttribute";
     const string AKInline       = Ns + "KotlinInlineAttribute";
     const string AKReadOnly     = Ns + "KotlinReadOnlyAttribute";
@@ -393,6 +394,14 @@ static class RoundtripMetadata
         if (ModFlag(mo, "operator")) flags |= 2;
         if (ModFlag(mo, "suspend")) flags |= 4;
         if ((mo["suspendBridge"] as JsonValue)?.GetValue<bool>() == true) flags |= 4;
+        if (mo["attrs"] is JsonArray sourceAttributes)
+            for (var index = sourceAttributes.Count - 1; index >= 0; index--)
+                if (sourceAttributes[index] is JsonObject attribute &&
+                    TypeJson.OwnerName(attribute["attr"]) == SourceLowPriority)
+                {
+                    flags |= 8;
+                    sourceAttributes.RemoveAt(index);
+                }
         if (flags != 0) Append(mo, Marker(AKFunction, IntArg(flags)));
         // [KotlinSuspendResult(version, bytes)] — the frontend-selected logical result of a suspend declaration.
         // The public CLR MethodDef returns Task/Task<T>; consumers must not reconstruct Kotlin meaning from that
@@ -473,6 +482,15 @@ static class RoundtripMetadata
     static bool HasAttr(JsonObject declaration, string attributeName) =>
         declaration["attrs"] is JsonArray attrs && attrs.OfType<JsonObject>().Any(attribute =>
             TypeJson.OwnerName(attribute["attr"]) == attributeName);
+
+    // Copy this source resolution fact independently of unrelated declaration attributes.
+    public static void CopySourceOverloadPriority(JsonObject source, JsonObject target)
+    {
+        if (source["attrs"] is not JsonArray attributes) return;
+        foreach (var attribute in attributes.OfType<JsonObject>())
+            if (TypeJson.OwnerName(attribute["attr"]) == SourceLowPriority)
+                Append(target, (JsonObject)attribute.DeepClone());
+    }
 
     static void StampParams(JsonNode ps)
     {

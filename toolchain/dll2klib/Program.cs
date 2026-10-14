@@ -2424,6 +2424,7 @@ internal sealed class AssemblyScanner : IDisposable
                         declarationIdentity?.NullableWitnessTypeParameterIndices.Count ?? 0) },
                 };
                 PromoteContextParameters(method, function);
+                ApplySourceFunctionPriority(function, kotlinFlags, names);
                 // A C# extension MethodDef has two CLR meanings: it remains an ordinary callable static member of
                 // its declaring class, while ReadCSharpExtensions separately publishes the namespace-scoped Kotlin
                 // extension view. Do not turn this class member into a second extension declaration. DotKt member
@@ -2467,13 +2468,16 @@ internal sealed class AssemblyScanner : IDisposable
                 continue;
             var parameters = Parameters(
                 methodHandle, method, signature.ParameterTypes, names, signatures, context).ToList();
-            result.Function.Add(new Function
+            var function = new Function
             {
                 Name = names.String(operatorName),
                 Flags = Flags.Callable(method.Attributes, modality: 0, kotlinFlags: 2) & ~(1 << 18),
                 ReturnType = ProjectReturn(methodHandle, method, signature.ReturnType, names, signatures, context),
                 ValueParameter = { parameters.Skip(1) },
-            });
+            };
+            ApplySourceFunctionPriority(function,
+                _attrs.Int32(methodHandle, MetadataAttributes.DotKtNs + "KotlinFunctionAttribute") ?? 0, names);
+            result.Function.Add(function);
         }
         if (isFlagsEnum)
             AddFlagsEnumOperations(handle, result, names);
@@ -3743,6 +3747,7 @@ internal sealed class AssemblyScanner : IDisposable
             inherited.Signatures,
             context,
             inherited.InterfaceArguments);
+        ApplySourceFunctionPriority(function, kotlinFlags, names);
         if (inherited.IsExplicit)
         {
             function.FunctionAnnotation.Add(ExplicitSlotAnnotations(names));
@@ -4527,6 +4532,13 @@ internal sealed class AssemblyScanner : IDisposable
         });
     }
 
+    private static void ApplySourceFunctionPriority(Function function, int kotlinFlags, NameTable names)
+    {
+        if ((kotlinFlags & 8) == 0) return;
+        AddLowPriorityAnnotation(function.FunctionAnnotation, names);
+        function.Flags |= 1; // Standard Kotlin HAS_ANNOTATIONS, not another protobuf function flag.
+    }
+
     private ImmutableArray<string> PhysicalParameterKeys(MethodDefinition method, GenericContext context) =>
         method.DecodeSignature(RawSignatureTypeProvider.Instance, context).ParameterTypes;
 
@@ -4760,6 +4772,8 @@ internal sealed class AssemblyScanner : IDisposable
                 ValueParameter = { Parameters(methodHandle, method, sig.ParameterTypes, names, signatures, context) },
             };
             PromoteContextParameters(method, function);
+            ApplySourceFunctionPriority(function,
+                _attrs.Int32(methodHandle, MetadataAttributes.DotKtNs + "KotlinFunctionAttribute") ?? 0, names);
             PromoteReceiver(methodHandle, method, function);
             foreach (var gpHandle in SourceMethodParameters(methodHandle))
             {
@@ -4871,6 +4885,7 @@ internal sealed class AssemblyScanner : IDisposable
             AddCSharp14MethodTypeParameters(
                 entry.KotlinImplementation, method, function.TypeParameter, names, signatures, context,
                 declarationIdentity?.SemanticReifiedTypeParameterIndices);
+            ApplySourceFunctionPriority(function, kotlinFlags, names);
             function.FunctionAnnotation.Add(ClrExternalAnnotation(names, owner));
             if (declarationIdentity is { } identity)
                 function.FunctionAnnotation.Add(
@@ -5232,6 +5247,7 @@ internal sealed class AssemblyScanner : IDisposable
                 function.TypeParameter.Add(tp);
             }
             RestoreErasedMethodBounds(methodHandle, function.TypeParameter, signatures);
+            ApplySourceFunctionPriority(function, kotlinFlags, names);
             ApplyPInvokeProjection(method, function, names);
             function.FunctionAnnotation.Add(ClrExternalAnnotation(names, handle));
             if (declarationIdentity is { } identity)
@@ -6426,7 +6442,7 @@ internal sealed class AssemblyScanner : IDisposable
             if (IsPublicOrProtected(getter.Attributes))
             {
                 var sig = getter.DecodeSignature(signatures, context with { Method = accessors.Getter });
-                owner.Function.Add(new Function
+                var function = new Function
                 {
                     Name = names.String("get"),
                     Flags = Flags.Callable(getter.Attributes, CallableModality(getter.Attributes), kotlinFlags: 2),
@@ -6438,7 +6454,10 @@ internal sealed class AssemblyScanner : IDisposable
                         signatures,
                         context with { Method = accessors.Getter }),
                     ValueParameter = { Parameters(accessors.Getter, getter, sig.ParameterTypes, names, signatures, context) },
-                });
+                };
+                ApplySourceFunctionPriority(function,
+                    _attrs.Int32(accessors.Getter, MetadataAttributes.DotKtNs + "KotlinFunctionAttribute") ?? 0, names);
+                owner.Function.Add(function);
             }
         }
         if (canWrite && !accessors.Setter.IsNil)
@@ -6446,13 +6465,16 @@ internal sealed class AssemblyScanner : IDisposable
             var setter = _md.GetMethodDefinition(accessors.Setter);
             var setterContext = context with { Method = accessors.Setter };
             var sig = setter.DecodeSignature(signatures, setterContext);
-            owner.Function.Add(new Function
+            var function = new Function
             {
                 Name = names.String("set"),
                 Flags = Flags.Callable(setter.Attributes, CallableModality(setter.Attributes), kotlinFlags: 2),
                 ReturnType = signatures.NamedType("kotlin.Unit"),
                 ValueParameter = { Parameters(accessors.Setter, setter, sig.ParameterTypes, names, signatures, setterContext) },
-            });
+            };
+            ApplySourceFunctionPriority(function,
+                _attrs.Int32(accessors.Setter, MetadataAttributes.DotKtNs + "KotlinFunctionAttribute") ?? 0, names);
+            owner.Function.Add(function);
         }
     }
 
