@@ -844,12 +844,6 @@ sealed class Pipeline
             // array -> IndexOutOfRangeException). Expand each such clause into two clauses covering BOTH so the Kotlin
             // "one catch handles any out-of-range access" semantics hold. Non-ref only (the ref surface stays pure Kotlin).
             if (!_options.RefBuild) CatchClauseWidening.Apply(substituted);
-            // TRY-VALUE OPERAND HOIST (bundle-6 `tryexprop`): a value-producing try/catch used in a non-first
-            // OPERAND slot (`1 + try{..}`, `"x" + try{..}`, `f(try{..})`) is hoisted out to a PRECEDING statement so
-            // the CLR protected region is entered with an empty eval stack (a `leave` clears the stack -> a pushed
-            // left operand would be lost -> InvalidProgram). kotc emits the correct value-form (a try-bearing
-            // valueBlock + result local); this is pure CLR eval-order normalization, so it lives in bir2cir.
-            if (!_options.RefBuild) TryValueOperandHoist.Apply(substituted, isValueFqn);
             staged.Add((substituted, outputName));
         }
 
@@ -1527,6 +1521,16 @@ sealed class Pipeline
             referencedCarrier: (target, source) => refs.TryExistentialPhysicalOwner(target.Name, out var carrier)
                 && carrier == source.Name, references: refs);
         foreach (var (lowered, _) in loweredRoots) FunctionSignatureIdentity.Complete(lowered);
+
+        // Final executable CIR admission: every call/conversion and suspend state machine is now physical.
+        // Ordered operands cross return, loop-transfer and protected-region boundaries only at an empty stack.
+        // This must follow suspend lowering: a temporary CLR address must never become a state-machine field.
+        if (!_options.RefBuild)
+        {
+            var physicalResultType = PhysicalValueCoercion.ResultTypeOracle(loweredRoots.Select(file => file.Root).ToList());
+            foreach (var (lowered, _) in loweredRoots)
+                PhysicalOperandNormalization.Apply(lowered, isValueFqn, physicalResultType);
+        }
 
         // Every representation synthesis is now complete. Validate the exact MethodDef table that CIR will describe;
         // do not defer a generated/user collision to ilemit and do not invent a late name after calls are bound.

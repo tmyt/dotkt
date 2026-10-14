@@ -363,6 +363,28 @@ static class PhysicalValueCoercion
         Console.WriteLine("[physical value edges] self-test OK (local generic result, erased result, native carrier view)");
     }
 
+    // Terminal operand materialization reads the same exact CLR result contract as value coercion. In particular
+    // source sty stamps and Kotlin array spellings are not authoritative for final physical call/spill slots.
+    internal static Func<JsonNode, BirScope, TypeNode> ResultTypeOracle(IReadOnlyList<JsonNode> roots)
+    {
+        var index = Index.Build(roots, () => throw new InvalidOperationException("Type lookup cannot materialize Unit"));
+        var fields = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
+        return (node, scope) =>
+        {
+            // Plain local CIR calls carry their exact authored declaration contract. A Kotlin function modifier
+            // on a parameter is metadata, not a reason to re-match that call against another declaration.
+            if (node is JsonObject call && Str(call["k"]) is "callStatic" or "callInstance" or "constrainedCall"
+                && TypeJson.Read(call["calleeRet"]) is TypeNode declared)
+                return SignatureValueTypes.Of(Close(declared, CallOwner(call)?.Args, MethodArgs(call)));
+            var result = ConstructedReferenceType(node, fields, scope.VarTypes)
+                ?? ExprType(node, new Scope(locals: scope.VarTypes), index);
+            // A plain clrStatic/clrInstance expression copies a ref return; byrefOf is the distinct physical
+            // operation that retains its pointer. A value spill must therefore hold the loaded element, not T&.
+            return node is JsonObject expression && Str(expression["k"]) is "clrStatic" or "clrInstance"
+                && result is TypeNode.ByRef reference ? reference.Of : result;
+        };
+    }
+
     static void RewriteDocument(JsonObject root, Index index)
     {
         index.Document = root;

@@ -53,7 +53,7 @@ fun computed(): Int = runBlock { 6 * 7 }
 inline fun repeat3(action: (Int) -> Unit) { action(0); action(1); action(2) }
 fun sum3(): Int { var total = 0; repeat3 { total = total + it }; return total }
 
-// #285: InlineSplice leaves the try body and lambda binding in one ordered value block; TryValueOperandHoist must
+// #285: InlineSplice leaves the try body and lambda binding in one ordered value block; PhysicalOperandNormalization must
 // move its protected region ahead of the String.Concat operand accumulator.
 inline fun inlineTry285(block: () -> Int): Int = try { block() } catch (e: Exception) { -1 }
 

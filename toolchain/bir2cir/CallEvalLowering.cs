@@ -422,7 +422,7 @@ static class CallEvalLowering
     /// This asks about STORAGE, not about side effects, so its answer is unrelated to the other four questions and
     /// must not be reconciled with them: `arrayGet` is here because `byref(a[i])` names an element slot, even though
     /// the same kind is impure for the suspend lowering's Q3 and not droppable for Q2.
-    static bool IsLvalueFormer(JsonNode node)
+    internal static bool IsLvalueFormer(JsonNode node)
     {
         if (node is not JsonObject o) return false;
         return Str(o["k"]) switch
@@ -437,7 +437,7 @@ static class CallEvalLowering
     }
 
     // Does this node's emitter consume `recv` as an ADDRESS rather than as a value? Shared by the suspend operand
-    // planner and the try-value stack normalizer: both must preserve the original storage location when they move
+    // planner and the physical operand normalizer: both must preserve the original storage location when they move
     // work that precedes a later control-flow boundary. A copied value-type receiver would make a member write or a
     // constrained dispatch mutate the copy instead of its source location.
     internal static bool ReceiverNeedsAddress(JsonObject o, ValueTypeOracle isValue)

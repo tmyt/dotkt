@@ -4,60 +4,43 @@ using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 
-// TRY-VALUE OPERAND HOIST (bundle-6 `tryexprop`): CLR eval-order normalization for a value-producing
-// try/catch(/finally) used in an OPERAND slot (`1 + try{..}`, `"x" + try{..}`, `f(try{..})`).
+// PHYSICAL ORDERED-OPERAND NORMALIZATION (#710). Kotlin statements in an operand may return, jump to a loop
+// target, or enter a protected region. None may inherit earlier operands on the CLR evaluation stack: ret needs
+// only its return value, loop targets need the loop's empty stack, and protected regions start empty.
 //
-// kotc already emits the correct value-form: a `valueBlock` whose `stmts` are `[ var dotkt_tryvalN;
-// try{ ..setLocal dotkt_tryvalN.. } catch{ ..setLocal.. } ]` with `result: local(dotkt_tryvalN)`.
-// The problem is downstream (ilemit): a `valueBlock` is emitted INLINE — its stmts run in place — but a
-// CLR protected region must be ENTERED WITH AN EMPTY EVALUATION STACK (`leave` clears the stack). When
-// the try-valueBlock sits in a non-first operand slot, the left operand is already pushed, so entering
-// the try wipes it -> InvalidProgramException.
-//
-// The fix belongs to bir2cir (Kotlin<->CLR relation; kotc has no CLR-stack knowledge, ilemit has no
-// Kotlin-aware rescheduling). Mirroring the suspend-spill precedent (SuspendColdLowering), we HOIST such
-// a block out of the operand position to PRECEDING statements: its inline statements (the var + the try)
-// become statements of the enclosing statement, and the operand slot is replaced with the block's
-// `result`. Left-to-right Kotlin evaluation order is preserved: any side-effecting operand evaluated
-// BEFORE a hoisted try is itself spilled to a preceding temp first.
-//
-// THE HAZARD IS THE BLOCK, NOT kotc's SPELLING OF IT. kotc's try-value form has the `try` as a direct
-// statement, but it is not the only producer of an inline block in an operand slot: several lowerings
-// materialise an operand into a MINTED `valueBlock` whose `var` initializer is then a try-valued
-// expression — a call-evaluation plan's bindings (CallEvalLowering, and MemberCallSubstitution for a
-// constructor argument the CLR mapping maps away), RangeMembershipLowering's bounds, PreconditionLowering's
-// subject, NetInteropBinding's adapters. The stack is just as non-empty when those statements run, so the
-// hoist looks for a `try` ANYWHERE the block runs inline (`RunsATry`) rather than only at its top level.
-// Missing that was an InvalidProgramException in shapes like `f("x", g(try { 1 } catch { 2 }) in 1..5)`.
-//
-// A hazardous block that is ALREADY at an empty-stack position (the first thing evaluated in its
-// statement — e.g. `val x = try{..}` directly, or the sole/leading argument of a call) is left inline;
-// ilemit handles it fine there.
-static class TryValueOperandHoist
+// bir2cir authors that physical order using existing var/local/valueBlock vocabulary. A hazardous later operand
+// moves as a WHOLE to a preceding typed local, with its earlier operands snapshotted before it. Moving a whole
+// conditional rather than extracting one arm's statements preserves taken/untaken paths. Conditional arms, loop
+// conditions and valueBlock results have site-local prefixes so work cannot escape its guard or dynamic extent.
+// kotc keeps Kotlin facts; ilemit emits the authored sequence without reconstructing Kotlin control flow.
+static class PhysicalOperandNormalization
 {
     static int _tmp;
     static ValueTypeOracle _isValue = _ => false;
+    static Func<JsonNode, BirScope, TypeNode> _typeOf;
 
-    public static void Apply(JsonNode root, ValueTypeOracle isValue)
+    public static void Apply(JsonNode root, ValueTypeOracle isValue, Func<JsonNode, BirScope, TypeNode> typeOf)
     {
         _isValue = isValue ?? (_ => false);
+        _typeOf = typeOf;
         Walk(root, BirScope.Empty);
     }
 
     // Statement-list-valued keys (their elements are statements, not operand expressions).
-    static readonly HashSet<string> StmtListKeys = new(StringComparer.Ordinal) { "body", "stmts", "finally" };
+    static readonly HashSet<string> StmtListKeys = new(StringComparer.Ordinal) { "body", "stmts", "finally", "preStmts" };
     // Keys the generic operand recurse must NOT descend into (they are statement lists, handled by Walk).
-    static readonly HashSet<string> SkipGenericKeys = new(StringComparer.Ordinal) { "body", "stmts", "finally", "catches", "branches" };
+    static readonly HashSet<string> SkipGenericKeys = new(StringComparer.Ordinal) { "body", "stmts", "finally", "preStmts", "catches", "branches", "synthClass" };
     // Q4 of the four value questions (roster in bir-common/ValueStability.cs) — STACK-NEUTRAL: may this operand stay
     // in its slot when a LATER sibling hoists out of the expression? A hoist moves the sibling's evaluation to a
     // PRECEDING statement, so every operand left of it now runs after what used to run after it. That is invisible
-    // only for an operand whose evaluation neither has an effect nor can fail — a literal, a local read, `this`.
+    // only for an operand whose value cannot change and whose evaluation cannot fail — a literal or `this`.
+    // A plain local read can observe a later operand's write, so it must be snapshotted too.
     // Anything else (including a load that merely dereferences, so `arrayGet`/`field` too) is spilled to a temp by
     // SpillIfNeeded, which is what preserves left-to-right order.
     //
     // Not a restatement of Q2 (droppable) or Q3 (resume-stable): this one asks about ORDER against a hoisted try,
     // not about skipping an evaluation or about surviving a resume, and the three land differently per kind.
-    static readonly HashSet<string> StackNeutralKinds = new(StringComparer.Ordinal) { "const", "local", "this" };
+    static readonly HashSet<string> StackNeutralKinds = new(StringComparer.Ordinal) { "const", "this" };
 
     // Value-list keys whose elements ilemit evaluates while a construction receiver (and, for an array, its index)
     // is already on the CLR stack. These are deliberately keyed by NODE KIND: arrays such as `sig`, `argTypes`,
@@ -83,6 +66,15 @@ static class TryValueOperandHoist
         ["objMethod"] = new[] { "recv", "arg" },
         ["setFieldExpr"] = new[] { "recv", "value" },
         ["clrPropSet"] = new[] { "recv", "value" },
+        ["clrEventAdd"] = new[] { "recv", "handler" },
+        ["clrEventRemove"] = new[] { "recv", "handler" },
+        ["setField"] = new[] { "recv", "value" },
+        ["stackGet"] = new[] { "index", "len", "ptr" },
+        ["stackSet"] = new[] { "index", "len", "ptr", "value" },
+        ["stackAsSpan"] = new[] { "ptr", "len" },
+        ["byrefStore"] = new[] { "ptr", "value" },
+        ["newArrayInit"] = new[] { "size", "init" },
+        ["enumParse"] = new[] { "arg" },
     };
 
     static string K(JsonNode n) => (n as JsonObject)?["k"] is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;
@@ -106,8 +98,23 @@ static class TryValueOperandHoist
             // `Extend` returns `this` unless the node really has parameters, so after the skip above the only nodes
             // that pay for a scope copy are the ones that declare some (a method/accessor/constructor, a lambda).
             var child = scope.Extend(obj);
-            foreach (var kv in obj) if (kv.Value != null) Walk(kv.Value, child);
+            foreach (var kv in obj)
+                if (kv.Value != null)
+                    Walk(kv.Value, K(obj) == "valueBlock" && kv.Key == "result" ? BlockScope(obj, child) : child);
             NormalizeLists(obj, child);
+            // Conditions remain at their evaluation site (including each loop iteration and guarded when arm).
+            // Only their eager operands move, inside a valueBlock at that site, never into an enclosing statement.
+            if (K(obj) is "if" or "while" or "dowhile" or "brIf" or "cond")
+            {
+                NormalizeAtSite(obj, "cond", child);
+                if (K(obj) == "cond")
+                {
+                    NormalizeAtSite(obj, "then", child);
+                    NormalizeAtSite(obj, "else", child);
+                }
+            }
+            if (obj["branches"] is JsonArray branches)
+                foreach (var b in branches.OfType<JsonObject>()) NormalizeAtSite(b, "cond", child);
         }
         else if (node is JsonArray arr)
         {
@@ -134,7 +141,7 @@ static class TryValueOperandHoist
             foreach (var b in branches) if (b is JsonObject bo && bo["body"] is JsonArray bb) bo["body"] = HoistList(bb, scope);
     }
 
-    // Rebuild a statement list: for each statement, extract operand-position try-valueBlocks from its
+    // Rebuild a statement list: for each statement, materialize hazardous ordered operands from its
     // single-eval expression child(ren) into preceding statements, then emit `pre + stmt`. A `var` enters
     // scope for the statements AFTER it (its own initializer is evaluated before it exists).
     static JsonArray HoistList(JsonArray list, BirScope scope)
@@ -160,10 +167,8 @@ static class TryValueOperandHoist
         return outList;
     }
 
-    // Only statements whose operand expression is evaluated EXACTLY ONCE at the statement's start are
-    // eligible (var init, assignment value, expr-statement, return/throw value). Loop/if conditions are
-    // NOT hoisted (a cond is re-evaluated per iteration / guards branch entry — hoisting would change
-    // semantics); a try-valueBlock in such a position is out of scope for this normalization.
+    // Only single-evaluation statement operands move into this prefix. Guarded/repeated conditions are normalized
+    // separately by NormalizeAtSite so their prefixes remain inside each guard/iteration.
     static void HoistStmtExprs(JsonObject stmt, List<JsonNode> pre, BirScope scope)
     {
         switch (K(stmt))
@@ -182,24 +187,55 @@ static class TryValueOperandHoist
         if (o[key] is JsonNode c) { o[key] = null; o[key] = HoistExpr(c, pre, atEmpty: true, scope); }
     }
 
-    // Walk an operand expression, hoisting any operand-position try-valueBlock into `pre`. `atEmpty`
+    static void NormalizeAtSite(JsonObject o, string key, BirScope scope)
+    {
+        if (o[key] is not JsonNode value) return;
+        if (K(o) == "valueBlock" && key == "result") scope = BlockScope(o, scope);
+        o[key] = null;
+        var pre = new List<JsonNode>();
+        var result = HoistExpr(value, pre, atEmpty: true, scope);
+        o[key] = pre.Count == 0 ? result : new JsonObject
+        {
+            ["k"] = "valueBlock", ["stmts"] = new JsonArray(pre.ToArray()), ["result"] = result,
+        };
+    }
+
+    static BirScope BlockScope(JsonObject block, BirScope outer)
+    {
+        var scope = outer.Child();
+        foreach (var key in new[] { "stmts", "body" })
+            if (block[key] is JsonArray statements)
+                foreach (var statement in statements.OfType<JsonObject>()) scope.Declare(statement);
+        return scope;
+    }
+
+    // Walk an operand expression, materializing hazardous ordered operands into `pre`. `atEmpty`
     // is true iff evaluating this node begins with an empty CLR eval stack.
     static JsonNode HoistExpr(JsonNode node, List<JsonNode> pre, bool atEmpty, BirScope scope)
     {
         if (node is not JsonObject o) return node;
         var k = K(o);
 
-        // A hazardous block at a NON-EMPTY stack moves; one at an empty stack is already safe and stays. Being safe
-        // is not being finished, though: the block's own subexpressions still need normalizing, so the empty-stack
-        // case FALLS THROUGH to the generic descent below rather than returning. Returning early there is what made
-        // widening the predicate a regression — a `when` whose subject is a try became "hazardous", and the descent
-        // that used to reach a try in one of its branches' operand slots stopped happening.
-        if (k == "valueBlock" && IsTryValueBlock(o) && !atEmpty)
+        // Every hazardous eager subtree is normalized at an empty stack before its result is stored.
+        if (!atEmpty && RunsStackBoundary(o))
         {
-            HoistTryValueBlock(o, pre);
-            // The RESULT is still evaluated in the slot, at the same non-empty stack, so a block nested there is
-            // hoisted in turn — after this block's own statements, which is the order it ran in.
-            return o["result"] is JsonNode r ? HoistExpr(r.DeepClone(), pre, atEmpty, scope) : o;
+            // Move the WHOLE operand, not the statements in one conditional arm. This keeps guarded work guarded
+            // and gives every return/loop transfer/protected-region entry an empty stack on its taken path.
+            var normalized = HoistExpr(o, pre, atEmpty: true, scope);
+            return SpillIfNeeded(normalized, pre, scope);
+        }
+        if (k == "valueBlock")
+        {
+            // Its result runs AFTER its statements. Keep normalization of that result at the result site.
+            NormalizeAtSite(o, "result", scope);
+            return o;
+        }
+        if (k == "cond")
+        {
+            NormalizeAtSite(o, "cond", scope);
+            NormalizeAtSite(o, "then", scope);
+            NormalizeAtSite(o, "else", scope);
+            return o;
         }
 
         if (k == "binOp" && o["lhs"] != null && o["rhs"] != null)
@@ -217,6 +253,11 @@ static class TryValueOperandHoist
             // ilemit has already pushed the object[] accumulator and an element index before every part, including
             // part 0. A protected region in any part therefore starts with a non-empty evaluation stack.
             HoistOrdered(parts.Count, i => parts[i], (i, v) => parts[i] = v, atEmpty: false, pre, scope);
+            return o;
+        }
+        if (k is "newClosure" or "newSam" && o["captures"] is JsonArray captures)
+        {
+            HoistOrdered(captures.Count, i => captures[i], (i, v) => captures[i] = v, atEmpty, pre, scope);
             return o;
         }
         if (k != null && ConstructionValueLists.TryGetValue(k, out var valueListKey)
@@ -260,8 +301,27 @@ static class TryValueOperandHoist
         var n = (hasRecv ? 1 : 0) + argc;
         JsonNode Get(int i) => (hasRecv && i == 0) ? o["recv"] : args[i - (hasRecv ? 1 : 0)];
         void Set(int i, JsonNode v) { if (hasRecv && i == 0) o["recv"] = v; else args[i - (hasRecv ? 1 : 0)] = v; }
-        HoistOrdered(n, Get, Set, atEmpty, pre, scope);
+        var signature = o["argTypes"] as JsonArray ?? o["shapeTypes"] as JsonArray ?? o["sig"] as JsonArray
+            ?? (o["memberRef"] as JsonObject)?["parameterTypes"] as JsonArray
+            ?? (o["invokeRef"] as JsonObject)?["parameterTypes"] as JsonArray;
+        bool IsLocation(int i)
+        {
+            if (hasRecv && i == 0) return CallEvalLowering.ReceiverNeedsAddress(o, _isValue);
+            var arg = i - (hasRecv ? 1 : 0);
+            return signature != null && arg < signature.Count && TypeJson.Read(signature[arg]) is TypeNode.ByRef;
+        }
+        TypeNode LocationType(int i)
+        {
+            if (hasRecv && i == 0) return ReceiverType(o);
+            var arg = i - (hasRecv ? 1 : 0);
+            return signature != null && arg < signature.Count && TypeJson.Read(signature[arg]) is TypeNode.ByRef byref
+                ? byref.Of : null;
+        }
+        HoistOrdered(n, Get, Set, atEmpty, pre, scope, isLocation: IsLocation, locationType: LocationType);
     }
+
+    static TypeNode ReceiverType(JsonObject o) =>
+        TypeJson.Read(o["recvType"]) ?? TypeJson.Read(o["ownerType"]) ?? TypeJson.Read(o["type"]);
 
     static void HoistNamedSlots(JsonObject o, string[] keys, bool atEmpty, List<JsonNode> pre, BirScope scope)
     {
@@ -269,8 +329,14 @@ static class TryValueOperandHoist
         var preserveFirstLocation = present.Length > 0 && present[0] == "recv"
             && CallEvalLowering.ReceiverNeedsAddress(o, _isValue);
         HoistOrdered(present.Length, i => o[present[i]], (i, v) => o[present[i]] = v,
-            atEmpty, pre, scope, preserveFirstLocation: preserveFirstLocation);
+            atEmpty: atEmpty && !HasImplicitPrefix(o), pre, scope,
+            isLocation: i => preserveFirstLocation && i == 0,
+            locationType: i => preserveFirstLocation && i == 0 ? ReceiverType(o) : null);
     }
+
+    // These value slots follow emitter-authored operands: the enum Type token, or a named managed pointer.
+    static bool HasImplicitPrefix(JsonObject o) => K(o) == "enumParse"
+        || K(o) == "byrefStore" && o["ptr"] == null;
 
     // Dictionary construction evaluates entry 0 key, entry 0 value, entry 1 key, entry 1 value, ... while the
     // dictionary receiver is live on the stack. Flatten that exact stream so a try-valued key/value hoists and every
@@ -309,65 +375,66 @@ static class TryValueOperandHoist
     // precedes a slot which hoists must itself be spilled (if side-effecting) so relative order holds.
     static void HoistOrdered(int n, Func<int, JsonNode> get, Action<int, JsonNode> set, bool atEmpty,
                              List<JsonNode> pre, BirScope scope, bool spillAllAfterHoist = false,
-                             bool preserveFirstLocation = false)
+                             Func<int, bool> isLocation = null, Func<int, TypeNode> locationType = null)
     {
         var lastHoist = -1;
         for (var i = 0; i < n; i++) if (WillHoist(get(i), i == 0 && atEmpty)) lastHoist = i;
         for (var i = 0; i < n; i++)
         {
             var node = get(i);
+            var location = isLocation?.Invoke(i) == true;
+            var addressedType = location ? locationType?.Invoke(i) : null;
             set(i, null);
+            if (location && lastHoist >= i)
+                node = MaterializeAddress(node, addressedType, pre, scope);
             var resolved = HoistExpr(node, pre, i == 0 && atEmpty, scope);
             // Ordinary operators/calls only need the prefix: evaluation resumes in their slots after the hoisted
             // block. A construction is different — its emitter consumes each value immediately through stelem/Add/
             // set_Item, while the Kotlin factory/vararg call evaluated EVERY source argument before that body began.
             // Once any protected region moves, materialize the whole non-neutral stream before construction so a
             // suffix expression cannot slide behind an earlier element's user-observable hash/equality operation.
-            if (lastHoist >= 0 && (spillAllAfterHoist || i < lastHoist))
-                resolved = preserveFirstLocation && i == 0
-                    ? PinAddressIfNeeded(resolved, pre)
-                    : SpillIfNeeded(resolved, pre, scope);
+            if (!location && lastHoist >= 0 && (spillAllAfterHoist || i < lastHoist))
+                resolved = SpillIfNeeded(resolved, pre, scope);
             set(i, resolved);
         }
     }
 
-    static JsonNode PinAddressIfNeeded(JsonNode location, List<JsonNode> pre)
+    // Preserve the evaluated LOCATION itself across a later control-transfer operand. Pinning only an array/index
+    // expression is not enough when those operands are mutable locals: taking the address later would select a
+    // different element. An ordinary rvalue first gets the same value temporary EmitAddr would otherwise make;
+    // lvalues and ref-returning expressions go directly into a typed managed-reference local.
+    static JsonNode MaterializeAddress(JsonNode location, TypeNode declaredType, List<JsonNode> pre, BirScope scope)
     {
-        var pinned = new JsonArray();
-        var resolved = CallEvalLowering.PinAddressForOrdering(location, pinned, _isValue);
-        foreach (var stmt in pinned) if (stmt != null) pre.Add(stmt.DeepClone());
-        return resolved;
+        var resolved = HoistExpr(location, pre, atEmpty: true, scope);
+        var type = _typeOf(resolved, scope) ?? declaredType
+            ?? throw new InvalidOperationException("bir2cir: an ordered address operand has no declared element type");
+        if (!CallEvalLowering.IsLvalueFormer(resolved) && type is not TypeNode.ByRef)
+            resolved = SpillIfNeeded(resolved, pre, scope);
+        var byref = type is TypeNode.ByRef ? type : new TypeNode.ByRef(type);
+        var name = "dotkt$address" + System.Threading.Interlocked.Increment(ref _tmp);
+        pre.Add(new JsonObject
+        {
+            ["k"] = "var", ["name"] = name, ["type"] = TypeJson.Write(byref),
+            ["init"] = new JsonObject { ["k"] = "byrefOf", ["inner"] = resolved.DeepClone() },
+        });
+        // The operand remains a LOCATION of the original element type. In a value slot this loads that value;
+        // in an address slot ilemit's existing byrefLoad address form reads the saved pointer. Later receiver
+        // binding therefore sees the original T rather than treating T& as a new receiver classifier.
+        return new JsonObject
+        {
+            ["k"] = "byrefLoad", ["local"] = name,
+            ["elem"] = TypeJson.Write(byref is TypeNode.ByRef reference ? reference.Of : type),
+        };
     }
 
-    // A slot evaluated before a hoisted try: a leftover leading try-valueBlock (safe-at-empty but now
-    // reordered) is hoisted; any other side-effecting operand is spilled to a preceding temp; a
-    // stack-neutral operand (const/local/this) is left untouched.
+    // Snapshot a value at its physical evaluation position. Only literals and this can be reread later unchanged.
     static JsonNode SpillIfNeeded(JsonNode resolved, List<JsonNode> pre, BirScope scope)
     {
-        if (resolved is JsonObject ro && K(ro) == "valueBlock" && IsTryValueBlock(ro))
-        {
-            HoistTryValueBlock(ro, pre);
-            // …and then the block's RESULT is spilled like any other operand. Moving only the statements would
-            // leave the result to be evaluated after the LATER slot's hoisted try, which is the reorder this
-            // function exists to prevent. It was invisible while the only such block was kotc's own try-value
-            // form, whose result is a stack-neutral `local`; a block a lowering mints has an arbitrary result —
-            // a `newClr` whose constructor can throw — and that one has to move with its statements.
-            return ro["result"] is JsonNode r ? SpillIfNeeded(r.DeepClone(), pre, scope) : resolved;
-        }
         if (IsStackNeutral(resolved)) return resolved;
         var tmp = "dotkt$hoist" + System.Threading.Interlocked.Increment(ref _tmp);
-        pre.Add(new JsonObject { ["k"] = "var", ["name"] = tmp, ["type"] = SpillType(resolved, scope), ["init"] = resolved.DeepClone() });
-        return new JsonObject { ["k"] = "local", ["name"] = tmp };
-    }
-
-    // Move a hazardous block's INLINE statements into the preceding-statement buffer; the caller replaces
-    // the node with its `result`. A `valueBlock` may carry either statement list and its consumers run
-    // `stmts` and then `body` (CallEvalLowering.MergeNestedResult), so they are moved in that order.
-    static void HoistTryValueBlock(JsonObject o, List<JsonNode> pre)
-    {
-        foreach (var key in new[] { "stmts", "body" })
-            if (o[key] is JsonArray st)
-                foreach (var s in st) if (s != null) pre.Add(s.DeepClone());
+        var type = SpillType(resolved, scope);
+        pre.Add(new JsonObject { ["k"] = "var", ["name"] = tmp, ["type"] = type, ["init"] = resolved.DeepClone() });
+        return new JsonObject { ["k"] = "local", ["name"] = tmp, ["sty"] = type.DeepClone() };
     }
 
     // Would HoistExpr append any preceding statement for this subtree? (i.e. does it contain a
@@ -376,16 +443,18 @@ static class TryValueOperandHoist
     {
         if (node is not JsonObject o) return false;
         var k = K(o);
-        if (k == "valueBlock" && IsTryValueBlock(o)) return !atEmpty;
+        if (!atEmpty && RunsStackBoundary(o)) return true;
+        if (k is "valueBlock" or "cond") return false;
         if (k == "binOp" && o["lhs"] != null && o["rhs"] != null)
             return WillHoist(o["lhs"], atEmpty) || WillHoist(o["rhs"], false);
         if (k != null && OrderedNamedValueSlots.TryGetValue(k, out var namedValueSlots))
         {
             var first = true;
+            var beginsEmpty = atEmpty && !HasImplicitPrefix(o);
             foreach (var key in namedValueSlots)
                 if (o[key] is JsonNode operand)
                 {
-                    if (WillHoist(operand, first && atEmpty)) return true;
+                    if (WillHoist(operand, first && beginsEmpty)) return true;
                     first = false;
                 }
             return false;
@@ -393,6 +462,12 @@ static class TryValueOperandHoist
         if (k == "concat" && o["parts"] is JsonArray parts)
         {
             foreach (var part in parts) if (WillHoist(part, atEmpty: false)) return true;
+            return false;
+        }
+        if (k is "newClosure" or "newSam" && o["captures"] is JsonArray captures)
+        {
+            for (var i = 0; i < captures.Count; i++)
+                if (WillHoist(captures[i], i == 0 && atEmpty)) return true;
             return false;
         }
         if (k != null && ConstructionValueLists.TryGetValue(k, out var valueListKey)
@@ -428,29 +503,22 @@ static class TryValueOperandHoist
         return false;
     }
 
-    // A `valueBlock` that ENTERS A PROTECTED REGION while the enclosing expression's operands are on the stack.
-    // Every part of it except the enclosing slot itself runs inline — the two statement lists and then the result —
-    // so a `try` in any of them is the same hazard, whether it is kotc's own top-level try statement or a
-    // try-valued initializer a later lowering wrapped in a minted block.
-    static bool IsTryValueBlock(JsonObject o)
-        => o["result"] != null && (RunsATry(o["stmts"]) || RunsATry(o["body"]) || RunsATry(o["result"]));
-
-    // Does evaluating this subtree ENTER a protected region here, on the current evaluation stack? The walk stops at
+    // Does evaluating this subtree cross a stack boundary? The walk stops at
     // a nested DECLARATION (anything carrying `params` — a lambda, a local function): its body runs when it is
     // invoked, on an evaluation stack of its own, so a `try` in there is not this expression's hazard. It also stops
     // at a type node, which carries no code (and spells its parameter TYPES as `params`).
-    static bool RunsATry(JsonNode n)
+    static bool RunsStackBoundary(JsonNode n)
     {
         switch (n)
         {
             case JsonObject o:
                 if (TypeJson.IsType(o)) return false;
-                if (K(o) == "try") return true;
+                if (K(o) is "try" or "return" or "returnExpr" or "break" or "continue" or "goto") return true;
                 if (o["params"] is JsonArray) return false;
-                foreach (var kv in o) if (kv.Value != null && RunsATry(kv.Value)) return true;
+                foreach (var kv in o) if (kv.Key != "synthClass" && kv.Value != null && RunsStackBoundary(kv.Value)) return true;
                 return false;
             case JsonArray a:
-                foreach (var it in a) if (it != null && RunsATry(it)) return true;
+                foreach (var it in a) if (it != null && RunsStackBoundary(it)) return true;
                 return false;
             default:
                 return false;
@@ -459,23 +527,15 @@ static class TryValueOperandHoist
 
     static bool IsStackNeutral(JsonNode n) => n is JsonObject o && StackNeutralKinds.Contains(K(o));
 
-    // The static type of a spilled temp (needed only for a side-effecting operand that precedes a hoisted try; the
-    // stack-neutral operands left in place never spill). It is the SHARED answer — `StaticType.Surface` over the
-    // node-local deriver every other spill site types its locals with — read against the lexical scope this walk
-    // carries, so a spilled `local`/synthesized temp resolves to its declared type rather than to a box. Copying
-    // whichever of `type`/`ret`/`dynRet` the node happened to carry, as this did, typed `f() + try{…}`'s spilled
-    // `f()` as `kotlin.Any` and the emitted unbox faulted at runtime.
-    //
-    // An underivable spill is an ERROR here, the same contract as every other spill site (SuspendOperandPlan's
-    // binding typing, CallEvalLowering's address pins): `kotlin.Any` boxes a value type and hides a type the CLR
-    // would refuse, so substituting it turns an earlier layer's DROP into a runtime fault instead of a diagnostic.
-    // A null from the shared deriver at this point is a hole in the DERIVER, and the message says so.
+    // The shared final-CLR result oracle consumes authored member/declaration contracts and lexical local types.
+    // Earlier semantic sty/ret stamps are not a substitute for the physical result. An underivable spill is a
+    // dropped contract, never a reason to fabricate an Any/object local or recover an older artifact's shape.
     static JsonNode SpillType(JsonNode n, BirScope scope)
-        => StaticType.Surface(n, scope) is DotKt.Bir.TypeNode t
+        => _typeOf(n, scope) is DotKt.Bir.TypeNode t
             ? TypeJson.Write(t)
             : throw new System.NotSupportedException(
-                $"bir2cir: try-value hoist: the `{K(n) ?? "?"}` operand evaluated before a hoisted `try` expression "
+                $"bir2cir: physical operand normalization: the `{K(n) ?? "?"}` operand moved across a stack boundary "
                 + "carries no static type, so the temporary that holds its value across the hoist would be untyped. "
                 + "An earlier lowering dropped the operand's type, or its node kind needs an arm in "
-                + "bir-common/NodeType.cs.");
+                + $"bir-common/NodeType.cs. Operand: {n.ToJsonString()}");
 }
