@@ -7,6 +7,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- Keep Kotlin code and metadata intact after C#-only incremental recompilation, while unchanged
+  builds preserve DLL timestamps and skip emission and downstream C# compilation (#963).
+
 - Preserve Kotlin classifier identity in public constructed supertypes before CLR identity substitution,
   so DLL consumers retain contracts such as `Slot<CharSequence>` (#721). Apply String-to-CharSequence
   adapters at exact-return bridge and constructor-delegation boundaries, preserving null and single evaluation,

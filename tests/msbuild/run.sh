@@ -127,6 +127,9 @@ if [[ $incr_rc1 -eq 0 && $incr_rc2 -eq 0 && "$incr1" == "12" && "$incr2" == "12"
 fi
 rm -rf "$incr"
 
+# C#-only incremental invalidation must not publish its placeholder over Kotlin code (#963).
+bash "$ROOT/tests/msbuild/incremental-emission.sh" "$WORK/incremental-emission" || fail=1
+
 # #467 + #592: every compiler-produced intermediate follows $(IntermediateOutputPath), not the project-wide
 # $(BaseIntermediateOutputPath). Build one project as Debug and Release CONCURRENTLY while each configuration selects
 # a different DLL with the SAME assembly identity and a different Kotlin source. Shared BIR/CIR/KLIB/rsp state can

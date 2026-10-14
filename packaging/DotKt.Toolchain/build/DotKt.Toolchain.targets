@@ -45,7 +45,11 @@
           Condition="'$(DotKtIlEmitResponseFile)' == ''">$(IntermediateOutputPath)dotkt-ilemit.rsp</DotKtIlEmitResponseFile>
       <DotKtCompileOptionsManifest
           Condition="'$(DotKtCompileOptionsManifest)' == ''">$(IntermediateOutputPath)dotkt-compile-options.txt</DotKtCompileOptionsManifest>
+      <_DotKtIlEmitStamp>$(IntermediateOutputPath)dotkt-ilemit.stamp</_DotKtIlEmitStamp>
     </PropertyGroup>
+    <ItemGroup>
+      <FileWrites Include="$(_DotKtIlEmitStamp)" />
+    </ItemGroup>
   </Target>
 
   <!-- Resolve references ONCE.  MSBuild/RAR owns selection and conflict resolution; the DotKt tools consume these
@@ -299,15 +303,13 @@
   <!-- After CoreCompile, overwrite csc's (placeholder) assembly with one emitted directly as CIL from CIR. The exact
        compile reference set owns external metadata identities; copy-local refs only disambiguate runtime twins and
        provide deployable implementations. -->
-  <!-- Incremental (#134): re-emit ONLY when the CIR changed ($(DotKtIntermediateCirPath)/.stamp), the ilemit tool changed, or a
-       runtime reference dll changed (a cross-into dependency's new build). Output is the emitted assembly in obj/;
-       on a no-op build CoreCompile leaves it untouched (the placeholder .cs is now WriteOnlyWhenDifferent) so it
-       stays newer than the CIR stamp and ilemit skips — the emitted dll's timestamp no longer churns every build,
-       so a downstream C# ProjectReference stops rebuilding. DotKtResolveReferenceSets is a dependency so the
-       @(_DotKtRuntimeReference) items exist when these Inputs are evaluated. -->
+  <!-- The shared obj DLL is also an input: Csc can replace it without changing CIR. Only successful Kotlin emission
+       updates the independent completion stamp, so a newer placeholder cannot masquerade as a completed output,
+       including after a failed compilation hook. A true no-op leaves both files untouched; a missing DLL or stamp
+       requires emission. DotKtResolveReferenceSets materializes the reference items before incremental evaluation. -->
   <Target Name="DotKtIlEmit" AfterTargets="CoreCompile" DependsOnTargets="DotKtBir2Cir;DotKtResolveReferenceSets"
-          Inputs="$(DotKtIntermediateCirPath)/.stamp;$(DotKtIlEmit);@(_DotKtCompileReference);@(_DotKtRuntimeReference)"
-          Outputs="$(IntermediateOutputPath)$(TargetName)$(TargetExt)">
+          Inputs="$(DotKtIntermediateCirPath)/.stamp;$(DotKtIlEmit);@(_DotKtCompileReference);@(_DotKtRuntimeReference);$(IntermediateOutputPath)$(TargetName)$(TargetExt)"
+          Outputs="$(_DotKtIlEmitStamp);$(IntermediateOutputPath)$(TargetName)$(TargetExt)">
     <ItemGroup>
       <_DotKtCir Include="$(DotKtIntermediateCirPath)/*.cir.json" />
       <!-- ilemit's runtime refs are the implementation assemblies from the copy-local set: the runtime stdlib
@@ -374,11 +376,12 @@
                       Lines="@(_DotKtIlEmitResponseArgument->'%(Value)')"
                       Overwrite="true" />
     <Exec Command="dotnet &quot;$(DotKtIlEmit)&quot; @&quot;$(DotKtIlEmitResponseFile)&quot;" />
+    <Touch Files="$(_DotKtIlEmitStamp)" AlwaysCreate="true" />
   </Target>
 
   <!-- `dotnet clean`: wipe project-local compiler state and generated reference KLIBs before CoreClean. -->
   <Target Name="DotKtClean" BeforeTargets="CoreClean" DependsOnTargets="DotKtInitializeIntermediatePaths">
     <RemoveDir Directories="$(DotKtIntermediateBirPath);$(DotKtIntermediateCirPath);$(DotKtReferenceKlibPath)" />
-    <Delete Files="$(DotKtReferenceKlibResponseFile);$(DotKtCompilerResponseFile);$(DotKtBir2CirResponseFile);$(DotKtIlEmitResponseFile);$(DotKtCompileOptionsManifest)" />
+    <Delete Files="$(DotKtReferenceKlibResponseFile);$(DotKtCompilerResponseFile);$(DotKtBir2CirResponseFile);$(DotKtIlEmitResponseFile);$(DotKtCompileOptionsManifest);$(_DotKtIlEmitStamp)" />
   </Target>
 </Project>
