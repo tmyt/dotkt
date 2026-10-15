@@ -19,20 +19,19 @@ using DotKt.Bir;
 //
 // This is a Kotlin-to-CLR ABI decision, so it belongs in bir2cir.  ilemit merely emits the object signature and the
 // explicit CIR types.  Detection is structural (return Tv + returned cast from a nullable/object static source), with
-// exact owner/name/substituted-signature matching at calls; no library or declaration-name special cases.
+// exact frontend declaration identity and owner matching at calls; no library or declaration-name special cases.
 static class UncheckedGenericCastReturnErasure
 {
     public sealed class DeclIndex
     {
-        internal readonly Dictionary<string, List<Decl>> ByOwner = new(StringComparer.Ordinal);
-        internal readonly List<Decl> TopLevel = new();
+        internal readonly Dictionary<string, Decl> ByIdentity = new(StringComparer.Ordinal);
     }
 
     internal sealed class Decl
     {
         public string Owner;
-        public string Name;
-        public TypeNode[] Params;
+        public bool TopLevel;
+        public bool Static;
         public TypeNode.Tv Return;
         public JsonObject Method;
     }
@@ -49,7 +48,7 @@ static class UncheckedGenericCastReturnErasure
     {
         if (topLevel && container["methods"] is JsonArray topMethods)
             foreach (var method in topMethods.OfType<JsonObject>())
-                AddCandidate(method, owner: null, index);
+                AddCandidate(method, Str(container["fileClass"]), topLevel: true, index);
 
         if (container["types"] is not JsonArray types) return;
         foreach (var type in types.OfType<JsonObject>())
@@ -57,14 +56,14 @@ static class UncheckedGenericCastReturnErasure
             var owner = Str(type["name"]);
             if (owner != null && type["methods"] is JsonArray methods)
                 foreach (var method in methods.OfType<JsonObject>())
-                    AddCandidate(method, owner, index);
+                    AddCandidate(method, owner, topLevel: false, index);
             CollectContainer(type, index, topLevel: false);
         }
     }
 
-    static void AddCandidate(JsonObject method, string owner, DeclIndex index)
+    static void AddCandidate(JsonObject method, string owner, bool topLevel, DeclIndex index)
     {
-        if (Str(method["name"]) is not string name
+        if (Str(method[DeclarationIdentityBinding.Key]) is not string identity
             // A virtual/override slot is one ABI shared by the whole hierarchy.  Erasing only the declaration whose
             // body happens to contain the cast changes its CLR slot and bypasses a derived unwrapping override (the
             // DispatchedTask<T>.getSuccessfulResult / CancellableContinuationImpl case).  Hierarchy-wide physical
@@ -75,20 +74,10 @@ static class UncheckedGenericCastReturnErasure
             || !HasReturnedUncheckedCast(method["body"], ret))
             return;
 
-        var ps = method["params"] is JsonArray paramsArray
-            ? paramsArray.OfType<JsonObject>().Select(p => TypeJson.Read(p["type"])).ToArray()
-            : Array.Empty<TypeNode>();
-        if (ps.Any(p => p == null)) return;
-
-        var decl = new Decl { Owner = owner, Name = name, Params = ps, Return = ret, Method = method };
-        if (owner == null)
+        index.ByIdentity.Add(identity, new Decl
         {
-            index.TopLevel.Add(decl);
-            return;
-        }
-        if (!index.ByOwner.TryGetValue(owner, out var declarations))
-            index.ByOwner[owner] = declarations = new List<Decl>();
-        declarations.Add(decl);
+            Owner = owner, TopLevel = topLevel, Static = Bool(method["static"]), Return = ret, Method = method,
+        });
     }
 
     static bool HasReturnedUncheckedCast(JsonNode node, TypeNode.Tv ret)
@@ -134,7 +123,7 @@ static class UncheckedGenericCastReturnErasure
 
         // Mutate each declaration exactly once.  The fact is the PRE-lowering Kotlin TypeNode; RoundtripMetadata
         // consumes it after type lowering and dll2klib restores the source signature for downstream Kotlin.
-        foreach (var decl in index.TopLevel.Concat(index.ByOwner.Values.SelectMany(x => x)))
+        foreach (var decl in index.ByIdentity.Values)
         {
             if (TypeJson.Read(decl.Method["ret"]) is not TypeNode.Tv) continue;
             decl.Method["retKotlinType"] = TypeNode.ToJson(decl.Return);
@@ -328,43 +317,39 @@ static class UncheckedGenericCastReturnErasure
     {
         logicalReturn = null;
         var kind = Str(call["k"]);
-        if (kind is not ("callInstance" or "callStatic") || Str(call["method"]) is not string name) return false;
+        if (kind is not ("callInstance" or "callStatic")
+            || Str(call[DeclarationIdentityBinding.Key]) is not string identity
+            || !index.ByIdentity.TryGetValue(identity, out var decl)
+            || decl.Static != (kind == "callStatic"))
+            return false;
 
         TypeNode[] ownerArgs = Array.Empty<TypeNode>();
-        IEnumerable<Decl> declarations;
         if (kind == "callInstance")
         {
             if (TypeJson.Read(call["ownerType"]) is not TypeNode.Fqn owner
-                || !index.ByOwner.TryGetValue(owner.Name, out var owned))
+                || owner.Name != decl.Owner)
                 return false;
             ownerArgs = owner.Args ?? Array.Empty<TypeNode>();
-            declarations = owned;
         }
         else
         {
-            // A local top-level BIR call is ownerless.  Once an external/file-class owner is attributed it is no
-            // longer a declaration from this compilation and must not be matched by bare name.
-            if (call["owner"] != null || call["calleeOwner"] != null) return false;
-            declarations = index.TopLevel;
+            // Source top-level calls carry their file facade in calleeOwner. Calls that remain ownerless after
+            // earlier lowerings still select a LOCAL declaration by frontend identity, never by a bare method name
+            // or substituted signature. An attributed owner is an exact fact, not evidence of an external call.
+            var hasOwner = false;
+            foreach (var key in new[] { "owner", "calleeOwner", "ownerType" })
+                if (call[key] != null)
+                {
+                    hasOwner = true;
+                    if (TypeJson.Read(call[key]) is not TypeNode.Fqn owner || owner.Name != decl.Owner)
+                        return false;
+                    ownerArgs = owner.Args ?? Array.Empty<TypeNode>();
+                }
+            if (!hasOwner && !decl.TopLevel) return false;
         }
 
-        var methodArgs = ReadTypes(call["typeArgs"]);
-        var sig = ReadTypes(call["sig"]);
-        var argc = (call["args"] as JsonArray)?.Count ?? 0;
-        var matches = new List<(Decl Decl, TypeNode Return)>();
-        foreach (var decl in declarations.Where(d => d.Name == name && d.Params.Length == argc))
-        {
-            var substitutedParams = decl.Params.Select(p => Substitute(p, ownerArgs, methodArgs)).ToArray();
-            if (substitutedParams.Any(p => p == null)) continue;
-            if (sig.Length > 0
-                && (sig.Length != substitutedParams.Length || !sig.Zip(substitutedParams).All(x => x.First.Equals(x.Second))))
-                continue;
-            var ret = Substitute(decl.Return, ownerArgs, methodArgs);
-            if (ret != null) matches.Add((decl, ret));
-        }
-        if (matches.Count != 1) return false;
-        logicalReturn = matches[0].Return;
-        return true;
+        logicalReturn = Substitute(decl.Return, ownerArgs, ReadTypes(call["typeArgs"]));
+        return logicalReturn != null;
     }
 
     static TypeNode[] ReadTypes(JsonNode node)

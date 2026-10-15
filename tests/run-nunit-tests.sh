@@ -51,9 +51,9 @@ PROJECTS=(
 # Reviewed on the v0.9.8 main baseline at the start of #227. Updating a suite requires updating this number in
 # the same change, making otherwise-silent test proliferation or accidental deletion an explicit review event.
 declare -A EXPECTED_DISCOVERED=(
-	["tests/basic"]=713
+	["tests/basic"]=719
 	["tests/coroutines"]=259
-	["tests/roundtrip/consumer"]=535
+	["tests/roundtrip/consumer"]=536
 	["tests/roundtrip/bidirectional/consumer"]=41
 	["tests/interop/consumer"]=373
 )
@@ -149,6 +149,16 @@ for proj in "${PROJECTS[@]}"; do
 		fi
 	fi
 	if [[ "$proj" == "tests/basic" ]]; then
+		if python3 "$ROOT/tests/basic/assert-top-level-unchecked-generic-cir.py" \
+			"$dir/obj/$CONFIGURATION/net10.0/bir/TopLevelUncheckedGenericCastTests.bir.json" \
+			"$dir/obj/$CONFIGURATION/net10.0/bir/TopLevelUncheckedGenericReader.bir.json" \
+			"$dir/obj/$CONFIGURATION/net10.0/cir/TopLevelUncheckedGenericCastTests.cir.json" \
+			>"$ROOT/build/nunit-$name.top-level-unchecked-generic.log" 2>&1; then
+			echo "  selected top-level unchecked results retain deferred storage and concrete checks"
+		else
+			echo "  TOP-LEVEL UNCHECKED GENERIC FAIL — see build/nunit-$name.top-level-unchecked-generic.log"
+			tail -25 "$ROOT/build/nunit-$name.top-level-unchecked-generic.log"; rc=1
+		fi
 		if python3 "$ROOT/tests/basic/assert-unit-block-values-bir.py" "$dir/obj/$CONFIGURATION/net10.0/bir/UnitBlockValueTests.bir.json" \
 			>"$ROOT/build/nunit-$name.unit-block-values-bir.log" 2>&1; then
 			echo "  Unit blocks retain ordered statements and their Kotlin result"
@@ -262,6 +272,16 @@ for proj in "${PROJECTS[@]}"; do
 	if [[ "$proj" == "tests/roundtrip/consumer" ]]; then
 		producer_dll="$ROOT/tests/roundtrip/producer/bin/$CONFIGURATION/net10.0/RoundtripProducer.dll"
 		producer_klib="$dir/obj/$CONFIGURATION/net10.0/klib/RoundtripProducer.klib"
+		if python3 "$ROOT/tests/roundtrip/assert-unchecked-top-level-identity.py" \
+			"$ROOT/tests/roundtrip/producer/obj/$CONFIGURATION/net10.0/bir/UncheckedTopLevelIdentity.bir.json" \
+			"$dir/obj/$CONFIGURATION/net10.0/bir/UncheckedTopLevelIdentityTests.bir.json" \
+			"$dir/obj/$CONFIGURATION/net10.0/cir/UncheckedTopLevelIdentityTests.cir.json" \
+			>"$ROOT/build/nunit-$name.unchecked-top-level-identity.log" 2>&1; then
+			echo "  referenced generic results stay isolated from same-named local erased producers"
+		else
+			echo "  UNCHECKED TOP-LEVEL IDENTITY FAIL — see build/nunit-$name.unchecked-top-level-identity.log"
+			tail -25 "$ROOT/build/nunit-$name.unchecked-top-level-identity.log"; rc=1
+		fi
 		if dotnet "$METADATA_INSPECTOR_DLL" --overload-priority "$producer_dll" "$producer_klib" "$STDLIB_REF_DLL" \
 			>"$ROOT/build/nunit-$name.overload-priority.log" 2>&1; then
 			echo "  source function priority survives PE/KLIB projection and reference body stripping"
