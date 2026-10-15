@@ -5,6 +5,28 @@ import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import System.Threading.Tasks.Task
 import dotkt.support.blockOn
 
+private suspend fun <T> constructedSuspendReceiverReference(value: T): Int {
+    var current = 0
+    suspend fun <U> U.bump() { Task.Delay(1).await(); current++ }
+    val reference: suspend () -> Unit = listOf(value)::bump
+    reference()
+    return current
+}
+
+private class GenericSuspendReceiverOwner<A, B>(val first: A, val second: B) {
+    suspend fun <T> replace(initial: T, next: T): Pair<A, T> {
+        var current = first to initial
+        suspend fun String.replacePair() {
+            Task.Delay(1).await()
+            check(length == 5 && second != null)
+            current = first to next
+        }
+        val reference: suspend () -> Unit = "hello"::replacePair
+        reference()
+        return current
+    }
+}
+
 class CapturedLocalSuspendExtensionReceiverTests {
     @TestAttribute
     fun capturedReceiverSurvivesAwaitAndNestedCalls() {
@@ -38,8 +60,13 @@ class CapturedLocalSuspendExtensionReceiverTests {
             val unboundWithoutCapture: suspend (String) -> Int = String::noCaptureAwait
             check(boundWithoutCapture() == 3)
             check(unboundWithoutCapture("hello") == 5)
+            suspend fun <U> U.appendGenericAfterAwait() { Task.Delay(1).await(); current++ }
+            val ownGeneric: suspend () -> Unit = 42::appendGenericAfterAwait
+            ownGeneric()
             current
         }
-        assertEquals(25, result)
+        assertEquals(26, result)
+        assertEquals(1, blockOn { constructedSuspendReceiverReference("value") })
+        assertEquals("owner" to 42, blockOn { GenericSuspendReceiverOwner("owner", true).replace(1, 42) })
     }
 }

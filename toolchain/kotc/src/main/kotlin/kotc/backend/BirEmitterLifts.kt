@@ -101,7 +101,7 @@ private fun BirEmitter.liftedDeclarationIdentityField(token: String): String =
  * A same-module default is rendered in its caller's type scope: collect dependencies after that substitution,
  * just as birType renders the body, so the declaration and its construction edge describe the same frame.
  */
-private fun BirEmitter.freeTypeParams(types: List<IrType>): List<org.jetbrains.kotlin.ir.declarations.IrTypeParameter> {
+internal fun BirEmitter.freeTypeParams(types: List<IrType>): List<org.jetbrains.kotlin.ir.declarations.IrTypeParameter> {
 	val acc = LinkedHashSet<org.jetbrains.kotlin.ir.declarations.IrTypeParameter>()
 	fun walk(type: IrType, frame: DefaultTypeFrame) {
 		fun walkClosed(t: IrType) {
@@ -123,7 +123,7 @@ private fun BirEmitter.freeTypeParams(types: List<IrType>): List<org.jetbrains.k
 /** Type arguments supplied when a synthetic declaration is materialized in the current lexical frame. An enclosing
  * lift may already have rebound the source parameter into its own class/method frame; bypassing that substitution
  * resurrects the old lexical token and leaves the construction naming a generic parameter that is no longer in scope. */
-private fun BirEmitter.liftedTypeArgsJson(parameters: List<IrTypeParameter>): String =
+internal fun BirEmitter.liftedTypeArgsJson(parameters: List<IrTypeParameter>): String =
 	if (parameters.isEmpty()) "" else ""","typeArgs":[${parameters.joinToString(",") {
 		(typeArgSubst[it] ?: tvOf(it)).toJson()
 	}}]"""
@@ -1064,6 +1064,7 @@ internal fun BirEmitter.suspendFunctionRef(node: IrFunctionReference, fn: IrSimp
 	val virtual = fn.modality != Modality.FINAL || fn.overriddenSymbols.isNotEmpty()
 	val anySlotTag = if (isAnySlotMethod(fn)) ""","anySlot":true""" else ""
 	val local = localFns[fn]
+	val localFrame = local?.let { localFunctionReferenceFrame(node, fn, it) }
 	// The lambda's OWN physical params = its extension receiver (when the callable type has one), then ordinary
 	// params. TypeNode.Fn deliberately keeps a Kotlin extension receiver in `recv` rather than duplicating it in
 	// `params`; newSuspendLambda's invoke/create protocol still receives it as physical arg0, exactly like source
@@ -1092,7 +1093,7 @@ internal fun BirEmitter.suspendFunctionRef(node: IrFunctionReference, fn: IrSimp
 				"""{"name":${str(fieldName)},"type":${captureFieldType(declaration).toJson()}}"""
 			}
 			val boundDescriptors = bound.zip(boundNames).map { (binding, name) ->
-				"""{"name":${str(name)},"type":${birType(binding.first.type).toJson()}}"""
+				"""{"name":${str(name)},"type":${birType(localFrame!!.parameterTypes.getValue(binding.first)).toJson()}}"""
 			}
 			captures = (capDescriptors + boundDescriptors).joinToString(",")
 			capValues = (local.captures.map { capValueExpr(it) } + bound.map { expr(it.second) })
@@ -1179,7 +1180,7 @@ internal fun BirEmitter.suspendFunctionRef(node: IrFunctionReference, fn: IrSimp
 	val capValuesJson = if (capValues == null) "" else ""","capValues":[$capValues]"""
 	// The SM must be generic over any enclosing type params in the reference's signature (reified CLR generics); bare
 	// names (bir2cir prepends `gp:`), consistent with suspendLambda().
-	val freeTps = (local?.typeParams
+	val freeTps = (localFrame?.typeParams
 		?: freeTypeParams(listOf(node.type) + listOfNotNull(boundRecv?.type, boundExt?.type)))
 		.sortedWith(compareBy<IrTypeParameter>(
 			{ if (tvOf(it).scope == "type") 0 else 1 },

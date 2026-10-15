@@ -20,6 +20,14 @@ private fun <T> capturedGenericReceiver(initial: T, next: T): T {
     return current
 }
 
+private fun <T> capturedConstructedReceiverReference(value: T): Int {
+    var current = 0
+    fun <U> U.bump() { current++ }
+    val reference: () -> Unit = listOf(value)::bump
+    reference()
+    return current
+}
+
 private class GenericReceiverOwner<A, B>(val first: A, val second: B) {
     fun <T> replace(initial: T, next: T): Pair<A, T> {
         var current = first to initial
@@ -77,6 +85,8 @@ class CapturedLocalExtensionReceiverTests {
         assertEquals(7 to "next", GenericReceiverOwner(7, "second").replace("first", "next"))
         assertEquals(42, capturedGenericReceiver(1, 42))
         assertEquals("next", capturedGenericReceiver("first", "next"))
+        assertEquals(1, capturedConstructedReceiverReference("value"))
+        assertEquals(1, capturedConstructedReceiverReference(42))
     }
 
     @TestAttribute
@@ -132,6 +142,16 @@ class CapturedLocalExtensionReceiverTests {
         val unboundWithoutCapture: (String) -> Int = String::noCaptureReference
         assertEquals(3, withoutCapture())
         assertEquals(5, unboundWithoutCapture("hello"))
+        fun selectWith(build: () -> String): String = build()
+        val nested: () -> Unit = (selectWith { "he" + receiver })::replaceReference
+        receiver = "changed after binding"
+        nested()
+        assertEquals(18, current)
+        var genericCalls = 0
+        fun <U> U.bumpGeneric() { genericCalls++ }
+        val ownGeneric: () -> Unit = 42::bumpGeneric
+        ownGeneric()
+        assertEquals(1, genericCalls)
     }
 
     @TestAttribute

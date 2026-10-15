@@ -76,5 +76,5 @@ for node in objects(bir):
         assert call["args"][-1]["k"] == "field", call
         assert len(node["captures"]) == 2, node
     forwarders.append(len(params))
-assert sorted(forwarders) == [0, 1], forwarders
+assert sorted(forwarders) == [0, 0, 1], forwarders
 print("Local extension receiver identities survive captures, generic frames and context arguments")
