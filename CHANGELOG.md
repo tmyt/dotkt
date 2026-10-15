@@ -52,6 +52,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Unit-valued generic callback slots retain their declaration signatures (#950).**
+  Inherited and concrete overrides bind exact CLR slots without changing stored function identity.
+
 - Preserve source-declared Kotlin function overload priority across DLL imports, including materialized
   suspend bridges, so alias constructors/factories and ordinary overloads retain their source selection (#1038).
 

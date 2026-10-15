@@ -28,6 +28,7 @@ static class Bir2Cir
                 StdlibBindingOverlay.SelfTest();
                 DeclarationIdentityBinding.SelfTest();
                 DeclarationSignatureIdentity.SelfTest();
+                FunctionSignatureIdentity.SelfTest();
                 PhysicalValueCoercion.SelfTest();
                 PrimitiveOperatorLowering.SelfTest();
                 KotlinPropertyAccessors.SelfTestAccessorSignatures();
@@ -51,6 +52,8 @@ static class Bir2Cir
                 KotlinCollectionSlotSynthesis.SelfTest();
                 KotlinOverrideSlotBridge.SelfTest();
                 ContinuationErasure.SelfTest();
+                ReferenceNullableStrip.FunctionSelfTest();
+                StarProjectionBoundLowering.FunctionSelfTest();
                 ClrMemberResolution.InheritedGenericResultSelfTest();
                 ClrMemberResolution.FunctionSlotComparisonSelfTest();
                 OwnerConstrainedMethodLowering.SelfTest();
