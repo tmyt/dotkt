@@ -66,6 +66,13 @@ if (args.Length == 3 && args[0] == "--reference-callable-visibility")
     return;
 }
 
+if (args.Length == 4 && args[0] == "--referenced-override-accessibility")
+{
+    CallableVisibilityMetadataInspector.VerifyReferencedOverride(args[1], args[2], args[3]);
+    Console.WriteLine("source-internal override of exact referenced public CLR slot: OK");
+    return;
+}
+
 if (args.Length == 2 && args[0] == "--inherited-callable-visibility")
 {
     CallableVisibilityMetadataInspector.VerifyInherited(args[1]);

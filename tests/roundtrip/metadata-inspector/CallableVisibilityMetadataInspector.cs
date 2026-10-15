@@ -117,6 +117,33 @@ internal static class CallableVisibilityMetadataInspector
             function.ValueParameter.Count == 0).Flags & 14) == 6, "public override KLIB visibility changed");
     }
 
+    public static void VerifyReferencedOverride(string dllPath, string birPath, string cirPath)
+    {
+        using var bir = JsonDocument.Parse(File.ReadAllText(birPath));
+        var source = bir.RootElement.GetProperty("types").EnumerateArray().Single();
+        var declaration = source.GetProperty("methods").EnumerateArray().Single();
+        Require(declaration.GetProperty("vis").GetString() == "internal", "friend override lost source visibility");
+        var selectedId = declaration.GetProperty("overrides")[0].GetProperty("declarationId").GetString();
+        Require(!string.IsNullOrEmpty(selectedId) &&
+            !bir.RootElement.GetProperty("methods").EnumerateArray().Concat(source.GetProperty("methods").EnumerateArray())
+                .Any(method => method.GetProperty("declarationId").GetString() == selectedId),
+            "friend fixture must select an external declaration, not a local public slot");
+        using var cir = JsonDocument.Parse(File.ReadAllText(cirPath));
+        var physical = cir.RootElement.GetProperty("types").EnumerateArray().Single(type =>
+            type.GetProperty("name").GetString() == "roundtrip.referenceoverride.FriendDerived");
+        Require(physical.GetProperty("methods").EnumerateArray().Single().GetProperty("vis").GetString() == "public",
+            "exact referenced slot did not widen the override");
+        using var stream = File.OpenRead(dllPath);
+        using var pe = new PEReader(stream);
+        var md = pe.GetMetadataReader();
+        var type = md.GetTypeDefinition(md.TypeDefinitions.Single(handle =>
+            TypeName(md, handle) == "roundtrip.referenceoverride.FriendDerived"));
+        var hook = type.GetMethods().Single(handle => md.GetString(md.GetMethodDefinition(handle).Name) == "hook");
+        Require((md.GetMethodDefinition(hook).Attributes & MethodAttributes.MemberAccessMask) == MethodAttributes.Public,
+            "referenced override lost public physical access");
+        CheckCarrier(md, hook);
+    }
+
     public static void VerifyReference(string dllPath, string klibPath)
     {
         using var stream = File.OpenRead(dllPath);
