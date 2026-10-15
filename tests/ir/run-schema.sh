@@ -31,6 +31,7 @@ cd "$ROOT" || exit 1
 PY="${PYTHON:-python3}"
 
 "$PY" tests/ir/test-typealias-schema.py || exit 1
+"$PY" tests/ir/test-generic-receiver-schema.py || exit 1
 
 globs=()
 [ -d build/clr-stdlib/bir ] && globs+=("build/clr-stdlib/bir/*.bir.json")
