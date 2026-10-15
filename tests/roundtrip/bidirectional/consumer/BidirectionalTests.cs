@@ -110,6 +110,11 @@ public class BidirectionalTests
             .GetParameters().Single();
         Assert.That(optional.IsOptional, Is.True);
         Assert.That(optional.DefaultValue, Is.EqualTo(BidirectionalAccess.WRITE));
+        Assert.That((int)roundtrip.clrenum.ExplicitClrEnumKt.importedFolderDefault(), Is.EqualTo(40));
+        var nativeOptional = typeof(roundtrip.clrenum.ExplicitClrEnumKt)
+            .GetMethod("importedFolderDefault")!.GetParameters()[0];
+        Assert.That(nativeOptional.IsOptional, Is.True);
+        Assert.That(nativeOptional.DefaultValue, Is.EqualTo(System.Environment.SpecialFolder.UserProfile));
 
         var marker = typeof(BidirectionalAccessMarked).GetCustomAttributesData()
             .Single(attribute => attribute.AttributeType.Name == nameof(BidirectionalAccessMarker));

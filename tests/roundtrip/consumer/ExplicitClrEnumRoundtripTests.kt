@@ -5,12 +5,15 @@ import NUnit.Framework.TestAttribute
 import roundtrip.clrenum.OrderedCode
 import roundtrip.clrenum.RoundtripAccess
 import roundtrip.clrenum.classifyOrderedCode
+import roundtrip.clrenum.importedFolderDefault
+import System.Convert
 
 private fun <T : Enum<T>> consumedEnumOrdinal(value: T): Int = value.ordinal
 
 class ExplicitClrEnumRoundtripTests {
     @TestAttribute
     fun orderedValuesAndPhysicalConstantsSurviveDllToKlibRoundtrip() {
+        assertEquals(40, Convert.ToInt32(importedFolderDefault()))
         val values = OrderedCode.values()
         assertEquals("FIRST", values[0].name)
         assertEquals("NEGATIVE", values[1].name)

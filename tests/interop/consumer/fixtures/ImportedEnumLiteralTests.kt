@@ -16,6 +16,8 @@ import System.Environment
 
 private typealias ImportedCodeAlias = Code
 
+private fun importedLiteralDefault(value: Code = Code.Negative): Int = EnumLiteralApi.Receive(value)
+
 class ImportedEnumLiteralTests {
     @TestAttribute
     fun sparseNegativeAndAliasedEntriesRemainNominalEnumValues() {
@@ -25,6 +27,7 @@ class ImportedEnumLiteralTests {
         assertEquals(73, EnumLiteralApi.Receive(Code.Alias))
         val stored: ImportedCodeAlias = ImportedCodeAlias.Alias
         assertEquals(73, EnumLiteralApi.Receive(stored))
+        assertEquals(-19, importedLiteralDefault())
         assertEquals(Code.Sparse, stored)
         assertEquals(103, EnumLiteralApi.ReceiveTop(TopCode.Sparse))
         val top = TopCode.Negative
