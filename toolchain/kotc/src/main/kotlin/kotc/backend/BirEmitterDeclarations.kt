@@ -136,7 +136,7 @@ internal fun hasStaticPropertyStorage(klass: IrClass, p: IrProperty): Boolean =
  *
  * Visibility and read-only follow the same rules as an instance backing field: an accessor-routed property keeps
  * its storage private behind accessors, while a non-routed one (`const`, `@ClrField`) keeps the source
- * visibility and is marked read-only when it is not publicly settable.
+ * visibility and is marked read-only when its setter is more restricted than the property.
  */
 internal fun BirEmitter.staticPropertyFields(klass: IrClass): List<String> =
 	klass.declarations.filterIsInstance<IrProperty>()
@@ -156,10 +156,11 @@ internal fun BirEmitter.staticPropertyFields(klass: IrClass): List<String> =
 			val routed = p.getter != null && !p.isConst && !isClrField(p)
 			val v = if (routed) "private" else visOf(p)
 			val visJson = if (v != "public") ""","vis":${str(v)}""" else ""
-			val ro = if (!routed && (!p.isVar || (p.setter != null && visOf(p.setter!!) != "public"))) ""","readOnly":true""" else ""
+			val ro = if (!routed && (!p.isVar || (p.setter != null && visOf(p.setter!!) != visOf(p)))) ""","readOnly":true""" else ""
 			val const = if (p.isConst) ""","const":true""" else ""
 			val kotlinStatic = if (isKotlinStaticProperty(p)) ""","kotlinStatic":true""" else ""
-			"""{"name":${str(bf.name.asString())},"type":${birType(bf.type).toJson()},"static":true$kotlinStatic,"init":$init$visJson$ro$const${lateinitFieldFlag(p)}${volatileFieldFlag(p)}}"""
+			val attrs = if (routed) "" else ""","attrs":[${attrsJson(p.annotations)}]"""
+			"""{"name":${str(bf.name.asString())},"type":${birType(bf.type).toJson()},"static":true$kotlinStatic,"init":$init$visJson$ro$const${lateinitFieldFlag(p)}${volatileFieldFlag(p)}$attrs}"""
 		}
 
 /**
@@ -983,13 +984,14 @@ internal fun BirEmitter.instanceStorageFields(klass: IrClass): List<String> {
 		if (clrEventDelegateCall(p) != null || hasStaticPropertyStorage(klass, p)) return@mapNotNull null
 		val bf = p.backingField ?: return@mapNotNull null
 		// Accessor-routed storage is an implementation detail. @ClrField / const retain their declared
-		// visibility; a non-publicly-settable plain field remains read-only to a re-consuming Kotlin module.
+		// visibility; a plain field with a more restricted setter has a read-only projected surface.
 		val routed = p.getter != null && !p.isConst && !isClrField(p)
 		val visibility = if (routed) "private" else visOf(p)
 		val visJson = if (visibility != "public") ""","vis":${str(visibility)}""" else ""
-		val readOnly = if (!routed && (!p.isVar || (p.setter != null && visOf(p.setter!!) != "public")))
+		val readOnly = if (!routed && (!p.isVar || (p.setter != null && visOf(p.setter!!) != visOf(p))))
 			""","readOnly":true""" else ""
-		"""{"name":${str(bf.name.asString())},"type":${birType(bf.type).toJson()}$visJson$readOnly${lateinitFieldFlag(p)}${volatileFieldFlag(p)}}"""
+		val attrs = if (routed) "" else ""","attrs":[${attrsJson(p.annotations)}]"""
+		"""{"name":${str(bf.name.asString())},"type":${birType(bf.type).toJson()}$visJson$readOnly${lateinitFieldFlag(p)}${volatileFieldFlag(p)}$attrs}"""
 	}
 	// Standalone frontend-synthesized fields (chiefly class-delegation storage) follow the same instance-initializer
 	// expansion below as property backing fields.
@@ -1457,7 +1459,7 @@ internal fun BirEmitter.topLevelAccessorMethod(acc: IrSimpleFunction, propName: 
 	val ret = if (isGetter) birType(acc.returnType) else TypeNode.Fqn("kotlin.Unit")
 	val property = acc.correspondingPropertySymbol?.owner
 		?: error("top-level accessor '$propName' has no corresponding property")
-	return """{"name":${str(propName)}${declarationIdField(acc)}${explicitClrNameField(acc)}${propertyAccessorFact(property, kind)},"static":true,"override":false,"virtual":false,"abstract":false,"objectOverride":false,"vis":${str(visOf(acc))}${typeParamsJson(acc.typeParameters)}${companionReceiverField(acc, kind, propName)},"params":[$ps],"ret":${str(ret)}${retCtxFnTypeField(acc)}${funModsJson(acc)},"body":[$body]}"""
+	return """{"name":${str(propName)}${declarationIdField(acc)}${explicitClrNameField(acc)}${propertyAccessorFact(property, kind)},"static":true,"override":false,"virtual":false,"abstract":false,"objectOverride":false,"vis":${str(visOf(acc))}${typeParamsJson(acc.typeParameters)}${companionReceiverField(acc, kind, propName)},"params":[$ps],"ret":${str(ret)}${retCtxFnTypeField(acc)}${funModsJson(acc)},"body":[$body],"attrs":[${attrsJson(property.annotations)}]}"""
 }
 
 internal fun BirEmitter.accessorMethod(acc: IrSimpleFunction, propName: String, isGetter: Boolean): String {

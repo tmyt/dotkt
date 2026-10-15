@@ -53,7 +53,7 @@ PROJECTS=(
 declare -A EXPECTED_DISCOVERED=(
 	["tests/basic"]=713
 	["tests/coroutines"]=259
-	["tests/roundtrip/consumer"]=527
+	["tests/roundtrip/consumer"]=531
 	["tests/roundtrip/bidirectional/consumer"]=41
 	["tests/interop/consumer"]=370
 )
@@ -284,6 +284,16 @@ for proj in "${PROJECTS[@]}"; do
 		else
 			echo "  TYPE VISIBILITY FAIL"
 			tail -25 "$ROOT/build/nunit-$name.type-visibility.log"; rc=1
+		fi
+		if dotnet "$METADATA_INSPECTOR_DLL" --callable-declaration-visibility "$producer_dll" "$producer_klib" \
+			>"$ROOT/build/nunit-$name.callable-visibility.log" 2>&1 \
+			&& bash "$ROOT/tests/roundtrip/assert-reference-callable-visibility.sh" \
+				"$ROOT/tests/roundtrip/producer/obj/$CONFIGURATION/net10.0/bir/PublishedCallableMetadata.bir.json" \
+				"$METADATA_INSPECTOR_DLL" >>"$ROOT/build/nunit-$name.callable-visibility.log" 2>&1; then
+			echo "  callable source visibility survives public inline ABI and reference body stripping"
+		else
+			echo "  CALLABLE VISIBILITY FAIL — see build/nunit-$name.callable-visibility.log"
+			tail -25 "$ROOT/build/nunit-$name.callable-visibility.log"; rc=1
 		fi
 		for alias_producer in RoundtripProducer RoundtripProducerMpp; do
 			if dotnet "$METADATA_INSPECTOR_DLL" --typealias-declarations \

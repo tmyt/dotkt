@@ -5,6 +5,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Preserve Kotlin callable visibility across DLL imports, including `@PublishedApi internal` functions,
+  properties and constructors. bir2cir separately keeps their public CLR inline ABI; reference body stripping
+  retains declaration visibility, signatures, constraints and inline metadata (#1035).
+
 - Implement lateinit initialization queries and use private boxed storage with typed CLR properties,
   including generic value-type defaults, callable references and cross-DLL writes. Reject `@ClrField`
   combined with `lateinit`; ordinary lateinit properties no longer expose public fields or C# ref/out storage (#969).

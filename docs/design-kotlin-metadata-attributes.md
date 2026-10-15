@@ -36,7 +36,7 @@ Only Kotlin facts that plain .NET metadata cannot express or cannot express with
 | a nullable GENERIC `T?` on an unconstrained `T` (`fun <T> f(x: T?): T?`, `Holder<T?>`, `Array<T?>`, `(T) -> T?`) | `System.Object` at that position — the one CLR slot that carries a real null for a value AND a reference instantiation (#86) | no; `object` names neither `T` nor the `?` | `[KotlinNullableGeneric(pre-erasure type node)]` **plus** the slot's own `[Nullable(2)]` byte |
 | imported CLR event endpoint (`CLREvent<T>`) | real CLR event metadata + add/remove accessors | yes for the event itself; Kotlin endpoint syntax must be synthesized | plain CLR event metadata, no DotKt attribute by default |
 | `final`/`open`/`abstract` (modality) | non-virtual / virtual / abstract | **yes** — rides .NET virtual-ness | (none) |
-| visibility | public/assembly/family | **yes** | (none) |
+| visibility | public/assembly/family, potentially widened for the inline ABI | only when source and physical accessibility agree | `[KotlinTypeVisibility]` for widened types; `[KotlinCallableVisibility(version, bytes)]` preserves non-public function, constructor, property and accessor source visibility independently of CLR accessibility |
 | generics, including `reified` | real CLR generic method `<T>`; Kotlin classifier/nullability-sensitive open parameters add hidden integer witnesses | runtime type: yes; Kotlin nullability/classifier/reified indices: no | `[KotlinDeclarationIdentity]` separately carries semantic `reified` indices and physical witness indices |
 
 The attributes are **compiler-EMBEDDED per-assembly** as internal `DotKt.Runtime.CompilerServices.*` types (like csc's
