@@ -23,6 +23,13 @@ const int IsInfixFunctionFlag = 1 << 9;
 // names. Star-projection existential association is metadata-authoritative and does not depend on this spelling.
 const string HoistedMarker = "$companion$";
 
+if (args.Length == 5 && args[0] == "--imported-enum-literals")
+{
+    ImportedEnumLiteralInspector.Verify(args[1], args[2], args[3], args[4]);
+    Console.WriteLine("native enum literal PE / KLIB / Kotlin BIR / physical CIR: OK");
+    return;
+}
+
 if (args.Length is 3 or 4 && args[0] == "--overload-priority")
 {
     OverloadPriorityInspector.Verify(args[1], args[2]);
@@ -239,6 +246,7 @@ if (args.Length != 7)
         "  CompanionMetadataInspector --klib-class-declared-override-nullable-method-bound <file.klib> <class> <function>\n" +
         "  CompanionMetadataInspector --klib-csharp-extension-shape <file.klib> <package> <class> <function>\n" +
         "  CompanionMetadataInspector --klib-flags-enum <file.klib> <class> <file.bir.json> <file.cir.json>\n" +
+        "  CompanionMetadataInspector --imported-enum-literals <producer.dll> <file.klib> <file.bir.json> <file.cir.json>\n" +
         "  CompanionMetadataInspector --klib-no-flags-enum <file.klib> <class>\n" +
         "  CompanionMetadataInspector --reified-witness-contract <producer.dll> <producer.klib> <package>\n" +
         "  CompanionMetadataInspector --default-witness-contract <producer.dll> <consumer.dll>");

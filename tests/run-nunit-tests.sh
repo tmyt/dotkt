@@ -55,7 +55,7 @@ declare -A EXPECTED_DISCOVERED=(
 	["tests/coroutines"]=259
 	["tests/roundtrip/consumer"]=532
 	["tests/roundtrip/bidirectional/consumer"]=41
-	["tests/interop/consumer"]=370
+	["tests/interop/consumer"]=373
 )
 
 # Validate the baseline map before doing any expensive work. A new/renamed suite without a reviewed count is a
@@ -553,6 +553,16 @@ for proj in "${PROJECTS[@]}"; do
 		fi
 		flags_bir="$dir/obj/$CONFIGURATION/net10.0/bir/ClrFlagsEnumTests.bir.json"
 		flags_cir="$dir/obj/$CONFIGURATION/net10.0/cir/ClrFlagsEnumTests.cir.json"
+		if dotnet "$METADATA_INSPECTOR_DLL" --imported-enum-literals \
+			"$dir/bin/$CONFIGURATION/net10.0/InteropProducer.dll" "$interop_klib" \
+			"$dir/obj/$CONFIGURATION/net10.0/bir/ImportedEnumLiteralTests.bir.json" \
+			"$dir/obj/$CONFIGURATION/net10.0/cir/ImportedEnumLiteralTests.cir.json" \
+			>"$ROOT/build/nunit-$name.imported-enum-literals.log" 2>&1; then
+			echo "  imported enum entries retain exact native declaration identities and physical bits"
+		else
+			echo "  IMPORTED ENUM LITERAL METADATA FAIL — see build/nunit-$name.imported-enum-literals.log"
+			tail -25 "$ROOT/build/nunit-$name.imported-enum-literals.log"; rc=1
+		fi
 		if dotnet "$METADATA_INSPECTOR_DLL" \
 			--klib-flags-enum "$interop_klib" FlagsInterop.AccessFlags "$flags_bir" "$flags_cir" \
 			>"$ROOT/build/nunit-$name.flags-enum.log" 2>&1; then

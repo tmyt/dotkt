@@ -1,7 +1,10 @@
 package roundtrip.clrenum
 
 import System.FlagsAttribute
+import System.Environment
 import kotlin.clr.ClrEnum
+
+fun importedFolderDefault(folder: Environment.SpecialFolder = Environment.SpecialFolder.UserProfile): Environment.SpecialFolder = folder
 
 @ClrEnum
 enum class OrderedCode(value: Int) {

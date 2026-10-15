@@ -5,6 +5,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Preserve imported CLR enum-entry identities, including nested types and Kotlin aliases, so sparse, negative,
+  aliased and high-bit native literals reach CLR APIs unchanged instead of using Kotlin declaration ordinals (#1043).
+
 - Preserve Kotlin callable visibility across DLL imports, including `@PublishedApi internal` functions,
   properties and constructors. bir2cir separately keeps their public CLR inline ABI; reference body stripping
   retains declaration visibility, signatures, constraints and inline metadata. Field-backed mutable properties

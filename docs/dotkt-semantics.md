@@ -930,8 +930,10 @@ all three `append` members). The range overload additionally marks its exclusive
 - Within a DotKt module both behave like Kotlin enums. **Across the round-trip** (re-consuming the dll as Kotlin)
   an explicit `@ClrEnum` is restored from its trusted ordered carrier, including names, physical values, and
   declaration ordinals. Ordinary basic and rich enums are not restored as Kotlin `enum class` declarations — see
-  §10.2 — so exhaustive `when` over those consumed enums degrades. A reference-KLIB-projected **.NET** enum arrives as
-  an object of enum-typed `val`s (read, pass, `==`, `when` all work, without exhaustiveness).
+  §10.2 — so exhaustive `when` over those consumed enums degrades. A reference-KLIB-projected **.NET** enum retains
+  its nominal CLR enum identity and exact native literal values (read, pass, `==`, `when` all work, without
+  exhaustiveness). Native aliases with the same underlying value compare equal, unlike distinct Kotlin-authored
+  enum entries; they cannot be distinguished by equality or separate `when` branches.
 - A referenced CLR enum carrying the target core library's exact `[System.Flags]` attribute additionally exposes
   typed `or`, `and`, `xor`, `inv`, and `contains` operations. Every non-Boolean operation accepts and returns that
   exact enum type, including unnamed and unknown bit patterns; distinct enum types never mix. `flag in value` means

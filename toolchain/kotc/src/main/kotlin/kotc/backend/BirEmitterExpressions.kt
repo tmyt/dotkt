@@ -352,15 +352,15 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 	is IrGetEnumValue -> {
 		val entry = node.symbol.owner
 		val parent = entry.parent as? IrClass
-		// Rich enum -> the static singleton field; basic enum -> ordinal const typed as the CLR enum.
+		// Rich enum -> the static singleton field; basic enum -> the selected Kotlin enum-entry identity.
 		if (parent != null && isRichEnum(parent))
 			"""{"k":"staticField","ownerType":${fqnJson(typeName(parent))},"name":${str(entry.name.asString())}}"""
 		else {
 			val ord = parent?.declarations?.filterIsInstance<IrEnumEntry>()?.indexOf(entry) ?: 0
-			// The enum-entry NAME is Kotlin declaration identity. Its ordinal remains the complete physical value for a
-			// locally-declared Kotlin enum; bir2cir uses the name plus referenced-DLL metadata to resolve a sparse CLR
-			// enum's actual underlying constant.
-			"""{"k":"enumValue","type":${fqnJson(parent?.let { typeName(it) } ?: "kotlin.Any")},"entry":${str(entry.name.asString())},"ordinal":$ord}"""
+			// Use the same declaration-type transport as every other value/signature. In particular, a projected
+			// classifier carries dll2klib's exact external identity; rebuilding it from its Kotlin display name
+			// would lose nested/renamed owners. bir2cir alone resolves the entry's physical constant.
+			"""{"k":"enumValue","type":${birType(node.type).toJson()},"entry":${str(entry.name.asString())},"ordinal":$ord}"""
 		}
 	}
 	// `object Foo` reference -> load the singleton `Foo.INSTANCE` static field (item 10). (Projected .NET objects
