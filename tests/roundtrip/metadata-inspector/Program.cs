@@ -1459,8 +1459,9 @@ static void VerifyUnsafeAccessorDll(string path, string producerPath)
         md.GetString(md.GetMethodDefinition(handle).Name) == "companionBlockStorageStaysOneLogicalMemberOnAGenericOwner");
     var externalVolatileIl = pe.GetMethodBody(md.GetMethodDefinition(externalVolatileAccess).RelativeVirtualAddress)
         .GetILBytes() ?? Array.Empty<byte>();
-    Require(ContainsVolatileFieldAccess(externalVolatileIl),
-        "consumer access to a referenced @Volatile field omitted the CIR-carried volatile. prefix");
+    Require(ContainsMethodCall(md, externalVolatileIl, "roundtrip.companionstatics.Counter", "prop_get<volatileLater>") &&
+            ContainsMethodCall(md, externalVolatileIl, "roundtrip.companionstatics.Counter", "prop_set<volatileLater>"),
+        "consumer lateinit access must call the producer's typed volatile property accessors");
 
     var secretAccessors = accessors.Where(pair =>
         md.GetString(pair.Definition.Name).Contains("$prop_get_secret_", StringComparison.Ordinal)).ToArray();
@@ -1519,11 +1520,46 @@ static void VerifyUnsafeAccessorDll(string path, string producerPath)
         .Select(md.GetMethodDefinition)
         .Where(method => md.GetString(method.Name).EndsWith("$invoke", StringComparison.Ordinal))
         .ToArray();
-    Require(wrappers.Length == 16 && wrappers.All(method =>
+    // Follow the selected getter's explicit state edge, not the query helper's generated spelling.
+    var lateinitOwner = producerMd.TypeDefinitions.Single(handle =>
+        StripArities(DefinitionName(producerMd, handle)) == "roundtrip.lateinitstorage.LateinitBox");
+    var lateinitGetter = producerMd.GetPropertyDefinition(producerMd.GetTypeDefinition(lateinitOwner).GetProperties()
+        .Single(handle => producerMd.GetString(producerMd.GetPropertyDefinition(handle).Name) == "value"))
+        .GetAccessors().Getter;
+    using var state = DecodeCarrierDocument(producerMd, producerMd.GetMethodDefinition(lateinitGetter).GetCustomAttributes(),
+        "DotKt.Runtime.CompilerServices.KotlinLateinitStateAttribute");
+    var stateOwner = state.RootElement.GetProperty("owner").GetString();
+    var stateMethod = state.RootElement.GetProperty("method").GetString();
+    var stateStatic = state.RootElement.GetProperty("static").GetBoolean();
+    Require(stateOwner == StripArities(DefinitionName(producerMd, lateinitOwner)) && !stateStatic,
+        "generic lateinit getter lost its exact instance initialization-state edge");
+    var stateAccessor = accessors.Single(pair =>
+    {
+        var attribute = pair.Definition.GetCustomAttributes().Select(md.GetCustomAttribute).Single(attribute =>
+            AttributeName(md, attribute) == "System.Runtime.CompilerServices.UnsafeAccessorAttribute");
+        var blob = md.GetBlobReader(attribute.Value);
+        if (blob.ReadUInt16() != 1 || blob.ReadInt32() != (stateStatic ? 2 : 1) || blob.ReadUInt16() != 1 ||
+            blob.ReadByte() != 0x54 || blob.ReadByte() != 0x0e || blob.ReadSerializedString() != "Name" ||
+            blob.ReadSerializedString() != stateMethod || blob.RemainingBytes != 0) return false;
+        var signature = md.GetBlobReader(pair.Definition.Signature);
+        var header = signature.ReadSignatureHeader();
+        if (header.IsGeneric) signature.ReadCompressedInteger();
+        return signature.ReadCompressedInteger() == 1 &&
+            signature.ReadSignatureTypeCode() == SignatureTypeCode.Boolean &&
+            signature.ReadSignatureTypeCode() == SignatureTypeCode.GenericTypeInstance &&
+            signature.ReadSignatureTypeCode() == SignatureTypeCode.TypeHandle &&
+            StripArities(TypeName(md, signature.ReadTypeHandle())) == stateOwner;
+    });
+    // Its one generic holder is shared by the Int and String instantiations.
+    var lateinitWrappers = wrappers.Where(method => method.GetDeclaringType() == stateAccessor.TypeHandle).ToArray();
+    Require(lateinitWrappers.Length == 1 &&
+            md.GetTypeDefinition(lateinitWrappers[0].GetDeclaringType()).GetGenericParameters().Count == 2,
+        "generic lateinit default query must retain one correctly framed private-target accessor holder");
+    Require(wrappers.Length == 17 && wrappers.All(method =>
             (method.Attributes & MethodAttributes.MemberAccessMask) == MethodAttributes.Assembly &&
             (method.Attributes & MethodAttributes.Static) != 0 && method.RelativeVirtualAddress != 0),
         $"generic UnsafeAccessor holders do not expose only compiler-generated internal wrappers " +
-        $"(found {wrappers.Length}, expected 16)");
+        $"(found {wrappers.Length}, expected 17)");
 }
 
 static void VerifyLayerBoundary(string birPath, string cirPath)
@@ -1788,11 +1824,12 @@ static void VerifyDll(string path)
             (FieldAttributes.Public | FieldAttributes.Static | FieldAttributes.Literal) &&
             !tag.GetDefaultValue().IsNil,
         "companion-block const is not a public CLR literal with a metadata constant");
-    var later = md.GetFieldDefinition(counterFields["later"]);
-    Require((later.Attributes & (FieldAttributes.Public | FieldAttributes.Static)) ==
-            (FieldAttributes.Public | FieldAttributes.Static) &&
-            HasFieldAttribute(md, counterFields["later"], LateinitAttribute),
-        "companion-block lateinit field lost its trusted CLR metadata marker");
+    var later = md.GetFieldDefinition(counterFields["<later>k__BackingField"]);
+    Require((later.Attributes & (FieldAttributes.FieldAccessMask | FieldAttributes.Static)) ==
+            (FieldAttributes.Private | FieldAttributes.Static) &&
+            md.GetBlobBytes(later.Signature).SequenceEqual(new byte[] { 0x06, 0x1c }) &&
+            HasFieldAttribute(md, counterFields["<later>k__BackingField"], LateinitAttribute),
+        "companion-block lateinit must have private object storage and its trusted metadata marker");
 
     var counterCompanionCarrier = carriers.Single(c =>
         c.Owner == "roundtrip.companionstatics.Counter" && c.Name == "Companion");
@@ -1823,11 +1860,12 @@ static void VerifyDll(string path)
             (FieldAttributes.Public | FieldAttributes.Static | FieldAttributes.Literal) &&
             !boxCode.GetDefaultValue().IsNil,
         "generic-owner companion const is not a public CLR literal with a metadata constant");
-    var boxLater = md.GetFieldDefinition(boxFields["later"]);
-    Require((boxLater.Attributes & (FieldAttributes.Public | FieldAttributes.Static)) ==
-            (FieldAttributes.Public | FieldAttributes.Static) &&
-            HasFieldAttribute(md, boxFields["later"], LateinitAttribute),
-        "generic-owner companion lateinit lost its trusted CLR metadata marker");
+    var boxLater = md.GetFieldDefinition(boxFields["<later>k__BackingField"]);
+    Require((boxLater.Attributes & (FieldAttributes.FieldAccessMask | FieldAttributes.Static)) ==
+            (FieldAttributes.Private | FieldAttributes.Static) &&
+            md.GetBlobBytes(boxLater.Signature).SequenceEqual(new byte[] { 0x06, 0x1c }) &&
+            HasFieldAttribute(md, boxFields["<later>k__BackingField"], LateinitAttribute),
+        "generic-owner companion lateinit must have private object storage and its trusted metadata marker");
     Require(md.GetTypeDefinition(box).GetGenericParameters().Count == 0,
         "generic-owner companion statics were not placed on one non-generic carrier");
 
@@ -1843,12 +1881,16 @@ static void VerifyDll(string path)
             $"UnsafeAccessor rewrite of private companion static omitted volatile. in {methodName}");
     }
 
-    var readVolatile = md.GetTypeDefinition(counter).GetMethods().Single(h =>
-        md.GetString(md.GetMethodDefinition(h).Name) == "readVolatileLater");
-    var il = pe.GetMethodBody(md.GetMethodDefinition(readVolatile).RelativeVirtualAddress).GetILBytes()
-        ?? Array.Empty<byte>();
-    Require(ContainsVolatileFieldAccess(il),
-        "lateinitGet of an @Volatile field omitted the volatile. prefix");
+    var volatileAccessors = md.GetPropertyDefinition(md.GetTypeDefinition(counter).GetProperties().Single(h =>
+        md.GetString(md.GetPropertyDefinition(h).Name) == "volatileLater")).GetAccessors();
+    foreach (var accessor in new[] { volatileAccessors.Getter, volatileAccessors.Setter })
+    {
+        Require(!accessor.IsNil, "volatile lateinit property lost a typed accessor");
+        var il = pe.GetMethodBody(md.GetMethodDefinition(accessor).RelativeVirtualAddress).GetILBytes()
+            ?? Array.Empty<byte>();
+        Require(ContainsVolatileFieldAccess(il),
+            "lateinit getter/setter storage access omitted the volatile. prefix");
+    }
 
     var protectedCarrier = carriers.Single(c => c.Owner == Ns + "ProtectedCompanionHost");
     var protectedMethods = md.GetTypeDefinition(protectedCarrier.Handle).GetMethods()
@@ -1981,9 +2023,8 @@ static void VerifyKlib(string path)
         "companion-block const lost KLIB IS_CONST/HAS_CONSTANT or its compile-time value");
     var later = counter.Property.Single(p => String(statics, p.Name) == "later");
     Require((later.Flags & (1 << 12)) != 0 &&
-            later.PropertyAnnotation.Any(a => QualifiedName(statics, a.Id) == "kotlin.clr.ClrField") &&
-            later.PropertyAnnotation.Any(a => QualifiedName(statics, a.Id) == "kotlin.clr.ClrLateinitField"),
-        "companion-block lateinit lost KLIB IS_LATEINIT or its static-property declaration marker");
+            !later.PropertyAnnotation.Any(a => QualifiedName(statics, a.Id) == "kotlin.clr.ClrField"),
+        "companion-block lateinit must restore IS_LATEINIT on its accessor-routed property");
     var counterCompanion = Class(statics, "roundtrip.companionstatics.Counter.Companion");
     var objectTag = counterCompanion.Property.Single(p => String(statics, p.Name) == "OBJECT_TAG");
     Require((objectTag.Flags & ((1 << 11) | (1 << 13))) == ((1 << 11) | (1 << 13)) &&
@@ -2001,9 +2042,8 @@ static void VerifyKlib(string path)
         "generic-owner companion const lost KLIB IS_CONST/HAS_CONSTANT or its compile-time value");
     var boxLater = box.Property.Single(p => String(statics, p.Name) == "later");
     Require((boxLater.Flags & (1 << 12)) != 0 &&
-            boxLater.PropertyAnnotation.Any(a => QualifiedName(statics, a.Id) == "kotlin.clr.ClrField") &&
-            boxLater.PropertyAnnotation.Any(a => QualifiedName(statics, a.Id) == "kotlin.clr.ClrLateinitField"),
-        "generic-owner companion lateinit lost KLIB IS_LATEINIT or its static-property declaration marker");
+            !boxLater.PropertyAnnotation.Any(a => QualifiedName(statics, a.Id) == "kotlin.clr.ClrField"),
+        "generic-owner companion lateinit must restore IS_LATEINIT on its accessor-routed property");
     var marker = statics.Package.Property.Single(p =>
         String(statics, p.Name) == "marker" &&
         p.ReceiverType is { HasClassName: true } receiver &&
@@ -2272,23 +2312,47 @@ static bool HasMethodAttribute(MetadataReader md, MethodDefinitionHandle handle,
 
 static bool ContainsVolatileFieldAccess(byte[] il)
 {
+    var volatilePrefix = false;
+    foreach (var (op, _) in ReadInstructions(il))
+    {
+        if (volatilePrefix &&
+            (op == OpCodes.Ldfld || op == OpCodes.Ldsfld || op == OpCodes.Stfld || op == OpCodes.Stsfld ||
+             op == OpCodes.Ldobj || op == OpCodes.Stobj))
+            return true;
+        volatilePrefix = op == OpCodes.Volatile;
+    }
+    return false;
+}
+
+static bool ContainsMethodCall(MetadataReader md, byte[] il, string owner, string name)
+{
+    foreach (var (op, token) in ReadInstructions(il))
+    {
+        if (op != OpCodes.Call && op != OpCodes.Callvirt) continue;
+        var handle = System.Reflection.Metadata.Ecma335.MetadataTokens.EntityHandle(token);
+        if (handle.Kind == HandleKind.MethodSpecification)
+            handle = md.GetMethodSpecification((MethodSpecificationHandle)handle).Method;
+        if (handle.Kind != HandleKind.MemberReference) continue;
+        var member = md.GetMemberReference((MemberReferenceHandle)handle);
+        if (md.GetString(member.Name) == name && TypeName(md, member.Parent) == owner) return true;
+    }
+    return false;
+}
+
+static IEnumerable<(OpCode Op, int Token)> ReadInstructions(byte[] il)
+{
     var opCodes = typeof(OpCodes).GetFields(BindingFlags.Public | BindingFlags.Static)
         .Where(field => field.FieldType == typeof(OpCode))
         .Select(field => (OpCode)field.GetValue(null)!)
         .ToDictionary(op => unchecked((ushort)op.Value));
-    var volatilePrefix = false;
     for (var offset = 0; offset < il.Length;)
     {
         var first = il[offset++];
         var key = first == 0xfe && offset < il.Length
             ? (ushort)(0xfe00 | il[offset++])
             : first;
-        if (!opCodes.TryGetValue(key, out var op)) return false;
-        if (volatilePrefix &&
-            (op == OpCodes.Ldfld || op == OpCodes.Ldsfld || op == OpCodes.Stfld || op == OpCodes.Stsfld ||
-             op == OpCodes.Ldobj || op == OpCodes.Stobj))
-            return true;
-        volatilePrefix = op == OpCodes.Volatile;
+        if (!opCodes.TryGetValue(key, out var op))
+            throw new InvalidDataException("invalid IL opcode in metadata control");
 
         var operandSize = op.OperandType switch {
             OperandType.InlineNone => 0,
@@ -2302,10 +2366,11 @@ static bool ContainsVolatileFieldAccess(byte[] il)
                 4 + checked(BitConverter.ToInt32(il, offset) * 4),
             _ => -1,
         };
-        if (operandSize < 0 || offset + operandSize > il.Length) return false;
+        if (operandSize < 0 || offset + operandSize > il.Length)
+            throw new InvalidDataException("invalid IL operand in metadata control");
+        yield return (op, op.OperandType == OperandType.InlineMethod ? BitConverter.ToInt32(il, offset) : 0);
         offset += operandSize;
     }
-    return false;
 }
 
 static void VerifyVolatileMethod(string path, string typeSuffix, string methodName)

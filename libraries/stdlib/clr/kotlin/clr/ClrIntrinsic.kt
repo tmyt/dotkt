@@ -44,16 +44,10 @@ internal annotation class ClrAttributeNamedArgument(val kind: String, val name: 
 // KLIB exposes it as a Kotlin property for frontend lookup, while this marker
 // preserves the storage fact so kotc emits a BIR field access. bir2cir still
 // resolves the actual CLR field and ilemit only emits the resulting CIR.
+// This opt-out cannot be applied to lateinit properties, whose source contract requires accessors.
 @Target(AnnotationTarget.PROPERTY)
 @Retention(AnnotationRetention.BINARY)
 public annotation class ClrField
-
-// Kotlin 2.4 does not copy KLIB IS_LATEINIT onto its synthetic static-property fake override. dll2klib therefore
-// carries the declaration fact in a compiler-only marker alongside ClrField. It is intentionally not a public flag
-// on the user-facing interop annotation: arbitrary @ClrField source must not be able to manufacture lateinit reads.
-@Target(AnnotationTarget.PROPERTY)
-@Retention(AnnotationRetention.BINARY)
-internal annotation class ClrLateinitField
 
 // Compiler-internal DLL -> KLIB linkage for members. Properties carry getter and setter identities separately.
 @Target(AnnotationTarget.FUNCTION, AnnotationTarget.PROPERTY)

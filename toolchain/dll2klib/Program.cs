@@ -2598,15 +2598,11 @@ internal sealed class AssemblyScanner : IDisposable
                 projected.Flags |= (1 << 11) | (1 << 13); // IS_CONST + HAS_CONSTANT
                 projected.CompileTimeValue = constant;
             }
-            var isLateinit = _attrs.Has(fieldHandle, MetadataAttributes.DotKtNs + "KotlinLateinitAttribute");
-            if (isLateinit)
-                projected.Flags |= 1 << 12; // IS_LATEINIT
             if (hasCustomAccessors)
                 ApplyAccessorFlags(projected, custom.Handles);
             else
             {
                 projected.PropertyAnnotation.Add(ClrFieldAnnotation(names));
-                if (isLateinit) projected.PropertyAnnotation.Add(ClrLateinitFieldAnnotation(names));
                 projected.Flags |= 1;
             }
             result.Property.Add(projected);
@@ -3552,11 +3548,6 @@ internal sealed class AssemblyScanner : IDisposable
                         : null,
                 };
                 projected.PropertyAnnotation.Add(ClrFieldAnnotation(names));
-                if (decoder.Attributes.Has(fieldHandle, MetadataAttributes.DotKtNs + "KotlinLateinitAttribute"))
-                {
-                    projected.Flags |= 1 << 12;
-                    projected.PropertyAnnotation.Add(ClrLateinitFieldAnnotation(names));
-                }
                 return projected;
             }
         }
@@ -5360,16 +5351,12 @@ internal sealed class AssemblyScanner : IDisposable
                 projected.Flags |= (1 << 11) | (1 << 13); // IS_CONST + HAS_CONSTANT
                 projected.CompileTimeValue = constant;
             }
-            var isLateinit = _attrs.Has(fieldHandle, MetadataAttributes.DotKtNs + "KotlinLateinitAttribute");
-            if (isLateinit)
-                projected.Flags |= 1 << 12; // IS_LATEINIT
             projected.PropertyAnnotation.Add(ClrExternalAnnotation(names, handle));
             if (hasCustomAccessors)
                 ApplyAccessorFlags(projected, custom.Handles);
             else
             {
                 projected.PropertyAnnotation.Add(ClrFieldAnnotation(names));
-                if (isLateinit) projected.PropertyAnnotation.Add(ClrLateinitFieldAnnotation(names));
             }
             projected.Flags |= 1;
             package.Property.Add(projected);
@@ -5496,6 +5483,8 @@ internal sealed class AssemblyScanner : IDisposable
         MethodDefinitionHandle getter,
         MethodDefinitionHandle setter)
     {
+        if (!getter.IsNil && _attrs.Has(getter, MetadataAttributes.DotKtNs + "KotlinLateinitAttribute"))
+            property.Flags |= 1 << 12; // IS_LATEINIT belongs to the Kotlin property, not its physical storage type.
         if (!getter.IsNil && IsPublicOrProtected(_md.GetMethodDefinition(getter).Attributes))
             property.GetterFlags = Flags.Accessor(_md.GetMethodDefinition(getter).Attributes);
         if (!setter.IsNil && IsPublicOrProtected(_md.GetMethodDefinition(setter).Attributes))
@@ -6420,9 +6409,6 @@ internal sealed class AssemblyScanner : IDisposable
 
     private static Annotation ClrFieldAnnotation(NameTable names) =>
         new() { Id = names.Class("kotlin.clr.ClrField") };
-
-    private static Annotation ClrLateinitFieldAnnotation(NameTable names) =>
-        new() { Id = names.Class("kotlin.clr.ClrLateinitField") };
 
     private void AddIndexer(
         Class owner,

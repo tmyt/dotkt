@@ -1,0 +1,2 @@
+@ClrField cannot be applied to a lateinit property
+lateinit requires property accessors

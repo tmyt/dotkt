@@ -454,10 +454,6 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 	// companion property accessed through its semantic receiver. Reached when a property's own custom accessor body
 	// reads/writes `field` (an IrGet/SetField).
 	internal fun staticBackingFieldOwner(fld: org.jetbrains.kotlin.ir.declarations.IrField): String? {
-		// A `lateinit` field keeps its own null-checked read/write path (lateinitGet) — never shadow it with a plain
-		// staticField load, even for a top-level/companion lateinit (defensive: its default accessors aren't emitted,
-		// so this is currently unreached, but the ordering must stay lateinit-first if that ever changes). #89.
-		if (fld.correspondingPropertySymbol?.owner?.isLateinit == true) return null
 		val parent = fld.parent
 		return when {
 			parent is IrFile && fld.isStatic -> fileClassName(parent)
@@ -985,6 +981,7 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 	// build (AliasHelperHoist is skipped there), so the ref assembly keeps the pure-Kotlin @ClrTypeAlias shapes verbatim.
 	fun emitFile(file: IrFile, typeAliases: List<String> = emptyList()): String {
 		fileEntry = file.fileEntry
+		validateLateinitAnnotations(file)
 		// Per-FILE lifted state. One BirEmitter instance processes every file in turn, so these MUST be reset here —
 		// otherwise each file's BIR accumulates the previous files' lifted lambdas/types, duplicating them into every
 		// file class (e.g. App.kt's `dotkt:lambda:<n>` reappearing in ControlsKt/DslKt/…). The `dotkt$*` types are

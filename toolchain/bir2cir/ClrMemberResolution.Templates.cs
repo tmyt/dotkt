@@ -203,29 +203,6 @@ static partial class ClrMemberResolution
         node["fieldRef"] = FieldRefJson(field, open, owner.Args ?? Array.Empty<TypeNode>());
     }
 
-    // `lateinitGet` is a direct load of the property storage followed by the null check encoded
-    // by that CIR node.  When an inline/reference payload makes that storage external, name the
-    // field just as an ordinary static/instance field operand does; ilemit must not rediscover it.
-    static void ResolveLateinitField(JsonObject node)
-    {
-        if (node.ContainsKey("fieldRef")) return;
-        if (ReadOwnerNode(node["ownerType"]) is not TypeNode.Fqn owner
-            || (node["name"] as JsonValue)?.GetValue<string>() is not string name)
-            return;
-        if (_localTypes.Contains(owner.Name)) return;
-        var open = ResolveOwnerType(owner);
-        if (open == null) return;
-        var isStatic = node["static"] is JsonValue value && value.TryGetValue<bool>(out var flag) && flag;
-        var flags = BindingFlags.Public | BindingFlags.NonPublic
-            | (isStatic ? BindingFlags.Static : BindingFlags.Instance) | BindingFlags.FlattenHierarchy;
-        var field = open.GetField(name, flags);
-        if (field != null && !(field.IsPublic || field.IsFamily || field.IsFamilyOrAssembly)) field = null;
-        if (field == null)
-            throw new InvalidOperationException(
-                $"bir2cir: external lateinit storage '{owner.Name}.{name}' does not resolve to a field");
-        node["fieldRef"] = FieldRefJson(field, open, owner.Args ?? Array.Empty<TypeNode>());
-    }
-
     /// <summary>
     /// The three BCL members a field-like event accessor's CAS loop runs through.
     /// </summary>

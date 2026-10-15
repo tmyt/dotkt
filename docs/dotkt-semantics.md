@@ -994,7 +994,7 @@ kotc or ilemit.
 
 An **accessor-routed** Kotlin property becomes a real CLR property (`Name` + dedicated
 `prop_get<Name>`/`prop_set<Name>` methods); its storage is
-emitted as an assembly-visible (`internal`) field named **`<Name>k__BackingField`**, stamped
+emitted as a non-public field named **`<Name>k__BackingField`**, stamped
 `[System.Runtime.CompilerServices.CompilerGenerated]` — the same convention and attribute `csc` uses for a C#
 auto-property. Kotlin/JVM instead names the field after the property, which on the CLR would put a property and a field
 of the SAME name on one type: reflection-driven .NET libraries group candidate members by name and cannot resolve that
@@ -1020,9 +1020,20 @@ identity.
 "Accessor-routed" is the exact scope, and it is **wider than "default accessors"**: a property that has a backing field
 *and* a custom accessor (`val p = 7; get() = field + 1`) still emits a CLR property, so its storage is renamed too.
 Only a property whose storage **is** the user-visible member emits no CLR property and therefore keeps its plain field
-name: `lateinit var`, `const`, a delegated property's `p$delegate`, a companion/top-level `val`/`var` (a static field),
+name: `const`, a delegated property's `p$delegate`, a field-routed companion/top-level `val`/`var` (a static field),
 and the `@ClrField` opt-out (§5f-adjacent: `@ClrField` deliberately emits a plain public field instead of a property).
-Reading an uninitialized `lateinit` slot throws Kotlin's `UninitializedPropertyAccessException`, with the Kotlin source
+An ordinary `lateinit var` exposes a typed CLR property, not a public field. Its private backing slot is
+`object`: null means uninitialized, and assigned CLR value types are boxed. The getter checks initialization before
+casting or unboxing to the declared type, so `lateinit var value: T` works for both `T = Int` (including zero) and
+reference types. Kotlin and C# assignments and callable-reference writes use the same typed accessors. C# cannot
+take the property or its private backing slot by `ref`/`out`; no native `T` field is exposed for this property.
+This representation is specific to lateinit, not a change to ordinary generic backing fields or native CLR fields.
+`@ClrField` cannot be combined with `lateinit` and produces a compile error.
+
+`this::value.isInitialized` checks that selected declaration's storage without invoking its throwing getter. Kotlin's
+frontend restricts this query to a property literal with lexical backing-field access; arbitrary saved references
+and external properties do not acquire a reflective initialization API. Receiver expressions are evaluated once.
+Reading an uninitialized slot throws Kotlin's `UninitializedPropertyAccessException`, with the Kotlin source
 property name in the message. The stdlib deliberately retains upstream's `DEPRECATION_ERROR` on naming that exception
 type in common source; callers should normally catch a public supertype rather than depend on that implementation type.
 

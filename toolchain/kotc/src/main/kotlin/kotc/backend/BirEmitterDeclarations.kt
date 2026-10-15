@@ -135,7 +135,7 @@ internal fun hasStaticPropertyStorage(klass: IrClass, p: IrProperty): Boolean =
  * emitting layer runs a non-literal static field's `init` in the type initializer.
  *
  * Visibility and read-only follow the same rules as an instance backing field: an accessor-routed property keeps
- * its storage private behind accessors, while a non-routed one (`const`, `lateinit`, `@ClrField`) keeps the source
+ * its storage private behind accessors, while a non-routed one (`const`, `@ClrField`) keeps the source
  * visibility and is marked read-only when it is not publicly settable.
  */
 internal fun BirEmitter.staticPropertyFields(klass: IrClass): List<String> =
@@ -153,7 +153,7 @@ internal fun BirEmitter.staticPropertyFields(klass: IrClass): List<String> =
 				activeSemanticOwner = savedSemanticOwner
 				activeSemanticOwnerDeclaration = savedSemanticDeclaration
 			}
-			val routed = p.getter != null && !p.isConst && !p.isLateinit && !isClrField(p)
+			val routed = p.getter != null && !p.isConst && !isClrField(p)
 			val v = if (routed) "private" else visOf(p)
 			val visJson = if (v != "public") ""","vis":${str(v)}""" else ""
 			val ro = if (!routed && (!p.isVar || (p.setter != null && visOf(p.setter!!) != "public"))) ""","readOnly":true""" else ""
@@ -741,12 +741,12 @@ internal fun BirEmitter.richEnumDef(ec: IrClass): String {
 	}
 	fun emitsAccessor(a: IrSimpleFunction?) = a != null &&
 		(a.body is IrBlockBody || (a.body == null && a.modality == Modality.ABSTRACT))
-	fun emitsGet(p: IrProperty) = emitsAccessor(p.getter) && !p.isConst && !p.isLateinit && !isClrField(p)
-	fun emitsSet(p: IrProperty) = emitsAccessor(p.setter) && !p.isConst && !p.isLateinit && !isClrField(p)
+	fun emitsGet(p: IrProperty) = emitsAccessor(p.getter) && !p.isConst && !isClrField(p)
+	fun emitsSet(p: IrProperty) = emitsAccessor(p.setter) && !p.isConst && !isClrField(p)
 	val userFields = userProps.mapNotNull { p ->
 		val bf = p.backingField ?: return@mapNotNull null
 		val visJson = if (emitsGet(p)) ""","vis":"internal"""" else ""
-		"""{"name":${str(bf.name.asString())},"type":${birType(bf.type).toJson()}$visJson}"""
+		"""{"name":${str(bf.name.asString())},"type":${birType(bf.type).toJson()}$visJson${lateinitFieldFlag(p)}}"""
 	} + syntheticInstanceStorageFields(ec)
 	val propAccessors = userProps.flatMap { p ->
 		listOfNotNull(
@@ -898,8 +898,8 @@ internal fun BirEmitter.richEnumDef(ec: IrClass): String {
 	// A `companion { }` property of an enum: static storage (initialized in the type initializer, after the entry
 	// singletons declared above, which is the order Kotlin specifies) plus its own static accessors and CLR property.
 	val staticProps = ec.declarations.filterIsInstance<IrProperty>().filter { isKotlinStaticProperty(it) }
-	fun emitsStaticGet(p: IrProperty) = p.getter?.body is IrBlockBody && !p.isConst && !p.isLateinit && !isClrField(p)
-	fun emitsStaticSet(p: IrProperty) = p.setter?.body is IrBlockBody && !p.isConst && !p.isLateinit && !isClrField(p)
+	fun emitsStaticGet(p: IrProperty) = p.getter?.body is IrBlockBody && !p.isConst && !isClrField(p)
+	fun emitsStaticSet(p: IrProperty) = p.setter?.body is IrBlockBody && !p.isConst && !isClrField(p)
 	fields.addAll(staticPropertyFields(ec))
 	val staticPropAccessors = staticProps.flatMap { p ->
 		listOfNotNull(
@@ -982,9 +982,9 @@ internal fun BirEmitter.instanceStorageFields(klass: IrClass): List<String> {
 		// property's storage belongs to the enclosing type rather than each instance.
 		if (clrEventDelegateCall(p) != null || hasStaticPropertyStorage(klass, p)) return@mapNotNull null
 		val bf = p.backingField ?: return@mapNotNull null
-		// Accessor-routed storage is an implementation detail. @ClrField / const / lateinit retain their declared
+		// Accessor-routed storage is an implementation detail. @ClrField / const retain their declared
 		// visibility; a non-publicly-settable plain field remains read-only to a re-consuming Kotlin module.
-		val routed = p.getter != null && !p.isConst && !p.isLateinit && !isClrField(p)
+		val routed = p.getter != null && !p.isConst && !isClrField(p)
 		val visibility = if (routed) "private" else visOf(p)
 		val visJson = if (visibility != "public") ""","vis":${str(visibility)}""" else ""
 		val readOnly = if (!routed && (!p.isVar || (p.setter != null && visOf(p.setter!!) != "public")))
@@ -1049,9 +1049,9 @@ internal fun BirEmitter.enumEntrySubclass(subName: String, baseName: String, cc:
 		.filter { (it.body != null || it.isExternal) && it.correspondingPropertySymbol == null }
 		.map { method(it, static = false, semanticOwnerOverride = subName) }
 	val entryProps = cc.declarations.filterIsInstance<IrProperty>().filter { !it.isFakeOverride }
-	fun emitsGet(p: IrProperty) = p.getter?.body is IrBlockBody && !p.isConst && !p.isLateinit &&
+	fun emitsGet(p: IrProperty) = p.getter?.body is IrBlockBody && !p.isConst &&
 		!isClrField(p) && !isClrEventProperty(p)
-	fun emitsSet(p: IrProperty) = p.setter?.body is IrBlockBody && !p.isConst && !p.isLateinit &&
+	fun emitsSet(p: IrProperty) = p.setter?.body is IrBlockBody && !p.isConst &&
 		!isClrField(p) && !isClrEventProperty(p)
 	val accessors = entryProps.flatMap { p ->
 		listOfNotNull(
@@ -1236,15 +1236,15 @@ internal fun BirEmitter.isVolatile(p: IrProperty): Boolean {
 internal fun BirEmitter.volatileFieldFlag(p: IrProperty): String = if (isVolatile(p)) ""","volatile":true""" else ""
 
 /** `,"lateinit":true` Kotlin field fact. bir2cir folds it into trusted metadata so dll2klib restores the standard
- *  IS_LATEINIT property flag; the physical null-check remains an access-site `lateinitGet`. */
-internal fun BirEmitter.lateinitFieldFlag(p: IrProperty): String = if (p.isLateinit) ""","lateinit":true""" else ""
+ *  IS_LATEINIT property flag. The getter identity also selects this declaration for initialization queries. */
+internal fun BirEmitter.lateinitFieldFlag(p: IrProperty): String = if (p.isLateinit)
+	""","lateinit":true,"lateinitDeclarationId":${str(declarationId(p.getter!!))}""" else ""
 
 /** The standard KLIB IS_LATEINIT flag can live on the lazy FIR declaration even when Kotlin 2.4's static-property
  * fake-override wrapper does not copy it onto the materialized IrProperty. Read the declaration-owned fact from
  * either representation; this is still Kotlin metadata, not a CLR-layout inference. */
 internal fun BirEmitter.isLateinitProperty(p: IrProperty): Boolean =
 	p.isLateinit ||
-		p.annotations.any { it.type.classFqName?.asString() == "kotlin.clr.ClrLateinitField" } ||
 		(p as? org.jetbrains.kotlin.fir.lazy.Fir2IrLazyProperty)?.fir?.isLateInit == true
 
 /** A property whose type is `kotlin.clr.ClrEvent<T>` — the compile-time-only fiction surfacing a .NET event.
@@ -1775,8 +1775,8 @@ internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDecla
 	fun inheritedStatic(p: IrProperty) = isInheritedStaticProperty(p)
 	// `!isClrEventProperty`: a `kotlin.clr.ClrEvent<T>` fake-override (a .NET event inherited through a base's
 	// interface) is not a real property and must not surface an accessor/property member.
-	fun emitsGet(p: IrProperty) = p.getter != null && !p.isConst && !p.isLateinit && !isClrField(p) && !dropFake(p.getter) && !isClrEventProperty(p) && !inheritedStatic(p)
-	fun emitsSet(p: IrProperty) = p.setter != null && !p.isConst && !p.isLateinit && !isClrField(p) && !dropFake(p.setter) && !isClrEventProperty(p) && !inheritedStatic(p)
+	fun emitsGet(p: IrProperty) = p.getter != null && !p.isConst && !isClrField(p) && !dropFake(p.getter) && !isClrEventProperty(p) && !inheritedStatic(p)
+	fun emitsSet(p: IrProperty) = p.setter != null && !p.isConst && !isClrField(p) && !dropFake(p.setter) && !isClrEventProperty(p) && !inheritedStatic(p)
 	val inheritedDefaultAccessors = klass.declarations.filterIsInstance<IrProperty>().flatMap { p ->
 		listOfNotNull(
 			inheritedDefaultAccessorFact(p, p.getter, "get"),

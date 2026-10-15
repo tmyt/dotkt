@@ -5,6 +5,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Implement lateinit initialization queries and use private boxed storage with typed CLR properties,
+  including generic value-type defaults, callable references and cross-DLL writes. Reject `@ClrField`
+  combined with `lateinit`; ordinary lateinit properties no longer expose public fields or C# ref/out storage (#969).
+
 - Fix verifier-invalid loop break/continue across protected regions, including nested/labeled loops and finally
   cleanup that overrides a pending transfer or exception. Physical branch ownership is resolved in bir2cir (#707).
 

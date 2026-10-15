@@ -5272,6 +5272,7 @@ sealed partial class ReferenceMetadataIndex
                             innerConstructorFactory?.TypeArguments,
                             SemanticMethodTypeParameters(method, dotKtAuthored, declarationIdentity?.NullableFrame), declarationIdentity?.NullableFrame)
                         {
+                            LateinitState = dotKtAuthored ? ReadLateinitState(method) : null,
                             SignatureParameters = method.GetParameters().Select(DeclarationSignatureSlot).ToArray(),
                             SignatureReturn = DeclarationSignatureSlot(method.ReturnParameter),
                             VarargPositions = method.GetParameters()
@@ -5466,6 +5467,9 @@ sealed partial class ReferenceMetadataIndex
             HandleKind.MethodDefinition);
         attrs.ValidateCarrierTargets(
             KotlinDeclarationIdentityAttr,
+            HandleKind.MethodDefinition);
+        attrs.ValidateCarrierTargets(
+            KotlinLateinitStateAttr,
             HandleKind.MethodDefinition);
         attrs.ValidateCarrierTargets(
             KotlinSuspendResultAttr,
@@ -8037,6 +8041,7 @@ sealed record MemberBinding(string Owner, string Name, int ParamCount, string In
     // Capture the selected reference MethodDef while scanning it. A local type may shadow its owner
     // during stdlib self-compilation; resolving that owner again is not declaration identity.
     public TypeNode[] SignatureParameters { get; init; }
+    public LateinitStateTarget LateinitState { get; init; }
     public TypeNode SignatureReturn { get; init; }
     public int[] VarargPositions { get; init; } = Array.Empty<int>();
 }

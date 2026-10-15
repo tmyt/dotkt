@@ -1016,6 +1016,7 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 	// by IR identity against the frontend-validated tail-call set installed by `method()`.
 	tailrecCtx?.let { ctx -> if (call in ctx.calls) return tailrecJump(call, ctx) }
 	val callee = call.symbol.owner
+	lateinitInitializationQuery(call)?.let { return it }
 	// A member/top-level delegated property is represented by a real CLR property accessor. Its frontend-generated
 	// accessor body already contains the resolved getValue/setValue call, so ordinary call emission is sufficient.
 	// `Lazy.getValue` alone is @InlineOnly and has no runtime declaration: lower that call, here in the accessor body,
@@ -1346,7 +1347,7 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 			val selectedOwner = kotc.frontend.ClrStaticOwners.at(sourcePathOf(call), call.endOffset,
 				staticProperty.name.asString(), propKind)?.let(::birType)?.toJson() ?: fqnJson(typeName(staticOwner))
 			val ret = if (isSetter) "" else ""","ret":${birType(call.type).toJson()}"""
-			// A property whose storage IS its user-visible member — `const`, `lateinit var`, `@ClrField` — emits no
+			// A property whose storage IS its user-visible member — `const`, `@ClrField` — emits no
 			// accessor at all (the declaration side gates on the same [fieldRoutedProperty] rule), so its access is
 			// the storage itself. Emitting an accessor call here named a `get_`/`set_` slot that does not exist.
 			if (!fieldRoutedProperty(staticProperty)) {
@@ -1354,8 +1355,6 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 				val fieldName = str(staticProperty.name.asString())
 				return if (isSetter)
 					"""{"k":"staticFieldSet","ownerType":$fieldOwner,"name":$fieldName,"value":${accessorArgs.first().let { expr(it) }}}"""
-				else if (isLateinitProperty(staticProperty))
-					"""{"k":"lateinitGet","ownerType":$fieldOwner,"static":true,"name":$fieldName}"""
 				else """{"k":"staticField","ownerType":$fieldOwner,"name":$fieldName}"""
 			}
 			return """{"k":"callStatic","ownerType":$selectedOwner,"method":${str(staticProperty.name.asString())},"prop":"$propKind"${overloadSigField(propertyAccessorDeclaration)},"argTypes":[$argTypes]$ret,"args":[$args]}"""
@@ -1734,22 +1733,15 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 				val fieldName = str(prop.name.asString())
 				val fieldOwner = if (isStatic) memberType!! else fieldDeclarationOwner(callee, recv!!.type)
 				val ownerType = fieldOwner.toJson()
-				val declarationProperty = (if (callee.isFakeOverride) callee.resolveFakeOverride() else callee)
-					?.correspondingPropertySymbol?.owner
-				val lateinit = isLateinitProperty(prop) || declarationProperty?.let(::isLateinitProperty) == true
 				return if (isStatic) {
 					if (callee === prop.setter)
 						"""{"k":"staticFieldSet","ownerType":$ownerType,"name":$fieldName,"value":${expr(regularArgs(call).first())}$companionCallTag}"""
-					else if (lateinit)
-						"""{"k":"lateinitGet","ownerType":$ownerType,"static":true,"name":$fieldName$companionCallTag}"""
 					else
 						"""{"k":"staticField","ownerType":$ownerType,"name":$fieldName${retHint((fieldOwner as? TypeNode.Fqn)?.args != null, call.type)}$companionCallTag}"""
 				} else {
 					val receiver = expr(recv!!)
 					if (callee === prop.setter)
 						"""{"k":"setFieldExpr","ownerType":$ownerType,"recv":$receiver,"name":$fieldName,"value":${expr(regularArgs(call).first())}$companionCallTag}"""
-					else if (lateinit)
-						"""{"k":"lateinitGet","ownerType":$ownerType,"recv":$receiver,"name":$fieldName$companionCallTag}"""
 					else
 						"""{"k":"field","ownerType":$ownerType,"recv":$receiver,"name":$fieldName${retHint((fieldOwner as? TypeNode.Fqn)?.args != null, call.type)}$companionCallTag}"""
 				}
@@ -1872,8 +1864,6 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 					if (isClrField(p)) {
 						return if (setter)
 							"""{"k":"staticFieldSet","ownerType":${fqnJson(fileClass)},"name":${str(p.name.asString())},"value":${expr(values.first())}$tag}"""
-						else if (isLateinitProperty(p))
-							"""{"k":"lateinitGet","ownerType":${fqnJson(fileClass)},"static":true,"name":${str(p.name.asString())}$tag}"""
 						else """{"k":"staticField","ownerType":${fqnJson(fileClass)},"name":${str(p.name.asString())}$tag}"""
 					}
 					val argTypes = values.joinToString(",") { birType(it.type).toJson() }
@@ -2024,7 +2014,7 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 		// A property with a custom accessor — OR one overriding an interface property (e.g. CharSequence.length) —
 		// routes through an accessor, not the backing field. Physical binding belongs to bir2cir and uses the explicit
 		// property identity plus the `overrides` marker.
-		if (!isLateinitProperty(property) && !isClrField(property)) {   // route through accessor; @ClrField reads/writes the plain field
+		if (!isClrField(property)) {   // route through accessor; @ClrField reads/writes the plain field
 			val virtual = isVirtualInstanceCall(call, callee)
 			// A member extension property dispatches on the enclosing C; its accessor takes the extension receiver as a
 			// leading `__self` argument.
@@ -2042,9 +2032,6 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 		val fieldOwner = fieldDeclarationOwner(callee, recvExpr?.type ?: declaringClass.defaultType)
 		return if (callee === property.setter)
 			"""{"k":"setFieldExpr","ownerType":${str(fieldOwner)},"recv":$recv,"name":${str(property.name.asString())},"value":${expr(regularArgs(call).first())}}"""
-		// `lateinit var` read -> throw if still uninitialized (the field is null) — proper lateinit semantics.
-		else if (isLateinitProperty(property))
-			"""{"k":"lateinitGet","ownerType":${str(fieldOwner)},"recv":$recv,"name":${str(property.name.asString())}}"""
 		else """{"k":"field","ownerType":${str(fieldOwner)},"recv":$recv,"name":${str(property.name.asString())}${retHint((fieldOwner as? TypeNode.Fqn)?.args != null, call.type)}}"""
 	}
 
@@ -2596,17 +2583,18 @@ internal fun BirEmitter.hasDefaultSetter(prop: IrProperty): Boolean {
 }
 
 // #89: a property whose backing field is accessed THROUGH `field`-based get_/set_ accessors — the routing this
-// fix targets. `const` is frontend-inlined; `lateinit` keeps a raw null-checked field with default accessors;
-// `@ClrField` is a plain field by opt-in. Delegated properties are accessor-routed too: their provider field is
+// fix targets. `const` is frontend-inlined; `@ClrField` is a plain field by opt-in. Lateinit and delegated
+// properties are accessor-routed too: a delegate's provider field is
 // storage, while the frontend-generated accessor body owns getValue/setValue lowering.
 internal fun BirEmitter.fieldRoutedProperty(prop: IrProperty): Boolean =
-	!prop.isConst && !isLateinitProperty(prop) && !isClrField(prop)
+	!prop.isConst && !isClrField(prop)
 // Once either accessor needs a method, the top-level property has one accessor-owned surface. Emit both roles (for a
 // var) and route both through it; otherwise the default half would remain a public field while the custom half became
 // a CLR Property, and the frontend fact that the declaration is mutable could not survive round-trip metadata.
 internal fun BirEmitter.accessorRoutedTopLevelProperty(prop: IrProperty): Boolean =
 	fieldRoutedProperty(prop) &&
-		(prop.getter?.let { !hasDefaultGetter(prop) } == true ||
+		((isLateinitProperty(prop) && companionReceiverJson(prop) == null) ||
+			prop.getter?.let { !hasDefaultGetter(prop) } == true ||
 			prop.setter?.let { !hasDefaultSetter(prop) } == true ||
 			// A physical method name requires a MethodDef even when the Kotlin accessor body is default. A
 			// field-backed companion extension is different: bir2cir owns that representation and receives the two
@@ -2621,7 +2609,7 @@ internal fun BirEmitter.accessorRoutedTopLevelProperty(prop: IrProperty): Boolea
 				(prop.getter?.let { declarationIdForPhysicalAllocation(it) } != null ||
 					prop.setter?.let { declarationIdForPhysicalAllocation(it) } != null)))
 // #89: a property READ resolves to a raw static-field load only with a real field AND (for a field-routed
-// property) no accessor-owned surface. An excluded (const/lateinit/@ClrField) property keeps the pre-fix rule; a
+// property) no accessor-owned surface. An excluded (const/@ClrField) property keeps the field rule; a
 // delegated property is field-routed because its provider-typed slot is never the value surface.
 internal fun BirEmitter.readsAsStaticField(prop: IrProperty): Boolean =
 	hasRealStaticField(prop) && (!fieldRoutedProperty(prop) || !accessorRoutedTopLevelProperty(prop))

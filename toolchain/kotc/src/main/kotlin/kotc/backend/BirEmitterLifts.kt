@@ -1379,8 +1379,8 @@ internal fun BirEmitter.kPropertyStub(name: String): String =
  * Supported scope: a TOP-LEVEL property (`::x`), a MEMBER property either BOUND (`obj::p`, receiver captured in a
  * field) or UNBOUND (`Type::p`, receiver becomes the `get`/`set`'s own leading param), and a TOP-LEVEL extension
  * property in its bound/unbound forms — including generic and referenced-assembly accessors. A MEMBER extension
- * property with both dispatch and extension receivers (`KProperty2`) is a clean deferral. `lateinit var` and
- * `@ClrField` member references use the backing-field path below. The compiler-synthesized KProperty argument of a
+ * property with both dispatch and extension receivers (`KProperty2`) is a clean deferral. `@ClrField` member
+ * references use the backing-field path below. The compiler-synthesized KProperty argument of a
  * delegate's getValue/setValue/provideDelegate is NOT this path — those call sites materialize `kPropertyStub` directly
  * without going through `expr()`/this dispatch; the origin check below is a defensive fallback only.
  */
@@ -1406,17 +1406,14 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 	val prop = node.symbol.owner
 	val companionExtensionUseTag = companionReceiverUseTag(node)
 	val companionExtension = isCompanionExtensionCallee(prop) || companionExtensionUseTag.isNotEmpty()
-	// A `const val` / `lateinit var` / `@ClrField` member property has PLAIN-BACKING-FIELD storage (no get_/set_
+	// A `const val` / `@ClrField` member property has PLAIN-BACKING-FIELD storage (no get_/set_
 	// accessor slot) —
-	// its get/set below read/write the field directly (`lateinitGet`/`field`/`setFieldExpr`), the SAME nodes the
+	// its get/set below read/write the field directly (`field`/`setFieldExpr`), the SAME nodes the
 	// ordinary member-property access path emits for these (BirEmitterCalls). `fieldBacked` gates that in readBody/
 	// setMethod; everything else (interface identity, receiver capture, generics) is shared with the accessor path.
 	val getterFn = node.getter?.owner ?: prop.getter
 		?: return unsupported(node, "this property reference", "the referenced property has no getter")
-	val declarationProperty = (if (getterFn.isFakeOverride) getterFn.resolveFakeOverride() else getterFn)
-		?.correspondingPropertySymbol?.owner
-	val fieldLateinit = isLateinitProperty(prop) || declarationProperty?.let(::isLateinitProperty) == true
-	val fieldBacked = prop.isConst || fieldLateinit || isClrField(prop)
+	val fieldBacked = prop.isConst || isClrField(prop)
 	val setterFn = if (prop.isVar) (node.setter?.owner ?: prop.setter) else null
 	val declClass = getterFn.parent as? IrClass
 	val name = prop.name.asString()
@@ -1586,12 +1583,11 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 			?.let { ""","companionCall":true""" } ?: ""
 		return """{"k":"callInstance","ownerType":${memberOwner.toJson()},"virtual":$virtual,"recv":${recvExprIn()},"method":${str(name)},"prop":${str(kind)}${overloadSigField(fn)},"args":[$args]$externalCompanionTag$declarationIdentityTag}"""
 	}
-	// A field-backed member property (`lateinit var`/`@ClrField`) reads/writes its backing field directly — the SAME
-	// `lateinitGet`/`field`/`setFieldExpr` shapes the ordinary member-access path emits — over the lift's receiver
+	// A field-backed member property (`@ClrField`) reads/writes its backing field directly — the SAME
+	// `field`/`setFieldExpr` shapes the ordinary member-access path emits — over the lift's receiver
 	// (bound = the captured `__recv` field, unbound = the `receiver` param).
 	fun fieldAccess(isSetter: Boolean, valueArg: String?): String = when {
 		isSetter -> """{"k":"setFieldExpr","ownerType":${memberOwner.toJson()},"recv":${recvExprIn()},"name":${str(name)},"value":$valueArg}"""
-		fieldLateinit -> """{"k":"lateinitGet","ownerType":${memberOwner.toJson()},"recv":${recvExprIn()},"name":${str(name)}}"""
 		// A field read carries the constructed-generic ret hint (a `tv`-typed field on `B<T>`) — parity with the
 		// ordinary member field-read path (BirEmitterCalls).
 		else -> """{"k":"field","ownerType":${memberOwner.toJson()},"recv":${recvExprIn()},"name":${str(name)}${retHint((memberOwner as? TypeNode.Fqn)?.args != null, getterFn.returnType)}}"""
@@ -1600,8 +1596,6 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 		val owner = memberOwner.toJson()
 		if (fieldBacked) return if (isSetter)
 			"""{"k":"staticFieldSet","ownerType":$owner,"name":${str(name)},"value":$valueArg}"""
-		else if (fieldLateinit)
-			"""{"k":"lateinitGet","ownerType":$owner,"static":true,"name":${str(name)}}"""
 		else """{"k":"staticField","ownerType":$owner,"name":${str(name)},"ret":${vType.toJson()}}"""
 		val kind = if (isSetter) "set" else "get"
 		val fn = if (isSetter) setterFn!! else getterFn
