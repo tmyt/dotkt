@@ -95,18 +95,29 @@ static class CapturedValueReceiverInvocation
         var pointer = prefix + "$address";
         var values = prefix + "$values";
         var helper = prefix + "$helper";
+        var statements = new JsonArray();
+        var location = receiver.DeepClone();
+        if (!CallEvalLowering.IsLvalueFormer(location))
+        {
+            // An ordinary receiver expression produces a value, including a native ref return consumed without
+            // the supported live-ref delegate. Snapshot it before argument effects; only real locations keep storage.
+            var value = prefix + "$receiver";
+            statements.Add(Variable(value, plan.Receiver, location));
+            location = Local(value);
+        }
+        statements.Add(Variable(pointer, new TypeNode.ByRef(plan.Receiver),
+            new JsonObject { ["k"] = "byrefOf", ["inner"] = location }));
         var factoryArguments = (JsonArray)factory["args"];
         var valueArray = factoryArguments[7].DeepClone();
         factoryArguments[7] = Local(values);
+        statements.Add(Variable(values, Values, valueArray));
+        statements.Add(Variable(helper, plan.CallerContract, new JsonObject { ["k"] = "cast",
+            ["type"] = TypeJson.Write(plan.CallerContract), ["e"] = factory }));
         var signature = new JsonArray(TypeJson.Write(new TypeNode.ByRef(plan.ContractReceiver)), TypeJson.Write(Values));
         return new JsonObject
         {
             ["k"] = "valueBlock", ["type"] = TypeJson.Write(plan.Return),
-            ["stmts"] = new JsonArray(
-                Variable(pointer, new TypeNode.ByRef(plan.Receiver), new JsonObject { ["k"] = "byrefOf", ["inner"] = receiver.DeepClone() }),
-                Variable(values, Values, valueArray),
-                Variable(helper, plan.CallerContract, new JsonObject { ["k"] = "cast",
-                    ["type"] = TypeJson.Write(plan.CallerContract), ["e"] = factory })),
+            ["stmts"] = statements,
             ["result"] = new JsonObject
             {
                 ["k"] = "callInstance", ["ownerType"] = TypeJson.Write(plan.CallerContract),

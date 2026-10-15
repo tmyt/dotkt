@@ -151,4 +151,49 @@ class StructReceiverTests {
         check(GenericStructReceiverCaller(17).read("method", TextKey()) == 2)
     }
 
+    @TestAttribute
+    fun instanceCallReceiverSnapshotsItsValueBeforeArguments() {
+        val key: Key<*> = TextKey()
+        check(Holder().Snapshot().Read(key) == 1)
+        val first = Holder()
+        first.Counter = Counter(7)
+        check(first.Receiver().Snapshot().Read(first.ReplaceAndMakeKey()) == 8)
+        check(first.Counter.Count == 40 && first.Trace == "rsk")
+        val second = Holder()
+        second.Counter = Counter(7)
+        check(second.Receiver().Snapshot().Read(replacingReceiverKey(second)) == 8)
+        check(second.Counter.Count == 40 && second.Trace == "rsk")
+    }
+
+    @TestAttribute
+    fun staticCallReceiverSnapshotsItsValueBeforeArguments() {
+        val key: Key<*> = TextKey()
+        check(Holder.Make(Holder()).Read(key) == 1)
+        val first = Holder()
+        first.Counter = Counter(7)
+        check(Holder.Make(first.Receiver()).Read(first.ReplaceAndMakeKey()) == 8)
+        check(first.Counter.Count == 40 && first.Trace == "rsk")
+        val second = Holder()
+        second.Counter = Counter(7)
+        check(Holder.Make(second.Receiver()).Read(replacingReceiverKey(second)) == 8)
+        check(second.Counter.Count == 40 && second.Trace == "rsk")
+    }
+
+    @TestAttribute
+    fun directRefReturningCallsRemainValueReceivers() {
+        val first = Holder()
+        first.Counter = Counter(7)
+        check(Holder.Live(first).Read(TextKey()) == 8)
+        check(first.Counter.Count == 7)
+        val key: Key<*> = TextKey()
+        check(Holder.Live(first).Read(key) == 8)
+        check(first.Counter.Count == 7)
+        val second = Holder()
+        second.Counter = Counter(7)
+        check(second.LiveInstance().Read(TextKey()) == 8)
+        check(second.Counter.Count == 7)
+        check(second.LiveInstance().Read(key) == 8)
+        check(second.Counter.Count == 7)
+    }
+
 }

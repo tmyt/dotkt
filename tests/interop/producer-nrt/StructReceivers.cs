@@ -49,6 +49,9 @@ public sealed class Holder
     public Counter Counter;
     public string Trace = "";
     public Holder Receiver() { Trace += "r"; return this; }
+    public Counter Snapshot() { Trace += "s"; return Counter; }
+    public static Counter Make(Holder holder) { holder.Trace += "s"; return holder.Counter; }
+    public ref Counter LiveInstance() => ref Counter;
     public TextKey MakeKey(bool mutate) { Trace += "k"; return new TextKey(this, mutate); }
     public TextKey ReplaceAndMakeKey()
     {
