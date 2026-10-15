@@ -1315,7 +1315,7 @@ class V:
                     child_role = "signature"
                 elif role == "declaration" and key == "params":
                     child_role = "parameter"
-                elif role == "declaration" and key == "clrInterfaceImpls":
+                elif role == "declaration" and key in ("clrInterfaceImpls", "clrBaseImpls"):
                     child_role = "linkage"
                 elif role == "linkage" and key in ("params", "ret"):
                     child_role = "signature"

@@ -281,9 +281,14 @@ static class KotlinOverrideSlotBridge
                 if (slotSignature?[i] is TypeNode.Mod { Req: false } slotIdentity
                     && declParams[i]?[FunctionSignatureIdentity.Key] is JsonNode bodyIdentity)
                 {
-                    var declaredIdentity = SupertypeGraph.SubstOwnerTvs(TypeJson.Read(bodyIdentity), ownArgs);
-                    if (!Equals(slotIdentity.M, declaredIdentity)
-                        && SameSourceFunctionRepresentation(slotIdentity.M, declaredIdentity, sourceMapping.OwnerFrame))
+                    var declaredIdentity = SupertypeGraph.SubstOwnerTvs(
+                        FunctionSignatureIdentity.DeclarationType(TypeJson.Read(bodyIdentity)), ownArgs);
+                    // The frontend has already selected this override. Equal value slots can be forwarded
+                    // unchanged, regardless of whether the discriminator contains a function at its head or
+                    // under a nullable/container type. Different modifiers still need an exact bridge row.
+                    if (fit[i] == Fit.Same
+                        && !ClrMemberResolution.SameInterfaceSlotType(
+                            PhysicalSlotType(slotIdentity.M), PhysicalSlotType(declaredIdentity)))
                         fit[i] = Fit.Bridge;
                 }
             }
@@ -388,7 +393,8 @@ static class KotlinOverrideSlotBridge
                 for (var i = 0; i < declParams.Count; i++)
                     if (slotSignature == null && declParams[i]?[FunctionSignatureIdentity.Key] is JsonNode discriminator)
                         descriptor["params"][i] = TypeJson.Write(new TypeNode.Mod(false,
-                            SupertypeGraph.SubstOwnerTvs(TypeJson.Read(discriminator), ownArgs), slotParams[i]));
+                            SupertypeGraph.SubstOwnerTvs(
+                                FunctionSignatureIdentity.DeclarationType(TypeJson.Read(discriminator)), ownArgs), slotParams[i]));
                 AddImplDescriptor(impl, "clrInterfaceImpls", descriptor);
                 return;
             }
@@ -664,7 +670,8 @@ static class KotlinOverrideSlotBridge
                         ? slotParamNodes.OfType<JsonObject>().Select((parameter, index) =>
                             parameter[FunctionSignatureIdentity.Key] is JsonNode discriminator
                                 ? (TypeNode)new TypeNode.Mod(false,
-                                    SupertypeGraph.SubstOwnerTvs(TypeJson.Read(discriminator), supArgs), slotParams[index])
+                                    SupertypeGraph.SubstOwnerTvs(
+                                        FunctionSignatureIdentity.DeclarationType(TypeJson.Read(discriminator)), supArgs), slotParams[index])
                                 : slotParams[index]).ToArray()
                         : null);
             }
@@ -1823,6 +1830,21 @@ static class KotlinOverrideSlotBridge
                 functionBody with { Clr = "System.Action" }, frame)
             || SameSourceFunctionRepresentation(new TypeNode.Array(functionSlot), new TypeNode.Array(functionBody), frame))
             throw new InvalidOperationException("Function override carrier seam lost source identity or admitted a nominal conversion");
+        var valueSignature = new TypeNode.Fn(false, new TypeNode.Fqn("kotlin.Unit"),
+            new TypeNode[] { new TypeNode.Fqn("kotlin.Unit") }, Clr: "System.Func");
+        var voidSignature = valueSignature with { Ret = new TypeNode.Fqn("void"), Clr = "System.Action" };
+        if (ClrMemberResolution.SameInterfaceSlotType(valueSignature, voidSignature)
+            || SameSourceFunctionRepresentation(valueSignature, voidSignature, null)
+            || ClrMemberResolution.SameInterfaceSlotType(BirTypeLowering.DelegateFqnOf(valueSignature),
+                BirTypeLowering.DelegateFqnOf(voidSignature)))
+            throw new InvalidOperationException("Function signature bridge confused source identity with delegate equivalence");
+        var carrier = new TypeNode.Fn(false, new TypeNode.Fqn("object"),
+            new TypeNode[] { new TypeNode.Fqn("object") }, Clr: "System.Func");
+        var integer = new TypeNode.Fqn("System.Int32");
+        if (IsNullableValueSlot(carrier, new TypeNode.Nullable(carrier), null, _ => false, false)
+            || !IsNullableValueSlot(integer, new TypeNode.Nullable(integer), null,
+                type => type.Name == "System.Int32", false))
+            throw new InvalidOperationException("Nullable bridge confused reference annotations with CLR nullable values");
         var slotMethod = JsonNode.Parse("""
           {"typeParams":[{"name":"R","constraints":[{"t":"tv","scope":"type","i":0}]},"P"]}
           """).AsObject();
@@ -1852,6 +1874,10 @@ static class KotlinOverrideSlotBridge
     static bool IsNullableValueSlot(TypeNode slot, TypeNode declared, ReferenceMetadataIndex refs,
         ValueTypeOracle isValue, bool returnPosition) =>
         declared is TypeNode.Nullable nullable
+        // A nullable reference annotation (including a function carrier) is not System.Nullable<T>.
+        // Ask the shared representation rule before authoring its construction or extraction.
+        && BirTypeLowering.LowerPhysicalType(declared, refs?.Aliases, isValue,
+            refs?.PhysicalTypeNames, typeArg: false, nullableFrames: refs?.NullableTypeFrames) is TypeNode.Nullable
         && BirTypeLowering.SamePhysicalSlotType(slot, nullable.Of, refs?.Aliases, isValue,
             refs?.PhysicalTypeNames, returnPosition, nullableFrames: refs?.NullableTypeFrames);
 
