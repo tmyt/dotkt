@@ -994,7 +994,7 @@ kotc or ilemit.
 
 An **accessor-routed** Kotlin property becomes a real CLR property (`Name` + dedicated
 `prop_get<Name>`/`prop_set<Name>` methods); its storage is
-emitted as a private field named **`<Name>k__BackingField`**, stamped
+emitted as a non-public field named **`<Name>k__BackingField`**, stamped
 `[System.Runtime.CompilerServices.CompilerGenerated]` — the same convention and attribute `csc` uses for a C#
 auto-property. Kotlin/JVM instead names the field after the property, which on the CLR would put a property and a field
 of the SAME name on one type: reflection-driven .NET libraries group candidate members by name and cannot resolve that
