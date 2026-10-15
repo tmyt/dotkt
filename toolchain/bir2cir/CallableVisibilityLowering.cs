@@ -2,7 +2,7 @@ using System.Text.Json.Nodes;
 using DotKt.Bir;
 
 // Capture the Kotlin declaration before any representation pass can replace it with a wider CLR entry point.
-// Fields here represent source properties; their backing-storage visibility is already explicit in BIR.
+// Field visibility is explicit in BIR, including both source properties and private backing storage.
 static class CallableVisibilityLowering
 {
     internal const string Carrier = "DotKt.Runtime.CompilerServices.KotlinCallableVisibilityAttribute";

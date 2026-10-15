@@ -3515,15 +3515,18 @@ internal sealed class AssemblyScanner : IDisposable
                 {
                     Name = names.String(name),
                     ReturnType = propertyType,
-                    Flags = Flags.Property(representative.Attributes, canWrite, isStatic: false),
+                    Flags = CallableVisibility(decoder.Attributes, representativeHandle,
+                        Flags.Property(representative.Attributes, canWrite, isStatic: false)),
                     SetterValueParameter = canWrite
                         ? new ValueParameter { Name = names.String("value"), Type = propertyType.Clone() }
                         : null,
                 };
                 if (!accessors.Getter.IsNil)
-                    projected.GetterFlags = Flags.Accessor(reader.GetMethodDefinition(accessors.Getter).Attributes);
+                    projected.GetterFlags = CallableVisibility(decoder.Attributes, accessors.Getter,
+                        Flags.Accessor(reader.GetMethodDefinition(accessors.Getter).Attributes));
                 if (canWrite)
-                    projected.SetterFlags = Flags.Accessor(reader.GetMethodDefinition(accessors.Setter).Attributes);
+                    projected.SetterFlags = CallableVisibility(decoder.Attributes, accessors.Setter,
+                        Flags.Accessor(reader.GetMethodDefinition(accessors.Setter).Attributes));
                 return projected;
             }
             // Fields occupy the same source member namespace as properties, but do not fulfill interface slots.
@@ -3543,7 +3546,8 @@ internal sealed class AssemblyScanner : IDisposable
                 {
                     Name = names.String(name),
                     ReturnType = fieldType,
-                    Flags = Flags.Property(field.Attributes, canWrite) | 1,
+                    Flags = CallableVisibility(decoder.Attributes, fieldHandle,
+                        Flags.Property(field.Attributes, canWrite) | 1),
                     SetterValueParameter = canWrite
                         ? new ValueParameter { Name = names.String("value"), Type = fieldType.Clone() }
                         : null,
@@ -5515,8 +5519,11 @@ internal sealed class AssemblyScanner : IDisposable
     }
 
     private int CallableVisibility(EntityHandle declaration, int flags)
+        => CallableVisibility(_attrs, declaration, flags);
+
+    private static int CallableVisibility(MetadataAttributes attributes, EntityHandle declaration, int flags)
     {
-        using var document = _attrs.CarrierDocument(
+        using var document = attributes.CarrierDocument(
             declaration, MetadataAttributes.DotKtNs + "KotlinCallableVisibilityAttribute");
         if (document is null) return flags;
         var visibility = document.RootElement.GetProperty("visibility").GetString();

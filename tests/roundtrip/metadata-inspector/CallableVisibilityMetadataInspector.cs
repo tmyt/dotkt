@@ -117,6 +117,29 @@ internal static class CallableVisibilityMetadataInspector
         CheckInternal(constructed.Constructor.Single().Flags, "reference constructor");
     }
 
+    public static void VerifyInherited(string klibPath)
+    {
+        var fragment = Fragment(klibPath, "InheritedCallableAdapter");
+        var type = fragment.Class.Single(type => QualifiedName(fragment, type.FqName) == "InheritedCallableAdapter.Derived");
+        foreach (var name in new[] { "secret", "secretField", "publicValue", "publicField" })
+        {
+            var properties = type.Property.Where(property => Name(fragment, property.Name) == name).ToArray();
+            Require(properties.Length == 2, name + ": inherited declaration and hidden interface slot must remain distinct");
+            var declaration = properties.Single(property => !property.PropertyAnnotation.Any(annotation =>
+                QualifiedName(fragment, annotation.Id) == "kotlin.Deprecated"));
+            var expectedVisibility = name.StartsWith("secret", StringComparison.Ordinal) ? 0 : 6;
+            Require((declaration.Flags & 14) == expectedVisibility, name + ": declaring assembly visibility lost");
+            if (declaration.HasGetterFlags)
+                Require((declaration.GetterFlags & 14) == expectedVisibility, name + ": getter visibility lost");
+            if (name.EndsWith("Field", StringComparison.Ordinal))
+                Require((declaration.Flags & (1 << 8)) != 0 && declaration.SetterValueParameter is not null &&
+                    declaration.PropertyAnnotation.Any(annotation => QualifiedName(fragment, annotation.Id) == "kotlin.clr.ClrField"),
+                    name + ": source field mutability or representation lost");
+            var slot = properties.Single(property => !ReferenceEquals(property, declaration));
+            Require((slot.Flags & 14) == 6, name + ": explicit interface slot visibility changed");
+        }
+    }
+
     static void CheckCarrier(MetadataReader md, EntityHandle handle)
     {
         var attribute = md.GetCustomAttributes(handle).Select(md.GetCustomAttribute).Single(attribute => IsCarrier(md, attribute, Carrier));

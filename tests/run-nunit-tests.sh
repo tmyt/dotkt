@@ -53,7 +53,7 @@ PROJECTS=(
 declare -A EXPECTED_DISCOVERED=(
 	["tests/basic"]=713
 	["tests/coroutines"]=259
-	["tests/roundtrip/consumer"]=531
+	["tests/roundtrip/consumer"]=532
 	["tests/roundtrip/bidirectional/consumer"]=41
 	["tests/interop/consumer"]=370
 )
@@ -287,6 +287,9 @@ for proj in "${PROJECTS[@]}"; do
 		fi
 		if dotnet "$METADATA_INSPECTOR_DLL" --callable-declaration-visibility "$producer_dll" "$producer_klib" \
 			>"$ROOT/build/nunit-$name.callable-visibility.log" 2>&1 \
+			&& dotnet "$METADATA_INSPECTOR_DLL" --inherited-callable-visibility \
+				"$dir/obj/$CONFIGURATION/net10.0/klib/PropertyMetadata.klib" \
+				>>"$ROOT/build/nunit-$name.callable-visibility.log" 2>&1 \
 			&& bash "$ROOT/tests/roundtrip/assert-reference-callable-visibility.sh" \
 				"$ROOT/tests/roundtrip/producer/obj/$CONFIGURATION/net10.0/bir/PublishedCallableMetadata.bir.json" \
 				"$METADATA_INSPECTOR_DLL" >>"$ROOT/build/nunit-$name.callable-visibility.log" 2>&1; then

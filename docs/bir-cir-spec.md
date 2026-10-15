@@ -53,7 +53,7 @@ continues to exclude its DLLs from projection because its dedicated frontend KLI
   from this trusted TypeDef carrier; it does not omit the declaration needed by public inline bodies.
   Ordinary CLR declarations without this carrier retain their ECMA-335 accessibility projection.
 - `KotlinCallableVisibilityAttribute(string version, byte[] content)` carries `{visibility}` in Kotlin
-  vocabulary on a source callable's MethodDef or property-representing FieldDef. bir2cir captures non-public
+  vocabulary on MethodDefs and FieldDefs, including private backing storage. bir2cir captures non-public
   source visibility before representation changes, separately makes `@PublishedApi internal` declarations
   CLR-public, and preserves the carrier on replacement source entry points such as suspend Task bridges and
   field-backed companion-extension accessors. dll2klib restores function, constructor, property and accessor

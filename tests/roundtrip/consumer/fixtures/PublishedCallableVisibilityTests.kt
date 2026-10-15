@@ -1,6 +1,14 @@
 import NUnit.Framework.TestAttribute
 import kotlin.coroutines.*
 import roundtrip.publishedcallables.*
+import InheritedCallableAdapter.*
+
+private class PublishedVisibilityChild : Derived() {
+    fun updateProtectedField(): Int {
+        protectedField = 14
+        return protectedField
+    }
+}
 
 private fun publishedNonLocalReturn(): Int {
     publicSplice { return it }
@@ -8,6 +16,19 @@ private fun publishedNonLocalReturn(): Int {
 }
 
 class PublishedCallableVisibilityTests {
+    @TestAttribute
+    fun inheritedPublicMembersAndExplicitInterfaceSlotsRemainDistinct() {
+        val value = PublishedVisibilityChild()
+        check(value.publicValue == 11)
+        value.publicField = 15
+        check(value.publicField == 15)
+        check(value.updateProtectedField() == 14)
+        check((value as ISecret).secret == "property-slot")
+        check((value as ISecretField).secretField == "field-slot")
+        check((value as IPublicValue).publicValue == "public-property-slot")
+        check((value as IPublicField).publicField == "public-field-slot")
+    }
+
     @TestAttribute
     fun publicEntryAndDefaultRemainCallableAcrossDlls() {
         check(publicEntry() == 7)

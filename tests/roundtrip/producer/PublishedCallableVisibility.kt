@@ -1,5 +1,7 @@
 package roundtrip.publishedcallables
 
+import kotlin.clr.ClrField
+
 @PublishedApi
 internal fun helper(): Int = 7
 
@@ -68,4 +70,12 @@ inline fun publicStatics(block: (Int) -> Int): Int {
     StaticHost.extensionProperty = 15
     return block(StaticHost.staticHelper() + StaticHost.staticProperty +
         StaticHost.extensionHelper() + StaticHost.extensionProperty)
+}
+
+open class InheritedVisibilityBase {
+    @PublishedApi internal val secret: Int get() = 7
+    @PublishedApi @ClrField internal var secretField: Int = 9
+    val publicValue: Int get() = 11
+    @ClrField var publicField: Int = 12
+    @ClrField protected var protectedField: Int = 13
 }

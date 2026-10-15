@@ -59,6 +59,13 @@ if (args.Length == 3 && args[0] == "--reference-callable-visibility")
     return;
 }
 
+if (args.Length == 2 && args[0] == "--inherited-callable-visibility")
+{
+    CallableVisibilityMetadataInspector.VerifyInherited(args[1]);
+    Console.WriteLine("inherited callable declaration visibility and hidden interface slots: OK");
+    return;
+}
+
 if (args.Length == 3 && args[0] == "--typealias-declarations")
 {
     TypeAliasMetadataInspector.Verify(args[1], args[2]);
