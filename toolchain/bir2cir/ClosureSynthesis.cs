@@ -197,14 +197,15 @@ static class ClosureSynthesis
                 }
                 if (Str(o["k"]) == "newClosure" && o["synthClass"] is JsonObject sc)
                 {
-                    // Bottom-up: synthesize any nested closures inside THIS closure's invoke body first, so the outer
-                    // class is assembled over an already-lean body (inner `newClosure`s stripped, inner classes queued).
+                    // Capture values are expressions too: a bound receiver may call a function with a capturing
+                    // lambda. Synthesize those payloads in the constructing frame before assembling this closure.
+                    if (o["captures"] is JsonNode values) Walk(values, newTypes, decl);
+                    // Bottom-up: also synthesize nested closures inside this closure's invoke body.
                     if (sc["body"] is JsonNode body) Walk(body, newTypes, decl);
                     CheckCaptureLegality(sc, decl);
                     newTypes.Add(BuildClosureClass(PrepareSyntheticTypeVariables(sc, o["typeArgs"] as JsonArray)));
                     o.Remove("synthClass");
-                    return;   // the invoke `body` (above) was recursed for NESTED closures; return WITHOUT descending into
-                              // this node's other children (the just-removed synthClass; the capture-value exprs are leaf reads)
+                    return;   // Both the invoke body and constructing capture expressions have been visited.
                 }
                 // A `newSam` carrying an embedded `synthClass` (the fun-interface class): a CROSS-MODULE SPLICED `newSam`
                 // (e.g. `compareBy{}`'s Comparator) references a `dotkt$…$SamN` class that lives in the ORIGIN/stdlib file,
