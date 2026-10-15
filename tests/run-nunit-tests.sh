@@ -53,7 +53,7 @@ PROJECTS=(
 declare -A EXPECTED_DISCOVERED=(
 	["tests/basic"]=713
 	["tests/coroutines"]=259
-	["tests/roundtrip/consumer"]=532
+	["tests/roundtrip/consumer"]=535
 	["tests/roundtrip/bidirectional/consumer"]=41
 	["tests/interop/consumer"]=373
 )
@@ -297,6 +297,14 @@ for proj in "${PROJECTS[@]}"; do
 		else
 			echo "  CALLABLE VISIBILITY FAIL — see build/nunit-$name.callable-visibility.log"
 			tail -25 "$ROOT/build/nunit-$name.callable-visibility.log"; rc=1
+		fi
+		if bash "$ROOT/tests/roundtrip/assert-published-override-reference.sh" \
+			"$dir/obj/$CONFIGURATION/net10.0/klib" "$producer_dll" "$METADATA_INSPECTOR_DLL" \
+			>"$ROOT/build/nunit-$name.referenced-override.log" 2>&1; then
+			echo "  internal override retains the exact referenced public CLR slot"
+		else
+			echo "  REFERENCED OVERRIDE FAIL"
+			tail -25 "$ROOT/build/nunit-$name.referenced-override.log"; rc=1
 		fi
 		for alias_producer in RoundtripProducer RoundtripProducerMpp; do
 			if dotnet "$METADATA_INSPECTOR_DLL" --typealias-declarations \

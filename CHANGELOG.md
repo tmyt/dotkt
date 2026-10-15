@@ -5,6 +5,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Preserve Kotlin override visibility while matching public inherited CLR slots, including `@PublishedApi`
+  internal methods and property accessors, so accepted overrides load and dispatch correctly (#1048).
+
 - Preserve imported CLR enum-entry identities, including nested types and Kotlin aliases, so sparse, negative,
   aliased and high-bit native literals reach CLR APIs unchanged instead of using Kotlin declaration ordinals (#1043).
 

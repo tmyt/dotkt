@@ -59,6 +59,9 @@ continues to exclude its DLLs from projection because its dedicated frontend KLI
   field-backed companion-extension accessors. dll2klib restores function, constructor, property and accessor
   visibility from the explicit carrier, never from public CLR accessibility or implementation bodies. The
   carrier and the declaration's signature, generic constraints and inline metadata survive reference-body stripping.
+  An override inherits a selected slot's public CLR accessibility through its exact frontend declaration identity,
+  not by repeating the base declaration's annotation. The full override closure makes this independent of source
+  order; a newly introduced setter over a `val` has no inherited setter declaration and is not widened with its getter.
 - **STATUS (#37 m6): LANDED.** The carrier attributes stamp `(string version, byte[] content)`. `version` is a
   `codec/schema-version` identifier; only `"bir-json/1"` is defined today. `content` is the codec-encoded body
   (today `UTF8(json)`). The dispatch shape leaves room for other codecs without reserving a particular identifier.
