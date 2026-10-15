@@ -598,6 +598,16 @@ member would be two members to it. The rules, all validator-enforced:
 Same-emission-unit members are NOT memberRefs: they have no assembly identity yet (their MethodDefs are being
 built by this compilation) and stay on the internal linkage (`localCtorIndex`, the emitted type's own signature
 table). The presence of a `memberRef` is therefore itself the external-vs-emitted discriminator.
+An external `clrGenericInstance` additionally carries `receiverMode:"address"|"value"` and
+`dispatch:"call"|"callvirt"|"constrained"`, selected by bir2cir from that exact declaration and receiver type.
+ilemit consumes these physical edges without deciding value-type address-taking or virtual/base dispatch.
+A captured method input does not change the receiver's location: for a statically known CLR value receiver,
+reflection closes a stateless adapter factory, then an ordinary generated interface call receives the original
+managed address. The receiver location is evaluated before arguments and before the factory; the reference is
+passed only for the call and is never boxed or stored in the adapter or on the heap. Native writes remain visible
+during callbacks and on exceptions.
+An rvalue receiver is first snapshotted into a value temporary, including a native ref-return consumed as an ordinary
+value. Only an explicit location, such as a supported live-ref delegate read, retains its original managed storage.
 For a declaration-identity-bound local call or delegate target, bir2cir carries `calleeRet`, the selected
 MethodDef's lowered return type in its declaration generic frame. It is not the expression's substituted result
 type. `calleeParams`, when present, likewise states the exact MethodDef parameter vector, including custom

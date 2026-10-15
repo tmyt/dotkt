@@ -5,6 +5,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Preserve mutable CLR struct receivers on generic instance calls, including captured method inputs,
+  live field/array/reference locations, aliasing and writes made before an exception (#998).
+
 - Keep private and ordinary top-level unchecked generic results erased until consumption, matching the exact
   frontend-selected declaration instead of reselecting an overload; concrete uses retain their checks (#1014).
 

@@ -996,6 +996,15 @@ static partial class ClrMemberResolution
                 // The generic method DEFINITION is the identity; the call's own `typeArgs` instantiate it, exactly
                 // as an ECMA MethodSpec wraps a MemberRef to the uninstantiated signature.
                 node["memberRef"] = MemberRefJson(win, MemberRefNode.Kinds.Method, open, ownerFqn.Args);
+                if (instance)
+                {
+                    var dispatch = Dispatch(win, open, (node["super"] as JsonValue)?.GetValue<bool>() ?? false);
+                    node["dispatch"] = dispatch;
+                    node["receiverMode"] = open.IsValueType ? "address" : "value";
+                    if (dispatch == "constrained")
+                        node["memberRef"] = MemberRefJson(ConstrainedSlot(win, open), MemberRefNode.Kinds.Method,
+                            open, ownerFqn.Args);
+                }
                 StampResolvedMethodTypeParameters(node, win);
                 StampDelegateArgumentTargets(node, win, ownerFqn.Args ?? Array.Empty<TypeNode>());
                 StampResolvedMemberReturn(node, win.ReturnType);

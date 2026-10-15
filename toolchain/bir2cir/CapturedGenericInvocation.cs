@@ -255,13 +255,25 @@ static class CapturedGenericInvocation
             var body = returnsVoid
                 ? new JsonArray(new JsonObject { ["k"] = "exprStmt", ["expr"] = forward })
                 : new JsonArray(new JsonObject { ["k"] = "return", ["value"] = Cast(Object, forward) });
+            var receiverPlan = isInstance && !isLocal && refs.IsValueType(owner)
+                ? CapturedValueReceiverInvocation.Create(name, lexicalOwner, ownerFrame, methodFrame, frame,
+                    owner, liftedOwner, forward, returnsVoid) : null;
+            if (receiverPlan != null)
+            {
+                // This reflected method is a type-frame factory, not the native invocation. The receiver is never
+                // transported through object[]; the following interface call consumes its original managed address.
+                parameterTypes[0] = Object;
+                body = receiverPlan.FactoryBody;
+                generated.Add(receiverPlan.Contract);
+                generated.Add(receiverPlan.Adapter);
+            }
             var thunk = new JsonObject
             {
                 ["name"] = "Invoke", ["static"] = true, ["vis"] = "public", ["typeParams"] = frame,
                 ["override"] = false, ["virtual"] = false, ["abstract"] = false, ["objectOverride"] = false,
                 ["params"] = new JsonArray(parameterTypes.Select((type, i) => (JsonNode)new JsonObject
                     { ["name"] = "p" + i, ["type"] = TypeJson.Write(type) }).ToArray()),
-                ["ret"] = TypeJson.Write(returnsVoid ? new TypeNode.Fqn("void") : Object),
+                ["ret"] = TypeJson.Write(returnsVoid && receiverPlan == null ? new TypeNode.Fqn("void") : Object),
                 ["body"] = body, ["attrs"] = new JsonArray(),
             };
             generated.Add(new JsonObject
@@ -274,16 +286,16 @@ static class CapturedGenericInvocation
                 ["ctors"] = new JsonArray(), ["methods"] = new JsonArray(thunk), ["attrs"] = new JsonArray(),
             });
             var values = arguments.Select(argument => (JsonNode)Cast(Object, argument.DeepClone())).ToList();
-            if (isInstance) values.Insert(0, Cast(Object, obj["recv"].DeepClone()));
+            if (isInstance) values.Insert(0, receiverPlan == null ? Cast(Object, obj["recv"].DeepClone()) : Constant(Object, null));
             var fallback = typeArgs.Select(type => TypeJson.Read(type)).ToList();
             fallback.AddRange(Enumerable.Range(0, ownerFrame.Count).Select(i => (TypeNode)new TypeNode.Tv("type", i)));
             fallback.AddRange(Enumerable.Range(0, methodFrame.Count).Select(i => (TypeNode)new TypeNode.Tv("method", i)));
             var runtimeCall = new JsonObject
             {
                 ["k"] = "clrStatic", ["type"] = TypeJson.Write(new TypeNode.Fqn(RuntimeOwner)),
-                ["method"] = returnsVoid ? "starProjectionInvokeCapturedHelperUnit" : "starProjectionInvokeCapturedHelper",
+                ["method"] = returnsVoid && receiverPlan == null ? "starProjectionInvokeCapturedHelperUnit" : "starProjectionInvokeCapturedHelper",
                 ["argTypes"] = new JsonArray(RuntimeSignature.Select(TypeJson.Write).ToArray()),
-                ["ret"] = TypeJson.Write(returnsVoid ? new TypeNode.Fqn("void") : Object),
+                ["ret"] = TypeJson.Write(returnsVoid && receiverPlan == null ? new TypeNode.Fqn("void") : Object),
                 ["args"] = new JsonArray(ClassRef(new TypeNode.Fqn(name)), Constant(Int, 0), Constant(String, "Invoke"),
                     Array(String, parameterTypes.Select(type => (JsonNode)Constant(String, RuntimeKey(type, refs)))),
                     Array(Type, fallback.Select(type => (JsonNode)ClassRef(type))),
@@ -325,7 +337,9 @@ static class CapturedGenericInvocation
             }
             runtimeCall.Remove("argTypes");
             ForeignStarProjectionBinding.RequireRuntimeFallback();
-            var replacement = returnsVoid || result == null || IsObject(result) ? runtimeCall : Cast(result, runtimeCall);
+            JsonObject invocation = receiverPlan == null ? runtimeCall
+                : CapturedValueReceiverInvocation.Invoke(receiverPlan, obj["recv"], runtimeCall, name);
+            var replacement = returnsVoid || result == null || IsObject(result) ? invocation : Cast(result, invocation);
             obj.Clear();
             foreach (var item in replacement.ToList()) { replacement.Remove(item.Key); obj[item.Key] = item.Value; }
         }
@@ -354,7 +368,7 @@ static class CapturedGenericInvocation
         });
         return contains;
     }
-    static JsonObject CloneParameter(JsonNode parameter, Func<TypeNode, TypeNode> map)
+    internal static JsonObject CloneParameter(JsonNode parameter, Func<TypeNode, TypeNode> map)
     {
         var clone = parameter is JsonObject definition ? (JsonObject)definition.DeepClone()
             : new JsonObject { ["name"] = Str(parameter) ?? throw new InvalidOperationException("Captured invocation has a malformed generic parameter") };
@@ -362,7 +376,7 @@ static class CapturedGenericInvocation
             clone["constraints"] = new JsonArray(constraints.Select(type => TypeJson.Write(map(TypeJson.Read(type)))).ToArray());
         return clone;
     }
-    static TypeNode Map(TypeNode type, Func<TypeNode.Tv, TypeNode> tv) => type switch
+    internal static TypeNode Map(TypeNode type, Func<TypeNode.Tv, TypeNode> tv) => type switch
     {
         TypeNode.Tv variable => tv(variable),
         TypeNode.Fqn f => new TypeNode.Fqn(f.Name, f.Args?.Select(arg => Map(arg, tv)).ToArray()),

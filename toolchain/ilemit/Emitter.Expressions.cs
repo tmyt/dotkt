@@ -362,20 +362,21 @@ sealed partial class Emitter
             }
             case "clrGenericInstance":
             {
-                // Generic instance call (`obj.M<T>(...)`): same scalar memberRef lookup as the static path, but
-                // address the constructed receiver type and `callvirt`. (Shares ResolveGenericMethod's MakeGenericMethod core.)
+                // Generic instance call: consume the receiver and dispatch authored with the selected MethodDef.
                 var type = ClrRef(e.GetProperty("type"));
                 var typeArgs = e.GetProperty("typeArgs").EnumerateArray().Select(a => MapType(a)).ToArray();
                 var argEls = e.GetProperty("args").EnumerateArray().ToList();
                 var mi = ResolveGenericMethod(type, e.GetProperty("method").GetString(), typeArgs, e, instance: true);
                 var ps = ParametersOf(mi);
-                EmitExpr(e.GetProperty("recv"));
+                switch (e.GetProperty("receiverMode").GetString())
+                {
+                    case "address": EmitAddr(e.GetProperty("recv")); break;
+                    case "value": EmitExpr(e.GetProperty("recv")); break;
+                    default: throw new InvalidOperationException("clrGenericInstance has no physical receiver mode");
+                }
                 for (int i = 0; i < argEls.Count; i++) EmitArg(argEls[i], ps[i].ParameterType);
                 RequireArgCount(argEls.Count, ps.Length, mi.ToString());
-                // A `super.M<T>(...)` to a CLR-bound base (issue #14) forces a non-virtual `call` to the base slot on the
-                // (reference) `this` receiver — else the callvirt re-dispatches to THIS class's override -> recursion.
-                var genSuper = e.TryGetProperty("super", out var supGi) && supGi.GetBoolean() && !IsValueType(type);
-                EmitMethod(_il, mi.IsVirtual && !genSuper ? OpCodes.Callvirt : OpCodes.Call, mi);
+                EmitClrDispatch(mi, e.GetProperty("dispatch").GetString(), type);
                 return ReturnTypeOf(mi);
             }
             case "newArray": return EmitNewArray(e);

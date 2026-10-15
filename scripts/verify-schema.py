@@ -180,6 +180,7 @@ STR_OK = {
     "vis", "variance", "kind",                  # visibility / variance / decl-kind enums
     "clr",                                      # fn.clr: CIR-only physical delegate-family decision authored by
                                                 # bir2cir; validated structurally + by BIR/CIR phase in type_node
+    "receiverMode",                              # CLR generic instance receiver: address or value, authored by bir2cir.
     "dispatch",                                  # clrInstance dispatch enum ("call"/"callvirt"/"constrained") — a
                                                 # bir2cir DECISION (W1-S2 #46), NOT a type slot; ilemit emits the opcode
                                                 # verbatim (no re-derivation from reflected IsVirtual/IsFinal)
@@ -1230,6 +1231,11 @@ class V:
                         if isinstance(declared, list) and len(declared) != len(ref.get("parameterTypes") or []):
                             self.err(f, path, "an applied attribute's memberRef takes a different number of arguments than the application states")
             if f.endswith(".cir.json"):
+                if o.get("k") == "clrGenericInstance":
+                    if o.get("receiverMode") not in ("address", "value"):
+                        self.err(f, path, "clrGenericInstance must carry address|value receiverMode")
+                    if o.get("dispatch") not in ("call", "callvirt", "constrained"):
+                        self.err(f, path, "clrGenericInstance must carry call|callvirt|constrained dispatch")
                 for required_key in COLLECTION_TEMPLATE_REFS.get(o.get("k"), ()):
                     if required_key not in o:
                         self.err(f, path, f"{o['k']} must carry {required_key}: a collection literal names the members it builds through")
