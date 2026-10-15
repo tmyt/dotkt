@@ -1,0 +1,45 @@
+{
+  "types": [
+    {
+      "name": "Base", "kind": "class",
+      "methods": [{
+        "name": "probe", "virtual": true,
+        "params": [{ "name": "value", "type": {
+          "t": "mod", "req": false, "m": { "t": "fqn", "name": "SignatureMarker" },
+          "of": { "t": "fqn", "name": "object" }
+        }}],
+        "ret": {
+          "t": "mod", "req": false, "m": { "t": "fqn", "name": "SignatureMarker" },
+          "of": { "t": "fqn", "name": "object" }
+        },
+        "body": []
+      }]
+    },
+    {
+      "name": "Derived", "kind": "class", "base": { "t": "fqn", "name": "Base" },
+      "methods": [{
+        "name": "bridge", "virtual": true,
+        "params": [{ "name": "value", "type": {
+          "t": "mod", "req": false, "m": { "t": "fqn", "name": "SignatureMarker" },
+          "of": { "t": "fqn", "name": "object" }
+        }}],
+        "ret": {
+          "t": "mod", "req": false, "m": { "t": "fqn", "name": "SignatureMarker" },
+          "of": { "t": "fqn", "name": "object" }
+        },
+        "clrBaseImpls": [{
+          "owner": { "t": "fqn", "name": "Base" }, "member": "probe", "arity": 0,
+          "params": [{
+            "t": "mod", "req": false, "m": { "t": "fqn", "name": "SignatureMarker" },
+            "of": { "t": "fqn", "name": "object" }
+          }],
+          "ret": {
+            "t": "mod", "req": false, "m": { "t": "fqn", "name": "SignatureMarker" },
+            "of": { "t": "fqn", "name": "object" }
+          }
+        }],
+        "body": []
+      }]
+    }
+  ]
+}
