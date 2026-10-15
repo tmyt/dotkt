@@ -1152,7 +1152,8 @@ runtime.
 | a **context parameter** (`context(s: S) fun f()`) | `[KotlinContextParameter]` on the emitted positional parameter — a bare marker. The parameter is physically ordinary (§5i), so without it the consumer would restore a plain leading value parameter and `with(s) { f() }` would stop resolving. Covers functions and property accessors, top-level and member. |
 | an **extension receiver** (`fun T.f()`) | `[KotlinExtensionReceiver]` on the emitted leading positional parameter — a bare marker. The parameter name is only physical spelling and has no semantic role; dll2klib restores a receiver solely from this trusted marker. Covers top-level and member functions and property accessors; companion extensions use their existing association carrier because they have no physical receiver slot. |
 | **reference-type nullability** (`String?`) | **.NET's own NRT** `[Nullable]`/`[NullableContext]` (§9) — readable by C# too |
-| `final`/`open`/`abstract`, visibility | **none** — ride .NET virtual-ness / accessibility |
+| `final`/`open`/`abstract` | **none** — ride .NET virtual-ness |
+| source visibility differing from CLR accessibility | `[KotlinTypeVisibility]` and `[KotlinCallableVisibility]` preserve Kotlin visibility independently of the public CLR ABI needed by `@PublishedApi internal` declarations. A property retains its accessor visibility as well; a public physical member does not grant ordinary Kotlin source access. |
 | generics, `reified` | `[KotlinDeclarationIdentity]` separately records semantic reified method-type-parameter indices and physical nullable-witness indices (§2) |
 | parameter names (named-argument calls) | emitted via `DefineParameter` (were dropped before; not a FIR limitation) |
 
@@ -2462,7 +2463,9 @@ Current deliberate limits are:
 - Kotlin function arities 0..22 round-trip exactly; 23 and above has no CLR delegate and is refused (§8e-bis);
 - arbitrary CLR custom-attribute applications are not reproduced as Kotlin annotation applications;
 - SOURCE-retained annotations and compile-time-only facts such as contracts are not present in CLR metadata; and
-- `internal` is enforced by CLR assembly visibility, without friend-module or `InternalsVisibleTo` wiring.
+- Ordinary `internal` declarations use CLR assembly visibility. `@PublishedApi internal` declarations may be
+  physically public for cross-module inline/default use, but explicit declaration metadata restores Kotlin
+  internal visibility for ordinary source access. There is no friend-module or `InternalsVisibleTo` wiring.
 
 ## Quick "this surprised me" index
 

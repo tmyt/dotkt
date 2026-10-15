@@ -45,6 +45,27 @@ if (args.Length == 3 && args[0] == "--type-declaration-visibility")
     return;
 }
 
+if (args.Length == 3 && args[0] == "--callable-declaration-visibility")
+{
+    CallableVisibilityMetadataInspector.Verify(args[1], args[2]);
+    Console.WriteLine("source-internal callable KLIB declarations and public inline CLR ABI: OK");
+    return;
+}
+
+if (args.Length == 3 && args[0] == "--reference-callable-visibility")
+{
+    CallableVisibilityMetadataInspector.VerifyReference(args[1], args[2]);
+    Console.WriteLine("body-stripped callable signatures, constraints, visibility and inline metadata: OK");
+    return;
+}
+
+if (args.Length == 2 && args[0] == "--inherited-callable-visibility")
+{
+    CallableVisibilityMetadataInspector.VerifyInherited(args[1]);
+    Console.WriteLine("inherited callable declaration visibility and hidden interface slots: OK");
+    return;
+}
+
 if (args.Length == 3 && args[0] == "--typealias-declarations")
 {
     TypeAliasMetadataInspector.Verify(args[1], args[2]);

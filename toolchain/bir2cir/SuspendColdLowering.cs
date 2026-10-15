@@ -4067,6 +4067,7 @@ static partial class SuspendColdLowering
         // physical details and must not publish a second Kotlin declaration carrier.
         void CarryKotlinDeclarationMetadata(JsonObject method)
         {
+            CallableVisibilityLowering.Copy(_m, method);
             RoundtripMetadata.CopySourceOverloadPriority(_m, method);
             // These source modifiers belong to the public Kotlin
             // declaration, not to the generated cold entry. Do not restore

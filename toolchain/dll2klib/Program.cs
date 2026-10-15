@@ -2366,7 +2366,7 @@ internal sealed class AssemblyScanner : IDisposable
                         names);
                 var constructor = new Constructor
                 {
-                    Flags = Flags.Visibility(method.Attributes),
+                    Flags = CallableVisibility(methodHandle, Flags.Visibility(method.Attributes)),
                     ValueParameter = { parameters },
                 };
                 foreach (var named in namedArgumentsForConstructor)
@@ -2423,6 +2423,7 @@ internal sealed class AssemblyScanner : IDisposable
                         declarationIdentity?.Parameters,
                         declarationIdentity?.NullableWitnessTypeParameterIndices.Count ?? 0) },
                 };
+                function.Flags = CallableVisibility(methodHandle, function.Flags);
                 PromoteContextParameters(method, function);
                 ApplySourceFunctionPriority(function, kotlinFlags, names);
                 // A C# extension MethodDef has two CLR meanings: it remains an ordinary callable static member of
@@ -2581,7 +2582,7 @@ internal sealed class AssemblyScanner : IDisposable
             {
                 Name = names.String(name),
                 ReturnType = fieldType,
-                Flags = Flags.Property(field.Attributes, canWrite),
+                Flags = CallableVisibility(fieldHandle, Flags.Property(field.Attributes, canWrite)),
                 SetterValueParameter = canWrite
                     ? new ValueParameter { Name = names.String("value"), Type = fieldType.Clone() }
                     : null,
@@ -3514,15 +3515,18 @@ internal sealed class AssemblyScanner : IDisposable
                 {
                     Name = names.String(name),
                     ReturnType = propertyType,
-                    Flags = Flags.Property(representative.Attributes, canWrite, isStatic: false),
+                    Flags = CallableVisibility(decoder.Attributes, representativeHandle,
+                        Flags.Property(representative.Attributes, canWrite, isStatic: false)),
                     SetterValueParameter = canWrite
                         ? new ValueParameter { Name = names.String("value"), Type = propertyType.Clone() }
                         : null,
                 };
                 if (!accessors.Getter.IsNil)
-                    projected.GetterFlags = Flags.Accessor(reader.GetMethodDefinition(accessors.Getter).Attributes);
+                    projected.GetterFlags = CallableVisibility(decoder.Attributes, accessors.Getter,
+                        Flags.Accessor(reader.GetMethodDefinition(accessors.Getter).Attributes));
                 if (canWrite)
-                    projected.SetterFlags = Flags.Accessor(reader.GetMethodDefinition(accessors.Setter).Attributes);
+                    projected.SetterFlags = CallableVisibility(decoder.Attributes, accessors.Setter,
+                        Flags.Accessor(reader.GetMethodDefinition(accessors.Setter).Attributes));
                 return projected;
             }
             // Fields occupy the same source member namespace as properties, but do not fulfill interface slots.
@@ -3542,7 +3546,8 @@ internal sealed class AssemblyScanner : IDisposable
                 {
                     Name = names.String(name),
                     ReturnType = fieldType,
-                    Flags = Flags.Property(field.Attributes, canWrite) | 1,
+                    Flags = CallableVisibility(decoder.Attributes, fieldHandle,
+                        Flags.Property(field.Attributes, canWrite) | 1),
                     SetterValueParameter = canWrite
                         ? new ValueParameter { Name = names.String("value"), Type = fieldType.Clone() }
                         : null,
@@ -4872,6 +4877,7 @@ internal sealed class AssemblyScanner : IDisposable
                     entry.ReceiverMarker, entry.BlockArity, names, signatures,
                     eraseBlockArguments: entry.KotlinImplementation != entry.Implementation),
             };
+            function.Flags = CallableVisibility(entry.KotlinImplementation, function.Flags);
             PromoteContextParameters(method, function);
             AddCSharp14MethodTypeParameters(
                 entry.KotlinImplementation, method, function.TypeParameter, names, signatures, context,
@@ -5209,6 +5215,7 @@ internal sealed class AssemblyScanner : IDisposable
                     declarationIdentity?.Parameters,
                     declarationIdentity?.NullableWitnessTypeParameterIndices.Count ?? 0) },
             };
+            function.Flags = CallableVisibility(methodHandle, function.Flags);
             PromoteContextParameters(method, function);
             // A Kotlin 2.4 COMPANION EXTENSION (`companion fun C.foo()`) is physically an ordinary receiverless static
             // of this facade; the trusted carrier holds the type it is associated with. Restoring it needs no new
@@ -5339,9 +5346,9 @@ internal sealed class AssemblyScanner : IDisposable
             {
                 Name = names.String(fieldCompanion?.Name ?? name),
                 ReturnType = type,
-                Flags = fieldCompanion is null
+                Flags = CallableVisibility(fieldHandle, fieldCompanion is null
                     ? Flags.Property(field.Attributes, canWrite) & ~(1 << 19)
-                    : Flags.Property(field.Attributes, canWrite),
+                    : Flags.Property(field.Attributes, canWrite)),
                 ReceiverType = fieldCompanion?.Receiver,
                 SetterValueParameter = canWrite ? new ValueParameter { Name = names.String("value"), Type = type.Clone() } : null,
             };
@@ -5483,12 +5490,14 @@ internal sealed class AssemblyScanner : IDisposable
         MethodDefinitionHandle getter,
         MethodDefinitionHandle setter)
     {
+        var representative = getter.IsNil ? setter : getter;
+        if (!representative.IsNil) property.Flags = CallableVisibility(representative, property.Flags);
         if (!getter.IsNil && _attrs.Has(getter, MetadataAttributes.DotKtNs + "KotlinLateinitAttribute"))
             property.Flags |= 1 << 12; // IS_LATEINIT belongs to the Kotlin property, not its physical storage type.
         if (!getter.IsNil && IsPublicOrProtected(_md.GetMethodDefinition(getter).Attributes))
-            property.GetterFlags = Flags.Accessor(_md.GetMethodDefinition(getter).Attributes);
+            property.GetterFlags = CallableVisibility(getter, Flags.Accessor(_md.GetMethodDefinition(getter).Attributes));
         if (!setter.IsNil && IsPublicOrProtected(_md.GetMethodDefinition(setter).Attributes))
-            property.SetterFlags = Flags.Accessor(_md.GetMethodDefinition(setter).Attributes);
+            property.SetterFlags = CallableVisibility(setter, Flags.Accessor(_md.GetMethodDefinition(setter).Attributes));
     }
 
     private void ApplyAccessorFlags(
@@ -5500,10 +5509,32 @@ internal sealed class AssemblyScanner : IDisposable
             var method = _md.GetMethodDefinition(handle);
             var association = PropertyAccessorAssociation(handle);
             if (association?.Kind == 1)
-                property.GetterFlags = Flags.Accessor(method.Attributes);
+            {
+                property.Flags = CallableVisibility(handle, property.Flags);
+                property.GetterFlags = CallableVisibility(handle, Flags.Accessor(method.Attributes));
+            }
             else if (association?.Kind == 2)
-                property.SetterFlags = Flags.Accessor(method.Attributes);
+                property.SetterFlags = CallableVisibility(handle, Flags.Accessor(method.Attributes));
         }
+    }
+
+    private int CallableVisibility(EntityHandle declaration, int flags)
+        => CallableVisibility(_attrs, declaration, flags);
+
+    private static int CallableVisibility(MetadataAttributes attributes, EntityHandle declaration, int flags)
+    {
+        using var document = attributes.CarrierDocument(
+            declaration, MetadataAttributes.DotKtNs + "KotlinCallableVisibilityAttribute");
+        if (document is null) return flags;
+        var visibility = document.RootElement.GetProperty("visibility").GetString();
+        return (flags & ~0xE) | (visibility switch
+        {
+            "internal" => 0,
+            "private" => 2,
+            "protected" => 4,
+            "public" => 6,
+            _ => throw new InvalidDataException($"invalid Kotlin callable visibility '{visibility}'"),
+        });
     }
 
     private readonly Dictionary<MethodDefinitionHandle, (string Name, int Kind)> _propertyAccessorAssociations = new();

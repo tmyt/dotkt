@@ -55,7 +55,7 @@ internal fun BirEmitter.needsNonNullCheck(t: IrType): Boolean {
 
 /**
  * Is `fn`'s Kotlin visibility part of the PUBLIC surface a null may cross into from outside the module — PUBLIC,
- * PROTECTED, or `@PublishedApi internal` (the cross-assembly inline surface, which `visOf` also promotes to public)?
+ * PROTECTED, or `@PublishedApi internal` (the cross-assembly inline surface whose physical CLR access bir2cir widens)?
  * Gates on the RAW IR visibility, NOT `visOf`'s emitted string: `visOf` maps `Local` to "public" (a trap), so using
  * it would wrongly include local functions. PRIVATE/INTERNAL/LOCAL are trusted within the module -> no check.
  */

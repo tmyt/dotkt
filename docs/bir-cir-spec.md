@@ -52,6 +52,13 @@ continues to exclude its DLLs from projection because its dedicated frontend KLI
   `{visibility}` in Kotlin visibility vocabulary. dll2klib restores standard KLIB class visibility
   from this trusted TypeDef carrier; it does not omit the declaration needed by public inline bodies.
   Ordinary CLR declarations without this carrier retain their ECMA-335 accessibility projection.
+- `KotlinCallableVisibilityAttribute(string version, byte[] content)` carries `{visibility}` in Kotlin
+  vocabulary on MethodDefs and FieldDefs, including private backing storage. bir2cir captures non-public
+  source visibility before representation changes, separately makes `@PublishedApi internal` declarations
+  CLR-public, and preserves the carrier on replacement source entry points such as suspend Task bridges and
+  field-backed companion-extension accessors. dll2klib restores function, constructor, property and accessor
+  visibility from the explicit carrier, never from public CLR accessibility or implementation bodies. The
+  carrier and the declaration's signature, generic constraints and inline metadata survive reference-body stripping.
 - **STATUS (#37 m6): LANDED.** The carrier attributes stamp `(string version, byte[] content)`. `version` is a
   `codec/schema-version` identifier; only `"bir-json/1"` is defined today. `content` is the codec-encoded body
   (today `UTF8(json)`). The dispatch shape leaves room for other codecs without reserving a particular identifier.

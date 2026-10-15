@@ -84,6 +84,10 @@ static class RoundtripMetadata
     public static void PreserveTypeVisibility(JsonObject type) =>
         Append(type, JsonCarrierAttr(AKTypeVisibility, new JsonObject { ["visibility"] = type["vis"]!.DeepClone() }));
 
+    public static void PreserveCallableVisibility(JsonObject declaration, string visibility) =>
+        Append(declaration, JsonCarrierAttr(CallableVisibilityLowering.Carrier,
+            new JsonObject { ["visibility"] = visibility }));
+
     // Declaration metadata is opaque to every physical representation pass. Encode it at the input boundary,
     // before any traversal can confuse a Kotlin alias's classifier or parameter with an executable CLR slot.
     public static void FreezeTypeAliases(JsonNode root)
@@ -950,6 +954,7 @@ static class RoundtripMetadata
             AttrClass(AKCollIdentity, Ctor(Param("System.String"), Param(ByteArrayType()))), // #29 — carrier of a pre-collapse `Box<List<T>>` collection identity
             AttrClass(AKType, Ctor(Param("System.String"), Param(ByteArrayType()))),         // compiler-synthesized CLR type -> original Kotlin TypeNode
             AttrClass(AKTypeVisibility, Ctor(Param("System.String"), Param(ByteArrayType()))), // source visibility before physical accessibility promotion
+            AttrClass(CallableVisibilityLowering.Carrier, Ctor(Param("System.String"), Param(ByteArrayType()))),
             AttrClass(AKSupertypes, Ctor(Param("System.String"), Param(ByteArrayType()))),   // #86 — pre-erasure supertype edges + type-parameter bounds
             AttrClass(AKTypeParameterBounds, Ctor(Param("System.String"), Param(ByteArrayType()))), // pre-erasure MethodDef type-parameter bounds
         };

@@ -692,6 +692,7 @@ static class CompanionExtensionBinding
             new JsonArray(new JsonObject { ["k"] = "return", ["value"] = read }),
             new JsonArray(),
             propertyType.DeepClone());
+        CallableVisibilityLowering.Copy(field, parts.Getter);
         if (Str(field["companionGetterExplicitClrName"]) is string getterExplicitName)
             parts.Getter[DeclarationIdentityBinding.ExplicitNameKey] = getterExplicitName;
         if (Str(field["companionGetterDeclarationId"]) is string getterDeclarationId)
@@ -730,6 +731,7 @@ static class CompanionExtensionBinding
             parts.Setter["declarationSourceName"] = sourceName;
         }
         field.Remove("companionGetterExplicitClrName");
+        if (parts.Setter != null) CallableVisibilityLowering.Copy(field, parts.Setter, setterVisibility);
         field.Remove("companionSetterExplicitClrName");
         field.Remove("companionGetterDeclarationId");
         field.Remove("companionSetterDeclarationId");

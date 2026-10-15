@@ -1072,10 +1072,9 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 					?.let { ""","companionSetterDeclarationId":${str(it)}""" } ?: ""
 				""","companionPropertyMutable":${p.isVar},"companionStorageReadOnly":$storageReadOnly$setter$getterName$setterName$getterId$setterId"""
 			} else ""
-			// A top-level `val` (or `var` with a non-public setter) -> mark the static field read-only so a downstream
-			// consuming module restores it as `val`, rejecting external writes (#34b, mirrors
-			// the member-field `readOnly` stamp).
-			val ro = if (!p.isVar || (p.setter != null && visOf(p.setter!!) != "public")) ""","readOnly":true""" else ""
+			// A val, or a var whose setter is more restricted than the property, has a read-only projected field
+			// surface. An internal property's ordinary internal setter does not change its source mutability.
+			val ro = if (!p.isVar || (p.setter != null && visOf(p.setter!!) != visOf(p))) ""","readOnly":true""" else ""
 			// Delegated storage has the provider type, not the public value type. Its surface is the generated accessor.
 			// Every other field retains the source declaration's visibility; omitting it means public in BIR/CIR and would
 			// leak a private/internal top-level const into both the CLR surface and the reconstructed reference KLIB.
@@ -1083,7 +1082,8 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 				// accessor roles are routed through the complete method surface emitted below.
 				val v = if (p.isDelegated || accessorRoutedTopLevelProperty(p)) "private" else visOf(p)
 			val vis = if (v != "public") ""","vis":${str(v)}""" else ""
-			"""{"name":${str(bf.name.asString())},"type":${birType(bf.type).toJson()},"static":true,"init":$init$const$vis$ro$companionProperty${lateinitFieldFlag(p)}${volatileFieldFlag(p)}${companionReceiverField(p, "field", p.name.asString())}}"""
+			val attrs = if (v == "private" && accessorRoutedTopLevelProperty(p)) "" else ""","attrs":[${attrsJson(p.annotations)}]"""
+			"""{"name":${str(bf.name.asString())},"type":${birType(bf.type).toJson()},"static":true,"init":$init$const$vis$ro$companionProperty${lateinitFieldFlag(p)}${volatileFieldFlag(p)}${companionReceiverField(p, "field", p.name.asString())}$attrs}"""
 		}
 		// Preserve every companion as a separate semantic declaration. Must run BEFORE body emission so every value/type
 		// use resolves to the same representation-neutral identity.
