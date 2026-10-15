@@ -913,8 +913,11 @@ static partial class ClrMemberResolution
         // Kotlin implementer carries a real `DotKt.Runtime.CompilerServices.Kotlin*Slots` interface slot so its
         // override is reached by ordinary virtual dispatch. A member arriving here unresolved is therefore an upstream
         // routing gap, not something to resolve at run time; PickUnique's hard error propagates.
-        var win = PickUnique(cands, m => m.GetParameters(), argNodes, ownerFqn.Args,
-            $"{(instance ? "clrInstance" : "clrStatic")} owner={TypeNode.ToJson(ownerFqn)} .{name}({DescArgs(argNodes)})");
+        var context = $"{(instance ? "clrInstance" : "clrStatic")} owner={TypeNode.ToJson(ownerFqn)} .{name}({DescArgs(argNodes)})";
+        var win = node["resolvedMemberParams"] is JsonArray selectedSignature
+            ? TryPickDeclared(cands, selectedSignature.Select(TypeJson.Read).ToList())
+                ?? throw new InvalidOperationException($"bir2cir: selected declaration {context} has no unique open signature")
+            : PickUnique(cands, m => m.GetParameters(), argNodes, ownerFqn.Args, context);
         var dispatch = instance
             ? Dispatch(win, open, (node["super"] as JsonValue)?.GetValue<bool>() ?? false)
             : null;
@@ -930,6 +933,7 @@ static partial class ClrMemberResolution
         StampDelegateArgumentTargets(node, win, ownerFqn.Args ?? Array.Empty<TypeNode>());
         StampResolvedMemberReturn(node, win.ReturnType);
         node.Remove("argTypes");
+        node.Remove("resolvedMemberParams");
         if (instance) node["dispatch"] = dispatch;
     }
 
@@ -1180,8 +1184,9 @@ static partial class ClrMemberResolution
                 ? method.GetGenericArguments().Length == methodArity
                 : methodArity == 0)
             .ToList();
-        declaration = PickUnique(candidates, method => method.GetParameters(), argNodes, ownerArgs,
-            $"default argument owner={TypeNode.ToJson(ownerFqn)} .{name}({DescArgs(argNodes)})");
+        declaration = TryPickDeclared(candidates, argNodes)
+            ?? throw new InvalidOperationException(
+                $"bir2cir: default argument declaration '{ownerFqn.Name}.{name}' has no unique open signature");
         return true;
     }
 

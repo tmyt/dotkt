@@ -15,6 +15,14 @@ import org.jetbrains.kotlin.fir.symbols.impl.FirNamedFunctionSymbol
 import org.jetbrains.kotlin.fir.unwrapFakeOverrides
 import org.jetbrains.kotlin.fir.visitors.FirDefaultVisitorVoid
 import org.jetbrains.kotlin.ir.declarations.IrSimpleFunction
+import org.jetbrains.kotlin.ir.declarations.IrDeclarationOrigin
+import org.jetbrains.kotlin.ir.declarations.IrModuleFragment
+import org.jetbrains.kotlin.ir.IrElement
+import org.jetbrains.kotlin.ir.expressions.IrCall
+import org.jetbrains.kotlin.ir.expressions.IrFunctionReference
+import org.jetbrains.kotlin.ir.visitors.IrVisitorVoid
+import org.jetbrains.kotlin.ir.visitors.acceptChildrenVoid
+import org.jetbrains.kotlin.ir.visitors.acceptVoid
 
 /**
  * Preserve FIR's selected declaration before Fir2Ir merges coincident inherited signatures.
@@ -28,8 +36,9 @@ object SelectedCallDeclarations {
 	private data class Key(val file: String, val end: Int, val name: String, val reference: Boolean)
 	private val source = linkedMapOf<Key, FirNamedFunctionSymbol>()
 	private val ir = mutableMapOf<Key, IrSimpleFunction>()
+	private val adapterCalls = java.util.IdentityHashMap<IrCall, IrSimpleFunction>()
 
-	fun reset() { source.clear(); ir.clear() }
+	fun reset() { source.clear(); ir.clear(); adapterCalls.clear() }
 
 	fun capture(files: List<FirFile>) {
 		for (file in files) {
@@ -52,10 +61,34 @@ object SelectedCallDeclarations {
 		}
 	}
 
-	fun convertDeclarations(components: Fir2IrComponents) {
+	fun convertDeclarations(components: Fir2IrComponents, module: IrModuleFragment) {
 		for ((key, symbol) in source)
 			ir[key] = components.declarationStorage.getIrFunctionSymbol(symbol).owner as IrSimpleFunction
+		// Fir2Ir's return/argument-coercion adapters contain calls, but their source expression was a reference.
+		// Associate that reference's chosen declaration with the adapter's forwarding call by IR symbol identity,
+		// before either the adapter body or its reference is serialized. Do not reinterpret a call's return type.
+		for (file in module.files) file.acceptVoid(object : IrVisitorVoid() {
+			override fun visitElement(element: IrElement) { element.acceptChildrenVoid(this) }
+			override fun visitFunctionReference(expression: IrFunctionReference) {
+				expression.acceptChildrenVoid(this)
+				val adapter = expression.symbol.owner as? IrSimpleFunction ?: return
+				if (adapter.origin != IrDeclarationOrigin.ADAPTER_FOR_CALLABLE_REFERENCE) return
+				val selected = at(file.fileEntry.name, expression.endOffset, adapter.name.asString(), reference = true)
+					?: return
+				val target = expression.reflectionTarget ?: return
+				adapter.body?.acceptVoid(object : IrVisitorVoid() {
+					override fun visitElement(element: IrElement) { element.acceptChildrenVoid(this) }
+					override fun visitCall(expression: IrCall) {
+						expression.acceptChildrenVoid(this)
+						if (expression.symbol == target) adapterCalls[expression] = selected
+					}
+				})
+			}
+		})
 	}
+
+	fun forCall(call: IrCall, file: String?): IrSimpleFunction? =
+		adapterCalls[call] ?: at(file, call.endOffset, call.symbol.owner.name.asString())
 
 	fun at(file: String?, end: Int, name: String, reference: Boolean = false): IrSimpleFunction? =
 		file?.let { ir[Key(it, end, name, reference)] }

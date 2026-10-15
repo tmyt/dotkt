@@ -422,6 +422,8 @@ static class NetInteropBinding
         // positional or trailing optional argument from the selected
         // reference declaration; ilemit therefore receives a complete vector.
         node["argTypes"] = TakeDeclaredSig();
+        if (Take("sig") is JsonArray selectedSignature)
+            node["resolvedMemberParams"] = NormalizeMemberSig(selectedSignature);
         node["ret"] = Take("ret");
         if (!isStatic) node["recv"] = Take("recv");
         node["args"] = args;

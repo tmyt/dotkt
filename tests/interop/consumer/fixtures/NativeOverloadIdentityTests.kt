@@ -1,6 +1,7 @@
 import NUnit.Framework.TestAttribute
 import NativeOverloadIdentity.ISlot
 import NativeOverloadIdentity.IReverseSlot
+import NativeOverloadIdentity.Selection
 
 private interface NativeReordered<A, B> : ISlot<B>
 private interface NativeTwiceReordered<A, B> : NativeReordered<B, A>
@@ -58,5 +59,35 @@ class NativeOverloadIdentityTests {
         check(direct(NativeDirectImplementation(), 83, "marker") == "int-overload")
         check(inherited(NativeImplementation(), 89, "marker") == "int-overload")
         check(reverse(NativeReverseImplementation(), 97, "marker") == "reverse-int-overload")
+    }
+
+    @TestAttribute fun nongenericMethodsAlsoKeepTheirOpenDeclarationIdentity() {
+        val slot: ISlot<Int> = NativeDirectImplementation()
+        val direct: String = slot.Plain(101)
+        val inherited: String = NativeImplementation().Plain(103)
+        val reverse: String = NativeReverseImplementation().Plain(107)
+        val bound: (Int) -> String = NativeImplementation()::Plain
+        val unbound: (ISlot<Int>, Int) -> String = ISlot<Int>::Plain
+        check(direct == "plain-int-overload" && inherited == "plain-int-overload")
+        check(reverse == "reverse-plain-int-overload")
+        check(bound(109) == "plain-int-overload")
+        check(unbound(slot, 113) == "plain-int-overload")
+    }
+
+    @TestAttribute fun omittedDefaultsBelongToTheSelectedOverload() {
+        val direct: ISlot<Int> = NativeDirectImplementation()
+        check(direct.Optional<String>(127) == "int-default")
+        check(NativeImplementation().Optional<String>(131) == "int-default")
+    }
+
+    @TestAttribute fun unitCoercionAdaptersKeepTheSelectedNativeTarget() {
+        val bound: (Int, String) -> Unit = NativeImplementation()::Echo
+        Selection.Last = "before-bound"
+        bound(137, "marker")
+        check(Selection.Last == "int")
+        val unbound: (NativeImplementation, Int, String) -> Unit = NativeImplementation::Echo
+        Selection.Last = "before-unbound"
+        unbound(NativeImplementation(), 139, "marker")
+        check(Selection.Last == "int")
     }
 }

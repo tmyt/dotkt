@@ -1634,7 +1634,7 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 	// `appError.Message`) is a fake-override whose `parent` is the Kotlin subclass, so resolve through the fake
 	// override to the real .NET declaring type. A `kotlin.*` stdlib owner resolves to null here and FALLS THROUGH to
 	// the plain Kotlin member-call path below (bir2cir substitutes it from the ref.dll).
-	val selectedDeclaration = kotc.frontend.SelectedCallDeclarations.at(sourcePathOf(call), call.endOffset, name)
+	val selectedDeclaration = kotc.frontend.SelectedCallDeclarations.forCall(call, sourcePathOf(call))
 	val clrTypeName = (selectedDeclaration?.parent as? IrClass)?.let { clrName(it) }
 		?: declaringClass?.let { clrName(it) }
 		?: (callee.takeIf { it.isFakeOverride }?.resolveFakeOverride()?.parent as? IrClass)?.let { clrName(it) }

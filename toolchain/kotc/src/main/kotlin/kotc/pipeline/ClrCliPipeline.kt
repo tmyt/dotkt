@@ -136,7 +136,7 @@ object ClrCommonFir2IrPipelinePhase : PipelinePhase<MetadataFrontendPipelineArti
 		kotc.frontend.ClrStaticOwners.convertTypes { type ->
 			with(fir2IrResult.components.typeConverter) { type.toIrType() }
 		}
-		kotc.frontend.SelectedCallDeclarations.convertDeclarations(fir2IrResult.components)
+		kotc.frontend.SelectedCallDeclarations.convertDeclarations(fir2IrResult.components, fir2IrResult.irModuleFragment)
 		return ClrFir2IrPipelineArtifact(fir2IrResult, input.configuration,
 			kotc.backend.TypeAliasDeclarations.collect(input, fir2IrResult))
 	}
