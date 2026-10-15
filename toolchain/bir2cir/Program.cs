@@ -354,7 +354,7 @@ sealed class Pipeline
         // Snapshot every method whose source-level `T` return is produced by an unchecked cast from a nullable/object
         // carrier.  Its physical CLR ABI must return object so narrowing can be delayed until the value is consumed;
         // the exact Kotlin `T` return is retained through [KotlinType].  Collected module-wide so cross-file local calls
-        // are matched by owner + substituted signature, never by a library/name heuristic.
+        // are matched by exact frontend declaration identity and owner, never by a library/name heuristic.
         var uncheckedGenericCastRets = UncheckedGenericCastReturnErasure.Collect(birFiles.Select(f => f.Root));
 
         // The local RICH-enum type names (a `kind:"class"` decl carrying the faithful `enumRich:true` marker), across

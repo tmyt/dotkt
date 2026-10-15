@@ -5,6 +5,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Keep private and ordinary top-level unchecked generic results erased until consumption, matching the exact
+  frontend-selected declaration instead of reselecting an overload; concrete uses retain their checks (#1014).
+
 - Preserve Kotlin override visibility while matching public inherited CLR slots, including `@PublishedApi`
   internal methods and property accessors, so accepted overrides load and dispatch correctly (#1048).
 
