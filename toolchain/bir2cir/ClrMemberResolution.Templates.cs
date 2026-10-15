@@ -425,9 +425,14 @@ static partial class ClrMemberResolution
                     : methodArity == 0))
             .ToList();
         var sig = (node["sig"] as JsonArray)?.Select(TypeJson.Read).ToList();
-        var win = sig == null
-            ? (cands.Count == 1 ? cands[0] : null)
-            : TryPickUnique(cands, sig, iface.Args ?? Array.Empty<TypeNode>());
+        // Dispatch lowering does not change a selected native declaration's frame. Closing that vector here
+        // would collapse M(T) and M(int) again on a constrained C<int> receiver. Other constrained-call producers
+        // carry physical `sig` inputs instead, and keep their existing representation-matching contract.
+        var win = node["resolvedMemberParams"] is JsonArray selectedSignature
+            ? TryPickDeclared(cands, selectedSignature.Select(TypeJson.Read).ToList(), open)
+            : sig == null
+                ? (cands.Count == 1 ? cands[0] : null)
+                : TryPickUnique(cands, sig, iface.Args ?? Array.Empty<TypeNode>());
         if (win == null)
             throw new InvalidOperationException(
                 $"bir2cir: constrained call '{iface.Name}.{name}' does not resolve to one declared signature");
@@ -436,5 +441,6 @@ static partial class ClrMemberResolution
         StampResolvedMethodTypeParameters(node, win);
         StampDelegateArgumentTargets(node, win, iface.Args ?? Array.Empty<TypeNode>());
         StampResolvedMemberReturn(node, win.ReturnType);
+        node.Remove("resolvedMemberParams");
     }
 }

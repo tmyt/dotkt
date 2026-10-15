@@ -913,8 +913,11 @@ static partial class ClrMemberResolution
         // Kotlin implementer carries a real `DotKt.Runtime.CompilerServices.Kotlin*Slots` interface slot so its
         // override is reached by ordinary virtual dispatch. A member arriving here unresolved is therefore an upstream
         // routing gap, not something to resolve at run time; PickUnique's hard error propagates.
-        var win = PickUnique(cands, m => m.GetParameters(), argNodes, ownerFqn.Args,
-            $"{(instance ? "clrInstance" : "clrStatic")} owner={TypeNode.ToJson(ownerFqn)} .{name}({DescArgs(argNodes)})");
+        var context = $"{(instance ? "clrInstance" : "clrStatic")} owner={TypeNode.ToJson(ownerFqn)} .{name}({DescArgs(argNodes)})";
+        var win = node["resolvedMemberParams"] is JsonArray selectedSignature
+            ? TryPickDeclared(cands, selectedSignature.Select(TypeJson.Read).ToList(), open)
+                ?? throw new InvalidOperationException($"bir2cir: selected declaration {context} has no unique open signature")
+            : PickUnique(cands, m => m.GetParameters(), argNodes, ownerFqn.Args, context);
         var dispatch = instance
             ? Dispatch(win, open, (node["super"] as JsonValue)?.GetValue<bool>() ?? false)
             : null;
@@ -930,6 +933,7 @@ static partial class ClrMemberResolution
         StampDelegateArgumentTargets(node, win, ownerFqn.Args ?? Array.Empty<TypeNode>());
         StampResolvedMemberReturn(node, win.ReturnType);
         node.Remove("argTypes");
+        node.Remove("resolvedMemberParams");
         if (instance) node["dispatch"] = dispatch;
     }
 
@@ -989,8 +993,11 @@ static partial class ClrMemberResolution
         // reached through an interface — a return read off a member the emitter does not link.
         if (sig != null && sig.Count == argCount && !sig.Any(t => t == null))
         {
-            var win = TryPickUnique(cands, sig, ownerFqn.Args)
-                      ?? TryPickUnique(InterfaceCandidates(), sig, ownerFqn.Args);
+            // This vector describes the selected OPEN declaration, not the call's argument values. Closing an
+            // owner variable here makes M(T) and M(int) coincide on C<int> and repeats overload resolution after
+            // the frontend has already selected one. Compare in the declaration frame before constructing its owner.
+            var win = TryPickDeclared(cands, sig, open)
+                      ?? TryPickDeclared(InterfaceCandidates(), sig, open);
             if (win != null)
             {
                 // The generic method DEFINITION is the identity; the call's own `typeArgs` instantiate it, exactly
@@ -1024,6 +1031,19 @@ static partial class ClrMemberResolution
         throw new InvalidOperationException(
             $"bir2cir: generic external call '{ownerFqn.Name}.{name}<{arity}>' carries no usable "
             + "frontend-resolved parameter vector");
+    }
+
+    static MethodInfo TryPickDeclared(List<MethodInfo> candidates, List<TypeNode> signature, Type declarationOwner)
+    {
+        // The carried owner names the frontend-selected declaration/projection frame. Its own declaration is not
+        // an inherited same-parameter member with a different return (Task<T>.GetAwaiter vs Task.GetAwaiter).
+        // A projected completion on a class instead describes its constructed public interface surface: retain
+        // that reflected frame rather than reopening I<string>.M(string) to the unrelated open I<T>.M(T) vector.
+        var exact = candidates.Where(candidate =>
+            Match(candidate.GetParameters(), signature, null) == MatchKind.Exact).ToList();
+        var own = exact.Where(candidate => SameDeclType(candidate.DeclaringType, declarationOwner)).ToList();
+        if (own.Count != 0) return own.Count == 1 ? own[0] : null;
+        return exact.Count == 1 ? exact[0] : null;
     }
 
     // `PickUnique`'s first two tiers without its diagnostics: the exact structural match, then the single applicable
@@ -1142,8 +1162,8 @@ static partial class ClrMemberResolution
         (node["argTypes"] as JsonArray)?.Where(x => x != null).Select(TypeJson.Read).ToList() ?? new List<TypeNode>();
 
     // DefaultArgSplice runs before NetInteropBinding, but it must read defaults from the exact MethodDef this pass will
-    // later put in memberRef. Share this resolver, including constructed-owner substitution, interface traversal,
-    // accessibility and overload ranking; a second approximation here can materialize a sibling's value irreversibly.
+    // later put in memberRef. Match in the selected declaration/projection frame; a second applicability search here
+    // can materialize a sibling's value irreversibly after owner substitution makes their parameters coincide.
     internal static bool TryResolveExternalMethodForDefaults(ReferenceMetadataIndex refs, TypeNode.Fqn ownerFqn,
         string name, int methodArity, bool isStatic, IReadOnlyList<TypeNode> callSignature,
         out MethodInfo declaration, string propertyKind = null)
@@ -1170,8 +1190,9 @@ static partial class ClrMemberResolution
                 ? method.GetGenericArguments().Length == methodArity
                 : methodArity == 0)
             .ToList();
-        declaration = PickUnique(candidates, method => method.GetParameters(), argNodes, ownerArgs,
-            $"default argument owner={TypeNode.ToJson(ownerFqn)} .{name}({DescArgs(argNodes)})");
+        declaration = TryPickDeclared(candidates, argNodes, open)
+            ?? throw new InvalidOperationException(
+                $"bir2cir: default argument declaration '{ownerFqn.Name}.{name}' has no unique open signature");
         return true;
     }
 

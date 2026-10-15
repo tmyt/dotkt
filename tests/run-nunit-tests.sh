@@ -55,7 +55,7 @@ declare -A EXPECTED_DISCOVERED=(
 	["tests/coroutines"]=260
 	["tests/roundtrip/consumer"]=536
 	["tests/roundtrip/bidirectional/consumer"]=41
-	["tests/interop/consumer"]=389
+	["tests/interop/consumer"]=400
 )
 
 # Validate the baseline map before doing any expensive work. A new/renamed suite without a reviewed count is a
@@ -580,6 +580,15 @@ for proj in "${PROJECTS[@]}"; do
 	if [[ "$proj" == "tests/interop/consumer" ]]; then
 		interop_dll="$dir/bin/$CONFIGURATION/net10.0/InteropConsumer.Tests.dll"
 		interop_klib="$dir/obj/$CONFIGURATION/net10.0/klib/InteropProducer.klib"
+		if python3 "$ROOT/tests/interop/assert-native-overload-identity.py" \
+			"$dir/obj/$CONFIGURATION/net10.0/bir/NativeOverloadIdentityTests.bir.json" \
+			"$dir/obj/$CONFIGURATION/net10.0/cir/NativeOverloadIdentityTests.cir.json" \
+			>"$ROOT/build/nunit-$name.native-overload-identity.log" 2>&1; then
+			echo "  native overload declarations survive owner substitution without reselection"
+		else
+			echo "  NATIVE OVERLOAD IDENTITY FAIL — see build/nunit-$name.native-overload-identity.log"
+			tail -25 "$ROOT/build/nunit-$name.native-overload-identity.log"; rc=1
+		fi
 		if dotnet "$METADATA_INSPECTOR_DLL" --klib-explicit-field-slots "$interop_klib" \
 			>"$ROOT/build/nunit-$name.explicit-field-slots.log" 2>&1; then
 			echo "  visible fields retain their types and visibility beside hidden interface slots"
