@@ -44,6 +44,7 @@ internal annotation class ClrAttributeNamedArgument(val kind: String, val name: 
 // KLIB exposes it as a Kotlin property for frontend lookup, while this marker
 // preserves the storage fact so kotc emits a BIR field access. bir2cir still
 // resolves the actual CLR field and ilemit only emits the resulting CIR.
+// This opt-out cannot be applied to lateinit properties, whose source contract requires accessors.
 @Target(AnnotationTarget.PROPERTY)
 @Retention(AnnotationRetention.BINARY)
 public annotation class ClrField

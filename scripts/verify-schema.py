@@ -85,6 +85,7 @@ REQUIRED_OPERATION_REFS = {
 # Required fields whose role is owned by the node discriminator. In particular, `to` cannot be a global type key:
 # conv.to is a Type while for/forRange.to is an expression. Keep these checks kind-directed for the same reason.
 REQUIRED_NODE_FIELDS = {
+    "lateinitIsInitialized": ("lateinitDeclarationId",),
     "conv": ("e", "to"),
     "enumBits": ("e", "type", "underlying"),
     "new": ("type", "args"),
@@ -167,6 +168,7 @@ MEMBER_REF_CONDITIONAL_KEYS = {
 # strings (spec §2.2.1 — a type IDENTITY used as a resolution key, not a document value-type
 # slot). A bare string at any OTHER key = a type node that regressed to a string.
 STR_OK = {
+    "lateinitDeclarationId",                    # BIR-only exact property declaration identity for initialization queries.
     "k", "t",                                   # node-kind / type-tag (validated vs frozen sets)
     "name",                                     # decl/local/var/field names AND fqn.name (the type identity string)
     "scope",                                    # tv.scope enum
@@ -339,7 +341,7 @@ KINDS = {
     # field-write family — the setField/setFieldExpr/staticFieldSet merge (§2.5) is "[finalize in impl]", so all
     # three remain LIVE kinds until that lands.
     "setFieldExpr", "staticFieldSet",
-    "lateinitGet", "getType", "safeCastValue", "constrainedCall", "spreadConcat",
+    "lateinitGet", "lateinitIsInitialized", "getType", "safeCastValue", "constrainedCall", "spreadConcat",
     "tupleItem", "unsupportedExpr",
     "stackAlloc", "stackGet", "stackSet", "stackAsSpan",
     "byrefOf", "byrefLoad", "byrefStore",
@@ -797,6 +799,11 @@ class V:
 
     def walk(self, f, o, path, is_type_decl=False, role=None):
         if isinstance(o, dict):
+            if "lateinitDeclarationId" in o:
+                if f.endswith(".cir.json"):
+                    self.err(f, path, "lateinitDeclarationId must be consumed before CIR")
+                if not isinstance(o["lateinitDeclarationId"], str) or not o["lateinitDeclarationId"]:
+                    self.err(f, path, "lateinitDeclarationId must be a nonempty declaration identity")
             self.rich_enum_decl(f, path, o, is_type_decl)
             self.basic_enum_decl(f, path, o, is_type_decl)
             for internal in BIR2CIR_INTERNAL_MEMBER_FACTS:
@@ -944,6 +951,8 @@ class V:
                                  f"clrFlagsOperation {key} must be a structured Type node")
             if isinstance(o.get("k"), str):
                 k = o["k"]
+                if k == "lateinitIsInitialized" and f.endswith(".cir.json"):
+                    self.err(f, path, "lateinitIsInitialized must be physically lowered before CIR")
                 self.kinds_seen.add(k)
                 if k not in KINDS:
                     self.err(f, path, f"unknown node kind k={k!r}")

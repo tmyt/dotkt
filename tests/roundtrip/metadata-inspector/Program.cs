@@ -1788,11 +1788,12 @@ static void VerifyDll(string path)
             (FieldAttributes.Public | FieldAttributes.Static | FieldAttributes.Literal) &&
             !tag.GetDefaultValue().IsNil,
         "companion-block const is not a public CLR literal with a metadata constant");
-    var later = md.GetFieldDefinition(counterFields["later"]);
-    Require((later.Attributes & (FieldAttributes.Public | FieldAttributes.Static)) ==
-            (FieldAttributes.Public | FieldAttributes.Static) &&
-            HasFieldAttribute(md, counterFields["later"], LateinitAttribute),
-        "companion-block lateinit field lost its trusted CLR metadata marker");
+    var later = md.GetFieldDefinition(counterFields["<later>k__BackingField"]);
+    Require((later.Attributes & (FieldAttributes.FieldAccessMask | FieldAttributes.Static)) ==
+            (FieldAttributes.Private | FieldAttributes.Static) &&
+            md.GetBlobBytes(later.Signature).SequenceEqual(new byte[] { 0x06, 0x1c }) &&
+            HasFieldAttribute(md, counterFields["<later>k__BackingField"], LateinitAttribute),
+        "companion-block lateinit must have private object storage and its trusted metadata marker");
 
     var counterCompanionCarrier = carriers.Single(c =>
         c.Owner == "roundtrip.companionstatics.Counter" && c.Name == "Companion");
@@ -1823,11 +1824,12 @@ static void VerifyDll(string path)
             (FieldAttributes.Public | FieldAttributes.Static | FieldAttributes.Literal) &&
             !boxCode.GetDefaultValue().IsNil,
         "generic-owner companion const is not a public CLR literal with a metadata constant");
-    var boxLater = md.GetFieldDefinition(boxFields["later"]);
-    Require((boxLater.Attributes & (FieldAttributes.Public | FieldAttributes.Static)) ==
-            (FieldAttributes.Public | FieldAttributes.Static) &&
-            HasFieldAttribute(md, boxFields["later"], LateinitAttribute),
-        "generic-owner companion lateinit lost its trusted CLR metadata marker");
+    var boxLater = md.GetFieldDefinition(boxFields["<later>k__BackingField"]);
+    Require((boxLater.Attributes & (FieldAttributes.FieldAccessMask | FieldAttributes.Static)) ==
+            (FieldAttributes.Private | FieldAttributes.Static) &&
+            md.GetBlobBytes(boxLater.Signature).SequenceEqual(new byte[] { 0x06, 0x1c }) &&
+            HasFieldAttribute(md, boxFields["<later>k__BackingField"], LateinitAttribute),
+        "generic-owner companion lateinit must have private object storage and its trusted metadata marker");
     Require(md.GetTypeDefinition(box).GetGenericParameters().Count == 0,
         "generic-owner companion statics were not placed on one non-generic carrier");
 
@@ -1843,8 +1845,8 @@ static void VerifyDll(string path)
             $"UnsafeAccessor rewrite of private companion static omitted volatile. in {methodName}");
     }
 
-    var readVolatile = md.GetTypeDefinition(counter).GetMethods().Single(h =>
-        md.GetString(md.GetMethodDefinition(h).Name) == "readVolatileLater");
+    var readVolatile = md.GetPropertyDefinition(md.GetTypeDefinition(counter).GetProperties().Single(h =>
+        md.GetString(md.GetPropertyDefinition(h).Name) == "volatileLater")).GetAccessors().Getter;
     var il = pe.GetMethodBody(md.GetMethodDefinition(readVolatile).RelativeVirtualAddress).GetILBytes()
         ?? Array.Empty<byte>();
     Require(ContainsVolatileFieldAccess(il),

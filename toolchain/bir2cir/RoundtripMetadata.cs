@@ -332,6 +332,7 @@ static class RoundtripMetadata
 
     static void StampMethod(JsonObject mo)
     {
+        if (TakeBool(mo, "lateinit")) Append(mo, Marker(AKLateinit));
         // Generic constraints are declaration metadata owned by their MethodDef. The CLR rows contain the erased
         // physical approximation; this carrier preserves the complete Kotlin constraint list for dll2klib.
         if ((mo[NullableGenericErasure.MethodTypeParameterBoundsPre] as JsonValue)?.GetValue<string>() is string bounds)

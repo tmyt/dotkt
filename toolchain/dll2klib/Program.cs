@@ -5496,6 +5496,8 @@ internal sealed class AssemblyScanner : IDisposable
         MethodDefinitionHandle getter,
         MethodDefinitionHandle setter)
     {
+        if (!getter.IsNil && _attrs.Has(getter, MetadataAttributes.DotKtNs + "KotlinLateinitAttribute"))
+            property.Flags |= 1 << 12; // IS_LATEINIT belongs to the Kotlin property, not its physical storage type.
         if (!getter.IsNil && IsPublicOrProtected(_md.GetMethodDefinition(getter).Attributes))
             property.GetterFlags = Flags.Accessor(_md.GetMethodDefinition(getter).Attributes);
         if (!setter.IsNil && IsPublicOrProtected(_md.GetMethodDefinition(setter).Attributes))

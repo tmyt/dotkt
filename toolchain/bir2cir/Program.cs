@@ -243,6 +243,7 @@ sealed class Pipeline
         // A receiverless companion extension needs its associated Kotlin classifier in the physical member identity.
         // Consume that explicit declaration/use fact before any name-keyed index or inline payload is captured.
         var companionExtensionBindings = CompanionExtensionBinding.Apply(birRoots, refs);
+        LateinitInitializationLowering.ApplyAll(birRoots);
         // #397: accessor declarations arrive in Kotlin vocabulary (source property identity + get/set role).
         // Materialize the dedicated CLR spelling once, after #389 has selected any companion-extension core/container
         // representation and before a name-keyed declaration index is captured.  The explicit identity remains on

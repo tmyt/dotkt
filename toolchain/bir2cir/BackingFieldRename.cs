@@ -33,7 +33,7 @@ using System.Text.Json.Nodes;
 //
 // OUT OF SCOPE — every property whose storage IS the user-visible member emits NO property record, so none of them is
 // touched and every user-visible field keeps its name: a `@ClrField` property (the opt-out that deliberately emits a
-// plain field), a `const`, a `lateinit var`, a delegated property's `<p>$delegate`, a default-only top-level property,
+// plain field), a `const`, a delegated property's `<p>$delegate`, a default-only top-level property,
 // an `object`'s `INSTANCE`, an enum entry's singleton and every capture/synthetic field. A property with a CUSTOM
 // accessor that still has a backing field (`val x = 7; get() = field + 1`) IS accessor-routed and IS renamed.
 //

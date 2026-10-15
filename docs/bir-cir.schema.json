@@ -640,7 +640,8 @@
         "init": { "$ref": "#/$defs/node", "$comment": "the initializer expression of a STATIC field, emitted into the type initializer. An instance field is initialized by its constructor instead and carries no `init`." },
         "const": { "type": "boolean", "$comment": "BIR-only Kotlin declaration fact. bir2cir requires a static compile-time-constant initializer and consumes both into the CIR `constant` value." },
         "constant": { "type": ["string", "number", "boolean", "null"], "$comment": "CIR physical field constant. ilemit emits a CLR static literal field and ECMA-335 Constant row; there is no executable initializer." },
-        "lateinit": { "type": "boolean", "$comment": "Kotlin round-trip declaration fact. bir2cir folds it into trusted [KotlinLateinit] field metadata; direct reads remain explicit `lateinitGet` nodes whose CIR form carries the fully bound UninitializedPropertyAccessException construction in `exception`." },
+        "lateinit": { "type": "boolean", "$comment": "Kotlin round-trip declaration fact. bir2cir authors private object storage with typed checked accessors and trusted [KotlinLateinit] metadata. The checked object read is explicit `lateinitGet`; its CIR form carries the fully bound UninitializedPropertyAccessException construction in `exception`." },
+        "lateinitDeclarationId": { "type": "string", "$comment": "BIR-only exact Kotlin getter declaration identity of the property owning this lateinit storage. bir2cir binds lexical initialization queries by this identity and consumes it before CIR." },
         "readOnly": { "type": "boolean", "$comment": "Kotlin round-trip metadata: the field is not publicly settable (`val`, or `var` with a non-public setter), so a consuming Kotlin module restores it as `val`. bir2cir folds it into [KotlinReadOnly]; distinct from the physical `initOnly` below." },
         "companionReceiver": { "type": "string", "$comment": "#382: the funDecl twin — the Kotlin type a field-backed COMPANION EXTENSION property (`companion val C.bar = 1`) is associated with, as a serialized type node." },
         "companionSourceName": { "type": "string", "$comment": "BIR-only source property name retained independently of the collision-free physical field name." },
@@ -672,6 +673,7 @@
         "calleeParams": { "type": "array", "items": { "$ref": "#/$defs/type" }, "$comment": "CIR-only exact local MethodDef parameter signature in the callee declaration generic frame, including custom modifiers. When present, this is the linkage vector; sig remains the call's value-slot vector." },
         "companionReceiver": { "type": "string", "$comment": "BIR-only use-site identity for a receiverless companion-extension call, delegate, or field access. bir2cir resolves it together with owner, source member name, and explicit operation role, then removes it." },
         "lateinitSourceName": { "type": "string", "$comment": "bir2cir-only transient source property identity retained when companion-extension binding replaces a lateinitGet's field name with its collision-free physical name. LateinitGetLowering consumes it into the exception message and removes it before CIR." },
+        "lateinitDeclarationId": { "type": "string", "$comment": "BIR-only exact frontend-selected Kotlin property getter identity on lateinitIsInitialized. This names the property declaration, not an executable checked-read target." },
         "volatile": { "type": "boolean", "$comment": "CIR-only access fact. bir2cir authors it on direct field, CLR-field-as-property, and UnsafeAccessor byref dereference nodes; ilemit emits the volatile. prefix one-to-one." },
         "exception": { "$ref": "#/$defs/node", "$comment": "CIR-only `lateinitGet` failure expression. bir2cir authors the exactly bindable UninitializedPropertyAccessException construction; ilemit evaluates and throws it one-to-one when the loaded value is null." }
       },
@@ -682,7 +684,7 @@
         "local", "const", "this", "var", "setLocal",
         "callInstance", "callStatic", "callInline", "callLocal", "localFunRef", "objMethod", "delegateInvoke",
         "binOp", "unaryOp", "conv", "cast", "isInst", "isInstRef", "objEq", "concat", "cond",
-        "field", "setField", "staticField",
+        "field", "setField", "staticField", "lateinitIsInitialized",
         "new", "newArray", "newArraySized", "newArrayInit", "arrayGet", "arraySet", "arrayLen",
         "newList", "newSet", "newMap", "newClosure", "newDelegate", "newSam", "newSuspendLambda",
         "newClrStaticDelegate", "companionValue",
@@ -701,6 +703,7 @@
         "loopId": { "type": "integer", "$comment": "CIR-only exact physical loop identity, mandatory on structured loops and their break/continue edges. Replaces Kotlin label selection at the emission boundary." }
       },
       "oneOf": [
+        { "properties": { "k": { "const": "lateinitIsInitialized" }, "lateinitDeclarationId": { "type": "string" }, "ownerType": { "$ref": "#/$defs/type" }, "recv": { "$ref": "#/$defs/node" } }, "required": ["lateinitDeclarationId"], "$comment": "BIR-only lexical initialization query. Receiver expression and constructed Kotlin declaration owner are retained when present; bir2cir independently binds the selected declaration's physical state, without invoking its checked getter." },
         { "properties": { "k": { "const": "local" }, "name": { "type": "string" } }, "required": ["name"] },
         { "properties": { "k": { "const": "const" }, "type": { "$ref": "#/$defs/type" }, "value": {} }, "required": ["type"] },
         { "properties": { "k": { "const": "this" } } },

@@ -4,9 +4,9 @@
 // libraries: Newtonsoft groups candidate members by name, so `SerializeObject` on such a type silently produced `{}`
 // and the round-trip back threw on the null constructor argument.
 //
-// A property whose storage IS the user-visible member (`lateinit var`, `const`, a delegated `p$delegate`, a
+// A property whose storage IS the user-visible member (`const`, a delegated `p$delegate`, a
 // companion/top-level static, the `@ClrField` opt-out) emits no CLR property and therefore keeps its plain name — the
-// last test pins that boundary. A CUSTOM accessor over a backing field is still accessor-routed, so it IS renamed.
+// lateinit and a CUSTOM accessor over a backing field are accessor-routed, so their storage IS renamed.
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
@@ -173,11 +173,14 @@ class AutoPropertyBackingFieldTests {
         assertEquals(2, BfRich.B.Weight)
     }
 
-    // The boundary: a `lateinit var` has no CLR property, so its field IS the user-visible member and keeps its name.
+    // A lateinit property has the same typed property surface, with private object storage for its null sentinel.
     @TestAttribute
-    fun plainFieldBackedPropertiesKeepTheirName() {
+    fun lateinitUsesPrivateObjectStorageAndATypedProperty() {
         val t = Type.GetType("BfLateinitHolder")!!
-        assertEquals(listOf("Late"), fieldNames(t))
-        assertEquals(0, propertyNames(t).size)
+        assertEquals(listOf("<Late>k__BackingField"), fieldNames(t))
+        assertEquals(listOf("Late"), propertyNames(t))
+        val field = backingFieldOf(t, "<Late>k__BackingField")!!
+        assertTrue(field.IsPrivate)
+        assertEquals(Type.GetType("System.Object"), field.FieldType)
     }
 }

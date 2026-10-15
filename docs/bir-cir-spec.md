@@ -215,6 +215,14 @@ Notes:
 
 ## 2. Node kinds — the `{"k":…}` expression/statement/decl vocabulary
 
+`lateinitIsInitialized` is a BIR-only lexical Kotlin initialization query. Its
+`lateinitDeclarationId` names the exact frontend-selected property getter declaration;
+the property's BIR storage carries the same identity. `ownerType` and `recv`, when
+present, retain the constructed Kotlin owner and authored receiver expression.
+`bir2cir` binds the physical initialization state independently of ordinary checked
+reads and consumes both the query and its declaration identity before CIR. `ilemit`
+receives only resolved ordinary CIR operations.
+
 Node kinds stay `{"k":…}`-tagged objects (already structured). The freeze CLEANS them (no representation
 change). Canonical set = the live kinds from the audit, MINUS the dead/merged below. Every `type`/`ret`/
 `elem`-valued field inside a node now holds a **`Type` node** (§1), never a string.
