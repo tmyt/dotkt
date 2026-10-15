@@ -51,8 +51,8 @@ PROJECTS=(
 # Reviewed on the v0.9.8 main baseline at the start of #227. Updating a suite requires updating this number in
 # the same change, making otherwise-silent test proliferation or accidental deletion an explicit review event.
 declare -A EXPECTED_DISCOVERED=(
-	["tests/basic"]=719
-	["tests/coroutines"]=259
+	["tests/basic"]=727
+	["tests/coroutines"]=260
 	["tests/roundtrip/consumer"]=536
 	["tests/roundtrip/bidirectional/consumer"]=41
 	["tests/interop/consumer"]=389
@@ -149,6 +149,14 @@ for proj in "${PROJECTS[@]}"; do
 		fi
 	fi
 	if [[ "$proj" == "tests/basic" ]]; then
+		if python3 "$ROOT/tests/basic/assert-captured-local-extension-bir.py" \
+			"$dir/obj/$CONFIGURATION/net10.0/bir/CapturedLocalExtensionReceiverTests.bir.json" \
+			>"$ROOT/build/nunit-$name.captured-local-extension.log" 2>&1; then
+			echo "  local extension receivers retain their authored argument identities"
+		else
+			echo "  CAPTURED LOCAL EXTENSION BIR FAIL — see build/nunit-$name.captured-local-extension.log"
+			tail -25 "$ROOT/build/nunit-$name.captured-local-extension.log"; rc=1
+		fi
 		if python3 "$ROOT/tests/basic/assert-top-level-unchecked-generic-cir.py" \
 			"$dir/obj/$CONFIGURATION/net10.0/bir/TopLevelUncheckedGenericCastTests.bir.json" \
 			"$dir/obj/$CONFIGURATION/net10.0/bir/TopLevelUncheckedGenericReader.bir.json" \

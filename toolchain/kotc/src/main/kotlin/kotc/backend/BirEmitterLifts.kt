@@ -507,9 +507,9 @@ internal fun BirEmitter.samConversion(node: IrTypeOperatorCall): String {
  * bound as a delegate. The forwarder is
  * needed (not a bare `ldftn`) because a @ClrIntrinsic stdlib ext has no real rt.dll body (bir2cir substitutes it
  * to a BCL call) — the CALL node gives bir2cir something to substitute. (Plain @InlineOnly funs without @ClrIntrinsic
- * DO get real rt.dll bodies; @ClrIntrinsic is the body-removing discriminator.) DEFERRED (clean `unsupported`, each
- * with its concrete blocker): a BOUND extension reference (`expr::extFn` — a closed static delegate is not
- * ilverify-clean), and a .NET-method deferral case. Suspend references do not take any of these delegate paths:
+ * DO get real rt.dll bodies; @ClrIntrinsic is the body-removing discriminator.) Bound extension references capture
+ * their eagerly evaluated receiver in an adapter rather than closing a static delegate. Suspend references do not
+ * take any of these delegate paths:
  * [suspendFunctionRef] uniformly adapts top-level/member/extension references to `newSuspendLambda`.
  */
 internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
@@ -631,37 +631,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 	// `::localFun` — a reference to a lexical declaration by its BIR id. Captures are explicit leading parameters;
 	// bir2cir chooses the eventual static MethodDef owner and compiler-reserved name.
 	localFns[fn]?.let { local ->
-		val caps = local.captures
-		val typeArgs = if (local.typeParams.isEmpty()) "" else ""","typeArgs":[${
-			localFunctionTypeArgs(local, fn, node.typeArguments).joinToString(",") { it.toJson() }
-		}]"""
-		// No captures: bir2cir can materialize a delegate to the physical static method directly.
-		if (caps.isEmpty())
-			return """{"k":"localFunRef","id":${str(local.id)},"funcType":${funcTypeOf(fn).toJson()}$typeArgs}"""
-		// WITH captures the delegate's arity cannot match the lifted static's (captures ride ahead of the declared
-		// params), so the reference is a CLOSURE over those values whose `invoke` forwards to the lift — the same
-		// `{ args -> bump(args) }` the user could write by hand, built from the same `synthClass` ingredients as the
-		// lambda path. A generic lift is represented by re-declaring the same free Kotlin type parameters on this
-		// closure fact; ClosureSynthesis rebinds the payload (including the forwarding call's typeArgs) into the
-		// synthesized class's type-parameter scope.
-		val cname = "dotkt\$${synthScope}\$Closure${closureCounter++}"
-		val capPairs = uniqueCaptureNames(caps)
-		val fields = capPairs.joinToString(",") { (decl, fname) ->
-			"""{"name":${str(fname)},"type":${str(captureFieldType(decl))}}"""
-		}
-		val ownVps = fn.parameters.filter { it.kind == IrParameterKind.Regular }
-		val callArgs = (capPairs.map { (_, fname) ->
-			"""{"k":"field","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":${str(fname)}}"""
-		} + ownVps.map { """{"k":"local","name":${str(it.name.asString())}}""" }).joinToString(",")
-		val callSig = (capPairs.map { (decl, _) -> captureFieldType(decl).toJson() } +
-			ownVps.map { birType(it.type).toJson() }).joinToString(",")
-		val callE = """{"k":"callLocal","id":${str(local.id)},"sig":[$callSig],"args":[$callArgs]$typeArgs}"""
-		val retT = birType(fn.returnType)
-		val invokeBody = if (fn.returnType.isUnit()) """{"k":"exprStmt","expr":$callE}"""
-			else """{"k":"return","value":$callE}"""
-		val synthClass = """{"name":${str(cname)},"fields":[$fields],"params":[${lambdaParamsJson(ownVps)}],"ret":${str(retT)},"body":[$invokeBody]${typeParamsJson(local.typeParams)}${semanticUseSiteOwnerJson()}}"""
-		val capExprs = caps.joinToString(",") { capValueExpr(it) }
-		return """{"k":"newClosure","closureType":${fqnJson(cname)},"captures":[$capExprs],"method":"invoke","funcType":${funcTypeOf(fn).toJson()}$typeArgs,"synthClass":$synthClass}"""
+		return localFunctionRef(node, fn, local, resolvedFuncType)
 	}
 	// A STATIC member reference — `C::f` for a Kotlin 2.4 `companion { fun f() }`, or a direct static declaration
 	// loaded from a CLR reference KLIB. Neither has a dispatch receiver, and neither is a top-level file-facade
@@ -1109,16 +1079,29 @@ internal fun BirEmitter.suspendFunctionRef(node: IrFunctionReference, fn: IrSimp
 	val captures: String; val capValues: String?; val bodyCall: String
 	when {
 		local != null -> {
+			val ownParams = localFunctionOwnParams(fn)
+			val bound = localFunctionBoundArguments(node, fn)
+			val boundNames = bound.indices.map { "dotkt\$bound$it" }
+			val boundFields = bound.zip(boundNames).associate { (binding, name) -> binding.first to name }
+			val remaining = ownParams.filter { it !in boundFields }
+			check(remaining.size == paramNames.size) { "local suspend reference lost its frontend argument binding" }
+			val arguments = remaining.zip(paramNames).toMap()
 			val capPairs = uniqueCaptureNames(
-				local.captures, paramNames.toMutableSet(), alwaysPrefix = true)
-			captures = capPairs.joinToString(",") { (declaration, fieldName) ->
+				local.captures, (paramNames + boundNames).toMutableSet(), alwaysPrefix = true)
+			val capDescriptors = capPairs.map { (declaration, fieldName) ->
 				"""{"name":${str(fieldName)},"type":${captureFieldType(declaration).toJson()}}"""
 			}
-			capValues = local.captures.joinToString(",") { capValueExpr(it) }.ifEmpty { null }
-			val args = (capPairs.map { (_, fieldName) -> localArg(fieldName) } + paramNames.map(::localArg))
-				.joinToString(",")
+			val boundDescriptors = bound.zip(boundNames).map { (binding, name) ->
+				"""{"name":${str(name)},"type":${birType(binding.first.type).toJson()}}"""
+			}
+			captures = (capDescriptors + boundDescriptors).joinToString(",")
+			capValues = (local.captures.map { capValueExpr(it) } + bound.map { expr(it.second) })
+				.joinToString(",").ifEmpty { null }
+			val args = (capPairs.map { (_, fieldName) -> localArg(fieldName) } + ownParams.map { parameter ->
+				localArg(boundFields[parameter] ?: arguments.getValue(parameter))
+			}).joinToString(",")
 			val sig = (capPairs.map { (declaration, _) -> captureFieldType(declaration).toJson() }
-				+ physicalParamTypes.map { it.toJson() }).joinToString(",")
+				+ ownParams.map { birType(it.type).toJson() }).joinToString(",")
 			val localTypeArgs = if (local.typeParams.isEmpty()) "" else
 				""","typeArgs":[${localFunctionTypeArgs(local, fn, node.typeArguments)
 					.joinToString(",") { it.toJson() }}]"""
@@ -2051,12 +2034,13 @@ internal fun BirEmitter.lambdaParamsJson(params: List<IrValueParameter>, recvNam
 			"""{"name":${str(nm)},"type":${ty.toJson()}}"""
 		}
 
-/** Emit `block` with a lifted lambda's OWN extension receiver bound to `recvName`, so the body's `this` reads render
+/** Emit `block` with a lexical function's OWN extension receiver bound to `recvName`, so the body's `this` reads render
  *  as that parameter instead of `{k:this}`. `{k:this}` is the ENCLOSING instance (or nothing at all in a static
  *  lift), so without this the receiver was never reachable: `val f: Int.(Int) -> Int = { d -> this + d }` threw a
  *  NullReferenceException, and once context parameters joined the physical sequence `this` began reading the CONTEXT
  *  — physical slot 0 — and silently returned the wrong value. Saved and RESTORED: the same parameter may already be
- *  bound by an enclosing carrier. */
+ *  bound by an enclosing carrier. Local declarations use the same identity binding: captures may precede their
+ *  receiver, and a nested declaration may capture that receiver separately from an enclosing dispatch receiver. */
 internal inline fun <T> BirEmitter.withLambdaSelf(fn: IrSimpleFunction, recvName: String?, block: () -> T): T {
 	val ext = extensionReceiverParam(fn)
 	if (ext == null || recvName == null) return block()
@@ -2066,8 +2050,8 @@ internal inline fun <T> BirEmitter.withLambdaSelf(fn: IrSimpleFunction, recvName
 	try { return block() } finally { if (had) selfSubst[ext] = saved!! else selfSubst.remove(ext) }
 }
 
-/** A fresh name for a lifted lambda's extension-receiver parameter, or null when it has none. Allocated against the
- *  lambda's own frame ([BirEmitter.freshFrameName]) — `{ __recv0 -> this + __recv0 }` is legal Kotlin, and a bare
+/** A fresh name for a lexical function's extension-receiver parameter, or null when it has none. Allocated against the
+ *  function's own frame ([BirEmitter.freshFrameName]) — `{ __recv0 -> this + __recv0 }` is legal Kotlin, and a bare
  *  counter would have emitted two parameters called `__recv0`. */
 internal fun BirEmitter.lambdaRecvName(fn: IrSimpleFunction): String? =
 	if ((extensionReceiverParam(fn) != null)) freshFrameName("__recv", fn) else null
@@ -2084,17 +2068,16 @@ internal fun BirEmitter.localFunctionDecl(fn: IrSimpleFunction): String {
 	// that param by name in its body, so it MUST be emitted as a leading method param, in declaration order (receivers
 	// precede regulars); filtering to Regular alone drops it and orphans a `receiver.f(p0)` body ref — the dangling-
 	// `receiver` IrSanity fault (kotc consumes the RAW fir2ir form, before UpgradeCallableReferences would flatten
-	// receivers to Regular). Captures are DISTINCT (outer decls, prepended before these). NOTE the still-unhandled
-	// sibling: a genuine local EXTENSION fun `fun T.f()` names its receiver `<this>` and its body reads it as `{k:this}`
-	// (exprInner), which is invalid in this STATIC lift — that needs a `__self`-style rename + selfSubst binding and is
-	// out of scope here (it was equally broken before — the param was simply dropped).
+	// receivers to Regular). Captures are DISTINCT (outer decls, prepended before these). Bind the declaration's own
+	// extension receiver by IR identity, not its `<this>` spelling or position among those captures.
 	// The ORDER is the call site's: receivers (dispatch then extension) ahead of the [isValueParameter] sequence
 	// (contexts then regulars), because the caller emits `capArgs + recvArgs + filledArgs(call)` in exactly that shape.
 	// IR order would interleave a context parameter BETWEEN the two receivers (fir2ir orders dispatch/context/extension/
 	// regular), which for a `context(c) fun T.f()` local would put the context value in the extension receiver's slot.
-	val ownValueParams = fn.parameters.filter { it.kind == IrParameterKind.DispatchReceiver } +
-		listOfNotNull(extensionReceiverParam(fn)) +
-		fn.parameters.filter { isValueParameter(it) }
+	val ownValueParams = localFunctionOwnParams(fn)
+	val recvName = lambdaRecvName(fn)
+	fun ownParamName(p: IrValueParameter) =
+		if (p.kind == IrParameterKind.ExtensionReceiver) recvName!! else p.name.asString()
 	// A local fn referencing an enclosing type parameter (in a capture, its own params/receivers, its return, or a TYPE
 	// OPERAND in its body such as `x is R` / `R::class`) becomes a GENERIC static method — reified CLR generics, same as
 	// a capturing closure class, which scans `bodyTypeOperands` for exactly the same reason. The call site (callStatic)
@@ -2111,7 +2094,7 @@ internal fun BirEmitter.localFunctionDecl(fn: IrSimpleFunction): String {
 	// transitive capture arrives from ANOTHER body, where its name may resolve to a different declaration than it does
 	// here (`fun bump() { n++ }` called by `fun addTwice(n: Int)`). Uniquing keeps the wrong binding from happening.
 	val capPairs = uniqueCaptureNames(
-		captures, ownValueParams.mapTo(HashSet()) { it.name.asString() }, alwaysPrefix = true)
+		captures, ownValueParams.mapTo(HashSet(), ::ownParamName), alwaysPrefix = true)
 	// Captures arrive as leading params; rewrite body refs to those params. This must cover not only `<this>` but
 	// also receiver-like captured params such as `$this$buildString`, otherwise an active inline substitution can
 	// leak a caller-local (`__lam<N>`) into the lifted method body.
@@ -2141,8 +2124,10 @@ internal fun BirEmitter.localFunctionDecl(fn: IrSimpleFunction): String {
 				",\"sharedCellType\":" + refType(decl).toJson() else ""
 			"""{"name":${str(fname)},"type":${type.toJson()}$shared}"""
 		}
-		ownParams = ownValueParams.map { pj(it.name.asString(), it.type) }
-		body = (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
+		ownParams = ownValueParams.map { pj(ownParamName(it), it.type) }
+		body = withLambdaSelf(fn, recvName) {
+			(fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
+		}
 		ret = birType(fn.returnType)
 		typeParams = typeParamsJson(freeTps)
 	} finally {

@@ -5,6 +5,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Preserve local extension receiver identities with preceding captures, including nested receivers, callable
+  references and constructed generic capture frames, so lifted bodies use the authored receiver (#973).
+
 - Preserve mutable CLR struct receivers on generic instance calls, including captured method inputs,
   live field/array/reference locations, aliasing and writes made before an exception (#998).
 
