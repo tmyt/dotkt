@@ -1593,7 +1593,8 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 		// call. The standard Item property resolves naturally to get_Item/set_Item, while this also handles a
 		// custom-named indexer. The receiver's type carries the element type arg (`Collection<Int>`), so the
 		// constructed `clrg:...[int]` resolves the substituted accessor.
-		val ixDeclaration = callee.takeIf { it.isFakeOverride }?.resolveFakeOverride() ?: callee
+		val ixDeclaration = kotc.frontend.SelectedCallDeclarations.forCall(call, sourcePathOf(call))
+			?: callee.takeIf { it.isFakeOverride }?.resolveFakeOverride() ?: callee
 		val ixOwner = ixDeclaration.parent as? IrClass
 		// Member extensions have both dispatch and extension receivers. Keep them
 		// on the ordinary extension-call path, which preserves both receiver roles.

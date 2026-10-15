@@ -2,6 +2,13 @@ import NUnit.Framework.TestAttribute
 import NativeOverloadIdentity.ISlot
 import NativeOverloadIdentity.IReverseSlot
 import NativeOverloadIdentity.Selection
+import NativeOverloadIdentity.CompletedSlot
+import NativeOverloadIdentity.ClassSlot
+import NativeOverloadIdentity.IIndexedSlot
+import NativeOverloadIdentity.IReverseIndexedSlot
+import System.Threading.Tasks.Task
+import System.Threading.Tasks.Task1
+import System.Runtime.CompilerServices.TaskAwaiter1
 
 private interface NativeReordered<A, B> : ISlot<B>
 private interface NativeTwiceReordered<A, B> : NativeReordered<B, A>
@@ -11,6 +18,10 @@ private class NativeStringImplementation : ISlot<String>
 private interface NativeReverseReordered<A, B> : IReverseSlot<B>
 private interface NativeReverseTwice<A, B> : NativeReverseReordered<B, A>
 private class NativeReverseImplementation : NativeReverseTwice<Int, String>
+private class NativeClassImplementation : ClassSlot<Int>()
+private interface NativeIndexedReordered<A, B> : IIndexedSlot<B>
+private class NativeIndexedImplementation : NativeIndexedReordered<String, Int>
+private class NativeReverseIndexedImplementation : IReverseIndexedSlot<Int>
 
 private fun <T> nativeOwnerEcho(slot: ISlot<T>, value: T): T = slot.Echo(value, "marker")
 private fun <T> nativeIntEcho(slot: ISlot<T>): String = slot.Echo(41, "marker")
@@ -31,6 +42,12 @@ class NativeOverloadIdentityTests {
         check(nativeOwnerEcho(direct, 47) == 47)
         check(nativeIntEcho(direct) == "int-overload")
         check(nativeOwnerEcho(NativeStringImplementation(), "owner") == "owner")
+        val nativeClass = NativeClassImplementation()
+        val boundClass: (Int, String) -> String = nativeClass::Echo
+        val unboundClass: (NativeClassImplementation, Int, String) -> String = NativeClassImplementation::Echo
+        check(nativeClass.Echo(151, "marker") == "class-int-overload")
+        check(boundClass(157, "marker") == "class-int-overload")
+        check(unboundClass(nativeClass, 163, "marker") == "class-int-overload")
     }
 
     @TestAttribute fun reverseMethodOrderKeepsTheSameSelectionRule() {
@@ -78,6 +95,7 @@ class NativeOverloadIdentityTests {
         val direct: ISlot<Int> = NativeDirectImplementation()
         check(direct.Optional<String>(127) == "int-default")
         check(NativeImplementation().Optional<String>(131) == "int-default")
+        check(NativeReverseImplementation().Optional<String>(167) == "reverse-int-default")
     }
 
     @TestAttribute fun unitCoercionAdaptersKeepTheSelectedNativeTarget() {
@@ -85,9 +103,45 @@ class NativeOverloadIdentityTests {
         Selection.Last = "before-bound"
         bound(137, "marker")
         check(Selection.Last == "int")
+        val reverse: (Int, String) -> Unit = NativeReverseImplementation()::Echo
+        Selection.Last = "before-reverse"
+        reverse(173, "marker")
+        check(Selection.Last == "reverse-int")
+        val reverseUnbound: (NativeReverseImplementation, Int, String) -> Unit = NativeReverseImplementation::Echo
+        Selection.Last = "before-reverse-unbound"
+        reverseUnbound(NativeReverseImplementation(), 179, "marker")
+        check(Selection.Last == "reverse-int")
         val unbound: (NativeImplementation, Int, String) -> Unit = NativeImplementation::Echo
         Selection.Last = "before-unbound"
         unbound(NativeImplementation(), 139, "marker")
         check(Selection.Last == "int")
+    }
+
+    @TestAttribute fun inheritedReturnOnlyDifferencesKeepTheSelectedOwner() {
+        val task = Task.FromResult(149)
+        check(task.GetAwaiter().GetResult() == 149)
+        val bound: () -> TaskAwaiter1<Int> = task::GetAwaiter
+        val unbound: (Task1<Int>) -> TaskAwaiter1<Int> = Task1<Int>::GetAwaiter
+        check(bound().GetResult() == 149)
+        check(unbound(task).GetResult() == 149)
+    }
+
+    @TestAttribute fun hiddenInterfaceCompletionsKeepTheirProjectedFrame() {
+        val value = CompletedSlot()
+        check(value.Mirror("direct") == "direct")
+        check(value.GenericMirror("generic", "marker") == "generic")
+        val bound: (String) -> String = value::Mirror
+        val unbound: (CompletedSlot, String) -> String = CompletedSlot::Mirror
+        val generic: (String, String) -> String = value::GenericMirror
+        check(bound("bound") == "bound")
+        check(unbound(value, "unbound") == "unbound")
+        check(generic("generic-ref", "marker") == "generic-ref")
+    }
+
+    @TestAttribute fun indexerOperatorsKeepTheSelectedDeclaration() {
+        val direct: IIndexedSlot<Int> = NativeIndexedImplementation()
+        check(direct[181] == "int-indexer")
+        check(NativeIndexedImplementation()[191] == "int-indexer")
+        check(NativeReverseIndexedImplementation()[193] == "reverse-int-indexer")
     }
 }

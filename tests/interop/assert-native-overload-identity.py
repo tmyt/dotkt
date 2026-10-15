@@ -50,9 +50,7 @@ for call in bir_calls:
     elif signature[0] == {"t": "tv", "scope": "type", "i": 0}:
         open_controls += 1
 assert open_controls >= 2, "generic owner call/reference controls disappeared"
-assert seen == {(owner, method) for owner in owners for method in ("Echo", "Plain")} | {
-    ("NativeOverloadIdentity.ISlot`1", "Optional")
-}, seen
+assert seen == {(owner, method) for owner in owners for method in ("Echo", "Plain", "Optional")}, seen
 
 cir_calls = [node for node in nodes(cir) if node.get("memberRef", {}).get("declaringType", {}).get("name") in owners
              and node["memberRef"].get("name") in ("Echo", "Plain", "Optional")]
@@ -75,4 +73,34 @@ original = next(method for method in fixture["methods"]
 original_calls = [node for node in nodes(original) if node.get("memberRef", {}).get("name") == "Echo"]
 assert len(original_calls) == 1, original_calls
 assert original_calls[0]["memberRef"]["returnType"] == fqn("System.String"), original_calls
+
+for owner_name, member_name, minimum in (
+    ("NativeOverloadIdentity.ClassSlot`1", "Echo", 3),
+    ("NativeOverloadIdentity.IIndexedSlot`1", "get_Item", 2),
+    ("NativeOverloadIdentity.IReverseIndexedSlot`1", "get_Item", 1),
+):
+    matches = [node["memberRef"] for node in nodes(cir)
+               if node.get("memberRef", {}).get("declaringType", {}).get("name") == owner_name
+               and node["memberRef"].get("name") == member_name]
+    assert len(matches) >= minimum, (owner_name, matches)
+    for member in matches:
+        assert member["parameterTypes"][0] == fqn("System.Int32"), member
+        assert member["returnType"] == fqn("System.String"), member
+
+awaiters = [node["memberRef"] for node in nodes(cir)
+            if node.get("memberRef", {}).get("name") == "GetAwaiter"]
+assert len(awaiters) >= 3, awaiters
+assert all(member["declaringType"]["name"] == "System.Threading.Tasks.Task`1"
+           and member["returnType"]["name"] == "System.Runtime.CompilerServices.TaskAwaiter`1"
+           for member in awaiters), awaiters
+completions = [node["memberRef"] for node in nodes(cir)
+               if node.get("memberRef", {}).get("name") in ("Mirror", "GenericMirror")]
+assert len(completions) >= 5, completions
+for member in completions:
+    assert member["declaringType"] == {
+        "t": "fqn", "name": "NativeOverloadIdentity.ICompletedSlot`1", "args": [fqn("System.String")]
+    }, member
+    assert member["parameterTypes"][0] == member["returnType"] == {
+        "t": "tv", "scope": "type", "i": 0
+    }, member
 print("native overload identities and result signatures survive owner substitution and adapters")
