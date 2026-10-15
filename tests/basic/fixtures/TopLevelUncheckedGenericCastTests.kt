@@ -39,6 +39,27 @@ private fun consumeInt(value: Int): Int = value + 1
 
 private fun concrete(raw: Any?): Int = consumeInt(read<Int>(raw))
 
+private class StaticUncheckedReader<T> {
+    companion {
+        @Suppress("UNCHECKED_CAST")
+        fun <R> read(raw: Any?): R = raw as R
+    }
+}
+
+private fun <T> deferredStatic(seed: T, consume: Boolean, raw: Any?): Int {
+    val value = StaticUncheckedReader.read<T>(raw)
+    if (!consume) return 7
+    return value.hashCode()
+}
+
+private fun <T> identity(value: T): T = value
+
+private fun <T> forwarded(seed: T, consume: Boolean, raw: Any?): T {
+    val value = read<T>(raw)
+    if (!consume) return seed
+    return identity(value)
+}
+
 class TopLevelUncheckedGenericCastTests {
     @TestAttribute
     fun privateTopLevelResultRemainsErasedForUnusedAndObjectUses() {
@@ -76,5 +97,23 @@ class TopLevelUncheckedGenericCastTests {
             failed = true
         }
         assertTrue(failed)
+    }
+
+    @TestAttribute
+    fun staticCarrierResultRemainsErasedForUnusedAndObjectUses() {
+        assertEquals(7, deferredStatic(0, false, null))
+        assertEquals(7, deferredStatic(0, false, "wrong"))
+        assertEquals(0, deferredStatic(0, true, null))
+        assertEquals("wrong".hashCode(), deferredStatic(0, true, "wrong"))
+        assertEquals(42, deferredStatic(0, true, 42))
+    }
+
+    @TestAttribute
+    fun deferredTopLevelResultCanEnterStaticArgumentsAndReturns() {
+        assertEquals(0, forwarded(0, false, null))
+        assertEquals(0, forwarded(0, false, "wrong"))
+        assertEquals("seed", forwarded("seed", false, 42))
+        assertEquals(42, forwarded(0, true, 42))
+        assertEquals("value", forwarded("", true, "value"))
     }
 }

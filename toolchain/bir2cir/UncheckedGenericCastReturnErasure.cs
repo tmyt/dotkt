@@ -333,9 +333,9 @@ static class UncheckedGenericCastReturnErasure
         }
         else
         {
-            // Private top-level calls carry their source file facade in calleeOwner; ordinary calls can remain
-            // ownerless. Both select a LOCAL declaration by its frontend identity, never by a bare method name or
-            // substituted signature. An attributed owner is an additional exact fact, not evidence of an external call.
+            // Source top-level calls carry their file facade in calleeOwner. Calls that remain ownerless after
+            // earlier lowerings still select a LOCAL declaration by frontend identity, never by a bare method name
+            // or substituted signature. An attributed owner is an exact fact, not evidence of an external call.
             var hasOwner = false;
             foreach (var key in new[] { "owner", "calleeOwner", "ownerType" })
                 if (call[key] != null)
