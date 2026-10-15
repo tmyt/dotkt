@@ -1634,7 +1634,9 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 	// `appError.Message`) is a fake-override whose `parent` is the Kotlin subclass, so resolve through the fake
 	// override to the real .NET declaring type. A `kotlin.*` stdlib owner resolves to null here and FALLS THROUGH to
 	// the plain Kotlin member-call path below (bir2cir substitutes it from the ref.dll).
-	val clrTypeName = declaringClass?.let { clrName(it) }
+	val selectedDeclaration = kotc.frontend.SelectedCallDeclarations.at(sourcePathOf(call), call.endOffset, name)
+	val clrTypeName = (selectedDeclaration?.parent as? IrClass)?.let { clrName(it) }
+		?: declaringClass?.let { clrName(it) }
 		?: (callee.takeIf { it.isFakeOverride }?.resolveFakeOverride()?.parent as? IrClass)?.let { clrName(it) }
 		// A restored external Kotlin companion may carry a CLR owner annotation; keep that exact owner identity.
 		?: declaringClass?.takeIf { it.isCompanion }?.let { it.parent as? IrClass }?.let { clrName(it) }
@@ -1645,7 +1647,7 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 		// A fake override's parameter types are substituted into its inheriting class.
 		// The selected declaration's owner and descriptor must use the same frame.
 		val callCallee = callee
-		val callee = if (callee.isFakeOverride) callee.resolveFakeOverride() ?: callee else callee
+		val callee = selectedDeclaration ?: if (callee.isFakeOverride) callee.resolveFakeOverride() ?: callee else callee
 		val recv = dispatchReceiver(call)
 		// A restored external Kotlin companion is an instance singleton: keep its IrGetObjectValue receiver in BIR
 		// (`Owner.INSTANCE`) and

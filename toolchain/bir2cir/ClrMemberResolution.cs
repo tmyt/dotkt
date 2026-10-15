@@ -989,8 +989,11 @@ static partial class ClrMemberResolution
         // reached through an interface — a return read off a member the emitter does not link.
         if (sig != null && sig.Count == argCount && !sig.Any(t => t == null))
         {
-            var win = TryPickUnique(cands, sig, ownerFqn.Args)
-                      ?? TryPickUnique(InterfaceCandidates(), sig, ownerFqn.Args);
+            // This vector describes the selected OPEN declaration, not the call's argument values. Closing an
+            // owner variable here makes M(T) and M(int) coincide on C<int> and repeats overload resolution after
+            // the frontend has already selected one. Compare in the declaration frame before constructing its owner.
+            var win = TryPickDeclared(cands, sig)
+                      ?? TryPickDeclared(InterfaceCandidates(), sig);
             if (win != null)
             {
                 // The generic method DEFINITION is the identity; the call's own `typeArgs` instantiate it, exactly
@@ -1024,6 +1027,13 @@ static partial class ClrMemberResolution
         throw new InvalidOperationException(
             $"bir2cir: generic external call '{ownerFqn.Name}.{name}<{arity}>' carries no usable "
             + "frontend-resolved parameter vector");
+    }
+
+    static MethodInfo TryPickDeclared(List<MethodInfo> candidates, List<TypeNode> signature)
+    {
+        var exact = candidates.Where(candidate =>
+            Match(OpenDeclarationOf(candidate).GetParameters(), signature, null) == MatchKind.Exact).ToList();
+        return exact.Count == 1 ? exact[0] : null;
     }
 
     // `PickUnique`'s first two tiers without its diagnostics: the exact structural match, then the single applicable

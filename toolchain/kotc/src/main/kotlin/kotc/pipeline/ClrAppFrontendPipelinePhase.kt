@@ -186,12 +186,14 @@ object ClrAppFrontendPipelinePhase : PipelinePhase<ConfigurationPipelineArtifact
 		// otherwise outlive the compilation inside a HOSTED kotc and a later run could read a stale entry.
 		kotc.frontend.ClrContextFnTypes.reset()
 		kotc.frontend.ClrStaticOwners.reset()
+		kotc.frontend.SelectedCallDeclarations.reset()
 		kotc.frontend.ClrCompanionExtensions.reset()
 		kotc.frontend.ClrProjectedMemberExtensionProperties.reset()
 		val outputs = sessionsWithSources.map { (session, files) ->
 			installKotlinJvmDefaultImport(session)
 			val firFiles = session.buildClrFirFromKtFiles(files)
 			resolveAndCheckFir(session, firFiles, diagnosticsReporter).also {
+				kotc.frontend.SelectedCallDeclarations.capture(it.fir)
 				normalizeClrStaticReceivers(session, it.fir)
 				// Capture the CONTEXT-FUNCTION-TYPE arities while FIR still has them — fir2ir erases the
 				// `ContextFunctionTypeParams` cone attribute, and `context(A) B.(D) -> E` becomes indistinguishable

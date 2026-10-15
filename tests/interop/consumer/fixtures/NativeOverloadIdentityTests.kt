@@ -1,0 +1,62 @@
+import NUnit.Framework.TestAttribute
+import NativeOverloadIdentity.ISlot
+import NativeOverloadIdentity.IReverseSlot
+
+private interface NativeReordered<A, B> : ISlot<B>
+private interface NativeTwiceReordered<A, B> : NativeReordered<B, A>
+private class NativeImplementation : NativeTwiceReordered<Int, String>
+private class NativeDirectImplementation : ISlot<Int>
+private class NativeStringImplementation : ISlot<String>
+private interface NativeReverseReordered<A, B> : IReverseSlot<B>
+private interface NativeReverseTwice<A, B> : NativeReverseReordered<B, A>
+private class NativeReverseImplementation : NativeReverseTwice<Int, String>
+
+private fun <T> nativeOwnerEcho(slot: ISlot<T>, value: T): T = slot.Echo(value, "marker")
+private fun <T> nativeIntEcho(slot: ISlot<T>): String = slot.Echo(41, "marker")
+private fun <T> nativeOwnerReference(slot: ISlot<T>): (T, String) -> T = slot::Echo
+private fun <T> nativeIntReference(slot: ISlot<T>): (Int, String) -> String = slot::Echo
+
+class NativeOverloadIdentityTests {
+    @TestAttribute fun originalTwoHopCollisionKeepsTheSelectedDeclaration() {
+        check(NativeImplementation().Echo(38, "marker") == "int-overload")
+    }
+
+    @TestAttribute fun directAndInheritedCallsKeepReturnAgreement() {
+        val direct: ISlot<Int> = NativeDirectImplementation()
+        val inherited = NativeDirectImplementation()
+        val first: String = direct.Echo(42, "marker")
+        val second: String = inherited.Echo(43, "marker")
+        check(first == "int-overload" && second == "int-overload")
+        check(nativeOwnerEcho(direct, 47) == 47)
+        check(nativeIntEcho(direct) == "int-overload")
+        check(nativeOwnerEcho(NativeStringImplementation(), "owner") == "owner")
+    }
+
+    @TestAttribute fun reverseMethodOrderKeepsTheSameSelectionRule() {
+        val slot: IReverseSlot<Int> = NativeReverseImplementation()
+        val direct: String = slot.Echo(53, "marker")
+        val inherited: String = NativeReverseImplementation().Echo(59, "marker")
+        check(direct == "reverse-int-overload" && inherited == "reverse-int-overload")
+    }
+
+    @TestAttribute fun boundReferencesKeepOpenDeclarationsBeforeOwnerSubstitution() {
+        val direct: ISlot<Int> = NativeDirectImplementation()
+        val first: (Int, String) -> String = direct::Echo
+        val inherited: (Int, String) -> String = NativeImplementation()::Echo
+        val reverse: (Int, String) -> String = NativeReverseImplementation()::Echo
+        check(first(61, "marker") == "int-overload")
+        check(inherited(67, "marker") == "int-overload")
+        check(reverse(71, "marker") == "reverse-int-overload")
+        check(nativeOwnerReference(direct)(73, "marker") == 73)
+        check(nativeIntReference(direct)(79, "marker") == "int-overload")
+    }
+
+    @TestAttribute fun unboundReferencesKeepTheSelectedDeclarationAndOwnerFrame() {
+        val direct: (ISlot<Int>, Int, String) -> String = ISlot<Int>::Echo
+        val inherited: (NativeImplementation, Int, String) -> String = NativeImplementation::Echo
+        val reverse: (NativeReverseImplementation, Int, String) -> String = NativeReverseImplementation::Echo
+        check(direct(NativeDirectImplementation(), 83, "marker") == "int-overload")
+        check(inherited(NativeImplementation(), 89, "marker") == "int-overload")
+        check(reverse(NativeReverseImplementation(), 97, "marker") == "reverse-int-overload")
+    }
+}

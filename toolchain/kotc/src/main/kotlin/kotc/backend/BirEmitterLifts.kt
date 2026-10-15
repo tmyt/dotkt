@@ -579,6 +579,9 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 	}
 	val fn = node.symbol.owner as? IrSimpleFunction
 		?: return unsupported(node, "this function reference", "only references to plain (simple) functions are supported")
+	val selectedDeclaration = kotc.frontend.SelectedCallDeclarations.at(
+		sourcePathOf(node), node.endOffset, fn.name.asString(), reference = true,
+	)
 	// An ADAPTER reference (`obj::member` / `::member` whose signature needs coercing to the expected function type —
 	// e.g. `MutableCollection<E>.add` (returns Boolean) referenced where a `(E) -> Unit` is expected): the frontend
 	// synthesizes an adapter fn with origin ADAPTER_FOR_CALLABLE_REFERENCE, a REAL body that calls the reflection target
@@ -845,7 +848,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 		}
 		val argsJson = regs.joinToString(",") { """{"k":"local","name":${str(it.name.asString())}}""" }
 		val recv = """{"k":"field","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":"__recv"}"""
-		val declaration = if (fn.isFakeOverride) fn.resolveFakeOverride() ?: fn else fn
+		val declaration = selectedDeclaration ?: if (fn.isFakeOverride) fn.resolveFakeOverride() ?: fn else fn
 		val declarationOwner = declaration.parent as? IrClass
 		val externalDeclaration = declarationOwner?.let { isExternalNetType(it) } == true
 		val signature = overloadSigField(if (externalDeclaration) declaration else fn)
@@ -869,7 +872,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 			val selectedOwner = if (externalDeclaration) callOwner else physicalOwner.toJson()
 			"""{"k":"callInstance","ownerType":$selectedOwner,"virtual":$virtual,"recv":$recv,"method":${str(fn.name.asString())}$signature$referenceTypeArgs,"argTypes":[$argTypes],"ret":$resultType,"sty":$resultType,"args":[$argsJson]${if (isAnySlotMethod(fn)) ""","anySlot":true""" else ""}$flagsOperationTag}"""
 		}
-		val call = memberVisibilityStamped(fn, rawCall)
+		val call = memberVisibilityStamped(if (externalDeclaration) declaration else fn, rawCall)
 		val body = if (resolvedFuncType.ret == TypeNode.Fqn("kotlin.Unit")) """{"k":"exprStmt","expr":$call}"""
 			else """{"k":"return","value":$call}"""
 		val nodeTypeArgs = (node.type as? IrSimpleType)?.arguments
@@ -900,7 +903,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 			val virtual = fn.modality != Modality.FINAL || fn.overriddenSymbols.isNotEmpty()
 			val liftedReferenceTypeArgs = functionReferenceTypeArgs(node, fn)
 				?: error("validated function reference lost its type arguments while entering its lifted method frame")
-			val target = if (fn.isFakeOverride) fn.resolveFakeOverride() ?: fn else fn
+			val target = selectedDeclaration ?: if (fn.isFakeOverride) fn.resolveFakeOverride() ?: fn else fn
 			val targetOwner = target.parent as? IrClass
 			val externalTarget = targetOwner?.let { isExternalNetType(it) } == true
 			val selectedOwner = if (externalTarget) {
@@ -979,8 +982,13 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 			val declaration = withLiftedMethodFrame(freeTps) {
 				val liftedFuncType = birType(node.type) as TypeNode.Fn
 				val selfT = liftedFuncType.params.first()
-				val liftedOwner = (selfT as? TypeNode.Fqn)?.let { TypeNode.Fqn(clrOwner, it.args) }
-					?: TypeNode.Fqn(clrOwner)
+				val target = selectedDeclaration ?: if (fn.isFakeOverride) fn.resolveFakeOverride() ?: fn else fn
+				val targetOwner = target.parent as IrClass
+				val receiverType = ((node.type as IrSimpleType).arguments.first() as IrTypeProjection).type
+				val liftedOwner = correspondingSupertypeInstantiation(
+					receiverType, targetOwner, allowCapturedArguments = true,
+				)?.let { birType(it) } ?: error("No selected reference owner for ${target.name} on $receiverType")
+				val signature = overloadSigField(target)
 				val psJson = (listOf("""{"name":"__self","type":${selfT.toJson()}}""") +
 					regs.zip(liftedFuncType.params.drop(1)).map { (parameter, type) ->
 						"""{"name":${str(parameter.name.asString())},"type":${type.toJson()}}"""
@@ -990,7 +998,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 				val liftedReferenceTypeArgs = functionReferenceTypeArgs(node, fn)
 					?: error("validated .NET method reference lost its type arguments in its lifted method frame")
 				// A genuine `NetType::m` method reference -> a lifted static forwarding to the .NET instance method.
-				val callE = """{"k":"callInstance","ownerType":${liftedOwner.toJson()},"method":${str(member)}$liftedReferenceTypeArgs,"argTypes":[$liftedArgTypes],"ret":${liftedFuncType.ret.toJson()},"recv":{"k":"local","name":"__self"},"args":[$argsJson]$anySlotTag$flagsOperationTag}"""
+				val callE = """{"k":"callInstance","ownerType":${liftedOwner.toJson()},"method":${str(member)}$signature$liftedReferenceTypeArgs,"argTypes":[$liftedArgTypes],"ret":${liftedFuncType.ret.toJson()},"recv":{"k":"local","name":"__self"},"args":[$argsJson]$anySlotTag$flagsOperationTag}"""
 				val effectiveIdentityTag = if (!selfT.containsStarProjection()) memberDeclarationIdentityTag else ""
 				val identityCallE = if (effectiveIdentityTag.isEmpty()) callE
 					else callE.dropLast(1) + effectiveIdentityTag + "}"
