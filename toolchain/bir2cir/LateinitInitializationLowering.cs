@@ -13,12 +13,15 @@ static class LateinitInitializationLowering
         public bool Static => Field["static"]?.GetValue<bool>() == true;
     }
 
-    public static void ApplyAll(IReadOnlyList<JsonNode> roots)
+    public static void ApplyAll(IReadOnlyList<JsonNode> roots, ReferenceMetadataIndex refs)
     {
         var identities = new Dictionary<string, Storage>(StringComparer.Ordinal);
         var fields = new Dictionary<(string Owner, string Name, bool Static), Storage>();
         foreach (var root in roots) Collect(root, identities, fields);
-        foreach (var root in roots) Rewrite(root, identities, fields);
+        // A public default argument can carry a query only as opaque BIR. Its consumer still needs an authored
+        // physical target, even when this producer has no executable query node to request the helper lazily.
+        foreach (var storage in identities.Values) EnsureQueryMethod(storage);
+        foreach (var root in roots) Rewrite(root, identities, fields, refs);
         foreach (var storage in identities.Values)
         {
             storage.Field.Remove(Identity);
@@ -47,32 +50,41 @@ static class LateinitInitializationLowering
     }
 
     static void Rewrite(JsonNode node, IReadOnlyDictionary<string, Storage> identities,
-        IReadOnlyDictionary<(string Owner, string Name, bool Static), Storage> fields)
+        IReadOnlyDictionary<(string Owner, string Name, bool Static), Storage> fields, ReferenceMetadataIndex refs)
     {
         if (node is JsonObject obj)
         {
-            foreach (var child in obj.ToArray()) if (child.Value != null) Rewrite(child.Value, identities, fields);
+            foreach (var child in obj.ToArray()) if (child.Value != null) Rewrite(child.Value, identities, fields, refs);
             if (obj["params"] is JsonArray && obj["body"] is JsonArray
-                && Str(obj["declarationId"]) is string declarationId && identities.ContainsKey(declarationId))
+                && Str(obj["declarationId"]) is string declarationId && identities.TryGetValue(declarationId, out var declarationStorage))
+            {
                 obj["lateinit"] = true;
+                RoundtripMetadata.StampLateinitState(obj, declarationStorage.Owner,
+                    declarationStorage.QueryMethod, declarationStorage.Static);
+            }
             var kind = Str(obj["k"]);
             if (kind == "lateinitIsInitialized")
             {
-                var storage = identities[Str(obj[Identity])];
-                var method = EnsureQueryMethod(storage);
+                var id = Str(obj[Identity]);
+                var target = identities.TryGetValue(id, out var storage)
+                    ? new LateinitStateTarget(storage.Owner, storage.QueryMethod, storage.Static)
+                    : refs.LateinitStateForDeclaration(id);
                 var sourceOwner = TypeJson.Read(obj["ownerType"]) as TypeNode.Fqn;
                 var receiver = obj["recv"]?.DeepClone();
                 var style = obj["sty"]?.DeepClone();
                 obj.Clear();
                 if (style != null) obj["sty"] = style;
-                obj["k"] = storage.Static ? "callStatic" : "callInstance";
-                obj["ownerType"] = TypeJson.Write(new TypeNode.Fqn(storage.Owner,
-                    storage.Static ? null : sourceOwner?.Args));
-                obj["method"] = method;
+                obj["k"] = target.Static ? "callStatic" : "callInstance";
+                obj["ownerType"] = TypeJson.Write(new TypeNode.Fqn(target.Owner,
+                    target.Static ? null : sourceOwner?.Args));
+                obj["method"] = target.Method;
                 obj["args"] = new JsonArray();
                 obj["sig"] = new JsonArray();
                 obj["ret"] = TypeJson.Fqn("kotlin.Boolean");
-                if (!storage.Static) { obj["recv"] = receiver; obj["virtual"] = false; }
+                obj["memberVisibility"] = "private";
+                obj["memberSignature"] = new JsonArray();
+                obj["memberReturnType"] = TypeJson.Fqn("kotlin.Boolean");
+                if (!target.Static) { obj["recv"] = receiver; obj["virtual"] = false; }
                 return;
             }
             if (kind is not ("lateinitGet" or "setField" or "setFieldExpr" or "staticFieldSet")) return;
@@ -98,7 +110,7 @@ static class LateinitInitializationLowering
             obj["e"] = checkedRead;
         }
         else if (node is JsonArray array)
-            foreach (var child in array.ToArray()) if (child != null) Rewrite(child, identities, fields);
+            foreach (var child in array.ToArray()) if (child != null) Rewrite(child, identities, fields, refs);
     }
 
     static JsonObject RawRead(Storage slot, JsonNode owner, JsonNode receiver)

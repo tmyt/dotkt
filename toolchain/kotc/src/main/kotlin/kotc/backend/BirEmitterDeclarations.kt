@@ -746,7 +746,7 @@ internal fun BirEmitter.richEnumDef(ec: IrClass): String {
 	val userFields = userProps.mapNotNull { p ->
 		val bf = p.backingField ?: return@mapNotNull null
 		val visJson = if (emitsGet(p)) ""","vis":"internal"""" else ""
-		"""{"name":${str(bf.name.asString())},"type":${birType(bf.type).toJson()}$visJson}"""
+		"""{"name":${str(bf.name.asString())},"type":${birType(bf.type).toJson()}$visJson${lateinitFieldFlag(p)}}"""
 	} + syntheticInstanceStorageFields(ec)
 	val propAccessors = userProps.flatMap { p ->
 		listOfNotNull(
@@ -1245,7 +1245,6 @@ internal fun BirEmitter.lateinitFieldFlag(p: IrProperty): String = if (p.isLatei
  * either representation; this is still Kotlin metadata, not a CLR-layout inference. */
 internal fun BirEmitter.isLateinitProperty(p: IrProperty): Boolean =
 	p.isLateinit ||
-		p.annotations.any { it.type.classFqName?.asString() == "kotlin.clr.ClrLateinitField" } ||
 		(p as? org.jetbrains.kotlin.fir.lazy.Fir2IrLazyProperty)?.fir?.isLateInit == true
 
 /** A property whose type is `kotlin.clr.ClrEvent<T>` — the compile-time-only fiction surfacing a .NET event.

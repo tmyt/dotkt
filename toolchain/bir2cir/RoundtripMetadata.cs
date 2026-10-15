@@ -40,6 +40,7 @@ static class RoundtripMetadata
     const string AKInline       = Ns + "KotlinInlineAttribute";
     const string AKReadOnly     = Ns + "KotlinReadOnlyAttribute";
     const string AKLateinit     = Ns + "KotlinLateinitAttribute";
+    const string AKLateinitState = Ns + "KotlinLateinitStateAttribute";
     const string AKFunInterface = Ns + "KotlinFunInterfaceAttribute";
     const string AKSealed       = Ns + "KotlinSealedAttribute";
     const string AKValue        = Ns + "KotlinValueAttribute";
@@ -815,6 +816,13 @@ static class RoundtripMetadata
             ["field"] = fieldName,
         }));
 
+    // Lexically legal producer defaults can transport an initialization query into another assembly. Bind the
+    // selected Kotlin getter to its private state accessor explicitly; the consumer never reconstructs storage.
+    internal static void StampLateinitState(JsonObject getter, string owner, string method, bool isStatic) =>
+        Append(getter, JsonCarrierAttr(AKLateinitState, new JsonObject {
+            ["owner"] = owner, ["method"] = method, ["static"] = isStatic,
+        }));
+
     // A generic C# 14 extension implementation must carry the receiver block's CLR method parameters. Kotlin's
     // declaration does not: its associated classifier is bare and contributes no callable type parameters. This
     // trusted edge points from the standard Roslyn-shaped wrapper to the non-generic-container core that dll2klib and
@@ -912,6 +920,7 @@ static class RoundtripMetadata
             AttrClass(AKInline, Ctor(Param("System.String"), Param(ByteArrayType()))),
             AttrClass(AKReadOnly, Ctor()),
             AttrClass(AKLateinit, Ctor()),
+            AttrClass(AKLateinitState, Ctor(Param("System.String"), Param(ByteArrayType()))),
             AttrClass(AKFunInterface, Ctor()),
             AttrClass(AKSealed, Ctor()),
             AttrClass(AKValue, Ctor()),

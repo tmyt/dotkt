@@ -5,6 +5,7 @@ import NUnit.Framework.Legacy.ClassicAssert.IsFalse as assertFalse
 import roundtrip.lateinitstorage.LateinitBox
 import roundtrip.lateinitstorage.exportedLateinit
 import roundtrip.lateinitstorage.exportedLateinitInitialized
+import roundtrip.lateinitstorage.exportedLateinitInitializedByDefault
 
 class LateinitStorageTests {
     @TestAttribute
@@ -12,17 +13,27 @@ class LateinitStorageTests {
         val first = LateinitBox<Int>()
         val second = LateinitBox<Int>()
         assertFalse(first.initialized())
+        assertFalse(first.initializedByDefault())
+        var receiverEvaluations = 0
+        fun selected(): LateinitBox<Int> { receiverEvaluations++; return second }
+        assertFalse(selected().initializedByDefault())
+        assertEquals(1, receiverEvaluations)
         var threw = false
         try { first.value } catch (error: Exception) { threw = true }
         assertTrue(threw)
         second.value = 0
         assertFalse(first.initialized())
         assertTrue(first.other(second))
+        assertTrue(selected().initializedByDefault())
+        assertEquals(2, receiverEvaluations)
+        assertFalse(first.initializedByDefault())
         assertEquals(0, second.value)
         val text = LateinitBox<String>()
         assertFalse(text.initialized())
+        assertFalse(text.initializedByDefault())
         text.value = ""
         assertTrue(text.initialized())
+        assertTrue(text.initializedByDefault())
         assertEquals("", text.value)
     }
 
@@ -43,8 +54,10 @@ class LateinitStorageTests {
     @TestAttribute
     fun topLevelWritesAcrossDllUseTypedAccessors() {
         assertFalse(exportedLateinitInitialized())
+        assertFalse(exportedLateinitInitializedByDefault())
         exportedLateinit = "consumer"
         assertTrue(exportedLateinitInitialized())
+        assertTrue(exportedLateinitInitializedByDefault())
         assertEquals("consumer", exportedLateinit)
     }
 }

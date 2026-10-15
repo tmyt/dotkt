@@ -222,6 +222,11 @@ present, retain the constructed Kotlin owner and authored receiver expression.
 `bir2cir` binds the physical initialization state independently of ordinary checked
 reads and consumes both the query and its declaration identity before CIR. `ilemit`
 receives only resolved ordinary CIR operations.
+An opaque Kotlin default-expression carrier keeps this semantic query. When it is
+materialized in another module, the exact getter identity selects the producer's
+`KotlinLateinitState` metadata edge to a private physical state accessor; no storage
+layout or getter body is reconstructed. The accessor declaration and edge survive
+reference-body stripping.
 
 Node kinds stay `{"k":…}`-tagged objects (already structured). The freeze CLEANS them (no representation
 change). Canonical set = the live kinds from the audit, MINUS the dead/merged below. Every `type`/`ret`/

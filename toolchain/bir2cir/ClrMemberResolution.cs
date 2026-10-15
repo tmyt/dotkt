@@ -459,7 +459,6 @@ static partial class ClrMemberResolution
             case "field": ResolveFieldAccess(node, write: false); break;
             case "setFieldExpr": ResolveFieldAccess(node, write: true); break;
             case "setField": ResolveFieldAccess(node, write: true); break;
-            case "lateinitGet": ResolveLateinitField(node); break;
         }
     }
 

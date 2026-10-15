@@ -1983,9 +1983,8 @@ static void VerifyKlib(string path)
         "companion-block const lost KLIB IS_CONST/HAS_CONSTANT or its compile-time value");
     var later = counter.Property.Single(p => String(statics, p.Name) == "later");
     Require((later.Flags & (1 << 12)) != 0 &&
-            later.PropertyAnnotation.Any(a => QualifiedName(statics, a.Id) == "kotlin.clr.ClrField") &&
-            later.PropertyAnnotation.Any(a => QualifiedName(statics, a.Id) == "kotlin.clr.ClrLateinitField"),
-        "companion-block lateinit lost KLIB IS_LATEINIT or its static-property declaration marker");
+            !later.PropertyAnnotation.Any(a => QualifiedName(statics, a.Id) == "kotlin.clr.ClrField"),
+        "companion-block lateinit must restore IS_LATEINIT on its accessor-routed property");
     var counterCompanion = Class(statics, "roundtrip.companionstatics.Counter.Companion");
     var objectTag = counterCompanion.Property.Single(p => String(statics, p.Name) == "OBJECT_TAG");
     Require((objectTag.Flags & ((1 << 11) | (1 << 13))) == ((1 << 11) | (1 << 13)) &&
@@ -2003,9 +2002,8 @@ static void VerifyKlib(string path)
         "generic-owner companion const lost KLIB IS_CONST/HAS_CONSTANT or its compile-time value");
     var boxLater = box.Property.Single(p => String(statics, p.Name) == "later");
     Require((boxLater.Flags & (1 << 12)) != 0 &&
-            boxLater.PropertyAnnotation.Any(a => QualifiedName(statics, a.Id) == "kotlin.clr.ClrField") &&
-            boxLater.PropertyAnnotation.Any(a => QualifiedName(statics, a.Id) == "kotlin.clr.ClrLateinitField"),
-        "generic-owner companion lateinit lost KLIB IS_LATEINIT or its static-property declaration marker");
+            !boxLater.PropertyAnnotation.Any(a => QualifiedName(statics, a.Id) == "kotlin.clr.ClrField"),
+        "generic-owner companion lateinit must restore IS_LATEINIT on its accessor-routed property");
     var marker = statics.Package.Property.Single(p =>
         String(statics, p.Name) == "marker" &&
         p.ReceiverType is { HasClassName: true } receiver &&

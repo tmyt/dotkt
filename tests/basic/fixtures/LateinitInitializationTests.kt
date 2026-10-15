@@ -57,6 +57,11 @@ class LateinitStateVolatile {
     @Volatile lateinit var value: String
     fun initialized(): Boolean = this::value.isInitialized
 }
+enum class LateinitStateEntry {
+    A;
+    lateinit var value: String
+    fun initialized(): Boolean = this::value.isInitialized
+}
 
 class LateinitInitializationTests {
     @TestAttribute
@@ -118,6 +123,10 @@ class LateinitInitializationTests {
 
     @TestAttribute
     fun topLevelObjectAndCompanionStorage() {
+        assertFalse(LateinitStateEntry.A.initialized())
+        LateinitStateEntry.A.value = "enum"
+        assertTrue(LateinitStateEntry.A.initialized())
+        assertEquals("enum", LateinitStateEntry.A.value)
         assertFalse(lateinitStateTopInitialized())
         lateinitStateTop = "top"
         assertTrue(lateinitStateTopInitialized())

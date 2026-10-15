@@ -1355,8 +1355,6 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 				val fieldName = str(staticProperty.name.asString())
 				return if (isSetter)
 					"""{"k":"staticFieldSet","ownerType":$fieldOwner,"name":$fieldName,"value":${accessorArgs.first().let { expr(it) }}}"""
-				else if (isLateinitProperty(staticProperty))
-					"""{"k":"lateinitGet","ownerType":$fieldOwner,"static":true,"name":$fieldName}"""
 				else """{"k":"staticField","ownerType":$fieldOwner,"name":$fieldName}"""
 			}
 			return """{"k":"callStatic","ownerType":$selectedOwner,"method":${str(staticProperty.name.asString())},"prop":"$propKind"${overloadSigField(propertyAccessorDeclaration)},"argTypes":[$argTypes]$ret,"args":[$args]}"""
@@ -1735,22 +1733,15 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 				val fieldName = str(prop.name.asString())
 				val fieldOwner = if (isStatic) memberType!! else fieldDeclarationOwner(callee, recv!!.type)
 				val ownerType = fieldOwner.toJson()
-				val declarationProperty = (if (callee.isFakeOverride) callee.resolveFakeOverride() else callee)
-					?.correspondingPropertySymbol?.owner
-				val lateinit = isLateinitProperty(prop) || declarationProperty?.let(::isLateinitProperty) == true
 				return if (isStatic) {
 					if (callee === prop.setter)
 						"""{"k":"staticFieldSet","ownerType":$ownerType,"name":$fieldName,"value":${expr(regularArgs(call).first())}$companionCallTag}"""
-					else if (lateinit)
-						"""{"k":"lateinitGet","ownerType":$ownerType,"static":true,"name":$fieldName$companionCallTag}"""
 					else
 						"""{"k":"staticField","ownerType":$ownerType,"name":$fieldName${retHint((fieldOwner as? TypeNode.Fqn)?.args != null, call.type)}$companionCallTag}"""
 				} else {
 					val receiver = expr(recv!!)
 					if (callee === prop.setter)
 						"""{"k":"setFieldExpr","ownerType":$ownerType,"recv":$receiver,"name":$fieldName,"value":${expr(regularArgs(call).first())}$companionCallTag}"""
-					else if (lateinit)
-						"""{"k":"lateinitGet","ownerType":$ownerType,"recv":$receiver,"name":$fieldName$companionCallTag}"""
 					else
 						"""{"k":"field","ownerType":$ownerType,"recv":$receiver,"name":$fieldName${retHint((fieldOwner as? TypeNode.Fqn)?.args != null, call.type)}$companionCallTag}"""
 				}
@@ -1873,8 +1864,6 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 					if (isClrField(p)) {
 						return if (setter)
 							"""{"k":"staticFieldSet","ownerType":${fqnJson(fileClass)},"name":${str(p.name.asString())},"value":${expr(values.first())}$tag}"""
-						else if (isLateinitProperty(p))
-							"""{"k":"lateinitGet","ownerType":${fqnJson(fileClass)},"static":true,"name":${str(p.name.asString())}$tag}"""
 						else """{"k":"staticField","ownerType":${fqnJson(fileClass)},"name":${str(p.name.asString())}$tag}"""
 					}
 					val argTypes = values.joinToString(",") { birType(it.type).toJson() }
@@ -2043,9 +2032,6 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 		val fieldOwner = fieldDeclarationOwner(callee, recvExpr?.type ?: declaringClass.defaultType)
 		return if (callee === property.setter)
 			"""{"k":"setFieldExpr","ownerType":${str(fieldOwner)},"recv":$recv,"name":${str(property.name.asString())},"value":${expr(regularArgs(call).first())}}"""
-		// `lateinit var` read -> throw if still uninitialized (the field is null) — proper lateinit semantics.
-		else if (isLateinitProperty(property))
-			"""{"k":"lateinitGet","ownerType":${str(fieldOwner)},"recv":$recv,"name":${str(property.name.asString())}}"""
 		else """{"k":"field","ownerType":${str(fieldOwner)},"recv":$recv,"name":${str(property.name.asString())}${retHint((fieldOwner as? TypeNode.Fqn)?.args != null, call.type)}}"""
 	}
 
