@@ -269,6 +269,9 @@ sealed partial class ReferenceMetadataIndex
             && binding.MethodArity == methodArity && binding.IsStatic == isStatic
                 ? binding.ReturnTypeNode : null;
 
+    internal bool IsPublicVirtualDeclaration(string id) =>
+        _declarationById.TryGetValue(id, out var binding) && binding.IsPublic && binding.IsVirtual;
+
     // UnsafeAccessorAttribute is matched by the CLR against the selected MethodDef's exact physical signature.
     // The frontend-authored declaration identity selects that MethodDef; inherited-owner binding supplies the
     // declaring TypeDef. Expose those already-indexed facts without re-resolving an overload from the use-site

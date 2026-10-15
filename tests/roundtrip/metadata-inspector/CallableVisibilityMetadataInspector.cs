@@ -67,6 +67,54 @@ internal static class CallableVisibilityMetadataInspector
             "public constructor control changed");
         Require((fragment.Package.Function.Single(function => Name(fragment, function.Name) == "publicEntry").Flags & 14) == 6,
             "public function control changed");
+        VerifyOverrides(md, klibPath);
+    }
+
+    static void VerifyOverrides(MetadataReader md, string klibPath)
+    {
+        const string package = "roundtrip.publishedoverrides";
+        var fragment = Fragment(klibPath, package);
+        foreach (var owner in new[] { "Base", "Derived", "Leaf", "AbstractBase", "Concrete" })
+        {
+            var type = md.GetTypeDefinition(md.TypeDefinitions.Single(handle => TypeName(md, handle) == package + "." + owner));
+            var methods = type.GetMethods().Select(handle => (Handle: handle, Method: md.GetMethodDefinition(handle)))
+                .Where(row => md.GetString(row.Method.Name) is "hook" or "select" or "suspended" or "operation"
+                    or "prop_get<readOnly>" or "prop_set<readOnly>" or "prop_get<mutable>" or "prop_set<mutable>")
+                .ToArray();
+            var expectedCount = owner switch { "Base" => 8, "Derived" => 9, "Leaf" => 7, _ => 1 };
+            Require(methods.Length == expectedCount, owner + ": expected override/accessor declarations missing");
+            foreach (var (handle, method) in methods)
+            {
+                var name = md.GetString(method.Name);
+                // The String overload is not published. A setter introduced over a val has no public base setter.
+                var unpromoted = name == "prop_set<readOnly>" || name == "hook" &&
+                    md.GetBlobBytes(method.Signature).SequenceEqual(new byte[] { 0x20, 1, 8, 14 });
+                Require((method.Attributes & MethodAttributes.MemberAccessMask) ==
+                    (unpromoted ? MethodAttributes.Assembly : MethodAttributes.Public),
+                    owner + "." + name + ": selected CLR slot accessibility changed");
+                CheckCarrier(md, handle);
+            }
+
+            var source = fragment.Class.Single(type => QualifiedName(fragment, type.FqName) == package + "." + owner);
+            foreach (var function in source.Function.Where(function => Name(fragment, function.Name) is
+                         "hook" or "select" or "suspended" or "operation"))
+                CheckInternal(function.Flags, owner + "." + Name(fragment, function.Name));
+            foreach (var property in source.Property.Where(property => Name(fragment, property.Name) is "readOnly" or "mutable"))
+            {
+                CheckInternal(property.Flags, owner + "." + Name(fragment, property.Name));
+                if (property.HasGetterFlags) CheckInternal(property.GetterFlags, owner + " getter");
+                if (property.HasSetterFlags) CheckInternal(property.SetterFlags, owner + " setter");
+            }
+        }
+
+        var publicType = md.GetTypeDefinition(md.TypeDefinitions.Single(handle =>
+            TypeName(md, handle) == package + ".PublicDerived"));
+        var publicHook = publicType.GetMethods().Single(handle => md.GetString(md.GetMethodDefinition(handle).Name) == "hook");
+        Require((md.GetMethodDefinition(publicHook).Attributes & MethodAttributes.MemberAccessMask) == MethodAttributes.Public
+            && !HasCarrier(md, publicHook, Carrier), "explicit public override was made source-internal");
+        var publicSource = fragment.Class.Single(type => QualifiedName(fragment, type.FqName) == package + ".PublicDerived");
+        Require((publicSource.Function.Single(function => Name(fragment, function.Name) == "hook" &&
+            function.ValueParameter.Count == 0).Flags & 14) == 6, "public override KLIB visibility changed");
     }
 
     public static void VerifyReference(string dllPath, string klibPath)

@@ -8,9 +8,32 @@ static class CallableVisibilityLowering
     internal const string Carrier = "DotKt.Runtime.CompilerServices.KotlinCallableVisibilityAttribute";
     const string PublishedApi = "kotlin.PublishedApi";
 
-    public static void ApplyAll(IEnumerable<JsonNode> roots)
+    public static void ApplyAll(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs)
     {
-        foreach (var root in roots.OfType<JsonObject>()) Apply(root);
+        var owners = roots.OfType<JsonObject>().SelectMany(Owners).ToArray();
+        foreach (var owner in owners) Apply(owner);
+
+        // `overrides` is the frontend's complete declaration closure, including exact getter/setter identities.
+        // A selected public CLR slot requires a public override even when its Kotlin declaration stays internal.
+        // Snapshot the already-promoted slots so this decision is independent of source/file traversal order;
+        // neither matching member names nor repeating the base declaration's annotation establishes this edge.
+        var methods = owners.Where(owner => owner["methods"] is JsonArray)
+            .SelectMany(owner => ((JsonArray)owner["methods"]).OfType<JsonObject>()).ToArray();
+        var publicSlots = methods.Where(method => (method["vis"]?.GetValue<string>() ?? "public") == "public")
+            .Select(method => method[DeclarationIdentityBinding.Key]?.GetValue<string>())
+            .Where(id => id != null).ToHashSet(StringComparer.Ordinal);
+        foreach (var method in methods)
+            if (method["overrides"] is JsonArray overrides && overrides.OfType<JsonObject>().Any(edge =>
+                edge[DeclarationIdentityBinding.Key]?.GetValue<string>() is string id
+                && (publicSlots.Contains(id) || refs.IsPublicVirtualDeclaration(id))))
+                method["vis"] = "public";
+    }
+
+    static IEnumerable<JsonObject> Owners(JsonObject owner)
+    {
+        yield return owner;
+        if (owner["types"] is JsonArray types)
+            foreach (var child in types.OfType<JsonObject>().SelectMany(Owners)) yield return child;
     }
 
     static void Apply(JsonObject owner)
@@ -22,8 +45,6 @@ static class CallableVisibilityLowering
                     Preserve(declaration);
                     Promote(declaration);
                 }
-        if (owner["types"] is JsonArray types)
-            foreach (var type in types.OfType<JsonObject>()) Apply(type);
     }
 
     public static void Preserve(JsonObject declaration)
