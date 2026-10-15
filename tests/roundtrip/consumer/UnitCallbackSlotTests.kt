@@ -6,6 +6,9 @@ private class GenericUnitSlots<T> : Body<T>(), Slot<T>
 private class DirectUnit : Slot<Unit> {
     override fun apply(value: Unit, callback: (Unit) -> Unit): Unit = callback(value)
 }
+private class NullableUnit : NullableSlot<Unit> {
+    override fun apply(value: Unit, callback: ((Unit) -> Unit)?) { callback?.invoke(value) }
+}
 private class OverrideUnit : Body<Unit>(), Slot<Unit> {
     override fun apply(value: Unit, callback: (Unit) -> Unit): Unit = callback(value)
 }
@@ -17,6 +20,14 @@ private class Identity : CallbackIdentitySlot<Unit> {
     }
     override fun callback(): (Unit) -> Unit = saved!!
     fun storedAsAny(): Any = saved!!
+}
+private class WrappedIdentity : WrappedIdentitySlot<Unit> {
+    private var saved: ((Unit) -> Unit)? = null
+    private var savedList: List<(Unit) -> Unit>? = null
+    private var savedArray: Array<(Unit) -> Unit>? = null
+    override fun rememberNullable(callback: ((Unit) -> Unit)?): Any? { saved = callback; return saved }
+    override fun rememberList(callbacks: List<(Unit) -> Unit>): Any { savedList = callbacks; return savedList!! }
+    override fun rememberArray(callbacks: Array<(Unit) -> Unit>): Any { savedArray = callbacks; return savedArray!! }
 }
 
 class UnitCallbackSlotTests {
@@ -68,5 +79,17 @@ class UnitCallbackSlotTests {
         producerIdentity.callback()(Unit)
         returnedGeneric(producerIdentity)(Unit)
         check(calls == 19)
+        val nullable = NullableUnit()
+        nullable.apply(Unit, callback)
+        throughNullable(nullable, Unit, callback)
+        throughNullable(nullable, Unit, null)
+        check(calls == 21)
+        val wrapped = WrappedIdentity()
+        val callbacks = listOf(callback)
+        val array = arrayOf(callback)
+        check(wrapped.rememberNullable(callback) === callback)
+        check(wrapped.rememberList(callbacks) === callbacks)
+        check(wrapped.rememberArray(array) === array)
+        checkWrappedIdentity(wrapped, callback, callbacks, array)
     }
 }

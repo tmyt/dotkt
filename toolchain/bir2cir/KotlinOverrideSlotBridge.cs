@@ -283,8 +283,12 @@ static class KotlinOverrideSlotBridge
                 {
                     var declaredIdentity = SupertypeGraph.SubstOwnerTvs(
                         FunctionSignatureIdentity.DeclarationType(TypeJson.Read(bodyIdentity)), ownArgs);
-                    if (!Equals(slotIdentity.M, declaredIdentity)
-                        && SameSourceFunctionSignature(slotIdentity.M, declaredIdentity, sourceMapping.OwnerFrame))
+                    // The frontend has already selected this override. Equal value slots can be forwarded
+                    // unchanged, regardless of whether the discriminator contains a function at its head or
+                    // under a nullable/container type. Different modifiers still need an exact bridge row.
+                    if (fit[i] == Fit.Same
+                        && !ClrMemberResolution.SameInterfaceSlotType(
+                            PhysicalSlotType(slotIdentity.M), PhysicalSlotType(declaredIdentity)))
                         fit[i] = Fit.Bridge;
                 }
             }
@@ -1768,23 +1772,6 @@ static class KotlinOverrideSlotBridge
                 .All(pair => Same(pair.First, pair.Second));
     }
 
-    // Only selected ordinary-function signature modifiers use this comparison. Different declaration families
-    // are not interchangeable: they require a separate exact MethodImpl row forwarding the unchanged value carrier.
-    static bool SameSourceFunctionSignature(TypeNode slot, TypeNode declared, NullableRepresentationFrame frame)
-    {
-        static TypeNode Source(TypeNode type) => type is TypeNode.Fn { Suspend: false } fn
-            ? fn with {
-                Clr = null,
-                Ret = fn.Ret is TypeNode.Fqn { Name: "void" or "System.Void", Args: null }
-                    ? new TypeNode.Fqn("kotlin.Unit") : Source(fn.Ret),
-                Params = fn.Params.Select(Source).ToArray(),
-                Recv = fn.Recv == null ? null : Source(fn.Recv),
-                Ctx = fn.Ctx?.Select(Source).ToArray(),
-            }
-            : type;
-        return SameSourceFunctionRepresentation(Source(slot), Source(declared), frame);
-    }
-
     internal static void SelfTest()
     {
         var suspendSource = new JsonObject {
@@ -1846,11 +1833,18 @@ static class KotlinOverrideSlotBridge
         var valueSignature = new TypeNode.Fn(false, new TypeNode.Fqn("kotlin.Unit"),
             new TypeNode[] { new TypeNode.Fqn("kotlin.Unit") }, Clr: "System.Func");
         var voidSignature = valueSignature with { Ret = new TypeNode.Fqn("void"), Clr = "System.Action" };
-        if (!SameSourceFunctionSignature(valueSignature, voidSignature, null)
+        if (ClrMemberResolution.SameInterfaceSlotType(valueSignature, voidSignature)
             || SameSourceFunctionRepresentation(valueSignature, voidSignature, null)
-            || SameSourceFunctionSignature(BirTypeLowering.DelegateFqnOf(valueSignature),
-                BirTypeLowering.DelegateFqnOf(voidSignature), null))
+            || ClrMemberResolution.SameInterfaceSlotType(BirTypeLowering.DelegateFqnOf(valueSignature),
+                BirTypeLowering.DelegateFqnOf(voidSignature)))
             throw new InvalidOperationException("Function signature bridge confused source identity with delegate equivalence");
+        var carrier = new TypeNode.Fn(false, new TypeNode.Fqn("object"),
+            new TypeNode[] { new TypeNode.Fqn("object") }, Clr: "System.Func");
+        var integer = new TypeNode.Fqn("System.Int32");
+        if (IsNullableValueSlot(carrier, new TypeNode.Nullable(carrier), null, _ => false, false)
+            || !IsNullableValueSlot(integer, new TypeNode.Nullable(integer), null,
+                type => type.Name == "System.Int32", false))
+            throw new InvalidOperationException("Nullable bridge confused reference annotations with CLR nullable values");
         var slotMethod = JsonNode.Parse("""
           {"typeParams":[{"name":"R","constraints":[{"t":"tv","scope":"type","i":0}]},"P"]}
           """).AsObject();
@@ -1880,6 +1874,10 @@ static class KotlinOverrideSlotBridge
     static bool IsNullableValueSlot(TypeNode slot, TypeNode declared, ReferenceMetadataIndex refs,
         ValueTypeOracle isValue, bool returnPosition) =>
         declared is TypeNode.Nullable nullable
+        // A nullable reference annotation (including a function carrier) is not System.Nullable<T>.
+        // Ask the shared representation rule before authoring its construction or extraction.
+        && BirTypeLowering.LowerPhysicalType(declared, refs?.Aliases, isValue,
+            refs?.PhysicalTypeNames, typeArg: false, nullableFrames: refs?.NullableTypeFrames) is TypeNode.Nullable
         && BirTypeLowering.SamePhysicalSlotType(slot, nullable.Of, refs?.Aliases, isValue,
             refs?.PhysicalTypeNames, returnPosition, nullableFrames: refs?.NullableTypeFrames);
 
