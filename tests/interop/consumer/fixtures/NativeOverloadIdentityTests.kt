@@ -25,6 +25,8 @@ private class NativeReverseIndexedImplementation : IReverseIndexedSlot<Int>
 
 private fun <T> nativeOwnerEcho(slot: ISlot<T>, value: T): T = slot.Echo(value, "marker")
 private fun <T> nativeIntEcho(slot: ISlot<T>): String = slot.Echo(41, "marker")
+private fun <S : ISlot<Int>> nativeConstrainedPlain(slot: S): String = slot.Plain(211)
+private fun <S : ISlot<Int>> nativeConstrainedEcho(slot: S): String = slot.Echo(223, "marker")
 private fun <T> nativeOwnerReference(slot: ISlot<T>): (T, String) -> T = slot::Echo
 private fun <T> nativeIntReference(slot: ISlot<T>): (Int, String) -> String = slot::Echo
 
@@ -89,6 +91,8 @@ class NativeOverloadIdentityTests {
         check(reverse == "reverse-plain-int-overload")
         check(bound(109) == "plain-int-overload")
         check(unbound(slot, 113) == "plain-int-overload")
+        check(nativeConstrainedPlain(NativeImplementation()) == "plain-int-overload")
+        check(nativeConstrainedEcho(NativeImplementation()) == "int-overload")
     }
 
     @TestAttribute fun omittedDefaultsBelongToTheSelectedOverload() {

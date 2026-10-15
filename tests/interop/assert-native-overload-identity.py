@@ -73,6 +73,9 @@ original = next(method for method in fixture["methods"]
 original_calls = [node for node in nodes(original) if node.get("memberRef", {}).get("name") == "Echo"]
 assert len(original_calls) == 1, original_calls
 assert original_calls[0]["memberRef"]["returnType"] == fqn("System.String"), original_calls
+constrained = [node for node in cir_calls if node.get("k") == "constrainedCall"]
+assert {node["memberRef"]["name"] for node in constrained} == {"Plain", "Echo"}, constrained
+assert all("resolvedMemberParams" not in node for node in constrained), constrained
 
 for owner_name, member_name, minimum in (
     ("NativeOverloadIdentity.ClassSlot`1", "Echo", 3),

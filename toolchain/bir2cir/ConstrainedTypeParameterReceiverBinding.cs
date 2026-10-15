@@ -348,7 +348,6 @@ static class ConstrainedTypeParameterReceiverBinding
                             CastResolvedPropertyReceiver(call, closedPropertyOwner);
                     }
                     var clrCall = kind is "clrInstance" or "clrGenericInstance";
-                    var genericClrCall = kind == "clrGenericInstance";
                     var ownerKey = clrCall ? "type" : "ownerType";
                     if (!resolvedPropertiesOnly && (kind == "callInstance" || clrCall)
                         && TypeJson.Read(call[ownerKey]) is TypeNode.Fqn owner
@@ -426,14 +425,12 @@ static class ConstrainedTypeParameterReceiverBinding
                                 // this node one-to-one.
                                 // Only the DISPATCH changes. `sig` (the overload key), `typeArgs` (a generic member's
                                 // instantiation) and `ret` (the declared call-result view) are facts about the CALL and
-                                // are carried through untouched. A clrGenericInstance's bir2cir-internal matching input
-                                // is `resolvedMemberParams`; constrainedCall uses the same input under its ordinary
-                                // `sig` slot. Move that fact rather than selecting again by name/arity.
-                                if (genericClrCall && call["resolvedMemberParams"] is JsonNode resolvedMemberParams)
-                                {
-                                    call.Remove("resolvedMemberParams");
-                                    call["sig"] = resolvedMemberParams;
-                                }
+                                // are carried through untouched. A CLR call's bir2cir-internal matching input
+                                // is `resolvedMemberParams`. Retain its declaration-frame identity until the
+                                // constrained member resolver consumes it; `sig` also supplies argument alignment,
+                                // but alone does not distinguish this fact from an ordinary physical call signature.
+                                if (call["resolvedMemberParams"] is JsonNode resolvedMemberParams)
+                                    call["sig"] = resolvedMemberParams.DeepClone();
                                 call["k"] = "constrainedCall";
                                 call["recvType"] = TypeJson.Write(tv);
                                 call["iface"] = TypeJson.Write(iface);
