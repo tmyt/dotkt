@@ -20,16 +20,16 @@ private class NativeAbstractMutableMap : AbstractMutableMap<String, Int>() {
 class AuthoredMapInteropTests {
     @TestAttribute
     fun readOnlyImplementationSuppliesNativeDictionaryContracts() {
-        assertTrue(NativeMaps.ReadOnly(NativeReadOnlyMap(mapOf(7 to "seven"))))
-        assertTrue(NativeMaps.CopyArguments(NativeReadOnlyMap(emptyMap())))
-        assertTrue(NativeMaps.CopyArguments(NativeReadOnlyMap(mapOf(7 to "seven"))))
+        assertTrue(NativeMaps.ReadOnly(NativeReadOnlyMap(mapOf(7 to "seven"))), "Native read-only dictionary slots")
+        assertTrue(NativeMaps.CopyArguments(NativeReadOnlyMap(emptyMap())), "Empty native CopyTo argument checks")
+        assertTrue(NativeMaps.CopyArguments(NativeReadOnlyMap(mapOf(7 to "seven"))), "Nonempty native CopyTo argument checks")
         val abstractMap = NativeAbstractMap()
-        assertTrue(NativeMaps.AbstractMap(abstractMap))
-        assertTrue(mapOf("a" to 1) == abstractMap)
-        assertTrue(mapOf("a" to 1).hashCode() == abstractMap.hashCode())
-        assertTrue(NativeMaps.AbstractMap(NativeAbstractMutableMap()))
+        assertTrue(NativeMaps.AbstractMap(abstractMap), "AbstractMap native slots")
+        assertTrue(mapOf("a" to 1) == abstractMap, "Map structural equality")
+        assertTrue(abstractMap.entries.hashCode() == abstractMap.hashCode(), "AbstractMap entry-set hash contract")
+        assertTrue(NativeMaps.AbstractMap(NativeAbstractMutableMap()), "AbstractMutableMap native slots")
         val raw = NativeMaps.RawDictionary()
-        assertTrue(raw is Map<*, *> && (raw as Map<*, *>)["a"] == 1)
+        assertTrue(raw is Map<*, *> && (raw as Map<*, *>)["a"] == 1, "Non-generic dictionary recognition and get")
     }
 
     @TestAttribute

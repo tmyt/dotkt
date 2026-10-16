@@ -132,11 +132,18 @@ static class KotlinMapStorageSynthesis
             Array.Empty<TypeNode>(), new[] { new TypeNode.Fqn("kotlin.Any") }
                 .Concat(args.Select(_ => (TypeNode)new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any")))).ToArray(),
             new[] { (JsonNode)Self() }.Concat(args).ToArray());
-        JsonObject PairPart(string part, TypeNode type) => new() {
-            ["k"] = "clrInstance", ["type"] = TypeJson.Write(Pair),
-            ["method"] = "get_" + part, ["ret"] = TypeJson.Write(type), ["recv"] = Local("pair"),
-            ["argTypes"] = new JsonArray(), ["args"] = new JsonArray(),
-        };
+        JsonObject PairPart(string part, TypeNode type)
+        {
+            if (!refs.TryExternalPropertyAccessor("System.Collections.Generic.KeyValuePair", part, "get",
+                    0, 0, Array.Empty<TypeNode>(), new[] { K, V },
+                    out var owner, out _, out var accessor))
+                throw new InvalidOperationException($"Native map entry has no declared '{part}' getter");
+            return new JsonObject {
+                ["k"] = "clrInstance", ["type"] = TypeJson.Write(F(owner, K, V)),
+                ["method"] = accessor, ["ret"] = TypeJson.Write(type), ["recv"] = Local("pair"),
+                ["argTypes"] = new JsonArray(), ["args"] = new JsonArray(),
+            };
+        }
         JsonObject PairMatches() {
             var comparer = F("System.Collections.Generic.EqualityComparer", V);
             var eq = Call(comparer, "Equals", Bool,
