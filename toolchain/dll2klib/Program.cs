@@ -2273,7 +2273,8 @@ internal sealed class AssemblyScanner : IDisposable
                     result,
                     signatures,
                     names,
-                    capturedSourceIndices);
+                    capturedSourceIndices,
+                    projectedBaseIndex: 0);
             }
         }
         else if (isAnnotation)
@@ -2296,15 +2297,20 @@ internal sealed class AssemblyScanner : IDisposable
                 !IsSystemType(def.BaseType, "System", "ValueType") &&
                 !IsSystemType(def.BaseType, "System", "Attribute"))
                 result.Supertype.Add(signatures.DecodeEntity(def.BaseType, typeContext, platform: false));
+            int? projectedBaseIndex = result.Supertype.Count == 0 ? null : 0;
             AddProjectedInterfaces();
             if (result.Supertype.Count == 0)
+            {
                 result.Supertype.Add(new KType { ClassName = names.Class("kotlin.Any") });
+                projectedBaseIndex = 0;
+            }
             RestoreErasedSupertypes(
                 handle,
                 result,
                 signatures,
                 names,
-                capturedSourceIndices);
+                capturedSourceIndices,
+                projectedBaseIndex);
         }
         if (isKotlinSealed)
         {
@@ -6543,11 +6549,12 @@ internal sealed class AssemblyScanner : IDisposable
     // representation decision may not spend. The producer therefore states the edges it erased on a type-level
     // `[KotlinSupertypes]` carrier, and they are put back here.
     //
-    // Matched by HEAD, not by position. The projection above is not a transcription of the metadata's interface
-    // list — it drops the non-generic shadows, collapses the `IComparable` bridge and synthesizes
-    // `kotlin.Throwable`/`kotlin.Any` edges — so an index would line up with nothing. Replacing an entry whose class
-    // name and argument count the carrier also names keeps every one of those decisions and moves only the
-    // arguments, which is all that was erased.
+    // The base edge has one declaration-owned role, independent of its physical classifier or generic arity.
+    // Restore it in that role: nullable representation frames can add CLR parameters, and an authoritative Kotlin
+    // base must not be discarded because its argument count differs from the physical TypeSpec.
+    // Interface corrections match by Kotlin classifier identity, not position or physical arity: projection drops
+    // non-generic shadows and collapses the `IComparable` bridge, so a physical interface index would line up with
+    // nothing. Only recorded corrections replace these interfaces; untouched edges retain their normal projection.
     //
     // A TYPE-PARAMETER BOUND is the same fact one level down and rides the same carrier's `bounds`. `class Box<T :
     // Sink<Int?>>` constrains T to a physical `Sink<object>`, so a consumer that re-derived the bound from the CLR
@@ -6560,13 +6567,17 @@ internal sealed class AssemblyScanner : IDisposable
     // a conflicting @UnsafeVariance use can require an interface's CLR GenericParam row to be invariant. Restoring the
     // authored variance here preserves the Kotlin declaration without asking consumers to infer it from physical ABI.
     private void RestoreErasedSupertypes(TypeDefinitionHandle handle, Class result, SignatureDecoder signatures,
-        NameTable names, IReadOnlySet<int> capturedSourceIndices)
+        NameTable names, IReadOnlySet<int> capturedSourceIndices, int? projectedBaseIndex)
     {
         using var doc = _attrs.CarrierDocument(handle, MetadataAttributes.DotKtNs + "KotlinSupertypesAttribute");
         if (doc is null) return;
         var pre = new List<KType>();
         if (doc.RootElement.TryGetProperty("base", out var b) && TypeNode.Read(b) is { } bn)
-            pre.Add(signatures.FromTypeNode(bn));
+        {
+            var sourceBase = signatures.FromTypeNode(bn);
+            if (projectedBaseIndex is int index) result.Supertype[index] = sourceBase;
+            else result.Supertype.Insert(0, sourceBase);
+        }
         if (doc.RootElement.TryGetProperty("interfaces", out var ifs) &&
             ifs.ValueKind == System.Text.Json.JsonValueKind.Array)
             foreach (var i in ifs.EnumerateArray())
@@ -6580,8 +6591,7 @@ internal sealed class AssemblyScanner : IDisposable
             if (!cur.HasClassName) continue;
             var curName = names.ClassName(cur.ClassName);
             var match = pre.FirstOrDefault(p => p.HasClassName
-                                                && names.ClassName(p.ClassName) == curName
-                                                && p.Argument.Count == cur.Argument.Count);
+                                                && names.ClassName(p.ClassName) == curName);
             if (match is not null) result.Supertype[i] = match;
         }
     }
