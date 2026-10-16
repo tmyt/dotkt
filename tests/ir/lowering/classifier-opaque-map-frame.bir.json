@@ -1,10 +1,10 @@
 {
-  "fileClass": "PreferredNativeClassifierFrameKt",
+  "fileClass": "OpaqueMapClassifierFrameKt",
   "hasMain": false,
   "fields": [], "types": [], "refTypes": [],
   "methods": [
     {
-      "name": "permuted", "declarationId": "preferred-native-permuted", "static": true,
+      "name": "permuted", "declarationId": "opaque-map-permuted", "static": true,
       "typeParams": ["K", "V"],
       "params": [{"name": "value", "type": {"t": "fqn", "name": "kotlin.Any"}}],
       "ret": {"t": "fqn", "name": "kotlin.collections.Map", "args": [
@@ -18,7 +18,7 @@
       }}]
     },
     {
-      "name": "concrete", "declarationId": "preferred-native-concrete", "static": true,
+      "name": "concrete", "declarationId": "opaque-map-concrete", "static": true,
       "params": [{"name": "value", "type": {"t": "fqn", "name": "kotlin.Any"}}],
       "ret": {"t": "fqn", "name": "kotlin.collections.Map", "args": [
         {"t": "fqn", "name": "kotlin.String"}, {"t": "fqn", "name": "kotlin.Int"}
