@@ -285,6 +285,11 @@ internal fun kotlinCollectionMatches(value: Any?, witness: Int, dictionary: Star
     // An opaque Object carrier no longer supplies a native checked cast's null rejection.
     // The source witness owns nullability for both membership tests and checked casts.
     if (value == null) return (witness and 1) != 0
+    if ((witness and -2) == 18 || (witness and -2) == 20) {
+        if (value is KotlinMapDefaultSlots)
+            return (witness and -2) == 18 || value is KotlinMutableMapSlots
+        return value is kotlin.collections.ClrRawDictionary || starProjectionHasView(value.starProjectionRuntimeType(), dictionary)
+    }
     if (value !is KotlinIterableClassifier) return when (witness and -2) {
         14, 16 -> foreignKotlinIterable(value, dictionary, readOnlyDictionary, set, readOnlySet,
             list, genericList, readOnlyList)
@@ -352,6 +357,10 @@ internal fun starProjectionKotlinCollectionIsInstance(
     secondOpenType: StarProjectionType,
 ): Boolean {
     if (value == null) return false
+    if (kind == 6 || kind == 7) {
+        if (value is KotlinMapDefaultSlots) return kind == 6 || value is KotlinMutableMapSlots
+        return value is kotlin.collections.ClrRawDictionary || starProjectionHasView(value.starProjectionRuntimeType(), firstOpenType)
+    }
     if (kind == 2 && value is KotlinMutableSetClassifier) return true
     if (kind == 1 && value is KotlinSetClassifier) return true
     if (kind == 0 && value is KotlinCollectionClassifier) return true

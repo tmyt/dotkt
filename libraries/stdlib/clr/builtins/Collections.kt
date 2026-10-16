@@ -102,8 +102,8 @@ public actual interface MutableSet<E> : Set<E>, MutableCollection<E> {
 // values as object with Kotlin type metadata. MutableMap retains its exact invariant dictionary face.
 // Constructors, inheritance and selected CLR declarations keep their exact physical types; widening Map values
 // preserves the original reference without casting between unrelated IDictionary constructions.
-// Members with a direct IDictionary equivalent carry @ClrIntrinsic; the rest (null-on-missing `get`, the keys/values/
-// entries VIEWS, putAll/getOrDefault/...) route through kotlin.collections.ClrMapDefaults (bir2cir Rule 5).
+// Kotlin map members route through ClrMapDefaults and authored-map capability slots. Native IDictionary slots
+// are a separate physical surface; they do not rename Kotlin declarations or select their view contracts.
 @kotlin.clr.ClrTypeAlias("System.Collections.Generic.IDictionary")
 public actual interface Map<K, out V> {
     // size / containsKey are NOT bound to @ClrIntrinsic("Count") / @ClrIntrinsic("ContainsKey"): a DIRECT bind reads
@@ -119,8 +119,7 @@ public actual interface Map<K, out V> {
     // Kotlin `get` returns null on a missing key; IDictionary's get_Item THROWS. NOT bound — routed to
     // ClrMapDefaults.clrMapGet (ContainsKey + raw get_Item).
     public actual operator fun get(key: K): V?
-    // Read views route to ClrMapDefaults snapshots so Set retains its Kotlin classifier identity and all views remain
-    // covariance-safe through the non-generic dictionary facade.
+    // ClrMapDefaults preserves authored getters and provides covariance-safe snapshots for BCL-backed maps.
     public actual val keys: Set<K>
     public actual val values: Collection<V>
     public actual val entries: Set<Map.Entry<K, V>>
@@ -147,7 +146,6 @@ public actual interface MutableMap<K, V> : Map<K, V> {
     public actual fun put(key: K, value: V): V?
     public actual fun remove(key: K): V?
     public actual fun putAll(from: Map<out K, V>): Unit
-    @kotlin.clr.ClrIntrinsic("Clear")
     public actual fun clear(): Unit
 
     // java.util.Map mutation defaults the compiler injects onto kotlin.collections.MutableMap (not in this source) as
@@ -178,10 +176,8 @@ public actual interface MutableMap<K, V> : Map<K, V> {
         if (newValue == null) remove(key) else put(key, newValue)
         return newValue
     }
-    // Mutable keys need an identity-bearing live Kotlin view; raw Dictionary.KeyCollection has only ICollection<K>.
-    // Mutable values can still bind directly to the BCL ValueCollection's ICollection<V> face.
+    // Mutable views dispatch through ClrMapDefaults, preserving authored getters rather than a native property.
     actual override val keys: MutableSet<K>
-    @kotlin.clr.ClrIntrinsic("Values")
     actual override val values: MutableCollection<V>
     // No BCL equivalent (KeyValuePair enumeration has no live setValue) — routed to ClrMapDefaults.
     actual override val entries: MutableSet<MutableMap.MutableEntry<K, V>>

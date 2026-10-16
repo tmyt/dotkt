@@ -34,6 +34,8 @@ static class KotlinTypeWitness
             "kotlin.collections.MutableSet" => 12,
             "kotlin.collections.Iterable" => 14,
             "kotlin.collections.MutableIterable" => 16,
+            "kotlin.collections.Map" => 18,
+            "kotlin.collections.MutableMap" => 20,
             _ => 0,
         },
         _ => 0,

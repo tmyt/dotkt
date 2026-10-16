@@ -13,7 +13,7 @@ Status: implemented design record. This document records the collection identiti
 | `MutableList<T>` | `IList<T>` |
 | `Set<T>` | `IReadOnlyCollection<T>` plus Kotlin Set identity |
 | `MutableSet<T>` | `ICollection<T>` plus Kotlin MutableSet identity |
-| `Map<K,V>` | `IReadOnlyDictionary<K,V>` |
+| `Map<K,V>` | `IDictionary<K,V>` plus Kotlin read-only map behavior |
 | `MutableMap<K,V>` | `IDictionary<K,V>` |
 
 These are exact declaration, implementation and native interop interfaces. Ordinary values of declaration-variant
@@ -69,6 +69,15 @@ bir2cir authors both halves as ordinary CIR — the adapter's TypeDef, fields, c
 ## Member behavior
 
 Members with direct BCL equivalents are substituted from stdlib metadata, for example `size` to `Count` and indexed access to the CLR indexer. Members without a one-to-one BCL operation retain real Kotlin bodies that use bound primitive members. This keeps stdlib policy in the stdlib rather than adding symbol recognition to the compiler.
+
+Authored `Map` and `MutableMap` implementations carry independent read and mutation capabilities selected by
+Kotlin override identity. Map dispatchers preserve their original getters, views, and overrides, including through
+erased or inherited references. One canonical stdlib carrier, also declared in its reference twin,
+fulfills all native `IDictionary<K,V>`,
+`ICollection<KeyValuePair<K,V>>`, and generic/non-generic enumeration slots. It translates missing-key and mutation
+return conventions, rejects mutation of read-only maps, and exposes checked live native key/value views without
+replacing the Kotlin views. Native enumeration constructs real CLR pairs from Kotlin entries; the two entry types
+are not interchangeable.
 
 Existential `MutableList` Count, indexed reads, and the default `isEmpty` use the eligible `IList<T>` family
 and its actual `ICollection<T>` parent. An unrelated readonly List is not a candidate for these mutable-view

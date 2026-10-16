@@ -1,0 +1,33 @@
+{
+  "fileClass": "NativeMutableMapClassifierFrameKt",
+  "hasMain": false, "fields": [], "types": [], "refTypes": [],
+  "methods": [
+    {
+      "name": "permuted", "declarationId": "mutable-native-permuted", "static": true,
+      "typeParams": ["K", "V"],
+      "params": [{"name": "value", "type": {"t": "fqn", "name": "kotlin.Any"}}],
+      "ret": {"t": "fqn", "name": "kotlin.collections.MutableMap", "args": [
+        {"t": "tv", "scope": "method", "i": 1}, {"t": "tv", "scope": "method", "i": 0}
+      ]},
+      "body": [{"k": "return", "value": {
+        "k": "cast", "e": {"k": "local", "name": "value"},
+        "type": {"t": "fqn", "name": "kotlin.collections.MutableMap", "args": [
+          {"t": "tv", "scope": "method", "i": 1}, {"t": "tv", "scope": "method", "i": 0}
+        ]}
+      }}]
+    },
+    {
+      "name": "concrete", "declarationId": "mutable-native-concrete", "static": true,
+      "params": [{"name": "value", "type": {"t": "fqn", "name": "kotlin.Any"}}],
+      "ret": {"t": "fqn", "name": "kotlin.collections.MutableMap", "args": [
+        {"t": "fqn", "name": "kotlin.String"}, {"t": "fqn", "name": "kotlin.Int"}
+      ]},
+      "body": [{"k": "return", "value": {
+        "k": "cast", "e": {"k": "local", "name": "value"},
+        "type": {"t": "fqn", "name": "kotlin.collections.MutableMap", "args": [
+          {"t": "fqn", "name": "kotlin.String"}, {"t": "fqn", "name": "kotlin.Int"}
+        ]}
+      }}]
+    }
+  ]
+}

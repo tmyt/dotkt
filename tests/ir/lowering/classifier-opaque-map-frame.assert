@@ -1,0 +1,7 @@
+# Read-only Map values retain Kotlin membership and an opaque physical carrier for both generic and concrete casts.
+# A closed invariant dictionary preference would reject valid Kotlin covariance and authored map implementations.
++"method":"kotlinCollectionCastCandidate"
++"k":"const","type":{"t":"fqn","name":"System.Int32"},"value":18
++"k":"classRef","type":{"t":"fqn","name":"System.Collections.Generic.IDictionary\u00602"}
+-"method":"starProjectionCast"
+-"name":"System.Collections.Generic.IDictionary\u00602","args":

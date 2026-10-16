@@ -5,6 +5,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Support Kotlin-authored Map/MutableMap implementations and inherited members with exact CLR dictionary slots,
+  preserving Kotlin overrides, views and read-only identity across DLLs (#771).
+
 - Preserve array identity and mutations through star/use-site projections and generic-owner properties across DLLs,
   using open CLR array storage for value/reference components and consistent projected casts and type tests (#809).
 

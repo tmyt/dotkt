@@ -929,7 +929,7 @@ sealed class Pipeline
         // the Kotlin-vocabulary phase, because the pass keys on the frontend `overrides` identity — which does not
         // survive to CIR — and on Kotlin's own supertype graph. Non-ref builds only.
         if (!_options.RefBuild)
-            KotlinCollectionSlotSynthesis.ApplyAll(staged.Select(s => s.Root).ToList());
+            KotlinCollectionSlotSynthesis.ApplyAll(staged.Select(s => s.Root).ToList(), refs, isValueFqn);
 
         // NOMINAL COLLECTION CLASSIFIER IDENTITIES: the operational aliases intentionally share BCL faces
         // (Collection/Set -> IReadOnlyCollection, MutableCollection/MutableSet -> ICollection), which otherwise makes
@@ -1398,6 +1398,14 @@ sealed class Pipeline
             // Kotlin-faced) simply never has.
             ReadOnlyCollectionViewInterfaces.Apply(lowered);
         }
+
+        if (_options.RefBuild)
+            emittedLocalTypes.Add(KotlinMapStorageSynthesis.EmitReferenceSurface(
+                loweredRoots.Select(s => s.Root).ToList()));
+        else
+            foreach (var carrier in KotlinMapStorageSynthesis.ApplyAll(
+                         loweredRoots.Select(s => s.Root).ToList(), refs, _options.SubstituteStdlibBuild))
+                emittedLocalTypes.Add(carrier);
 
         if (!_options.RefBuild)
             foreach (var carrier in ReadOnlyCollectionStorageSynthesis.ApplyAll(
