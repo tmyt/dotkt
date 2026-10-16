@@ -32,3 +32,12 @@ open class CollectionConstructorReturn<T> {
     constructor(items: List<T>) { result = "list:" + items.size }
     constructor(value: Any) { result = "any:" + value }
 }
+
+class CollectionArrayConstructorReturn {
+    val result: Int
+    constructor(values: Array<Int>) { check(values.size == 1); result = 1 }
+    constructor(values: IntArray) { check(values.size == 1); result = 2 }
+}
+fun collectionArrayConstructorLocal(): Int =
+    CollectionArrayConstructorReturn(arrayOf(7)).result * 10 +
+        CollectionArrayConstructorReturn(intArrayOf(8)).result

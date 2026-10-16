@@ -295,14 +295,7 @@ static class RoundtripMetadata
         if (to["ctors"] is JsonArray ctors)
             foreach (var c in ctors) if (c is JsonObject co)
             {
-                if (co[DeclarationIdentityBinding.Key] is JsonValue constructorIdentity)
-                {
-                    Append(co, JsonCarrierAttr(AKDeclarationIdentity, new JsonObject {
-                        ["id"] = constructorIdentity.DeepClone(), ["name"] = ".ctor",
-                    }));
-                    co.Remove(DeclarationIdentityBinding.Key);
-                    co.Remove("declarationSourceName");
-                }
+                StampConstructorIdentity(co);
                 if ((co["aliasCtorAdapter"] as JsonValue)?.GetValue<string>() is string adapter)
                 {
                     Append(co, Marker(AKConstructorAdapter,
@@ -313,6 +306,20 @@ static class RoundtripMetadata
             }
         if (to["types"] is JsonArray nested)
             foreach (var t in nested) if (t is JsonObject nto) StampType(nto);
+    }
+
+    static void StampConstructorIdentity(JsonObject constructor)
+    {
+        if (constructor[DeclarationIdentityBinding.Key] is JsonValue identity)
+        {
+            var payload = new JsonObject { ["id"] = identity.DeepClone(), ["name"] = ".ctor" };
+            if (constructor[DeclarationSignatureIdentity.AllocatedKey]?.GetValue<bool>() == true)
+                payload[DeclarationSignatureIdentity.AllocationMetadataKey] = true;
+            Append(constructor, JsonCarrierAttr(AKDeclarationIdentity, payload));
+            constructor.Remove(DeclarationIdentityBinding.Key);
+            constructor.Remove("declarationSourceName");
+        }
+        constructor.Remove(DeclarationSignatureIdentity.AllocatedKey);
     }
 
     static void RecordTypeParameterVariances(JsonObject type)
@@ -800,6 +807,19 @@ static class RoundtripMetadata
             || !ReferenceEquals(first, ReferenceMetadataIndex.SelectDeclarationTwin(
                 new[] { second, first }, Identity, "probe:first")))
             throw new InvalidOperationException("Runtime twin association lost declaration identity or exact modifiers");
+        var constructor = Declaration("probe:constructor", "Probe.ConstructorSignature");
+        constructor[DeclarationSignatureIdentity.AllocatedKey] = true;
+        var constructorSignature = constructor["params"].ToJsonString();
+        StampConstructorIdentity(constructor);
+        var constructorArgs = constructor["attrs"][0]["args"];
+        var constructorPayload = BirCarrier.DecodeBody(constructorArgs[0]["value"].GetValue<string>(),
+            Convert.FromBase64String(constructorArgs[1]["bytes"].GetValue<string>()));
+        if (constructor.ContainsKey(DeclarationSignatureIdentity.AllocatedKey)
+            || constructor.ContainsKey(DeclarationIdentityBinding.Key)
+            || constructorPayload[DeclarationSignatureIdentity.AllocationMetadataKey]?.GetValue<bool>() != true
+            || constructorPayload["id"]?.GetValue<string>() != "probe:constructor"
+            || constructor["params"].ToJsonString() != constructorSignature)
+            throw new InvalidOperationException("Constructor identity lost allocation ownership or exact signature");
         Console.WriteLine("[runtime linkage] self-test OK (distinct IDs, opaque slots, exact signature modifiers)");
     }
 

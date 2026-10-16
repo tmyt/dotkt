@@ -253,6 +253,7 @@ STR_OK = {
                                                  # explicit get/set role, and file-local Property/accessor association.
                                                  # bir2cir consumes these after every semantic property pass has run.
     "defaultDeclarationId",                    # selected Kotlin default-argument declaration; consumed by DefaultArgSplice.
+    "constructorDeclarationId", "delegationDeclarationId",  # BIR selected constructor identities, not type slots.
     "declarationId", "declarationSourceName",    # #395: frontend declaration fingerprint + original Kotlin callable name;
                                                  # consumed by physical member allocation / round-trip metadata.
     "explicitClrName",                           # #402: BIR-only source-authored MethodDef name from @ClrName/@JvmName;
@@ -1309,14 +1310,18 @@ class V:
                     validate_aliases(val, p, lambda where, message: self.err(f, where, message))
                     continue
                 child_role = "signature" if role == "signature" and "t" in o else None
-                if key in ("methods", "ctors") and (path == "" or is_type_decl):
+                if key == "ctors" and (path == "" or is_type_decl):
+                    child_role = "constructor"
+                elif key == "methods" and (path == "" or is_type_decl):
                     child_role = "declaration"
                 elif key == "properties" and (path == "" or is_type_decl):
                     child_role = "property"
                 elif role == "property" and key in ("getSig", "setSig"):
                     child_role = "signature"
-                elif role == "declaration" and key == "params":
+                elif role in ("declaration", "constructor") and key == "params":
                     child_role = "parameter"
+                elif role == "constructor" and key == "delegationSig":
+                    child_role = "signature"
                 elif role == "declaration" and key in ("clrInterfaceImpls", "clrBaseImpls"):
                     child_role = "linkage"
                 elif role == "linkage" and key in ("params", "ret"):
@@ -1326,6 +1331,8 @@ class V:
                 elif "k" in o and key in ("calleeParams", "calleeRet"):
                     child_role = "signature"
                 elif o.get("k") in ("callStatic", "callInstance", "constrainedCall", "newDelegate") and key == "sig":
+                    child_role = "signature"
+                elif o.get("k") == "new" and key == "argTypes":
                     child_role = "signature"
                 elif o.get("k") in ("clrEventAdd", "clrEventRemove") and o.get("localAccessor") is True and key == "sig":
                     child_role = "signature"
