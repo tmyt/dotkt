@@ -4,21 +4,22 @@ using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 
-// Open Kotlin arrays retain the allocation's runtime component, independently of the caller's T.
+// Open Kotlin arrays retain the allocation's runtime component, independently of the caller's T or star projection.
 // The physical value slot is System.Array; exact native array signatures remain separate facts.
 // All access is materialized here as ordinary CLR calls, not reconstructed by ilemit.
 static class GenericArrayStorageLowering
 {
     internal static bool NeedsStorage(TypeNode.Array array) =>
-        array.SzArray && array.Rank == 1 && ContainsVariable(array.Elem);
+        array.SzArray && array.Rank == 1 && ContainsOpenComponent(array.Elem);
 
-    static bool ContainsVariable(TypeNode type) => type switch {
-        TypeNode.Tv => true,
-        TypeNode.Nullable n => ContainsVariable(n.Of),
-        TypeNode.Oblivious o => ContainsVariable(o.Of),
-        TypeNode.Projection p => ContainsVariable(p.Of),
-        TypeNode.Array a => ContainsVariable(a.Elem),
-        TypeNode.Fqn { Args: { } args } => args.Any(ContainsVariable),
+    static bool ContainsOpenComponent(TypeNode type) => type switch {
+        // A projection's bound is not the allocation's component: Array<out Any?>
+        // can hold an Int32[] just as Array<*> can.
+        TypeNode.Tv or TypeNode.Star or TypeNode.Projection => true,
+        TypeNode.Nullable n => ContainsOpenComponent(n.Of),
+        TypeNode.Oblivious o => ContainsOpenComponent(o.Of),
+        TypeNode.Array a => ContainsOpenComponent(a.Elem),
+        TypeNode.Fqn { Args: { } args } => args.Any(ContainsOpenComponent),
         _ => false,
     };
 
@@ -182,7 +183,10 @@ static class GenericArrayStorageLowering
         {
             while (expected is TypeNode.Nullable or TypeNode.Oblivious or TypeNode.Projection)
                 expected = expected switch { TypeNode.Nullable n => n.Of, TypeNode.Oblivious o => o.Of,
+                    // An in-projection has Any? as its readable bound, not its write bound.
+                    TypeNode.Projection { Variance: "in" } => new TypeNode.Star(),
                     TypeNode.Projection p => p.Of, _ => expected };
+            if (expected is TypeNode.Star) return Bool(true);
             if (expected is TypeNode.Tv variable)
             {
                 if (!variables.Add(variable)) throw new InvalidOperationException("Cyclic array-cast erasure bound");
@@ -245,6 +249,16 @@ static class GenericArrayStorageLowering
 
     internal static void SelfTest()
     {
+        var openComponents = new TypeNode[] {
+            new TypeNode.Star(), new TypeNode.Tv("method", 0),
+            new TypeNode.Projection("out", new TypeNode.Fqn("kotlin.Any")),
+            new TypeNode.Projection("in", new TypeNode.Fqn("kotlin.Int")),
+            new TypeNode.Array(new TypeNode.Star()),
+        };
+        if (openComponents.Any(component => !NeedsStorage(new TypeNode.Array(component)))
+            || NeedsStorage(new TypeNode.Array(new TypeNode.Fqn("kotlin.Int")))
+            || NeedsStorage(new TypeNode.Array(new TypeNode.Star(), Rank: 2, SzArray: false)))
+            throw new InvalidOperationException("Open array storage lost its component or native-shape distinction");
         var actual = Local("component", new TypeNode.Fqn("System.Type"));
         var classifier = new JsonObject { ["k"] = "const", ["type"] = Type("System.Boolean"), ["value"] = false };
         var check = ErasedComponentCheck(new TypeNode.Fqn("System.Object"), actual, classifier);

@@ -16,6 +16,47 @@ class ArraySourceSurface(
 }
 
 class GenericArraySource<T>(val values: Array<T>)
+fun firstStarArray(values: Array<*>): Any? = values[0]
+fun relayStarArray(values: Array<*>): Array<*> = values
+fun <T> genericStarArray(values: Array<T>): Array<*> = values
+fun nullableStarArray(values: Array<*>?): Array<*>? = values
+fun castStarArray(value: Any?): Array<*>? = value as? Array<*>
+fun projectedStarArray(values: Array<out Any?>): Array<*> = values
+fun writeProjectedArray(values: Array<in Int>, value: Int) { values[0] = value }
+fun castWritableIntArray(value: Any): Array<in Int>? = value as? Array<in Int>
+
+fun checkLocalStarArraySources() {
+    val values = arrayOf(7, 8)
+    check(firstStarArray(values) == 7)
+    val projected = relayStarArray(values)
+    check(projected === values && genericStarArray(values) === values)
+    values[0] = 9
+    check(projected[0] == 9 && projected.iterator().next() == 9)
+    check(projectedStarArray(values) === values)
+    writeProjectedArray(values, 11)
+    check(projected[0] == 11)
+    val source: GenericArraySource<*> = GenericArraySource(values)
+    check(source.values === values && source.values[0] == 11)
+    check(nullableStarArray(values) === values && nullableStarArray(null) == null)
+    check(castStarArray(values) === values)
+    check(castStarArray(null) == null && castStarArray("not an array") == null)
+    val nullable = arrayOf<Int?>(null, 13)
+    check(relayStarArray(nullable) === nullable && firstStarArray(nullable) == null)
+    nullable[0] = 17
+    check(relayStarArray(nullable)[0] == 17)
+    val references = arrayOf("a", "b")
+    check(genericStarArray(references) === references && firstStarArray(references) == "a")
+    references[0] = "changed"
+    check(relayStarArray(references)[0] == "changed")
+    check(castWritableIntArray(references) === references)
+    val objects = arrayOf<Any?>(null)
+    writeProjectedArray(objects, 19)
+    check(objects[0] == 19)
+    val nested = arrayOf(arrayOf(23))
+    check(relayStarArray(nested) === nested)
+    check((firstStarArray(nested) as Array<*>)[0] == 23)
+}
+
 class ArraySourceBox<T>(val value: T)
 interface ArraySourceEdge<T> { fun value(): T }
 class IntArraySourceEdge(val items: Array<Int>) : ArraySourceEdge<Array<Int>> {
