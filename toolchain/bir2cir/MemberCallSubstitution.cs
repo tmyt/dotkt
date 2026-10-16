@@ -1667,7 +1667,7 @@ static class MemberCallSubstitution
         // Rule 5m (MAP-interface defaults): Map/MutableMap both alias IDictionary<K,V> (see the stdlib rationale), but
         // most Kotlin map members have no 1:1 IDictionary equivalent — `get` is null-on-missing while get_Item THROWS,
         // put/remove return the previous value, and the keys/values/entries views are Kotlin-typed. Route them to the
-        // rt's ClrMapDefaults statics, generic over BOTH type args (the 2-type-arg mirror of CollDefaultCall). Members
+        // rt's ClrMapDefaults statics, generic over BOTH type args (the 2-type-arg mirror of CollDefaultCall).
         // Source map members use this semantic dispatcher; already-bound native CLR calls retain their own slots.
         if (instance && kind == "interface" &&
             (ownerFqn == "kotlin.collections.Map" || ownerFqn == "kotlin.collections.MutableMap"))
