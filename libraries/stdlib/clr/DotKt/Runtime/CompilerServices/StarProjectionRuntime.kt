@@ -12,6 +12,12 @@ internal interface StarProjectionModule
 @kotlin.clr.ClrTypeAlias("System.Reflection.MethodInfo")
 @PublishedApi
 internal interface StarProjectionMethod {
+    @property:kotlin.clr.ClrProperty(kotlin.clr.READ, "IsVirtual")
+    val isVirtual: Boolean
+
+    @kotlin.clr.ClrIntrinsic("GetBaseDefinition")
+    fun getBaseDefinition(): StarProjectionMethod
+
     @property:kotlin.clr.ClrProperty(kotlin.clr.READ, "IsStatic")
     val isStatic: Boolean
 
@@ -183,7 +189,7 @@ internal interface StarProjectionDelegate {
 }
 
 @kotlin.clr.ClrIntrinsic("GetType")
-private fun Any.starProjectionRuntimeType(): StarProjectionType = TODO("clr binding should be implemented")
+internal fun Any.starProjectionRuntimeType(): StarProjectionType = TODO("clr binding should be implemented")
 
 // CLR generics are reified, so an arbitrary foreign G<X> has no nominal type that can represent Kotlin's G<*>.
 // bir2cir keeps the value itself (no wrapper) and calls this runtime only for classifier tests/casts and member
@@ -1006,7 +1012,7 @@ private fun rawListIsMapStorage(receiver: Any): Boolean {
 
 // Prefer the read-only contract and fall back to its mutable counterpart. A List's parent Collection
 // closure can be independent even when the same object also exposes dictionary entry storage.
-private fun findErasedProjectedView(receiver: Any, preferred: String, fallback: String,
+internal fun findErasedProjectedView(receiver: Any, preferred: String, fallback: String,
     excludeDictionaryStorage: Boolean = false, elementWitness: StarProjectionType? = null,
     failOnAmbiguity: Boolean = true, requiredElement: StarProjectionType? = null): StarProjectionType? {
     val runtimeType = receiver.starProjectionRuntimeType()
@@ -1066,11 +1072,19 @@ private fun findErasedProjectedView(receiver: Any, preferred: String, fallback: 
     // Preference chooses between two representations of the same element closure, not between
     // unrelated contracts. Distinct element types remain ambiguous across the two definitions too.
     if (preferredMatch != null && fallbackMatch != null
-        && preferredMatch.getGenericArguments()[0] != fallbackMatch.getGenericArguments()[0]) {
+        && !sameProjectedArguments(preferredMatch, fallbackMatch)) {
         if (!failOnAmbiguity) return null
         throw IllegalStateException("Ambiguous projected view " + preferred + " or " + fallback)
     }
     return preferredMatch ?: fallbackMatch
+}
+
+private fun sameProjectedArguments(left: StarProjectionType, right: StarProjectionType): Boolean {
+    val first = left.getGenericArguments()
+    val second = right.getGenericArguments()
+    if (first.size != second.size) return false
+    for (index in first.indices) if (first[index] != second[index]) return false
+    return true
 }
 
 // List/Set contribute Kotlin Collection contracts independently of dictionary storage. Select their
@@ -1084,7 +1098,7 @@ private fun isIndependentCollectionView(view: StarProjectionType): Boolean {
     }
 }
 
-private fun erasedProjectedMethod(view: StarProjectionType, name: String, parameterCount: Int): StarProjectionMethod {
+internal fun erasedProjectedMethod(view: StarProjectionType, name: String, parameterCount: Int): StarProjectionMethod {
     var match: StarProjectionMethod? = null
     for (candidate in view.getMethods()) {
         if (candidate.name != name || candidate.getParameters().size != parameterCount) continue
@@ -1144,7 +1158,7 @@ internal fun projectedSetViewCount(receiver: Any, sourceWitness: Any?): Int {
     return projectedParentCollectionCount(receiver, set, collectionName)
 }
 
-private fun projectedSetFamily(receiver: Any, sourceWitness: Any?,
+internal fun projectedSetFamily(receiver: Any, sourceWitness: Any?,
     failOnAmbiguity: Boolean = true): StarProjectionType? {
     // The operation supplies its static view preference. No originating view survives opaque value transport.
     val element = if (sourceWitness == null) null else (sourceWitness as StarProjectionType).getGenericArguments()[0]
@@ -1164,7 +1178,7 @@ internal fun projectedSetEnumeratorErased(receiver: Any, sourceWitness: Any?): A
     return projectedFamilyEnumerator(receiver, family)
 }
 
-private fun projectedFamilyEnumerator(receiver: Any, family: StarProjectionType): Any {
+internal fun projectedFamilyEnumerator(receiver: Any, family: StarProjectionType): Any {
     var enumerable: StarProjectionType? = null
     for (parent in family.getInterfaces()) {
         if (!parent.isGenericType
@@ -1238,7 +1252,7 @@ internal fun projectedMutableSetCountErased(receiver: Any): Int {
 
 // Follow the selected family to its actual parent Count declaration. Unrelated Collection
 // implementations on the original receiver cannot change that family's size.
-private fun projectedParentCollectionCount(receiver: Any, view: StarProjectionType, collectionName: String): Int {
+internal fun projectedParentCollectionCount(receiver: Any, view: StarProjectionType, collectionName: String): Int {
     return try {
         var getter: StarProjectionMethod? = if (view.isGenericType
             && view.getGenericTypeDefinition().fullName == collectionName)

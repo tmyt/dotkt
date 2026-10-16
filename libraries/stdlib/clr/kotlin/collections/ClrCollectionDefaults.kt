@@ -664,6 +664,8 @@ public fun <T> clrProjectedListListIterator(list: Any, index: Int): ListIterator
 // subList -> a live read-only view. ClrSubList implements List (@Clr) so it gets get_Count/get_Item (C3a) + a generated
 // GetEnumerator (the reverse bridge). It only needs size/get; the non-BCL members route to the helpers above.
 private class ClrSubList<T>(private val backing: List<T>, private val fromIndex: Int, private val toIndex: Int) : List<T> {
+    override fun equals(other: Any?): Boolean = DotKt.Runtime.CompilerServices.structuralEquals(this, other, 0)
+
     init { clrCheckSubListBounds(backing.size, fromIndex, toIndex) }
 
     override val size: Int get() = toIndex - fromIndex
@@ -695,6 +697,8 @@ private class ClrProjectedListView<T>(
     private val toIndex: Int,
     private val preferredView: Any?,
 ) : List<T> {
+    override fun equals(other: Any?): Boolean = DotKt.Runtime.CompilerServices.structuralEquals(this, other, 0)
+
     init { clrCheckSubListBounds(projectedViewCountErased(backing, preferredView, 3), fromIndex, toIndex) }
 
     override val size: Int get() = toIndex - fromIndex
@@ -732,6 +736,8 @@ private class ClrProjectedMutableSubList<T>(
     private var end: Int,
     private val parent: ClrProjectedMutableSubList<T>? = null,
 ) : MutableList<T> {
+    override fun equals(other: Any?): Boolean = DotKt.Runtime.CompilerServices.structuralEquals(this, other, 0)
+
     init { clrCheckSubListBounds(projectedMutableListCountErased(backing), start, end) }
 
     override val size: Int get() = end - start
@@ -882,28 +888,4 @@ public fun <T> clrProjectedMutableListSubList(list: Any, fromIndex: Int, toIndex
             ?: ClrProjectedMutableSubList(result, 0, projectedMutableListCountErased(result))
     }
     return ClrProjectedMutableSubList(list, fromIndex, toIndex)
-}
-
-// ---- Structural equality (Kotlin `==` on collections is structural; the substituted BCL types use REFERENCE ----
-// Object.Equals, so the backend routes a collection `==` here). Null-safe: the backend passes the raw operands.
-
-/** Kotlin structural List/ordered-collection equality: same size, elementwise-equal IN ORDER. */
-public fun <T> clrCollStructEquals(a: Collection<T>?, b: Collection<T>?): Boolean {
-    if (a === b) return true
-    if (a == null || b == null) return false
-    if (a.size != b.size) return false
-    val ai = a.iterator()
-    val bi = b.iterator()
-    while (ai.hasNext()) {
-        if (ai.next() != bi.next()) return false
-    }
-    return true
-}
-
-/** Kotlin structural Set equality: same size and each element mutually contained (unordered). */
-public fun <T> clrSetStructEquals(a: Collection<T>?, b: Collection<T>?): Boolean {
-    if (a === b) return true
-    if (a == null || b == null) return false
-    if (a.size != b.size) return false
-    return clrCollContainsAll(a, b)
 }

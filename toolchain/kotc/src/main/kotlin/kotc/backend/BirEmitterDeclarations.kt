@@ -2658,9 +2658,19 @@ internal fun BirEmitter.isAnySlotMethod(fn: IrSimpleFunction): Boolean {
 	// universal slot — it takes an argument on the CLR. Counting only the regular parameters made it `reg == 0`,
 	// renaming `ToString(C)` onto System.Object's slot (the exact arity gate bir2cir's AnySlotRebind relies on).
 	val reg = fn.parameters.count { isValueParameter(it) }
-	return when (fn.name.asString()) {
+	val slotShape = when (fn.name.asString()) {
 		"toString", "hashCode" -> reg == 0
 		"equals" -> reg == 1
 		else -> false
 	}
+	if (!slotShape) return false
+	// An overload with the same name and arity is not an Any slot. Preserve the
+	// frontend's actual override ancestry, rather than inferring it from a name.
+	val seen = mutableSetOf<IrSimpleFunction>()
+	fun overridesAny(candidate: IrSimpleFunction): Boolean {
+		if (!seen.add(candidate)) return false
+		if ((candidate.parent as? IrClass)?.fqNameWhenAvailable?.asString() == "kotlin.Any") return true
+		return candidate.overriddenSymbols.any { overridesAny(it.owner) }
+	}
+	return overridesAny(fn)
 }

@@ -20,6 +20,8 @@ package kotlin.collections
  */
 @SinceKotlin("1.1")
 public actual abstract class AbstractMutableMap<K, V> protected actual constructor() : MutableMap<K, V> {
+    override fun equals(other: Any?): Boolean = DotKt.Runtime.CompilerServices.structuralEquals(this, other, 2)
+
 
     private fun implFindEntry(key: K): MutableMap.MutableEntry<K, V>? = entries.firstOrNull { it.key == key }
 

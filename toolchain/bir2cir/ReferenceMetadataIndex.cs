@@ -1353,6 +1353,27 @@ sealed partial class ReferenceMetadataIndex
         return _kotlinMapStorageDefinitions = result.OrderBy(name => name, StringComparer.Ordinal).ToArray();
     }
 
+    public IReadOnlyList<string> KotlinEqualityStorageDefinitions(string classifier)
+    {
+        var result = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var (identity, shape) in _referenceTypeShapes)
+        {
+            if (!_ownerAlias.ContainsKey(identity.Name) || shape.Kind != "class") continue;
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            var pending = new Queue<TypeNode.Fqn>(shape.Interfaces ?? Array.Empty<TypeNode.Fqn>());
+            if (shape.Base != null) pending.Enqueue(shape.Base);
+            while (pending.TryDequeue(out var face))
+            {
+                if (!seen.Add(face.Name)) continue;
+                foreach (var (parent, _) in ReferencedSupertypes(face)) pending.Enqueue(parent);
+            }
+            if (seen.Contains("kotlin.collections." + classifier)
+                || seen.Contains("kotlin.collections.Mutable" + classifier))
+                result.Add(ExactReflectedOwner(identity.Name, identity.Arity));
+        }
+        return result.OrderBy(name => name, StringComparer.Ordinal).ToArray();
+    }
+
     // The static counterpart of kotlinCollectionStorageMatches. Reflection supplies the exact
     // constructed interface identities, including substitutions through foreign base classes.
     // A Kotlin subclass must not turn an inherited alias's storage into a permanent nominal marker.

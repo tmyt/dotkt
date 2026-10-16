@@ -139,21 +139,6 @@ static class FaithfulHints
             : Helper(CollDefaults, "clrCollToString", new JsonArray { op.DeepClone() },
                 new JsonArray { CollectionMethodTv() }, CollTypeArgs(kind, args));
 
-    // Kotlin STRUCTURAL `==` on the SAME collection kind: clrCollStructEquals / clrSetStructEquals / clrMapStructEquals.
-    // type-args come from the LEFT operand's kind/args.
-    public static JsonObject StructEquals(JsonNode lu, JsonNode ru, CollKind kind, TypeNode[] leftArgs)
-    {
-        var (owner, method) = kind switch
-        {
-            CollKind.Map => (MapDefaults, "clrMapStructEquals"),
-            CollKind.Set => (CollDefaults, "clrSetStructEquals"),
-            _ => (CollDefaults, "clrCollStructEquals"),
-        };
-        JsonNode slot = kind == CollKind.Map ? Nullable(TypeJson.Fqn("kotlin.Any")) : Nullable(CollectionMethodTv());
-        return Helper(owner, method, new JsonArray { lu.DeepClone(), ru.DeepClone() },
-            new JsonArray { slot.DeepClone(), slot }, CollTypeArgs(kind, leftArgs));
-    }
-
     // Double/Float total-order helpers on kotlin.NumbersKt (NO type-args). `method` = clrDoubleCompare/clrFloatCompare
     // (compareTo) or clrDoubleEquals/clrFloatEquals (boxed `==` / explicit `.equals`).
     public static JsonObject FloatCall(string method, JsonNode a, JsonNode b) =>
@@ -306,8 +291,8 @@ static class FaithfulHintRecognition
     }
 
     // `objMethod ToString`: a collection/Map receiver (StaticType.Value of `recv`) -> clrCollToString/clrMapToString
-    // (Kotlin `[a, b]`); else keep the plain .NET ToString. `objMethod Equals`: SAME collection kind -> struct-eq
-    // helper; both non-null Double/Float -> float-equals helper; else keep Object.Equals. (#59 — the former
+    // (Kotlin `[a, b]`); else keep the plain .NET ToString. `objMethod Equals`: both non-null
+    // Double/Float -> float-equals helper; all other equality is resolved by KotlinEqualityLowering. (#59 — the former
     // recvType/argType hints, recovered structurally.)
     static JsonNode TransformObjMethod(JsonObject o, BirScope scope)
     {
@@ -322,11 +307,6 @@ static class FaithfulHintRecognition
         {
             var recvT = StaticType.Value(erecv, scope);
             var argT = StaticType.Value(earg, scope);
-            var rc = recvT != null ? FaithfulHints.ClassifyColl(recvT) : null;
-            var ac = argT != null ? FaithfulHints.ClassifyColl(argT) : null;
-            if (rc is { } rk && ac is { } ak && rk.kind == ak.kind)
-                return FaithfulHints.StructEquals(
-                    FaithfulHints.StripAnyCast(o["recv"]), FaithfulHints.StripAnyCast(o["arg"]), rk.kind, rk.args);
             if (recvT != null && argT != null && FloatEqualsMethod(recvT, argT) is string fm)
                 return FaithfulHints.FloatCall(fm, FaithfulHints.StripAnyCast(o["recv"]), FaithfulHints.StripAnyCast(o["arg"]));
             return o;

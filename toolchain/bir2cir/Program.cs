@@ -585,7 +585,7 @@ sealed class Pipeline
             // `callInstance compareTo`) with NO type hint; bir2cir
             // recovers the collection/Map/Double/Float/null operand types via StaticType (StaticTypeResolver.cs) and
             // selects the stdlib helper required by the semantic operation (clrCollToString/clrMapToString/
-            // clrCollStructEquals/clrDoubleCompare/LibraryKt.toString…). (The EQEQ family is handled by
+            // clrDoubleCompare/LibraryKt.toString…). (The EQEQ family is handled by
             // PrimitiveOperatorLowering above.) Runs SECOND — right after the primitive-op restore, before the compareTo
             // callInstance reaches MemberCallSubstitution's primitive-compareTo -> System.Double.CompareTo routing, and
             // before any type-erasing pass — so the inner value nodes stay pure kotlin.* and lower normally downstream.
@@ -659,6 +659,7 @@ sealed class Pipeline
             // rebind to an `objMethod` (virtual dispatch to the runtime slot). Fires ONLY where FindMethod would throw, so
             // a type declaring its own override is untouched. Runs AFTER ObjectSlotRename (call `method` is BCL here).
             if (!_options.RefBuild) AnySlotRebind.Apply(bir.Root, localRefTypes);
+            if (!_options.RefBuild) KotlinEqualityLowering.Apply(bir.Root);
             // NULLABLE-GENERIC erasure — THE DECLARATION AXIS of #86's erasure invariant (ALL builds, so ref.dll +
             // rt.dll + the app's view of a signature agree). `Nullable(Tv)` (a nullable UNCONSTRAINED type variable
             // `T?`) has no CLR type of its own: `Nullable<T>` is inexpressible for an unconstrained T, and a bare `!T`

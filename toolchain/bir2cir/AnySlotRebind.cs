@@ -24,8 +24,8 @@ using System.Text.Json.Nodes;
 // It fires ONLY where ilemit would throw: the owner is a locally-declared reference type whose own declaration AND
 // resolvable base chain (a local base that declares it, or ANY external/.NET base whose inherited slot ilemit reflects)
 // provide no such slot. A type declaring its own override (`Box.toString`) keeps its working direct call/reference; a
-// `super.M()` (its own kotlin.Any owner + `super:true`, handled by MemberCallSubstitution as a non-virtual base call)
-// never reaches this owner shape. For an interface receiver whose slot ilemit COULD resolve via a super-interface's
+// `super.M()` remains nonvirtual; a retained Kotlin Any-slot fact also lets an inherited fake declaration bind to
+// its actual Object root. For an interface receiver whose slot ilemit COULD resolve via a super-interface's
 // abstract redeclaration (FindInInterfaces), the rebind is a benign no-op-equivalent: both `callvirt <iface>::Slot` and
 // `callvirt object::Slot` are virtual dispatch to the runtime type.
 static class AnySlotRebind
@@ -106,13 +106,20 @@ static class AnySlotRebind
         var isDelegate = k is "newBoundDelegate" or "newBoundClrDelegate";
         if (!isCall && !isDelegate) return;
         if ((obj["method"] as JsonValue)?.TryGetValue<string>(out var method) != true || !ObjectSlots.Contains(method)) return;
-        // A `super.M()` rides in with its own kotlin.Any owner + `super:true` and must stay a non-virtual base call
-        // (a callvirt would re-dispatch to THIS type's override and infinite-loop, #14). Belt-and-braces: its owner
-        // (kotlin.Any) is never in `types` anyway, so the owner gate below already excludes it.
-        if ((obj["super"] as JsonValue)?.TryGetValue<bool>(out var sup) == true && sup) return;
+        var isSuper = (obj["super"] as JsonValue)?.TryGetValue<bool>(out var sup) == true && sup;
+        if (isSuper && obj["anySlot"]?.GetValue<bool>() != true) return;
         var owner = TypeJson.OwnerName(obj["ownerType"]);
         if (owner == null || !types.ContainsKey(owner)) return;     // non-local owner -> resolved by another binder
         if (ResolvesSlot(types, owner, method)) return;             // declared here or on a resolvable base
+
+        // A fake inherited Any declaration need not have a MethodDef on the
+        // selected immediate base. Bind its real root without changing dispatch:
+        // super.equals stays a nonvirtual Object call, never the runtime helper.
+        if (isSuper)
+        {
+            obj["ownerType"] = TypeJson.Fqn("kotlin.Any");
+            return;
+        }
 
         if (isDelegate)
         {
