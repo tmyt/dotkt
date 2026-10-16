@@ -764,10 +764,11 @@ Consequences and remaining implementation limitations:
 
 - **A Kotlin `Map` value slot surfaces to C# as `object`**, with Kotlin metadata restoring `Map<K,V>` for Kotlin
   consumers. Concrete dictionaries and mutable dictionary declarations remain reified. `emptyMap()` returns a fresh
-  Dictionary-backed map (the pure-Kotlin `EmptyMap` singleton cannot satisfy the IDictionary surface).
+  Dictionary-backed map.
 - **`Map.get` is null-on-missing** (Kotlin semantics), synthesized as `ContainsKey` + `get_Item` in
-  `kotlin.collections.ClrMapDefaults` (`IDictionary`'s raw indexer throws); `put`/`remove` return the previous value
-  the same way. `size`/`containsKey`/`clear` bind 1:1 (`Count`/`ContainsKey`/`Clear`).
+  `kotlin.collections.ClrMapDefaults` (the generic CLR indexer throws); `put`/`remove` return the previous value.
+  Authored implementations dispatch to their original methods; native dictionary slots translate these conventions
+  separately. `size`, `containsKey`, and `clear` also preserve authored dispatch.
 - **Authored maps preserve their original views and overrides.** Kotlin map calls dispatch through compiler-owned
   read/mutation capabilities. Their native dictionary facade translates CLR-specific indexer, mutation, pair and
   enumeration contracts without replacing Kotlin entries or copying the map. Native key/value collection adapters
@@ -781,9 +782,9 @@ Consequences and remaining implementation limitations:
   stable physical MethodDef names after erasure; neither declaration order nor an emitter-local `$dupN` repair
   chooses the call target. Destructuring `for ((k,v) in m)` therefore follows the overload selected by Kotlin for
   the receiver's static type.
-- A **user class implementing `Map`/`MutableMap` in pure Kotlin** must satisfy the full `IDictionary` surface; today
-  only the `@ClrIntrinsic`-renamed slots are generated, so such classes (stdlib `AbstractMap`, `MapWithDefaultImpl`)
-  fail to LOAD when touched — the known under-tested pure-Kotlin dual-rep path (`dual-representation-stdlib-types`).
+- A **user class implementing `Map`/`MutableMap` in pure Kotlin** receives the full native dictionary surface from
+  bir2cir. Kotlin-only properties are not treated as nonexistent dictionary members. This also applies to inherited
+  implementations and independently compiled Kotlin libraries.
 - **Map delegation (`val name by data`) requires a String-KEYED map at runtime.** The stdlib
   `Map<in String, V>.getValue` body pins `getOrImplicitDefault`'s K to `String` (a `(this as Map<String, V>)` CLR
   adaptation in `MapAccessors.kt`): the frontend approximates the contravariant captured K to `Any`, which under
