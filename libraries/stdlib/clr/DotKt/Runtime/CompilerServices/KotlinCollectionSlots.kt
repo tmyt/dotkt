@@ -26,6 +26,64 @@ internal interface KotlinSetClassifier : KotlinCollectionClassifier
 @PublishedApi
 internal interface KotlinMutableSetClassifier : KotlinSetClassifier, KotlinMutableCollectionClassifier
 
+/** Kotlin map behavior is independent of the native dictionary's signatures and missing-key conventions. */
+@PublishedApi
+internal interface KotlinMapDefaultSlots {
+    fun dotktMapSize(): Int
+    fun dotktMapIsEmpty(): Boolean
+    fun dotktMapContainsKey(key: Any?): Boolean
+    fun dotktMapContainsValue(value: Any?): Boolean
+    fun dotktMapGet(key: Any?): Any?
+    fun dotktMapKeys(): Any
+    fun dotktMapValues(): Any
+    fun dotktMapEntries(): Any
+
+    fun dotktMapGetOrDefault(key: Any?, defaultValue: Any?): Any? {
+        val value = dotktMapGet(key)
+        return if (value != null || dotktMapContainsKey(key)) value else defaultValue
+    }
+}
+
+@PublishedApi
+internal interface KotlinMutableMapSlots {
+    fun dotktMapPut(key: Any?, value: Any?): Any?
+    fun dotktMapRemove(key: Any?): Any?
+    fun dotktMapPutAll(from: Any)
+    fun dotktMapClear()
+    fun dotktMapMutableKeys(): Any
+    fun dotktMapMutableValues(): Any
+    fun dotktMapMutableEntries(): Any
+
+    fun dotktMapRemoveEntry(key: Any?, value: Any?): Boolean {
+        val read = this as KotlinMapDefaultSlots
+        if (!read.dotktMapContainsKey(key) || read.dotktMapGet(key) != value) return false
+        dotktMapRemove(key)
+        return true
+    }
+
+    fun dotktMapPutIfAbsent(key: Any?, value: Any?): Any? {
+        val oldValue = (this as KotlinMapDefaultSlots).dotktMapGet(key)
+        return if (oldValue == null) dotktMapPut(key, value) else oldValue
+    }
+
+    fun dotktMapReplace(key: Any?, value: Any?): Any? =
+        if ((this as KotlinMapDefaultSlots).dotktMapContainsKey(key)) dotktMapPut(key, value) else null
+
+    fun dotktMapReplaceEntry(key: Any?, oldValue: Any?, newValue: Any?): Boolean {
+        val read = this as KotlinMapDefaultSlots
+        if (!read.dotktMapContainsKey(key) || read.dotktMapGet(key) != oldValue) return false
+        dotktMapPut(key, newValue)
+        return true
+    }
+
+    fun dotktMapMerge(key: Any?, value: Any?, remapping: (Any?, Any?) -> Any?): Any? {
+        val oldValue = (this as KotlinMapDefaultSlots).dotktMapGet(key)
+        val newValue = if (oldValue == null) value else remapping(oldValue, value)
+        if (newValue == null) dotktMapRemove(key) else dotktMapPut(key, newValue)
+        return newValue
+    }
+}
+
 // SUPPLEMENTAL KOTLIN SLOTS FOR @ClrTypeAlias'd COLLECTION INTERFACES.
 //
 // `kotlin.collections.MutableCollection<E>` IS `System.Collections.Generic.ICollection<E>` and

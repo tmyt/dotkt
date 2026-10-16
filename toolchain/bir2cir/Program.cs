@@ -1400,6 +1400,11 @@ sealed class Pipeline
         }
 
         if (!_options.RefBuild)
+            foreach (var carrier in KotlinMapStorageSynthesis.ApplyAll(
+                         loweredRoots.Select(s => s.Root).ToList(), refs))
+                emittedLocalTypes.Add(carrier);
+
+        if (!_options.RefBuild)
             foreach (var carrier in ReadOnlyCollectionStorageSynthesis.ApplyAll(
                          loweredRoots.Select(s => s.Root).ToList(), refs))
                 emittedLocalTypes.Add(carrier);

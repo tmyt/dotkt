@@ -1087,32 +1087,20 @@ static class MemberCallSubstitution
                         $"bir2cir: unresolved top-level property accessor '{fn}' ({topLevelPropertyAccess}) — "
                         + "the frontend-resolved property has no exact reference MethodSemantics association");
             }
-            // STAR-PROJECTED Map<*,*> cross-module extension (#74a): `m[key]`/`m.containsKey(key)` on a star-projected
-            // `Map<*,*>` receiver is NOT dispatched as the Map interface MEMBER (a star receiver's `K`-typed param
-            // isn't a viable member-call argument) — Kotlin instead resolves the top-level `@kotlin.internal.
-            // OnlyInputTypes` extension `Map<out K,V>.get`/`.containsKey` (Maps.kt). That extension is `@InlineOnly`
-            // but is NOT actually inlined cross-module (the frontend klib carries no IR bodies for it), so it arrives
-            // HERE as a genuine generic top-level call instantiated K=V=`object`/`Any?` (the star erasure). Its
-            // compiled body re-casts internally to the covariance-safe non-generic `IDictionary` facade
-            // (`ClrRawDictionary`), but the CALL BOUNDARY's own formal param — `Map<K,V>` = the INVARIANT generic
-            // `IDictionary<object,object>` at this instantiation — throws InvalidCastException first (the real
-            // receiver's runtime type, e.g. `Dictionary<String,Int>`, is not assignable to it). Recognize this
-            // exact shape and emit the non-generic `IDictionary.get_Item`/`.Contains` call directly (its indexer is
-            // null-on-missing, matching Kotlin `Map.get`'s null-on-missing exactly) — bypassing the generic route.
+            // Star queries can resolve to the common OnlyInputTypes extensions rather than a member.
+            // They still own Kotlin map semantics: use the same opaque receiver dispatcher as member calls.
             if ((fn == "get" || fn == "containsKey") && args0.Count == 2 && sigParts0.Count >= 1
                 && sigParts0[0] is TypeNode.Fqn { Name: "kotlin.collections.Map" or "kotlin.collections.MutableMap" }
                 && node["typeArgs"] is JsonArray starTypeArgs && starTypeArgs.Count >= 1
                 && starTypeArgs.All(t => IsErasedAny(TypeJson.Read(t))))
-                return new JsonObject
-                {
-                    ["k"] = "clrInstance",
-                    ["type"] = TypeJson.Fqn("System.Collections.IDictionary"),
-                    ["method"] = fn == "get" ? "get_Item" : "Contains",
-                    ["argTypes"] = new JsonArray { TypeJson.Fqn("System.Object") },
-                    ["ret"] = TypeJson.Fqn(fn == "get" ? "System.Object" : "System.Boolean"),
-                    ["recv"] = args0[0]?.DeepClone(),
-                    ["args"] = new JsonArray { args0[1]?.DeepClone() },
-                };
+            {
+                var receiverCall = (JsonObject)node.DeepClone();
+                receiverCall["recv"] = args0[0]?.DeepClone();
+                var erased = new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"));
+                return MapDefaultCall(receiverCall, fn == "get" ? "clrMapGet" : "clrMapContainsKey",
+                    new TypeNode.Fqn("kotlin.collections.Map", new TypeNode[] { erased, erased }),
+                    new JsonArray(args0[1]?.DeepClone()), refs, ctx);
+            }
             // A top-level @ClrIntrinsic bound to a FQ BCL static. Resolve the EXACT overload by the call's full
             // ParamKey signature first (sqrt/abs/pow -> System.Math.* for Double/Int/Long but System.MathF.* for
             // Float; a non-intrinsic sibling like Double.pow(Int) MISSES here). Fall back to the name-only map only for
@@ -1700,27 +1688,6 @@ static class MemberCallSubstitution
         if (instance && kind == "interface" &&
             (ownerFqn == "kotlin.collections.Map" || ownerFqn == "kotlin.collections.MutableMap"))
         {
-            // STAR-PROJECTED Map<*,*> (#74a): `get`/`containsKey` on an ALL-erased Map/MutableMap owner would
-            // otherwise route to the generic ClrMapDefaultsKt.clrMapGet/clrMapContainsKey helper below, whose FORMAL
-            // param is `Map<K,V>` = the INVARIANT generic `IDictionary<object,object>` at this K=V=object
-            // instantiation. The real receiver's runtime type (e.g. `Dictionary<String,Int>`) is NOT assignable to
-            // that generic instantiation (CLR generics are reified + invariant) even though the helper's BODY
-            // immediately re-casts to the covariance-safe NON-generic `IDictionary` facade (`ClrRawDictionary`) —
-            // the call BOUNDARY itself throws InvalidCastException before the body ever runs. Skip the generic
-            // helper entirely and emit the non-generic call directly: `IDictionary.get_Item`/`.Contains` (both
-            // implemented by every `Dictionary<K,V>` regardless of K/V — `IDictionary<K,V> : IDictionary`, so no
-            // recv cast is needed). `IDictionary`'s indexer is null-on-missing, matching Kotlin `Map.get` exactly.
-            if (FaithfulHints.IsStarProjectedColl(ownerFqnNode) && args.Count >= 1 && member is "get" or "containsKey")
-                return new JsonObject
-                {
-                    ["k"] = "clrInstance",
-                    ["type"] = TypeJson.Fqn("System.Collections.IDictionary"),
-                    ["method"] = member == "get" ? "get_Item" : "Contains",
-                    ["argTypes"] = new JsonArray { TypeJson.Fqn("System.Object") },
-                    ["ret"] = TypeJson.Fqn(member == "get" ? "System.Object" : "System.Boolean"),
-                    ["recv"] = node["recv"]?.DeepClone(),
-                    ["args"] = new JsonArray { args[0].DeepClone() },
-                };
             var mutable = ownerFqn == "kotlin.collections.MutableMap";
             var semanticPropertyAccess = Str(node[KotlinPropertyAccessors.KindKey]) ?? Str(node["prop"]);
             var helper = MapDefaultHelper(member, semanticPropertyAccess, args.Count, mutable);
@@ -2544,11 +2511,13 @@ static class MemberCallSubstitution
         ("values", "get", 0, false) => "clrMapValues",
         ("entries", "get", 0, false) => "clrMapEntries",
         ("keys", "get", 0, true) => "clrMapMutableKeys",
+        ("values", "get", 0, true) => "clrMapMutableValues",
         ("entries", "get", 0, true) => "clrMapMutableEntries",
         ("put", _, 2, true) => "clrMapPut",
         ("remove", _, 1, true) => "clrMapRemove",
         ("remove", _, 2, true) => "clrMapRemoveKV",
         ("putAll", _, 1, true) => "clrMapPutAll",
+        ("clear", _, 0, true) => "clrMapClear",
         ("putIfAbsent", _, 2, true) => "clrMapPutIfAbsent",
         ("replace", _, 2, true) => "clrMapReplace",
         ("replace", _, 3, true) => "clrMapReplaceKVV",
@@ -2564,7 +2533,7 @@ static class MemberCallSubstitution
         TypeNode[] ps = method switch
         {
             "clrMapIsEmpty" or "clrMapSize" or "clrMapKeys" or "clrMapValues" or "clrMapEntries"
-                or "clrMapMutableKeys" or "clrMapMutableEntries" => new[] { any },
+                or "clrMapMutableKeys" or "clrMapMutableValues" or "clrMapMutableEntries" or "clrMapClear" => new[] { any },
             "clrMapGet" or "clrMapContainsKey" or "clrMapRemove" => new[] { any, k },
             "clrMapContainsValue" => new[] { any, v },
             "clrMapPut" or "clrMapGetOrDefault" or "clrMapRemoveKV" or "clrMapPutIfAbsent" or "clrMapReplace"

@@ -1,31 +1,17 @@
 /*
- * CLR ref/runtime split: default implementations for Map/MutableMap members that have NO 1:1 equivalent on the
- * substituted BCL IDictionary<K,V> (see builtins/Collections.kt for the alias rationale). The backend (bir2cir Rule 5,
- * 2-type-arg map routing) rewrites `m.get(k)` / `m.put(k,v)` / `m.entries` / ... to these statics — the map mirror of
- * ClrCollectionDefaults.
- *
- * #75 Piece 2 — NON-GENERIC map PARAM (`m: Any`): every bir2cir-routed helper takes its map as `Any` (`object`), NOT the
- * generic `Map<K,V>`/`MutableMap<K,V>` (`IDictionary<K,V>`). bir2cir Piece 1 (RetypeReceiverToConcrete) retypes the
- * spliced map receiver to its CONCRETE `Dictionary<K,V>`; passing that concrete value (OR a normal map's generic
- * `IDictionary<K,V>` interface) into a generic-`IDictionary<K,V>` param needs an INVARIANT-generic / interface-to-
- * -non-generic `castclass` that ilverify REJECTS or that ilemit does not emit (#75 mapValues: 0x67/0xD3 groupBy stloc,
- * and 0x14A normal-map `IDictionary<int,int>`->`System.Collections.IDictionary` seam). An `Any` (object) param is
- * UNIVERSALLY assignable — any map reference flows into it with NO cast at the call seam (verifiable for both the
- * concrete groupBy Dictionary and a normal generic-interface map). The body then does the one verifiable
- * `m as ClrRawDictionary` (object -> `System.Collections.IDictionary`, implemented by EVERY `Dictionary<K,V>`) inside
- * the stdlib, so a groupingBy/mapValues value-type mismatch never hits the generic value-type invariance -> no
- * EntryPointNotFound. K/V remain method type params only where the KEY arg or RETURN value needs them; keys/values box
- * through the `Any?`-typed non-generic members and narrow with `as K`/`as V` (unbox.any for value types).
- *
- * Semantics notes (recorded in docs/dotkt-semantics.md):
- *   - `Map.get` is null-on-missing (Kotlin), synthesized as ContainsKey + get_Item (IDictionary's get_Item throws).
- *   - Map's READ views (keys/values/entries: pure-Kotlin Set/Collection types) are SNAPSHOTS, not live views.
- *   - MutableMap.keys is a live identity-bearing view; MutableMap.entries elements are LIVE (setValue writes
- *     through), but the entry SET itself is a snapshot.
+ * Kotlin Map dispatch is independent of the native dictionary's signatures. An opaque receiver preserves
+ * Kotlin covariance without an invariant IDictionary<K,V> cast at the helper boundary. Authored maps dispatch
+ * through their exact compiler-provided capabilities, preserving overrides and original views. BCL-backed
+ * Dictionary values retain the non-generic fallback and its existing snapshot read views/live mutable keys.
+ * The native IDictionary facade is synthesized separately by bir2cir: missing-key indexers throw, mutation
+ * slots use CLR return conventions, and enumeration converts Kotlin entries to real KeyValuePair values.
  */
 @file:Suppress("NOTHING_TO_INLINE", "UNCHECKED_CAST")
 
 package kotlin.collections
+
+import DotKt.Runtime.CompilerServices.KotlinMapDefaultSlots
+import DotKt.Runtime.CompilerServices.KotlinMutableMapSlots
 
 // ---- raw BCL member accessors: extensions on the NON-GENERIC System.Collections.IDictionary facade ----------------
 //
@@ -76,6 +62,7 @@ internal fun <K> ClrRawDictionary.clrMapNativeKeys(): Iterable<K> {
 // `System.Collections.Generic.Dictionary`2[...]` instead, so the backend routes `map.toString()` / `println(map)` here
 // (the map mirror of clrCollToString). Emitted into the rt assembly for kotc/bir2cir to target.
 public fun <K, V> clrMapToString(m: Any): String {
+    if (m is KotlinMapDefaultSlots) return m.toString()
     val e = (m as ClrRawDictionary).GetEnumerator()
     val sb = StringBuilder()
     sb.append("{")
@@ -92,29 +79,35 @@ public fun <K, V> clrMapToString(m: Any): String {
 }
 
 public fun <K, V> clrMapGet(m: Any, key: K): V? {
+    if (m is KotlinMapDefaultSlots) return m.dotktMapGet(key) as V?
     val d = m as ClrRawDictionary
     @Suppress("UNCHECKED_CAST")
     return if (d.Contains(key)) (d.rawGet(key) as V) else null   // null flows DIRECTLY into the object-erased return (V?-NOTE)
 }
 
-public fun <K, V> clrMapIsEmpty(m: Any): Boolean = (m as ClrRawCollection).count() == 0
+public fun <K, V> clrMapIsEmpty(m: Any): Boolean =
+    if (m is KotlinMapDefaultSlots) m.dotktMapIsEmpty() else (m as ClrRawCollection).count() == 0
 
 // COVARIANCE-SAFE size / containsKey: `size` and `containsKey` on the Map interface are UNBOUND (no @ClrIntrinsic), and
 // bir2cir Rule 5m routes `get_size`/`containsKey` on a Map/MutableMap owner to THESE helpers (exactly as `get`/`get_keys`/
 // `get_values` route). They read through the NON-GENERIC facade (ICollection.Count / IDictionary.Contains) so they survive
 // a groupBy-style value-type mismatch, AND make stdlib algorithms that pre-size via `this.size` (mapValues'
 // `mapCapacity(size)`) covariance-safe transitively.
-public fun <K, V> clrMapSize(m: Any): Int = (m as ClrRawCollection).count()
+public fun <K, V> clrMapSize(m: Any): Int =
+    if (m is KotlinMapDefaultSlots) m.dotktMapSize() else (m as ClrRawCollection).count()
 
-public fun <K, V> clrMapContainsKey(m: Any, key: K): Boolean = (m as ClrRawDictionary).Contains(key)
+public fun <K, V> clrMapContainsKey(m: Any, key: K): Boolean =
+    if (m is KotlinMapDefaultSlots) m.dotktMapContainsKey(key) else (m as ClrRawDictionary).Contains(key)
 
 public fun <K, V> clrMapContainsValue(m: Any, value: V): Boolean {
+    if (m is KotlinMapDefaultSlots) return m.dotktMapContainsValue(value)
     val e = (m as ClrRawDictionary).GetEnumerator()
     while (e.MoveNext()) if (e.value() == value) return true
     return false
 }
 
 public fun <K, V> clrMapGetOrDefault(m: Any, key: K, defaultValue: V): V {
+    if (m is KotlinMapDefaultSlots) return m.dotktMapGetOrDefault(key, defaultValue) as V
     val d = m as ClrRawDictionary
     @Suppress("UNCHECKED_CAST")
     return if (d.Contains(key)) (d.rawGet(key) as V) else defaultValue
@@ -122,6 +115,7 @@ public fun <K, V> clrMapGetOrDefault(m: Any, key: K, defaultValue: V): V {
 
 /** `Map.keys: Set<K>` — snapshot into an identity-bearing Kotlin Set rather than exposing Dictionary.KeyCollection. */
 public fun <K, V> clrMapKeys(m: Any): Set<K> {
+    if (m is KotlinMapDefaultSlots) return m.dotktMapKeys() as Set<K>
     val e = (m as ClrRawDictionary).GetEnumerator()
     val out = ArrayList<K>()
     @Suppress("UNCHECKED_CAST")
@@ -131,6 +125,7 @@ public fun <K, V> clrMapKeys(m: Any): Set<K> {
 
 /** `Map.values: Collection<V>` — an ArrayList (BCL List) IS a Collection (IReadOnlyCollection) — snapshot. */
 public fun <K, V> clrMapValues(m: Any): Collection<V> {
+    if (m is KotlinMapDefaultSlots) return m.dotktMapValues() as Collection<V>
     val e = (m as ClrRawDictionary).GetEnumerator()
     val out = ArrayList<V>()
     @Suppress("UNCHECKED_CAST")
@@ -143,6 +138,7 @@ public fun <K, V> clrMapValues(m: Any): Collection<V> {
  *  the MutableMap view destructures/casts fine — at runtime every aliased map IS an IDictionary. The entry KEYS are
  *  snapshotted off the non-generic enumerator (covariance-safe); each entry's value read also goes non-generic. */
 public fun <K, V> clrMapEntries(m: Any): Set<Map.Entry<K, V>> {
+    if (m is KotlinMapDefaultSlots) return m.dotktMapEntries() as Set<Map.Entry<K, V>>
     val d = m as ClrRawDictionary
     val e = d.GetEnumerator()
     val out = ArrayList<Map.Entry<K, V>>()
@@ -159,6 +155,7 @@ public fun <K, V> clrMapEntries(m: Any): Set<Map.Entry<K, V>> {
 // into the (object-erased) return.
 
 public fun <K, V> clrMapPut(m: Any, key: K, value: V): V? {
+    if (m is KotlinMutableMapSlots) return m.dotktMapPut(key, value) as V?
     val d = m as ClrRawDictionary
     if (d.Contains(key)) {
         val old = d.clrMapItem<V>(key)
@@ -170,6 +167,7 @@ public fun <K, V> clrMapPut(m: Any, key: K, value: V): V? {
 }
 
 public fun <K, V> clrMapRemove(m: Any, key: K): V? {
+    if (m is KotlinMutableMapSlots) return m.dotktMapRemove(key) as V?
     val d = m as ClrRawDictionary
     if (d.Contains(key)) {
         val old = d.clrMapItem<V>(key)
@@ -180,27 +178,40 @@ public fun <K, V> clrMapRemove(m: Any, key: K): V? {
 }
 
 public fun <K, V> clrMapRemoveKV(m: Any, key: K, value: V): Boolean {
+    if (m is KotlinMutableMapSlots) return m.dotktMapRemoveEntry(key, value)
     val d = m as ClrRawDictionary
     return if (d.Contains(key) && d.clrMapItem<V>(key) == value) { d.clrMapRemoveKey(key); true } else false
 }
 
 public fun <K, V> clrMapPutAll(m: Any, from: Any): Unit {
+    if (m is KotlinMutableMapSlots) { m.dotktMapPutAll(from); return }
     val d = m as ClrRawDictionary
+    if (from is KotlinMapDefaultSlots) {
+        val iterator = clrProjectedIterator<Map.Entry<*, *>>(from.dotktMapEntries())
+        while (iterator.hasNext()) {
+            val entry = iterator.next()
+            d.clrMapSetItem(entry.key, entry.value)
+        }
+        return
+    }
     val s = from as ClrRawDictionary
     for (k in s.clrMapNativeKeys<K>()) d.clrMapSetItem(k, s.clrMapItem<V>(k))
 }
 
 public fun <K, V> clrMapPutIfAbsent(m: Any, key: K, value: V): V? {
+    if (m is KotlinMutableMapSlots) return m.dotktMapPutIfAbsent(key, value) as V?
     val d = m as ClrRawDictionary
     return if (d.Contains(key)) d.clrMapItem<V>(key) else { d.clrMapSetItem(key, value); null }
 }
 
 public fun <K, V> clrMapReplace(m: Any, key: K, value: V): V? {
+    if (m is KotlinMutableMapSlots) return m.dotktMapReplace(key, value) as V?
     val d = m as ClrRawDictionary
     return if (d.Contains(key)) clrMapPut<K, V>(m, key, value) else null
 }
 
 public fun <K, V> clrMapReplaceKVV(m: Any, key: K, oldValue: V, newValue: V): Boolean {
+    if (m is KotlinMutableMapSlots) return m.dotktMapReplaceEntry(key, oldValue, newValue)
     val d = m as ClrRawDictionary
     return if (d.Contains(key) && d.clrMapItem<V>(key) == oldValue) { d.clrMapSetItem(key, newValue); true } else false
 }
@@ -211,6 +222,7 @@ public fun <K, V> clrMapReplaceKVV(m: Any, key: K, oldValue: V, newValue: V): Bo
  * so null only ever flows DIRECTLY into the (object-erased) return — never into a `gp:V` local (see the V?-return NOTE).
  */
 public fun <K, V> clrMapMerge(m: Any, key: K, value: V, remappingFunction: (V, V) -> V?): V? {
+    if (m is KotlinMutableMapSlots) return m.dotktMapMerge(key, value, remappingFunction as (Any?, Any?) -> Any?) as V?
     val d = m as ClrRawDictionary
     if (!d.Contains(key)) {
         d.clrMapSetItem(key, value)
@@ -236,6 +248,7 @@ public fun <K, V> clrMapMerge(m: Any, key: K, value: V, remappingFunction: (V, V
  * LIVE (value reads and setValue go through the backing map); the set itself is a snapshot.
  */
 public fun <K, V> clrMapMutableEntries(m: Any): MutableSet<MutableMap.MutableEntry<K, V>> {
+    if (m is KotlinMutableMapSlots) return m.dotktMapMutableEntries() as MutableSet<MutableMap.MutableEntry<K, V>>
     val d = m as ClrRawDictionary
     val e = d.GetEnumerator()
     val out = LinkedHashSet<MutableMap.MutableEntry<K, V>>()
@@ -249,7 +262,22 @@ public fun <K, V> clrMapMutableEntries(m: Any): MutableSet<MutableMap.MutableEnt
  * independent MutableSet identity. This Kotlin view does, while forwarding remove/clear to the backing raw map.
  * Adding a key has no corresponding value and is therefore unsupported, matching Kotlin's MutableMap.keys contract.
  */
-public fun <K, V> clrMapMutableKeys(m: Any): MutableSet<K> = ClrMutableMapKeySet(m as ClrRawDictionary)
+public fun <K, V> clrMapMutableKeys(m: Any): MutableSet<K> =
+    if (m is KotlinMutableMapSlots) m.dotktMapMutableKeys() as MutableSet<K> else ClrMutableMapKeySet(m as ClrRawDictionary)
+
+@kotlin.clr.ClrTypeAlias("System.Collections.Generic.IDictionary")
+private interface ClrNativeMapValues<K, V> {
+    @property:kotlin.clr.ClrProperty(kotlin.clr.READ, "Values")
+    val values: MutableCollection<V>
+}
+
+public fun <K, V> clrMapMutableValues(m: Any): MutableCollection<V> =
+    if (m is KotlinMutableMapSlots) m.dotktMapMutableValues() as MutableCollection<V>
+    else (m as ClrNativeMapValues<K, V>).values
+
+public fun <K, V> clrMapClear(m: Any) {
+    if (m is KotlinMutableMapSlots) m.dotktMapClear() else (m as ClrRawDictionary).rawClear()
+}
 
 // ---- pure-Kotlin backing types --------------------------------------------------------------------------------------
 

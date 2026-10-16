@@ -461,7 +461,7 @@ static class ReverseEnumeratorBridgeSynthesis
 
     static TypeNode Tv0 => new TypeNode.Tv("type", 0);
 
-    static JsonObject Adapter(string name, ReferenceMetadataIndex refs)
+    internal static JsonObject Adapter(string name, ReferenceMetadataIndex refs)
     {
         var sourceElement = Tv0;
         var targetElement = Tv0;

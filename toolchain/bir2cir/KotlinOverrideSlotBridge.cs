@@ -510,6 +510,9 @@ static class KotlinOverrideSlotBridge
 
         foreach (var (spec, supIsInterface) in SupertypeGraph.Reachable(cls, defs, refs))
         {
+            // These declarations own Kotlin dispatch, not matching IDictionary MethodDefs.
+            // The map capability and native-facade passes own the two independent obligations.
+            if (!refBuild && KotlinCollectionSlotSynthesis.IsMapContractOwner(spec.Name)) continue;
             if (!defs.TryGetValue(spec.Name, out var sup))
             {
                 // A referenced BASE CLASS reaches the same arm; only its wiring differs (a MethodImpl against the
@@ -520,7 +523,7 @@ static class KotlinOverrideSlotBridge
                         Fill(semanticOwner, owner, isInterface, referenced, slotHasDefault, identity, member, accessor,
                             parameters, ret, implementation, slotTypeParams, unitValueReturn, signature, referenceMember),
                     suspendValues: phase == Phase.SuspendValueBridges, inheritedSignatures: inheritedSignatures,
-                    sourceParameters: sourceParameters);
+                    sourceParameters: sourceParameters, nativeAliases: !refBuild);
                 continue;
             }
             var supArgs = SupertypeGraph.EffectiveArgs(spec, sup.Arity);
@@ -1359,7 +1362,7 @@ static class KotlinOverrideSlotBridge
         ReferenceMetadataIndex refs, Phase phase, NullableRepresentationTypes sourceMapping,
         Action<TypeNode.Fqn, TypeNode.Fqn, bool, bool, string, string, string, TypeNode[], TypeNode, JsonObject, JsonArray, bool, bool, TypeNode[], string> fill,
         bool suspendValues = false, IReadOnlyDictionary<JsonObject, TypeNode[]> inheritedSignatures = null,
-        IReadOnlyDictionary<JsonObject, TypeNode[]> sourceParameters = null)
+        IReadOnlyDictionary<JsonObject, TypeNode[]> sourceParameters = null, bool nativeAliases = false)
     {
         if (refs == null) return;
         var supArgs = spec.Args ?? Array.Empty<TypeNode>();
@@ -1374,6 +1377,7 @@ static class KotlinOverrideSlotBridge
             var methodArity = (impl["typeParams"] as JsonArray)?.Count ?? 0;
             foreach (var o in overrides.OfType<JsonObject>())
             {
+                if (nativeAliases && KotlinCollectionSlotSynthesis.OwnsMapOverride(o)) continue;
                 // THE MARKER SAYS WHAT WAS OVERRIDDEN; THE SPEC SAYS WHERE THE SLOT IS REACHED. Those differ the
                 // moment a referenced supertype inherits the member — `class C : Derived<Int>` where `accept` is
                 // declared on `Sink` — so requiring the marker's owner to EQUAL the spec skipped the slot entirely.

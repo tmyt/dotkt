@@ -55,8 +55,6 @@ static class StarProjectionLowering
     {
         ["kotlin.collections.Iterable"] = "System.Collections.IEnumerable",
         ["kotlin.collections.MutableIterable"] = "System.Collections.IEnumerable",
-        ["kotlin.collections.Map"] = "System.Collections.IDictionary",
-        ["kotlin.collections.MutableMap"] = "System.Collections.IDictionary",
     };
 
     internal static bool IsNonGenericCollectionFacade(TypeNode type) =>
@@ -71,6 +69,8 @@ static class StarProjectionLowering
         ["kotlin.collections.List"] = 3,
         ["kotlin.collections.MutableList"] = 4,
         ["kotlin.collections.MutableCollection"] = 5,
+        ["kotlin.collections.Map"] = 6,
+        ["kotlin.collections.MutableMap"] = 7,
     };
 
     static string Str(JsonNode n) => (n as JsonValue)?.GetValue<string>();
@@ -266,12 +266,14 @@ static class StarProjectionLowering
             3 => "System.Collections.Generic.IReadOnlyList`1",
             4 => "System.Collections.Generic.IList`1",
             5 => "System.Collections.Generic.ICollection`1",
+            6 or 7 => "System.Collections.Generic.IDictionary`2",
             _ => throw new InvalidOperationException("Unknown collection classifier"),
         };
         var second = classifierKind switch
         {
             0 or 5 => "System.Collections.Generic.ICollection`1",
             3 or 4 => "System.Collections.Generic.IList`1",
+            6 or 7 => "System.Collections.Generic.IDictionary`2",
             _ => "System.Collections.Generic.ISet`1",
         };
         var call = Call(method,
@@ -289,6 +291,8 @@ static class StarProjectionLowering
     static JsonObject LowerIdentityMember(JsonObject call, JsonObject cast, int classifierKind,
         ReferenceMetadataIndex refs, MemberCallSubstitution.SubstCtx context)
     {
+        // Map calls use the semantic map dispatchers, not the enumerable/collection protocol.
+        if (classifierKind is 6 or 7) return null;
         var checkedReceiver = LowerIdentityClassifier("cast", cast["e"], classifierKind, nullable: false, cast["type"]);
         var member = Str(call["method"]);
         var propertyAccess = Str(call["prop"]);
