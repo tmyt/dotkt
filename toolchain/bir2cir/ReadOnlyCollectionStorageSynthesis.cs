@@ -157,7 +157,8 @@ static class ReadOnlyCollectionStorageSynthesis
             "Physical collection storage carrier has no nullable representation witness");
         var arguments = helper.NullableFrame?.Close(new TypeNode[] { Element },
             type => type, NoNullableWitness, type => type, NoNullableWitness) ?? new TypeNode[] { Element };
-        TypeNode Physical(TypeNode type) => BirTypeLowering.LowerPhysicalType(type, refs.Aliases,
+        TypeNode Physical(TypeNode type) => BirTypeLowering.LowerPhysicalType(
+            FBoundStarProjectionErasure.ProjectReferencedValueType(type, refs), refs.Aliases,
             refs.IsValueType, refs.PhysicalTypeNames, typeArg: false, nullableFrames: refs.NullableTypeFrames);
         return new JsonObject {
             ["k"] = "callStatic", ["owner"] = TypeJson.Fqn(owner), ["method"] = name,

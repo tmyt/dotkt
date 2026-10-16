@@ -203,9 +203,8 @@ static class CompanionExtensionBinding
         }
         var receiverClassifier = ReceiverClassifier(JsonNode.Parse(receiver))
             ?? throw new InvalidOperationException("companion extension receiver is not a classifier type: " + receiver);
-        // Preserve the semantic classifier through BirTypeLowering when it has a CLR alias. Exact metadata spelling is
-        // needed only for unaliased referenced types (notably nested generic TypeDefs); applying it to an alias first
-        // would turn `kotlin.collections.List` into `kotlin.collections.List`1` and bypass the IReadOnlyList binding.
+        // The C# receiver marker is an exact CLR declaration, not an ordinary Kotlin value slot. Resolve its alias
+        // construction now so value erasure cannot discard the type arguments C# needs for receiver inference.
         var physicalReceiverClassifier = receiverClassifier;
         if (!localTypes.ContainsKey(receiverClassifier) && !refs.Aliases.ContainsKey(receiverClassifier) &&
             refs.TryExactPhysicalTypeName(receiverClassifier, refs.OwnerArity(receiverClassifier), out var exactReceiver))
@@ -220,6 +219,15 @@ static class CompanionExtensionBinding
         var receiverTypeParams = ReceiverTypeParameters(receiverClassifier, localTypes, refs);
         var physicalReceiverTypeParams = PhysicalReceiverTypeParameters(receiverTypeParams);
         var blockArity = receiverTypeParams.Count;
+        var receiverArguments = Enumerable.Range(0, blockArity)
+            .Select(index => (TypeNode)new TypeNode.Tv("type", index)).ToArray();
+        if (refs.Aliases.TryGetValue(receiverClassifier, out var receiverAlias))
+        {
+            receiverArguments = refs.NullableTypeFrames.GetValueOrDefault(receiverClassifier)
+                ?.OrdinaryArguments(receiverArguments) ?? receiverArguments;
+            physicalReceiverClassifier = refs.ResolveNetType(receiverAlias, receiverArguments.Length)?.FullName
+                ?? throw new InvalidOperationException("Companion receiver alias has no exact CLR declaration");
+        }
         var implementations = new JsonArray();
         var signatureDeclarations = new JsonArray();
         var signatureProperties = new JsonArray();
@@ -419,9 +427,7 @@ static class CompanionExtensionBinding
                     ["name"] = "",
                     ["type"] = blockArity == 0
                         ? JsonNode.Parse(receiver)
-                        : TypeJson.Write(new TypeNode.Fqn(physicalReceiverClassifier,
-                            Enumerable.Range(0, blockArity)
-                                .Select(index => (TypeNode)new TypeNode.Tv("type", index)).ToArray())),
+                        : TypeJson.Write(new TypeNode.Fqn(physicalReceiverClassifier, receiverArguments)),
                 }),
                 ["ret"] = TypeJson.Fqn("void"),
                 ["body"] = new JsonArray(),

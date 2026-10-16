@@ -362,6 +362,11 @@ static class KotlinOverrideSlotBridge
             var needsExplicitSlot = needsExplicitPropertySlot || needsExactInterfaceSlot;
             var constructedSlotTypeParams = SubstituteOwnerTypeParameterConstraints(
                 slotTypeParams, semanticSpec.Args ?? Array.Empty<TypeNode>());
+            if (phase == Phase.PhysicalBridges && !needsSignatureBridge && cls.Kind == "class"
+                && inheritedOwner == null && IsNativeSlotOwner(descriptorSpec.Name, defs, refs.HasDotKtOwner))
+                DeclarationSignatureIdentity.RecordSelectedPhysicalSlot(impl,
+                    ImplDescriptor(descriptorSpec, descriptorMember, (impl["typeParams"] as JsonArray)?.Count ?? 0,
+                        slotSignature ?? slotParams, slotRet, constructedSlotTypeParams, unitValueReturn), supIsInterface);
             // The declaration-move half still sees the original Kotlin supertype graph. Star-projection erasure may
             // add a synthesized existential view while retaining the class's direct interface edge before the bridge
             // half runs. Both are real CLR obligations and therefore need independently resolved MethodImpl facts.
@@ -1772,8 +1777,21 @@ static class KotlinOverrideSlotBridge
                 .All(pair => Same(pair.First, pair.Second));
     }
 
+    // Reference metadata owns only referenced Kotlin declarations. A current-compilation owner is a Kotlin
+    // signature-plan participant too, even though it cannot appear in that reference-only index.
+    static bool IsNativeSlotOwner(string name, IReadOnlyDictionary<string, Def> definitions,
+        Func<string, bool> isReferencedKotlinOwner) =>
+        !definitions.ContainsKey(name) && !isReferencedKotlinOwner(name);
+
     internal static void SelfTest()
     {
+        var localSlotOwners = SupertypeGraph.Collect(new[] { JsonNode.Parse("""
+            {"types":[{"name":"LocalSlot","kind":"interface","methods":[]}]}
+            """) });
+        if (IsNativeSlotOwner("LocalSlot", localSlotOwners, _ => false)
+            || IsNativeSlotOwner("ReferencedSlot", localSlotOwners, name => name == "ReferencedSlot")
+            || !IsNativeSlotOwner("NativeSlot", localSlotOwners, _ => false))
+            throw new InvalidOperationException("Physical-only slot capture admitted a selected Kotlin declaration");
         var suspendSource = new JsonObject {
             [DeclarationIdentityBinding.Key] = "selected-suspend",
             [KotlinPropertyAccessors.SuspendSourceParamsKey] = new JsonArray(),
@@ -2238,6 +2256,8 @@ static class KotlinOverrideSlotBridge
         };
         if (impl["inheritedDeclarationId"] is JsonNode declarationId)
             call[DeclarationIdentityBinding.Key] = declarationId.DeepClone();
+        else if (impl[DeclarationIdentityBinding.Key] is JsonNode implementationId)
+            call[DeclarationIdentityBinding.Key] = implementationId.DeepClone();
         if (IsSuspendMethod(impl)) call["suspendCall"] = true;
         if (impl["typeParams"] is JsonArray methodTps && methodTps.Count > 0)
         {
@@ -2302,6 +2322,23 @@ static class KotlinOverrideSlotBridge
             CarryKotlinType(bridge, "nullableGenericRet", "retNullableFlags", implRet, slotRet, isValue);
         if (impl["typeParams"] is JsonArray tps) bridge["typeParams"] = tps.DeepClone();
         return MaterializedExecutable.Normalize(bridge);
+    }
+
+    internal static JsonObject BuildSignatureBridge(Def owner, JsonObject implementation, TypeNode[] signature,
+        TypeNode result, string name, ValueTypeOracle isValue, ReferenceMetadataIndex refs)
+    {
+        // Reuse the ordinary override conversion/forwarding boundary. Identity modifiers belong only to the
+        // emitted method signature; arguments and conversions keep the underlying CLR value representation.
+        var valueImplementation = implementation.DeepClone().AsObject();
+        valueImplementation["inheritedDeclarationSignature"] = FunctionSignatureIdentity.Signature(
+            (JsonArray)implementation["params"]);
+        foreach (var parameter in ((JsonArray)valueImplementation["params"]).OfType<JsonObject>())
+            parameter["type"] = TypeJson.Write(SignatureValueTypes.Of(TypeJson.Read(parameter["type"])));
+        var bridge = BuildBridge(owner, valueImplementation, signature.Select(SignatureValueTypes.Of).ToArray(),
+            result, name, isValue, refs);
+        for (var index = 0; index < signature.Length; index++)
+            bridge["params"][index]["type"] = TypeJson.Write(signature[index]);
+        return bridge;
     }
 
     // The Kotlin type of a slot the bridge states physically, on BOTH round-trip channels every erased slot uses: the

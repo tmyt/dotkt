@@ -81,6 +81,8 @@ static partial class ClrMemberResolution
             var declarationSig = call["memberSignature"] as JsonArray;
             var sig = declarationSig ?? useSiteSig;
             var exact = new List<(JsonObject ctor, int index)>();
+            var identityKey = signatureName == "delegationSig" ? "delegationDeclarationId" : "constructorDeclarationId";
+            var selectedIdentity = (call[identityKey] as JsonValue)?.GetValue<string>();
             // `new.argTypes` is a use-site vector and therefore closes the constructor owner's type frame.
             // `delegationSig` is authored on the delegating declaration but names the selected target's declaration
             // frame; its `type#0` must remain target `type#0` even when a derived owner reaches that target as
@@ -91,6 +93,12 @@ static partial class ClrMemberResolution
                 var wanted = sig.Select(TypeJson.Read).ToArray();
                 foreach (var candidate in sameArity)
                 {
+                    if (selectedIdentity != null)
+                    {
+                        if ((candidate.ctor[DeclarationIdentityBinding.Key] as JsonValue)?.GetValue<string>() == selectedIdentity)
+                            exact.Add(candidate);
+                        continue;
+                    }
                     var ps = (JsonArray)candidate.ctor["params"];
                     // These vectors identify the frontend-selected declaration, not the argument carrier.
                     // Ordinary function values can share storage while naming different constructor overloads.
@@ -138,6 +146,7 @@ static partial class ClrMemberResolution
                     ownerArgs, Array.Empty<TypeNode>());
             }
             call.Remove("memberSignature");
+            call.Remove(identityKey);
         }
 
         void WalkLocalNews(JsonNode node)
@@ -375,11 +384,14 @@ static partial class ClrMemberResolution
                         + $"{baseArgs.Count} arguments but {semanticSig.Count} signature slots");
                 var arity = open.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
                     .Where(c => c.GetParameters().Length == semanticSig.Count).ToList();
-                var winner = PickDeclaredConstructor(arity, semanticSig,
-                    $"base constructor owner={TypeNode.ToJson(baseFqn)} ({DescArgs(semanticSig)})");
+                var winner = ctor["delegationDeclarationId"] is JsonValue delegationIdentity
+                    ? _refs.SelectConstructorDeclaration(arity, delegationIdentity.GetValue<string>())
+                    : PickDeclaredConstructor(arity, semanticSig,
+                        $"base constructor owner={TypeNode.ToJson(baseFqn)} ({DescArgs(semanticSig)})");
                 ctor["baseCtorRef"] = MemberRefJson(winner, MemberRefNode.Kinds.Ctor, open, baseFqn.Args);
                 StampDelegateArgumentTargets(ctor, winner.GetParameters(),
                     baseFqn.Args ?? Array.Empty<TypeNode>(), Array.Empty<TypeNode>(), "baseArgs");
+                ctor.Remove("delegationDeclarationId");
             }
         }
     }
@@ -760,7 +772,9 @@ static partial class ClrMemberResolution
         var ctors = open.GetConstructors(BindingFlags.Public | BindingFlags.Instance)
             .Where(c => c.GetParameters().Length == argNodes.Count).ToList();
         ConstructorInfo win;
-        if (node["memberSignature"] is JsonArray selectedSignature)
+        if (node["constructorDeclarationId"] is JsonValue constructorIdentity)
+            win = _refs.SelectConstructorDeclaration(ctors, constructorIdentity.GetValue<string>());
+        else if (node["memberSignature"] is JsonArray selectedSignature)
         {
             var declaration = selectedSignature.Select(TypeJson.Read)
                 .Select(BirTypeLowering.CanonicalPhysicalSlotType).ToList();
@@ -779,6 +793,7 @@ static partial class ClrMemberResolution
         StampResolvedMemberReturn(node, typeof(void));
         node.Remove("argTypes");
         node.Remove("memberSignature");
+        node.Remove("constructorDeclarationId");
     }
 
     static ConstructorInfo PickDeclaredConstructor(IEnumerable<ConstructorInfo> constructors,

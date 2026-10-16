@@ -16,8 +16,8 @@ using DotKt.Bir;
 //
 // Give every emitted class whose Kotlin supertypes reach such a member a real compiler-owned CLR interface slot and
 // one private `dotkt$slot$…` bridge per member, wired by an exact `clrInterfaceImpls` MethodImpl descriptor. Each
-// bridge restores erased arguments to the overridden member's own declared type (a live typed view for collection
-// arguments, a cast/unbox for element arguments) and forwards VIRTUALLY, so a further-derived override still wins and
+// bridge forwards opaque collection arguments unchanged and restores element arguments with a cast/unbox.
+// It forwards VIRTUALLY, so a further-derived override still wins and
 // a subclass needs no bridge of its own.
 //
 // THE MEMBER IS IDENTIFIED BY THE FRONTEND'S OVERRIDE FACTS, NEVER BY NAME AND ARITY. A declaration qualifies only
@@ -32,7 +32,7 @@ using DotKt.Bir;
 //
 // The bridge's parameter typing likewise comes from the OVERRIDDEN declaration, substituted into the implementer's
 // frame — never from guessing which parameter "looks like" the collection. Its collection parameter is ERASED to
-// `Any` to match the non-generic slot interface, then adapted back to the implementer's own instantiation, so the
+// `Any` to match the non-generic slot interface and the implementation's opaque collection value ABI, so the
 // capability test at the call site never has to be re-argued from the dispatcher's generic arguments (see the note
 // on KotlinCollectionSlots.kt — a robustness choice, not a reproduced bug fix).
 //
@@ -125,16 +125,12 @@ static class KotlinCollectionSlotSynthesis
         public int Arity;
     }
 
-    public static void ApplyAll(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs,
-        ValueTypeOracle isValue, GenericRepresentationPolicy representations)
+    public static void ApplyAll(IEnumerable<JsonNode> roots)
     {
         var defs = new Dictionary<string, Def>(StringComparer.Ordinal);
         foreach (var root in roots) Collect(root, defs);
-        var frames = refs.NullableTypeFrames.ToDictionary(pair => pair.Key, pair => pair.Value);
-        foreach (var def in defs.Values)
-            if (KotlinSupertypesRecord.ReadNullableFrame(def.Node) is { } frame) frames[def.Name] = frame;
         foreach (var def in defs.Values.Where(d => d.Kind is "class" or "interface").ToList())
-            ApplyType(def, defs, frames, refs, isValue, representations);
+            ApplyType(def, defs);
     }
 
     static void Collect(JsonNode node, Dictionary<string, Def> defs)
@@ -158,9 +154,7 @@ static class KotlinCollectionSlotSynthesis
         }
     }
 
-    static void ApplyType(Def cls, IReadOnlyDictionary<string, Def> defs,
-        IReadOnlyDictionary<string, NullableRepresentationFrame> frames, ReferenceMetadataIndex refs,
-        ValueTypeOracle isValue, GenericRepresentationPolicy representations)
+    static void ApplyType(Def cls, IReadOnlyDictionary<string, Def> defs)
     {
         if (cls.Methods == null) return;
         // A class whose BASE CHAIN already carries a slot interface needs nothing of its own: that base's bridge
@@ -178,7 +172,7 @@ static class KotlinCollectionSlotSynthesis
             // body, or an interface DEFAULT method for which the frontend emits nothing on the implementing class).
             if (!TryResolveImplementation(cls, slot, defs, out var target)) continue;
             if (cls.Methods.OfType<JsonObject>().Any(m => Str(m["name"]) == slot.Bridge)) continue;
-            newBridges.Add(Bridge(cls, slot, target, frames, refs, isValue, representations));
+            newBridges.Add(Bridge(cls, slot, target));
             wanted.Add(slot.SlotInterface);
         }
         if (newBridges.Count == 0) return;
@@ -310,13 +304,11 @@ static class KotlinCollectionSlotSynthesis
     /// `private bool dotkt$slot$&lt;member&gt;(object p0[, int index]) { return this.&lt;member&gt;((&lt;declared&gt;)p0, …) }`.
     ///
     /// The erased `Any` parameter is what makes the capability test instantiation-independent. An element is
-    /// cast/unboxed to the OVERRIDDEN member's declared E; a Collection argument gets a live Collection&lt;E&gt; view so
-    /// value-type generic variance never becomes an invalid cast. The forward is VIRTUAL: the bridge is inherited by
+    /// cast/unboxed to the OVERRIDDEN member's declared E; Collection values already share the opaque slot ABI and
+    /// retain their original reference. The forward is VIRTUAL: the bridge is inherited by
     /// subclasses and must reach the most-derived override.
     /// </summary>
-    static JsonObject Bridge(Def cls, Slot slot, (TypeNode.Fqn Owner, JsonObject Method) target,
-        IReadOnlyDictionary<string, NullableRepresentationFrame> frames, ReferenceMetadataIndex refs,
-        ValueTypeOracle isValue, GenericRepresentationPolicy representations)
+    static JsonObject Bridge(Def cls, Slot slot, (TypeNode.Fqn Owner, JsonObject Method) target)
     {
         var declaredParams = (target.Method["params"] as JsonArray)?.OfType<JsonObject>()
             .Select(p => TypeJson.Read(p["type"])).ToArray() ?? Array.Empty<TypeNode>();
@@ -327,11 +319,6 @@ static class KotlinCollectionSlotSynthesis
                 + $"{declaredParams.Length} readable parameter(s), but the slot declares {slot.Arity} parameter(s) and "
                 + $"{slot.Parameters.Length} carrier fact(s).");
         var ownerArgs = target.Owner.Args ?? Array.Empty<TypeNode>();
-        var declarationMapping = new NullableRepresentationTypes(frames.GetValueOrDefault(target.Owner.Name),
-            Str(target.Method[NullableRepresentationTypes.MethodFrameKey]) is string encoded
-                ? NullableRepresentationFrame.Read(JsonNode.Parse(encoded)) : null,
-            frames, isValue, policy: representations);
-
         var bridgeParams = new JsonArray();
         var slotParams = new JsonArray();
         var callSig = new JsonArray();
@@ -354,8 +341,8 @@ static class KotlinCollectionSlotSynthesis
                 ParameterCarrier.Exact => Local(name),
                 ParameterCarrier.ErasedValue => new JsonObject
                     { ["k"] = "cast", ["type"] = TypeJson.Write(declared), ["e"] = Local(name) },
-                ParameterCarrier.ErasedCollection => AdaptCollectionArgument(slot,
-                    (JsonObject)target.Method["params"][i], declared, ownerArgs, declarationMapping, refs, name),
+                ParameterCarrier.ErasedCollection => CollectionArgument(slot,
+                    (JsonObject)target.Method["params"][i], declared, name),
                 _ => throw new InvalidOperationException($"bir2cir: unknown collection slot carrier {carrier}"),
             });
         }
@@ -481,78 +468,39 @@ static class KotlinCollectionSlotSynthesis
         ["k"] = "const", ["type"] = TypeJson.Fqn("kotlin.Boolean"), ["value"] = value,
     };
 
-    // CLR variance does not convert IReadOnlyCollection<Int32> to IReadOnlyCollection<Object>. An erased slot bridge
-    // that merely casts its collection argument therefore skips a Kotlin override exactly for value-type elements.
-    // Re-close the live projected view at the implementer's own declared E, which is known precisely in this bridge.
-    static JsonObject AdaptCollectionArgument(Slot slot, JsonObject parameter, TypeNode declared,
-        TypeNode[] ownerArgs, NullableRepresentationTypes declarationMapping, ReferenceMetadataIndex refs, string name)
+    // The slot and the selected Kotlin implementation both carry the original collection as object. The source
+    // carrier validates that contract; no CLR generic closure or helper frame needs to be reconstructed here.
+    static JsonObject CollectionArgument(Slot slot, JsonObject parameter, TypeNode declared, string name)
     {
-        var source = Str(parameter["nullableGeneric"]) is string sourceType
+        var source = (Str(parameter["kotlinType"]) ?? Str(parameter["nullableGeneric"])) is string sourceType
             ? TypeJson.Read(JsonNode.Parse(sourceType)) : TypeJson.Read(parameter["type"]);
-        if (source is not TypeNode.Fqn { Name: Collection, Args: { Length: 1 } args })
+        if (source is not TypeNode.Fqn { Name: Collection, Args.Length: 1 }
+            || declared is not TypeNode.Fqn { Name: "kotlin.Any" or "System.Object" or "object" })
             throw new InvalidOperationException(
-                $"bir2cir: '{slot.DeclaringInterface}.{slot.Member}' marks a non-Collection parameter as an erased "
-                + $"collection carrier ({TypeJson.Write(source)}); the slot table and Kotlin declaration are inconsistent.");
-        var helper = refs.AuthoredKotlinHelper("kotlin.collections.ClrCollectionDefaultsKt", "clrProjectedCollectionView", 1,
-            new TypeNode[] { new TypeNode.Fqn("kotlin.Any") });
-        var typeArguments = CloseCollectionViewArguments(args[0], helper.NullableFrame,
-            declarationMapping, ownerArgs);
-        return new JsonObject
-        {
-            ["k"] = "callStatic",
-            ["owner"] = TypeJson.Fqn("kotlin.collections.ClrCollectionDefaultsKt"),
-            ["method"] = "clrProjectedCollectionView",
-            [DeclarationIdentityBinding.Key] = helper.DeclarationId,
-            ["sig"] = new JsonArray(helper.ParamTypeNodes.Select(TypeJson.Write).ToArray()),
-            ["typeArgs"] = new JsonArray(typeArguments.Select(TypeJson.Write).ToArray()),
-            ["ret"] = TypeJson.Write(declared),
-            ["args"] = new JsonArray(Local(name)),
-        };
+                $"bir2cir: '{slot.DeclaringInterface}.{slot.Member}' collection slot disagrees with its source "
+                + $"({TypeJson.Write(source)}) or physical parameter ({TypeJson.Write(declared)}).");
+        return Local(name);
     }
-
-    // The source parameter belongs to the selected implementation's declaration. Close its helper frame there,
-    // then substitute the constructed inherited owner into the bridge's frame. A physical Collection argument
-    // alone has already lost the root/storage distinction and cannot be used to reconstruct this correspondence.
-    static TypeNode[] CloseCollectionViewArguments(TypeNode sourceElement, NullableRepresentationFrame helperFrame,
-        NullableRepresentationTypes declarationMapping, TypeNode[] ownerArguments) =>
-        declarationMapping.CloseMethod(helperFrame ?? new NullableRepresentationFrame(1, Array.Empty<int>()),
-            new[] { sourceElement }).Select(argument => Subst(argument, ownerArguments)).ToArray();
 
     public static void SelfTest()
     {
-        var ownerFrame = new NullableRepresentationFrame(2, Array.Empty<int>(), new[] { 2, 0, 3, 1 },
-            storageIndices: new[] { 0, 1 });
-        var helperFrame = new NullableRepresentationFrame(1, Array.Empty<int>(), storageIndices: new[] { 0 });
-        var aliases = new Dictionary<string, string> { [Collection] = "System.Collections.Generic.IReadOnlyCollection" };
-        var mapping = new NullableRepresentationTypes(ownerFrame, null,
-            new Dictionary<string, NullableRepresentationFrame> { [Collection] = helperFrame }, _ => false,
-            policy: new GenericRepresentationPolicy(aliases));
-        var inheritedOwnerArguments = new TypeNode[] {
-            new TypeNode.Tv("type", 5), new TypeNode.Tv("type", 4),
-            new TypeNode.Tv("type", 3), new TypeNode.Tv("type", 2),
-        };
-        var arguments = CloseCollectionViewArguments(new TypeNode.Tv("type", 1), helperFrame, mapping, inheritedOwnerArguments);
-        if (!arguments.SequenceEqual(new TypeNode[] { new TypeNode.Tv("type", 2), new TypeNode.Tv("type", 3) }))
-            throw new InvalidOperationException("Collection slot helper lost source/physical inherited owner correspondence");
-        var projected = CloseCollectionViewArguments(new TypeNode.Projection("out", new TypeNode.Tv("type", 1)),
-            helperFrame, mapping, inheritedOwnerArguments);
-        if (!projected.SequenceEqual(new TypeNode[] {
-                new TypeNode.Projection("out", new TypeNode.Tv("type", 2)),
-                new TypeNode.Projection("out", new TypeNode.Tv("type", 3)),
-            }))
-            throw new InvalidOperationException("Collection slot helper failed to substitute through a projection");
-        var concrete = CloseCollectionViewArguments(
+        foreach (var element in new TypeNode[] {
+            new TypeNode.Fqn("kotlin.Int"), new TypeNode.Fqn("kotlin.String"), new TypeNode.Tv("type", 1),
+            new TypeNode.Projection("out", new TypeNode.Tv("type", 1)),
             new TypeNode.Fqn(Collection, new TypeNode[] { new TypeNode.Fqn("kotlin.String") }),
-            helperFrame, mapping, inheritedOwnerArguments);
-        if (concrete[0] is not TypeNode.Fqn { Name: Collection, Args.Length: 2 }
-            || concrete[1] is not TypeNode.Fqn { Name: Collection, Args.Length: 2 })
-            throw new InvalidOperationException("Collection slot helper discarded a readonly argument's source identity");
-        if (concrete.Select(argument => BirTypeLowering.LowerPhysicalType(argument, aliases,
-                _ => false, null, typeArg: true,
-                nullableFrames: new Dictionary<string, NullableRepresentationFrame> { [Collection] = helperFrame })).Any(argument =>
-                argument is not TypeNode.Fqn { Name: "System.Collections.Generic.IReadOnlyCollection", Args.Length: 1 }))
-            throw new InvalidOperationException("Final collection alias lowering changed its canonical readonly face");
-        Console.WriteLine("[collection slot frames] self-test OK (source element, inherited physical permutation, concrete roles)");
+        })
+        {
+            var source = new TypeNode.Fqn(Collection, new[] { element });
+            var physical = new TypeNode.Fqn("kotlin.Any");
+            var parameter = new JsonObject {
+                ["type"] = TypeJson.Write(physical), ["kotlinType"] = TypeNode.ToJson(source),
+            };
+            var forwarded = CollectionArgument(Slots.Single(slot => slot.SlotMember == "dotktContainsAll"),
+                parameter, physical, "collection");
+            if (Str(forwarded["k"]) != "local" || Str(forwarded["name"]) != "collection")
+                throw new InvalidOperationException("Collection slot changed an opaque argument's identity");
+        }
+        Console.WriteLine("[collection slot values] self-test OK (reference/value elements, owner variables, projections, nested source types)");
     }
 
     static TypeNode.Fqn SelfOwner(Def cls)

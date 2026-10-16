@@ -462,7 +462,9 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 					.map { birType(it.type).toJson() }
 				(listOfNotNull(outer) + regular).joinToString(",")
 			}
-			"""{"k":"new","type":${clr.toJson()},"argTypes":[$externalTypes],"args":[$externalArgs],"memberSignature":[$externalSignature]}"""
+			val identity = declarationIdForPhysicalAllocation(node.symbol.owner)
+				?.let { ""","constructorDeclarationId":${str(it)}""" }.orEmpty()
+			"""{"k":"new","type":${clr.toJson()},"argTypes":[$externalTypes],"args":[$externalArgs],"memberSignature":[$externalSignature]$identity}"""
 		}
 		else {
 			// A lifted local class prepends its captured outer locals (evaluated here, in the outer context).
@@ -498,7 +500,9 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 			// `node.type` + the enclosing captured params it recorded in `liftedTypeArgParams`), so a
 			// `fun <T> f(){ class L{ val x:T=t }; L() }` instantiates `L<T>` at each `new` site. A non-generic local
 			// class / any other type keeps the plain identity.
-			"""{"k":"new","type":${(klass?.let { ownerSpec(it, node.type) } ?: OBJ).toJson()},"argTypes":[$ctorArgTypes],"args":[$args],"memberSignature":[$ctorMemberSignature]}"""
+			val identity = declarationIdForPhysicalAllocation(node.symbol.owner)
+				?.let { ""","constructorDeclarationId":${str(it)}""" }.orEmpty()
+			"""{"k":"new","type":${(klass?.let { ownerSpec(it, node.type) } ?: OBJ).toJson()},"argTypes":[$ctorArgTypes],"args":[$args],"memberSignature":[$ctorMemberSignature]$identity}"""
 		}
 		}
 	}

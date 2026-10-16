@@ -50,7 +50,7 @@ internal annotation class ClrAttributeNamedArgument(val kind: String, val name: 
 public annotation class ClrField
 
 // Compiler-internal DLL -> KLIB linkage for members. Properties carry getter and setter identities separately.
-@Target(AnnotationTarget.FUNCTION, AnnotationTarget.PROPERTY)
+@Target(AnnotationTarget.FUNCTION, AnnotationTarget.PROPERTY, AnnotationTarget.CONSTRUCTOR)
 @Retention(AnnotationRetention.BINARY)
 public annotation class KotlinDeclarationIdentity(val id: String, val setterId: String)
 

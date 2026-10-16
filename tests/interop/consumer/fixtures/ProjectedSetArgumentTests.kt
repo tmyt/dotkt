@@ -6,16 +6,33 @@ import SetArgumentInterop.*
 private fun widenedSize(value: Set<Any?>): Int = value.size
 private fun widenedView(value: Set<Any?>): Set<Any?> = value
 private fun forwardSize(value: Set<*>): Int = widenedSize(value)
+private fun starSize(value: Set<*>): Int = value.size
+private fun starFirst(value: Set<*>): Any? = value.iterator().next()
 private fun forwardView(value: Set<*>): Set<Any?> = widenedView(value)
 private fun nullableSize(value: Set<Any?>?): Int = value?.size ?: -1
 private fun forwardNullable(value: Set<*>?): Int = nullableSize(value)
 private fun collectionSize(value: Collection<Any?>): Int = value.size
+private fun collectionEmpty(value: Collection<Any?>): Boolean = value.isEmpty()
+private fun collectionContains(value: Collection<Any?>, element: Any?): Boolean = value.contains(element)
+private fun collectionFirst(value: Collection<Any?>): Any? = value.iterator().next()
+private fun integerSetEmpty(value: Set<Int>): Boolean = value.isEmpty()
+private fun collectionCast(value: Any): Collection<Any?> = value as Collection<Any?>
+private fun collectionSafeCast(value: Any?): Collection<Any?>? = value as? Collection<Any?>
+private fun nullableCollectionCast(value: Any?): Collection<Any?>? = value as Collection<Any?>?
+private fun collectionMatches(value: Any?): Boolean = value is Collection<*>
+private fun nullableCollectionMatches(value: Any?): Boolean = value is Collection<*>?
 private fun ignoreCollection(value: Collection<Any?>): Int = 7
 private fun ignoreSet(value: Set<Any?>): Int = 9
 private fun ignoreIterable(value: Iterable<Any?>): Int = 11
 private fun iterableView(value: Iterable<Any?>): Iterable<Any?> = value
 private fun nullableIterableView(value: Iterable<Any?>?): Iterable<Any?>? = value
 private fun forwardNullableIterable(value: Set<*>?): Iterable<Any?>? = nullableIterableView(value)
+private fun sameReference(first: Any?, second: Any?): Boolean = first === second
+private fun checkAmbiguous(operation: () -> Unit) {
+    var caught = false
+    try { operation() } catch (_: IllegalStateException) { caught = true }
+    check(caught)
+}
 private fun iterableSum(value: Iterable<Any?>): Int {
     var sum = 0
     for (element in value) sum += element as Int
@@ -49,10 +66,9 @@ class ProjectedSetArgumentTests {
         check(ignoreSet(set) == 9)
         check(ignoreIterable(set) == 11)
         val view = forwardView(set)
-        var caught = false
-        try { view.iterator() }
-        catch (_: IllegalStateException) { caught = true }
-        check(caught)
+        check(sameReference(view, source))
+        check(view.iterator().next() == "a")
+        checkAmbiguous { starFirst(set) }
     }
 
     @TestAttribute fun exactMutableWitnessKeepsFaithfulReadonlyIdentity() {
@@ -62,11 +78,11 @@ class ProjectedSetArgumentTests {
         check(widenedView(exact) === source)
     }
 
-    @TestAttribute fun exactMutableWitnessSurvivesRequiredReadonlyAdaptation() {
+    @TestAttribute fun readonlyWideningPreservesIdentityAndUsesItsStaticPreference() {
         val source: Any = ObjectMutableSetAndIntSet()
         val exact = source as MutableSet<Any?>
         val view = widenedView(exact)
-        check(view !== source)
+        check(sameReference(view, source))
         check(view.size == 2)
         check(view.contains("a") && !view.contains(7))
         val iterator = view.iterator()
@@ -147,7 +163,7 @@ class ProjectedSetArgumentTests {
         check(view.iterator().next() == 7) { "authored iterator" }
     }
 
-    @TestAttribute fun anAlreadyAdaptedSetDoesNotGetWrappedAgain() {
+    @TestAttribute fun repeatedWideningDoesNotWrapTheSet() {
         val source: Any = IntSetAndList<String>()
         val view = forwardView(source as Set<*>)
         check(forwardView(view) === view)
@@ -166,22 +182,36 @@ class ProjectedSetArgumentTests {
         check(widenedView(exact) === source)
     }
 
-    @TestAttribute fun genuinelyAmbiguousSetFamiliesRemainAmbiguous() {
-        val source: Any = ObjectAndIntSet()
-        var caught = false
-        try { forwardSize(source as Set<*>) }
-        catch (_: IllegalStateException) { caught = true }
-        check(caught)
+    @TestAttribute fun staticWideningSelectsTheSameViewForTheSameObjectAndCallee() {
+        val native = ObjectAndIntSet()
+        val source: Any = native
+        check(widenedSize(source as Set<Any?>) == 2)
+        check(forwardSize(source as Set<*>) == 2)
+        check(sameReference(widenedView(source as Set<Any?>), forwardView(source as Set<*>)))
+        checkAmbiguous { starSize(source as Set<*>) }
+        checkAmbiguous { starFirst(source as Set<*>) }
+        native.Clear()
+        check(integerSetEmpty(source as Set<Int>))
+        check(widenedSize(source as Set<Any?>) == 2)
+        check(collectionSize(source as Collection<Any?>) == 2)
+        check(!collectionEmpty(source as Collection<Any?>))
+        check(collectionContains(source as Collection<Any?>, "a"))
+        check(!collectionContains(source as Collection<Any?>, 7))
+        check(collectionFirst(source as Collection<Any?>) == "a")
+        check(ExactCollectionBoundary.Count(source as System.Collections.Generic.IReadOnlyCollection<Any?>) == 2)
     }
 
-    @TestAttribute fun aSetWidenedToCollectionKeepsItsSelectedFamily() {
+    @TestAttribute fun aSetWidenedToCollectionUsesTheCollectionOperationView() {
         val source: Any = IntSetAndList<String>()
-        check(collectionSize(source as Set<*>) == 3)
+        checkAmbiguous { collectionSize(source as Set<*>) }
+        checkAmbiguous { collectionSize(source as Collection<Any?>) }
     }
 
-    @TestAttribute fun aSetWidenedToIterableKeepsItsSelectedEnumeration() {
+    @TestAttribute fun aSetWidenedToIterableUsesTheIterableOperationView() {
         val source: Any = IntSetAndList<String>()
-        check(iterableSum(source as Set<*>) == 27)
+        check(sameReference(iterableView(source as Set<*>), source))
+        checkAmbiguous { iterableSum(source as Set<*>) }
+        checkAmbiguous { iterableSum(source as Iterable<Any?>) }
     }
 
     @TestAttribute fun faithfulIterableCovarianceDoesNotRequireReadonlyCollection() {
@@ -189,18 +219,39 @@ class ProjectedSetArgumentTests {
         check(iterableView(source as Set<*>) === source)
     }
 
-    @TestAttribute fun nullableIterableBoundaryPreservesNullAndItsSetElements() {
+    @TestAttribute fun nullableIterableBoundaryPreservesNullAndUsesItsStaticView() {
         check(forwardNullableIterable(null) == null)
         val source: Any = IntSetAndList<String>()
         val result = forwardNullableIterable(source as Set<*>)!!
-        var sum = 0
-        for (element in result) sum += element as Int
-        check(sum == 27)
+        check(sameReference(result, source))
+        checkAmbiguous { iterableSum(result) }
     }
 
     @TestAttribute fun concreteMutableStorageCanFillAReadonlySetParameter() {
         val source: Any = ObjectSetOnly()
         val mutable = source as MutableSet<Any?>
         check(widenedSize(mutable) == 2)
+        check(collectionSize(mutable) == 2)
+        check(!collectionEmpty(mutable))
+        check(collectionContains(mutable, "a") && !collectionContains(mutable, 7))
+        check(collectionFirst(mutable) == "a")
+        check(sameReference(collectionCast(source), source))
+        check(sameReference(collectionSafeCast(source), source))
+        check(collectionMatches(source))
+        val absent: Any? = null
+        check(!collectionMatches(absent))
+        check(nullableCollectionMatches(absent))
+        check(collectionSafeCast(absent) == null)
+        check(sameReference(nullableCollectionCast(absent), null))
+        val unrelated: Any = "not a collection"
+        check(!collectionMatches(unrelated))
+        check(collectionSafeCast(unrelated) == null)
+        var rejected = false
+        try { collectionCast(unrelated) } catch (_: ClassCastException) { rejected = true }
+        check(rejected)
+        rejected = false
+        try { ExactCollectionBoundary.Count(mutable as System.Collections.Generic.IReadOnlyCollection<Any?>) }
+        catch (_: System.InvalidCastException) { rejected = true }
+        check(rejected)
     }
 }

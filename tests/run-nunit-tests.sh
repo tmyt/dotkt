@@ -51,9 +51,9 @@ PROJECTS=(
 # Reviewed on the v0.9.8 main baseline at the start of #227. Updating a suite requires updating this number in
 # the same change, making otherwise-silent test proliferation or accidental deletion an explicit review event.
 declare -A EXPECTED_DISCOVERED=(
-	["tests/basic"]=727
+	["tests/basic"]=731
 	["tests/coroutines"]=260
-	["tests/roundtrip/consumer"]=538
+	["tests/roundtrip/consumer"]=541
 	["tests/roundtrip/bidirectional/consumer"]=41
 	["tests/interop/consumer"]=400
 )
@@ -280,6 +280,13 @@ for proj in "${PROJECTS[@]}"; do
 	if [[ "$proj" == "tests/roundtrip/consumer" ]]; then
 		producer_dll="$ROOT/tests/roundtrip/producer/bin/$CONFIGURATION/net10.0/RoundtripProducer.dll"
 		producer_klib="$dir/obj/$CONFIGURATION/net10.0/klib/RoundtripProducer.klib"
+		if dotnet "$METADATA_INSPECTOR_DLL" --projected-collection-returns "$producer_dll" "$producer_klib" \
+			>"$ROOT/build/nunit-$name.projected-collection-returns.log" 2>&1; then
+			echo "  projected collection values preserve source signatures and exact native CLR declarations"
+		else
+			echo "  PROJECTED COLLECTION RETURN METADATA FAIL"
+			tail -25 "$ROOT/build/nunit-$name.projected-collection-returns.log"; rc=1
+		fi
 		if python3 "$ROOT/tests/roundtrip/assert-unchecked-top-level-identity.py" \
 			"$ROOT/tests/roundtrip/producer/obj/$CONFIGURATION/net10.0/bir/UncheckedTopLevelIdentity.bir.json" \
 			"$dir/obj/$CONFIGURATION/net10.0/bir/UncheckedTopLevelIdentityTests.bir.json" \

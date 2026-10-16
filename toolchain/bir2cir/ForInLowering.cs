@@ -86,8 +86,12 @@ static class ForInLowering
         if (Str(o["k"]) != "forIn") return;
         if (IsCountedRange(o["srcType"], stdlibBuild)) ReplaceWith(o, BuildForRange(o, o["src"]));
         else if (!stdlibBuild && TryBuildDownTo(o, localTopLevelFns) is JsonObject dt) ReplaceWith(o, dt);
-        else if (IsNetOrSequenceEnumerable(o["srcType"], refs)) ReplaceWith(o, BuildForEachInline(o));
-        else if (stdlibBuild && IsStdlibCollection(o["srcType"], typeSupers)) ReplaceWith(o, BuildForEachInline(o));
+        // The authored iterator call owns the static collection family. A raw optimized enumerable loop
+        // would discard that family and could select an unrelated interface implemented by the same object.
+        else if (OpaqueEnumerable(TypeJson.Read(o["srcType"]), refs) && o["fallback"] is JsonObject iteratorFallback)
+            ReplaceWith(o, iteratorFallback);
+        else if (IsNetOrSequenceEnumerable(o["srcType"], refs)) ReplaceWith(o, BuildForEachInline(o, refs));
+        else if (stdlibBuild && IsStdlibCollection(o["srcType"], typeSupers)) ReplaceWith(o, BuildForEachInline(o, refs));
         else if (o["fallback"] is JsonObject fb) ReplaceWith(o, fb);
     }
 
@@ -190,7 +194,7 @@ static class ForInLowering
     };
 
     // A stdlib-collection forIn -> forEachInline (GetEnumerator); transient srcType/fallback facts are dropped.
-    static JsonObject BuildForEachInline(JsonObject o) => new()
+    static JsonObject BuildForEachInline(JsonObject o, ReferenceMetadataIndex refs) => new()
     {
         ["k"] = "forEachInline",
         ["label"] = o["label"]?.DeepClone(),
@@ -198,6 +202,16 @@ static class ForInLowering
         ["src"] = o["src"]?.DeepClone(),
         ["var"] = o["var"]?.DeepClone(),
         ["body"] = o["body"]?.DeepClone(),
+        // Classify before ordinary value erasure drops the alias owner. A typed IEnumerable<E> operand is not
+        // valid for a Kotlin variant value whose actual CLR element closure can differ (including value elements).
+        ["erasedEnumeration"] = OpaqueEnumerable(TypeJson.Read(o["srcType"]), refs),
+    };
+
+    static bool OpaqueEnumerable(TypeNode type, ReferenceMetadataIndex refs) => type switch {
+        TypeNode.Nullable nullable => OpaqueEnumerable(nullable.Of, refs),
+        TypeNode.Oblivious oblivious => OpaqueEnumerable(oblivious.Of, refs),
+        TypeNode.Fqn owner => AliasVarianceRepresentation.RequiresErasure(owner, refs),
+        _ => false,
     };
 
     static void ReplaceWith(JsonObject o, JsonObject repl)

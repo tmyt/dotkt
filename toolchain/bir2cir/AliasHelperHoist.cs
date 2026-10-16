@@ -386,6 +386,9 @@ static class AliasHelperHoist
         if (m[DeclarationIdentityBinding.Key] is JsonValue identity && identity.TryGetValue<string>(out var sourceIdentity))
         {
             outM[DeclarationIdentityBinding.Key] = DeclarationIdentity(sourceIdentity);
+            outM["declarationSourceName"] = m["declarationSourceName"]?.DeepClone()
+                ?? throw new InvalidOperationException(
+                    $"Hoisted declaration '{sourceIdentity}' has no preserved source name");
             outM["generated"] = true;
         }
         return outM;
@@ -434,6 +437,7 @@ static class AliasHelperHoist
             new TypeNode[] { new TypeNode.Tv("type", 1) }));
         var method = new JsonObject { ["name"] = "Read",
             [DeclarationIdentityBinding.Key] = "dotkt-declaration-v1:alias-selftest",
+            ["declarationSourceName"] = "Read",
             ["typeParams"] = new JsonArray("R"),
             ["params"] = new JsonArray(new JsonObject { ["name"] = "callback",
                 ["type"] = callback.DeepClone(), [FunctionSignatureIdentity.Key] = callback.DeepClone() }),
@@ -455,6 +459,7 @@ static class AliasHelperHoist
         var construction = hoisted["body"][0];
         if (hoisted[DeclarationIdentityBinding.Key]?.GetValue<string>() !=
                 DeclarationIdentity("dotkt-declaration-v1:alias-selftest")
+            || hoisted["declarationSourceName"]?.GetValue<string>() != "Read"
             || TypeJson.Read(hoisted["params"][1][FunctionSignatureIdentity.Key]) is not TypeNode.Fn callbackSignature
             || callbackSignature.Ret != new TypeNode.Tv("method", 6)
             || callbackSignature.Params[0] != new TypeNode.Tv("method", 1))

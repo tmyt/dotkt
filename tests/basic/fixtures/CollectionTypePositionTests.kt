@@ -1,15 +1,7 @@
-// Where a collection token SITS decides which CLR interface it becomes (#370 regression battery).
-//
-// A read-only Kotlin collection lowers to its covariant CLR face (`IReadOnlyList`) in a head position, but to the
-// invariant sibling (`IList`) when it sits in a generic ARGUMENT position — BirTypeLowering's Root-V collapse.
-// A member reference has to spell the member the way the TARGET declares it, so a reference authored by walking a
-// signature with one uniform alias step names a member that does not exist: `List<List<T>>` came out as
-// `IReadOnlyList<IReadOnlyList<T>>` where the runtime stdlib declares `IReadOnlyList<IList<T>>`.
-//
-// The pairing is what makes this a fixture rather than an example. `collectionInBothPositionsOfOneCall` puts the
-// SAME Kotlin type in both positions of a SINGLE call — `List<String>` as the receiver's element (a storage slot,
-// which collapses) and as the lambda's parameter (a method slot, which must not) — so a rule that is uniform in
-// either direction breaks one half of one call. No single-position test can catch that.
+// Collection values retain their Kotlin meaning across signature and storage positions (#370 regression battery).
+// Ordinary read-only values use an opaque identity-preserving ABI; native declarations and implemented interfaces
+// keep their exact CLR faces. Nested values, returned elements and callback slots must agree with that same contract,
+// rather than manufacturing a different reified collection construction at each use.
 //
 // These assert values, but their real assertion is that they COMPILE: a mis-spelled reference fails the exact
 // member lookup at emit time, naming the member and the candidates it did not match.
@@ -24,16 +16,14 @@ class CollectionTypePositionCell<T>(initial: T) {
 }
 
 class CollectionTypePositionTests {
-    // ---- generic-ARGUMENT position: the token collapses to the invariant sibling ------------------------------
+    // ---- generic argument positions -------------------------------------------------------------------------
 
-    // Direct element extraction crosses the physical sibling seam created by Root-V: the member returns the
-    // invariant nested face while Kotlin exposes the read-only face. bir2cir must state that view conversion in
-    // CIR; leaving it to ilemit both violates layer ownership and produces unverifiable IL when it is omitted.
+    // Direct element extraction must preserve the nested collection's ordinary value representation. bir2cir owns
+    // that representation and all conversion edges; ilemit emits the already-resolved signature one-to-one.
 
     @TestAttribute
     fun nestedCollectionInAReturnedElementSlot() {
-        // `List<List<T>>` — the inner token is the returned collection's element, a storage slot. This is the
-        // shape that was mis-spelled: the reference said `IReadOnlyList<IReadOnlyList<T>>`.
+        // The nested list is a returned element as well as a declared local value.
         val w: List<List<Int>> = listOf(1, 2, 3, 4).windowed(2, 1)
         assertEquals(3, w.size)
         val first: List<Int> = w[0]
@@ -60,20 +50,18 @@ class CollectionTypePositionTests {
 
     @TestAttribute
     fun nestedCollectionAsAMapValue() {
-        // The same collapse one level down a different container: `Map<K, List<V>>`.
+        // Read-only values remain read-only inside a different container too: `Map<K, List<V>>`.
         val g: Map<Int, List<String>> = listOf("a", "bb", "cc").groupBy { it.length }
         assertEquals(1, g[1]!!.size)
         assertEquals(2, g[2]!!.size)
         assertEquals("a", g[1]!![0])
     }
 
-    // ---- both positions at once: the control that no uniform rule can satisfy ---------------------------------
+    // ---- storage and callback positions in the same call -----------------------------------------------------
 
     @TestAttribute
     fun collectionInBothPositionsOfOneCall() {
-        // `List<String>` is the receiver's ELEMENT (storage — collapses to the invariant sibling) and the
-        // lambda's PARAMETER (a function type's slot — keeps the covariant face). One call, one Kotlin type,
-        // two required spellings.
+        // `List<String>` is both the receiver's element and the lambda's parameter.
         val joined: List<String> = listOf(listOf("a", "b"), listOf("c")).map { it.joinToString("") }
         assertEquals(2, joined.size)
         assertEquals("ab", joined[0])
@@ -95,7 +83,7 @@ class CollectionTypePositionTests {
         assertEquals("ccc", sorted[2].first)
     }
 
-    // ---- head position: the covariant face, the rule everything else is measured against ----------------------
+    // ---- direct read-only values ----------------------------------------------------------------------------
 
     @TestAttribute
     fun headPositionKeepsTheReadOnlyFace() {

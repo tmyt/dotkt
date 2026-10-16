@@ -28,6 +28,8 @@ static class Bir2Cir
                 StdlibBindingOverlay.SelfTest();
                 DeclarationIdentityBinding.SelfTest();
                 DeclarationSignatureIdentity.SelfTest();
+                ForeignStarProjectionBinding.SelfTest();
+                MemberCallSubstitution.StaticCollectionPreferenceSelfTest();
                 FunctionSignatureIdentity.SelfTest();
                 PhysicalValueCoercion.SelfTest();
                 PrimitiveOperatorLowering.SelfTest();
@@ -61,6 +63,10 @@ static class Bir2Cir
                 FBoundStarProjectionErasure.ProjectionConstraintSelfTest();
                 ComparableRepresentationLowering.SelfTest();
                 AliasVarianceRepresentation.SelfTest();
+                KotlinCollectionClassifierLowering.SelfTest();
+                GenericArrayStorageLowering.SelfTest();
+                RoundtripMetadata.RuntimeLinkageSelfTest();
+                SuspendColdLowering.DeclarationRegistrySelfTest();
                 ReferenceMetadataIndex.SelfTest();
                 NullableTvErasureCallRealign.SelfTest();
                 MapVarianceRealign.SelfTest();
@@ -922,7 +928,7 @@ sealed class Pipeline
         // the Kotlin-vocabulary phase, because the pass keys on the frontend `overrides` identity — which does not
         // survive to CIR — and on Kotlin's own supertype graph. Non-ref builds only.
         if (!_options.RefBuild)
-            KotlinCollectionSlotSynthesis.ApplyAll(staged.Select(s => s.Root).ToList(), refs, isValueFqn, genericRepresentations);
+            KotlinCollectionSlotSynthesis.ApplyAll(staged.Select(s => s.Root).ToList());
 
         // NOMINAL COLLECTION CLASSIFIER IDENTITIES: the operational aliases intentionally share BCL faces
         // (Collection/Set -> IReadOnlyCollection, MutableCollection/MutableSet -> ICollection), which otherwise makes
@@ -1330,6 +1336,8 @@ sealed class Pipeline
         var declarationSignatures = DeclarationSignatureIdentity.Plan(declarationCollisionProjection);
         DeclarationSignatureIdentity.Apply(declarationCollisionProjection, declarationSignatures);
         DeclarationSignatureIdentity.Apply(loweredRoots.Select(s => s.Root), declarationSignatures);
+        DeclarationSignatureIdentity.BindSelectedOverrides(loweredRoots.Select(s => s.Root), declarationSignatures,
+            refs, isValueFqn);
         var declarationPhysicalNames = DeclarationIdentityBinding.AllocatePhysicalNames(
             declarationCollisionProjection, out var declarationSemanticCarrierIds);
         DeclarationIdentityBinding.ApplyLocal(
@@ -1440,13 +1448,12 @@ sealed class Pipeline
             // CIR `attrs`/`retAttrs` entries (ilemit then only STAMPS them via its generic BuildCab path — no Kotlin
             // knowledge left in ilemit). Runs on the fully-lowered decls so the materialized facts (nullableFlags,
             // suspendFnType, inlineBir, mods, suspendBridge, readOnly) are all present. SKIPPED in the runtime build
-            // (`!SubstituteStdlibBuild`) — the gate that REPLACES ilemit's deleted `_stripMetadata`. Placed after
+            // (`!SubstituteStdlibBuild`) except for runtime declaration-linkage facts. Placed after
             // the earlier reference-body squash, which preserves all captured metadata. The attribute-class DEFS
             // are emitted ONCE below (SynthDefsFile), not per-file.
             if (!_options.SubstituteStdlibBuild) RoundtripMetadata.Stamp(lowered);
-            // RUNTIME build: strip every applied user annotation (kotc's kotlin.Deprecated/SinceKotlin/InlineOnly/…) —
-            // DotKt.Stdlib.dll is the shipping runtime assembly and is never metadata-read, so only runtime-relevant
-            // annotations survive this boundary.
+            // Runtime builds retain user annotations and minimal declaration linkage, but omit source projection
+            // metadata. Exact runtime MethodDefs are associated with their reference twins by declaration ID.
             else RoundtripMetadata.StripRuntimeAttrs(lowered);
             // The Kotlin `suspend` modifier has no CLR meaning and every consumer of it is a bir2cir pass: the cold
             // lowering, and the [KotlinFunction(Suspend)] stamp just written (which is how a referenced module still
@@ -1591,7 +1598,7 @@ sealed class Pipeline
         // #71 S2: emit the embedded round-trip attribute-class defs ONCE per assembly, as a dedicated synthetic CIR
         // file (glob-sorted first via the `000-` prefix so its TypeDefs precede the user types, minimizing dump churn).
         // Alias declarations also survive in a stdlib runtime assembly; projection still excludes that assembly
-        // by its explicit stdlib marker. Only the assembly-alias carrier is needed on that metadata-stripped path.
+        // by its explicit stdlib marker. Runtime twins retain only alias and declaration-linkage carrier definitions.
         if (!_options.SubstituteStdlibBuild || birRoots.OfType<JsonObject>().Any(root =>
                 root["assemblyAttrs"] is JsonArray { Count: > 0 }))
         {
@@ -1600,7 +1607,7 @@ sealed class Pipeline
             // and every Kotlin stamp would then silently vanish (its attr class absent -> BuildCab skips).
             if (files.Any(f => f.OutputName == synthName))
                 throw new InvalidOperationException($"bir2cir: reserved synthetic CIR name '{synthName}' collides with an input file");
-            var attributeDefinitions = RoundtripMetadata.SynthDefsFile(refs, aliasesOnly: _options.SubstituteStdlibBuild);
+            var attributeDefinitions = RoundtripMetadata.SynthDefsFile(refs, linkageOnly: _options.SubstituteStdlibBuild);
             ClrMemberResolution.ResolveAttributeCtors(attributeDefinitions, refs);
             if (fixedMemberTable != null) attributeDefinitions["wellKnownRefs"] = fixedMemberTable.DeepClone();
             files.Insert(0, new CirFile(synthName, attributeDefinitions.ToJsonString(JsonOptions.Indented)));

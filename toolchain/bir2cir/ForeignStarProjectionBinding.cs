@@ -223,9 +223,13 @@ static class ForeignStarProjectionBinding
             _ => "starProjectionCast",
         };
         var result = kind == "isInst" ? Bool : kind == "cast" ? Any : AnyN;
+        // The selected native definition owns its generic frame; the source alias can additionally have storage
+        // companions. ClosedViewHint maps those source arguments through their declared frame exactly once.
+        var declaringView = new TypeNode.Fqn(openType);
+        var preferredView = ClosedViewHint(operand, owner, declaringView, refs, preferExplicit: true);
         JsonObject RuntimeCall(JsonNode value) => Call(method,
-            new[] { AnyN, Type }, result,
-            value.DeepClone(), ClassRef(openType));
+            new[] { AnyN, Type, TypeN }, result,
+            value.DeepClone(), ClassRef(openType), preferredView.DeepClone());
 
         if (!nullable || kind == "isInstRef")
         {
@@ -285,6 +289,7 @@ static class ForeignStarProjectionBinding
             // authored base's frame, not the receiver's unrelated generic frame. Recover the stated nominal
             // view from the opaque receiver and let ordinary member binding consume the selected descriptor.
             if (!ContainsExistential(authoredOwner)
+                && !AliasVarianceRepresentation.RequiresErasure(owner, refs)
                 && refs.ResolveForeignProjectionType(authoredOwner.Name, authoredOwner.Args) is { } nominalOwner
                 // The same generic declaration is still existential: an authored readable bound
                 // does not prove that the receiver has that exact CLR construction.
@@ -302,6 +307,7 @@ static class ForeignStarProjectionBinding
             throw new NotSupportedException(
                 $"bir2cir: foreign byref-like generic star projection `{owner.Name}<*>` has no boxable CLR existential representation");
         var valueReceiver = refs.IsValueType(owner);
+        var resultOwnerArgs = AliasVarianceRepresentation.ResultOwnerArguments(owner, refs);
 
         // Source CLR calls retain their selected declaration descriptor before Kotlin nullable-value erasure.
         // Compiler-authored calls already state the descriptor in sig/argTypes; neither route infers it from values.
@@ -343,7 +349,7 @@ static class ForeignStarProjectionBinding
             var fieldSemanticResult = TypeJson.Read(obj["ret"]) ?? NodeType.Of(obj);
             var fieldAdapterResult = SubstituteProjectedOwnerSlots(fieldSemanticResult, owner.Args);
             if (UnwrapFunction(fieldDeclarationType) is TypeNode.Fn
-                && DependsOnProjectedOwnerSlot(fieldDeclarationType, owner.Args)
+                && DependsOnProjectedOwnerSlot(fieldDeclarationType, resultOwnerArgs)
                 && UnwrapFunction(fieldAdapterResult) is TypeNode.Fn fieldFunction)
             {
                 rewritten = WrapDependentDelegateResult(fieldCall, fieldAdapterResult, fieldFunction);
@@ -351,7 +357,7 @@ static class ForeignStarProjectionBinding
             }
             // The selected declaration retains which nested generic slots depend on the
             // projected owner; the readable Kotlin result may already have replaced them by bounds.
-            var fieldResult = ProjectResult(fieldDeclarationType, owner.Args, refs);
+            var fieldResult = ProjectResult(fieldDeclarationType, resultOwnerArgs, refs);
             rewritten = IsObjectish(fieldResult) ? fieldCall : new JsonObject
             {
                 ["k"] = "cast", ["type"] = TypeJson.Write(fieldResult), ["e"] = fieldCall,
@@ -412,9 +418,9 @@ static class ForeignStarProjectionBinding
         var semanticFunction = UnwrapFunction(adapterResult);
         var adaptDelegate = UnwrapFunction(declarationReturn) is TypeNode.Fn declarationFunction
             && !declarationFunction.Suspend
-            && DependsOnProjectedOwnerSlot(declarationReturn, owner.Args)
+            && DependsOnProjectedOwnerSlot(declarationReturn, resultOwnerArgs)
             && semanticFunction != null;
-        var projectedResult = ProjectResult(declarationReturn, owner.Args, refs,
+        var projectedResult = ProjectResult(declarationReturn, resultOwnerArgs, refs,
             (obj["typeArgs"] as JsonArray)?.Select(TypeJson.Read).ToArray());
 
         if (valueReceiver)
@@ -798,20 +804,31 @@ static class ForeignStarProjectionBinding
     };
 
     static JsonNode ClosedViewHint(JsonNode receiver, TypeNode.Fqn owner, TypeNode declaringView,
-        ReferenceMetadataIndex refs)
+        ReferenceMetadataIndex refs, bool preferExplicit = false)
     {
-        if (receiver is JsonObject { } obj && Str(obj["k"]) == "local"
+        // An ordinary variant alias states a readable preference, not a guaranteed physical closure. The runtime
+        // uses it only when that exact implemented view exists; otherwise the unique actual closure remains valid.
+        TypeNode.Fqn selectedHint = AliasVarianceRepresentation.RequiresErasure(owner, refs)
+            && owner.Args?.Any(ContainsExistential) == false ? owner : null;
+        if (!AliasVarianceRepresentation.RequiresErasure(owner, refs) && (!preferExplicit || selectedHint == null)
+            && receiver is JsonObject { } obj && Str(obj["k"]) == "local"
             && Str(obj["name"]) is string name && _closedViewHints.TryGetValue(name, out var hint)
             && SameForeignProjectionOwner(hint, owner, refs)
             && hint.Args?.Length == owner.Args?.Length)
+            selectedHint = hint;
+        if (selectedHint is { } view)
         {
+            var arguments = refs.NullableTypeFrames.GetValueOrDefault(view.Name)?.OrdinaryArguments(view.Args) ?? view.Args;
             // MetadataLoadContext reports a method declared directly on an open generic as the bare definition.
-            // In that case the authored exact closure already is the declaring view; emitting the bare generic as a
+            // In that case the selected preferred closure already is the declaring view; emitting the bare generic as a
             // classRef would be an invalid/absent CLR type token.
             if (declaringView is TypeNode.Fqn { Args: null } direct
-                && SameForeignProjectionOwner(hint, new TypeNode.Fqn(direct.Name, hint.Args), refs))
-                return ClassRef(hint);
-            var translated = SubstituteOwnerSlots(declaringView, hint.Args);
+                && refs.ResolveForeignProjectionType(view.Name, view.Args) is { } preferredOwner
+                && refs.ResolveForeignProjectionType(direct.Name, arguments) is { } declaringOwner
+                && (preferredOwner.IsConstructedGenericType ? preferredOwner.GetGenericTypeDefinition() : preferredOwner)
+                    == (declaringOwner.IsConstructedGenericType ? declaringOwner.GetGenericTypeDefinition() : declaringOwner))
+                return ClassRef(new TypeNode.Fqn(direct.Name, arguments));
+            var translated = SubstituteOwnerSlots(declaringView, arguments);
             if (translated is TypeNode.Fqn translatedFqn && !ContainsExistential(translatedFqn))
                 return ClassRef(translatedFqn);
         }
@@ -885,7 +902,7 @@ static class ForeignStarProjectionBinding
     };
 
     // A foreign star value remains the original object to preserve Kotlin reference identity. When an immutable local
-    // is initialized from one exact CLR closure, carry that frontend-authored view separately to reflection dispatch;
+    // is initialized from a concrete source view, carry that preferred view separately to reflection dispatch;
     // this distinguishes `I<X>` and `I<Y>` implemented by the same CLR object without wrapping the value. Mutable
     // locals are deliberately excluded: a compile-time hint would become stale after an assignment.
     internal static Dictionary<string, TypeNode.Fqn> CollectClosedViewHints(IReadOnlyList<JsonNode> roots,
@@ -1023,8 +1040,9 @@ static class ForeignStarProjectionBinding
     static bool DependsOnProjectedOwnerSlot(TypeNode type, TypeNode[] ownerArgs) => type switch
     {
         TypeNode.Tv { Scope: "type" } tv when tv.I >= 0 && tv.I < ownerArgs.Length
-            => ownerArgs[tv.I] is TypeNode.Star or TypeNode.Projection
-                || DependsOnProjectedOwnerSlot(ownerArgs[tv.I], ownerArgs),
+            // One simultaneous substitution: the selected argument belongs to the caller's frame. Its TVs must
+            // never be rebound against this declaration's unrelated owner argument vector.
+            => ContainsExistential(ownerArgs[tv.I]),
         TypeNode.Star or TypeNode.Projection => true,
         TypeNode.Fqn { Args: { } args } => args.Any(a => DependsOnProjectedOwnerSlot(a, ownerArgs)),
         TypeNode.Nullable n => DependsOnProjectedOwnerSlot(n.Of, ownerArgs),
@@ -1056,6 +1074,21 @@ static class ForeignStarProjectionBinding
             || (fn.Ctx?.Any(ContainsExistential) ?? false),
         _ => false,
     };
+
+    internal static void SelfTest()
+    {
+        var slot = new TypeNode.Tv("type", 0);
+        var callerArgs = new TypeNode[] { slot };
+        if (DependsOnProjectedOwnerSlot(slot, callerArgs))
+            throw new InvalidOperationException("Caller owner variable was rebound in the declaration frame");
+        var permuted = new TypeNode[] { new TypeNode.Tv("type", 1), new TypeNode.Projection("out", String) };
+        var nested = new TypeNode.Fqn("Probe.Native", new TypeNode[] { slot });
+        if (DependsOnProjectedOwnerSlot(nested, permuted)
+            || !DependsOnProjectedOwnerSlot(new TypeNode.Tv("type", 1), permuted)
+            || DependsOnProjectedOwnerSlot(new TypeNode.Fqn("Probe.Native", new[] { String }), permuted))
+            throw new InvalidOperationException("Projected result dependency crossed caller/declaration frames");
+        Console.WriteLine("[foreign projected results] self-test OK (simultaneous substitution, nested dependency, exact independent result)");
+    }
 
     static bool IsObjectish(TypeNode type) => type switch
     {

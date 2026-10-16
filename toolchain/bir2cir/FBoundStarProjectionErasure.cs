@@ -180,6 +180,12 @@ static class FBoundStarProjectionErasure
         ForeignStarProjectionBinding.ApplyAll(rootList,
             owners.Values.Where(owner => owner.Needed).ToDictionary(
                 owner => owner.Name, owner => owner.ErasedName, StringComparer.Ordinal), refs, localClrAliases);
+        // Factory allocation above used the source constraint graph. Freeze that same classification before value
+        // projection can erase a dependent alias bound to Object and make its sibling constraints appear independent.
+        var innerDependencies = owners.Values.Where(owner => owner.Needed && IsInner(owner.Def))
+            .ToDictionary(owner => owner.Name, owner => (
+                Dependent: OwnerDependentInnerParameters(owner, InnerCapturedCount(owner.Def)),
+                Direct: DirectOwnerDependentInnerParameters(owner, InnerCapturedCount(owner.Def))), StringComparer.Ordinal);
         foreach (var root in rootList) Rewrite(root, owners, defs, refs, localClrAliases: localClrAliases);
         // A mutable cell's value writes now have physical types. Align its explicit storage before the existing
         // local/return propagation below, so nullable temporaries and separate read closures see the same slot.
@@ -212,7 +218,7 @@ static class FBoundStarProjectionErasure
         // Binding above consumes the complete Kotlin constraint graph. Only after every local call and generated
         // seam has been selected may the physical inner TypeDefs drop constraints that cannot name a star outer.
         var weakenedOwnerSlots = WeakenOwnerDependentInnerConstraints(
-            owners.Values.Where(owner => owner.Needed)).ToDictionary(pair => pair.Key, pair => pair.Value,
+            owners.Values.Where(owner => owner.Needed), innerDependencies).ToDictionary(pair => pair.Key, pair => pair.Value,
                 StringComparer.Ordinal);
         foreach (var (name, slots) in generatedMethodFrames)
         {
@@ -568,9 +574,11 @@ static class FBoundStarProjectionErasure
         || refs != null && !refs.HasDotKtOwner(owner.Name)
             && refs.ResolveRefType(owner.Name, owner.Args?.Length ?? 0) != null;
 
-    // The temporary and its initializer retain the same concrete head, but their generic arguments are
-    // ordinary value slots and must receive the same projection as the construction's arguments.
-    static bool PreservesConstructionHead(JsonObject node, string key) => key == "type"
+    // Operation owners retain their selected head, not recursively exact Kotlin-supplied arguments.
+    // Native memberRef/declaration descriptors separately remain fully bound above.
+    static bool PreservesConstructionHead(JsonObject node, string key) =>
+        key is "type" or "ownerType" && ClrBoundNode.IsAny(Str(node["k"]))
+        || key == "type"
         && ((Str(node["k"]) is "new" or "newClr")
             || Str(node["k"]) == "var" && Bool(node[CallEvalLowering.ValueTemporaryKey])
                 && node["init"] is JsonObject initializer && Str(initializer["k"]) == "new"
@@ -954,6 +962,26 @@ static class FBoundStarProjectionErasure
             || RewriteType(inner, owners, refs, boundDeclaration: true) != inner
             || RewriteType(inner, owners, refs, preserveConstructedHead: true) != inner)
             throw new InvalidOperationException("Inner value projection changed an invariant owner or exact linkage slot");
+        foreach (var kind in new[] { "clrInstance", "clrStatic", "clrGenericInstance", "clrPropGet", "clrPropSet", "newClr" })
+        {
+            var operation = new JsonObject { ["k"] = kind, ["type"] = TypeJson.Write(inner) };
+            if (IsBoundDeclarationType(operation, "type", refs, null)
+                || !PreservesConstructionHead(operation, "type")
+                || !PreservesConstructionHead(operation, "ownerType")
+                || IsBoundDeclarationType(operation, "ret", refs, null)
+                || RewriteType(inner, owners, refs,
+                    preserveConstructedHead: PreservesConstructionHead(operation, "type")) != inner)
+                throw new InvalidOperationException("A bound CLR declaring owner became an ordinary value slot");
+        }
+        var native = new TypeNode.Fqn("System.Collections.Generic.List", new TypeNode[] { inner });
+        var explicitNative = new TypeNode.Fqn("System.Collections.Generic.List", new TypeNode[] {
+            new TypeNode.Fqn("System.Collections.Generic.IReadOnlyList", new TypeNode[] { new TypeNode.Fqn("System.String") }),
+        });
+        if (RewriteType(native, owners, refs, preserveConstructedHead: true)
+                != new TypeNode.Fqn(native.Name, new TypeNode[] { new TypeNode.Fqn("InnerView") })
+            || RewriteType(explicitNative, owners, refs, preserveConstructedHead: true) != explicitNative
+            || RewriteType(native, owners, refs, boundDeclaration: true) != native)
+            throw new InvalidOperationException("Operation owner arguments confused Kotlin values with exact native descriptors");
         var constructionOwner = JsonNode.Parse("""
           {"kind":"class","typeParams":["P","T","Q","U"]}
           """).AsObject();
@@ -1031,6 +1059,20 @@ static class FBoundStarProjectionErasure
         if (!changedInner.ContainsKey("Owner.Inner")
             || !JsonNode.DeepEquals(innerSource, materializedInner[KotlinSupertypesRecord.PreKey]))
             throw new InvalidOperationException("Physical inner companion bound became a Kotlin source fact");
+        var projectedInner = JsonNode.Parse("""
+            {"mods":{"inner":true},"outerTypeParamCount":1,"typeParams":["T",
+             {"name":"E","constraints":[{"t":"fqn","name":"Bound","args":[{"t":"tv","scope":"type","i":0}]},
+               {"t":"fqn","name":"Marker"}]}]}
+            """).AsObject();
+        var projectedOwner = new Owner { Name = "Owner.Projected", Def = projectedInner };
+        var dependencyPlan = new Dictionary<string, (HashSet<int> Dependent, HashSet<int> Direct)> {
+            [projectedOwner.Name] = (OwnerDependentInnerParameters(projectedOwner, 1),
+                DirectOwnerDependentInnerParameters(projectedOwner, 1)),
+        };
+        projectedInner["typeParams"][1]["constraints"][0] = TypeJson.Fqn("kotlin.Any");
+        WeakenOwnerDependentInnerConstraints(new[] { projectedOwner }, dependencyPlan);
+        if (((JsonArray)projectedInner["typeParams"][1]["constraints"]).Count != 0)
+            throw new InvalidOperationException("Value projection resurrected a constraint on a bottom-fixed inner slot");
         Console.WriteLine("[constraint projections] self-test OK (star, variance, annotation, exact bound, physical/source separation)");
     }
 
@@ -1694,7 +1736,8 @@ static class FBoundStarProjectionErasure
         return HasKotlinVariantParameter(application, refs.OwnerTypeParamDeclarations(application.Name));
     }
 
-    // A foreign alias cannot be retrofitted with a nominal carrier. Its binding's incompatible variance requires
+    // A foreign alias cannot be retrofitted with a nominal carrier. Kotlin variance includes value arguments,
+    // unlike CLR interface variance, and requires
     // an opaque reference slot instead; the exact source application still travels in KotlinType metadata.
     static bool RequiresOpaqueVariantAlias(TypeNode.Fqn application,
         IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs,
@@ -1888,18 +1931,28 @@ static class FBoundStarProjectionErasure
                 {
                     var bridge = BridgeMethod(owner, method, owners, refs,
                         slotTypeParams: slot["typeParams"] as JsonArray);
+                    DeclarationSignatureIdentity.RecordSelectedImplementationSlot(bridge, slot);
                     declared.Add(bridge);
                 }
                 else if (Str(owner.Def["kind"]) == "interface")
+                {
                     // A concrete/default declaration on a derived CLR interface does not implicitly implement the
                     // same-shaped abstract slot on the synthesized existential base interface. Give every source
                     // interface method a distinct private forwarding body and an exact MethodImpl; abstract source
                     // methods are valid virtual call targets and are supplied by the eventual implementing class.
                     // The slot keeps its public source name, while the body name is deliberately unspeakable.
-                    declared.Add(BridgeMethod(owner, method, owners, refs,
+                    var bridge = BridgeMethod(owner, method, owners, refs,
                         StarMethodName(owner, method),
                         slotMemberName: Str(slot[DeclarationIdentityBinding.ExplicitNameKey]) ?? Str(slot["name"]),
-                        slotTypeParams: slot["typeParams"] as JsonArray));
+                        slotTypeParams: slot["typeParams"] as JsonArray);
+                    DeclarationSignatureIdentity.RecordSelectedImplementationSlot(bridge, slot);
+                    declared.Add(bridge);
+                }
+                else
+                    // A later declaration-signature allocation may add modifiers to the source MethodDef.
+                    // Preserve this selected implicit relation so that allocation can author an exact forwarder
+                    // without rediscovering the existential slot from its erased name or parameter vector.
+                    DeclarationSignatureIdentity.RecordSelectedImplementationSlot(method, slot);
             }
 
             // A class existential cannot inherit a concrete non-generic base, yet star-typed
@@ -1915,8 +1968,10 @@ static class FBoundStarProjectionErasure
                 var key = MethodKey(slot);
                 if (key == null || !seen.Add(key)) continue;
                 methods.Add(slot);
-                declared.Add(BridgeMethod(owner, method, owners, refs, bridgeName,
-                    new TypeNode.Fqn(declaringName), slotTypeParams: slot["typeParams"] as JsonArray));
+                var bridge = BridgeMethod(owner, method, owners, refs, bridgeName,
+                    new TypeNode.Fqn(declaringName), slotTypeParams: slot["typeParams"] as JsonArray);
+                DeclarationSignatureIdentity.RecordSelectedImplementationSlot(bridge, slot);
+                declared.Add(bridge);
             }
 
             foreach (var inner in owners.Values.Where(candidate => candidate.Needed
@@ -2415,14 +2470,16 @@ static class FBoundStarProjectionErasure
         return result;
     }
 
-    static IReadOnlyDictionary<string, HashSet<int>> WeakenOwnerDependentInnerConstraints(IEnumerable<Owner> owners)
+    static IReadOnlyDictionary<string, HashSet<int>> WeakenOwnerDependentInnerConstraints(IEnumerable<Owner> owners,
+        IReadOnlyDictionary<string, (HashSet<int> Dependent, HashSet<int> Direct)> sourceDependencies = null)
     {
         var result = new Dictionary<string, HashSet<int>>(StringComparer.Ordinal);
         foreach (var inner in owners.Where(owner => IsInner(owner.Def)))
         {
             var capturedCount = InnerCapturedCount(inner.Def);
-            var dependent = OwnerDependentInnerParameters(inner, capturedCount);
-            var directDependent = DirectOwnerDependentInnerParameters(inner, capturedCount);
+            var source = sourceDependencies?.GetValueOrDefault(inner.Name);
+            var dependent = source?.Dependent ?? OwnerDependentInnerParameters(inner, capturedCount);
+            var directDependent = source?.Direct ?? DirectOwnerDependentInnerParameters(inner, capturedCount);
             if (dependent.Count == 0 || inner.Def["typeParams"] is not JsonArray parameters) continue;
 
             var recorded = new JsonObject();
@@ -4961,6 +5018,11 @@ static class FBoundStarProjectionErasure
     {
         if (TypeJson.Read(slot) is TypeNode.Fqn f && owners.TryGetValue(f.Name, out var owner)) target.Add(owner);
     }
+
+    // A helper authored after the main projection still has the reference assembly's Kotlin declaration types.
+    // Apply the same referenced value ABI before lowering aliases; selected native CLR descriptors are separate.
+    internal static TypeNode ProjectReferencedValueType(TypeNode type, ReferenceMetadataIndex refs) =>
+        RewriteType(type, new Dictionary<string, Owner>(StringComparer.Ordinal), refs);
 
     static TypeNode RewriteType(TypeNode type, IReadOnlyDictionary<string, Owner> owners,
         ReferenceMetadataIndex refs, bool boundDeclaration = false,

@@ -165,6 +165,8 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 			if (projectedClrOwner != null) return carried
 			return carried ?: declarationId(fn)
 		}
+		if (fn is IrConstructor) return carriedDeclarationId(fn)
+			?: if (projectedClrOwner == null) declarationId(fn) else null
 		if (fn !is IrSimpleFunction) return null
 		val owner = fn.parent as? IrClass ?: return null
 		// Native array and compile-time-handle classifiers deliberately have no MethodDefs in the emitted module.

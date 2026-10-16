@@ -295,6 +295,7 @@ static class RoundtripMetadata
         if (to["ctors"] is JsonArray ctors)
             foreach (var c in ctors) if (c is JsonObject co)
             {
+                StampConstructorIdentity(co);
                 if ((co["aliasCtorAdapter"] as JsonValue)?.GetValue<string>() is string adapter)
                 {
                     Append(co, Marker(AKConstructorAdapter,
@@ -305,6 +306,20 @@ static class RoundtripMetadata
             }
         if (to["types"] is JsonArray nested)
             foreach (var t in nested) if (t is JsonObject nto) StampType(nto);
+    }
+
+    static void StampConstructorIdentity(JsonObject constructor)
+    {
+        if (constructor[DeclarationIdentityBinding.Key] is JsonValue identity)
+        {
+            var payload = new JsonObject { ["id"] = identity.DeepClone(), ["name"] = ".ctor" };
+            if (constructor[DeclarationSignatureIdentity.AllocatedKey]?.GetValue<bool>() == true)
+                payload[DeclarationSignatureIdentity.AllocationMetadataKey] = true;
+            Append(constructor, JsonCarrierAttr(AKDeclarationIdentity, payload));
+            constructor.Remove(DeclarationIdentityBinding.Key);
+            constructor.Remove("declarationSourceName");
+        }
+        constructor.Remove(DeclarationSignatureIdentity.AllocatedKey);
     }
 
     static void RecordTypeParameterVariances(JsonObject type)
@@ -366,6 +381,8 @@ static class RoundtripMetadata
                 ["id"] = declarationId,
                 ["name"] = sourceName,
             };
+            if (mo[DeclarationSignatureIdentity.AllocatedKey]?.GetValue<bool>() == true)
+                identity[DeclarationSignatureIdentity.AllocationMetadataKey] = true;
             if (mo[DeclarationIdentityBinding.SemanticSignatureKey] is JsonObject semanticSignature)
                 identity["signature"] = semanticSignature.DeepClone();
             if (mo[ReifiedNullabilityWitnessLowering.SemanticIndicesKey] is JsonArray reified)
@@ -388,6 +405,7 @@ static class RoundtripMetadata
             mo.Remove(ReifiedNullabilityWitnessLowering.SemanticIndicesKey);
             mo.Remove(ReifiedNullabilityWitnessLowering.WitnessIndicesKey);
         }
+        mo.Remove(DeclarationSignatureIdentity.AllocatedKey);
         if (mo[NullableRepresentationTypes.MethodFrameKey] != null)
             throw new InvalidOperationException($"Nullable representation frame on {mo["name"]} requires declaration identity metadata");
         // CLR Property rows cannot describe method-generic accessors. The allocator leaves this exact semantic
@@ -658,20 +676,21 @@ static class RoundtripMetadata
 
     // ---------------------------------------------------------------------------------------------------------------
     // RUNTIME build: strip the COMPILE-TIME-ONLY carriers from `attrs`/`retAttrs`, KEEPING genuine USER annotations
-    // (#47). RoundtripMetadata itself never runs in the rt build, so the attrs present are kotc's verbatim annotations:
+    // (#47). Stamp does not run in the runtime build, so the input attrs are kotc's verbatim annotations:
     // the @Clr* binding surface (`kotlin.clr.*`) + the round-trip carriers (`DotKt.Runtime.CompilerServices.*` / NRT
-    // `System.Runtime.CompilerServices.Nullable{,Context}`) — both compile-time-only, ref-side facts that must NOT ship
-    // on DotKt.Stdlib.dll (the never-metadata-read runtime assembly, substituted away at app-emit) — AND the user's own
+    // `System.Runtime.CompilerServices.Nullable{,Context}`) — ref-side source facts that need not ship on
+    // DotKt.Stdlib.dll — AND the user's own
     // annotations (kotlin.Deprecated / SinceKotlin / InlineOnly / PublishedApi / …). The predicate must preserve those
     // user annotations and drop only compiler-internal declaration-slot carriers that have no runtime stdlib meaning.
-    // Assembly-level alias declaration metadata is a separate contract and survives in both stdlib twins; the
-    // frontend KLIB is still authoritative, and dll2klib excludes both marked stdlib assemblies from projection.
+    // Declaration IDs and assembly-level aliases are linkage facts and survive in both twins. The runtime ID
+    // associates its exact physical MethodDef with the reference declaration without reconstructing an erased
+    // signature. The frontend KLIB stays authoritative; dll2klib excludes both marked stdlib twins from projection.
     // ---------------------------------------------------------------------------------------------------------------
     public static void StripRuntimeAttrs(JsonNode root)
     {
         if (root is not JsonObject o) return;
-        // FBoundStarProjectionErasure's pass-local hand-off is consumed only by Stamp in metadata-bearing builds.
-        // The runtime build deliberately emits no declaration-slot round-trip attribute, but must discard this temporary fact.
+        // Source projection hand-offs are consumed only by Stamp in metadata-bearing builds.
+        // Runtime linkage IDs below do not carry these source-slot facts.
         o.Remove("kotlinType");
         o.Remove("retKotlinType");
         o.Remove(KotlinSupertypesRecord.PreKey);
@@ -699,12 +718,16 @@ static class RoundtripMetadata
         if (arr is not JsonArray a) return;
         foreach (var d in a) if (d is JsonObject po)
         {
+            var declarationId = (po[DeclarationIdentityBinding.Key] as JsonValue)?.GetValue<string>();
+            var sourceName = (po["declarationSourceName"] as JsonValue)?.GetValue<string>();
+            var signatureAllocated = po[DeclarationSignatureIdentity.AllocatedKey]?.GetValue<bool>() == true;
+            po.Remove(DeclarationSignatureIdentity.AllocatedKey);
             po.Remove("kotlinType");
             po.Remove("retKotlinType");
             po.Remove("suspendResult");
             // A method-generic Kotlin property has no representable CLR Property signature. Metadata-bearing builds
-            // consume this exact association into [KotlinPropertyAccessor]; the runtime twin emits no round-trip
-            // metadata, so discard the same pass-local hand-off before CIR reaches ilemit.
+            // consume this exact association into [KotlinPropertyAccessor]; runtime linkage does not carry
+            // property projection metadata, so discard the hand-off before CIR reaches ilemit.
             po.Remove(KotlinPropertyAccessors.MetadataCarrierKey);
             po.Remove(DeclarationIdentityBinding.Key);
             po.Remove("declarationSourceName");
@@ -720,6 +743,16 @@ static class RoundtripMetadata
             }
             StripAttrs(po, "attrs");
             StripAttrs(po, "retAttrs");
+            if (declarationId != null)
+            {
+                var identity = new JsonObject {
+                    ["id"] = declarationId,
+                    ["name"] = sourceName ?? throw new InvalidOperationException(
+                        $"Runtime declaration '{declarationId}' has no source name"),
+                };
+                if (signatureAllocated) identity[DeclarationSignatureIdentity.AllocationMetadataKey] = true;
+                Append(po, JsonCarrierAttr(AKDeclarationIdentity, identity));
+            }
             if (hasParams) StripDecls(po["params"]);
         }
     }
@@ -735,11 +768,66 @@ static class RoundtripMetadata
         if (a.Count == 0) decl.Remove(key);
     }
 
+    internal static void RuntimeLinkageSelfTest()
+    {
+        JsonObject Declaration(string identity, string modifier) => new() {
+            ["name"] = "overloaded",
+            [DeclarationIdentityBinding.Key] = identity,
+            ["declarationSourceName"] = "overloaded",
+            ["params"] = new JsonArray(new JsonObject {
+                ["name"] = "value",
+                ["type"] = TypeJson.Write(new TypeNode.Mod(false,
+                    new TypeNode.Fqn(modifier), new TypeNode.Fqn("System.Object"))),
+            }),
+        };
+        var first = Declaration("probe:first", "Probe.FirstSignature");
+        first[DeclarationSignatureIdentity.AllocatedKey] = true;
+        var second = Declaration("probe:second", "Probe.SecondSignature");
+        var firstSignature = first["params"].ToJsonString();
+        var secondSignature = second["params"].ToJsonString();
+        var root = new JsonObject { ["methods"] = new JsonArray(first, second) };
+        StripRuntimeAttrs(root);
+        string Identity(JsonObject declaration)
+        {
+            var attribute = ((JsonArray)declaration["attrs"]).OfType<JsonObject>().Single();
+            if (TypeJson.OwnerName(attribute["attr"]) != AKDeclarationIdentity)
+                throw new InvalidOperationException("Runtime linkage has no declaration carrier");
+            var args = (JsonArray)attribute["args"];
+            var payload = BirCarrier.DecodeBody(args[0]["value"].GetValue<string>(),
+                Convert.FromBase64String(args[1]["bytes"].GetValue<string>()));
+            var allocated = payload[DeclarationSignatureIdentity.AllocationMetadataKey]?.GetValue<bool>() == true;
+            if (payload.AsObject().Count != (allocated ? 3 : 2)
+                || allocated != ReferenceEquals(declaration, first))
+                throw new InvalidOperationException("Runtime linkage retained source projection metadata");
+            return payload["id"].GetValue<string>();
+        }
+        if (Identity(first) != "probe:first" || Identity(second) != "probe:second"
+            || first["params"].ToJsonString() != firstSignature
+            || second["params"].ToJsonString() != secondSignature
+            || !ReferenceEquals(first, ReferenceMetadataIndex.SelectDeclarationTwin(
+                new[] { second, first }, Identity, "probe:first")))
+            throw new InvalidOperationException("Runtime twin association lost declaration identity or exact modifiers");
+        var constructor = Declaration("probe:constructor", "Probe.ConstructorSignature");
+        constructor[DeclarationSignatureIdentity.AllocatedKey] = true;
+        var constructorSignature = constructor["params"].ToJsonString();
+        StampConstructorIdentity(constructor);
+        var constructorArgs = constructor["attrs"][0]["args"];
+        var constructorPayload = BirCarrier.DecodeBody(constructorArgs[0]["value"].GetValue<string>(),
+            Convert.FromBase64String(constructorArgs[1]["bytes"].GetValue<string>()));
+        if (constructor.ContainsKey(DeclarationSignatureIdentity.AllocatedKey)
+            || constructor.ContainsKey(DeclarationIdentityBinding.Key)
+            || constructorPayload[DeclarationSignatureIdentity.AllocationMetadataKey]?.GetValue<bool>() != true
+            || constructorPayload["id"]?.GetValue<string>() != "probe:constructor"
+            || constructor["params"].ToJsonString() != constructorSignature)
+            throw new InvalidOperationException("Constructor identity lost allocation ownership or exact signature");
+        Console.WriteLine("[runtime linkage] self-test OK (distinct IDs, opaque slots, exact signature modifiers)");
+    }
+
     // A compile-time-only carrier (round-trip surface / @Clr* binding / NRT) — dropped from the shipping runtime dll.
     // Everything else survives: the user's own annotations (kotlin.Deprecated/SinceKotlin/PublishedApi/Volatile), and —
     // matching the app/ref builds, which keep them too (kotc serializes every annotation verbatim, no retention filter)
     // — the compiler-internal resolution hints (kotlin.Suppress, kotlin.internal.*). Those hints are inert on the rt.dll
-    // (never metadata-read), so keeping them costs nothing and keeps rt consistent with app/ref; a retention-aware filter
+    // (not projected as Kotlin source), so keeping them keeps rt consistent with app/ref; a retention-aware filter
     // (SOURCE-retention annotations should ship on NO binary) is a broader downstream policy, deliberately NOT folded here.
     static bool IsRuntimeStrippable(string fqn) =>
         fqn.StartsWith(Ns, StringComparison.Ordinal)          // DotKt.Runtime.CompilerServices.* round-trip carriers
@@ -911,7 +999,7 @@ static class RoundtripMetadata
     // NO name (a named ctor param would mint Param rows the embedded attrs never had); the empty body chains to
     // Attribute()'s protected ctor.
     // ---------------------------------------------------------------------------------------------------------------
-    public static JsonObject SynthDefsFile(ReferenceMetadataIndex refs, bool aliasesOnly = false)
+    public static JsonObject SynthDefsFile(ReferenceMetadataIndex refs, bool linkageOnly = false)
     {
         // Resolve the shared base delegation BEFORE any ctor is built, so every synthesized class states the
         // member it delegates to rather than describing it.
@@ -958,7 +1046,8 @@ static class RoundtripMetadata
             AttrClass(AKSupertypes, Ctor(Param("System.String"), Param(ByteArrayType()))),   // #86 — pre-erasure supertype edges + type-parameter bounds
             AttrClass(AKTypeParameterBounds, Ctor(Param("System.String"), Param(ByteArrayType()))), // pre-erasure MethodDef type-parameter bounds
         };
-        if (aliasesOnly) types = new JsonArray(TypeAliasAttributeDefinition());
+        if (linkageOnly) types = new JsonArray(TypeAliasAttributeDefinition(),
+            AttrClass(AKDeclarationIdentity, Ctor(Param("System.String"), Param(ByteArrayType()))));
         return new JsonObject
         {
             ["fileClass"] = "",     // no top-level funs/fields -> ilemit defines no file-class type for this file

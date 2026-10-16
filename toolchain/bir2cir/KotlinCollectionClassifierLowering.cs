@@ -17,18 +17,19 @@ static class KotlinCollectionClassifierLowering
         var names = new HashSet<string>(StringComparer.Ordinal);
         CollectNames(node, names);
         var next = 0;
-        Rewrite(node, names, refs.KotlinMapStorageDefinitions(), ref next);
+        Rewrite(node, names, refs.KotlinMapStorageDefinitions(), refs, ref next);
     }
 
-    static void Rewrite(JsonNode node, HashSet<string> names, IReadOnlyList<string> mapStorage, ref int next)
+    static void Rewrite(JsonNode node, HashSet<string> names, IReadOnlyList<string> mapStorage,
+        ReferenceMetadataIndex refs, ref int next)
     {
         if (node is JsonArray array)
         {
-            foreach (var child in array) Rewrite(child, names, mapStorage, ref next);
+            foreach (var child in array) Rewrite(child, names, mapStorage, refs, ref next);
             return;
         }
         if (node is not JsonObject obj) return;
-        foreach (var child in obj.Select(pair => pair.Value).ToArray()) Rewrite(child, names, mapStorage, ref next);
+        foreach (var child in obj.Select(pair => pair.Value).ToArray()) Rewrite(child, names, mapStorage, refs, ref next);
         if (Text(obj["k"]) is not ("isInst" or "isInstRef" or "cast") || obj["e"] is not JsonObject operand) return;
         // Array checks consume the reified component fact in the later physical
         // array projection. A collection guard does not own that fact.
@@ -46,6 +47,15 @@ static class KotlinCollectionClassifierLowering
             witness = KotlinTypeWitness.Constant(flags);
         }
         var nullableObject = new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"));
+        var opaqueAlias = operandType is TypeNode.Fqn alias && AliasVarianceRepresentation.RequiresErasure(alias, refs);
+        // The nominal/storage guard owns Kotlin membership. Its physical value test must agree with the opaque
+        // alias ABI, not reopen the source preference as a required closed native interface.
+        void ProjectPhysicalTest(JsonObject test)
+        {
+            if (!opaqueAlias) return;
+            test["type"] = TypeJson.Write(OpaqueTestType(TypeJson.Read(test["type"])));
+            if (test["sty"] != null) test["sty"] = test["type"].DeepClone();
+        }
         var runtimeType = new TypeNode.Fqn("DotKt.Runtime.CompilerServices.StarProjectionType");
         JsonObject ClassRef(string name) => new() { ["k"] = "classRef", ["type"] = TypeJson.Fqn(name) };
         JsonObject Call(string helper, TypeNode result, JsonNode value) => new() {
@@ -82,6 +92,7 @@ static class KotlinCollectionClassifierLowering
             foreach (var storage in mapStorage)
                 candidate = StorageCall("kotlinCollectionStorageCastCandidate", nullableObject, candidate, storage);
             obj["e"] = Call(CastCandidate, nullableObject, candidate);
+            ProjectPhysicalTest(obj);
             return;
         }
 
@@ -92,6 +103,7 @@ static class KotlinCollectionClassifierLowering
         var local = new JsonObject { ["k"] = "local", ["name"] = temp };
         var physicalTest = (JsonObject)obj.DeepClone();
         physicalTest["e"] = local.DeepClone();
+        ProjectPhysicalTest(physicalTest);
         var matches = Call(Matches, new TypeNode.Fqn("kotlin.Boolean"), local);
         foreach (var storage in mapStorage)
             matches = new JsonObject {
@@ -135,6 +147,24 @@ static class KotlinCollectionClassifierLowering
         }
         else if (node is JsonArray array)
             foreach (var child in array) CollectNames(child, names);
+    }
+
+    // Erasing the collection carrier does not erase the source operation's nullability.
+    static TypeNode OpaqueTestType(TypeNode source) => source switch {
+        TypeNode.Nullable n => new TypeNode.Nullable(OpaqueTestType(n.Of)),
+        TypeNode.Oblivious o => new TypeNode.Oblivious(OpaqueTestType(o.Of)),
+        _ => new TypeNode.Fqn("kotlin.Any"),
+    };
+
+    internal static void SelfTest()
+    {
+        var alias = new TypeNode.Fqn("VariantAlias", new TypeNode[] { new TypeNode.Star() });
+        var any = new TypeNode.Fqn("kotlin.Any");
+        if (OpaqueTestType(alias) != any
+            || OpaqueTestType(new TypeNode.Nullable(alias)) != new TypeNode.Nullable(any)
+            || OpaqueTestType(new TypeNode.Oblivious(alias)) != new TypeNode.Oblivious(any))
+            throw new InvalidOperationException("Opaque collection classifier lost source nullability");
+        Console.WriteLine("[collection classifiers] self-test OK (opaque carrier, nullable and oblivious targets)");
     }
 
     static string Text(JsonNode node) => node is JsonValue value && value.TryGetValue<string>(out var text) ? text : null;

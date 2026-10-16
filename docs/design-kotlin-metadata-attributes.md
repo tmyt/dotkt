@@ -172,6 +172,12 @@ edge it did not touch is not on the carrier, so the consumer's own projection de
 ordinary type carries nothing at all. dll2klib reads all three back (`RestoreErasedSupertypes`): the two supertype
 members replace a projected edge by head, `bounds` is applied to the type parameter at that index.
 
+The declaration-signature allocator additionally records `signatureAllocation: true` on the existing
+`KotlinDeclarationIdentity` payload for declarations whose physical parameter identity it allocated. Absence is
+the current unallocated form. Full reference metadata and minimal runtime linkage retain this physical obligation;
+the DLL reader consumes it without exposing a Kotlin source annotation argument. An optional modifier alone is
+not this fact: function-signature modifiers have their own bridge owner and must not trigger another allocation bridge.
+
 Two boundaries of `bounds`, both measured. A METHOD's type-parameter bounds are not on it — this carrier is
 type-level and giving a member one is a channel that does not exist — so a `fun <T : Sink<Int?>> f()` still
 re-imports its bound as the physical `Sink<object>`. For a CLASS type parameter, dll2klib first projects the ordinary

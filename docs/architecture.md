@@ -34,7 +34,7 @@ The CLR stdlib has three deliberately separate views:
 |---|---|---|
 | `kotlin-stdlib-clr-frontend.klib` | `kotc` | Kotlin declarations and language metadata used for frontend resolution |
 | `DotKt.Private.Stdlib.dll` | `bir2cir` | Reference-only metadata carrying `@ClrTypeAlias`, `@ClrIntrinsic`, and related bindings |
-| `DotKt.Stdlib.dll` | Emitted applications | Shipping runtime implementations |
+| `DotKt.Stdlib.dll` | Emitted applications; `bir2cir` for exact physical linkage | Shipping implementations and declaration-ID associations with the reference twin |
 
 The split prevents frontend declarations, binding metadata, and executable implementations from being treated as one interchangeable artifact.
 

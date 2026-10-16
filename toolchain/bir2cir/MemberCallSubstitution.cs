@@ -1397,7 +1397,7 @@ static class MemberCallSubstitution
                         // cannot carry the derived owner's type-argument substitution (`List<T>`). The CLR member
                         // resolver will re-anchor the property to its exact declaring base interface while preserving
                         // that constructed edge. A non-CLR user subclass still starts from the bound ancestor.
-                        return ClrPropNode(node, ClrOwnerType(refs, ownerFqnNode)
+                        return ClrPropNode(node, ClrValueOwnerType(refs, ownerFqnNode)
                             ?? ClrOwnerType(refs, new TypeNode.Fqn(ovOwner)) ?? new TypeNode.Fqn(ovBcl), povName,
                             sourceAccessorKind == "set" ? ClrPropWrite : ClrPropRead, pmember, pargs,
                             sourceAccessorKind);
@@ -1509,8 +1509,15 @@ static class MemberCallSubstitution
         if (instance && inlineFieldGetter)
             return new JsonObject { ["k"] = "conv", ["to"] = TypeJson.Fqn(inlineConv), ["e"] = node["recv"]?.DeepClone() };
 
+        if (instance && StaticCollectionOperation(node, ownerFqnNode, refs, ctx) is JsonObject collectionOperation)
+        {
+            BindAuthoredHelper(collectionOperation, refs, ctx);
+            return collectionOperation;
+        }
+
         // The CLR owner TYPE the call addresses (a ClrRef-resolvable BCL token; see ClrOwnerType).
-        TypeNode clrOwner = ClrOwnerType(refs, ownerFqnNode) ?? new TypeNode.Fqn(bcl);
+        TypeNode clrOwner = (instance ? ClrValueOwnerType(refs, ownerFqnNode) : ClrOwnerType(refs, ownerFqnNode))
+            ?? new TypeNode.Fqn(bcl);
 
         // The alias-companion gate selected one declaration by its complete signature. Consume that SAME binding;
         // re-querying by name+argument-count here would allow a same-arity sibling to change the CLR member or byref
@@ -1937,10 +1944,11 @@ static class MemberCallSubstitution
         return ObjType;
     }
 
-    // Whether the selected collection member is reached through an existential use-site projection. Choosing a
-    // closed defaults-helper signature for such a receiver would assert an invariant CLR interface that it need not
-    // have; the projected helper instead resolves the actual closed interface at runtime.
-    static bool HasProjectedCollectionReceiver(JsonObject node, TypeNode.Fqn owner, SubstCtx ctx)
+    // Use-site projections and declaration-site variance both give ordinary collection values an existential
+    // representation. A closed defaults-helper signature would assert a CLR construction the original object
+    // need not implement; the projected helper instead resolves its actual closed interface at runtime.
+    static bool HasProjectedCollectionReceiver(JsonObject node, TypeNode.Fqn owner, SubstCtx ctx,
+        ReferenceMetadataIndex refs)
     {
         static bool ContainsProjection(TypeNode type) => type switch
         {
@@ -1959,7 +1967,8 @@ static class MemberCallSubstitution
             _ => false,
         };
 
-        if (ContainsProjection(owner)) return true;
+        if (ContainsProjection(owner)
+            || refs != null && AliasVarianceRepresentation.RequiresErasure(owner, refs)) return true;
         if (ctx == null || node["recv"] is not JsonObject receiver)
             return false;
         if (Str(receiver["k"]) == "local" && Str(receiver["name"]) is string local
@@ -2196,7 +2205,7 @@ static class MemberCallSubstitution
             // receiver-erased adapter; it resolves the receiver's actual ICollection<X> while the ordinary invariant
             // case keeps the direct helper. This also covers lifted closures, whose captured method variables have
             // already been rebound into their generated type frame by ClosureSynthesis.
-            if (HasProjectedCollectionReceiver(node, ownerFqnNode, ctx))
+            if (HasProjectedCollectionReceiver(node, ownerFqnNode, ctx, refs))
                 slotHelper = slotHelper switch
                 {
                     "clrCollAdd" => "clrProjectedCollAdd",
@@ -2220,7 +2229,7 @@ static class MemberCallSubstitution
         if (ownerFqn == "kotlin.collections.MutableList"
             && (((member is "set" or "set_Item") && args.Count == 2) || ((member is "removeAt" or "RemoveAt") && args.Count == 1)))
         {
-            var projected = HasProjectedCollectionReceiver(node, ownerFqnNode, ctx);
+            var projected = HasProjectedCollectionReceiver(node, ownerFqnNode, ctx, refs);
             var listHelper = (member is "set" or "set_Item", projected) switch
             {
                 (true, true) => "clrProjectedListSet",
@@ -2236,12 +2245,153 @@ static class MemberCallSubstitution
         return null;
     }
 
-    internal static JsonNode CollectionDefaultCall(JsonObject node, TypeNode.Fqn ownerFqnNode,
-        JsonArray args, ReferenceMetadataIndex refs, SubstCtx ctx)
+    internal enum CollectionOperationPhase { Source, Physical }
+
+    // Construct one source-selected operation; its caller owns declaration binding and frame materialization.
+    internal static JsonObject StaticCollectionOperation(JsonObject node, TypeNode.Fqn owner,
+        ReferenceMetadataIndex refs, SubstCtx context, CollectionOperationPhase phase = CollectionOperationPhase.Physical)
     {
+        var family = owner.Name switch {
+            "kotlin.collections.Collection" => 0,
+            "kotlin.collections.Set" => 1,
+            "kotlin.collections.Iterable" => 2,
+            "kotlin.collections.List" => 3,
+            _ => -1,
+        };
+        if (family < 0) return null;
+        var member = Str(node["method"]);
+        var arguments = node["args"] as JsonArray ?? new JsonArray();
+        var helper = (member, arguments.Count) switch {
+            ("size", 0) when family != 2 && Str(node["prop"]) == "get" => "projectedViewCountErased",
+            ("isEmpty", 0) when family != 2 => "clrProjectedViewIsEmpty",
+            ("contains", 1) when family != 2 => "clrProjectedViewContains",
+            ("containsAll", 1) when family != 2 => "clrProjectedViewContainsAll",
+            ("iterator", 0) => "clrProjectedViewIterator",
+            ("get" or "get_Item", 1) when family == 3 => "clrProjectedViewGet",
+            ("indexOf", 1) when family == 3 => "clrProjectedViewIndexOf",
+            ("lastIndexOf", 1) when family == 3 => "clrProjectedViewLastIndexOf",
+            ("listIterator", 0) when family == 3 => "clrProjectedViewListIterator",
+            ("listIterator", 1) when family == 3 => "clrProjectedViewListIteratorAt",
+            ("subList", 2) when family == 3 => "clrProjectedViewSubList",
+            _ => null,
+        };
+        if (helper == null || node["recv"] == null) return null;
+        var element = CollElemArg(node, refs, context, owner);
+        var preferred = StaticCollectionPreference(owner, refs,
+            family == 1 ? "System.Collections.Generic.IReadOnlySet`1"
+                : family == 0 ? "System.Collections.Generic.IReadOnlyCollection`1"
+                : family == 3 ? "System.Collections.Generic.IReadOnlyList`1" : "System.Collections.Generic.IEnumerable`1", phase);
+        var familyArgument = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("kotlin.Int"), ["value"] = family };
+        var helperArguments = new JsonArray(preferred, familyArgument);
+        foreach (var argument in arguments) helperArguments.Add(argument?.DeepClone());
+        JsonObject call;
+        if (helper == "projectedViewCountErased")
+            call = StaticCollectionCountCall(node["recv"], preferred, familyArgument);
+        else
+        {
+            call = (JsonObject)CollDefaultCall(node, "kotlin.collections.ClrCollectionDefaultsKt", helper, element, helperArguments);
+            call["ret"] = TypeJson.Write(member switch {
+                "iterator" => new TypeNode.Fqn("kotlin.collections.Iterator", new[] { element }),
+                "listIterator" => new TypeNode.Fqn("kotlin.collections.ListIterator", new[] { element }),
+                "subList" => new TypeNode.Fqn("kotlin.collections.List", new[] { element }),
+                "get" or "get_Item" => element,
+                "indexOf" or "lastIndexOf" => new TypeNode.Fqn("kotlin.Int"),
+                _ => new TypeNode.Fqn("kotlin.Boolean"),
+            });
+        }
+        return call;
+    }
+
+    static JsonObject StaticCollectionCountCall(JsonNode receiver, JsonNode preferred, JsonNode family) => new() {
+        ["k"] = "callStatic", ["owner"] = TypeJson.Fqn("DotKt.Runtime.CompilerServices.StarProjectionRuntimeKt"),
+        ["method"] = "projectedViewCountErased", ["typeArgs"] = new JsonArray(),
+        ["sig"] = new JsonArray(TypeJson.Fqn("kotlin.Any"), TypeJson.Write(new TypeNode.Nullable(ObjType)), TypeJson.Fqn("kotlin.Int")),
+        ["ret"] = TypeJson.Fqn("kotlin.Int"),
+        ["args"] = new JsonArray(receiver.DeepClone(), preferred.DeepClone(), family.DeepClone()),
+    };
+
+    static TypeNode[] CollectionPreferenceArguments(TypeNode[] arguments, NullableRepresentationFrame frame,
+        CollectionOperationPhase phase) => arguments == null ? null
+        : phase == CollectionOperationPhase.Source ? arguments : frame?.OrdinaryArguments(arguments) ?? arguments;
+
+    internal static JsonNode StaticCollectionPreference(TypeNode.Fqn owner, ReferenceMetadataIndex refs, string nativeOwner,
+        CollectionOperationPhase phase = CollectionOperationPhase.Physical)
+    {
+        var arguments = CollectionPreferenceArguments(owner.Args, refs?.NullableTypeFrames.GetValueOrDefault(owner.Name), phase);
+        if (arguments is not { Length: 1 } || HasProjection(arguments[0]))
+            return new JsonObject { ["k"] = "const", ["type"] = TypeJson.Write(new TypeNode.Nullable(ObjType)), ["value"] = null };
+        return new JsonObject { ["k"] = "classRef", ["type"] = TypeJson.Write(new TypeNode.Fqn(nativeOwner,
+            new[] { phase == CollectionOperationPhase.Source ? arguments[0]
+                : NullableGenericErasure.EraseArgument(arguments[0], refs == null ? _isValue : refs.IsValueType) })) };
+    }
+
+    static bool HasProjection(TypeNode type) => type switch {
+        TypeNode.Star or TypeNode.Projection => true,
+        TypeNode.Nullable n => HasProjection(n.Of),
+        TypeNode.Oblivious o => HasProjection(o.Of),
+        TypeNode.Fqn f => f.Args?.Any(HasProjection) == true,
+        _ => false,
+    };
+
+    internal static void StaticCollectionPreferenceSelfTest()
+    {
+        var refs = ReferenceMetadataIndex.Build(Array.Empty<string>());
+        var variable = new TypeNode.Tv("method", 1);
+        var companionFrame = new NullableRepresentationFrame(1, Array.Empty<int>(), new[] { 1, 0 }, new[] { 0 });
+        var sourceArgument = new TypeNode.Tv("method", 3);
+        if (CollectionPreferenceArguments(new TypeNode[] { sourceArgument }, companionFrame, CollectionOperationPhase.Source)
+                is not [TypeNode.Tv { Scope: "method", I: 3 }]
+            || CollectionPreferenceArguments(new TypeNode[] { new TypeNode.Tv("method", 4), variable }, companionFrame,
+                CollectionOperationPhase.Physical) is not [TypeNode.Tv { Scope: "method", I: 1 }])
+            throw new InvalidOperationException("Static collection preference confused source arguments with a companion frame");
+        JsonNode Preference(TypeNode element) => StaticCollectionPreference(
+            new TypeNode.Fqn("kotlin.collections.Set", new[] { element }), refs,
+            "System.Collections.Generic.IReadOnlySet`1");
+        var count = StaticCollectionCountCall(new JsonObject { ["k"] = "local", ["name"] = "source" }, Preference(variable),
+            new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("kotlin.Int"), ["value"] = 1 });
+        if (count["typeArgs"] is not JsonArray { Count: 0 }
+            || count["sig"] is not JsonArray { Count: 3 }
+            || Str(StaticCollectionPreference(new TypeNode.Fqn("kotlin.collections.Set"), refs,
+                "System.Collections.Generic.IReadOnlySet`1")["k"]) != "const")
+            throw new InvalidOperationException("Static collection helper lost its explicit non-generic vector or bare-view role");
+        if (Preference(new TypeNode.Star())["value"] != null
+            || Str(Preference(new TypeNode.Star())["k"]) != "const"
+            || TypeJson.Read(Preference(variable)["type"]) is not TypeNode.Fqn { Args: [TypeNode.Tv { Scope: "method", I: 1 }] }
+            || TypeJson.Read(Preference(ObjType)["type"]) is not TypeNode.Fqn { Name: "System.Collections.Generic.IReadOnlySet`1", Args.Length: 1 }
+            || Str(Preference(new TypeNode.Projection("out", ObjType))["k"]) != "const")
+            throw new InvalidOperationException("Static collection preference lost exact/star or caller-frame ownership");
+        foreach (var (member, arity, helper) in new[] {
+            ("get", 1, "clrProjectedViewGet"), ("isEmpty", 0, "clrProjectedViewIsEmpty"),
+            ("contains", 1, "clrProjectedViewContains"), ("containsAll", 1, "clrProjectedViewContainsAll"),
+            ("iterator", 0, "clrProjectedViewIterator"), ("indexOf", 1, "clrProjectedViewIndexOf"),
+            ("lastIndexOf", 1, "clrProjectedViewLastIndexOf"), ("listIterator", 0, "clrProjectedViewListIterator"),
+            ("listIterator", 1, "clrProjectedViewListIteratorAt"), ("subList", 2, "clrProjectedViewSubList"),
+        })
+        {
+            var operation = StaticCollectionOperation(new JsonObject {
+                ["method"] = member, ["recv"] = new JsonObject { ["k"] = "local", ["name"] = "source" },
+                ["args"] = new JsonArray(Enumerable.Range(0, arity).Select(i => (JsonNode)new JsonObject {
+                    ["k"] = "const", ["type"] = TypeJson.Fqn("kotlin.Int"), ["value"] = i,
+                }).ToArray()),
+            }, new TypeNode.Fqn("kotlin.collections.List", new[] { variable }), refs, new SubstCtx(), CollectionOperationPhase.Source);
+            if (Str(operation?["method"]) != helper || operation["args"][2]["value"].GetValue<int>() != 3
+                || operation["args"] is not JsonArray arguments || arguments.Count != arity + 3
+                || TypeJson.Read(operation["args"][1]["type"]) is not TypeNode.Fqn {
+                    Name: "System.Collections.Generic.IReadOnlyList`1", Args: [TypeNode.Tv { Scope: "method", I: 1 }] }
+                || CollectionHelperSig("kotlin.collections.ClrCollectionDefaultsKt", helper).Count != arguments.Count)
+                throw new InvalidOperationException("Static List operation lost its shared family, caller view or exact helper shape: " + member);
+        }
+        Console.WriteLine("[static collection preference] self-test OK (exact, star, caller frame, no origin carrier)");
+    }
+
+    internal static JsonNode CollectionDefaultCall(JsonObject node, TypeNode.Fqn ownerFqnNode,
+        JsonArray args, ReferenceMetadataIndex refs, SubstCtx ctx,
+        CollectionOperationPhase phase = CollectionOperationPhase.Physical)
+    {
+        if (StaticCollectionOperation(node, ownerFqnNode, refs, ctx, phase) is { } operation) return operation;
         var ownerFqn = ownerFqnNode.Name;
         var member = Str(node["method"]);
-        var projected = HasProjectedCollectionReceiver(node, ownerFqnNode, ctx);
+        var projected = HasProjectedCollectionReceiver(node, ownerFqnNode, ctx, refs);
         var elem = projected ? CollElemArg(node, refs, ctx, ownerFqnNode) : OwnerElemArg(ownerFqnNode);
         if (member == "iterator" && args.Count == 0)
         {
@@ -2340,6 +2490,18 @@ static class MemberCallSubstitution
             // runtime iterator while retaining T only in the return type.
             (_, "clrMutableIterator") => new[] { new TypeNode.Fqn("kotlin.Any") },
             (_, "clrProjectedIterator") => new[] { new TypeNode.Fqn("kotlin.Any") },
+            (_, "clrProjectedViewIterator" or "clrProjectedViewIsEmpty" or "clrProjectedViewListIterator") =>
+                new TypeNode[] { new TypeNode.Fqn("kotlin.Any"), new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any")), new TypeNode.Fqn("kotlin.Int") },
+            (_, "clrProjectedViewContains" or "clrProjectedViewIndexOf" or "clrProjectedViewLastIndexOf") => new TypeNode[] {
+                new TypeNode.Fqn("kotlin.Any"), new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any")), new TypeNode.Fqn("kotlin.Int"), tv },
+            (_, "clrProjectedViewGet" or "clrProjectedViewListIteratorAt") => new TypeNode[] {
+                new TypeNode.Fqn("kotlin.Any"), new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any")),
+                new TypeNode.Fqn("kotlin.Int"), new TypeNode.Fqn("kotlin.Int") },
+            (_, "clrProjectedViewSubList") => new TypeNode[] {
+                new TypeNode.Fqn("kotlin.Any"), new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any")),
+                new TypeNode.Fqn("kotlin.Int"), new TypeNode.Fqn("kotlin.Int"), new TypeNode.Fqn("kotlin.Int") },
+            (_, "clrProjectedViewContainsAll") => new TypeNode[] {
+                new TypeNode.Fqn("kotlin.Any"), new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any")), new TypeNode.Fqn("kotlin.Int"), Gen("kotlin.collections.Collection") },
             (_, "clrMutableListListIterator") => new TypeNode[] { Gen("kotlin.collections.MutableList"), new TypeNode.Fqn("kotlin.Int") },
             (_, "clrProjectedMutableListIterator" or "clrProjectedListIterator") =>
                 new TypeNode[] { new TypeNode.Fqn("kotlin.Any") },
@@ -2491,6 +2653,12 @@ static class MemberCallSubstitution
         TypeNode.Fqn f => ReferenceMetadataIndex.RecvKeyOfFqn(f.Name),
         _ => "",
     };
+
+    // An ordinary variant alias receiver does not prove a closed CLR interface, even when it is a type variable
+    // constrained by that source alias. Retain its semantic owner for foreign projection binding. Constructors and
+    // genuine native descriptors still use ClrOwnerType directly and keep their exact CLR construction.
+    static TypeNode ClrValueOwnerType(ReferenceMetadataIndex refs, TypeNode.Fqn ownerFqn) =>
+        AliasVarianceRepresentation.RequiresErasure(ownerFqn, refs) ? ownerFqn : ClrOwnerType(refs, ownerFqn);
 
     // A CLR-bound owner token's ClrRef-resolvable BCL type: a non-generic alias is its bare BCL FQN ("System.String"
     // -- NOT the "string" shorthand, which ilemit ClrRef can't resolve as a clr* `type`); a generic alias keeps its
