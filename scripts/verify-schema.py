@@ -1102,7 +1102,9 @@ class V:
                                      "inheritedDefaultMethods", "inheritedClassMethods"):
                     if property_key in o:
                         self.err(f, path, f"{property_key} is a BIR property-accessor fact and must be consumed before CIR")
-                for declaration_key in ("declarationId", "defaultDeclarationId", "declarationSourceName", "explicitClrName"):
+                for declaration_key in ("declarationId", "defaultDeclarationId", "declarationSourceName", "explicitClrName",
+                                        "constructorDeclarationId", "delegationDeclarationId", "signatureOverrideDeclarations",
+                                        "declarationSignatureAllocation"):
                     if declaration_key in o:
                         self.err(f, path, f"{declaration_key} is a BIR declaration-identity fact and must be consumed before CIR")
                 for ownership_key in ("semanticOwner", "staticSemanticOwner", "outerTypeParamCount", "outerTypeParamOffset", "typeParamDecls", "lexicalOwnerTypeParamCount"):

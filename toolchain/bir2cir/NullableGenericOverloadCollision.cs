@@ -114,6 +114,12 @@ static class NullableGenericOverloadCollision
             if (seen.TryGetValue(key, out var prior))
             {
                 if (SourceKey(prior) == SourceKey(co)) continue;
+                if (Str(prior[DeclarationIdentityBinding.Key]) is string priorId
+                    && Str(co[DeclarationIdentityBinding.Key]) is string currentId && priorId != currentId)
+                {
+                    seen[key] = co;
+                    continue;
+                }
                 throw new InvalidOperationException(
                     $"bir2cir: {file}: {ownerName}: two constructors erase to one CLR signature. "
                     + $"A nullable generic argument is emitted as System.Object, so "

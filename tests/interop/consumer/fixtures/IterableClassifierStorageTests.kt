@@ -39,11 +39,14 @@ class IterableClassifierStorageTests {
 
     @TestAttribute fun setIdentitySurvivesDictionaryStorage() {
         for (value in arrayOf<Any>(IterableClassifierStorage.SetAndDictionary(), IterableClassifierMixedSet())) {
+            (value as MutableSet<Int>).add(7)
             check(value is Iterable<*>)
             check(value is MutableIterable<*>)
             check(matches<Iterable<*>>(value))
             check(value as? Iterable<*> === value)
             check(value is MutableSet<*>)
+            val iterator = (value as Iterable<Any?>).iterator()
+            check(iterator.hasNext() && iterator.next() == 7 && !iterator.hasNext())
         }
     }
 

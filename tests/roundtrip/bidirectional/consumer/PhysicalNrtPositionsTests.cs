@@ -1,5 +1,7 @@
 using System;
 using System.Reflection;
+using System.Linq;
+using System.Text.Json;
 using NUnit.Framework;
 using roundtrip.physicalnrtpositions;
 
@@ -11,7 +13,7 @@ public class PhysicalNrtPositionsTests
     {
         Assert.That(info.ReadState, Is.EqualTo(NullabilityState.NotNull));
         Assert.That(info.GenericTypeArguments.Length, Is.EqualTo(4));
-        Assert.That(info.GenericTypeArguments[0].Type, Is.EqualTo(typeof(IComparable)));
+        Assert.That(info.GenericTypeArguments[0].Type, Is.EqualTo(typeof(object)));
         Assert.That(info.GenericTypeArguments[0].ReadState, Is.EqualTo(NullabilityState.Nullable));
         Assert.That(info.GenericTypeArguments[1].ReadState, Is.EqualTo(second));
         for (var index = 0; index < 2; index++)
@@ -31,7 +33,7 @@ public class PhysicalNrtPositionsTests
         AssertPair(Context.Create(Method("echoCollapsed").GetParameters()[0]), NullabilityState.NotNull);
         AssertPair(Context.Create(Method("echoCollapsed").ReturnParameter), NullabilityState.NotNull);
         var head = Context.Create(Method("collapsedHead").ReturnParameter);
-        Assert.That(head.Type, Is.EqualTo(typeof(IComparable)));
+        Assert.That(head.Type, Is.EqualTo(typeof(object)));
         Assert.That(head.ReadState, Is.EqualTo(NullabilityState.Nullable));
     }
 
@@ -53,9 +55,25 @@ public class PhysicalNrtPositionsTests
     {
         var retained = Context.Create(Method("retainedGeneric").ReturnParameter);
         var comparable = retained.GenericTypeArguments[0];
-        Assert.That(comparable.Type, Is.EqualTo(typeof(IComparable<string>)));
+        Assert.That(comparable.Type, Is.EqualTo(typeof(object)));
         Assert.That(comparable.ReadState, Is.EqualTo(NullabilityState.Nullable));
-        Assert.That(comparable.GenericTypeArguments[0].ReadState, Is.EqualTo(NullabilityState.NotNull));
+        Assert.That(comparable.GenericTypeArguments, Is.Empty);
+        var attribute = Method("retainedGeneric").ReturnParameter.GetCustomAttributesData().Single(value =>
+            value.AttributeType.FullName == "DotKt.Runtime.CompilerServices.KotlinTypeAttribute");
+        Assert.That(attribute.ConstructorArguments[0].Value, Is.EqualTo("bir-json/1"));
+        var bytes = ((System.Collections.Generic.IEnumerable<CustomAttributeTypedArgument>)
+            attribute.ConstructorArguments[1].Value!).Select(value => (byte)value.Value!).ToArray();
+        using var source = JsonDocument.Parse(bytes);
+        var sourcePair = source.RootElement;
+        Assert.That(sourcePair.GetProperty("name").GetString(), Is.EqualTo("roundtrip.physicalnrtpositions.NrtPair"));
+        var sourceComparable = sourcePair.GetProperty("args")[0];
+        Assert.That(sourceComparable.GetProperty("t").GetString(), Is.EqualTo("nullable"));
+        sourceComparable = sourceComparable.GetProperty("of");
+        Assert.That(sourceComparable.GetProperty("name").GetString(), Is.EqualTo("kotlin.Comparable"));
+        Assert.That(sourceComparable.GetProperty("args").GetArrayLength(), Is.EqualTo(1));
+        var sourceString = sourceComparable.GetProperty("args")[0];
+        Assert.That(sourceString.GetProperty("t").GetString(), Is.EqualTo("fqn"));
+        Assert.That(sourceString.GetProperty("name").GetString(), Is.EqualTo("kotlin.String"));
         Assert.That(retained.GenericTypeArguments[1].ReadState, Is.EqualTo(NullabilityState.NotNull));
         var nested = Context.Create(Method("nestedCollapsed").ReturnParameter);
         AssertPair(nested.GenericTypeArguments[0], NullabilityState.NotNull);
@@ -71,7 +89,7 @@ public class PhysicalNrtPositionsTests
             Assert.That(info.GenericTypeArguments.Length, Is.EqualTo(6));
             Assert.That(info.GenericTypeArguments[0].Type, Is.EqualTo(typeof(string)));
             Assert.That(info.GenericTypeArguments[0].ReadState, Is.EqualTo(NullabilityState.Nullable));
-            Assert.That(info.GenericTypeArguments[1].Type, Is.EqualTo(typeof(IComparable)));
+            Assert.That(info.GenericTypeArguments[1].Type, Is.EqualTo(typeof(object)));
             Assert.That(info.GenericTypeArguments[1].ReadState, Is.EqualTo(NullabilityState.Nullable));
             Assert.That(info.GenericTypeArguments[2].ReadState, Is.EqualTo(NullabilityState.NotNull));
             for (var index = 0; index < 3; index++)

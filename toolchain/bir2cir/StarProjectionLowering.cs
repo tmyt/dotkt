@@ -130,6 +130,15 @@ static class StarProjectionLowering
         {
             context = (context ?? new MemberCallSubstitution.SubstCtx()).Extend(obj);
             if (Str(obj["k"]) == "callInstance"
+                && TypeJson.Read(obj["ownerType"]) is TypeNode.Fqn operationOwner
+                && MemberCallSubstitution.StaticCollectionOperation(obj, operationOwner, refs, context) is JsonObject operation)
+            {
+                MemberCallSubstitution.BindAuthoredHelper(operation, refs, context, refs.IsValueType);
+                Replace(obj, operation);
+                foreach (var child in obj.Select(kv => kv.Value).Where(v => v != null).ToList()) Apply(child, refs, closedViews, context);
+                return;
+            }
+            if (Str(obj["k"]) == "callInstance"
                 && IsIdentityCollection(obj["ownerType"], out var collectionKind, out _)
                 && collectionKind is 0 or 1 or 2 or 5
                 && Str(obj["method"]) == "size" && Str(obj["prop"]) == "get"

@@ -295,6 +295,14 @@ static class RoundtripMetadata
         if (to["ctors"] is JsonArray ctors)
             foreach (var c in ctors) if (c is JsonObject co)
             {
+                if (co[DeclarationIdentityBinding.Key] is JsonValue constructorIdentity)
+                {
+                    Append(co, JsonCarrierAttr(AKDeclarationIdentity, new JsonObject {
+                        ["id"] = constructorIdentity.DeepClone(), ["name"] = ".ctor",
+                    }));
+                    co.Remove(DeclarationIdentityBinding.Key);
+                    co.Remove("declarationSourceName");
+                }
                 if ((co["aliasCtorAdapter"] as JsonValue)?.GetValue<string>() is string adapter)
                 {
                     Append(co, Marker(AKConstructorAdapter,
@@ -366,6 +374,8 @@ static class RoundtripMetadata
                 ["id"] = declarationId,
                 ["name"] = sourceName,
             };
+            if (mo[DeclarationSignatureIdentity.AllocatedKey]?.GetValue<bool>() == true)
+                identity[DeclarationSignatureIdentity.AllocationMetadataKey] = true;
             if (mo[DeclarationIdentityBinding.SemanticSignatureKey] is JsonObject semanticSignature)
                 identity["signature"] = semanticSignature.DeepClone();
             if (mo[ReifiedNullabilityWitnessLowering.SemanticIndicesKey] is JsonArray reified)
@@ -388,6 +398,7 @@ static class RoundtripMetadata
             mo.Remove(ReifiedNullabilityWitnessLowering.SemanticIndicesKey);
             mo.Remove(ReifiedNullabilityWitnessLowering.WitnessIndicesKey);
         }
+        mo.Remove(DeclarationSignatureIdentity.AllocatedKey);
         if (mo[NullableRepresentationTypes.MethodFrameKey] != null)
             throw new InvalidOperationException($"Nullable representation frame on {mo["name"]} requires declaration identity metadata");
         // CLR Property rows cannot describe method-generic accessors. The allocator leaves this exact semantic
@@ -702,6 +713,8 @@ static class RoundtripMetadata
         {
             var declarationId = (po[DeclarationIdentityBinding.Key] as JsonValue)?.GetValue<string>();
             var sourceName = (po["declarationSourceName"] as JsonValue)?.GetValue<string>();
+            var signatureAllocated = po[DeclarationSignatureIdentity.AllocatedKey]?.GetValue<bool>() == true;
+            po.Remove(DeclarationSignatureIdentity.AllocatedKey);
             po.Remove("kotlinType");
             po.Remove("retKotlinType");
             po.Remove("suspendResult");
@@ -724,11 +737,15 @@ static class RoundtripMetadata
             StripAttrs(po, "attrs");
             StripAttrs(po, "retAttrs");
             if (declarationId != null)
-                Append(po, JsonCarrierAttr(AKDeclarationIdentity, new JsonObject {
+            {
+                var identity = new JsonObject {
                     ["id"] = declarationId,
                     ["name"] = sourceName ?? throw new InvalidOperationException(
                         $"Runtime declaration '{declarationId}' has no source name"),
-                }));
+                };
+                if (signatureAllocated) identity[DeclarationSignatureIdentity.AllocationMetadataKey] = true;
+                Append(po, JsonCarrierAttr(AKDeclarationIdentity, identity));
+            }
             if (hasParams) StripDecls(po["params"]);
         }
     }
@@ -757,6 +774,7 @@ static class RoundtripMetadata
             }),
         };
         var first = Declaration("probe:first", "Probe.FirstSignature");
+        first[DeclarationSignatureIdentity.AllocatedKey] = true;
         var second = Declaration("probe:second", "Probe.SecondSignature");
         var firstSignature = first["params"].ToJsonString();
         var secondSignature = second["params"].ToJsonString();
@@ -770,7 +788,9 @@ static class RoundtripMetadata
             var args = (JsonArray)attribute["args"];
             var payload = BirCarrier.DecodeBody(args[0]["value"].GetValue<string>(),
                 Convert.FromBase64String(args[1]["bytes"].GetValue<string>()));
-            if (payload.AsObject().Count != 2)
+            var allocated = payload[DeclarationSignatureIdentity.AllocationMetadataKey]?.GetValue<bool>() == true;
+            if (payload.AsObject().Count != (allocated ? 3 : 2)
+                || allocated != ReferenceEquals(declaration, first))
                 throw new InvalidOperationException("Runtime linkage retained source projection metadata");
             return payload["id"].GetValue<string>();
         }

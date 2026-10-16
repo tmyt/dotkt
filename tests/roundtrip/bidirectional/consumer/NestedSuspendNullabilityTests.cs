@@ -88,7 +88,7 @@ public class NestedSuspendNullabilityTests
         {
             var pair = Result(name).GenericTypeArguments[0];
             Assert.That(pair.GenericTypeArguments[0].Type,
-                Is.EqualTo(name == "enumResult" ? typeof(Enum) : typeof(IComparable)));
+                Is.EqualTo(name == "enumResult" ? typeof(Enum) : typeof(object)));
             State(pair.GenericTypeArguments[0], NullabilityState.Nullable);
             State(pair.GenericTypeArguments[1], NullabilityState.NotNull);
             Assert.That(Flags(name), Is.EqualTo(new byte[] { 1, 1, 2, 1, 2, 1 }));

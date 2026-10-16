@@ -198,7 +198,9 @@ static class GenericArrayStorageLowering
             if (expected is TypeNode.Fqn { Name: "kotlin.Any" or "System.Object" or "object", Args: null }) return Bool(true);
             if (expected is TypeNode.Fqn { Args: { Length: > 0 } } generic
                 && ForeignStarProjectionBinding.TypeClassifierCheck(generic, actualType, refs) is { } foreignCheck)
-                return foreignCheck;
+                return AliasVarianceRepresentation.RequiresErasure(generic, refs)
+                    ? ErasedComponentCheck(projectBound(generic), actualType, foreignCheck)
+                    : foreignCheck;
             var classifier = projectBound(expected);
             return RuntimeCall(refs, "System.Type", "IsAssignableFrom", new JsonObject {
                 ["k"] = "classRef", ["type"] = TypeJson.Write(classifier),
@@ -227,6 +229,31 @@ static class GenericArrayStorageLowering
         operation["type"] = Type("System.Array");
         operation["stmts"] = statements;
         operation["result"] = value;
+    }
+
+    // An allocation of an opaque alias has its ordinary physical component. Other allocations must still
+    // provide the source classifier; assignability to Object would incorrectly accept unrelated String[].
+    static JsonObject ErasedComponentCheck(TypeNode physical, JsonNode actualType, JsonNode classifierCheck) => new() {
+        ["k"] = "cond", ["type"] = Type("System.Boolean"),
+        ["cond"] = new JsonObject {
+            ["k"] = "objEq", ["lhs"] = actualType.DeepClone(),
+            ["rhs"] = new JsonObject { ["k"] = "classRef", ["type"] = TypeJson.Write(physical) },
+        },
+        ["then"] = new JsonObject { ["k"] = "const", ["type"] = Type("System.Boolean"), ["value"] = true },
+        ["else"] = classifierCheck.DeepClone(),
+    };
+
+    internal static void SelfTest()
+    {
+        var actual = Local("component", new TypeNode.Fqn("System.Type"));
+        var classifier = new JsonObject { ["k"] = "const", ["type"] = Type("System.Boolean"), ["value"] = false };
+        var check = ErasedComponentCheck(new TypeNode.Fqn("System.Object"), actual, classifier);
+        if (Text(check["cond"]?["k"]) != "objEq"
+            || TypeJson.OwnerName(check["cond"]?["rhs"]?["type"]) != "System.Object"
+            || !JsonNode.DeepEquals(check["cond"]?["lhs"], actual)
+            || !JsonNode.DeepEquals(check["else"], classifier))
+            throw new InvalidOperationException("Erased array component lost exact storage or classifier checks");
+        Console.WriteLine("[array component classifiers] self-test OK (exact opaque storage, retained native classifier)");
     }
 
     static JsonObject Store(JsonObject store, JsonNode receiver, ReferenceMetadataIndex refs)

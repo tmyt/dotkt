@@ -36,12 +36,11 @@ import DotKt.Runtime.CompilerServices.projectedCollectionCountErased
 import DotKt.Runtime.CompilerServices.projectedListCountErased
 import DotKt.Runtime.CompilerServices.projectedMutableListCountErased
 import DotKt.Runtime.CompilerServices.projectedSetCountErased
-import DotKt.Runtime.CompilerServices.projectedSetViewCount
-import DotKt.Runtime.CompilerServices.projectedSetStorageIsFaithful
-import DotKt.Runtime.CompilerServices.projectedSetEnumeratorErased
+import DotKt.Runtime.CompilerServices.projectedViewEnumeratorErased
+import DotKt.Runtime.CompilerServices.projectedViewCountErased
 import DotKt.Runtime.CompilerServices.projectedMutableSetCountErased
 import DotKt.Runtime.CompilerServices.projectedMutableCollectionCountErased
-import DotKt.Runtime.CompilerServices.projectedListGetErased
+import DotKt.Runtime.CompilerServices.projectedListViewGetErased
 
 /** Variance-independent mutable-list face used after `MutableIterable<out T>` has widened its element type. */
 @kotlin.clr.ClrTypeAlias("System.Collections.IList")
@@ -65,73 +64,74 @@ private class ClrProjectedIterator<T>(private val iterator: Iterator<Any?>) : It
 public fun <T> clrProjectedIterator(iterable: Any): Iterator<T> =
     ClrProjectedIterator(iteratorOverRawEnumerable(iterable))
 
-private class ClrProjectedIterableView<T>(private val source: Any) : Iterable<T> {
-    override fun iterator(): Iterator<T> = clrProjectedIterator(source)
+public fun <T> clrProjectedViewIterator(source: Any, preferredView: Any?, family: Int): Iterator<T> {
+    val enumerator = projectedViewEnumeratorErased(source, preferredView, family)
+    return if (enumerator == null) clrProjectedIterator(source)
+        else ClrProjectedIterator(KotlinIteratorOverRawEnumerator(enumerator as ClrRawEnumerator))
 }
 
-public fun <T> clrProjectedIterableView(source: Any): Iterable<T> =
-    (source as? Iterable<T>) ?: ClrProjectedIterableView(source)
-
-private class ClrProjectedMutableIterableView<T>(private val source: Any) : MutableIterable<T> {
-    override fun iterator(): MutableIterator<T> = clrMutableIterator(source)
+public fun <T> clrProjectedViewIsEmpty(source: Any, preferredView: Any?, family: Int): Boolean {
+    val slots = source as? KotlinCollectionDefaultSlots
+    return slots?.dotktIsEmpty() ?: (projectedViewCountErased(source, preferredView, family) == 0)
 }
 
-public fun <T> clrProjectedMutableIterableView(source: Any): MutableIterable<T> =
-    (source as? MutableIterable<T>) ?: ClrProjectedMutableIterableView(source)
-
-// A projected collection can legally cross into a covariant Collection<T> slot even when its actual element is a
-// value type. CLR variance cannot express that edge (`IReadOnlyCollection<Int32>` is not an
-// `IReadOnlyCollection<Object>`), so preserve the original receiver whenever it already inhabits the requested
-// closed face and otherwise expose a live, read-only view over its non-generic enumerable face.
-private class ClrProjectedCollectionView<T>(private val source: Any) : Collection<T> {
-    override val size: Int get() = projectedCollectionCountErased(source)
-
-    override fun isEmpty(): Boolean = clrProjectedCollIsEmpty<Any?>(source)
-    override fun contains(element: T): Boolean = clrProjectedCollContains(source, element)
-    override fun containsAll(elements: Collection<T>): Boolean = clrProjectedCollContainsAll(source, elements)
-    override fun iterator(): Iterator<T> = clrProjectedIterator(source)
+public fun <T> clrProjectedViewContains(source: Any, preferredView: Any?, family: Int, element: T): Boolean {
+    val slots = source as? KotlinCollectionDefaultSlots
+    if (slots != null) return slots.dotktContains(element)
+    val iterator = clrProjectedViewIterator<Any?>(source, preferredView, family)
+    while (iterator.hasNext()) if (iterator.next() == element) return true
+    return false
 }
 
-public fun <T> clrProjectedCollectionView(source: Any): Collection<T> =
-    (source as? Collection<T>) ?: ClrProjectedCollectionView(source)
+public fun <T> clrProjectedViewContainsAll(source: Any, preferredView: Any?, family: Int, elements: Collection<T>): Boolean {
+    val slots = source as? KotlinCollectionDefaultSlots
+    if (slots != null) return slots.dotktContainsAll(elements)
+    for (element in elements) if (!clrProjectedViewContains(source, preferredView, family, element)) return false
+    return true
+}
 
-private class ClrProjectedSetView<T>(private val source: Any, private val sourceWitness: Any?) : AbstractSet<T>() {
-    override val size: Int get() = projectedSetViewCount(source, sourceWitness)
-    override fun isEmpty(): Boolean {
-        val slots = source as? KotlinCollectionDefaultSlots
-        return slots?.dotktIsEmpty() ?: (size == 0)
+public fun <T> clrProjectedViewGet(source: Any, preferredView: Any?, family: Int, index: Int): T =
+    projectedListViewGetErased(source, preferredView, index) as T
+
+private fun <T> clrProjectedViewFindIndex(source: Any, preferredView: Any?, family: Int, element: T, last: Boolean): Int {
+    val slots = source as? KotlinListDefaultSlots
+    if (slots != null) return if (last) slots.dotktLastIndexOf(element) else slots.dotktIndexOf(element)
+    var found = -1
+    var index = 0
+    val iterator = clrProjectedViewIterator<Any?>(source, preferredView, family)
+    while (iterator.hasNext()) {
+        if (iterator.next() == element) {
+            if (!last) return index
+            found = index
+        }
+        index++
     }
-    override fun iterator(): Iterator<T> = ClrProjectedIterator(
-        KotlinIteratorOverRawEnumerator(projectedSetEnumeratorErased(source, sourceWitness) as ClrRawEnumerator))
-
-    override fun contains(element: T): Boolean {
-        val slots = source as? KotlinCollectionDefaultSlots
-        if (slots != null) return slots.dotktContains(element)
-        for (value in this) if (value == element) return true
-        return false
-    }
-
-    override fun containsAll(elements: Collection<T>): Boolean {
-        val slots = source as? KotlinCollectionDefaultSlots
-        if (slots != null) return slots.dotktContainsAll(elements)
-        for (element in elements) if (!contains(element)) return false
-        return true
-    }
+    return found
 }
 
-public fun <T> clrProjectedSetView(source: Any, targetType: Any, sourceWitness: Any?): Set<T> =
-    if (projectedSetStorageIsFaithful(source, targetType, sourceWitness)) source as Set<T>
-    else ClrProjectedSetView(source, sourceWitness)
+public fun <T> clrProjectedViewIndexOf(source: Any, preferredView: Any?, family: Int, element: T): Int =
+    clrProjectedViewFindIndex(source, preferredView, family, element, false)
 
-public fun <T> clrProjectedNullableSetView(source: Any?, targetType: Any, sourceWitness: Any?): Set<T>? =
-    if (source == null) null else clrProjectedSetView(source, targetType, sourceWitness)
+public fun <T> clrProjectedViewLastIndexOf(source: Any, preferredView: Any?, family: Int, element: T): Int =
+    clrProjectedViewFindIndex(source, preferredView, family, element, true)
 
-public fun <T> clrProjectedSetIterableView(source: Any, targetType: Any, sourceWitness: Any?): Iterable<T> =
-    if (projectedSetStorageIsFaithful(source, targetType, sourceWitness)) source as Iterable<T>
-    else ClrProjectedSetView(source, sourceWitness)
+public fun <T> clrProjectedViewListIterator(source: Any, preferredView: Any?, family: Int): ListIterator<T> {
+    val slots = source as? KotlinListDefaultSlots
+    if (slots != null) return ClrErasedListIteratorAdapter(slots.dotktListIterator())
+    return ClrProjectedListView<T>(source, 0, projectedViewCountErased(source, preferredView, family), preferredView).listIterator()
+}
 
-public fun <T> clrProjectedNullableSetIterableView(source: Any?, targetType: Any, sourceWitness: Any?): Iterable<T>? =
-    if (source == null) null else clrProjectedSetIterableView(source, targetType, sourceWitness)
+public fun <T> clrProjectedViewListIteratorAt(source: Any, preferredView: Any?, family: Int, index: Int): ListIterator<T> {
+    val slots = source as? KotlinListDefaultSlots
+    if (slots != null) return ClrErasedListIteratorAdapter(slots.dotktListIteratorAt(index))
+    return ClrProjectedListView<T>(source, 0, projectedViewCountErased(source, preferredView, family), preferredView).listIterator(index)
+}
+
+public fun <T> clrProjectedViewSubList(source: Any, preferredView: Any?, family: Int, fromIndex: Int, toIndex: Int): List<T> {
+    val slots = source as? KotlinListDefaultSlots
+    if (slots != null) return slots.dotktSubList(fromIndex, toIndex) as List<T>
+    return ClrProjectedListView(source, fromIndex, toIndex, preferredView)
+}
 
 public fun <T> clrCollIsEmpty(c: Collection<T>): Boolean = c.size == 0
 
@@ -652,13 +652,13 @@ public fun <T> clrProjectedMutableListListIterator(list: Any, index: Int): Mutab
 public fun <T> clrProjectedListIterator(list: Any): ListIterator<T> {
     val slots = list as? KotlinListDefaultSlots
     if (slots != null) return ClrErasedListIteratorAdapter(slots.dotktListIterator())
-    return ClrProjectedListView<T>(list, 0, projectedListCountErased(list)).listIterator()
+    return ClrProjectedListView<T>(list, 0, projectedListCountErased(list), null).listIterator()
 }
 
 public fun <T> clrProjectedListListIterator(list: Any, index: Int): ListIterator<T> {
     val slots = list as? KotlinListDefaultSlots
     if (slots != null) return ClrErasedListIteratorAdapter(slots.dotktListIteratorAt(index))
-    return ClrProjectedListView<T>(list, 0, projectedListCountErased(list)).listIterator(index)
+    return ClrProjectedListView<T>(list, 0, projectedListCountErased(list), null).listIterator(index)
 }
 
 // subList -> a live read-only view. ClrSubList implements List (@Clr) so it gets get_Count/get_Item (C3a) + a generated
@@ -693,13 +693,14 @@ private class ClrProjectedListView<T>(
     private val backing: Any,
     private val fromIndex: Int,
     private val toIndex: Int,
+    private val preferredView: Any?,
 ) : List<T> {
-    init { clrCheckSubListBounds(projectedListCountErased(backing), fromIndex, toIndex) }
+    init { clrCheckSubListBounds(projectedViewCountErased(backing, preferredView, 3), fromIndex, toIndex) }
 
     override val size: Int get() = toIndex - fromIndex
     override fun get(index: Int): T {
         if (index < 0 || index >= size) throw IndexOutOfBoundsException()
-        return projectedListGetErased(backing, fromIndex + index) as T
+        return projectedListViewGetErased(backing, preferredView, fromIndex + index) as T
     }
     override fun isEmpty(): Boolean = size == 0
     override fun contains(element: T): Boolean = indexOf(element) >= 0
@@ -711,21 +712,18 @@ private class ClrProjectedListView<T>(
     override fun listIterator(index: Int): ListIterator<T> = ClrListIterator(this, index)
     override fun subList(fromIndex: Int, toIndex: Int): List<T> {
         clrCheckSubListBounds(size, fromIndex, toIndex)
-        return ClrProjectedListView(backing, this.fromIndex + fromIndex, this.fromIndex + toIndex)
+        return ClrProjectedListView(backing, this.fromIndex + fromIndex, this.fromIndex + toIndex, preferredView)
     }
 }
-
-public fun <T> clrProjectedListView(source: Any): List<T> =
-    (source as? List<T>) ?: ClrProjectedListView(source, 0, projectedListCountErased(source))
 
 public fun <T> clrProjectedListSubList(list: Any, fromIndex: Int, toIndex: Int): List<T> {
     val slots = list as? KotlinListDefaultSlots
     if (slots != null) {
         val result = slots.dotktSubList(fromIndex, toIndex)
         return (result as? List<T>)
-            ?: ClrProjectedListView(result, 0, projectedListCountErased(result))
+            ?: ClrProjectedListView(result, 0, projectedListCountErased(result), null)
     }
-    return ClrProjectedListView(list, fromIndex, toIndex)
+    return ClrProjectedListView(list, fromIndex, toIndex, null)
 }
 
 private class ClrProjectedMutableSubList<T>(

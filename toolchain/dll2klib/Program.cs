@@ -2369,6 +2369,8 @@ internal sealed class AssemblyScanner : IDisposable
                     Flags = CallableVisibility(methodHandle, Flags.Visibility(method.Attributes)),
                     ValueParameter = { parameters },
                 };
+                if (declarationIdentity is { } constructorIdentity)
+                    constructor.ConstructorAnnotation.Add(KotlinDeclarationIdentityAnnotation(names, constructorIdentity.Id, ""));
                 foreach (var named in namedArgumentsForConstructor)
                 {
                     var parameter = new ValueParameter
@@ -5870,11 +5872,13 @@ internal sealed class AssemblyScanner : IDisposable
         if (document is null) return null;
         var root = document.RootElement;
         var propertyCount = root.ValueKind == JsonValueKind.Object ? root.EnumerateObject().Count() : 0;
-        if (propertyCount is < 2 or > 6 ||
+        if (propertyCount is < 2 or > 7 ||
             !root.TryGetProperty("id", out var idNode) || idNode.ValueKind != JsonValueKind.String ||
             !root.TryGetProperty("name", out var nameNode) || nameNode.ValueKind != JsonValueKind.String ||
             root.EnumerateObject().Any(property => property.Name is not (
-                "id" or "name" or "signature" or "reified" or "nullableWitness" or NullableRepresentationFrame.MetadataKey)) ||
+                "id" or "name" or "signature" or "reified" or "nullableWitness" or NullableRepresentationFrame.MetadataKey or "signatureAllocation")) ||
+            root.TryGetProperty("signatureAllocation", out var allocationNode)
+                && allocationNode.ValueKind != JsonValueKind.True ||
             root.TryGetProperty("signature", out var signatureNode) && signatureNode.ValueKind != JsonValueKind.Object ||
             root.TryGetProperty("reified", out var reifiedNode) && reifiedNode.ValueKind != JsonValueKind.Array ||
             root.TryGetProperty("nullableWitness", out var witnessNode)

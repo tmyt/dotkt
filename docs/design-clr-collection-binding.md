@@ -4,7 +4,7 @@ Status: implemented design record. This document records the collection identiti
 
 ## Public type mapping
 
-| Kotlin type | CLR representation |
+| Kotlin type | CLR operational interface |
 |---|---|
 | `Iterable<T>` | `IEnumerable<T>` |
 | `Collection<T>` | `IReadOnlyCollection<T>` |
@@ -16,27 +16,33 @@ Status: implemented design record. This document records the collection identiti
 | `Map<K,V>` | `IReadOnlyDictionary<K,V>` |
 | `MutableMap<K,V>` | `IDictionary<K,V>` |
 
-Factories such as `listOf`, `mutableListOf`, and `mapOf` return ordinary BCL implementations through these interface views. The mapping is declared by stdlib `@ClrTypeAlias` and `@ClrIntrinsic` metadata and applied by bir2cir; kotc does not hard-code it.
+These are exact declaration, implementation and native interop interfaces. Ordinary values of declaration-variant
+aliases use `object`, retaining their Kotlin source types in metadata. Factories return ordinary BCL implementations;
+widening passes the same reference without requiring CLR variance between value-element instantiations.
+The mapping is declared by stdlib `@ClrTypeAlias` and `@ClrIntrinsic` metadata and applied by bir2cir; kotc does not hard-code it.
 
 Emitted Kotlin Set implementations carry the nominal Kotlin Set classifier; foreign Sets are recognized through
 their actual `IReadOnlySet<T>` / `ISet<T>` interfaces. A shared Collection storage interface alone does not identify
 a Set, and an unrelated List implemented by the same object does not supply that Set's Count or enumeration.
 
-### Projected Set arguments
+### Static operation views
 
-When a `Set<*>` crosses a closed Set, Collection, or Iterable argument boundary, bir2cir preserves the source
-family and supplies the requested physical interface type to the runtime adapter. A pre-existing concrete source
-witness is not reopened as an ambiguous existential. Nullable boundaries pass null through without constructing a view.
-When a concrete MutableSet needs readonly adaptation, bir2cir also supplies its exact source storage type;
-the adapter retains that element witness instead of reopening unrelated Set closures on the same object.
+Opaque values retain the raw reference, not a dynamically remembered originating view. Each operation selects
+from its static Kotlin view: a matching implemented closed preference wins, otherwise exactly one eligible actual
+family is required. A star supplies no closed preference. Merely transporting an ambiguous value does not open
+its family; null passes through unchanged.
 
-The runtime keeps the original object when the selected Set's actual parents faithfully satisfy the requested
-interface and its generic operational parents. Exact interface slots are authoritative; covariant conversion is
-used only when no unrelated compatible closed interface can compete. Otherwise a live Set view selects Count
-and enumeration through the Set family and preserves Kotlin default-member overrides. An Iterable-only boundary
-does not require the source to implement an additional readonly Collection interface just to retain identity.
-Dictionary entry storage is excluded from the nominal Kotlin Set family. Merely transporting an ambiguous
-existential does not resolve its elements: the live view reports ambiguity only when an operation needs that family.
+Direct Set Count, queries and iteration select the same actual Set family and its Collection/Enumerable parents,
+excluding unrelated List and raw enumeration. The preferred element can match a read-only or mutable Set root;
+mutable-only Sets remain readable, and Kotlin-authored default-member overrides remain authoritative. Widening
+to Collection or Iterable deliberately drops the originating Set family: the operation uses that wider static
+view and can therefore be ambiguous even when the Set operation was unique. The same object entering the same
+static parameter has the same behavior regardless of its earlier casts or generic storage. No collection adapter,
+per-object provenance registry or identity normalization participates in this policy.
+
+List Count, indexed reads, queries and iteration likewise share the selected List family and its actual parents.
+The explicit `listIterator` and `subList` operations retain their requested backing view in the newly created
+iterator or live slice; this is operation state, not originating-view metadata on the transported collection.
 
 ## Why Kotlin `Iterator<T>` is not simply `IEnumerator<T>`
 
@@ -71,7 +77,9 @@ Raw `IList` remains a fallback only when no eligible generic mutable List exists
 generic ambiguity or a getter exception. Map-owned List storage is excluded, and source-authored exact
 interface witnesses and Kotlin emptiness overrides remain authoritative.
 
-For-loops over BCL-bound collections lower to the CLR enumeration protocol. An explicit Kotlin `iterator()` call still receives the Kotlin adapter, because its caller expects `hasNext()` and `next()`.
+For-loops over opaque collection values consume the authored iterator operation and its static family selection.
+Exact BCL enumerable sources can use the CLR enumeration protocol directly. Kotlin iterator consumers receive
+the protocol adapter because they expect `hasNext()` and `next()`; this adapter does not replace the collection value.
 
 ## Layer ownership
 

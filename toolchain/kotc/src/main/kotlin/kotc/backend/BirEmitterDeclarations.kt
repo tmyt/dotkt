@@ -783,7 +783,7 @@ internal fun BirEmitter.richEnumDef(ec: IrClass): String {
 	}
 	val baseAbstract = absMethods.isNotEmpty() || hasAbstractAccessor
 	// base ctor must be callable from the entry subclasses -> protected (was private for the flat form).
-	val ctor = """{"params":[$ctorParams],"baseArgs":null,"thisArgs":null,"vis":${str(if (hasPerEntry) "protected" else "private")},"body":[$ctorBody]}"""
+	val ctor = """{"params":[$ctorParams]${declarationIdField(primaryCtor)},"declarationSourceName":".ctor","baseArgs":null,"thisArgs":null,"vis":${str(if (hasPerEntry) "protected" else "private")},"body":[$ctorBody]}"""
 	// Every secondary enum constructor remains a real constructor on the rich class. Prefix the same synthesized
 	// metadata parameters, then preserve the frontend-selected `this(...)` target and its complete argument plan.
 	// This is declaration projection only: bir2cir resolves the exact physical constructor from delegationSig.
@@ -826,7 +826,9 @@ internal fun BirEmitter.richEnumDef(ec: IrClass): String {
 		val emittedBody = (preconditionChecks(c) + ownStatements).joinToString(",")
 		val bindings = plan.bindingsJson().takeIf { !plan.isEmpty }
 			?.let { ""","delegationBindings":$it""" }.orEmpty()
-		return """{"params":[$params],"baseArgs":null,"thisArgs":[$thisArgs],"delegationSig":[$delegationSig]$bindings,"vis":${str(if (hasPerEntry) "protected" else "private")},"body":[$emittedBody]}"""
+		val targetIdentity = declarationIdForPhysicalAllocation(delegating.symbol.owner)
+			?.let { ""","delegationDeclarationId":${str(it)}""" }.orEmpty()
+		return """{"params":[$params]${declarationIdField(c)},"declarationSourceName":".ctor","baseArgs":null,"thisArgs":[$thisArgs],"delegationSig":[$delegationSig]$targetIdentity$bindings,"vis":${str(if (hasPerEntry) "protected" else "private")},"body":[$emittedBody]}"""
 	}
 	val ctors = (listOf(ctor) + enumCtors.filter { !it.isPrimary }.map(::secondaryCtor)).joinToString(",")
 	// instance fields: metadata + user props.
@@ -845,7 +847,7 @@ internal fun BirEmitter.richEnumDef(ec: IrClass): String {
 			val sub = "<>${name}_${ent.name.asString()}"
 			val superCall = enumSuperCall(cc)
 			subDefs.add(enumEntrySubclass(
-				sub, name, cc, superCall.args, superCall.bindings, superCall.parameterTypes))
+				sub, name, cc, superCall.args, superCall.bindings, superCall.parameterTypes, superCall.declarationId))
 			fields.add("""{"name":${str(ent.name.asString())},"type":${fqnJson(name)},"static":true,"initOnly":true,"init":{"k":"new","type":${fqnJson(sub)},"argTypes":[${fqnJson("kotlin.String")},${fqnJson("kotlin.Int")}],"args":[${nameOrd(i, ent).joinToString(",")}]}}""")
 		} else {
 			val ecc = (ent.initializerExpression as? IrExpressionBody)?.expression as? IrEnumConstructorCall
@@ -864,7 +866,9 @@ internal fun BirEmitter.richEnumDef(ec: IrClass): String {
 				.map { birType(it.type).toJson() }
 			val entrySig = (listOf(fqnJson("kotlin.String"), fqnJson("kotlin.Int")) + selectedTypes)
 				.joinToString(",")
-			val newEntry = """{"k":"new","type":${fqnJson(name)},"argTypes":[$entrySig],"args":[$newArgs],"memberSignature":[$entrySig]}"""
+			val selectedIdentity = declarationIdForPhysicalAllocation(selectedCtor)
+				?.let { ""","constructorDeclarationId":${str(it)}""" }.orEmpty()
+			val newEntry = """{"k":"new","type":${fqnJson(name)},"argTypes":[$entrySig],"args":[$newArgs],"memberSignature":[$entrySig]$selectedIdentity}"""
 			val init = entryPlan?.wrap(newEntry, fqnJson(name)) ?: newEntry
 			fields.add("""{"name":${str(ent.name.asString())},"type":${fqnJson(name)},"static":true,"initOnly":true,"init":$init}""")
 		}
@@ -951,7 +955,8 @@ internal fun BirEmitter.richEnumDef(ec: IrClass): String {
 internal data class EnumSuperCall(
 	val args: List<String>,
 	val bindings: String?,
-	val parameterTypes: List<String>)
+	val parameterTypes: List<String>,
+	val declarationId: String? = null)
 
 /** The exact enum-super call a per-entry body's anonymous subclass makes. Omitted defaults are filled like every
  * constructor call site, while the selected constructor's source parameter types preserve overload identity after
@@ -972,7 +977,8 @@ internal fun BirEmitter.enumSuperCall(cc: IrClass): EnumSuperCall {
 	val (plan, args) = withCallPlan(call) { filledArgs(call) }
 	val parameterTypes = call.symbol.owner.parameters.filter(::isValueParameter)
 		.map { birType(it.type).toJson() }
-	return EnumSuperCall(args, plan.bindingsJson().takeIf { !plan.isEmpty }, parameterTypes)
+	return EnumSuperCall(args, plan.bindingsJson().takeIf { !plan.isEmpty }, parameterTypes,
+		declarationIdForPhysicalAllocation(call.symbol.owner))
 }
 
 /** Instance storage authored by a Kotlin class body. Rich-enum entry subclasses and ordinary classes share this
@@ -1041,7 +1047,7 @@ internal fun BirEmitter.instanceInitializerStatements(klass: IrClass): List<Stri
 /** A per-entry enum body `NAME(args) { override fun … }` -> a subclass `<>Enum_NAME : Enum` whose ctor takes only
  *  (__name, __ordinal) and forwards them plus the baked-in `args` to the base ctor; carries overriding members. */
 internal fun BirEmitter.enumEntrySubclass(subName: String, baseName: String, cc: IrClass,
-		userArgs: List<String>, delegationBindings: String?, baseParamTypes: List<String>): String {
+		userArgs: List<String>, delegationBindings: String?, baseParamTypes: List<String>, baseDeclarationId: String?): String {
 	// The frontend's anonymous entry class has no stable source name. Pin every member-body owner reference to the
 	// explicit BIR subclass identity chosen above, just as lifted anonymous classes do before emitting their bodies.
 	anonNames[cc] = subName
@@ -1083,7 +1089,8 @@ internal fun BirEmitter.enumEntrySubclass(subName: String, baseName: String, cc:
 	val delegationSig = (listOf(fqnJson("kotlin.String"), fqnJson("kotlin.Int")) +
 		baseParamTypes).joinToString(",")
 	val bindings = delegationBindings?.let { ""","delegationBindings":$it""" } ?: ""
-	val subCtor = """{"params":[{"name":"__name","type":${fqnJson("kotlin.String")}},{"name":"__ordinal","type":${fqnJson("kotlin.Int")}}],"baseArgs":[$baseArgs],"thisArgs":null,"delegationSig":[$delegationSig]$bindings,"vis":"public","body":[${ctorBody.joinToString(",")}]}"""
+	val selectedIdentity = baseDeclarationId?.let { ""","delegationDeclarationId":${str(it)}""" }.orEmpty()
+	val subCtor = """{"params":[{"name":"__name","type":${fqnJson("kotlin.String")}},{"name":"__ordinal","type":${fqnJson("kotlin.Int")}}],"baseArgs":[$baseArgs],"thisArgs":null,"delegationSig":[$delegationSig]$selectedIdentity$bindings,"vis":"public","body":[${ctorBody.joinToString(",")}]}"""
 	val clrEventsJson = if (clrEventBackings.isEmpty()) "" else
 		""","clrEvents":[${clrEventBackings.joinToString(",")}]"""
 	// An enum-entry body is an anonymous subclass semantically owned by the enum declaration. Keep that fact explicit;
@@ -1542,11 +1549,14 @@ internal fun BirEmitter.accessorMethod(acc: IrSimpleFunction, propName: String, 
  *  kotc names NO CLR base type here. */
 internal fun BirEmitter.annotationDef(klass: IrClass): String {
 	rejectClrEnumOnNonEnum(klass)
-	val ctorParams = klass.declarations.filterIsInstance<IrConstructor>().firstOrNull { it.isPrimary }
-		?.parameters?.filter { it.kind == IrParameterKind.Regular }.orEmpty()
+	val primary = klass.declarations.filterIsInstance<IrConstructor>().singleOrNull { it.isPrimary }
+	val ctorParams = primary?.parameters?.filter { it.kind == IrParameterKind.Regular }.orEmpty()
 	val fields = ctorParams.joinToString(",") { """{"name":${str(it.name.asString())},"type":${birType(it.type).toJson()}}""" }
 	val assigns = ctorParams.joinToString(",") { """{"k":"setField","ownerType":${fqnJson(typeName(klass))},"recv":{"k":"this"},"name":${str(it.name.asString())},"value":{"k":"local","name":${str(it.name.asString())}}}""" }
-	val ctor = """{"params":[$fields],"baseArgs":[],"thisArgs":null,"vis":"public","body":[$assigns]}"""
+	// An expect annotation without a source constructor uses the synthesized empty constructor;
+	// only an actual IR constructor owns a declaration identity.
+	val constructorIdentity = primary?.let { declarationIdField(it) + ",\"declarationSourceName\":\".ctor\"" }.orEmpty()
+	val ctor = """{"params":[$fields]$constructorIdentity,"baseArgs":[],"thisArgs":null,"vis":"public","body":[$assigns]}"""
 	val visibility = sourceTypeVisibilityField(klass)
 	return """{"name":${str(typeName(klass))},"kind":"class"${semanticOwnerJson(klass)}${classModsJson(annotation = true)}$visibility,"abstract":false,"base":null,"interfaces":[],"fields":[$fields],"ctors":[$ctor],"methods":[],"attrs":[${attrsJson(klass.annotations)}]}"""
 }
@@ -2007,6 +2017,8 @@ internal fun BirEmitter.ctor(klass: IrClass, ctor: IrConstructor, captures: List
 	val delegationOuterSlot = delegating?.let { d ->
 		dispatchReceiver(d)?.let { hiddenDelegationSig.size }
 	}?.let { ""","delegationOuterSlot":$it""" } ?: ""
+	val delegationIdentity = delegating?.takeIf { baseArgs != null || thisArgs != null }?.symbol?.owner?.let { declarationIdForPhysicalAllocation(it) }
+		?.let { ""","delegationDeclarationId":${str(it)}""" }.orEmpty()
 	// #6 non-null parameter PRECONDITIONS at entry. They land AFTER the base/`this` ctor delegation (baseArgs/thisArgs
 	// ride a separate field), so a null user param dereferenced by a base-ctor arg NREs before this friendly NPE — an
 	// accepted ordering deviation from JVM's before-super() insertion (docs/dotkt-semantics.md).
@@ -2017,7 +2029,7 @@ internal fun BirEmitter.ctor(klass: IrClass, ctor: IrConstructor, captures: List
 	// Constructor annotations are declaration metadata just like method annotations. In particular, trusted CLR
 	// binding annotations on an alias constructor must reach bir2cir before the alias TypeDef is hoisted away; omitting
 	// this slot makes a consumer unable to distinguish a Kotlin copy contract from the physical CLR constructor shape.
-	return """{"params":[$params],"baseArgs":$baseJson,"thisArgs":$thisJson$delegationSig$delegationOuterSlot$bindingsJson,"vis":${str(visOf(ctor))},"body":[$ctorBody],"attrs":[${attrsJson(ctor.annotations)}]}"""
+	return """{"params":[$params]${declarationIdField(ctor)},"declarationSourceName":".ctor","baseArgs":$baseJson,"thisArgs":$thisJson$delegationSig$delegationIdentity$delegationOuterSlot$bindingsJson,"vis":${str(visOf(ctor))},"body":[$ctorBody],"attrs":[${attrsJson(ctor.annotations)}]}"""
 }
 
 internal fun BirEmitter.method(fn: IrSimpleFunction, static: Boolean, semanticOwnerOverride: String? = null): String {

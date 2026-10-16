@@ -49,6 +49,25 @@ static class AliasVarianceRepresentation
         return false;
     }
 
+    // This frame describes readable results, not a construction witness. A Kotlin covariant application may
+    // have arrived from a different value-element CLR closure, even when its source argument is not a star.
+    internal static TypeNode[] ResultOwnerArguments(TypeNode.Fqn application, ReferenceMetadataIndex refs)
+    {
+        if (!RequiresErasure(application, refs)) return application.Args;
+        var parameters = OrdinaryParameters(refs.OwnerTypeParamDeclarations(application.Name),
+            refs.NullableTypeFrames.GetValueOrDefault(application.Name));
+        var arguments = refs.NullableTypeFrames.GetValueOrDefault(application.Name)
+            ?.OrdinaryArguments(application.Args) ?? application.Args;
+        return ProjectVariantArguments(arguments, parameters);
+    }
+
+    static TypeNode[] ProjectVariantArguments(TypeNode[] arguments, JsonArray parameters) =>
+        arguments.Select((argument, index) => {
+            var variance = (parameters[index] as JsonObject)?["variance"]?.GetValue<string>();
+            return argument is not (TypeNode.Star or TypeNode.Projection) && variance is "out" or "in"
+                ? new TypeNode.Projection(variance, argument) : argument;
+        }).ToArray();
+
     internal static void SelfTest()
     {
         var covariant = JsonNode.Parse("""[{"name":"T","variance":"out"}]""").AsArray();
@@ -65,6 +84,9 @@ static class AliasVarianceRepresentation
         var mapFrame = new NullableRepresentationFrame(2, Array.Empty<int>(), new[] { 2, 0, 3, 1 }, new[] { 0, 1 });
         if (!HasUnrepresentableVariance(OrdinaryParameters(framedMap, mapFrame), typeof(System.Collections.Generic.IDictionary<,>)))
             throw new InvalidOperationException("Alias variance treated storage companions as CLR alias parameters");
+        if (ProjectVariantArguments(new TypeNode[] { new TypeNode.Tv("type", 0) }, covariant)[0]
+            is not TypeNode.Projection { Variance: "out", Of: TypeNode.Tv { I: 0 } })
+            throw new InvalidOperationException("A variant readable owner argument became an exact CLR witness");
         Console.WriteLine("[alias variance] self-test OK (value-type variance, invariant storage, declaration frames)");
     }
 }

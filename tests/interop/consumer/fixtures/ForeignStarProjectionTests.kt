@@ -76,8 +76,13 @@ class ForeignStarProjectionTests {
 
     @TestAttribute
     fun interfaceAndMixedProjectionPreserveIdentityAndReadableSlots() {
-        val projectedAlias: List<*> = Factory.DualAliasListAsObject() as List<String>
-        assertEquals("alias-string-view", projectedAlias[0])
+        val aliasValue = Factory.DualAliasListAsObject()
+        assertEquals("alias-string-view", (aliasValue as List<String>)[0])
+        assertEquals(73, (aliasValue as List<Int>)[0])
+        val projectedAlias: List<*> = aliasValue as List<String>
+        var aliasAmbiguous = false
+        try { projectedAlias[0] } catch (_: IllegalStateException) { aliasAmbiguous = true }
+        assertTrue(aliasAmbiguous)
 
         val exact = Factory.StringBox()
         val projected: IBox<*> = exact

@@ -134,7 +134,8 @@ static class CollectionHelperBinding
                     || !(owner.Name.StartsWith("kotlin.collections.", StringComparison.Ordinal) || owner.Name == "kotlin.sequences.Sequence"))
                     return obj;
                 call = (MemberCallSubstitution.CollectionMutationCall(obj, owner, args, references, context)
-                    ?? MemberCallSubstitution.CollectionDefaultCall(obj, owner, args, references, context)) as JsonObject;
+                    ?? MemberCallSubstitution.CollectionDefaultCall(obj, owner, args, references, context,
+                        MemberCallSubstitution.CollectionOperationPhase.Source)) as JsonObject;
                 if (call == null) return obj;
             }
             var sourceArguments = ((JsonArray)call["typeArgs"]).Select(TypeJson.Read).Select(SourceArgument).ToArray();
@@ -288,6 +289,12 @@ static class CollectionHelperBinding
         var bound = Call("kotlin.collections.Collection", variable, "isEmpty");
         bound["clrOwnerResolved"] = true;
         body.Add(bound);
+        body.Add(Call("kotlin.collections.Set", new TypeNode.Star(), "iterator"));
+        body.Add(Call("kotlin.collections.Iterable", variable, "iterator"));
+        body.Add(Call("kotlin.collections.Set", variable, "contains",
+            new JsonObject { ["k"] = "local", ["name"] = "value" }));
+        body.Add(Call("kotlin.collections.Collection", variable, "containsAll",
+            new JsonObject { ["k"] = "local", ["name"] = "values" }));
         var nestedIterator = JsonNode.Parse("""
         {"k":"newObject","synthClass":{"name":"kotlin.collections.NestedIteratorProbe","methods":[
           {"name":"iterator","abstract":false,"params":[],"body":[]}]}}
@@ -299,7 +306,8 @@ static class CollectionHelperBinding
             || MemberCallSubstitution.MissingCollectionIteratorCall(iteratorCall, iteratorOwner, new JsonArray(), true) != null
             || MemberCallSubstitution.MissingCollectionIteratorCall(iteratorCall, iteratorOwner, new JsonArray(), false) == null)
             throw new InvalidOperationException("Source iterator binding lost an unhoisted concrete declaration");
-        var methods = new JsonArray(new[] { "clrCollIsEmpty", "clrProjectedCollIsEmpty", "clrListListIterator", "clrProjectedCollAdd" }
+        var methods = new JsonArray(new[] { "clrProjectedViewIsEmpty", "clrProjectedViewIterator",
+                "clrProjectedViewContains", "clrProjectedViewContainsAll", "clrProjectedViewListIterator", "clrProjectedCollAdd" }
             .Select(name => (JsonNode)Helper(name)).ToArray());
         methods.Add(new JsonObject { ["name"] = "use", [DeclarationIdentityBinding.Key] = "use-collections",
             ["typeParams"] = new JsonArray("T"), ["params"] = new JsonArray(), ["ret"] = TypeJson.Write(boolType), ["body"] = body });
@@ -307,25 +315,41 @@ static class CollectionHelperBinding
             ["kotlin.collections.Collection"] = "System.Collections.Generic.IReadOnlyCollection",
             ["kotlin.collections.List"] = "System.Collections.Generic.IReadOnlyList",
             ["kotlin.collections.MutableCollection"] = "System.Collections.Generic.ICollection",
+            ["kotlin.collections.Set"] = "System.Collections.Generic.IReadOnlyCollection",
+            ["kotlin.collections.Iterable"] = "System.Collections.Generic.IEnumerable",
         };
         var root = new JsonObject { ["fileClass"] = helperOwner, ["methods"] = methods,
             ["types"] = new JsonArray(aliases.Keys.Select(name => (JsonNode)new JsonObject {
                 ["name"] = name, ["kind"] = "interface", ["typeParams"] = new JsonArray("T"), ["methods"] = new JsonArray(),
             }).ToArray()) };
         Apply(new[] { root }, null, aliases);
-        if (Text(body[0][DeclarationIdentityBinding.Key]) != "clrCollIsEmpty"
-            || Text(body[1][DeclarationIdentityBinding.Key]) != "clrProjectedCollIsEmpty"
-            || Text(body[2][DeclarationIdentityBinding.Key]) != "clrListListIterator"
-            || body[2]["args"][1]["value"].GetValue<int>() != 0
+        if (Text(body[0][DeclarationIdentityBinding.Key]) != "clrProjectedViewIsEmpty"
+            || body[0]["args"][2]["value"].GetValue<int>() != 0
+            || TypeJson.Read(body[0]["args"][1]["type"]) is not TypeNode.Fqn {
+                Name: "System.Collections.Generic.IReadOnlyCollection`1", Args: [TypeNode.Tv { Scope: "method", I: 0 }] }
+            || Text(body[1][DeclarationIdentityBinding.Key]) != "clrProjectedViewIsEmpty"
+            || Text(body[1]["args"][1]["k"]) != "const"
+            || Text(body[2][DeclarationIdentityBinding.Key]) != "clrProjectedViewListIterator"
+            || body[2]["args"] is not JsonArray { Count: 3 }
+            || body[2]["args"][2]["value"].GetValue<int>() != 3
             || Text(body[3][DeclarationIdentityBinding.Key]) != "clrProjectedCollAdd"
-            || Text(body[4]["k"]) != "callInstance")
+            || Text(body[4]["k"]) != "callInstance"
+            || Text(body[5][DeclarationIdentityBinding.Key]) != "clrProjectedViewIterator"
+            || body[5]["args"][2]["value"].GetValue<int>() != 1
+            || Text(body[5]["args"][1]["k"]) != "const"
+            || Text(body[6][DeclarationIdentityBinding.Key]) != "clrProjectedViewIterator"
+            || body[6]["args"][2]["value"].GetValue<int>() != 2
+            || TypeJson.Read(body[6]["args"][1]["type"]) is not TypeNode.Fqn {
+                Name: "System.Collections.Generic.IEnumerable`1", Args: [TypeNode.Tv { Scope: "method", I: 0 }] }
+            || Text(body[7][DeclarationIdentityBinding.Key]) != "clrProjectedViewContains"
+            || Text(body[8][DeclarationIdentityBinding.Key]) != "clrProjectedViewContainsAll")
             throw new InvalidOperationException("Source collection helper selection changed projection, default index or exact-owner routing");
         NullableRepresentationMaterialization.Apply(new[] { root }, _ => false,
             policy: new GenericRepresentationPolicy(aliases));
         if (((JsonArray)body[0]["typeArgs"]).Count != 1
             || TypeJson.Read(body[0]["typeArgs"][0]) != variable)
             throw new InvalidOperationException("Source collection helper changed its canonical argument");
-        Console.WriteLine("[collection helper binding] self-test OK (invariant/projected, mutation, default index, exact owner, canonical argument)");
+        Console.WriteLine("[collection helper binding] self-test OK (static family/preference, source selection, mutation, default index, exact owner, canonical argument)");
     }
 
     static string Text(JsonNode node) => (node as JsonValue)?.TryGetValue<string>(out var text) == true ? text : null;

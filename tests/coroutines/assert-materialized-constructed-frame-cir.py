@@ -29,22 +29,14 @@ constructed_box = {
     "t": "fqn",
     "name": "MaterializedConstructedBox",
     "args": [
-        {
-            "t": "fqn",
-            "name": "System.Collections.Generic.IReadOnlyList",
-            "args": [owner_t],
-        }
+        {"t": "fqn", "name": "System.Object"}
     ],
 }
 mixed_box = {
     "t": "fqn",
     "name": "MaterializedMixedBox",
     "args": [
-        {
-            "t": "fqn",
-            "name": "System.Collections.Generic.IReadOnlyList",
-            "args": [owner_t],
-        },
+        {"t": "fqn", "name": "System.Object"},
         owner_t,
         {"t": "tv", "scope": "type", "i": 1},
     ],

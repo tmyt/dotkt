@@ -190,18 +190,21 @@ private fun Any.starProjectionRuntimeType(): StarProjectionType = TODO("clr bind
 // dispatch through that existential view. The compiler supplies the exact open declaring type and metadata token;
 // this code never resolves an overload by source name.
 @PublishedApi
-internal fun starProjectionIsInstance(value: Any?, openGenericType: StarProjectionType): Boolean =
-    value != null && starProjectionClosedView(value.starProjectionRuntimeType(), openGenericType) != null
+internal fun starProjectionIsInstance(value: Any?, openGenericType: StarProjectionType,
+    preferredView: StarProjectionType?): Boolean =
+    value != null && starProjectionClosedView(value.starProjectionRuntimeType(), openGenericType, preferredView) != null
 
 @PublishedApi
-internal fun starProjectionCast(value: Any?, openGenericType: StarProjectionType): Any {
-    if (value != null && starProjectionClosedView(value.starProjectionRuntimeType(), openGenericType) != null) return value
+internal fun starProjectionCast(value: Any?, openGenericType: StarProjectionType,
+    preferredView: StarProjectionType?): Any {
+    if (value != null && starProjectionClosedView(value.starProjectionRuntimeType(), openGenericType, preferredView) != null) return value
     throw ClassCastException("Value is not an instance of " + openGenericType.fullName)
 }
 
 @PublishedApi
-internal fun starProjectionSafeCast(value: Any?, openGenericType: StarProjectionType): Any? =
-    if (value != null && starProjectionClosedView(value.starProjectionRuntimeType(), openGenericType) != null) value else null
+internal fun starProjectionSafeCast(value: Any?, openGenericType: StarProjectionType,
+    preferredView: StarProjectionType?): Any? =
+    if (value != null && starProjectionClosedView(value.starProjectionRuntimeType(), openGenericType, preferredView) != null) value else null
 
 // String, arrays and dictionary storage have CLR enumerators without Kotlin Iterable membership.
 // Declaration-owned Kotlin identities are checked before this foreign-storage policy, so a map that
@@ -273,6 +276,9 @@ internal fun kotlinCollectionMatches(value: Any?, witness: Int, dictionary: Star
     readOnlyDictionary: StarProjectionType, set: StarProjectionType, readOnlySet: StarProjectionType,
     list: StarProjectionType, genericList: StarProjectionType, readOnlyList: StarProjectionType,
     collection: StarProjectionType, readOnlyCollection: StarProjectionType): Boolean {
+    // An opaque Object carrier no longer supplies a native checked cast's null rejection.
+    // The source witness owns nullability for both membership tests and checked casts.
+    if (value == null) return (witness and 1) != 0
     if (value !is KotlinIterableClassifier) return when (witness and -2) {
         14, 16 -> foreignKotlinIterable(value, dictionary, readOnlyDictionary, set, readOnlySet,
             list, genericList, readOnlyList)
@@ -881,9 +887,9 @@ private fun starProjectionClosedView(
     openGenericType: StarProjectionType,
     closedViewHint: StarProjectionType? = null,
 ): StarProjectionType? {
-    // The compiler's exact witness describes the authored receiver.  An inherited member can be declared on a
-    // different open generic (`Derived<String>` -> `Base<String>`), so translate that witness through its physical
-    // base/interface graph before comparing it with the declaring closure.  Calling this helper without a hint is
+    // The compiler's preferred view describes the authored receiver. An inherited member can be declared on a
+    // different open generic (`Derived<String>` -> `Base<String>`), so translate that preference through its physical
+    // base/interface graph before comparing it with the declaring closure. Calling this helper without a hint is
     // also the ambiguity check: two distinct closed interface views are never guessed.
     val declaringHint = if (closedViewHint != null
         && closedViewHint != openGenericType
@@ -891,28 +897,29 @@ private fun starProjectionClosedView(
             || closedViewHint.getGenericTypeDefinition() != openGenericType))
         starProjectionClosedView(closedViewHint, openGenericType, null)
     else closedViewHint
+    // A Kotlin variant view can prefer a closure without proving it: List<Any> can still be a List<Int>.
+    // Prefer an exact implemented view when present, otherwise require one unambiguous actual closure.
+    var match: StarProjectionType? = null
+    var ambiguous = false
     var current: StarProjectionType? = runtimeType
     while (current != null) {
         if (current == openGenericType) return current
         if (current.isGenericType && current.getGenericTypeDefinition() == openGenericType) {
-            if (declaringHint == null || current == declaringHint) return current
+            if (current == declaringHint) return current
+            if (match != null && match != current) ambiguous = true
+            match = current
         }
         current = current.baseType
     }
-    var match: StarProjectionType? = null
     for (candidate in runtimeType.getInterfaces()) {
         // A projected generic receiver can select a member declared on an exact non-generic base interface.
         if (candidate == openGenericType) return candidate
         if (!candidate.isGenericType || candidate.getGenericTypeDefinition() != openGenericType) continue
-        if (declaringHint != null) {
-            if (candidate == declaringHint) return candidate
-            continue
-        }
-        if (match != null) throw IllegalStateException(
-            "Ambiguous star-projection view " + openGenericType.fullName
-        )
+        if (candidate == declaringHint) return candidate
+        if (match != null && match != candidate) ambiguous = true
         match = candidate
     }
+    if (ambiguous) throw IllegalStateException("Ambiguous star-projection view " + openGenericType.fullName)
     return match
 }
 
@@ -1001,20 +1008,27 @@ private fun rawListIsMapStorage(receiver: Any): Boolean {
 // closure can be independent even when the same object also exposes dictionary entry storage.
 private fun findErasedProjectedView(receiver: Any, preferred: String, fallback: String,
     excludeDictionaryStorage: Boolean = false, elementWitness: StarProjectionType? = null,
-    failOnAmbiguity: Boolean = true): StarProjectionType? {
+    failOnAmbiguity: Boolean = true, requiredElement: StarProjectionType? = null): StarProjectionType? {
     val runtimeType = receiver.starProjectionRuntimeType()
     val interfaces = runtimeType.getInterfaces()
     val listView = preferred == "System.Collections.Generic.IReadOnlyList`1"
         || preferred == "System.Collections.Generic.IList`1"
     val storageFaces = if (excludeDictionaryStorage || listView) collectionMapStorageFaces(runtimeType)
         else emptyArray<StarProjectionType>()
+    // A static element view is a preference, not a required physical instantiation. Try its exact
+    // eligible closure first, then apply the same unique-family rule without that preference.
+    if (elementWitness != null) {
+        val exact = findErasedProjectedView(receiver, preferred, fallback, excludeDictionaryStorage,
+            null, false, elementWitness)
+        if (exact != null) return exact
+    }
     var preferredMatch: StarProjectionType? = null
     var fallbackMatch: StarProjectionType? = null
     for (candidate in interfaces) {
         if (!candidate.isGenericType) continue
         val definition = candidate.getGenericTypeDefinition().fullName
         if (definition != preferred && definition != fallback) continue
-        if (elementWitness != null && candidate.getGenericArguments()[0] != elementWitness) continue
+        if (requiredElement != null && candidate.getGenericArguments()[0] != requiredElement) continue
         if (listView && hasExactFace(storageFaces, candidate)) continue
         if (excludeDictionaryStorage) {
             var dictionaryParent = hasExactFace(storageFaces, candidate)
@@ -1098,9 +1112,15 @@ internal fun projectedCollectionCountErased(receiver: Any): Int {
 }
 
 @PublishedApi
-internal fun projectedListCountErased(receiver: Any): Int {
-    val view = findErasedProjectedView(receiver,
-        "System.Collections.Generic.IReadOnlyList`1", "System.Collections.Generic.IList`1")
+internal fun projectedListCountErased(receiver: Any): Int = projectedListViewCount(receiver, null)
+
+private fun projectedListFamily(receiver: Any, preferred: StarProjectionType?): StarProjectionType? =
+    findErasedProjectedView(receiver,
+        "System.Collections.Generic.IReadOnlyList`1", "System.Collections.Generic.IList`1",
+        elementWitness = preferred?.getGenericArguments()?.get(0))
+
+private fun projectedListViewCount(receiver: Any, preferred: StarProjectionType?): Int {
+    val view = projectedListFamily(receiver, preferred)
     if (view == null && receiver is StarProjectionRawList && !rawListIsMapStorage(receiver)) return receiver.count
     val list = view ?: throw UnsupportedOperationException("Projected receiver has no CLR List surface")
     val collectionName = if (list.getGenericTypeDefinition().fullName == "System.Collections.Generic.IReadOnlyList`1")
@@ -1126,8 +1146,7 @@ internal fun projectedSetViewCount(receiver: Any, sourceWitness: Any?): Int {
 
 private fun projectedSetFamily(receiver: Any, sourceWitness: Any?,
     failOnAmbiguity: Boolean = true): StarProjectionType? {
-    // bir2cir supplies the exact constructed source storage for a concrete MutableSet witness.
-    // Its element is retained across readonly adaptation instead of reopening the receiver's other Set closures.
+    // The operation supplies its static view preference. No originating view survives opaque value transport.
     val element = if (sourceWitness == null) null else (sourceWitness as StarProjectionType).getGenericArguments()[0]
     return if (receiver is KotlinSetClassifier)
         findErasedProjectedView(receiver,
@@ -1138,61 +1157,65 @@ private fun projectedSetFamily(receiver: Any, sourceWitness: Any?,
         elementWitness = element, failOnAmbiguity = failOnAmbiguity)
 }
 
-// Returning the original object is safe only when every operational parent selects this Set's slot.
-// A compatible Collection<T> cast alone can silently select an unrelated covariant List on the same object.
-@PublishedApi
-internal fun projectedSetStorageIsFaithful(receiver: Any, targetType: Any, sourceWitness: Any?): Boolean {
-    // Transporting an existential is not an operation on it. Defer genuine ambiguity to the live view's use.
-    val family = projectedSetFamily(receiver, sourceWitness, failOnAmbiguity = false) ?: return false
-    val target = targetType as StarProjectionType
-    val actual = receiver.starProjectionRuntimeType()
-    if (!faithfulProjectedParent(actual, family, target)) return false
-    for (parent in target.getInterfaces()) {
-        if (parent.isGenericType && !faithfulProjectedParent(actual, family, parent)) return false
-    }
-    return true
-}
-
-private fun faithfulProjectedParent(actual: StarProjectionType, family: StarProjectionType,
-    target: StarProjectionType): Boolean {
-    val definition = target.getGenericTypeDefinition()
-    var selected: StarProjectionType? = null
-    if (family.isGenericType && family.getGenericTypeDefinition() == definition
-        && target.isAssignableFrom(family)) selected = family
-    for (parent in family.getInterfaces()) {
-        if (!parent.isGenericType || parent.getGenericTypeDefinition() != definition
-            || !target.isAssignableFrom(parent)) continue
-        if (selected != null && selected != parent) return false
-        selected = parent
-    }
-    val slot = selected ?: return false
-    if (slot == target) return true
-    for (candidate in actual.getInterfaces()) {
-        if (candidate.isGenericType && candidate.getGenericTypeDefinition() == definition
-            && candidate != slot && target.isAssignableFrom(candidate)) return false
-    }
-    return true
-}
-
 @PublishedApi
 internal fun projectedSetEnumeratorErased(receiver: Any, sourceWitness: Any?): Any {
     val family = projectedSetFamily(receiver, sourceWitness)
         ?: throw UnsupportedOperationException("Projected receiver has no CLR Set surface")
+    return projectedFamilyEnumerator(receiver, family)
+}
+
+private fun projectedFamilyEnumerator(receiver: Any, family: StarProjectionType): Any {
     var enumerable: StarProjectionType? = null
     for (parent in family.getInterfaces()) {
         if (!parent.isGenericType
             || parent.getGenericTypeDefinition().fullName != "System.Collections.Generic.IEnumerable`1") continue
         if (enumerable != null && enumerable != parent)
-            throw IllegalStateException("Ambiguous Set enumerable parent")
+            throw IllegalStateException("Ambiguous collection enumerable parent")
         enumerable = parent
     }
-    val selected = enumerable ?: throw UnsupportedOperationException("Set has no generic enumerable parent")
+    val selected = enumerable ?: throw UnsupportedOperationException("Collection has no generic enumerable parent")
     return try {
         erasedProjectedMethod(selected, "GetEnumerator", 0).invoke(receiver, arrayOfNulls<Any?>(0))
-            ?: throw IllegalStateException("Set GetEnumerator returned null")
+            ?: throw IllegalStateException("Collection GetEnumerator returned null")
     } catch (failure: StarProjectionInvocationException) {
         throw (failure.innerException ?: failure)
     }
+}
+
+@PublishedApi
+internal fun projectedViewEnumeratorErased(receiver: Any, preferredView: Any?, family: Int): Any? {
+    if (family == 1) return projectedSetEnumeratorErased(receiver, preferredView)
+    val preferred = if (preferredView == null) null else preferredView as StarProjectionType
+    val view = if (family == 0) projectedCollectionFamily(receiver, preferred)
+        else if (family == 3) projectedListFamily(receiver, preferred)
+        else findErasedProjectedView(receiver,
+            "System.Collections.Generic.IEnumerable`1", "System.Collections.Generic.IEnumerable`1",
+            excludeDictionaryStorage = true, elementWitness = preferred?.getGenericArguments()?.get(0))
+    if (view == null) return null
+    if (family == 0 || family == 3) return projectedFamilyEnumerator(receiver, view)
+    return try {
+        erasedProjectedMethod(view, "GetEnumerator", 0).invoke(receiver, arrayOfNulls<Any?>(0))
+            ?: throw IllegalStateException("Iterable GetEnumerator returned null")
+    } catch (failure: StarProjectionInvocationException) {
+        throw (failure.innerException ?: failure)
+    }
+}
+
+private fun projectedCollectionFamily(receiver: Any, preferred: StarProjectionType?): StarProjectionType? =
+    findErasedProjectedView(receiver,
+        "System.Collections.Generic.IReadOnlyCollection`1", "System.Collections.Generic.ICollection`1",
+        excludeDictionaryStorage = true, elementWitness = preferred?.getGenericArguments()?.get(0))
+
+@PublishedApi
+internal fun projectedViewCountErased(receiver: Any, preferredView: Any?, family: Int): Int {
+    if (family == 1) return projectedSetViewCount(receiver, preferredView)
+    val preferred = if (preferredView == null) null else preferredView as StarProjectionType
+    if (family == 3) return projectedListViewCount(receiver, preferred)
+    val view = projectedCollectionFamily(receiver, preferred)
+    if (view == null && receiver is StarProjectionRawCollection) return receiver.count
+    val selected = view ?: throw UnsupportedOperationException("Projected receiver has no CLR Collection surface")
+    val collectionName = selected.getGenericTypeDefinition().fullName!!
+    return projectedParentCollectionCount(receiver, selected, collectionName)
 }
 
 @PublishedApi
@@ -1236,9 +1259,12 @@ private fun projectedParentCollectionCount(receiver: Any, view: StarProjectionTy
 }
 
 @PublishedApi
-internal fun projectedListGetErased(receiver: Any, index: Int): Any? {
-    val view = findErasedProjectedView(receiver,
-        "System.Collections.Generic.IReadOnlyList`1", "System.Collections.Generic.IList`1")
+internal fun projectedListGetErased(receiver: Any, index: Int): Any? = projectedListViewGetErased(receiver, null, index)
+
+@PublishedApi
+internal fun projectedListViewGetErased(receiver: Any, preferredView: Any?, index: Int): Any? {
+    val preferred = if (preferredView == null) null else preferredView as StarProjectionType
+    val view = projectedListFamily(receiver, preferred)
     if (view == null && receiver is StarProjectionRawList && !rawListIsMapStorage(receiver)) return receiver.get(index)
     val list = view ?: throw UnsupportedOperationException("Projected receiver has no CLR List surface")
     return try {

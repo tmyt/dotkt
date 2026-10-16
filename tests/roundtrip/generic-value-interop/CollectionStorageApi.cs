@@ -2,6 +2,9 @@ using System.Collections.Generic;
 
 namespace GenericValueInterop;
 
+public interface ICollectionOverloadSlot { string Pick(object value); }
+public class CollectionOverloadBase { public virtual string Pick(object value) => "base"; }
+
 public static class CollectionStorageApi
 {
     public static T[] Copy<T>(object value)

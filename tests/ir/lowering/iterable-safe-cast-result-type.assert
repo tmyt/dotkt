@@ -1,8 +1,13 @@
-# The synthesized guard owns its nullable opaque result, even without an input sty stamp. Its raw classifier
-# check retains the selected native declaration; the successful arm returns the original object without a view.
+# The synthesized guard owns its nullable opaque result, even without an input sty stamp. Nominal and storage
+# eligibility protect a single evaluation; the successful physical test returns the same object, not a closed view.
 +"k":"cond","type":{"t":"fqn","name":"System.Object"},"cond":
++"k":"var","name":"dotkt$collectionClassifier$value$0","type":{"t":"fqn","name":"System.Object"},"init":{"k":"local","name":"value"}
++"method":"kotlinCollectionStorageMatches"
 +"method":"kotlinCollectionMatches"
-+"method":"starProjectionSafeCast"
-+"args":[{"k":"local","name":"dotkt$collectionClassifier$value$0"},{"k":"classRef","type":{"t":"fqn","name":"System.Collections.Generic.IEnumerable\u00601"}}]
++"then":{"k":"cast","type":{"t":"fqn","name":"System.Object"},"e":{"k":"isInstRef","type":{"t":"fqn","name":"System.Object"},"e":{"k":"local","name":"dotkt$collectionClassifier$value$0"}}}
 +"else":{"k":"const","type":{"t":"fqn","name":"System.Object"},"value":null}
--"k":"isInstRef"
++"retNullableFlags":[2]
++"bytes":"eyJ0IjoibnVsbGFibGUiLCJvZiI6eyJ0IjoiZnFuIiwibmFtZSI6ImtvdGxpbi5jb2xsZWN0aW9ucy5JdGVyYWJsZSIsImFyZ3MiOlt7InQiOiJmcW4iLCJuYW1lIjoia290bGluLlN0cmluZyJ9XX19"
+-"method":"starProjectionSafeCast"
+-"name":"System.Collections.Generic.IEnumerable\u00601","args"
+-"name":"dotkt$collectionClassifier$value$1"

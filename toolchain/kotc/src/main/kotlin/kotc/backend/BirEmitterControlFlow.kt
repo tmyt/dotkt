@@ -391,7 +391,11 @@ internal fun BirEmitter.blockExpr(block: IrBlock): String {
 			val capArgs = captured.joinToString(",") { capValueExpr(it) }
 			val capArgTypes = capPairs.joinToString(",") { (decl, _) -> str(captureFieldType(decl)) }
 			val newType = if (liftedCaps.isEmpty()) TypeNode.Fqn(cname) else TypeNode.Fqn(cname, liftedCaps)
-			return """{"k":"new","type":${newType.toJson()},"argTypes":[$capArgTypes],"args":[$capArgs]}"""
+			val construction = block.statements.lastOrNull() as? IrConstructorCall
+				?: return invariantBroken(block, "an object literal has no selected constructor call")
+			val identity = declarationIdForPhysicalAllocation(construction.symbol.owner)
+				?.let { ""","constructorDeclarationId":${str(it)}""" }.orEmpty()
+			return """{"k":"new","type":${newType.toJson()},"argTypes":[$capArgTypes],"args":[$capArgs]$identity}"""
 		}
 	}
 	// `when (subject)` lowers to `{ val tmp = subject; WHEN }` in expression position. The subject is bound

@@ -94,14 +94,19 @@ class CollectionCountViewTests {
         check(caught)
     }
 
-    @TestAttribute fun explicitClosedCollectionViewDisambiguatesTheCount() {
+    @TestAttribute fun closedCollectionPreferencesDoNotPersistAfterStarWidening() {
         val value: Any = CollectionStorageInterop.AmbiguousCollectionCounts()
         val integers = value as Collection<Int>
         val strings = value as Collection<String>
         check(integers.size == 2)
         check(strings.size == 3)
         val projected: Collection<*> = integers
-        check(projected.size == 2)
+        var caught = false
+        try { projected.size } catch (_: IllegalStateException) { caught = true }
+        check(caught)
+        caught = false
+        try { collectionViewCount(projected) } catch (_: IllegalStateException) { caught = true }
+        check(caught)
     }
 
     @TestAttribute fun listUpcastExcludesDictionaryEntryCount() {

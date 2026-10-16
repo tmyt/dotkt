@@ -28,6 +28,8 @@ static class Bir2Cir
                 StdlibBindingOverlay.SelfTest();
                 DeclarationIdentityBinding.SelfTest();
                 DeclarationSignatureIdentity.SelfTest();
+                ForeignStarProjectionBinding.SelfTest();
+                MemberCallSubstitution.StaticCollectionPreferenceSelfTest();
                 FunctionSignatureIdentity.SelfTest();
                 PhysicalValueCoercion.SelfTest();
                 PrimitiveOperatorLowering.SelfTest();
@@ -61,6 +63,8 @@ static class Bir2Cir
                 FBoundStarProjectionErasure.ProjectionConstraintSelfTest();
                 ComparableRepresentationLowering.SelfTest();
                 AliasVarianceRepresentation.SelfTest();
+                KotlinCollectionClassifierLowering.SelfTest();
+                GenericArrayStorageLowering.SelfTest();
                 RoundtripMetadata.RuntimeLinkageSelfTest();
                 SuspendColdLowering.DeclarationRegistrySelfTest();
                 ReferenceMetadataIndex.SelfTest();
@@ -1332,6 +1336,8 @@ sealed class Pipeline
         var declarationSignatures = DeclarationSignatureIdentity.Plan(declarationCollisionProjection);
         DeclarationSignatureIdentity.Apply(declarationCollisionProjection, declarationSignatures);
         DeclarationSignatureIdentity.Apply(loweredRoots.Select(s => s.Root), declarationSignatures);
+        DeclarationSignatureIdentity.BindSelectedOverrides(loweredRoots.Select(s => s.Root), declarationSignatures,
+            refs, isValueFqn);
         var declarationPhysicalNames = DeclarationIdentityBinding.AllocatePhysicalNames(
             declarationCollisionProjection, out var declarationSemanticCarrierIds);
         DeclarationIdentityBinding.ApplyLocal(

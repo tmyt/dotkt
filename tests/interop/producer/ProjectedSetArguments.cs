@@ -3,6 +3,11 @@ using System.Collections.Generic;
 
 namespace SetArgumentInterop;
 
+public static class ExactCollectionBoundary
+{
+    public static int Count(IReadOnlyCollection<object> items) => items.Count;
+}
+
 public sealed class IntSetAndList<T> : HashSet<int>, IReadOnlyList<T>
 {
     public IntSetAndList() { Add(7); Add(9); Add(11); }

@@ -3,26 +3,16 @@ using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 
-// A `for (x in seq)` over a Kotlin `Sequence` (@ClrTypeAlias IEnumerable) is kotc-lowered to `forEachInline`, which
-// ilemit emits as a TYPED `IEnumerable<elem>::GetEnumerator` dispatch. But the object `sequence { .. }` returns
-// (`dotkt_obj*` — the lifted anon Sequence) has NO type params of its OWN yet declares its `IEnumerable<T>` interface
-// referencing the ENCLOSING `sequence<T>` method's type param (`tv scope=method`), so it is erased to
-// `IEnumerable<object>` at runtime. The typed `IEnumerable<string>::GetEnumerator` slot the app then dispatches is
-// therefore absent -> System.EntryPointNotFoundException (cases/il-seqforin).
-//
-// The variance-immune fix (the same non-generic escape hatch StarProjectionCountLowering / StarProjectionLowering use
-// for reification/variance mismatches): dispatch the enumeration through the NON-generic `System.Collections.IEnumerable`
-// / `IEnumerator` — which EVERY `IEnumerable<T>` implements regardless of the erased element — and cast each
-// `get_Current` (object) to the loop element type. This keeps `elem` for the yielded-value cast (object -> string /
-// unbox to Int) while aligning the GetEnumerator dispatch with the erased runtime shape.
+// Opaque Kotlin enumerable values cannot be dispatched as one reified IEnumerable<elem> construction. ForInLowering
+// records that physical boundary before ordinary alias erasure discards the source owner; source expressions that
+// still state an erased Sequence/collection view use the same boundary. Dispatch through the non-generic
+// IEnumerable / IEnumerator shared by every IEnumerable<T>, then convert each Current value to the declared element.
 //
 // Rewrites the forEachInline in place into a `block`:
 //     var $seqIt$N : System.Collections.IEnumerator = (<src>).GetEnumerator()          // non-generic
 //     while ($seqIt$N.MoveNext()) { var <x> : elem = (elem) $seqIt$N.get_Current(); <body...> }
-// The `while` registers a loop label (break/continue keep working; the labeled-loop `label` is preserved). SCOPED to a
-// `src` whose static Kotlin type is `kotlin.sequences.Sequence` (only the erased-anon-object case) — a `for` over a real
-// List/Set keeps its faster typed IEnumerable<elem> path. Non-ref builds only; runs BEFORE BirTypeLowering (the Sequence
-// FQN is still in the source vocabulary, and the emitted System.Collections.* / elem tokens flow through lowering).
+// The `while` retains the loop label and element conversion, including value-element unboxing. Exact native
+// enumerable values keep their typed path. This runs before BirTypeLowering in executable builds.
 static class SequenceForEachLowering
 {
     static int _tmp;
@@ -31,8 +21,11 @@ static class SequenceForEachLowering
     {
         if (node is JsonObject o)
         {
-            if (Str(o["k"]) == "forEachInline" && o["src"] is JsonObject src && IsSequenceTyped(src))
-                Rewrite(o, src);
+            if (Str(o["k"]) == "forEachInline" && o["src"] is JsonObject src)
+            {
+                if (o["erasedEnumeration"]?.GetValue<bool>() == true || IsSequenceTyped(src)) Rewrite(o, src);
+                else o.Remove("erasedEnumeration");
+            }
             foreach (var kv in o) if (kv.Value != null) Apply(kv.Value);
         }
         else if (node is JsonArray a)

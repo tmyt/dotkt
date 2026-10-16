@@ -623,12 +623,17 @@ the accessor's nominal delegate and reuses that same object for add/remove. ilem
 conversion from the handler's shape.
 
 For a BIR `new`, `memberSignature` is the frontend-selected OPEN constructor declaration vector (including any
-compiler-authored enclosing/capture slots), while `argTypes` is the substituted use-site vector. For a same-unit
+compiler-authored enclosing/capture slots), while `argTypes` is the substituted use-site vector. Kotlin-authored
+constructors additionally carry `declarationId`; their selected construction and delegation edges carry
+`constructorDeclarationId` and `delegationDeclarationId`. These current declaration identities select the physical
+constructor even when ordinary value erasure collapses its parameter vector. Signature-only CLR declarations retain
+their exact native descriptors; an alias constructor's explicit binding consumes its source identity. For a same-unit
 constructor, `bir2cir` consumes the former to select one declaration, closes it in the constructed owner's final
 physical frame, materializes any required representation conversion, retains the resulting use-site `argTypes` for
 argument coercion, and replaces the declaration fact with scalar `localCtorIndex`. For an external constructor, the
 resolved `memberRef` carries the physical parameter vector and `argTypes` is consumed. Neither `memberSignature` nor
-a constructor candidate set reaches CIR.
+a constructor candidate set or selected source declaration ID reaches CIR. Constructor declaration IDs survive body
+stripping and DLL round-trip in the same trusted `[KotlinDeclarationIdentity]` carrier as method identities.
 Selection against `memberSignature` compares open declaration slots, without owner substitution or an alternate
 use-site match. This applies to referenced constructors as well: `.ctor(T)` and `.ctor(Int)` remain distinct when
 the constructed owner uses `T = Int`. Owner substitution occurs only after the selected declaration is known.

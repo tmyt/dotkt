@@ -244,6 +244,10 @@ sealed partial class ReferenceMetadataIndex
         return type;
     }
 
+    internal ConstructorInfo SelectConstructorDeclaration(IEnumerable<ConstructorInfo> constructors, string identity) =>
+        SelectDeclarationTwin(constructors, constructor => KotlinDeclarationIdentityPayload(
+            constructor.GetCustomAttributesData(), constructor.DeclaringType?.Assembly, 0)?.Id, identity);
+
     public bool TryDeclarationIdentity(
         string id,
         out string physicalName,
@@ -268,6 +272,20 @@ sealed partial class ReferenceMetadataIndex
             && BareOwnerFqn(binding.DeclarationPhysicalOwner ?? binding.Owner) == BareOwnerFqn(owner)
             && binding.MethodArity == methodArity && binding.IsStatic == isStatic
                 ? binding.ReturnTypeNode : null;
+
+    // A preserved override edge selects this declaration before signature erasure. Return its complete open CLR
+    // signature, including modifiers; the consumer closes the selected declaring owner through its supertype graph.
+    internal bool TryDeclarationSignatureSlot(string id, out ReferencedDeclarationSlot declaration)
+    {
+        declaration = null;
+        if (id == null || !_declarationById.TryGetValue(id, out var binding) || binding.IsStatic) return false;
+        var owner = binding.DeclarationPhysicalOwner ?? binding.Owner;
+        declaration = new ReferencedDeclarationSlot(owner, binding.Name, binding.MethodArity,
+            binding.SignatureParameters ?? throw new InvalidOperationException($"Declaration '{id}' has no signature parameters"),
+            binding.SignatureReturn ?? throw new InvalidOperationException($"Declaration '{id}' has no signature return"),
+            _ownerKindByPhysicalOwner[owner] == "interface", binding.SignatureAllocated);
+        return true;
+    }
 
     internal bool IsPublicVirtualDeclaration(string id) =>
         _declarationById.TryGetValue(id, out var binding) && binding.IsPublic && binding.IsVirtual;
@@ -1202,6 +1220,7 @@ sealed partial class ReferenceMetadataIndex
         && a.IsPropertyBridge == b.IsPropertyBridge && a.DeclarationId == b.DeclarationId
         && a.DeclarationSourceName == b.DeclarationSourceName
         && a.DeclarationPhysicalOwner == b.DeclarationPhysicalOwner
+        && a.SignatureAllocated == b.SignatureAllocated
         && Same(a.DeclarationSemanticParams, b.DeclarationSemanticParams)
         && Same(a.DeclarationSemanticReturn, b.DeclarationSemanticReturn)
         && a.CollectionFactoryKind == b.CollectionFactoryKind && a.ArrayFactoryKind == b.ArrayFactoryKind
@@ -4086,14 +4105,11 @@ sealed partial class ReferenceMetadataIndex
                 var explicitNullableFrame = member.NullableFrame != null
                     || _ownerNullableFrames.ContainsKey(member.Owner)
                     || _ownerNullableFrames.ContainsKey(lookupOwner);
-                SlotFact FramedSlot(TypeNode carrier, TypeNode physical)
-                    => selectedPhysicalMember == null && carrier is TypeNode.Nullable { Of: TypeNode.Tv }
-                        ? DeclaredSlot(carrier, physical)
-                        : new SlotFact(Canonical(physical), false);
                 // A selected suspend projection is already a physical hot/cold MethodDef. Its logical Kotlin
                 // result carrier belongs to the source declaration, not to the Task-returning MethodImpl row.
                 declaredRet = explicitNullableFrame
-                    ? FramedSlot(member.NullableGenericRet, member.ReturnTypeNode)
+                    ? FramedSlot(member.NullableGenericRet, member.ReturnTypeNode,
+                        selectedPhysicalMember == null, includeUnchangedMethodReturn)
                     : selectedPhysicalMember != null
                     ? new SlotFact(member.ReturnTypeNode, false)
                     : propertyName != null && includeClosedPropertyReturn
@@ -4104,7 +4120,7 @@ sealed partial class ReferenceMetadataIndex
                 declaredParams = new SlotFact[argCount];
                 for (var i = 0; i < argCount; i++)
                     declaredParams[i] = explicitNullableFrame
-                        ? FramedSlot(member.NullableGenericParams?[i], member.ParamTypeNodes[i])
+                        ? FramedSlot(member.NullableGenericParams?[i], member.ParamTypeNodes[i], selectedPhysicalMember == null)
                         : selectedPhysicalMember != null
                         ? new SlotFact(member.ParamTypeNodes[i], false)
                         : propertyName == null
@@ -4280,6 +4296,13 @@ sealed partial class ReferenceMetadataIndex
     // other. Nothing produces a per-parameter refusal today; the channel is what would carry the next one.
     static SlotFact DeclaredSlot(TypeNode carrier, TypeNode physical)
         => new(carrier ?? OpenPhysical(physical), false);
+
+    // A materialized frame does not grant nullable-erasure ownership of an unrelated closed return ABI
+    // (for example unchecked Any? as T). Keep its caller projection for the physical value-flow pass.
+    static SlotFact FramedSlot(TypeNode carrier, TypeNode physical, bool allowScalarCarrier, bool includeClosed = true)
+        => allowScalarCarrier && carrier is TypeNode.Nullable { Of: TypeNode.Tv }
+            ? DeclaredSlot(carrier, physical)
+            : new SlotFact(includeClosed ? Canonical(physical) : OpenPhysical(physical), false);
 
     // An exact property accessor lookup is tied to a Property row and its associated MethodSemantics method, then
     // checked against the complete frontend-resolved signature in the constructed owner's type frame. For a fixed
@@ -5294,6 +5317,7 @@ sealed partial class ReferenceMetadataIndex
                             innerConstructorFactory?.TypeArguments,
                             SemanticMethodTypeParameters(method, dotKtAuthored, declarationIdentity?.NullableFrame), declarationIdentity?.NullableFrame)
                         {
+                            SignatureAllocated = declarationIdentity?.SignatureAllocated == true,
                             LateinitState = dotKtAuthored ? ReadLateinitState(method) : null,
                             SignatureParameters = method.GetParameters().Select(DeclarationSignatureSlot).ToArray(),
                             SignatureReturn = DeclarationSignatureSlot(method.ReturnParameter),
@@ -6454,7 +6478,7 @@ sealed partial class ReferenceMetadataIndex
         string SourceAssociation);
     sealed record DeclarationIdentityPayloadInfo(string Id, string Name, TypeNode[] SemanticParams,
         TypeNode SemanticReturn, int[] SemanticReifiedTypeParameterIndices,
-        int[] NullableWitnessTypeParameterIndices, NullableRepresentationFrame NullableFrame);
+        int[] NullableWitnessTypeParameterIndices, NullableRepresentationFrame NullableFrame, bool SignatureAllocated);
 
     static DeclarationIdentityPayloadInfo KotlinDeclarationIdentityPayload(
         IList<CustomAttributeData> attrs, Assembly declaringAssembly, int methodGenericArity = int.MaxValue)
@@ -6466,10 +6490,12 @@ sealed partial class ReferenceMetadataIndex
 
     static DeclarationIdentityPayloadInfo ParseDeclarationIdentityPayload(JsonObject payload, int methodGenericArity)
     {
-        if (payload.Count is < 2 or > 6 ||
+        if (payload.Count is < 2 or > 7 ||
             payload["id"] is not JsonValue idValue || !idValue.TryGetValue<string>(out var id) ||
             payload["name"] is not JsonValue nameValue || !nameValue.TryGetValue<string>(out var name)
-            || payload.Any(kv => kv.Key is not ("id" or "name" or "signature" or "reified" or "nullableWitness" or NullableRepresentationFrame.MetadataKey))
+            || payload.Any(kv => kv.Key is not ("id" or "name" or "signature" or "reified" or "nullableWitness" or NullableRepresentationFrame.MetadataKey or DeclarationSignatureIdentity.AllocationMetadataKey))
+            || payload[DeclarationSignatureIdentity.AllocationMetadataKey] is JsonNode allocation
+                && (allocation is not JsonValue allocationValue || !allocationValue.TryGetValue<bool>(out var allocated) || !allocated)
             || payload["signature"] is JsonNode signature && signature is not JsonObject
             || payload["reified"] is JsonNode reifiedNode && reifiedNode is not JsonArray
             || payload["nullableWitness"] is JsonNode witnessNode && witnessNode is not JsonArray
@@ -6529,7 +6555,8 @@ sealed partial class ReferenceMetadataIndex
             }
         }
         return new DeclarationIdentityPayloadInfo(
-            id, name, semanticParams, semanticReturn, reified, nullableWitness, nullableFrame);
+            id, name, semanticParams, semanticReturn, reified, nullableWitness, nullableFrame,
+            payload[DeclarationSignatureIdentity.AllocationMetadataKey]?.GetValue<bool>() == true);
     }
 
     static NullableRepresentationFrame ReadNullableFrame(JsonNode node, int physicalArity)
@@ -7445,6 +7472,52 @@ sealed partial class ReferenceMetadataIndex
 
     internal static void SelfTest()
     {
+        var returnSource = new TypeNode.Tv("method", 0);
+        var returnStorage = new TypeNode.Tv("method", 1);
+        var objectReturn = new TypeNode.Fqn("System.Object");
+        if (FramedSlot(returnSource, objectReturn, true, false).Node != null
+            || FramedSlot(returnSource, objectReturn, true).Node != Canonical(objectReturn)
+            || FramedSlot(returnSource, returnStorage, true, false).Node != returnStorage
+            || FramedSlot(new TypeNode.Nullable(returnSource), objectReturn, true, false).Node
+                != new TypeNode.Nullable(returnSource))
+            throw new InvalidOperationException("Materialized frame stole closed return ownership or lost scalar/open slots");
+        var allocatedIdentity = ParseDeclarationIdentityPayload(new JsonObject {
+            ["id"] = "allocated-slot", ["name"] = "accept",
+            [DeclarationSignatureIdentity.AllocationMetadataKey] = true,
+        }, 0);
+        var unallocatedIdentity = ParseDeclarationIdentityPayload(new JsonObject {
+            ["id"] = "function-slot", ["name"] = "accept",
+        }, 0);
+        if (!allocatedIdentity.SignatureAllocated || unallocatedIdentity.SignatureAllocated)
+            throw new InvalidOperationException("Declaration signature allocation lost its explicit owning role");
+        {
+            var index = Build(Array.Empty<string>());
+            index._ownerKindByPhysicalOwner["ReferencedSlot"] = "interface";
+            var signature = new TypeNode.Mod(false, new TypeNode.Fqn("ExistingFunctionIdentity"),
+                new TypeNode.Fqn("System.Object"));
+            var binding = new MemberBinding("ReferencedSlot", "accept", 1, null, true, false) {
+                SignatureParameters = new TypeNode[] { signature }, SignatureReturn = new TypeNode.Fqn("void"),
+            };
+            index._declarationById["referenced-slot"] = binding;
+            var root = JsonNode.Parse("""
+                {"types":[{"name":"Implementation","kind":"class","interfaces":[{"t":"fqn","name":"ReferencedSlot"}],
+                  "methods":[{"name":"accept","declarationId":"implementation","declarationSourceName":"accept",
+                    "signatureOverrideDeclarations":["referenced-slot"],
+                    "params":[{"name":"value","type":{"t":"fqn","name":"System.Object"}}],
+                    "ret":{"t":"fqn","name":"void"},"body":[]}]}]}
+                """);
+            DeclarationSignatureIdentity.BindSelectedOverrides(new[] { root },
+                new Dictionary<string, JsonArray>(), index, _ => false);
+            if (root["types"][0]["methods"].AsArray().Count != 1)
+                throw new InvalidOperationException("Existing function identity acquired a second signature-allocation bridge");
+            root["types"][0]["methods"][0]["signatureOverrideDeclarations"] = new JsonArray("referenced-slot");
+            index._declarationById["referenced-slot"] = binding with { SignatureAllocated = true };
+            DeclarationSignatureIdentity.BindSelectedOverrides(new[] { root },
+                new Dictionary<string, JsonArray>(), index, _ => false);
+            if (root["types"][0]["methods"].AsArray().Count != 2
+                || root["types"][0]["methods"][1]["clrInterfaceImpls"]?.AsArray().Count != 1)
+                throw new InvalidOperationException("A referenced signature allocation lost its explicit slot obligation");
+        }
         SelfTestSourceHierarchyFrames();
         {
             var index = Build(Array.Empty<string>());
@@ -8063,6 +8136,7 @@ sealed record MemberBinding(string Owner, string Name, int ParamCount, string In
     // Capture the selected reference MethodDef while scanning it. A local type may shadow its owner
     // during stdlib self-compilation; resolving that owner again is not declaration identity.
     public TypeNode[] SignatureParameters { get; init; }
+    public bool SignatureAllocated { get; init; }
     public LateinitStateTarget LateinitState { get; init; }
     public TypeNode SignatureReturn { get; init; }
     public int[] VarargPositions { get; init; } = Array.Empty<int>();
@@ -8075,6 +8149,9 @@ sealed record ReferencedMethodDeclaration(string PhysicalMember, TypeNode[] Para
 
 sealed record ReferencedUnsafeAccessorMethod(string PhysicalMember, TypeNode[] Parameters, TypeNode Return,
     JsonArray TypeParams, TypeNode NullableGenericReturn);
+
+sealed record ReferencedDeclarationSlot(string Owner, string Name, int Arity, TypeNode[] Parameters,
+    TypeNode Return, bool IsInterface, bool SignatureAllocated);
 
 sealed record MethodImplBinding(string BodyOwner, int BodyToken, TypeNode.Fqn DeclarationOwner,
     string DeclarationMember);

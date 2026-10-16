@@ -1,0 +1,7 @@
+# A source Map application has storage companions. Its preferred CLR classifier uses the selected native
+# definition's two ordinary slots, not the source physical arity. Preserve caller-frame permutation exactly once.
++"method":"starProjectionCast"
++"k":"classRef","type":{"t":"fqn","name":"System.Collections.Generic.IDictionary\u00602"}
++"k":"classRef","type":{"t":"fqn","name":"System.Collections.Generic.IDictionary\u00602","args":[{"t":"tv","scope":"method","i":1},{"t":"tv","scope":"method","i":0}]}
++"k":"classRef","type":{"t":"fqn","name":"System.Collections.Generic.IDictionary\u00602","args":[{"t":"fqn","name":"System.String"},{"t":"fqn","name":"System.Int32"}]}
+-"name":"System.Collections.Generic.IDictionary\u00602","args":[{"t":"tv","scope":"method","i":1},{"t":"tv","scope":"method","i":0},{"t":"tv","scope":"type"

@@ -38,6 +38,29 @@ sealed class AliasConstructorDelegationExpansion
         var aliases = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
         foreach (var root in rootList)
             CollectTypes(root, refs, aliases);
+        bool IsAlias(string owner) => owner != null && (aliases.ContainsKey(owner) || refs.Aliases.ContainsKey(owner));
+        void ConsumeAliasIdentities(JsonNode node, string owner = null, string baseOwner = null)
+        {
+            if (node is JsonObject obj)
+            {
+                if (obj["ctors"] is JsonArray && Str(obj["name"]) is string declaredOwner)
+                {
+                    owner = declaredOwner;
+                    baseOwner = TypeJson.OwnerName(obj["base"]);
+                }
+                // An alias constructor is a binding contract, not a MethodDef on its CLR target. Its explicit
+                // delegation/collection binding owns selection; a source declaration ID must not target the BCL.
+                if (Str(obj["k"]) == "new" && IsAlias(TypeJson.OwnerName(obj["type"])))
+                    obj.Remove("constructorDeclarationId");
+                if (obj["params"] is JsonArray && obj["delegationDeclarationId"] != null
+                    && IsAlias(obj["thisArgs"] is JsonArray ? owner : baseOwner))
+                    obj.Remove("delegationDeclarationId");
+                foreach (var value in obj.Select(pair => pair.Value).ToArray()) ConsumeAliasIdentities(value, owner, baseOwner);
+            }
+            else if (node is JsonArray array)
+                foreach (var value in array) ConsumeAliasIdentities(value, owner, baseOwner);
+        }
+        foreach (var root in rootList) ConsumeAliasIdentities(root);
         // A constructor delegation owns a call-evaluation plan just like an ordinary call.  The adapter is copied
         // out of its declaration, so lower that plan while it is still attached to the declaration and carry the
         // resulting ordered prefix with the argument vector.  All other expression lowering intentionally happens
