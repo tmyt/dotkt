@@ -31,9 +31,49 @@ private val mapEqualityStorage = mapEqualityStorageTypes()
 private interface NativeEqualityObject {
     @kotlin.clr.ClrIntrinsic("Equals")
     fun nativeEquals(other: Any?): Boolean
+
+    @kotlin.clr.ClrIntrinsic("GetHashCode")
+    fun nativeHashCode(): Int
 }
 
 private fun Any.nativeObjectEquals(other: Any?): Boolean = (this as NativeEqualityObject).nativeEquals(other)
+
+@kotlin.clr.ClrIntrinsic("System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode")
+private fun equalityIdentityHash(value: Any): Int = error("CLR binding")
+
+private fun nestedEqualityHash(value: Any?): Int {
+    if (value === null) return 0
+    if (value is String || value.starProjectionRuntimeType().isValueType)
+        return (value as NativeEqualityObject).nativeHashCode()
+    val plan = equalityTypePlan(value.starProjectionRuntimeType())
+    return if (plan.family < 0) (value as NativeEqualityObject).nativeHashCode()
+        else structuralHash(value, plan.family, plan.storage)
+}
+
+// A real stdlib equals override needs the corresponding real hash override.
+// Nested aliases use the same logical family here; public native alias hashing
+// and hash-container storage are not reconstructed or redesigned by this helper.
+@PublishedApi
+internal fun structuralHash(value: Any, family: Int, storage: StarProjectionType? = null): Int {
+    val view = equalityView(value, family, storage) ?: return equalityIdentityHash(value)
+    val elements = equalityEnumerator(value, view)
+    var hash = if (family == 0) 1 else 0
+    try {
+        while (elements.MoveNext()) {
+            val element = elements.current()
+            if (family == 2) {
+                val entry = element!!
+                val access = equalityEntryAccess(entry.starProjectionRuntimeType())
+                hash += nestedEqualityHash(invokeEquality(access.key, entry, equalityNoArguments)) xor
+                    nestedEqualityHash(invokeEquality(access.value, entry, equalityNoArguments))
+            } else {
+                val elementHash = nestedEqualityHash(element)
+                hash = if (family == 0) 31 * hash + elementHash else hash + elementHash
+            }
+        }
+        return hash
+    } finally { disposeEnumerator(elements) }
+}
 
 private val objectType = Any().starProjectionRuntimeType()
 private val objectEqualsSlot = findObjectEqualsSlot()
@@ -73,19 +113,26 @@ internal fun kotlinInstanceEquals(left: Any?, right: Any?): Boolean {
     if (receiver is Double) return right is Double && kotlin.clrDoubleEquals(receiver, right)
     if (receiver is Float) return right is Float && kotlin.clrFloatEquals(receiver, right)
     val type = receiver.starProjectionRuntimeType()
-    if (type.isValueType || hasNativeEqualsOverride(type)) return receiver.nativeObjectEquals(right)
+    if (type.isValueType) return receiver.nativeObjectEquals(right)
+    val plan = equalityTypePlan(type)
+    return if (plan.family < 0) receiver.nativeObjectEquals(right)
+        else structuralEquals(receiver, right, plan.family, plan.storage)
+}
+
+internal fun classifyEqualityType(type: StarProjectionType): EqualityTypePlan {
+    if (hasNativeEqualsOverride(type)) return EqualityTypePlan(-1, null)
     var storage: StarProjectionType? = type
     while (storage != null) {
         val definition = if (storage.isGenericType) storage.getGenericTypeDefinition() else storage
         for (candidate in listEqualityStorage)
-            if (definition.nativeObjectEquals(candidate)) return structuralEquals(receiver, right, 0, storage)
+            if (definition.nativeObjectEquals(candidate)) return EqualityTypePlan(0, storage)
         for (candidate in setEqualityStorage)
-            if (definition.nativeObjectEquals(candidate)) return structuralEquals(receiver, right, 1, storage)
+            if (definition.nativeObjectEquals(candidate)) return EqualityTypePlan(1, storage)
         for (candidate in mapEqualityStorage)
-            if (definition.nativeObjectEquals(candidate)) return structuralEquals(receiver, right, 2, storage)
+            if (definition.nativeObjectEquals(candidate)) return EqualityTypePlan(2, storage)
         storage = storage.baseType
     }
-    return receiver.nativeObjectEquals(right)
+    return EqualityTypePlan(-1, null)
 }
 
 private fun equalityView(value: Any, family: Int, storage: StarProjectionType?): StarProjectionType? {
@@ -111,8 +158,9 @@ private fun equalityView(value: Any, family: Int, storage: StarProjectionType?):
         else -> "System.Collections.Generic.IDictionary`2"
     }
     if (storage == null) return findErasedProjectedView(value, preferred, fallback, failOnAmbiguity = false)
-    // An inherited bound-class default uses that base's own storage contract,
-    // not an unrelated interface reimplemented by the derived CLR class.
+    // The bound base fixes the family and exact interface identity. Native
+    // reimplementation of THAT interface remains virtual; unrelated faces do
+    // not change the default. Do not reconstruct private native storage.
     var preferredView: StarProjectionType? = null
     var fallbackView: StarProjectionType? = null
     for (view in storage.getInterfaces()) {
@@ -137,10 +185,36 @@ private fun equalityCount(value: Any, view: StarProjectionType): Int {
 private fun equalityEnumerator(value: Any, view: StarProjectionType): ClrRawEnumerator =
     projectedFamilyEnumerator(value, view) as ClrRawEnumerator
 
-private fun entryPart(entry: Any, name: String): Any? = try {
-    erasedProjectedMethod(entry.starProjectionRuntimeType(), name, 0).invoke(entry, emptyArray<Any?>())
+private val equalityNoArguments = emptyArray<Any?>()
+
+private fun invokeEquality(method: StarProjectionMethod, receiver: Any, arguments: Array<Any?>): Any? = try {
+    method.invoke(receiver, arguments)
 } catch (failure: StarProjectionInvocationException) {
     throw (failure.innerException ?: failure)
+}
+
+private fun mapStructuralEquals(left: Any, leftView: StarProjectionType, right: Any, rightView: StarProjectionType): Boolean {
+    // Common AbstractMap compares the peer's entries through this map's lookup,
+    // preserving authored/native lookup semantics without a Cartesian scan.
+    val contains = erasedProjectedMethod(leftView, "ContainsKey", 1)
+    val get = erasedProjectedMethod(leftView, "get_Item", 1)
+    val keyType = contains.getParameters()[0].parameterType
+    val entries = equalityEnumerator(right, rightView)
+    try {
+        while (entries.MoveNext()) {
+            val entry = entries.current()!!
+            val access = equalityEntryAccess(entry.starProjectionRuntimeType())
+            val key = invokeEquality(access.key, entry, equalityNoArguments)
+            if (key === null) {
+                if (!starProjectionTypeAcceptsNull(keyType)) return false
+            } else if (!keyType.isAssignableFrom(key.starProjectionRuntimeType())) return false
+            val arguments = arrayOf(key)
+            if (!(invokeEquality(contains, left, arguments) as Boolean)) return false
+            if (!kotlinEquals(invokeEquality(get, left, arguments),
+                    invokeEquality(access.value, entry, equalityNoArguments))) return false
+        }
+        return true
+    } finally { disposeEnumerator(entries) }
 }
 
 // Real emitted stdlib implementations call this from their virtual equals slot.
@@ -152,6 +226,7 @@ internal fun structuralEquals(left: Any, right: Any?, family: Int, storage: Star
     val leftView = equalityView(left, family, storage) ?: return false
     val rightView = equalityView(right, family, null) ?: return false
     if (equalityCount(left, leftView) != equalityCount(right, rightView)) return false
+    if (family == 2) return mapStructuralEquals(left, leftView, right, rightView)
     val first = equalityEnumerator(left, leftView)
     try {
         if (family == 0) {
@@ -163,20 +238,15 @@ internal fun structuralEquals(left: Any, right: Any?, family: Int, storage: Star
                 return !second.MoveNext()
             } finally { disposeEnumerator(second) }
         }
+        val enumerateSecond = projectedFamilyEnumeratorMethod(rightView)
         while (first.MoveNext()) {
             val element = first.current()
-            val second = equalityEnumerator(right, rightView)
+            val second = invokeEquality(enumerateSecond, right, equalityNoArguments) as ClrRawEnumerator
             var found = false
             try {
                 while (second.MoveNext()) {
                     val candidate = second.current()
-                    if (family == 1) {
-                        if (kotlinEquals(element, candidate)) { found = true; break }
-                    } else if (kotlinEquals(entryPart(element!!, "get_Key"), entryPart(candidate!!, "get_Key"))) {
-                        if (!kotlinEquals(entryPart(element, "get_Value"), entryPart(candidate, "get_Value"))) return false
-                        found = true
-                        break
-                    }
+                    if (kotlinEquals(element, candidate)) { found = true; break }
                 }
             } finally { disposeEnumerator(second) }
             if (!found) return false

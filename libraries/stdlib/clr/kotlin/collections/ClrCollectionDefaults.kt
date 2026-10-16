@@ -665,6 +665,7 @@ public fun <T> clrProjectedListListIterator(list: Any, index: Int): ListIterator
 // GetEnumerator (the reverse bridge). It only needs size/get; the non-BCL members route to the helpers above.
 private class ClrSubList<T>(private val backing: List<T>, private val fromIndex: Int, private val toIndex: Int) : List<T> {
     override fun equals(other: Any?): Boolean = DotKt.Runtime.CompilerServices.structuralEquals(this, other, 0)
+    override fun hashCode(): Int = DotKt.Runtime.CompilerServices.structuralHash(this, 0)
 
     init { clrCheckSubListBounds(backing.size, fromIndex, toIndex) }
 
@@ -698,6 +699,7 @@ private class ClrProjectedListView<T>(
     private val preferredView: Any?,
 ) : List<T> {
     override fun equals(other: Any?): Boolean = DotKt.Runtime.CompilerServices.structuralEquals(this, other, 0)
+    override fun hashCode(): Int = DotKt.Runtime.CompilerServices.structuralHash(this, 0)
 
     init { clrCheckSubListBounds(projectedViewCountErased(backing, preferredView, 3), fromIndex, toIndex) }
 
@@ -737,6 +739,7 @@ private class ClrProjectedMutableSubList<T>(
     private val parent: ClrProjectedMutableSubList<T>? = null,
 ) : MutableList<T> {
     override fun equals(other: Any?): Boolean = DotKt.Runtime.CompilerServices.structuralEquals(this, other, 0)
+    override fun hashCode(): Int = DotKt.Runtime.CompilerServices.structuralHash(this, 0)
 
     init { clrCheckSubListBounds(projectedMutableListCountErased(backing), start, end) }
 

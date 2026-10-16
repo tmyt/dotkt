@@ -82,6 +82,9 @@ class CollectionEqualityTests {
 
     @TestAttribute
     fun logicalFamiliesAndNestedElementsAreComparedWithoutGenericCasts() {
+        val data: Any = GenericEqualityData(23, "tag")
+        check(data == GenericEqualityData(23, "tag"))
+        check(data != GenericEqualityData(23, "other"))
         val left: Any = listOf(listOf(23), setOf("x"), mapOf("a" to listOf(42)), null)
         val right: Any = listOf(listOf(23), setOf("x"), mapOf("a" to listOf(42)), null)
         check(left == right)

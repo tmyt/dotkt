@@ -3846,14 +3846,23 @@ static class FBoundStarProjectionErasure
             || block["result"] is not JsonObject conditional || Str(conditional["k"]) != "cond"
             || conditional["cond"] is not JsonObject not || Str(not["k"]) != "unaryOp"
             || Str(not["op"]) != "!" || not["e"] is not JsonObject equals
-            || Str(equals["k"]) != "objEq"
-            || equals["lhs"] is not JsonObject lhs || Str(lhs["k"]) != "local" || Str(lhs["name"]) != name
-            || equals["rhs"] is not JsonObject rhs || Str(rhs["k"]) != "const" || rhs["value"] != null
+            || Str(equals["k"]) != "binOp" || Str(equals["op"]) != "==="
+            || ReferenceGuardOperand(equals["lhs"]) is not JsonObject lhs || Str(lhs["k"]) != "local" || Str(lhs["name"]) != name
+            || ReferenceGuardOperand(equals["rhs"]) is not JsonObject rhs || Str(rhs["k"]) != "const" || rhs["value"] != null
             || conditional["then"] is not JsonObject then || Str(then["k"]) != "local"
             || Str(then["name"]) != name
             || conditional["else"] is not JsonObject otherwise || Str(otherwise["k"]) != "throwExpr")
             return null;
         return field;
+    }
+
+    static JsonNode ReferenceGuardOperand(JsonNode operand)
+    {
+        if (operand is not JsonObject cast || Str(cast["k"]) != "cast") return operand;
+        var type = TypeJson.Read(cast["type"]);
+        if (type is TypeNode.Nullable nullable) type = nullable.Of;
+        return type is TypeNode.Fqn { Name: "kotlin.Any" or "System.Object" or "object" }
+            ? cast["e"] : operand;
     }
 
     static void BindStarInnerConstruction(JsonObject construction,

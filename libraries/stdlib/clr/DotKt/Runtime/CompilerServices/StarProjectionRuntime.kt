@@ -1178,7 +1178,7 @@ internal fun projectedSetEnumeratorErased(receiver: Any, sourceWitness: Any?): A
     return projectedFamilyEnumerator(receiver, family)
 }
 
-internal fun projectedFamilyEnumerator(receiver: Any, family: StarProjectionType): Any {
+internal fun projectedFamilyEnumeratorMethod(family: StarProjectionType): StarProjectionMethod {
     var enumerable: StarProjectionType? = null
     for (parent in family.getInterfaces()) {
         if (!parent.isGenericType
@@ -1188,8 +1188,12 @@ internal fun projectedFamilyEnumerator(receiver: Any, family: StarProjectionType
         enumerable = parent
     }
     val selected = enumerable ?: throw UnsupportedOperationException("Collection has no generic enumerable parent")
+    return erasedProjectedMethod(selected, "GetEnumerator", 0)
+}
+
+internal fun projectedFamilyEnumerator(receiver: Any, family: StarProjectionType): Any {
     return try {
-        erasedProjectedMethod(selected, "GetEnumerator", 0).invoke(receiver, arrayOfNulls<Any?>(0))
+        projectedFamilyEnumeratorMethod(family).invoke(receiver, arrayOfNulls<Any?>(0))
             ?: throw IllegalStateException("Collection GetEnumerator returned null")
     } catch (failure: StarProjectionInvocationException) {
         throw (failure.innerException ?: failure)

@@ -276,6 +276,7 @@ private class ClrMutableMapEntry<K, V>(private val raw: ClrRawDictionary, overri
  *  yet lower an object expression capturing an enclosing generic parameter). Backs Map's read views. */
 private class ClrMapSnapshotSet<E>(private val elements: List<E>) : Set<E> {
     override fun equals(other: Any?): Boolean = DotKt.Runtime.CompilerServices.structuralEquals(this, other, 1)
+    override fun hashCode(): Int = DotKt.Runtime.CompilerServices.structuralHash(this, 1)
 
     override val size: Int get() = elements.size
     override fun isEmpty(): Boolean = elements.size == 0
@@ -286,6 +287,7 @@ private class ClrMapSnapshotSet<E>(private val elements: List<E>) : Set<E> {
 
 private class ClrMutableMapKeySet<K>(private val raw: ClrRawDictionary) : MutableSet<K> {
     override fun equals(other: Any?): Boolean = DotKt.Runtime.CompilerServices.structuralEquals(this, other, 1)
+    override fun hashCode(): Int = DotKt.Runtime.CompilerServices.structuralHash(this, 1)
 
     override val size: Int get() = (raw as ClrRawCollection).count()
     override fun isEmpty(): Boolean = size == 0

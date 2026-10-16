@@ -18,6 +18,7 @@ package kotlin.collections
 @SinceKotlin("1.1")
 public actual abstract class AbstractMutableSet<E> protected actual constructor() : MutableSet<E> {
     override fun equals(other: Any?): Boolean = DotKt.Runtime.CompilerServices.structuralEquals(this, other, 1)
+    override fun hashCode(): Int = DotKt.Runtime.CompilerServices.structuralHash(this, 1)
 
     actual override fun isEmpty(): Boolean = size == 0
 

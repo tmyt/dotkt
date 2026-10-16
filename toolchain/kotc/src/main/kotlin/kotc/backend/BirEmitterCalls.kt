@@ -2083,11 +2083,8 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 			}
 			"equals" -> {
 				val recvE = dispatchReceiver(call)!!; val argE = regularArgs(call).first()
-				// Emit the FAITHFUL objMethod equals. An EXPLICIT `.equals()` on a boxed Double/Float / a collection
-				// follows Kotlin's TOTAL order / STRUCTURAL equality (Object.Equals gives IEEE
-				// `(-0.0).equals(0.0)==true` / reference identity), so bir2cir recovers the receiver/arg static types
-				// via StaticType (no kotc hint) and routes to the SAME helper the EQEQ path uses; else it keeps
-				// Object.Equals.
+				// Preserve the selected Kotlin Any slot. bir2cir realizes its virtual
+				// equality semantics independently of the receiver's static type.
 				return """{"k":"objMethod","method":"equals","recv":${expr(recvE)},"arg":${expr(argE)}}"""
 			}
 		}

@@ -7,6 +7,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 - Keep List/Set/Map equality stable through Any, nullable/generic storage, callable references and DLL imports,
   preserving authored virtual equals and ordinary object/array identity instead of selecting static shortcuts (#843).
+  Real stdlib defaults provide matching virtual hashes, and map equality retains lookup-based complexity.
 
 - Restore saved Kotlin supertypes across DLL imports without requiring their source arity to match lowered CLR
   type arguments. Imported abstract collection and generic interface implementations can be inherited (#1061).

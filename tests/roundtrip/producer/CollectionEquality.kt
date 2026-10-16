@@ -11,6 +11,8 @@ class EqualityStorage(val value: Any?) {
     fun sameAs(other: Any?): Boolean = value == other
 }
 
+data class GenericEqualityData<T>(val value: T, val tag: String)
+
 open class DefaultList : List<Int> by listOf(23, 42)
 
 class SuperDefaultList : DefaultList() {

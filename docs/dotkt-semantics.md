@@ -594,11 +594,17 @@ largest value with `NaN == NaN` structurally and `NaN.compareTo(NaN) == 0`. On t
   `(-0.0).compareTo(0.0)` → **`-1`**, `Double.NaN.compareTo(1.0)` → **`1`**, `Double.NaN.compareTo(Double.NaN)` → **`0`**.
 
 - Kotlin `==` and `Any.equals` use the same virtual equality rule through concrete, Any, nullable, generic,
-  stored, callable-reference and DLL boundaries. Authored/inherited CLR Object-slot overrides run exactly once,
-  including self and null arguments. Merely implementing List/Set/Map does not invent an equals override.
-  Emitted stdlib collection implementations provide their declared defaults; native class aliases receive List
+  stored, callable-reference and DLL boundaries. Calls to authored/inherited CLR Object-slot overrides run exactly
+  once, including self and null arguments; null tests and `!!` do not invoke equals. Merely implementing List/Set/Map
+  does not invent an equals override.
+  Emitted stdlib collection implementations provide their declared defaults with matching virtual hashCode;
+  native class aliases receive List
   ordered, Set unordered or Map key/value equality from their authoritative stdlib binding metadata. An inherited
-  native-class default reads that base's own storage, not unrelated interfaces supplied by a derived CLR class.
+  native-class default selects that base's family and constructed interface, not unrelated interfaces supplied by a
+  derived CLR class. Reimplementation of that exact native interface remains virtual, including Count/enumeration;
+  equality does not bypass it to reconstruct private native storage. Map defaults use this map's lookup to compare
+  the peer's entries, like common AbstractMap, preserving native/authored lookup semantics rather than scanning all
+  entry pairs. Runtime type classification and entry accessors are cached without retaining collectible types.
   A foreign peer with ambiguous collection views does not participate in structural equality. Arrays and plain
   objects retain reference identity, and explicit CLR `Equals` calls/nonvirtual `super.equals` retain their native
   targets. None of these operations remember an originating collection view or wrap/copy the collection.

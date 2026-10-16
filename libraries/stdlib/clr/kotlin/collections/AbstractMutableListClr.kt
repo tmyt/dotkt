@@ -19,6 +19,7 @@ package kotlin.collections
 @Suppress("NO_ACTUAL_CLASS_MEMBER_FOR_EXPECTED_CLASS")
 public actual abstract class AbstractMutableList<E> protected actual constructor() : MutableList<E> {
     override fun equals(other: Any?): Boolean = DotKt.Runtime.CompilerServices.structuralEquals(this, other, 0)
+    override fun hashCode(): Int = DotKt.Runtime.CompilerServices.structuralHash(this, 0)
 
     private var _modCount: Int = 0
 

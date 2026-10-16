@@ -4,19 +4,12 @@ using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 
-// FAITHFUL-HINT RECOGNITION (#52 Phase 4b / #59): kotc stopped routing four Kotlin-SEMANTIC recognition families to
-// the stdlib helpers (ClrCollectionDefaultsKt / ClrMapDefaultsKt / NumbersKt / LibraryKt) by hardcoded FQN. It emits
-// the FAITHFUL op (`objMethod ToString/Equals`, `concat` with parts, `callStatic println/print`, `callInstance
-// compareTo`) with NO type hint (#59 — the transient recvType/argType/argTypes/partTypes hints are RETIRED). bir2cir
-// performs recognition from the operand's recovered static type (StaticType — StaticTypeResolver.cs) and constructs
-// the canonical stdlib helper call defined by the current CLR representation contract.
-//
-// The EQEQ family is handled inside PrimitiveOperatorLowering.LowerIntrinsic (it already owns the EQEQ arm); this pass
-// handles the remaining four sites (objMethod ToString/Equals, println/print, concat, Double/Float compareTo). Both
-// run EARLY — before MemberCallSubstitution / factory / BirTypeLowering — so the inner value nodes still carry the
-// pure kotlin.* / listOf shapes and flow through the normal downstream lowering, exactly as when kotc wrapped them.
-// Each pass threads a BirScope (the declaration-scoped local/param type environment) so StaticType can recover a
-// bare operand `local`'s declared type — the early-pass twin of MemberCallSubstitution's SubstCtx.VarTypes.
+// Select the CLR representation of Kotlin rendering and floating-point ordering.
+// kotc supplies ordinary Kotlin operations, not helper names or representation
+// hints. StaticType recovers source types in the declaration's BirScope before
+// member/factory/type substitution consumes them. Equality is normalized at
+// representation entry by KotlinEqualityLowering; primitive EQEQ remains owned
+// by PrimitiveOperatorLowering.
 
 // Shared recognition primitives used by BOTH this pass and PrimitiveOperatorLowering's EQEQ arm.
 static class FaithfulHints
@@ -291,9 +284,8 @@ static class FaithfulHintRecognition
     }
 
     // `objMethod ToString`: a collection/Map receiver (StaticType.Value of `recv`) -> clrCollToString/clrMapToString
-    // (Kotlin `[a, b]`); else keep the plain .NET ToString. `objMethod Equals`: both non-null
-    // Double/Float -> float-equals helper; all other equality is resolved by KotlinEqualityLowering. (#59 — the former
-    // recvType/argType hints, recovered structurally.)
+    // (Kotlin `[a, b]`); else keep the plain .NET ToString. Equality has already
+    // been consumed at representation entry by KotlinEqualityLowering.
     static JsonNode TransformObjMethod(JsonObject o, BirScope scope)
     {
         var method = (o["method"] as JsonValue)?.GetValue<string>();
@@ -301,14 +293,6 @@ static class FaithfulHintRecognition
         {
             if (StaticType.Value(recv, scope) is TypeNode rt && FaithfulHints.ClassifyColl(rt) is { } c)
                 return FaithfulHints.CollToString(FaithfulHints.StripAnyCast(o["recv"]), c.kind, c.args);
-            return o;
-        }
-        if (method == "Equals" && o["recv"] is JsonNode erecv && o["arg"] is JsonNode earg)
-        {
-            var recvT = StaticType.Value(erecv, scope);
-            var argT = StaticType.Value(earg, scope);
-            if (recvT != null && argT != null && FloatEqualsMethod(recvT, argT) is string fm)
-                return FaithfulHints.FloatCall(fm, FaithfulHints.StripAnyCast(o["recv"]), FaithfulHints.StripAnyCast(o["arg"]));
             return o;
         }
         return o;
@@ -374,9 +358,4 @@ static class FaithfulHintRecognition
         return FaithfulHints.FloatCall(method, o["recv"], args[0]);
     }
 
-    // The float-equals helper method iff BOTH hints are the SAME non-null primitive (kotlin.Double / kotlin.Float).
-    static string FloatEqualsMethod(TypeNode a, TypeNode b) =>
-        FaithfulHints.IsNonNullFqn(a, "kotlin.Double") && FaithfulHints.IsNonNullFqn(b, "kotlin.Double") ? "clrDoubleEquals"
-        : FaithfulHints.IsNonNullFqn(a, "kotlin.Float") && FaithfulHints.IsNonNullFqn(b, "kotlin.Float") ? "clrFloatEquals"
-        : null;
 }
