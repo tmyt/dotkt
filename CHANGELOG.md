@@ -5,6 +5,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Preserve array identity and mutations through star/use-site projections and generic-owner properties across DLLs,
+  using open CLR array storage for value/reference components and consistent projected casts and type tests (#809).
+
 - Keep List/Set/Map equality stable through Any, nullable/generic storage, callable references and DLL imports,
   preserving authored virtual equals and ordinary object/array identity instead of selecting static shortcuts (#843).
   Real stdlib defaults provide matching virtual hashes, and map equality retains lookup-based complexity.

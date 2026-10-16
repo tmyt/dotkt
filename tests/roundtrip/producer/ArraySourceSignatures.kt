@@ -16,6 +16,58 @@ class ArraySourceSurface(
 }
 
 class GenericArraySource<T>(val values: Array<T>)
+annotation class ArraySourceNames(vararg val names: String)
+fun firstStarArray(values: Array<*>): Any? = values[0]
+@ArraySourceNames("star", "array")
+fun relayStarArray(values: Array<*>): Array<*> = values
+fun <T> genericStarArray(values: Array<T>): Array<*> = values
+fun nullableStarArray(values: Array<*>?): Array<*>? = values
+fun castStarArray(value: Any?): Array<*>? = value as? Array<*>
+fun projectedStarArray(values: Array<out Any?>): Array<*> = values
+fun writeProjectedArray(values: Array<in Int>, value: Int) { values[0] = value }
+fun castWritableIntArray(value: Any): Array<in Int>? = value as? Array<in Int>
+fun isStarArray(value: Any?): Boolean = value is Array<*>
+fun isNullableStarArray(value: Any?): Boolean = value is Array<*>?
+fun castNestedStarArray(value: Any): Array<Array<*>>? = value as? Array<Array<*>>
+
+fun checkLocalStarArraySources() {
+    val values = arrayOf(7, 8)
+    check(firstStarArray(values) == 7)
+    val projected = relayStarArray(values)
+    check(projected === values && genericStarArray(values) === values)
+    values[0] = 9
+    check(projected[0] == 9 && projected.iterator().next() == 9)
+    check(projectedStarArray(values) === values)
+    writeProjectedArray(values, 11)
+    check(projected[0] == 11)
+    val source: GenericArraySource<*> = GenericArraySource(values)
+    check(source.values === values && source.values[0] == 11)
+    check(nullableStarArray(values) === values && nullableStarArray(null) == null)
+    check(castStarArray(values) === values)
+    check(castStarArray(null) == null && castStarArray("not an array") == null)
+    check(isStarArray(values) && !isStarArray(null) && !isStarArray("not an array"))
+    check(isNullableStarArray(values) && isNullableStarArray(null) && !isNullableStarArray("not an array"))
+    val nullable = arrayOf<Int?>(null, 13)
+    check(relayStarArray(nullable) === nullable && firstStarArray(nullable) == null)
+    nullable[0] = 17
+    check(relayStarArray(nullable)[0] == 17)
+    val references = arrayOf("a", "b")
+    check(genericStarArray(references) === references && firstStarArray(references) == "a")
+    references[0] = "changed"
+    check(relayStarArray(references)[0] == "changed")
+    check(castWritableIntArray(references) === references)
+    val objects = arrayOf<Any?>(null)
+    writeProjectedArray(objects, 19)
+    check(objects[0] == 19)
+    val nested = arrayOf(arrayOf(23))
+    check(relayStarArray(nested) === nested)
+    check((firstStarArray(nested) as Array<*>)[0] == 23)
+    val openNested: Any = arrayOf<Array<*>>(arrayOf(29), arrayOf("nested"))
+    check(castNestedStarArray(openNested) === openNested)
+    check((openNested as Array<Array<*>>)[0][0] == 29)
+    check(castNestedStarArray(arrayOf("not nested")) == null)
+}
+
 class ArraySourceBox<T>(val value: T)
 interface ArraySourceEdge<T> { fun value(): T }
 class IntArraySourceEdge(val items: Array<Int>) : ArraySourceEdge<Array<Int>> {

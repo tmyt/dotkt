@@ -8,6 +8,50 @@ import kotlin.coroutines.*
 
 class ArraySourceSignatureTests {
     @TestAttribute
+    fun localStarArraysKeepRuntimeComponents() {
+        checkLocalStarArraySources()
+    }
+
+    @TestAttribute
+    fun importedStarArraysKeepRuntimeComponents() {
+        val values = arrayOf(29, 31)
+        check(firstStarArray(values) == 29)
+        val projected: Array<*> = relayStarArray(values)
+        check(projected === values && genericStarArray(values) === values)
+        values[0] = 37
+        check(projected[0] == 37 && projected.iterator().next() == 37)
+        val source: GenericArraySource<*> = GenericArraySource(values)
+        check(source.values === values && source.values.size == 2 && source.values[0] == 37)
+        check(projectedStarArray(values) === values)
+        writeProjectedArray(values, 39)
+        check(projected[0] == 39 && source.values[0] == 39)
+        check(nullableStarArray(values) === values && nullableStarArray(null) == null)
+        check(castStarArray(values) === values)
+        check(castStarArray(null) == null && castStarArray("not an array") == null)
+        check(isStarArray(values) && !isStarArray(null) && !isStarArray("not an array"))
+        check(isNullableStarArray(values) && isNullableStarArray(null) && !isNullableStarArray("not an array"))
+        val nullable = arrayOf<Int?>(null, 41)
+        check(relayStarArray(nullable) === nullable && firstStarArray(nullable) == null)
+        nullable[0] = 43
+        check(relayStarArray(nullable)[0] == 43)
+        val references = arrayOf("a", "b")
+        check(genericStarArray(references) === references && firstStarArray(references) == "a")
+        references[0] = "changed"
+        check(relayStarArray(references)[0] == "changed")
+        check(castWritableIntArray(references) === references)
+        val objects = arrayOf<Any?>(null)
+        writeProjectedArray(objects, 53)
+        check(objects[0] == 53)
+        val nested = arrayOf(arrayOf(47))
+        check(relayStarArray(nested) === nested)
+        check((firstStarArray(nested) as Array<*>)[0] == 47)
+        val openNested: Any = arrayOf<Array<*>>(arrayOf(59), arrayOf("nested"))
+        check(castNestedStarArray(openNested) === openNested)
+        check((openNested as Array<Array<*>>)[0][0] == 59)
+        check(castNestedStarArray(arrayOf("not nested")) == null)
+    }
+
+    @TestAttribute
     fun localArraySignaturesKeepSourceClassifiers() {
         checkLocalArraySources()
     }

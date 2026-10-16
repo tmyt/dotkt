@@ -284,9 +284,14 @@ if covariant_carrier not in collision_locals:
     raise SystemExit(f"a user __outer local in a generated frame was mistaken for lexical this: {collision_locals!r}")
 
 invariant = method("invariantProjectedValue")
-exact_invariant = array(fqn("InvariantValue", fqn("System.String"), fqn("System.String")))
+exact_invariant = fqn("InvariantValue", fqn("System.String"), fqn("System.String"))
 parameters = invariant.get("params", [])
-if len(parameters) != 1 or parameters[0].get("type") != exact_invariant:
-    raise SystemExit(f"invariant projected element was over-erased: {parameters!r}")
+if len(parameters) != 1 or parameters[0].get("type") != fqn("System.Array"):
+    raise SystemExit(f"projected array did not retain open component storage: {parameters!r}")
+invariant_nodes = list(objects(invariant.get("body", [])))
+if not any(node.get("k") == "cast" and node.get("type") == exact_invariant for node in invariant_nodes):
+    raise SystemExit("invariant projected element access lost its exact constructed type")
+if not any(node.get("ownerType") == exact_invariant for node in invariant_nodes):
+    raise SystemExit("invariant projected element member did not use its exact constructed owner")
 
 print("projected covariant array carriers and invariant projection are exact")

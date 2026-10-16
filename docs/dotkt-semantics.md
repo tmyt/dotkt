@@ -2200,7 +2200,7 @@ Concretely:
 | `fun f(x: Int?)`, `fun f(): Int?`, `val x: Int?` | `Nullable<int32>` — the direct slot is unchanged |
 | `fun <T> f(x: T?)` | `object` — no CLR slot expresses an unconstrained `T?` |
 | Open `Box<T?>` | `Box<N(T)>` in the declaration's explicit frame |
-| Open Kotlin `Array<T>`, `Array<T?>` value slots | `System.Array`, retaining the allocation's runtime component |
+| Open Kotlin `Array<T>`, `Array<T?>`, star/use-site-projected array value slots | `System.Array`, retaining the allocation's runtime component |
 | `List<Int?>` / `MutableList<Int?>` | `object` / `IList<object>`; the list's own nullable-element storage remains boxed |
 | `Map<String, Int?>`, `Pair<Int?, String>`, `Box<Int?>` | `object`, `Pair<object, string>`, `Box<object>` |
 | `Array<Int?>` | `object[]` |
@@ -2317,12 +2317,19 @@ What this is observable as, beyond the boxing already listed above:
   only instantiation whose `T[]` parameter the receiver inhabits, and for the collection because that is what
   `List<Int?>` is. The two agree by construction, which is what lets an `Array<T>` extension over an `Array<Int?>`
   hand its `List<object>` result to a declared `List<Int?>` slot.
-- **Open Kotlin arrays keep their allocation's runtime component.** An open `Array<T>` or `Array<T?>` value slot
-  uses `System.Array`; it does not force the existing allocation to have the caller's concrete `T[]` shape.
+- **Open Kotlin arrays keep their allocation's runtime component.** An open `Array<T>` or `Array<T?>`,
+  `Array<*>`, or use-site-projected array value slot uses `System.Array`; it does not force the existing allocation
+  to have the caller's concrete `T[]` shape. This includes `Array<out Any?>`, the readable approximation of an
+  existential generic owner's `Array<T>` property. The source array type remains in Kotlin metadata.
   Element reads and writes are explicitly lowered by bir2cir. Stores retain component checks and do not acquire
   `Array.SetValue`'s numeric-widening or null-to-default behavior. Array identity and aliases are unchanged;
   `copyOf` creates an independent allocation and preserves the receiver's runtime component where its nullable
   result permits it.
+- **Projected array classification uses the same storage rule.** Casts and `is` tests against `Array<*>` accept
+  value- and reference-component vectors without copying. An `in X` component has readable bound `Any?`, so
+  `as Array<in X>` does not require the allocation's component to be `X`; an incompatible subsequent store throws
+  `ArrayTypeMismatchException`. Nested open components accept their selected `System.Array` storage as well as
+  native vector components. Closed invariant element reads still cast to their exact constructed type.
 - **An unchecked generic array cast checks the erased component bound, not the caller's concrete `T`.**
   `arrayOfNulls<Node>(n) as Array<T?>` inside `fun <T : Node>` is valid internal storage. The cast checks vector
   shape and Kotlin's representative upper bound (class bound, otherwise first interface bound), including nested
@@ -2335,6 +2342,8 @@ What this is observable as, beyond the boxing already listed above:
   nested native generic constructions and supported `ref`/`out` or live-reference locations retain the selected
   declaration's native array shape. Crossing from open Kotlin storage checks that shape without copying or
   changing aliases. Kotlin allocation element witnesses likewise remain exact, separate from open value slots.
+  Attribute constructor/field signatures and attribute blobs likewise retain concrete CLR array types, not open
+  array storage; this does not change ordinary projected array slots on an annotated Kotlin method.
   A collection factory's native container element, key or value argument is such a witness too;
   storing an open array in that container checks its exact array shape at the insertion edge.
 

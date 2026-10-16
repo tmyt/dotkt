@@ -4,13 +4,24 @@ using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 
-// Open Kotlin arrays retain the allocation's runtime component, independently of the caller's T.
+// Open Kotlin arrays retain the allocation's runtime component, independently of the caller's T or star projection.
 // The physical value slot is System.Array; exact native array signatures remain separate facts.
 // All access is materialized here as ordinary CLR calls, not reconstructed by ilemit.
 static class GenericArrayStorageLowering
 {
     internal static bool NeedsStorage(TypeNode.Array array) =>
-        array.SzArray && array.Rank == 1 && ContainsVariable(array.Elem);
+        array.SzArray && array.Rank == 1 && ContainsOpenComponent(array.Elem);
+
+    static bool ContainsOpenComponent(TypeNode type) => type switch {
+        // A projection's bound is not the allocation's component: Array<out Any?>
+        // can hold an Int32[] just as Array<*> can.
+        TypeNode.Tv or TypeNode.Star or TypeNode.Projection => true,
+        TypeNode.Nullable n => ContainsOpenComponent(n.Of),
+        TypeNode.Oblivious o => ContainsOpenComponent(o.Of),
+        TypeNode.Array a => ContainsOpenComponent(a.Elem),
+        TypeNode.Fqn { Args: { } args } => args.Any(ContainsOpenComponent),
+        _ => false,
+    };
 
     static bool ContainsVariable(TypeNode type) => type switch {
         TypeNode.Tv => true,
@@ -118,11 +129,14 @@ static class GenericArrayStorageLowering
             target = target is TypeNode.Nullable n ? n.Of : ((TypeNode.Oblivious)target).Of;
         if (target is not TypeNode.Array array || !NeedsStorage(array)) return;
         var kind = Text(operation["k"]);
-        if (kind is not ("cast" or "isInstRef") || KotlinTypeWitness.NeedsWitness(operation)) return;
-        var safe = kind == "isInstRef";
+        var test = kind == "isInst";
+        if (kind is not ("cast" or "isInstRef" or "isInst")
+            || KotlinTypeWitness.NeedsWitness(operation) && ContainsVariable(array)) return;
+        var safe = test || kind == "isInstRef";
         var fresh = FreshNames(operation);
         var arrayName = fresh("$arrayCast$");
         var typeName = fresh("$arrayCastType$");
+        var inputName = test && nullable ? fresh("$arrayInput$") : null;
         var arrayType = new TypeNode.Fqn("System.Array");
         var typeType = new TypeNode.Fqn("System.Type");
         JsonObject Bool(bool value) => new() { ["k"] = "const", ["type"] = Type("System.Boolean"), ["value"] = value };
@@ -182,19 +196,29 @@ static class GenericArrayStorageLowering
         {
             while (expected is TypeNode.Nullable or TypeNode.Oblivious or TypeNode.Projection)
                 expected = expected switch { TypeNode.Nullable n => n.Of, TypeNode.Oblivious o => o.Of,
+                    // An in-projection has Any? as its readable bound, not its write bound.
+                    TypeNode.Projection { Variance: "in" } => new TypeNode.Star(),
                     TypeNode.Projection p => p.Of, _ => expected };
+            if (expected is TypeNode.Star) return Bool(true);
             if (expected is TypeNode.Tv variable)
             {
                 if (!variables.Add(variable)) throw new InvalidOperationException("Cyclic array-cast erasure bound");
                 return Check(Bound(variable), actualType, variables);
             }
             if (expected is TypeNode.Array nested)
-                return new JsonObject {
+            {
+                var nativeCheck = new JsonObject {
                     ["k"] = "cond", ["type"] = Type("System.Boolean"),
                     ["cond"] = RuntimeCall(refs, "System.Type", "get_IsSZArray", actualType, "System.Boolean", Array.Empty<string>()),
                     ["then"] = Check(nested.Elem, RuntimeCall(refs, "System.Type", "GetElementType", actualType,
                         "System.Type", Array.Empty<string>()), new HashSet<TypeNode.Tv>(variables)), ["else"] = Bool(false),
                 };
+                // An array whose element is itself open allocates System.Array[];
+                // that exact component is already the nested array's physical storage.
+                return NeedsStorage(nested)
+                    ? ErasedComponentCheck(new TypeNode.Fqn("System.Array"), actualType, nativeCheck)
+                    : nativeCheck;
+            }
             if (expected is TypeNode.Fqn { Name: "kotlin.Any" or "System.Object" or "object", Args: null }) return Bool(true);
             if (expected is TypeNode.Fqn { Args: { Length: > 0 } } generic
                 && ForeignStarProjectionBinding.TypeClassifierCheck(generic, actualType, refs) is { } foreignCheck)
@@ -217,8 +241,13 @@ static class GenericArrayStorageLowering
             } };
         var value = Local(arrayName, arrayType);
         var isNull = new JsonObject { ["k"] = "objEq", ["lhs"] = value.DeepClone(), ["rhs"] = Null() };
-        var statements = new JsonArray(Var(arrayName, arrayType, new JsonObject {
-            ["k"] = safe ? "isInstRef" : "cast", ["type"] = Type("System.Array"), ["e"] = operation["e"].DeepClone(),
+        var statements = new JsonArray();
+        if (inputName != null)
+            statements.Add(Var(inputName, new TypeNode.Fqn("System.Object"), operation["e"].DeepClone()));
+        statements.Add(Var(arrayName, arrayType, new JsonObject {
+            ["k"] = safe ? "isInstRef" : "cast", ["type"] = Type("System.Array"),
+            ["e"] = inputName == null ? operation["e"].DeepClone()
+                : Local(inputName, new TypeNode.Fqn("System.Object")),
         }));
         if (!safe && !nullable) statements.Add(If(isNull.DeepClone(), Failure()));
         statements.Add(If(Not(isNull),
@@ -226,9 +255,14 @@ static class GenericArrayStorageLowering
             If(Not(invalid), Failure())));
         operation.Clear();
         operation["k"] = "valueBlock";
-        operation["type"] = Type("System.Array");
+        operation["type"] = Type(test ? "System.Boolean" : "System.Array");
         operation["stmts"] = statements;
-        operation["result"] = value;
+        operation["result"] = !test ? value : inputName == null ? Not(isNull.DeepClone()) : new JsonObject {
+            ["k"] = "cond", ["type"] = Type("System.Boolean"),
+            ["cond"] = new JsonObject { ["k"] = "binOp", ["op"] = "==",
+                ["lhs"] = Local(inputName, new TypeNode.Fqn("System.Object")), ["rhs"] = Null() },
+            ["then"] = Bool(true), ["else"] = Not(isNull.DeepClone()),
+        };
     }
 
     // An allocation of an opaque alias has its ordinary physical component. Other allocations must still
@@ -245,6 +279,16 @@ static class GenericArrayStorageLowering
 
     internal static void SelfTest()
     {
+        var openComponents = new TypeNode[] {
+            new TypeNode.Star(), new TypeNode.Tv("method", 0),
+            new TypeNode.Projection("out", new TypeNode.Fqn("kotlin.Any")),
+            new TypeNode.Projection("in", new TypeNode.Fqn("kotlin.Int")),
+            new TypeNode.Array(new TypeNode.Star()),
+        };
+        if (openComponents.Any(component => !NeedsStorage(new TypeNode.Array(component)))
+            || NeedsStorage(new TypeNode.Array(new TypeNode.Fqn("kotlin.Int")))
+            || NeedsStorage(new TypeNode.Array(new TypeNode.Star(), Rank: 2, SzArray: false)))
+            throw new InvalidOperationException("Open array storage lost its component or native-shape distinction");
         var actual = Local("component", new TypeNode.Fqn("System.Type"));
         var classifier = new JsonObject { ["k"] = "const", ["type"] = Type("System.Boolean"), ["value"] = false };
         var check = ErasedComponentCheck(new TypeNode.Fqn("System.Object"), actual, classifier);
