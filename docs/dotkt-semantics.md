@@ -170,7 +170,10 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   `IEnumerable` where that face is faithful; `println` of such an erased value renders via
   the runtime-detecting `clrElemToString`. (A `<*>` value can only be used non-generically anyway.) This is the same
   invariance that requires §5c's separation of opaque `Map` values from exact dictionary constructions. #60.
-  `Map<*,*>` retains its non-generic `IDictionary` path. `Collection<*>`, `MutableCollection<*>`, `List<*>`, `MutableList<*>`,
+  `Map<*,*>` and `MutableMap<*,*>` recognize authored map capabilities or a real generic `IDictionary<,>` face,
+  without requiring non-generic dictionary inheritance. Authored read-only maps do not gain Kotlin mutability
+  from their native dictionary facade. Map queries use the same semantic dispatchers as typed calls.
+  `Collection<*>`, `MutableCollection<*>`, `List<*>`, `MutableList<*>`,
   `Set<*>`, and `MutableSet<*>` use a shared composite `is`/`as?`/`as` classifier because one raw BCL face is insufficient: emitted
   Kotlin implementations carry compiler-owned nominal identity interfaces, while BCL-backed values are recognized
   through the generic `IReadOnlyCollection<>`/`ICollection<>`, `IReadOnlySet<>`/`ISet<>`, and
@@ -765,7 +768,11 @@ Consequences and remaining implementation limitations:
 - **`Map.get` is null-on-missing** (Kotlin semantics), synthesized as `ContainsKey` + `get_Item` in
   `kotlin.collections.ClrMapDefaults` (`IDictionary`'s raw indexer throws); `put`/`remove` return the previous value
   the same way. `size`/`containsKey`/`clear` bind 1:1 (`Count`/`ContainsKey`/`Clear`).
-- **`Map.keys`/`values`/`entries` are SNAPSHOTS, not live views** (Kotlin's are live): `keys`/`entries` return an
+- **Authored maps preserve their original views and overrides.** Kotlin map calls dispatch through compiler-owned
+  read/mutation capabilities. Their native dictionary facade translates CLR-specific indexer, mutation, pair and
+  enumeration contracts without replacing Kotlin entries or copying the map. Native key/value collection adapters
+  remain live over the original views. BCL-backed fallback behavior below is unchanged.
+- **BCL-backed `Map.keys`/`values`/`entries` are SNAPSHOTS, not live views** (Kotlin's are live): `keys`/`entries` return an
   identity-bearing Kotlin `Set`, `values` a
   BCL List. Entry VALUES are live (`entry.value`/`setValue` read/write through the backing map), but a key
   added/removed after taking the view is not reflected in it. `MutableMap.keys` is a live identity-bearing Kotlin view:
@@ -2546,7 +2553,7 @@ Current deliberate limits are:
 - `suspend fun` has no Continuation parameter — it returns `Task<T>`, and it starts **hot** (like C# `async`), not cold. §4.
 - A `Span`/`ref struct` value is fine inside a `suspend fun` — until it has to survive a suspension, or be captured by a (non-inline) lambda; both are compile-time errors, mirroring C# CS4007/CS4012/CS8352. §4d.
 - A `CharSequence` parameter surfaces to C# as `string`; a `StringBuilder` passed as `CharSequence` is **snapshotted** by an implicit `.toString()` — no live view. §5b.
-- A Kotlin `Map` value slot surfaces to C# as `object`, preserving Kotlin covariance; `MutableMap` retains its exact dictionary face. `Map.keys`/`values`/`entries` are snapshots. §5c.
+- A Kotlin `Map` value slot surfaces to C# as `object`, preserving Kotlin covariance; `MutableMap` retains its exact dictionary face. Authored maps preserve their views; BCL-backed read views remain snapshots. §5c.
 - A function type of 17..22 parameters is not `System.Func`/`Action` (they stop at 16) but the stdlib's canonical
   `KFunc`/`KAction` — one definition for the whole platform. An extension receiver counts toward the arity, and
   23 and above has no CLR delegate at all and is refused — the frontend accepts it, the representation cannot.

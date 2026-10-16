@@ -16,3 +16,6 @@ class ImportedReorderedMap<A, B>(storage: MutableMap<B, A>) : ImportedReadOnlyMa
 
 fun importedMap(): Map<Int, String> = ImportedReorderedMap(mutableMapOf(7 to "seven"))
 fun readImportedMap(map: Map<Int, String>): String? = map[7]
+
+// An explicitly imported user extension must not be substituted by a stdlib map dispatcher.
+fun <K, V> Map<out K, V>.get(key: K): V? = null

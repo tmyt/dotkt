@@ -7,6 +7,7 @@ open class AuthoredReadOnlyMap<K, V>(protected val backing: MutableMap<K, V>) : 
     var getCalls = 0
     var containsCalls = 0
     var emptyCalls = 0
+    var defaultCalls = 0
     override val size: Int get() = backing.size
     override val keys: Set<K> = backing.keys
     override val values: Collection<V> = backing.values
@@ -15,10 +16,15 @@ open class AuthoredReadOnlyMap<K, V>(protected val backing: MutableMap<K, V>) : 
     override fun containsKey(key: K): Boolean { containsCalls++; return backing.containsKey(key) }
     override fun containsValue(value: V): Boolean = backing.containsValue(value)
     override fun get(key: K): V? { getCalls++; return backing[key] }
+    override fun getOrDefault(key: K, defaultValue: V): V {
+        defaultCalls++
+        return backing.getOrDefault(key, defaultValue)
+    }
 }
 
 class AuthoredMutableMap<K, V>(backing: MutableMap<K, V>) : AuthoredReadOnlyMap<K, V>(backing), MutableMap<K, V> {
     var putCalls = 0
+    var optionalCalls = 0
     override val keys: MutableSet<K> = backing.keys
     override val values: MutableCollection<V> = backing.values
     override val entries: MutableSet<MutableMap.MutableEntry<K, V>> get() = backing.entries
@@ -26,6 +32,17 @@ class AuthoredMutableMap<K, V>(backing: MutableMap<K, V>) : AuthoredReadOnlyMap<
     override fun remove(key: K): V? = backing.remove(key)
     override fun putAll(from: Map<out K, V>) = backing.putAll(from)
     override fun clear() = backing.clear()
+    override fun putIfAbsent(key: K, value: V): V? { optionalCalls++; return backing.putIfAbsent(key, value) }
+    override fun replace(key: K, value: V): V? { optionalCalls++; return backing.replace(key, value) }
+    override fun replace(key: K, oldValue: V, newValue: V): Boolean {
+        optionalCalls++
+        return backing.replace(key, oldValue, newValue)
+    }
+    override fun remove(key: K, value: V): Boolean { optionalCalls++; return backing.remove(key, value) }
+    override fun merge(key: K, value: V, remappingFunction: (V, V) -> V?): V? {
+        optionalCalls++
+        return backing.merge(key, value, remappingFunction)
+    }
 }
 
 class AuthoredMapTests {
@@ -45,6 +62,7 @@ class AuthoredMapTests {
         assertTrue(map.containsKey(1) && source.containsCalls == 1)
         assertTrue(!map.isEmpty() && source.emptyCalls == 1)
         assertTrue(map.containsValue("one"))
+        assertTrue(map.getOrDefault(2, "default") == "default" && source.defaultCalls == 1)
         assertTrue(map.keys === source.keys && map.values === source.values)
     }
 
@@ -58,6 +76,15 @@ class AuthoredMapTests {
         assertTrue(keys === source.keys && keys.contains(2))
         assertTrue(map[1] == "updated" && source.getCalls == 1)
         assertTrue(map.remove(1) == "updated" && map.remove(1) == null)
+        val entry = map.entries.first { it.key == 2 }
+        assertTrue(entry.setValue("two updated") == "two" && map[2] == "two updated")
+        assertTrue(map.putIfAbsent(3, "three") == null)
+        assertTrue(map.replace(3, "changed") == "three")
+        assertTrue(map.replace(3, "changed", "final"))
+        assertTrue(map.remove(3, "final"))
+        assertTrue(map.merge(4, "four") { a, b -> a + b } == "four")
+        assertTrue(map.merge(4, "!") { a, b -> a + b } == "four!")
+        assertTrue(source.optionalCalls == 6)
         map.clear()
         assertTrue(map.isEmpty() && keys.isEmpty())
     }
@@ -67,6 +94,7 @@ class AuthoredMapTests {
         val map: MutableMap<Int, Int?> = AuthoredMutableMap(mutableMapOf(1 to null, 2 to 0))
         assertTrue(map.containsKey(1) && map[1] == null)
         assertTrue(map[2] == 0 && !map.containsKey(3) && map[3] == null)
+        assertTrue(map.getOrDefault(1, 42) == null && map.getOrDefault(3, 42) == 42)
         assertTrue(map.put(2, 42) == 0 && map[2] == 42)
         assertTrue(map.remove(1) == null && !map.containsKey(1))
     }

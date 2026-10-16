@@ -1087,20 +1087,6 @@ static class MemberCallSubstitution
                         $"bir2cir: unresolved top-level property accessor '{fn}' ({topLevelPropertyAccess}) — "
                         + "the frontend-resolved property has no exact reference MethodSemantics association");
             }
-            // Star queries can resolve to the common OnlyInputTypes extensions rather than a member.
-            // They still own Kotlin map semantics: use the same opaque receiver dispatcher as member calls.
-            if ((fn == "get" || fn == "containsKey") && args0.Count == 2 && sigParts0.Count >= 1
-                && sigParts0[0] is TypeNode.Fqn { Name: "kotlin.collections.Map" or "kotlin.collections.MutableMap" }
-                && node["typeArgs"] is JsonArray starTypeArgs && starTypeArgs.Count >= 1
-                && starTypeArgs.All(t => IsErasedAny(TypeJson.Read(t))))
-            {
-                var receiverCall = (JsonObject)node.DeepClone();
-                receiverCall["recv"] = args0[0]?.DeepClone();
-                var erased = new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"));
-                return MapDefaultCall(receiverCall, fn == "get" ? "clrMapGet" : "clrMapContainsKey",
-                    new TypeNode.Fqn("kotlin.collections.Map", new TypeNode[] { erased, erased }),
-                    new JsonArray(args0[1]?.DeepClone()), refs, ctx);
-            }
             // A top-level @ClrIntrinsic bound to a FQ BCL static. Resolve the EXACT overload by the call's full
             // ParamKey signature first (sqrt/abs/pow -> System.Math.* for Double/Int/Long but System.MathF.* for
             // Float; a non-intrinsic sibling like Double.pow(Int) MISSES here). Fall back to the name-only map only for
