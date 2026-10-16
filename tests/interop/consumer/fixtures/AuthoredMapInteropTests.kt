@@ -9,6 +9,8 @@ class AuthoredMapInteropTests {
     @TestAttribute
     fun readOnlyImplementationSuppliesNativeDictionaryContracts() {
         assertTrue(NativeMaps.ReadOnly(NativeReadOnlyMap(mapOf(7 to "seven"))))
+        assertTrue(NativeMaps.CopyArguments(NativeReadOnlyMap(emptyMap())))
+        assertTrue(NativeMaps.CopyArguments(NativeReadOnlyMap(mapOf(7 to "seven"))))
     }
 
     @TestAttribute

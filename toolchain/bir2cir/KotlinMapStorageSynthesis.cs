@@ -61,7 +61,10 @@ static class KotlinMapStorageSynthesis
                          && f.Args is { Length: 2 }))
             {
                 var carrier = F(CarrierName, dictionary.Args);
-                if (reached.Any(f => f == carrier)) continue;
+                if (reached.Any(f => ReferenceMetadataIndex.BareOwnerFqn(f.Name) == CarrierName
+                        && f.Args is { Length: 2 }
+                        && f.Args.Zip(dictionary.Args).All(pair =>
+                            ClrMemberResolution.SameInterfaceSlotType(pair.First, pair.Second)))) continue;
                 if (def.Node["interfaces"] is not JsonArray interfaces)
                     def.Node["interfaces"] = interfaces = new JsonArray();
                 interfaces.Add(TypeJson.Write(carrier));
@@ -181,7 +184,23 @@ static class KotlinMapStorageSynthesis
                 Cast(F(Collection, element), Helper(refs, "clrAuthoredMapCollection", Any, new[] { element },
                     new TypeNode[] { new TypeNode.Fqn("kotlin.Any") }, Slot(slot, Any)))))));
         var copy = CollectionBclSlotSynthesis.CopyTo(TypeJson.Write(Pair));
-        methods.Add(Method(collection, "CopyTo", Void, (JsonArray)copy["params"].DeepClone(), (JsonArray)copy["body"].DeepClone()));
+        JsonObject Binary(string op, JsonNode left, JsonNode right) => new() {
+            ["k"] = "binOp", ["op"] = op, ["lhs"] = left, ["rhs"] = right,
+        };
+        JsonObject Throw(string type) => new() { ["k"] = "throw", ["value"] = new JsonObject {
+            ["k"] = "new", ["type"] = TypeJson.Fqn(type), ["argTypes"] = new JsonArray(), ["args"] = new JsonArray(),
+        } };
+        var copyBody = (JsonArray)copy["body"].DeepClone();
+        copyBody.Insert(0, If(Binary(">", Slot("dotktMapSize", Int), Binary("-",
+            Call(F("System.Array"), "get_Length", Int, Local("array"), Array.Empty<TypeNode>()), Local("arrayIndex"))),
+            Throw("System.ArgumentException")));
+        copyBody.Insert(0, If(Binary("<", Local("arrayIndex"), new JsonObject {
+            ["k"] = "const", ["type"] = TypeJson.Write(Int), ["value"] = 0,
+        }), Throw("System.ArgumentOutOfRangeException")));
+        copyBody.Insert(0, If(Binary("==", Cast(Any, Local("array")), new JsonObject {
+            ["k"] = "const", ["type"] = TypeJson.Write(Any), ["value"] = null,
+        }), Throw("System.ArgumentNullException")));
+        methods.Add(Method(collection, "CopyTo", Void, (JsonArray)copy["params"].DeepClone(), copyBody));
         JsonObject Enumerator() => new() {
             ["k"] = "new", ["type"] = TypeJson.Write(F(EnumeratorName, Pair)),
             ["localCtorIndex"] = 0,

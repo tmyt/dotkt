@@ -50,4 +50,21 @@ public static class NativeMaps
     }
 
     public static object Echo(object source) => (IDictionary<int, int>)source;
+
+    public static bool CopyArguments(object source)
+    {
+        var pairs = (ICollection<KeyValuePair<int, string>>)source;
+        var empty = Array.Empty<KeyValuePair<int, string>>();
+        if (!Throws<ArgumentNullException>(() => pairs.CopyTo(null, 0))
+            || !Throws<ArgumentOutOfRangeException>(() => pairs.CopyTo(empty, -1))
+            || !Throws<ArgumentException>(() => pairs.CopyTo(empty, 1))) return false;
+        return pairs.Count == 0 || Throws<ArgumentException>(() => pairs.CopyTo(empty, 0));
+    }
+
+    private static bool Throws<T>(Action action) where T : Exception
+    {
+        try { action(); return false; }
+        catch (T) { return true; }
+        catch { return false; }
+    }
 }

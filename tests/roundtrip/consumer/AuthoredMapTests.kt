@@ -4,6 +4,7 @@ import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
 import roundtrip.authoredmap.*
 import roundtrip.authoredmap.get as customGet
+import AuthoredMapRoundtrip.NativeDictionary
 
 private fun customStarQuery(map: Map<*, *>, key: Any?): Any? = map.customGet(key)
 
@@ -30,5 +31,6 @@ class AuthoredMapTests {
         assertTrue(map[7] == "local" && readImportedMap(map) == "local")
         assertTrue(source.get("seven") == "unrelated overload")
         assertTrue(map.size == 1 && map.containsKey(7))
+        assertTrue(NativeDictionary.Count(source) == 1 && NativeDictionary.Get(source, 7) == "local")
     }
 }
