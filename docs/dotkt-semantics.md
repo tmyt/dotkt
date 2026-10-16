@@ -170,8 +170,9 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   `IEnumerable` where that face is faithful; `println` of such an erased value renders via
   the runtime-detecting `clrElemToString`. (A `<*>` value can only be used non-generically anyway.) This is the same
   invariance that requires §5c's separation of opaque `Map` values from exact dictionary constructions. #60.
-  `Map<*,*>` and `MutableMap<*,*>` recognize authored map capabilities or a real generic `IDictionary<,>` face,
-  without requiring non-generic dictionary inheritance. Authored read-only maps do not gain Kotlin mutability
+  `Map<*,*>` and `MutableMap<*,*>` recognize authored map capabilities, a real generic `IDictionary<,>` face,
+  or the existing non-generic `IDictionary` face (including `Hashtable`),
+  without requiring generic dictionaries to inherit non-generic dictionaries. Authored read-only maps do not gain Kotlin mutability
   from their native dictionary facade. Map queries use the same semantic dispatchers as typed calls.
   `Collection<*>`, `MutableCollection<*>`, `List<*>`, `MutableList<*>`,
   `Set<*>`, and `MutableSet<*>` use a shared composite `is`/`as?`/`as` classifier because one raw BCL face is insufficient: emitted

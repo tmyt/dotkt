@@ -3,6 +3,26 @@ import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
 
 private fun authoredMapQuery(source: Any, key: Any?): Any? = (source as Map<*, *>)[key]
 
+open class AuthoredPlainMapOperations<K, V>(protected val data: MutableMap<K, V>) {
+    open val size: Int get() = data.size
+    open val keys: MutableSet<K> get() = data.keys
+    open val values: MutableCollection<V> get() = data.values
+    open val entries: MutableSet<MutableMap.MutableEntry<K, V>> get() = data.entries
+    open fun isEmpty(): Boolean = data.isEmpty()
+    open fun containsKey(key: K): Boolean = data.containsKey(key)
+    open fun containsValue(value: V): Boolean = data.containsValue(value)
+    open fun get(key: K): V? = data[key]
+    open fun put(key: K, value: V): V? = data.put(key, value)
+    open fun remove(key: K): V? = data.remove(key)
+    open fun putAll(from: Map<out K, V>) = data.putAll(from)
+    open fun clear() = data.clear()
+}
+
+private class AuthoredPlainInheritedMap<K, V>(data: MutableMap<K, V>) :
+    AuthoredPlainMapOperations<K, V>(data), MutableMap<K, V> {
+    override fun get(key: K): V? = super.get(key)
+}
+
 open class AuthoredReadOnlyMap<K, V>(protected val backing: MutableMap<K, V>) : Map<K, V> {
     var getCalls = 0
     var containsCalls = 0
@@ -52,6 +72,11 @@ class AuthoredMapTests {
         assertTrue(map.size == 0 && map.isEmpty())
         assertTrue(map["missing"] == null && !map.containsKey("missing"))
         assertTrue(map.keys.isEmpty() && map.values.isEmpty() && map.entries.isEmpty())
+        val inherited: MutableMap<Int, String> = AuthoredPlainInheritedMap(mutableMapOf(1 to "one"))
+        assertTrue(inherited.size == 1 && inherited[1] == "one")
+        assertTrue(inherited.put(2, "two") == null && inherited.containsKey(2))
+        inherited.clear()
+        assertTrue(inherited.isEmpty())
     }
 
     @TestAttribute
@@ -97,6 +122,8 @@ class AuthoredMapTests {
         assertTrue(map.getOrDefault(1, 42) == null && map.getOrDefault(3, 42) == 42)
         assertTrue(map.put(2, 42) == 0 && map[2] == 42)
         assertTrue(map.remove(1) == null && !map.containsKey(1))
+        val numbers: MutableMap<Int, Int> = AuthoredMutableMap(mutableMapOf(1 to 2))
+        assertTrue(numbers.merge(1, 3) { a, b -> a + b } == 5)
     }
 
     @TestAttribute

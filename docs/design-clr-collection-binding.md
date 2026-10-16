@@ -72,7 +72,8 @@ Members with direct BCL equivalents are substituted from stdlib metadata, for ex
 
 Authored `Map` and `MutableMap` implementations carry independent read and mutation capabilities selected by
 Kotlin override identity. Map dispatchers preserve their original getters, views, and overrides, including through
-erased or inherited references. A separate physical carrier fulfills all native `IDictionary<K,V>`,
+erased or inherited references. One canonical stdlib carrier, also declared in its reference twin,
+fulfills all native `IDictionary<K,V>`,
 `ICollection<KeyValuePair<K,V>>`, and generic/non-generic enumeration slots. It translates missing-key and mutation
 return conventions, rejects mutation of read-only maps, and exposes checked live native key/value views without
 replacing the Kotlin views. Native enumeration constructs real CLR pairs from Kotlin entries; the two entry types

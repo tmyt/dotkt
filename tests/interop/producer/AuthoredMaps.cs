@@ -50,6 +50,13 @@ public static class NativeMaps
     }
 
     public static object Echo(object source) => (IDictionary<int, int>)source;
+    public static object RawDictionary() => new Hashtable { ["a"] = 1 };
+
+    public static bool AbstractMap(object source)
+    {
+        var map = (IDictionary<string, int>)source;
+        return map.Count == 1 && map["a"] == 1;
+    }
 
     public static bool CopyArguments(object source)
     {

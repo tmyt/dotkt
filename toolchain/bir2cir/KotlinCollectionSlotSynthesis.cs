@@ -182,12 +182,14 @@ static class KotlinCollectionSlotSynthesis
         public int Arity;
     }
 
-    public static void ApplyAll(IEnumerable<JsonNode> roots)
+    public static void ApplyAll(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs, ValueTypeOracle isValue)
     {
+        var rootList = roots.ToList();
+        var inherited = KotlinOverrideSlotBridge.SelectedInheritedMapMethods(rootList, refs, isValue);
         var defs = new Dictionary<string, Def>(StringComparer.Ordinal);
-        foreach (var root in roots) Collect(root, defs);
+        foreach (var root in rootList) Collect(root, defs);
         foreach (var def in defs.Values.Where(d => d.Kind is "class" or "interface").ToList())
-            ApplyType(def, defs);
+            ApplyType(def, defs, inherited.TryGetValue(def.Name, out var methods) ? methods : null);
     }
 
     static void Collect(JsonNode node, Dictionary<string, Def> defs)
@@ -211,7 +213,8 @@ static class KotlinCollectionSlotSynthesis
         }
     }
 
-    static void ApplyType(Def cls, IReadOnlyDictionary<string, Def> defs)
+    static void ApplyType(Def cls, IReadOnlyDictionary<string, Def> defs,
+        IReadOnlyList<(TypeNode.Fqn Owner, JsonObject Method)> inheritedMethods)
     {
         if (cls.Methods == null) return;
         // A class whose BASE CHAIN already carries a slot interface needs nothing of its own: that base's bridge
@@ -227,7 +230,7 @@ static class KotlinCollectionSlotSynthesis
             // Does this class PARTICIPATE in the slot? Exactly when a declaration reachable from it overrides the
             // Kotlin member: its own first, else a concrete declaration in its local supertype closure (a base-class
             // body, or an interface DEFAULT method for which the frontend emits nothing on the implementing class).
-            if (!TryResolveImplementation(cls, slot, defs, out var target)) continue;
+            if (!TryResolveImplementation(cls, slot, defs, inheritedMethods, out var target)) continue;
             if (cls.Methods.OfType<JsonObject>().Any(m => Str(m["name"]) == slot.Bridge)) continue;
             newBridges.Add(Bridge(cls, slot, target));
             wanted.Add(slot.SlotInterface);
@@ -291,13 +294,20 @@ static class KotlinCollectionSlotSynthesis
 
     /// <summary>Where the slot's Kotlin member is really implemented, expressed in this class's own frame.</summary>
     static bool TryResolveImplementation(Def cls, Slot slot, IReadOnlyDictionary<string, Def> defs,
-        out (TypeNode.Fqn Owner, JsonObject Method) target)
+        IReadOnlyList<(TypeNode.Fqn Owner, JsonObject Method)> inheritedMethods,
+        out (TypeNode.Fqn Owner, JsonObject Method, bool Closed) target)
     {
         target = default;
         // 1. This class's own declaration wins, and it is the common case.
         if (DeclaresConcretely(cls, slot) is JsonObject own)
         {
-            target = (SelfOwner(cls), own);
+            target = (SelfOwner(cls), own, false);
+            return true;
+        }
+        var selected = inheritedMethods?.Where(method => Overrides(method.Method, slot)).ToList();
+        if (selected is { Count: 1 })
+        {
+            target = (selected[0].Owner, selected[0].Method, true);
             return true;
         }
         // 2. Otherwise the implementation is inherited. Walk the LOCAL supertype closure — base classes and
@@ -308,7 +318,7 @@ static class KotlinCollectionSlotSynthesis
         foreach (var (spec, def) in LocalSupertypeClosure(cls, defs))
         {
             if (DeclaresConcretely(def, slot) is not JsonObject inheritedMethod) continue;
-            target = (spec, inheritedMethod);
+            target = (spec, inheritedMethod, false);
             return true;
         }
         return false;
@@ -367,7 +377,7 @@ static class KotlinCollectionSlotSynthesis
     /// retain their original reference. The forward is VIRTUAL: the bridge is inherited by
     /// subclasses and must reach the most-derived override.
     /// </summary>
-    static JsonObject Bridge(Def cls, Slot slot, (TypeNode.Fqn Owner, JsonObject Method) target)
+    static JsonObject Bridge(Def cls, Slot slot, (TypeNode.Fqn Owner, JsonObject Method, bool Closed) target)
     {
         var declaredParams = (target.Method["params"] as JsonArray)?.OfType<JsonObject>()
             .Select(p => TypeJson.Read(p["type"])).ToArray() ?? Array.Empty<TypeNode>();
@@ -378,13 +388,14 @@ static class KotlinCollectionSlotSynthesis
                 + $"{declaredParams.Length} readable parameter(s), but the slot declares {slot.Arity} parameter(s) and "
                 + $"{slot.Parameters.Length} carrier fact(s).");
         var ownerArgs = target.Owner.Args ?? Array.Empty<TypeNode>();
+        TypeNode InCaller(TypeNode type) => target.Closed ? type : Subst(type, ownerArgs);
         var bridgeParams = new JsonArray();
         var slotParams = new JsonArray();
         var callSig = new JsonArray();
         var callArgs = new JsonArray();
         for (var i = 0; i < declaredParams.Length; i++)
         {
-            var declared = Subst(declaredParams[i], ownerArgs);
+            var declared = InCaller(declaredParams[i]);
             // The ERASED positions are the ones the SLOT INTERFACE declares as `Any`; `MutableList.addAll(index,
             // elements)`'s leading `Int` index stays verbatim. Both facts come from the Kotlin slot declaration, not
             // from inspecting what a parameter type happens to look like.
@@ -419,7 +430,7 @@ static class KotlinCollectionSlotSynthesis
             });
         }
 
-        var targetRet = Subst(TypeJson.Read(target.Method["ret"]) ?? new TypeNode.Fqn("kotlin.Boolean"), ownerArgs);
+        var targetRet = InCaller(TypeJson.Read(target.Method["ret"]) ?? new TypeNode.Fqn("kotlin.Boolean"));
         var slotRet = slot.EraseReturn
             ? slot.NullableReturn ? (TypeNode)new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"))
                 : new TypeNode.Fqn("kotlin.Any") : targetRet;
@@ -432,12 +443,18 @@ static class KotlinCollectionSlotSynthesis
             // as an ordinary Kotlin receiver call and bind it back to the slot this bridge implements.
             ["clrOwnerResolved"] = true,
             ["recv"] = new JsonObject { ["k"] = "this" },
-            ["method"] = Str(target.Method["name"]),
+            ["method"] = Str(target.Method[DeclarationIdentityBinding.ExplicitNameKey]) ?? Str(target.Method["name"]),
             ["sig"] = callSig,
             ["ret"] = TypeJson.Write(targetRet),
             ["args"] = callArgs,
         };
-        if (slot.Kind == "getter")
+        if (target.Closed)
+        {
+            forwarded["dynRet"] = TypeJson.Write(targetRet);
+            forwarded["calleeParams"] = target.Method["inheritedDeclarationSignature"]?.DeepClone();
+        }
+        if (slot.Kind == "getter" && (!target.Closed
+                || Str(target.Method[DeclarationIdentityBinding.ExplicitNameKey]) == Str(target.Method["name"])))
         {
             if (!KotlinPropertyAccessors.TryIdentity(target.Method, out var property, out var accessor))
                 throw new InvalidOperationException("Map getter bridge has no declaration-owned property identity");
@@ -445,7 +462,7 @@ static class KotlinCollectionSlotSynthesis
             forwarded["prop"] = accessor;
             KotlinPropertyAccessors.PreserveCallIdentity((JsonObject)forwarded, property, accessor);
         }
-        if (target.Method[DeclarationIdentityBinding.Key] is JsonNode declarationId)
+        if ((target.Method["inheritedDeclarationId"] ?? target.Method[DeclarationIdentityBinding.Key]) is JsonNode declarationId)
             forwarded[DeclarationIdentityBinding.Key] = declarationId.DeepClone();
         if (slot.EraseReturn)
             forwarded = new JsonObject { ["k"] = "cast", ["type"] = TypeJson.Write(slotRet), ["e"] = forwarded };
@@ -458,7 +475,7 @@ static class KotlinCollectionSlotSynthesis
                 {
                     ["k"] = "cond",
                     ["type"] = TypeJson.Write(slotRet),
-                    ["cond"] = ErasedValueCompatible(Subst(declaredParams[i], ownerArgs), "p" + i),
+                    ["cond"] = ErasedValueCompatible(InCaller(declaredParams[i]), "p" + i),
                     ["then"] = forwarded,
                     ["else"] = ErasedQueryMiss(slot),
                 };

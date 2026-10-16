@@ -5,7 +5,8 @@ using System.Text.Json.Nodes;
 using DotKt.Bir;
 
 // Kotlin Map operations and native IDictionary slots have different contracts. This physical
-// carrier supplies the complete native face while dispatching through the selected Kotlin slots.
+// canonical stdlib carrier supplies the native face while dispatching through the selected Kotlin slots.
+// Its declared reference-twin surface and runtime definition share one identity across consuming modules.
 static class KotlinMapStorageSynthesis
 {
     const string CarrierName = "DotKt.Runtime.CompilerServices.dotkt$KotlinMapStorage";
@@ -47,10 +48,10 @@ static class KotlinMapStorageSynthesis
             Cast(F(KotlinCollectionSlotSynthesis.MapSlots), Self()),
             args.Select(_ => Any).ToArray(), args);
 
-    internal static IReadOnlyList<string> ApplyAll(IReadOnlyList<JsonNode> roots, ReferenceMetadataIndex refs)
+    internal static IReadOnlyList<string> ApplyAll(IReadOnlyList<JsonNode> roots, ReferenceMetadataIndex refs,
+        bool defineCarrier)
     {
         var defs = SupertypeGraph.Collect(roots);
-        var used = false;
         foreach (var def in defs.Values)
         {
             if (def.Kind != "class") continue;
@@ -68,15 +69,22 @@ static class KotlinMapStorageSynthesis
                 if (def.Node["interfaces"] is not JsonArray interfaces)
                     def.Node["interfaces"] = interfaces = new JsonArray();
                 interfaces.Add(TypeJson.Write(carrier));
-                used = true;
             }
         }
-        if (!used) return Array.Empty<string>();
+        if (!defineCarrier) return Array.Empty<string>();
         var host = roots.OfType<JsonObject>().First();
         if (host["types"] is not JsonArray types) host["types"] = types = new JsonArray();
         types.Add(Carrier(refs));
         types.Add(ReverseEnumeratorBridgeSynthesis.Adapter(EnumeratorName, refs));
         return new[] { CarrierName, EnumeratorName };
+    }
+
+    internal static string EmitReferenceSurface(IReadOnlyList<JsonNode> roots)
+    {
+        var host = roots.OfType<JsonObject>().First();
+        if (host["types"] is not JsonArray types) host["types"] = types = new JsonArray();
+        types.Add(Carrier(null, declarationOnly: true));
+        return CarrierName;
     }
 
     static JsonObject Method(TypeNode owner, string member, TypeNode ret, JsonArray parameters, JsonArray body)
@@ -111,7 +119,7 @@ static class KotlinMapStorageSynthesis
         };
     }
 
-    static JsonObject Carrier(ReferenceMetadataIndex refs)
+    static JsonObject Carrier(ReferenceMetadataIndex refs, bool declarationOnly = false)
     {
         var dictionary = F(Dictionary, K, V);
         var collection = F(Collection, Pair);
@@ -153,34 +161,40 @@ static class KotlinMapStorageSynthesis
             ["ptr"] = Local("value"), ["elem"] = TypeJson.Write(V), ["value"] = value });
         JsonArray KeyParams() => new(Parameter("key", K));
         JsonArray PairParams() => new(Parameter("pair", Pair));
+        JsonObject Define(TypeNode owner, string member, TypeNode ret, JsonArray parameters, Func<JsonArray> body) =>
+            Method(owner, member, ret, parameters, declarationOnly
+                ? new JsonArray(new JsonObject { ["k"] = "throw", ["value"] = new JsonObject {
+                    ["k"] = "new", ["type"] = TypeJson.Fqn("System.NotSupportedException"),
+                    ["argTypes"] = new JsonArray(), ["args"] = new JsonArray(),
+                } }) : body());
         var methods = new JsonArray {
-            Method(dictionary, "get_Item", V, KeyParams(), new JsonArray(If(Contains(), Return(Get())), ThrowMissing())),
-            Method(dictionary, "ContainsKey", Bool, KeyParams(), new JsonArray(Return(Contains()))),
-            Method(dictionary, "set_Item", Void, new JsonArray(Parameter("key", K), Parameter("value", V)),
-                new JsonArray(Expr(NativeHelper("clrAuthoredMapSet", Void, Cast(Any, key.DeepClone()), Cast(Any, Local("value")))))),
-            Method(dictionary, "Add", Void, new JsonArray(Parameter("key", K), Parameter("value", V)),
-                new JsonArray(Expr(NativeHelper("clrAuthoredMapAdd", Void, Cast(Any, key.DeepClone()), Cast(Any, Local("value")))))),
-            Method(dictionary, "Remove", Bool, KeyParams(), new JsonArray(Return(
+            Define(dictionary, "get_Item", V, KeyParams(), () => new JsonArray(If(Contains(), Return(Get())), ThrowMissing())),
+            Define(dictionary, "ContainsKey", Bool, KeyParams(), () => new JsonArray(Return(Contains()))),
+            Define(dictionary, "set_Item", Void, new JsonArray(Parameter("key", K), Parameter("value", V)),
+                () => new JsonArray(Expr(NativeHelper("clrAuthoredMapSet", Void, Cast(Any, key.DeepClone()), Cast(Any, Local("value")))))),
+            Define(dictionary, "Add", Void, new JsonArray(Parameter("key", K), Parameter("value", V)),
+                () => new JsonArray(Expr(NativeHelper("clrAuthoredMapAdd", Void, Cast(Any, key.DeepClone()), Cast(Any, Local("value")))))),
+            Define(dictionary, "Remove", Bool, KeyParams(), () => new JsonArray(Return(
                 NativeHelper("clrAuthoredMapRemove", Bool, Cast(Any, key.DeepClone()))))),
-            Method(dictionary, "TryGetValue", Bool, new JsonArray(Parameter("key", K), Parameter("value", new TypeNode.ByRef(V))),
-                new JsonArray(If(Contains(), Store(Get()), Return(Constant(Bool, true))),
+            Define(dictionary, "TryGetValue", Bool, new JsonArray(Parameter("key", K), Parameter("value", new TypeNode.ByRef(V))),
+                () => new JsonArray(If(Contains(), Store(Get()), Return(Constant(Bool, true))),
                     Store(new JsonObject { ["k"] = "default", ["type"] = TypeJson.Write(V) }), Return(Constant(Bool, false)))),
-            Method(collection, "get_Count", Int, new JsonArray(), new JsonArray(Return(Slot("dotktMapSize", Int)))),
-            Method(collection, "get_IsReadOnly", Bool, new JsonArray(), new JsonArray(Return(new JsonObject {
+            Define(collection, "get_Count", Int, new JsonArray(), () => new JsonArray(Return(Slot("dotktMapSize", Int)))),
+            Define(collection, "get_IsReadOnly", Bool, new JsonArray(), () => new JsonArray(Return(new JsonObject {
                 ["k"] = "unaryOp", ["op"] = "!", ["e"] = new JsonObject { ["k"] = "isInst",
                     ["type"] = TypeJson.Fqn(KotlinCollectionSlotSynthesis.MutableMapSlots), ["e"] = Self() },
             }))),
-            Method(collection, "Add", Void, PairParams(), new JsonArray(Expr(NativeHelper("clrAuthoredMapAdd", Void,
+            Define(collection, "Add", Void, PairParams(), () => new JsonArray(Expr(NativeHelper("clrAuthoredMapAdd", Void,
                 Cast(Any, PairPart("Key", K)), Cast(Any, PairPart("Value", V)))))),
-            Method(collection, "Clear", Void, new JsonArray(), new JsonArray(Expr(NativeHelper("clrAuthoredMapClear", Void)))),
-            Method(collection, "Contains", Bool, PairParams(), new JsonArray(Return(PairMatches()))),
-            Method(collection, "Remove", Bool, PairParams(), new JsonArray(
+            Define(collection, "Clear", Void, new JsonArray(), () => new JsonArray(Expr(NativeHelper("clrAuthoredMapClear", Void)))),
+            Define(collection, "Contains", Bool, PairParams(), () => new JsonArray(Return(PairMatches()))),
+            Define(collection, "Remove", Bool, PairParams(), () => new JsonArray(
                 Expr(NativeHelper("clrAuthoredMapCheckMutable", Void)),
                 If(PairMatches(), Return(NativeHelper("clrAuthoredMapRemove", Bool, Cast(Any, PairPart("Key", K))))),
                 Return(Constant(Bool, false)))),
         };
         foreach (var (member, slot, element) in new[] { ("get_Keys", "dotktMapKeys", K), ("get_Values", "dotktMapValues", V) })
-            methods.Add(Method(dictionary, member, F(Collection, element), new JsonArray(), new JsonArray(Return(
+            methods.Add(Define(dictionary, member, F(Collection, element), new JsonArray(), () => new JsonArray(Return(
                 Cast(F(Collection, element), Helper(refs, "clrAuthoredMapCollection", Any, new[] { element },
                     new TypeNode[] { new TypeNode.Fqn("kotlin.Any") }, Slot(slot, Any)))))));
         var copy = CollectionBclSlotSynthesis.CopyTo(TypeJson.Write(Pair));
@@ -200,7 +214,7 @@ static class KotlinMapStorageSynthesis
         copyBody.Insert(0, If(Binary("==", Cast(Any, Local("array")), new JsonObject {
             ["k"] = "const", ["type"] = TypeJson.Write(Any), ["value"] = null,
         }), Throw("System.ArgumentNullException")));
-        methods.Add(Method(collection, "CopyTo", Void, (JsonArray)copy["params"].DeepClone(), copyBody));
+        methods.Add(Define(collection, "CopyTo", Void, (JsonArray)copy["params"].DeepClone(), () => copyBody));
         JsonObject Enumerator() => new() {
             ["k"] = "new", ["type"] = TypeJson.Write(F(EnumeratorName, Pair)),
             ["localCtorIndex"] = 0,
@@ -209,11 +223,11 @@ static class KotlinMapStorageSynthesis
                 "clrAuthoredMapIterator", Any, new[] { K, V }, new TypeNode[] { new TypeNode.Fqn("kotlin.Any") },
                 Slot("dotktMapEntries", Any)))),
         };
-        methods.Add(Method(enumerable, "GetEnumerator", iterator, new JsonArray(), new JsonArray(Return(Enumerator()))));
-        methods.Add(Method(F(RawEnumerable), "GetEnumerator", F("System.Collections.IEnumerator"),
-            new JsonArray(), new JsonArray(Return(Enumerator()))));
+        methods.Add(Define(enumerable, "GetEnumerator", iterator, new JsonArray(), () => new JsonArray(Return(Enumerator()))));
+        methods.Add(Define(F(RawEnumerable), "GetEnumerator", F("System.Collections.IEnumerator"),
+            new JsonArray(), () => new JsonArray(Return(Enumerator()))));
         return new JsonObject {
-            ["name"] = CarrierName, ["kind"] = "interface", ["vis"] = "internal", ["generated"] = true,
+            ["name"] = CarrierName, ["kind"] = "interface", ["vis"] = "public", ["generated"] = true,
             ["typeParams"] = new JsonArray("K", "V"), ["base"] = null,
             ["fields"] = new JsonArray(), ["ctors"] = new JsonArray(), ["methods"] = methods,
             ["interfaces"] = new JsonArray(TypeJson.Write(dictionary), TypeJson.Fqn(KotlinCollectionSlotSynthesis.MapSlots)),

@@ -288,7 +288,7 @@ internal fun kotlinCollectionMatches(value: Any?, witness: Int, dictionary: Star
     if ((witness and -2) == 18 || (witness and -2) == 20) {
         if (value is KotlinMapDefaultSlots)
             return (witness and -2) == 18 || value is KotlinMutableMapSlots
-        return starProjectionHasView(value.starProjectionRuntimeType(), dictionary)
+        return value is kotlin.collections.ClrRawDictionary || starProjectionHasView(value.starProjectionRuntimeType(), dictionary)
     }
     if (value !is KotlinIterableClassifier) return when (witness and -2) {
         14, 16 -> foreignKotlinIterable(value, dictionary, readOnlyDictionary, set, readOnlySet,
@@ -359,7 +359,7 @@ internal fun starProjectionKotlinCollectionIsInstance(
     if (value == null) return false
     if (kind == 6 || kind == 7) {
         if (value is KotlinMapDefaultSlots) return kind == 6 || value is KotlinMutableMapSlots
-        return starProjectionHasView(value.starProjectionRuntimeType(), firstOpenType)
+        return value is kotlin.collections.ClrRawDictionary || starProjectionHasView(value.starProjectionRuntimeType(), firstOpenType)
     }
     if (kind == 2 && value is KotlinMutableSetClassifier) return true
     if (kind == 1 && value is KotlinSetClassifier) return true

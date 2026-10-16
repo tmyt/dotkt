@@ -690,12 +690,14 @@ static class KotlinOverrideSlotBridge
     static void CollectInheritedClassMethods(Def cls, IReadOnlyDictionary<string, Def> defs,
         ReferenceMetadataIndex refs, ValueTypeOracle isValue, List<JsonObject> candidates,
         Dictionary<JsonObject, TypeNode.Fqn> inheritedOwners,
-        Dictionary<JsonObject, TypeNode[]> inheritedSignatures, bool suspendValues)
+        Dictionary<JsonObject, TypeNode[]> inheritedSignatures, bool suspendValues,
+        Func<JsonObject, bool> includeFact = null)
     {
         if (cls.Node["inheritedClassMethods"] is not JsonArray facts) return;
         var bases = SupertypeGraph.Reachable(cls, defs, refs).Where(edge => !edge.isInterface).ToList();
         foreach (var fact in facts.OfType<JsonObject>())
         {
+            if (includeFact != null && !includeFact(fact)) continue;
             if (fact[KotlinPropertyAccessors.InheritedImplementationKey] is not JsonObject implementation
                 || TypeJson.OwnerName(implementation["owner"]) is not string ownerName
                 || Str(implementation["member"]) is not string member
@@ -817,6 +819,25 @@ static class KotlinOverrideSlotBridge
                 }
             }
         }
+    }
+
+    internal static Dictionary<string, List<(TypeNode.Fqn Owner, JsonObject Method)>> SelectedInheritedMapMethods(
+        IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs, ValueTypeOracle isValue)
+    {
+        var defs = SupertypeGraph.Collect(roots);
+        var selected = new Dictionary<string, List<(TypeNode.Fqn, JsonObject)>>(StringComparer.Ordinal);
+        foreach (var cls in defs.Values.Where(def => def.Kind == "class"))
+        {
+            var methods = new List<JsonObject>();
+            var owners = new Dictionary<JsonObject, TypeNode.Fqn>();
+            var signatures = new Dictionary<JsonObject, TypeNode[]>();
+            CollectInheritedClassMethods(cls, defs, refs, isValue, methods, owners, signatures,
+                suspendValues: false, includeFact: fact => fact["overrides"] is JsonArray overrides
+                    && overrides.OfType<JsonObject>().Any(KotlinCollectionSlotSynthesis.OwnsMapOverride));
+            if (methods.Count != 0)
+                selected[cls.Name] = methods.Select(method => (owners[method], method)).ToList();
+        }
+        return selected;
     }
 
     static bool SameSelectedSuspendDeclaration(IReadOnlyList<JsonObject> projections)

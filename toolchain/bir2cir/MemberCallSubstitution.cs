@@ -1668,9 +1668,7 @@ static class MemberCallSubstitution
         // most Kotlin map members have no 1:1 IDictionary equivalent — `get` is null-on-missing while get_Item THROWS,
         // put/remove return the previous value, and the keys/values/entries views are Kotlin-typed. Route them to the
         // rt's ClrMapDefaults statics, generic over BOTH type args (the 2-type-arg mirror of CollDefaultCall). Members
-        // that DO bind 1:1 (@ClrIntrinsic size/containsKey/clear + MutableMap values) were already renamed to
-        // their BCL slot by DeclarationRename and fall through to Rule 4; the defensive get_keys/get_values entries
-        // below catch an un-renamed MutableMap accessor call (no overrides metadata) as a direct property read.
+        // Source map members use this semantic dispatcher; already-bound native CLR calls retain their own slots.
         if (instance && kind == "interface" &&
             (ownerFqn == "kotlin.collections.Map" || ownerFqn == "kotlin.collections.MutableMap"))
         {
@@ -1679,8 +1677,6 @@ static class MemberCallSubstitution
             var helper = MapDefaultHelper(member, semanticPropertyAccess, args.Count, mutable);
             if (helper != null)
                 return MapDefaultCall(node, helper, ownerFqnNode, args, refs, ctx);
-            if (mutable && semanticPropertyAccess == "get" && args.Count == 0 && member == "values")
-                return ClrPropNode(node, clrOwner, "Values", ClrPropRead, member, args, "get");
             // else fall through to Rule 4: an already-BCL member name on the aliased IDictionary owner.
         }
 
