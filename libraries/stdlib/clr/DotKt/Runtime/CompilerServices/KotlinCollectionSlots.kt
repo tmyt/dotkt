@@ -56,7 +56,7 @@ internal interface KotlinMutableSetClassifier : KotlinSetClassifier, KotlinMutab
 // constructed capability test would have to be re-argued from scratch after any change to a dispatcher's parameter
 // typing, and getting it wrong is fail-OPEN: the override is skipped with no diagnostic. The erased test
 // cannot be defeated that way and costs strictly less (one non-generic `isinst`). A collection-argument bridge
-// re-establishes the implementer's exact element instantiation. The iterator dispatcher instead adapts the returned
+// forwards the original opaque collection value unchanged. The iterator dispatcher instead adapts the returned
 // exact `MutableIterator<E>` at an erased/star call site; it cannot rely on CLR covariance because value-type generic
 // arguments do not participate in variance.
 //

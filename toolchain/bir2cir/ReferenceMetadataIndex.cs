@@ -2104,18 +2104,16 @@ sealed partial class ReferenceMetadataIndex
     /// collapses, and a value type's nullability, which the surface cannot express at all because `kotlin.Float`
     /// is a class there and `Nullable&lt;class&gt;` is not a type. Each of those was found by a build failing on it.
     ///
-    /// So read the shipped declaration instead of reconstructing it. Selection stays here, where it belongs, and
-    /// refuses rather than guesses: same declaring type name, same member name, same generic arity, same parameter
-    /// count, and exactly one candidate. An ambiguous or absent twin falls back to the reflected member, which is
-    /// correct for every reference whose twin is itself (a BCL assembly is its own physical form).
+    /// So read the shipped declaration instead of reconstructing it. Authored declarations retain their trusted
+    /// IDs in both twins: exactly one runtime MethodDef must carry the selected ID, regardless of erased slots or
+    /// signature modifiers. A BCL declaration has no separate owner and remains its own physical form.
     /// </remarks>
     readonly Dictionary<MemberInfo, MemberInfo> _shippedCache = new();
 
     public MethodBase PhysicalTwinOf(MethodBase member, Type declaringDef)
     {
         if (_shippedCache.TryGetValue(member, out var cached)) return cached as MethodBase;
-        MethodBase found = null;
-        try { found = FindShippedMethod(member, declaringDef); } catch { found = null; }
+        var found = FindShippedMethod(member, declaringDef);
         _shippedCache[member] = found;
         return found;
     }
@@ -2125,6 +2123,19 @@ sealed partial class ReferenceMetadataIndex
         var owner = PhysicalOwnerOf(declaringDef);
         if (owner == null) return null;
         var arity = member.IsGenericMethod ? member.GetGenericArguments().Length : 0;
+        var identity = KotlinDeclarationIdentityPayload(member.GetCustomAttributesData(),
+            member.DeclaringType?.Assembly, arity)?.Id;
+        if (identity != null)
+        {
+            var declarations = member is ConstructorInfo
+                ? owner.GetConstructors(MemberProbeFlags).Cast<MethodBase>()
+                : owner.GetMethods(MemberProbeFlags).Cast<MethodBase>();
+            return SelectDeclarationTwin(declarations, candidate =>
+                KotlinDeclarationIdentityPayload(candidate.GetCustomAttributesData(),
+                    candidate.DeclaringType?.Assembly,
+                    candidate.IsGenericMethod ? candidate.GetGenericArguments().Length : 0)?.Id,
+                identity);
+        }
         var want = member.GetParameters();
         var candidates = (member is ConstructorInfo
                 // A type initializer is a constructor to reflection and never a member anything references, so it
@@ -2149,6 +2160,14 @@ sealed partial class ReferenceMetadataIndex
             .Where(m => string.Join(",", m.GetParameters().Select(p => TwinStableKey(p.ParameterType))) == key)
             .ToList();
         return matched.Count == 1 ? matched[0] : null;
+    }
+
+    internal static T SelectDeclarationTwin<T>(IEnumerable<T> declarations, Func<T, string> identityOf,
+        string identity)
+    {
+        var matches = declarations.Where(declaration => identityOf(declaration) == identity).ToArray();
+        return matches.Length == 1 ? matches[0] : throw new InvalidOperationException(
+            $"Physical declaration identity '{identity}' selects {matches.Length} runtime MethodDefs");
     }
 
     /// <summary>A type's identity in the spelling both twins share: the alias resolved, the shape kept.</summary>

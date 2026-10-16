@@ -349,43 +349,51 @@ static partial class SuspendColdLowering
     const string CoroutineContextFqn = "kotlin.coroutines.CoroutineContext";
     const string ContinuationFqn = "kotlin.coroutines.Continuation";
 
-    // A suspend fun's identity: Owner=null for a top-level file-class static, else the enclosing class FQN. Sig
-    // is the joined param-type list — it discriminates OVERLOADS that share (Owner, Name) (e.g. SequenceScope
-    // has three `yieldAll` overloads differing only by param type: Iterator/Iterable/Sequence). Without it the
-    // registry would collapse the overloads to one, dropping the others (see SigOf).
-    //
-    // #199 — FileClass is part of the identity so two TOP-LEVEL suspend funs with the SAME simple name in
-    // DIFFERENT packages (Owner=null for both — kotc emits top-level method names as bare simple names) do NOT
-    // collide. Without it `a.foo` and `b.foo` share FunKey(null,"foo",sig): the loser is dropped from `entries`
-    // and left un-lowered -> a bir2cir refusal (SuspendResidueLowering) / runtime EntryPointNotFound. A MEMBER's Owner is
-    // already the class FQN (`a.Box` vs `b.Box`) so it needs no FileClass to disambiguate, but including it is
-    // harmless (a class lives in exactly one file). The Container (`Owner ?? FileClass`) is the FQN identity used
-    // to key the return-type maps below.
-    readonly record struct FunKey(string Owner, string FileClass, string Name, string Sig, string TypeParamSig);
-
-    // The param-type signature discriminating overloaded suspend members (see FunKey.Sig).
-    // Overload-key signature: the CANONICAL JSON of each param's structured TypeNode. Post-#37-flip `p["type"]` is a
-    // TypeNode OBJECT, not a bare string — the old `Str(p["type"])` returned null for EVERY param (→ sig ""), collapsing
-    // all same-arity overloads onto one FunKey (only the last survived). That lost the abstract `yieldAll(Iterator)`
-    // cold entry to the sibling `yieldAll(IEnumerable)` overloads (seqyieldall: an inner `yieldAll$dotkt_suspend(Iterator,
-    // Continuation)` call then fell back to the IEnumerable slot → a Kotlin Iterator cast to IEnumerable → InvalidCast).
-    // The two Iterable/Sequence overloads genuinely alias to the SAME `IEnumerable` sig and still coalesce (correct — one
-    // CLR method), but the distinct Iterator overload now keeps its own entry.
-    static string SigOf(JsonObject m) =>
-        m["params"] is JsonArray ps
-            ? string.Join(",", ps.OfType<JsonObject>().Select(p =>
-                TypeJson.Read(p["type"]) is TypeNode t ? TypeNode.ToJson(t) : (Str(p["type"]) ?? "")))
-            : "";
-
-    // Kotlin may distinguish overloads solely by generic bounds. Those bounds are absent from the CLR method
-    // signature, but they remain part of the Kotlin declaration identity and therefore must keep the declarations
-    // distinct through suspend lowering. ilemit's general duplicate-signature handling owns the eventual physical
-    // CLR-name mangling; this registry must not discard either declaration before that layer sees it.
-    static string TypeParamSigOf(JsonObject m) =>
-        m["typeParams"] is JsonArray tps ? tps.ToJsonString() : "";
-
     // A declared suspend fun + where it lives (for cold-entry/SM splicing).
     sealed record Entry(JsonObject Method, JsonObject Root, JsonObject TypeNode, string Owner, string FileClass);
+
+    // This is an inventory of declarations, not an overload resolver. Different Kotlin declarations can already
+    // have identical physical parameter types after value projection. Keep every actual node and its declaration
+    // identity in source order; downstream declaration allocation owns distinct CLR names and exact call edges.
+    static List<Entry> DeclaredSuspendEntries(IReadOnlyList<JsonNode> roots)
+    {
+        var entries = new List<Entry>();
+        foreach (var root in roots.OfType<JsonObject>())
+        {
+            var fileClass = Str(root["fileClass"]) ?? "Kt";
+            foreach (var method in (root["methods"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
+                if (Str(method["name"]) != null && IsColdCandidate(method))
+                    entries.Add(new Entry(method, root, null, null, fileClass));
+            foreach (var owner in (root["types"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
+                if (Str(owner["name"]) is string ownerName)
+                    foreach (var method in (owner["methods"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
+                        if (Str(method["name"]) != null && IsMemberColdCandidate(method))
+                            entries.Add(new Entry(method, root, owner, ownerName, fileClass));
+        }
+        return entries;
+    }
+
+    internal static void DeclarationRegistrySelfTest()
+    {
+        var root = JsonNode.Parse("""
+            {"fileClass":"RegistryProbe","methods":[],"types":[{"name":"RegistryOwner","methods":[
+              {"name":"visit","declarationId":"first","explicitClrName":"firstEntry","mods":{"suspend":true},
+               "typeParams":[],"params":[{"name":"value","type":{"t":"fqn","name":"kotlin.Any"}}]},
+              {"name":"visit","declarationId":"second","explicitClrName":"secondEntry","mods":{"suspend":true},
+               "typeParams":[],"params":[{"name":"value","type":{"t":"fqn","name":"kotlin.Any"}}]}
+            ]}]}
+            """).AsObject();
+        var declarations = root["types"][0]["methods"].AsArray();
+        var entries = DeclaredSuspendEntries(new JsonNode[] { root });
+        if (entries.Count != 2 || !ReferenceEquals(entries[0].Method, declarations[0])
+            || !ReferenceEquals(entries[1].Method, declarations[1])
+            || Str(entries[0].Method[DeclarationIdentityBinding.Key]) != "first"
+            || Str(entries[1].Method[DeclarationIdentityBinding.Key]) != "second"
+            || Str(entries[0].Method[DeclarationIdentityBinding.ExplicitNameKey]) != "firstEntry"
+            || Str(entries[1].Method[DeclarationIdentityBinding.ExplicitNameKey]) != "secondEntry")
+            throw new InvalidOperationException("Suspend declaration inventory coalesced distinct opaque signatures");
+        Console.WriteLine("[suspend declaration inventory] self-test OK (identical physical signatures, exact IDs/names, source order)");
+    }
 
     // Returns the callee-return-type map (cold-entry name -> Kotlin resultType), so the SEPARATE
     // SuspendLambdaLowering phase can type a suspend-lambda's awaited value the SAME way (else a
@@ -424,7 +432,7 @@ static partial class SuspendColdLowering
         // 1. R1 — the UNCONDITIONAL registry of EVERY declared suspend fun across every input file. This is a
         //    CLASSIFIER, not a filter: nothing is dropped for shape or resolvability. Each admitted member is classified
         //    into abstract / segmentable / call-time-throw by FunGen.
-        var entries = new Dictionary<FunKey, Entry>();
+        var entries = DeclaredSuspendEntries(roots);
         // Closure-class registry (for the suspendCoroutine intrinsic inliner): kotc materializes the intrinsic's
         // `{ c -> … }` block as a top-level closure class; the inliner resolves its `invoke` body by name here.
         var closures = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
@@ -432,21 +440,6 @@ static partial class SuspendColdLowering
             if (r is JsonObject f && f["types"] is JsonArray fts)
                 foreach (var t in fts)
                     if (t is JsonObject to && Str(to["name"]) is string tn) closures[tn] = to;
-        foreach (var r in roots)
-        {
-            if (r is not JsonObject file) continue;
-            var fileClass = Str(file["fileClass"]) ?? "Kt";
-            if (file["methods"] is JsonArray methods)
-                foreach (var m in methods)
-                    if (m is JsonObject mo && Str(mo["name"]) is string name && IsColdCandidate(mo))
-                        entries[new FunKey(null, fileClass, name, SigOf(mo), TypeParamSigOf(mo))] = new Entry(mo, file, null, null, fileClass);
-            if (file["types"] is JsonArray types)
-                foreach (var t in types)
-                    if (t is JsonObject to && Str(to["name"]) is string owner && to["methods"] is JsonArray tms)
-                        foreach (var m in tms)
-                            if (m is JsonObject mo && Str(mo["name"]) is string name && IsMemberColdCandidate(mo))
-                                entries[new FunKey(owner, fileClass, name, SigOf(mo), TypeParamSigOf(mo))] = new Entry(mo, file, to, owner, fileClass);
-        }
         // callee-return-type fallback for await-temp field typing when a call node carries neither an instantiated
         // `ret`/`dynRet` NOR a static-type `sty` (see EmitSuspensionPoint — `sty`, the frontend-resolved static
         // type kotc stamps on every call node, is the PRIMARY source and needs no owner disambiguation): the
@@ -455,10 +448,10 @@ static partial class SuspendColdLowering
         // two same-simple-name suspend funs across packages — but `sty` (read first) already types every
         // kotc-origin suspension point precisely per call, so this fallback only serves rare synthesized nodes.
         var calleeRet = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
-        foreach (var (k, e) in entries)
-            calleeRet[k.Name] = TypeJson.Read(e.Method["suspendRet"])
+        foreach (var e in entries)
+            calleeRet[Str(e.Method["name"])] = TypeJson.Read(e.Method["suspendRet"])
                 ?? throw new InvalidOperationException(
-                    $"bir2cir: suspend-lowering: the suspend declaration `{k.Owner ?? k.FileClass}.{k.Name}` carries no "
+                    $"bir2cir: suspend-lowering: the suspend declaration `{e.Owner ?? e.FileClass}.{Str(e.Method["name"])}` carries no "
                     + "`suspendRet` slot. kotc stamps it on EVERY `isSuspend` declaration (BirEmitterDeclarations "
                     + "`resultTypeJson`) and admission to this registry requires the same `suspend` modifier, so the two "
                     + "cannot disagree on valid input: the slot was dropped by a pass that rewrote the declaration.");
@@ -531,28 +524,28 @@ static partial class SuspendColdLowering
                 + "System.Threading.Tasks.Task, Task<T>, and TaskCompletionSource<T>; "
                 + "the public suspend ABI cannot be emitted.");
 
-        // SM-type-name disambiguation for OVERLOADED members (same Owner+Name, differing only by param type):
-        // each overload needs a UNIQUE SM class name (the cold-entry NAME stays `<name>$dotkt_suspend` — they are
-        // IL overloads resolved by param type). A group of one keeps the bare `<owner>_<name>$sm` name (existing
-        // output unchanged); a group of >1 appends a suffix from the param types' simple names
+        // SM-type-name disambiguation for distinct declarations with the same owner and source name:
+        // each declaration needs a UNIQUE SM class name even when its physical parameter slots coincide.
+        // Cold entries retain declaration identity for the later physical-name allocation. A group of one
+        // keeps the bare `<owner>_<name>$sm` name; a group of >1 appends the parameter types' simple names
         // (`_Iterator`/`_Iterable`/`_Sequence`), falling back to a positional index on a residual collision.
-        var smSuffix = new Dictionary<FunKey, string>();
-        foreach (var g in entries.Keys.GroupBy(k => (k.Owner, k.FileClass, k.Name)))
+        var smSuffix = new Dictionary<JsonObject, string>(ReferenceEqualityComparer.Instance);
+        foreach (var g in entries.GroupBy(e => (e.Owner, e.FileClass, Name: Str(e.Method["name"]))))
         {
             var members = g.ToList();
-            if (members.Count == 1) { smSuffix[members[0]] = ""; continue; }
-            var cands = members.Select(k => ParamSimpleNames(entries[k].Method)).ToList();
+            if (members.Count == 1) { smSuffix[members[0].Method] = ""; continue; }
+            var cands = members.Select(e => ParamSimpleNames(e.Method)).ToList();
             var unique = cands.All(c => c.Length > 0) && cands.Distinct(StringComparer.Ordinal).Count() == cands.Count;
             for (var i = 0; i < members.Count; i++)
-                smSuffix[members[i]] = "_" + (unique ? cands[i] : "ov" + i);
+                smSuffix[members[i].Method] = "_" + (unique ? cands[i] : "ov" + i);
         }
 
         // 2. Transform each declared suspend fun, splicing the cold entry (into its declaring container) and the
         //    SM type (into its file's top-level types).
         JsonObject rootContinuationHost = null;
-        foreach (var key in entries.Keys)
+        foreach (var e in entries)
         {
-            var e = entries[key];
+            var name = Str(e.Method["name"]);
             // M3 — a `static` member (a companion suspend fun kotc promotes to a static method on the OUTER class):
             // no `$this`, the cold entry/bridge stay static in the class (like a top-level fun, but the container is
             // the class). An instance member is `owner != null && !static`.
@@ -570,7 +563,7 @@ static partial class SuspendColdLowering
             {
                 if (lexicalOwnerCount > otps.Count)
                     throw new InvalidOperationException(
-                        $"suspend member '{e.Owner}.{key.Name}' claims {lexicalOwnerCount} lexical owner slots " +
+                        $"suspend member '{e.Owner}.{name}' claims {lexicalOwnerCount} lexical owner slots " +
                         $"but its owner declares only {otps.Count}");
                 foreach (var t in otps.Take(lexicalOwnerCount))
                     ownerTpDecls.Add(t?.DeepClone());
@@ -583,8 +576,8 @@ static partial class SuspendColdLowering
             if (e.Root["methods"] is JsonArray flm)
                 foreach (var lm in flm)
                     if (lm is JsonObject lmo && Str(lmo["name"]) is string lmn) fileLambdas[lmn] = lmo;
-            var gen = new FunGen(e.Method, key.Name, e.FileClass, e.Owner, calleeRet, baseIsLocal, tcsBcl, taskBcl,
-                ownerTpDecls, closures, smSuffix[key], fileLambdas, staticMember);
+            var gen = new FunGen(e.Method, name, e.FileClass, e.Owner, calleeRet, baseIsLocal, tcsBcl, taskBcl,
+                ownerTpDecls, closures, smSuffix[e.Method], fileLambdas, staticMember);
             var newMethods = new List<JsonNode>();
             var newTypes = new List<JsonNode>();
             gen.Build(newMethods, newTypes);

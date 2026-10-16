@@ -61,9 +61,9 @@
 #   same whether bir2cir stated the face or an emitter inferred it, which is exactly the confusion the rule ends.
 #   `readonly-collection-view-sibling` asserts the stated array, including the two faces that owe nothing.
 #
-#   Layer ownership (collection-view value flow) — after Kotlin read-only/mutable collection faces become unrelated
-#   CLR siblings, bir2cir materializes the checked view conversion on every resolved CIR value-flow edge. The
-#   `collection-view-value-flow` fixture pins both directions across argument, local/field storage, conditional joins,
+#   Layer ownership (collection-view value flow) — ordinary Kotlin read-only values use opaque Object slots, while
+#   mutable values and exact native CLR sibling declarations stay reified. bir2cir materializes their checked value
+#   conversions. The `collection-view-value-flow` fixture pins both directions across argument, local/field storage, conditional joins,
 #   constructor evaluation/delegation, return, local-call result, and exact field/property result edges. It includes
 #   fieldRef, constructed generic-field closure, and the exact physical result stamp inside each caller-facing cast;
 #   ilemit emits those nodes one-to-one and owns no collection ABI inference.

@@ -85,6 +85,148 @@
         }
       ],
       "attrs": []
+    },
+    {
+      "name": "MutableReadMap",
+      "kind": "interface",
+      "base": null,
+      "interfaces": [],
+      "fields": [],
+      "ctors": [],
+      "methods": [
+        {
+          "name": "map",
+          "propertyName": "map",
+          "propertyAccessor": "get",
+          "propertyAssociation": "p2",
+          "static": false,
+          "override": false,
+          "virtual": true,
+          "abstract": true,
+          "params": [],
+          "ret": {
+            "t": "fqn",
+            "name": "kotlin.collections.MutableCollection",
+            "args": [
+              {
+                "t": "fqn",
+                "name": "kotlin.Int"
+              }
+            ]
+          },
+          "body": [],
+          "attrs": []
+        }
+      ],
+      "properties": [
+        {
+          "name": "map",
+          "type": {
+            "t": "fqn",
+            "name": "kotlin.collections.MutableCollection",
+            "args": [
+              {
+                "t": "fqn",
+                "name": "kotlin.Int"
+              }
+            ]
+          },
+          "kotlinAccessors": [
+            "get"
+          ],
+          "propertyAssociation": "p2"
+        }
+      ],
+      "attrs": []
+    },
+    {
+      "name": "MutableMapCollisionImpl",
+      "kind": "class",
+      "base": null,
+      "interfaces": [
+        {
+          "t": "fqn",
+          "name": "MutableReadMap"
+        }
+      ],
+      "fields": [],
+      "ctors": [
+        {
+          "params": [],
+          "baseArgs": null,
+          "thisArgs": null,
+          "vis": "public",
+          "body": []
+        }
+      ],
+      "methods": [
+        {
+          "name": "map",
+          "propertyName": "map",
+          "propertyAccessor": "get",
+          "propertyAssociation": "p3",
+          "static": false,
+          "override": false,
+          "virtual": true,
+          "abstract": false,
+          "vis": "public",
+          "params": [],
+          "ret": {
+            "t": "fqn",
+            "name": "kotlin.collections.MutableSet",
+            "args": [
+              {
+                "t": "fqn",
+                "name": "kotlin.Int"
+              }
+            ]
+          },
+          "overrides": [
+            {
+              "owner": {
+                "t": "fqn",
+                "name": "MutableReadMap"
+              },
+              "member": "map",
+              "kind": "getter",
+              "arity": 0
+            }
+          ],
+          "body": [],
+          "attrs": []
+        }
+      ],
+      "properties": [
+        {
+          "name": "map",
+          "type": {
+            "t": "fqn",
+            "name": "kotlin.collections.MutableSet",
+            "args": [
+              {
+                "t": "fqn",
+                "name": "kotlin.Int"
+              }
+            ]
+          },
+          "kotlinAccessors": [
+            "get"
+          ],
+          "propertyAssociation": "p3",
+          "overrides": [
+            {
+              "owner": {
+                "t": "fqn",
+                "name": "MutableReadMap"
+              },
+              "member": "map",
+              "kind": "getter",
+              "arity": 0
+            }
+          ]
+        }
+      ],
+      "attrs": []
     }
   ]
 }

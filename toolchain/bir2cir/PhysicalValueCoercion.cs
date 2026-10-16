@@ -313,6 +313,28 @@ static class PhysicalValueCoercion
                "typeArgs":[{"t":"tv","scope":"method","i":1}],"captures":[{"k":"local","name":"value"}]}}]}
           """).AsObject();
         root["methods"].AsArray().Add(closureCapture);
+        var opaqueResults = JsonNode.Parse("""
+          {"fileClass":"OpaqueResults","methods":[
+            {"name":"nativeResult","params":[],"ret":{"t":"fqn","name":"NativeView"},"body":[]},
+            {"name":"opaqueResult","params":[],"ret":{"t":"fqn","name":"System.Object"},"body":[]},
+            {"name":"probe","params":[],"ret":{"t":"fqn","name":"void"},"body":[
+              {"k":"exprStmt","expr":{"k":"callStatic","owner":{"t":"fqn","name":"OpaqueResults"},
+                "method":"nativeResult","sig":[],"args":[],"ret":{"t":"fqn","name":"System.Object"}}},
+              {"k":"exprStmt","expr":{"k":"callStatic","owner":{"t":"fqn","name":"OpaqueResults"},
+                "method":"opaqueResult","sig":[],"args":[],"ret":{"t":"fqn","name":"NativeView"}}},
+              {"k":"exprStmt","expr":{"k":"clrPropGet","type":{"t":"fqn","name":"NativeOwner"},
+                "name":"Value","static":false,"recv":{"k":"const","type":{"t":"fqn","name":"NativeOwner"},"value":null},
+                "ret":{"t":"fqn","name":"System.Object"},"memberRef":{"kind":"propertyAccessor",
+                  "declaringType":{"t":"fqn","name":"NativeOwner"},"name":"get_Value",
+                  "returnType":{"t":"fqn","name":"NativeView"},"parameterTypes":[]}}}]}]}
+          """).AsObject();
+        ApplyAll(new JsonNode[] { opaqueResults }, () => throw new InvalidOperationException("Unexpected Unit conversion"), _ => false);
+        var opaqueEdges = opaqueResults["methods"][2]["body"].AsArray();
+        foreach (var (edge, expected) in opaqueEdges.Select((edge, index) => (edge,
+                     index == 1 ? "System.Object" : "NativeView")))
+            if (Str(edge["expr"]["k"]) != "cast"
+                || TypeJson.Read(edge["expr"]["e"]["ret"]) != new TypeNode.Fqn(expected))
+                throw new InvalidOperationException("Opaque reference projection lost an exact local/native result contract");
         ApplyAll(new JsonNode[] { root }, () => throw new InvalidOperationException("Unexpected Unit conversion"), _ => false,
             isExistentialOwner: owner => owner.Name is "Carrier" or "DerivedCarrier",
             isNativeReference: owner => owner.Name == "System.Collections.Generic.IReadOnlyList",
@@ -1017,7 +1039,13 @@ static class PhysicalValueCoercion
                 or "callStatic" or "callInstance" or "constrainedCall";
         var arrayStorageProjection = SignatureValueTypes.Of(actual) is TypeNode.Fqn { Name: "System.Array" }
             && SignatureValueTypes.Of(declared) is TypeNode.Array;
-        if (!genericObjectProjection && !genericSlotProjection && !arrayStorageProjection
+        // An opaque ordinary value and its exact native/local return are separate contracts. Even an upcast to
+        // Object must leave the real member result on the inner call; a following consumer may need that fact.
+        var opaqueReferenceProjection = actual != null && !actual.Equals(declared)
+            && (SignatureValueTypes.Of(actual) is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" }
+                || SignatureValueTypes.Of(declared) is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" })
+            && IsReferenceSlot(actual, index.IsValue) && IsReferenceSlot(declared, index.IsValue);
+        if (!genericObjectProjection && !genericSlotProjection && !arrayStorageProjection && !opaqueReferenceProjection
             && !CollectionViewFaces.IsViewSeam(actual, declared)) return expression;
         var physical = expression.DeepClone().AsObject();
         // The inner expression leaves the exact member/declaration result on the CLR stack. Once the caller-facing

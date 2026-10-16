@@ -901,6 +901,8 @@ private fun starProjectionClosedView(
     }
     var match: StarProjectionType? = null
     for (candidate in runtimeType.getInterfaces()) {
+        // A projected generic receiver can select a member declared on an exact non-generic base interface.
+        if (candidate == openGenericType) return candidate
         if (!candidate.isGenericType || candidate.getGenericTypeDefinition() != openGenericType) continue
         if (declaringHint != null) {
             if (candidate == declaringHint) return candidate

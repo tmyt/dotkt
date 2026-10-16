@@ -129,7 +129,6 @@ static class StarProjectionLowering
         if (node is JsonObject obj)
         {
             context = (context ?? new MemberCallSubstitution.SubstCtx()).Extend(obj);
-            AdaptProjectedCollectionArguments(obj, refs, context);
             if (Str(obj["k"]) == "callInstance"
                 && IsIdentityCollection(obj["ownerType"], out var collectionKind, out _)
                 && collectionKind is 0 or 1 or 2 or 5
@@ -217,106 +216,12 @@ static class StarProjectionLowering
             foreach (var it in arr) if (it != null) Apply(it, refs, closedViews, context);
     }
 
-    // Kotlin collection covariance permits a star-projected value to fill a Collection<T> parameter selected by
-    // ordinary overload resolution. The CLR call boundary is reified: a value-element collection in particular
-    // cannot be cast to IReadOnlyCollection<object>. Materialize the compiler/runtime-owned live view while both the
-    // source projection and the selected Kotlin parameter are still explicit. This is a rule for every Collection
-    // argument edge, not for any particular extension such as `plus`.
-    static void AdaptProjectedCollectionArguments(JsonObject call, ReferenceMetadataIndex refs,
-        MemberCallSubstitution.SubstCtx context)
-    {
-        var kind = Str(call["k"]);
-        if (kind is not ("callStatic" or "callInstance")) return;
-        if (call["sig"] is not JsonArray signature || call["args"] is not JsonArray arguments
-            || signature.Count != arguments.Count) return;
-        var methodArguments = call["typeArgs"] is JsonArray typeArgs
-            ? typeArgs.Select(TypeJson.Read).ToArray()
-            : Array.Empty<TypeNode>();
-        if (methodArguments.Any(type => type == null)) return;
-
-        for (var index = 0; index < signature.Count; index++)
-        {
-            if (arguments[index] is not JsonObject argument || !IsProjectedCollectionValue(argument)) continue;
-            var parameter = TypeJson.Read(signature[index]);
-            if (parameter == null) continue;
-            var closed = FBoundStarProjectionErasure.SubstituteMethodTypeArguments(parameter, methodArguments);
-            var core = StripOuterWrappers(closed);
-            if (core is not TypeNode.Fqn collection || collection.Args is not { Length: 1 } elementArgs
-                || ContainsProjection(elementArgs[0])) continue;
-            var sourceSet = new[] { argument["type"], argument["sty"] }
-                .Select(TypeJson.Read).Where(type => type != null).Select(StripOuterWrappers)
-                .OfType<TypeNode.Fqn>().FirstOrDefault(type =>
-                    type.Name is "kotlin.collections.Set" or "kotlin.collections.MutableSet");
-            var setArgument = collection.Name == "kotlin.collections.Set"
-                || sourceSet != null && collection.Name is "kotlin.collections.Collection" or "kotlin.collections.Iterable";
-            // Keep a concrete witness when its storage already supplies the requested family. MutableSet uses
-            // ICollection<T>, which supplies IEnumerable<T> but need not supply readonly Collection storage.
-            if (setArgument && sourceSet?.Args is { Length: > 0 } && !ContainsProjection(sourceSet)
-                && (sourceSet.Name == "kotlin.collections.Set" || collection.Name == "kotlin.collections.Iterable")) continue;
-            var helper = collection.Name switch
-            {
-                "kotlin.collections.Iterable" => "clrProjectedIterableView",
-                "kotlin.collections.MutableIterable" => "clrProjectedMutableIterableView",
-                "kotlin.collections.Collection" => "clrProjectedCollectionView",
-                "kotlin.collections.Set" => "clrProjectedSetView",
-                "kotlin.collections.List" => "clrProjectedListView",
-                _ => null,
-            };
-            if (helper == null) continue;
-            var helperReturn = closed;
-            var helperSignature = new JsonArray(TypeJson.Write(Any));
-            var helperArguments = new JsonArray(argument.DeepClone());
-            if (setArgument)
-            {
-                var nullable = closed is TypeNode.Nullable or TypeNode.Oblivious;
-                var iterable = collection.Name == "kotlin.collections.Iterable";
-                helper = iterable
-                    ? nullable ? "clrProjectedNullableSetIterableView" : "clrProjectedSetIterableView"
-                    : nullable ? "clrProjectedNullableSetView" : "clrProjectedSetView";
-                helperReturn = new TypeNode.Fqn(iterable ? "kotlin.collections.Iterable" : "kotlin.collections.Set", elementArgs);
-                if (nullable) helperReturn = new TypeNode.Nullable(helperReturn);
-                helperSignature[0] = TypeJson.Write(nullable ? AnyN : Any);
-                helperSignature.Add(TypeJson.Write(Any));
-                helperArguments.Add(new JsonObject
-                {
-                    ["k"] = "classRef",
-                    ["type"] = TypeJson.Write(new TypeNode.Fqn(
-                        iterable ? "kotlin.collections.Iterable" : "kotlin.collections.Collection", elementArgs)),
-                });
-                helperSignature.Add(TypeJson.Write(AnyN));
-                helperArguments.Add(sourceSet?.Args is { Length: > 0 } && !ContainsProjection(sourceSet)
-                    ? new JsonObject { ["k"] = "classRef", ["type"] = TypeJson.Write(sourceSet) }
-                    : new JsonObject { ["k"] = "const", ["type"] = TypeJson.Write(AnyN), ["value"] = null });
-            }
-            var projected = new JsonObject
-            {
-                ["k"] = "callStatic",
-                ["owner"] = TypeJson.Fqn("kotlin.collections.ClrCollectionDefaultsKt"),
-                ["method"] = helper,
-                ["sig"] = helperSignature,
-                ["typeArgs"] = new JsonArray(TypeJson.Write(elementArgs[0])),
-                ["ret"] = TypeJson.Write(helperReturn),
-                ["args"] = helperArguments,
-            };
-            MemberCallSubstitution.BindAuthoredHelper(projected, refs, context, refs.IsValueType);
-            arguments[index] = projected;
-        }
-    }
-
     static TypeNode StripOuterWrappers(TypeNode type) => type switch
     {
         TypeNode.Nullable nullable => StripOuterWrappers(nullable.Of),
         TypeNode.Oblivious oblivious => StripOuterWrappers(oblivious.Of),
         _ => type,
     };
-
-    static bool IsProjectedCollectionValue(JsonObject expression)
-    {
-        foreach (var slot in new[] { expression["type"], expression["sty"] })
-            if (slot != null && (IsStarCollection(slot, out _) || IsIdentityCollection(slot, out _, out _)))
-                return true;
-        return false;
-    }
 
     static bool ContainsProjection(TypeNode type) => type switch
     {

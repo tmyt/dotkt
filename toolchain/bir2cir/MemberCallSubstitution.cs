@@ -1397,7 +1397,7 @@ static class MemberCallSubstitution
                         // cannot carry the derived owner's type-argument substitution (`List<T>`). The CLR member
                         // resolver will re-anchor the property to its exact declaring base interface while preserving
                         // that constructed edge. A non-CLR user subclass still starts from the bound ancestor.
-                        return ClrPropNode(node, ClrOwnerType(refs, ownerFqnNode)
+                        return ClrPropNode(node, ClrValueOwnerType(refs, ownerFqnNode)
                             ?? ClrOwnerType(refs, new TypeNode.Fqn(ovOwner)) ?? new TypeNode.Fqn(ovBcl), povName,
                             sourceAccessorKind == "set" ? ClrPropWrite : ClrPropRead, pmember, pargs,
                             sourceAccessorKind);
@@ -1510,7 +1510,8 @@ static class MemberCallSubstitution
             return new JsonObject { ["k"] = "conv", ["to"] = TypeJson.Fqn(inlineConv), ["e"] = node["recv"]?.DeepClone() };
 
         // The CLR owner TYPE the call addresses (a ClrRef-resolvable BCL token; see ClrOwnerType).
-        TypeNode clrOwner = ClrOwnerType(refs, ownerFqnNode) ?? new TypeNode.Fqn(bcl);
+        TypeNode clrOwner = (instance ? ClrValueOwnerType(refs, ownerFqnNode) : ClrOwnerType(refs, ownerFqnNode))
+            ?? new TypeNode.Fqn(bcl);
 
         // The alias-companion gate selected one declaration by its complete signature. Consume that SAME binding;
         // re-querying by name+argument-count here would allow a same-arity sibling to change the CLR member or byref
@@ -1937,10 +1938,11 @@ static class MemberCallSubstitution
         return ObjType;
     }
 
-    // Whether the selected collection member is reached through an existential use-site projection. Choosing a
-    // closed defaults-helper signature for such a receiver would assert an invariant CLR interface that it need not
-    // have; the projected helper instead resolves the actual closed interface at runtime.
-    static bool HasProjectedCollectionReceiver(JsonObject node, TypeNode.Fqn owner, SubstCtx ctx)
+    // Use-site projections and declaration-site variance both give ordinary collection values an existential
+    // representation. A closed defaults-helper signature would assert a CLR construction the original object
+    // need not implement; the projected helper instead resolves its actual closed interface at runtime.
+    static bool HasProjectedCollectionReceiver(JsonObject node, TypeNode.Fqn owner, SubstCtx ctx,
+        ReferenceMetadataIndex refs)
     {
         static bool ContainsProjection(TypeNode type) => type switch
         {
@@ -1959,7 +1961,8 @@ static class MemberCallSubstitution
             _ => false,
         };
 
-        if (ContainsProjection(owner)) return true;
+        if (ContainsProjection(owner)
+            || refs != null && AliasVarianceRepresentation.RequiresErasure(owner, refs)) return true;
         if (ctx == null || node["recv"] is not JsonObject receiver)
             return false;
         if (Str(receiver["k"]) == "local" && Str(receiver["name"]) is string local
@@ -2196,7 +2199,7 @@ static class MemberCallSubstitution
             // receiver-erased adapter; it resolves the receiver's actual ICollection<X> while the ordinary invariant
             // case keeps the direct helper. This also covers lifted closures, whose captured method variables have
             // already been rebound into their generated type frame by ClosureSynthesis.
-            if (HasProjectedCollectionReceiver(node, ownerFqnNode, ctx))
+            if (HasProjectedCollectionReceiver(node, ownerFqnNode, ctx, refs))
                 slotHelper = slotHelper switch
                 {
                     "clrCollAdd" => "clrProjectedCollAdd",
@@ -2220,7 +2223,7 @@ static class MemberCallSubstitution
         if (ownerFqn == "kotlin.collections.MutableList"
             && (((member is "set" or "set_Item") && args.Count == 2) || ((member is "removeAt" or "RemoveAt") && args.Count == 1)))
         {
-            var projected = HasProjectedCollectionReceiver(node, ownerFqnNode, ctx);
+            var projected = HasProjectedCollectionReceiver(node, ownerFqnNode, ctx, refs);
             var listHelper = (member is "set" or "set_Item", projected) switch
             {
                 (true, true) => "clrProjectedListSet",
@@ -2241,7 +2244,7 @@ static class MemberCallSubstitution
     {
         var ownerFqn = ownerFqnNode.Name;
         var member = Str(node["method"]);
-        var projected = HasProjectedCollectionReceiver(node, ownerFqnNode, ctx);
+        var projected = HasProjectedCollectionReceiver(node, ownerFqnNode, ctx, refs);
         var elem = projected ? CollElemArg(node, refs, ctx, ownerFqnNode) : OwnerElemArg(ownerFqnNode);
         if (member == "iterator" && args.Count == 0)
         {
@@ -2491,6 +2494,12 @@ static class MemberCallSubstitution
         TypeNode.Fqn f => ReferenceMetadataIndex.RecvKeyOfFqn(f.Name),
         _ => "",
     };
+
+    // An ordinary variant alias receiver does not prove a closed CLR interface, even when it is a type variable
+    // constrained by that source alias. Retain its semantic owner for foreign projection binding. Constructors and
+    // genuine native descriptors still use ClrOwnerType directly and keep their exact CLR construction.
+    static TypeNode ClrValueOwnerType(ReferenceMetadataIndex refs, TypeNode.Fqn ownerFqn) =>
+        AliasVarianceRepresentation.RequiresErasure(ownerFqn, refs) ? ownerFqn : ClrOwnerType(refs, ownerFqn);
 
     // A CLR-bound owner token's ClrRef-resolvable BCL type: a non-generic alias is its bare BCL FQN ("System.String"
     // -- NOT the "string" shorthand, which ilemit ClrRef can't resolve as a clr* `type`); a generic alias keeps its

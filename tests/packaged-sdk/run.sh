@@ -994,7 +994,7 @@ class NgLists {
         for (x in xs) if (x != null) s += x
         return s
     }
-    fun joinPresent(xs: List<String?>): String {                 // the REFERENCE control: still IReadOnlyList<string>
+    fun joinPresent(xs: List<String?>): String {                 // reference elements retain native string storage
         var s = ""
         for (x in xs) if (x != null) s = if (s == "") x else s + "," + x
         return s
@@ -1046,9 +1046,9 @@ EOF
 			'nglib.NBox`1|.ctor|p0|System.Object|1' \
 			"nglib.NgArrays|boxedPair|ret|System.Object[]|any" \
 			"nglib.NgArrays|sumPresent|p0|System.Object[]|any" \
-			'nglib.NgLists|boxedList|ret|System.Collections.Generic.IReadOnlyList`1[System.Object]|1' \
-			'nglib.NgLists|sumPresent|p0|System.Collections.Generic.IReadOnlyList`1[System.Object]|1' \
-			'nglib.NgLists|joinPresent|p0|System.Collections.Generic.IReadOnlyList`1[System.String]|0'
+			'nglib.NgLists|boxedList|ret|System.Object|1' \
+			'nglib.NgLists|sumPresent|p0|System.Object|1' \
+			'nglib.NgLists|joinPresent|p0|System.Object|0'
 		do
 			IFS='|' read -r pOwner pMember pSlot pType pCarrier <<<"$probe"
 			if ! dotnet "$REFCHECK/bin/refcheck.dll" --shape "$libdll" "$pOwner" "$pMember" "$pSlot" "$pType" "$pCarrier" \
@@ -1103,9 +1103,10 @@ class Program {
         int boxNull = new NBox<int>(null).orElse(9);
         int boxValue = new NBox<int>(4).orElse(9);
         var lists = new NgLists();
-        // A `List<Int?>` is an `IReadOnlyList<object>`: a C# caller can hand it a list holding a null at T=int,
-        // which no `IReadOnlyList<int>` slot admits. The `List<String?>` control still binds as `string`.
-        System.Collections.Generic.IReadOnlyList<object> boxedList = lists.boxedList(4);
+        // Ordinary Kotlin List values are opaque, while the underlying nullable-value storage still boxes.
+        // Inspect that exact storage explicitly; neither List<int> nor Nullable<int>[] can supply these elements.
+        System.Collections.Generic.IReadOnlyList<object> boxedList =
+            (System.Collections.Generic.IReadOnlyList<object>)lists.boxedList(4);
         int listSum = lists.sumPresent(new object[] { 1, null, 5 });
         string joined = lists.joinPresent(new string[] { "a", null, "b" });
         var arrays = new NgArrays();

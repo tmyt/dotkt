@@ -285,6 +285,7 @@ static class ForeignStarProjectionBinding
             // authored base's frame, not the receiver's unrelated generic frame. Recover the stated nominal
             // view from the opaque receiver and let ordinary member binding consume the selected descriptor.
             if (!ContainsExistential(authoredOwner)
+                && !AliasVarianceRepresentation.RequiresErasure(owner, refs)
                 && refs.ResolveForeignProjectionType(authoredOwner.Name, authoredOwner.Args) is { } nominalOwner
                 // The same generic declaration is still existential: an authored readable bound
                 // does not prove that the receiver has that exact CLR construction.
@@ -938,6 +939,8 @@ static class ForeignStarProjectionBinding
                     exact = inherited;
                 if (exact?.Args is not { Length: > 0 } args || exact.Name != starOwner.Name
                     || args.Length != starOwner.Args.Length || args.Any(ContainsExistential)
+                    // An opaque Kotlin variance view is not proof of one exact CLR closure.
+                    || AliasVarianceRepresentation.RequiresErasure(exact, refs)
                     || refs.ResolveForeignProjectionType(exact.Name, args) == null) continue;
                 result[name] = exact;
                 changed = true;

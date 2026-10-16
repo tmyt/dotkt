@@ -45,7 +45,9 @@ public class BidirectionalTests
     {
         var greeter = new BidirectionalGreeter("Visual Studio");
         Assert.That(greeter.greet(), Is.EqualTo("Hi, Visual Studio (accent=cyan)"));
-        IReadOnlyList<string> names = greeter.roster();
+        Assert.That(typeof(BidirectionalGreeter).GetMethod(nameof(BidirectionalGreeter.roster))!.ReturnType,
+            Is.EqualTo(typeof(object)), "Kotlin List values use an identity-preserving opaque ABI");
+        IReadOnlyList<string> names = (IReadOnlyList<string>)greeter.roster();
         Assert.That(string.Join(", ", names), Is.EqualTo("Visual Studio A, Visual Studio B, Visual Studio C"));
     }
 

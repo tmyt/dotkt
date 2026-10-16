@@ -5,6 +5,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Preserve projected collection returns and widening without wrappers, copies or invalid CLR value-element
+  covariance, retaining reference identity and live mutations through ordinary generic calls and storage (#862).
+
 - Preserve frontend-selected native overload declarations across substituted and reordered owners, including
   direct/inherited calls and callable references whose signatures coincide after owner substitution (#972).
 

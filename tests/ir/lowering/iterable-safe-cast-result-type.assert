@@ -1,4 +1,8 @@
-# The synthesized guard owns its nullable reference result, even without an input sty stamp.
-+"k":"cond","type":{"t":"fqn","name":"System.Collections.Generic.IEnumerable","args":[{"t":"fqn","name":"System.String"}]},"cond":
+# The synthesized guard owns its nullable opaque result, even without an input sty stamp. Its raw classifier
+# check retains the selected native declaration; the successful arm returns the original object without a view.
++"k":"cond","type":{"t":"fqn","name":"System.Object"},"cond":
 +"method":"kotlinCollectionMatches"
-+"k":"isInstRef"
++"method":"starProjectionSafeCast"
++"args":[{"k":"local","name":"dotkt$collectionClassifier$value$0"},{"k":"classRef","type":{"t":"fqn","name":"System.Collections.Generic.IEnumerable\u00601"}}]
++"else":{"k":"const","type":{"t":"fqn","name":"System.Object"},"value":null}
+-"k":"isInstRef"

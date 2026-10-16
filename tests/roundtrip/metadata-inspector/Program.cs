@@ -23,6 +23,13 @@ const int IsInfixFunctionFlag = 1 << 9;
 // names. Star-projection existential association is metadata-authoritative and does not depend on this spelling.
 const string HoistedMarker = "$companion$";
 
+if (args.Length == 3 && args[0] == "--projected-collection-returns")
+{
+    ProjectedCollectionReturnInspector.Verify(args[1], args[2]);
+    Console.WriteLine("opaque collection slots, exact native declarations and source KLIB projection: OK");
+    return;
+}
+
 if (args.Length == 5 && args[0] == "--imported-enum-literals")
 {
     ImportedEnumLiteralInspector.Verify(args[1], args[2], args[3], args[4]);
