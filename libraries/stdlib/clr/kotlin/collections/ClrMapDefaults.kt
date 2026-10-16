@@ -275,6 +275,9 @@ private class ClrMutableMapEntry<K, V>(private val raw: ClrRawDictionary, overri
 /** A pure-Kotlin `Set` over a snapshot list (mirrors ClrSubList: named class, NOT an object expression — kotc cannot
  *  yet lower an object expression capturing an enclosing generic parameter). Backs Map's read views. */
 private class ClrMapSnapshotSet<E>(private val elements: List<E>) : Set<E> {
+    override fun equals(other: Any?): Boolean = DotKt.Runtime.CompilerServices.structuralEquals(this, other, 1)
+    override fun hashCode(): Int = DotKt.Runtime.CompilerServices.structuralHash(this, 1)
+
     override val size: Int get() = elements.size
     override fun isEmpty(): Boolean = elements.size == 0
     override fun contains(element: E): Boolean = clrCollContains(elements, element)
@@ -283,6 +286,9 @@ private class ClrMapSnapshotSet<E>(private val elements: List<E>) : Set<E> {
 }
 
 private class ClrMutableMapKeySet<K>(private val raw: ClrRawDictionary) : MutableSet<K> {
+    override fun equals(other: Any?): Boolean = DotKt.Runtime.CompilerServices.structuralEquals(this, other, 1)
+    override fun hashCode(): Int = DotKt.Runtime.CompilerServices.structuralHash(this, 1)
+
     override val size: Int get() = (raw as ClrRawCollection).count()
     override fun isEmpty(): Boolean = size == 0
     override fun contains(element: K): Boolean = raw.Contains(element)
@@ -338,18 +344,4 @@ private class ClrMutableMapKeySet<K>(private val raw: ClrRawDictionary) : Mutabl
         return changed
     }
     override fun clear() = raw.rawClear()
-}
-
-/** Kotlin structural Map equality: same size and every key of one maps to an equal value in the other (null-safe). */
-public fun <K, V> clrMapStructEquals(a: Any?, b: Any?): Boolean {
-    if (a === b) return true
-    if (a == null || b == null) return false
-    val da = a as ClrRawDictionary
-    val db = b as ClrRawDictionary
-    if ((da as ClrRawCollection).count() != (db as ClrRawCollection).count()) return false
-    for (k in da.clrMapNativeKeys<K>()) {
-        if (!db.Contains(k)) return false
-        if (da.clrMapItem<V>(k) != db.clrMapItem<V>(k)) return false
-    }
-    return true
 }

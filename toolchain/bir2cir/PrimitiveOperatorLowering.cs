@@ -215,28 +215,16 @@ static class PrimitiveOperatorLowering
                 ["lhs"] = ShapeCompareOperand(args[0], args[1], scope),
                 ["rhs"] = ShapeCompareOperand(args[1], args[0], scope),
             };
-        // `==` (EQEQ): structural equality recognized off TWO operand hints — the surface `argTypes` (declared static
-        // types) drive the prim/ref split; the cast-stripped `argValueTypes` drive the Kotlin-SEMANTIC recognition
-        // (collection structural `==`, Double/Float total-order `==`) that kotc's former collEqRoute/floatTotalEqRoute
-        // did. Order reproduces kotc's precedence exactly:
-        //   1. BOTH argTypes non-null primitives (EqEqPrimFq — the integral set + bool/char, NOT Double/Float) -> CIL
-        //      `ceq` (`binOp ==`). [direct integral primitive; a DIRECT float `==` arrives as `ieee754equals`, not here]
-        //   2. else BOTH argValueTypes the SAME collection kind -> the struct-eq helper (`listOf(1)==setOf(1)` differs in kind -> falls through).
-        //   3. else BOTH argValueTypes a non-null Double / non-null Float -> the total-order float-equals helper
-        //      (this is where a STRUCTURAL Double/Float EQEQ — data-class `equals` — lands: NaN==NaN true, -0.0!=0.0; #95).
-        //   4. else BOTH argValueTypes a raw value-nullable `Double?` / `Float?` -> null-safe total-order bit-equality
-        //      (the #152 twin of step 3: a STRUCTURAL EQEQ over a NULLABLE Double/Float field — null==null true, one null
-        //      false, both present -> clr{Double,Float}Equals; else the boxed `objEq` gives IEEE `Double.Equals`).
-        //   5. else the null-safe `Object.Equals` (`objEq`).
-        // Operands passed to the collection/float HELPER are cast-stripped (an IMPLICIT_CAST-to-Any renders as a `cast`
-        // node — matching kotc's former collEqRoute/floatTotalEqRoute `expr(unwrapped)`). The primitive fast-path AND the
-        // `objEq` fallback keep the ORIGINAL operands (kotc's former reference EQEQ emitted `expr(operands[i])`, NOT
-        // unwrapped — stripping the Any-box off a boxed value operand `anyVal == 1` would feed a raw value to
-        // Object.Equals -> invalid IL).
+        // Integral primitive equality is direct CIL. Floating structural equality
+        // retains its total-order rules, independently of direct IEEE operators.
+        // Every other EQEQ uses the same null-safe Kotlin runtime operation;
+        // collection static types do not select or bypass a virtual equals slot.
         if (m == "EQEQ" && args.Count == 2)
         {
+            if (KotlinEqualityLowering.NullComparison(args[0], args[1]) is JsonObject nullCheck)
+                return nullCheck;
             // #59: recover the operand static types via StaticType (no kotc hint). SURFACE (the former `argTypes`)
-            // drives the prim fast-path; VALUE (the former cast-stripped `argValueTypes`) drives collection/float.
+            // drives the primitive fast-path; VALUE drives floating total-order recognition.
             var ls = StaticType.Surface(args[0], scope);
             var rs = StaticType.Surface(args[1], scope);
             if (ls is TypeNode.Fqn lsf && EqEqPrimFq.Contains(lsf.Name)
@@ -250,12 +238,8 @@ static class PrimitiveOperatorLowering
                     ["rhs"] = new JsonObject { ["k"] = "cast", ["type"] = TypeJson.Write(rs), ["e"] = args[1]?.DeepClone() } };
             var lt = StaticType.Value(args[0], scope);
             var rt = StaticType.Value(args[1], scope);
-            var lc = lt != null ? FaithfulHints.ClassifyColl(lt) : null;
-            var rc = rt != null ? FaithfulHints.ClassifyColl(rt) : null;
             var lu = FaithfulHints.StripAnyCast(args[0]);
             var ru = FaithfulHints.StripAnyCast(args[1]);
-            if (lc is { } lk && rc is { } rk && lk.kind == rk.kind)
-                return FaithfulHints.StructEquals(lu, ru, lk.kind, lk.args);
             if (lt != null && rt != null)
             {
                 if (FaithfulHints.IsNonNullFqn(lt, "kotlin.Double") && FaithfulHints.IsNonNullFqn(rt, "kotlin.Double"))
@@ -276,7 +260,7 @@ static class PrimitiveOperatorLowering
                 if (NullableFloatElem(lt) is string lfe && NullableFloatElem(rt) is string rfe && lfe == rfe)
                     return NullableFloatEquals(args[0], args[1], lfe);
             }
-            return new JsonObject { ["k"] = "objEq", ["lhs"] = args[0]?.DeepClone(), ["rhs"] = args[1]?.DeepClone() };
+            return KotlinEqualityLowering.Call(args[0], args[1], nullSafe: true);
         }
         // Preserve identity intent until physical operand types are final. Numeric equality
         // already uses == and must not acquire reference boxing from this operation.

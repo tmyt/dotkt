@@ -27,7 +27,14 @@ static class ObjectSlotRename
         ["equals"] = "Equals",
     };
 
-    public static void Apply(JsonNode root) => Walk(root);
+    public static void Apply(JsonNode root)
+    {
+        Walk(root);
+        // Resolve semantic equality before generic frame consumers inspect the
+        // apparent collection owner of an inherited Any slot. Payload entry uses
+        // this same normalization, including for inline/default bodies.
+        KotlinEqualityLowering.Apply(root, preserveSuperIntent: true);
+    }
 
     static void Walk(JsonNode node)
     {
@@ -43,11 +50,13 @@ static class ObjectSlotRename
                 // reference-surface declaration (whose owner can have a different
                 // representation). Its source MethodDef identity is consumed here.
                 obj.Remove(DeclarationIdentityBinding.Key);
-                // Native-array calls still need this semantic fact at the helper-allocation boundary:
+                // Equals keeps its semantic fact until KotlinEqualityLowering consumes it.
+                // Native-array calls also need this fact at the helper-allocation boundary:
                 // Object slots use native storage, not a hoisted value-class body. MemberCallSubstitution
                 // consumes it when producing objMethod; reference-build bodies are squashed instead.
-                if ((obj["k"] as JsonValue)?.GetValue<string>() != "callInstance"
-                    || !AliasHelperHoist.UsesNativeArrayObjectSlot(TypeJson.OwnerName(obj["ownerType"]), true))
+                if (obj["method"]?.GetValue<string>() != "Equals"
+                    && ((obj["k"] as JsonValue)?.GetValue<string>() != "callInstance"
+                    || !AliasHelperHoist.UsesNativeArrayObjectSlot(TypeJson.OwnerName(obj["ownerType"]), true)))
                     obj.Remove("anySlot");
             }
             // An `objMethod` node is UNAMBIGUOUSLY a System.Object virtual call — rename its `method` by bare name.

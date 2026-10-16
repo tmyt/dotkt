@@ -366,6 +366,9 @@ public actual class HashSet<E> : MutableSet<E> {
 // GetEnumerator bridge wraps iterator() — the SAME machinery AbstractMutableSet/ClrMatchGroupCollection rely on.
 @SinceKotlin("1.1")
 public actual class LinkedHashSet<E> : MutableSet<E> {
+    override fun equals(other: Any?): Boolean = DotKt.Runtime.CompilerServices.structuralEquals(this, other, 1)
+    override fun hashCode(): Int = DotKt.Runtime.CompilerServices.structuralHash(this, 1)
+
     // Backing insertion-ordered map: keys are the set elements (order-preserving via OrderedDictionary); the value is an
     // unused placeholder. Reading the value never happens, so the V?-local landmine (ClrMapDefaults) is not in play.
     private val map: LinkedHashMap<E, Boolean>

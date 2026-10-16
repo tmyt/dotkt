@@ -586,16 +586,28 @@ largest value with `NaN == NaN` structurally and `NaN.compareTo(NaN) == 0`. On t
 (`(-0.0).Equals(0.0)` is `true`, `(-0.0).CompareTo(0.0)` is `0`). DotKt matches Kotlin (final-review C14, 2026-07-06):
 
 - A **boxed** `==` (`kotlin.Any.equals` on a boxed floating value — e.g. `(-0.0 as Any) == (0.0 as Any)`) — AND an
-  **explicit `.equals()`** method call on a boxed floating value (`(-0.0).equals(0.0)`) — are routed by kotc to the
+  **explicit `.equals()`** method call on a boxed floating value (`(-0.0).equals(0.0)`) — are resolved by bir2cir and the
   stdlib total-order helper `clrDoubleEquals`/`clrFloatEquals` (`toBits()` bit-compare, NaN-canonicalized):
   `(-0.0 as Any) == (0.0 as Any)` and `(-0.0).equals(0.0)` → **`false`**, `(NaN as Any) == (NaN as Any)` and
   `Double.NaN.equals(Double.NaN)` → **`true`**.
 - A direct `Double`/`Float.compareTo` is routed to `clrDoubleCompare`/`clrFloatCompare` (JDK total-order algorithm):
   `(-0.0).compareTo(0.0)` → **`-1`**, `Double.NaN.compareTo(1.0)` → **`1`**, `Double.NaN.compareTo(Double.NaN)` → **`0`**.
 
-- A **collection** `.equals()` (List/Set/Map) is likewise routed to the stdlib structural helper, exactly like the
-  `==` operator (`listOf(1,2).equals(listOf(1,2))` → **`true`**), while a **plain object** `.equals()` keeps
-  `Object.Equals` reference identity. String `.equals()` uses String's own value-equality binding.
+- Kotlin `==` and `Any.equals` use the same virtual equality rule through concrete, Any, nullable, generic,
+  stored, callable-reference and DLL boundaries. Calls to authored/inherited CLR Object-slot overrides run exactly
+  once, including self and null arguments; null tests and `!!` do not invoke equals. Merely implementing List/Set/Map
+  does not invent an equals override.
+  Emitted stdlib collection implementations provide their declared defaults with matching virtual hashCode;
+  native class aliases receive List
+  ordered, Set unordered or Map key/value equality from their authoritative stdlib binding metadata. An inherited
+  native-class default selects that base's family and constructed interface, not unrelated interfaces supplied by a
+  derived CLR class. Reimplementation of that exact native interface remains virtual, including Count/enumeration;
+  equality does not bypass it to reconstruct private native storage. Map defaults use this map's lookup to compare
+  the peer's entries, like common AbstractMap, preserving native/authored lookup semantics rather than scanning all
+  entry pairs. Runtime type classification and entry accessors are cached without retaining collectible types.
+  A foreign peer with ambiguous collection views does not participate in structural equality. Arrays and plain
+  objects retain reference identity, and explicit CLR `Equals` calls/nonvirtual `super.equals` retain their native
+  targets. None of these operations remember an originating collection view or wrap/copy the collection.
 
 The **primitive** operators stay IEEE (matching Kotlin, and `il-nancmp`-green): `-0.0 == 0.0` → `true`,
 `Double.NaN == Double.NaN` → `false`, and direct `<`/`>`/`<=`/`>=` (which desugar to the IEEE compare intrinsics, not

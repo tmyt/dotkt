@@ -942,10 +942,17 @@ static class MemberCallSubstitution
     // metadata or guess storage ownership from a concrete BCL class or its element type.
     static JsonNode CompilerMetadataIntrinsic(string intrinsic, ReferenceMetadataIndex refs)
     {
-        if (intrinsic != "dotkt.collectionMapStorageTypes") return null;
+        var definitions = intrinsic switch {
+            "dotkt.collectionMapStorageTypes" => refs.KotlinMapStorageDefinitions(),
+            "dotkt.equalityStorage.List" => refs.KotlinEqualityStorageDefinitions("List"),
+            "dotkt.equalityStorage.Set" => refs.KotlinEqualityStorageDefinitions("Set"),
+            "dotkt.equalityStorage.Map" => refs.KotlinEqualityStorageDefinitions("Map"),
+            _ => null,
+        };
+        if (definitions == null) return null;
         return new JsonObject {
             ["k"] = "newArray", ["elem"] = TypeJson.Fqn("System.Type"),
-            ["elems"] = new JsonArray(refs.KotlinMapStorageDefinitions().Select(name => (JsonNode)new JsonObject {
+            ["elems"] = new JsonArray(definitions.Select(name => (JsonNode)new JsonObject {
                 ["k"] = "classRef", ["type"] = TypeJson.Fqn(name),
             }).ToArray()),
         };
