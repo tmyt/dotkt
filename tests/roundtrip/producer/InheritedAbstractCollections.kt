@@ -17,6 +17,10 @@ open class LibraryList<T>(private val elements: List<T>) : AbstractList<T>() {
     override fun get(index: Int): T = elements[index]
 }
 
+open class LibraryLazy<T>(override val value: T) : Lazy<T> {
+    override fun isInitialized(): Boolean = true
+}
+
 open class OrdinaryBase<T>(val value: T)
 open class LibraryBase : OrdinaryBase<String?>(null), CollectionTag {
     override fun tag(): String = "base"

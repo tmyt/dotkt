@@ -5,6 +5,7 @@ import roundtrip.inheritedabstractcollections.*
 
 private class ImportedSet : LibrarySet()
 private class ImportedList<T>(elements: List<T>) : LibraryList<T>(elements)
+private class ImportedLazy<T>(value: T) : LibraryLazy<T>(value)
 private class ImportedBase : LibraryBase()
 
 class InheritedAbstractCollectionTests {
@@ -30,5 +31,15 @@ class InheritedAbstractCollectionTests {
         val control = ImportedBase()
         check(control.value == null)
         check((control as CollectionTag).tag() == "base")
+    }
+
+    @TestAttribute
+    fun importedInterfaceRetainsItsSourceArity() {
+        val text: Lazy<String> = ImportedLazy("x")
+        check(text.value == "x" && text.isInitialized())
+        val nullable: Lazy<Int?> = ImportedLazy<Int?>(null)
+        check(nullable.value == null && nullable.isInitialized())
+        val integer: Lazy<Int> = ImportedLazy(7)
+        check(integer.value == 7)
     }
 }

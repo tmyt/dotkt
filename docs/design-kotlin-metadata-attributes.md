@@ -169,8 +169,9 @@ The payload is the same opaque TypeNode encoding every other carrier uses, so no
 maps a TYPE parameter's index to the pre-erasure list of that parameter's upper bounds, which erase for the same
 reason and are lost the same way. Each member is recorded only where the erasure actually moved that position — an
 edge it did not touch is not on the carrier, so the consumer's own projection decisions for it stand — and an
-ordinary type carries nothing at all. dll2klib reads all three back (`RestoreErasedSupertypes`): the two supertype
-members replace a projected edge by head, `bounds` is applied to the type parameter at that index.
+ordinary type carries nothing at all. dll2klib reads these facts back (`RestoreErasedSupertypes`): `base` replaces
+the single base edge by its declaration role; `interfaces` corrects projected edges by Kotlin classifier identity;
+`bounds` is applied to the type parameter at that index. Physical representation arity does not select source facts.
 
 The declaration-signature allocator additionally records `signatureAllocation: true` on the existing
 `KotlinDeclarationIdentity` payload for declarations whose physical parameter identity it allocated. Absence is
@@ -241,12 +242,13 @@ are bound later to exact nested metadata paths without changing the captured Kot
 the parameter's flattened publication index, including captured outer parameters of an `inner` class; that is the
 same frame ilemit emits and dll2klib assigns to `TypeParameter.Id`.
 
-`dll2klib` restores the edges by HEAD, not by position, and that is load-bearing: the projected supertype list is not
-a transcription of the metadata's interface list — it drops the non-generic shadows, collapses the `IComparable`
-bridge and synthesizes `kotlin.Throwable`/`kotlin.Any` edges — so an index would line up with nothing. Replacing an
-entry whose class name and argument count the carrier also names keeps every one of those decisions and moves only
-the arguments, which is all that was erased. Witnessed cross-module by
-`roundtrip-nullable-vt-generic-supertype-edge`.
+`dll2klib` restores a recorded base by its single declaration role, independently of the physical base's classifier
+or argument count. Recorded interface corrections match by Kotlin classifier identity, not list position or CLR
+arity: the projected interface list drops non-generic shadows and collapses the `IComparable` bridge, so physical
+indices do not identify source edges. A nullable representation frame may add physical type arguments to either
+kind of edge; those arguments must not prevent restoration of the exact source TypeNode. Untouched interface edges
+keep their normal projection. The round-trip inherited collection and `Lazy` tests cover this source/physical arity
+difference; `roundtrip-nullable-vt-generic-supertype-edge` covers erased source arguments.
 
 At each carried slot, the erasure may be at the slot's **head** (`x: T?`) or **nested** (`Holder<T?>`, `List<Int?>`,
 `Array<T?>`, `(T) -> T?`, `Holder<T?>?`). The two need different amounts of help on the way back:

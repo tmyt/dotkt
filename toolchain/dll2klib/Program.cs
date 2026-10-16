@@ -6552,9 +6552,9 @@ internal sealed class AssemblyScanner : IDisposable
     // The base edge has one declaration-owned role, independent of its physical classifier or generic arity.
     // Restore it in that role: nullable representation frames can add CLR parameters, and an authoritative Kotlin
     // base must not be discarded because its argument count differs from the physical TypeSpec.
-    // Interface corrections still match by head, not position: projection drops non-generic shadows and collapses
-    // the `IComparable` bridge, so a physical interface index would line up with nothing. Only recorded corrections
-    // replace these projected interfaces; untouched edges retain their normal projection.
+    // Interface corrections match by Kotlin classifier identity, not position or physical arity: projection drops
+    // non-generic shadows and collapses the `IComparable` bridge, so a physical interface index would line up with
+    // nothing. Only recorded corrections replace these interfaces; untouched edges retain their normal projection.
     //
     // A TYPE-PARAMETER BOUND is the same fact one level down and rides the same carrier's `bounds`. `class Box<T :
     // Sink<Int?>>` constrains T to a physical `Sink<object>`, so a consumer that re-derived the bound from the CLR
@@ -6591,8 +6591,7 @@ internal sealed class AssemblyScanner : IDisposable
             if (!cur.HasClassName) continue;
             var curName = names.ClassName(cur.ClassName);
             var match = pre.FirstOrDefault(p => p.HasClassName
-                                                && names.ClassName(p.ClassName) == curName
-                                                && p.Argument.Count == cur.Argument.Count);
+                                                && names.ClassName(p.ClassName) == curName);
             if (match is not null) result.Supertype[i] = match;
         }
     }

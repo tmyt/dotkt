@@ -5,8 +5,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
-- Restore the saved Kotlin base type by its declaration role across DLL imports, rather than requiring its
-  generic arity to match the lowered CLR base. Imported abstract collection subclasses can be inherited (#1061).
+- Restore saved Kotlin supertypes across DLL imports without requiring their source arity to match lowered CLR
+  type arguments. Imported abstract collection and generic interface implementations can be inherited (#1061).
 
 - Preserve projected collection returns and widening without wrappers, copies or invalid CLR value-element
   covariance, retaining reference identity and live mutations through ordinary generic calls and storage (#862).
