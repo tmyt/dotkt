@@ -2342,6 +2342,8 @@ What this is observable as, beyond the boxing already listed above:
   nested native generic constructions and supported `ref`/`out` or live-reference locations retain the selected
   declaration's native array shape. Crossing from open Kotlin storage checks that shape without copying or
   changing aliases. Kotlin allocation element witnesses likewise remain exact, separate from open value slots.
+  Attribute constructor/field signatures and attribute blobs likewise retain concrete CLR array types, not open
+  array storage; this does not change ordinary projected array slots on an annotated Kotlin method.
   A collection factory's native container element, key or value argument is such a witness too;
   storing an open array in that container checks its exact array shape at the insertion edge.
 

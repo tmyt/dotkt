@@ -992,7 +992,7 @@ static class BirTypeLowering
     // Structured declaration modifier (spec §2.1): `decl.mods.<key> == true` (absent object/key = false).
     static bool ModFlag(JsonObject obj, string name) => obj["mods"] is JsonObject m && (m[name] as JsonValue)?.GetValue<bool>() == true;
 
-    static bool IsAttributeClass(JsonObject obj) =>
+    internal static bool IsAttributeClass(JsonObject obj) =>
         ModFlag(obj, "annotation") ||
         (obj["base"] is JsonObject b && b["t"] is JsonValue bt && bt.TryGetValue<string>(out var bts) && bts == "fqn" &&
          b["name"] is JsonValue bn && bn.TryGetValue<string>(out var s) && s != null &&

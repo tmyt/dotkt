@@ -474,6 +474,7 @@ static class FBoundStarProjectionErasure
                             var exactOuterSlot = IsInnerConstructionOuterSlot(obj, index, defs, refs);
                             argumentTypes[index] = TypeJson.Write(RewriteType(argumentType, owners, refs,
                                 childBoundDeclaration, localClrAliases,
+                                preserveArrayShape: childArrayShape,
                                 preserveConstructedHead: exactValue || exactOuterSlot));
                         }
                         continue;
@@ -550,7 +551,11 @@ static class FBoundStarProjectionErasure
     // Kotlin generic values in a bridge into exact constructed CLR values.
     static bool IsNativeArrayDeclarationSlot(JsonObject owner, string key, ReferenceMetadataIndex refs,
         IReadOnlyDictionary<string, string> localClrAliases) =>
-        key == "typeArgs" && ClrBoundNode.IsAny(Str(owner["k"]))
+        // Attribute declarations and blobs obey CLR fixed-argument types, not
+        // ordinary Kotlin open-array value storage. Do not propagate this into nested types.
+        key is "attrs" or "retAttrs" or "assemblyAttrs"
+        || key is "ctors" or "fields" or "properties" or "methods" && BirTypeLowering.IsAttributeClass(owner)
+        || key == "typeArgs" && ClrBoundNode.IsAny(Str(owner["k"]))
         // Collection constructions allocate a native generic container. Its
         // element/key/value are CLR argument witnesses, not array value slots.
         // PhysicalValueCoercion authors the conversion at each insertion edge.
@@ -3165,6 +3170,7 @@ static class FBoundStarProjectionErasure
                             var exactOuterSlot = IsInnerConstructionOuterSlot(obj, index, defs, refs);
                             argumentTypes[index] = TypeJson.Write(RewriteType(argumentType, owners, refs,
                                 childBoundDeclaration, localClrAliases,
+                                preserveArrayShape: childArrayShape,
                                 preserveConstructedHead: exactValue || exactOuterSlot));
                         }
                         continue;

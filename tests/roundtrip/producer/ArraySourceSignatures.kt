@@ -16,7 +16,9 @@ class ArraySourceSurface(
 }
 
 class GenericArraySource<T>(val values: Array<T>)
+annotation class ArraySourceNames(vararg val names: String)
 fun firstStarArray(values: Array<*>): Any? = values[0]
+@ArraySourceNames("star", "array")
 fun relayStarArray(values: Array<*>): Array<*> = values
 fun <T> genericStarArray(values: Array<T>): Array<*> = values
 fun nullableStarArray(values: Array<*>?): Array<*>? = values

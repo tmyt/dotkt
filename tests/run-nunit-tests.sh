@@ -280,6 +280,13 @@ for proj in "${PROJECTS[@]}"; do
 	if [[ "$proj" == "tests/roundtrip/consumer" ]]; then
 		producer_dll="$ROOT/tests/roundtrip/producer/bin/$CONFIGURATION/net10.0/RoundtripProducer.dll"
 		producer_klib="$dir/obj/$CONFIGURATION/net10.0/klib/RoundtripProducer.klib"
+		if dotnet "$METADATA_INSPECTOR_DLL" --projected-array-attributes "$producer_dll" \
+			>"$ROOT/build/nunit-$name.projected-array-attributes.log" 2>&1; then
+			echo "  projected array slots preserve native attribute declarations and blobs"
+		else
+			echo "  PROJECTED ARRAY ATTRIBUTE FAIL"
+			tail -25 "$ROOT/build/nunit-$name.projected-array-attributes.log"; rc=1
+		fi
 		if dotnet "$METADATA_INSPECTOR_DLL" --projected-collection-returns "$producer_dll" "$producer_klib" \
 			>"$ROOT/build/nunit-$name.projected-collection-returns.log" 2>&1; then
 			echo "  projected collection values preserve source signatures and exact native CLR declarations"
