@@ -24,6 +24,9 @@ fun castStarArray(value: Any?): Array<*>? = value as? Array<*>
 fun projectedStarArray(values: Array<out Any?>): Array<*> = values
 fun writeProjectedArray(values: Array<in Int>, value: Int) { values[0] = value }
 fun castWritableIntArray(value: Any): Array<in Int>? = value as? Array<in Int>
+fun isStarArray(value: Any?): Boolean = value is Array<*>
+fun isNullableStarArray(value: Any?): Boolean = value is Array<*>?
+fun castNestedStarArray(value: Any): Array<Array<*>>? = value as? Array<Array<*>>
 
 fun checkLocalStarArraySources() {
     val values = arrayOf(7, 8)
@@ -40,6 +43,8 @@ fun checkLocalStarArraySources() {
     check(nullableStarArray(values) === values && nullableStarArray(null) == null)
     check(castStarArray(values) === values)
     check(castStarArray(null) == null && castStarArray("not an array") == null)
+    check(isStarArray(values) && !isStarArray(null) && !isStarArray("not an array"))
+    check(isNullableStarArray(values) && isNullableStarArray(null) && !isNullableStarArray("not an array"))
     val nullable = arrayOf<Int?>(null, 13)
     check(relayStarArray(nullable) === nullable && firstStarArray(nullable) == null)
     nullable[0] = 17
@@ -55,6 +60,10 @@ fun checkLocalStarArraySources() {
     val nested = arrayOf(arrayOf(23))
     check(relayStarArray(nested) === nested)
     check((firstStarArray(nested) as Array<*>)[0] == 23)
+    val openNested: Any = arrayOf<Array<*>>(arrayOf(29), arrayOf("nested"))
+    check(castNestedStarArray(openNested) === openNested)
+    check((openNested as Array<Array<*>>)[0][0] == 29)
+    check(castNestedStarArray(arrayOf("not nested")) == null)
 }
 
 class ArraySourceBox<T>(val value: T)

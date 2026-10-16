@@ -3112,7 +3112,7 @@ static class FBoundStarProjectionErasure
                 // exact constructed source only after that physical representation is known; its stale frontend
                 // `sty` is not proof that `(x as Derived<T>) as Base<T>` still carries Derived<T> at this point.
                 var runtimeKind = Str(obj["k"]);
-                var arrayCastTarget = runtimeKind is "cast" or "isInstRef" && !Bool(obj["_exactBridgeCast"])
+                var arrayCastTarget = runtimeKind is "cast" or "isInstRef" or "isInst" && !Bool(obj["_exactBridgeCast"])
                     ? TypeJson.Read(obj["type"]) : null;
                 var runtimeOperand = runtimeKind is "cast" or "isInstRef" ? obj["e"] : null;
                 var rewroteRuntimeOperand = runtimeOperand != null;

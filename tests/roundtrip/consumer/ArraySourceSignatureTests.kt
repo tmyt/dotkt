@@ -28,6 +28,8 @@ class ArraySourceSignatureTests {
         check(nullableStarArray(values) === values && nullableStarArray(null) == null)
         check(castStarArray(values) === values)
         check(castStarArray(null) == null && castStarArray("not an array") == null)
+        check(isStarArray(values) && !isStarArray(null) && !isStarArray("not an array"))
+        check(isNullableStarArray(values) && isNullableStarArray(null) && !isNullableStarArray("not an array"))
         val nullable = arrayOf<Int?>(null, 41)
         check(relayStarArray(nullable) === nullable && firstStarArray(nullable) == null)
         nullable[0] = 43
@@ -43,6 +45,10 @@ class ArraySourceSignatureTests {
         val nested = arrayOf(arrayOf(47))
         check(relayStarArray(nested) === nested)
         check((firstStarArray(nested) as Array<*>)[0] == 47)
+        val openNested: Any = arrayOf<Array<*>>(arrayOf(59), arrayOf("nested"))
+        check(castNestedStarArray(openNested) === openNested)
+        check((openNested as Array<Array<*>>)[0][0] == 59)
+        check(castNestedStarArray(arrayOf("not nested")) == null)
     }
 
     @TestAttribute
