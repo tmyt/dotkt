@@ -62,7 +62,7 @@ declaration signatures, generic constraints, nullability, and Kotlin metadata.
 ### By-reference parameters
 
 Normal CLR `ref`/`out` interop is represented in the reference KLIB as
-`ClrRef<T>` and called with `byref(value)`. `@ClrRefArguments(mask)` is a
+`ClrRef<T>` and called with `byref(value)`. A parameter's `@ClrRefArgument` is a
 separate stdlib-binding escape hatch used when an intrinsic Kotlin signature
 cannot expose `ClrRef<T>` directly. `bir2cir` consumes both forms and selects
 the CLR managed-pointer representation.

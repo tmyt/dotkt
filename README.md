@@ -43,10 +43,12 @@ both retired and removed.)
 hand-written compiler mapping. It ships as three artifacts: a **frontend klib**
 (`kotlin-stdlib-clr-frontend.klib`, what kotc resolves `kotlin.*` against), a **reference dll**
 (`DotKt.Private.Stdlib.dll`, compile-time metadata carrying the `@Clr*` bindings), and the
-shipping **runtime dll** (`DotKt.Stdlib.dll`). Where a Kotlin type *is* a BCL type
-(`List`→BCL list interfaces, `Map`→`IDictionary`, `StringBuilder`, exceptions, …) the binding is
+shipping **runtime dll** (`DotKt.Stdlib.dll`). Bindings to BCL types and operational interfaces
+(`List`→BCL list interfaces, `Map`→dictionary operations, `StringBuilder`, exceptions, …) are
 declared **in the stdlib source** as `@ClrTypeAlias`/`@ClrIntrinsic` metadata and applied by
-bir2cir at app-emit — the compiler itself stays generic.
+bir2cir in runtime and application builds — the compiler itself stays generic. Ordinary values of
+covariant collection aliases use `object` slots with their Kotlin types preserved in metadata;
+exact native declarations keep their CLR signatures.
 
 ## What works today
 
@@ -74,7 +76,7 @@ round-trip, wide-delegate, and packaged-SDK scenarios. Test entry points live be
 - Collections (`listOf`/`mapOf`/…, `map`/`filter`/`fold`/`groupBy`/`joinToString`/`sorted*`/…),
   strings + `Regex`, `kotlin.math`, ranges, `Pair`/`Triple`, scope functions, destructuring,
   unsigned types, `Array<T>` ops, `Result`/`runCatching`, atomics — the real stdlib bodies run
-  on the CLR (lazy `Sequence`/coroutine builders are the in-progress tail)
+  on the CLR, including lazy `Sequence` chains and `sequence { yield(...) }` builders
 
 **Kotlin ↔ .NET interop**
 - `import System.X` façade-free (the complete public surface of every resolved reference assembly
@@ -96,7 +98,7 @@ Prereqs: the repo's Gradle auto-provisions a JDK; you need the **.NET SDK 10**.
 ```bash
 make help                          # all targets
 make all                           # toolchain + stdlib artifacts
-make dev SRC=path/to/Foo.kt        # compile + run one file (wraps scripts/dotkt.sh --run)
+make dev SRC=path/to/Foo.kt RUN=1  # compile + run one file (wraps scripts/dotkt.sh --run)
 make verify                        # all compiler, IR, MSBuild, roundtrip, and package gates
 make pack                          # NuGet packages into a local feed
 ```

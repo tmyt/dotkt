@@ -17,7 +17,8 @@ Status legend: ✅ works today (exercised by the test gates) · 🚧 in progress
 | Null safety: `?.` `?:` `!!`, smart casts, `Int?` → `Nullable<int>`, NRT interop | ✅ |
 | Control flow, `when`, ranges, labeled jumps, `try`/`catch`, string templates | ✅ |
 | Operator overloading, `infix`, destructuring | ✅ |
-| `suspend` functions (`Task<T>` ABI) / `Sequence` builders / `yield` | 🚧 (ABI settled; runtime port in progress) |
+| `suspend` functions (`Task<T>` ABI), continuations, coroutine context, Task/ValueTask await | ✅ |
+| `Sequence` / `iterator` builders, `yield` / `yieldAll` | ✅ |
 | Structured concurrency (`Job`, `CoroutineScope`, `launch`) | ❌ (later track) |
 | Context parameters (`context(s: S) fun f()`), incl. cross-module | ✅ (a leading CLR parameter; see the differences doc) |
 
@@ -27,10 +28,10 @@ Status legend: ✅ works today (exercised by the test gates) · 🚧 in progress
 |---|---|
 | Collections (`listOf`/`mapOf`/…, `map`/`filter`/`fold`/`groupBy`/`joinToString`/`sorted*`/…) | ✅ |
 | Strings (`trim`/`padStart`/`split`/templates/… — a few ops still route through interim lowerings) | ✅ |
-| `Regex` | 🚧 `find`/`matchEntire`/`matches`/`matchAt`/`matchesAt`/`containsMatchIn`/`replace`/`replaceFirst`/`split`/`escape`/`escapeReplacement`/`fromLiteral` + the `MatchResult`/group surface (`value`/`range`/`groups`/`groupValues`, by-index & by-name groups) all work (gates: `il-regex`, `il-regexgroups`, `il-regexreplace`). `findAll`/`splitToSequence`/`options` are still pending (the first two are gated on the lazy-`Sequence` runtime). `matchEntire` does not re-anchor an alternation (`a\|ab` over `"ab"`), a deliberate CLR deviation being tightened in #162. |
+| `Regex` | ✅ Matching (including anchored `matchEntire`/`matches`), groups, replacement, splitting, `findAll`, `splitToSequence`, and `options`. The CLR engine and [option mapping](../dotkt-semantics.md#5b-quater-regexoptions-decodes-the-compiled-regexoptions-three-regexoptions-have-no-clr-bit-deliberate-clr-choice) have documented differences. |
 | `kotlin.math`, ranges, `Pair`/`Triple`, scope functions, unsigned types, `Array<T>` ops | ✅ |
 | `Result`/`runCatching`, atomics, exceptions (bound to `System.*`) | ✅ |
-| Lazy `Sequence` chains (`asSequence().map{…}`) | 🚧 (coroutine-machinery-gated) |
+| Lazy `Sequence` chains (`asSequence().map{…}`, filtering, short-circuiting terminals) | ✅ |
 | kotlinx libraries (coroutines-core, serialization, …) | ❌ (stdlib only; separate future track) |
 
 ## .NET interop
@@ -51,3 +52,6 @@ Status legend: ✅ works today (exercised by the test gates) · 🚧 in progress
 Gates backing this table: `tests/run-nunit-tests.sh` (compile → NUnit assertions → `ilverify`, including
 ProjectReference consume-as-Kotlin coverage) and `tests/msbuild/run.sh` (stateful MSBuild). `make verify` runs the
 complete set.
+
+Sequence and Regex coverage lives in `tests/basic/fixtures/SequenceOperationTests.kt`,
+`tests/basic/fixtures/RegexTests.kt`, and `tests/coroutines/fixtures/CoroutineSequenceBuilderTests.kt`.

@@ -108,9 +108,10 @@ If you have the source repo rather than the NuGet packages:
 ```bash
 make help                      # list all targets
 make all                       # build the full toolchain + stdlib
-make dev SRC=path/to/Foo.kt    # compile + run one Kotlin file through the pipeline
+make dev SRC=path/to/Foo.kt RUN=1 # compile + run one Kotlin file through the pipeline
 make verify                    # run all compiler, IR, MSBuild, roundtrip, and package gates
 make pack                      # produce the NuGet packages into a local feed
 ```
 
-(`./scripts/dotkt.sh --run path/to/Foo.kt` is the underlying one-shot wrapper.)
+(`./scripts/dotkt.sh --run path/to/Foo.kt` is the underlying one-shot wrapper. Omit `RUN=1` from
+`make dev` to compile without running.)

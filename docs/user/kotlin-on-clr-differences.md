@@ -32,7 +32,9 @@ Not Java `printf` (`"%d"`). It binds straight to `System.String.Format`.
   snapshotted by an implicit `.toString()`. **It is a snapshot, not a live view** — mutating the
   builder afterwards is not observed through the parameter.
 - You can still write `class S : CharSequence` — a user implementation keeps working via a
-  synthetic interface.
+  synthetic interface. An assembly declaring such an implementation retains that interface for
+  its own `CharSequence` slots. The stdlib's CharSequence extension signatures also retain the
+  interface and use an adapter at string boundaries.
 
 ## `suspend` functions are async `Task<T>` functions
 
@@ -40,34 +42,41 @@ Not Java `printf` (`"%d"`). It binds straight to `System.String.Format`.
 suspend fun fetch(): Int          // CLR signature: Task<int> fetch()
 ```
 
-- Calling a suspend function **is an await**; C# can `await` your Kotlin directly and vice versa.
-- Execution is **hot, like C# `async`** — a suspend function starts running when invoked, not
-  lazily on collection like kotlinx's cold-by-default builders.
-- There is no `Continuation` parameter in any public signature.
-- Status: the ABI is settled and locked in the design docs; the full coroutine/`Sequence` runtime
-  is the current implementation track — check the release notes before relying on advanced
-  builders.
+- C# awaits the exported task. Kotlin suspend callers compose through an internal continuation
+  entry; `.await()` consumes .NET awaitables from Kotlin.
+- The exported task method starts execution immediately, like C# `async`. A `sequence { ... }`
+  builder remains lazy and is driven by iteration.
+- The public task method has no `Continuation` parameter; the internal entry carries it.
+- Suspend lowering, continuations, coroutine context, and `Sequence`/`yield` builders are
+  implemented. Structured concurrency APIs such as `Job` and `CoroutineScope` belong to the
+  separate kotlinx library track.
 
 ## Generics are real (reified) — and that mostly helps
 
-The CLR keeps type arguments at runtime, so `is T` / `T::class` use a real generic type. CLR type
-arguments do not retain Kotlin nullability, so nullable-sensitive generic operations receive a compiler-hidden
-nullability witness: `x is T` correctly accepts null when called as `f<String?>`, including when the test
-is inside a captured lambda, SAM, suspend lambda, delegate, or object expression. The witness is independent of
-the Kotlin `reified` declaration marker, and the ordinary Kotlin rule still rejects passing a non-reified type
-parameter into a reified function. `inline` is
+The CLR keeps physical type arguments at runtime, but those arguments do not always identify the
+original Kotlin type: nullable value arguments may use `object`, and collection storage does not encode
+every Kotlin classifier. Operations such as reified `is T` and checked casts receive a compiler-hidden
+type witness when needed. It carries Kotlin nullability, classifier identity, and an optional classifier
+predicate; it follows captured lambdas, SAMs, suspend lambdas, delegates, and object expressions.
+`T::class` uses the physical CLR type. Kotlin's source rules for `reified` still apply, including the
+restriction on passing a non-reified type parameter into a reified function. `inline` is
 otherwise a no-op unless you pass a lambda literal (then it's really inlined, including non-local
 `return`, even cross-module).
 
-## Collections are the BCL's
+## Collections use BCL storage and Kotlin type metadata
 
-Kotlin `List`/`MutableList`/`Map`/... are bound to the real BCL collection types — a Kotlin
-`List<Int>` is directly usable from C#. Two consequences:
+Factories use BCL collections. Ordinary value slots for covariant aliases such as `List<Int>` and
+`Map<K,V>` are emitted as `object`, with the original Kotlin types retained in metadata. This lets
+Kotlin covariance preserve the same collection reference even when CLR value-type instantiations are
+invariant. Exact native declarations and invariant `MutableMap<K,V>` slots retain their CLR interfaces.
 
-- A Kotlin `Map` surfaces to C# as `IDictionary<K,V>` (mutable interface) — Kotlin's read-only-ness
-  is enforced by the Kotlin compiler, not the CLR type. `Map.get` keeps Kotlin's
-  null-on-missing semantics.
-- `map.keys` / `values` / `entries` are **snapshots**, not the JVM's live views.
+- C# consumers of an opaque Kotlin collection slot see `object`; a Kotlin consumer recovers the
+  source type. Widening a Kotlin collection does not copy it or create a wrapper.
+- `Map.get` keeps Kotlin's null-on-missing semantics. Kotlin-authored map implementations retain
+  their original methods and views.
+- BCL-backed read-only `Map.keys` / `values` / `entries` are snapshots of membership, while an
+  entry's value reads through to the backing map. `MutableMap.keys` is live and supports remove/clear;
+  `MutableMap.values` uses the native dictionary view.
 
 ## `value class` is a real class
 
@@ -113,7 +122,7 @@ current language version 2.4.` Functions, properties, members, extensions,
 
 - **kotlinx libraries** (kotlinx-coroutines, kotlinx-serialization, …) — DotKt binds the
   *stdlib*; kotlinx is a separate future track.
-- **Full coroutine machinery** (`Sequence` builders / `yield`, structured concurrency) — in
-  progress; the `suspend`⇔`Task` ABI above is the settled design.
+- **Structured concurrency APIs** (`Job`, `CoroutineScope`, `launch`, …) — part of the separate
+  kotlinx library track. Stdlib `Sequence` builders and `yield` are supported.
 - **Live `CharSequence` views** and user implementations of `Appendable` (use `StringBuilder`).
 - `internal` is assembly-visibility; there is no friend-module (`InternalsVisibleTo`) wiring yet.

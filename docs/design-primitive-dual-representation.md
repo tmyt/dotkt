@@ -1,104 +1,74 @@
-# Primitive dual-representation — how kotlin.Int/Short/… emit on the CLR
+# Primitive and Number representation on the CLR
 
-Status: **decided (Model-B pragmatic)** (2026-06-28); **the general rule is IMPLEMENTED** (bir2cir type lowering;
-nullable-generic `T?` return erasure to `object` landed 2026-07-02). This is the hardest type-representation problem in the stdlib; the
-trigger is dotPeek showing the garbage `public class kotlin.Short : Number, Comparable<short>` (an empty shell) and the
-primitive `toDouble` no-impl load errors.
+Status: current implementation record. Kotlin source types are preserved in frontend metadata;
+`bir2cir` selects their CLR storage and operations.
 
-## The symptom
+## Primitive storage
 
-`kotlin.Short` emits (CIR) as: `base = kotlin.Number`, `interfaces = [kotlin.Comparable[short]]`, **0 methods, 0 fields**.
-Two things are wrong:
-1. The supertype's type arg `Short` is BCL-lowered to `short` (System.Int16) -> `Comparable<short>` instead of Kotlin's
-   self-referential `Comparable<Short>`.
-2. The members (`toDouble`, `plus`, `compareTo`, …) are dropped -> empty shell -> `Number`'s abstract conversions are
-   unfilled -> load failure.
+The CLR stdlib declarations bind Kotlin primitives to their native CLR types through `@ClrTypeAlias`.
+In runtime and application builds, that binding applies to bare values and generic arguments:
 
-## Why it's hard — the facts
+| Kotlin position | Physical CLR representation |
+|---|---|
+| `Int` parameter, result, field, or local | `System.Int32` |
+| `Box<Int>` for an ordinary invariant `Box<T>` | `Box<System.Int32>` |
+| exact native collection element `Int` | `System.Int32` in the selected CLR generic interface |
+| `Int` stored in `Any` or `Number` | native boxed `System.Int32` |
+| direct `Int?` value slot | `System.Nullable<System.Int32>` |
 
-- **Arithmetic is IL, not method calls.** kotc lowers `a + b` to a `{"k":"bin","op":"+"}` node; ilemit emits IL `add`,
-  which requires the operands to be a CLR primitive (System.Int32). So a `kotlin.Int` value MUST be System.Int32 at the
-  IL level.
-- **The primitive maps are pervasive.** `birType`/`netType` map `kotlin.Int -> int`/`System.Int32`, `kotlin.Short ->
-  System.Int16`, … — used for every parameter/field/local/generic-arg of a primitive type. They are correct at VALUE
-  positions (and needed for IL).
-- **The clr actuals declare members with NO body** (`class Byte private constructor() : Number(), Comparable<Byte> {
-  fun toDouble(): Double … }` — Step-1 stubs, bodies `TODO`). kotc filters bodyless non-abstract methods -> the shell.
-- **`kotlin.Number` has NO BCL equivalent.** CLR's numeric value types (Int32, …) share no common `Number` base. So
-  `kotlin.Number` must be a real emitted type, and `Byte : Number` only holds if `Byte` is a type that extends it.
+Runtime and application builds do not emit wrapper classes such as `kotlin.Int` or `kotlin.Short`.
+A generic argument does not by itself introduce a Kotlin wrapper or require boxing; CLR generics can
+store native value types directly. Boxing is selected when a value actually crosses an object slot.
 
-## Considered alternatives (historical) — the Model A vs B fork
+Other representation rules still apply around these primitives. Ordinary slots for declaration-variant
+collection aliases such as `List<Int>` use `object`, while exact native declaration signatures retain
+their CLR interface types. Nullable generic storage is also positional: an open `T?` uses `object`,
+and a possibly-value nullable argument such as `Box<Int?>` uses an erased argument with its source
+type retained in metadata. These are storage rules owned by `bir2cir`, not Kotlin source-type changes.
+See [dotkt-semantics.md](dotkt-semantics.md) §§2, 5c, and 9c-bis.
 
-> Historical. The decision is **Model-B pragmatic** — the locked outcome is the general-rule section below. This fork
-> and the recommendation that follows are retained for context.
+## Number is a Kotlin classifier over native values
 
-The current state is an **incoherent hybrid**: kotc emits a `kotlin.Short` TYPE (so it can sit under `Number`) while
-ALSO mapping `Short -> System.Int16` at references (so arithmetic works). The shell is the collision of the two.
+The CLR numeric value types cannot inherit a common Kotlin class. Ordinary `Number` and `Number?`
+slots therefore use `System.Object`, including nested generic arguments. Numeric values retain their
+native CLR boxes; passing an `Int` through `Number` does not create another wrapper object.
 
-- **Model A — primitives ARE the BCL types.** Don't emit `kotlin.Int/Short/…` as types; `kotlin.Int` === System.Int32
-  everywhere. Arithmetic = IL (unchanged). Simple, and the shells/`Comparable<short>`/`toDouble` errors vanish (the
-  types don't exist to fail). **BUT it breaks the `Number` hierarchy**: `System.Int32` does not extend `kotlin.Number`,
-  so `fun f(n: Number)` can't take an `Int`. (Mitigations: box to `kotlin.Number` at the Number-typed boundary, or map
-  `Number` to `System.object`/`System.IConvertible` and lose the Kotlin contract.) Not "pure kotlin.*"
-  (contradicts [[clr-stdlib-grand-strategy]]).
-- **Model B — primitives are PURE kotlin.* types** (the grand strategy; "BCL maps OFF under DOTKT_STDLIB_COMPILE").
-  `kotlin.Int : Number, Comparable<kotlin.Int>` is emitted faithfully; the BCL substitution (`kotlin.Int -> System.Int32`)
-  happens at APP-emit time. **Requires** (a) the app-time substitution machinery (memory: "NOT YET IMPLEMENTED"), and
-  (b) a value model where a `kotlin.Int` value is NOT System.Int32 during stdlib build — so arithmetic can't be IL
-  `bin`-on-Int32; it must be method calls (`Int.plus`) OR ilemit must resolve `@kotlin.Int -> System.Int32` for IL while
-  keeping `@kotlin.Int` for type metadata (which collapses the separate type unless very carefully scoped).
+`Number` membership is determined from Kotlin semantics: the six signed numeric primitive types and
+authored Number subclasses qualify. Boolean, Char, unsigned values, strings, and arbitrary
+`IConvertible` objects do not acquire Number identity. Direct and reified checks use the same rule.
 
-## Recommendation (historical)
+An authored `class N : Number()` has physical base `System.Object`. Compiler-owned nominal conversion
+slots preserve its `toByte`/`toShort`/`toInt`/`toLong`/`toFloat`/`toDouble` overrides, including inherited
+implementations, generic bounds, and calls across a DLL boundary. Native numeric boxes use their
+corresponding conversions. Source-aware lookup preserves Kotlin overload selection before CLR erasure.
+The physically impossible Number-class constraint is omitted from CLR generic constraints while the
+original Kotlin bound is preserved in metadata. No public runtime `kotlin.Number` class is emitted.
 
-The grand strategy commits to **Model B**, and the dotPeek garbage is exactly Model B done halfway. But full Model B is
-a major project (substitution machinery + value/arithmetic rework). Proposed phasing:
+`Number::class` and `T::class` describe physical CLR types; classifier-sensitive `is`/`as` operations
+carry separate Kotlin facts. Array storage follows the array representation contract: for example,
+`Array<Number>` uses `object[]`, while an `Array<out Number>` view can retain a native numeric array
+through `System.Array`. The detailed classifier and array rules are in
+[dotkt-semantics.md §5-number](dotkt-semantics.md#5-number-number-values-keep-native-clr-boxing-authored-subclasses-use-nominal-slots).
 
-1. **Stop the incoherent hybrid first (cheap, unblocks load):** under DOTKT_STDLIB_COMPILE, make the primitive-type
-   emission COHERENT. Two candidate cheap fixes, pick one:
-   - **B-lite (keep the phantom type, fix it):** emit `kotlin.Short`'s supertype self-reference as `@kotlin.Short` (not
-     `short`) and emit its members (don't filter the bodyless conversions — emit them as `@Clr`-bound or abstract-filled
-     stubs). The type becomes a valid (phantom) `Number` subtype. Keeps BCL maps at value positions.
-   - **A-lite (drop the phantom type):** under stdlib-compile, DON'T emit the primitive type definitions at all; they map
-     to BCL. Resolves the shells immediately; defer the `Number`-hierarchy hole to when Number-typed stdlib code actually
-     exercises it.
-2. **Then the real Model B** (separate, large): the @Clr app-time substitution pass + the value/arithmetic model, so the
-   stdlib is genuinely pure-kotlin and an app rewrites `kotlin.Int -> System.Int32` at emit.
+## Artifact and layer ownership
 
-The choice between B-lite and A-lite (and committing to full B later) is the design owner's — it's the pure-kotlin-stdlib
-philosophy vs. pragmatic-BCL-alias, and it sets how `Number`/boxing/reflection behave. See also
-[[dual-representation-stdlib-types]], [[four-layer-purpose-retire-intrinsics]].
+- `kotc` records Kotlin identities, types, bounds, and operations in BIR. It does not select CLR
+  wrappers, boxing, or native collection signatures.
+- The metadata stdlib build retains the pure Kotlin declaration surface and its binding annotations.
+  Runtime and application builds apply the bindings in `bir2cir`.
+- `bir2cir` owns type substitution, object-slot conversions, Number dispatch, classifier witnesses,
+  and preservation of the original declaration facts in metadata.
+- `ilemit` emits the resolved CIR signatures and conversions one-to-one.
+- `dll2klib` restores source types and bounds from trusted metadata when a user library is consumed
+  as Kotlin. Reference-body stripping must preserve these facts and the declaration constraints.
 
-## The general rule (design owner, 2026-06-28): preserve the primitive in TYPE-ARGUMENT positions
+## Implementation and coverage
 
-Supertype is just one case; the general rule is **a primitive in a TYPE-ARGUMENT position keeps its `kotlin.*` type
-(`@kotlin.Int`), a primitive in a BARE value position lowers to the BCL primitive (System.Int32)**:
+`toolchain/bir2cir/BirTypeLowering.cs` applies primitive aliases in both value and generic positions.
+Number's trusted stdlib binding and nominal conversion contract are declared in
+`libraries/stdlib/clr/builtins/Number.kt`.
 
-| position | form | example |
-|---|---|---|
-| bare value (param / local / field / return / arithmetic) | **BCL primitive** | `fun f(x: Int)` -> `x: System.Int32`; `a+b` -> IL add |
-| type ARGUMENT (generic arg, incl. a supertype's args) | **`@kotlin.*`** | `Comparable<Int>` -> `Comparable<@kotlin.Int>`; `List<Int>` -> `List<@kotlin.Int>` |
-
-This is exactly the **JVM boxing boundary** (`int` bare vs `Integer` in generics) — and it falls out as a *consequence*,
-not a free choice: `kotlin.Number` is an abstract CLASS, a CLR struct cannot extend a class, so a `kotlin.Int` that must
-satisfy `Int : Number` (and `Comparable<Int>` over ITSELF) has to be a **reference type** — i.e. the boxed form — exactly
-where it appears as a type (generic args). So:
-- `kotlin.Int/Short/…` ARE emitted as real reference types extending `Number`, implementing `Comparable<self>`, carrying
-  their conversion members — used wherever a primitive appears as a TYPE ARGUMENT.
-- bare primitive values stay `System.Int32` (IL-native arithmetic, no boxing) — the CLR efficiency is kept off the
-  generic boundary.
-- **kotc inserts box/unbox at the boundary**: passing a bare `Int` where `@kotlin.Int` is wanted (into `List<Int>.add`,
-  into a `Comparable<Int>` slot) boxes System.Int32 -> kotlin.Int; reading it back unboxes.
-
-Trade-off: this re-accepts boxing AT THE GENERIC BOUNDARY (a JVM-ism CLR could avoid with `List<int>`), in exchange for a
-coherent `Number` hierarchy, self-referential `Comparable`, and faithful Kotlin reflection. It is the pragmatic Model-B:
-the primitive types are pure `kotlin.*` reference types in the type system, BCL only at bare-value/IL positions. RECOMMENDED.
-
-**Artifact split (where the substitution happens).** `ref.dll` (the pure-Kotlin stdlib surface) keeps `kotlin.Int` with
-**NO** substitution. **Both `rt.dll` and the app** perform the `kotlin.Int → System.Int32` substitution at bare-value
-positions — it is **not app-only** (see [[artifact-emission-policy]]).
-
-**Implementation sketch:** in `birType`/`netType` (these primitive maps live in `bir2cir` under the four-layer split —
-`dll2klib`/`kotc`/`bir2cir`/`ilemit`), thread a "type-argument position" flag — a primitive at a type-arg
-position emits `@kotlin.Int`; bare stays `int`/`System.Int32`. Emit the primitive type definitions (Number subtypes,
-Comparable<self>, conversion members — with bodies that box/convert). Insert box/unbox coercions where a bare value
-crosses into a type-arg slot and back. (Supertype args are just the first type-arg case this covers.)
+Permanent coverage includes `tests/basic/fixtures/NumberTests.kt`,
+`tests/interop/consumer/fixtures/NumberNativeTests.kt`, `tests/roundtrip/consumer/NumberTests.kt`,
+and `tests/roundtrip/bidirectional/consumer/NumberTests.cs`. These cover Kotlin behavior, exact native
+signatures, authored subclasses, and source restoration across separately compiled assemblies.

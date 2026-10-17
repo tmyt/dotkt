@@ -21,6 +21,8 @@ The documentation tree contains current user guidance, normative contracts, and 
 | [bir-cir.schema.json](bir-cir.schema.json) | Machine-readable BIR/CIR schema |
 | [design-compiler-modes.md](design-compiler-modes.md) | Metadata, runtime, and application build modes |
 | [coroutine-abi.md](coroutine-abi.md) | Public `suspend` to `Task<T>` ABI |
+| [bir2cir-phase-contracts.md](bir2cir-phase-contracts.md) | Admission and normalization of materialized executable graphs |
+| [application-manifest.md](application-manifest.md) | Windows application manifest configuration and incremental behavior |
 
 ## Current design records
 
@@ -31,11 +33,14 @@ These documents describe current implementation decisions or approved work that 
 - [design-clr-event-model.md](design-clr-event-model.md)
 - [design-clr-property-model.md](design-clr-property-model.md)
 - [design-coroutine-cold-core-task-bridge.md](design-coroutine-cold-core-task-bridge.md)
+- [design-dll2klib.md](design-dll2klib.md)
+- [design-function-value-representation.md](design-function-value-representation.md)
 - [design-kotlin-metadata-attributes.md](design-kotlin-metadata-attributes.md)
 - [design-primitive-dual-representation.md](design-primitive-dual-representation.md)
 - [design-ktproj-mpp.md](design-ktproj-mpp.md)
 - [design-nunit-test-harness.md](design-nunit-test-harness.md)
 - [design-stdlib-compilation.md](design-stdlib-compilation.md)
+- [design-target-reference-emission.md](design-target-reference-emission.md)
 
 ## Maintainer guide
 
