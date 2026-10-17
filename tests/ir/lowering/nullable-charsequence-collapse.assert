@@ -8,7 +8,8 @@
 
 # A potentially-null StringBuilder is evaluated once, null-tested, and snapshot only in the else arm.
 +"k":"valueBlock","stmts":[{"k":"var","name":"__cssnapshot$1","type":{"t":"fqn","name":"System.Object"},"init":{"k":"local","name":"value"}}]
-+"k":"cond","type":{"t":"fqn","name":"System.String"},"cond":{"k":"objEq","lhs":{"k":"local","name":"__cssnapshot$1"},"rhs":{"k":"const","type":{"t":"fqn","name":"System.Object"},"value":null}},"then":{"k":"cast","type":{"t":"fqn","name":"System.String"},"e":{"k":"const","type":{"t":"fqn","name":"System.Object"},"value":null}}
++"k":"cond","type":{"t":"fqn","name":"System.String"},"cond":{"k":"binOp","op":"==","lhs":{"k":"local","name":"__cssnapshot$1"},"rhs":{"k":"const","type":{"t":"fqn","name":"System.Object"},"value":null}},"then":{"k":"cast","type":{"t":"fqn","name":"System.String"},"e":{"k":"const","type":{"t":"fqn","name":"System.Object"},"value":null}}
+-"k":"objEq"
 +"else":{"k":"callStatic","owner":{"t":"fqn","name":"kotlin.LibraryKt"},"method":"toString","sig":[{"t":"fqn","name":"object"}],"ret":{"t":"fqn","name":"System.String"},"args":[{"k":"local","name":"__cssnapshot$1"}]
 
 # In particular, the original nullable value is not supplied directly to the null-stringifying helper.

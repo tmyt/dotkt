@@ -518,7 +518,7 @@ static class KotlinCollectionSlotSynthesis
         ["type"] = TypeJson.Fqn("kotlin.Boolean"),
         ["cond"] = new JsonObject
         {
-            ["k"] = "objEq",
+            ["k"] = "binOp", ["op"] = "===",
             ["lhs"] = Local(name),
             ["rhs"] = new JsonObject
             {

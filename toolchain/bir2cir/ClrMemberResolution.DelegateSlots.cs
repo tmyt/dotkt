@@ -214,7 +214,7 @@ static partial class ClrMemberResolution
                 ["k"] = "cond", ["type"] = TypeJson.Write(target),
                 ["cond"] = new JsonObject
                 {
-                    ["k"] = "objEq", ["lhs"] = new JsonObject { ["k"] = "local", ["name"] = temporary },
+                    ["k"] = "binOp", ["op"] = "===", ["lhs"] = new JsonObject { ["k"] = "local", ["name"] = temporary },
                     ["rhs"] = NullValue(),
                 },
                 ["then"] = NullValue(), ["else"] = adapted,

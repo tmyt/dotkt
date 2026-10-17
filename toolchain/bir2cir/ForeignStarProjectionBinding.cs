@@ -256,7 +256,7 @@ static class ForeignStarProjectionBinding
                 ["k"] = "cond",
                 ["cond"] = new JsonObject
                 {
-                    ["k"] = "objEq", ["lhs"] = local.DeepClone(),
+                    ["k"] = "binOp", ["op"] = "===", ["lhs"] = local.DeepClone(),
                     ["rhs"] = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Write(AnyN), ["value"] = null },
                 },
                 ["then"] = whenNull,
@@ -484,7 +484,7 @@ static class ForeignStarProjectionBinding
                 ["k"] = "cond",
                 ["cond"] = new JsonObject
                 {
-                    ["k"] = "objEq", ["lhs"] = Temp(),
+                    ["k"] = "binOp", ["op"] = "===", ["lhs"] = Temp(),
                     ["rhs"] = new JsonObject
                     {
                         ["k"] = "const", ["type"] = TypeJson.Write(AnyN), ["value"] = null,

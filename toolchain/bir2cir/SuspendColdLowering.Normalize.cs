@@ -376,7 +376,7 @@ static partial class SuspendColdLowering
                     // The hoisted handler, gated on the capture being non-null; catch-var refs -> __exc$K. Each stmt is a
                     // fresh DeepClone (a parentless node) so re-parenting it into the enclosing statement list is legal.
                     var skipL = NextLabel();
-                    tail.Add(BrIf(new JsonObject { ["k"] = "objEq", ["lhs"] = LocalOf(excName), ["rhs"] = NullConst(AnyTn) }, true, skipL));
+                    tail.Add(BrIf(new JsonObject { ["k"] = "binOp", ["op"] = "===", ["lhs"] = LocalOf(excName), ["rhs"] = NullConst(AnyTn) }, true, skipL));
                     foreach (var st in handlerBody)
                     {
                         var cloned = st?.DeepClone();
@@ -509,7 +509,7 @@ static partial class SuspendColdLowering
             var noPending = NextLabel();
             result.Add(BrIf(new JsonObject
             {
-                ["k"] = "objEq", ["lhs"] = LocalOf(pendingName), ["rhs"] = NullConst(AnyTn),
+                ["k"] = "binOp", ["op"] = "===", ["lhs"] = LocalOf(pendingName), ["rhs"] = NullConst(AnyTn),
             }, true, noPending));
             result.Add(new JsonObject { ["k"] = "throw", ["value"] = LocalOf(pendingName) });
             result.Add(Label(noPending));

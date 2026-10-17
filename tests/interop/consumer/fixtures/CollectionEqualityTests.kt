@@ -9,6 +9,18 @@ import CollectionStorageInterop.AmbiguousCollectionCounts
 
 class CollectionEqualityTests {
     @TestAttribute
+    fun nullableForeignClassifierGuardsDoNotCallEquals() {
+        val value = OverriddenList()
+        val opaque: Any? = value
+        check(opaque is System.Collections.Generic.List<*>?)
+        check((opaque as System.Collections.Generic.List<*>?) === value)
+        check(value.Calls == 0)
+        val absent: Any? = null
+        check(absent is System.Collections.Generic.List<*>?)
+        check((absent as System.Collections.Generic.List<*>?) === null)
+    }
+
+    @TestAttribute
     fun realStdlibDefaultsPreserveTheNativeEqualsHashContract() {
         val first = LinkedHashSet<Int>()
         first.add(23); first.add(42)

@@ -495,7 +495,7 @@ static class CharSeqStringLowering
             ["type"] = nullableString.DeepClone(),
             ["cond"] = new JsonObject
             {
-                ["k"] = "objEq",
+                ["k"] = "binOp", ["op"] = "===",
                 ["lhs"] = read.DeepClone(),
                 ["rhs"] = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("System.Object"), ["value"] = null },
             },
