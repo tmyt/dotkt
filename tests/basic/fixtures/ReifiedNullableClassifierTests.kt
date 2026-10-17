@@ -9,6 +9,9 @@ private inline fun <reified T> nullableClassifierAddNull(value: Any?): Boolean =
 private inline fun <reified T> nullableClassifierSafeCast(value: Any?): T? = value as? T
 private inline fun <reified T> nullableClassifierCast(value: Any?): T = value as T
 private inline fun <reified T> nullableClassifierDelegate(): (Any?) -> Boolean = { it is T }
+private inline fun <reified T> nullableClassifierEffectMatches(noinline next: () -> Any?): Boolean = next() is T
+private inline fun <reified T> nullableClassifierEffectSafeCast(noinline next: () -> Any?): T? = next() as? T
+private inline fun <reified T> nullableClassifierEffectCast(noinline next: () -> Any?): T = next() as T
 private enum class NullableClassifierEnum { Entry }
 private class NullableClassifierBox<T>(val value: T)
 
@@ -81,16 +84,33 @@ class ReifiedNullableClassifierTests {
     @TestAttribute
     fun typeChecksAndCastsEvaluateTheirOperandOnce() {
         var count = 0
-        fun next(value: Any?): Any? { count++; return value }
-        ClassicAssert.IsFalse(nullableClassifierMatches<Int?>(next("wrong")))
+        var value: Any? = "wrong"
+        val next: () -> Any? = { count++; value }
+        ClassicAssert.IsFalse(nullableClassifierEffectMatches<Int?>(next))
         ClassicAssert.AreEqual(1, count)
-        ClassicAssert.IsTrue(nullableClassifierMatches<Int?>(next(null)))
+        value = null
+        ClassicAssert.IsTrue(nullableClassifierEffectMatches<Int?>(next))
         ClassicAssert.AreEqual(2, count)
-        ClassicAssert.IsNull(nullableClassifierSafeCast<Int?>(next("wrong")))
+        value = 42
+        ClassicAssert.IsTrue(nullableClassifierEffectMatches<Int?>(next))
         ClassicAssert.AreEqual(3, count)
-        ClassicAssert.AreEqual(42, nullableClassifierCast<Int?>(next(42)))
+        value = "wrong"
+        ClassicAssert.IsNull(nullableClassifierEffectSafeCast<Int?>(next))
         ClassicAssert.AreEqual(4, count)
-        try { nullableClassifierCast<Int?>(next("wrong")) } catch (_: InvalidCastException) { }
+        value = null
+        ClassicAssert.IsNull(nullableClassifierEffectSafeCast<Int?>(next))
         ClassicAssert.AreEqual(5, count)
+        value = 42
+        ClassicAssert.AreEqual(42, nullableClassifierEffectSafeCast<Int?>(next))
+        ClassicAssert.AreEqual(6, count)
+        value = null
+        ClassicAssert.IsNull(nullableClassifierEffectCast<Int?>(next))
+        ClassicAssert.AreEqual(7, count)
+        value = 42
+        ClassicAssert.AreEqual(42, nullableClassifierEffectCast<Int?>(next))
+        ClassicAssert.AreEqual(8, count)
+        value = "wrong"
+        try { nullableClassifierEffectCast<Int?>(next) } catch (_: InvalidCastException) { }
+        ClassicAssert.AreEqual(9, count)
     }
 }
