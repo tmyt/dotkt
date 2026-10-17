@@ -5,6 +5,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Preserve SDK-selected native Windows resources in Kotlin outputs, including default executable manifests,
+  manifest opt-outs and file/product VERSIONINFO, without recompiling Kotlin for resource-only changes (#1073).
+
 - Preserve Kotlin Number values over native CLR numeric boxes, including conversions, classifier checks,
   custom virtual slots and cross-DLL bounds. Number now aliases Object; the former public CLR kotlin.Number
   class is removed (C# source naming that class must change), while Kotlin Number inheritance remains unchanged (#697).

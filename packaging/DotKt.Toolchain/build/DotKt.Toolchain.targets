@@ -309,23 +309,22 @@
        updates the independent completion stamp, so a newer placeholder cannot masquerade as a completed output,
        including after a failed compilation hook. A true no-op leaves both files untouched; a missing DLL or stamp
        requires emission. DotKtResolveReferenceSets materializes the reference items before incremental evaluation. -->
-  <!-- Consume the same resolved manifest file as csc. Record selection separately from Kotlin inputs so
-       switching/clearing a native resource re-emits without needlessly recompiling the Kotlin source. -->
-  <Target Name="DotKtComputeEmitOptions" DependsOnTargets="DotKtInitializeIntermediatePaths;SetWin32ManifestProperties">
-    <PropertyGroup>
-      <_DotKtWin32ManifestResourceId>2</_DotKtWin32ManifestResourceId>
-      <_DotKtWin32ManifestResourceId Condition="'$(_IsExecutable)' == 'true'">1</_DotKtWin32ManifestResourceId>
-    </PropertyGroup>
+  <!-- Csc owns SDK-selected native resources (including defaults and opt-outs). Its output is the resource
+       provider for Kotlin emission, never a source of declarations or method bodies. Track option selection
+       BEFORE CoreCompile so switching to an older file or clearing an option refreshes that provider too. -->
+  <Target Name="DotKtComputeEmitOptions" BeforeTargets="CoreCompile"
+          DependsOnTargets="DotKtInitializeIntermediatePaths;SetWin32ManifestProperties">
     <ItemGroup>
-      <_DotKtWin32Manifest Remove="@(_DotKtWin32Manifest)" />
-      <_DotKtWin32Manifest Include="$(Win32Manifest)" Condition="'$(Win32Manifest)' != ''" />
+      <_DotKtNativeResourceInput Remove="@(_DotKtNativeResourceInput)" />
+      <_DotKtNativeResourceInput Include="$(Win32Manifest);$(Win32Resource);$(ApplicationIcon)" />
+      <CustomAdditionalCompileInputs Include="$(DotKtEmitOptionsManifest)" />
     </ItemGroup>
     <WriteLinesToFile File="$(DotKtEmitOptionsManifest)" Overwrite="true" WriteOnlyWhenDifferent="true"
-                      Lines="win32-manifest-id=$(_DotKtWin32ManifestResourceId);@(_DotKtWin32Manifest->'%(FullPath)')" />
+                      Lines="output-type=$(OutputType);no-win32-manifest=$(NoWin32Manifest);manifest=$(Win32Manifest);resource=$(Win32Resource);icon=$(ApplicationIcon)" />
   </Target>
 
   <Target Name="DotKtIlEmit" AfterTargets="CoreCompile" DependsOnTargets="DotKtBir2Cir;DotKtResolveReferenceSets;DotKtComputeEmitOptions"
-          Inputs="$(DotKtIntermediateCirPath)/.stamp;$(DotKtIlEmit);@(_DotKtCompileReference);@(_DotKtRuntimeReference);$(IntermediateOutputPath)$(TargetName)$(TargetExt);$(DotKtEmitOptionsManifest);@(_DotKtWin32Manifest)"
+          Inputs="$(DotKtIntermediateCirPath)/.stamp;$(DotKtIlEmit);@(_DotKtCompileReference);@(_DotKtRuntimeReference);$(IntermediateOutputPath)$(TargetName)$(TargetExt);$(DotKtEmitOptionsManifest);@(_DotKtNativeResourceInput)"
           Outputs="$(_DotKtIlEmitStamp);$(IntermediateOutputPath)$(TargetName)$(TargetExt)">
     <ItemGroup>
       <_DotKtCir Include="$(DotKtIntermediateCirPath)/*.cir.json" />
@@ -352,6 +351,7 @@
     <PropertyGroup>
       <_DotKtIlEmitOutputPath>$(IntermediateOutputPath.TrimEnd('/').TrimEnd('\'))</_DotKtIlEmitOutputPath>
       <_DotKtEscapedIlEmitOutputPath>$(_DotKtIlEmitOutputPath.Replace('\', '\\').Replace('&quot;', '\&quot;'))</_DotKtEscapedIlEmitOutputPath>
+      <_DotKtEscapedResourceProvider>$([System.IO.Path]::GetFullPath('$(IntermediateOutputPath)$(TargetName)$(TargetExt)').Replace('\', '\\').Replace('&quot;', '\&quot;'))</_DotKtEscapedResourceProvider>
       <_DotKtEscapedTargetName>$(TargetName.Replace('\', '\\').Replace('&quot;', '\&quot;'))</_DotKtEscapedTargetName>
       <_DotKtEscapedCompileReferences>$(_DotKtCompileReferences.Replace('\', '\\').Replace('&quot;', '\&quot;'))</_DotKtEscapedCompileReferences>
       <_DotKtEscapedRuntimeReferences>$(_DotKtRuntimeReferences.Replace('\', '\\').Replace('&quot;', '\&quot;'))</_DotKtEscapedRuntimeReferences>
@@ -370,8 +370,6 @@
     <ItemGroup>
       <_DotKtIlEmitResponseArgument Remove="@(_DotKtIlEmitResponseArgument)" />
       <_DotKtEscapedCir Remove="@(_DotKtEscapedCir)" />
-      <_DotKtEscapedWin32Manifest Remove="@(_DotKtEscapedWin32Manifest)" />
-      <_DotKtEscapedWin32Manifest Include="@(_DotKtWin32Manifest->'%(FullPath)'->Replace('\', '\\')->Replace('&quot;', '\&quot;'))" />
       <_DotKtEscapedCir Include="@(_DotKtCir->'%(FullPath)'->Replace('\', '\\')->Replace('&quot;', '\&quot;'))" />
       <_DotKtIlEmitResponseArgument Include="_output"><Value>&quot;$(_DotKtEscapedIlEmitOutputPath)&quot;</Value></_DotKtIlEmitResponseArgument>
       <_DotKtIlEmitResponseArgument Include="_assembly"><Value>&quot;$(_DotKtEscapedTargetName)&quot;</Value></_DotKtIlEmitResponseArgument>
@@ -389,10 +387,8 @@
       <_DotKtIlEmitResponseArgument Include="_rid"><Value>&quot;$(_DotKtEscapedRuntimeIdentifier)&quot;</Value></_DotKtIlEmitResponseArgument>
       <_DotKtIlEmitResponseArgument Include="_rid_graph_option"><Value>--rid-graph-path</Value></_DotKtIlEmitResponseArgument>
       <_DotKtIlEmitResponseArgument Include="_rid_graph"><Value>&quot;$(_DotKtEscapedRuntimeIdentifierGraphPath)&quot;</Value></_DotKtIlEmitResponseArgument>
-      <_DotKtIlEmitResponseArgument Include="_manifest_option" Condition="'@(_DotKtWin32Manifest)' != ''"><Value>--win32-manifest</Value></_DotKtIlEmitResponseArgument>
-      <_DotKtIlEmitResponseArgument Include="@(_DotKtEscapedWin32Manifest)"><Value>&quot;%(Identity)&quot;</Value></_DotKtIlEmitResponseArgument>
-      <_DotKtIlEmitResponseArgument Include="_manifest_id_option" Condition="'@(_DotKtWin32Manifest)' != ''"><Value>--win32-manifest-resource-id</Value></_DotKtIlEmitResponseArgument>
-      <_DotKtIlEmitResponseArgument Include="_manifest_id" Condition="'@(_DotKtWin32Manifest)' != ''"><Value>$(_DotKtWin32ManifestResourceId)</Value></_DotKtIlEmitResponseArgument>
+      <_DotKtIlEmitResponseArgument Include="_native_resources_option"><Value>--win32-resources-from</Value></_DotKtIlEmitResponseArgument>
+      <_DotKtIlEmitResponseArgument Include="_native_resources"><Value>&quot;$(_DotKtEscapedResourceProvider)&quot;</Value></_DotKtIlEmitResponseArgument>
       <_DotKtIlEmitResponseArgument Include="@(_DotKtEscapedCir)"><Value>&quot;%(Identity)&quot;</Value></_DotKtIlEmitResponseArgument>
     </ItemGroup>
     <WriteLinesToFile File="$(DotKtIlEmitResponseFile)"

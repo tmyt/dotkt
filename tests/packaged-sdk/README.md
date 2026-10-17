@@ -10,7 +10,10 @@ compilation are the behavior under test.
 The application-manifest scenario cross-builds `win-x64` Kotlin and same-target C# applications and reads
 `RT_MANIFEST/1/0` from the final native `.exe` as well as the managed DLL (ID 2 for Library). It compares the full manifest XML and exact DotKt payload bytes, including a BOM,
 checks build/publish, content changes, selection changes, clearing, true no-op builds and missing/unusable
-files, and verifies that manifest edits do not recompile Kotlin. This scenario maps only DotKt packages to
+files, and verifies that manifest edits do not recompile Kotlin. It also compares native resource IDs and
+payloads byte-for-byte against a same-identity C# control for default/disabled manifests, Exe/WinExe/Library,
+and file/product version changes, including the final build/publish apphost and no-apphost output.
+This scenario maps only DotKt packages to
 the local feed; the SDK-selected `Microsoft.NETCore.App.Host.*` pack may come from nuget.org in its isolated
 cache. It inspects Windows PE files on the build host; it does not execute Windows UI or validate OS policy.
 
