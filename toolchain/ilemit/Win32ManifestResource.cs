@@ -1,9 +1,9 @@
 using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
 
-// RT_MANIFEST / CREATEPROCESS_MANIFEST_RESOURCE_ID / neutral language.
-// The SDK resolves the file; this builder only serializes its bytes into the native PE resource tree.
-sealed class Win32ManifestResource(byte[] content) : ResourceSectionBuilder
+// RT_MANIFEST / SDK-selected application(1) or isolation-aware library(2) ID / neutral language.
+// The SDK resolves the file and output kind; this builder only serializes those physical inputs.
+sealed class Win32ManifestResource(byte[] content, uint resourceId) : ResourceSectionBuilder
 {
     protected override void Serialize(BlobBuilder builder, SectionLocation location)
     {
@@ -21,7 +21,7 @@ sealed class Win32ManifestResource(byte[] content) : ResourceSectionBuilder
             builder.WriteUInt32(target);
         }
         Directory(24, 0x80000000u | directorySize);
-        Directory(1, 0x80000000u | (2 * directorySize));
+        Directory(resourceId, 0x80000000u | (2 * directorySize));
         Directory(0, dataEntryOffset);
         builder.WriteUInt32(checked((uint)(location.RelativeVirtualAddress + contentOffset)));
         builder.WriteUInt32(checked((uint)content.Length));

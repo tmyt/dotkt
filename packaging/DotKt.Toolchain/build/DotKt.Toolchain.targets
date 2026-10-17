@@ -312,12 +312,16 @@
   <!-- Consume the same resolved manifest file as csc. Record selection separately from Kotlin inputs so
        switching/clearing a native resource re-emits without needlessly recompiling the Kotlin source. -->
   <Target Name="DotKtComputeEmitOptions" DependsOnTargets="DotKtInitializeIntermediatePaths;SetWin32ManifestProperties">
+    <PropertyGroup>
+      <_DotKtWin32ManifestResourceId>2</_DotKtWin32ManifestResourceId>
+      <_DotKtWin32ManifestResourceId Condition="'$(_IsExecutable)' == 'true'">1</_DotKtWin32ManifestResourceId>
+    </PropertyGroup>
     <ItemGroup>
       <_DotKtWin32Manifest Remove="@(_DotKtWin32Manifest)" />
       <_DotKtWin32Manifest Include="$(Win32Manifest)" Condition="'$(Win32Manifest)' != ''" />
     </ItemGroup>
     <WriteLinesToFile File="$(DotKtEmitOptionsManifest)" Overwrite="true" WriteOnlyWhenDifferent="true"
-                      Lines="win32-manifest;@(_DotKtWin32Manifest->'%(FullPath)')" />
+                      Lines="win32-manifest-id=$(_DotKtWin32ManifestResourceId);@(_DotKtWin32Manifest->'%(FullPath)')" />
   </Target>
 
   <Target Name="DotKtIlEmit" AfterTargets="CoreCompile" DependsOnTargets="DotKtBir2Cir;DotKtResolveReferenceSets;DotKtComputeEmitOptions"
@@ -387,6 +391,8 @@
       <_DotKtIlEmitResponseArgument Include="_rid_graph"><Value>&quot;$(_DotKtEscapedRuntimeIdentifierGraphPath)&quot;</Value></_DotKtIlEmitResponseArgument>
       <_DotKtIlEmitResponseArgument Include="_manifest_option" Condition="'@(_DotKtWin32Manifest)' != ''"><Value>--win32-manifest</Value></_DotKtIlEmitResponseArgument>
       <_DotKtIlEmitResponseArgument Include="@(_DotKtEscapedWin32Manifest)"><Value>&quot;%(Identity)&quot;</Value></_DotKtIlEmitResponseArgument>
+      <_DotKtIlEmitResponseArgument Include="_manifest_id_option" Condition="'@(_DotKtWin32Manifest)' != ''"><Value>--win32-manifest-resource-id</Value></_DotKtIlEmitResponseArgument>
+      <_DotKtIlEmitResponseArgument Include="_manifest_id" Condition="'@(_DotKtWin32Manifest)' != ''"><Value>$(_DotKtWin32ManifestResourceId)</Value></_DotKtIlEmitResponseArgument>
       <_DotKtIlEmitResponseArgument Include="@(_DotKtEscapedCir)"><Value>&quot;%(Identity)&quot;</Value></_DotKtIlEmitResponseArgument>
     </ItemGroup>
     <WriteLinesToFile File="$(DotKtIlEmitResponseFile)"

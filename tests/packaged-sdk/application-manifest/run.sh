@@ -11,7 +11,7 @@ kt="$ws/Kotlin app"
 cs="$ws/CSharp control"
 manifests="$ws/manifest files"
 mkdir "$kt" "$cs" "$manifests"
-cp "$FIXTURE/first.manifest" "$manifests/first.manifest"
+{ printf '\357\273\277'; cat "$FIXTURE/first.manifest"; } > "$manifests/first.manifest"
 cp "$FIXTURE/second.manifest" "$manifests/second.manifest"
 cat > "$ws/nuget.config" <<EOF
 <configuration>
@@ -32,7 +32,7 @@ for spec in "DotKt.Sdk/$version|$kt/App.ktproj" "Microsoft.NET.Sdk|$cs/Control.c
 EOF
 done
 printf '%s\n' 'fun main() { println("Kotlin manifest app") }' > "$kt/Program.kt"
-printf '%s\n' 'System.Console.WriteLine("CSharp manifest control");' > "$cs/Program.cs"
+printf '%s\n' 'public static class Program { public static void Main() => System.Console.WriteLine("CSharp manifest control"); }' > "$cs/Program.cs"
 dotnet build "$FIXTURE/ManifestInspector.csproj" -o "$ws/inspector" -v:q --nologo > "$ws/inspector.log" 2>&1
 inspect() { dotnet "$ws/inspector/ManifestInspector.dll" "$@"; }
 build() { local project="$1" stage="$2"; shift 2; dotnet build "$project" -v:q --nologo "$@" > "$ws/$stage.log" 2>&1; }
@@ -42,6 +42,7 @@ state() { stat -c '%y' "$kt/$out/App.dll" "$kt/$out/App.exe" "$kt/$obj/dotkt-ile
 frontend_state() { stat -c '%y' "$kt/$obj/bir/.stamp" "$kt/$obj/cir/.stamp"; }
 check_pair() {
   inspect "$1" "$kt/$out/App.dll" "$kt/$out/App.exe" "$cs/$out/Control.dll" "$cs/$out/Control.exe"
+  inspect --bytes "$1" "$kt/$out/App.dll" "$kt/$out/App.exe"
   inspect --kotlin "$kt/$out/App.dll"
 }
 
@@ -69,6 +70,7 @@ for project in "$kt/App.ktproj" "$cs/Control.csproj"; do
   dotnet publish "$project" -c Debug --no-restore -v:q --nologo '-p:ApplicationManifest=../manifest files/second.manifest' >> "$ws/publish.log" 2>&1
 done
 inspect "$manifests/second.manifest" "$kt/$out/publish/App.exe" "$cs/$out/publish/Control.exe"
+inspect --bytes "$manifests/second.manifest" "$kt/$out/publish/App.exe"
 build "$kt/App.ktproj" cleared '-p:ApplicationManifest='
 inspect --absent "$kt/$out/App.dll" "$kt/$out/App.exe"
 [[ "$front_before" == "$(frontend_state)" ]] || { echo 'native manifest edits recompiled Kotlin' >&2; exit 1; }
@@ -87,5 +89,10 @@ build "$kt/App.ktproj" winexe '-p:OutputType=WinExe' "-p:ApplicationManifest=$ma
 build "$cs/Control.csproj" control-winexe --no-incremental '-p:OutputType=WinExe' "-p:ApplicationManifest=$manifests/second.manifest"
 check_pair "$manifests/second.manifest"
 inspect --gui "$kt/$out/App.exe" "$cs/$out/Control.exe"
+build "$kt/App.ktproj" library '-p:OutputType=Library' "-p:ApplicationManifest=$manifests/second.manifest"
+build "$cs/Control.csproj" control-library --no-incremental '-p:OutputType=Library' "-p:ApplicationManifest=$manifests/second.manifest"
+inspect --library "$manifests/second.manifest" "$kt/$out/App.dll" "$cs/$out/Control.dll"
+inspect --library --bytes "$manifests/second.manifest" "$kt/$out/App.dll"
+inspect --kotlin "$kt/$out/App.dll"
 bash "$REPO/tests/run-ilverify.sh" "$kt/$out/App.dll"
 echo 'application-manifest: PASS (C# oracle, final exe/build/publish, changes/clear/no-op, missing/unusable input)'

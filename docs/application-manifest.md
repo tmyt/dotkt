@@ -15,11 +15,12 @@ Use the standard SDK property to embed an application manifest:
 
 The path is project-relative (absolute paths and spaces also work). DotKt consumes the .NET SDK's resolved
 `Win32Manifest` input and writes its bytes as a native PE `RT_MANIFEST` resource. The standard SDK apphost
-then carries it into the final Windows executable for build and publish. No managed `EmbeddedResource`,
+then carries it into the final Windows executable for build and publish. Executable outputs use resource ID 1;
+Library outputs use DLL isolation-aware resource ID 2, matching C#. No managed `EmbeddedResource`,
 sidecar copy or post-build patch is needed. Changing the file, switching it or clearing the property is an
 incremental emission input; unchanged builds do not re-emit, and manifest-only changes do not recompile Kotlin.
 
-This applies to normal `Exe`/`WinExe` managed applications with a Windows PE apphost. `UseAppHost=false`
+The final-executable behavior applies to normal `Exe`/`WinExe` managed applications with a Windows PE apphost. `UseAppHost=false`
 leaves the resource in the managed DLL only; launching that DLL with `dotnet` does not change the manifest
 of the `dotnet` host process. A non-Windows apphost cannot use a Windows manifest. NativeAOT, ClickOnce,
 icons and general Win32 resource files are not added by this feature. With no selected manifest, existing

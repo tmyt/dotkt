@@ -6,6 +6,8 @@ using System.Xml.Linq;
 
 try
 {
+    uint resourceId = 1;
+    if (args[0] == "--library") { resourceId = 2; args = args.Skip(1).ToArray(); }
     if (args[0] == "--gui")
     {
         foreach (var file in args.Skip(1))
@@ -23,12 +25,20 @@ try
         if (!names.Contains("ProgramKt") || names.Contains("_DotKtPlaceholder"))
             throw new InvalidDataException("Final managed output is not the Kotlin program: " + args[1]);
     }
+    else if (args[0] == "--bytes")
+    {
+        var expected = File.ReadAllBytes(args[1]);
+        foreach (var file in args.Skip(2))
+            if (!expected.AsSpan().SequenceEqual(ManifestBytes(file, resourceId)))
+                throw new InvalidDataException("Native manifest bytes differ from " + args[1] + ": " + file);
+    }
     else
     {
         var expected = args[0] == "--absent" ? null : XDocument.Load(args[0]).Root;
         foreach (var file in args.Skip(1))
         {
-            var actual = Manifest(file);
+            var payload = ManifestBytes(file, resourceId);
+            var actual = payload == null ? null : XDocument.Parse(Encoding.UTF8.GetString(payload).Trim('\uFEFF', '\0')).Root;
             if (!XNode.DeepEquals(expected, actual))
                 throw new InvalidDataException("Native manifest differs from " + args[0] + ": " + file);
         }
@@ -41,7 +51,7 @@ catch (Exception error)
     return 1;
 }
 
-static XElement Manifest(string file)
+static byte[] ManifestBytes(string file, uint resourceId)
 {
     using var pe = new PEReader(File.OpenRead(file));
     var resource = pe.PEHeaders.PEHeader.ResourceTableDirectory;
@@ -63,12 +73,11 @@ static XElement Manifest(string file)
         ? checked((int)(entry & 0x7fffffff)) : throw new InvalidDataException("Expected resource directory: " + file);
     var type = Find(0, 24); // RT_MANIFEST
     if (type == null) return null;
-    var name = Find(Directory(type.Value), 1); // CREATEPROCESS_MANIFEST_RESOURCE_ID
+    var name = Find(Directory(type.Value), resourceId);
     if (name == null) return null;
     var language = Find(Directory(name.Value), 0); // neutral, matching the same-target C# control
     if (language == null || (language.Value & 0x80000000) != 0)
         throw new InvalidDataException("Missing neutral manifest data: " + file);
     var data = checked((int)language.Value);
-    var payload = pe.GetSectionData(checked((int)U32(data))).GetContent(0, checked((int)U32(data + 4))).ToArray();
-    return XDocument.Parse(Encoding.UTF8.GetString(payload).Trim('\uFEFF', '\0')).Root;
+    return pe.GetSectionData(checked((int)U32(data))).GetContent(0, checked((int)U32(data + 4))).ToArray();
 }

@@ -1,6 +1,6 @@
 // ilemit — emit a runnable .NET assembly directly as CIL from Backend IR (BIR) JSON. No C#, no csc.
 //
-//   ilemit <output-dir> <assemblyName> --compile-refs a.dll;b.dll;... [--runtime-refs a.dll;b.dll;...] [--target-framework-moniker <framework>] [--target-platform <platform>] [--supported-os-platform <platform>] [--target-rid <rid>] [--rid-graph-path <json>] [--win32-manifest <file>] <file1.cir.json>...
+//   ilemit <output-dir> <assemblyName> --compile-refs a.dll;b.dll;... [--runtime-refs a.dll;b.dll;...] [--target-framework-moniker <framework>] [--target-platform <platform>] [--supported-os-platform <platform>] [--target-rid <rid>] [--rid-graph-path <json>] [--win32-manifest <file>] [--win32-manifest-resource-id <1|2>] <file1.cir.json>...
 //
 // All BIR files compile into ONE assembly (so multi-file Kotlin cross-references resolve).
 // D1.2 = M0 subset; D1.4 = user classes (fields, ctors, methods, inheritance, virtual/override).
@@ -25,7 +25,7 @@ static class IlEmit
             Console.Error.WriteLine($"ilemit: {ex.Message}");
             return 1;
         }
-        if (args.Length < 3) { Console.Error.WriteLine("usage: ilemit <out-dir> <asmName> --compile-refs <dll;dll;...> [--build-stdlib=metadata|runtime] [--runtime-refs <dll;dll;...>] [--target-framework-moniker <framework>] [--target-platform <platform>] [--supported-os-platform <platform>] [--target-rid <rid>] [--rid-graph-path <json>] [--win32-manifest <file>] <file.cir.json>..."); return 1; }
+        if (args.Length < 3) { Console.Error.WriteLine("usage: ilemit <out-dir> <asmName> --compile-refs <dll;dll;...> [--build-stdlib=metadata|runtime] [--runtime-refs <dll;dll;...>] [--target-framework-moniker <framework>] [--target-platform <platform>] [--supported-os-platform <platform>] [--target-rid <rid>] [--rid-graph-path <json>] [--win32-manifest <file>] [--win32-manifest-resource-id <1|2>] <file.cir.json>..."); return 1; }
         var outDir = args[0];
         var asmName = args[1];
         Directory.CreateDirectory(outDir);
@@ -51,6 +51,7 @@ static class IlEmit
         string targetPlatform = null;
         string supportedOsPlatform = null;
         string win32Manifest = null;
+        uint win32ManifestResourceId = 1;
         var rest = args.Skip(2).ToList();
         for (int i = 0; i < rest.Count; i++)
         {
@@ -72,6 +73,11 @@ static class IlEmit
             else if (rest[i] == "--supported-os-platform") { Console.Error.WriteLine("ilemit: --supported-os-platform requires a platform name"); return 1; }
             else if (rest[i] == "--win32-manifest" && i + 1 < rest.Count) win32Manifest = rest[++i];
             else if (rest[i] == "--win32-manifest") { Console.Error.WriteLine("ilemit: --win32-manifest requires a file path"); return 1; }
+            else if (rest[i] == "--win32-manifest-resource-id")
+            {
+                if (++i >= rest.Count || !uint.TryParse(rest[i], out win32ManifestResourceId) || win32ManifestResourceId is not (1 or 2))
+                { Console.Error.WriteLine("ilemit: --win32-manifest-resource-id requires 1 (application) or 2 (library)"); return 1; }
+            }
             else if (rest[i] == "--ref") { Console.Error.WriteLine("ilemit: --ref was replaced by --runtime-refs"); return 1; }
             else if (rest[i] == "--build-stdlib=metadata") mode = Emitter.BuildStdlibMode.Metadata;
             else if (rest[i] == "--build-stdlib=runtime") mode = Emitter.BuildStdlibMode.Runtime;
@@ -90,7 +96,7 @@ static class IlEmit
         {
             using var target = new TargetReferenceUniverse(compileRefs, runtimeRefs, targetRid, ridGraphPath);
             var files = bir.Select(LoadInputDocument).ToList();
-            var nativeResources = win32Manifest == null ? null : new Win32ManifestResource(File.ReadAllBytes(win32Manifest));
+            var nativeResources = win32Manifest == null ? null : new Win32ManifestResource(File.ReadAllBytes(win32Manifest), win32ManifestResourceId);
             new Emitter(outDir, asmName, target, mode, targetFrameworkMoniker, targetPlatform, supportedOsPlatform, nativeResources)
                 .EmitAssembly(MergeByFileClass(files));
             return 0;
