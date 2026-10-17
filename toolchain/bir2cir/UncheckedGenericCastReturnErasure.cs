@@ -121,11 +121,13 @@ static class UncheckedGenericCastReturnErasure
     {
         if (root is not JsonObject obj) return;
 
-        // Mutate each declaration exactly once.  The fact is the PRE-lowering Kotlin TypeNode; RoundtripMetadata
+        // The global index owns cross-file ABI facts, not permission to lower a later root early.
+        // Mutate only declarations currently owned by this root, after its semantic guards have been bound.
+        // The fact is the PRE-lowering Kotlin TypeNode; RoundtripMetadata
         // consumes it after type lowering and dll2klib restores the source signature for downstream Kotlin.
         foreach (var decl in index.ByIdentity.Values)
         {
-            if (TypeJson.Read(decl.Method["ret"]) is not TypeNode.Tv) continue;
+            if (!OwnedBy(decl.Method, root) || TypeJson.Read(decl.Method["ret"]) is not TypeNode.Tv) continue;
             decl.Method["retKotlinType"] = TypeNode.ToJson(decl.Return);
             decl.Method["ret"] = TypeJson.Fqn("object");
             RetypeReturnedCasts(decl.Method["body"], decl.Return);
@@ -135,6 +137,13 @@ static class UncheckedGenericCastReturnErasure
         if (obj["types"] is JsonArray types)
             foreach (var type in types)
                 if (type != null) ApplyCallsOnly(type, index);
+    }
+
+    static bool OwnedBy(JsonNode declaration, JsonNode root)
+    {
+        for (var owner = declaration; owner != null; owner = owner.Parent)
+            if (ReferenceEquals(owner, root)) return true;
+        return false;
     }
 
     // Consumer-side half of the object-return ABI.  dll2klib has already restored the Kotlin expression type into
@@ -394,6 +403,44 @@ static class UncheckedGenericCastReturnErasure
                     RetypeReturnedCasts(child, ret);
                 break;
         }
+    }
+
+    internal static void SelfTest()
+    {
+        JsonObject Root(string owner, string identity) => JsonNode.Parse("""
+        {"fileClass":"OWNER","methods":[{"name":"read","declarationId":"IDENTITY","static":true,
+         "typeParams":["T"],"ret":{"t":"tv","scope":"method","i":0},"params":[],"body":[
+          {"k":"return","value":{"k":"cast","reifiedTypeOperand":false,
+           "type":{"t":"tv","scope":"method","i":0},"e":{"k":"local","name":"value",
+           "sty":{"t":"nullable","of":{"t":"fqn","name":"kotlin.Any"}}}}}]}]}
+        """.Replace("OWNER", owner).Replace("IDENTITY", identity)).AsObject();
+        foreach (var reverse in new[] { false, true })
+        {
+            var first = Root("First", "first");
+            var second = Root("Second", "second");
+            if (reverse) (first, second) = (second, first);
+            var other = second["methods"][0].AsObject();
+            var sourceReturn = TypeJson.Read(other["ret"]);
+            first["methods"].AsArray().Add(JsonNode.Parse("""
+            {"name":"use","params":[],"body":[{"k":"var","name":"deferred",
+             "type":{"t":"tv","scope":"method","i":0},"init":{"k":"callStatic","method":"read",
+             "declarationId":"IDENTITY","owner":{"t":"fqn","name":"OWNER"},
+             "typeArgs":[{"t":"tv","scope":"method","i":0}],"args":[]}}]}
+            """.Replace("OWNER", Str(second["fileClass"]))
+                .Replace("IDENTITY", Str(other[DeclarationIdentityBinding.Key]))));
+            var index = Collect(new JsonNode[] { first, second });
+            Apply(first, index);
+            if (TypeJson.Read(first["methods"][0]["ret"]) != new TypeNode.Fqn("object")
+                || TypeJson.Read(first["methods"][1]["body"][0]["type"]) != new TypeNode.Fqn("object")
+                || TypeJson.Read(other["ret"]) != sourceReturn
+                || TypeJson.Read(other["body"][0]["value"]["type"]) != sourceReturn)
+                throw new InvalidOperationException("Unchecked cast lowering crossed root ownership or lost cross-file ABI facts");
+            Apply(second, index);
+            if (TypeJson.Read(other["ret"]) != new TypeNode.Fqn("object")
+                || index.ByIdentity[Str(other[DeclarationIdentityBinding.Key])].Return != sourceReturn)
+                throw new InvalidOperationException("Unchecked cast lowering lost its source snapshot or owning-root transition");
+        }
+        Console.WriteLine("[unchecked cast ownership] self-test OK (both root orders, deferred cross-file calls, source snapshot)");
     }
 
     static string Str(JsonNode node) =>

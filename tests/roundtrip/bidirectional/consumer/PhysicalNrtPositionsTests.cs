@@ -13,7 +13,7 @@ public class PhysicalNrtPositionsTests
     {
         Assert.That(info.ReadState, Is.EqualTo(NullabilityState.NotNull));
         Assert.That(info.GenericTypeArguments.Length, Is.EqualTo(4));
-        Assert.That(info.GenericTypeArguments[0].Type, Is.EqualTo(typeof(object)));
+        Assert.That(info.GenericTypeArguments[0].Type, Is.EqualTo(typeof(IComparable)));
         Assert.That(info.GenericTypeArguments[0].ReadState, Is.EqualTo(NullabilityState.Nullable));
         Assert.That(info.GenericTypeArguments[1].ReadState, Is.EqualTo(second));
         for (var index = 0; index < 2; index++)
@@ -33,7 +33,7 @@ public class PhysicalNrtPositionsTests
         AssertPair(Context.Create(Method("echoCollapsed").GetParameters()[0]), NullabilityState.NotNull);
         AssertPair(Context.Create(Method("echoCollapsed").ReturnParameter), NullabilityState.NotNull);
         var head = Context.Create(Method("collapsedHead").ReturnParameter);
-        Assert.That(head.Type, Is.EqualTo(typeof(object)));
+        Assert.That(head.Type, Is.EqualTo(typeof(IComparable)));
         Assert.That(head.ReadState, Is.EqualTo(NullabilityState.Nullable));
     }
 
@@ -89,7 +89,7 @@ public class PhysicalNrtPositionsTests
             Assert.That(info.GenericTypeArguments.Length, Is.EqualTo(6));
             Assert.That(info.GenericTypeArguments[0].Type, Is.EqualTo(typeof(string)));
             Assert.That(info.GenericTypeArguments[0].ReadState, Is.EqualTo(NullabilityState.Nullable));
-            Assert.That(info.GenericTypeArguments[1].Type, Is.EqualTo(typeof(object)));
+            Assert.That(info.GenericTypeArguments[1].Type, Is.EqualTo(typeof(IComparable)));
             Assert.That(info.GenericTypeArguments[1].ReadState, Is.EqualTo(NullabilityState.Nullable));
             Assert.That(info.GenericTypeArguments[2].ReadState, Is.EqualTo(NullabilityState.NotNull));
             for (var index = 0; index < 3; index++)

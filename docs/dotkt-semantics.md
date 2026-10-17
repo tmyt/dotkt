@@ -165,9 +165,12 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
 - **The same semantic-boundary rule applies to projected `@ClrTypeAlias` types.** A projection must not be lowered
   mechanically as an invariant construction of its CLR alias. For example, `MutableList<out T>` is carried as Kotlin
   declaration metadata over an opaque CLR slot, and member access binds to the exact closed interface implemented by
-  the runtime object. Declaration-variant aliases also use opaque ordinary value slots: matching CLR variance flags
+  the runtime object. Declaration-variant aliases with a reified generic physical head also use opaque ordinary value slots: matching CLR variance flags
   do not admit Kotlin's value-element conversions. Exact native declarations and construction witnesses remain
-  reified; `Comparable<*>` operations can still use non-generic `IComparable`. A caller-supplied Kotlin alias argument
+  reified. An application whose selected physical head is non-generic does not need that generic variance erasure:
+  `Comparable<*>` and `Comparable<Any?>` retain non-generic `IComparable` in ordinary and nested value slots, including
+  nullable slots. C# therefore observes `IComparable`, not `object`, at those positions; their nullability is unchanged.
+  A caller-supplied Kotlin alias argument
   in `System.Collections.Generic.List<List<String>>` uses the ordinary `object` element ABI; an explicitly native
   `System.Collections.Generic.List<System.Collections.Generic.IReadOnlyList<String>>` keeps that exact native argument.
   When a projected map is passed to a stdlib copy constructor, the trusted collection-factory contract

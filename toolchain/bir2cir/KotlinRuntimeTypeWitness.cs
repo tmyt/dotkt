@@ -137,12 +137,19 @@ static class KotlinRuntimeTypeWitness
                 physicalTest["sty"] = TypeJson.Fqn("kotlin.Boolean");
                 // A semantic superclass predicate cannot promise an impossible physical array conversion.
                 // Null rejection remains owned by the original cast's Kotlin nullability guard.
-                var castMatches = new JsonObject {
+                var semanticCastMatches = new JsonObject {
                     ["k"] = "cond", ["type"] = TypeJson.Fqn("kotlin.Boolean"), ["cond"] = matches,
                     ["then"] = new JsonObject { ["k"] = "cond", ["type"] = TypeJson.Fqn("kotlin.Boolean"),
                         ["cond"] = new JsonObject { ["k"] = "objEq", ["lhs"] = Local(), ["rhs"] = Null() },
                         ["then"] = Bool(true), ["else"] = physicalTest },
                     ["else"] = Bool(false),
+                };
+                // Without a semantic predicate, preserve the original matches-only preguard exactly.
+                // In particular the collection composite cast owns its membership exception, not its is-test.
+                var castMatches = new JsonObject {
+                    ["k"] = "cond", ["type"] = TypeJson.Fqn("kotlin.Boolean"),
+                    ["cond"] = new JsonObject { ["k"] = "objEq", ["lhs"] = predicate.DeepClone(), ["rhs"] = Null() },
+                    ["then"] = matches.DeepClone(), ["else"] = semanticCastMatches,
                 };
                 var nativeException = refs.ResolveRefType("System.InvalidCastException");
                 statements.Add(new JsonObject {
