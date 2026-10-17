@@ -46,9 +46,9 @@ and managed attributes. The SDK also preserves the concrete CLR assembly version
 `GenerateAssemblyInfo` / individual version-attribute opt-outs follow the underlying .NET SDK.
 Version-only changes refresh emission without recompiling Kotlin; unchanged builds do not re-emit.
 The SDK passes the compiler's concrete assembly identity (including expanded wildcards), not a version
-guessed from native resource strings. Direct ilemit callers can supply `--assembly-version`,
-`--assembly-file-version-base64` and `--assembly-informational-version-base64` (UTF-8 text encoded as Base64);
-absent options add no version metadata.
+guessed from native resource strings. Direct ilemit callers can supply `--assembly-versions-from <PE>`
+to preserve that PE's assembly version and file/informational version attributes;
+without this option no version metadata is added.
 Existing SDK `ApplicationIcon` and `Win32Resource` inputs are preserved by the same
 resource transfer; they are not independently reconstructed or merged. Switching or clearing native
 resource options refreshes the provider and final PE without recompiling Kotlin. Direct `ilemit` callers

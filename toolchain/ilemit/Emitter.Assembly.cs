@@ -26,17 +26,14 @@ sealed partial class Emitter
         // MetadataLoadContext. The compiler host still supplies Reflection.Emit's implementation, never an emitted
         // identity. Mixing a host Type with this graph is invalid even when its FullName matches a target Type.
         var ab = new PersistedAssemblyBuilder(new AssemblyName(_asmName) { Version = _versions?.Identity }, _target.CoreAssembly);
-        if (_versions?.FileVersion is { } fileVersion)
+        if (_versions != null)
         {
-            // member-lookup-residual: project-selected assembly boilerplate, not a Kotlin program operation
-            var ctor = Bcl("System.Reflection.AssemblyFileVersionAttribute").GetConstructor(new[] { Bcl("System.String") });
-            SetAttribute(ab.SetCustomAttribute, ctor, new[] { Bcl("System.String") }, fileVersion);
-        }
-        if (_versions?.InformationalVersion is { } informationalVersion)
-        {
-            // member-lookup-residual: project-selected assembly boilerplate, not a Kotlin program operation
-            var ctor = Bcl("System.Reflection.AssemblyInformationalVersionAttribute").GetConstructor(new[] { Bcl("System.String") });
-            SetAttribute(ab.SetCustomAttribute, ctor, new[] { Bcl("System.String") }, informationalVersion);
+            foreach (var attribute in _versions.Attributes)
+            {
+                // member-lookup-residual: project-selected assembly boilerplate, not a Kotlin program operation
+                var ctor = Bcl(attribute.TypeName).GetConstructor(new[] { Bcl("System.String") });
+                ab.SetCustomAttribute(ctor, attribute.Blob);
+            }
         }
         // Assembly provenance: the emitter owns the final assembly in BOTH SDK and direct-CLI flows, so it stamps an
         // explicit, versioned DotKt protocol marker here (not in MSBuild-only SDK plumbing). dll2klib requires this

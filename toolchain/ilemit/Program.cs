@@ -51,9 +51,7 @@ static class IlEmit
         string targetPlatform = null;
         string supportedOsPlatform = null;
         string win32ResourcesFrom = null;
-        string assemblyVersion = null;
-        string assemblyFileVersion = null;
-        string assemblyInformationalVersion = null;
+        string assemblyVersionsFrom = null;
         var rest = args.Skip(2).ToList();
         for (int i = 0; i < rest.Count; i++)
         {
@@ -75,12 +73,8 @@ static class IlEmit
             else if (rest[i] == "--supported-os-platform") { Console.Error.WriteLine("ilemit: --supported-os-platform requires a platform name"); return 1; }
             else if (rest[i] == "--win32-resources-from" && i + 1 < rest.Count) win32ResourcesFrom = rest[++i];
             else if (rest[i] == "--win32-resources-from") { Console.Error.WriteLine("ilemit: --win32-resources-from requires a PE file path"); return 1; }
-            else if (rest[i] == "--assembly-version" && i + 1 < rest.Count) assemblyVersion = rest[++i];
-            else if (rest[i] == "--assembly-version") { Console.Error.WriteLine("ilemit: --assembly-version requires a version"); return 1; }
-            else if (rest[i] == "--assembly-file-version-base64" && i + 1 < rest.Count) assemblyFileVersion = rest[++i];
-            else if (rest[i] == "--assembly-file-version-base64") { Console.Error.WriteLine("ilemit: --assembly-file-version-base64 requires a value"); return 1; }
-            else if (rest[i] == "--assembly-informational-version-base64" && i + 1 < rest.Count) assemblyInformationalVersion = rest[++i];
-            else if (rest[i] == "--assembly-informational-version-base64") { Console.Error.WriteLine("ilemit: --assembly-informational-version-base64 requires a value"); return 1; }
+            else if (rest[i] == "--assembly-versions-from" && i + 1 < rest.Count) assemblyVersionsFrom = rest[++i];
+            else if (rest[i] == "--assembly-versions-from") { Console.Error.WriteLine("ilemit: --assembly-versions-from requires a PE file path"); return 1; }
             else if (rest[i] == "--ref") { Console.Error.WriteLine("ilemit: --ref was replaced by --runtime-refs"); return 1; }
             else if (rest[i] == "--build-stdlib=metadata") mode = Emitter.BuildStdlibMode.Metadata;
             else if (rest[i] == "--build-stdlib=runtime") mode = Emitter.BuildStdlibMode.Runtime;
@@ -100,8 +94,7 @@ static class IlEmit
             using var target = new TargetReferenceUniverse(compileRefs, runtimeRefs, targetRid, ridGraphPath);
             var files = bir.Select(LoadInputDocument).ToList();
             var nativeResources = win32ResourcesFrom == null ? null : Win32Resources.FromPE(win32ResourcesFrom);
-            var versions = new AssemblyVersions(assemblyVersion == null ? null : Version.Parse(assemblyVersion),
-                DecodeVersion(assemblyFileVersion), DecodeVersion(assemblyInformationalVersion));
+            var versions = assemblyVersionsFrom == null ? null : AssemblyVersions.FromPE(assemblyVersionsFrom);
             new Emitter(outDir, asmName, target, mode, targetFrameworkMoniker, targetPlatform, supportedOsPlatform, nativeResources, versions)
                 .EmitAssembly(MergeByFileClass(files));
             return 0;
@@ -115,9 +108,6 @@ static class IlEmit
             return 1;
         }
     }
-
-    static string DecodeVersion(string value) => value == null ? null
-        : System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(value));
 
     // Multiple CIR files can target the SAME file class — a Kotlin multiplatform `expect`/`actual` split (the common
     // `_Comparisons.kt` and the platform `_ComparisonsClr.kt` both compile to `kotlin.comparisons._ComparisonsKt`).
@@ -193,9 +183,6 @@ class CirEmitException : Exception
     public string Decl { get; }
     public CirEmitException(string decl, string message, Exception inner) : base(message, inner) { Decl = decl; }
 }
-
-// Concrete assembly boilerplate supplied by the project/direct driver, not Kotlin declaration semantics.
-sealed record AssemblyVersions(Version Identity, string FileVersion, string InformationalVersion);
 
 sealed partial class Emitter
 {

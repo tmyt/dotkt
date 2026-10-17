@@ -27,6 +27,13 @@ for spec in "DotKt.Sdk/$version|$kt/App.ktproj" "Microsoft.NET.Sdk|$cs/Control.c
   <AssemblyAttribute Include="System.Reflection.AssemblyFileVersionAttribute"><_Parameter1></_Parameter1></AssemblyAttribute>
   <AssemblyAttribute Include="System.Reflection.AssemblyInformationalVersionAttribute"><_Parameter1></_Parameter1></AssemblyAttribute>
 </ItemGroup>
+<ItemGroup Condition="'$(LiteralVersionAttributes)' == 'true'">
+  <AssemblyAttribute Include="System.Reflection.AssemblyInformationalVersionAttribute"><_Parameter1>"custom" + "-literal"</_Parameter1><_Parameter1_IsLiteral>true</_Parameter1_IsLiteral></AssemblyAttribute>
+</ItemGroup>
+<ItemGroup Condition="'$(ShortVersionAttributes)' == 'true'">
+  <AssemblyAttribute Include="System.Reflection.AssemblyFileVersion"><_Parameter1>6.7.8.9</_Parameter1></AssemblyAttribute>
+  <AssemblyAttribute Include="System.Reflection.AssemblyInformationalVersion"><_Parameter1>custom-short</_Parameter1></AssemblyAttribute>
+</ItemGroup>
 <Target Name="RecordProviderVersion" BeforeTargets="DotKtIlEmit">
   <GetAssemblyIdentity AssemblyFiles="$(IntermediateOutputPath)$(TargetName)$(TargetExt)">
     <Output TaskParameter="Assemblies" ItemName="ProviderIdentity" />
@@ -78,6 +85,10 @@ check 1.0.0.0 1.0.0.0 1.2.3
 pair special -p:SpecialVersion=true
 pair custom-attributes -p:CustomVersionAttributes=true -p:GenerateAssemblyFileVersionAttribute=false -p:GenerateAssemblyInformationalVersionAttribute=false
 check 1.0.0.0 6.7.8.9 custom
+pair literal-attributes -p:LiteralVersionAttributes=true -p:GenerateAssemblyInformationalVersionAttribute=false
+check 1.0.0.0 1.0.0.0 custom-literal
+pair short-attributes -p:ShortVersionAttributes=true -p:GenerateAssemblyFileVersionAttribute=false -p:GenerateAssemblyInformationalVersionAttribute=false
+check 1.0.0.0 6.7.8.9 custom-short
 pair empty-attributes -p:EmptyVersionAttributes=true -p:GenerateAssemblyFileVersionAttribute=false -p:GenerateAssemblyInformationalVersionAttribute=false
 check 1.0.0.0 '' ''
 pair no-file-version -p:GenerateAssemblyFileVersionAttribute=false
