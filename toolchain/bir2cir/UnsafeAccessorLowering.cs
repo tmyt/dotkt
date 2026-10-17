@@ -451,7 +451,7 @@ static class UnsafeAccessorLowering
             ["virtual"] = false,
             ["recv"] = receiver.DeepClone(),
             ["method"] = definition.EntryName,
-            [DeclarationIdentityBinding.Key] = definition.Identity,
+            // This forwarder is already an exact physical target, not a selected Kotlin declaration.
             ["sig"] = definition.Signature.DeepClone(),
             ["args"] = access["args"]?.DeepClone() ?? new JsonArray(),
             ["ret"] = callResult.DeepClone(),
@@ -460,6 +460,30 @@ static class UnsafeAccessorLowering
         if (access["typeArgs"] is JsonArray originalTypeArgs)
             replacement["typeArgs"] = originalTypeArgs.DeepClone();
         Replace(access, replacement);
+    }
+
+    internal static void SuperForwarderSelfTest()
+    {
+        var root = JsonNode.Parse("""
+        {"types":[
+          {"name":"Base","methods":[{"name":"read","declarationId":"base-read","params":[],
+            "ret":{"t":"fqn","name":"kotlin.Int"}}]},
+          {"name":"Child","base":{"t":"fqn","name":"Base"},"methods":[]},
+          {"name":"Carrier","nestedIn":"Child","methods":[{"name":"invoke","body":[
+            {"k":"return","value":{"k":"callInstance","super":true,"declarationId":"base-read",
+             "ownerType":{"t":"fqn","name":"Base"},"method":"read","sig":[],"args":[],
+             "ret":{"t":"fqn","name":"kotlin.Int"},
+             "recv":{"k":"local","name":"outer","sty":{"t":"fqn","name":"Child"}}}}]}]}]}
+        """);
+        ApplyAll(new[] { root }, null);
+        var forwarder = root["types"][1]["methods"][0];
+        var call = root["types"][2]["methods"][0]["body"][0]["value"].AsObject();
+        if (call.ContainsKey(DeclarationIdentityBinding.Key)
+            || Str(call["method"]) != Str(forwarder["name"])
+            || Str(forwarder["body"][0]["value"][DeclarationIdentityBinding.Key]) != "base-read"
+            || Str(forwarder["body"][0]["value"]["recv"]["k"]) != "this")
+            throw new InvalidOperationException("Super forwarder confused physical and selected-declaration targets");
+        Console.WriteLine("[super forwarder] self-test OK (exact physical call, selected base identity)");
     }
 
     static JsonObject SelectMethod(JsonObject[] candidates, JsonArray signature, TypeNode[] ownerArgs)

@@ -370,7 +370,10 @@ sealed class ValueRepresentationLowering
             }
             foreach (var (key, child) in obj.ToArray())
             {
-                if (key is "attrs" or "overrides" or "memberRef" or DeclarationIdentityBinding.SemanticSignatureKey) continue;
+                // MethodImpl descriptors state exact physical slots, not source declarations. Their
+                // signatures still undergo type lowering, but must never acquire source metadata carriers.
+                if (key is "attrs" or "overrides" or "memberRef" or "clrInterfaceImpls" or "clrBaseImpls"
+                    or DeclarationIdentityBinding.SemanticSignatureKey) continue;
                 Walk(child);
             }
         }
@@ -543,9 +546,17 @@ sealed class ValueRepresentationLowering
             new TypeNode.Projection("out", new TypeNode.Fqn("Union")))));
         policy.EraseBounds(root);
         policy.BindOperations(root);
+        var method = root["methods"][3];
+        foreach (var key in new[] { "clrInterfaceImpls", "clrBaseImpls" })
+            method[key] = JsonNode.Parse("""
+            [{"owner":{"t":"fqn","name":"Source"},"member":"value","arity":0,"params":[],
+              "ret":{"t":"fqn","name":"Union"}}]
+            """);
         policy.RecordSourceTypes(root);
         policy.SynthesizeSlots(new[] { root });
-        var method = root["methods"][3];
+        foreach (var key in new[] { "clrInterfaceImpls", "clrBaseImpls" })
+            if (method[key][0].AsObject().ContainsKey("retKotlinType"))
+                throw new InvalidOperationException("Physical MethodImpl descriptor acquired source metadata");
         if (TypeJson.OwnerName(method["params"][0]["type"]) != "Union"
             || TypeJson.Read(method["ret"]) != new TypeNode.Array(new TypeNode.Fqn("Union"))
             || method["params"][0]["kotlinType"] == null || method["retKotlinType"] == null
