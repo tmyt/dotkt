@@ -7,11 +7,18 @@ scenario builds a packaged Kotlin producer and a separately compiled Kotlin cons
 These are shell scenarios because package restore, template installation, isolated NuGet state, and separate
 compilation are the behavior under test.
 
+The application-manifest scenario cross-builds `win-x64` Kotlin and same-target C# applications and reads
+`RT_MANIFEST/1/0` from the final native `.exe` as well as the managed DLL (ID 2 for Library). It compares the full manifest XML and exact DotKt payload bytes, including a BOM,
+checks build/publish, content changes, selection changes, clearing, true no-op builds and missing/unusable
+files, and verifies that manifest edits do not recompile Kotlin. This scenario maps only DotKt packages to
+the local feed; the SDK-selected `Microsoft.NETCore.App.Host.*` pack may come from nuget.org in its isolated
+cache. It inspects Windows PE files on the build host; it does not execute Windows UI or validate OS policy.
+
 The state the scenarios create stays inside the repository, all of it gitignored: the scratch workspace
 `build/verify-packaged-sdk` and the local feed `build/nuget-feed`, both wiped at the start of every run, plus
 the cached refcheck tool in `build/verify-packaged-sdk-tool`, which is kept between runs on purpose. Within
-that boundary the SDK-resolution path restores through a per-run `nuget.config` with a `<clear/>`ed source
-list, the local feed only, and a scratch `globalPackagesFolder`, and each template case installs into a
+that boundary the DotKt SDK-resolution path restores through a per-run `nuget.config` with a `<clear/>`ed source
+list, the local feed only (except the separately mapped apphost pack described above), and a scratch `globalPackagesFolder`, and each template case installs into a
 template hive of its own (`dotnet new --debug:custom-hive`) rather than the store under `$HOME`. A failed run
 leaves nothing behind to clean up.
 
