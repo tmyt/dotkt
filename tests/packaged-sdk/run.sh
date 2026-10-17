@@ -103,6 +103,8 @@ KOTLIN_VER="$(grep -oP '<DotKtKotlinVersion>\K[^<]+' "$ROOT/packaging/DotKt.Vers
 [[ -n "$KOTLIN_VER" ]] || die "could not read DotKtKotlinVersion from packaging/DotKt.Versions.props"
 FEED="$ROOT/build/nuget-feed"
 
+python3 "$ROOT/tests/packaged-sdk/test_stdlib_build.py"
+
 # 1. Pack the 5 nupkgs FRESH from the current sources (rebuilds the tools + re-copies the shipped targets into
 #    DotKt.Toolchain). Uses the cached stdlib dlls when present — correct for an MSBuild/targets-only change;
 #    a stdlib/kotc/bir2cir source change is gated by verify-tests, not here.

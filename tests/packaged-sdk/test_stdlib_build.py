@@ -1,0 +1,172 @@
+#!/usr/bin/env python3
+"""Exercise the real stdlib/pack scripts with compilers that leave partial outputs."""
+
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import tempfile
+import unittest
+
+
+ROOT = Path(__file__).resolve().parents[2]
+BUILDS = {
+    "klib": ("build-stdlib-klib.sh", "need_fe_klib", "clr-stdlib-frontend-klib/kotlin-stdlib-clr-frontend.klib"),
+    "ref": ("build-stdlib-ref.sh", "need_stdlib_ref", "clr-stdlib/dll/DotKt.Private.Stdlib.dll"),
+    "rt": ("build-stdlib-rt.sh", "need_stdlib_rt", "clr-stdlib-rt/dll/DotKt.Stdlib.dll"),
+}
+STAGES = ("klib:kotc", "ref:kotc", "ref:bir2cir", "ref:ilemit", "rt:kotc", "rt:bir2cir", "rt:ilemit")
+
+# Only compiler processes are replaced; script control flow, fingerprints and packaging remain real.
+COMPILER = r'''#!/usr/bin/env python3
+import os
+from pathlib import Path
+import sys
+
+args = sys.argv[1:]
+if Path(sys.argv[0]).name == "kotc":
+    output = Path(args[args.index("-d") + 1])
+    stage = "kotc"
+    if os.environ.get("DOTKT_BUILD_KLIB") == "1":
+        kind = "klib"
+    else:
+        kind = "rt" if "clr-stdlib-rt" in output.parts else "ref"
+        output = output / "partial.bir.json"
+elif args[0] in ("build", "pack"):
+    with open(os.environ["TRACE"], "a") as trace:
+        trace.write(args[0] + "\n")
+    sys.exit(0)
+else:
+    stage = Path(args[0]).stem
+    output = Path(args[1])
+    kind = "rt" if "clr-stdlib-rt" in output.parts else "ref"
+    output = output / (args[2] + ".dll" if stage == "ilemit" else "partial.cir.json")
+name = kind + ":" + stage
+with open(os.environ["TRACE"], "a") as trace:
+    trace.write(name + "\n")
+output.parent.mkdir(parents=True, exist_ok=True)
+output.write_text("partial output\n")
+if name == os.environ.get("FAIL_STAGE"):
+    print("error: compiler failed after writing partial output", file=sys.stderr)
+    sys.exit(41)
+'''
+
+
+class StdlibBuildTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="dotkt-stdlib-build-")
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name) / "repo with spaces"
+        self.root.mkdir()
+        self.trace = self.root / "trace"
+        for name in ("lib.sh", "pack-nuget.sh", *(b[0] for b in BUILDS.values())):
+            self.copy("scripts/" + name)
+        # Pack guards and staging use the repository's current versions/templates, not test duplicates.
+        shutil.copytree(ROOT / "packaging", self.root / "packaging",
+                        ignore=shutil.ignore_patterns("bin", "obj", "tools", "lib"))
+        for name in ("global.json", "README.md", "docs/user/getting-started.md"):
+            self.copy(name)
+        for name in ("common/src", "clr/common", "src", "unsigned/src"):
+            (self.root / "libraries/stdlib" / name).mkdir(parents=True, exist_ok=True)
+        self.write("libraries/stdlib/src/Empty.kt", "// fixture source\n")
+        self.write("libraries/stdlib/clr/stdlib-bindings.json", "{}\n")
+        self.write("toolchain/kotc/build/install/kotc/bin/kotc", COMPILER, executable=True)
+        self.write("bin/dotnet", COMPILER, executable=True)
+        self.write("gradlew", "#!/usr/bin/env bash\nexit 0\n", executable=True)
+        for tool in ("bir2cir", "ilemit", "dll2klib"):
+            self.write(f"build/{tool}-bin/{tool}.dll", "fixture tool\n")
+        self.write("refs/Framework.dll", "fixture reference\n")
+        self.env = dict(os.environ, PATH=str(self.root / "bin") + os.pathsep + os.environ["PATH"],
+                        TRACE=str(self.trace), DOTNET_REFPACK_DIR=str(self.root / "refs"),
+                        FRAMEWORK_COMPILE_REFS=str(self.root / "refs/Framework.dll"))
+        self.env.pop("DOTKT_BUILD_KLIB", None)
+        self.env.pop("FAIL_STAGE", None)
+
+    def copy(self, name):
+        target = self.root / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / name, target)
+
+    def write(self, name, content, executable=False):
+        target = self.root / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content)
+        if executable:
+            target.chmod(0o755)
+
+    def run_bash(self, command, fail_stage=""):
+        return subprocess.run(["bash", "-c", command], cwd=self.root,
+                              env=dict(self.env, FAIL_STAGE=fail_stage),
+                              capture_output=True, text=True, timeout=30)
+
+    def calls(self):
+        return self.trace.read_text().splitlines() if self.trace.exists() else []
+
+    def assert_failed_at(self, result, stage):
+        self.assertEqual(result.returncode, 41, result.stdout + result.stderr)
+        calls = self.calls()
+        self.assertIn(stage, calls)
+        self.assertEqual(calls[-1], stage, calls)
+        self.assertNotIn("pack", calls)
+        self.assertFalse(list((self.root / "build").rglob("*.toolstamp")))
+        kind = stage.split(":")[0]
+        output = self.root / "build" / BUILDS[kind][2]
+        if stage.endswith("ilemit") or kind == "klib":
+            self.assertTrue(output.is_file(), "the failing process must have left a partial artifact")
+
+    def test_partial_failures_stop_direct_builds(self):
+        for stage in STAGES:
+            with self.subTest(stage=stage):
+                kind = stage.split(":")[0]
+                # A runtime build consumes an already-built reference assembly.
+                self.write("build/" + BUILDS["ref"][2], "reference fixture\n")
+                script = BUILDS[kind][0]
+                self.assert_failed_at(self.run_bash(f"bash scripts/{script}" +
+                                      (" --emit" if kind != "klib" else ""), stage), stage)
+
+    def test_partial_frontend_failures_stop_without_emit(self):
+        for kind in ("ref", "rt"):
+            with self.subTest(kind=kind):
+                self.assert_failed_at(self.run_bash(f"bash scripts/{BUILDS[kind][0]}",
+                                                   kind + ":kotc"), kind + ":kotc")
+
+    def test_failed_builders_do_not_stamp_in_tested_shell_contexts(self):
+        for stage in STAGES:
+            with self.subTest(stage=stage):
+                kind = stage.split(":")[0]
+                # Existing stale artifacts must not turn a failed rebuild into a cache hit.
+                self.write("build/" + BUILDS[kind][2], "stale artifact\n")
+                self.write("build/" + BUILDS["ref"][2], "reference fixture\n")
+                command = "source scripts/lib.sh; if " + BUILDS[kind][1] + "; then exit 0; else exit $?; fi"
+                self.assert_failed_at(self.run_bash(command, stage), stage)
+
+    def test_pack_never_packages_partial_builds(self):
+        for stage in STAGES:
+            with self.subTest(stage=stage):
+                # Each attempt starts without successful stamps from an earlier pack.
+                for stamp in (self.root / "build").rglob("*.toolstamp"):
+                    stamp.unlink()
+                result = self.run_bash("bash scripts/pack-nuget.sh", stage)
+                self.assertEqual(result.returncode, 41, result.stdout + result.stderr)
+                calls = self.calls()
+                self.assertEqual(calls[-1], stage, calls)
+                self.assertNotIn("pack", calls)
+                artifact = self.root / "build" / BUILDS[stage.split(":")[0]][2]
+                self.assertFalse(Path(str(artifact) + ".toolstamp").exists())
+
+    def test_successful_pack_stamps_and_reuses_artifacts(self):
+        command = "bash scripts/pack-nuget.sh"
+        result = self.run_bash(command)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual([c for c in self.calls() if ":" in c], list(STAGES))
+        self.assertEqual(self.calls().count("pack"), 5)
+        self.assertEqual(len(list((self.root / "build").rglob("*.toolstamp"))), 3)
+        self.trace.unlink()
+        result = self.run_bash(command)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse([c for c in self.calls() if ":" in c], self.calls())
+        self.assertEqual(self.calls().count("pack"), 5)
+
+
+if __name__ == "__main__":
+    unittest.main()

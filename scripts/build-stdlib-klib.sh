@@ -8,7 +8,7 @@ usage() {
 	cat <<EOF
 usage: $SCRIPT_NAME
 Builds $FE_KLIB from the libraries/stdlib sources. -h for this help.
-Exits nonzero if the KLIB was not produced.
+Exits nonzero if kotc fails or the KLIB was not produced.
 EOF
 }
 while (( $# )); do
@@ -50,7 +50,7 @@ DOTKT_BUILD_KLIB=1 "$KOTC" \
 	-Xreturn-value-checker=check -XXLanguage:+UnnamedLocalVariables \
 	-Xcommon-sources="$STDLIB_COMMON_CSV" $STDLIB_OPTIN \
 	"${STDLIB_FRAGMENT_ARGS[@]}" \
-	-d "$KLIB" 2>"$OUT/kotc.err" || true
+	-d "$KLIB" 2>"$OUT/kotc.err"
 grep ': error:' "$OUT/kotc.err" | sed -E 's/^.*: error: //' | sort | uniq -c | sort -rn | head -10 || true
 
 [[ -f "$KLIB" ]] || die "expected packed KLIB at $KLIB (see $OUT/kotc.err)"
