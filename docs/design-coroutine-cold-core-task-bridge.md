@@ -421,9 +421,12 @@ task.await() // metadata-only member synthesized into the task's reference KLIB
 Blocking or scheduling helpers such as `runBlocking` and `delay` are library APIs layered over the coroutine core;
 they are not compiler-provided `kotlin.clr` declarations.
 
-### v1 limits (policy = call-time NotSupportedException, never an emit crash)
+### Supported protected regions and library boundary
 
-- No suspension inside `catch`/`finally` blocks (try/catch AROUND suspension works).
+- Suspension inside `catch`/`finally` and nested protected regions is supported. Handlers and nested
+  regions are normalized into resumable flat routes before state-machine segmentation, for both
+  named suspend functions and suspend lambdas. Coverage: `tests/coroutines/fixtures/SuspendTryLoweringTests.kt`
+  and `tests/coroutines/fixtures/ProtectedSuspendLoopTransferTests.kt`.
 - No `suspendCancellableCoroutine` (kotlinx — purged). Plain `suspendCoroutine` works E2E, INCLUDING
   cross-module (F2, 2026-07-05): our compiler does not inline `@InlineOnly` cross-module, so an APP's
   `suspendCoroutine { … }` reaches bir2cir un-inlined (a plain `callStatic suspendCoroutine(<closure>)`,
@@ -437,7 +440,13 @@ they are not compiler-provided `kotlin.clr` declarations.
   type has unstable `===` identity otherwise). Same-module `suspendCoroutine*` still lowers via the
   inlined `valueBlock` intrinsic (`EmitIntrinsicSuspension`). Coverage:
   `tests/coroutines/fixtures/ContinuationBridgeTests.kt`.
-- No CancellationToken/Job/interceptor dispatch (later layers); `intercepted()` = identity v1.
+- Continuation interception is implemented. `ContinuationImpl.intercepted()` consults the coroutine
+  context's `ContinuationInterceptor`, caches its wrapper, and releases that wrapper on completion.
+  Task-await resumption passes through the intercepted continuation; without an interceptor the
+  captured SynchronizationContext or inline fallback applies. Coverage:
+  `tests/coroutines/fixtures/CoroutineContextInterceptionTests.kt`.
+- `CancellationToken` is not an implicit suspend parameter, and Job/structured-concurrency APIs
+  belong to the separate kotlinx library track. These library boundaries do not disable interception.
 
 ### Supersession notes
 
@@ -516,7 +525,7 @@ UNCONDITIONALLY. The classifier assigns each admitted member one of three shapes
 |---|---|
 | abstract member (explicit declaration modality) | abstract cold entry + abstract Task bridge (no SM) |
 | concrete + segmentable (`SuspensionRefusalReason == null`) | SM class + cold entry + bridge (the full transform) |
-| concrete + NOT segmentable (v1 limit, or M4 own-generic-on-generic-class) | a call-time `throw NotSupportedException(reason)` cold entry + bridge, and a bir2cir WARNING naming the fun + the refusal site |
+| concrete + a remaining unsupported body shape | a call-time `throw NotSupportedException(reason)` cold entry + bridge, and a bir2cir WARNING naming the fun + the refusal site |
 
 An empty concrete Unit-returning default interface body remains concrete. It uses a direct cold entry returning
 the Unit value plus its Task bridge; body length does not determine declaration modality.
@@ -538,9 +547,13 @@ An app build has no such residue, and a survivor there is refused in bir2cir.
   (concrete or abstract, but always a callable slot). Call-site rewrite (`callStatic`/`callInstance`/`clr*`)
   is UNCONDITIONAL. An inherited or overridden suspend member is resolved by NATIVE virtual dispatch through
   the virtual/override-lockstep cold slot — no hierarchy analysis in bir2cir.
-- **The v1-non-segmentable set** (suspension in a catch/finally, a nested suspending try, a suspension in a
-  disallowed lambda position, M4) now COMPILES with a call-time throw rather than an emit ICE. Both call
-  paths observe the throw: a Kotlin→Kotlin cold call propagates it synchronously; the public Task bridge
+- **The classifier's remaining refusal path** emits a call-time throw for unsupported body shapes,
+  including disallowed lambda/closure positions and a suspending `forRange` body retained in a stdlib self-build.
+  Application ranges have already become counted `for` loops at this point. Catch/finally suspension,
+  nested protected regions, and method generics
+  on generic owners are supported and do not belong to this refusal set. This fallback is an implementation
+  limitation, not undefined Kotlin user-program behavior or a new semantic exception. Both call paths observe
+  the throw: a Kotlin→Kotlin cold call propagates it synchronously; the public Task bridge
   catches it and faults the Task (`RootContinuation.resumeWith` → `TrySetException`, NSE is not OCE so
   faulted, not canceled). A C# caller that drops the returned faulted Task never observes the NSE — the
   standard .NET async contract, accepted as Kotlin-faithful.

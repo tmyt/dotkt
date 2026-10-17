@@ -1,6 +1,6 @@
 # Consuming a DotKt assembly AS KOTLIN — metadata attributes
 
-**Status: v1 implemented & verified (2026-06-24).** `tests/roundtrip/consumer`.
+Status: current implementation record. Source restoration is exercised by `tests/roundtrip/`.
 
 ## Goal
 
@@ -8,7 +8,7 @@ A DotKt-compiled assembly is a normal .NET assembly, so it can be consumed from 
 But to consume it **as Kotlin** — another `.ktproj` using it with Kotlin syntax — the Kotlin-language facts that
 have **no native .NET representation** must travel with the assembly and be restored on the consumer's FIR. This is
 the foundation for shipping compiled Kotlin libraries (kotlinx-coroutines, serialization, …) for the CLR and
-consuming them as Kotlin (see [[dotkt-compile-kotlin-libraries]]).
+consuming them as Kotlin. See [design-dll2klib.md](design-dll2klib.md) for reference projection.
 
 ## What needs an attribute (and what doesn't)
 
@@ -21,6 +21,11 @@ Only Kotlin facts that plain .NET metadata cannot express or cannot express with
 | `suspend fun` | `Task<T>`-returning method | no (the Task ABI hides the suspend-ness) | `[KotlinFunction(Suspend)]` |
 | source `@LowPriorityInOverloadResolution` on a function | ordinary source-function MethodDef, including a public suspend Task bridge | no | `[KotlinFunction(LowPriority)]`, restored as the standard Kotlin function annotation |
 | top-level `fun` | static method of a `<File>Kt` class | no (.NET has no top-level functions) | `[KotlinFileClass]` on the file class |
+| extension receiver (`fun T.f()`) | ordinary leading positional parameter | no | `[KotlinExtensionReceiver]` on that parameter; restores a receiver for top-level/member functions and property accessors |
+| context parameter | ordinary positional parameter after an extension receiver, before regular parameters | no | `[KotlinContextParameter]` on each context parameter |
+| ordinary function-containing declaration slot | identity-preserving delegate carrier, possibly nested inside a generic type | no | `[KotlinType(version, bytes)]` preserves the source slot before representation changes |
+| suspend function type | object state-machine carrier | no | `[KotlinSuspendFunctionType(version, bytes)]` preserves the source function type |
+| `typealias` | no CLR TypeDef | no | assembly-level `[KotlinTypeAlias(version, bytes)]` preserves the actualized declaration, source visibility, parameters, types, and annotations |
 | named/default `companion object` | compiler-reserved singleton carrier, nested in a non-generic owner and hoisted beside a generic one | no; CLR nesting does not record the source companion association/name | `[KotlinCompanion(version, bytes)]` on the physical carrier type |
 | `class C { companion { … } }` member | a real static member of `C` | **yes** — a CLR static member IS the shape (`IS_STATIC_FUNCTION`/`IS_STATIC_PROPERTY`) | (none) |
 | `companion fun C.foo()` / ordinary `companion val C.bar` | released C# 14 static extension-member graph; a generic receiver additionally uses a source-named CLR wrapper plus an unspeakable receiverless Kotlin core | receiver/name/kind: **yes**, from `ExtensionAttribute` + `ExtensionMarkerAttribute`; a generic wrapper's Kotlin call target is not expressible in the standard graph | generic wrapper only: `[KotlinExtensionCore(version, bytes)]` carrying `{name}`; it links wrapper to core and does not duplicate extension semantics |
@@ -34,14 +39,14 @@ Only Kotlin facts that plain .NET metadata cannot express or cannot express with
 | Kotlin `val` backed by a **`@ClrField` public field** | public field | no; a plain public field looks writable | `[KotlinReadOnly]` — survives **only** for the `@ClrField` plain-field case; a normal `val` is now a get-only CLR property, recoverable from plain metadata (see [design-clr-property-model.md](design-clr-property-model.md)) |
 | reference-type nullability (`String?`) | .NET nullable reference metadata | yes for NRT-aware tools; must be emitted | `[Nullable]` / `[NullableContext]` |
 | a nullable GENERIC `T?` on an unconstrained `T` (`fun <T> f(x: T?): T?`, `Holder<T?>`, `Array<T?>`, `(T) -> T?`) | `System.Object` at that position — the one CLR slot that carries a real null for a value AND a reference instantiation (#86) | no; `object` names neither `T` nor the `?` | `[KotlinNullableGeneric(pre-erasure type node)]` **plus** the slot's own `[Nullable(2)]` byte |
-| imported CLR event endpoint (`CLREvent<T>`) | real CLR event metadata + add/remove accessors | yes for the event itself; Kotlin endpoint syntax must be synthesized | plain CLR event metadata, no DotKt attribute by default |
+| imported CLR event endpoint (`ClrEvent<T>`) | real CLR event metadata + add/remove accessors | yes for the event itself; Kotlin endpoint syntax must be synthesized | plain CLR event metadata, no DotKt attribute by default |
 | `final`/`open`/`abstract` (modality) | non-virtual / virtual / abstract | **yes** — rides .NET virtual-ness | (none) |
 | visibility | public/assembly/family, potentially widened for the inline ABI | only when source and physical accessibility agree | `[KotlinTypeVisibility]` for widened types; `[KotlinCallableVisibility(version, bytes)]` preserves non-public function, constructor, property and accessor source visibility independently of CLR accessibility |
-| generics, including `reified` | real CLR generic method `<T>`; Kotlin classifier/nullability-sensitive open parameters add hidden integer witnesses | runtime type: yes; Kotlin nullability/classifier/reified indices: no | `[KotlinDeclarationIdentity]` separately carries semantic `reified` indices and physical witness indices |
+| generics, including `reified` | real CLR generic method `<T>`; demanded classifier/nullability-sensitive operations add hidden type witnesses | runtime type: yes; Kotlin nullability/classifier/reified indices: no | `[KotlinDeclarationIdentity]` separately carries semantic `reified` indices and physical witness indices |
 
 The attributes are **compiler-EMBEDDED per-assembly** as internal `DotKt.Runtime.CompilerServices.*` types (like csc's
 own `NullableAttribute`/`IsReadOnlyAttribute`) — there is **no referenced `DotKt.Runtime` DLL** (that runtime is
-ELIMINATED; the real CLR stdlib superseded it). They are metadata-only, never executed ([[dotkt-naming-and-runtime-split]]).
+ELIMINATED; the real CLR stdlib superseded it). They are metadata-only, never executed. The shipping runtime implementation is `DotKt.Stdlib.dll`.
 
 `KotlinFunction` composes the declaration facts `Infix=1`, `Operator=2`, `Suspend=4`, and `LowPriority=8`.
 `bir2cir` consumes the source priority annotation into that flag; `ilemit` emits the authored carrier unchanged.
@@ -62,28 +67,24 @@ classification.
 
 ## Pipeline
 
+```text
+  kotc:     records Kotlin declaration identities, modifiers, types, receivers,
+            contexts, source visibility, inline/default bodies, and nullability in BIR
+  bir2cir:  selects physical CLR declarations and signatures, constructs carrier attributes,
+            and preserves source facts before representation changes
+  ilemit:   emits the authored CIR declarations, attributes, provenance, and NRT metadata
+  dll2klib: verifies provenance and restores declarations into a standard metadata-only KLIB;
+            keeps exact physical linkage in compiler metadata
+  kotc:     loads the consumer KLIB through the ordinary Kotlin symbol provider
+  bir2cir:  binds consumer calls to the recorded declaration identity; Kotlin suspend calls
+            use cold continuation entries and exported CLR callers use Task bridges
 ```
-  emit:   BirEmitter records infix/operator/suspend, companion-extension receiver/name/kind, inline bodies,
-          read-only/lateinit fields, file classes, and reference nullability
-            -> ilemit stamps [assembly: AssemblyMetadata("DotKt.Compiler", "metadata-v1")],
-               compiler-generated embedded carrier definitions,
-               [KotlinFunction(flags)] / [KotlinFileClass] / [KotlinCompanionExtension(receiver,name,kind)] /
-               [KotlinExtensionCore(wrapper-to-core)] /
-               [KotlinInline("bir-json/1", content)] / [KotlinConstructorAdapter(delegation)] / [KotlinReadOnly] / [KotlinLateinit] /
-               [KotlinPropertyStorage] / [KotlinStaticCarrier] /
-               .NET NRT [Nullable*]
-  project: dll2klib verifies assembly + carrier provenance, then writes standard KLIB metadata
-            (suspend: Task<T> unwrapped to T)
-            CLR `op_*` methods map back to Kotlin operator names through the standard operator table
-            CLR events restore as ClrEvent<T> endpoints from EventInfo + delegate Invoke
-            top-level declarations carry their physical file-class owner in `@ClrExternal`
-            field mutability, inline body availability, and NRT nullability
-  resolve: kotc's ordinary KLIB symbol provider restores the projected Kotlin declarations
-  backend (consumer): a call to a restored top-level fun forwards its `@ClrExternal` owner into BIR;
-            a restored suspend call's .NET return is Task<T> (coTaskType), awaited by the coroutine machinery;
-            a restored event subscription lowers to add + an EventSubscription close-token whose callback invokes
-            remove with the exact same handler bound to the event's exact CLR delegate type.
-```
+
+Carrier construction belongs to `bir2cir`; `ilemit` does not reconstruct Kotlin semantics or
+infer a standard-library ABI. Stripping reference bodies preserves signatures, generic constraints,
+all declaration carriers, and nullable metadata. Compiler-produced assemblies and carriers are
+internal ABI; facts missing from an older artifact are not reconstructed from names or bodies.
+
 
 ### `[KotlinCompanion]` — association and source name on the CLR carrier
 
@@ -123,8 +124,8 @@ whose CLR nesting contradicts its kind. It then attaches the physical type to th
 `COMPANION_OBJECT`, retaining supertypes and instance members while hiding the physical `$INSTANCE` field. It sets
 `companion_object_name` and `nested_class_name`; no path recognizes a
 companion from a CLR suffix, the word `Companion`, or member names. Consequently a named companion and an unrelated
-nested class called `Companion` remain distinct, and arbitrary CLR static projection keeps its existing synthetic
-companion behavior without masquerading as a restored Kotlin declaration. A protected companion on an externally
+nested class called `Companion` remain distinct, and arbitrary CLR statics remain direct static declarations without
+masquerading as a restored Kotlin companion. A protected companion on an externally
 visible owner is projected with protected Kotlin class/member flags; its carrier is NestedPublic because generated
 reference/state-machine helpers are not subclasses of the source outer class. `dll2klib` also maps carrier type
 signatures back to the exact nested companion classifier ID,
@@ -311,8 +312,9 @@ From the **consumer surface**, an imported inline body and a reified type parame
 - **CLR generics carry the runtime type**, so a Kotlin `inline fun <reified T>` remains an ordinary CLR generic
   method `M<T>()`. CLR does not carry Kotlin's nullable-instantiation bit, so `bir2cir` computes a module-wide
   structural demand set from nullable-sensitive operations and exact call/lift correspondences, then appends hidden
-  integer witnesses only for demanded positions. Bit zero carries nullability; the remaining classifier code
-  preserves Kotlin collection identity when CLR storage interfaces overlap. `[KotlinDeclarationIdentity]` records semantic `reified` indices
+  `ValueTuple<Int32, System.Type, Func<object, object>>` witnesses only for demanded positions. The tuple
+  carries nullability/nominal flags, the runtime classifier, and an optional classifier predicate.
+  This preserves Kotlin identity when CLR storage is erased or native values cannot inherit a Kotlin class. `[KotlinDeclarationIdentity]` records semantic `reified` indices
   and physical nullable-witness indices separately; `dll2klib` restores the former and hides the latter, while
   consumer `bir2cir` uses the trusted physical indices to pass or forward each witness. Consequently the ordinary
   Kotlin `TYPE_PARAMETER_AS_REIFIED` rule remains in force across DLL→KLIB boundaries. A body
@@ -325,18 +327,17 @@ From the **consumer surface**, an imported inline body and a reified type parame
   parameter**. Without the body we can't inline, so such a call simply won't compile on the consumer (a normal
   "return not allowed here") — not silent breakage.
 
-So `[Reified]`/`[ReifiedInline]`/`[KotlinInlineBody]` are **not part of the design.** Empirically (2026-06-24), the
-cross-assembly inline matrix is:
+`[KotlinDeclarationIdentity]` and `[KotlinInline]` carry these separate facts. The inline matrix is:
 
 | case | result |
 |---|---|
-| same-module inline (incl. non-local return, crossinline) | ✅ existing (`il-inline`/`il-inline2`/`il-xinline`) |
-| cross-module **non-reified** inline | ✅ emitted as a normal method; consumed as a regular (non-inlined) call |
+| same-module inline (incl. non-local return, crossinline) | ✅ raw BIR splicing |
+| cross-module inline without a lambda literal | ✅ ordinary method call |
 | cross-module **reified** inline | ✅ real generic method; nullable-sensitive positions receive hidden witnesses that stay hidden from Kotlin source |
 | cross-module inline + lambda with **non-local return** | ✅ carried as raw BIR and spliced by bir2cir |
 
 **Where inlining happens.** DotKt does NOT run the standard JVM IR `FunctionInlining` lowering — its pipeline is the
-four layers `dll2klib` / `kotc` / `bir2cir` / `ilemit` (`native-cir` is the target; the frontend is
+four layers `dll2klib` / `kotc` / `bir2cir` / `ilemit` (the frontend is
 `…Fir2Ir then ClrBackendPhase`, no JVM lowerings). **Inlining (the `[KotlinInline]` splice) is a `bir2cir` (BIR→CIR)
 responsibility.** kotc projects the call and caller-lambda body to a `callInline` BIR node; bir2cir resolves either
 the same-module raw stash or the referenced `[KotlinInline]` payload and performs the splice. Lambda-less inline funs
@@ -364,26 +365,14 @@ Scope: lambda-taking inline funcs only (the only ones whose body must travel; la
 plain/generic methods). Splice hygiene covers callee locals, labels, generic lifted methods, transitively nested
 non-capturing lambdas, member inline functions, and non-local returns.
 
-## Fixed along the way (2026-06-24)
+## Verification and related contracts
 
-- **Member `suspend fun` returning a USER type** (`suspend fun f(): Vec`) — previously crashed ilemit
-  (`AsyncTaskMethodBuilder<Vec>`/`Task<Vec>`/`TaskAwaiter<Vec>` are TypeBuilderInstantiations whose `GetMethod`
-  throws). Fixed by the `GenM` helper (re-anchor the open method via `TypeBuilder.GetMethod`) across the coroutine
-  state machine, **and** by the `EmitClrCall` return-type substitution: `TypeBuilder.GetMethod` leaves the method's
-  return type open (`TaskAwaiter`1<!0>`), so the runBlocking/await path mis-typed its temp — now it trusts the BIR
-  `ret` hint. Works through both a `suspend fun` and a `runBlocking { … }` lambda.
-- **Parameter names** — ilemit defined methods by type only (never `DefineParameter`), so names were lost and
-  dll2klib fell back to `arg0`/`arg1`, blocking named-argument calls across a boundary. Now emitted; `f(b = 2, a = 1)`
-  round-trips. (The names were always in the BIR — it was purely an emit omission, not a FIR limitation.)
+`tests/roundtrip/` exercises separate Kotlin producers and consumers; its bidirectional C# tests also
+inspect the physical signatures and metadata. Receiver restoration is covered by
+`tests/roundtrip/consumer/fixtures/InlineDefaultReceiverRoundtripTests.kt` and
+`tests/roundtrip/consumer/fixtures/MemberExtensionIndexerRoundtripTests.kt`. Ordinary function slots
+are covered by `tests/roundtrip/consumer/FunctionVarianceTests.kt`.
 
-- **Kotlin package → .NET namespace (was FOUNDATIONAL; FIXED 2026-06-24).** DotKt used to flatten all packages to the
-  **root** namespace — a correctness bug (`alpha.Box` + `beta.Box` both emitted `.NET Box` → collision/ilemit crash) and
-  the blocker for packaged consumption. `BirEmitter.typeName()`/`fileClassName()` now qualify top-level
-  classes/interfaces/enums and the file facade with `packageFqName` (nested types stay simple; root-package unchanged).
-  Verified: `alpha.Box`+`beta.Box` coexist, and a `package geom` library is consumed via `import geom.Vec`/`import
-  geom.Dir`/`import geom.greet` (top-level too) through the MSBuild import-scan flow.
-
-## Known gaps / follow-ups
-
-- Extension functions (`fun T.f()`) restore as plain statics, not Kotlin extensions, yet (a future flag/marker).
-- Remaining roundtrip limitations are tracked in GitHub Issues and covered where possible by `tests/roundtrip/`.
+The full behavioral contract and projection limits are in [dotkt-semantics.md](dotkt-semantics.md)
+§§6 and 10. [design-compiler-modes.md](design-compiler-modes.md) defines which artifacts retain
+metadata. GitHub Issues is the source of truth for remaining work.
