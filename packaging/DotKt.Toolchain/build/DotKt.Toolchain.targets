@@ -309,18 +309,18 @@
        updates the independent completion stamp, so a newer placeholder cannot masquerade as a completed output,
        including after a failed compilation hook. A true no-op leaves both files untouched; a missing DLL or stamp
        requires emission. DotKtResolveReferenceSets materializes the reference items before incremental evaluation. -->
-  <!-- Csc owns SDK-selected native resources (including defaults and opt-outs). Its output is the resource
-       provider for Kotlin emission, never a source of declarations or method bodies. Track option selection
+  <!-- Csc owns SDK-selected native resources and managed versions (including defaults and opt-outs). Its output
+       provides these physical assembly facts, never declarations or method bodies. Track option selection
        BEFORE CoreCompile so switching to an older file or clearing an option refreshes that provider too. -->
   <Target Name="DotKtComputeEmitOptions" BeforeTargets="CoreCompile"
-          DependsOnTargets="DotKtInitializeIntermediatePaths;SetWin32ManifestProperties">
+          DependsOnTargets="DotKtInitializeIntermediatePaths;SetWin32ManifestProperties;GenerateAssemblyInfo">
     <ItemGroup>
       <_DotKtNativeResourceInput Remove="@(_DotKtNativeResourceInput)" />
       <_DotKtNativeResourceInput Include="$(Win32Manifest);$(Win32Resource);$(ApplicationIcon)" />
       <CustomAdditionalCompileInputs Include="$(DotKtEmitOptionsManifest)" />
     </ItemGroup>
     <WriteLinesToFile File="$(DotKtEmitOptionsManifest)" Overwrite="true" WriteOnlyWhenDifferent="true"
-                      Lines="output-type=$(OutputType);no-win32-manifest=$(NoWin32Manifest);manifest=$(Win32Manifest);resource=$(Win32Resource);icon=$(ApplicationIcon)" />
+                      Lines="output-type=$(OutputType);no-win32-manifest=$(NoWin32Manifest);manifest=$(Win32Manifest);resource=$(Win32Resource);icon=$(ApplicationIcon);generate-assembly-info=$(GenerateAssemblyInfo);assembly-version-enabled=$(GenerateAssemblyVersionAttribute);file-version-enabled=$(GenerateAssemblyFileVersionAttribute);informational-version-enabled=$(GenerateAssemblyInformationalVersionAttribute)" />
   </Target>
 
   <Target Name="DotKtIlEmit" AfterTargets="CoreCompile" DependsOnTargets="DotKtBir2Cir;DotKtResolveReferenceSets;DotKtComputeEmitOptions"
@@ -373,6 +373,8 @@
       <_DotKtEscapedCir Include="@(_DotKtCir->'%(FullPath)'->Replace('\', '\\')->Replace('&quot;', '\&quot;'))" />
       <_DotKtIlEmitResponseArgument Include="_output"><Value>&quot;$(_DotKtEscapedIlEmitOutputPath)&quot;</Value></_DotKtIlEmitResponseArgument>
       <_DotKtIlEmitResponseArgument Include="_assembly"><Value>&quot;$(_DotKtEscapedTargetName)&quot;</Value></_DotKtIlEmitResponseArgument>
+      <_DotKtIlEmitResponseArgument Include="_assembly_versions_option"><Value>--assembly-versions-from</Value></_DotKtIlEmitResponseArgument>
+      <_DotKtIlEmitResponseArgument Include="_assembly_versions"><Value>&quot;$(_DotKtEscapedResourceProvider)&quot;</Value></_DotKtIlEmitResponseArgument>
       <_DotKtIlEmitResponseArgument Include="_compile_refs_option"><Value>--compile-refs</Value></_DotKtIlEmitResponseArgument>
       <_DotKtIlEmitResponseArgument Include="_compile_refs"><Value>&quot;$(_DotKtEscapedCompileReferences)&quot;</Value></_DotKtIlEmitResponseArgument>
       <_DotKtIlEmitResponseArgument Include="_runtime_refs_option"><Value>--runtime-refs</Value></_DotKtIlEmitResponseArgument>

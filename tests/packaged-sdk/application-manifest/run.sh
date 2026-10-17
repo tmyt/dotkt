@@ -106,6 +106,7 @@ pair() {
   build "$kt/App.ktproj" "$stage" "${defaults[@]}" "$@"
   build "$cs/Control.csproj" "control-$stage" --no-incremental "${defaults[@]}" "$@"
   inspect --resources "$cs/$out/App.dll" "$kt/$out/App.dll"
+  inspect --managed-match "$cs/$out/App.dll" "$kt/$out/App.dll"
   inspect --kotlin "$kt/$out/App.dll"
 }
 pair defaults

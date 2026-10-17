@@ -17,6 +17,12 @@ This scenario maps only DotKt packages to
 the local feed; the SDK-selected `Microsoft.NETCore.App.Host.*` pack may come from nuget.org in its isolated
 cache. It inspects Windows PE files on the build host; it does not execute Windows UI or validate OS policy.
 
+The managed-version scenario compares the actual Assembly table and version attributes with a same-target
+C# control: SDK defaults and explicit overrides, Version prefix/suffix, SourceRevisionId composition,
+generation opt-outs, quoting, wildcard expansion, no-op/incremental changes, Library/publish output and
+separately compiled Kotlin/C# consumers with nonzero AssemblyRef versions. The manifest scenario also
+compares managed versions alongside the native resources, keeping these distinct surfaces coherent.
+
 The state the scenarios create stays inside the repository, all of it gitignored: the scratch workspace
 `build/verify-packaged-sdk` and the local feed `build/nuget-feed`, both wiped at the start of every run, plus
 the cached refcheck tool in `build/verify-packaged-sdk-tool`, which is kept between runs on purpose. Within
