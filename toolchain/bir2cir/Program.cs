@@ -62,6 +62,7 @@ static class Bir2Cir
                 StdlibSubstituteTypeParams.SelfTest();
                 FBoundStarProjectionErasure.ProjectionConstraintSelfTest();
                 ComparableRepresentationLowering.SelfTest();
+                ValueRepresentationLowering.SelfTest();
                 AliasVarianceRepresentation.SelfTest();
                 KotlinCollectionClassifierLowering.SelfTest();
                 GenericArrayStorageLowering.SelfTest();
@@ -190,6 +191,10 @@ sealed class Pipeline
         // #395: snapshot frontend declaration identity before ANY Kotlin-to-CLR representation pass can rename,
         // move, clone, or synthesize a declaration. These are source facts, never a physical-name reverse inference.
         var declarationSemanticSignatures = DeclarationIdentityBinding.PreserveSourceFacts(birRoots);
+        var valueRepresentations = new ValueRepresentationLowering(birRoots, refs, _options.RefBuild);
+        KotlinRuntimeTypeWitness.ValueRepresentations = valueRepresentations;
+        BirTypeLowering.ValueRepresentations = valueRepresentations;
+        foreach (var root in birRoots) valueRepresentations.EraseBounds(root);
         CallableVisibilityLowering.ApplyAll(birRoots, refs);
         FunctionValueRepresentation.PreserveSourceFacts(birRoots);
         CapturedGenericInvocation.PreserveSourceFacts(birRoots, refs);
@@ -510,6 +515,7 @@ sealed class Pipeline
             // `kotlin.Nothing`. BEFORE the suspend transform, whose `__cond$` machinery already stores nothing for a
             // `throwExpr` arm — so one rule covers the plain and the state-machine lowering alike.
             NothingValueTermination.Apply(bir.Root);
+            valueRepresentations.BindOperations(bir.Root);
             // NULLABLE-INSTANTIATION WITNESS ABI (#316/#466): every raw inline/default payload is materialized now,
             // while exact declaration identities and Kotlin type arguments are still present. Record structurally
             // demanded call witnesses and capture lifted-frame witnesses before ClosureSynthesis/physical type
@@ -1023,7 +1029,7 @@ sealed class Pipeline
         // `compareTo(...): Nothing` is normalized at that bridge's construction boundary, before the physical Int32
         // slot could receive Nothing's later CLR object erasure.
         if (!_options.RefBuild)
-            foreach (var stagedFile in staged) ComparableBridgeSynthesis.Apply(stagedFile.Root);
+            foreach (var stagedFile in staged) ComparableBridgeSynthesis.Apply(stagedFile.Root, valueRepresentations.Storage);
 
         // @PublishedApi is a Kotlin semantic annotation carried alongside the source `internal` visibility in BIR.
         // Resolve its effective CLR accessibility here, before ownership selects top-level versus Nested* metadata.
@@ -1269,6 +1275,9 @@ sealed class Pipeline
             // the ref.dll + rt.dll + app views of a signature's nullability agree (the scalar decl flags are retired).
             // Count only arguments retained by the selected physical head, preserving the source annotation
             // wrappers on those arguments. The reference build must query its own representation as well.
+            // Capture complete source slots before reference-nullable stripping. The exact KotlinType carrier
+            // owns nested and outer nullability; NRT flags alone cannot restore a projected nominal source type.
+            valueRepresentations.ProjectValues(substituted, preserveOnly: true);
             DeclNullableFlags.Apply(substituted, isValueFqn,
                 type => BirTypeLowering.AnnotationArguments(type, refs.Aliases, isValueFqn,
                     refs.PhysicalTypeNames, emittedLocalTypes, _options.RefBuild, refs.NullableTypeFrames),
@@ -1308,6 +1317,7 @@ sealed class Pipeline
             // restores `List` vs `MutableList` cross-module in both channels. APP builds only (the collapse is
             // non-ref; only an app-emitted library is dll2klib-re-consumed). Runs on kotlin.* names before lowering.
             if (attributeTopLevelOwner) CollectionIdentityRecord.RecordMemberSlots(substituted);
+            valueRepresentations.ProjectValues(substituted);
             // The type transform: lower the Kotlin type vocabulary into ilemit's CLR-codegen vocabulary, emitting a
             // BIR-SHAPED CIR (same node shape; only type strings change). No verbatim/envelope track. The ref.dll
             // @ClrTypeAlias index lowers EVERY CLR-bound type (collections/StringBuilder/Regex/... not just the

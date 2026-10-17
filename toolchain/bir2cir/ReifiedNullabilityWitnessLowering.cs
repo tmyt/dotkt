@@ -165,6 +165,7 @@ static class ReifiedNullabilityWitnessLowering
                         var witness = WitnessFor(obj["type"], witnesses);
                         obj[KotlinTypeWitness.OperandKey] = KotlinRuntimeTypeWitness.Flags(witness);
                         obj[KotlinRuntimeTypeWitness.OperandKey] = KotlinRuntimeTypeWitness.Classifier(witness);
+                        obj[KotlinRuntimeTypeWitness.PredicateKey] = KotlinRuntimeTypeWitness.Predicate(witness);
                         if (Str(obj["k"]) == "isInst")
                             obj["nullWitness"] = KotlinTypeWitness.AllowsNull(KotlinRuntimeTypeWitness.Flags(witness));
                     }

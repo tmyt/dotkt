@@ -22,6 +22,7 @@ using DotKt.Bir;
 // resolve ("cannot resolve .NET type kotlin.Byte").
 static class BirTypeLowering
 {
+    internal static ValueRepresentationLowering ValueRepresentations { get; set; }
     // A synthesized declaration/MethodImpl may fill a value-returning generic CLR slot even when its closed
     // Kotlin type is Unit. This representation fact is consumed here, never serialized into final CIR.
     internal const string ValueReturnKey = "dotktValueReturn";
@@ -39,7 +40,8 @@ static class BirTypeLowering
     // A pre-lowering projection pass must ask the same head-selection rule as the final type lowering. Remove only
     // the existential shell that FBoundStarProjectionErasure itself will erase, lower the resulting arguments, and
     // delegate the classifier decision to PhysicalHead. This keeps Comparable<*> on non-generic IComparable while
-    // Comparable<in Number> retains the reified IComparable<Number> head.
+    // An opaque argument's value representation participates in that decision too; a Kotlin
+    // superclass represented by Object cannot retain a reified native comparison head.
     internal static bool ProjectedAliasHasReifiedGenericHead(
         string kotlinFqn, string bcl, IReadOnlyList<TypeNode> arguments)
     {
@@ -52,7 +54,8 @@ static class BirTypeLowering
             _ => type,
         };
         var lowered = arguments.Select(argument =>
-            LowerType(Bound(argument), refBuild: false, force: true, typeArg: true)).ToArray();
+            LowerType(ValueRepresentations?.Storage(Bound(argument)) ?? Bound(argument),
+                refBuild: false, force: true, typeArg: true)).ToArray();
         return PhysicalHead(kotlinFqn, bcl, lowered)
             is TypeNode.Fqn { Args: not null };
     }
@@ -646,7 +649,7 @@ static class BirTypeLowering
         IReadOnlyDictionary<string, string> aliases, ValueTypeOracle isValueFqn,
         IReadOnlyDictionary<string, string> physicalTypeNames, bool typeArg,
         IReadOnlySet<string> localTypeNames = null, bool refBuild = false,
-        IReadOnlyDictionary<string, NullableRepresentationFrame> nullableFrames = null)
+        IReadOnlyDictionary<string, NullableRepresentationFrame> nullableFrames = null, bool declarationHead = false)
     {
         var savedAliases = _aliases;
         var savedIsValue = _isValueFqn;
@@ -660,7 +663,11 @@ static class BirTypeLowering
             _physicalTypeNames = physicalTypeNames ?? new Dictionary<string, string>(StringComparer.Ordinal);
             _localTypeNames = localTypeNames ?? new HashSet<string>(StringComparer.Ordinal);
             _nullableFrames = nullableFrames;
-            return LowerType(type, refBuild, force: false, typeArg);
+            var projected = refBuild || ValueRepresentations == null ? type
+                : declarationHead && type is TypeNode.Fqn owner
+                    ? new TypeNode.Fqn(owner.Name, owner.Args?.Select(ValueRepresentations.Storage).ToArray())
+                    : ValueRepresentations.Storage(type);
+            return LowerType(projected, refBuild, force: false, typeArg);
         }
         finally
         {

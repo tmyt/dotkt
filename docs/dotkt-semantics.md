@@ -32,6 +32,7 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
 | [3](#3-inline-happens-at-emit-time-and-is-decoration-unless-a-lambda-literal-is-passed) | `inline` is emit-time, decoration unless a lambda is passed |
 | [4](#4-suspend-fun--an-async-taskt-function-hot-not-cold) | `suspend fun` = an async `Task<T>` function; **hot, not cold** |
 | [5](#5-primitive-stringification-is-clr-native-not-kotlinjvm-cosmetics) | CLR-native stringification; `String.format` = .NET composite format |
+| [5-number](#5-number-number-values-keep-native-clr-boxing-authored-subclasses-retain-a-real-base-class) | Number values use native CLR boxes and source-aware dispatch |
 | [5b](#5b-charsequence-is-string-on-the-clr--an-immutable-snapshot-not-a-live-view) | **`CharSequence` is `string`** — snapshot, not live view |
 | [5c](#5c-map-values-preserve-kotlin-covariance-across-invariant-clr-dictionaries) | Covariant `Map` values and exact CLR dictionary declarations |
 | [5d](#5d-appendable-is-systemtextstringbuilder) | `Appendable` is `System.Text.StringBuilder` |
@@ -72,8 +73,10 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   CLR generic arguments also do not distinguish `String` from `String?`, and invariant collection storage does not
   encode Kotlin's nominal read-only/mutable classifier. `bir2cir` therefore derives type-witness demand from operations such as `is T`
   and checked reified casts, and propagates it structurally through exact calls and lifted frames. Only demanded
-  method type parameters receive one hidden `ValueTuple<Int32, System.Type>` carrying nullability/nominal flags
-  and the runtime classifier separately from generic storage. Thus `is Int?` accepts null and boxed integers,
+  method type parameters receive one hidden `ValueTuple<Int32, System.Type, Func<object, object>>` carrying
+  nullability/nominal flags, the runtime classifier, and an optional classifier predicate separately from generic
+  storage. The predicate expresses a Kotlin superclass whose native CLR values cannot inherit its runtime class.
+  Thus `is Int?` accepts null and boxed integers,
   but not an unrelated value merely because its storage fits `Object`. Opaque foreign generic classifiers carry
   their open CLR definition and use raw base/interface membership, just like a direct classifier check; they do
   not test `Object` or a fabricated `G<Object>` construction. Checked reified `as` and `as?` use
@@ -587,6 +590,42 @@ encoding, which the JIT honors and which a single-threaded run cannot itself obs
   hash component. Consequence: two distinct `Box` instances with no override render **identically**
   (`[Box]` / `[Box]`), where JVM's default form would visibly differ by hash. Same class of
   unspecified-behavior host-convention divergence as the rest of this section — accepted, document only.
+
+## 5-number. `Number` values keep native CLR boxing; authored subclasses retain a real base class
+
+Kotlin `Byte`, `Short`, `Int`, `Long`, `Float`, and `Double` are Number subtypes, but their native CLR value types
+cannot inherit a Kotlin runtime class. Ordinary `Number`/`Number?` parameters, results, fields, properties, locals,
+and nested generic arguments therefore use `System.Object`. Numeric values keep their native CLR boxes without a
+wrapper or identity-changing adapter. C# consumers pass ordinary boxed numeric values to those slots.
+
+The real abstract `kotlin.Number` class remains the inheritance and virtual-dispatch contract for authored
+`class N : Number()`. Its overrides run when the value is used as Number, including through a generic bound or a
+separately compiled DLL. Kotlin source types and bounds survive in declaration metadata; the physically impossible
+CLR Number-class generic constraint does not. Native CLR declaration signatures, construction, and inheritance
+remain exact rather than acquiring the ordinary value-slot erasure.
+
+Number membership is not an Object or `IConvertible` test. Direct and reified `is`/`as?`/`as` recognize exactly the
+six numeric primitives and Number subclasses (plus null only for a nullable target). Boolean, Char, unsigned
+numbers, strings, and unrelated objects do not gain Number identity. Conversion dispatch uses the corresponding
+primitive conversion or the authored virtual override; it does not substitute `System.Convert` rounding rules.
+The trusted stdlib supplies storage, classifier, and exact member-adapter bindings; bir2cir resolves them, and
+ilemit receives only resolved CLR operations.
+
+This is not a Kotlin-reflection implementation. Under the existing `KClass` = `System.Type` contract (§2, §5g),
+`Number::class` names the exact runtime base class, whose CLR `Type.IsInstanceOfType(17)` is false. A generic `T::class`
+without classifier operations receives no semantic witness and reports its physical type argument: instantiating it
+with Number therefore exposes Object, whose CLR membership also accepts non-numbers. These CLR reflection tokens are
+not the semantic classifier used by Kotlin `is`/`as` operations. `KClass.isInstance` itself remains an unbound CLR
+stdlib stub; this change does not implement that reflection API.
+
+`Array<Number>` uses `object[]`, following the existing nullable/opaque array component-storage contract. Array
+stores/reads and generic forwarding preserve the allocation and its identity. Such an erased allocation cannot
+distinguish its original Number component from another source component also stored as Object. A more precise
+native component must still supply the requested classifier: `string[]` does not pass a direct or reified
+`Array<Number>` check merely because it can be assigned to `object[]`. This is a storage representation deviation,
+not undefined user-program behavior. A native numeric value array such as `int[]` cannot pass an invariant
+`Array<Number>` check or cast either: its component satisfies Number, but its allocation cannot be used as
+`object[]`. The existing read-only `Array<out Number>` view can retain that native allocation through `System.Array`.
 
 ## 5a. `Double`/`Float` boxed structural equality & `compareTo` follow Kotlin's total order
 

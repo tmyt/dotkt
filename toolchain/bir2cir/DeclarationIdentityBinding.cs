@@ -655,7 +655,8 @@ static class DeclarationIdentityBinding
                     obj["calleeRet"] = declarationsById[id]["ret"]?.DeepClone()
                         ?? throw new InvalidOperationException("Local declaration has no physical return signature");
                     if (declarationsById[id]["params"] is JsonArray selectedParameters
-                        && selectedParameters.OfType<JsonObject>().Any(p => p[FunctionSignatureIdentity.Key] != null))
+                        && selectedParameters.OfType<JsonObject>().Any(p => p[FunctionSignatureIdentity.Key] != null
+                            || TypeJson.Read(p["type"]) is TypeNode.Mod))
                         obj["calleeParams"] = FunctionSignatureIdentity.Signature(selectedParameters);
                     // A trusted overlay can deliberately change selected declaration slots while retaining their
                     // Kotlin surface in metadata. Rewrite only those physical slots: an ordinary call's remaining

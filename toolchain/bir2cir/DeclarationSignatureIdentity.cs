@@ -272,6 +272,19 @@ static class DeclarationSignatureIdentity
         {
             if (node is JsonObject obj)
             {
+                // UnsafeAccessor's runtime matcher includes custom modifiers. Carry the selected local target's
+                // allocated identity to its exact extern signature, excluding the synthetic owner argument.
+                if (Text(obj["unsafeTargetDeclarationId"] ?? obj["unsafeSignatureTargetDeclarationId"]) is string targetId
+                    && plan.TryGetValue(targetId, out var targetTypes) && obj["params"] is JsonArray accessorParameters)
+                {
+                    var offset = accessorParameters.Count - targetTypes.Count;
+                    if (offset is < 0 or > 1)
+                        throw new InvalidOperationException("UnsafeAccessor signature differs from its selected declaration");
+                    for (var index = 0; index < targetTypes.Count; index++)
+                        accessorParameters[index + offset]["type"] = TypeJson.Write(WithIdentityModifiers(
+                            TypeJson.Read(targetTypes[index]), TypeJson.Read(accessorParameters[index + offset]["type"])));
+                }
+                obj.Remove("unsafeSignatureTargetDeclarationId");
                 if (Text(obj[DeclarationIdentityBinding.Key]) is string id && plan.TryGetValue(id, out var types))
                 {
                     if (obj["params"] is JsonArray parameters)
@@ -465,10 +478,17 @@ static class DeclarationSignatureIdentity
         var aliasPlan = Plan(new[] { aliases });
         if (aliasPlan.Count != 2)
             throw new InvalidOperationException("Nominal aliases lost their independent signature identities");
+        aliases["methods"].AsArray().Add(new JsonObject {
+            ["name"] = "access", ["unsafeTargetDeclarationId"] = "first",
+            ["params"] = new JsonArray(new JsonObject { ["type"] = TypeJson.Fqn("AliasSignatureProbe") },
+                new JsonObject { ["type"] = TypeJson.Fqn("System.Object") }),
+        });
         Apply(new[] { aliases }, aliasPlan);
-        if (aliases["methods"].AsArray().Any(method => SignatureValueTypes.Of(
+        if (aliases["methods"].AsArray().Take(2).Any(method => SignatureValueTypes.Of(
                 TypeJson.Read(method["params"][0]["type"])) is not TypeNode.Fqn { Name: "System.Object" }))
             throw new InvalidOperationException("Nominal signature identity changed a CLR value slot");
+        if (!JsonNode.DeepEquals(aliases["methods"][0]["params"][0]["type"], aliases["methods"][2]["params"][1]["type"]))
+            throw new InvalidOperationException("UnsafeAccessor lost its selected target's signature identity");
         var slots = sourceCarrier["methods"].DeepClone().AsArray();
         foreach (var method in slots.OfType<JsonObject>()) { method["virtual"] = true; method["abstract"] = true; }
         var implementations = slots.DeepClone().AsArray();

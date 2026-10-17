@@ -9,29 +9,39 @@ static class KotlinRuntimeTypeWitness
 {
     internal const string OperandKey = "kotlinRuntimeTypeWitness";
     internal const string ClassifierKey = "kotlinClassifierRef";
+    internal const string PredicateKey = "kotlinClassifierPredicate";
+    internal static TypeNode PredicateType => new TypeNode.Fqn("System.Func", new TypeNode[] {
+        new TypeNode.Fqn("System.Object"), new TypeNode.Fqn("System.Object"),
+    });
+    internal static ValueRepresentationLowering ValueRepresentations { get; set; }
     internal static TypeNode Type => new TypeNode.Fqn("System.ValueTuple", new TypeNode[] {
-        new TypeNode.Fqn("System.Int32"), new TypeNode.Fqn("System.Type"),
+        new TypeNode.Fqn("System.Int32"), new TypeNode.Fqn("System.Type"), PredicateType,
     });
     internal static JsonNode TypeJsonNode() => TypeJson.Write(Type);
 
     internal static JsonObject Flags(JsonNode witness) => Field(witness, "Item1", new TypeNode.Fqn("System.Int32"));
     internal static JsonObject Classifier(JsonNode witness) => Field(witness, "Item2", new TypeNode.Fqn("System.Type"));
+    internal static JsonObject Predicate(JsonNode witness) => Field(witness, "Item3", PredicateType);
     static JsonObject Field(JsonNode witness, string name, TypeNode result) => new() {
         ["k"] = "field", ["ownerType"] = TypeJsonNode(), ["recv"] = witness.DeepClone(),
         ["name"] = name, ["type"] = TypeJson.Write(result), ["sty"] = TypeJson.Write(result),
     };
 
-    internal static JsonNode Create(JsonNode flags, JsonNode classifier) => new JsonObject {
+    internal static JsonNode Create(JsonNode flags, JsonNode classifier, JsonNode predicate) => new JsonObject {
         ["k"] = "new", ["type"] = TypeJsonNode(),
-        ["args"] = new JsonArray(flags, classifier),
-        ["argTypes"] = new JsonArray(TypeJson.Fqn("System.Int32"), TypeJson.Fqn("System.Type")),
+        ["args"] = new JsonArray(flags, classifier, predicate),
+        ["argTypes"] = new JsonArray(TypeJson.Fqn("System.Int32"), TypeJson.Fqn("System.Type"), TypeJson.Write(PredicateType)),
     };
 
     internal static JsonNode Known(TypeNode type) => Create(KotlinTypeWitness.Constant(KotlinTypeWitness.Flags(type)),
-        new JsonObject { ["k"] = "classRef", ["type"] = TypeJson.Write(type), [ClassifierKey] = true });
+        new JsonObject { ["k"] = "classRef", ["type"] = TypeJson.Write(ValueRepresentations?.Storage(type) ?? type),
+            [ClassifierKey] = true },
+        ValueRepresentations?.Predicate(type) ?? new JsonObject {
+            ["k"] = "const", ["type"] = TypeJson.Write(PredicateType), ["value"] = null,
+        });
 
     internal static JsonNode Nullable(JsonNode witness) => Create(
-        KotlinTypeWitness.Binary("|", Flags(witness), KotlinTypeWitness.Constant(1)), Classifier(witness));
+        KotlinTypeWitness.Binary("|", Flags(witness), KotlinTypeWitness.Constant(1)), Classifier(witness), Predicate(witness));
 
     internal static void LowerOperations(JsonNode root, ReferenceMetadataIndex refs)
     {
@@ -55,6 +65,9 @@ static class KotlinRuntimeTypeWitness
             if (obj[OperandKey] is not JsonNode classifier) return;
             classifier = classifier.DeepClone();
             obj.Remove(OperandKey);
+            var predicate = obj[PredicateKey]?.DeepClone()
+                ?? throw new InvalidOperationException("Runtime classifier has no predicate descriptor");
+            obj.Remove(PredicateKey);
             var flags = obj[KotlinTypeWitness.OperandKey]?.DeepClone()
                 ?? throw new InvalidOperationException("Runtime classifier has no Kotlin type flags");
             string name;
@@ -94,7 +107,21 @@ static class KotlinRuntimeTypeWitness
                 ["else"] = new JsonObject {
                     ["k"] = "cond", ["cond"] = KotlinTypeWitness.Binary("!=",
                         KotlinTypeWitness.Binary("&", flags.DeepClone(), KotlinTypeWitness.Constant(-2)), KotlinTypeWitness.Constant(0)),
-                    ["then"] = Bool(true), ["else"] = test,
+                    ["then"] = Bool(true), ["else"] = new JsonObject {
+                        ["k"] = "cond", ["type"] = TypeJson.Fqn("kotlin.Boolean"),
+                        ["cond"] = new JsonObject { ["k"] = "objEq", ["lhs"] = predicate.DeepClone(), ["rhs"] = Null() },
+                        ["then"] = test,
+                        ["else"] = new JsonObject { ["k"] = "cond", ["type"] = TypeJson.Fqn("kotlin.Boolean"),
+                            ["cond"] = new JsonObject { ["k"] = "cast", ["type"] = TypeJson.Fqn("kotlin.Boolean"),
+                                ["e"] = new JsonObject {
+                                    ["k"] = "delegateInvoke", ["funcType"] = TypeJson.Write(new TypeNode.Fn(false,
+                                        new TypeNode.Fqn("System.Object"), new[] { new TypeNode.Fqn("System.Object") })),
+                                    ["recv"] = predicate.DeepClone(), ["args"] = new JsonArray(Local()),
+                                },
+                            },
+                            ["then"] = test.DeepClone(), ["else"] = Bool(false),
+                        },
+                    },
                 },
             };
             var statements = new JsonArray(new JsonObject {
@@ -105,13 +132,24 @@ static class KotlinRuntimeTypeWitness
             JsonNode result;
             if (obj["k"]?.GetValue<string>() == "cast")
             {
-                var exception = refs.ResolveRefType("System.InvalidCastException");
+                var physicalTest = (JsonObject)physical.DeepClone();
+                physicalTest["k"] = "isInst";
+                physicalTest["sty"] = TypeJson.Fqn("kotlin.Boolean");
+                // A semantic superclass predicate cannot promise an impossible physical array conversion.
+                // Null rejection remains owned by the original cast's Kotlin nullability guard.
+                var castMatches = new JsonObject {
+                    ["k"] = "cond", ["type"] = TypeJson.Fqn("kotlin.Boolean"), ["cond"] = matches,
+                    ["then"] = new JsonObject { ["k"] = "cond", ["type"] = TypeJson.Fqn("kotlin.Boolean"),
+                        ["cond"] = new JsonObject { ["k"] = "objEq", ["lhs"] = Local(), ["rhs"] = Null() },
+                        ["then"] = Bool(true), ["else"] = physicalTest },
+                    ["else"] = Bool(false),
+                };
                 statements.Add(new JsonObject {
                     ["k"] = "if", ["branches"] = new JsonArray(new JsonObject {
-                        ["cond"] = new JsonObject { ["k"] = "unaryOp", ["op"] = "!", ["e"] = matches },
+                        ["cond"] = new JsonObject { ["k"] = "unaryOp", ["op"] = "!", ["e"] = castMatches },
                         ["body"] = new JsonArray(new JsonObject { ["k"] = "throw", ["value"] = new JsonObject {
-                            ["k"] = "newClr", ["type"] = TypeJson.Fqn("System.InvalidCastException"), ["args"] = new JsonArray(),
-                            ["memberRef"] = ClrMemberResolution.MemberRefJson(exception.GetConstructor(System.Type.EmptyTypes), "ctor", exception, null),
+                            ["k"] = "new", ["type"] = TypeJson.Fqn("kotlin.ClassCastException"),
+                            ["args"] = new JsonArray(), ["argTypes"] = new JsonArray(),
                         } }),
                     }),
                 });

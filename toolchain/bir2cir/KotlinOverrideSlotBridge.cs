@@ -588,7 +588,7 @@ static class KotlinOverrideSlotBridge
                 var descriptorOwner = spec;
                 var loweredDescriptorOwner = refs == null ? null : BirTypeLowering.LowerPhysicalType(
                     spec, refs.Aliases, isValue, refs.PhysicalTypeNames, typeArg: false, localTypeNames,
-                    nullableFrames: refs.NullableTypeFrames) as TypeNode.Fqn;
+                    nullableFrames: refs.NullableTypeFrames, declarationHead: true) as TypeNode.Fqn;
                 string aliasedPhysicalMember = null;
                 if (propertyName == null && refs != null)
                 {
@@ -1547,7 +1547,7 @@ static class KotlinOverrideSlotBridge
                     {
                         var projectedOwner = (TypeNode.Fqn)BirTypeLowering.LowerPhysicalType(
                             descriptorOwner, refs.Aliases, isValue, refs.PhysicalTypeNames, typeArg: false,
-                            nullableFrames: refs.NullableTypeFrames);
+                            nullableFrames: refs.NullableTypeFrames, declarationHead: true);
                         var currentPhysicalOwner = refs.ExactReflectedOwner(
                             selectedSpec.Name, projectedOwner.Args?.Length ?? 0);
                         if (physicalOwner != currentPhysicalOwner) continue;
@@ -1609,7 +1609,8 @@ static class KotlinOverrideSlotBridge
 
                     var loweredOwner = BirTypeLowering.LowerPhysicalType(
                         selectedDescriptorOwner, refs.Aliases, isValue, refs.PhysicalTypeNames,
-                        typeArg: false, localTypeNames: null, nullableFrames: refs.NullableTypeFrames) as TypeNode.Fqn;
+                        typeArg: false, localTypeNames: null, nullableFrames: refs.NullableTypeFrames,
+                        declarationHead: true) as TypeNode.Fqn;
                     if (loweredOwner != null
                         && refs.ResolveNetType(loweredOwner.Name, loweredOwner.Args?.Length ?? 0)
                             is { IsInterface: true })
@@ -1752,7 +1753,9 @@ static class KotlinOverrideSlotBridge
         if (returnPosition && IsVoid(slot)) return Fit.Bridge;
         // A referenced MethodDef's source carrier can name Any/Any? for its existing object slot.
         // Local Kotlin declarations still belong to source covariance, not CLR object-slot erasure.
-        if (IsBareObject(slot) || referencedSlot && LowersToObject(slot))
+        var storageSlot = BirTypeLowering.ValueRepresentations?.Storage(slot) ?? slot;
+        if (IsBareObject(slot) || !storageSlot.Equals(slot) && LowersToObject(storageSlot)
+            || referencedSlot && LowersToObject(slot))
             // `Any?`/`Any` reach the same bare `object` the slot is, one lowering later — a bridge for them would
             // declare a second member with the identical CLR signature.
             return LowersToObject(declared) ? Fit.Same : Fit.Bridge;
@@ -1981,14 +1984,17 @@ static class KotlinOverrideSlotBridge
     // True iff BirTypeLowering will make this type the bare `object` the erased slot already is. A reference `T?` is
     // stripped to its bare inner, so the question recurses through the wrapper; a VALUE `T?` stays `Nullable<V>`, and
     // a type variable stays `!T`.
-    static bool LowersToObject(TypeNode t) => t switch
+    static bool LowersToObject(TypeNode t)
     {
+        t = BirTypeLowering.ValueRepresentations?.Storage(t) ?? t;
+        return t switch {
         TypeNode.Oblivious o => LowersToObject(o.Of),
         TypeNode.Nullable n => LowersToObject(n.Of),
         TypeNode.Fn f => f.Suspend,
         TypeNode.Fqn { Args: null } f => f.Name is "object" or "System.Object" or "kotlin.Any",
         _ => false,
-    };
+        };
+    }
 
     // The class's own declaration that fills this slot. Two independent proofs are accepted, and both are needed:
     // the Kotlin `overrides` fact names the supertype the author wrote (`Sink`), which is what makes the match safe;

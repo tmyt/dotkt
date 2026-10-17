@@ -6594,6 +6594,12 @@ internal sealed class AssemblyScanner : IDisposable
                                                 && names.ClassName(p.ClassName) == curName);
             if (match is not null) result.Supertype[i] = match;
         }
+        // A physical projection can collapse a generic interface into its non-generic CLR face. That face is
+        // deliberately absent from the Kotlin projection, so restore its declaration-owned source edge as well.
+        foreach (var source in pre)
+            if (source.HasClassName && !result.Supertype.Any(current => current.HasClassName
+                    && names.ClassName(current.ClassName) == names.ClassName(source.ClassName)))
+                result.Supertype.Add(source);
     }
 
     private static void RestoreErasedBounds(System.Text.Json.JsonDocument doc, Class result,

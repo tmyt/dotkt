@@ -675,7 +675,7 @@ sealed partial class ReferenceMetadataIndex
         .Select(fqn => DottedFqn(BareOwnerFqn(fqn)))
         .ToHashSet(StringComparer.Ordinal);
 
-    bool IsLocalEmittedType(string fqn) =>
+    internal bool IsLocalEmittedType(string fqn) =>
         _localEmittedTypes.Contains(DottedFqn(BareOwnerFqn(fqn)));
 
     // Foundational REFERENCE-type aliases known to bir2cir directly (the same principle as the foundational
@@ -1324,6 +1324,9 @@ sealed partial class ReferenceMetadataIndex
     // substitution (owner identity) and the TYPE-TOKEN lowering (supertypes/interfaces/type-args/fields). Keyed on the
     // stripped FQN (no generic-arity backtick), matching a BIR type token's bare owner.
     public IReadOnlyDictionary<string, string> Aliases => _ownerAlias;
+
+    internal string ValueAdapter(string declarationId) => declarationId != null
+        && _declarationById.TryGetValue(declarationId, out var declaration) ? declaration.ValueAdapter : null;
 
     // A trusted class alias declares Kotlin meaning even when the physical class has additional
     // operational interfaces. Derive map-only storage from that declaration, not concrete CLR names
@@ -4979,6 +4982,13 @@ sealed partial class ReferenceMetadataIndex
                     // member-call owner token matches. A CLR-bound owner carries @ClrTypeAlias (the type-identity
                     // binding) or, for any not-yet-renamed bound class, a class-level @ClrIntrinsic.
                     var ownerFqn = StripGenericArity(type.FullName ?? type.Name);
+                    var valueRepresentation = dotKtAuthored ? type.GetCustomAttributesData().SingleOrDefault(attribute =>
+                        attribute.AttributeType.FullName == ValueRepresentationLowering.TypeAttribute) : null;
+                    if (valueRepresentation != null)
+                        metadata.ValueRepresentations.Add(ownerFqn, new ValueRepresentationBinding(
+                            (string)valueRepresentation.ConstructorArguments[0].Value,
+                            (string)valueRepresentation.ConstructorArguments[1].Value,
+                            (string)valueRepresentation.ConstructorArguments[2].Value));
                     var exactPhysicalOwner = ExactPhysicalMetadataName(type);
                     AddExactPhysicalTypeName(metadata.ExactPhysicalTypeByDottedName,
                         OwnerIdentity(ownerFqn, type.IsGenericType ? type.GetGenericArguments().Length : 0),
@@ -5338,6 +5348,9 @@ sealed partial class ReferenceMetadataIndex
                             innerConstructorFactory?.TypeArguments,
                             SemanticMethodTypeParameters(method, dotKtAuthored, declarationIdentity?.NullableFrame), declarationIdentity?.NullableFrame)
                         {
+                            ValueAdapter = dotKtAuthored ? method.GetCustomAttributesData().SingleOrDefault(attribute =>
+                                attribute.AttributeType.FullName == ValueRepresentationLowering.MemberAttribute)
+                                ?.ConstructorArguments[0].Value as string : null,
                             SignatureAllocated = declarationIdentity?.SignatureAllocated == true,
                             LateinitState = dotKtAuthored ? ReadLateinitState(method) : null,
                             SignatureParameters = method.GetParameters().Select(DeclarationSignatureSlot).ToArray(),
@@ -8032,6 +8045,7 @@ sealed record ReferenceAssembly(string Path, string Name, string Version, Refere
 
 sealed class ReferenceDotKtMetadata
 {
+    public readonly Dictionary<string, ValueRepresentationBinding> ValueRepresentations = new(StringComparer.Ordinal);
     public readonly List<string> Diagnostics = new();
 
     // CALL-SUBSTITUTION metadata (sourced from the ref.dll, consumed by MemberCallSubstitution; NOT serialized).
@@ -8157,6 +8171,7 @@ sealed record MemberBinding(string Owner, string Name, int ParamCount, string In
     // Capture the selected reference MethodDef while scanning it. A local type may shadow its owner
     // during stdlib self-compilation; resolving that owner again is not declaration identity.
     public TypeNode[] SignatureParameters { get; init; }
+    public string ValueAdapter { get; init; }
     public bool SignatureAllocated { get; init; }
     public LateinitStateTarget LateinitState { get; init; }
     public TypeNode SignatureReturn { get; init; }

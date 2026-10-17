@@ -2848,6 +2848,20 @@ static class MemberCallSubstitution
     static JsonNode ExactIntrinsicCall(JsonObject node, TypeNode clrOwner, string member, JsonArray args, bool instance,
         ExactClrMemberBinding binding, ReferenceMetadataIndex refs, SubstCtx ctx, string ownerToken)
     {
+        // A trusted native view may name a class emitted by this compilation (the runtime
+        // stdlib self-build). It still names exact physical slots, but it belongs to the local
+        // axis, not a referenced CLR type. Do not make the emitter rediscover that distinction.
+        if (clrOwner is TypeNode.Fqn localOwner && refs.IsLocalEmittedType(localOwner.Name)
+            && !refs.Aliases.ContainsKey(localOwner.Name)
+            && !binding.Intrinsic.Contains('.') && binding.CountStart < 0 && binding.ByrefPositions.Length == 0)
+            return new JsonObject {
+                ["k"] = instance ? "callInstance" : "callStatic",
+                [instance ? "ownerType" : "owner"] = TypeJson.Write(clrOwner),
+                ["method"] = binding.Intrinsic, ["sig"] = new JsonArray(InferArgTypes(node, args).Select(type => type.DeepClone()).ToArray()),
+                ["recv"] = instance ? node["recv"]?.DeepClone() : null,
+                ["args"] = args.DeepClone(), ["dynRet"] = RetToken(node),
+                ["virtual"] = instance, ["clrOwnerResolved"] = true,
+            };
         if (binding.CountStart < 0 && binding.CountEnd < 0)
             return Constrainify(ClrCallNode(node, clrOwner, binding.Intrinsic, member, args, refs, instance,
                 binding.ByrefPositions), node, refs, ctx, ownerToken);

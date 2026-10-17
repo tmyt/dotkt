@@ -37,7 +37,7 @@ static class UnsafeAccessorLowering
         public IReadOnlyList<JsonObject> LookupFields { get; set; } = Array.Empty<JsonObject>();
     }
     sealed record AccessorDefinition(string EntryName, string HolderName, JsonArray Signature,
-        int OwnerTypeParamCount, int MethodTypeParamCount);
+        int OwnerTypeParamCount, int MethodTypeParamCount, string Identity = null);
 
     static int _counter;
     static string Str(JsonNode node) => (node as JsonValue)?.GetValue<string>();
@@ -319,6 +319,7 @@ static class UnsafeAccessorLowering
             ["owner"] = callOwner.DeepClone(),
             ["ownerType"] = callOwner,
             ["method"] = definition.EntryName,
+            [DeclarationIdentityBinding.Key] = definition.Identity,
             ["sig"] = definition.Signature.DeepClone(),
             ["args"] = args,
             ["ret"] = callReturnType.DeepClone(),
@@ -450,6 +451,7 @@ static class UnsafeAccessorLowering
             ["virtual"] = false,
             ["recv"] = receiver.DeepClone(),
             ["method"] = definition.EntryName,
+            [DeclarationIdentityBinding.Key] = definition.Identity,
             ["sig"] = definition.Signature.DeepClone(),
             ["args"] = access["args"]?.DeepClone() ?? new JsonArray(),
             ["ret"] = callResult.DeepClone(),
@@ -534,6 +536,7 @@ static class UnsafeAccessorLowering
             ["ownerType"] = callOwner.DeepClone(),
             ["calleeOwner"] = callOwner,
             ["method"] = definition.EntryName,
+            [DeclarationIdentityBinding.Key] = definition.Identity,
             ["sig"] = definition.Signature.DeepClone(),
             ["virtual"] = false,
             ["recv"] = access["recv"]?.DeepClone(),
@@ -673,10 +676,13 @@ static class UnsafeAccessorLowering
             declarationParams.Add(Param("arg" + index, signature[index]?.DeepClone()));
         var methodParams = RenamedTypeParams(methodTypeParams, "__method");
         var accessorName = AccessorName(targetName);
+        var accessorIdentity = DeclarationIdentityBinding.PhysicalOnlyId(
+            caller.Name, "unsafe-accessor:" + accessorName);
 
         if (ownerCount == 0)
         {
             var accessor = AccessorDeclaration(accessorName, returnType, declarationParams, kind, targetName);
+            accessor[DeclarationIdentityBinding.Key] = accessorIdentity;
             StampNullableErasureOwnership(accessor, nullableGenericReturn, nullableErasureOwnershipKnown);
             if (targetDeclarationId != null) accessor["unsafeTargetDeclarationId"] = targetDeclarationId;
             if (methodParams != null) accessor["typeParams"] = methodParams.DeepClone();
@@ -684,7 +690,7 @@ static class UnsafeAccessorLowering
             var direct = new AccessorDefinition(accessorName, null,
                 new JsonArray(declarationParams.OfType<JsonObject>()
                     .Select(parameter => parameter["type"]?.DeepClone()).ToArray()), 0,
-                methodParams?.Count ?? 0);
+                methodParams?.Count ?? 0, accessorIdentity);
             accessors[key] = direct;
             return direct;
         }
@@ -696,11 +702,18 @@ static class UnsafeAccessorLowering
         var holderName = "dotkt$unsafe$holder$" + System.Threading.Interlocked.Increment(ref _counter);
         var holderTypeParams = RenamedTypeParams(ownerTypeParams, "__owner");
         var externMethod = AccessorDeclaration(accessorName, returnType, declarationParams, kind, targetName);
+        externMethod[DeclarationIdentityBinding.Key] = accessorIdentity;
         if (targetDeclarationId != null) externMethod["unsafeTargetDeclarationId"] = targetDeclarationId;
         if (methodParams != null) externMethod["typeParams"] = methodParams.DeepClone();
         var entryName = accessorName + "$invoke";
         var wrapper = WrapperDeclaration(entryName, accessorName, holderName, holderTypeParams.Count,
             methodParams?.Count ?? 0, returnType, declarationParams, methodParams);
+        var wrapperIdentity = DeclarationIdentityBinding.PhysicalOnlyId(caller.Name, "unsafe-wrapper:" + accessorName);
+        wrapper[DeclarationIdentityBinding.Key] = wrapperIdentity;
+        if (targetDeclarationId != null) wrapper["unsafeSignatureTargetDeclarationId"] = targetDeclarationId;
+        wrapper["body"][0]["value"]?[DeclarationIdentityBinding.Key] = accessorIdentity;
+        if (wrapper["body"][0]["expr"] is JsonObject wrapperCall)
+            wrapperCall[DeclarationIdentityBinding.Key] = accessorIdentity;
         StampNullableErasureOwnership(wrapper, nullableGenericReturn, nullableErasureOwnershipKnown);
         EnsureArray(caller.Root, "types").Add(new JsonObject
         {
@@ -720,7 +733,7 @@ static class UnsafeAccessorLowering
         var definition = new AccessorDefinition(entryName, holderName,
             new JsonArray(declarationParams.OfType<JsonObject>()
                 .Select(parameter => parameter["type"]?.DeepClone()).ToArray()), ownerCount,
-            methodParams?.Count ?? 0);
+            methodParams?.Count ?? 0, wrapperIdentity);
         accessors[key] = definition;
         return definition;
     }
@@ -832,6 +845,7 @@ static class UnsafeAccessorLowering
             ["owner"] = callOwner.DeepClone(),
             ["ownerType"] = callOwner,
             ["method"] = definition.EntryName,
+            [DeclarationIdentityBinding.Key] = definition.Identity,
             ["sig"] = definition.Signature.DeepClone(),
             ["args"] = access["args"]?.DeepClone() ?? new JsonArray(),
             ["ret"] = access["type"]?.DeepClone(),
@@ -924,6 +938,7 @@ static class UnsafeAccessorLowering
             ["owner"] = callOwner.DeepClone(),
             ["ownerType"] = callOwner.DeepClone(),
             ["method"] = definition.EntryName,
+            [DeclarationIdentityBinding.Key] = definition.Identity,
             ["sig"] = definition.Signature.DeepClone(),
             ["args"] = new JsonArray(targetStatic
                 ? new JsonObject { ["k"] = "default", ["type"] = ownerNode.DeepClone() }
