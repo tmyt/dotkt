@@ -208,7 +208,8 @@ internal fun BirEmitter.tryStmt(node: IrTry): String {
 }
 
 internal fun BirEmitter.bodyStmts(e: IrExpression): String =
-	if (e is IrBlock) e.statements.joinToString(",") { stmt(it) } else stmt(e)
+	// A sole for-loop is itself an IrBlock; preserve it for stmt's structured-loop projection.
+	if (e is IrBlock && e.origin?.toString() != "FOR_LOOP") e.statements.joinToString(",") { stmt(it) } else stmt(e)
 
 /** `try`/`catch` in value position -> a temp local assigned in each branch, returned via a valueBlock. */
 internal fun BirEmitter.tryExpr(node: IrTry): String {
