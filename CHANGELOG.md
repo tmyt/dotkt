@@ -5,6 +5,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Stop stdlib builds and packaging on failed compiler stages, even when partial BIR, CIR, DLL or KLIB outputs
+  remain; never stamp a failed rebuild as fresh (#1060).
+
 - Preserve SDK-selected managed assembly versions and generated file/informational version attributes,
   including generation opt-outs, source revision IDs and incremental version-only changes.
 

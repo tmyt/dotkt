@@ -36,6 +36,10 @@ drives Gradle (Maven Central and `~/.gradle`) and the toolchain's own NuGet rest
 restores from the user's configured NuGet sources — both into `~/.nuget/packages`, whose extraction is
 lock-protected and safe for concurrent worktrees. `~/.gradle` is the one shared resource with a history of
 cross-worktree contention; `gradle.properties` carries the mitigation and names the next lever if it recurs.
+Before packing, `test_stdlib_build.py` exercises the real stdlib/pack scripts in temporary repositories with
+controlled compiler processes. A failed stage must stop subsequent stages, stamping and packaging even if it
+leaves partial outputs; successful builds must retain fingerprint-based reuse. It can also be run standalone
+with `python3 tests/packaged-sdk/test_stdlib_build.py` without building the toolchain.
 Two more reaches outside the repository, neither of them shared mutable state: `run-ilverify.sh` locates
 ILVerify under `$HOME/.dotnet` (a read; the ILVerify check itself is part of the coroutine scenario's verdict),
 and `verify-pack-idempotency.sh` re-runs the pack twice more, using a `mktemp -d` scratch it removes on exit.

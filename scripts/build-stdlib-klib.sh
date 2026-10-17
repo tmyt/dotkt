@@ -8,7 +8,7 @@ usage() {
 	cat <<EOF
 usage: $SCRIPT_NAME
 Builds $FE_KLIB from the libraries/stdlib sources. -h for this help.
-Exits nonzero if the KLIB was not produced.
+Exits nonzero if kotc fails or the KLIB was not produced.
 EOF
 }
 while (( $# )); do
@@ -44,14 +44,13 @@ collect_stdlib_sources
 stdlib_fragment_args
 
 info "frontend klib sources: ${#STDLIB_COMMON[@]}+${#STDLIB_SRC[@]}+${#STDLIB_UNSIGNED[@]} common + ${#STDLIB_CLR[@]} clr"
-DOTKT_BUILD_KLIB=1 "$KOTC" \
+DOTKT_BUILD_KLIB=1 run_stdlib_stage "$OUT/kotc.err" "$KOTC" \
 	"${STDLIB_COMMON[@]}" "${STDLIB_SRC[@]}" "${STDLIB_UNSIGNED[@]}" "${STDLIB_CLR[@]}" \
 	-Xallow-kotlin-package -Xexpect-actual-classes -Xstdlib-compilation -Xcontext-parameters \
 	-Xreturn-value-checker=check -XXLanguage:+UnnamedLocalVariables \
 	-Xcommon-sources="$STDLIB_COMMON_CSV" $STDLIB_OPTIN \
 	"${STDLIB_FRAGMENT_ARGS[@]}" \
-	-d "$KLIB" 2>"$OUT/kotc.err" || true
-grep ': error:' "$OUT/kotc.err" | sed -E 's/^.*: error: //' | sort | uniq -c | sort -rn | head -10 || true
+	-d "$KLIB"
 
 [[ -f "$KLIB" ]] || die "expected packed KLIB at $KLIB (see $OUT/kotc.err)"
 info "frontend klib: $KLIB ($(du -sh "$KLIB" | awk '{print $1}'))"

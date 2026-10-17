@@ -2,9 +2,7 @@
 #
 #   source "$ROOT/scripts/lib.sh"
 #
-# Provides, in order: strict mode (set -euo pipefail — a script that must tolerate a failing
-# command, e.g. kotc exiting nonzero while the script reports error counts, adds an explicit
-# `|| true` at that call site); ROOT; the canonical toolchain/artifact paths (the single source —
+# Provides, in order: strict mode (set -euo pipefail); ROOT; the canonical toolchain/artifact paths (the single source —
 # the Makefile mirrors these, do not re-derive them in a script); log helpers info/warn/die with
 # a uniform "<script>:" prefix; usage_error() (scripts define usage()); and lazy need_*() builders
 # that build a missing tool/artifact, loudly.
@@ -111,6 +109,14 @@ xfail_diff() { # <prefix> <xfail-assoc-array-name> [actual-fail-name...]
 xfail_gate_is_clean() { (( ${#XFAIL_NEW[@]} == 0 && ${#XFAIL_FIXED[@]} == 0 )); }
 
 # --- lazy builders (loud when they fire) -----------------------------------------------------------
+run_stdlib_stage() { # <stderr-log> <command> [args...] — partial output never overrides process failure
+	local log="$1"; shift
+	"$@" 2>"$log" || {
+		local status=$?
+		warn "compiler stage failed (exit $status); see $log"
+		return "$status"
+	}
+}
 need_kotc() {
 	[[ -x "$KOTC" ]] || { info "building kotc (gradlew :kotc:installDist)" >&2; (cd "$ROOT" && ./gradlew -q :kotc:installDist); }
 }
@@ -159,20 +165,21 @@ _stamp_fresh() { [[ -e "$1" && -f "$1.toolstamp" && "$(cat "$1.toolstamp" 2>/dev
 need_fe_klib() { # the CLR frontend stdlib KLIB (kotc -classpath input); rebuild if missing OR toolchain changed
 	_stamp_fresh "$FE_KLIB" "$(_toolstamp_klib)" && return 0
 	info "building CLR frontend stdlib klib (missing or toolchain fingerprint changed)" >&2
-	bash "$ROOT/scripts/build-stdlib-klib.sh" >/dev/null 2>&1
+	# Explicitly propagate failure even when a caller tests this function (disabling Bash errexit).
+	bash "$ROOT/scripts/build-stdlib-klib.sh" >/dev/null 2>&1 || return $?
 	# Recompute post-build: build-stdlib-klib.sh may itself build kotc (need_kotc), moving input mtimes.
 	_toolstamp_klib > "$FE_KLIB.toolstamp"
 }
 need_stdlib_ref() { # the stdlib REFERENCE dll; rebuild if missing OR toolchain changed
 	_stamp_fresh "$STDLIB_REF_DLL" "$(_toolstamp_ref)" && return 0
 	info "building stdlib REFERENCE dll (missing or toolchain fingerprint changed)" >&2
-	bash "$ROOT/scripts/build-stdlib-ref.sh" --emit >/dev/null 2>&1
+	bash "$ROOT/scripts/build-stdlib-ref.sh" --emit >/dev/null 2>&1 || return $?
 	_toolstamp_ref > "$STDLIB_REF_DLL.toolstamp"
 }
 need_stdlib_rt() { # the stdlib RUNTIME dll; rebuild if missing OR toolchain changed (the ref dll is an input)
 	_stamp_fresh "$STDLIB_RT_DLL" "$(_toolstamp_rt)" && return 0
 	info "building stdlib RUNTIME dll (missing or toolchain fingerprint changed)" >&2
-	bash "$ROOT/scripts/build-stdlib-rt.sh" --emit >/dev/null 2>&1
+	bash "$ROOT/scripts/build-stdlib-rt.sh" --emit >/dev/null 2>&1 || return $?
 	_toolstamp_rt > "$STDLIB_RT_DLL.toolstamp"
 }
 
