@@ -8,7 +8,19 @@ try
 {
     uint resourceId = 1;
     if (args[0] == "--library") { resourceId = 2; args = args.Skip(1).ToArray(); }
-    if (args[0] == "--write-res")
+    if (args[0] == "--write-icon")
+    {
+        using var stream = File.Create(args[1]);
+        using var writer = new BinaryWriter(stream);
+        writer.Write((ushort)0); writer.Write((ushort)1); writer.Write((ushort)1); // ICONDIR
+        writer.Write(new byte[] { 1, 1, 0, 0 }); // 1x1, true color
+        writer.Write((ushort)1); writer.Write((ushort)32); writer.Write(48); writer.Write(22);
+        writer.Write(40); writer.Write(1); writer.Write(2); // BITMAPINFOHEADER, doubled height includes mask
+        writer.Write((ushort)1); writer.Write((ushort)32); writer.Write(0); writer.Write(8);
+        writer.Write(new byte[16]);
+        writer.Write(uint.Parse(args[2])); writer.Write(0); // BGRA pixel + padded AND mask
+    }
+    else if (args[0] == "--write-res")
     {
         // rc.exe-style .res with one named resource and a non-neutral language. Csc owns conversion to PE.
         using var stream = File.Create(args[1]);

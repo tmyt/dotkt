@@ -116,8 +116,13 @@ before="$(state)"; front_before="$(frontend_state)"
 build "$kt/App.ktproj" defaults-no-op "${defaults[@]}"
 [[ "$before" == "$(state)" ]] || { echo 'default resources no-op changed outputs' >&2; exit 1; }
 # Re-emission may run after CoreCompile has skipped, so the resource provider can be the previous Kotlin PE.
+before="$(state)"
+pdb_before="$(stat -c '%y' "$kt/$obj/App.pdb")"
 touch "$kt/$obj/cir/.stamp"
-build "$kt/App.ktproj" reemit "${defaults[@]}"
+build "$kt/App.ktproj" reemit "${defaults[@]}" -v:n
+[[ "$before" != "$(state)" ]] || { echo 'reemit did not update outputs' >&2; exit 1; }
+[[ "$pdb_before" == "$(stat -c '%y' "$kt/$obj/App.pdb")" ]] || { echo 'reemit unexpectedly reran Csc' >&2; exit 1; }
+grep -Fq 'Skipping target "CoreCompile"' "$ws/reemit.log"
 inspect --resources "$cs/$out/App.dll" "$kt/$out/App.dll"
 inspect --kotlin "$kt/$out/App.dll"
 front_before="$(frontend_state)"
@@ -151,11 +156,23 @@ inspect --write-res "$manifests/first.res" first-payload
 inspect --write-res "$manifests/second.res" second-payload
 pair custom-resource "-p:Win32Resource=$manifests/first.res"
 inspect --absent "$kt/$out/App.dll" "$kt/$out/App.exe"
+inspect --resources "$cs/$out/App.exe" "$kt/$out/App.exe"
 pair switched-resource "-p:Win32Resource=$manifests/second.res"
+inspect --resources "$cs/$out/App.exe" "$kt/$out/App.exe"
 inspect --write-res "$manifests/second.res" changed-payload
 pair changed-resource "-p:Win32Resource=$manifests/second.res"
+inspect --resources "$cs/$out/App.exe" "$kt/$out/App.exe"
 pair cleared-resource -p:Win32Resource=
 inspect --default "$kt/$out/App.dll" "$kt/$out/App.exe"
 inspect --version 3.4.5.6 7.8.9-preview "$kt/$out/App.dll" "$kt/$out/App.exe"
+inspect --write-icon "$manifests/first.ico" 4294901760
+inspect --write-icon "$manifests/second.ico" 4278190335
+pair icon "-p:ApplicationIcon=$manifests/first.ico"
+inspect --resources "$cs/$out/App.exe" "$kt/$out/App.exe"
+pair switched-icon "-p:ApplicationIcon=$manifests/second.ico"
+inspect --resources "$cs/$out/App.exe" "$kt/$out/App.exe"
+pair cleared-icon -p:ApplicationIcon=
+inspect --resources "$cs/$out/App.exe" "$kt/$out/App.exe"
+[[ "$front_before" == "$(frontend_state)" ]] || { echo 'resource or icon edits recompiled Kotlin' >&2; exit 1; }
 bash "$REPO/tests/run-ilverify.sh" "$kt/$out/App.dll"
 echo 'application-manifest: PASS (explicit/default/disabled, VERSIONINFO, C# parity, final DLL/apphost/build/publish, incremental)'

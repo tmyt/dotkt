@@ -40,7 +40,9 @@ execution-policy declaration, not an unconditional resource to add to every DLL.
 
 Native `VERSIONINFO` is also preserved, including SDK-selected file/product version and product/company
 strings. This is the Windows Explorer version-information surface, distinct from CLR assembly identity
-and managed attributes. Existing SDK `ApplicationIcon` and `Win32Resource` inputs are preserved by the same
+and managed attributes. Currently, SDK version properties are not projected to the Kotlin assembly's
+managed version identity or version attributes; this resource transfer does not address that separate limitation.
+Existing SDK `ApplicationIcon` and `Win32Resource` inputs are preserved by the same
 resource transfer; they are not independently reconstructed or merged. Switching or clearing native
 resource options refreshes the provider and final PE without recompiling Kotlin. Direct `ilemit` callers
 have no implicit resources: the project driver supplies a PE via `--win32-resources-from` when needed.
