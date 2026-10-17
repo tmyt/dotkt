@@ -37,12 +37,11 @@ stdlib_fragment_args
 FLAGS=(-no-stdlib -Xallow-kotlin-package -Xexpect-actual-classes -Xstdlib-compilation -Xcontext-parameters -Xreturn-value-checker=check -XXLanguage:+UnnamedLocalVariables -Xcommon-sources="$STDLIB_COMMON_CSV" $STDLIB_OPTIN)
 
 info "SUBSTITUTE-mode kotc: ${#STDLIB_COMMON[@]}+${#STDLIB_SRC[@]}+${#STDLIB_UNSIGNED[@]}+${#STDLIB_CLR[@]} stdlib files -> BIR (@Clr ACTIVE)"
-"$KOTC" \
+run_stdlib_stage "$OUT/kotc.err" "$KOTC" \
 	"${STDLIB_COMMON[@]}" "${STDLIB_SRC[@]}" "${STDLIB_UNSIGNED[@]}" "${STDLIB_CLR[@]}" \
-	"${FLAGS[@]}" "${STDLIB_FRAGMENT_ARGS[@]}" -d "$BIR" 2>"$OUT/kotc.err"
+	"${FLAGS[@]}" "${STDLIB_FRAGMENT_ARGS[@]}" -d "$BIR"
 bir_count="$(ls "$BIR"/*.bir.json 2>/dev/null | wc -l)"
-echo "frontend errors: $(grep -c ': error:' "$OUT/kotc.err")   BIR files: $bir_count"
-grep ': error:' "$OUT/kotc.err" | sed -E 's/^.*: error: //; s/'"'"'[^'"'"']*'"'"'/X/g; s/[0-9]+/N/g' | sort | uniq -c | sort -rn | head -10 || true
+echo "BIR files: $bir_count"
 (( bir_count > 0 )) || die "frontend produced no BIR (see $OUT/kotc.err)"
 
 if (( do_emit )); then
@@ -53,10 +52,10 @@ if (( do_emit )); then
 	# (member calls on CLR-bound owners -> plain BCL calls). Must exist — build the ref first.
 	[[ -f "$STDLIB_REF_DLL" ]] || die "reference stdlib dll not found at $STDLIB_REF_DLL — run 'build-stdlib-ref.sh --emit' first (the runtime build reads it for the @ClrTypeAlias/@ClrIntrinsic labels)"
 	compile_refs="$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_REF_DLL")"
-	dotnet "$BIR2CIR_DLL" "$CIR" --compile-refs "$compile_refs" --build-stdlib=runtime \
-		--stdlib-bindings "$STDLIB_BINDINGS" "$BIR"/*.bir.json 2>"$OUT/bir2cir.err" | tail -1
+	run_stdlib_stage "$OUT/bir2cir.err" dotnet "$BIR2CIR_DLL" "$CIR" --compile-refs "$compile_refs" --build-stdlib=runtime \
+		--stdlib-bindings "$STDLIB_BINDINGS" "$BIR"/*.bir.json | tail -1
 	info "ilemit (substitute) -> DotKt.Stdlib.dll"
-	dotnet "$ILEMIT_DLL" "$DLL" DotKt.Stdlib --compile-refs "$FRAMEWORK_COMPILE_REFS" --runtime-refs "" --target-framework-moniker "$DOTKT_TARGET_FRAMEWORK_MONIKER" --build-stdlib=runtime "$CIR"/*.cir.json 2>"$OUT/ilemit.err" | tail -2
+	run_stdlib_stage "$OUT/ilemit.err" dotnet "$ILEMIT_DLL" "$DLL" DotKt.Stdlib --compile-refs "$FRAMEWORK_COMPILE_REFS" --runtime-refs "" --target-framework-moniker "$DOTKT_TARGET_FRAMEWORK_MONIKER" --build-stdlib=runtime "$CIR"/*.cir.json | tail -2
 	# Diagnostic filtering is informational; process status above determines stage success.
 	grep -vE '^\s+at ' "$OUT/ilemit.err" | grep -iE 'exception|error|unresolved|no matching|not found|cannot' | head -3 || true
 	[[ -f "$DLL/DotKt.Stdlib.dll" ]] || die "DotKt.Stdlib.dll was not emitted (see $OUT/ilemit.err)"

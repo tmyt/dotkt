@@ -109,6 +109,14 @@ xfail_diff() { # <prefix> <xfail-assoc-array-name> [actual-fail-name...]
 xfail_gate_is_clean() { (( ${#XFAIL_NEW[@]} == 0 && ${#XFAIL_FIXED[@]} == 0 )); }
 
 # --- lazy builders (loud when they fire) -----------------------------------------------------------
+run_stdlib_stage() { # <stderr-log> <command> [args...] — partial output never overrides process failure
+	local log="$1"; shift
+	"$@" 2>"$log" || {
+		local status=$?
+		warn "compiler stage failed (exit $status); see $log"
+		return "$status"
+	}
+}
 need_kotc() {
 	[[ -x "$KOTC" ]] || { info "building kotc (gradlew :kotc:installDist)" >&2; (cd "$ROOT" && ./gradlew -q :kotc:installDist); }
 }

@@ -30,7 +30,7 @@ if Path(sys.argv[0]).name == "kotc":
     if os.environ.get("DOTKT_BUILD_KLIB") == "1":
         kind = "klib"
     else:
-        kind = "rt" if "clr-stdlib-rt" in output.parts else "ref"
+        kind = "shared" if "clr-stdlib-shared" in output.parts else ("rt" if "clr-stdlib-rt" in output.parts else "ref")
         output = output / "partial.bir.json"
 elif args[0] in ("build", "pack"):
     with open(os.environ["TRACE"], "a") as trace:
@@ -59,7 +59,7 @@ class StdlibBuildTests(unittest.TestCase):
         self.root = Path(self.temp.name) / "repo with spaces"
         self.root.mkdir()
         self.trace = self.root / "trace"
-        for name in ("lib.sh", "pack-nuget.sh", *(b[0] for b in BUILDS.values())):
+        for name in ("lib.sh", "pack-nuget.sh", "build-stdlib.sh", *(b[0] for b in BUILDS.values())):
             self.copy("scripts/" + name)
         # Pack guards and staging use the repository's current versions/templates, not test duplicates.
         shutil.copytree(ROOT / "packaging", self.root / "packaging",
@@ -103,14 +103,14 @@ class StdlibBuildTests(unittest.TestCase):
         return self.trace.read_text().splitlines() if self.trace.exists() else []
 
     def assert_failed_at(self, result, stage):
-        self.assertEqual(result.returncode, 41, result.stdout + result.stderr)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
         calls = self.calls()
         self.assertIn(stage, calls)
         self.assertEqual(calls[-1], stage, calls)
         self.assertNotIn("pack", calls)
         self.assertFalse(list((self.root / "build").rglob("*.toolstamp")))
         kind = stage.split(":")[0]
-        output = self.root / "build" / BUILDS[kind][2]
+        output = self.root / "build" / BUILDS.get(kind, BUILDS["ref"])[2]
         if stage.endswith("ilemit") or kind == "klib":
             self.assertTrue(output.is_file(), "the failing process must have left a partial artifact")
 
@@ -130,6 +130,14 @@ class StdlibBuildTests(unittest.TestCase):
                 self.assert_failed_at(self.run_bash(f"bash scripts/{BUILDS[kind][0]}",
                                                    kind + ":kotc"), kind + ":kotc")
 
+    def test_unified_build_stops_at_each_failed_stage(self):
+        for stage in ("shared:kotc", *STAGES[2:4], *STAGES[5:]):
+            with self.subTest(stage=stage):
+                self.assert_failed_at(self.run_bash("bash scripts/build-stdlib.sh --emit", stage), stage)
+        self.assert_failed_at(self.run_bash("bash scripts/build-stdlib.sh", "shared:kotc"), "shared:kotc")
+        result = self.run_bash("bash scripts/build-stdlib.sh --emit")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_failed_builders_do_not_stamp_in_tested_shell_contexts(self):
         for stage in STAGES:
             with self.subTest(stage=stage):
@@ -147,7 +155,7 @@ class StdlibBuildTests(unittest.TestCase):
                 for stamp in (self.root / "build").rglob("*.toolstamp"):
                     stamp.unlink()
                 result = self.run_bash("bash scripts/pack-nuget.sh", stage)
-                self.assertEqual(result.returncode, 41, result.stdout + result.stderr)
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
                 calls = self.calls()
                 self.assertEqual(calls[-1], stage, calls)
                 self.assertNotIn("pack", calls)
