@@ -1360,6 +1360,7 @@ sealed partial class Emitter
         var peBuilder = new ManagedPEBuilder(
             peHeader, new MetadataRootBuilder(metadata), ilStream,
             mappedFieldData: fieldData,
+            nativeResources: _nativeResources,
             entryPoint: entry != null ? MetadataTokens.MethodDefinitionHandle(entry.MetadataToken) : default);
         var blob = new BlobBuilder();
         peBuilder.Serialize(blob);

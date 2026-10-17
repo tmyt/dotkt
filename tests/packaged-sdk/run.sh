@@ -12,6 +12,7 @@
 #              stdout, and prove each >8191-byte compiler argument set travels through a packaged response file.
 #   incremental-emission — C#-only recompilation retains Kotlin execution/metadata and separate consumers;
 #              true no-op rebuilds preserve DLL timestamps and skip downstream C# compilation.
+#   application-manifest — Windows apphost native manifest parity with C#, build/publish and incremental inputs.
 #   multi-target-klib-references — one parallel two-TFM producer plus matching C# and DotKt consumers: preserve
 #              target-specific references/sources/KLIB ownership, metadata, runtime/IL validity and independent
 #              no-op/deletion behavior; also pin the unsupported-TFM restore diagnostic.
@@ -1449,9 +1450,19 @@ case_incremental_emission() {
 	fi
 }
 
+case_application_manifest() {
+	if bash "$ROOT/tests/packaged-sdk/application-manifest/run.sh" "$FEED" "$VER" "$WS/application-manifest" \
+			>"$WS/application-manifest.log" 2>&1; then
+		pass application-manifest
+	else
+		fail application-manifest "native Windows manifest regression" "$(tail -40 "$WS/application-manifest.log")"
+	fi
+}
+
 case_toolchain_assembly_identity
 case_exe
 case_incremental_emission
+case_application_manifest
 case_multitarget_klib_references
 case_library
 case_csharp_consumer

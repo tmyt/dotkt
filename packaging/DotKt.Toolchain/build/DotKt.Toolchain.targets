@@ -45,10 +45,12 @@
           Condition="'$(DotKtIlEmitResponseFile)' == ''">$(IntermediateOutputPath)dotkt-ilemit.rsp</DotKtIlEmitResponseFile>
       <DotKtCompileOptionsManifest
           Condition="'$(DotKtCompileOptionsManifest)' == ''">$(IntermediateOutputPath)dotkt-compile-options.txt</DotKtCompileOptionsManifest>
+      <DotKtEmitOptionsManifest
+          Condition="'$(DotKtEmitOptionsManifest)' == ''">$(IntermediateOutputPath)dotkt-emit-options.txt</DotKtEmitOptionsManifest>
       <_DotKtIlEmitStamp>$(IntermediateOutputPath)dotkt-ilemit.stamp</_DotKtIlEmitStamp>
     </PropertyGroup>
     <ItemGroup>
-      <FileWrites Include="$(_DotKtIlEmitStamp)" />
+      <FileWrites Include="$(_DotKtIlEmitStamp);$(DotKtEmitOptionsManifest)" />
     </ItemGroup>
   </Target>
 
@@ -307,8 +309,19 @@
        updates the independent completion stamp, so a newer placeholder cannot masquerade as a completed output,
        including after a failed compilation hook. A true no-op leaves both files untouched; a missing DLL or stamp
        requires emission. DotKtResolveReferenceSets materializes the reference items before incremental evaluation. -->
-  <Target Name="DotKtIlEmit" AfterTargets="CoreCompile" DependsOnTargets="DotKtBir2Cir;DotKtResolveReferenceSets"
-          Inputs="$(DotKtIntermediateCirPath)/.stamp;$(DotKtIlEmit);@(_DotKtCompileReference);@(_DotKtRuntimeReference);$(IntermediateOutputPath)$(TargetName)$(TargetExt)"
+  <!-- Consume the same resolved manifest file as csc. Record selection separately from Kotlin inputs so
+       switching/clearing a native resource re-emits without needlessly recompiling the Kotlin source. -->
+  <Target Name="DotKtComputeEmitOptions" DependsOnTargets="DotKtInitializeIntermediatePaths;SetWin32ManifestProperties">
+    <ItemGroup>
+      <_DotKtWin32Manifest Remove="@(_DotKtWin32Manifest)" />
+      <_DotKtWin32Manifest Include="$(Win32Manifest)" Condition="'$(Win32Manifest)' != ''" />
+    </ItemGroup>
+    <WriteLinesToFile File="$(DotKtEmitOptionsManifest)" Overwrite="true" WriteOnlyWhenDifferent="true"
+                      Lines="win32-manifest;@(_DotKtWin32Manifest->'%(FullPath)')" />
+  </Target>
+
+  <Target Name="DotKtIlEmit" AfterTargets="CoreCompile" DependsOnTargets="DotKtBir2Cir;DotKtResolveReferenceSets;DotKtComputeEmitOptions"
+          Inputs="$(DotKtIntermediateCirPath)/.stamp;$(DotKtIlEmit);@(_DotKtCompileReference);@(_DotKtRuntimeReference);$(IntermediateOutputPath)$(TargetName)$(TargetExt);$(DotKtEmitOptionsManifest);@(_DotKtWin32Manifest)"
           Outputs="$(_DotKtIlEmitStamp);$(IntermediateOutputPath)$(TargetName)$(TargetExt)">
     <ItemGroup>
       <_DotKtCir Include="$(DotKtIntermediateCirPath)/*.cir.json" />
@@ -353,6 +366,8 @@
     <ItemGroup>
       <_DotKtIlEmitResponseArgument Remove="@(_DotKtIlEmitResponseArgument)" />
       <_DotKtEscapedCir Remove="@(_DotKtEscapedCir)" />
+      <_DotKtEscapedWin32Manifest Remove="@(_DotKtEscapedWin32Manifest)" />
+      <_DotKtEscapedWin32Manifest Include="@(_DotKtWin32Manifest->'%(FullPath)'->Replace('\', '\\')->Replace('&quot;', '\&quot;'))" />
       <_DotKtEscapedCir Include="@(_DotKtCir->'%(FullPath)'->Replace('\', '\\')->Replace('&quot;', '\&quot;'))" />
       <_DotKtIlEmitResponseArgument Include="_output"><Value>&quot;$(_DotKtEscapedIlEmitOutputPath)&quot;</Value></_DotKtIlEmitResponseArgument>
       <_DotKtIlEmitResponseArgument Include="_assembly"><Value>&quot;$(_DotKtEscapedTargetName)&quot;</Value></_DotKtIlEmitResponseArgument>
@@ -370,6 +385,8 @@
       <_DotKtIlEmitResponseArgument Include="_rid"><Value>&quot;$(_DotKtEscapedRuntimeIdentifier)&quot;</Value></_DotKtIlEmitResponseArgument>
       <_DotKtIlEmitResponseArgument Include="_rid_graph_option"><Value>--rid-graph-path</Value></_DotKtIlEmitResponseArgument>
       <_DotKtIlEmitResponseArgument Include="_rid_graph"><Value>&quot;$(_DotKtEscapedRuntimeIdentifierGraphPath)&quot;</Value></_DotKtIlEmitResponseArgument>
+      <_DotKtIlEmitResponseArgument Include="_manifest_option" Condition="'@(_DotKtWin32Manifest)' != ''"><Value>--win32-manifest</Value></_DotKtIlEmitResponseArgument>
+      <_DotKtIlEmitResponseArgument Include="@(_DotKtEscapedWin32Manifest)"><Value>&quot;%(Identity)&quot;</Value></_DotKtIlEmitResponseArgument>
       <_DotKtIlEmitResponseArgument Include="@(_DotKtEscapedCir)"><Value>&quot;%(Identity)&quot;</Value></_DotKtIlEmitResponseArgument>
     </ItemGroup>
     <WriteLinesToFile File="$(DotKtIlEmitResponseFile)"
@@ -382,6 +399,6 @@
   <!-- `dotnet clean`: wipe project-local compiler state and generated reference KLIBs before CoreClean. -->
   <Target Name="DotKtClean" BeforeTargets="CoreClean" DependsOnTargets="DotKtInitializeIntermediatePaths">
     <RemoveDir Directories="$(DotKtIntermediateBirPath);$(DotKtIntermediateCirPath);$(DotKtReferenceKlibPath)" />
-    <Delete Files="$(DotKtReferenceKlibResponseFile);$(DotKtCompilerResponseFile);$(DotKtBir2CirResponseFile);$(DotKtIlEmitResponseFile);$(DotKtCompileOptionsManifest);$(_DotKtIlEmitStamp)" />
+    <Delete Files="$(DotKtReferenceKlibResponseFile);$(DotKtCompilerResponseFile);$(DotKtBir2CirResponseFile);$(DotKtIlEmitResponseFile);$(DotKtCompileOptionsManifest);$(DotKtEmitOptionsManifest);$(_DotKtIlEmitStamp)" />
   </Target>
 </Project>

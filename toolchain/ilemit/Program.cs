@@ -1,6 +1,6 @@
 // ilemit — emit a runnable .NET assembly directly as CIL from Backend IR (BIR) JSON. No C#, no csc.
 //
-//   ilemit <output-dir> <assemblyName> --compile-refs a.dll;b.dll;... [--runtime-refs a.dll;b.dll;...] [--target-framework-moniker <framework>] [--target-platform <platform>] [--supported-os-platform <platform>] [--target-rid <rid>] [--rid-graph-path <json>] <file1.cir.json>...
+//   ilemit <output-dir> <assemblyName> --compile-refs a.dll;b.dll;... [--runtime-refs a.dll;b.dll;...] [--target-framework-moniker <framework>] [--target-platform <platform>] [--supported-os-platform <platform>] [--target-rid <rid>] [--rid-graph-path <json>] [--win32-manifest <file>] <file1.cir.json>...
 //
 // All BIR files compile into ONE assembly (so multi-file Kotlin cross-references resolve).
 // D1.2 = M0 subset; D1.4 = user classes (fields, ctors, methods, inheritance, virtual/override).
@@ -25,7 +25,7 @@ static class IlEmit
             Console.Error.WriteLine($"ilemit: {ex.Message}");
             return 1;
         }
-        if (args.Length < 3) { Console.Error.WriteLine("usage: ilemit <out-dir> <asmName> --compile-refs <dll;dll;...> [--build-stdlib=metadata|runtime] [--runtime-refs <dll;dll;...>] [--target-framework-moniker <framework>] [--target-platform <platform>] [--supported-os-platform <platform>] [--target-rid <rid>] [--rid-graph-path <json>] <file.cir.json>..."); return 1; }
+        if (args.Length < 3) { Console.Error.WriteLine("usage: ilemit <out-dir> <asmName> --compile-refs <dll;dll;...> [--build-stdlib=metadata|runtime] [--runtime-refs <dll;dll;...>] [--target-framework-moniker <framework>] [--target-platform <platform>] [--supported-os-platform <platform>] [--target-rid <rid>] [--rid-graph-path <json>] [--win32-manifest <file>] <file.cir.json>..."); return 1; }
         var outDir = args[0];
         var asmName = args[1];
         Directory.CreateDirectory(outDir);
@@ -50,6 +50,7 @@ static class IlEmit
         string targetFrameworkMoniker = null;
         string targetPlatform = null;
         string supportedOsPlatform = null;
+        string win32Manifest = null;
         var rest = args.Skip(2).ToList();
         for (int i = 0; i < rest.Count; i++)
         {
@@ -69,6 +70,8 @@ static class IlEmit
             else if (rest[i] == "--target-platform") { Console.Error.WriteLine("ilemit: --target-platform requires a platform name"); return 1; }
             else if (rest[i] == "--supported-os-platform" && i + 1 < rest.Count) supportedOsPlatform = rest[++i];
             else if (rest[i] == "--supported-os-platform") { Console.Error.WriteLine("ilemit: --supported-os-platform requires a platform name"); return 1; }
+            else if (rest[i] == "--win32-manifest" && i + 1 < rest.Count) win32Manifest = rest[++i];
+            else if (rest[i] == "--win32-manifest") { Console.Error.WriteLine("ilemit: --win32-manifest requires a file path"); return 1; }
             else if (rest[i] == "--ref") { Console.Error.WriteLine("ilemit: --ref was replaced by --runtime-refs"); return 1; }
             else if (rest[i] == "--build-stdlib=metadata") mode = Emitter.BuildStdlibMode.Metadata;
             else if (rest[i] == "--build-stdlib=runtime") mode = Emitter.BuildStdlibMode.Runtime;
@@ -87,7 +90,8 @@ static class IlEmit
         {
             using var target = new TargetReferenceUniverse(compileRefs, runtimeRefs, targetRid, ridGraphPath);
             var files = bir.Select(LoadInputDocument).ToList();
-            new Emitter(outDir, asmName, target, mode, targetFrameworkMoniker, targetPlatform, supportedOsPlatform)
+            var nativeResources = win32Manifest == null ? null : new Win32ManifestResource(File.ReadAllBytes(win32Manifest));
+            new Emitter(outDir, asmName, target, mode, targetFrameworkMoniker, targetPlatform, supportedOsPlatform, nativeResources)
                 .EmitAssembly(MergeByFileClass(files));
             return 0;
         }
@@ -183,6 +187,7 @@ sealed partial class Emitter
     readonly string _targetFrameworkMoniker;
     readonly string _targetPlatform;
     readonly string _supportedOsPlatform;
+    readonly ResourceSectionBuilder _nativeResources;
     // #335/#336: the exact compile-reference MetadataLoadContext is the sole source of external metadata identity.
     readonly TargetReferenceUniverse _target;
     Type Bcl(string fullName) => _target.ResolveType(fullName);
@@ -258,12 +263,13 @@ sealed partial class Emitter
 
     public Emitter(string outDir, string asmName, TargetReferenceUniverse target,
         BuildStdlibMode mode = BuildStdlibMode.App, string targetFrameworkMoniker = null,
-        string targetPlatform = null, string supportedOsPlatform = null)
+        string targetPlatform = null, string supportedOsPlatform = null, ResourceSectionBuilder nativeResources = null)
     {
         _outDir = outDir; _asmName = asmName; _target = target;
         _targetFrameworkMoniker = string.IsNullOrWhiteSpace(targetFrameworkMoniker) ? null : targetFrameworkMoniker;
         _targetPlatform = string.IsNullOrWhiteSpace(targetPlatform) ? null : targetPlatform;
         _supportedOsPlatform = string.IsNullOrWhiteSpace(supportedOsPlatform) ? null : supportedOsPlatform;
+        _nativeResources = nativeResources;
         _methodRetType = Bcl("System.Void");
         _stdlibAssembly = mode != BuildStdlibMode.App;       // both the metadata and runtime twins are stdlib artifacts
     }
