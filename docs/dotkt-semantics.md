@@ -1623,6 +1623,11 @@ failing closed is the same shape Kotlin/JVM emits (`ACONST_NULL; ATHROW` after s
   `<ProjectReference>` without a repair stage.
 - Forward (`Kotlin → .NET`): `dll2klib` projects every resolved reference assembly to a metadata-only KLIB, so
   `import System.X` and C# `<ProjectReference>` declarations resolve through the ordinary frontend classpath.
+- `kotlin.ClassCastException` aliases `System.InvalidCastException` at runtime. Failed native casts and
+  compiler/runtime classifier checks are caught with either exception vocabulary; Kotlin constructors and
+  subclasses use that same native base. The two frontend views remain distinct as described in §8b.
+  `as?` still produces null on failure, and unrelated exceptions are not wrapped or reclassified.
+  No separate runtime `kotlin.ClassCastException` CLR class is emitted; C# consumers use `System.InvalidCastException`.
 - A public CLR class can legally implement an `internal` or otherwise inaccessible interface. That interface edge is
   omitted from the Kotlin supertype list, while every independently public interface edge remains visible. If the
   hidden interface supplies a public slot through a default `MethodImpl`, or the class supplies it through a private

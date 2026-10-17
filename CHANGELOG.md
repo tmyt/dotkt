@@ -5,6 +5,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Bind Kotlin ClassCastException to System.InvalidCastException so ordinary casts, runtime classifier helpers
+  and explicit throws share one catchable exception identity, including cross-DLL and C# consumers (#1052).
+
 - Use identity for compiler-generated coroutine sentinel and null guards, including late array storage and
   runtime classifier checks, without invoking user `equals` or changing authored equality (#1064).
 

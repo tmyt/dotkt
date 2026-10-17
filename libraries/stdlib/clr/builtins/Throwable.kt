@@ -111,6 +111,7 @@ public actual open class NullPointerException : RuntimeException {
     public actual constructor(message: String?) : super(message)
 }
 
+@kotlin.clr.ClrTypeAlias("System.InvalidCastException")
 public actual open class ClassCastException : RuntimeException {
     public actual constructor() : super()
     public actual constructor(message: String?) : super(message)
