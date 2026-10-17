@@ -5,33 +5,40 @@
 
 @file:Suppress("ACTUAL_WITHOUT_EXPECT", "NO_ACTUAL_FOR_EXPECT", "UNCHECKED_CAST", "NOTHING_TO_INLINE", "NO_ACTUAL_CLASS_MEMBER_FOR_EXPECTED_CLASS")
 
-// Step-1 CLR stub mirroring the JVM `actual`; bodies are `TODO` pending the `@Clr`/BCL
-// binding step (see docs/design-stdlib-compilation.md "THE CANONICAL ROADMAP").
-
 package kotlin
 
 /**
  * Superclass for all platform classes representing numeric values.
  */
+@kotlin.clr.ClrTypeAlias("System.Object")
+@kotlin.clr.ClrValueRepresentation(
+    "DotKt.Runtime.CompilerServices.NumberRuntimeKt.numberMatches",
+    "DotKt.Runtime.CompilerServices.NumberRuntimeKt.numberClassifier",
+    "DotKt.Runtime.CompilerServices.NumberRuntimeKt.numberComponentMatches",
+)
 public actual abstract class Number {
     /**
      * Returns the value of this number as a [Double], which may involve rounding.
      */
+    @kotlin.clr.ClrValueMember("DotKt.Runtime.CompilerServices.NumberRuntimeKt.numberToDouble", "DotKt.Runtime.CompilerServices.NumberSlots.dotktToDouble")
     public actual abstract fun toDouble(): Double
 
     /**
      * Returns the value of this number as a [Float], which may involve rounding.
      */
+    @kotlin.clr.ClrValueMember("DotKt.Runtime.CompilerServices.NumberRuntimeKt.numberToFloat", "DotKt.Runtime.CompilerServices.NumberSlots.dotktToFloat")
     public actual abstract fun toFloat(): Float
 
     /**
      * Returns the value of this number as a [Long], which may involve rounding or truncation.
      */
+    @kotlin.clr.ClrValueMember("DotKt.Runtime.CompilerServices.NumberRuntimeKt.numberToLong", "DotKt.Runtime.CompilerServices.NumberSlots.dotktToLong")
     public actual abstract fun toLong(): Long
 
     /**
      * Returns the value of this number as an [Int], which may involve rounding or truncation.
      */
+    @kotlin.clr.ClrValueMember("DotKt.Runtime.CompilerServices.NumberRuntimeKt.numberToInt", "DotKt.Runtime.CompilerServices.NumberSlots.dotktToInt")
     public actual abstract fun toInt(): Int
 
     /**
@@ -39,15 +46,18 @@ public actual abstract class Number {
      */
     @Deprecated("Direct conversion to Char is deprecated. Use toInt().toChar() or Char constructor instead.\nIf you override toChar() function in your Number inheritor, it's recommended to gradually deprecate the overriding function and then remove it.\nSee https://youtrack.jetbrains.com/issue/KT-46465 for details about the migration", ReplaceWith("this.toInt().toChar()"))
     @DeprecatedSinceKotlin(warningSince = "1.9", errorSince = "2.3")
+    @kotlin.clr.ClrValueMember("DotKt.Runtime.CompilerServices.NumberRuntimeKt.numberToChar", "DotKt.Runtime.CompilerServices.NumberSlots.dotktToChar")
     public actual open fun toChar(): Char = toInt().toChar()
 
     /**
      * Returns the value of this number as a [Short], which may involve rounding or truncation.
      */
+    @kotlin.clr.ClrValueMember("DotKt.Runtime.CompilerServices.NumberRuntimeKt.numberToShort", "DotKt.Runtime.CompilerServices.NumberSlots.dotktToShort")
     public actual abstract fun toShort(): Short
 
     /**
      * Returns the value of this number as a [Byte], which may involve rounding or truncation.
      */
+    @kotlin.clr.ClrValueMember("DotKt.Runtime.CompilerServices.NumberRuntimeKt.numberToByte", "DotKt.Runtime.CompilerServices.NumberSlots.dotktToByte")
     public actual abstract fun toByte(): Byte
 }

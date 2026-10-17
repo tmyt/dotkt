@@ -6581,7 +6581,11 @@ internal sealed class AssemblyScanner : IDisposable
         if (doc.RootElement.TryGetProperty("interfaces", out var ifs) &&
             ifs.ValueKind == System.Text.Json.JsonValueKind.Array)
             foreach (var i in ifs.EnumerateArray())
-                if (TypeNode.Read(i) is { } n) pre.Add(signatures.FromTypeNode(n));
+                if (TypeNode.Read(i) is { } n)
+                {
+                    var source = signatures.FromTypeNode(n);
+                    if (!signatures.IsCompilerOwnedSlotCarrier(source)) pre.Add(source);
+                }
         RestoreErasedBounds(doc, result, signatures, capturedSourceIndices);
         RestoreKotlinVariances(doc, result, capturedSourceIndices);
         if (pre.Count == 0) return;
@@ -6594,6 +6598,12 @@ internal sealed class AssemblyScanner : IDisposable
                                                 && names.ClassName(p.ClassName) == curName);
             if (match is not null) result.Supertype[i] = match;
         }
+        // A physical projection can collapse a generic interface into its non-generic CLR face. That face is
+        // deliberately absent from the Kotlin projection, so restore its declaration-owned source edge as well.
+        foreach (var source in pre)
+            if (source.HasClassName && !result.Supertype.Any(current => current.HasClassName
+                    && names.ClassName(current.ClassName) == names.ClassName(source.ClassName)))
+                result.Supertype.Add(source);
     }
 
     private static void RestoreErasedBounds(System.Text.Json.JsonDocument doc, Class result,

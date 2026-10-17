@@ -51,11 +51,11 @@ PROJECTS=(
 # Reviewed on the v0.9.8 main baseline at the start of #227. Updating a suite requires updating this number in
 # the same change, making otherwise-silent test proliferation or accidental deletion an explicit review event.
 declare -A EXPECTED_DISCOVERED=(
-	["tests/basic"]=741
+	["tests/basic"]=744
 	["tests/coroutines"]=260
-	["tests/roundtrip/consumer"]=554
-	["tests/roundtrip/bidirectional/consumer"]=41
-	["tests/interop/consumer"]=406
+	["tests/roundtrip/consumer"]=555
+	["tests/roundtrip/bidirectional/consumer"]=42
+	["tests/interop/consumer"]=407
 )
 
 # Validate the baseline map before doing any expensive work. A new/renamed suite without a reviewed count is a
@@ -280,6 +280,13 @@ for proj in "${PROJECTS[@]}"; do
 	if [[ "$proj" == "tests/roundtrip/consumer" ]]; then
 		producer_dll="$ROOT/tests/roundtrip/producer/bin/$CONFIGURATION/net10.0/RoundtripProducer.dll"
 		producer_klib="$dir/obj/$CONFIGURATION/net10.0/klib/RoundtripProducer.klib"
+		if dotnet "$METADATA_INSPECTOR_DLL" --number-representation "$STDLIB_REF_DLL" "$producer_dll" "$producer_klib" \
+			>"$ROOT/build/nunit-$name.number-representation.log" 2>&1; then
+			echo "  Number slots and source bounds survive reference/DLL/KLIB boundaries"
+		else
+			echo "  NUMBER REPRESENTATION METADATA FAIL"
+			tail -25 "$ROOT/build/nunit-$name.number-representation.log"; rc=1
+		fi
 		if dotnet "$METADATA_INSPECTOR_DLL" --projected-array-attributes "$producer_dll" \
 			>"$ROOT/build/nunit-$name.projected-array-attributes.log" 2>&1; then
 			echo "  projected array slots preserve native attribute declarations and blobs"

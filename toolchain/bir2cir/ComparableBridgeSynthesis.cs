@@ -20,7 +20,7 @@ using DotKt.Bir;
 // Nothing's CLR object erasure into it (#321). Non-ref builds only (the ref surface stays pure Kotlin).
 static class ComparableBridgeSynthesis
 {
-    public static void Apply(JsonNode root)
+    public static void Apply(JsonNode root, Func<TypeNode, TypeNode> projectValue = null)
     {
         if (root is not JsonObject o || o["types"] is not JsonArray types) return;
         foreach (var t in types)
@@ -36,7 +36,7 @@ static class ComparableBridgeSynthesis
                 else if (f.Name is not ("kotlin.Comparable" or "System.IComparable")) continue;
                 else if (f.Args is { Length: 1 })
                 {
-                    if (BirTypeLowering.ComparableApplicationCollapses(f.Args[0])) hasNonGeneric = true;
+                    if (BirTypeLowering.ComparableApplicationCollapses(projectValue?.Invoke(f.Args[0]) ?? f.Args[0])) hasNonGeneric = true;
                     else selfArg = f.Args[0];
                 }
             }

@@ -220,6 +220,8 @@ static class GenericArrayStorageLowering
                     : nativeCheck;
             }
             if (expected is TypeNode.Fqn { Name: "kotlin.Any" or "System.Object" or "object", Args: null }) return Bool(true);
+            if (KotlinRuntimeTypeWitness.ValueRepresentations?.ComponentPredicate(expected, actualType) is { } semanticCheck)
+                return ErasedComponentCheck(projectBound(expected), actualType, semanticCheck);
             if (expected is TypeNode.Fqn { Args: { Length: > 0 } } generic
                 && ForeignStarProjectionBinding.TypeClassifierCheck(generic, actualType, refs) is { } foreignCheck)
                 return AliasVarianceRepresentation.RequiresErasure(generic, refs)

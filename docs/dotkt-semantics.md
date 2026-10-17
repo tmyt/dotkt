@@ -32,6 +32,7 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
 | [3](#3-inline-happens-at-emit-time-and-is-decoration-unless-a-lambda-literal-is-passed) | `inline` is emit-time, decoration unless a lambda is passed |
 | [4](#4-suspend-fun--an-async-taskt-function-hot-not-cold) | `suspend fun` = an async `Task<T>` function; **hot, not cold** |
 | [5](#5-primitive-stringification-is-clr-native-not-kotlinjvm-cosmetics) | CLR-native stringification; `String.format` = .NET composite format |
+| [5-number](#5-number-number-values-keep-native-clr-boxing-authored-subclasses-use-nominal-slots) | Number values use native CLR boxes and source-aware dispatch |
 | [5b](#5b-charsequence-is-string-on-the-clr--an-immutable-snapshot-not-a-live-view) | **`CharSequence` is `string`** — snapshot, not live view |
 | [5c](#5c-map-values-preserve-kotlin-covariance-across-invariant-clr-dictionaries) | Covariant `Map` values and exact CLR dictionary declarations |
 | [5d](#5d-appendable-is-systemtextstringbuilder) | `Appendable` is `System.Text.StringBuilder` |
@@ -72,8 +73,10 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   CLR generic arguments also do not distinguish `String` from `String?`, and invariant collection storage does not
   encode Kotlin's nominal read-only/mutable classifier. `bir2cir` therefore derives type-witness demand from operations such as `is T`
   and checked reified casts, and propagates it structurally through exact calls and lifted frames. Only demanded
-  method type parameters receive one hidden `ValueTuple<Int32, System.Type>` carrying nullability/nominal flags
-  and the runtime classifier separately from generic storage. Thus `is Int?` accepts null and boxed integers,
+  method type parameters receive one hidden `ValueTuple<Int32, System.Type, Func<object, object>>` carrying
+  nullability/nominal flags, the runtime classifier, and an optional classifier predicate separately from generic
+  storage. The predicate expresses a Kotlin superclass whose native CLR values cannot inherit its runtime class.
+  Thus `is Int?` accepts null and boxed integers,
   but not an unrelated value merely because its storage fits `Object`. Opaque foreign generic classifiers carry
   their open CLR definition and use raw base/interface membership, just like a direct classifier check; they do
   not test `Object` or a fabricated `G<Object>` construction. Checked reified `as` and `as?` use
@@ -162,9 +165,12 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
 - **The same semantic-boundary rule applies to projected `@ClrTypeAlias` types.** A projection must not be lowered
   mechanically as an invariant construction of its CLR alias. For example, `MutableList<out T>` is carried as Kotlin
   declaration metadata over an opaque CLR slot, and member access binds to the exact closed interface implemented by
-  the runtime object. Declaration-variant aliases also use opaque ordinary value slots: matching CLR variance flags
+  the runtime object. Declaration-variant aliases with a reified generic physical head also use opaque ordinary value slots: matching CLR variance flags
   do not admit Kotlin's value-element conversions. Exact native declarations and construction witnesses remain
-  reified; `Comparable<*>` operations can still use non-generic `IComparable`. A caller-supplied Kotlin alias argument
+  reified. An application whose selected physical head is non-generic does not need that generic variance erasure:
+  `Comparable<*>` and `Comparable<Any?>` retain non-generic `IComparable` in ordinary and nested value slots, including
+  nullable slots. C# therefore observes `IComparable`, not `object`, at those positions; their nullability is unchanged.
+  A caller-supplied Kotlin alias argument
   in `System.Collections.Generic.List<List<String>>` uses the ordinary `object` element ABI; an explicitly native
   `System.Collections.Generic.List<System.Collections.Generic.IReadOnlyList<String>>` keeps that exact native argument.
   When a projected map is passed to a stdlib copy constructor, the trusted collection-factory contract
@@ -587,6 +593,63 @@ encoding, which the JIT honors and which a single-threaded run cannot itself obs
   hash component. Consequence: two distinct `Box` instances with no override render **identically**
   (`[Box]` / `[Box]`), where JVM's default form would visibly differ by hash. Same class of
   unspecified-behavior host-convention divergence as the rest of this section — accepted, document only.
+
+## 5-number. `Number` values keep native CLR boxing; authored subclasses use nominal slots
+
+Kotlin `Byte`, `Short`, `Int`, `Long`, `Float`, and `Double` are Number subtypes, but their native CLR value types
+cannot inherit a Kotlin runtime class. Ordinary `Number`/`Number?` parameters, results, fields, properties, locals,
+and nested generic arguments therefore use `System.Object`. Numeric values keep their native CLR boxes without a
+wrapper or identity-changing adapter. C# consumers pass ordinary boxes of the six corresponding signed/floating
+CLR types to those slots.
+
+`Number` aliases `System.Object`, including the physical base of an authored `class N : Number()`.
+Compiler-owned nominal conversion slots preserve its overrides when the value is used as Number, including through
+a generic bound or a separately compiled DLL. Kotlin source types and bounds survive in declaration metadata; the physically impossible
+CLR Number-class generic constraint does not. Native CLR declaration signatures, construction, and inheritance
+remain exact rather than acquiring the ordinary value-slot erasure.
+
+Number membership is not an Object or `IConvertible` test. Direct and reified `is`/`as?`/`as` recognize exactly the
+six numeric primitives and Number subclasses (plus null only for a nullable target). Boolean, Char, unsigned
+numbers, strings, and unrelated objects do not gain Number identity. Conversion dispatch uses the corresponding
+primitive conversion or the authored virtual override; it does not substitute `System.Convert` rounding rules.
+The trusted stdlib supplies the alias, classifier, and exact member-adapter/nominal-slot bindings; bir2cir resolves them, and
+ilemit receives only resolved CLR operations.
+An unchecked non-reified `value as T` with `T : Number` retains the raw Number classifier guard even when its
+result is unused or deferred in Object storage. Concrete typed consumers still perform their existing CLR
+narrowing; this does not make a boxed Long usable as an Int.
+As with other unchecked class-bound casts, that raw bound guard admits null; the original generic cast and
+its typed consumer keep their existing null handling. Direct and reified non-null Number casts still reject null.
+
+This is not a Kotlin-reflection implementation. Under the existing `KClass` = `System.Type` contract (§2, §5g),
+`Number::class` names its physical alias, `System.Object`. A generic `T::class`
+without classifier operations receives no semantic witness and reports its physical type argument: instantiating it
+with Number also exposes Object, whose CLR membership accepts non-numbers. These CLR reflection tokens are
+not the semantic classifier used by Kotlin `is`/`as` operations. `KClass.isInstance` itself remains an unbound CLR
+stdlib stub; this change does not implement that reflection API.
+
+`Array<Number>` uses `object[]`, following the existing nullable/opaque array component-storage contract. Array
+stores/reads and generic forwarding preserve the allocation and its identity. Such an erased allocation cannot
+distinguish its original Number component from another source component also stored as Object. A more precise
+native component must still supply the requested classifier: `string[]` does not pass a direct or reified
+`Array<Number>` check merely because it can be assigned to `object[]`. This is a storage representation deviation,
+not undefined user-program behavior. A native numeric value array such as `int[]` cannot pass an invariant
+`Array<Number>` check or cast either: its component satisfies Number, but its allocation cannot be used as
+`object[]`. The existing read-only `Array<out Number>` view can retain that native allocation through `System.Array`.
+An open non-reified `Array<T>` retains the existing `System.Array` contract: a `T : Number` component check admits
+the six numeric components and nominal implementations, so an `Int32[]` can be checked and used inside that open
+generic body. Its native component still enforces stores. This does not give that allocation the invariant
+`Array<Number>`/`object[]` representation.
+Nested projected arrays retain the same rule: `Array<Array<out Number>>` may allocate `System.Array[]`, whose
+erased inner component is accepted without pretending it has the invariant `object[][]` representation.
+
+There is no runtime public CLR `kotlin.Number` class. C# source naming that former compiler-produced base, parameter
+type, or generic constraint must change; it is not a native CLR numeric union. C# consumes Kotlin Number value slots
+as Object and authored implementations as ordinary classes with compiler-owned conversion interfaces. Those
+interfaces are physical capabilities, never reverse-mapped to Kotlin Number declarations or native constraints.
+Genuine CLR-owned classes, generic constraints, and `ref`/`out` signatures keep their own exact contracts.
+The compiler-private reference stdlib retains the Kotlin Number declaration and its binding attributes solely as
+compiler metadata, just as for other aliases; it is not a runtime interop assembly. `Number()` source construction,
+custom overrides, and nonvirtual `super.toChar()` retain Kotlin behavior; the default body is a static alias helper.
 
 ## 5a. `Double`/`Float` boxed structural equality & `compareTo` follow Kotlin's total order
 

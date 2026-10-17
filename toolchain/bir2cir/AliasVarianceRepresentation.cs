@@ -14,6 +14,9 @@ static class AliasVarianceRepresentation
     {
         if (application.Args is not { Length: > 0 } arguments) return false;
         if (binding == null && !refs.Aliases.TryGetValue(application.Name, out binding)) return false;
+        if (BirTypeLowering.GenericAliasHeadDependsOnLoweredArguments(binding)
+            && !BirTypeLowering.ProjectedAliasHasReifiedGenericHead(application.Name, binding, arguments, refs.Aliases))
+            return false;
         if (sourceParameters == null)
         {
             sourceParameters = refs.OwnerTypeParamDeclarations(application.Name);

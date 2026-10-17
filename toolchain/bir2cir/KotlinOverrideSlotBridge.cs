@@ -1752,10 +1752,12 @@ static class KotlinOverrideSlotBridge
         if (returnPosition && IsVoid(slot)) return Fit.Bridge;
         // A referenced MethodDef's source carrier can name Any/Any? for its existing object slot.
         // Local Kotlin declarations still belong to source covariance, not CLR object-slot erasure.
-        if (IsBareObject(slot) || referencedSlot && LowersToObject(slot))
+        if (IsBareObject(slot)
+            || KotlinRuntimeTypeWitness.ValueRepresentations?.HasClassifier(slot) == true && LowersToObject(slot, refs)
+            || referencedSlot && LowersToObject(slot, refs))
             // `Any?`/`Any` reach the same bare `object` the slot is, one lowering later — a bridge for them would
             // declare a second member with the identical CLR signature.
-            return LowersToObject(declared) ? Fit.Same : Fit.Bridge;
+            return LowersToObject(declared, refs) ? Fit.Same : Fit.Bridge;
         // Substitution into an interface's bare T can select a nullable companion variable, whereas the
         // overriding body's scalar T? is object-erased. The selected override relation licenses an outer
         // box/unbox bridge; it does not license rewriting invariant constructions containing either type.
@@ -1981,14 +1983,17 @@ static class KotlinOverrideSlotBridge
     // True iff BirTypeLowering will make this type the bare `object` the erased slot already is. A reference `T?` is
     // stripped to its bare inner, so the question recurses through the wrapper; a VALUE `T?` stays `Nullable<V>`, and
     // a type variable stays `!T`.
-    static bool LowersToObject(TypeNode t) => t switch
+    static bool LowersToObject(TypeNode t, ReferenceMetadataIndex refs = null)
     {
-        TypeNode.Oblivious o => LowersToObject(o.Of),
-        TypeNode.Nullable n => LowersToObject(n.Of),
+        return t switch {
+        TypeNode.Oblivious o => LowersToObject(o.Of, refs),
+        TypeNode.Nullable n => LowersToObject(n.Of, refs),
         TypeNode.Fn f => f.Suspend,
-        TypeNode.Fqn { Args: null } f => f.Name is "object" or "System.Object" or "kotlin.Any",
+        TypeNode.Fqn { Args: null } f => f.Name is "object" or "System.Object" or "kotlin.Any"
+            || refs?.Aliases.TryGetValue(f.Name, out var alias) == true && alias is "object" or "System.Object",
         _ => false,
-    };
+        };
+    }
 
     // The class's own declaration that fills this slot. Two independent proofs are accepted, and both are needed:
     // the Kotlin `overrides` fact names the supertype the author wrote (`Sink`), which is what makes the match safe;
