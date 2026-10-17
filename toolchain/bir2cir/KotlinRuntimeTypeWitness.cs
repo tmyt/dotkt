@@ -102,14 +102,14 @@ static class KotlinRuntimeTypeWitness
             // The existing nominal/physical operation owns nullability, including checked casts' Kotlin exception.
             // Collection membership also belongs to that composite guard, not to a native interface token.
             var matches = new JsonObject {
-                ["k"] = "cond", ["cond"] = new JsonObject { ["k"] = "objEq", ["lhs"] = Local(), ["rhs"] = Null() },
+                ["k"] = "cond", ["cond"] = new JsonObject { ["k"] = "binOp", ["op"] = "===", ["lhs"] = Local(), ["rhs"] = Null() },
                 ["then"] = Bool(true),
                 ["else"] = new JsonObject {
                     ["k"] = "cond", ["cond"] = KotlinTypeWitness.Binary("!=",
                         KotlinTypeWitness.Binary("&", flags.DeepClone(), KotlinTypeWitness.Constant(-2)), KotlinTypeWitness.Constant(0)),
                     ["then"] = Bool(true), ["else"] = new JsonObject {
                         ["k"] = "cond", ["type"] = TypeJson.Fqn("kotlin.Boolean"),
-                        ["cond"] = new JsonObject { ["k"] = "objEq", ["lhs"] = predicate.DeepClone(), ["rhs"] = Null() },
+                        ["cond"] = new JsonObject { ["k"] = "binOp", ["op"] = "===", ["lhs"] = predicate.DeepClone(), ["rhs"] = Null() },
                         ["then"] = test,
                         ["else"] = new JsonObject { ["k"] = "cond", ["type"] = TypeJson.Fqn("kotlin.Boolean"),
                             ["cond"] = new JsonObject { ["k"] = "cast", ["type"] = TypeJson.Fqn("kotlin.Boolean"),
@@ -140,7 +140,7 @@ static class KotlinRuntimeTypeWitness
                 var semanticCastMatches = new JsonObject {
                     ["k"] = "cond", ["type"] = TypeJson.Fqn("kotlin.Boolean"), ["cond"] = matches,
                     ["then"] = new JsonObject { ["k"] = "cond", ["type"] = TypeJson.Fqn("kotlin.Boolean"),
-                        ["cond"] = new JsonObject { ["k"] = "objEq", ["lhs"] = Local(), ["rhs"] = Null() },
+                        ["cond"] = new JsonObject { ["k"] = "binOp", ["op"] = "===", ["lhs"] = Local(), ["rhs"] = Null() },
                         ["then"] = Bool(true), ["else"] = physicalTest },
                     ["else"] = Bool(false),
                 };
@@ -148,7 +148,7 @@ static class KotlinRuntimeTypeWitness
                 // In particular the collection composite cast owns its membership exception, not its is-test.
                 var castMatches = new JsonObject {
                     ["k"] = "cond", ["type"] = TypeJson.Fqn("kotlin.Boolean"),
-                    ["cond"] = new JsonObject { ["k"] = "objEq", ["lhs"] = predicate.DeepClone(), ["rhs"] = Null() },
+                    ["cond"] = new JsonObject { ["k"] = "binOp", ["op"] = "===", ["lhs"] = predicate.DeepClone(), ["rhs"] = Null() },
                     ["then"] = matches.DeepClone(), ["else"] = semanticCastMatches,
                 };
                 var nativeException = refs.ResolveRefType("System.InvalidCastException");
@@ -159,7 +159,7 @@ static class KotlinRuntimeTypeWitness
                             // Existing CLR-token classifiers keep their native checked-cast exception contract.
                             // Only the explicit semantic-superclass predicate selects the new Kotlin guard.
                             ["k"] = "if", ["branches"] = new JsonArray(new JsonObject {
-                                ["cond"] = new JsonObject { ["k"] = "objEq", ["lhs"] = predicate.DeepClone(), ["rhs"] = Null() },
+                                ["cond"] = new JsonObject { ["k"] = "binOp", ["op"] = "===", ["lhs"] = predicate.DeepClone(), ["rhs"] = Null() },
                                 ["body"] = new JsonArray(new JsonObject { ["k"] = "throw", ["value"] = new JsonObject {
                                     ["k"] = "newClr", ["type"] = TypeJson.Fqn("System.InvalidCastException"), ["args"] = new JsonArray(),
                                     ["memberRef"] = ClrMemberResolution.MemberRefJson(nativeException.GetConstructor(System.Type.EmptyTypes),

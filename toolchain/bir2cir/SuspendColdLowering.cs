@@ -710,7 +710,7 @@ static partial class SuspendColdLowering
                         ["k"] = "brIf", ["id"] = failureLabel, ["on"] = false,
                         ["cond"] = new JsonObject
                         {
-                            ["k"] = "objEq",
+                            ["k"] = "binOp", ["op"] = "===",
                             ["lhs"] = LocalValue(exceptionName),
                             ["rhs"] = new JsonObject
                             {
@@ -2338,7 +2338,7 @@ static partial class SuspendColdLowering
             outp.Add(new JsonObject { ["k"] = "setLocal", ["name"] = ResumeResultParameter, ["value"] = ColdCall(callNode, outp) });
             outp.Add(BrIf(new JsonObject
             {
-                ["k"] = "objEq",
+                ["k"] = "binOp", ["op"] = "===",
                 ["lhs"] = new JsonObject { ["k"] = "local", ["name"] = ResumeResultParameter },
                 ["rhs"] = Suspended(),
             }, false, resumeLabel));
@@ -2478,7 +2478,7 @@ static partial class SuspendColdLowering
             outp.Add(new JsonObject { ["k"] = "setLocal", ["name"] = ResumeResultParameter, ["value"] = Rewrite(tail, outp, AnyTn) });
             outp.Add(BrIf(new JsonObject
             {
-                ["k"] = "objEq",
+                ["k"] = "binOp", ["op"] = "===",
                 ["lhs"] = new JsonObject { ["k"] = "local", ["name"] = ResumeResultParameter },
                 ["rhs"] = Suspended(),
             }, false, resumeLabel));
@@ -4258,7 +4258,7 @@ static partial class SuspendColdLowering
             // if (r !== COROUTINE_SUSPENDED) return;
             // else tcs.Task.GetAwaiter().GetResult();   (block, preserving raw await exception semantics)
             var skipL = NextLabel();
-            body.Add(BrIf(new JsonObject { ["k"] = "objEq", ["lhs"] = Local(BridgeResultLocal), ["rhs"] = Suspended() }, false, skipL));
+            body.Add(BrIf(new JsonObject { ["k"] = "binOp", ["op"] = "===", ["lhs"] = Local(BridgeResultLocal), ["rhs"] = Suspended() }, false, skipL));
             var task = new JsonObject
             {
                 ["k"] = "clrPropGet",
@@ -4439,7 +4439,7 @@ static partial class SuspendColdLowering
             };
 
             var skipL = NextLabel();
-            body.Add(BrIf(new JsonObject { ["k"] = "objEq", ["lhs"] = Local(BridgeResultLocal), ["rhs"] = Suspended() }, true, skipL));
+            body.Add(BrIf(new JsonObject { ["k"] = "binOp", ["op"] = "===", ["lhs"] = Local(BridgeResultLocal), ["rhs"] = Suspended() }, true, skipL));
             JsonNode resultVal = IsAnyTn(rTaskSlot)
                 ? Local(BridgeResultLocal)
                 : new JsonObject { ["k"] = "cast", ["type"] = Tw(rTaskSlot), ["e"] = Local(BridgeResultLocal) };

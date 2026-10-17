@@ -5,6 +5,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Use identity for compiler-generated coroutine sentinel and null guards, including late array storage and
+  runtime classifier checks, without invoking user `equals` or changing authored equality (#1064).
+
 - Stop stdlib builds and packaging on failed compiler stages, even when partial BIR, CIR, DLL or KLIB outputs
   remain; never stamp a failed rebuild as fresh (#1060).
 

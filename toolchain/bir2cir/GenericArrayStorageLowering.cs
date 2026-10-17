@@ -242,7 +242,7 @@ static class GenericArrayStorageLowering
                 ["memberRef"] = ClrMemberResolution.MemberRefJson(exceptionConstructor, "ctor", exceptionOwner, null),
             } };
         var value = Local(arrayName, arrayType);
-        var isNull = new JsonObject { ["k"] = "objEq", ["lhs"] = value.DeepClone(), ["rhs"] = Null() };
+        var isNull = new JsonObject { ["k"] = "binOp", ["op"] = "===", ["lhs"] = value.DeepClone(), ["rhs"] = Null() };
         var statements = new JsonArray();
         if (inputName != null)
             statements.Add(Var(inputName, new TypeNode.Fqn("System.Object"), operation["e"].DeepClone()));
@@ -315,7 +315,7 @@ static class GenericArrayStorageLowering
         var typeType = new TypeNode.Fqn("System.Type");
         JsonObject Null() => new() { ["k"] = "const", ["type"] = Type("System.Object"), ["value"] = null };
         JsonObject EqualNull(JsonNode value) => new() {
-            ["k"] = "objEq", ["lhs"] = value, ["rhs"] = Null(),
+            ["k"] = "binOp", ["op"] = "===", ["lhs"] = value, ["rhs"] = Null(),
         };
         JsonObject Not(JsonNode value) => new() { ["k"] = "unaryOp", ["op"] = "!", ["e"] = value };
         var exceptionOwner = refs.ResolveRefType("System.ArrayTypeMismatchException");

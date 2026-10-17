@@ -730,7 +730,7 @@ static class StringCharSequenceBridge
             ["type"] = TypeJson.Fqn(CharSeq),
             ["cond"] = new JsonObject
             {
-                ["k"] = "objEq",
+                ["k"] = "binOp", ["op"] = "===",
                 ["lhs"] = read.DeepClone(),
                 ["rhs"] = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn(CharSeq), ["value"] = null },
             },
