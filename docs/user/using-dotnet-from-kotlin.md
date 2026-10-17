@@ -68,18 +68,30 @@ println(p.Apply({ x -> x + 5 }, 10))     // Func<int,int>
 println(GenDel().Run({ v -> v * 3 }, 2)) // delegate T Mapper<T>(T)
 ```
 
-.NET **events** are exposed as `add_<Event>` / `remove_<Event>`:
+.NET **events** are projected as read-only event properties. Subscribe through the property and
+keep the returned closeable subscription:
 
 ```kotlin
 import System.Collections.ObjectModel.ObservableCollection
 
-val c = ObservableCollection<Int>()
-c.add_CollectionChanged { sender, e -> println("changed") }
+fun main() {
+    val c = ObservableCollection<Int>()
+    val subscription = c.CollectionChanged.subscribe { _, _ -> println("changed") }
+    c.Add(1)                     // changed
+    subscription.close()         // removes the exact handler that was added
+    subscription.close()         // safe to close more than once
+    c.Add(2)                     // this subscription no longer fires
 
-val h: (Any?, Any?) -> Unit = { _, _ -> println("h fired") }
-c.add_CollectionChanged(h)      // subscribe a stored handler…
-c.remove_CollectionChanged(h)   // …so it can be unsubscribed (delegate equality)
+    c.CollectionChanged.subscribe { _, _ -> println("scoped") }.use {
+        c.Add(3)                 // scoped; automatically unsubscribed at the end of use
+    }
+}
 ```
+
+Stored handlers use the same form: `val subscription = c.CollectionChanged.subscribe(handler)`.
+Close that subscription to unsubscribe; retaining the original lambda is unnecessary. Static and
+interface events use the same subscription API. The underlying CLR add/remove accessors are bound
+by the compiler; they are not Kotlin methods to call directly.
 
 ## 4. `out` / `ref` parameters — `byref(...)`
 
@@ -94,8 +106,15 @@ val ok = c.TryDivide(10, 2, byref(q))   // out int → writes q = 5
 c.Swap(byref(x), byref(y))              // ref int, ref int → swapped in place
 ```
 
-A `ref`-returning method received plainly gives you a value copy; bind it with
+The intended behavior of a `ref`-returning method received plainly is a value copy; bind it with
 `var x by byref(m())` to keep a **live** reference whose writes flow back into the .NET storage.
+
+There is a current implementation bug in plain value consumption of a **generic method's** ref
+return: the generated generic-call path does not load the referent. Such a call can return a corrupt
+value or crash. Use the live-reference delegate for an API whose referent type is represented exactly;
+for example, `CollectionsMarshal.GetValueRefOrNullRef` can be bound with `by byref(...)`. Nullable
+annotations on other ref-returning APIs can introduce a separate referent-storage mismatch, so this
+is not a blanket workaround for every generic ref return.
 
 You can also expose a real CLR `ref` parameter from a non-suspend Kotlin function. Read and write its live storage
 through `ClrRef<T>.value`:
@@ -111,6 +130,15 @@ fun increment(slot: ClrRef<Int>) {
 C# sees the parameter as `ref int`. A managed reference cannot be kept in a heap field; capturing or storing a
 `ClrRef<T>` parameter, using one in a `suspend` declaration, and declaring `ClrRef<T>` return types or properties are
 unsupported forms with undefined behavior.
+
+### Imported native-sized integers
+
+Some BCL signatures encode `nint`/`nuint` as the CLR native-integer primitive signature codes.
+The current DLL-to-KLIB projection falls back to `Any?` for those codes instead of preserving
+`System.IntPtr`/`System.UIntPtr`. For example, a projected `Marshal.AllocHGlobal` result can then
+fail to bind to `Marshal.WriteInt32`'s native-integer parameter. This is a projection bug, not a
+Kotlin restriction; use a CLR helper with a faithfully projected signature for an affected API.
+The Kotlin-declared P/Invoke signature subset below is a separate path.
 
 ## 5. Native calls with `DllImportAttribute`
 

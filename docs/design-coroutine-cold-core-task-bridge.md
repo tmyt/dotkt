@@ -9,7 +9,7 @@ The short version:
 - CLR-facing `suspend fun` exports should remain hot `Task<T>` / `Task` methods.
 - `.NET Task -> Kotlin suspend` interop should be a CLR platform extension (`Task.await`) supplied outside the
   frontend stdlib klib.
-- `Task`, `Sequence`, `IAsyncEnumerable`, and future kotlinx builders should be adapters/sinks over a shared
+- `Task`, `Sequence`, `IAsyncEnumerable`, and kotlinx library builders should be adapters/sinks over a shared
   coroutine core, not the core representation itself.
 
 ## 1. Core distinction
@@ -427,7 +427,8 @@ they are not compiler-provided `kotlin.clr` declarations.
   regions are normalized into resumable flat routes before state-machine segmentation, for both
   named suspend functions and suspend lambdas. Coverage: `tests/coroutines/fixtures/SuspendTryLoweringTests.kt`
   and `tests/coroutines/fixtures/ProtectedSuspendLoopTransferTests.kt`.
-- No `suspendCancellableCoroutine` (kotlinx — purged). Plain `suspendCoroutine` works E2E, INCLUDING
+- `suspendCancellableCoroutine` is supplied by the separate `dotktx.coroutines` library, not by the
+  compiler-provided stdlib. Plain `suspendCoroutine` works E2E, INCLUDING
   cross-module (F2, 2026-07-05): our compiler does not inline `@InlineOnly` cross-module, so an APP's
   `suspendCoroutine { … }` reaches bir2cir un-inlined (a plain `callStatic suspendCoroutine(<closure>)`,
   its wrapper body NOT inlined at the call site). `SuspendColdLowering` recognizes that shape
@@ -445,8 +446,8 @@ they are not compiler-provided `kotlin.clr` declarations.
   Task-await resumption passes through the intercepted continuation; without an interceptor the
   captured SynchronizationContext or inline fallback applies. Coverage:
   `tests/coroutines/fixtures/CoroutineContextInterceptionTests.kt`.
-- `CancellationToken` is not an implicit suspend parameter, and Job/structured-concurrency APIs
-  belong to the separate kotlinx library track. These library boundaries do not disable interception.
+- `CancellationToken` is not an implicit suspend parameter. Job/structured-concurrency APIs are supplied
+  by the separate `dotktx.coroutines` CLR port. These library boundaries do not disable interception.
 
 ### Supersession notes
 
@@ -474,36 +475,20 @@ they are not compiler-provided `kotlin.clr` declarations.
    `IntrinsicsKt.COROUTINE_SUSPENDED` *field* — the real symbol is the property getter
    `get_COROUTINE_SUSPENDED()` (P2 references the getter directly, bypassing the node). Delete in P6.
 
-## 13. `blockOn` AND `delay` are DROPPED from kotlin.clr — re-implemented in the TEST HARNESS (user, 2026-07-03)
+## 13. Library builders and the compiler test harness
 
-Neither is a stdlib primitive: in upstream Kotlin `delay`/`runBlocking` live in `kotlinx.coroutines`
-(structured concurrency / dispatcher), NOT `kotlin-stdlib`. They were pushed into `kotlin.clr` only as a
-test crutch after the kotlinx purge — a category error. The compiler NEVER needs to emit either: every
-compiler-emitted coroutine driver — the synthesized `suspend fun main` drain, the public `Task<T>` bridge,
-and Kotlin→Kotlin direct cold calls — uses the low-level machinery (SM / TCS / RootContinuation / sync-or-
-`async Task Main` drain), not `blockOn`. The user-facing "run a coroutine from a sync .NET context" case is
-served natively by the `Task<T>` bridge + `.GetAwaiter().GetResult()` (.NET's own blocking).
+`runBlocking`, `delay`, `launch`, and `async` belong to the separate `dotktx.coroutines` port of
+kotlinx.coroutines. They are ordinary library APIs over the continuation core, cancellation, and dispatchers;
+the compiler does not provide `kotlin.clr.blockOn` or `kotlin.clr.delay`.
 
-**Decision:**
-- **`blockOn` and `delay` are REMOVED from `kotlin.clr`** (the `expect` in `common/src/kotlin/clr/CoroutinesH.kt`,
-  the jar stub actual staged in `build-stdlib-jar.sh`, and the real actuals in `taskinterop/Coroutines.kt`).
-- **The compiler-projected CLR coroutine surface is just `await`** — the genuine CLR async boundary.
-  Proper `blockOn`/`delay`/`launch`/`async` (with cancellation + dispatcher)
-  are a future **Track 2** (kotlinx port).
-- **`blockOn`/`delay` are re-implemented IN THE TEST HARNESS, in pure Kotlin, over the PUBLIC stdlib primitives**
-  (`startCoroutine`/`Continuation` for blockOn's drain; `Task.Delay(ms).await()` for delay). The coroutine test
-  samples import the harness helpers instead of a stdlib symbol.
+Compiler regression fixtures use the shared support in `tests/support/coroutines/CoroutineTestSupport.kt`.
+Its `blockOn` drives public `startCoroutine`/`Continuation` primitives, and its delay helper awaits a .NET Task.
+This keeps core compiler tests independent of the external library while exercising the same low-level contract.
+The support code is test infrastructure, not a supported application library.
 
-**Why this is the validation, not just a test convenience:** the cold-core thesis is "sequence/Flow/kotlinx
-builders are ordinary library code over the shared cold core — the compiler needs NO builder knowledge." A
-test harness that implements the kotlinx primitives `blockOn`/`delay` in pure Kotlin over our stdlib
-primitives, with ZERO compiler special-casing, is a LIVING PROOF of exactly that claim. If the harness can't
-express them, that surfaces a real primitive gap — the best possible test. The harness IS a mini-Track-2.
-
-Harness location: shared Kotlin support under `tests/support/`, compiled with the coroutine tests; roundtrip
-scenarios keep their own inline copy. Sequencing:
-harness `blockOn` needs only `startCoroutine` (available after wave-2b lambda SMs); harness `delay` needs
-`await` (P4) — so `delay`-using tests wait on P4, `blockOn`-using tests land right after wave-2b.
+The compiler-generated suspend-main drain, public Task bridge, and Kotlin-to-Kotlin cold calls use their
+own resolved continuation/Task machinery. They do not call the test harness or recognize coroutine builders
+by library/function name. Library runtime validation remains separate from the compiler's core coroutine suite.
 
 ## 14. R1 — "Declaration is unconditional": the cold-entry ABI is an invariant, not a proof (#90/#100/#101)
 
