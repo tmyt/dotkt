@@ -2,9 +2,14 @@ package roundtrip.reifiednullability
 
 public inline fun <reified T> matches(value: Any?): Boolean = value is T
 
-// CLR generic reification already supplies the runtime classifier. This declaration retains Kotlin's semantic
-// `reified` marker for consumers but must not receive a nullable-instantiation Boolean: no operation asks whether a
-// null value matches T.
+public inline fun <reified T> safeCast(value: Any?): T? = value as? T
+
+public inline fun <reified T> checkedCast(value: Any?): T = value as T
+
+public inline fun <reified T> nullableForwarded(value: Any?): Boolean = matches<T?>(value)
+
+// A class literal reads the CLR generic argument's runtime type, not a membership predicate. This declaration
+// retains Kotlin's semantic `reified` marker for consumers but has no type-test witness demand.
 public inline fun <reified T> classifierName(): String = T::class.simpleName ?: "?"
 
 public inline fun <reified T> forwarded(value: Any?): Boolean = matches<T>(value)

@@ -1,0 +1,60 @@
+{
+  "fileClass": "ReifiedNullableClassifierKt",
+  "methods": [
+    {
+      "name": "accepts", "declarationId": "classifier:accepts", "static": true,
+      "typeParams": [{"name": "T", "reified": true}],
+      "params": [{"name": "value", "type": {"t": "nullable", "of": {"t": "fqn", "name": "kotlin.Any"}}}],
+      "ret": {"t": "fqn", "name": "kotlin.Boolean"},
+      "body": [{"k": "return", "value": {
+        "k": "isInst", "type": {"t": "tv", "scope": "method", "i": 0}, "e": {"k": "local", "name": "value"}
+      }}]
+    },
+    {
+      "name": "checked", "declarationId": "classifier:checked", "static": true,
+      "typeParams": [{"name": "T", "reified": true}],
+      "params": [{"name": "value", "type": {"t": "nullable", "of": {"t": "fqn", "name": "kotlin.Any"}}}],
+      "ret": {"t": "tv", "scope": "method", "i": 0},
+      "body": [{"k": "return", "value": {
+        "k": "cast", "reifiedTypeOperand": true, "type": {"t": "tv", "scope": "method", "i": 0},
+        "e": {"k": "local", "name": "value"}
+      }}]
+    },
+    {
+      "name": "safe", "declarationId": "classifier:safe", "static": true,
+      "typeParams": [{"name": "T", "reified": true}],
+      "params": [{"name": "value", "type": {"t": "nullable", "of": {"t": "fqn", "name": "kotlin.Any"}}}],
+      "ret": {"t": "nullable", "of": {"t": "tv", "scope": "method", "i": 0}},
+      "body": [{"k": "return", "value": {
+        "k": "isInstRef", "reifiedTypeOperand": true, "type": {"t": "tv", "scope": "method", "i": 0},
+        "e": {"k": "local", "name": "value"}
+      }}]
+    },
+    {
+      "name": "nullableInteger", "declarationId": "classifier:nullableInteger", "static": true,
+      "params": [{"name": "value", "type": {"t": "nullable", "of": {"t": "fqn", "name": "kotlin.Any"}}}],
+      "ret": {"t": "fqn", "name": "kotlin.Boolean"},
+      "body": [{"k": "return", "value": {
+        "k": "callStatic", "owner": {"t": "fqn", "name": "ReifiedNullableClassifierKt"},
+        "method": "accepts", "declarationId": "classifier:accepts",
+        "sig": [{"t": "nullable", "of": {"t": "fqn", "name": "kotlin.Any"}}],
+        "ret": {"t": "fqn", "name": "kotlin.Boolean"},
+        "typeArgs": [{"t": "nullable", "of": {"t": "fqn", "name": "kotlin.Int"}}],
+        "args": [{"k": "local", "name": "value"}]
+      }}]
+    },
+    {
+      "name": "comparableInteger", "declarationId": "classifier:comparableInteger", "static": true,
+      "params": [{"name": "value", "type": {"t": "nullable", "of": {"t": "fqn", "name": "kotlin.Any"}}}],
+      "ret": {"t": "fqn", "name": "kotlin.Boolean"},
+      "body": [{"k": "return", "value": {
+        "k": "callStatic", "owner": {"t": "fqn", "name": "ReifiedNullableClassifierKt"},
+        "method": "accepts", "declarationId": "classifier:accepts",
+        "sig": [{"t": "nullable", "of": {"t": "fqn", "name": "kotlin.Any"}}],
+        "ret": {"t": "fqn", "name": "kotlin.Boolean"},
+        "typeArgs": [{"t": "fqn", "name": "kotlin.Comparable", "args": [{"t": "fqn", "name": "kotlin.Int"}]}],
+        "args": [{"k": "local", "name": "value"}]
+      }}]
+    }
+  ]
+}

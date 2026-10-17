@@ -1195,7 +1195,8 @@ static class FBoundStarProjectionErasure
                 if (TryVarianceProjectedArrayInitializerOwner(obj, defs, refs, out var initializerOwner)
                     && owners.TryGetValue(initializerOwner.Name, out var projectedInitializerOwner))
                     projectedInitializerOwner.Needed = true;
-                var runtimeClassifier = Str(obj["k"]) is "isInst" or "isInstRef" or "cast";
+                var runtimeClassifier = Str(obj["k"]) is "isInst" or "isInstRef" or "cast"
+                    || Bool(obj[KotlinRuntimeTypeWitness.ClassifierKey]);
                 foreach (var kv in obj)
                 {
                     if (kv.Value == null || kv.Key == "name") continue;
@@ -3133,10 +3134,18 @@ static class FBoundStarProjectionErasure
                 // Base$star value at later Base<T> call/return slots and makes otherwise ordinary generic code
                 // unverifiable.
                 var runtimeTarget = TypeJson.Read(obj["type"]);
-                if (!Bool(obj["_exactBridgeCast"]) && runtimeKind is "isInst" or "isInstRef" or "cast"
+                var classifierRef = Bool(obj[KotlinRuntimeTypeWitness.ClassifierKey]);
+                obj.Remove(KotlinRuntimeTypeWitness.ClassifierKey);
+                if (classifierRef && StripSourceNullability(runtimeTarget) is TypeNode.Fqn foreignClassifier
+                    && ForeignStarProjectionBinding.OpenClassifierType(foreignClassifier, refs) is string openClassifier)
+                {
+                    obj["type"] = TypeJson.Fqn(openClassifier);
+                    ForeignStarProjectionBinding.RequireRuntimeFallback();
+                }
+                else if (!Bool(obj["_exactBridgeCast"]) && (runtimeKind is "isInst" or "isInstRef" or "cast" || classifierRef)
                     && StripSourceNullability(runtimeTarget) is TypeNode.Fqn { Args: { } } runtimeF
                     && TryExistentialCarrier(runtimeF.Name, owners, refs, out var runtimeCarrier)
-                    && (runtimeKind == "isInst"
+                    && (runtimeKind == "isInst" || classifierRef
                         || !IsProvenConstructedUpcast(
                             obj, runtimeF, defs, refs, currentThisType)))
                 {

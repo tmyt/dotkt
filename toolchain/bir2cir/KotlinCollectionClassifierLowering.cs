@@ -114,6 +114,9 @@ static class KotlinCollectionClassifierLowering
             };
         var target = TypeJson.Read(physicalTest["type"]);
         var safeCastResult = target is TypeNode.Nullable ? target : new TypeNode.Nullable(target);
+        // This pass runs after nullable erasure. A newly authored T? result must use its boxed slot too;
+        // a generic T local would unbox null (or merge an unboxed value with a null reference).
+        safeCastResult = NullableGenericErasure.EraseNullableTv(safeCastResult, _ => false);
         JsonObject result = Text(obj["k"]) == "isInst"
             ? new JsonObject {
                 ["k"] = "cond", ["cond"] = matches, ["then"] = physicalTest,

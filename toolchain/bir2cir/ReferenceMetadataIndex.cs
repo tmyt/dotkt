@@ -392,7 +392,7 @@ sealed partial class ReferenceMetadataIndex
             return false;
         }
         var completedCallSignature = completesWithNullableWitnesses
-            ? callSignature.Concat(Enumerable.Repeat<TypeNode>(new TypeNode.Fqn("kotlin.Int"),
+            ? callSignature.Concat(Enumerable.Repeat<TypeNode>(KotlinRuntimeTypeWitness.Type,
                 missingNullableWitnesses)).ToArray()
             : callSignature.ToArray();
         var physicalOwner = binding.DeclarationPhysicalOwner ?? binding.Owner;
