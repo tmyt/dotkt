@@ -1023,6 +1023,26 @@ attribute full name without those provenance markers is ignored. Consequences:
   round-trip stamp of the original Kotlin collection identity (a bir2cir `RoundtripMetadata` follow-up). `List`,
   `MutableList`, and `Map` — the common cases — round-trip precisely.
 
+### Native CLR enumeration
+
+Native `System.Collections.Generic.IEnumerable<T>` values support Kotlin `for` directly, including interface-typed
+parameters and API returns. No eager array conversion or extra adapter import is needed:
+
+```kotlin
+import System.IO.DirectoryInfo
+
+fun inspect(directory: DirectoryInfo) {
+    for (entry in directory.EnumerateFileSystemInfos()) println(entry.Name)
+}
+```
+
+Enumeration evaluates the source once, obtains one enumerator, and requests elements lazily through
+`MoveNext`/`Current`. Native exceptions propagate normally. Native source declarations retain their CLR types
+rather than being rewritten to Kotlin `Iterable` or `Sequence`; iteration adds no new runtime classifier rules.
+The protocol does not add automatic `Dispose` on completion, exception or early exit.
+For resource-owning enumeration, explicitly acquire the native enumerator and dispose it in `finally`;
+the inherited non-generic `MoveNext` surface can be accessed as `System.Collections.IEnumerator`.
+
 ## 5d. `Appendable` is `System.Text.StringBuilder`
 
 `kotlin.text.Appendable` is a JVM-ism (`java.lang.Appendable`) with **no distinct .NET representation** —

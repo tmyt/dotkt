@@ -90,8 +90,7 @@ internal fun BirEmitter.labelJson(label: String?): String = label?.let { str(it)
 /** A loop body: a block's statements, or a single bare statement (single-statement loop bodies). */
 internal fun BirEmitter.loopBody(body: IrExpression?): String = when (body) {
 	null -> ""
-	is IrBlock -> body.statements.joinToString(",") { stmt(it) }
-	else -> stmt(body)
+	else -> bodyStmts(body)
 }
 
 /** Wrap a statement-position control transfer ([xfer] = a `goto`/`break`/`continue` node) so it can sit in an
@@ -208,7 +207,8 @@ internal fun BirEmitter.tryStmt(node: IrTry): String {
 }
 
 internal fun BirEmitter.bodyStmts(e: IrExpression): String =
-	if (e is IrBlock) e.statements.joinToString(",") { stmt(it) } else stmt(e)
+	// A sole for-loop is itself an IrBlock; preserve it for stmt's structured-loop projection.
+	if (e is IrBlock && e.origin?.toString() != "FOR_LOOP") e.statements.joinToString(",") { stmt(it) } else stmt(e)
 
 /** `try`/`catch` in value position -> a temp local assigned in each branch, returned via a valueBlock. */
 internal fun BirEmitter.tryExpr(node: IrTry): String {
