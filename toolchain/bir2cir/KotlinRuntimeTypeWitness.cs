@@ -151,22 +151,10 @@ static class KotlinRuntimeTypeWitness
                     ["cond"] = new JsonObject { ["k"] = "binOp", ["op"] = "===", ["lhs"] = predicate.DeepClone(), ["rhs"] = Null() },
                     ["then"] = matches.DeepClone(), ["else"] = semanticCastMatches,
                 };
-                var nativeException = refs.ResolveRefType("System.InvalidCastException");
                 statements.Add(new JsonObject {
                     ["k"] = "if", ["branches"] = new JsonArray(new JsonObject {
                         ["cond"] = new JsonObject { ["k"] = "unaryOp", ["op"] = "!", ["e"] = castMatches },
-                        ["body"] = new JsonArray(new JsonObject {
-                            // Existing CLR-token classifiers keep their native checked-cast exception contract.
-                            // Only the explicit semantic-superclass predicate selects the new Kotlin guard.
-                            ["k"] = "if", ["branches"] = new JsonArray(new JsonObject {
-                                ["cond"] = new JsonObject { ["k"] = "binOp", ["op"] = "===", ["lhs"] = predicate.DeepClone(), ["rhs"] = Null() },
-                                ["body"] = new JsonArray(new JsonObject { ["k"] = "throw", ["value"] = new JsonObject {
-                                    ["k"] = "newClr", ["type"] = TypeJson.Fqn("System.InvalidCastException"), ["args"] = new JsonArray(),
-                                    ["memberRef"] = ClrMemberResolution.MemberRefJson(nativeException.GetConstructor(System.Type.EmptyTypes),
-                                        "ctor", nativeException, null),
-                                } }),
-                            }),
-                        }, new JsonObject { ["k"] = "throw", ["value"] = new JsonObject {
+                        ["body"] = new JsonArray(new JsonObject { ["k"] = "throw", ["value"] = new JsonObject {
                             ["k"] = "new", ["type"] = TypeJson.Fqn("kotlin.ClassCastException"),
                             ["args"] = new JsonArray(), ["argTypes"] = new JsonArray(),
                         } }),

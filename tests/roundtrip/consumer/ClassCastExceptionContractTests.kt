@@ -21,6 +21,7 @@ class ClassCastExceptionContractTests {
         check(explicit)
         val exported: Any = api.construct("factory")
         check(exported is System.InvalidCastException)
-        check(api.construct("source view").message == "source view")
+        val typed: ClassCastException = api.construct("source view")
+        check(typed.message == "source view")
     }
 }
