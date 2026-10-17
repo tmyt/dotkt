@@ -363,12 +363,12 @@ This is a user-stated foundational deviation, not an implementation detail.
   internal lowered form, with a `Task` sink). A C# caller `await`s it natively. A Kotlin caller in another module sees a
   `suspend fun` again (restored from a `[KotlinFunction(Suspend)]` attribute, with the `Task<T>` unwrapped to `T`) and
   calls its continuation-based cold entry directly, avoiding an intermediate Task allocation.
-- **Execution is HOT, not cold.** A .NET `Task` starts running when created — so invoking a suspend function starts
-  its execution immediately, exactly like C# `async`. This deliberately deviates from the kotlinx-coroutines
-  cold-by-default framing (a `suspend` body that only runs when awaited/launched). Kotlin's *language* semantics for
-  a direct suspend call (call = run to the first suspension and continue) are preserved; what does NOT carry over is
-  the kotlinx-style cold-start expectation around builders. Structured concurrency (`Job`/`CoroutineScope`) is a
-  separate later track.
+- **The exported Task bridge starts execution immediately**, like a C# `async` method. Kotlin-to-Kotlin suspend
+  calls use the continuation entry and retain ordinary Kotlin call/suspension semantics. Builder start behavior is
+  library-defined: a cold Flow or Sequence remains cold, while coroutine builders select their own start policy.
+  The separate `dotktx.coroutines` CLR port supplies `Job`, `CoroutineScope`, `launch`, `async`, Flow, and channels;
+  those APIs are not bundled in the compiler-provided stdlib. See
+  [external kotlinx libraries](user/supported-features.md#external-kotlinx-libraries).
 - Gotcha: a member `suspend fun` returning a **user type** drove out a Reflection.Emit limitation
   (`AsyncTaskMethodBuilder<UserT>` is a TypeBuilder instantiation) — fixed by re-anchoring those members via
   `TypeBuilder.GetMethod`.
@@ -414,7 +414,7 @@ direct `GetAwaiter()` path, which is the same behavior without the configured-aw
   SyncContext pump would starve delivery). Suppressing the SyncContext capture when an interceptor is present (a
   runtime branch, ideally a stdlib `taskinterop` await-registration helper) is the cleaner consolidation, deferred.
 
-## 4a-bis. Cancellation-exception fidelity across the Task bridge is ONE-WAY (Kotlin→.NET fixed; .NET→Kotlin is a 0.9.8/Track-2 gap)
+## 4a-bis. Cancellation-exception fidelity across the Task bridge is ONE-WAY
 
 Cancellation crosses the suspend↔`Task` boundary as an EXCEPTION, and the two exception vocabularies differ: Kotlin
 signals cancellation with `kotlin.coroutines.cancellation.CancellationException` (which extends `IllegalStateException`
@@ -430,14 +430,14 @@ on the CLR — `CancellationExceptionClr.kt`), while .NET signals it with `Syste
   preserved into the .NET exception; carrying it via `TrySetException` would leave `IsCanceled == false` and break every
   .NET structured-concurrency consumer) route to a CANCELED Task. A .NET consumer of a Kotlin `suspend fun` therefore
   observes idiomatic cancellation (`TaskCanceledException` on `await`, `Task.IsCanceled`).
-- **.NET→Kotlin (DELIBERATE GAP, 0.9.8/Track-2).** The REVERSE is NOT bridged: a plain `.await()` of a canceled .NET
+- **.NET→Kotlin.** The REVERSE is NOT bridged: a plain `.await()` of a canceled .NET
   `Task` resumes the Kotlin coroutine with a `TaskCanceledException` (an `OperationCanceledException`), which is NOT a
   `kotlin.coroutines.cancellation.CancellationException` — so a Kotlin `catch (e: CancellationException)` does NOT catch
   it, and Kotlin structured-concurrency (`Job` cancellation, `NonCancellable`, cancellation-aware `finally`) does not
   recognize it as cancellation. `.await()` deliberately does NOT auto-insert an inbound OCE→CE mapping (matching the
-  #86 "nothing auto-inserted" principle); the planned fix is an OPT-IN interop adapter `Task.awaitCancellable()`
-  (OCE→CancellationException) shipped with the structured-concurrency track (it is meaningless without `Job`/
-  `CoroutineScope`). A future opt-in adapter can bridge this boundary; remaining work is tracked in GitHub Issues.
+  #86 "nothing auto-inserted" principle). Using the separate coroutines library does not change the built-in await
+  bridge's exception mapping. Catch `System.OperationCanceledException` explicitly when consuming cancellable .NET
+  work, or use a library adapter with an explicit cancellation contract. Remaining work is tracked in GitHub Issues.
 
 ## 4c. `.await()` binds to the .NET AWAITABLE PATTERN (GetAwaiter), not to Task (#10)
 

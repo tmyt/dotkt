@@ -49,8 +49,8 @@ suspend fun fetch(): Int          // CLR signature: Task<int> fetch()
   builder remains lazy and is driven by iteration.
 - The exported task method has no `Continuation` parameter; the continuation entry carries it.
 - Suspend lowering, continuations, coroutine context, and `Sequence`/`yield` builders are
-  implemented. Structured concurrency APIs such as `Job` and `CoroutineScope` belong to the
-  separate kotlinx library track.
+  implemented. Add the separate `dotktx.coroutines` library for structured concurrency APIs
+  such as `Job`, `CoroutineScope`, `launch`, and `async`; they are not bundled in the stdlib.
 
 ## Generics are real (reified) — and that mostly helps
 
@@ -122,9 +122,8 @@ current language version 2.4.` Functions, properties, members, extensions,
 
 ## Not supported (current, honest list)
 
-- **kotlinx libraries** (kotlinx-coroutines, kotlinx-serialization, …) — DotKt binds the
-  *stdlib*; kotlinx is a separate future track.
-- **Structured concurrency APIs** (`Job`, `CoroutineScope`, `launch`, …) — part of the separate
-  kotlinx library track. Stdlib `Sequence` builders and `yield` are supported.
+- **Kotlinx libraries without a CLR port** require separate porting and validation. The
+  `dotktx.coroutines` and `dotktx.atomicfu` ports are available as separate libraries; see
+  [external kotlinx libraries](supported-features.md#external-kotlinx-libraries).
 - **Live `CharSequence` views** and user implementations of `Appendable` (use `StringBuilder`).
 - `internal` is assembly-visibility; there is no friend-module (`InternalsVisibleTo`) wiring yet.
