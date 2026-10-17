@@ -1586,7 +1586,7 @@ sealed partial class ReferenceMetadataIndex
             // routing the same value through the opaque reflection ABI would discard a valid nominal conversion.
             if (BirTypeLowering.GenericAliasHeadDependsOnLoweredArguments(aliasOwner)
                 && !BirTypeLowering.ProjectedAliasHasReifiedGenericHead(
-                    sourceOwner, aliasOwner, arguments)) return null;
+                    sourceOwner, aliasOwner, arguments, Aliases)) return null;
             return ResolveNetType(aliasOwner, genericArity);
         }
         if (HasDotKtOwner(sourceOwner)) return null;

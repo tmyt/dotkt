@@ -5174,7 +5174,7 @@ static class FBoundStarProjectionErasure
     {
         if (localClrAliases != null && localClrAliases.TryGetValue(type.Name, out var physical))
             return !BirTypeLowering.GenericAliasHeadDependsOnLoweredArguments(physical)
-                || BirTypeLowering.ProjectedAliasHasReifiedGenericHead(type.Name, physical, type.Args);
+                || BirTypeLowering.ProjectedAliasHasReifiedGenericHead(type.Name, physical, type.Args, refs.Aliases, localClrAliases);
         return ForeignStarProjectionBinding.IsForeignStarType(type, refs);
     }
 

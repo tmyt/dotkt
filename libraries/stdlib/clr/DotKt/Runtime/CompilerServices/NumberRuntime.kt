@@ -15,19 +15,27 @@ internal interface NumberSlots {
     fun dotktToChar(): Char
 }
 
+@kotlin.clr.ClrTypeAlias("System.Array")
+private interface NumberArrayStorage
+
 @PublishedApi
-internal fun numberMatches(value: Any?, arrayDepth: Int): Boolean {
-    if (arrayDepth == 0) return value is Byte || value is Short || value is Int || value is Long ||
+internal fun numberMatches(value: Any?, arrayShape: String): Boolean {
+    if (arrayShape.length == 0) return value is Byte || value is Short || value is Int || value is Long ||
         value is Float || value is Double || value is NumberSlots
-    return value != null && numberArrayTypeMatches(value.starProjectionRuntimeType(), arrayDepth)
+    return value != null && numberArrayTypeMatches(value.starProjectionRuntimeType(), arrayShape, 0)
 }
 
-private fun numberArrayTypeMatches(type: StarProjectionType, depth: Int): Boolean {
+private fun numberArrayTypeMatches(type: StarProjectionType, shape: String, index: Int): Boolean {
     if (!type.isSzArray) return false
     val component = type.getElementType()!!
     // Erased allocations retain the existing object[] component contract. A more
     // precise native component must still supply the requested Kotlin classifier.
-    if (depth > 1) return numberArrayTypeMatches(component, depth - 1)
+    if (index + 1 < shape.length) {
+        // Nested projected/open arrays allocate System.Array[]; the erased component
+        // already supplies that level's storage, just as in ordinary array casts.
+        if (shape[index + 1] == 'o' && component == (NumberArrayStorage::class as StarProjectionType)) return true
+        return numberArrayTypeMatches(component, shape, index + 1)
+    }
     return component == (Any::class as StarProjectionType) || numberComponentMatches(component)
 }
 
@@ -40,7 +48,7 @@ internal fun numberComponentMatches(component: StarProjectionType): Boolean =
         (NumberSlots::class as StarProjectionType).isAssignableFrom(component)
 
 @PublishedApi
-internal fun numberClassifier(arrayDepth: Int): (Any?) -> Boolean = { numberMatches(it, arrayDepth) }
+internal fun numberClassifier(arrayShape: String): (Any?) -> Boolean = { numberMatches(it, arrayShape) }
 
 @PublishedApi
 internal fun numberToDouble(value: Any): Double = when (value) {

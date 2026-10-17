@@ -79,6 +79,9 @@ internal static class NumberMetadataInspector
             && IsNumber(bound.TypeParameter[0].UpperBound[0]), "DLL import lost a class's source Number bound");
         var implementation = fragment.Class.Single(type => Name(fragment, type.FqName) == Package + ".LibraryNumber");
         Require(implementation.Supertype.Any(IsNumber), "DLL import lost the source Number base edge");
+        Require(implementation.Supertype.Any(type => type.HasClassName
+            && Name(fragment, type.ClassName) == "kotlin.Comparable" && type.Argument.Count == 1
+            && IsNumber(type.Argument[0].Type)), "DLL import lost the Number-bearing Comparable source edge");
         Require(!implementation.Supertype.Any(type => type.HasClassName && Name(fragment, type.ClassName)
             .StartsWith("DotKt.Runtime.CompilerServices.", StringComparison.Ordinal)),
             "a physical nominal carrier was reverse-mapped into the Kotlin API");

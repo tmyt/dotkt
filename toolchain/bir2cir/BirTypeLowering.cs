@@ -38,12 +38,18 @@ static class BirTypeLowering
 
     // A pre-lowering projection pass must ask the same head-selection rule as the final type lowering. Remove only
     // the existential shell that FBoundStarProjectionErasure itself will erase, lower the resulting arguments, and
-    // delegate the classifier decision to PhysicalHead. This keeps Comparable<*> on non-generic IComparable while
-    // An opaque argument's value representation participates in that decision too; a Kotlin
-    // superclass represented by Object cannot retain a reified native comparison head.
+    // delegate the classifier decision to PhysicalHead. Argument aliases participate in that same decision;
+    // do not use the full-tree lowering's ambient state before that lowering has even run.
     internal static bool ProjectedAliasHasReifiedGenericHead(
-        string kotlinFqn, string bcl, IReadOnlyList<TypeNode> arguments)
+        string kotlinFqn, string bcl, IReadOnlyList<TypeNode> arguments,
+        IReadOnlyDictionary<string, string> aliases, IReadOnlyDictionary<string, string> localAliases = null)
     {
+        if (localAliases != null)
+        {
+            var combined = new Dictionary<string, string>(aliases, StringComparer.Ordinal);
+            foreach (var (name, target) in localAliases) combined[name] = target;
+            aliases = combined;
+        }
         TypeNode Bound(TypeNode type) => type switch
         {
             TypeNode.Star => new TypeNode.Fqn("kotlin.Any"),
@@ -53,8 +59,7 @@ static class BirTypeLowering
             _ => type,
         };
         var lowered = arguments.Select(argument =>
-            LowerType(Bound(argument),
-                refBuild: false, force: true, typeArg: true)).ToArray();
+            LowerPhysicalType(Bound(argument), aliases, null, null, typeArg: true)).ToArray();
         return PhysicalHead(kotlinFqn, bcl, lowered)
             is TypeNode.Fqn { Args: not null };
     }

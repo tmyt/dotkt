@@ -69,9 +69,9 @@ sealed class ValueRepresentationLowering
 
     internal JsonNode Predicate(TypeNode type)
     {
-        var (binding, depth) = Classifier(type);
+        var (binding, shape) = Classifier(type);
         return !referenceBuild && binding != null
-            ? Helper(binding.ClassifierFactory, new[] { Depth(depth) }, new[] { new TypeNode.Fqn("kotlin.Int") },
+            ? Helper(binding.ClassifierFactory, new[] { Shape(shape) }, new[] { new TypeNode.Fqn("kotlin.String") },
                 KotlinRuntimeTypeWitness.PredicateType) : null;
     }
 
@@ -79,8 +79,8 @@ sealed class ValueRepresentationLowering
 
     internal JsonNode ComponentPredicate(TypeNode type, JsonNode actualType)
     {
-        var (binding, depth) = Classifier(type);
-        return !referenceBuild && binding != null && depth == 0
+        var (binding, shape) = Classifier(type);
+        return !referenceBuild && binding != null && shape.Length == 0
             ? Helper(binding.ComponentClassifier, new[] { actualType },
                 new TypeNode[] { new TypeNode.Fqn("DotKt.Runtime.CompilerServices.StarProjectionType") }, new TypeNode.Fqn("kotlin.Boolean"))
             : null;
@@ -125,22 +125,26 @@ sealed class ValueRepresentationLowering
         return null;
     }
 
-    (ValueRepresentationBinding Binding, int Depth) Classifier(TypeNode type)
+    (ValueRepresentationBinding Binding, string Shape) Classifier(TypeNode type)
     {
-        var depth = 0;
+        var shape = "";
         for (;;)
             switch (type)
             {
                 case TypeNode.Nullable nullable: type = nullable.Of; break;
                 case TypeNode.Oblivious oblivious: type = oblivious.Of; break;
                 case TypeNode.Projection { Variance: "out" } projection: type = projection.Of; break;
-                case TypeNode.Array { SzArray: true, Rank: 1 } array: type = array.Elem; depth++; break;
-                case TypeNode.Fqn f when bindings.TryGetValue(f.Name, out var binding): return (binding, depth);
-                default: return (null, 0);
+                case TypeNode.Array { SzArray: true, Rank: 1 } array:
+                    shape += GenericArrayStorageLowering.NeedsStorage(array) ? "o" : "a";
+                    type = array.Elem;
+                    break;
+                case TypeNode.Fqn f when bindings.TryGetValue(f.Name, out var binding): return (binding, shape);
+                default: return (null, "");
             }
     }
 
-    static JsonObject Depth(int depth) => new() { ["k"] = "const", ["type"] = TypeJson.Fqn("kotlin.Int"), ["value"] = depth };
+    // One character per vector, outermost first: open System.Array storage or exact array storage.
+    static JsonObject Shape(string shape) => new() { ["k"] = "const", ["type"] = TypeJson.Fqn("kotlin.String"), ["value"] = shape };
 
     JsonObject Helper(string target, IReadOnlyList<JsonNode> arguments, IReadOnlyList<TypeNode> parameters, TypeNode result)
     {
@@ -261,15 +265,17 @@ sealed class ValueRepresentationLowering
             {
                 // An unchecked generic cast still checks its erased source bound. Keep that
                 // guard inside the operand so deferred Object-return/narrowing remains unchanged.
+                // Like an ordinary raw class-bound cast, this preguard admits null; the original
+                // generic cast and its eventual typed consumer retain ownership of null handling.
                 var guard = (JsonObject)operation.DeepClone();
-                guard["type"] = TypeJson.Write(source is TypeNode.Nullable ? new TypeNode.Nullable(bound) : bound);
+                guard["type"] = TypeJson.Write(bound is TypeNode.Nullable ? bound : new TypeNode.Nullable(bound));
                 Walk(guard);
                 operation["e"] = new JsonObject { ["k"] = "cast",
                     ["type"] = TypeJson.Write(new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"))), ["e"] = guard };
                 return;
             }
             var nullable = source is TypeNode.Nullable;
-            var (binding, depth) = Classifier(source);
+            var (binding, shape) = Classifier(source);
             if (binding == null) return;
             string temp;
             do temp = "$valueClassifier$" + suffix++; while (!names.Add(temp));
@@ -283,8 +289,8 @@ sealed class ValueRepresentationLowering
                 ["then"] = Bool(nullable),
                 ["else"] = new JsonObject {
                     ["k"] = "cond", ["type"] = TypeJson.Fqn("kotlin.Boolean"),
-                    ["cond"] = Helper(binding.Classifier, new[] { Local(), Depth(depth) },
-                        new TypeNode[] { any, new TypeNode.Fqn("kotlin.Int") }, new TypeNode.Fqn("kotlin.Boolean")),
+                    ["cond"] = Helper(binding.Classifier, new[] { Local(), Shape(shape) },
+                        new TypeNode[] { any, new TypeNode.Fqn("kotlin.String") }, new TypeNode.Fqn("kotlin.Boolean")),
                     ["then"] = new JsonObject { ["k"] = "isInst", ["type"] = TypeJson.Write(source), ["e"] = Local() },
                     ["else"] = Bool(false),
                 },
@@ -351,8 +357,12 @@ sealed class ValueRepresentationLowering
                 if (obj["kind"] != null)
                 {
                     var pre = new JsonObject();
-                    if (obj["interfaces"] is JsonArray interfaces && interfaces.Select(TypeJson.Read)
-                        .Any(type => type != null && !type.Equals(AliasFace(type)))) pre["interfaces"] = interfaces.DeepClone();
+                    if (obj["interfaces"] is JsonArray interfaces)
+                    {
+                        var changed = interfaces.Where(edge => TypeJson.Read(edge) is TypeNode type
+                            && !type.Equals(AliasFace(type))).Select(edge => edge.DeepClone()).ToArray();
+                        if (changed.Length > 0) pre["interfaces"] = new JsonArray(changed);
+                    }
                     if (TypeJson.Read(obj["base"]) is TypeNode parent && !parent.Equals(AliasFace(parent)))
                         pre["base"] = obj["base"].DeepClone();
                     KotlinSupertypesRecord.Merge(obj, pre);
@@ -414,21 +424,24 @@ sealed class ValueRepresentationLowering
                 if (own.Length > 1) throw new InvalidOperationException("Ambiguous selected nominal-slot implementation");
                 JsonObject inherited = null;
                 TypeNode.Fqn inheritedOwner = null;
-                if (cls.Base != null)
+                // An intermediate class need not declare any semantic overrides or new bridges.
+                // Resolve the actual inherited body along the constructed class chain, not just its first edge.
+                foreach (var (baseType, _) in SupertypeGraph.Reachable(cls, defs, refs).Where(edge => !edge.isInterface))
                 {
-                    if (bridges.TryGetValue((cls.Base.Name, source.Slot), out var local))
+                    if (bridges.TryGetValue((baseType.Name, source.Slot), out var local))
                     {
                         inherited = local;
-                        inheritedOwner = cls.Base;
+                        inheritedOwner = baseType;
                     }
-                    else if (refs?.ValueSlotBridge(cls.Base.Name, slotOwner, slotMember) is { } external)
+                    else if (refs?.ValueSlotBridge(baseType.Name, slotOwner, slotMember) is { } external)
                     {
                         inherited = new JsonObject { ["name"] = external.Name, ["abstract"] = external.IsAbstract,
                             ["ret"] = TypeJson.Write(external.ReturnTypeNode),
                             ["params"] = new JsonArray(external.ParamTypeNodes.Select((type, index) => (JsonNode)new JsonObject {
                                 ["name"] = "p" + index, ["type"] = TypeJson.Write(type) }).ToArray()) };
-                        inheritedOwner = cls.Base;
+                        inheritedOwner = baseType;
                     }
+                    if (inherited != null) break;
                 }
                 var declaration = source.Method;
                 var parameters = declaration["params"] as JsonArray ?? new JsonArray();
@@ -511,8 +524,8 @@ sealed class ValueRepresentationLowering
           {"name":"Child","kind":"class","base":{"t":"fqn","name":"Union"},"methods":[
            {"name":"differentName","declarationId":"child-convert","ret":{"t":"fqn","name":"kotlin.Int"},"params":[],
             "overrides":[{"declarationId":"convert"}],"abstract":false}]}],"methods":[
-          {"name":"matches","declarationId":"matches","params":[{"type":{"t":"nullable","of":{"t":"fqn","name":"kotlin.Any"}}},{"type":{"t":"fqn","name":"kotlin.Int"}}]},
-          {"name":"classifier","declarationId":"classifier","params":[{"type":{"t":"fqn","name":"kotlin.Int"}}]},
+          {"name":"matches","declarationId":"matches","params":[{"type":{"t":"nullable","of":{"t":"fqn","name":"kotlin.Any"}}},{"type":{"t":"fqn","name":"kotlin.String"}}]},
+          {"name":"classifier","declarationId":"classifier","params":[{"type":{"t":"fqn","name":"kotlin.String"}}]},
           {"name":"convert","declarationId":"helper-convert","params":[{"type":{"t":"fqn","name":"kotlin.Any"}}]},
           {"name":"use","params":[{"name":"value","type":{"t":"fqn","name":"Union"}}],
            "ret":{"t":"array","elem":{"t":"fqn","name":"Union"}},
@@ -526,6 +539,8 @@ sealed class ValueRepresentationLowering
         var policy = new ValueRepresentationLowering(new[] { root }, null, false);
         var scalar = policy.Predicate(new TypeNode.Fqn("Union"));
         var vector = policy.Predicate(new TypeNode.Array(new TypeNode.Fqn("Union")));
+        var projected = policy.Predicate(new TypeNode.Array(new TypeNode.Array(
+            new TypeNode.Projection("out", new TypeNode.Fqn("Union")))));
         policy.EraseBounds(root);
         policy.BindOperations(root);
         policy.RecordSourceTypes(root);
@@ -541,9 +556,10 @@ sealed class ValueRepresentationLowering
             || TypeJson.OwnerName(method["body"][2]["expr"]["type"]) != "Union"
             || TypeJson.OwnerName(method["body"][3]["expr"]["sig"][0]) != "Union"
             || TypeJson.OwnerName(root["types"][1]["base"]) != "Union"
-            || scalar["args"][0]["value"].GetValue<int>() != 0
-            || vector["args"][0]["value"].GetValue<int>() != 1)
-            throw new InvalidOperationException("Value representation lost source types, bounds, exact heads, or classifier depth");
+            || Text(scalar["args"][0]["value"]) != ""
+            || Text(vector["args"][0]["value"]) != "a"
+            || Text(projected["args"][0]["value"]) != "oo")
+            throw new InvalidOperationException("Value representation lost source types, bounds, exact heads, or classifier shape");
         var child = root["types"][1];
         var bridge = child["methods"].AsArray().OfType<JsonObject>().Single(method => method["generated"]?.GetValue<bool>() == true);
         if (TypeJson.OwnerName(child["interfaces"][0]) != "Slots"

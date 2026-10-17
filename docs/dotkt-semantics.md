@@ -614,6 +614,8 @@ ilemit receives only resolved CLR operations.
 An unchecked non-reified `value as T` with `T : Number` retains the raw Number classifier guard even when its
 result is unused or deferred in Object storage. Concrete typed consumers still perform their existing CLR
 narrowing; this does not make a boxed Long usable as an Int.
+As with other unchecked class-bound casts, that raw bound guard admits null; the original generic cast and
+its typed consumer keep their existing null handling. Direct and reified non-null Number casts still reject null.
 
 This is not a Kotlin-reflection implementation. Under the existing `KClass` = `System.Type` contract (§2, §5g),
 `Number::class` names its physical alias, `System.Object`. A generic `T::class`
@@ -634,6 +636,8 @@ An open non-reified `Array<T>` retains the existing `System.Array` contract: a `
 the six numeric components and nominal implementations, so an `Int32[]` can be checked and used inside that open
 generic body. Its native component still enforces stores. This does not give that allocation the invariant
 `Array<Number>`/`object[]` representation.
+Nested projected arrays retain the same rule: `Array<Array<out Number>>` may allocate `System.Array[]`, whose
+erased inner component is accepted without pretending it has the invariant `object[][]` representation.
 
 There is no runtime public CLR `kotlin.Number` class. C# source naming that former compiler-produced base, parameter
 type, or generic constraint must change; it is not a native CLR numeric union. C# consumes Kotlin Number value slots

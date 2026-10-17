@@ -37,9 +37,9 @@ private fun numberValue(value: Number): Int = value.toInt()
 private fun numberChoice(value: Number): String = "number"
 private fun numberChoice(value: Any): String = "any"
 private fun <T : Number> boundedNumber(value: T): Int = value.toInt()
-private fun <T : Number> boundedNumberCast(value: Any): T = value as T
-private fun <T : Number> boundedNumberSafe(value: Any): T? = value as? T
-private class NumberCaster<A, N : Number> { fun <T : N> cast(value: Any): T = value as T }
+private fun <T : Number> boundedNumberCast(value: Any?): T = value as T
+private fun <T : Number> boundedNumberSafe(value: Any?): T? = value as? T
+private class NumberCaster<A, N : Number> { fun <T : N> cast(value: Any?): T = value as T }
 private fun <T> numberArrayIdentity(value: Array<T>): Array<T> = value
 private fun <T : Number> boundedNumberArray(value: Any, replacement: T): Boolean {
     val array = value as? Array<T> ?: return false
@@ -95,6 +95,13 @@ class NumberTests {
         check(rejected)
         check(boundedNumberSafe<Number>("bad") == null)
         assertEquals(17, boundedNumberCast<Number>(17).toInt())
+        val uncheckedNull: Any? = boundedNumberCast<Number>(null)
+        val inheritedBoundNull: Any? = NumberCaster<Any, Number>().cast<Number>(null)
+        check(uncheckedNull == null && inheritedBoundNull == null)
+        check(boundedNumberSafe<Number>(null) == null)
+        rejected = false
+        try { numberCast<Number>(null) } catch (_: ClassCastException) { rejected = true }
+        check(rejected)
     }
 
     @TestAttribute
@@ -190,5 +197,16 @@ class NumberTests {
         val nestedChecked = numberCast<Array<Array<Number>>>(nested)
         nestedChecked[0][0] = 9L
         assertEquals(9, nestedChecked[0][0].toInt())
+        val nestedProjected: Any = arrayOf<Array<out Number>>(arrayOf(1))
+        check(numberIs<Array<Array<out Number>>>(nestedProjected))
+        assertEquals(1, numberSafe<Array<Array<out Number>>>(nestedProjected)!![0][0].toInt())
+        assertEquals(1, numberCast<Array<Array<out Number>>>(nestedProjected)[0][0].toInt())
+        assertEquals(1, (nestedProjected as Array<Array<out Number>>)[0][0].toInt())
+        assertEquals(1, (nestedProjected as? Array<Array<out Number>>)!![0][0].toInt())
+        val projectedView = numberCast<Array<Array<out Number>>>(nestedProjected)
+        projectedView[0] = arrayOf(2L)
+        assertEquals(2, projectedView[0][0].toInt())
+        check(numberIs<Array<Array<out Number>>>(nestedNative))
+        check(!numberIs<Array<Array<out Number>>>(arrayOf(arrayOf("precise"))))
     }
 }

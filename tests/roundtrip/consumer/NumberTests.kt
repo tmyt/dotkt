@@ -7,6 +7,8 @@ import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import roundtrip.numbers.*
 
 class ConsumerNumber : LibraryNumber(1) { override fun toInt(): Int = 83 }
+open class ConsumerMiddle : LibraryNumber(1)
+class ConsumerLeaf : ConsumerMiddle() { override fun toInt(): Int = 83 }
 class ConsumerCharacter : LibraryNumber(65) {
     var calls: Int = 0
     @kotlin.clr.ClrName("CustomCharacter")
@@ -24,6 +26,8 @@ class NumberRoundtripTests {
         assertEquals("any", numberChoice("17"))
         assertEquals(18, boundedNumber(18))
         assertEquals(18, numberCast<Number>(18L).toInt())
+        val uncheckedNull: Any? = numberCast<Number>(null)
+        check(uncheckedNull == null)
         var rejected = false
         try { numberCast<Number>("bad") } catch (_: ClassCastException) { rejected = true }
         check(rejected)
@@ -36,6 +40,13 @@ class NumberRoundtripTests {
         check(slot.nullable == null)
         val custom: Number = ConsumerNumber()
         assertEquals(83, numberValue(custom))
+        val leaf: Number = ConsumerLeaf()
+        assertEquals(83, leaf.toInt())
+        assertEquals(1L, leaf.toLong())
+        assertEquals(83.toChar(), leaf.toChar())
+        assertEquals(0, (leaf as Comparable<Number>).compareTo(83))
+        check(isNumberType<Comparable<Number>>(leaf))
+        check(!isNumberType<Comparable<Number>>(Any()))
         val character = ConsumerCharacter()
         assertEquals('A', (character as Number).toChar())
         assertEquals(1, character.calls)
@@ -49,5 +60,7 @@ class NumberRoundtripTests {
         check(!isNumberType<Number>('a'))
         check(isNumberType<Array<Number>>(array))
         check(!isNumberType<Array<Number>>(arrayOf("precise")))
+        val projected: Any = arrayOf<Array<out Number>>(arrayOf(1))
+        check(isNumberType<Array<Array<out Number>>>(projected))
     }
 }
