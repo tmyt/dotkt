@@ -316,7 +316,7 @@ var nullIsCalls = 0
 fun nullIsSrc(n: Int): Any? { nullIsCalls++; return if (n > 0) "hi" else null }
 
 // A CLR generic argument does not distinguish String from String?. Reified Kotlin declarations therefore receive a
-// hidden Boolean witness, including when the type argument flows through another reified declaration.
+// explicit type witness, including when the type argument flows through another reified declaration.
 inline fun <reified T> nullReifiedIs(x: Any?): Boolean = x is T
 inline fun <reified U> nullReifiedForward(x: Any?): Boolean = nullReifiedIs<U>(x)
 inline fun <reified A, reified B> nullReifiedEither(x: Any?): Boolean = x is A || x is B

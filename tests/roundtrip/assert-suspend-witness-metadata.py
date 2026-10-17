@@ -43,7 +43,11 @@ for method in declarations(document):
         assert len(identity["signature"]["params"]) == expected[name], (name, identity)
         assert len(method["params"]) == expected[name] + len(witnesses), (name, method["params"])
         if witnesses:
-            assert method["params"][-1]["type"] == {"t": "fqn", "name": "System.Int32"}
+            assert method["params"][-1]["type"] == {
+                "t": "fqn", "name": "System.ValueTuple", "args": [
+                    {"t": "fqn", "name": "System.Int32"}, {"t": "fqn", "name": "System.Type"},
+                ],
+            }
         assert method["ret"] == {
             "t": "fqn", "name": "System.Threading.Tasks.Task",
             "args": [{"t": "fqn", "name": "System.Boolean"}],
@@ -79,7 +83,11 @@ for call in objects(consumer):
     assert target["name"] == call["method"]
     assert len(target["parameterTypes"]) == parameter_count, (name, target)
     if witness_count:
-        assert target["parameterTypes"][-2] == {"t": "fqn", "name": "System.Int32"}
+        assert target["parameterTypes"][-2] == {
+            "t": "fqn", "name": "System.ValueTuple`2", "args": [
+                {"t": "fqn", "name": "System.Int32"}, {"t": "fqn", "name": "System.Type"},
+            ],
+        }
     assert target["parameterTypes"][-1]["name"] == "kotlin.coroutines.Continuation$star"
 assert called == set(expected), (called, "Cross-DLL cold calls must actually be exercised")
 print("Suspend Task bridges retain source reified indices and hidden witness metadata")

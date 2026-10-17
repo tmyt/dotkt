@@ -5,6 +5,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Preserve nullable reified type classifiers independently of CLR generic storage for `is`, `as?` and checked `as`,
+  including forwarding, lifted delegates and DLL/KLIB round-trips (#755).
+
 - Support Kotlin-authored Map/MutableMap implementations and inherited members with exact CLR dictionary slots,
   preserving Kotlin overrides, views and read-only identity across DLLs (#771).
 

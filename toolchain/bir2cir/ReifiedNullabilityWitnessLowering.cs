@@ -6,7 +6,7 @@ using DotKt.Bir;
 
 // A CLR generic argument cannot distinguish `String` from `String?` (or `Int` from `Int?` after the Kotlin
 // instantiation has selected the same open `!!T` body). Collection storage also merges read-only/mutable faces.
-// Preserve nullability and the nominal classifier as an explicit integer ABI witness for each METHOD
+// Preserve nullability, nominal flags and the runtime classifier as one explicit ABI witness for each METHOD
 // type parameter whose body transitively performs a type-sensitive operation. Kotlin
 // `reified` is retained separately as declaration metadata; it never selects this physical ABI. This layer threads
 // structurally-derived demand through exact declaration identities and explicit lifted-frame correspondences, while
@@ -88,7 +88,7 @@ static class ReifiedNullabilityWitnessLowering
                     while (!usedNames.Add(name)) name += "$";
                     parameters.Add(new JsonObject {
                         ["name"] = name,
-                        ["type"] = Fqn("kotlin.Int"),
+                        ["type"] = KotlinRuntimeTypeWitness.TypeJsonNode(),
                     });
                     var value = new JsonObject { ["k"] = "local", ["name"] = name };
                     if (frame == null) methodWitnesses[index] = value;
@@ -98,7 +98,7 @@ static class ReifiedNullabilityWitnessLowering
                         if (slot.SourceIndex != index) continue;
                         methodWitnesses[physical] = slot.Representation is NullableRepresentationFrame.Role.Nullable
                             or NullableRepresentationFrame.Role.NullableStorage
-                            ? KotlinTypeWitness.Binary("|", value.DeepClone(), KotlinTypeWitness.Constant(1))
+                            ? KotlinRuntimeTypeWitness.Nullable(value)
                             : value.DeepClone();
                     }
                 }
@@ -163,9 +163,10 @@ static class ReifiedNullabilityWitnessLowering
                         && KotlinTypeWitness.Variable(TypeJson.Read(obj["type"])) != null)
                     {
                         var witness = WitnessFor(obj["type"], witnesses);
-                        obj[KotlinTypeWitness.OperandKey] = witness.DeepClone();
+                        obj[KotlinTypeWitness.OperandKey] = KotlinRuntimeTypeWitness.Flags(witness);
+                        obj[KotlinRuntimeTypeWitness.OperandKey] = KotlinRuntimeTypeWitness.Classifier(witness);
                         if (Str(obj["k"]) == "isInst")
-                            obj["nullWitness"] = KotlinTypeWitness.AllowsNull(witness);
+                            obj["nullWitness"] = KotlinTypeWitness.AllowsNull(KotlinRuntimeTypeWitness.Flags(witness));
                     }
                     if (Str(obj["k"]) is "callStatic" or "callInstance" or "constrainedCall"
                         && Str(obj[DeclarationIdentityBinding.Key]) is string targetId)
@@ -306,7 +307,7 @@ static class ReifiedNullabilityWitnessLowering
                 throw new InvalidOperationException(
                     $"bir2cir: nullable-sensitive generated delegate '{Str(node["method"])}' has no type argument at index {index}");
             var name = Prefix + index;
-            fields.Add(new JsonObject { ["name"] = name, ["type"] = Fqn("kotlin.Int") });
+            fields.Add(new JsonObject { ["name"] = name, ["type"] = KotlinRuntimeTypeWitness.TypeJsonNode() });
             captures.Add(WitnessFor(typeArgs[index], callerWitnesses));
             closureWitnesses[index] = new JsonObject {
                 ["k"] = "field",
@@ -369,7 +370,7 @@ static class ReifiedNullabilityWitnessLowering
                 throw new InvalidOperationException($"bir2cir: nullable-sensitive closure has no type argument at index {index}");
             var name = Prefix + index;
             while (!usedNames.Add(name)) name += "$";
-            fields.Add(new JsonObject { ["name"] = name, ["type"] = Fqn("kotlin.Int") });
+            fields.Add(new JsonObject { ["name"] = name, ["type"] = KotlinRuntimeTypeWitness.TypeJsonNode() });
             captures.Add(WitnessFor(typeArgs[index], callerWitnesses));
             var field = new JsonObject {
                 ["k"] = "field",
@@ -414,7 +415,7 @@ static class ReifiedNullabilityWitnessLowering
                 throw new InvalidOperationException($"bir2cir: nullable-sensitive SAM has no type argument at index {index}");
             var name = Prefix + index;
             while (!usedNames.Add(name)) name += "$";
-            fields.Add(new JsonObject { ["name"] = name, ["type"] = Fqn("kotlin.Int") });
+            fields.Add(new JsonObject { ["name"] = name, ["type"] = KotlinRuntimeTypeWitness.TypeJsonNode() });
             captures.Add(WitnessFor(typeArgs[index], callerWitnesses));
             AppendCapturedFieldToConstructors(synthClass, className, name);
             var field = new JsonObject {
@@ -457,7 +458,7 @@ static class ReifiedNullabilityWitnessLowering
                     $"bir2cir: nullable-sensitive suspend lambda has no type argument at index {index}");
             var name = Prefix + index;
             while (!usedNames.Add(name)) name += "$";
-            captures.Add(new JsonObject { ["name"] = name, ["type"] = Fqn("kotlin.Int") });
+            captures.Add(new JsonObject { ["name"] = name, ["type"] = KotlinRuntimeTypeWitness.TypeJsonNode() });
             capValues.Add(WitnessFor(typeArgs[index], callerWitnesses));
             var local = new JsonObject { ["k"] = "local", ["name"] = name };
             var declarationArgs = node[SuspendLambdaLowering.SplicedDeclarationFrameKey] as JsonArray ?? typeArgs;
@@ -514,7 +515,7 @@ static class ReifiedNullabilityWitnessLowering
             var value = WitnessFor(typeArguments[index], callerWitnesses);
             var name = Prefix + index;
             while (!usedNames.Add(name)) name += "$";
-            captures.Add(new JsonObject { ["name"] = name, ["type"] = Fqn("kotlin.Int") });
+            captures.Add(new JsonObject { ["name"] = name, ["type"] = KotlinRuntimeTypeWitness.TypeJsonNode() });
             capValues.Add(value);
             var declarationArguments = node[SuspendLambdaLowering.SplicedDeclarationFrameKey] as JsonArray;
             var declarationScope = declarationArguments == null ? typeArguments[index] : declarationArguments[index];
@@ -540,7 +541,7 @@ static class ReifiedNullabilityWitnessLowering
         {
             var name = Prefix + index;
             while (!usedNames.Add(name)) name += "$";
-            fields.Add(new JsonObject { ["name"] = name, ["type"] = Fqn("kotlin.Int") });
+            fields.Add(new JsonObject { ["name"] = name, ["type"] = KotlinRuntimeTypeWitness.TypeJsonNode() });
             AppendCapturedFieldToConstructors(type, className, name);
             witnesses[index] = new JsonObject {
                 ["k"] = "field", ["ownerType"] = Fqn(className),
@@ -558,13 +559,13 @@ static class ReifiedNullabilityWitnessLowering
         {
             var parameters = ctor["params"] as JsonArray ?? new JsonArray();
             ctor["params"] = parameters;
-            parameters.Add(new JsonObject { ["name"] = name, ["type"] = Fqn("kotlin.Int") });
+            parameters.Add(new JsonObject { ["name"] = name, ["type"] = KotlinRuntimeTypeWitness.TypeJsonNode() });
             if (ctor["thisArgs"] is JsonArray thisArgs)
             {
                 thisArgs.Add(new JsonObject { ["k"] = "local", ["name"] = name });
                 var delegationSig = ctor["delegationSig"] as JsonArray ?? new JsonArray();
                 ctor["delegationSig"] = delegationSig;
-                delegationSig.Add(Fqn("kotlin.Int"));
+                delegationSig.Add(KotlinRuntimeTypeWitness.TypeJsonNode());
                 continue;
             }
             var body = ctor["body"] as JsonArray ?? new JsonArray();
@@ -708,8 +709,7 @@ static class ReifiedNullabilityWitnessLowering
     {
         return TypeJson.Read(type) switch
         {
-            TypeNode.Nullable n => KotlinTypeWitness.Binary("|",
-                WitnessFor(TypeJson.Write(n.Of), callerWitnesses), KotlinTypeWitness.Constant(1)),
+            TypeNode.Nullable n => KotlinRuntimeTypeWitness.Nullable(WitnessFor(TypeJson.Write(n.Of), callerWitnesses)),
             TypeNode.Oblivious o => WitnessFor(TypeJson.Write(o.Of), callerWitnesses),
             TypeNode.Tv { Scope: "method" } tv when callerWitnesses?.Method != null
                 && callerWitnesses.Method.TryGetValue(tv.I, out var witness)
@@ -722,13 +722,13 @@ static class ReifiedNullabilityWitnessLowering
             // miscompiles nullable instantiations; source-level non-reified forwarding is already rejected by kotc.
             TypeNode.Tv tv => throw new InvalidOperationException(
                 $"bir2cir: nullable-witness demand reached unbound {tv.Scope} type parameter {tv.I}"),
-            var known => KotlinTypeWitness.Constant(KotlinTypeWitness.Flags(known)),
+            var known => KotlinRuntimeTypeWitness.Known(known),
         };
     }
 
     static void AppendWitnessType(JsonObject call, string key)
     {
-        if (call[key] is JsonArray vector) vector.Add(Fqn("kotlin.Int"));
+        if (call[key] is JsonArray vector) vector.Add(KotlinRuntimeTypeWitness.TypeJsonNode());
     }
 
     static JsonObject Fqn(string name) => new() { ["t"] = "fqn", ["name"] = name };

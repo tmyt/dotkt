@@ -1,0 +1,11 @@
+# A nullable value's generic storage is Object, but its classifier token is Int32.
++"typeArgs":[{"t":"fqn","name":"object"}]
++"k":"classRef","type":{"t":"fqn","name":"System.Int32"}
++"name":"System.ValueTuple"
++"method":"IsInstanceOfType"
++"name":"Item2"
++"k":"if","branches":[{"cond":
++"name":"System.InvalidCastException"
++"k":"cond","type":{"t":"fqn","name":"object"}
+-kotlinRuntimeTypeWitness
+-kotlinClassifierRef

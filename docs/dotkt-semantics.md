@@ -28,7 +28,7 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
 | § | Deviation |
 |---|---|
 | [1](#1-kotlin-packages--net-namespaces) | Kotlin packages → .NET namespaces |
-| [2](#2-generics-are-reified--nullable-sensitive-uses-carry-a-separate-witness) | Reified generics — CLR runtime type plus structurally demanded Kotlin nullability witness |
+| [2](#2-generics-are-reified--nullable-sensitive-uses-carry-a-separate-witness) | Reified generics — CLR storage plus structurally demanded Kotlin type witness |
 | [3](#3-inline-happens-at-emit-time-and-is-decoration-unless-a-lambda-literal-is-passed) | `inline` is emit-time, decoration unless a lambda is passed |
 | [4](#4-suspend-fun--an-async-taskt-function-hot-not-cold) | `suspend fun` = an async `Task<T>` function; **hot, not cold** |
 | [5](#5-primitive-stringification-is-clr-native-not-kotlinjvm-cosmetics) | CLR-native stringification; `String.format` = .NET composite format |
@@ -67,13 +67,17 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   *requires* `inline` (the type is baked in during inlining). You can't call a reified function non-inlined, and you
   can't pass a non-reified type parameter to a reified one.
 - **DotKt:** the CLR has **real reified generics**. `inline fun <reified T> foo()` is emitted as an ordinary generic
-  method `foo<T>()`; the body's `T::class` / `is T` / `as? T` use the real runtime type. CLR generic arguments do not,
-  however, distinguish `String` from `String?`, and invariant collection storage does not encode Kotlin's nominal
-  read-only/mutable classifier. `bir2cir` therefore derives type-witness demand from operations such as `is T`
+  method `foo<T>()`. A class literal uses the CLR runtime type of that generic argument. This is a physical
+  storage type, not necessarily the Kotlin classifier: nullable value arguments such as `Int?` can use `Object`.
+  CLR generic arguments also do not distinguish `String` from `String?`, and invariant collection storage does not
+  encode Kotlin's nominal read-only/mutable classifier. `bir2cir` therefore derives type-witness demand from operations such as `is T`
   and checked reified casts, and propagates it structurally through exact calls and lifted frames. Only demanded
-  method type parameters receive a hidden integer carrying nullability and the collection classifier;
-  a `reified T` used only by `T::class`, for example, receives none. Calls pass
-  a constant for a concrete type and forward the witness when the argument is another reified parameter. The facts
+  method type parameters receive one hidden `ValueTuple<Int32, System.Type>` carrying nullability/nominal flags
+  and the runtime classifier separately from generic storage. Thus `is Int?` accepts null and boxed integers,
+  but not an unrelated value merely because its storage fits `Object`. Checked reified `as` and `as?` use
+  the same classifier, with throwing and null-producing failure respectively;
+  a `reified T` used only by `T::class`, for example, receives none. Calls construct a witness from a concrete source
+  type and forward it when the argument is another reified parameter. The facts
   are separate compiler-internal ABI: `[KotlinDeclarationIdentity]` carries semantic `reified` indices and physical
   witness indices across a DLL boundary; `dll2klib` restores the former and hides the latter. If the
   lexical body moves into a closure, SAM shim, suspend-lambda state machine, or lifted object, that body captures the
@@ -81,8 +85,8 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   method/type slot, so a dense synthetic index is never mistaken for an enclosing declaration index.
   kotc records the reified type operand on explicit/safe casts; an unchecked cast to an ordinary source type
   parameter does not acquire a Kotlin classifier check merely because CLR generics retain physical type arguments.
-  bir2cir resolves the nominal guard and the Boolean null-match expression; ilemit emits those resolved operations
-  without reconstructing Kotlin collection semantics from a CLR interface.
+  bir2cir resolves the runtime classifier guard, nominal guard and Boolean null-match expression; ilemit emits those
+  resolved operations without reconstructing Kotlin collection semantics from a CLR interface.
 - Kotlin's source rule remains authoritative: passing a **non-reified** method type parameter to a reified one
   (`fun <U> bar() = foo<U>()`) is rejected with `TYPE_PARAMETER_AS_REIFIED`, including through DLL→KLIB consumption.
 - **A Kotlin star projection is never represented as `G<object>`.** CLR generics are reified and invariant, so

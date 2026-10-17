@@ -541,7 +541,8 @@ static class FBoundStarProjectionErasure
         // Binding factories own their exact allocation-element result. Value slots using that result are separate.
         if (key == "ret" && (owner["attrs"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()
             .Any(a => TypeJson.OwnerName(a["attr"]) == "kotlin.clr.ClrArrayFactory")) return true;
-        if (key == "type" && kind is "cast" or "isInst" or "isInstRef" && KotlinTypeWitness.NeedsWitness(owner)) return true;
+        if (key == "type" && (kind is "cast" or "isInst" or "isInstRef" && KotlinTypeWitness.NeedsWitness(owner)
+            || Bool(owner[KotlinRuntimeTypeWitness.ClassifierKey]))) return true;
         return key == "memberSignature" && kind is "new" or "newClr"
             && TypeJson.Read(owner["type"]) is TypeNode.Fqn constructed
             && IsNativeArrayOwner(constructed, refs, localClrAliases);
@@ -1195,7 +1196,8 @@ static class FBoundStarProjectionErasure
                 if (TryVarianceProjectedArrayInitializerOwner(obj, defs, refs, out var initializerOwner)
                     && owners.TryGetValue(initializerOwner.Name, out var projectedInitializerOwner))
                     projectedInitializerOwner.Needed = true;
-                var runtimeClassifier = Str(obj["k"]) is "isInst" or "isInstRef" or "cast";
+                var runtimeClassifier = Str(obj["k"]) is "isInst" or "isInstRef" or "cast"
+                    || Bool(obj[KotlinRuntimeTypeWitness.ClassifierKey]);
                 foreach (var kv in obj)
                 {
                     if (kv.Value == null || kv.Key == "name") continue;
@@ -3133,10 +3135,12 @@ static class FBoundStarProjectionErasure
                 // Base$star value at later Base<T> call/return slots and makes otherwise ordinary generic code
                 // unverifiable.
                 var runtimeTarget = TypeJson.Read(obj["type"]);
-                if (!Bool(obj["_exactBridgeCast"]) && runtimeKind is "isInst" or "isInstRef" or "cast"
+                var classifierRef = Bool(obj[KotlinRuntimeTypeWitness.ClassifierKey]);
+                obj.Remove(KotlinRuntimeTypeWitness.ClassifierKey);
+                if (!Bool(obj["_exactBridgeCast"]) && (runtimeKind is "isInst" or "isInstRef" or "cast" || classifierRef)
                     && StripSourceNullability(runtimeTarget) is TypeNode.Fqn { Args: { } } runtimeF
                     && TryExistentialCarrier(runtimeF.Name, owners, refs, out var runtimeCarrier)
-                    && (runtimeKind == "isInst"
+                    && (runtimeKind == "isInst" || classifierRef
                         || !IsProvenConstructedUpcast(
                             obj, runtimeF, defs, refs, currentThisType)))
                 {
