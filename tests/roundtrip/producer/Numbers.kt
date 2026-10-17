@@ -18,5 +18,7 @@ fun numberValue(value: Number): Int = value.toInt()
 fun numberChoice(value: Number): String = "number"
 fun numberChoice(value: Any): String = "any"
 fun <T : Number> boundedNumber(value: T): Int = value.toInt()
+@Suppress("UNCHECKED_CAST")
+fun <T : Number> numberCast(value: Any): T = value as T
 fun numberArray(values: Array<Number>): Array<Number> = values
 inline fun <reified T> isNumberType(value: Any?): Boolean = value is T

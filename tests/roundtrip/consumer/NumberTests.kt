@@ -1,3 +1,5 @@
+@file:Suppress("DEPRECATION_ERROR")
+
 package roundtrip.numbertests
 
 import NUnit.Framework.TestAttribute
@@ -5,6 +7,14 @@ import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import roundtrip.numbers.*
 
 class ConsumerNumber : LibraryNumber(1) { override fun toInt(): Int = 83 }
+class ConsumerCharacter : LibraryNumber(65) {
+    var calls: Int = 0
+    @kotlin.clr.ClrName("CustomCharacter")
+    override fun toChar(): Char {
+        calls++
+        return if (calls == 1) super.toChar() else '?'
+    }
+}
 
 class NumberRoundtripTests {
     @TestAttribute
@@ -13,6 +23,10 @@ class NumberRoundtripTests {
         assertEquals("number", numberChoice(17))
         assertEquals("any", numberChoice("17"))
         assertEquals(18, boundedNumber(18))
+        assertEquals(18, numberCast<Number>(18L).toInt())
+        var rejected = false
+        try { numberCast<Number>("bad") } catch (_: ClassCastException) { rejected = true }
+        check(rejected)
         assertEquals(19, NumberBound(19).read())
         val slot = NumberSlots(20, null)
         val sourceNumber: Number = slot.read()
@@ -22,6 +36,10 @@ class NumberRoundtripTests {
         check(slot.nullable == null)
         val custom: Number = ConsumerNumber()
         assertEquals(83, numberValue(custom))
+        val character = ConsumerCharacter()
+        assertEquals('A', (character as Number).toChar())
+        assertEquals(1, character.calls)
+        assertEquals('B', (LibraryNumber(66) as Number).toChar())
         val order: Comparable<Number> = NumberOrder()
         assertEquals(22, order.compareTo(22))
         val array = arrayOf<Number>(23, custom)

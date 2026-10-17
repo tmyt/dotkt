@@ -675,7 +675,7 @@ sealed partial class ReferenceMetadataIndex
         .Select(fqn => DottedFqn(BareOwnerFqn(fqn)))
         .ToHashSet(StringComparer.Ordinal);
 
-    internal bool IsLocalEmittedType(string fqn) =>
+    bool IsLocalEmittedType(string fqn) =>
         _localEmittedTypes.Contains(DottedFqn(BareOwnerFqn(fqn)));
 
     // Foundational REFERENCE-type aliases known to bir2cir directly (the same principle as the foundational
@@ -1327,6 +1327,18 @@ sealed partial class ReferenceMetadataIndex
 
     internal string ValueAdapter(string declarationId) => declarationId != null
         && _declarationById.TryGetValue(declarationId, out var declaration) ? declaration.ValueAdapter : null;
+
+    internal IEnumerable<MemberBinding> ValueMembers => _declarationById.Values.Where(member => member.ValueAdapter != null);
+
+    // A compiler-authored nominal bridge is identified by its exact MethodImpl declaration,
+    // not its spelling or body. Protected bridges remain callable nonvirtually by descendants.
+    internal MemberBinding ValueSlotBridge(string owner, string slotOwner, string slotMember)
+    {
+        owner = StripGenericArity(DottedFqn(BareOwnerFqn(owner)));
+        if (!TryMembersByBirOwner(owner, out var members)) return null;
+        return members.SingleOrDefault(member => _methodImplsByBody.TryGetValue((owner, member.MetadataToken), out var rows)
+            && rows.Any(row => row.DeclarationOwner.Name == slotOwner && row.DeclarationMember == slotMember));
+    }
 
     // A trusted class alias declares Kotlin meaning even when the physical class has additional
     // operational interfaces. Derive map-only storage from that declaration, not concrete CLR names
@@ -5351,6 +5363,9 @@ sealed partial class ReferenceMetadataIndex
                             ValueAdapter = dotKtAuthored ? method.GetCustomAttributesData().SingleOrDefault(attribute =>
                                 attribute.AttributeType.FullName == ValueRepresentationLowering.MemberAttribute)
                                 ?.ConstructorArguments[0].Value as string : null,
+                            ValueSlot = dotKtAuthored ? method.GetCustomAttributesData().SingleOrDefault(attribute =>
+                                attribute.AttributeType.FullName == ValueRepresentationLowering.MemberAttribute)
+                                ?.ConstructorArguments[1].Value as string : null,
                             SignatureAllocated = declarationIdentity?.SignatureAllocated == true,
                             LateinitState = dotKtAuthored ? ReadLateinitState(method) : null,
                             SignatureParameters = method.GetParameters().Select(DeclarationSignatureSlot).ToArray(),
@@ -8172,6 +8187,7 @@ sealed record MemberBinding(string Owner, string Name, int ParamCount, string In
     // during stdlib self-compilation; resolving that owner again is not declaration identity.
     public TypeNode[] SignatureParameters { get; init; }
     public string ValueAdapter { get; init; }
+    public string ValueSlot { get; init; }
     public bool SignatureAllocated { get; init; }
     public LateinitStateTarget LateinitState { get; init; }
     public TypeNode SignatureReturn { get; init; }

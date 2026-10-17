@@ -17,6 +17,8 @@ internal static class NumberMetadataInspector
             .Single(type => md.GetString(type.Namespace) == "kotlin" && md.GetString(type.Name) == "Number");
         Require(HasAttribute(md, number.GetCustomAttributes(), "kotlin.clr.ClrValueRepresentation"),
             "reference body stripping lost the superclass value-representation contract");
+        Require(HasAttribute(md, number.GetCustomAttributes(), "kotlin.clr.ClrTypeAlias"),
+            "reference body stripping lost the physical alias contract");
         var members = number.GetMethods().Select(md.GetMethodDefinition).ToArray();
         foreach (var name in new[] { "toByte", "toShort", "toInt", "toLong", "toFloat", "toDouble", "toChar" })
         {
@@ -66,12 +68,20 @@ internal static class NumberMetadataInspector
         Function Function(string name) => fragment.Package.Function.Single(function => fragment.Strings.String[function.Name] == name);
         bool IsNumber(DotKt.Klib.Metadata.Type type) => type.HasClassName && Name(fragment, type.ClassName) == "kotlin.Number";
         Require(IsNumber(Function("numberValue").ValueParameter.Single().Type), "DLL import lost a source Number parameter");
-        var bounded = Function("boundedNumber");
-        Require(bounded.TypeParameter.Count == 1 && bounded.TypeParameter[0].UpperBound.Count == 1
-            && IsNumber(bounded.TypeParameter[0].UpperBound[0]), "DLL import lost a method's source Number bound");
+        foreach (var name in new[] { "boundedNumber", "numberCast" })
+        {
+            var bounded = Function(name);
+            Require(bounded.TypeParameter.Count == 1 && bounded.TypeParameter[0].UpperBound.Count == 1
+                && IsNumber(bounded.TypeParameter[0].UpperBound[0]), "DLL import lost a method's source Number bound");
+        }
         var bound = fragment.Class.Single(type => Name(fragment, type.FqName) == Package + ".NumberBound");
         Require(bound.TypeParameter.Count == 1 && bound.TypeParameter[0].UpperBound.Count == 1
             && IsNumber(bound.TypeParameter[0].UpperBound[0]), "DLL import lost a class's source Number bound");
+        var implementation = fragment.Class.Single(type => Name(fragment, type.FqName) == Package + ".LibraryNumber");
+        Require(implementation.Supertype.Any(IsNumber), "DLL import lost the source Number base edge");
+        Require(!implementation.Supertype.Any(type => type.HasClassName && Name(fragment, type.ClassName)
+            .StartsWith("DotKt.Runtime.CompilerServices.", StringComparison.Ordinal)),
+            "a physical nominal carrier was reverse-mapped into the Kotlin API");
         var slots = fragment.Class.Single(type => Name(fragment, type.FqName) == Package + ".NumberSlots");
         foreach (var property in slots.Property)
             Require(IsNumber(property.ReturnType) && property.ReturnType.Nullable ==

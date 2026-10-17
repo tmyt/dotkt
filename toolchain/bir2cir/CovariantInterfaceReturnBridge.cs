@@ -220,8 +220,7 @@ static class CovariantInterfaceReturnBridge
                 // The override edge is Kotlin vocabulary; the referenced TypeDef and its descriptors use
                 // the expanded CLR frame. Close that frame once, without replacing the source selection args.
                 var projectedOwner = BirTypeLowering.LowerPhysicalType(callerMapping.Slot(semanticOwner), refs.Aliases, isValue,
-                    refs.PhysicalTypeNames, typeArg: false, nullableFrames: refs.NullableTypeFrames,
-                    declarationHead: true) as TypeNode.Fqn;
+                    refs.PhysicalTypeNames, typeArg: false, nullableFrames: refs.NullableTypeFrames) as TypeNode.Fqn;
                 if (projectedOwner == null || !refs.TryReferenceTypeShape(projectedOwner,
                         out var ownerArity, out var ownerKind, out _, out _) || ownerKind != "interface") continue;
                 var physicalOwnerArgs = projectedOwner.Args ?? Array.Empty<TypeNode>();

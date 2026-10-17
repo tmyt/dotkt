@@ -7,9 +7,11 @@ import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.coroutines.startCoroutine
 import kotlin.coroutines.suspendCoroutine
 
-open class AuthoredNumber(private val value: Int) : Number() {
+abstract class NumericRoot : Number()
+open class AuthoredNumber(private val value: Int) : NumericRoot() {
     override fun toByte(): Byte = value.toByte()
     override fun toShort(): Short = value.toShort()
+    @kotlin.clr.ClrName("NumericInt")
     override fun toInt(): Int = value
     override fun toLong(): Long = value.toLong()
     override fun toFloat(): Float = value.toFloat()
@@ -35,7 +37,16 @@ private fun numberValue(value: Number): Int = value.toInt()
 private fun numberChoice(value: Number): String = "number"
 private fun numberChoice(value: Any): String = "any"
 private fun <T : Number> boundedNumber(value: T): Int = value.toInt()
+private fun <T : Number> boundedNumberCast(value: Any): T = value as T
+private fun <T : Number> boundedNumberSafe(value: Any): T? = value as? T
+private class NumberCaster<A, N : Number> { fun <T : N> cast(value: Any): T = value as T }
 private fun <T> numberArrayIdentity(value: Array<T>): Array<T> = value
+private fun <T : Number> boundedNumberArray(value: Any, replacement: T): Boolean {
+    val array = value as? Array<T> ?: return false
+    check(array[0].toInt() == 1)
+    array[0] = replacement
+    return array[0].toInt() == replacement.toInt()
+}
 private inline fun <reified T> numberIs(value: Any?): Boolean = value is T
 private inline fun <reified T> numberSafe(value: Any?): T? = value as? T
 private inline fun <reified T> numberCast(value: Any?): T = value as T
@@ -76,6 +87,14 @@ class NumberTests {
         var rejected = false
         try { val ignored = "bad" as Any as Number } catch (_: ClassCastException) { rejected = true }
         check(rejected)
+        rejected = false
+        try { boundedNumberCast<Number>("bad") } catch (_: ClassCastException) { rejected = true }
+        check(rejected)
+        rejected = false
+        try { NumberCaster<Any, Number>().cast<Number>("bad") } catch (_: ClassCastException) { rejected = true }
+        check(rejected)
+        check(boundedNumberSafe<Number>("bad") == null)
+        assertEquals(17, boundedNumberCast<Number>(17).toInt())
     }
 
     @TestAttribute
@@ -160,5 +179,16 @@ class NumberTests {
         val reified = numberCast<Array<Number>>(array)
         reified[1] = 5L
         assertEquals(5, reified[1].toInt())
+        check(boundedNumberArray<Number>(arrayOf(1), 6))
+        check(boundedNumberArray(arrayOf(1), 7))
+        check(!boundedNumberArray<Number>(arrayOf("precise"), 8))
+        val nestedNative: Any = arrayOf(arrayOf(1))
+        check(!numberIs<Array<Array<Number>>>(nestedNative))
+        check(numberSafe<Array<Array<Number>>>(nestedNative) == null)
+        check((nestedNative as? Array<Array<Number>>) == null)
+        val nested: Any = arrayOf(arrayOf<Number>(1))
+        val nestedChecked = numberCast<Array<Array<Number>>>(nested)
+        nestedChecked[0][0] = 9L
+        assertEquals(9, nestedChecked[0][0].toInt())
     }
 }

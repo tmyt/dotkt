@@ -34,7 +34,7 @@ static class KotlinRuntimeTypeWitness
     };
 
     internal static JsonNode Known(TypeNode type) => Create(KotlinTypeWitness.Constant(KotlinTypeWitness.Flags(type)),
-        new JsonObject { ["k"] = "classRef", ["type"] = TypeJson.Write(ValueRepresentations?.Storage(type) ?? type),
+        new JsonObject { ["k"] = "classRef", ["type"] = TypeJson.Write(type),
             [ClassifierKey] = true },
         ValueRepresentations?.Predicate(type) ?? new JsonObject {
             ["k"] = "const", ["type"] = TypeJson.Write(PredicateType), ["value"] = null,
@@ -144,10 +144,22 @@ static class KotlinRuntimeTypeWitness
                         ["then"] = Bool(true), ["else"] = physicalTest },
                     ["else"] = Bool(false),
                 };
+                var nativeException = refs.ResolveRefType("System.InvalidCastException");
                 statements.Add(new JsonObject {
                     ["k"] = "if", ["branches"] = new JsonArray(new JsonObject {
                         ["cond"] = new JsonObject { ["k"] = "unaryOp", ["op"] = "!", ["e"] = castMatches },
-                        ["body"] = new JsonArray(new JsonObject { ["k"] = "throw", ["value"] = new JsonObject {
+                        ["body"] = new JsonArray(new JsonObject {
+                            // Existing CLR-token classifiers keep their native checked-cast exception contract.
+                            // Only the explicit semantic-superclass predicate selects the new Kotlin guard.
+                            ["k"] = "if", ["branches"] = new JsonArray(new JsonObject {
+                                ["cond"] = new JsonObject { ["k"] = "objEq", ["lhs"] = predicate.DeepClone(), ["rhs"] = Null() },
+                                ["body"] = new JsonArray(new JsonObject { ["k"] = "throw", ["value"] = new JsonObject {
+                                    ["k"] = "newClr", ["type"] = TypeJson.Fqn("System.InvalidCastException"), ["args"] = new JsonArray(),
+                                    ["memberRef"] = ClrMemberResolution.MemberRefJson(nativeException.GetConstructor(System.Type.EmptyTypes),
+                                        "ctor", nativeException, null),
+                                } }),
+                            }),
+                        }, new JsonObject { ["k"] = "throw", ["value"] = new JsonObject {
                             ["k"] = "new", ["type"] = TypeJson.Fqn("kotlin.ClassCastException"),
                             ["args"] = new JsonArray(), ["argTypes"] = new JsonArray(),
                         } }),

@@ -22,7 +22,6 @@ using DotKt.Bir;
 // resolve ("cannot resolve .NET type kotlin.Byte").
 static class BirTypeLowering
 {
-    internal static ValueRepresentationLowering ValueRepresentations { get; set; }
     // A synthesized declaration/MethodImpl may fill a value-returning generic CLR slot even when its closed
     // Kotlin type is Unit. This representation fact is consumed here, never serialized into final CIR.
     internal const string ValueReturnKey = "dotktValueReturn";
@@ -54,7 +53,7 @@ static class BirTypeLowering
             _ => type,
         };
         var lowered = arguments.Select(argument =>
-            LowerType(ValueRepresentations?.Storage(Bound(argument)) ?? Bound(argument),
+            LowerType(Bound(argument),
                 refBuild: false, force: true, typeArg: true)).ToArray();
         return PhysicalHead(kotlinFqn, bcl, lowered)
             is TypeNode.Fqn { Args: not null };
@@ -649,7 +648,7 @@ static class BirTypeLowering
         IReadOnlyDictionary<string, string> aliases, ValueTypeOracle isValueFqn,
         IReadOnlyDictionary<string, string> physicalTypeNames, bool typeArg,
         IReadOnlySet<string> localTypeNames = null, bool refBuild = false,
-        IReadOnlyDictionary<string, NullableRepresentationFrame> nullableFrames = null, bool declarationHead = false)
+        IReadOnlyDictionary<string, NullableRepresentationFrame> nullableFrames = null)
     {
         var savedAliases = _aliases;
         var savedIsValue = _isValueFqn;
@@ -663,11 +662,7 @@ static class BirTypeLowering
             _physicalTypeNames = physicalTypeNames ?? new Dictionary<string, string>(StringComparer.Ordinal);
             _localTypeNames = localTypeNames ?? new HashSet<string>(StringComparer.Ordinal);
             _nullableFrames = nullableFrames;
-            var projected = refBuild || ValueRepresentations == null ? type
-                : declarationHead && type is TypeNode.Fqn owner
-                    ? new TypeNode.Fqn(owner.Name, owner.Args?.Select(ValueRepresentations.Storage).ToArray())
-                    : ValueRepresentations.Storage(type);
-            return LowerType(projected, refBuild, force: false, typeArg);
+            return LowerType(type, refBuild, force: false, typeArg);
         }
         finally
         {

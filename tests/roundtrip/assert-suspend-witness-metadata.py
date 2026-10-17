@@ -46,6 +46,9 @@ for method in declarations(document):
             assert method["params"][-1]["type"] == {
                 "t": "fqn", "name": "System.ValueTuple", "args": [
                     {"t": "fqn", "name": "System.Int32"}, {"t": "fqn", "name": "System.Type"},
+                    {"t": "fqn", "name": "System.Func", "args": [
+                        {"t": "fqn", "name": "System.Object"}, {"t": "fqn", "name": "System.Object"},
+                    ]},
                 ],
             }
         assert method["ret"] == {
@@ -84,8 +87,11 @@ for call in objects(consumer):
     assert len(target["parameterTypes"]) == parameter_count, (name, target)
     if witness_count:
         assert target["parameterTypes"][-2] == {
-            "t": "fqn", "name": "System.ValueTuple`2", "args": [
+            "t": "fqn", "name": "System.ValueTuple`3", "args": [
                 {"t": "fqn", "name": "System.Int32"}, {"t": "fqn", "name": "System.Type"},
+                {"t": "fqn", "name": "System.Func`2", "args": [
+                    {"t": "fqn", "name": "System.Object"}, {"t": "fqn", "name": "System.Object"},
+                ]},
             ],
         }
     assert target["parameterTypes"][-1]["name"] == "kotlin.coroutines.Continuation$star"

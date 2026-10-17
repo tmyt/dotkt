@@ -4,21 +4,24 @@ using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 
-sealed record ValueRepresentationBinding(string Storage, string Classifier, string ClassifierFactory);
+sealed record ValueRepresentationBinding(string Classifier, string ClassifierFactory, string ComponentClassifier);
 
-// Declaration-owned value storage is independent of the runtime inheritance classifier.
+// Declaration-owned Kotlin classifiers can be narrower than their CLR alias face.
 // The trusted stdlib supplies all type/member/classifier choices. No source name selects a rule.
 sealed class ValueRepresentationLowering
 {
     internal const string TypeAttribute = "kotlin.clr.ClrValueRepresentation";
     internal const string MemberAttribute = "kotlin.clr.ClrValueMember";
     readonly Dictionary<string, ValueRepresentationBinding> bindings = new(StringComparer.Ordinal);
+    readonly Dictionary<string, string> aliases;
     readonly Dictionary<string, string> adapters = new(StringComparer.Ordinal);
+    readonly Dictionary<string, (string Owner, JsonObject Method, string Slot)> members = new(StringComparer.Ordinal);
     readonly Dictionary<string, (string Owner, JsonObject Method)> locals = new(StringComparer.Ordinal);
     readonly ReferenceMetadataIndex refs;
     readonly bool referenceBuild;
 
     static string Text(JsonNode node) => (node as JsonValue)?.TryGetValue<string>(out var value) == true ? value : null;
+    static bool Bool(JsonNode node) => node is JsonValue value && value.TryGetValue<bool>(out var result) && result;
     static JsonObject Attribute(JsonObject declaration, string name) =>
         (declaration["attrs"] as JsonArray)?.OfType<JsonObject>()
             .SingleOrDefault(attribute => TypeJson.OwnerName(attribute["attr"]) == name);
@@ -28,18 +31,36 @@ sealed class ValueRepresentationLowering
     {
         refs = references;
         referenceBuild = refBuild;
+        aliases = new Dictionary<string, string>(refs?.Aliases ?? new Dictionary<string, string>(), StringComparer.Ordinal);
         foreach (var assembly in refs?.Assemblies ?? Array.Empty<ReferenceAssembly>())
             foreach (var (name, binding) in assembly.DotKt.ValueRepresentations) bindings[name] = binding;
+        foreach (var member in refs?.ValueMembers ?? Array.Empty<MemberBinding>())
+            members[member.DeclarationId] = (member.Owner, new JsonObject {
+                ["name"] = member.DeclarationSourceName ?? member.Name,
+                [DeclarationIdentityBinding.Key] = member.DeclarationId,
+                ["abstract"] = member.IsAbstract,
+                ["params"] = new JsonArray((member.DeclarationSemanticParams ?? member.ParamTypeNodes)
+                    .Select((type, index) => (JsonNode)new JsonObject { ["name"] = "p" + index, ["type"] = TypeJson.Write(type) }).ToArray()),
+                ["ret"] = TypeJson.Write(member.DeclarationSemanticReturn ?? member.ReturnTypeNode),
+            }, member.ValueSlot);
         void Index(JsonObject declaration)
         {
-            if (Text(declaration["name"]) is string name && Attribute(declaration, TypeAttribute) is { } attribute)
-                bindings[name] = new(Argument(attribute, 0), Argument(attribute, 1), Argument(attribute, 2));
+            if (Text(declaration["name"]) is string name)
+            {
+                if (Attribute(declaration, "kotlin.clr.ClrTypeAlias") is { } alias) aliases[name] = Argument(alias, 0);
+                if (Attribute(declaration, TypeAttribute) is { } attribute)
+                    bindings[name] = new(Argument(attribute, 0), Argument(attribute, 1), Argument(attribute, 2));
+            }
             var owner = Text(declaration["fileClass"]) ?? Text(declaration["name"]);
             foreach (var method in (declaration["methods"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
                 if (Text(method[DeclarationIdentityBinding.Key]) is string id)
                 {
                     locals[id] = (owner, method);
-                    if (Attribute(method, MemberAttribute) is { } marker) adapters[id] = Argument(marker, 0);
+                    if (Attribute(method, MemberAttribute) is { } marker)
+                    {
+                        adapters[id] = Argument(marker, 0);
+                        members[id] = (owner, method, Argument(marker, 1));
+                    }
                 }
             foreach (var type in (declaration["types"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()) Index(type);
         }
@@ -52,6 +73,56 @@ sealed class ValueRepresentationLowering
         return !referenceBuild && binding != null
             ? Helper(binding.ClassifierFactory, new[] { Depth(depth) }, new[] { new TypeNode.Fqn("kotlin.Int") },
                 KotlinRuntimeTypeWitness.PredicateType) : null;
+    }
+
+    internal bool HasClassifier(TypeNode type) => Classifier(type).Binding != null;
+
+    internal JsonNode ComponentPredicate(TypeNode type, JsonNode actualType)
+    {
+        var (binding, depth) = Classifier(type);
+        return !referenceBuild && binding != null && depth == 0
+            ? Helper(binding.ComponentClassifier, new[] { actualType },
+                new TypeNode[] { new TypeNode.Fqn("DotKt.Runtime.CompilerServices.StarProjectionType") }, new TypeNode.Fqn("kotlin.Boolean"))
+            : null;
+    }
+
+    static JsonObject GenericDeclaration(JsonObject operation, string scope)
+    {
+        for (JsonNode parent = operation.Parent; parent != null; parent = parent.Parent)
+            if (parent is JsonObject owner && (scope == "method"
+                ? owner["k"] == null && owner["params"] is JsonArray && owner["body"] is JsonArray
+                : Text(owner["kind"]) is "class" or "interface" or "enum" or "struct"))
+                return owner;
+        return null;
+    }
+
+    static NullableRepresentationFrame GenericFrame(JsonObject declaration, string scope) => declaration == null ? null
+        : scope == "method" ? NullableRepresentationTypes.DeclarationMethodFrame(declaration)
+            : KotlinSupertypesRecord.ReadNullableFrame(declaration);
+
+    TypeNode SemanticBound(JsonObject operation, TypeNode.Tv variable, HashSet<TypeNode.Tv> visited)
+    {
+        if (!visited.Add(variable)) return null;
+        var declaration = GenericDeclaration(operation, variable.Scope);
+        if (declaration == null) return null;
+        var frame = GenericFrame(declaration, variable.Scope);
+        var sourceIndex = frame?.PhysicalSlot(variable.I).SourceIndex ?? variable.I;
+        var sourceKey = variable.Scope == "method" ? NullableGenericErasure.MethodTypeParameterBoundsPre : KotlinSupertypesRecord.PreKey;
+        var bounds = Text(declaration[sourceKey]) is string encoded
+            ? JsonNode.Parse(encoded)?["bounds"]?[sourceIndex.ToString()] as JsonArray : null;
+        var parameter = (declaration["typeParams"] as JsonArray)?[variable.I] as JsonObject;
+        bounds ??= parameter?["constraints"] as JsonArray;
+        foreach (var bound in (bounds ?? new JsonArray()).Select(TypeJson.Read))
+        {
+            if (HasClassifier(bound)) return bound;
+            if (bound is TypeNode.Tv parent)
+            {
+                var parentFrame = GenericFrame(GenericDeclaration(operation, parent.Scope), parent.Scope);
+                var physical = parentFrame?.Variable(parent, NullableRepresentationFrame.Role.Ordinary) as TypeNode.Tv ?? parent;
+                if (SemanticBound(operation, physical, visited) is { } inherited) return inherited;
+            }
+        }
+        return null;
     }
 
     (ValueRepresentationBinding Binding, int Depth) Classifier(TypeNode type)
@@ -93,8 +164,8 @@ sealed class ValueRepresentationLowering
         };
     }
 
-    // Freeze source constraints before companion frames are materialized. A CLR bound naming
-    // the runtime class would reject native values admitted by the Kotlin declaration.
+    // Freeze source constraints before companion frames are materialized. The physical
+    // alias is not the semantic numeric union and cannot express its Kotlin upper bound.
     internal void EraseBounds(JsonNode root)
     {
         if (referenceBuild || bindings.Count == 0) return;
@@ -110,7 +181,7 @@ sealed class ValueRepresentationLowering
                     if (parameters[index] is JsonObject parameter && parameter["constraints"] is JsonArray constraints)
                     {
                         bounds[index.ToString()] = constraints.DeepClone();
-                        changed |= constraints.Select(TypeJson.Read).Any(type => type != null && !type.Equals(Storage(type)));
+                        changed |= constraints.Select(TypeJson.Read).Any(type => type != null && !type.Equals(AliasFace(type)));
                         var retained = constraints.Where(bound => TypeJson.Read(bound) is not TypeNode.Fqn f
                             || !bindings.ContainsKey(f.Name)).Select(bound => bound.DeepClone()).ToArray();
                         if (retained.Length == constraints.Count) continue;
@@ -162,6 +233,13 @@ sealed class ValueRepresentationLowering
             foreach (var (key, child) in operation.ToArray())
                 if (key is not ("attrs" or "overrides" or DeclarationIdentityBinding.SemanticSignatureKey)) Walk(child);
             var kind = Text(operation["k"]);
+            if (kind == "callInstance" && operation["super"]?.GetValue<bool>() == true
+                && Text(operation[DeclarationIdentityBinding.Key]) is string selected
+                && members.TryGetValue(selected, out var body) && !(body.Method["abstract"]?.GetValue<bool>() ?? false))
+            {
+                Replace(operation, DefaultCall(body.Owner, body.Method, operation["recv"], operation["args"] as JsonArray));
+                return;
+            }
             if (kind == "callInstance" && operation["super"]?.GetValue<bool>() != true
                 && Text(operation[DeclarationIdentityBinding.Key]) is string id
                 && (adapters.GetValueOrDefault(id) ?? refs?.ValueAdapter(id)) is string target)
@@ -176,6 +254,20 @@ sealed class ValueRepresentationLowering
             }
             if (kind is not ("cast" or "isInst" or "isInstRef") || operation["e"] == null) return;
             var source = TypeJson.Read(operation["type"]);
+            var scalar = source is TypeNode.Nullable n ? n.Of : source;
+            if (kind is "cast" or "isInstRef" && scalar is TypeNode.Tv variable
+                && !KotlinTypeWitness.NeedsWitness(operation)
+                && SemanticBound(operation, variable, new HashSet<TypeNode.Tv>()) is { } bound)
+            {
+                // An unchecked generic cast still checks its erased source bound. Keep that
+                // guard inside the operand so deferred Object-return/narrowing remains unchanged.
+                var guard = (JsonObject)operation.DeepClone();
+                guard["type"] = TypeJson.Write(source is TypeNode.Nullable ? new TypeNode.Nullable(bound) : bound);
+                Walk(guard);
+                operation["e"] = new JsonObject { ["k"] = "cast",
+                    ["type"] = TypeJson.Write(new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"))), ["e"] = guard };
+                return;
+            }
             var nullable = source is TypeNode.Nullable;
             var (binding, depth) = Classifier(source);
             if (binding == null) return;
@@ -222,25 +314,25 @@ sealed class ValueRepresentationLowering
         Walk(root);
     }
 
-    internal TypeNode Storage(TypeNode type) => type switch {
-        TypeNode.Fqn f when bindings.TryGetValue(f.Name, out var binding) => new TypeNode.Fqn(binding.Storage),
-        TypeNode.Fqn f => new TypeNode.Fqn(f.Name, f.Args?.Select(Storage).ToArray()),
-        TypeNode.Array a => new TypeNode.Array(Storage(a.Elem), a.Rank, a.SzArray),
-        TypeNode.Nullable n => new TypeNode.Nullable(Storage(n.Of)),
-        TypeNode.Oblivious o => new TypeNode.Oblivious(Storage(o.Of)),
-        TypeNode.ByRef b => new TypeNode.ByRef(Storage(b.Of)),
-        TypeNode.Projection p => new TypeNode.Projection(p.Variance, Storage(p.Of)),
-        TypeNode.Fn f => f with { Ret = Storage(f.Ret), Params = f.Params.Select(Storage).ToArray(),
-            Recv = f.Recv == null ? null : Storage(f.Recv), Ctx = f.Ctx?.Select(Storage).ToArray() },
+    TypeNode AliasFace(TypeNode type) => type switch {
+        TypeNode.Fqn f when bindings.ContainsKey(f.Name) => new TypeNode.Fqn(aliases[f.Name], f.Args?.Select(AliasFace).ToArray()),
+        TypeNode.Fqn f => new TypeNode.Fqn(f.Name, f.Args?.Select(AliasFace).ToArray()),
+        TypeNode.Array a => new TypeNode.Array(AliasFace(a.Elem), a.Rank, a.SzArray),
+        TypeNode.Nullable n => new TypeNode.Nullable(AliasFace(n.Of)),
+        TypeNode.Oblivious o => new TypeNode.Oblivious(AliasFace(o.Of)),
+        TypeNode.ByRef b => new TypeNode.ByRef(AliasFace(b.Of)),
+        TypeNode.Projection p => new TypeNode.Projection(p.Variance, AliasFace(p.Of)),
+        TypeNode.Fn f => f with { Ret = AliasFace(f.Ret), Params = f.Params.Select(AliasFace).ToArray(),
+            Recv = f.Recv == null ? null : AliasFace(f.Recv), Ctx = f.Ctx?.Select(AliasFace).ToArray() },
         _ => type,
     };
 
-    internal void ProjectValues(JsonNode root, bool preserveOnly = false)
+    internal void RecordSourceTypes(JsonNode root)
     {
         if (referenceBuild || bindings.Count == 0) return;
         void Slot(JsonObject declaration, string key, string carrier)
         {
-            if (TypeJson.Read(declaration[key]) is not TypeNode original || original.Equals(Storage(original))) return;
+            if (TypeJson.Read(declaration[key]) is not TypeNode original || original.Equals(AliasFace(original))) return;
             declaration[carrier] ??= TypeNode.ToJson(original);
         }
         void Walk(JsonNode node)
@@ -248,8 +340,7 @@ sealed class ValueRepresentationLowering
             if (node is JsonArray array)
             {
                 for (var index = 0; index < array.Count; index++)
-                    if (!preserveOnly && TypeJson.Read(array[index]) is TypeNode type) array[index] = TypeJson.Write(Storage(type));
-                    else Walk(array[index]);
+                    Walk(array[index]);
                 return;
             }
             if (node is not JsonObject obj) return;
@@ -261,8 +352,8 @@ sealed class ValueRepresentationLowering
                 {
                     var pre = new JsonObject();
                     if (obj["interfaces"] is JsonArray interfaces && interfaces.Select(TypeJson.Read)
-                        .Any(type => type != null && !type.Equals(Storage(type)))) pre["interfaces"] = interfaces.DeepClone();
-                    if (TypeJson.Read(obj["base"]) is TypeNode parent && !parent.Equals(Storage(parent)))
+                        .Any(type => type != null && !type.Equals(AliasFace(type)))) pre["interfaces"] = interfaces.DeepClone();
+                    if (TypeJson.Read(obj["base"]) is TypeNode parent && !parent.Equals(AliasFace(parent)))
                         pre["base"] = obj["base"].DeepClone();
                     KotlinSupertypesRecord.Merge(obj, pre);
                 }
@@ -270,27 +361,134 @@ sealed class ValueRepresentationLowering
             foreach (var (key, child) in obj.ToArray())
             {
                 if (key is "attrs" or "overrides" or "memberRef" or DeclarationIdentityBinding.SemanticSignatureKey) continue;
-                // These are selected declaration descriptors, not argument value slots. An ordinary CLR
-                // declaration keeps its native parameter types even when Kotlin values use a broader storage ABI.
-                var declarationOwner = TypeJson.Read(obj["ownerType"] ?? obj["owner"]
-                    ?? (Text(obj["k"]) is "new" or "newClr" or "clrInstance" or "clrStatic" ? obj["type"] : null));
-                if (key is "sig" or "argTypes" or "memberSignature" or "resolvedMemberParams"
-                    && declarationOwner is TypeNode.Fqn nativeOwner && refs != null
-                    && refs.ResolveForeignProjectionType(nativeOwner.Name, nativeOwner.Args ?? Array.Empty<TypeNode>()) != null)
-                    continue;
-                // Physical heads are not value slots. Their supplied generic arguments still are.
-                var exact = key is "base" or "owner" or "ownerType" or "declaringType" or "iface"
-                    || key == "type" && Text(obj["k"]) is "new" or "classRef" or "clrInstance" or "clrStatic" or "newClr";
-                if (!preserveOnly && TypeJson.Read(child) is TypeNode type)
-                {
-                    var mapped = exact && type is TypeNode.Fqn f
-                        ? new TypeNode.Fqn(f.Name, f.Args?.Select(Storage).ToArray()) : Storage(type);
-                    obj[key] = TypeJson.Write(mapped);
-                }
-                else Walk(child);
+                Walk(child);
             }
         }
         Walk(root);
+    }
+
+    JsonObject DefaultCall(string owner, JsonObject source, JsonNode receiver, JsonArray arguments)
+    {
+        var call = new JsonObject {
+            [DeclarationIdentityBinding.Key] = source[DeclarationIdentityBinding.Key]?.DeepClone(),
+            ["recv"] = receiver.DeepClone(), ["ret"] = source["ret"]?.DeepClone(),
+            ["sig"] = new JsonArray((source["params"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()
+                .Select(parameter => parameter["type"]?.DeepClone()).ToArray()),
+        };
+        return (JsonObject)MemberCallSubstitution.Rule3HelperCall(call, refs, new TypeNode.Fqn(owner),
+            Text(source["name"]), arguments ?? new JsonArray(), instance: true, locals.Keys.ToHashSet(StringComparer.Ordinal));
+    }
+
+    // Alias classes have no runtime base TypeDef. Give their semantic virtual slots a real
+    // nominal interface map. Bridges are protected virtual implementation details: descendants
+    // override the selected bridge, or call its inherited body NONvirtually. Thus a default
+    // followed by a descendant override works across DLLs without rediscovering any body.
+    internal void SynthesizeSlots(IReadOnlyList<JsonNode> roots)
+    {
+        if (referenceBuild || members.Count == 0) return;
+        var defs = SupertypeGraph.Collect(roots);
+        var completed = new HashSet<string>(StringComparer.Ordinal);
+        var active = new HashSet<string>(StringComparer.Ordinal);
+        var bridges = new Dictionary<(string Owner, string Slot), JsonObject>();
+        void Apply(SupertypeGraph.Def cls)
+        {
+            if (completed.Contains(cls.Name) || cls.Kind != "class") return;
+            if (!active.Add(cls.Name)) throw new InvalidOperationException("Cyclic nominal-slot base graph");
+            if (cls.Base != null && defs.TryGetValue(cls.Base.Name, out var parent)) Apply(parent);
+            var reachable = SupertypeGraph.Reachable(cls, defs, refs).Select(edge => edge.spec.Name).ToHashSet(StringComparer.Ordinal);
+            // Referenced physical bases can erase their Kotlin alias edge. The frontend's
+            // flattened exact override identities still state which semantic family is selected.
+            foreach (var method in cls.Methods.OfType<JsonObject>())
+                foreach (var marker in (method["overrides"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
+                    if (Text(marker[DeclarationIdentityBinding.Key]) is string id && members.TryGetValue(id, out var selected))
+                        reachable.Add(selected.Owner);
+            var sourceMembers = members.Where(member => reachable.Contains(member.Value.Owner)).ToArray();
+            foreach (var (sourceId, source) in sourceMembers)
+            {
+                var split = source.Slot.LastIndexOf('.');
+                var slotOwner = source.Slot[..split];
+                var slotMember = source.Slot[(split + 1)..];
+                var own = cls.Methods.OfType<JsonObject>().Where(method => !Bool(method["static"])
+                    && method["overrides"] is JsonArray overrides && overrides.OfType<JsonObject>()
+                        .Any(marker => Text(marker[DeclarationIdentityBinding.Key]) == sourceId)).ToArray();
+                if (own.Length > 1) throw new InvalidOperationException("Ambiguous selected nominal-slot implementation");
+                JsonObject inherited = null;
+                TypeNode.Fqn inheritedOwner = null;
+                if (cls.Base != null)
+                {
+                    if (bridges.TryGetValue((cls.Base.Name, source.Slot), out var local))
+                    {
+                        inherited = local;
+                        inheritedOwner = cls.Base;
+                    }
+                    else if (refs?.ValueSlotBridge(cls.Base.Name, slotOwner, slotMember) is { } external)
+                    {
+                        inherited = new JsonObject { ["name"] = external.Name, ["abstract"] = external.IsAbstract,
+                            ["ret"] = TypeJson.Write(external.ReturnTypeNode),
+                            ["params"] = new JsonArray(external.ParamTypeNodes.Select((type, index) => (JsonNode)new JsonObject {
+                                ["name"] = "p" + index, ["type"] = TypeJson.Write(type) }).ToArray()) };
+                        inheritedOwner = cls.Base;
+                    }
+                }
+                var declaration = source.Method;
+                var parameters = declaration["params"] as JsonArray ?? new JsonArray();
+                var signature = new JsonArray(parameters.OfType<JsonObject>().Select(parameter => parameter["type"]?.DeepClone()).ToArray());
+                var arguments = new JsonArray(parameters.Select((parameter, index) => (JsonNode)new JsonObject {
+                    ["k"] = "local", ["name"] = "p" + index, ["sty"] = parameter["type"]?.DeepClone() }).ToArray());
+                var target = own.SingleOrDefault();
+                if (target?["overrides"] is JsonArray selectedOverrides
+                    && selectedOverrides.OfType<JsonObject>().Select(marker => Text(marker[DeclarationIdentityBinding.Key]))
+                        .Where(id => id != null).All(members.ContainsKey))
+                    target[DeclarationIdentityBinding.IndependentAliasSlotKey] = true;
+                var abstractSlot = target != null ? Bool(target["abstract"])
+                    : inherited != null ? Bool(inherited["abstract"]) : Bool(declaration["abstract"]);
+                JsonObject forwarded = null;
+                if (!abstractSlot)
+                {
+                    if (target != null || inherited != null)
+                    {
+                        var selected = target ?? inherited;
+                        forwarded = new JsonObject {
+                            ["k"] = "callInstance", ["ownerType"] = TypeJson.Write(target != null
+                                ? new TypeNode.Fqn(cls.Name, cls.Arity == 0 ? null
+                                    : Enumerable.Range(0, cls.Arity).Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray())
+                                : inheritedOwner),
+                            ["method"] = selected[DeclarationIdentityBinding.ExplicitNameKey]?.DeepClone() ?? selected["name"]?.DeepClone(),
+                            ["recv"] = new JsonObject { ["k"] = "this" }, ["args"] = arguments,
+                            ["sig"] = signature.DeepClone(), ["ret"] = declaration["ret"]?.DeepClone(),
+                            ["virtual"] = target != null, ["clrOwnerResolved"] = true,
+                        };
+                        if (target == null) forwarded["super"] = true;
+                        else if (target[DeclarationIdentityBinding.Key] is JsonNode id) forwarded[DeclarationIdentityBinding.Key] = id.DeepClone();
+                    }
+                    else forwarded = DefaultCall(source.Owner, declaration, new JsonObject { ["k"] = "this" }, arguments);
+                }
+                var name = "dotkt$value$" + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+                    System.Text.Encoding.UTF8.GetBytes(source.Slot))).ToLowerInvariant()[..16];
+                var bridge = new JsonObject {
+                    ["name"] = name, ["static"] = false, ["override"] = inherited != null,
+                    ["virtual"] = true, ["abstract"] = abstractSlot, ["objectOverride"] = false,
+                    ["vis"] = "protected", ["generated"] = true,
+                    ["params"] = new JsonArray(parameters.Select((parameter, index) => (JsonNode)new JsonObject {
+                        ["name"] = "p" + index, ["type"] = parameter["type"]?.DeepClone() }).ToArray()),
+                    ["ret"] = declaration["ret"]?.DeepClone(),
+                    ["body"] = abstractSlot ? new JsonArray() : new JsonArray(new JsonObject { ["k"] = "return", ["value"] = forwarded }),
+                    ["attrs"] = new JsonArray(),
+                    ["clrInterfaceImpls"] = new JsonArray(new JsonObject {
+                        ["owner"] = TypeJson.Fqn(slotOwner), ["member"] = slotMember, ["arity"] = 0,
+                        ["params"] = signature, ["ret"] = declaration["ret"]?.DeepClone(),
+                    }),
+                };
+                cls.Methods.Add(MaterializedExecutable.Normalize(bridge));
+                bridges[(cls.Name, source.Slot)] = bridge;
+                var interfaces = cls.Node["interfaces"] as JsonArray ?? new JsonArray();
+                if (cls.Node["interfaces"] == null) cls.Node["interfaces"] = interfaces;
+                if (!interfaces.Any(type => TypeJson.OwnerName(type) == slotOwner)) interfaces.Add(TypeJson.Fqn(slotOwner));
+            }
+            active.Remove(cls.Name);
+            completed.Add(cls.Name);
+        }
+        foreach (var cls in defs.Values) Apply(cls);
     }
 
     static void Replace(JsonObject target, JsonObject replacement)
@@ -305,11 +503,14 @@ sealed class ValueRepresentationLowering
     {
         var root = JsonNode.Parse("""
         {"fileClass":"Helpers","types":[{"name":"Union","kind":"class","attrs":[
+          {"attr":{"t":"fqn","name":"kotlin.clr.ClrTypeAlias"},"args":[{"value":"System.Object"}]},
           {"attr":{"t":"fqn","name":"kotlin.clr.ClrValueRepresentation"},"args":[
-           {"value":"System.Object"},{"value":"Helpers.matches"},{"value":"Helpers.classifier"}]}],
-          "methods":[{"name":"convert","declarationId":"convert","attrs":[
-           {"attr":{"t":"fqn","name":"kotlin.clr.ClrValueMember"},"args":[{"value":"Helpers.convert"}]}]}]},
-          {"name":"Child","kind":"class","base":{"t":"fqn","name":"Union"}}],"methods":[
+           {"value":"Helpers.matches"},{"value":"Helpers.classifier"},{"value":"Helpers.component"}]}],
+          "methods":[{"name":"convert","declarationId":"convert","params":[],"ret":{"t":"fqn","name":"kotlin.Int"},"abstract":true,"attrs":[
+           {"attr":{"t":"fqn","name":"kotlin.clr.ClrValueMember"},"args":[{"value":"Helpers.convert"},{"value":"Slots.convert"}]}]}]},
+          {"name":"Child","kind":"class","base":{"t":"fqn","name":"Union"},"methods":[
+           {"name":"differentName","declarationId":"child-convert","ret":{"t":"fqn","name":"kotlin.Int"},"params":[],
+            "overrides":[{"declarationId":"convert"}],"abstract":false}]}],"methods":[
           {"name":"matches","declarationId":"matches","params":[{"type":{"t":"nullable","of":{"t":"fqn","name":"kotlin.Any"}}},{"type":{"t":"fqn","name":"kotlin.Int"}}]},
           {"name":"classifier","declarationId":"classifier","params":[{"type":{"t":"fqn","name":"kotlin.Int"}}]},
           {"name":"convert","declarationId":"helper-convert","params":[{"type":{"t":"fqn","name":"kotlin.Any"}}]},
@@ -327,21 +528,28 @@ sealed class ValueRepresentationLowering
         var vector = policy.Predicate(new TypeNode.Array(new TypeNode.Fqn("Union")));
         policy.EraseBounds(root);
         policy.BindOperations(root);
-        policy.ProjectValues(root);
+        policy.RecordSourceTypes(root);
+        policy.SynthesizeSlots(new[] { root });
         var method = root["methods"][3];
-        if (TypeJson.OwnerName(method["params"][0]["type"]) != "System.Object"
-            || TypeJson.Read(method["ret"]) != new TypeNode.Array(new TypeNode.Fqn("System.Object"))
+        if (TypeJson.OwnerName(method["params"][0]["type"]) != "Union"
+            || TypeJson.Read(method["ret"]) != new TypeNode.Array(new TypeNode.Fqn("Union"))
             || method["params"][0]["kotlinType"] == null || method["retKotlinType"] == null
             || method["typeParams"][0]["constraints"].AsArray().Count != 0
             || Text(method[NullableGenericErasure.MethodTypeParameterBoundsPre])?.Contains("Union") != true
             || Text(method["body"][0]["value"][DeclarationIdentityBinding.Key]) != "helper-convert"
             || Text(method["body"][1]["expr"]["k"]) != "valueBlock"
             || TypeJson.OwnerName(method["body"][2]["expr"]["type"]) != "Union"
-            || TypeJson.OwnerName(method["body"][3]["expr"]["sig"][0]) != "System.Object"
+            || TypeJson.OwnerName(method["body"][3]["expr"]["sig"][0]) != "Union"
             || TypeJson.OwnerName(root["types"][1]["base"]) != "Union"
             || scalar["args"][0]["value"].GetValue<int>() != 0
             || vector["args"][0]["value"].GetValue<int>() != 1)
             throw new InvalidOperationException("Value representation lost source types, bounds, exact heads, or classifier depth");
-        Console.WriteLine("[value representation] self-test OK (metadata-driven storage, source carriers, bounds, exact heads, adapters, array classifiers)");
+        var child = root["types"][1];
+        var bridge = child["methods"].AsArray().OfType<JsonObject>().Single(method => method["generated"]?.GetValue<bool>() == true);
+        if (TypeJson.OwnerName(child["interfaces"][0]) != "Slots"
+            || Text(bridge["body"][0]["value"][DeclarationIdentityBinding.Key]) != "child-convert"
+            || Text(bridge["clrInterfaceImpls"][0]["member"]) != "convert")
+            throw new InvalidOperationException("Nominal slots lost exact override/member bindings");
+        Console.WriteLine("[value representation] self-test OK (source carriers, bounds, exact adapters, nominal slots, array classifiers)");
     }
 }

@@ -2848,20 +2848,6 @@ static class MemberCallSubstitution
     static JsonNode ExactIntrinsicCall(JsonObject node, TypeNode clrOwner, string member, JsonArray args, bool instance,
         ExactClrMemberBinding binding, ReferenceMetadataIndex refs, SubstCtx ctx, string ownerToken)
     {
-        // A trusted native view may name a class emitted by this compilation (the runtime
-        // stdlib self-build). It still names exact physical slots, but it belongs to the local
-        // axis, not a referenced CLR type. Do not make the emitter rediscover that distinction.
-        if (clrOwner is TypeNode.Fqn localOwner && refs.IsLocalEmittedType(localOwner.Name)
-            && !refs.Aliases.ContainsKey(localOwner.Name)
-            && !binding.Intrinsic.Contains('.') && binding.CountStart < 0 && binding.ByrefPositions.Length == 0)
-            return new JsonObject {
-                ["k"] = instance ? "callInstance" : "callStatic",
-                [instance ? "ownerType" : "owner"] = TypeJson.Write(clrOwner),
-                ["method"] = binding.Intrinsic, ["sig"] = new JsonArray(InferArgTypes(node, args).Select(type => type.DeepClone()).ToArray()),
-                ["recv"] = instance ? node["recv"]?.DeepClone() : null,
-                ["args"] = args.DeepClone(), ["dynRet"] = RetToken(node),
-                ["virtual"] = instance, ["clrOwnerResolved"] = true,
-            };
         if (binding.CountStart < 0 && binding.CountEnd < 0)
             return Constrainify(ClrCallNode(node, clrOwner, binding.Intrinsic, member, args, refs, instance,
                 binding.ByrefPositions), node, refs, ctx, ownerToken);
@@ -3004,8 +2990,10 @@ static class MemberCallSubstitution
     // (`HashMap<String,Int>().put(..)` -> an open-generic callStatic -> InvalidProgramException at run), and the bare
     // ownerFqn sig slot lowered to the degenerate NON-generic BCL type (`clr:System...Dictionary`) — carry the
     // instantiated token so the `__self` slot and the helper type args agree.
-    static JsonNode Rule3HelperCall(JsonObject node, ReferenceMetadataIndex refs, TypeNode.Fqn ownerFqn, string member, JsonArray args, bool instance)
+    internal static JsonNode Rule3HelperCall(JsonObject node, ReferenceMetadataIndex refs, TypeNode.Fqn ownerFqn, string member, JsonArray args, bool instance,
+        IReadOnlySet<string> selectedLocalIds = null)
     {
+        var localIds = selectedLocalIds ?? _localDeclarationIds;
         var ownerName = ownerFqn.Name;
         var hargs = new JsonArray();
         if (instance && node["recv"] != null) hargs.Add(node["recv"].DeepClone());
@@ -3025,7 +3013,7 @@ static class MemberCallSubstitution
             ["args"] = hargs,
         };
         var sourceIdentity = Str(node[DeclarationIdentityBinding.Key]);
-        if (sourceIdentity != null && _localDeclarationIds?.Contains(sourceIdentity) == true)
+        if (sourceIdentity != null && localIds?.Contains(sourceIdentity) == true)
             call[DeclarationIdentityBinding.Key] = AliasHelperHoist.DeclarationIdentity(sourceIdentity);
         // The helper is instantiated with the alias class's args FIRST, then the method's own typeArgs (structured).
         var typeArgs = new JsonArray();
@@ -3053,7 +3041,7 @@ static class MemberCallSubstitution
         // `sig` may be LONGER than args (omitted defaulted params, filled downstream) — the bridge matches
         // positionally from the left; only a SHORTER sig would misalign.
         if (sigParts.Count >= hargs.Count) call["sig"] = sigParts;
-        if (sourceIdentity != null && _localDeclarationIds?.Contains(sourceIdentity) != true)
+        if (sourceIdentity != null && localIds?.Contains(sourceIdentity) != true)
         {
             // Reference stdlib retains the semantic alias declaration, not the runtime helper.
             // Select that exact declaration by identity and project its complete signature using

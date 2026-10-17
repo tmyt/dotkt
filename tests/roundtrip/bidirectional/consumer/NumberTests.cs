@@ -12,7 +12,10 @@ public class NumberInteropTests
         var slot = new NumberSlots(18, null);
         Assert.That(slot.read(), Is.TypeOf<int>().And.EqualTo(18));
         Assert.That(typeof(NumberSlots).GetProperty("value")!.PropertyType, Is.EqualTo(typeof(object)));
-        Assert.That(typeof(LibraryNumber).BaseType!.FullName, Is.EqualTo("kotlin.Number"));
+        Assert.That(typeof(LibraryNumber).BaseType, Is.EqualTo(typeof(object)));
+        var nominal = typeof(LibraryNumber).GetInterfaces().Single(type =>
+            type.FullName == "DotKt.Runtime.CompilerServices.NumberSlots");
+        Assert.That(nominal.Assembly.GetType("kotlin.Number"), Is.Null);
         var order = new NumberOrder();
         Assert.That(((IComparable)order).CompareTo(19), Is.EqualTo(19));
         var method = typeof(NumberOrder).GetMethod("CompareTo", new[] { typeof(object) })!;

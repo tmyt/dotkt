@@ -193,7 +193,6 @@ sealed class Pipeline
         var declarationSemanticSignatures = DeclarationIdentityBinding.PreserveSourceFacts(birRoots);
         var valueRepresentations = new ValueRepresentationLowering(birRoots, refs, _options.RefBuild);
         KotlinRuntimeTypeWitness.ValueRepresentations = valueRepresentations;
-        BirTypeLowering.ValueRepresentations = valueRepresentations;
         foreach (var root in birRoots) valueRepresentations.EraseBounds(root);
         CallableVisibilityLowering.ApplyAll(birRoots, refs);
         FunctionValueRepresentation.PreserveSourceFacts(birRoots);
@@ -940,6 +939,7 @@ sealed class Pipeline
         // survive to CIR — and on Kotlin's own supertype graph. Non-ref builds only.
         if (!_options.RefBuild)
             KotlinCollectionSlotSynthesis.ApplyAll(staged.Select(s => s.Root).ToList(), refs, isValueFqn);
+        valueRepresentations.SynthesizeSlots(staged.Select(s => s.Root).ToList());
 
         // NOMINAL COLLECTION CLASSIFIER IDENTITIES: the operational aliases intentionally share BCL faces
         // (Collection/Set -> IReadOnlyCollection, MutableCollection/MutableSet -> ICollection), which otherwise makes
@@ -1029,7 +1029,9 @@ sealed class Pipeline
         // `compareTo(...): Nothing` is normalized at that bridge's construction boundary, before the physical Int32
         // slot could receive Nothing's later CLR object erasure.
         if (!_options.RefBuild)
-            foreach (var stagedFile in staged) ComparableBridgeSynthesis.Apply(stagedFile.Root, valueRepresentations.Storage);
+            foreach (var stagedFile in staged) ComparableBridgeSynthesis.Apply(stagedFile.Root,
+                type => BirTypeLowering.LowerPhysicalType(type, refs.Aliases, isValueFqn,
+                    refs.PhysicalTypeNames, typeArg: true, nullableFrames: refs.NullableTypeFrames));
 
         // @PublishedApi is a Kotlin semantic annotation carried alongside the source `internal` visibility in BIR.
         // Resolve its effective CLR accessibility here, before ownership selects top-level versus Nested* metadata.
@@ -1277,7 +1279,7 @@ sealed class Pipeline
             // wrappers on those arguments. The reference build must query its own representation as well.
             // Capture complete source slots before reference-nullable stripping. The exact KotlinType carrier
             // owns nested and outer nullability; NRT flags alone cannot restore a projected nominal source type.
-            valueRepresentations.ProjectValues(substituted, preserveOnly: true);
+            valueRepresentations.RecordSourceTypes(substituted);
             DeclNullableFlags.Apply(substituted, isValueFqn,
                 type => BirTypeLowering.AnnotationArguments(type, refs.Aliases, isValueFqn,
                     refs.PhysicalTypeNames, emittedLocalTypes, _options.RefBuild, refs.NullableTypeFrames),
@@ -1317,7 +1319,6 @@ sealed class Pipeline
             // restores `List` vs `MutableList` cross-module in both channels. APP builds only (the collapse is
             // non-ref; only an app-emitted library is dll2klib-re-consumed). Runs on kotlin.* names before lowering.
             if (attributeTopLevelOwner) CollectionIdentityRecord.RecordMemberSlots(substituted);
-            valueRepresentations.ProjectValues(substituted);
             // The type transform: lower the Kotlin type vocabulary into ilemit's CLR-codegen vocabulary, emitting a
             // BIR-SHAPED CIR (same node shape; only type strings change). No verbatim/envelope track. The ref.dll
             // @ClrTypeAlias index lowers EVERY CLR-bound type (collections/StringBuilder/Regex/... not just the

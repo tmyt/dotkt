@@ -21,6 +21,7 @@ static class DeclarationIdentityBinding
     internal const string ReferencedIntrinsicKey = "declarationReferencedIntrinsic";
     internal const string ReferencedFactoryKey = "declarationReferencedFactory";
     internal const string PhysicalOnlySuffix = "|clr-physical-only";
+    internal const string IndependentAliasSlotKey = "independentAliasSlot";
 
     internal static string PhysicalOnlyId(string declarationId, string role) =>
         declarationId + PhysicalOnlySuffix + "|" + role;
@@ -291,7 +292,7 @@ static class DeclarationIdentityBinding
                             result.Add((method, ownerName, packageName, Str(method[Key]), name,
                                 Str(method["declarationSourceName"]) ?? name, PhysicalSignature(method),
                                 Str(method[ExplicitNameKey]), generatedOwner || Bool(method["generated"]),
-                                !Bool(method["abstract"]) && (Str(owner["kind"]) == "interface"
+                                !Bool(method["abstract"]) && (Bool(method[IndependentAliasSlotKey]) || Str(owner["kind"]) == "interface"
                                     || !Bool(method["virtual"]) && !Bool(method["override"])
                                         && (method["overrides"] as JsonArray)?.Count is not > 0)));
                 if (owner["types"] is JsonArray types)
