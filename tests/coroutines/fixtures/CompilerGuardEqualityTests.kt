@@ -35,6 +35,11 @@ class CoroutineGuardTaskProvider(val result: CoroutineGuardValue) {
     suspend fun provide(): CoroutineGuardValue = result
 }
 
+class CoroutineGuardSuspendingTaskProvider {
+    var pending: Continuation<String>? = null
+    suspend fun provide(): String = suspendCoroutine { pending = it }
+}
+
 class CompilerGuardEqualityTests {
     @TestAttribute
     fun synchronousColdCallsAndStoredSuspendLambdasDoNotCallEquals() {
@@ -91,6 +96,25 @@ class CompilerGuardEqualityTests {
         assertEquals(true, task.IsCompleted)
         assertEquals(true, task.GetAwaiter().GetResult() === value)
         assertEquals(0, value.calls)
+    }
+
+    @TestAttribute
+    fun asynchronouslyFailedTaskPreservesExceptionIdentityWithoutEquals() {
+        val cause = CoroutineGuardFailure()
+        val provider = CoroutineGuardSuspendingTaskProvider()
+        val task = Type.GetType("CoroutineGuardSuspendingTaskProvider")!!.GetMethod("provide")!!
+            .Invoke(provider, null) as Task1<String>
+        assertEquals(false, task.IsCompleted)
+        provider.pending!!.resumeWith(Result.failure(cause))
+        assertEquals(true, task.IsFaulted)
+        var observed: Throwable? = null
+        try {
+            task.GetAwaiter().GetResult()
+        } catch (failure: Throwable) {
+            observed = failure
+        }
+        assertEquals(true, observed === cause)
+        assertEquals(0, cause.calls)
     }
 
     @TestAttribute
