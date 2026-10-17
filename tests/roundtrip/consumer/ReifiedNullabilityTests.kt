@@ -2,6 +2,8 @@ import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert
 import System.InvalidCastException
 import System.TimeSpan
+import InheritedGenericOwners.Base as ForeignClassifierBox
+import InheritedGenericOwners.IntBridge as ForeignClassifierDerived
 import roundtrip.reifiednullability.delayed
 import roundtrip.reifiednullability.forwarded
 import roundtrip.reifiednullability.matches
@@ -84,6 +86,41 @@ class ReifiedNullabilityTests {
         var rejected = false
         try { checkedCast<Int?>("wrong") } catch (_: InvalidCastException) { rejected = true }
         ClassicAssert.IsTrue(rejected)
+        var stringNullRejected = false
+        try { checkedCast<String>(null) } catch (_: ClassCastException) { stringNullRejected = true }
+        ClassicAssert.IsTrue(stringNullRejected)
+        var listNullRejected = false
+        try { checkedCast<List<*>>(null) } catch (_: ClassCastException) { listNullRejected = true }
+        ClassicAssert.IsTrue(listNullRejected)
+        ClassicAssert.IsNull(checkedCast<String?>(null))
+        ClassicAssert.IsNull(checkedCast<List<*>?>(null))
+        var wrongStringRejected = false
+        try { checkedCast<String>(42) } catch (_: InvalidCastException) { wrongStringRejected = true }
+        ClassicAssert.IsTrue(wrongStringRejected)
+
+        for (candidate in arrayOf<Any?>(null, Any(), "text", 42)) {
+            val expected = candidate is Comparable<*>
+            ClassicAssert.AreEqual(expected, matches<Comparable<Int>>(candidate))
+            ClassicAssert.AreEqual(expected, forwarded<Comparable<Int>>(candidate))
+            ClassicAssert.AreEqual(expected, delayed<Comparable<Int>>(candidate))
+            ClassicAssert.AreEqual(expected, checker<Comparable<Int>>().matches(candidate))
+            ClassicAssert.AreEqual(expected, runReifiedSuspend(suspended<Comparable<Int>>(candidate)))
+        }
+        for (candidate in arrayOf<Any?>(null, Any(), "text", ForeignClassifierBox<Int>(), ForeignClassifierDerived())) {
+            val expected = candidate is ForeignClassifierBox<*>
+            ClassicAssert.AreEqual(expected, matches<ForeignClassifierBox<*>>(candidate))
+            ClassicAssert.AreEqual(expected, forwarded<ForeignClassifierBox<*>>(candidate))
+            ClassicAssert.AreEqual(expected, delayed<ForeignClassifierBox<*>>(candidate))
+            ClassicAssert.AreEqual(expected, objectDelayed<ForeignClassifierBox<*>>(candidate))
+            ClassicAssert.AreEqual(expected, checker<ForeignClassifierBox<*>>().matches(candidate))
+            ClassicAssert.AreEqual(expected, runReifiedSuspend(suspended<ForeignClassifierBox<*>>(candidate)))
+        }
+        ClassicAssert.IsTrue(matches<ForeignClassifierBox<*>?>(null))
+        ClassicAssert.IsTrue(nullableForwarded<ForeignClassifierBox<*>>(null))
+        ClassicAssert.IsNull(safeCast<ForeignClassifierBox<*>>(Any()))
+        val foreign: Any = ForeignClassifierBox<String>()
+        ClassicAssert.AreSame(foreign, safeCast<ForeignClassifierBox<*>>(foreign))
+        ClassicAssert.AreSame(foreign, checkedCast<ForeignClassifierBox<*>>(foreign))
     }
 
     @TestAttribute

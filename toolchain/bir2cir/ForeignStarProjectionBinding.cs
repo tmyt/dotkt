@@ -785,6 +785,9 @@ static class ForeignStarProjectionBinding
         ? Call("starProjectionHasView", new[] { Type, Type }, Bool,
             runtimeType.DeepClone(), ClassRef(openType)) : null;
 
+    internal static string OpenClassifierType(TypeNode.Fqn owner, ReferenceMetadataIndex refs) =>
+        IsForeignStarType(owner, refs) ? OpenType(owner, refs) : null;
+
     static string OpenType(TypeNode.Fqn owner, ReferenceMetadataIndex refs)
     {
         var type = refs.ResolveForeignProjectionType(owner.Name, owner.Args);

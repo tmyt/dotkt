@@ -63,19 +63,34 @@ static class KotlinRuntimeTypeWitness
             JsonObject Local() => new() { ["k"] = "local", ["name"] = name, ["sty"] = TypeJson.Write(any) };
             JsonObject Null() => new() { ["k"] = "const", ["type"] = TypeJson.Write(any), ["value"] = null };
             JsonObject Bool(bool value) => new() { ["k"] = "const", ["type"] = TypeJson.Fqn("kotlin.Boolean"), ["value"] = value };
-            var test = new JsonObject {
-                ["k"] = "clrInstance", ["type"] = TypeJson.Fqn("System.Type"), ["method"] = "IsInstanceOfType",
-                ["recv"] = classifier, ["args"] = new JsonArray(Local()),
-                ["argTypes"] = new JsonArray(TypeJson.Fqn("System.Object")), ["ret"] = TypeJson.Fqn("System.Boolean"),
-                ["dispatch"] = "callvirt",
-                ["memberRef"] = ClrMemberResolution.ArrayStorageMethodRef(refs, "IsInstanceOfType",
-                    new[] { "System.Object" }, "System.Type", false),
+            JsonObject NativeCall(string owner, string method, JsonNode receiver, string result,
+                string[] parameters, params JsonNode[] arguments) => new() {
+                ["k"] = "clrInstance", ["type"] = TypeJson.Fqn(owner), ["method"] = method,
+                ["recv"] = receiver.DeepClone(), ["args"] = new JsonArray(arguments),
+                ["argTypes"] = new JsonArray(parameters.Select(TypeJson.Fqn).ToArray()),
+                ["ret"] = TypeJson.Fqn(result), ["dispatch"] = "callvirt",
+                ["memberRef"] = ClrMemberResolution.ArrayStorageMethodRef(refs, method, parameters, owner, false),
             };
-            // Collection membership is owned by the nominal flags and its existing composite guard.
-            // Its CLR token may deliberately be Object; do not replace the guard with a native interface test.
+            // A foreign opaque construction is represented by its open definition, not Object or G<Object>.
+            // Use the existing raw-classifier membership operation for that token; exact tokens keep CLR is-instance.
+            var test = new JsonObject {
+                ["k"] = "cond", ["type"] = TypeJson.Fqn("kotlin.Boolean"),
+                ["cond"] = NativeCall("System.Type", "get_IsGenericTypeDefinition", classifier, "System.Boolean", Array.Empty<string>()),
+                ["then"] = new JsonObject {
+                    ["k"] = "callStatic", ["owner"] = TypeJson.Fqn("DotKt.Runtime.CompilerServices.StarProjectionRuntimeKt"),
+                    ["method"] = "starProjectionHasView",
+                    ["sig"] = new JsonArray(TypeJson.Fqn("System.Type"), TypeJson.Fqn("System.Type")),
+                    ["ret"] = TypeJson.Fqn("kotlin.Boolean"),
+                    ["args"] = new JsonArray(
+                        NativeCall("System.Object", "GetType", Local(), "System.Type", Array.Empty<string>()), classifier.DeepClone()),
+                },
+                ["else"] = NativeCall("System.Type", "IsInstanceOfType", classifier, "System.Boolean", new[] { "System.Object" }, Local()),
+            };
+            // The existing nominal/physical operation owns nullability, including checked casts' Kotlin exception.
+            // Collection membership also belongs to that composite guard, not to a native interface token.
             var matches = new JsonObject {
                 ["k"] = "cond", ["cond"] = new JsonObject { ["k"] = "objEq", ["lhs"] = Local(), ["rhs"] = Null() },
-                ["then"] = KotlinTypeWitness.AllowsNull(flags),
+                ["then"] = Bool(true),
                 ["else"] = new JsonObject {
                     ["k"] = "cond", ["cond"] = KotlinTypeWitness.Binary("!=",
                         KotlinTypeWitness.Binary("&", flags.DeepClone(), KotlinTypeWitness.Constant(-2)), KotlinTypeWitness.Constant(0)),

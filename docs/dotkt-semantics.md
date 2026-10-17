@@ -74,8 +74,11 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   and checked reified casts, and propagates it structurally through exact calls and lifted frames. Only demanded
   method type parameters receive one hidden `ValueTuple<Int32, System.Type>` carrying nullability/nominal flags
   and the runtime classifier separately from generic storage. Thus `is Int?` accepts null and boxed integers,
-  but not an unrelated value merely because its storage fits `Object`. Checked reified `as` and `as?` use
-  the same classifier, with throwing and null-producing failure respectively;
+  but not an unrelated value merely because its storage fits `Object`. Opaque foreign generic classifiers carry
+  their open CLR definition and use raw base/interface membership, just like a direct classifier check; they do
+  not test `Object` or a fabricated `G<Object>` construction. Checked reified `as` and `as?` use
+  the same classifier, with throwing and null-producing failure respectively. The existing nullability/nominal
+  operation still owns null rejection, including the Kotlin `ClassCastException` for a null checked cast;
   a `reified T` used only by `T::class`, for example, receives none. Calls construct a witness from a concrete source
   type and forward it when the argument is another reified parameter. The facts
   are separate compiler-internal ABI: `[KotlinDeclarationIdentity]` carries semantic `reified` indices and physical

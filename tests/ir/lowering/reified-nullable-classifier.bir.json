@@ -42,6 +42,19 @@
         "typeArgs": [{"t": "nullable", "of": {"t": "fqn", "name": "kotlin.Int"}}],
         "args": [{"k": "local", "name": "value"}]
       }}]
+    },
+    {
+      "name": "comparableInteger", "declarationId": "classifier:comparableInteger", "static": true,
+      "params": [{"name": "value", "type": {"t": "nullable", "of": {"t": "fqn", "name": "kotlin.Any"}}}],
+      "ret": {"t": "fqn", "name": "kotlin.Boolean"},
+      "body": [{"k": "return", "value": {
+        "k": "callStatic", "owner": {"t": "fqn", "name": "ReifiedNullableClassifierKt"},
+        "method": "accepts", "declarationId": "classifier:accepts",
+        "sig": [{"t": "nullable", "of": {"t": "fqn", "name": "kotlin.Any"}}],
+        "ret": {"t": "fqn", "name": "kotlin.Boolean"},
+        "typeArgs": [{"t": "fqn", "name": "kotlin.Comparable", "args": [{"t": "fqn", "name": "kotlin.Int"}]}],
+        "args": [{"k": "local", "name": "value"}]
+      }}]
     }
   ]
 }

@@ -48,6 +48,16 @@ class ReifiedNullableClassifierTests {
         ClassicAssert.IsFalse(nullableClassifierMatches<String?>(42))
         ClassicAssert.IsTrue(nullableClassifierMatches<Any?>("ok"))
         ClassicAssert.IsTrue(nullableClassifierMatches<Any?>(42))
+        val unrelated: Any = Any()
+        ClassicAssert.IsFalse(unrelated is Comparable<*>)
+        ClassicAssert.IsFalse(nullableClassifierMatches<Comparable<Int>>(unrelated))
+        ClassicAssert.IsFalse(nullableClassifierForward<Comparable<Int>>(unrelated))
+        ClassicAssert.IsFalse(nullableClassifierDelegate<Comparable<Int>>()(unrelated))
+        ClassicAssert.IsTrue(nullableClassifierMatches<Comparable<Int>>(42))
+        ClassicAssert.IsTrue(nullableClassifierForward<Comparable<Int>>("ok"))
+        ClassicAssert.IsTrue(nullableClassifierDelegate<Comparable<Int>>()(42))
+        ClassicAssert.IsFalse(nullableClassifierMatches<Comparable<Int>>(null))
+        ClassicAssert.IsTrue(nullableClassifierMatches<Comparable<Int>?>(null))
     }
 
     @TestAttribute
@@ -79,6 +89,17 @@ class ReifiedNullableClassifierTests {
         var rejected = false
         try { nullableClassifierCast<Int?>("wrong") } catch (_: InvalidCastException) { rejected = true }
         ClassicAssert.IsTrue(rejected)
+        var stringNullRejected = false
+        try { nullableClassifierCast<String>(null) } catch (_: ClassCastException) { stringNullRejected = true }
+        ClassicAssert.IsTrue(stringNullRejected)
+        var listNullRejected = false
+        try { nullableClassifierCast<List<*>>(null) } catch (_: ClassCastException) { listNullRejected = true }
+        ClassicAssert.IsTrue(listNullRejected)
+        ClassicAssert.IsNull(nullableClassifierCast<String?>(null))
+        ClassicAssert.IsNull(nullableClassifierCast<List<*>?>(null))
+        var wrongStringRejected = false
+        try { nullableClassifierCast<String>(42) } catch (_: InvalidCastException) { wrongStringRejected = true }
+        ClassicAssert.IsTrue(wrongStringRejected)
     }
 
     @TestAttribute

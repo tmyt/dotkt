@@ -541,8 +541,7 @@ static class FBoundStarProjectionErasure
         // Binding factories own their exact allocation-element result. Value slots using that result are separate.
         if (key == "ret" && (owner["attrs"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()
             .Any(a => TypeJson.OwnerName(a["attr"]) == "kotlin.clr.ClrArrayFactory")) return true;
-        if (key == "type" && (kind is "cast" or "isInst" or "isInstRef" && KotlinTypeWitness.NeedsWitness(owner)
-            || Bool(owner[KotlinRuntimeTypeWitness.ClassifierKey]))) return true;
+        if (key == "type" && kind is "cast" or "isInst" or "isInstRef" && KotlinTypeWitness.NeedsWitness(owner)) return true;
         return key == "memberSignature" && kind is "new" or "newClr"
             && TypeJson.Read(owner["type"]) is TypeNode.Fqn constructed
             && IsNativeArrayOwner(constructed, refs, localClrAliases);
@@ -3137,7 +3136,13 @@ static class FBoundStarProjectionErasure
                 var runtimeTarget = TypeJson.Read(obj["type"]);
                 var classifierRef = Bool(obj[KotlinRuntimeTypeWitness.ClassifierKey]);
                 obj.Remove(KotlinRuntimeTypeWitness.ClassifierKey);
-                if (!Bool(obj["_exactBridgeCast"]) && (runtimeKind is "isInst" or "isInstRef" or "cast" || classifierRef)
+                if (classifierRef && StripSourceNullability(runtimeTarget) is TypeNode.Fqn foreignClassifier
+                    && ForeignStarProjectionBinding.OpenClassifierType(foreignClassifier, refs) is string openClassifier)
+                {
+                    obj["type"] = TypeJson.Fqn(openClassifier);
+                    ForeignStarProjectionBinding.RequireRuntimeFallback();
+                }
+                else if (!Bool(obj["_exactBridgeCast"]) && (runtimeKind is "isInst" or "isInstRef" or "cast" || classifierRef)
                     && StripSourceNullability(runtimeTarget) is TypeNode.Fqn { Args: { } } runtimeF
                     && TryExistentialCarrier(runtimeF.Name, owners, refs, out var runtimeCarrier)
                     && (runtimeKind == "isInst" || classifierRef
