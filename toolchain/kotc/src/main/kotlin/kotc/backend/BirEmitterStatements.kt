@@ -214,9 +214,7 @@ internal fun BirEmitter.stmt(node: org.jetbrains.kotlin.ir.IrElement): String = 
 	// A value coerced to Unit in statement position (e.g. `i++`) -> emit its inner block as statements
 	// (otherwise the side effects — the `<unary>` temp + the assignment — would be dropped).
 	is IrTypeOperatorCall -> if (node.operator == IrTypeOperator.IMPLICIT_COERCION_TO_UNIT) {
-		val arg = node.argument
-		if (arg is IrBlock) """{"k":"block","body":[${arg.statements.joinToString(",") { stmt(it) }}]}"""
-		else stmt(arg)
+		stmt(node.argument)
 	} else """{"k":"exprStmt","expr":${expr(node)}}"""
 	// Preserve a local function as a lexical BIR declaration. bir2cir alone chooses its CLR MethodDef owner.
 	is IrSimpleFunction -> localFunctionDecl(node)

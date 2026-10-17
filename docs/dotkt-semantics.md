@@ -1037,8 +1037,9 @@ fun inspect(directory: DirectoryInfo) {
 ```
 
 Enumeration evaluates the source once, obtains one enumerator, and requests elements lazily through
-`MoveNext`/`Current`. Native exceptions propagate normally. This protocol does not make a native enumerable a
-Kotlin `Iterable` or `Sequence`, nor does it add automatic `Dispose` on completion, exception or early exit.
+`MoveNext`/`Current`. Native exceptions propagate normally. Native source declarations retain their CLR types
+rather than being rewritten to Kotlin `Iterable` or `Sequence`; iteration adds no new runtime classifier rules.
+The protocol does not add automatic `Dispose` on completion, exception or early exit.
 For resource-owning enumeration, explicitly acquire the native enumerator and dispose it in `finally`;
 the inherited non-generic `MoveNext` surface can be accessed as `System.Collections.IEnumerator`.
 

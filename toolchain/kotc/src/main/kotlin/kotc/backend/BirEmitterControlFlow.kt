@@ -90,8 +90,7 @@ internal fun BirEmitter.labelJson(label: String?): String = label?.let { str(it)
 /** A loop body: a block's statements, or a single bare statement (single-statement loop bodies). */
 internal fun BirEmitter.loopBody(body: IrExpression?): String = when (body) {
 	null -> ""
-	is IrBlock -> body.statements.joinToString(",") { stmt(it) }
-	else -> stmt(body)
+	else -> bodyStmts(body)
 }
 
 /** Wrap a statement-position control transfer ([xfer] = a `goto`/`break`/`continue` node) so it can sit in an

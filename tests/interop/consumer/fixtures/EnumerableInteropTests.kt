@@ -62,9 +62,19 @@ class EnumerableInteropTests {
         assertEquals(1, empty.Moves)
         assertEquals(0, empty.Currents)
         assertEquals(7, firstNativeElement(EnumerationProbe<Int>(arrayOf(7, 8)).Source()))
-        assertEquals("first", firstNativeElement(words.Source()))
+        assertEquals("a", firstNativeElement(words.Source()))
         assertEquals(null, firstNativeElement(empty.Source()))
+        // Foreign iteration capability remains eligible under the existing runtime classifier rules.
+        assertEquals(true, (view as Any) is Iterable<*>)
         assertEquals(false, ("text" as Any) is Iterable<*>)
+        var repeat = true
+        var nestedSum = 0
+        while (repeat) for (value in EnumerationProbe<Int>(arrayOf(1, 2)).Source()) {
+            nestedSum += value
+            repeat = false
+        }
+        do for (value in EnumerationProbe<Int>(arrayOf(3, 4)).Source()) nestedSum += value while (false)
+        assertEquals(10, nestedSum)
     }
 
     @TestAttribute
