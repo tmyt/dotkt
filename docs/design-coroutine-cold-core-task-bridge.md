@@ -440,7 +440,13 @@ they are not compiler-provided `kotlin.clr` declarations.
   type has unstable `===` identity otherwise). Same-module `suspendCoroutine*` still lowers via the
   inlined `valueBlock` intrinsic (`EmitIntrinsicSuspension`). Coverage:
   `tests/coroutines/fixtures/ContinuationBridgeTests.kt`.
-- No CancellationToken/Job/interceptor dispatch (later layers); `intercepted()` = identity v1.
+- Continuation interception is implemented. `ContinuationImpl.intercepted()` consults the coroutine
+  context's `ContinuationInterceptor`, caches its wrapper, and releases that wrapper on completion.
+  Task-await resumption passes through the intercepted continuation; without an interceptor the
+  captured SynchronizationContext or inline fallback applies. Coverage:
+  `tests/coroutines/fixtures/CoroutineContextInterceptionTests.kt`.
+- `CancellationToken` is not an implicit suspend parameter, and Job/structured-concurrency APIs
+  belong to the separate kotlinx library track. These library boundaries do not disable interception.
 
 ### Supersession notes
 
@@ -519,7 +525,7 @@ UNCONDITIONALLY. The classifier assigns each admitted member one of three shapes
 |---|---|
 | abstract member (explicit declaration modality) | abstract cold entry + abstract Task bridge (no SM) |
 | concrete + segmentable (`SuspensionRefusalReason == null`) | SM class + cold entry + bridge (the full transform) |
-| concrete + a suspension remaining in a disallowed lambda/closure position | a call-time `throw NotSupportedException(reason)` cold entry + bridge, and a bir2cir WARNING naming the fun + the refusal site |
+| concrete + a remaining unsupported body shape | a call-time `throw NotSupportedException(reason)` cold entry + bridge, and a bir2cir WARNING naming the fun + the refusal site |
 
 An empty concrete Unit-returning default interface body remains concrete. It uses a direct cold entry returning
 the Unit value plus its Task bridge; body length does not determine declaration modality.
@@ -541,8 +547,10 @@ An app build has no such residue, and a survivor there is refused in bir2cir.
   (concrete or abstract, but always a callable slot). Call-site rewrite (`callStatic`/`callInstance`/`clr*`)
   is UNCONDITIONAL. An inherited or overridden suspend member is resolved by NATIVE virtual dispatch through
   the virtual/override-lockstep cold slot — no hierarchy analysis in bir2cir.
-- **The classifier's remaining refusal path** emits a call-time throw for a suspension left in a
-  disallowed lambda/closure position. Catch/finally suspension, nested protected regions, and method generics
+- **The classifier's remaining refusal path** emits a call-time throw for unsupported body shapes,
+  including disallowed lambda/closure positions and a suspending `forRange` body retained in a stdlib self-build.
+  Application ranges have already become counted `for` loops at this point. Catch/finally suspension,
+  nested protected regions, and method generics
   on generic owners are supported and do not belong to this refusal set. This fallback is an implementation
   limitation, not undefined Kotlin user-program behavior or a new semantic exception. Both call paths observe
   the throw: a Kotlin→Kotlin cold call propagates it synchronously; the public Task bridge

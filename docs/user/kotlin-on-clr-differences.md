@@ -42,11 +42,12 @@ Not Java `printf` (`"%d"`). It binds straight to `System.String.Format`.
 suspend fun fetch(): Int          // CLR signature: Task<int> fetch()
 ```
 
-- C# awaits the exported task. Kotlin suspend callers compose through an internal continuation
-  entry; `.await()` consumes .NET awaitables from Kotlin.
+- C# awaits the exported task. Kotlin suspend callers compose through a compiler-generated
+  continuation entry, which is CLR-public for calls across assemblies. `.await()` consumes
+  .NET awaitables from Kotlin.
 - The exported task method starts execution immediately, like C# `async`. A `sequence { ... }`
   builder remains lazy and is driven by iteration.
-- The public task method has no `Continuation` parameter; the internal entry carries it.
+- The exported task method has no `Continuation` parameter; the continuation entry carries it.
 - Suspend lowering, continuations, coroutine context, and `Sequence`/`yield` builders are
   implemented. Structured concurrency APIs such as `Job` and `CoroutineScope` belong to the
   separate kotlinx library track.
@@ -68,7 +69,8 @@ otherwise a no-op unless you pass a lambda literal (then it's really inlined, in
 Factories use BCL collections. Ordinary value slots for covariant aliases such as `List<Int>` and
 `Map<K,V>` are emitted as `object`, with the original Kotlin types retained in metadata. This lets
 Kotlin covariance preserve the same collection reference even when CLR value-type instantiations are
-invariant. Exact native declarations and invariant `MutableMap<K,V>` slots retain their CLR interfaces.
+invariant. Exact native declarations and invariant mutable collection slots, such as
+`MutableList<T>` and `MutableMap<K,V>`, retain their CLR interfaces.
 
 - C# consumers of an opaque Kotlin collection slot see `object`; a Kotlin consumer recovers the
   source type. Widening a Kotlin collection does not copy it or create a wrapper.
