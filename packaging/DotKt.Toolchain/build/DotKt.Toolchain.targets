@@ -313,14 +313,29 @@
        provider for Kotlin emission, never a source of declarations or method bodies. Track option selection
        BEFORE CoreCompile so switching to an older file or clearing an option refreshes that provider too. -->
   <Target Name="DotKtComputeEmitOptions" BeforeTargets="CoreCompile"
-          DependsOnTargets="DotKtInitializeIntermediatePaths;SetWin32ManifestProperties">
+          DependsOnTargets="DotKtInitializeIntermediatePaths;SetWin32ManifestProperties;GenerateAssemblyInfo">
+    <ItemGroup>
+      <!-- Consume the SDK's selected attributes, including generation opt-outs and SourceRevisionId composition. -->
+      <_DotKtFileVersionAttribute Include="@(AssemblyAttribute)" Condition="'$(GenerateAssemblyInfo)' == 'true' and '%(AssemblyAttribute.Identity)' == 'System.Reflection.AssemblyFileVersionAttribute'" />
+      <_DotKtInformationalVersionAttribute Include="@(AssemblyAttribute)" Condition="'$(GenerateAssemblyInfo)' == 'true' and '%(AssemblyAttribute.Identity)' == 'System.Reflection.AssemblyInformationalVersionAttribute'" />
+    </ItemGroup>
+    <PropertyGroup>
+      <_DotKtAssemblyFileVersion>@(_DotKtFileVersionAttribute->'%(_Parameter1)')</_DotKtAssemblyFileVersion>
+      <_DotKtAssemblyInformationalVersion>@(_DotKtInformationalVersionAttribute->'%(_Parameter1)')</_DotKtAssemblyInformationalVersion>
+      <_DotKtFileVersionCount>@(_DotKtFileVersionAttribute->Count())</_DotKtFileVersionCount>
+      <_DotKtInformationalVersionCount>@(_DotKtInformationalVersionAttribute->Count())</_DotKtInformationalVersionCount>
+      <!-- Text is not a path: MSBuild task-item/argfile transport can normalize backslashes and quotes.
+           Base64 keeps arbitrary attribute strings and option stamps byte-exact without emitter-side policy. -->
+      <_DotKtFileVersionBase64>$([MSBuild]::ConvertToBase64('$(_DotKtAssemblyFileVersion)'))</_DotKtFileVersionBase64>
+      <_DotKtInformationalVersionBase64>$([MSBuild]::ConvertToBase64('$(_DotKtAssemblyInformationalVersion)'))</_DotKtInformationalVersionBase64>
+    </PropertyGroup>
     <ItemGroup>
       <_DotKtNativeResourceInput Remove="@(_DotKtNativeResourceInput)" />
       <_DotKtNativeResourceInput Include="$(Win32Manifest);$(Win32Resource);$(ApplicationIcon)" />
       <CustomAdditionalCompileInputs Include="$(DotKtEmitOptionsManifest)" />
     </ItemGroup>
     <WriteLinesToFile File="$(DotKtEmitOptionsManifest)" Overwrite="true" WriteOnlyWhenDifferent="true"
-                      Lines="output-type=$(OutputType);no-win32-manifest=$(NoWin32Manifest);manifest=$(Win32Manifest);resource=$(Win32Resource);icon=$(ApplicationIcon)" />
+                      Lines="output-type=$(OutputType);no-win32-manifest=$(NoWin32Manifest);manifest=$(Win32Manifest);resource=$(Win32Resource);icon=$(ApplicationIcon);generate-assembly-info=$(GenerateAssemblyInfo);assembly-version-enabled=$(GenerateAssemblyVersionAttribute);assembly-version=$(AssemblyVersion);file-version-count=$(_DotKtFileVersionCount);file-version=$(_DotKtFileVersionBase64);informational-version-count=$(_DotKtInformationalVersionCount);informational-version=$(_DotKtInformationalVersionBase64)" />
   </Target>
 
   <Target Name="DotKtIlEmit" AfterTargets="CoreCompile" DependsOnTargets="DotKtBir2Cir;DotKtResolveReferenceSets;DotKtComputeEmitOptions"
@@ -342,6 +357,11 @@
            DotKt.Runtime reference is needed (that pre-stdlib runtime DLL is retired). -->
     </ItemGroup>
     <Message Importance="high" Text="DotKt: emitting CIL from CIR -> $(TargetName)$(TargetExt)" />
+    <!-- Read the SDK compiler's concrete identity, including wildcard normalization and generation opt-outs.
+         On a skipped CoreCompile this is the previous Kotlin output, whose identity was already preserved. -->
+    <GetAssemblyIdentity AssemblyFiles="$(IntermediateOutputPath)$(TargetName)$(TargetExt)">
+      <Output TaskParameter="Assemblies" ItemName="_DotKtAssemblyIdentity" />
+    </GetAssemblyIdentity>
     <!-- #51: pass the TARGET RID + the SDK's RID fallback graph so ilemit selects the runtimes/<rid>/lib asset the
          TARGET runtime would load (not the build HOST's) when a copy-local package ships multiple RID builds. RAR
          gives ilemit ALL RID assets of a RID-impl package; the tool must pick per the target RID. $(RuntimeIdentifier)
@@ -373,6 +393,12 @@
       <_DotKtEscapedCir Include="@(_DotKtCir->'%(FullPath)'->Replace('\', '\\')->Replace('&quot;', '\&quot;'))" />
       <_DotKtIlEmitResponseArgument Include="_output"><Value>&quot;$(_DotKtEscapedIlEmitOutputPath)&quot;</Value></_DotKtIlEmitResponseArgument>
       <_DotKtIlEmitResponseArgument Include="_assembly"><Value>&quot;$(_DotKtEscapedTargetName)&quot;</Value></_DotKtIlEmitResponseArgument>
+      <_DotKtIlEmitResponseArgument Include="_assembly_version_option"><Value>--assembly-version</Value></_DotKtIlEmitResponseArgument>
+      <_DotKtIlEmitResponseArgument Include="_assembly_version"><Value>&quot;@(_DotKtAssemblyIdentity->'%(Version)')&quot;</Value></_DotKtIlEmitResponseArgument>
+      <_DotKtIlEmitResponseArgument Include="_file_version_option" Condition="'@(_DotKtFileVersionAttribute)' != ''"><Value>--assembly-file-version-base64</Value></_DotKtIlEmitResponseArgument>
+      <_DotKtIlEmitResponseArgument Include="_file_version" Condition="'@(_DotKtFileVersionAttribute)' != ''"><Value>&quot;$(_DotKtFileVersionBase64)&quot;</Value></_DotKtIlEmitResponseArgument>
+      <_DotKtIlEmitResponseArgument Include="_informational_version_option" Condition="'@(_DotKtInformationalVersionAttribute)' != ''"><Value>--assembly-informational-version-base64</Value></_DotKtIlEmitResponseArgument>
+      <_DotKtIlEmitResponseArgument Include="_informational_version" Condition="'@(_DotKtInformationalVersionAttribute)' != ''"><Value>&quot;$(_DotKtInformationalVersionBase64)&quot;</Value></_DotKtIlEmitResponseArgument>
       <_DotKtIlEmitResponseArgument Include="_compile_refs_option"><Value>--compile-refs</Value></_DotKtIlEmitResponseArgument>
       <_DotKtIlEmitResponseArgument Include="_compile_refs"><Value>&quot;$(_DotKtEscapedCompileReferences)&quot;</Value></_DotKtIlEmitResponseArgument>
       <_DotKtIlEmitResponseArgument Include="_runtime_refs_option"><Value>--runtime-refs</Value></_DotKtIlEmitResponseArgument>

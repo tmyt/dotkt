@@ -8,7 +8,32 @@ try
 {
     uint resourceId = 1;
     if (args[0] == "--library") { resourceId = 2; args = args.Skip(1).ToArray(); }
-    if (args[0] == "--write-icon")
+    if (args[0] == "--managed-match")
+    {
+        var expected = Versions(args[1]);
+        foreach (var file in args.Skip(2))
+            if (!expected.SequenceEqual(Versions(file)))
+                throw new InvalidDataException("Managed versions differ from " + args[1] + ": " + file);
+    }
+    else if (args[0] == "--managed")
+    {
+        var expected = args.Skip(1).Take(3).Select(v => v == "<absent>" ? null : v).Append(null).ToArray();
+        foreach (var file in args.Skip(4))
+            if (!expected.SequenceEqual(Versions(file)))
+                throw new InvalidDataException("Unexpected managed versions: " + file + ": " + string.Join(" / ", Versions(file)));
+    }
+    else if (args[0] == "--reference-version")
+    {
+        foreach (var file in args.Skip(3))
+        {
+            using var pe = new PEReader(File.OpenRead(file));
+            var metadata = pe.GetMetadataReader();
+            var reference = metadata.AssemblyReferences.Select(metadata.GetAssemblyReference)
+                .Single(r => metadata.GetString(r.Name) == args[1]);
+            if (reference.Version.ToString() != args[2]) throw new InvalidDataException("Wrong AssemblyRef version: " + file);
+        }
+    }
+    else if (args[0] == "--write-icon")
     {
         using var stream = File.Create(args[1]);
         using var writer = new BinaryWriter(stream);
@@ -133,6 +158,30 @@ catch (Exception error)
 
 static byte[] ManifestBytes(string file, uint resourceId)
     => Resources(file).GetValueOrDefault($"#24/#{resourceId}/#0")?.Data;
+
+static string[] Versions(string file)
+{
+    using var pe = new PEReader(File.OpenRead(file));
+    var metadata = pe.GetMetadataReader();
+    var assembly = metadata.GetAssemblyDefinition();
+    var attributes = new Dictionary<string, string>();
+    foreach (var handle in assembly.GetCustomAttributes())
+    {
+        var attribute = metadata.GetCustomAttribute(handle);
+        if (attribute.Constructor.Kind != HandleKind.MemberReference) continue;
+        var ctor = metadata.GetMemberReference((MemberReferenceHandle)attribute.Constructor);
+        if (ctor.Parent.Kind != HandleKind.TypeReference) continue;
+        var type = metadata.GetTypeReference((TypeReferenceHandle)ctor.Parent);
+        var name = metadata.GetString(type.Name);
+        if (metadata.GetString(type.Namespace) != "System.Reflection" ||
+            name is not ("AssemblyFileVersionAttribute" or "AssemblyInformationalVersionAttribute" or "AssemblyVersionAttribute")) continue;
+        var value = metadata.GetBlobReader(attribute.Value);
+        if (value.ReadUInt16() != 1) throw new InvalidDataException("Invalid custom attribute prolog");
+        attributes.Add(name, value.ReadSerializedString()); // duplicate attributes fail rather than hiding one
+    }
+    return new[] { assembly.Version.ToString(), attributes.GetValueOrDefault("AssemblyFileVersionAttribute"),
+        attributes.GetValueOrDefault("AssemblyInformationalVersionAttribute"), attributes.GetValueOrDefault("AssemblyVersionAttribute") };
+}
 
 static Dictionary<string, NativeResource> Resources(string file)
 {

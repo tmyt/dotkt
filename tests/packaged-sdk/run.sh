@@ -1459,10 +1459,20 @@ case_application_manifest() {
 	fi
 }
 
+case_managed_versions() {
+	if bash "$ROOT/tests/packaged-sdk/managed-versions/run.sh" "$FEED" "$VER" "$WS/managed-versions" \
+			>"$WS/managed-versions.log" 2>&1; then
+		pass managed-versions
+	else
+		fail managed-versions "managed SDK version regression" "$(tail -40 "$WS/managed-versions.log")"
+	fi
+}
+
 case_toolchain_assembly_identity
 case_exe
 case_incremental_emission
 case_application_manifest
+case_managed_versions
 case_multitarget_klib_references
 case_library
 case_csharp_consumer
