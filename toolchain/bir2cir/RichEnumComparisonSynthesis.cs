@@ -43,7 +43,7 @@ static class RichEnumComparisonSynthesis
                 } }),
                 ["clrInterfaceImpls"] = new JsonArray(new JsonObject {
                     ["owner"] = TypeJson.Fqn(Face), ["member"] = "compareEnumTo", ["arity"] = 0,
-                    ["params"] = new JsonArray(TypeJson.Fqn("System.Object")), ["ret"] = TypeJson.Fqn("System.Int32"),
+                    ["params"] = new JsonArray(TypeJson.Fqn("kotlin.Any")), ["ret"] = TypeJson.Fqn("kotlin.Int"),
                 }),
             });
         }

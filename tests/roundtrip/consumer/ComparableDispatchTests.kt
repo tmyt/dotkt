@@ -51,6 +51,23 @@ class ComparableDispatchTests {
     }
 
     @TestAttribute
+    fun enumBaseClassifierDoesNotBecomeAny() {
+        val native: Any = ExplicitComparisonOrder.FIRST
+        val rich: Any = RichComparisonOrder.FIRST
+        assertTrue(enumView(native) == native)
+        assertTrue(enumView(rich) === rich)
+        assertTrue(enumView("not an enum") == null)
+        assertTrue(enumView(null) == null)
+        assertTrue(requireEnumView(native) == native)
+        assertTrue(requireEnumView(rich) === rich)
+        assertTrue(hasEnumView<Enum<*>>(native))
+        assertTrue(hasEnumView<Enum<*>>(rich))
+        assertTrue(!hasEnumView<Enum<*>>(Any()))
+        assertTrue(!hasEnumView<Enum<*>>(null))
+        assertTrue(try { requireEnumView("not an enum"); false } catch (e: ClassCastException) { true })
+    }
+
+    @TestAttribute
     fun importedComparisonKeepsAuthoredAndPrimitiveSemantics() {
         val left = ComparisonValue(3)
         val right = ComparisonValue(8)

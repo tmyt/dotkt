@@ -7,6 +7,36 @@ internal interface KotlinEnumComparison {
     fun compareEnumTo(other: Any): Int
 }
 
+@kotlin.clr.ClrTypeAlias("System.Enum")
+private interface NativeEnumValue
+
+@kotlin.clr.ClrTypeAlias("System.Array")
+private interface EnumArrayStorage
+
+@PublishedApi
+internal fun enumMatches(value: Any?, arrayShape: String): Boolean {
+    if (arrayShape.length == 0) return value is NativeEnumValue || value is KotlinEnumComparison
+    return value != null && enumArrayTypeMatches(value.starProjectionRuntimeType(), arrayShape, 0)
+}
+
+private fun enumArrayTypeMatches(type: StarProjectionType, shape: String, index: Int): Boolean {
+    if (!type.isSzArray) return false
+    val component = type.getElementType()!!
+    if (index + 1 < shape.length) {
+        if (shape[index + 1] == 'o' && component == (EnumArrayStorage::class as StarProjectionType)) return true
+        return enumArrayTypeMatches(component, shape, index + 1)
+    }
+    return component == (Any::class as StarProjectionType) || enumComponentMatches(component)
+}
+
+@PublishedApi
+internal fun enumComponentMatches(component: StarProjectionType): Boolean =
+    (NativeEnumValue::class as StarProjectionType).isAssignableFrom(component) ||
+        (KotlinEnumComparison::class as StarProjectionType).isAssignableFrom(component)
+
+@PublishedApi
+internal fun enumClassifier(arrayShape: String): (Any?) -> Boolean = { enumMatches(it, arrayShape) }
+
 // Generic `T : Enum<T>` code cannot bake in one enum declaration's ordinal map. Explicit Kotlin CLR enums therefore
 // stamp each literal with its declaration ordinal; this runtime reads that exact compiler carrier. Enums without the
 // carrier retain the CLR projection's established Enum.GetValues order, including arbitrary external CLR enums.

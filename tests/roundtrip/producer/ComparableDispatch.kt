@@ -15,6 +15,10 @@ enum class RichComparisonOrder(val label: String) : ComparisonMarker<String>, Sy
 }
 
 class ComparisonBoundBox<T>(val value: T)
+fun enumView(value: Any?): Enum<*>? = value as? Enum<*>
+fun requireEnumView(value: Any): Enum<*> = value as Enum<*>
+inline fun <reified T> hasEnumView(value: Any?): Boolean = value is T
+
 fun <T : Comparable<T>, U : ComparisonBoundBox<Int?>> keepMixedBounds(value: T, box: U): U = box
 
 fun <T : Comparable<T>> compareImported(left: T, right: T): Int = left.compareTo(right)
