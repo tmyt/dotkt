@@ -5,6 +5,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Preserve source constraints and generic frames when inherited implementations fill consumer-local interface slots (#1089).
+
 - Preserve inherited nullable-generic interface forwarding across DLL boundaries (#967).
 
 - Preserve enum comparison semantics through generic bounds and callable references, including explicit declaration order and rich enum representations (#768).

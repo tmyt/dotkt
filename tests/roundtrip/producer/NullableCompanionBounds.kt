@@ -62,6 +62,9 @@ interface BoundedCompanionSink { fun <T : CompanionNamed> count(values: List<T?>
 open class BoundedCompanionSinkBase {
     fun <T : CompanionNamed> count(values: List<T?>): Int = values.size
 }
+open class OwnerBoundedCompanionSinkBase<Root : CompanionNamed> {
+    fun <T : Root> count(values: List<T?>): Int = values.size
+}
 class LocalBoundedCompanionSink : BoundedCompanionSinkBase(), BoundedCompanionSink
 
 interface DefaultCompanionSink { fun <T> count(values: List<T?>): Int = values.size }

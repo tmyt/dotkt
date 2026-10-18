@@ -14,6 +14,13 @@ private class LocalBaseImportedCompanionSink : LocalCompanionSinkBase(), Compani
 private class CompanionArgumentOuter { class Entry }
 private open class CompanionArgumentBase { fun count(value: CompanionArgumentOuter.Entry): Int = 1 }
 private class ImportedNestedArgumentSink : CompanionArgumentBase(), CompanionArgumentSink<CompanionArgumentOuter.Entry>
+private interface ConsumerCompanionSink { fun <T> count(values: List<T?>): Int }
+private class ImportedBaseConsumerSink : CompanionSinkBase(), ConsumerCompanionSink
+private interface ConsumerBoundedCompanionSink { fun <T : CompanionNamed> count(values: List<T?>): Int }
+private class ImportedBaseConsumerBoundedSink : BoundedCompanionSinkBase(), ConsumerBoundedCompanionSink
+private interface ConsumerOwnerCompanionSink<Root : CompanionNamed> { fun <T : Root> count(values: List<T?>): Int }
+private class ImportedBaseConsumerOwnerSink<Unused, Root : CompanionNamed> :
+    OwnerBoundedCompanionSinkBase<Root>(), ConsumerOwnerCompanionSink<Root>
 private class ImportedDefaultCompanionSink : DefaultCompanionSink
 private class CompanionCompletion<T> : Continuation<T> {
     var completed = false
@@ -32,6 +39,18 @@ private fun <T> runCompanion(block: suspend () -> T): T {
 }
 
 class NullableCompanionBoundTests {
+    @TestAttribute
+    fun importedBaseFillsLocalNullableGenericContracts() {
+        val unbounded: ConsumerCompanionSink = ImportedBaseConsumerSink()
+        check(unbounded.count(listOf<Int?>(1, null)) == 2)
+        check(unbounded.count(listOf<String?>("reference", null)) == 2)
+        val values = listOf<CompanionName?>(CompanionName("bound"), null)
+        val bounded: ConsumerBoundedCompanionSink = ImportedBaseConsumerBoundedSink()
+        check(bounded.count(values) == 2)
+        val owner: ConsumerOwnerCompanionSink<CompanionName> = ImportedBaseConsumerOwnerSink<String, CompanionName>()
+        check(owner.count(values) == 2)
+    }
+
     @TestAttribute
     fun inheritedImplementationsCompareSourceBounds() {
         val values = listOf<Int?>(1, null)
