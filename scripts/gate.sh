@@ -27,9 +27,9 @@
 #   scripts/{lib,build-stdlib*,dotkt,  -> FULL   (shared build machinery — affects every stage)
 #     gen-*}.sh
 #   scripts/pack-nuget.sh              -> FULL + verify-packaged-sdk
-#   toolchain/bir2cir/** | ilemit/**   -> stdlib EMIT (clean) + compiler tests +
-#                                          verify-schema + verify-sanity + target-universe
-#                                          (kotc unchanged: no installDist cost)
+#   toolchain/bir2cir/** | ilemit/**   -> clean stdlib + compiler tests + schema/sanity + lowering +
+#                                          MSBuild + target-universe + P/Invoke + DLL-to-KLIB E2E + packaged SDK
+#                                          (the unchanged kotc launcher is reused)
 #   toolchain/bir-common/**            -> FULL   (TypeNode/IrSanity are <Compile Link/>-shared into every tool)
 #   toolchain/kotc/** | libraries/stdlib/**  -> FULL + clean stdlib rebuild
 #   tests/{basic,interop,coroutines,roundtrip}/** -> compiler tests
@@ -102,9 +102,8 @@ classify() { # <path>
 			want packagedsdk; reason "$p -> verify-packaged-sdk (package-version guard input)" ;;
 		THIRD-PARTY-NOTICES.md|packaging/*.md)
 			want packagedsdk; reason "$p -> verify-packaged-sdk (packaged documentation)" ;;
-		# These still take the conservative FULL path, but FULL intentionally excludes the expensive
-		# packaged-SDK release gate for ordinary compiler changes. Select that gate explicitly only
-		# for inputs that can alter the SDK used to build or the nupkgs consumed by downstream projects.
+		# FULL names the core gates; packaged SDK is selected separately for inputs with packaged consumers.
+		# --release adds that gate unconditionally, while these package inputs also require all core gates.
 		global.json|packaging/*)
 			NEED_FULL=1; want packagedsdk; reason "$p -> FULL + verify-packaged-sdk (release/package input)" ;;
 		# ---- docs / changelog -------------------------------------------------------------------
@@ -122,9 +121,10 @@ classify() { # <path>
 		scripts/lib.sh|scripts/build-stdlib*.sh|scripts/dotkt.sh|scripts/gen-*|scripts/hooks/*)
 			NEED_FULL=1; reason "$p -> FULL (shared build machinery)" ;;
 		# ---- toolchain --------------------------------------------------------------------------
-		toolchain/bir2cir/*|toolchain/ilemit/*)
-			want compiler_tests; want schema; want sanity; want targetuniverse; CLEAN=1
-			reason "$p -> bir2cir/ilemit: clean stdlib emit + compiler tests + verify-schema + verify-sanity + target-universe" ;;
+		toolchain/bir2cir|toolchain/bir2cir/*|toolchain/ilemit|toolchain/ilemit/*)
+			want compiler_tests; want schema; want sanity; want lowering; want msbuild; want targetuniverse
+			want pinvoke; want dll2klib; want packagedsdk; CLEAN=1
+			reason "$p -> bir2cir/ilemit consumers: clean stdlib + compiler tests + schema/sanity + lowering + MSBuild + target-universe + P/Invoke + DLL-to-KLIB E2E + packaged SDK" ;;
 		toolchain/bir-common/*)
 			NEED_FULL=1; CLEAN=1; reason "$p -> FULL (bir-common is <Compile Link/>-shared into every tool)" ;;
 		toolchain/kotc/*)
