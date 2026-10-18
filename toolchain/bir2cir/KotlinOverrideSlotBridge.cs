@@ -1465,7 +1465,7 @@ static class KotlinOverrideSlotBridge
                 var physicalSelectedSpec = accessorKind != null
                     ? (TypeNode.Fqn)sourceMapping.Slot(selectedSpec) : selectedSpec;
                 // Kotlin-owned applications close V? as object, while the implementing scalar getter keeps
-                // Nullable<V>. Close the owner and its slot together; native CLR applications remain exact.
+                // Nullable<V>. Close the owner and slot together; native CLR applications keep their own handling.
                 if (accessorKind != null && representations?.OwnsValueSlots(selectedSpec.Name) == true)
                     physicalSelectedSpec = (TypeNode.Fqn)NullableGenericErasure.EraseArgument(physicalSelectedSpec, isValue);
                 var physicalSelectedArgs = physicalSelectedSpec.Args ?? Array.Empty<TypeNode>();
