@@ -29,11 +29,24 @@ class ComparableDispatchTests {
     fun inheritedEnumComparisonUsesItsComparableContract() {
         assertEnumComparison(ComparisonOrder.FIRST, ComparisonOrder.SECOND)
         assertEnumComparison(ExplicitComparisonOrder.FIRST, ExplicitComparisonOrder.SECOND)
+        assertEnumComparison(PlainRichComparisonOrder.FIRST, PlainRichComparisonOrder.SECOND)
         val richFirst = RichComparisonOrder.FIRST
         val richSecond = RichComparisonOrder.SECOND
         assertEnumComparison(richFirst, richSecond)
         assertTrue((richFirst as System.IComparable).CompareTo(richSecond) == 77)
         assertTrue(DependentEnumComparisonBox<String, RichComparisonOrder>().compareBound(richFirst, richSecond) < 0)
+        assertIncompatibleEnumsThrow(ComparisonOrder.FIRST, ExplicitComparisonOrder.FIRST)
+        assertIncompatibleEnumsThrow(PlainRichComparisonOrder.FIRST, RichComparisonOrder.FIRST)
+        assertTrue((PlainRichComparisonOrder.FIRST as Any) is Comparable<*>)
+        @Suppress("UNCHECKED_CAST")
+        val plain = (PlainRichComparisonOrder.FIRST as Any) as Comparable<Any>
+        assertTrue(plain.compareTo(PlainRichComparisonOrder.SECOND) < 0)
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun assertIncompatibleEnumsThrow(left: Any, right: Any) {
+        val comparison = left as Comparable<Any>
+        assertTrue(try { comparison.compareTo(right); false } catch (e: ClassCastException) { true })
     }
 
     private fun <T : Enum<T>> assertEnumComparison(first: T, second: T) {

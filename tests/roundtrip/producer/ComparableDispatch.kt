@@ -7,6 +7,8 @@ enum class ComparisonOrder { FIRST, SECOND }
 @ClrEnum
 enum class ExplicitComparisonOrder(value: Int) { FIRST(4), SECOND(-2) }
 
+enum class PlainRichComparisonOrder(val label: String) { FIRST("first"), SECOND("second") }
+
 interface ComparisonMarker<Tag>
 enum class RichComparisonOrder(val label: String) : ComparisonMarker<String>, System.IComparable {
     FIRST("first"), SECOND("second");

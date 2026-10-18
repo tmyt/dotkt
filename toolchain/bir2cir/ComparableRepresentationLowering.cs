@@ -110,10 +110,10 @@ static class ComparableRepresentationLowering
             ["recv"] = Cast(owner, Local("receiver")), ["argTypes"] = new JsonArray(TypeJson.Write(argument)),
             ["args"] = new JsonArray(Cast(argument, Local("other"))), ["ret"] = TypeJson.Write(Result),
         };
-        JsonObject Ordinal(string parameter) => new() {
+        JsonObject CompareNativeEnum() => new() {
             ["k"] = "callStatic", ["owner"] = TypeJson.Fqn("DotKt.Runtime.CompilerServices.EnumRuntimeKt"),
-            ["method"] = "kotlinEnumOrdinal", ["sig"] = new JsonArray(TypeJson.Write(Object)),
-            ["args"] = new JsonArray(Cast(Object, Local(parameter))), ["ret"] = TypeJson.Write(Result),
+            ["method"] = "kotlinEnumCompareTo", ["sig"] = new JsonArray(TypeJson.Write(Object), TypeJson.Write(Object)),
+            ["args"] = new JsonArray(Cast(Object, Local("receiver")), Cast(Object, Local("other"))), ["ret"] = TypeJson.Write(Result),
         };
         return new JsonObject {
             ["name"] = name, [DeclarationIdentityBinding.Key] = identity,
@@ -140,7 +140,7 @@ static class ComparableRepresentationLowering
                     ["then"] = Compare(generic, Parameter), ["else"] = new JsonObject {
                         ["k"] = "cond", ["type"] = TypeJson.Write(Result),
                         ["cond"] = new JsonObject { ["k"] = "isInst", ["type"] = TypeJson.Fqn("System.Enum"), ["e"] = Local("receiver") },
-                        ["then"] = new JsonObject { ["k"] = "binOp", ["op"] = "-", ["lhs"] = Ordinal("receiver"), ["rhs"] = Ordinal("other") },
+                        ["then"] = CompareNativeEnum(),
                         ["else"] = Compare(erased, Object),
                     },
                 },
@@ -228,7 +228,7 @@ static class ComparableRepresentationLowering
         var branch = helpers[0]["body"][0]["value"]["else"];
         if (TypeJson.Read(branch["then"]["type"]) is not TypeNode.Fqn { Name: "System.IComparable`1", Args.Length: 1 }
             || TypeJson.OwnerName(branch["else"]["cond"]["type"]) != "System.Enum"
-            || Text(branch["else"]["then"]["lhs"]["method"]) != "kotlinEnumOrdinal"
+            || Text(branch["else"]["then"]["method"]) != "kotlinEnumCompareTo"
             || TypeJson.Read(branch["else"]["else"]["type"]) is not TypeNode.Fqn { Name: "System.IComparable", Args: null })
             throw new InvalidOperationException("Comparable dispatch lost generic-first/non-generic dispatch order");
         var inherited = new JsonObject {
@@ -256,6 +256,7 @@ static class ComparableRepresentationLowering
             || BirTypeLowering.ProjectedAliasHasReifiedGenericHead("kotlin.Enum", "System.Object",
                 new TypeNode[] { new TypeNode.Star() }, new Dictionary<string, string>())
             || Text(enumBridge["body"][0]["value"]["lhs"]["name"]) != "selectedOrdinalField"
+            || TypeJson.OwnerName(enumRoot["types"][0]["base"]) != "DotKt.Runtime.CompilerServices.KotlinEnumComparable"
             || Text(enumBridge["clrInterfaceImpls"][0]["member"]) != "compareEnumTo")
             throw new InvalidOperationException("Enum comparison lost the shared value view or the producer's ordinal map");
         Console.WriteLine("[comparable representation] self-test OK (shared facade, evaluation, source bounds, generic-first dispatch, inherited owner frame)");

@@ -17,6 +17,7 @@ static class RichEnumComparisonSynthesis
             if (type["richEnum"] is not JsonObject metadata) continue;
             var owner = type["name"].GetValue<string>();
             var ordinal = metadata["ordinal"].GetValue<string>();
+            type["base"] = TypeJson.Fqn("DotKt.Runtime.CompilerServices.KotlinEnumComparable");
             var interfaces = type["interfaces"] as JsonArray ?? new JsonArray();
             if (type["interfaces"] == null) type["interfaces"] = interfaces;
             interfaces.Add(TypeJson.Fqn(Face));

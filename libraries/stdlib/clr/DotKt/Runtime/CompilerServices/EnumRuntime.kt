@@ -7,6 +7,11 @@ internal interface KotlinEnumComparison {
     fun compareEnumTo(other: Any): Int
 }
 
+@PublishedApi
+internal abstract class KotlinEnumComparable : Comparable<Any> {
+    override fun compareTo(other: Any): Int = (this as KotlinEnumComparison).compareEnumTo(other)
+}
+
 @kotlin.clr.ClrTypeAlias("System.Enum")
 private interface NativeEnumValue
 
@@ -106,6 +111,12 @@ private fun enumRuntimeValues(type: EnumRuntimeType): EnumRuntimeArray = TODO("c
 
 private const val BASIC_ENUM = "DotKt.Runtime.CompilerServices.KotlinBasicEnumAttribute"
 private const val BASIC_ENUM_ORDINAL = "DotKt.Runtime.CompilerServices.KotlinBasicEnumOrdinalAttribute"
+
+@PublishedApi
+internal fun kotlinEnumCompareTo(receiver: Any, other: Any): Int {
+    if (receiver.enumRuntimeType() != other.enumRuntimeType()) throw ClassCastException()
+    return kotlinEnumOrdinal(receiver) - kotlinEnumOrdinal(other)
+}
 
 @PublishedApi
 internal fun kotlinEnumOrdinal(value: Any): Int {
