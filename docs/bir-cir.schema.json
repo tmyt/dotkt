@@ -747,7 +747,7 @@
         { "properties": { "k": { "const": "nullableWrap" }, "e": { "$ref": "#/$defs/node" }, "elem": { "$ref": "#/$defs/type" } }, "required": ["e", "elem"], "$comment": "value-type nullable wrap; operand `e`, element type `elem` (shared with nullableValue/nullableHasValue/nullableNull)" },
         { "properties": { "k": { "const": "localFun" }, "id": { "type": "string" }, "decl": { "type": "object" } }, "required": ["id", "decl"], "$comment": "BIR-only lexical Kotlin local-function declaration. The nested declaration is the semantic ownership fact; bir2cir consumes it into a physical MethodDef." },
         { "properties": { "k": { "const": "block" }, "body": { "type": "array", "items": { "$ref": "#/$defs/node" } } }, "required": ["body"] },
-        { "properties": { "k": { "const": "valueBlock" }, "body": { "type": "array", "items": { "$ref": "#/$defs/node" } }, "value": { "$ref": "#/$defs/node" } }, "required": ["body", "value"] },
+        { "properties": { "k": { "const": "valueBlock" }, "stmts": { "type": "array", "items": { "$ref": "#/$defs/node" } }, "result": { "$ref": "#/$defs/node" }, "type": { "$ref": "#/$defs/type" }, "joinNullBranch": { "const": true, "$comment": "BIR-only frontend fact: this block passes through a null-yielding result. ValueJoinNullWidening consumes and removes it before CIR, as for var/cond joins." } }, "required": ["stmts", "result"] },
         { "properties": { "k": { "const": "exprStmt" }, "expr": { "$ref": "#/$defs/node" } }, "required": ["expr"] },
         { "properties": { "k": { "const": "return" }, "value": { "$ref": "#/$defs/node" } } },
         { "properties": { "k": { "const": "throw" }, "value": { "$ref": "#/$defs/node" }, "excType": { "$ref": "#/$defs/type" } }, "required": ["value"] },
