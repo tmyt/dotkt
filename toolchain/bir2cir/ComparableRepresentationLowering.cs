@@ -130,8 +130,8 @@ static class ComparableRepresentationLowering
                 ["k"] = "cond", ["type"] = TypeJson.Write(Result),
                 ["cond"] = new JsonObject { ["k"] = "isInst", ["type"] = TypeJson.Write(enumFace), ["e"] = Local("receiver") },
                 ["then"] = new JsonObject {
-                    ["k"] = "clrInstance", ["type"] = TypeJson.Write(enumFace), ["method"] = "compareEnumTo",
-                    ["recv"] = Cast(enumFace, Local("receiver")), ["argTypes"] = new JsonArray(TypeJson.Write(Object)),
+                    ["k"] = "callInstance", ["ownerType"] = TypeJson.Write(enumFace), ["method"] = "compareEnumTo", ["virtual"] = true,
+                    ["recv"] = Cast(enumFace, Local("receiver")), ["sig"] = new JsonArray(TypeJson.Write(Object)),
                     ["args"] = new JsonArray(Cast(Object, Local("other"))), ["ret"] = TypeJson.Write(Result),
                 },
                 ["else"] = new JsonObject {
