@@ -1,5 +1,47 @@
 package DotKt.Runtime.CompilerServices
 
+// Compiler-owned comparison face for singleton-class enums. Keep it distinct from user-implemented CLR
+// IComparable slots: Kotlin's final enum comparison always uses declaration order.
+@PublishedApi
+internal interface KotlinEnumComparison {
+    fun compareEnumTo(other: Any): Int
+}
+
+@PublishedApi
+internal abstract class KotlinEnumComparable : Comparable<Any> {
+    override fun compareTo(other: Any): Int = (this as KotlinEnumComparison).compareEnumTo(other)
+}
+
+@kotlin.clr.ClrTypeAlias("System.Enum")
+private interface NativeEnumValue
+
+@kotlin.clr.ClrTypeAlias("System.Array")
+private interface EnumArrayStorage
+
+@PublishedApi
+internal fun enumMatches(value: Any?, arrayShape: String): Boolean {
+    if (arrayShape.length == 0) return value is NativeEnumValue || value is KotlinEnumComparison
+    return value != null && enumArrayTypeMatches(value.starProjectionRuntimeType(), arrayShape, 0)
+}
+
+private fun enumArrayTypeMatches(type: StarProjectionType, shape: String, index: Int): Boolean {
+    if (!type.isSzArray) return false
+    val component = type.getElementType()!!
+    if (index + 1 < shape.length) {
+        if (shape[index + 1] == 'o' && component == (EnumArrayStorage::class as StarProjectionType)) return true
+        return enumArrayTypeMatches(component, shape, index + 1)
+    }
+    return component == (Any::class as StarProjectionType) || enumComponentMatches(component)
+}
+
+@PublishedApi
+internal fun enumComponentMatches(component: StarProjectionType): Boolean =
+    (NativeEnumValue::class as StarProjectionType).isAssignableFrom(component) ||
+        (KotlinEnumComparison::class as StarProjectionType).isAssignableFrom(component)
+
+@PublishedApi
+internal fun enumClassifier(arrayShape: String): (Any?) -> Boolean = { enumMatches(it, arrayShape) }
+
 // Generic `T : Enum<T>` code cannot bake in one enum declaration's ordinal map. Explicit Kotlin CLR enums therefore
 // stamp each literal with its declaration ordinal; this runtime reads that exact compiler carrier. Enums without the
 // carrier retain the CLR projection's established Enum.GetValues order, including arbitrary external CLR enums.
@@ -69,6 +111,12 @@ private fun enumRuntimeValues(type: EnumRuntimeType): EnumRuntimeArray = TODO("c
 
 private const val BASIC_ENUM = "DotKt.Runtime.CompilerServices.KotlinBasicEnumAttribute"
 private const val BASIC_ENUM_ORDINAL = "DotKt.Runtime.CompilerServices.KotlinBasicEnumOrdinalAttribute"
+
+@PublishedApi
+internal fun kotlinEnumCompareTo(receiver: Any, other: Any): Int {
+    if (receiver.enumRuntimeType() != other.enumRuntimeType()) throw ClassCastException()
+    return kotlinEnumOrdinal(receiver) - kotlinEnumOrdinal(other)
+}
 
 @PublishedApi
 internal fun kotlinEnumOrdinal(value: Any): Int {

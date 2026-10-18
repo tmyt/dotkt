@@ -321,7 +321,8 @@ sealed class ValueRepresentationLowering
     }
 
     TypeNode AliasFace(TypeNode type) => type switch {
-        TypeNode.Fqn f when bindings.ContainsKey(f.Name) => new TypeNode.Fqn(aliases[f.Name], f.Args?.Select(AliasFace).ToArray()),
+        TypeNode.Fqn f when bindings.ContainsKey(f.Name) =>
+            BirTypeLowering.PhysicalHead(f.Name, aliases[f.Name], f.Args?.Select(AliasFace).ToArray()),
         TypeNode.Fqn f => new TypeNode.Fqn(f.Name, f.Args?.Select(AliasFace).ToArray()),
         TypeNode.Array a => new TypeNode.Array(AliasFace(a.Elem), a.Rank, a.SzArray),
         TypeNode.Nullable n => new TypeNode.Nullable(AliasFace(n.Of)),

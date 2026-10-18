@@ -15,6 +15,12 @@ package kotlin
  * See the [Kotlin language documentation](https://kotlinlang.org/docs/reference/enum-classes.html) for more
  * information on enum classes.
  */
+@kotlin.clr.ClrTypeAlias("System.Object")
+@kotlin.clr.ClrValueRepresentation(
+    "DotKt.Runtime.CompilerServices.EnumRuntimeKt.enumMatches",
+    "DotKt.Runtime.CompilerServices.EnumRuntimeKt.enumClassifier",
+    "DotKt.Runtime.CompilerServices.EnumRuntimeKt.enumComponentMatches",
+)
 public actual abstract class Enum<E : Enum<E>> actual constructor(name: String, ordinal: Int) : Comparable<E> {
     public actual companion object {}
 

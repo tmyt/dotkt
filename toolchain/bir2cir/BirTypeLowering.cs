@@ -25,16 +25,15 @@ static class BirTypeLowering
     // A synthesized declaration/MethodImpl may fill a value-returning generic CLR slot even when its closed
     // Kotlin type is Unit. This representation fact is consumed here, never serialized into final CIR.
     internal const string ValueReturnKey = "dotktValueReturn";
-    // Kotlin's generic Enum<E> classifier is represented by the non-generic CLR System.Enum classifier. Passes that
+    // Kotlin's generic Enum<E> admits both CLR enums and singleton classes, so its value view is System.Object. Passes that
     // synthesize ABI for physically reified generic owners must consult this rule instead of treating the BIR arity
     // as proof that a CLR generic TypeDef exists.
     internal static bool ErasesGenericApplicationToNonGenericClassifier(string fqn) => fqn == "kotlin.Enum";
 
-    // A caller authoring a CLR-bound generic owner before the argument-erasure and type-lowering boundary must retain
-    // the semantic head for applications whose physical classifier depends on those final arguments. Otherwise the
-    // later pass sees only an already-physical generic name and cannot apply this file's non-generic-head rule.
-    internal static bool GenericAliasHeadDependsOnLoweredArguments(string bcl) =>
-        bcl == "System.IComparable";
+    // Preserve the semantic head until PhysicalHead can select a collapsed classifier. This includes applications
+    // that always erase their arguments, and aliases whose collapse depends on the final lowered arguments.
+    internal static bool AliasHeadRequiresSourceIdentity(string source, string bcl) =>
+        ErasesGenericApplicationToNonGenericClassifier(source) || bcl == "System.IComparable";
 
     // A pre-lowering projection pass must ask the same head-selection rule as the final type lowering. Remove only
     // the existential shell that FBoundStarProjectionErasure itself will erase, lower the resulting arguments, and
@@ -314,10 +313,10 @@ static class BirTypeLowering
     internal static TypeNode PhysicalHead(string kotlinFqn, string bcl, TypeNode[] loweredArgs,
         IReadOnlyDictionary<string, NullableRepresentationFrame> nullableFrames = null)
     {
-        // `kotlin.Enum<E>` -> the NON-generic `System.Enum` (a Kotlin enum is a real CLR System.Enum, not the
-        // generic stdlib class); drop the self-referential arg (`where T : Enum`).
+        // The Kotlin enum base is a union of native enums and singleton classes, not System.Enum. Its source
+        // identity survives in metadata; the shared value view cannot retain the self-referential argument.
         if (ErasesGenericApplicationToNonGenericClassifier(kotlinFqn) && loweredArgs != null)
-            return new TypeNode.Fqn("System.Enum");
+            return new TypeNode.Fqn("System.Object");
         // A leaf: a @ClrTypeAlias type — a foundational primitive (kotlin.Int -> System.Int32) or a non-primitive
         // BCL (StringBuilder/Regex/IComparable/…) -> the BCL FQN. Otherwise the name stands: user / stdlib /
         // in-assembly names are unchanged, trusted external DotKt identities become their physical metadata names.
@@ -484,8 +483,7 @@ static class BirTypeLowering
                     if (!force && refBuild)
                         return new TypeNode.Fqn(PhysicalName(f.Name),
                             f.Args?.Select(a => LowerType(a, refBuild, force: false, typeArg: true)).ToArray());
-                    // `kotlin.Enum<E>` -> the NON-generic `System.Enum` (a Kotlin enum is a real CLR System.Enum, not
-                    // the generic stdlib class); drop the self-referential arg (`where T : Enum`).
+                    // PhysicalHead selects the common value view for Kotlin enum bases after lowering arguments.
                     var methodSlotCarrier = f.Args != null && InterfaceMethodSlotCarriers.Contains(f.Name);
                     var loweredArgs = f.Args?.Select(a => LowerType(a, refBuild, force,
                         typeArg: methodSlotCarrier ? false : true)).ToArray();
