@@ -37,6 +37,16 @@ class ImportedEnumLiteralTests {
         assertEquals(-7, EnumLiteralApi.ReceiveTop(negative))
         assertEquals(1, negative.ordinal)
         assertEquals(1, importedOrderOrdinal(negative))
+        val ordinalReference = TopCode::ordinal
+        val boundOrdinal = negative::ordinal
+        assertEquals(1, ordinalReference.get(negative))
+        assertEquals(1, boundOrdinal.get())
+        val comparison: (TopCode, TopCode) -> Int = TopCode::compareTo
+        val boundComparison: (TopCode) -> Int = sparse::compareTo
+        assertEquals(-1, comparison(sparse, negative))
+        assertEquals(-1, boundComparison(negative))
+        assertEquals(-1, EnumOrderApi.Unknown().ordinal)
+        assertEquals(-1, importedOrderOrdinal(EnumOrderApi.Unknown()))
         assertEquals(-1, sparse.compareTo(negative))
         assertEquals(-1, importedOrderCompare(sparse, negative))
         assertEquals(1, importedOrderCompare(negative, sparse))

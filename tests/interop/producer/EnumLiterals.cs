@@ -27,6 +27,7 @@ public static class EnumOrderApi
     public static TopCode Negative() => TopCode.Negative;
     public static TopCode Sparse() => TopCode.Sparse;
     public static TopCode Alias() => TopCode.Alias;
+    public static TopCode Unknown() => (TopCode)777;
     public static OrderedU32 U32High() => OrderedU32.High;
     public static OrderedU64 U64High() => OrderedU64.High;
     public static OrderedI64 I64High() => OrderedI64.High;

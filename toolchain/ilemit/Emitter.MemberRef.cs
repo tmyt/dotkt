@@ -196,7 +196,6 @@ sealed partial class Emitter
     {
         "String.ConcatArray", "Type.FromHandle", "Object.GetType", "Object.ToString", "Object.GetHashCode",
         "Object.Equals", "Enum.GetValues", "Enum.Parse",
-        "Array.IndexOf",
         "Object.ctor",
         "IndexOutOfRangeException.ctor",
         "NullableT.ctor", "SpanT.ctorPointer",

@@ -9,12 +9,13 @@ using DotKt.Bir;
 // carries no `kotlin.*` FQN of the intrinsic). On the CLR every type arg is REIFIED, so these lower at the call
 // site exactly like `T.values()` / `T.valueOf(name)` — a Kotlin<->CLR equivalence, so it lives HERE:
 //
-//   enumValues<T>() / enumEntries<T>()  -> rich enum: callStatic <T>.values()          ; basic/gp: {k:enumValues,type:T}
+//   enumValues<T>() / enumEntries<T>()  -> rich enum: callStatic <T>.values(); otherwise an enumValues semantic node
 //   enumValueOf<T>(name)                -> rich enum: callStatic <T>.valueOf(name)      ; basic/gp: {k:enumParse,type:T,arg}
 //
 // RICH vs BASIC comes from an explicit producer fact: local BIR carries `enumRich:true`, while a referenced producer
-// carries trusted [KotlinRichEnum]. A generic-param T or a basic enum takes the semantic node (System.Enum.GetValues /
-// Enum.Parse); no values()/valueOf() name/signature convention is used to classify a referenced owner.
+// carries trusted [KotlinRichEnum]. EnumValueLowering resolves the semantic values node to declaration-ordered
+// physical tables or the ordered runtime helper for a generic parameter. No values()/valueOf() name/signature
+// convention is used to classify a referenced owner.
 //
 // Runs EARLY (grouped with the range/array/char faithful recognitions, before MemberCallSubstitution / BirTypeLowering)
 // so the produced enumValues/enumParse/values nodes enter the ordinary CIR pipeline with their semantic enum identity

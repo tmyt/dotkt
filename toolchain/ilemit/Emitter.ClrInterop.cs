@@ -156,20 +156,9 @@ sealed partial class Emitter
             _il.MarkLabel(done);
             return Bcl("System.Int32");
         }
-        // CIR without a table requests the runtime enum surface explicitly. bir2cir supplies ordered physical maps
-        // for concrete referenced declarations and selects its runtime helper for generic Kotlin enum operations.
+        if (e.TryGetProperty("type", out _))
+            throw new InvalidDataException("ilemit: typed enum ordinal has no physical declaration map");
         // The typeless local-basic form has contiguous physical values and needs only Conv_I4.
-        if (e.TryGetProperty("type", out var tp))
-        {
-            var et = NativeType(tp);
-            _il.Emit(OpCodes.Ldtoken, et);
-            EmitMethod(_il, OpCodes.Call, WellKnown<MethodInfo>("Type.FromHandle"));
-            EmitMethod(_il, OpCodes.Call, WellKnown<MethodInfo>("Enum.GetValues"));
-            EmitExpr(e.GetProperty("e"));
-            _il.Emit(OpCodes.Box, et);
-            EmitMethod(_il, OpCodes.Call, WellKnown<MethodInfo>("Array.IndexOf"));
-            return Bcl("System.Int32");
-        }
         EmitExpr(e.GetProperty("e"));
         _il.Emit(OpCodes.Conv_I4);
         return Bcl("System.Int32");
@@ -211,6 +200,7 @@ sealed partial class Emitter
         "System.UInt32" => uint.Parse(text, CultureInfo.InvariantCulture),
         "System.Int64" => long.Parse(text, CultureInfo.InvariantCulture),
         "System.UInt64" => ulong.Parse(text, CultureInfo.InvariantCulture),
+        "System.Char" => (char)ushort.Parse(text, CultureInfo.InvariantCulture),
         _ => throw new InvalidDataException($"ilemit: illegal CLR enum underlying type '{underlying}'"),
     };
 
@@ -231,6 +221,7 @@ sealed partial class Emitter
             case "System.Byte":
             case "System.Int16":
             case "System.UInt16":
+            case "System.Char":
             case "System.Int32":
                 _il.Emit(OpCodes.Ldc_I4, int.Parse(text, CultureInfo.InvariantCulture));
                 break;

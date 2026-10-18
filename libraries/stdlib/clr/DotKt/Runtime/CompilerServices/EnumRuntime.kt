@@ -73,6 +73,9 @@ private interface EnumRuntimeAttribute {
 
 @kotlin.clr.ClrTypeAlias("System.Reflection.FieldInfo")
 private interface EnumRuntimeField {
+    @property:kotlin.clr.ClrProperty(kotlin.clr.READ, "Name")
+    val name: String
+
     @property:kotlin.clr.ClrProperty(kotlin.clr.READ, "IsStatic")
     val isStatic: Boolean
 
@@ -151,6 +154,7 @@ private const val BASIC_ENUM_ORDINAL = "DotKt.Runtime.CompilerServices.KotlinBas
 
 @PublishedApi
 internal fun kotlinEnumCompareTo(receiver: Any, other: Any): Int {
+    if (receiver is KotlinEnumComparison) return receiver.compareEnumTo(other)
     if (receiver.enumRuntimeType() != other.enumRuntimeType()) throw ClassCastException()
     return kotlinEnumOrdinal(receiver) - kotlinEnumOrdinal(other)
 }
@@ -163,7 +167,7 @@ internal fun kotlinEnumOrdinal(value: Any): Int {
     val explicit = type.hasExplicitOrder()
     var ordinal = 0
     for (field in fields) {
-        if (!field.isProjectedEntry()) continue
+        if (!field.isProjectedEntry(explicit)) continue
         if (field.getValue(null) == value) return if (explicit) field.declarationOrdinal(type.assembly) else ordinal
         ordinal++
     }
@@ -176,13 +180,13 @@ internal fun kotlinEnumValues(typeToken: Any): Any {
     // GetValues supplies a native enum array, not its Kotlin ordering. Overwrite every projected slot below.
     val nativeValues = enumRuntimeValues(type)
     val fields = type.getFields(EnumRuntimeBindingFlags.DECLARED_STATIC_PUBLIC_NON_PUBLIC)
-    var count = 0
-    for (field in fields) if (field.isProjectedEntry()) count++
-    val values = if (nativeValues.length == count) nativeValues else enumRuntimeArray(type, count)
     val explicit = type.hasExplicitOrder()
+    var count = 0
+    for (field in fields) if (field.isProjectedEntry(explicit)) count++
+    val values = if (nativeValues.length == count) nativeValues else enumRuntimeArray(type, count)
     var ordinal = 0
     for (field in fields) {
-        if (!field.isProjectedEntry()) continue
+        if (!field.isProjectedEntry(explicit)) continue
         val index = if (explicit) field.declarationOrdinal(type.assembly) else ordinal
         values.setValue(field.getValue(null), index)
         ordinal++
@@ -190,8 +194,8 @@ internal fun kotlinEnumValues(typeToken: Any): Any {
     return values
 }
 
-private fun EnumRuntimeField.isProjectedEntry(): Boolean =
-    isStatic && isLiteral && (isPublic || isFamily || isFamilyOrAssembly)
+private fun EnumRuntimeField.isProjectedEntry(explicit: Boolean): Boolean =
+    isStatic && isLiteral && (explicit || !name.startsWith("<")) && (isPublic || isFamily || isFamilyOrAssembly)
 
 private fun EnumRuntimeType.hasExplicitOrder(): Boolean {
     val attributes = getCustomAttributesData()

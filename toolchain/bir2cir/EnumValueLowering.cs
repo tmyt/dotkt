@@ -151,6 +151,19 @@ static class EnumValueLowering
         ["physicalValue"] = entry.PhysicalValue,
     }).ToArray());
 
+    internal static JsonObject ReferencedOrdinal(JsonNode receiver, JsonNode enumType, ReferenceMetadataIndex refs)
+    {
+        var owner = TypeJson.OwnerName(enumType);
+        if (owner == null || !(refs.TryKotlinBasicEnum(owner, out var metadata)
+                || refs.TryNativeEnumEntries(owner, out metadata)))
+            throw new InvalidOperationException("Referenced enum ordinal has no selected declaration map");
+        return new JsonObject
+        {
+            ["k"] = "enumOrdinal", ["e"] = receiver.DeepClone(),
+            ["type"] = enumType.DeepClone(), ["values"] = Values(metadata),
+        };
+    }
+
     static int _parseTemp;
 
     // System.Enum.Parse also accepts numeric strings and, for [Flags] enums, comma-separated combinations. Kotlin's
