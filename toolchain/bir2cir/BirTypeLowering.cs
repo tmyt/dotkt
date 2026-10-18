@@ -30,11 +30,10 @@ static class BirTypeLowering
     // as proof that a CLR generic TypeDef exists.
     internal static bool ErasesGenericApplicationToNonGenericClassifier(string fqn) => fqn == "kotlin.Enum";
 
-    // A caller authoring a CLR-bound generic owner before the argument-erasure and type-lowering boundary must retain
-    // the semantic head for applications whose physical classifier depends on those final arguments. Otherwise the
-    // later pass sees only an already-physical generic name and cannot apply this file's non-generic-head rule.
-    internal static bool GenericAliasHeadDependsOnLoweredArguments(string bcl) =>
-        bcl == "System.IComparable";
+    // Preserve the semantic head until PhysicalHead can select a collapsed classifier. This includes applications
+    // that always erase their arguments, and aliases whose collapse depends on the final lowered arguments.
+    internal static bool AliasHeadRequiresSourceIdentity(string source, string bcl) =>
+        ErasesGenericApplicationToNonGenericClassifier(source) || bcl == "System.IComparable";
 
     // A pre-lowering projection pass must ask the same head-selection rule as the final type lowering. Remove only
     // the existential shell that FBoundStarProjectionErasure itself will erase, lower the resulting arguments, and

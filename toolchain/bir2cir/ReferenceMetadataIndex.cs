@@ -1584,7 +1584,7 @@ sealed partial class ReferenceMetadataIndex
             // Some Kotlin generic surfaces already have a non-generic CLR face selected by BirTypeLowering from
             // their argument shape (Comparable<*> -> System.IComparable). That face is the exact representation;
             // routing the same value through the opaque reflection ABI would discard a valid nominal conversion.
-            if (BirTypeLowering.GenericAliasHeadDependsOnLoweredArguments(aliasOwner)
+            if (BirTypeLowering.AliasHeadRequiresSourceIdentity(sourceOwner, aliasOwner)
                 && !BirTypeLowering.ProjectedAliasHasReifiedGenericHead(
                     sourceOwner, aliasOwner, arguments, Aliases)) return null;
             return ResolveNetType(aliasOwner, genericArity);

@@ -252,6 +252,9 @@ static class ComparableRepresentationLowering
         var enumBridge = enumRoot["types"][0]["methods"][0];
         if (BirTypeLowering.PhysicalHead("kotlin.Enum", "System.Object", new[] { Parameter })
                 is not TypeNode.Fqn { Name: "System.Object", Args: null }
+            || !BirTypeLowering.AliasHeadRequiresSourceIdentity("kotlin.Enum", "System.Object")
+            || BirTypeLowering.ProjectedAliasHasReifiedGenericHead("kotlin.Enum", "System.Object",
+                new TypeNode[] { new TypeNode.Star() }, new Dictionary<string, string>())
             || Text(enumBridge["body"][0]["value"]["lhs"]["name"]) != "selectedOrdinalField"
             || Text(enumBridge["clrInterfaceImpls"][0]["member"]) != "compareEnumTo")
             throw new InvalidOperationException("Enum comparison lost the shared value view or the producer's ordinal map");

@@ -2624,10 +2624,9 @@ static class MemberCallSubstitution
     internal static TypeNode ClrOwnerType(ReferenceMetadataIndex refs, TypeNode.Fqn ownerFqn)
     {
         if (!refs.TryResolveClrOwner(ownerFqn.Name, out var bcl, out _)) return null;
-        // Some generic aliases select a non-generic physical classifier from their FINAL lowered arguments. Keep
-        // their semantic head until NullableGenericErasure and BirTypeLowering have made that decision; prematurely
-        // authoring the BCL head here loses the alias provenance and leaves a stale constructed CLR owner.
-        var head = BirTypeLowering.GenericAliasHeadDependsOnLoweredArguments(bcl)
+        // A collapsing generic alias must keep its source identity until PhysicalHead selects the final classifier;
+        // authoring its non-generic BCL head with source arguments would manufacture a nonexistent CLR construction.
+        var head = BirTypeLowering.AliasHeadRequiresSourceIdentity(ownerFqn.Name, bcl)
             ? ownerFqn.Name
             : bcl;
         var arity = refs.OwnerArity(ownerFqn.Name);

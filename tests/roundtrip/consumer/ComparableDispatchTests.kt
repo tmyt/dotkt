@@ -27,8 +27,16 @@ class ComparableDispatchTests {
 
     @TestAttribute
     fun inheritedEnumComparisonUsesItsComparableContract() {
-        val first = ComparisonOrder.FIRST
-        val second = ComparisonOrder.SECOND
+        assertEnumComparison(ComparisonOrder.FIRST, ComparisonOrder.SECOND)
+        assertEnumComparison(ExplicitComparisonOrder.FIRST, ExplicitComparisonOrder.SECOND)
+        val richFirst = RichComparisonOrder.FIRST
+        val richSecond = RichComparisonOrder.SECOND
+        assertEnumComparison(richFirst, richSecond)
+        assertTrue((richFirst as System.IComparable).CompareTo(richSecond) == 77)
+        assertTrue(DependentEnumComparisonBox<String, RichComparisonOrder>().compareBound(richFirst, richSecond) < 0)
+    }
+
+    private fun <T : Enum<T>> assertEnumComparison(first: T, second: T) {
         assertTrue(compareEnumBound(first, second) < 0)
         assertTrue(compareEnumBound(second, first) > 0)
         assertTrue(compareEnumBound(first, first) == 0)
@@ -38,16 +46,8 @@ class ComparableDispatchTests {
         assertTrue(compareEnumBoundReference(first, second) < 0)
         assertTrue(compareEnumBoundUnbound(first, second) < 0)
         assertTrue(EnumBoundComparisonBox(first).compare(second) < 0)
-        assertTrue(compareEnumBound(ExplicitComparisonOrder.FIRST, ExplicitComparisonOrder.SECOND) < 0)
-        assertTrue(compareImported(ExplicitComparisonOrder.FIRST, ExplicitComparisonOrder.SECOND) < 0)
-        assertTrue(maxOf(ExplicitComparisonOrder.FIRST, ExplicitComparisonOrder.SECOND) == ExplicitComparisonOrder.SECOND)
-        val richFirst = RichComparisonOrder.FIRST
-        val richSecond = RichComparisonOrder.SECOND
-        assertTrue(compareEnumBound(richFirst, richSecond) < 0)
-        assertTrue(compareImported(richFirst, richSecond) < 0)
-        assertTrue((richFirst as System.IComparable).CompareTo(richSecond) == 77)
-        assertTrue(compareEnumBoundSpliced(richFirst, richSecond) { it } < 0)
-        assertTrue(DependentEnumComparisonBox<String, RichComparisonOrder>().compareBound(richFirst, richSecond) < 0)
+        assertTrue(compareImported(first, second) < 0)
+        assertTrue(maxOf(first, second) == second)
     }
 
     @TestAttribute
@@ -63,7 +63,11 @@ class ComparableDispatchTests {
         assertTrue(hasEnumView<Enum<*>>(native))
         assertTrue(hasEnumView<Enum<*>>(rich))
         assertTrue(!hasEnumView<Enum<*>>(Any()))
+        assertTrue(!hasEnumView<Enum<*>>(1))
         assertTrue(!hasEnumView<Enum<*>>(null))
+        assertTrue(hasEnumView<Array<Enum<*>>>(arrayOf(ExplicitComparisonOrder.FIRST)))
+        assertTrue(hasEnumView<Array<Enum<*>>>(arrayOf(RichComparisonOrder.FIRST)))
+        assertTrue(!hasEnumView<Array<Enum<*>>>(arrayOf("not an enum")))
         assertTrue(try { requireEnumView("not an enum"); false } catch (e: ClassCastException) { true })
     }
 
