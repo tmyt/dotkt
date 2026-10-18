@@ -90,6 +90,7 @@ REQUIRED_NODE_FIELDS = {
     "enumBits": ("e", "type", "underlying"),
     "new": ("type", "args"),
     "constrainedCall": ("args",),
+    "valueBlock": ("stmts", "result"),
 }
 
 # The per-document table of fixed BCL members a Kotlin operation expands into (#370). Keyed by ROLE.
@@ -961,6 +962,18 @@ class V:
                 for required in REQUIRED_NODE_FIELDS.get(k, ()):
                     if required not in o:
                         self.err(f, path, f"{k} is missing required field {required!r}")
+                if k == "valueBlock":
+                    if "stmts" in o:
+                        if not isinstance(o["stmts"], list):
+                            self.err(f, path + "/stmts", "valueBlock.stmts must be an array of nodes")
+                        else:
+                            for i, statement in enumerate(o["stmts"]):
+                                if not isinstance(statement, dict) or not isinstance(statement.get("k"), str):
+                                    self.err(f, path + f"/stmts[{i}]", "valueBlock.stmts entries must be nodes")
+                    if "result" in o:
+                        result = o["result"]
+                        if not isinstance(result, dict) or not isinstance(result.get("k"), str):
+                            self.err(f, path + "/result", "valueBlock.result must be a node")
                 if k == "conv" and "to" in o:
                     target = o["to"]
                     if not isinstance(target, dict) or not isinstance(target.get("t"), str):
