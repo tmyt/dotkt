@@ -9,6 +9,11 @@ private fun <U, T : U> localCompanionWiden(value: T): U = value
 private fun <T> localCompanionNullable(value: T): T? = localCompanionWiden<T?, T>(value)
 private class ImportedCompanionSink : CompanionSinkBase(), CompanionSink
 private class ImportedBoundedCompanionSink : BoundedCompanionSinkBase(), BoundedCompanionSink
+private open class LocalCompanionSinkBase { fun <T> count(values: List<T?>): Int = values.size }
+private class LocalBaseImportedCompanionSink : LocalCompanionSinkBase(), CompanionSink
+private class CompanionArgumentOuter { class Entry }
+private open class CompanionArgumentBase { fun count(value: CompanionArgumentOuter.Entry): Int = 1 }
+private class ImportedNestedArgumentSink : CompanionArgumentBase(), CompanionArgumentSink<CompanionArgumentOuter.Entry>
 private class ImportedDefaultCompanionSink : DefaultCompanionSink
 private class CompanionCompletion<T> : Continuation<T> {
     var completed = false
@@ -40,6 +45,10 @@ class NullableCompanionBoundTests {
         check(localBounded.count(bounded) == 2)
         val importedBounded: BoundedCompanionSink = ImportedBoundedCompanionSink()
         check(importedBounded.count(bounded) == 2)
+        val localBase: CompanionSink = LocalBaseImportedCompanionSink()
+        check(localBase.count(values) == 2)
+        val nested: CompanionArgumentSink<CompanionArgumentOuter.Entry> = ImportedNestedArgumentSink()
+        check(nested.count(CompanionArgumentOuter.Entry()) == 1)
         val localDefault: DefaultCompanionSink = LocalDefaultCompanionSink()
         val importedDefault: DefaultCompanionSink = ImportedDefaultCompanionSink()
         check(localDefault.count(values) == 2)

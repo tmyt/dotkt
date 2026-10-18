@@ -703,9 +703,7 @@ static class KotlinOverrideSlotBridge
                 || Str(implementation["member"]) is not string member
                 || fact["params"] is not JsonArray parameters
                 || TypeJson.Read(fact["ret"]) is not TypeNode factRet) continue;
-            // Declaration selection consumes the preserved Kotlin signature, not the already-erased value slots.
-            var factParams = parameters.OfType<JsonObject>().Select(p =>
-                Str(p["kotlinType"]) is string sourceType ? TypeNode.Parse(sourceType) : TypeJson.Read(p["type"])).ToArray();
+            var factParams = parameters.OfType<JsonObject>().Select(p => TypeJson.Read(p["type"])).ToArray();
             if (factParams.Any(p => p == null)) continue;
             var arity = Int(implementation["arity"]);
             var propertyAccessor = Str(fact[KotlinPropertyAccessors.KindKey]);
@@ -769,10 +767,18 @@ static class KotlinOverrideSlotBridge
                                 selectedSuspend: true, out source)) continue;
                         logicalSuspendResult = SupertypeGraph.SubstOwnerTvs(source.Return, args);
                     }
-                    else if (!refs.TrySelectedMethodDeclaration(spec.Name, member,
-                            (fact["typeParams"] as JsonArray)?.Count ?? 0,
-                            factParams, factRet, args, SemanticMethodTypeParameters(fact),
-                            out source, propertyAccessor)) continue;
+                    else
+                    {
+                        // Referenced declaration selection needs the preserved source signature; local and
+                        // physical slot matching still consume the lowered factParams in their own frame.
+                        var declarationParams = parameters.OfType<JsonObject>().Select((parameter, index) =>
+                            Str(parameter["kotlinType"]) is string sourceType
+                                ? TypeNode.Parse(sourceType) : factParams[index]).ToArray();
+                        if (!refs.TrySelectedMethodDeclaration(spec.Name, member,
+                                (fact["typeParams"] as JsonArray)?.Count ?? 0,
+                                declarationParams, factRet, args, SemanticMethodTypeParameters(fact),
+                                out source, propertyAccessor)) continue;
+                    }
                     sourceParams = source.PhysicalParameters.Select(p => SupertypeGraph.SubstOwnerTvs(p, args)).ToArray();
                     declarationSignature = new JsonArray(source.SignatureParameters.Select(TypeJson.Write).ToArray());
                     referencedDeclarationId = source.DeclarationId;
