@@ -35,8 +35,13 @@ assert_suites packaged-notices THIRD-PARTY-NOTICES.md packagedsdk
 
 # Conservative fallback remains the compiler FULL set; it must not silently become the release gate.
 assert_suites unrelated-broad-change build-logic/unknown.input "$FULL_SUITES"
-assert_suites compiler-full toolchain/bir-common/TypeNode.cs "$FULL_SUITES"
-assert_suites stdlib-source libraries/stdlib/common/src/generated/_Arrays.kt "$FULL_SUITES"
+# Shared/upstream compiler inputs must retain the packaged consumer selected by direct backend edits.
+for path in toolchain/bir-common/TypeNode.cs toolchain/kotc/build.gradle.kts toolchain/dll2klib/Program.cs \
+	libraries/stdlib/common/src/generated/_Arrays.kt toolchain/bir-common toolchain/kotc toolchain/dll2klib libraries/stdlib; do
+	assert_suites compiler-input-consumers "$path" "$FULL_SUITES packagedsdk"
+	plan="$(bash "$ROOT/scripts/gate.sh" --dry-run "$path")"
+	grep -qx 'clean stdlib rebuild: YES' <<<"$plan" || die "$path must rebuild the baked stdlib"
+done
 assert_suites stdlib-snapshot-test tests/stdlib-common-upstream/upstream-v2.4.21.sha256 stdlib_upstream
 assert_suites ilverify-harness tests/ilverify/test_harness.py compiler_tests
 verifier_suites="compiler_tests csharp14 pinvoke dll2klib packagedsdk"

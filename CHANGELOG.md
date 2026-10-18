@@ -5,7 +5,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
-- Include direct lowering, MSBuild, CLR interop and packaged SDK consumers when selecting gates for backend edits (#767).
+- Include direct lowering, MSBuild, CLR interop and packaged SDK consumers when selecting gates for compiler edits (#767).
 
 - Align the valueBlock wire schema and validation with the current stmts/result contract (#712).
 
