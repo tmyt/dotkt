@@ -51,6 +51,8 @@ class ImportedEnumLiteralTests {
         assertEquals(expected, factory().joinToString(":") { EnumLiteralApi.ReceiveTop(it).toString() })
         val kotlinFactory: () -> Array<ImportedOrderKotlinControl> = ::importedOrderValues
         assertEquals("FIRST:SECOND:LAST", kotlinFactory().joinToString(":") { it.name })
+        assertEquals(1, importedOrderOrdinal(ImportedOrderKotlinControl.SECOND))
+        assertEquals(-2, importedOrderCompare(ImportedOrderKotlinControl.FIRST, ImportedOrderKotlinControl.LAST))
         assertEquals("0:1:0", enumValues<TopCode>().joinToString(":") { importedOrderOrdinal(it).toString() })
     }
 
