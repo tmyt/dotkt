@@ -703,7 +703,9 @@ static class KotlinOverrideSlotBridge
                 || Str(implementation["member"]) is not string member
                 || fact["params"] is not JsonArray parameters
                 || TypeJson.Read(fact["ret"]) is not TypeNode factRet) continue;
-            var factParams = parameters.OfType<JsonObject>().Select(p => TypeJson.Read(p["type"])).ToArray();
+            // Declaration selection consumes the preserved Kotlin signature, not the already-erased value slots.
+            var factParams = parameters.OfType<JsonObject>().Select(p =>
+                Str(p["kotlinType"]) is string sourceType ? TypeNode.Parse(sourceType) : TypeJson.Read(p["type"])).ToArray();
             if (factParams.Any(p => p == null)) continue;
             var arity = Int(implementation["arity"]);
             var propertyAccessor = Str(fact[KotlinPropertyAccessors.KindKey]);

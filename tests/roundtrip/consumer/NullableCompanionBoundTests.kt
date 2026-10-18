@@ -7,6 +7,8 @@ import kotlin.coroutines.startCoroutine
 
 private fun <U, T : U> localCompanionWiden(value: T): U = value
 private fun <T> localCompanionNullable(value: T): T? = localCompanionWiden<T?, T>(value)
+private class ImportedCompanionSink : CompanionSinkBase(), CompanionSink
+private class ImportedBoundedCompanionSink : BoundedCompanionSinkBase(), BoundedCompanionSink
 private class ImportedDefaultCompanionSink : DefaultCompanionSink
 private class CompanionCompletion<T> : Continuation<T> {
     var completed = false
@@ -30,9 +32,14 @@ class NullableCompanionBoundTests {
         val values = listOf<Int?>(1, null)
         val local: CompanionSink = LocalCompanionSink()
         check(local.count(values) == 2)
+        val imported: CompanionSink = ImportedCompanionSink()
+        check(imported.count(values) == 2)
+        check(imported.count(listOf<String?>("reference", null)) == 2)
         val bounded = listOf<CompanionName?>(CompanionName("bound"), null)
         val localBounded: BoundedCompanionSink = LocalBoundedCompanionSink()
         check(localBounded.count(bounded) == 2)
+        val importedBounded: BoundedCompanionSink = ImportedBoundedCompanionSink()
+        check(importedBounded.count(bounded) == 2)
         val localDefault: DefaultCompanionSink = LocalDefaultCompanionSink()
         val importedDefault: DefaultCompanionSink = ImportedDefaultCompanionSink()
         check(localDefault.count(values) == 2)
