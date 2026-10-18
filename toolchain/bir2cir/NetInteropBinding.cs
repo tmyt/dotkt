@@ -296,8 +296,7 @@ static class NetInteropBinding
         // .NET-enum receiver as a plain property-get by IDENTITY (`callInstance ownerType=System.DayOfWeek method=name/
         // ordinal prop=get`) — but System.Enum declares NEITHER as a .NET property (they'd fall through to a non-existent
         // `get_name`/`get_ordinal`). Bind them to the CLR enum semantics: `name` -> ToString() (the constant name, the
-        // System.Enum override), `ordinal` -> the DECLARATION INDEX via `enumOrdinal` carrying the enum type (ilemit does
-        // Array.IndexOf(Enum.GetValues(t), value) — Kotlin-faithful even for a sparse/negative/aliased .NET enum). The
+        // System.Enum override), `ordinal` -> the DECLARATION INDEX via an explicitly ordered physical map. The
         // GENERIC-receiver case (`e: T`, `T : Enum<T>`, owner kotlin.Enum) is handled separately by EnumMemberBinding.
         if (!isStatic && IsNetEnum(netType) && Str(v.TryGetValue("prop", out var pj) ? pj : null) == "get"
             && (method == "name" || method == "ordinal"))
@@ -305,7 +304,20 @@ static class NetInteropBinding
             var recv0 = Take("recv");
             var replacement = method == "name"
                 ? new JsonObject { ["k"] = "objMethod", ["method"] = "ToString", ["recv"] = recv0 }
-                : new JsonObject { ["k"] = "enumOrdinal", ["e"] = recv0, ["type"] = owner };
+                : EnumValueLowering.ReferencedOrdinal(recv0, owner, _refs);
+            node.Clear();
+            foreach (var pair in replacement) node[pair.Key] = pair.Value?.DeepClone();
+            return;
+        }
+
+        if (!isStatic && IsNetEnum(netType) && method == "compareTo" && args.Count == 1)
+        {
+            var replacement = new JsonObject
+            {
+                ["k"] = "binOp", ["op"] = "-",
+                ["lhs"] = EnumValueLowering.ReferencedOrdinal(Take("recv"), owner, _refs),
+                ["rhs"] = EnumValueLowering.ReferencedOrdinal(args[0], owner, _refs),
+            };
             node.Clear();
             foreach (var pair in replacement) node[pair.Key] = pair.Value?.DeepClone();
             return;

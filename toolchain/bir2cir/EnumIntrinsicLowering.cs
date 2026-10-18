@@ -9,12 +9,13 @@ using DotKt.Bir;
 // carries no `kotlin.*` FQN of the intrinsic). On the CLR every type arg is REIFIED, so these lower at the call
 // site exactly like `T.values()` / `T.valueOf(name)` — a Kotlin<->CLR equivalence, so it lives HERE:
 //
-//   enumValues<T>() / enumEntries<T>()  -> rich enum: callStatic <T>.values()          ; basic/gp: {k:enumValues,type:T}
+//   enumValues<T>() / enumEntries<T>()  -> rich enum: callStatic <T>.values(); otherwise an enumValues semantic node
 //   enumValueOf<T>(name)                -> rich enum: callStatic <T>.valueOf(name)      ; basic/gp: {k:enumParse,type:T,arg}
 //
 // RICH vs BASIC comes from an explicit producer fact: local BIR carries `enumRich:true`, while a referenced producer
-// carries trusted [KotlinRichEnum]. A generic-param T or a basic enum takes the semantic node (System.Enum.GetValues /
-// Enum.Parse); no values()/valueOf() name/signature convention is used to classify a referenced owner.
+// carries trusted [KotlinRichEnum]. EnumValueLowering resolves the semantic values node to declaration-ordered
+// physical tables or the ordered runtime helper for a generic parameter. No values()/valueOf() name/signature
+// convention is used to classify a referenced owner.
 //
 // Runs EARLY (grouped with the range/array/char faithful recognitions, before MemberCallSubstitution / BirTypeLowering)
 // so the produced enumValues/enumParse/values nodes enter the ordinary CIR pipeline with their semantic enum identity
@@ -166,6 +167,15 @@ static class EnumIntrinsicLowering
 
     internal static void SelfTest()
     {
+        var parameter = new TypeNode.Tv("method", 0);
+        var genericValues = new JsonObject { ["k"] = "enumValues", ["type"] = TypeJson.Write(parameter) };
+        EnumValueLowering.Apply(genericValues, ReferenceMetadataIndex.Build(System.Array.Empty<string>()),
+            new HashSet<string>(), new Dictionary<string, BasicEnumMetadata>());
+        if (Str(genericValues["k"]) != "cast" || TypeJson.Read(genericValues["type"]) != new TypeNode.Array(parameter)
+            || Str(genericValues["e"]?["method"]) != "kotlinEnumValues"
+            || Str(genericValues["e"]?["args"]?[0]?["k"]) != "classRef"
+            || TypeJson.Read(genericValues["e"]?["args"]?[0]?["type"]) != parameter)
+            throw new System.InvalidOperationException("Generic enum values lost their ordered runtime operation or exact type frame");
         var ordinary = TypeJson.Fqn("EnumType");
         var companion = TypeJson.Fqn("StorageType");
         var frame = new NullableRepresentationFrame(1, System.Array.Empty<int>(),

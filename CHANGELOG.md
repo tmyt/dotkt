@@ -5,6 +5,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Preserve projected declaration order for native CLR enum values, ordinals and generic comparisons without changing alias identity (#1050).
+
 - Preserve source constraints and generic frames when inherited implementations fill consumer-local interface slots (#1089).
 
 - Preserve inherited nullable-generic interface forwarding across DLL boundaries (#967).

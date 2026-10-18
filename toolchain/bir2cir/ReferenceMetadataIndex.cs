@@ -1987,7 +1987,24 @@ sealed partial class ReferenceMetadataIndex
         catch { return null; }
         return new EnumPhysicalConstant(
             underlying.FullName ?? underlying.Name,
-            Convert.ToString(raw, CultureInfo.InvariantCulture));
+            EnumConstantText(raw));
+    }
+
+    // dll2klib presents foreign enum entries in FieldDef order, not Enum.GetValues' unsigned numeric order.
+    // Aliases remain separate declarations here even though their physical CLR values are indistinguishable.
+    public bool TryNativeEnumEntries(string fqn, out BasicEnumMetadata metadata)
+    {
+        metadata = null;
+        var type = ResolveNetType(fqn);
+        if (type == null || !type.IsEnum) return false;
+        var fields = type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.DeclaredOnly)
+            .Where(field => field.IsLiteral && field.FieldType == type && !field.Name.StartsWith('<')
+                && (field.IsPublic || field.IsFamily || field.IsFamilyOrAssembly))
+            .OrderBy(field => field.MetadataToken);
+        metadata = new BasicEnumMetadata(type.GetEnumUnderlyingType().FullName,
+            fields.Select((field, ordinal) => new BasicEnumEntry(field.Name, ordinal,
+                EnumConstantText(field.GetRawConstantValue()))).ToArray());
+        return true;
     }
 
     public bool IsEnumType(TypeNode.Fqn type) => ReferencedTypeKind(type) == "enum";
@@ -6810,6 +6827,7 @@ sealed partial class ReferenceMetadataIndex
 
     static string EnumConstantText(object value) => value switch
     {
+        char v => ((int)v).ToString(CultureInfo.InvariantCulture),
         sbyte v => v.ToString(CultureInfo.InvariantCulture),
         byte v => v.ToString(CultureInfo.InvariantCulture),
         short v => v.ToString(CultureInfo.InvariantCulture),

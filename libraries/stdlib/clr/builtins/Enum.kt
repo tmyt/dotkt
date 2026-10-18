@@ -36,7 +36,8 @@ public actual abstract class Enum<E : Enum<E>> actual constructor(name: String, 
      */
     public actual final val ordinal: Int get() = TODO("clr binding should be implemented")
 
-    public actual override final fun compareTo(other: E): Int = TODO("clr binding should be implemented")
+    public actual override final fun compareTo(other: E): Int =
+        DotKt.Runtime.CompilerServices.kotlinEnumCompareTo(this, other)
 
     public actual override final fun equals(other: Any?): Boolean = TODO("clr binding should be implemented")
 

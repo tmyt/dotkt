@@ -1085,6 +1085,10 @@ all three `append` members). The range overload additionally marks its exclusive
   its nominal CLR enum identity and exact native literal values (read, pass, `==`, `when` all work, without
   exhaustiveness). Native aliases with the same underlying value compare equal, unlike distinct Kotlin-authored
   enum entries; they cannot be distinguished by equality or separate `when` branches.
+- Imported native enum `ordinal`, `values()` / `enumValues`, and Kotlin comparison operations follow the visible
+  FieldDef declaration order projected by dll2klib, not CLR unsigned numeric sorting. Values lists retain aliases
+  in that order, but equal native alias bits have the first matching declaration's ordinal and compare equal.
+  No wrapper or integer API replaces the native CLR enum type. An undeclared native bit pattern has ordinal `-1`.
 - A referenced CLR enum carrying the target core library's exact `[System.Flags]` attribute additionally exposes
   typed `or`, `and`, `xor`, `inv`, and `contains` operations. Every non-Boolean operation accepts and returns that
   exact enum type, including unnamed and unknown bit patterns; distinct enum types never mix. `flag in value` means

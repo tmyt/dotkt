@@ -105,11 +105,36 @@ static class EnumValueLowering
                     // reserved for referenced CLR enums, whose declaration index may differ from the underlying value.
                     obj.Remove("type");
                 }
+                else if (refs.TryNativeEnumEntries(enumOwner, out var nativeEntries))
+                {
+                    obj["values"] = Values(nativeEntries);
+                }
             }
             if (kind == "enumValues" && TypeJson.OwnerName(obj["type"]) is string valuesOwner
                 && (localExplicitEnums.TryGetValue(valuesOwner, out var localValues)
-                    || refs.TryKotlinBasicEnum(valuesOwner, out localValues)))
+                    || refs.TryKotlinBasicEnum(valuesOwner, out localValues)
+                    || refs.TryNativeEnumEntries(valuesOwner, out localValues)))
                 obj["values"] = Values(localValues);
+
+            if (kind == "enumValues" && TypeJson.Read(obj["type"]) is TypeNode.Tv parameter)
+            {
+                // The enum declaration is known only at runtime. Select the same ordered runtime operation here;
+                // ilemit must not substitute Enum.GetValues' numeric order for Kotlin's declaration order.
+                var position = obj["pos"]?.DeepClone();
+                obj.Clear();
+                obj["k"] = "cast";
+                obj["type"] = TypeJson.Write(new TypeNode.Array(parameter));
+                obj["e"] = new JsonObject
+                {
+                    ["k"] = "callStatic",
+                    ["owner"] = TypeJson.Fqn("DotKt.Runtime.CompilerServices.EnumRuntimeKt"),
+                    ["method"] = "kotlinEnumValues",
+                    ["sig"] = new JsonArray(TypeJson.Fqn("kotlin.Any")),
+                    ["args"] = new JsonArray(new JsonObject { ["k"] = "classRef", ["type"] = TypeJson.Write(parameter) }),
+                    ["ret"] = TypeJson.Fqn("kotlin.Any"),
+                };
+                if (position != null) obj["pos"] = position;
+            }
 
             foreach (var kv in obj)
                 if (kv.Value != null) Walk(kv.Value, refs, localBasicEnums, localExplicitEnums);
@@ -125,6 +150,19 @@ static class EnumValueLowering
         ["underlying"] = metadata.Underlying,
         ["physicalValue"] = entry.PhysicalValue,
     }).ToArray());
+
+    internal static JsonObject ReferencedOrdinal(JsonNode receiver, JsonNode enumType, ReferenceMetadataIndex refs)
+    {
+        var owner = TypeJson.OwnerName(enumType);
+        if (owner == null || !(refs.TryKotlinBasicEnum(owner, out var metadata)
+                || refs.TryNativeEnumEntries(owner, out metadata)))
+            throw new InvalidOperationException("Referenced enum ordinal has no selected declaration map");
+        return new JsonObject
+        {
+            ["k"] = "enumOrdinal", ["e"] = receiver.DeepClone(),
+            ["type"] = enumType.DeepClone(), ["values"] = Values(metadata),
+        };
+    }
 
     static int _parseTemp;
 
