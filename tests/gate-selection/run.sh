@@ -35,8 +35,13 @@ assert_suites packaged-notices THIRD-PARTY-NOTICES.md packagedsdk
 
 # Conservative fallback remains the compiler FULL set; it must not silently become the release gate.
 assert_suites unrelated-broad-change build-logic/unknown.input "$FULL_SUITES"
-assert_suites compiler-full toolchain/bir-common/TypeNode.cs "$FULL_SUITES"
-assert_suites stdlib-source libraries/stdlib/common/src/generated/_Arrays.kt "$FULL_SUITES"
+# Shared/upstream compiler inputs must retain the packaged consumer selected by direct backend edits.
+for path in toolchain/bir-common/TypeNode.cs toolchain/kotc/build.gradle.kts toolchain/dll2klib/Program.cs \
+	libraries/stdlib/common/src/generated/_Arrays.kt toolchain/bir-common toolchain/kotc toolchain/dll2klib libraries/stdlib; do
+	assert_suites compiler-input-consumers "$path" "$FULL_SUITES packagedsdk"
+	plan="$(bash "$ROOT/scripts/gate.sh" --dry-run "$path")"
+	grep -qx 'clean stdlib rebuild: YES' <<<"$plan" || die "$path must rebuild the baked stdlib"
+done
 assert_suites stdlib-snapshot-test tests/stdlib-common-upstream/upstream-v2.4.21.sha256 stdlib_upstream
 assert_suites ilverify-harness tests/ilverify/test_harness.py compiler_tests
 verifier_suites="compiler_tests csharp14 pinvoke dll2klib packagedsdk"
@@ -46,6 +51,23 @@ mixed_suites="$(suite_line tests/run-ilverify.sh tests/basic/fixtures/SomeTest.k
 assert_suites dll2klib-test tests/special/dll2klib-e2e/run.sh "$FULL_SUITES"
 assert_suites schema-consumers scripts/verify-schema.py 'schema dll2klib'
 assert_suites schema-contract docs/bir-cir.schema.json 'schema dll2klib'
+
+# Backend edits affect direct lowering, in-repo builds, CLR import and packaged consumers.
+# The C#-only ABI oracle, upstream checksum and policy self-tests do not consume these tools.
+compiler_suites='compiler_tests schema sanity lowering msbuild targetuniverse pinvoke dll2klib packagedsdk'
+for path in toolchain/bir2cir/Program.cs toolchain/ilemit/Emitter.Expressions.cs toolchain/bir2cir toolchain/ilemit; do
+	assert_suites backend-consumers "$path" "$compiler_suites"
+	plan="$(bash "$ROOT/scripts/gate.sh" --dry-run "$path")"
+	grep -qx 'clean stdlib rebuild: YES' <<<"$plan" || die "$path must rebuild the baked stdlib"
+done
+mixed_suites="$(suite_line toolchain/bir2cir/Program.cs toolchain/ilemit/Emitter.Expressions.cs \
+	scripts/verify-schema.py tests/target-universe/run.sh)"
+[[ "$mixed_suites" == "$compiler_suites" ]] || die "overlapping backend consumers were lost or duplicated: '$mixed_suites'"
+mixed_suites="$(suite_line toolchain/bir2cir/Program.cs tests/run-ilverify.sh)"
+[[ "$mixed_suites" == 'compiler_tests schema sanity lowering msbuild targetuniverse csharp14 pinvoke dll2klib packagedsdk' ]] ||
+	die "backend/verifier union must retain the C#-only verifier consumer: '$mixed_suites'"
+mixed_suites="$(suite_line toolchain/ilemit/Emitter.Expressions.cs build-logic/unknown.input)"
+[[ "$mixed_suites" == "$FULL_SUITES packagedsdk" ]] || die "FULL fallback lost the packaged backend consumer: '$mixed_suites'"
 
 make_plan() {
 	make --no-print-directory -n -C "$ROOT" -o toolchain -o stdlib -o pack -o bir2cir -o stdlib-ref "$@"

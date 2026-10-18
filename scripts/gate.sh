@@ -7,11 +7,10 @@
 # subset for exactly those changes. It does NOT reimplement any suite — it selects which of the existing
 # Make suite targets to invoke and whether to force a clean stdlib rebuild first.
 #
-# It is a SELECTOR, not a new gate: `gate.sh --full` runs the complete verify-core set with a clean
-# stdlib rebuild and is the AUTHORITATIVE pre-merge / release gate the coordinator uses for integration.
-# The change-aware subset is a fast DEV convenience; when in doubt it falls back to --full (CONSERVATIVE:
-# a wrong "skip" that hides a regression is far worse than a slow gate — see MEMORY
-# build-cache-masks-stdlib-regressions).
+# It is a SELECTOR, not a new gate: --full runs verify-core with a clean stdlib rebuild;
+# --release adds packaged SDK and matches canonical `make verify`, required before merge.
+# The change-aware subset is a DEV convenience. Unrecognized inputs fall back to the complete core set,
+# retaining any explicitly selected packaged consumers. A wrong skip is worse than a slow gate.
 #
 # CHANGE SOURCE (default): the union of committed diff vs main (git diff main...HEAD), staged, unstaged,
 # and untracked paths. Override by passing explicit paths as arguments (e.g. `gate.sh toolchain/ilemit`).
@@ -27,11 +26,11 @@
 #   scripts/{lib,build-stdlib*,dotkt,  -> FULL   (shared build machinery — affects every stage)
 #     gen-*}.sh
 #   scripts/pack-nuget.sh              -> FULL + verify-packaged-sdk
-#   toolchain/bir2cir/** | ilemit/**   -> stdlib EMIT (clean) + compiler tests +
-#                                          verify-schema + verify-sanity + target-universe
-#                                          (kotc unchanged: no installDist cost)
-#   toolchain/bir-common/**            -> FULL   (TypeNode/IrSanity are <Compile Link/>-shared into every tool)
-#   toolchain/kotc/** | libraries/stdlib/**  -> FULL + clean stdlib rebuild
+#   toolchain/bir2cir/** | ilemit/**   -> clean stdlib + compiler tests + schema/sanity + lowering +
+#                                          MSBuild + target-universe + P/Invoke + DLL-to-KLIB E2E + packaged SDK
+#                                          (the unchanged kotc launcher is reused)
+#   toolchain/bir-common/** | kotc/** | dll2klib/** | libraries/stdlib/**
+#                                       -> FULL + packaged SDK + clean stdlib (shared/upstream compiler inputs)
 #   tests/{basic,interop,coroutines,roundtrip}/** -> compiler tests
 #   tests/run-ilverify.sh              -> compiler tests + C# ABI + P/Invoke + DLL-to-KLIB E2E + packaged SDK
 #   anything else                      -> FULL
@@ -47,7 +46,7 @@ usage: $SCRIPT_NAME [--full] [--release] [--dry-run] [PATH...]
 Change-aware wrapper over the tests/ suites: runs the minimal correct rebuild + suite
 subset for the changed paths (default: git-detected). Prints exactly what it chose and WHY.
 
-  --full        run the complete verify-core set with a clean stdlib rebuild (authoritative pre-merge)
+  --full        run the complete verify-core set with a clean stdlib rebuild (core gates only)
   --release     --full plus the packaged-SDK gate (matches \`make verify\`)
   -n, --dry-run print the selected rebuilds + suites and exit WITHOUT running anything
   PATH...       classify these explicit paths instead of the git-detected change set
@@ -102,9 +101,8 @@ classify() { # <path>
 			want packagedsdk; reason "$p -> verify-packaged-sdk (package-version guard input)" ;;
 		THIRD-PARTY-NOTICES.md|packaging/*.md)
 			want packagedsdk; reason "$p -> verify-packaged-sdk (packaged documentation)" ;;
-		# These still take the conservative FULL path, but FULL intentionally excludes the expensive
-		# packaged-SDK release gate for ordinary compiler changes. Select that gate explicitly only
-		# for inputs that can alter the SDK used to build or the nupkgs consumed by downstream projects.
+		# FULL names the core gates; packaged SDK is selected separately for inputs with packaged consumers.
+		# --release adds that gate unconditionally, while these package inputs also require all core gates.
 		global.json|packaging/*)
 			NEED_FULL=1; want packagedsdk; reason "$p -> FULL + verify-packaged-sdk (release/package input)" ;;
 		# ---- docs / changelog -------------------------------------------------------------------
@@ -122,15 +120,16 @@ classify() { # <path>
 		scripts/lib.sh|scripts/build-stdlib*.sh|scripts/dotkt.sh|scripts/gen-*|scripts/hooks/*)
 			NEED_FULL=1; reason "$p -> FULL (shared build machinery)" ;;
 		# ---- toolchain --------------------------------------------------------------------------
-		toolchain/bir2cir/*|toolchain/ilemit/*)
-			want compiler_tests; want schema; want sanity; want targetuniverse; CLEAN=1
-			reason "$p -> bir2cir/ilemit: clean stdlib emit + compiler tests + verify-schema + verify-sanity + target-universe" ;;
-		toolchain/bir-common/*)
-			NEED_FULL=1; CLEAN=1; reason "$p -> FULL (bir-common is <Compile Link/>-shared into every tool)" ;;
-		toolchain/kotc/*)
-			NEED_FULL=1; CLEAN=1; reason "$p -> FULL + clean stdlib (kotc frontend changed)" ;;
-		libraries/stdlib/*)
-			NEED_FULL=1; CLEAN=1; reason "$p -> FULL + clean stdlib (stdlib source changed)" ;;
+		toolchain/bir2cir|toolchain/bir2cir/*|toolchain/ilemit|toolchain/ilemit/*)
+			want compiler_tests; want schema; want sanity; want lowering; want msbuild; want targetuniverse
+			want pinvoke; want dll2klib; want packagedsdk; CLEAN=1
+			reason "$p -> bir2cir/ilemit consumers: clean stdlib + compiler tests + schema/sanity + lowering + MSBuild + target-universe + P/Invoke + DLL-to-KLIB E2E + packaged SDK" ;;
+		toolchain/bir-common|toolchain/bir-common/*)
+			NEED_FULL=1; CLEAN=1; want packagedsdk
+			reason "$p -> FULL + packaged SDK (bir-common is <Compile Link/>-shared into every tool)" ;;
+		toolchain/kotc|toolchain/kotc/*|toolchain/dll2klib|toolchain/dll2klib/*|libraries/stdlib|libraries/stdlib/*)
+			NEED_FULL=1; CLEAN=1; want packagedsdk
+			reason "$p -> FULL + packaged SDK + clean stdlib (upstream compiler/stdlib input)" ;;
 		# ---- tests ------------------------------------------------------------------------------
 		tests/run-ilverify.sh)
 			want compiler_tests; want csharp14; want pinvoke; want dll2klib; want packagedsdk
@@ -181,7 +180,7 @@ elif (( ${#CHANGES[@]} == 0 )); then
 else
 	for c in "${CHANGES[@]}"; do classify "$c"; done
 	if (( NEED_FULL )); then
-		CLEAN=1   # an escalated FULL is the authoritative path: clean-rebuild the stdlib too (defeat cache-masking)
+		CLEAN=1   # a broad fallback must also rebuild the stdlib (defeat cache-masking)
 		for s in "${FULL_SUITES[@]}"; do want "$s"; done
 		reason "==> a broad/unmatched path was seen: escalated to the FULL verify-core set + clean stdlib rebuild"
 	fi

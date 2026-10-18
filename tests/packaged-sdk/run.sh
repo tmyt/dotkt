@@ -105,9 +105,8 @@ FEED="$ROOT/build/nuget-feed"
 
 python3 "$ROOT/tests/packaged-sdk/test_stdlib_build.py"
 
-# 1. Pack the 5 nupkgs FRESH from the current sources (rebuilds the tools + re-copies the shipped targets into
-#    DotKt.Toolchain). Uses the cached stdlib dlls when present — correct for an MSBuild/targets-only change;
-#    a stdlib/kotc/bir2cir source change is gated by verify-tests, not here.
+# 1. Pack the 5 nupkgs from the current sources, rebuilding tools and copying the shipped targets.
+#    The fingerprint-aware helpers reuse content-valid stdlib artifacts and rebuild stale ones before packaging.
 info "packing 5 nupkgs (version $VER) -> $FEED"
 bash "$ROOT/scripts/pack-nuget.sh" >/dev/null || die "pack-nuget.sh failed"
 # #223: immediately repeat the standalone pack. Tool builds may refresh output mtimes, but a content-stable
