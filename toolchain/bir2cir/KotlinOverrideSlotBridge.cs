@@ -517,7 +517,7 @@ static class KotlinOverrideSlotBridge
             {
                 // A referenced BASE CLASS reaches the same arm; only its wiring differs (a MethodImpl against the
                 // constructed base rather than the interface), and the emitter resolves that base externally.
-                FillFromReference(cls, defs, spec, supIsInterface, candidates, ownArgs, isValue, refs, phase, sourceMapping,
+                FillFromReference(cls, defs, spec, supIsInterface, candidates, ownArgs, isValue, refs, phase, sourceMapping, representations,
                     (semanticOwner, owner, isInterface, referenced, identity, member, accessor, parameters, ret, implementation,
                             slotTypeParams, slotHasDefault, unitValueReturn, signature, referenceMember) =>
                         Fill(semanticOwner, owner, isInterface, referenced, slotHasDefault, identity, member, accessor,
@@ -1411,7 +1411,7 @@ static class KotlinOverrideSlotBridge
     // the derivation the refusal exists to prevent.
     static void FillFromReference(Def cls, IReadOnlyDictionary<string, Def> defs, TypeNode.Fqn spec,
         bool supIsInterface, IEnumerable<JsonObject> methods, TypeNode[] ownArgs, ValueTypeOracle isValue,
-        ReferenceMetadataIndex refs, Phase phase, NullableRepresentationTypes sourceMapping,
+        ReferenceMetadataIndex refs, Phase phase, NullableRepresentationTypes sourceMapping, GenericRepresentationPolicy representations,
         Action<TypeNode.Fqn, TypeNode.Fqn, bool, bool, string, string, string, TypeNode[], TypeNode, JsonObject, JsonArray, bool, bool, TypeNode[], string> fill,
         bool suspendValues = false, IReadOnlyDictionary<JsonObject, TypeNode[]> inheritedSignatures = null,
         IReadOnlyDictionary<JsonObject, TypeNode[]> sourceParameters = null, bool nativeAliases = false)
@@ -1464,6 +1464,10 @@ static class KotlinOverrideSlotBridge
                 var selectedArgs = selectedSpec.Args ?? Array.Empty<TypeNode>();
                 var physicalSelectedSpec = accessorKind != null
                     ? (TypeNode.Fqn)sourceMapping.Slot(selectedSpec) : selectedSpec;
+                // Kotlin-owned applications close V? as object, while the implementing scalar getter keeps
+                // Nullable<V>. Close the owner and its slot together; native CLR applications remain exact.
+                if (accessorKind != null && representations?.OwnsValueSlots(selectedSpec.Name) == true)
+                    physicalSelectedSpec = (TypeNode.Fqn)NullableGenericErasure.EraseArgument(physicalSelectedSpec, isValue);
                 var physicalSelectedArgs = physicalSelectedSpec.Args ?? Array.Empty<TypeNode>();
                 var implementationSignature = suspendValues && sourceParameters != null
                     && sourceParameters.TryGetValue(impl, out var sourceSignature)

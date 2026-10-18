@@ -19,8 +19,18 @@ private class DefaultInheritedFieldChild : DefaultInheritedField()
 private class StaticDefaultFieldChild : IStaticDefaultValue
 private class DefaultEventFieldChild : DefaultEventField()
 private class DefaultInheritedEventFieldChild : DefaultInheritedEventField()
+private class NativeNullableFieldSlot(override val Value: Int?) : IValue<Int?>
 
 class ExplicitFieldSlotTests {
+    @TestAttribute fun nativeNullablePropertyOverrideKeepsItsExactClrOwner() {
+        val present = NativeNullableFieldSlot(42)
+        val absent = NativeNullableFieldSlot(null)
+        val presentSlot: IValue<Int?> = present
+        val absentSlot: IValue<Int?> = absent
+        check(present.Value == 42 && absent.Value == null)
+        check(presentSlot.Value == 42 && absentSlot.Value == null)
+    }
+
     @TestAttribute fun genericFieldAllowsExplicitInterfaceReimplementation() {
         val value = ReferenceFieldReimplementation()
         val slot: IReferenceValue<String> = value
