@@ -22,7 +22,7 @@ classpath="$FE_KLIB"
 while IFS= read -r klib; do classpath+="$cp_sep$klib"; done < <(find "$OUT/klib" -maxdepth 1 -name '*.klib' | LC_ALL=C sort)
 "$KOTC" "$HERE/consumer.kt" -no-stdlib -classpath "$classpath" -d "$OUT/bir"
 fixtures="$(refset_join "$OUT/fixture/MetadataOrder.dll" "$OUT/fixture/CharEnums.dll" "$OUT/fixture/FSharp.Core.dll")"
-dotnet "$BIR2CIR_DLL" "$OUT/cir" --compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_REF_DLL" "$fixtures")" "$OUT/bir/consumer.bir.json"
+dotnet "$BIR2CIR_DLL" "$OUT/cir" --compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_REF_DLL" "$STDLIB_RT_DLL" "$fixtures")" "$OUT/bir/consumer.bir.json"
 dotnet "$ILEMIT_DLL" "$OUT/il" NativeEnumOrder \
     --compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_RT_DLL" "$fixtures")" \
     --runtime-refs "$(refset_join "$STDLIB_RT_DLL" "$fixtures")" \

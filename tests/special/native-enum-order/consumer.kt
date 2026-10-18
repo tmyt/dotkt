@@ -1,4 +1,5 @@
 private fun <T : Enum<T>> ordinal(value: T): Int = value.ordinal
+private fun <T : Enum<T>> compare(left: T, right: T): Int = left.compareTo(right)
 inline fun <reified T : Enum<T>> valuesOf(): Array<T> = enumValues<T>()
 enum class RichControl(val marker: Int) {
     First(1) { override fun read(): Int = marker }, Second(2);
@@ -29,9 +30,8 @@ fun main() {
     check(enumValues<NativeChar.Code>().joinToString(":") { NativeChar.Api.Bits(it).toString() } == "122:97:122")
     val characters: () -> Array<NativeChar.Code> = ::valuesOf
     check(characters().joinToString(":") { NativeChar.Api.Bits(it).toString() } == "122:97:122")
-    val richComparison: (RichControl, RichControl) -> Int = RichControl::compareTo
-    check(richComparison(RichControl.First, RichControl.Second) == -1)
-    val richBound: (RichControl) -> Int = RichControl.First::compareTo
-    check(richBound(RichControl.Second) == -1)
+    check(RichControl.First.compareTo(RichControl.Second) == -1)
+    check(compare(RichControl.First, RichControl.Second) == -1)
+    check(compare(RichControl.Second, RichControl.First) == 1)
     println("native enum metadata order: OK")
 }
