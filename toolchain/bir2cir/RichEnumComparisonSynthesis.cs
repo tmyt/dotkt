@@ -18,6 +18,13 @@ static class RichEnumComparisonSynthesis
             var owner = type["name"].GetValue<string>();
             var ordinal = metadata["ordinal"].GetValue<string>();
             type["base"] = TypeJson.Fqn("DotKt.Runtime.CompilerServices.KotlinEnumComparable");
+            foreach (var constructor in (type["ctors"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
+                if (constructor["thisArgs"] is not JsonArray)
+                {
+                    constructor["baseArgs"] = new JsonArray();
+                    constructor["delegationSig"] = new JsonArray();
+                    constructor.Remove("delegationDeclarationId");
+                }
             var interfaces = type["interfaces"] as JsonArray ?? new JsonArray();
             if (type["interfaces"] == null) type["interfaces"] = interfaces;
             interfaces.Add(TypeJson.Fqn(Face));

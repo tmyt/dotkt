@@ -246,7 +246,8 @@ static class ComparableRepresentationLowering
             throw new InvalidOperationException("Ordinary class comparison lost its selected implementation");
         var enumRoot = JsonNode.Parse("""
         {"fileClass":"EnumComparisons","types":[{"name":"RichOrder","kind":"class","interfaces":[],
-          "methods":[],"richEnum":{"ordinal":"selectedOrdinalField"}}],"methods":[]}
+          "methods":[],"ctors":[{"params":[],"baseArgs":null,"thisArgs":null,"body":[]}],
+          "richEnum":{"ordinal":"selectedOrdinalField"}}],"methods":[]}
         """).AsObject();
         Apply(new JsonNode[] { enumRoot }, referenceBuild: false);
         var enumBridge = enumRoot["types"][0]["methods"][0];
@@ -257,6 +258,8 @@ static class ComparableRepresentationLowering
                 new TypeNode[] { new TypeNode.Star() }, new Dictionary<string, string>())
             || Text(enumBridge["body"][0]["value"]["lhs"]["name"]) != "selectedOrdinalField"
             || TypeJson.OwnerName(enumRoot["types"][0]["base"]) != "DotKt.Runtime.CompilerServices.KotlinEnumComparable"
+            || enumRoot["types"][0]["ctors"][0]["baseArgs"] is not JsonArray { Count: 0 }
+            || enumRoot["types"][0]["ctors"][0]["delegationSig"] is not JsonArray { Count: 0 }
             || Text(enumBridge["clrInterfaceImpls"][0]["member"]) != "compareEnumTo")
             throw new InvalidOperationException("Enum comparison lost the shared value view or the producer's ordinal map");
         Console.WriteLine("[comparable representation] self-test OK (shared facade, evaluation, source bounds, generic-first dispatch, inherited owner frame)");
