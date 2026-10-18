@@ -5,6 +5,28 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+## 0.9.15 (2026-10-18)
+
+### Release highlights
+
+- All five packages and SDK defaults use `0.9.15`; the embedded Kotlin compiler and
+  upstream common standard-library baseline remain **2.4.21**.
+- Improve Kotlin numeric, collection, array and generic contracts across CLR calls and DLL imports,
+  including equality, runtime type classifiers, native enum values and source visibility.
+- Preserve Windows manifests, native version resources and SDK-selected managed assembly versions.
+- Breaking interop changes: the CLR `kotlin.Number` class is removed; ordinary `lateinit` uses
+  properties rather than public fields and rejects `@ClrField`; opaque collection operations
+  follow the static Kotlin view rather than remembering their originating collection view.
+- Rebuild dependent Kotlin-produced DLLs with this toolchain; older compiler-generated artifacts
+  remain unsupported. Atomicfu, kotlinx.coroutines and UI integration libraries are not bundled.
+
+### Toolchain and SDK
+
+- **Unit-valued generic callback slots retain their declaration signatures (#950).**
+  Inherited and concrete overrides bind exact CLR slots without changing stored function identity.
+
+- Preserve native CLR for-loop structure inside exception regions and nested statement bodies (#1071).
+
 - Bind Kotlin ClassCastException to System.InvalidCastException so ordinary casts, runtime classifier helpers
   and explicit throws share one catchable exception identity, including cross-DLL and C# consumers (#1052).
 
@@ -92,9 +114,6 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   remain unsupported. Atomicfu, kotlinx.coroutines and UI integration libraries are not bundled.
 
 ### Toolchain
-
-- **Unit-valued generic callback slots retain their declaration signatures (#950).**
-  Inherited and concrete overrides bind exact CLR slots without changing stored function identity.
 
 - Preserve source-declared Kotlin function overload priority across DLL imports, including materialized
   suspend bridges, so alias constructors/factories and ordinary overloads retain their source selection (#1038).
