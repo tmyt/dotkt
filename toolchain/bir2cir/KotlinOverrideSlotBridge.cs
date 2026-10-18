@@ -716,6 +716,7 @@ static class KotlinOverrideSlotBridge
                 bool returnsValue = false;
                 string physicalMember = null;
                 JsonArray physicalTypeParams = null;
+                NullableRepresentationFrame physicalMethodFrame = null;
                 JsonArray declarationSignature = null;
                 string referencedDeclarationId = null;
                 TypeNode logicalSuspendResult = null;
@@ -741,6 +742,7 @@ static class KotlinOverrideSlotBridge
                     {
                         declarationSignature = FunctionSignatureIdentity.Signature((JsonArray)source["params"]);
                         physicalTypeParams = source["typeParams"] as JsonArray;
+                        physicalMethodFrame = NullableRepresentationTypes.DeclarationMethodFrame(source);
                         sourceParams = ((JsonArray)source["params"]).OfType<JsonObject>()
                             .Select(p => SupertypeGraph.SubstOwnerTvs(TypeJson.Read(p["type"]), args)).ToArray();
                         var openRet = TypeJson.Read(source["ret"]);
@@ -774,15 +776,19 @@ static class KotlinOverrideSlotBridge
                         var declarationParams = parameters.OfType<JsonObject>().Select((parameter, index) =>
                             Str(parameter["kotlinType"]) is string sourceType
                                 ? TypeNode.Parse(sourceType) : factParams[index]).ToArray();
+                        var ownArgs = ClassOwnArgs(cls);
+                        var selectedOwnerArgs = KotlinSupertypesRecord.ReadNullableFrame(cls.Node)?.OrdinaryArguments(ownArgs)
+                            ?? ownArgs;
                         if (!refs.TrySelectedMethodDeclaration(spec.Name, member,
                                 (fact["typeParams"] as JsonArray)?.Count ?? 0,
                                 declarationParams, factRet, args, SemanticMethodTypeParameters(fact),
-                                out source, propertyAccessor)) continue;
+                                selectedOwnerArgs, out source, propertyAccessor)) continue;
                     }
                     sourceParams = source.PhysicalParameters.Select(p => SupertypeGraph.SubstOwnerTvs(p, args)).ToArray();
                     declarationSignature = new JsonArray(source.SignatureParameters.Select(TypeJson.Write).ToArray());
                     referencedDeclarationId = source.DeclarationId;
                     physicalTypeParams = source.TypeParams;
+                    physicalMethodFrame = source.NullableFrame;
                     sourceRet = SupertypeGraph.SubstOwnerTvs(
                         logicalSuspendResult != null ? source.Return : source.PhysicalReturn, args);
                     returnsValue = logicalSuspendResult != null ? !IsVoid(source.Return) : source.ReturnsValue;
@@ -801,6 +807,21 @@ static class KotlinOverrideSlotBridge
                         candidate["params"] = projectedSource["params"].DeepClone();
                     }
                     candidate["typeParams"] = SubstituteOwnerTypeParameterConstraints(physicalTypeParams, args);
+                    if (physicalMethodFrame is { RequiresMetadata: true })
+                        candidate[NullableRepresentationTypes.MethodFrameKey] = physicalMethodFrame.ToJson().ToJsonString();
+                    // The candidate now owns physical parameters; carry the selected implementation's source
+                    // bounds too, so local interface matching does not mistake companion constraints for Kotlin bounds.
+                    if (Str(implementation[NullableGenericErasure.MethodTypeParameterBoundsPre]) is string encodedBounds)
+                    {
+                        var sourceBounds = JsonNode.Parse(encodedBounds).AsObject();
+                        var ownerFrame = sourceOwner != null ? KotlinSupertypesRecord.ReadNullableFrame(sourceOwner.Node)
+                            : refs.NullableTypeFrames.GetValueOrDefault(spec.Name);
+                        var sourceOwnerArgs = ownerFrame?.OrdinaryArguments(args) ?? args;
+                        foreach (var constraints in sourceBounds["bounds"].AsObject().Select(pair => pair.Value).OfType<JsonArray>())
+                            for (var index = 0; index < constraints.Count; index++)
+                                constraints[index] = TypeJson.Write(SupertypeGraph.SubstOwnerTvs(TypeJson.Read(constraints[index]), sourceOwnerArgs));
+                        candidate[NullableGenericErasure.MethodTypeParameterBoundsPre] = sourceBounds.ToJsonString();
+                    }
                     candidate[DeclarationIdentityBinding.ExplicitNameKey] = physicalMember;
                     candidate["ret"] = TypeJson.Write(sourceRet);
                     candidate["inheritedDeclarationSignature"] = declarationSignature;
@@ -929,6 +950,8 @@ static class KotlinOverrideSlotBridge
                 if (refs == null
                     || !refs.TrySelectedMethodDeclaration(spec.Name, implementationMember, methodArity,
                         factParams, factRet, spec.Args ?? Array.Empty<TypeNode>(), SemanticMethodTypeParameters(implementation),
+                        refs.NullableTypeFrames.GetValueOrDefault(spec.Name)?.OrdinaryArguments(spec.Args ?? Array.Empty<TypeNode>())
+                            ?? spec.Args ?? Array.Empty<TypeNode>(),
                         out var referencedDeclaration)
                     || referencedDeclaration.Return == null
                     || referencedDeclaration.Parameters == null

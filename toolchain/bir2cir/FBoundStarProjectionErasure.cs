@@ -3633,7 +3633,8 @@ static class FBoundStarProjectionErasure
             || call["sig"] is not JsonArray signature
             || !refs.TrySelectedMethodDeclaration(owner.Name, property, 0,
                 signature.Select(TypeJson.Read).ToArray(), NodeType.Stamp(call),
-                owner.Args ?? Array.Empty<TypeNode>(), new JsonArray(), out var selected, accessor)) return;
+                owner.Args ?? Array.Empty<TypeNode>(), new JsonArray(), Array.Empty<TypeNode>(),
+                out var selected, accessor)) return;
         var result = SubstituteDeclarationTypeArguments(selected.PhysicalReturn,
             owner.Args ?? Array.Empty<TypeNode>(), Array.Empty<TypeNode>());
         var semantic = NodeType.Stamp(call);
