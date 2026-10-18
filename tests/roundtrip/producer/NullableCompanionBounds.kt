@@ -63,6 +63,7 @@ open class BoundedCompanionSinkBase {
     fun <T : CompanionNamed> count(values: List<T?>): Int = values.size
 }
 open class OwnerBoundedCompanionSinkBase<Root : CompanionNamed> {
+    fun roots(): List<Root?> = emptyList()
     fun <T : Root> count(values: List<T?>): Int = values.size
 }
 class LocalBoundedCompanionSink : BoundedCompanionSinkBase(), BoundedCompanionSink

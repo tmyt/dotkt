@@ -776,10 +776,13 @@ static class KotlinOverrideSlotBridge
                         var declarationParams = parameters.OfType<JsonObject>().Select((parameter, index) =>
                             Str(parameter["kotlinType"]) is string sourceType
                                 ? TypeNode.Parse(sourceType) : factParams[index]).ToArray();
+                        var ownArgs = ClassOwnArgs(cls);
+                        var selectedOwnerArgs = KotlinSupertypesRecord.ReadNullableFrame(cls.Node)?.OrdinaryArguments(ownArgs)
+                            ?? ownArgs;
                         if (!refs.TrySelectedMethodDeclaration(spec.Name, member,
                                 (fact["typeParams"] as JsonArray)?.Count ?? 0,
                                 declarationParams, factRet, args, SemanticMethodTypeParameters(fact),
-                                out source, propertyAccessor)) continue;
+                                selectedOwnerArgs, out source, propertyAccessor)) continue;
                     }
                     sourceParams = source.PhysicalParameters.Select(p => SupertypeGraph.SubstOwnerTvs(p, args)).ToArray();
                     declarationSignature = new JsonArray(source.SignatureParameters.Select(TypeJson.Write).ToArray());
@@ -947,6 +950,8 @@ static class KotlinOverrideSlotBridge
                 if (refs == null
                     || !refs.TrySelectedMethodDeclaration(spec.Name, implementationMember, methodArity,
                         factParams, factRet, spec.Args ?? Array.Empty<TypeNode>(), SemanticMethodTypeParameters(implementation),
+                        refs.NullableTypeFrames.GetValueOrDefault(spec.Name)?.OrdinaryArguments(spec.Args ?? Array.Empty<TypeNode>())
+                            ?? spec.Args ?? Array.Empty<TypeNode>(),
                         out var referencedDeclaration)
                     || referencedDeclaration.Return == null
                     || referencedDeclaration.Parameters == null

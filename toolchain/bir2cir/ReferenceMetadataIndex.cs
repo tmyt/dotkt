@@ -3250,12 +3250,16 @@ sealed partial class ReferenceMetadataIndex
     // owner that supplies the body, so walking to a same-shaped ancestor would replace the frontend's decision with a
     // new backend resolution.  The returned types are the declaration types before nullable-TV erasure where the
     // trusted carrier states them, and the physical declaration types otherwise.
+    // Referenced bounds use the declaration's source owner frame; selected bounds use the caller-stated owner frame.
     public bool TrySelectedMethodDeclaration(string ownerFqn, string sourceMember, int methodArity,
         IReadOnlyList<TypeNode> signature, TypeNode resolvedReturn, TypeNode[] ownerTypeArguments,
-        JsonArray selectedTypeParams, out ReferencedMethodDeclaration declaration, string propertyAccessor = null)
+        JsonArray selectedTypeParams, TypeNode[] selectedOwnerTypeArguments,
+        out ReferencedMethodDeclaration declaration, string propertyAccessor = null)
     {
         declaration = null;
         if (!TryMembersByBirOwner(ownerFqn, out var list)) return false;
+        var sourceOwnerArguments = SourceHierarchyFrame(ownerFqn)?.OrdinaryArguments(ownerTypeArguments)
+            ?? ownerTypeArguments;
         var matches = list.Where(member => (propertyAccessor == null
                     ? member.SourcePropertyName == null
                         && (member.DeclarationSourceName ?? member.SourceMethodName ?? member.Name) == sourceMember
@@ -3263,7 +3267,8 @@ sealed partial class ReferenceMetadataIndex
                         && member.AccessorKind == propertyAccessor)
                 && (member.NullableFrame?.SourceArity ?? member.MethodArity) == methodArity
                 && KotlinOverrideSlotBridge.SameMethodTypeParameterShape(
-                    member.SemanticMethodTypeParams ?? member.MethodTypeParams, selectedTypeParams, ownerTypeArguments, ownerTypeArguments)
+                    member.SemanticMethodTypeParams ?? member.MethodTypeParams, selectedTypeParams,
+                    sourceOwnerArguments, selectedOwnerTypeArguments)
                 && MethodSignatureMatches(member, signature, resolvedReturn, ownerTypeArguments, kotlinParameters: true)
                 && member.ParamTypeNodes != null && member.ReturnTypeNode != null)
             .ToList();
@@ -7570,6 +7575,41 @@ sealed partial class ReferenceMetadataIndex
         SelfTestSourceHierarchyFrames();
         {
             var index = Build(Array.Empty<string>());
+            var root = new TypeNode.Tv("type", 1);
+            var nullableRoot = new TypeNode.Tv("type", 2);
+            JsonArray Bounds(TypeNode bound) => new(new JsonObject {
+                ["name"] = "T", ["constraints"] = new JsonArray(TypeJson.Write(bound)),
+            });
+            var declaringArgs = new TypeNode[] { root, nullableRoot };
+            var callerArgs = new TypeNode[] { new TypeNode.Tv("type", 0), root };
+            var result = new TypeNode.Fqn("kotlin.Int");
+            index._membersByOwner["SelectedOwnerFrame"] = new List<MemberBinding> {
+                new("SelectedOwnerFrame", "count", 0, null, false, false, MethodArity: 1,
+                    ParamTypeNodes: Array.Empty<TypeNode>(), ReturnTypeNode: result,
+                    MethodTypeParams: Bounds(new TypeNode.Tv("type", 0)),
+                    SemanticMethodTypeParams: Bounds(new TypeNode.Tv("type", 0))),
+            };
+            index._ownerNullableFrames["SelectedOwnerFrame"] = new NullableRepresentationFrame(1, new[] { 0 });
+            if (!index.TrySelectedMethodDeclaration("SelectedOwnerFrame", "count", 1,
+                    Array.Empty<TypeNode>(), result, declaringArgs, Bounds(root), callerArgs, out _)
+                || index.TrySelectedMethodDeclaration("SelectedOwnerFrame", "count", 1,
+                    Array.Empty<TypeNode>(), result, declaringArgs, Bounds(root), declaringArgs, out _)
+                || index.TrySelectedMethodDeclaration("SelectedOwnerFrame", "count", 1,
+                    Array.Empty<TypeNode>(), result, declaringArgs, Bounds(new TypeNode.Tv("type", 0)), callerArgs, out _))
+                throw new InvalidOperationException("Selected method constraints mixed declaration and caller owner frames");
+            index._ownerNullableFrames["SelectedOwnerFrame"] = new NullableRepresentationFrame(1,
+                new[] { 0 }, physicalOrder: new[] { 1, 0 });
+            index._membersByOwner["SelectedOwnerFrame"][0] = index._membersByOwner["SelectedOwnerFrame"][0] with {
+                MethodTypeParams = Bounds(new TypeNode.Tv("type", 1)),
+            };
+            if (!index.TrySelectedMethodDeclaration("SelectedOwnerFrame", "count", 1,
+                    Array.Empty<TypeNode>(), result, new TypeNode[] { nullableRoot, root }, Bounds(root), callerArgs,
+                    out var permutedDeclaration)
+                || TypeJson.Read(permutedDeclaration.TypeParams[0]["constraints"][0]) != new TypeNode.Tv("type", 1))
+                throw new InvalidOperationException("Selected source constraints ignored the declared owner frame permutation");
+        }
+        {
+            var index = Build(Array.Empty<string>());
             var source = new TypeNode.Tv("method", 0);
             index._membersByOwner["InheritedFrame"] = new List<MemberBinding> {
                 new("InheritedFrame", "echo", 1, null, false, false,
@@ -7593,10 +7633,11 @@ sealed partial class ReferenceMetadataIndex
                 throw new InvalidOperationException("Inherited slot selection mixed source and physical generic arities");
             if (!index.TrySelectedMethodDeclaration("InheritedFrame", "echo", 1,
                     new TypeNode[] { source }, source, Array.Empty<TypeNode>(), new JsonArray("T"),
-                    out var inherited)
+                    Array.Empty<TypeNode>(), out var inherited)
                 || inherited.PhysicalParameters[0] != new TypeNode.Tv("method", 1)
                 || index.TrySelectedMethodDeclaration("InheritedFrame", "echo", 2,
-                    new TypeNode[] { source }, source, Array.Empty<TypeNode>(), new JsonArray("T"), out _))
+                    new TypeNode[] { source }, source, Array.Empty<TypeNode>(), new JsonArray("T"),
+                    Array.Empty<TypeNode>(), out _))
                 throw new InvalidOperationException("Inherited implementation selection lost its source arity or selected physical parameter");
             index._existentialPhysicalBySemanticOwner["Stored"] = "StoredCarrier";
             index._membersByOwner["CarrierGetter"] = new List<MemberBinding> {
@@ -7608,10 +7649,10 @@ sealed partial class ReferenceMetadataIndex
             };
             if (!index.TrySelectedMethodDeclaration("CarrierGetter", "value", 0,
                     Array.Empty<TypeNode>(), new TypeNode.Fqn("StoredCarrier"), new TypeNode[] { source },
-                    new JsonArray(), out _, propertyAccessor: "get")
+                    new JsonArray(), Array.Empty<TypeNode>(), out _, propertyAccessor: "get")
                 || index.TrySelectedMethodDeclaration("CarrierGetter", "value", 0,
                     Array.Empty<TypeNode>(), new TypeNode.Fqn("OtherCarrier"), new TypeNode[] { source },
-                    new JsonArray(), out _, propertyAccessor: "get"))
+                    new JsonArray(), Array.Empty<TypeNode>(), out _, propertyAccessor: "get"))
                 throw new InvalidOperationException("Inherited getter selection lost its recorded classifier correspondence");
         }
         {

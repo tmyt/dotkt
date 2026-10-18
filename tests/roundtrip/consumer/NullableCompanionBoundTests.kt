@@ -47,7 +47,9 @@ class NullableCompanionBoundTests {
         val values = listOf<CompanionName?>(CompanionName("bound"), null)
         val bounded: ConsumerBoundedCompanionSink = ImportedBaseConsumerBoundedSink()
         check(bounded.count(values) == 2)
-        val owner: ConsumerOwnerCompanionSink<CompanionName> = ImportedBaseConsumerOwnerSink<String, CompanionName>()
+        val implementation = ImportedBaseConsumerOwnerSink<String, CompanionName>()
+        check(implementation.roots().isEmpty())
+        val owner: ConsumerOwnerCompanionSink<CompanionName> = implementation
         check(owner.count(values) == 2)
     }
 
