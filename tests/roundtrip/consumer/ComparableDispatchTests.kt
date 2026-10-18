@@ -26,6 +26,20 @@ class ComparableDispatchTests {
     }
 
     @TestAttribute
+    fun inheritedEnumComparisonUsesItsComparableContract() {
+        val first = ComparisonOrder.FIRST
+        val second = ComparisonOrder.SECOND
+        assertTrue(compareEnumBound(first, second) < 0)
+        assertTrue(compareEnumBound(second, first) > 0)
+        assertTrue(compareEnumBound(first, first) == 0)
+        assertTrue(compareEnumBoundShifted("frame", first, second) < 0)
+        assertTrue(compareEnumBoundInline(first, second) < 0)
+        assertTrue(compareEnumBoundReference(first, second) < 0)
+        assertTrue(compareEnumBoundUnbound(first, second) < 0)
+        assertTrue(EnumBoundComparisonBox(first).compare(second) < 0)
+    }
+
+    @TestAttribute
     fun importedComparisonKeepsAuthoredAndPrimitiveSemantics() {
         val left = ComparisonValue(3)
         val right = ComparisonValue(8)

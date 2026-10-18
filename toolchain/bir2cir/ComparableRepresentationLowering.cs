@@ -50,7 +50,7 @@ static class ComparableRepresentationLowering
                 foreach (var (key, child) in call.ToArray())
                     if (key is not ("attrs" or "overrides")) Rewrite(child);
                 if (Text(call["k"]) != "callInstance" || Text(call["method"]) != "compareTo"
-                    || TypeJson.Read(call["ownerType"]) is not TypeNode.Fqn { Name: "kotlin.Comparable", Args.Length: 1 } comparable
+                    || ComparisonContract(call) is not TypeNode.Fqn comparable
                     || call["args"] is not JsonArray { Count: 1 } args) return;
                 var argument = comparable.Args[0];
                 if (argument is TypeNode.Projection projection) argument = projection.Of;
@@ -75,6 +75,28 @@ static class ComparableRepresentationLowering
             if (used && inserted.Add(owner)) methods.Add(Helper(helperName, identity));
             if (!referenceBuild) EraseBounds(root);
         }
+    }
+
+    static TypeNode.Fqn ComparisonContract(JsonObject call)
+    {
+        if (TypeJson.Read(call["ownerType"]) is not TypeNode.Fqn owner) return null;
+        if (owner is { Name: "kotlin.Comparable", Args.Length: 1 }) return owner;
+        // An erased generic classifier cannot retain the generic comparison slot on its physical owner.
+        // The frontend's override contract identifies the Kotlin operation; close that contract in the
+        // selected owner's frame before nullable/storage companions change either frame. Ordinary class
+        // overrides and explicit super calls retain their selected implementation.
+        if (!BirTypeLowering.ErasesGenericApplicationToNonGenericClassifier(owner.Name)
+            || call["super"] != null || call["overrides"] is not JsonArray overrides)
+            return null;
+        return overrides.OfType<JsonObject>()
+            .Where(slot => Text(slot["member"]) == "compareTo" && Text(slot["kind"]) == "method")
+            .Select(slot => TypeJson.Read(slot["owner"]))
+            .OfType<TypeNode.Fqn>()
+            .Where(contract => contract is { Name: "kotlin.Comparable", Args.Length: 1 })
+            .Select(contract => SupertypeGraph.SubstOwnerTvs(contract, owner.Args ?? Array.Empty<TypeNode>()))
+            .OfType<TypeNode.Fqn>()
+            .DistinctBy(SupertypeGraph.TypeKey)
+            .SingleOrDefault();
     }
 
     static JsonObject Helper(string name, string identity)
@@ -186,7 +208,20 @@ static class ComparableRepresentationLowering
         if (TypeJson.Read(branch["then"]["type"]) is not TypeNode.Fqn { Name: "System.IComparable`1", Args.Length: 1 }
             || TypeJson.Read(branch["else"]["type"]) is not TypeNode.Fqn { Name: "System.IComparable", Args: null })
             throw new InvalidOperationException("Comparable dispatch lost generic-first/non-generic dispatch order");
-        Console.WriteLine("[comparable representation] self-test OK (shared facade, evaluation, source bounds, generic-first dispatch)");
+        var inherited = new JsonObject {
+            ["ownerType"] = TypeJson.Write(new TypeNode.Fqn("kotlin.Enum", new[] { new TypeNode.Tv("method", 1) })),
+            ["overrides"] = new JsonArray(new JsonObject {
+                ["owner"] = TypeJson.Write(new TypeNode.Fqn("kotlin.Comparable", new[] { new TypeNode.Tv("type", 0) })),
+                ["member"] = "compareTo", ["kind"] = "method",
+            }),
+        };
+        if (ComparisonContract(inherited) is not TypeNode.Fqn { Args.Length: 1 } inheritedOwner
+            || inheritedOwner.Args[0] is not TypeNode.Tv { Scope: "method", I: 1 })
+            throw new InvalidOperationException("Inherited comparison contract lost the selected owner's frame");
+        inherited["ownerType"] = TypeJson.Fqn("AuthoredComparison");
+        if (ComparisonContract(inherited) != null)
+            throw new InvalidOperationException("Ordinary class comparison lost its selected implementation");
+        Console.WriteLine("[comparable representation] self-test OK (shared facade, evaluation, source bounds, generic-first dispatch, inherited owner frame)");
     }
 
     static string Text(JsonNode node) => (node as JsonValue)?.TryGetValue<string>(out var value) == true ? value : null;

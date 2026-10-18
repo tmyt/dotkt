@@ -5,6 +5,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Realize inherited Comparable operations before erasing their generic owner, including Enum<T>-bound comparisons (#768).
+
 - Include direct lowering, MSBuild, CLR interop and packaged SDK consumers when selecting gates for compiler edits (#767).
 
 - Align the valueBlock wire schema and validation with the current stmts/result contract (#712).
