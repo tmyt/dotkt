@@ -301,6 +301,13 @@ for proj in "${PROJECTS[@]}"; do
 			echo "  PROJECTED COLLECTION RETURN METADATA FAIL"
 			tail -25 "$ROOT/build/nunit-$name.projected-collection-returns.log"; rc=1
 		fi
+		if bash "$ROOT/tests/roundtrip/assert-enum-callable-frame.sh" \
+			>"$ROOT/build/nunit-$name.enum-callable-frame.log" 2>&1; then
+			echo "  enum callable references preserve declaration-relative override facts"
+		else
+			echo "  ENUM CALLABLE FRAME FAIL"
+			tail -25 "$ROOT/build/nunit-$name.enum-callable-frame.log"; rc=1
+		fi
 		if python3 "$ROOT/tests/roundtrip/assert-unchecked-top-level-identity.py" \
 			"$ROOT/tests/roundtrip/producer/obj/$CONFIGURATION/net10.0/bir/UncheckedTopLevelIdentity.bir.json" \
 			"$dir/obj/$CONFIGURATION/net10.0/bir/UncheckedTopLevelIdentityTests.bir.json" \

@@ -1,5 +1,12 @@
 package DotKt.Runtime.CompilerServices
 
+// Compiler-owned comparison face for singleton-class enums. Keep it distinct from user-implemented CLR
+// IComparable slots: Kotlin's final enum comparison always uses declaration order.
+@PublishedApi
+internal interface KotlinEnumComparison {
+    fun compareEnumTo(other: Any): Int
+}
+
 // Generic `T : Enum<T>` code cannot bake in one enum declaration's ordinal map. Explicit Kotlin CLR enums therefore
 // stamp each literal with its declaration ordinal; this runtime reads that exact compiler carrier. Enums without the
 // carrier retain the CLR projection's established Enum.GetValues order, including arbitrary external CLR enums.

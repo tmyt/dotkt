@@ -859,7 +859,8 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 			birType(constructed).toJson()
 		} else owner
 		val resultType = resolvedFuncType.ret.toJson()
-		val overrideFacts = overridesJson(if (externalDeclaration) declaration else fn)
+		val overrideTarget = if (externalDeclaration) declaration else fn
+		val overrideFacts = inMemberDeclarationFrame(overrideTarget) { overridesJson(overrideTarget) }
 		val rawCall = if (!isExternalNetType(ownerClass) || memberDeclarationIdentityTag.isNotEmpty())
 			"""{"k":"callInstance","ownerType":$callOwner,"virtual":$virtual,"recv":$recv,"method":${str(fn.name.asString())}$signature$referenceTypeArgs,"ret":$resultType,"sty":$resultType,"args":[$argsJson]$overrideFacts${if (isAnySlotMethod(fn)) ""","anySlot":true""" else ""}$memberDeclarationIdentityTag$flagsOperationTag}"""
 		else {
@@ -916,7 +917,8 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 			} else selfT
 			val signature = overloadSigField(if (externalTarget) target else fn)
 			val resultType = liftedFnType.ret.toJson()
-			val overrideFacts = overridesJson(if (externalTarget) target else fn)
+			val overrideTarget = if (externalTarget) target else fn
+			val overrideFacts = inMemberDeclarationFrame(overrideTarget) { overridesJson(overrideTarget) }
 			val callE = """{"k":"callInstance","ownerType":${selectedOwner.toJson()},"virtual":$virtual,"recv":{"k":"local","name":"__self"},"method":${str(fn.name.asString())}$signature$liftedReferenceTypeArgs,"ret":$resultType,"sty":$resultType,"args":[$argsJson]$overrideFacts${if (isAnySlotMethod(fn)) ""","anySlot":true""" else ""}}"""
 			val identityCallE = if (effectiveIdentityTag.isEmpty()) callE
 				else callE.dropLast(1) + effectiveIdentityTag + "}"

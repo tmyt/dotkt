@@ -34,9 +34,20 @@ class ComparableDispatchTests {
         assertTrue(compareEnumBound(first, first) == 0)
         assertTrue(compareEnumBoundShifted("frame", first, second) < 0)
         assertTrue(compareEnumBoundInline(first, second) < 0)
+        assertTrue(compareEnumBoundSpliced(first, second) { it } < 0)
         assertTrue(compareEnumBoundReference(first, second) < 0)
         assertTrue(compareEnumBoundUnbound(first, second) < 0)
         assertTrue(EnumBoundComparisonBox(first).compare(second) < 0)
+        assertTrue(compareEnumBound(ExplicitComparisonOrder.FIRST, ExplicitComparisonOrder.SECOND) < 0)
+        assertTrue(compareImported(ExplicitComparisonOrder.FIRST, ExplicitComparisonOrder.SECOND) < 0)
+        assertTrue(maxOf(ExplicitComparisonOrder.FIRST, ExplicitComparisonOrder.SECOND) == ExplicitComparisonOrder.SECOND)
+        val richFirst = RichComparisonOrder.FIRST
+        val richSecond = RichComparisonOrder.SECOND
+        assertTrue(compareEnumBound(richFirst, richSecond) < 0)
+        assertTrue(compareImported(richFirst, richSecond) < 0)
+        assertTrue((richFirst as System.IComparable).CompareTo(richSecond) == 77)
+        assertTrue(compareEnumBoundSpliced(richFirst, richSecond) { it } < 0)
+        assertTrue(DependentEnumComparisonBox<String, RichComparisonOrder>().compareBound(richFirst, richSecond) < 0)
     }
 
     @TestAttribute

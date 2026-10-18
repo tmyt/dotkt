@@ -20,6 +20,7 @@ static class ComparableRepresentationLowering
     internal static void Apply(IReadOnlyList<JsonNode> roots, bool referenceBuild)
     {
         ConstrainedTypeParameterReceiverBinding.CloseOpenOwners(roots);
+        RichEnumComparisonSynthesis.Apply(roots);
         var helperNames = roots.OfType<JsonObject>().Where(root => Text(root["fileClass"]) != null)
             .GroupBy(root => Text(root["fileClass"])).ToDictionary(group => group.Key, group => {
                 var names = group.SelectMany(root => (root["methods"] as JsonArray ?? new JsonArray())
@@ -103,10 +104,16 @@ static class ComparableRepresentationLowering
     {
         var generic = new TypeNode.Fqn("System.IComparable`1", new[] { Parameter });
         var erased = new TypeNode.Fqn("System.IComparable");
+        var enumFace = new TypeNode.Fqn(RichEnumComparisonSynthesis.Face);
         JsonObject Compare(TypeNode owner, TypeNode argument) => new() {
             ["k"] = "clrInstance", ["type"] = TypeJson.Write(owner), ["method"] = "CompareTo",
             ["recv"] = Cast(owner, Local("receiver")), ["argTypes"] = new JsonArray(TypeJson.Write(argument)),
             ["args"] = new JsonArray(Cast(argument, Local("other"))), ["ret"] = TypeJson.Write(Result),
+        };
+        JsonObject Ordinal(string parameter) => new() {
+            ["k"] = "callStatic", ["owner"] = TypeJson.Fqn("DotKt.Runtime.CompilerServices.EnumRuntimeKt"),
+            ["method"] = "kotlinEnumOrdinal", ["sig"] = new JsonArray(TypeJson.Write(Object)),
+            ["args"] = new JsonArray(Cast(Object, Local(parameter))), ["ret"] = TypeJson.Write(Result),
         };
         return new JsonObject {
             ["name"] = name, [DeclarationIdentityBinding.Key] = identity,
@@ -121,8 +128,22 @@ static class ComparableRepresentationLowering
                 new JsonObject { ["name"] = "other", ["type"] = TypeJson.Write(Parameter) }),
             ["body"] = new JsonArray(new JsonObject { ["k"] = "return", ["value"] = new JsonObject {
                 ["k"] = "cond", ["type"] = TypeJson.Write(Result),
-                ["cond"] = new JsonObject { ["k"] = "isInst", ["type"] = TypeJson.Write(generic), ["e"] = Local("receiver") },
-                ["then"] = Compare(generic, Parameter), ["else"] = Compare(erased, Object),
+                ["cond"] = new JsonObject { ["k"] = "isInst", ["type"] = TypeJson.Write(enumFace), ["e"] = Local("receiver") },
+                ["then"] = new JsonObject {
+                    ["k"] = "clrInstance", ["type"] = TypeJson.Write(enumFace), ["method"] = "compareEnumTo",
+                    ["recv"] = Cast(enumFace, Local("receiver")), ["argTypes"] = new JsonArray(TypeJson.Write(Object)),
+                    ["args"] = new JsonArray(Cast(Object, Local("other"))), ["ret"] = TypeJson.Write(Result),
+                },
+                ["else"] = new JsonObject {
+                    ["k"] = "cond", ["type"] = TypeJson.Write(Result),
+                    ["cond"] = new JsonObject { ["k"] = "isInst", ["type"] = TypeJson.Write(generic), ["e"] = Local("receiver") },
+                    ["then"] = Compare(generic, Parameter), ["else"] = new JsonObject {
+                        ["k"] = "cond", ["type"] = TypeJson.Write(Result),
+                        ["cond"] = new JsonObject { ["k"] = "isInst", ["type"] = TypeJson.Fqn("System.Enum"), ["e"] = Local("receiver") },
+                        ["then"] = new JsonObject { ["k"] = "binOp", ["op"] = "-", ["lhs"] = Ordinal("receiver"), ["rhs"] = Ordinal("other") },
+                        ["else"] = Compare(erased, Object),
+                    },
+                },
             } }),
         };
     }
@@ -142,11 +163,11 @@ static class ComparableRepresentationLowering
                     // This carrier freezes the method's source bounds before companion-frame expansion.
                     // A partial snapshot would make later passes mistake unrelated bounds for already-saved facts.
                     bounds[index.ToString()] = constraints.DeepClone();
-                    if (!constraints.Any(bound => TypeJson.Read(bound) is TypeNode.Fqn { Name: "kotlin.Comparable" }))
+                    if (!constraints.Any(IsRepresentationUnionBound))
                         continue;
                     changed = true;
                     parameter["constraints"] = new JsonArray(constraints.Where(bound =>
-                        TypeJson.Read(bound) is not TypeNode.Fqn { Name: "kotlin.Comparable" }).Select(bound => bound.DeepClone()).ToArray());
+                        !IsRepresentationUnionBound(bound)).Select(bound => bound.DeepClone()).ToArray());
                 }
             if (changed)
             {
@@ -167,6 +188,12 @@ static class ComparableRepresentationLowering
         foreach (var (key, child) in declaration.ToArray())
             if (key is not ("attrs" or "overrides")) EraseBounds(child);
     }
+
+    // Both Kotlin comparison bounds admit CLR enums and singleton-class enums. No single CLR class/interface
+    // constraint represents that union; retain the source bounds in the same durable metadata as Comparable.
+    static bool IsRepresentationUnionBound(JsonNode bound) => TypeJson.Read(bound) is TypeNode.Fqn classifier
+        && (classifier.Name == "kotlin.Comparable"
+            || BirTypeLowering.ErasesGenericApplicationToNonGenericClassifier(classifier.Name));
 
     internal static void SelfTest()
     {
@@ -204,9 +231,11 @@ static class ComparableRepresentationLowering
                 || !JsonNode.DeepEquals(bounds["bounds"]["1"], otherBounds))
                 throw new InvalidOperationException("Comparable dispatch lost evaluation or source bound metadata");
         }
-        var branch = helpers[0]["body"][0]["value"];
+        var branch = helpers[0]["body"][0]["value"]["else"];
         if (TypeJson.Read(branch["then"]["type"]) is not TypeNode.Fqn { Name: "System.IComparable`1", Args.Length: 1 }
-            || TypeJson.Read(branch["else"]["type"]) is not TypeNode.Fqn { Name: "System.IComparable", Args: null })
+            || TypeJson.OwnerName(branch["else"]["cond"]["type"]) != "System.Enum"
+            || Text(branch["else"]["then"]["lhs"]["method"]) != "kotlinEnumOrdinal"
+            || TypeJson.Read(branch["else"]["else"]["type"]) is not TypeNode.Fqn { Name: "System.IComparable", Args: null })
             throw new InvalidOperationException("Comparable dispatch lost generic-first/non-generic dispatch order");
         var inherited = new JsonObject {
             ["ownerType"] = TypeJson.Write(new TypeNode.Fqn("kotlin.Enum", new[] { new TypeNode.Tv("method", 1) })),
@@ -221,6 +250,24 @@ static class ComparableRepresentationLowering
         inherited["ownerType"] = TypeJson.Fqn("AuthoredComparison");
         if (ComparisonContract(inherited) != null)
             throw new InvalidOperationException("Ordinary class comparison lost its selected implementation");
+        var enumRoot = JsonNode.Parse("""
+        {"fileClass":"EnumComparisons","types":[{"name":"RichOrder","kind":"class","interfaces":[],
+          "methods":[],"richEnum":{"ordinal":"selectedOrdinalField"}}],"methods":[{"name":"compare",
+          "typeParams":[{"name":"T","constraints":[{"t":"fqn","name":"kotlin.Enum",
+          "args":[{"t":"tv","scope":"method","i":0}]}]}],"body":[]}]}
+        """).AsObject();
+        var enumBounds = enumRoot["methods"][0]["typeParams"][0]["constraints"].DeepClone();
+        Apply(new JsonNode[] { enumRoot }, referenceBuild: false);
+        var enumMethod = enumRoot["methods"][0];
+        var savedEnumBounds = JsonNode.Parse(Text(enumMethod[NullableGenericErasure.MethodTypeParameterBoundsPre]));
+        var enumBridge = enumRoot["types"][0]["methods"][0];
+        if (enumMethod["typeParams"][0]["constraints"].AsArray().Count != 0
+            || BirTypeLowering.PhysicalHead("kotlin.Enum", null, new[] { Parameter })
+                is not TypeNode.Fqn { Name: "System.Object", Args: null }
+            || !JsonNode.DeepEquals(savedEnumBounds["bounds"]["0"], enumBounds)
+            || Text(enumBridge["body"][0]["value"]["lhs"]["name"]) != "selectedOrdinalField"
+            || Text(enumBridge["clrInterfaceImpls"][0]["member"]) != "compareEnumTo")
+            throw new InvalidOperationException("Enum comparison lost source bounds or the producer's ordinal map");
         Console.WriteLine("[comparable representation] self-test OK (shared facade, evaluation, source bounds, generic-first dispatch, inherited owner frame)");
     }
 

@@ -1073,6 +1073,11 @@ all three `append` members). The range overload additionally marks its exclusive
   the compiler-stamped declaration ordinal rather than recovering it from CLR FieldDef or `Enum.GetValues` order.
 - A **rich** enum (constructor params, methods, per-entry bodies) → a **singleton-field class** (one static readonly
   instance per entry, with real properties/methods; `name`/`ordinal`/`values()`/`valueOf()` synthesized).
+- Kotlin enum comparisons use declaration order for all three forms, including through generic bounds and callable
+  references. The shared `Enum<E>` value view is CLR `object`, since neither a CLR `System.Enum` base nor one generic
+  comparison constraint can cover both native enums and singleton classes. Source bounds remain in Kotlin metadata;
+  singleton classes implement a compiler-owned comparison face using their declared ordinal field, independently
+  of any user-authored CLR `IComparable` implementation.
 - Within a DotKt module both behave like Kotlin enums. **Across the round-trip** (re-consuming the dll as Kotlin)
   an explicit `@ClrEnum` is restored from its trusted ordered carrier, including names, physical values, and
   declaration ordinals. Ordinary basic and rich enums are not restored as Kotlin `enum class` declarations — see
