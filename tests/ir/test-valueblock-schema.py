@@ -38,6 +38,8 @@ class ValueBlockSchemaTests(unittest.TestCase):
         self.assertEqual(shape["properties"]["stmts"],
                          {"type": "array", "items": {"$ref": "#/$defs/node"}})
         self.assertEqual(shape["properties"]["result"], {"$ref": "#/$defs/node"})
+        self.assertEqual(shape["properties"]["type"], {"$ref": "#/$defs/type"})
+        self.assertIs(shape["properties"]["joinNullBranch"]["const"], True)
 
     def test_current_shapes(self):
         empty = dict(self.node, stmts=[])
@@ -50,6 +52,7 @@ class ValueBlockSchemaTests(unittest.TestCase):
             for node in (self.node, empty, nested, terminating, typed):
                 with self.subTest(phase=phase, node=node):
                     self.assertEqual(self.validate(node, phase), [])
+        self.assertEqual(self.validate(dict(self.node, joinNullBranch=True), "bir"), [])
 
     def test_missing_fields(self):
         for phase in ("bir", "cir"):
