@@ -156,9 +156,9 @@ sealed partial class Emitter
             _il.MarkLabel(done);
             return Bcl("System.Int32");
         }
-        // A LOCAL value-type enum's ordinal == its underlying value (kotc assigns contiguous 0..n) -> a plain Conv_I4.
-        // A REFERENCED .NET enum (#107 — the node carries the enum `type`) may have sparse/negative/aliased values, so
-        // its Kotlin ordinal (the DECLARATION INDEX) is Array.IndexOf(Enum.GetValues(t), value), NOT the underlying int.
+        // CIR without a table requests the runtime enum surface explicitly. bir2cir supplies ordered physical maps
+        // for concrete referenced declarations and selects its runtime helper for generic Kotlin enum operations.
+        // The typeless local-basic form has contiguous physical values and needs only Conv_I4.
         if (e.TryGetProperty("type", out var tp))
         {
             var et = NativeType(tp);

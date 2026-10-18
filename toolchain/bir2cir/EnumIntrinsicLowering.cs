@@ -166,6 +166,15 @@ static class EnumIntrinsicLowering
 
     internal static void SelfTest()
     {
+        var parameter = new TypeNode.Tv("method", 0);
+        var genericValues = new JsonObject { ["k"] = "enumValues", ["type"] = TypeJson.Write(parameter) };
+        EnumValueLowering.Apply(genericValues, ReferenceMetadataIndex.Build(System.Array.Empty<string>()),
+            new HashSet<string>(), new Dictionary<string, BasicEnumMetadata>());
+        if (Str(genericValues["k"]) != "cast" || TypeJson.Read(genericValues["type"]) != new TypeNode.Array(parameter)
+            || Str(genericValues["e"]?["method"]) != "kotlinEnumValues"
+            || Str(genericValues["e"]?["args"]?[0]?["k"]) != "classRef"
+            || TypeJson.Read(genericValues["e"]?["args"]?[0]?["type"]) != parameter)
+            throw new System.InvalidOperationException("Generic enum values lost their ordered runtime operation or exact type frame");
         var ordinary = TypeJson.Fqn("EnumType");
         var companion = TypeJson.Fqn("StorageType");
         var frame = new NullableRepresentationFrame(1, System.Array.Empty<int>(),

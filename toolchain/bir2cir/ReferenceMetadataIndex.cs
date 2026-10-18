@@ -1990,6 +1990,23 @@ sealed partial class ReferenceMetadataIndex
             Convert.ToString(raw, CultureInfo.InvariantCulture));
     }
 
+    // dll2klib presents foreign enum entries in FieldDef order, not Enum.GetValues' unsigned numeric order.
+    // Aliases remain separate declarations here even though their physical CLR values are indistinguishable.
+    public bool TryNativeEnumEntries(string fqn, out BasicEnumMetadata metadata)
+    {
+        metadata = null;
+        var type = ResolveNetType(fqn);
+        if (type == null || !type.IsEnum) return false;
+        var fields = type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.DeclaredOnly)
+            .Where(field => field.IsLiteral && field.FieldType == type
+                && (field.IsPublic || field.IsFamily || field.IsFamilyOrAssembly))
+            .OrderBy(field => field.MetadataToken);
+        metadata = new BasicEnumMetadata(type.GetEnumUnderlyingType().FullName,
+            fields.Select((field, ordinal) => new BasicEnumEntry(field.Name, ordinal,
+                EnumConstantText(field.GetRawConstantValue()))).ToArray());
+        return true;
+    }
+
     public bool IsEnumType(TypeNode.Fqn type) => ReferencedTypeKind(type) == "enum";
 
     public bool IsInterfaceType(TypeNode.Fqn type)
