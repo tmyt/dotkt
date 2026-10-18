@@ -5,6 +5,20 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+## 0.9.15 (2026-10-18)
+
+### Release highlights
+
+- All five packages and SDK defaults use `0.9.15`; the embedded Kotlin compiler and
+  upstream common standard-library baseline remain **2.4.21**.
+- Improve Kotlin numeric, collection, array and generic contracts across CLR calls and DLL imports,
+  including equality, runtime type classifiers, native enum values and source visibility.
+- Preserve Windows manifests, native version resources and SDK-selected managed assembly versions.
+- Rebuild dependent Kotlin-produced DLLs with this toolchain; older compiler-generated artifacts
+  remain unsupported. Atomicfu, kotlinx.coroutines and UI integration libraries are not bundled.
+
+### Toolchain and SDK
+
 - Bind Kotlin ClassCastException to System.InvalidCastException so ordinary casts, runtime classifier helpers
   and explicit throws share one catchable exception identity, including cross-DLL and C# consumers (#1052).
 
