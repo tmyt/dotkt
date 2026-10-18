@@ -106,12 +106,27 @@ private interface EnumRuntimeType {
     @property:kotlin.clr.ClrProperty(kotlin.clr.READ, "FullName")
     val fullName: String?
 
+    @property:kotlin.clr.ClrProperty(kotlin.clr.READ, "Assembly")
+    val assembly: EnumRuntimeAssembly
+
     @kotlin.clr.ClrIntrinsic("GetFields")
     fun getFields(flags: EnumRuntimeBindingFlags): Array<EnumRuntimeField>
 
     @kotlin.clr.ClrIntrinsic("GetCustomAttributesData")
     fun getCustomAttributesData(): EnumRuntimeList<EnumRuntimeAttribute>
 }
+
+@kotlin.clr.ClrTypeAlias("System.Reflection.Assembly")
+private interface EnumRuntimeAssembly {
+    @kotlin.clr.ClrIntrinsic("GetCustomAttributesData")
+    fun getCustomAttributesData(): EnumRuntimeList<EnumRuntimeAttribute>
+}
+
+@kotlin.clr.ClrTypeAlias("System.Reflection.AssemblyMetadataAttribute")
+private interface EnumAssemblyMarker
+
+@kotlin.clr.ClrTypeAlias("System.Runtime.CompilerServices.CompilerGeneratedAttribute")
+private interface EnumCarrierMarker
 
 @kotlin.clr.ClrTypeAlias("System.Array")
 private interface EnumRuntimeArray {
@@ -149,7 +164,7 @@ internal fun kotlinEnumOrdinal(value: Any): Int {
     var ordinal = 0
     for (field in fields) {
         if (!field.isProjectedEntry()) continue
-        if (field.getValue(null) == value) return if (explicit) field.declarationOrdinal() else ordinal
+        if (field.getValue(null) == value) return if (explicit) field.declarationOrdinal(type.assembly) else ordinal
         ordinal++
     }
     return -1
@@ -168,7 +183,7 @@ internal fun kotlinEnumValues(typeToken: Any): Any {
     var ordinal = 0
     for (field in fields) {
         if (!field.isProjectedEntry()) continue
-        val index = if (explicit) field.declarationOrdinal() else ordinal
+        val index = if (explicit) field.declarationOrdinal(type.assembly) else ordinal
         values.setValue(field.getValue(null), index)
         ordinal++
     }
@@ -181,16 +196,38 @@ private fun EnumRuntimeField.isProjectedEntry(): Boolean =
 private fun EnumRuntimeType.hasExplicitOrder(): Boolean {
     val attributes = getCustomAttributesData()
     for (index in 0 until attributes.count)
-        if (attributes[index].attributeType.fullName == BASIC_ENUM) return true
+        if (attributes[index].isCompilerCarrier(BASIC_ENUM, assembly) && assembly.isCompilerAssembly()) return true
     return false
 }
 
-private fun EnumRuntimeField.declarationOrdinal(): Int {
+private fun EnumRuntimeField.declarationOrdinal(owner: EnumRuntimeAssembly): Int {
     val attributes = getCustomAttributesData()
     for (index in 0 until attributes.count) {
         val attribute = attributes[index]
-        if (attribute.attributeType.fullName == BASIC_ENUM_ORDINAL)
+        if (attribute.isCompilerCarrier(BASIC_ENUM_ORDINAL, owner))
             return attribute.constructorArguments[0].value as Int
     }
     return -1
+}
+
+private fun EnumRuntimeAttribute.isCompilerCarrier(name: String, owner: EnumRuntimeAssembly): Boolean {
+    val type = attributeType
+    if (type.fullName != name || type.assembly != owner) return false
+    val attributes = type.getCustomAttributesData()
+    val markerType = EnumCarrierMarker::class as EnumRuntimeType
+    for (index in 0 until attributes.count)
+        if (attributes[index].attributeType == markerType) return true
+    return false
+}
+
+private fun EnumRuntimeAssembly.isCompilerAssembly(): Boolean {
+    val attributes = getCustomAttributesData()
+    val markerType = EnumAssemblyMarker::class as EnumRuntimeType
+    for (index in 0 until attributes.count) {
+        val attribute = attributes[index]
+        if (attribute.attributeType != markerType) continue
+        val arguments = attribute.constructorArguments
+        if (arguments.count == 2 && arguments[0].value == "DotKt.Compiler" && arguments[1].value == "metadata-v1") return true
+    }
+    return false
 }

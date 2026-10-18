@@ -53,6 +53,9 @@ class ImportedEnumLiteralTests {
         assertEquals("FIRST:SECOND:LAST", kotlinFactory().joinToString(":") { it.name })
         assertEquals(1, importedOrderOrdinal(ImportedOrderKotlinControl.SECOND))
         assertEquals(-2, importedOrderCompare(ImportedOrderKotlinControl.FIRST, ImportedOrderKotlinControl.LAST))
+        val lookalikeFactory: () -> Array<EnumCarrierLookalike.Code> = ::importedOrderValues
+        assertEquals("103:-7", lookalikeFactory().joinToString(":") { EnumCarrierLookalike.Api.Bits(it).toString() })
+        assertEquals(1, importedOrderOrdinal(EnumCarrierLookalike.Api.Negative()))
         assertEquals("0:1:0", enumValues<TopCode>().joinToString(":") { importedOrderOrdinal(it).toString() })
     }
 
