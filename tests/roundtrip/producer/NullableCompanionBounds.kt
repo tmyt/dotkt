@@ -54,6 +54,7 @@ fun resumeCompanion() {
 }
 
 interface CompanionSink { fun <T> count(values: List<T?>): Int }
+interface CompanionArgumentSink<T> { fun count(value: T): Int }
 open class CompanionSinkBase { fun <T> count(values: List<T?>): Int = values.size }
 class LocalCompanionSink : CompanionSinkBase(), CompanionSink
 

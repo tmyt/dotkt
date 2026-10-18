@@ -767,10 +767,18 @@ static class KotlinOverrideSlotBridge
                                 selectedSuspend: true, out source)) continue;
                         logicalSuspendResult = SupertypeGraph.SubstOwnerTvs(source.Return, args);
                     }
-                    else if (!refs.TrySelectedMethodDeclaration(spec.Name, member,
-                            (fact["typeParams"] as JsonArray)?.Count ?? 0,
-                            factParams, factRet, args, SemanticMethodTypeParameters(fact),
-                            out source, propertyAccessor)) continue;
+                    else
+                    {
+                        // Referenced declaration selection needs the preserved source signature; local and
+                        // physical slot matching still consume the lowered factParams in their own frame.
+                        var declarationParams = parameters.OfType<JsonObject>().Select((parameter, index) =>
+                            Str(parameter["kotlinType"]) is string sourceType
+                                ? TypeNode.Parse(sourceType) : factParams[index]).ToArray();
+                        if (!refs.TrySelectedMethodDeclaration(spec.Name, member,
+                                (fact["typeParams"] as JsonArray)?.Count ?? 0,
+                                declarationParams, factRet, args, SemanticMethodTypeParameters(fact),
+                                out source, propertyAccessor)) continue;
+                    }
                     sourceParams = source.PhysicalParameters.Select(p => SupertypeGraph.SubstOwnerTvs(p, args)).ToArray();
                     declarationSignature = new JsonArray(source.SignatureParameters.Select(TypeJson.Write).ToArray());
                     referencedDeclarationId = source.DeclarationId;
