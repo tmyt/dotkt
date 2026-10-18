@@ -179,7 +179,7 @@ sealed partial class Emitter
                 EmitEnumConstantBits(
                     value.GetProperty("underlying").GetString(),
                     value.GetProperty("physicalValue").GetString());
-                EmitStelem(et);
+                EmitStelem(Bcl(value.GetProperty("underlying").GetString()));
             }
             return et.MakeArrayType();
         }
