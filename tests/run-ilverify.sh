@@ -46,7 +46,7 @@ declare -A ALLOWED_UNMANAGED_POINTER=()
 # defect or permission to ignore other errors involving Span. Assembly, full method and error kind
 # must all match. Generated-name drift is deliberately caught by --audit-baseline.
 declare -A ILVERIFY_SPAN_RETURN=(
-	['NominalFunctionDelegateTests::dotkt:lambda:54([S.P.CoreLib]System.Span`1<int32>)']='input Span identity callback'
+	['NominalFunctionDelegateTests::dotkt:lambda:58([S.P.CoreLib]System.Span`1<int32>)']='input Span identity callback'
 	['NominalFunctionDelegateTests+dotkt$NominalFunctionDelegateTestsKt$Closure130::invoke()']='heap-array Span callback'
 )
 
