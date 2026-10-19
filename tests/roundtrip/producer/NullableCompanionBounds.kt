@@ -5,6 +5,19 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
 
 fun <U, T : U> companionWiden(value: T): U = value
+
+interface CompanionCell<T> { var item: T }
+interface CompanionLeft<T> : CompanionCell<T>
+interface CompanionRight<T> : CompanionCell<T>
+open class CompanionCellBase<T>(initial: T) : CompanionLeft<T> {
+    override var item: T = initial
+}
+class CompanionDiamond<U, T : U>(initial: T) : CompanionCellBase<T>(initial), CompanionRight<T>
+fun <U, T : U> companionDiamondUpdate(cell: CompanionDiamond<U, T>, value: T): T {
+    cell.item = value
+    return cell.item
+}
+
 fun <T> companionNullable(value: T): T? = companionWiden<T?, T>(value)
 fun <T> companionDeferred(value: T): () -> T? = { companionWiden<T?, T>(value) }
 
