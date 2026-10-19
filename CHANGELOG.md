@@ -5,6 +5,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Keep imported inherited call argument descriptors in the selected declaration's frame, including reordered owner arguments (#1102).
+
 - Preserve managed-reference pointees and live aliasing through generic-owner member contracts, including DLL imports (#970).
 
 - Keep inherited generic property signatures in their accessed owner's frame independently of visibility metadata (#964).
