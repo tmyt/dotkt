@@ -1511,6 +1511,9 @@ internal sealed class AssemblyScanner : IDisposable
             MetadataAttributes.DotKtNs + "KotlinInnerConstructorFactoryAttribute",
             HandleKind.MethodDefinition);
         _attrs.ValidateCarrierTargets(
+            MetadataAttributes.DotKtNs + "KotlinManagedReferenceContractAttribute",
+            HandleKind.TypeDefinition);
+        _attrs.ValidateCarrierTargets(
             MetadataAttributes.DotKtNs + "KotlinDeclarationIdentityAttribute",
             HandleKind.MethodDefinition);
         _attrs.ValidateCarrierTargets(
@@ -1570,6 +1573,13 @@ internal sealed class AssemblyScanner : IDisposable
         {
             foreach (var handle in md.TypeDefinitions)
             {
+                using var referenceContract = _attrs.CarrierDocument(handle,
+                    MetadataAttributes.DotKtNs + "KotlinManagedReferenceContractAttribute");
+                if (referenceContract is not null)
+                {
+                    _existentialCarriers.Add(handle);
+                    continue;
+                }
                 if (!_attrs.Has(handle, "System.Runtime.CompilerServices.CompilerGeneratedAttribute", requireTrust: false)
                     || _attrs.CarrierType(handle, MetadataAttributes.DotKtNs + "KotlinTypeAttribute")
                         is not TypeNode.Fqn { Args: { Length: > 0 } args } semantic
@@ -3202,9 +3212,16 @@ internal sealed class AssemblyScanner : IDisposable
             }
         }
 
-        bool IsCurrentExistentialCarrier(MetadataReader reader, EntityHandle entity) =>
-            IsCurrentAssembly(reader) && entity.Kind == HandleKind.TypeDefinition &&
-            _existentialCarriers.Contains((TypeDefinitionHandle)entity);
+        bool IsCurrentExistentialCarrier(MetadataReader reader, EntityHandle entity)
+        {
+            if (IsCurrentAssembly(reader) && entity.Kind == HandleKind.TypeDefinition &&
+                _existentialCarriers.Contains((TypeDefinitionHandle)entity)) return true;
+            if (!_publicTypeCatalog.TryResolveDefinition(reader, entity, out var resolved)) return false;
+            var attributes = new MetadataAttributes(resolved.Reader);
+            using var contract = attributes.CarrierDocument(resolved.Handle,
+                MetadataAttributes.DotKtNs + "KotlinManagedReferenceContractAttribute");
+            return contract is not null;
+        }
     }
 
     // A CLR class can inherit the implementation of a public interface slot from a

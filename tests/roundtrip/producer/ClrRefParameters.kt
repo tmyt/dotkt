@@ -1,6 +1,7 @@
 package roundtrip.clrrefparameters
 
 import kotlin.clr.ClrRef
+import kotlin.clr.byref
 
 fun incrementReferenced(slot: ClrRef<Int>, delta: Int): Int {
     slot.value = slot.value + delta
@@ -24,4 +25,50 @@ fun <T> swapReferenced(first: ClrRef<T>, second: ClrRef<T>) {
     val saved = first.value
     first.value = second.value
     second.value = saved
+}
+
+class ReferenceBox<T>(val value: T)
+
+open class ReferenceWriter<T, Unused> {
+    open fun replace(first: ClrRef<ReferenceBox<T>>, second: ClrRef<ReferenceBox<T>>,
+                     value: ReferenceBox<T>): ReferenceBox<T> {
+        first.value = value
+        return second.value
+    }
+
+    fun <R> replaceAndReturn(slot: ClrRef<ReferenceBox<T>>, value: ReferenceBox<T>, token: R): R {
+        slot.value = value
+        return token
+    }
+
+    fun replaceAndThrow(slot: ClrRef<ReferenceBox<T>>, value: ReferenceBox<T>) {
+        slot.value = value
+        throw IllegalStateException("after write")
+    }
+}
+
+class DerivedReferenceWriter<A, B> : ReferenceWriter<B, A>()
+
+class OverridingReferenceWriter : ReferenceWriter<String, Int>() {
+    var calls = 0
+    override fun replace(first: ClrRef<ReferenceBox<String>>, second: ClrRef<ReferenceBox<String>>,
+                         value: ReferenceBox<String>): ReferenceBox<String> {
+        calls += 1
+        first.value = value
+        return second.value
+    }
+}
+
+class ScalarReferenceWriter<Unused, T> {
+    fun replace(first: ClrRef<T>, second: ClrRef<T>, value: T): T {
+        first.value = value
+        return second.value
+    }
+}
+
+fun sameModuleReferenceAlias(): Boolean {
+    var value = ReferenceBox("before")
+    val replacement = ReferenceBox("after")
+    return ReferenceWriter<String, Int>().replace(byref(value), byref(value), replacement) === replacement
+        && value === replacement
 }

@@ -5,6 +5,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Preserve managed-reference pointees and live aliasing through generic-owner member contracts, including DLL imports (#970).
+
 - Keep inherited generic property signatures in their accessed owner's frame independently of visibility metadata (#964).
 
 - Preserve Kotlin enum comparison semantics for concrete bound and unbound function references, including imported rich enums (#1093).
