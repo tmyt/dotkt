@@ -6,8 +6,8 @@ using System.Text.Json.Nodes;
 sealed record BasicEnumEntry(string Name, int Ordinal, string PhysicalValue);
 sealed record BasicEnumMetadata(string Underlying, IReadOnlyList<BasicEnumEntry> Entries);
 
-// @ClrEnum DECLARATION LOWERING (#526). kotc has already selected and source-validated the exact Kotlin contract:
-// the BIR declaration carries its Kotlin underlying type plus an ordered name/ordinal/constant map. This pass is the
+// BASIC ENUM DECLARATION LOWERING. kotc has already selected and source-validated the exact Kotlin contract:
+// BIR carries ordered Kotlin enum declarations; @ClrEnum additionally supplies an underlying type and constants. This is the
 // Kotlin-to-CLR boundary: validate that producer fact defensively, select the legal CLR underlying type, author the
 // physical literal values, and retain the ordered map for operations and trusted round-trip metadata.
 static class ClrEnumLowering
@@ -26,13 +26,31 @@ static class ClrEnumLowering
 
     public static Dictionary<string, BasicEnumMetadata> Apply(IEnumerable<JsonNode> roots)
     {
+        // Only explicitly-valued enums need a non-contiguous local use-site map.
         var result = new Dictionary<string, BasicEnumMetadata>(StringComparer.Ordinal);
         foreach (var root in roots)
         {
             if (root is not JsonObject ro || ro["types"] is not JsonArray types) continue;
             foreach (var type in types.OfType<JsonObject>())
             {
-                if (Str(type["kind"]) != "enum" || type["clrEnum"] is not JsonObject fact) continue;
+                if (Str(type["kind"]) != "enum") continue;
+                if (type["clrEnum"] is not JsonObject fact)
+                {
+                    // Ordinary Kotlin enums use their semantic ordinal as the Int32 literal value. Publish that
+                    // producer-owned map too: a DLL consumer must not rediscover Kotlin order from FieldDef layout.
+                    var ordinaryEntries = new List<BasicEnumEntry>();
+                    foreach (var node in type["entries"].AsArray())
+                    {
+                        var entry = node.AsObject();
+                        var ordinal = entry["ordinal"].GetValue<int>();
+                        var value = ordinal.ToString(CultureInfo.InvariantCulture);
+                        entry["underlying"] = "System.Int32";
+                        entry["physicalValue"] = value;
+                        ordinaryEntries.Add(new BasicEnumEntry(entry["name"].GetValue<string>(), ordinal, value));
+                    }
+                    StampMetadata(type, "System.Int32", ordinaryEntries);
+                    continue;
+                }
                 var owner = Str(type["name"]);
                 if (owner == null) Fail(type, "an explicit enum has no name");
                 var kotlinUnderlying = TypeJson.OwnerName(fact["underlying"]);
@@ -74,25 +92,29 @@ static class ClrEnumLowering
                     ordered.Add(new BasicEnumEntry(name, ordinal, normalized));
                 }
 
-                var carrierEntries = new JsonArray(ordered.Select(entry => (JsonNode)new JsonObject
-                {
-                    ["name"] = entry.Name,
-                    ["ordinal"] = entry.Ordinal,
-                    ["physicalValue"] = entry.PhysicalValue,
-                }).ToArray());
                 type.Remove("clrEnum");
-                type["underlying"] = TypeJson.Fqn(physical.Clr);
-                type["basicEnum"] = new JsonObject
-                {
-                    ["underlying"] = physical.Clr,
-                    ["entries"] = carrierEntries,
-                };
+                StampMetadata(type, physical.Clr, ordered);
                 RemoveSourceMarker(type);
                 if (!result.TryAdd(owner, new BasicEnumMetadata(physical.Clr, ordered)))
                     Fail(type, $"duplicate explicit enum declaration '{owner}'");
             }
         }
         return result;
+    }
+
+    static void StampMetadata(JsonObject type, string underlying, IReadOnlyList<BasicEnumEntry> entries)
+    {
+        type["underlying"] = TypeJson.Fqn(underlying);
+        type["basicEnum"] = new JsonObject
+        {
+            ["underlying"] = underlying,
+            ["entries"] = new JsonArray(entries.Select(entry => (JsonNode)new JsonObject
+            {
+                ["name"] = entry.Name,
+                ["ordinal"] = entry.Ordinal,
+                ["physicalValue"] = entry.PhysicalValue,
+            }).ToArray()),
+        };
     }
 
     static void RemoveSourceMarker(JsonObject type)
