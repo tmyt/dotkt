@@ -368,7 +368,7 @@ static class RoundtripMetadata
         }
         // A generated method on an existential interface is the physical construction seam for an inner class whose
         // hidden outer slot cannot be named invariantly from G<*>.  The payload identifies the selected Kotlin inner
-        // classifier and constructor descriptor; downstream bir2cir consumes it, while dll2klib omits the generated
+        // classifier and selected constructor identity; downstream bir2cir consumes it, while dll2klib omits the generated
         // MethodDef instead of projecting a fictitious Kotlin function.
         if (mo[FBoundStarProjectionErasure.InnerConstructorFactoryKey] is JsonObject innerFactory)
         {

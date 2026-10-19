@@ -2894,10 +2894,10 @@ sealed partial class ReferenceMetadataIndex
     }
 
     // A referenced existential outer publishes constructor factories as trusted generated interface slots.  Select
-    // the exact slot from the carrier's Kotlin inner classifier + constructor descriptor; the physical method name is
-    // only an output.  This deliberately does not infer construction semantics from a `$star$new$...` spelling.
+    // the exact slot from the carrier's Kotlin inner classifier + selected constructor identity. Neither closing
+    // generic arguments nor erasing function signatures may reopen overload selection. The method name is output.
     public bool TryExistentialInnerConstructorFactory(string semanticOuter, TypeNode.Fqn innerType,
-        IReadOnlyList<TypeNode> authoredParameters,
+        string constructorDeclaration,
         out string physicalOwner, out string physicalMethod, out TypeNode[] physicalParameters,
         out TypeNode physicalResult, out TypeNode[] physicalTypeArguments,
         out TypeNode.Fqn referenceOwner, out string referenceInvoke)
@@ -2908,7 +2908,7 @@ sealed partial class ReferenceMetadataIndex
         physicalTypeArguments = null;
         referenceOwner = null;
         referenceInvoke = null;
-        if (semanticOuter == null || innerType == null || authoredParameters == null
+        if (semanticOuter == null || innerType == null || constructorDeclaration == null
             || !TryExistentialPhysicalOwner(semanticOuter, out var owner)) return false;
         var arguments = innerType.Args ?? Array.Empty<TypeNode>();
         bool DescribesInnerClassifier(MemberBinding member)
@@ -2955,13 +2955,7 @@ sealed partial class ReferenceMetadataIndex
             foreach (var member in members.Where(member =>
                 !member.IsStatic
                 && member.InnerConstructorOwner != null && DescribesInnerClassifier(member)
-                && member.InnerConstructorParameters is { } semanticParameters
-                && semanticParameters.Length == authoredParameters.Count
-                && semanticParameters.Select((parameter, index) =>
-                        SemanticDeclarationDescribesCall(
-                            FBoundStarProjectionErasure.CloseInnerConstructorType(parameter, arguments),
-                            authoredParameters[index]))
-                    .All(equal => equal)
+                && member.InnerConstructorDeclaration == constructorDeclaration
                 && member.ParamTypeNodes != null && member.ReturnTypeNode != null))
                 if (TryFactoryTypeArguments(member, out var typeArguments))
                 {
@@ -5470,7 +5464,7 @@ sealed partial class ReferenceMetadataIndex
                                     ?? DeclarationTypeNode(p.ParameterType)).ToArray()
                                 : null,
                             innerConstructorFactory?.Inner,
-                            innerConstructorFactory?.Parameters,
+                            innerConstructorFactory?.Declaration,
                             innerConstructorFactory?.TypeArguments,
                             SemanticMethodTypeParameters(method, dotKtAuthored, declarationIdentity?.NullableFrame), declarationIdentity?.NullableFrame)
                         {
@@ -6782,7 +6776,7 @@ sealed partial class ReferenceMetadataIndex
     }
 
     sealed record InnerConstructorFactoryPayloadInfo(
-        string Inner, TypeNode[] Parameters, int[] TypeArguments);
+        string Inner, string Declaration, int[] TypeArguments);
 
     static InnerConstructorFactoryPayloadInfo KotlinInnerConstructorFactoryPayload(
         IList<CustomAttributeData> attrs, Assembly declaringAssembly)
@@ -6799,17 +6793,16 @@ sealed partial class ReferenceMetadataIndex
         if (payload.Count != 3
             || payload["inner"] is not JsonValue innerValue
             || !innerValue.TryGetValue<string>(out var inner) || string.IsNullOrEmpty(inner)
-            || payload["params"] is not JsonArray parameters
+            || payload["declaration"] is not JsonValue declarationValue
+            || !declarationValue.TryGetValue<string>(out var declaration) || string.IsNullOrEmpty(declaration)
             || payload["typeArgs"] is not JsonArray typeArguments)
             throw new InvalidDataException("malformed [KotlinInnerConstructorFactory] payload");
-        var parsed = parameters.Select(TypeJson.Read).ToArray();
         var parsedTypeArguments = typeArguments.Select(argument =>
             argument is JsonValue value && value.TryGetValue<int>(out var position) ? position : int.MinValue).ToArray();
-        if (parsed.Any(parameter => parameter == null)
-            || parsedTypeArguments.Any(position =>
+        if (parsedTypeArguments.Any(position =>
                 position < FBoundStarProjectionErasure.InnerFactoryBottomTypeArgument))
             throw new InvalidDataException("malformed [KotlinInnerConstructorFactory] parameter descriptor");
-        return new InnerConstructorFactoryPayloadInfo(inner, parsed, parsedTypeArguments);
+        return new InnerConstructorFactoryPayloadInfo(inner, declaration, parsedTypeArguments);
     }
 
     static string KotlinExtensionCoreName(
@@ -8335,7 +8328,7 @@ sealed record MethodSlotIdentity(string PhysicalMember, JsonArray TypeParams, bo
 // (DeclarationTypeNode), the same one `ParamTypeNodes` uses, which keeps generic parameters as `Tv` — a declaration
 // the caller substitutes. The two are not interchangeable: `Iterable<E>.iterator()` is `Iterator` in the first and
 // `Iterator<!0>` in the second, and only the second says what the call site's type argument completes.
-sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic, int PropertyAccess = 0, string PropertyName = null, int[] ByrefPositions = null, bool Suspend = false, bool Conv = false, TypeNode ConvTo = null, TypeNode ReturnType = null, int MethodArity = 0, TypeNode[] ParamTypeNodes = null, bool IsVirtual = false, TypeNode KotlinReturnType = null, TypeNode SuspendReturnType = null, TypeNode NullableGenericRet = null, TypeNode[] NullableGenericParams = null, TypeNode ReturnTypeNode = null, int MetadataToken = 0, string SourcePropertyName = null, string AccessorKind = null, string AssociatedPropertyName = null, bool IsPropertyBridge = false, bool IsPublic = false, string PropertyAssociation = null, string SourcePropertyAssociation = null, string SourceMethodName = null, JsonArray MethodTypeParams = null, string DeclarationId = null, string DeclarationSourceName = null, string DeclarationPhysicalOwner = null, TypeNode[] DeclarationSemanticParams = null, TypeNode DeclarationSemanticReturn = null, string CollectionFactoryKind = null, string ArrayFactoryKind = null, string ArrayFactoryElementHint = null, int CountStart = -1, int CountEnd = -1, int[] SemanticReifiedTypeParameterIndices = null, int[] NullableWitnessTypeParameterIndices = null, TypeNode[] KotlinParameterTypes = null, string InnerConstructorOwner = null, TypeNode[] InnerConstructorParameters = null, int[] InnerConstructorTypeArguments = null, JsonArray SemanticMethodTypeParams = null, NullableRepresentationFrame NullableFrame = null)
+sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic, int PropertyAccess = 0, string PropertyName = null, int[] ByrefPositions = null, bool Suspend = false, bool Conv = false, TypeNode ConvTo = null, TypeNode ReturnType = null, int MethodArity = 0, TypeNode[] ParamTypeNodes = null, bool IsVirtual = false, TypeNode KotlinReturnType = null, TypeNode SuspendReturnType = null, TypeNode NullableGenericRet = null, TypeNode[] NullableGenericParams = null, TypeNode ReturnTypeNode = null, int MetadataToken = 0, string SourcePropertyName = null, string AccessorKind = null, string AssociatedPropertyName = null, bool IsPropertyBridge = false, bool IsPublic = false, string PropertyAssociation = null, string SourcePropertyAssociation = null, string SourceMethodName = null, JsonArray MethodTypeParams = null, string DeclarationId = null, string DeclarationSourceName = null, string DeclarationPhysicalOwner = null, TypeNode[] DeclarationSemanticParams = null, TypeNode DeclarationSemanticReturn = null, string CollectionFactoryKind = null, string ArrayFactoryKind = null, string ArrayFactoryElementHint = null, int CountStart = -1, int CountEnd = -1, int[] SemanticReifiedTypeParameterIndices = null, int[] NullableWitnessTypeParameterIndices = null, TypeNode[] KotlinParameterTypes = null, string InnerConstructorOwner = null, string InnerConstructorDeclaration = null, int[] InnerConstructorTypeArguments = null, JsonArray SemanticMethodTypeParams = null, NullableRepresentationFrame NullableFrame = null)
 {
     // Capture the selected reference MethodDef while scanning it. A local type may shadow its owner
     // during stdlib self-compilation; resolving that owner again is not declaration identity.
