@@ -696,15 +696,18 @@ static class RoundtripMetadata
     {
         if (root is not JsonObject o) return;
         // Source projection hand-offs are consumed only by Stamp in metadata-bearing builds.
-        // Runtime linkage IDs below do not carry these source-slot facts.
+        // Runtime linkage IDs below do not carry source-slot facts; rich-enum maps also have a runtime consumer.
         o.Remove("kotlinType");
         o.Remove("retKotlinType");
         o.Remove(KotlinSupertypesRecord.PreKey);
         o.Remove("kotlinCompanion");
+        var runtimeRichEnum = o["richEnum"]?.DeepClone();
         o.Remove("richEnum");
         o.Remove("enumRich");
         o.Remove("basicEnum");
         StripAttrs(o, "attrs");
+        // Generic enum operations need this exact physical API map at runtime, including for stdlib-owned enums.
+        if (runtimeRichEnum != null) Append(o, JsonCarrierAttr(AKRichEnum, runtimeRichEnum));
         StripDecls(o["methods"], hasParams: true);
         StripDecls(o["fields"]);
         StripDecls(o["properties"]);
@@ -1005,7 +1008,7 @@ static class RoundtripMetadata
     // NO name (a named ctor param would mint Param rows the embedded attrs never had); the empty body chains to
     // Attribute()'s protected ctor.
     // ---------------------------------------------------------------------------------------------------------------
-    public static JsonObject SynthDefsFile(ReferenceMetadataIndex refs, bool linkageOnly = false)
+    public static JsonObject SynthDefsFile(ReferenceMetadataIndex refs, bool runtimeOnly = false)
     {
         // Resolve the shared base delegation BEFORE any ctor is built, so every synthesized class states the
         // member it delegates to rather than describing it.
@@ -1053,8 +1056,9 @@ static class RoundtripMetadata
             AttrClass(AKSupertypes, Ctor(Param("System.String"), Param(ByteArrayType()))),   // #86 — pre-erasure supertype edges + type-parameter bounds
             AttrClass(AKTypeParameterBounds, Ctor(Param("System.String"), Param(ByteArrayType()))), // pre-erasure MethodDef type-parameter bounds
         };
-        if (linkageOnly) types = new JsonArray(TypeAliasAttributeDefinition(),
-            AttrClass(AKDeclarationIdentity, Ctor(Param("System.String"), Param(ByteArrayType()))));
+        if (runtimeOnly) types = new JsonArray(TypeAliasAttributeDefinition(),
+            AttrClass(AKDeclarationIdentity, Ctor(Param("System.String"), Param(ByteArrayType()))),
+            AttrClass(AKRichEnum, Ctor(Param("System.String"), Param(ByteArrayType()))));
         return new JsonObject
         {
             ["fileClass"] = "",     // no top-level funs/fields -> ilemit defines no file-class type for this file

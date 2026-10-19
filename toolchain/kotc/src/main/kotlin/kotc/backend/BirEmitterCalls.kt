@@ -1484,7 +1484,7 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 	// EACH, in that (Kotlin) order, so the short circuit neither skips a bound nor reads the subject early.
 	// The Kotlin<->CLR range relation lives in bir2cir.
 
-	// Enum rich API: Color.values()/entries -> Enum.GetValues<T>(); Color.valueOf(s) -> Enum.Parse<T>(s).
+	// Preserve the enum API's Kotlin identity. In particular, entries is a list-valued property, not values().
 	val enumDeclarationOwner = (callee.parent as? IrClass)
 		?: (callee.correspondingPropertySymbol?.owner?.parent as? IrClass)
 	val enumResultOwner = if (name == "entries" || name == "<get-entries>")
@@ -1506,16 +1506,18 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 		val isEntriesGetter =
 			callee.correspondingPropertySymbol?.owner?.name?.asString() == "entries" ||
 				name == "entries" || name == "<get-entries>"
+		if (isEntriesGetter)
+			return """{"k":"callStatic","ownerType":$enumType,"method":"entries","prop":"get","sig":[],"args":[],"ret":${birType(call.type).toJson()},"dotktFrontendDeclarationConsumed":true}"""
 		// Rich enum -> the synthesized static values()/valueOf() methods on the class.
 		if (ec.origin.toString() == "DEFINED" && isRichEnum(ec)) {
-			if (name == "values" || isEntriesGetter)
+			if (name == "values")
 				return """{"k":"callStatic","owner":$enumType,"method":"values","args":[],"dotktFrontendDeclarationConsumed":true}"""
 			if (name == "valueOf") return """{"k":"callStatic","owner":$enumType,"method":"valueOf","sig":[${fqnJson("kotlin.String")}],"args":[${expr(regularArgs(call).first())}],"dotktFrontendDeclarationConsumed":true}"""
 		}
 		// Basic enum -> the semantic enumValues/enumParse node carrying the enum's FAITHFUL FQN identity (a
 		// structured Type, never the banned `@Name` type-token). bir2cir/ilemit resolve it to the local enum type,
 		// exactly as the reified `enumValues<T>()` path does (EnumIntrinsicLowering re-emits the same node shape).
-		if (name == "values" || isEntriesGetter)
+		if (name == "values")
 			return """{"k":"enumValues","type":$enumType}"""
 		if (name == "valueOf") return """{"k":"enumParse","type":$enumType,"arg":${expr(regularArgs(call).first())}}"""
 	}
@@ -1998,8 +2000,6 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 	// `.size` -> CIL array length (arrays) or `Enumerable.Count` (collections).
 	if (property?.name?.asString() == "size") dispatchReceiver(call)?.let { r ->
 		if (isArrayType(r.type)) return """{"k":"arrayLen","array":${expr(r)}}"""
-		// `Color.entries.size`: entries -> a Color[] (enumValues), so .size is the array length.
-		if (r.type.classFqName?.asString() == "kotlin.enums.EnumEntries") return """{"k":"arrayLen","array":${expr(r)}}"""
 		// kotlin.* collection/map `.size` is NOT intercepted: it's a real `size` property — fall through to the
 		// ordinary property read so it emits as a semantic Kotlin property call.
 	}

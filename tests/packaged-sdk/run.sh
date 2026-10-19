@@ -419,6 +419,9 @@ case_exe() {
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>disable</Nullable>
   </PropertyGroup>
+  <ItemGroup>
+    <RuntimeHostConfigurationOption Include="System.Text.Json.JsonSerializer.IsReflectionEnabledByDefault" Value="false" />
+  </ItemGroup>
   <!-- Public toolchain-extension contract: the target returns only KLIBs projected from this TFM's resolved
        references. The embedded frontend stdlib remains available through its dedicated property. -->
   <Target Name="AssertDotKtKlibReferences"
@@ -454,7 +457,12 @@ fun nextBuilder(): StringBuilder? {
     return StringBuilder().append("once")
 }
 fun nullableFromCall(): CharSequence? = nextBuilder()
+enum class PackagedEntries(val score: Int) { VALUE(7) }
+inline fun <reified E : Enum<E>> packagedEntries(): kotlin.enums.EnumEntries<E> = kotlin.enums.enumEntries<E>()
 fun main() {
+    val entries = packagedEntries<PackagedEntries>()
+    check(entries[0].score == 7 && entries === PackagedEntries.entries)
+    check(packagedEntries<CharCategory>()[0] == CharCategory.UNASSIGNED)
     val value: Any? = nullableCharSequence()
     check(value == null)
     check(nullableBuilder(null) == null)

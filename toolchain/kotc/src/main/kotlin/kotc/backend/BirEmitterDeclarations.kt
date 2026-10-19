@@ -724,7 +724,7 @@ internal fun BirEmitter.richEnumDef(ec: IrClass): String {
 	// `properties` entry, with the backing field demoted to internal. A bare public field alone crashes
 	// ilemit with "<Enum>.get_<prop> not found".
 	// Only REAL user properties: kotlin.Enum's `name`/`ordinal` ride along as body-less fake overrides and
-	// `entries` as an IrSyntheticBody getter (call sites route all three to __name/__ordinal/values());
+	// `entries` as an IrSyntheticBody getter (bir2cir realizes its list-valued property operation);
 	// emitting their accessors would produce empty methods (ilverify ReturnMissing). A source accessor is either a
 	// concrete IrBlockBody or an abstract body-less declaration; no other body shape belongs in this class.
 	// A `companion { }` property of an enum is a static of the enum class, not per-entry state: it keeps its own

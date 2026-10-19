@@ -7,18 +7,22 @@ using DotKt.Bir;
 // those Kotlin identities to the selected reference DLL's physical representation.
 static class EnumValueLowering
 {
-    public static void Apply(
+    public static bool Apply(
         JsonNode root,
         ReferenceMetadataIndex refs,
         ISet<string> localBasicEnums,
-        IReadOnlyDictionary<string, BasicEnumMetadata> localExplicitEnums) =>
-        Walk(root, refs, localBasicEnums, localExplicitEnums);
+        IReadOnlyDictionary<string, BasicEnumMetadata> localExplicitEnums)
+    {
+        var runtimeLookup = false;
+        Walk(root, refs, localBasicEnums, localExplicitEnums, ref runtimeLookup);
+        return runtimeLookup;
+    }
 
     static void Walk(
         JsonNode node,
         ReferenceMetadataIndex refs,
         ISet<string> localBasicEnums,
-        IReadOnlyDictionary<string, BasicEnumMetadata> localExplicitEnums)
+        IReadOnlyDictionary<string, BasicEnumMetadata> localExplicitEnums, ref bool runtimeLookup)
     {
         if (node is JsonObject obj)
         {
@@ -118,6 +122,7 @@ static class EnumValueLowering
 
             if (kind == "enumValues" && TypeJson.Read(obj["type"]) is TypeNode.Tv parameter)
             {
+                runtimeLookup = true;
                 // The enum declaration is known only at runtime. Select the same ordered runtime operation here;
                 // ilemit must not substitute Enum.GetValues' numeric order for Kotlin's declaration order.
                 var position = obj["pos"]?.DeepClone();
@@ -137,11 +142,11 @@ static class EnumValueLowering
             }
 
             foreach (var kv in obj)
-                if (kv.Value != null) Walk(kv.Value, refs, localBasicEnums, localExplicitEnums);
+                if (kv.Value != null) Walk(kv.Value, refs, localBasicEnums, localExplicitEnums, ref runtimeLookup);
         }
         else if (node is JsonArray arr)
             foreach (var item in arr)
-                if (item != null) Walk(item, refs, localBasicEnums, localExplicitEnums);
+                if (item != null) Walk(item, refs, localBasicEnums, localExplicitEnums, ref runtimeLookup);
     }
 
     static JsonArray Values(BasicEnumMetadata metadata) => new(metadata.Entries.Select(entry => (JsonNode)new JsonObject

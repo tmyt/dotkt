@@ -22,11 +22,12 @@ classpath="$FE_KLIB"
 while IFS= read -r klib; do classpath+="$cp_sep$klib"; done < <(find "$OUT/klib" -maxdepth 1 -name '*.klib' | LC_ALL=C sort)
 "$KOTC" "$HERE/consumer.kt" -no-stdlib -classpath "$classpath" -d "$OUT/bir"
 fixtures="$(refset_join "$OUT/fixture/MetadataOrder.dll" "$OUT/fixture/CharEnums.dll" "$OUT/fixture/FSharp.Core.dll")"
-dotnet "$BIR2CIR_DLL" "$OUT/cir" --compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_REF_DLL" "$STDLIB_RT_DLL" "$fixtures")" "$OUT/bir/consumer.bir.json"
+dotnet "$BIR2CIR_DLL" "$OUT/cir" --reflection-restricted --compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_REF_DLL" "$STDLIB_RT_DLL" "$fixtures")" "$OUT/bir/consumer.bir.json" 2> "$OUT/lowering.err"
+grep -Fq 'warning DOTKTENUM001:' "$OUT/lowering.err" || die 'generic enum reflection warning was not emitted'
 dotnet "$ILEMIT_DLL" "$OUT/il" NativeEnumOrder \
     --compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_RT_DLL" "$fixtures")" \
     --runtime-refs "$(refset_join "$STDLIB_RT_DLL" "$fixtures")" \
-    --target-framework-moniker "$DOTKT_TARGET_FRAMEWORK_MONIKER" "$OUT/cir/consumer.cir.json"
+    --target-framework-moniker "$DOTKT_TARGET_FRAMEWORK_MONIKER" "$OUT/cir/"*.cir.json
 write_runtimeconfig "$OUT/il" NativeEnumOrder
 cp "$STDLIB_RT_DLL" "$OUT/fixture/MetadataOrder.dll" "$OUT/fixture/CharEnums.dll" "$OUT/fixture/FSharp.Core.dll" "$OUT/il/"
 bash "$ROOT/tests/run-ilverify.sh" "$OUT/fixture/MetadataOrder.dll" "$OUT/fixture/CharEnums.dll" "$OUT/il/NativeEnumOrder.dll"

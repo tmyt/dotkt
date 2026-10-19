@@ -4,12 +4,12 @@ using System.Text.Json.Nodes;
 using DotKt.Bir;
 
 // TOP-LEVEL REIFIED ENUM INTRINSICS (#73). kotc emits the FAITHFUL top-level call for `enumValues<T>()` /
-// `enumValueOf<T>(name)` / `enums.enumEntries<T>()` / `enumEntriesIntrinsic<T>()` — a plain
+// `enumValueOf<T>(name)` — a plain
 // `callStatic owner:null method:"enumValues" typeArgs:[T] args:[…]` (the Kotlin fact; it names no CLR shape and
 // carries no `kotlin.*` FQN of the intrinsic). On the CLR every type arg is REIFIED, so these lower at the call
 // site exactly like `T.values()` / `T.valueOf(name)` — a Kotlin<->CLR equivalence, so it lives HERE:
 //
-//   enumValues<T>() / enumEntries<T>()  -> rich enum: callStatic <T>.values(); otherwise an enumValues semantic node
+//   enumValues<T>()                    -> rich enum: callStatic <T>.values(); otherwise an enumValues semantic node
 //   enumValueOf<T>(name)                -> rich enum: callStatic <T>.valueOf(name)      ; basic/gp: {k:enumParse,type:T,arg}
 //
 // RICH vs BASIC comes from an explicit producer fact: local BIR carries `enumRich:true`, while a referenced producer
@@ -23,7 +23,7 @@ using DotKt.Bir;
 static class EnumIntrinsicLowering
 {
     static readonly HashSet<string> Names = new(System.StringComparer.Ordinal)
-    { "enumValues", "enumValueOf", "enumEntries", "enumEntriesIntrinsic" };
+    { "enumValues", "enumValueOf" };
 
     // Collect the local RICH-enum type names (a `kind:"class"` decl carrying the faithful `enumRich:true` marker),
     // across ALL input files (a cross-file `enumValues<E>()` may name an enum declared in another input).
@@ -69,47 +69,17 @@ static class EnumIntrinsicLowering
         var semanticKind = Str(o["k"]);
         if (semanticKind is "enumValues" or "enumParse"
             && o["type"] is JsonNode semanticTypeNode
-            && TypeJson.Read(semanticTypeNode) is TypeNode.Fqn semanticType
-            && refs.TryKotlinRichEnumStaticApis(
-                semanticType.Name, out var semanticValuesApi, out var semanticValueOfApi))
+            && TypeJson.Read(semanticTypeNode) is TypeNode.Fqn semanticType)
         {
-            var replacement = RichEnumCall(
-                semanticTypeNode,
-                semanticKind == "enumParse" ? semanticValueOfApi : semanticValuesApi,
-                semanticKind == "enumParse" ? o["arg"] : null);
-            Replace(o, replacement);
-            return;
-        }
-
-        // The Kotlin frontend may preserve the synthesized `EnumClass.entries` property as an ownerful static
-        // property read. Its semantic identity is structural: a zero-argument `entries` getter on E returning
-        // EnumEntries<E>. Realize that Kotlin enum operation here, alongside the top-level enumEntries intrinsic,
-        // rather than asking ilemit to find a physical `E.get_entries` method (a CLR enum has no such member).
-        if (app && Str(o["k"]) == "callStatic"
-            && Str(o["prop"]) == "get"
-            && Str(o["method"]) == "entries"
-            && o["ownerType"] is JsonNode ownerNode
-            && (o["args"] as JsonArray)?.Count == 0
-            && TypeJson.Read(ownerNode) is TypeNode.Fqn owner
-            && TypeJson.Read(o["ret"]) is TypeNode.Fqn ret
-            && ret.Name == "kotlin.enums.EnumEntries"
-            && ret.Args is { Length: 1 }
-            && ret.Args[0] is TypeNode.Fqn enumType
-            && enumType.Name == owner.Name)
-        {
-            JsonNode replacement;
-            if (rich.Contains(owner.Name))
-                replacement = RichEnumCall(TypeJson.Write(enumType), "values", null);
-            else if (refs.TryKotlinRichEnumStaticApis(owner.Name, out var mappedValues, out _))
-                replacement = RichEnumCall(TypeJson.Write(enumType), mappedValues, null);
-            else
-                replacement = new JsonObject
-                {
-                    ["k"] = "enumValues",
-                    ["type"] = TypeJson.Write(enumType),
-                };
-            Replace(o, replacement);
-            return;
+            var values = "values";
+            var valueOf = "valueOf";
+            if (rich.Contains(semanticType.Name)
+                || refs.TryKotlinRichEnumStaticApis(semanticType.Name, out values, out valueOf))
+            {
+                Replace(o, RichEnumCall(semanticTypeNode, semanticKind == "enumParse" ? valueOf : values,
+                    semanticKind == "enumParse" ? o["arg"] : null));
+                return;
+            }
         }
 
         if (Str(o["k"]) != "callStatic" || o["owner"] != null) return;
@@ -123,17 +93,10 @@ static class EnumIntrinsicLowering
         if (tArg == null) return;
         var args = o["args"] as JsonArray ?? new JsonArray();
         var isValueOf = method == "enumValueOf";
-        var isEntries = method is "enumEntries" or "enumEntriesIntrinsic";
-        // Arity gate (matches the intrinsic signatures) — also disambiguates the non-reified `enumEntries(provider)`
-        // stdlib helper (1 arg) from the 0-arg `enums.enumEntries<T>()` intrinsic.
+        // Match the Kotlin intrinsic's source-visible argument count.
         if (args.Count != (isValueOf ? 1 : 0)) return;
         // A user top-level `fun enumValues<T>()` shadow (app build) is NOT the kotlin.* intrinsic — leave it be.
         if (app && local.Contains(method)) return;
-        // The entries family is NOT intercepted under a stdlib self-build (Metadata|Runtime): the rt-emitted
-        // `enumEntries<T>` body would return `T[]` where its declared return is the `EnumEntries<T>` interface
-        // (invalid IL) — its filler body stays; only App-build call sites are intercepted.
-        if (isEntries && !app) return;
-
         var richName = TypeJson.Read(tArg) is TypeNode.Fqn f ? f.Name : null;
         var isLocalRich = richName != null && rich.Contains(richName);
         string mappedValuesApi = null;
@@ -169,9 +132,9 @@ static class EnumIntrinsicLowering
     {
         var parameter = new TypeNode.Tv("method", 0);
         var genericValues = new JsonObject { ["k"] = "enumValues", ["type"] = TypeJson.Write(parameter) };
-        EnumValueLowering.Apply(genericValues, ReferenceMetadataIndex.Build(System.Array.Empty<string>()),
+        var runtimeLookup = EnumValueLowering.Apply(genericValues, ReferenceMetadataIndex.Build(System.Array.Empty<string>()),
             new HashSet<string>(), new Dictionary<string, BasicEnumMetadata>());
-        if (Str(genericValues["k"]) != "cast" || TypeJson.Read(genericValues["type"]) != new TypeNode.Array(parameter)
+        if (!runtimeLookup || Str(genericValues["k"]) != "cast" || TypeJson.Read(genericValues["type"]) != new TypeNode.Array(parameter)
             || Str(genericValues["e"]?["method"]) != "kotlinEnumValues"
             || Str(genericValues["e"]?["args"]?[0]?["k"]) != "classRef"
             || TypeJson.Read(genericValues["e"]?["args"]?[0]?["type"]) != parameter)

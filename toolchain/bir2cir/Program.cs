@@ -43,6 +43,7 @@ static class Bir2Cir
                 NullableRepresentationTypes.SelfTest();
                 NullableRepresentationMaterialization.SelfTest();
                 EnumIntrinsicLowering.SelfTest();
+                EnumEntriesLowering.SelfTest();
                 InnerRepresentationFrameTests.SelfTest();
                 GenericRepresentationPolicy.SelfTest();
                 BirTypeLowering.SelfTestSlotReturns();
@@ -98,6 +99,7 @@ static class Bir2Cir
 sealed class Pipeline
 {
     readonly DriverOptions _options;
+    bool _enumRuntimeLookup;
 
     public Pipeline(DriverOptions options) => _options = options;
 
@@ -119,6 +121,10 @@ sealed class Pipeline
             Console.Error.WriteLine(
                 "bir2cir: warning DOTKTSTAR001: a CLR star projection uses reflection; "
                 + "NativeAOT/trimming must preserve the referenced generic type and member metadata");
+        if (_options.ReflectionRestricted && _enumRuntimeLookup)
+            Console.Error.WriteLine(
+                "bir2cir: warning DOTKTENUM001: a generic enum operation uses reflection; "
+                + "NativeAOT/trimming must preserve the enum declaration and its generated values API metadata");
         // Release the long-lived .NET-interop MetadataLoadContext (kept alive across all transform passes for
         // NetInteropBinding's owner resolution — A2 / #61) now that no pass needs metadata reflection.
         refs.DisposeNet();
@@ -225,6 +231,7 @@ sealed class Pipeline
             {
                 foreach (var root in birRoots)
                 {
+                    EnumEntriesLowering.Apply(root, refs, bind);
                     ObjectSlotRename.Apply(root);
                     PrimitiveOperatorLowering.Apply(root, refs);
                     FaithfulHintRecognition.Apply(root, refs, sourceTopLevelFns);
@@ -564,22 +571,21 @@ sealed class Pipeline
             // (not body-squashed) carries a raw IL operation rather than an unresolvable bodyless builtin call.
             PrimitiveOperatorLowering.Apply(bir.Root, refs);
             // ENUM REIFIED INTRINSICS (#73): kotc emits the faithful top-level `callStatic owner:null method:enumValues
-            // typeArgs:[T]` for `enumValues<T>()`/`enumValueOf<T>()`/`enums.enumEntries<T>()`/`enumEntriesIntrinsic<T>()`.
+            // typeArgs:[T]` for `enumValues<T>()`/`enumValueOf<T>()`, including the cold values operation for entries.
             // Re-emit the same BIR vocabulary — rich enum -> static values()/valueOf(), basic/generic-param -> semantic
             // enumValues/enumParse — deriving rich-vs-basic from the explicit producer fact (local `enumRich:true`,
             // referenced trusted [KotlinRichEnum]). Runs
-            // BEFORE ArrayConstructionLowering (#77): a `for (x in enumValues<Color>())` / `.entries` for-loop wraps
+            // BEFORE ArrayConstructionLowering (#77): a `for (x in enumValues<Color>())` for-loop wraps
             // this call in a `forArray` whose element ArrayConstructionLowering derives via StaticType off the ALREADY-
             // lowered `enumValues`/rich-`values()` node — so the reified top-level intrinsic must already be in its
-            // final semantic shape when element derivation runs. Entries family: App-build sites only (stdlib
-            // self-build keeps the filler body — see
-            // EnumIntrinsicLowering).
+            // final semantic shape when element derivation runs. EnumEntries itself was bound to a cached list
+            // before representation materialization and must never be replaced by an array-valued expression here.
             EnumIntrinsicLowering.Apply(
                 bir.Root, localRichEnums, localTopLevelFns, attributeTopLevelOwner, refs, representationMethodFrames);
             // ENUM ENTRY VALUES: kotc preserves owner + entry-name Kotlin identity. Resolve a referenced rich enum's
             // carrier-mapped singleton field, or a CLR enum's potentially sparse/negative/aliased physical constant,
             // from the exact compile reference here.
-            EnumValueLowering.Apply(bir.Root, refs, localBasicEnums, localExplicitEnums);
+            _enumRuntimeLookup |= EnumValueLowering.Apply(bir.Root, refs, localBasicEnums, localExplicitEnums);
             // ARRAY CONSTRUCTION + INTRINSIC ELEMENT (#73 Phase 2b-A): kotc emits the faithful `kotlin.IntArray`
             // identity — the sized ctor as `new kotlin.IntArray(size, init)`, the arrayGet/arraySet/forArray
             // intrinsics with NO `elem`. Derive the sized-array construction (newArrayInit/newArraySized) + stamp the
@@ -1625,8 +1631,8 @@ sealed class Pipeline
         // #71 S2: emit the embedded round-trip attribute-class defs ONCE per assembly, as a dedicated synthetic CIR
         // file (glob-sorted first via the `000-` prefix so its TypeDefs precede the user types, minimizing dump churn).
         // Alias declarations also survive in a stdlib runtime assembly; projection still excludes that assembly
-        // by its explicit stdlib marker. Runtime twins retain only alias and declaration-linkage carrier definitions.
-        if (!_options.SubstituteStdlibBuild || birRoots.OfType<JsonObject>().Any(root =>
+        // by its explicit stdlib marker. Runtime twins also keep rich-enum API maps consumed by generic operations.
+        if (!_options.SubstituteStdlibBuild || localRichEnums.Count != 0 || birRoots.OfType<JsonObject>().Any(root =>
                 root["assemblyAttrs"] is JsonArray { Count: > 0 }))
         {
             const string synthName = "000-dotkt-roundtrip-attrs.cir.json";
@@ -1634,7 +1640,7 @@ sealed class Pipeline
             // and every Kotlin stamp would then silently vanish (its attr class absent -> BuildCab skips).
             if (files.Any(f => f.OutputName == synthName))
                 throw new InvalidOperationException($"bir2cir: reserved synthetic CIR name '{synthName}' collides with an input file");
-            var attributeDefinitions = RoundtripMetadata.SynthDefsFile(refs, linkageOnly: _options.SubstituteStdlibBuild);
+            var attributeDefinitions = RoundtripMetadata.SynthDefsFile(refs, runtimeOnly: _options.SubstituteStdlibBuild);
             ClrMemberResolution.ResolveAttributeCtors(attributeDefinitions, refs);
             if (fixedMemberTable != null) attributeDefinitions["wellKnownRefs"] = fixedMemberTable.DeepClone();
             files.Insert(0, new CirFile(synthName, attributeDefinitions.ToJsonString(JsonOptions.Indented)));

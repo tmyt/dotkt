@@ -5,6 +5,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Preserve cached, immutable enum entries list values across calls and DLL boundaries, including native aliases and generic rich enums (#1091).
+
 - Preserve named inner-constructor overload selection across DLL factories, even when generic arguments close to the same types (#1107).
 
 - Preserve managed-reference identity and required storage constraints through inner-constructor factories, including DLL calls (#1104).
