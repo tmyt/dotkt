@@ -1,4 +1,4 @@
-# The unified exact-slot resolver names the accessor, the uninhabitable nullable candidate, and its bridge owner.
+# Keep the selected accessor, nullable candidate and source owner, not the generated bridge's implementation name.
 interface MethodImpl 'plainnet.IProp.get_Items`0' resolves to 0 external declaration(s), expected exactly one
 System.Nullable
-body: CAccessor.dotkt$covar$prop_get_Items_$0
+body: CAccessor.
