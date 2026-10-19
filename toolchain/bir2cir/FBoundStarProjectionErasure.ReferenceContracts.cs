@@ -15,9 +15,12 @@ static partial class FBoundStarProjectionErasure
         && shape.Any(type => SignatureValueTypes.Of(TypeJson.Read(type)) is TypeNode.ByRef) ? shape : null;
 
     static ReferenceContract CreateReferenceContract(Owner owner, JsonObject method, JsonObject slot,
-        ReferenceMetadataIndex refs)
+        ReferenceMetadataIndex refs) => CreateReferenceContract(owner,
+            method["params"] as JsonArray ?? new JsonArray(), method[DeclarationIdentityBinding.Key], slot, refs);
+
+    static ReferenceContract CreateReferenceContract(Owner owner, JsonArray originals, JsonNode declaration,
+        JsonObject slot, ReferenceMetadataIndex refs)
     {
-        var originals = method["params"] as JsonArray ?? new JsonArray();
         var dependencies = new HashSet<int>();
         foreach (var parameter in originals.OfType<JsonObject>())
             if (SignatureValueTypes.Of(TypeJson.Read(parameter["type"])) is TypeNode.ByRef reference)
@@ -58,7 +61,7 @@ static partial class FBoundStarProjectionErasure
             ["typeParams"] = parameters,
             ["managedReferenceContract"] = new JsonObject {
                 ["owner"] = owner.Name,
-                ["declaration"] = method[DeclarationIdentityBinding.Key]?.DeepClone(),
+                ["declaration"] = declaration?.DeepClone(),
                 ["invoke"] = "$ref$invoke",
                 ["slots"] = new JsonArray(indices.Select(index => (JsonNode)JsonValue.Create(index)).ToArray()),
             },

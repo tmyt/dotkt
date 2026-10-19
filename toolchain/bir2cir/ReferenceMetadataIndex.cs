@@ -2899,15 +2899,17 @@ sealed partial class ReferenceMetadataIndex
     public bool TryExistentialInnerConstructorFactory(string semanticOuter, TypeNode.Fqn innerType,
         IReadOnlyList<TypeNode> authoredParameters,
         out string physicalOwner, out string physicalMethod, out TypeNode[] physicalParameters,
-        out TypeNode physicalResult, out TypeNode[] physicalTypeArguments)
+        out TypeNode physicalResult, out TypeNode[] physicalTypeArguments,
+        out TypeNode.Fqn referenceOwner, out string referenceInvoke)
     {
         physicalOwner = physicalMethod = null;
         physicalParameters = null;
         physicalResult = null;
         physicalTypeArguments = null;
+        referenceOwner = null;
+        referenceInvoke = null;
         if (semanticOuter == null || innerType == null || authoredParameters == null
-            || !TryExistentialPhysicalOwner(semanticOuter, out var owner)
-            || !TryMembersByBirOwner(owner, out var members)) return false;
+            || !TryExistentialPhysicalOwner(semanticOuter, out var owner)) return false;
         var arguments = innerType.Args ?? Array.Empty<TypeNode>();
         bool DescribesInnerClassifier(MemberBinding member)
         {
@@ -2945,8 +2947,12 @@ sealed partial class ReferenceMetadataIndex
             return true;
         }
 
-        var candidates = new List<(MemberBinding Member, TypeNode[] TypeArguments)>();
-        foreach (var member in members.Where(member =>
+        var candidates = new List<(MemberBinding Member, TypeNode[] TypeArguments,
+            string Owner, int[] Slots, string Invoke)>();
+        void SelectFactories(string candidateOwner, int[] slots, string invoke)
+        {
+            if (!TryMembersByBirOwner(candidateOwner, out var members)) return;
+            foreach (var member in members.Where(member =>
                 !member.IsStatic
                 && member.InnerConstructorOwner != null && DescribesInnerClassifier(member)
                 && member.InnerConstructorParameters is { } semanticParameters
@@ -2957,15 +2963,29 @@ sealed partial class ReferenceMetadataIndex
                             authoredParameters[index]))
                     .All(equal => equal)
                 && member.ParamTypeNodes != null && member.ReturnTypeNode != null))
-            if (TryFactoryTypeArguments(member, out var typeArguments))
-                candidates.Add((member, typeArguments));
+                if (TryFactoryTypeArguments(member, out var typeArguments))
+                {
+                    if (slots != null && slots.Any(index =>
+                            index >= arguments.Length - member.InnerConstructorTypeArguments.Length))
+                        throw new InvalidOperationException("Managed-reference factory has an incomplete captured owner frame");
+                    candidates.Add((member, typeArguments, candidateOwner, slots, invoke));
+                }
+        }
+        SelectFactories(owner, null, null);
+        if (_managedReferenceContracts.TryGetValue(StripGenericArity(DottedFqn(semanticOuter)), out var contracts))
+            foreach (var contract in contracts) SelectFactories(contract.Owner, contract.Slots, contract.Invoke);
         if (candidates.Count != 1) return false;
-        var (match, selectedTypeArguments) = candidates[0];
-        physicalOwner = owner;
+        var (match, selectedTypeArguments, selectedOwner, selectedSlots, selectedInvoke) = candidates[0];
+        physicalOwner = selectedOwner;
         physicalMethod = match.Name;
         physicalParameters = match.ParamTypeNodes;
         physicalResult = match.ReturnTypeNode;
         physicalTypeArguments = selectedTypeArguments;
+        if (selectedSlots != null)
+        {
+            referenceOwner = new TypeNode.Fqn(selectedOwner, selectedSlots.Select(index => arguments[index]).ToArray());
+            referenceInvoke = selectedInvoke;
+        }
         return true;
     }
 

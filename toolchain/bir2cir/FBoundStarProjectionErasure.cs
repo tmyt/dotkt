@@ -2008,7 +2008,13 @@ static partial class FBoundStarProjectionErasure
                     if (key == null || !seen.Add(key))
                         throw new InvalidOperationException(
                             $"duplicate existential inner-constructor factory for '{inner.Name}'");
-                    methods.Add(factory.Slot);
+                    if (CreateReferenceContract(owner, (JsonArray)factory.Bridge["params"],
+                            constructor[DeclarationIdentityBinding.Key], factory.Slot, refs) is { } contract)
+                    {
+                        owner.ReferenceContracts.Add(constructor, contract);
+                        factory.Bridge["clrInterfaceImpls"][0]["owner"] = TypeJson.Write(contract.Owner);
+                    }
+                    else methods.Add(factory.Slot);
                     declared.Add(factory.Bridge);
                 }
             }
@@ -2348,11 +2354,14 @@ static partial class FBoundStarProjectionErasure
         {
             if (physicalParams[i] is not JsonObject parameter) continue;
             var exact = exactParams[i];
-            var physical = EraseOwnerTv(exact, owners, refs);
+            // An address cannot cross an object-valued slot. Its owner-dependent pointee belongs to the
+            // invariant reference contract allocated by Synthesize, just as for an ordinary member bridge.
+            var physical = SignatureValueTypes.Of(exact) is TypeNode.ByRef ? exact : EraseOwnerTv(exact, owners, refs);
             parameter["type"] = TypeJson.Write(physical);
             if (TypeJson.Read(parameter[FunctionSignatureIdentity.Key]) is TypeNode signatureType)
                 parameter[FunctionSignatureIdentity.Key] = TypeJson.Write(
-                    EraseOwnerTv(Project(signatureType), owners, refs));
+                    SignatureValueTypes.Of(exact) is TypeNode.ByRef
+                        ? Project(signatureType) : EraseOwnerTv(Project(signatureType), owners, refs));
             if (!physical.Equals(exact)) parameter["kotlinType"] ??= TypeNode.ToJson(exact);
         }
 
@@ -3942,6 +3951,8 @@ static partial class FBoundStarProjectionErasure
         JsonArray declarationParameters = null;
         TypeNode physicalResult = null;
         TypeNode[] physicalTypeArguments = null;
+        ReferenceContract referenceContract = null;
+        TypeNode.Fqn referenceOwner = null;
 
         if (isLocalInner)
         {
@@ -3975,16 +3986,27 @@ static partial class FBoundStarProjectionErasure
                 .Select(parameter => TypeJson.Read(parameter["type"])).ToArray() ?? Array.Empty<TypeNode>();
             physicalResult = TypeJson.Read(factory["ret"]);
             physicalTypeArguments = InnerFactoryCallTypeArguments(inner, innerType.Args ?? Array.Empty<TypeNode>());
+            if (outer.ReferenceContracts.TryGetValue(matches[0].ctor, out referenceContract))
+                referenceOwner = (TypeNode.Fqn)SubstituteDeclarationTypeArguments(referenceContract.Owner,
+                    innerType.Args.Take(InnerCapturedCount(inner.Def)).ToArray(), Array.Empty<TypeNode>());
         }
         else
         {
             if (!refs.TryExistentialInnerConstructorFactory(
                      referencedOuter, innerType, authoredSignature.Skip(1).ToArray(),
                      out physicalOwner, out physicalMethod, out physicalParameters, out physicalResult,
-                     out physicalTypeArguments))
+                     out physicalTypeArguments, out referenceOwner, out var referenceInvoke))
                 throw new InvalidOperationException(
                     $"bir2cir: referenced inner construction '{innerType.Name}' through star-projected outer " +
                     $"'{referencedOuter}<*>' has no exact existential constructor factory");
+            if (referenceOwner != null)
+                referenceContract = new ReferenceContract(referenceOwner, new JsonObject {
+                    ["name"] = physicalMethod,
+                    ["params"] = new JsonArray(physicalParameters.Select((type, index) => (JsonNode)new JsonObject {
+                        ["name"] = "p" + index, ["type"] = TypeJson.Write(type),
+                    }).ToArray()),
+                    ["ret"] = TypeJson.Write(physicalResult),
+                }, referenceInvoke);
         }
 
         var replacement = new JsonObject
@@ -4002,6 +4024,9 @@ static partial class FBoundStarProjectionErasure
             replacement["typeArgs"] = new JsonArray(physicalTypeArguments.Select(TypeJson.Write).ToArray());
         if (declarationParameters != null) replacement["calleeParams"] = declarationParameters;
         if (construction["pos"] != null) replacement["pos"] = construction["pos"]?.DeepClone();
+        if (referenceContract != null)
+            BindReferenceContract(replacement, referenceContract, Array.Empty<TypeNode>(),
+                false, null, null, referenceOwner);
         construction.Clear();
         foreach (var pair in replacement) construction[pair.Key] = pair.Value?.DeepClone();
     }
