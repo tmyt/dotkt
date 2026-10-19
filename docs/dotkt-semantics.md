@@ -1105,6 +1105,8 @@ all three `append` members). The range overload additionally marks its exclusive
   They are ordinary list values, including across DLL argument/return boundaries; `values()` still returns a fresh
   array. The entries list preserves declaration order and every native alias slot. Equal native aliases therefore
   have the same first `indexOf`, while `lastIndexOf` returns the last matching slot, as for any Kotlin list.
+  A generic runtime lookup consumes the exact enum declaration/API metadata; NativeAOT or trimmed builds emit
+  `DOTKTENUM001` because that metadata must be preserved. JSON carrier parsing itself does not use a reflection-based serializer.
 - A referenced CLR enum carrying the target core library's exact `[System.Flags]` attribute additionally exposes
   typed `or`, `and`, `xor`, `inv`, and `contains` operations. Every non-Boolean operation accepts and returns that
   exact enum type, including unnamed and unknown bit patterns; distinct enum types never mix. `flag in value` means

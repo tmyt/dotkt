@@ -66,7 +66,7 @@ private class ClrEnumEntries<E : Enum<E>>(private val values: Array<E>) :
         return values[index]
     }
 
-    override fun contains(element: E): Boolean = first.containsKey(element)
-    override fun indexOf(element: E): Int = first[element] ?: -1
-    override fun lastIndexOf(element: E): Int = last[element] ?: -1
+    override fun contains(element: E): Boolean = (element as Any?) != null && first.containsKey(element)
+    override fun indexOf(element: E): Int = if ((element as Any?) == null) -1 else first[element] ?: -1
+    override fun lastIndexOf(element: E): Int = if ((element as Any?) == null) -1 else last[element] ?: -1
 }

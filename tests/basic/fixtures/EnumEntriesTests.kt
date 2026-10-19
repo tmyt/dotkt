@@ -5,9 +5,15 @@ import kotlin.enums.EnumEntries
 import kotlin.enums.enumEntries
 
 private enum class NoBasicEntries { ; }
+private enum class EntriesPhysicalNameClash {
+    VALUE;
+    @kotlin.clr.ClrName("values")
+    fun userValues(): Int = 1
+}
 
 private fun <E : Enum<E>> relayEnumEntries(entries: EnumEntries<E>): EnumEntries<E> = entries
 private inline fun <reified E : Enum<E>> inlineEnumEntries(): EnumEntries<E> = enumEntries<E>()
+private inline fun <reified E : Enum<E>> enumEntriesClosure(): () -> EnumEntries<E> = { enumEntries<E>() }
 
 class EnumEntriesTests {
     @TestAttribute
@@ -47,10 +53,20 @@ class EnumEntriesTests {
         assertTrue(entries.contains(EnumPlanet.JUPITER))
         assertEquals(2, entries.indexOf(EnumPlanet.JUPITER))
         assertEquals(2, entries.lastIndexOf(EnumPlanet.JUPITER))
+        val star: List<*> = entries
+        assertEquals(false, star.contains(null))
+        assertEquals(-1, star.indexOf(null))
+        assertEquals(-1, star.lastIndexOf(null))
+        assertEquals(false, star.contains("EARTH"))
         assertEquals("5|1|9", entries.joinToString("|") { it.mass.toString() })
         val bodyEntries = EnumMixedEntryBody.entries
         assertTrue(bodyEntries === enumEntries<EnumMixedEntryBody>())
         assertEquals(EnumMixedEntryBody.values().toList(), bodyEntries)
+        val clashingFactory = enumEntriesClosure<EntriesPhysicalNameClash>()
+        assertEquals(1, clashingFactory().size)
+        val stdlib = inlineEnumEntries<CharCategory>()
+        assertEquals(CharCategory.UNASSIGNED, stdlib[0])
+        assertTrue(stdlib === CharCategory.entries)
     }
 
     @TestAttribute

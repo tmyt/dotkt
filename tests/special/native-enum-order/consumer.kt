@@ -1,12 +1,18 @@
 private fun <T : Enum<T>> ordinal(value: T): Int = value.ordinal
 private fun <T : Enum<T>> compare(left: T, right: T): Int = left.compareTo(right)
 inline fun <reified T : Enum<T>> valuesOf(): Array<T> = enumValues<T>()
+inline fun <reified T : Enum<T>> entriesOf(): kotlin.enums.EnumEntries<T> = kotlin.enums.enumEntries<T>()
 enum class RichControl(val marker: Int) {
     First(1) { override fun read(): Int = marker }, Second(2);
     open fun read(): Int = marker
 }
 
 fun main() {
+    System.AppContext.SetSwitch("System.Text.Json.JsonSerializer.IsReflectionEnabledByDefault", false)
+    val richEntries = entriesOf<RichControl>()
+    check(richEntries[0] == RichControl.First && richEntries.size == 2)
+    check(richEntries === RichControl.entries)
+    check(entriesOf<CharCategory>()[0] == CharCategory.UNASSIGNED)
     val first = MetadataOrder.Api.First()
     check(first.ordinal == 0 && ordinal(first) == 0)
     check(MetadataOrder.Api.Bits(MetadataOrder.Code.First) == 103)

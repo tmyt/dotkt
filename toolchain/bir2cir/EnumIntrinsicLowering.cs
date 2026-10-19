@@ -132,9 +132,9 @@ static class EnumIntrinsicLowering
     {
         var parameter = new TypeNode.Tv("method", 0);
         var genericValues = new JsonObject { ["k"] = "enumValues", ["type"] = TypeJson.Write(parameter) };
-        EnumValueLowering.Apply(genericValues, ReferenceMetadataIndex.Build(System.Array.Empty<string>()),
+        var runtimeLookup = EnumValueLowering.Apply(genericValues, ReferenceMetadataIndex.Build(System.Array.Empty<string>()),
             new HashSet<string>(), new Dictionary<string, BasicEnumMetadata>());
-        if (Str(genericValues["k"]) != "cast" || TypeJson.Read(genericValues["type"]) != new TypeNode.Array(parameter)
+        if (!runtimeLookup || Str(genericValues["k"]) != "cast" || TypeJson.Read(genericValues["type"]) != new TypeNode.Array(parameter)
             || Str(genericValues["e"]?["method"]) != "kotlinEnumValues"
             || Str(genericValues["e"]?["args"]?[0]?["k"]) != "classRef"
             || TypeJson.Read(genericValues["e"]?["args"]?[0]?["type"]) != parameter)
