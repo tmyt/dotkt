@@ -86,11 +86,17 @@ static class ComparableRepresentationLowering
         // The frontend's override contract identifies the Kotlin operation; close that contract in the
         // selected owner's frame before nullable/storage companions change either frame. Ordinary class
         // overrides and explicit super calls retain their selected implementation.
-        if (!BirTypeLowering.ErasesGenericApplicationToNonGenericClassifier(owner.Name)
-            || call["super"] != null || call["overrides"] is not JsonArray overrides)
+        if (call["super"] != null || call["overrides"] is not JsonArray overrides)
             return null;
-        return overrides.OfType<JsonObject>()
-            .Where(slot => Text(slot["member"]) == "compareTo" && Text(slot["kind"]) == "method")
+        var comparisonSlots = overrides.OfType<JsonObject>()
+            .Where(slot => Text(slot["member"]) == "compareTo" && Text(slot["kind"]) == "method");
+        // A concrete enum reference selects the final Enum comparison through its concrete owner.
+        // Its explicit override chain, not that owner's eventual CLR shape, identifies the operation.
+        if (!BirTypeLowering.ErasesGenericApplicationToNonGenericClassifier(owner.Name)
+            && !comparisonSlots.Any(slot => TypeJson.Read(slot["owner"])
+                is TypeNode.Fqn { Name: "kotlin.Enum", Args.Length: 1 }))
+            return null;
+        return comparisonSlots
             .Select(slot => TypeJson.Read(slot["owner"]))
             .OfType<TypeNode.Fqn>()
             .Where(contract => contract is { Name: "kotlin.Comparable", Args.Length: 1 })
@@ -244,6 +250,19 @@ static class ComparableRepresentationLowering
         inherited["ownerType"] = TypeJson.Fqn("AuthoredComparison");
         if (ComparisonContract(inherited) != null)
             throw new InvalidOperationException("Ordinary class comparison lost its selected implementation");
+        var enumReference = JsonNode.Parse("""
+        {"ownerType":{"t":"fqn","name":"ConcreteEnum"},"overrides":[
+          {"owner":{"t":"fqn","name":"kotlin.Enum","args":[{"t":"fqn","name":"ConcreteEnum"}]},
+           "member":"compareTo","kind":"method"},
+          {"owner":{"t":"fqn","name":"kotlin.Comparable","args":[{"t":"fqn","name":"ConcreteEnum"}]},
+           "member":"compareTo","kind":"method"}]}
+        """).AsObject();
+        if (ComparisonContract(enumReference) is not TypeNode.Fqn { Args.Length: 1 } enumContract
+            || TypeJson.OwnerName(TypeJson.Write(enumContract.Args[0])) != "ConcreteEnum")
+            throw new InvalidOperationException("Concrete enum reference lost its selected comparison contract");
+        enumReference["super"] = TypeJson.Fqn("kotlin.Enum");
+        if (ComparisonContract(enumReference) != null)
+            throw new InvalidOperationException("Explicit super comparison lost its selected implementation");
         var enumRoot = JsonNode.Parse("""
         {"fileClass":"EnumComparisons","types":[{"name":"RichOrder","kind":"class","interfaces":[],
           "methods":[],"ctors":[{"params":[],"baseArgs":null,"thisArgs":null,"body":[]}],
