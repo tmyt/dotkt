@@ -1603,7 +1603,7 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 			// The latter may be a Kotlin class with no referenced CLR indexer declaration.
 			val mt = correspondingSupertypeInstantiation(recv.type, ixOwner, allowCapturedArguments = true)
 				?.let { birType(it) } ?: error("No selected indexer owner for ${callee.name} on ${recv.type}")
-			val (ixArgs, ixArgTypes) = clrCallArgs(call, callee)
+			val (ixArgs, ixArgTypes) = clrCallArgs(call, ixDeclaration)
 			val ixSignature = overloadSigField(ixDeclaration)
 			// The get accessor returning a generic param (`IList<T>.get` -> T) reports the SUBSTITUTED ret (gp:T):
 			// ilemit then hands back gp:T (matching the stack), so the value<->collection boundary box/unbox is
@@ -1647,7 +1647,6 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 	if (clrType != null) {
 		// A fake override's parameter types are substituted into its inheriting class.
 		// The selected declaration's owner and descriptor must use the same frame.
-		val callCallee = callee
 		val callee = selectedDeclaration ?: if (callee.isFakeOverride) callee.resolveFakeOverride() ?: callee else callee
 		val recv = dispatchReceiver(call)
 		// A restored external Kotlin companion is an instance singleton: keep its IrGetObjectValue receiver in BIR
@@ -1820,18 +1819,18 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 		// object: it's a STATIC call whose first argument is the extension receiver.
 		val extRecv = extensionReceiver(call)
 		if (isStatic && extRecv != null) {
-			val (allArgs, allArgTypes) = clrCallArgsWithRecv(call, callCallee, extRecv)
+			val (allArgs, allArgTypes) = clrCallArgsWithRecv(call, callee, extRecv)
 			return """{"k":"callStatic","ownerType":${clrType!!.toJson()},"method":${str(member)}${overloadSigField(callee)},"argTypes":[$allArgTypes],"ret":$ret,"args":[$allArgs]$suspendTag$anySlotTag$companionCallTag}"""
 		}
 		// A restored MEMBER extension function (`class C { fun T.f() }`): an INSTANCE method on the dispatch receiver
 		// (C) whose first .NET param `__self` is the extension receiver -> dispatch on `recv`, prepend the receiver.
 		if (!isStatic && extRecv != null && recv != null) {
-			val (allArgs, allArgTypes) = clrCallArgsWithRecv(call, callCallee, extRecv)
+			val (allArgs, allArgTypes) = clrCallArgsWithRecv(call, callee, extRecv)
 			return """{"k":"callInstance","virtual":$clrCallVirtual,"ownerType":${memberType!!.toJson()},"method":${str(member)}${overloadSigField(callee)},"argTypes":[$allArgTypes],"ret":$ret,"recv":${expr(recv)},"args":[$allArgs]$suspendTag$anySlotTag${superTag(call)}$companionCallTag}"""
 		}
 		// A2 (#61): a PLAIN static/instance call by the .NET owner's FQN identity; bir2cir's NetInteropBinding
 		// resolves the owner off the .NET refs and shapes it (clrStatic/clrInstance). No .NET-shape decision here.
-		val (cArgs, cArgTypes) = clrCallArgs(call, callCallee)
+		val (cArgs, cArgTypes) = clrCallArgs(call, callee)
 		return if (isStatic)
 			"""{"k":"callStatic","ownerType":${clrType!!.toJson()},"method":${str(member)}${overloadSigField(callee)},"argTypes":[$cArgTypes],"ret":$ret,"args":[$cArgs]$suspendTag$anySlotTag$companionCallTag}"""
 		else
@@ -2518,6 +2517,7 @@ internal fun BirEmitter.byrefBackingField(inner: IrExpression): String? {
  *  so the two vectors are always the SAME physical sequence: `[__self?] + contexts + regulars`, positions filled by
  *  [filledExternalArgs].
  *
+ *  Parameter descriptors use the selected declaration's frame; argument expressions retain the caller's frame.
  *  Both halves derive from the callee's PARAMETERS, never from "the expressions that happen to be present". Building
  *  them from provided expressions (the previous shape here and at the three sibling member paths) silently DELETED an
  *  omitted default's slot: no `defaultArg` placeholder was emitted, so a later provided argument slid into the omitted
@@ -2529,7 +2529,9 @@ internal fun BirEmitter.byrefBackingField(inner: IrExpression): String? {
  *  default-fill); a `byref(x)` arg unwraps to its lvalue `x`, which ilemit passes by address. */
 internal fun BirEmitter.clrCallArgs(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression, callee: org.jetbrains.kotlin.ir.declarations.IrFunction): Pair<String, String> {
 	val aj = filledExternalArgs(call)
-	val tj = regularParams(callee).map { birType(it.type).toJson() }.take(aj.size)
+	val tj = inMemberDeclarationFrame(callee) {
+		regularParams(callee).map { birType(it.type).toJson() }
+	}.take(aj.size)
 	return aj.joinToString(",") to tj.joinToString(",")
 }
 
@@ -2539,7 +2541,7 @@ internal fun BirEmitter.clrCallArgsWithRecv(call: org.jetbrains.kotlin.ir.expres
 		callee: org.jetbrains.kotlin.ir.declarations.IrFunction, extRecv: IrExpression): Pair<String, String> {
 	val (aj, tj) = clrCallArgs(call, callee)
 	val extParamType = extensionReceiverParam(callee)
-		?.let { birType(it.type) } ?: birType(extRecv.type)
+		?.let { inMemberDeclarationFrame(callee) { birType(it.type) } } ?: birType(extRecv.type)
 	val args = listOf(expr(extRecv)) + listOfNotNull(aj.takeIf { it.isNotEmpty() })
 	val types = listOf(extParamType.toJson()) + listOfNotNull(tj.takeIf { it.isNotEmpty() })
 	return args.joinToString(",") to types.joinToString(",")
