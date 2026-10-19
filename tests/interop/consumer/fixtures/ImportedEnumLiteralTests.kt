@@ -17,6 +17,8 @@ import EnumLiteralInterop.OrderedI64
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import System.Environment
+import kotlin.enums.EnumEntries
+import kotlin.enums.enumEntries
 
 private typealias ImportedCodeAlias = Code
 
@@ -24,11 +26,43 @@ private fun importedLiteralDefault(value: Code = Code.Negative): Int = EnumLiter
 private fun <T : Enum<T>> importedOrderOrdinal(value: T): Int = value.ordinal
 private fun <T : Comparable<T>> importedOrderCompare(left: T, right: T): Int = left.compareTo(right)
 inline fun <reified T : Enum<T>> importedOrderValues(): Array<T> = enumValues<T>()
+private inline fun <reified T : Enum<T>> importedOrderEntries(): EnumEntries<T> = enumEntries<T>()
+private fun relayImportedEntries(entries: EnumEntries<TopCode>): EnumEntries<TopCode> = entries
 
 @kotlin.clr.ClrEnum
 private enum class ImportedOrderKotlinControl(value: Int) { FIRST(10), SECOND(-4), LAST(0) }
 
 class ImportedEnumLiteralTests {
+    @TestAttribute
+    fun nativeEntriesAreCachedListValuesAndPreserveAliasSlots() {
+        val entries = relayImportedEntries(importedOrderEntries<TopCode>())
+        assertEquals(true, entries === enumEntries<TopCode>())
+        assertEquals(true, entries === TopCode.entries)
+        assertEquals(3, entries.size)
+        assertEquals(-7, EnumLiteralApi.ReceiveTop(entries[1]))
+        assertEquals("103:-7:103", entries.joinToString(":") { EnumLiteralApi.ReceiveTop(it).toString() })
+        assertEquals(true, entries.contains(TopCode.Alias))
+        assertEquals(0, entries.indexOf(TopCode.Alias))
+        assertEquals(2, entries.lastIndexOf(TopCode.Sparse))
+        assertEquals(false, entries.contains(EnumOrderApi.Unknown()))
+        assertEquals(-1, entries.indexOf(EnumOrderApi.Unknown()))
+        assertEquals(-1, entries.lastIndexOf(EnumOrderApi.Unknown()))
+        val bits = mutableListOf<Int>()
+        for (entry in entries) bits.add(EnumLiteralApi.ReceiveTop(entry))
+        assertEquals(listOf(103, -7, 103), bits)
+    }
+
+    @TestAttribute
+    fun nativeEntriesRetainUnsigned64BitValues() {
+        val entries: EnumEntries<OrderedU64> = enumEntries<OrderedU64>()
+        assertEquals(true, entries === OrderedU64.entries)
+        assertEquals(4, entries.size)
+        assertEquals("18446744073709551615:0:9000000000:18446744073709551615",
+            entries.joinToString(":") { EnumOrderApi.U64Bits(it) })
+        assertEquals(0, entries.indexOf(OrderedU64.Alias))
+        assertEquals(3, entries.lastIndexOf(OrderedU64.High))
+    }
+
     @TestAttribute
     fun nativeOrderUsesProjectedDeclarationsWithoutChangingAliasIdentity() {
         val negative = EnumOrderApi.Negative()

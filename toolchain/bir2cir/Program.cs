@@ -43,6 +43,7 @@ static class Bir2Cir
                 NullableRepresentationTypes.SelfTest();
                 NullableRepresentationMaterialization.SelfTest();
                 EnumIntrinsicLowering.SelfTest();
+                EnumEntriesLowering.SelfTest();
                 InnerRepresentationFrameTests.SelfTest();
                 GenericRepresentationPolicy.SelfTest();
                 BirTypeLowering.SelfTestSlotReturns();
@@ -225,6 +226,7 @@ sealed class Pipeline
             {
                 foreach (var root in birRoots)
                 {
+                    EnumEntriesLowering.Apply(root, refs, bind);
                     ObjectSlotRename.Apply(root);
                     PrimitiveOperatorLowering.Apply(root, refs);
                     FaithfulHintRecognition.Apply(root, refs, sourceTopLevelFns);
@@ -564,16 +566,15 @@ sealed class Pipeline
             // (not body-squashed) carries a raw IL operation rather than an unresolvable bodyless builtin call.
             PrimitiveOperatorLowering.Apply(bir.Root, refs);
             // ENUM REIFIED INTRINSICS (#73): kotc emits the faithful top-level `callStatic owner:null method:enumValues
-            // typeArgs:[T]` for `enumValues<T>()`/`enumValueOf<T>()`/`enums.enumEntries<T>()`/`enumEntriesIntrinsic<T>()`.
+            // typeArgs:[T]` for `enumValues<T>()`/`enumValueOf<T>()`, including the cold values operation for entries.
             // Re-emit the same BIR vocabulary — rich enum -> static values()/valueOf(), basic/generic-param -> semantic
             // enumValues/enumParse — deriving rich-vs-basic from the explicit producer fact (local `enumRich:true`,
             // referenced trusted [KotlinRichEnum]). Runs
-            // BEFORE ArrayConstructionLowering (#77): a `for (x in enumValues<Color>())` / `.entries` for-loop wraps
+            // BEFORE ArrayConstructionLowering (#77): a `for (x in enumValues<Color>())` for-loop wraps
             // this call in a `forArray` whose element ArrayConstructionLowering derives via StaticType off the ALREADY-
             // lowered `enumValues`/rich-`values()` node — so the reified top-level intrinsic must already be in its
-            // final semantic shape when element derivation runs. Entries family: App-build sites only (stdlib
-            // self-build keeps the filler body — see
-            // EnumIntrinsicLowering).
+            // final semantic shape when element derivation runs. EnumEntries itself was bound to a cached list
+            // before representation materialization and must never be replaced by an array-valued expression here.
             EnumIntrinsicLowering.Apply(
                 bir.Root, localRichEnums, localTopLevelFns, attributeTopLevelOwner, refs, representationMethodFrames);
             // ENUM ENTRY VALUES: kotc preserves owner + entry-name Kotlin identity. Resolve a referenced rich enum's

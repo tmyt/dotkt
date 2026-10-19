@@ -96,6 +96,7 @@ private interface EnumRuntimeField {
 
     @kotlin.clr.ClrIntrinsic("GetCustomAttributesData")
     fun getCustomAttributesData(): EnumRuntimeList<EnumRuntimeAttribute>
+
 }
 
 @kotlin.clr.ClrTypeAlias("System.Reflection.BindingFlags")
@@ -114,6 +115,9 @@ private interface EnumRuntimeType {
 
     @kotlin.clr.ClrIntrinsic("GetFields")
     fun getFields(flags: EnumRuntimeBindingFlags): Array<EnumRuntimeField>
+
+    @kotlin.clr.ClrIntrinsic("GetMethod")
+    fun getMethod(name: String, genericParameterCount: Int, types: Array<EnumRuntimeType>): StarProjectionMethod?
 
     @kotlin.clr.ClrIntrinsic("GetCustomAttributesData")
     fun getCustomAttributesData(): EnumRuntimeList<EnumRuntimeAttribute>
@@ -151,6 +155,7 @@ private fun enumRuntimeArray(type: EnumRuntimeType, length: Int): EnumRuntimeArr
 
 private const val BASIC_ENUM = "DotKt.Runtime.CompilerServices.KotlinBasicEnumAttribute"
 private const val BASIC_ENUM_ORDINAL = "DotKt.Runtime.CompilerServices.KotlinBasicEnumOrdinalAttribute"
+private const val RICH_ENUM = "DotKt.Runtime.CompilerServices.KotlinRichEnumAttribute"
 
 @PublishedApi
 internal fun kotlinEnumCompareTo(receiver: Any, other: Any): Int {
@@ -177,6 +182,19 @@ internal fun kotlinEnumOrdinal(value: Any): Int {
 @PublishedApi
 internal fun kotlinEnumValues(typeToken: Any): Any {
     val type = typeToken as EnumRuntimeType
+    // A generic caller cannot select a rich enum's class API statically. Read the exact producer-owned map;
+    // neither a values() naming convention nor the singleton fields' physical order is a declaration fact.
+    if (type.assembly.isCompilerAssembly()) {
+        val attributes = type.getCustomAttributesData()
+        for (index in 0 until attributes.count) {
+            val attribute = attributes[index]
+            if (!attribute.isCompilerCarrier(RICH_ENUM, type.assembly)) continue
+            val api = richEnumValuesApi(attribute)
+            val method = type.getMethod(api, 0, emptyArray())!!
+            try { return method.invoke(null, emptyArray())!! }
+            catch (failure: StarProjectionInvocationException) { throw (failure.innerException ?: failure) }
+        }
+    }
     // GetValues supplies a native enum array, not its Kotlin ordering. Overwrite every projected slot below.
     val nativeValues = enumRuntimeValues(type)
     val fields = type.getFields(EnumRuntimeBindingFlags.DECLARED_STATIC_PUBLIC_NON_PUBLIC)
@@ -192,6 +210,41 @@ internal fun kotlinEnumValues(typeToken: Any): Any {
         ordinal++
     }
     return values
+}
+
+@kotlin.clr.ClrTypeAlias("System.Text.Encoding")
+private interface EnumCarrierEncoding {
+    @OptIn(ExperimentalUnsignedTypes::class)
+    @kotlin.clr.ClrIntrinsic("GetString")
+    fun getString(bytes: UByteArray): String
+}
+
+@kotlin.clr.ClrIntrinsic("System.Text.Encoding.get_UTF8")
+private fun enumCarrierEncoding(): EnumCarrierEncoding = error("CLR binding")
+
+@kotlin.clr.ClrTypeAlias("System.Text.Json.JsonSerializerOptions")
+private interface EnumCarrierJsonOptions
+
+@kotlin.clr.ClrTypeAlias("System.Text.Json.JsonElement")
+private interface EnumCarrierJsonElement {
+    @kotlin.clr.ClrIntrinsic("GetProperty")
+    fun getProperty(name: String): EnumCarrierJsonElement
+    @kotlin.clr.ClrIntrinsic("GetString")
+    fun getString(): String?
+}
+
+@kotlin.clr.ClrIntrinsic("System.Text.Json.JsonSerializer.Deserialize")
+private fun <T> enumCarrierJson(json: String, options: EnumCarrierJsonOptions?): T = error("CLR binding")
+
+@OptIn(ExperimentalUnsignedTypes::class)
+private fun richEnumValuesApi(attribute: EnumRuntimeAttribute): String {
+    val arguments = attribute.constructorArguments
+    check(arguments[0].value == "bir-json/1")
+    @Suppress("UNCHECKED_CAST")
+    val content = arguments[1].value as EnumRuntimeList<EnumRuntimeAttributeArgument>
+    val bytes = UByteArray(content.count) { content[it].value as UByte }
+    val payload = enumCarrierJson<EnumCarrierJsonElement>(enumCarrierEncoding().getString(bytes), null)
+    return payload.getProperty("values").getString()!!
 }
 
 private fun EnumRuntimeField.isProjectedEntry(explicit: Boolean): Boolean =
