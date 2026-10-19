@@ -963,6 +963,12 @@ static class BirTypeLowering
             if (ModFlag(obj, "annotation"))
             {
                 copy["base"] = TypeNode.Write(new TypeNode.Fqn("System.Attribute"));
+                // A source-implicit Any constructor becomes the selected CLR Attribute constructor. State the
+                // physical base call before member binding; the emitter must not infer it from the new base type.
+                if (copy["ctors"] is JsonArray constructors)
+                    foreach (var constructor in constructors.OfType<JsonObject>())
+                        if (constructor["baseArgs"] == null && constructor["thisArgs"] == null)
+                            constructor["baseArgs"] = new JsonArray();
                 (copy["mods"] as JsonObject)?.Remove("annotation");   // drop the Kotlin-only flag; never reaches CIR/ilemit
             }
             // UNIT -> void DERIVATION (unit-fold-in-bir2cir, USER 2026-07-05): kotc emits the pure Kotlin `kotlin.Unit`
