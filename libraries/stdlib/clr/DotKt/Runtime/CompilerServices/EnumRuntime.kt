@@ -42,7 +42,7 @@ internal fun enumComponentMatches(component: StarProjectionType): Boolean =
 @PublishedApi
 internal fun enumClassifier(arrayShape: String): (Any?) -> Boolean = { enumMatches(it, arrayShape) }
 
-// Generic `T : Enum<T>` code cannot bake in one enum declaration's ordinal map. Explicit Kotlin CLR enums therefore
+// Generic `T : Enum<T>` code cannot bake in one enum declaration's ordinal map. Metadata-bearing Kotlin basic enums
 // stamp each literal with its declaration ordinal; this runtime reads that exact compiler carrier. Enums without the
 // carrier use the same visible FieldDef order that dll2klib projects. Identical native alias bits select the first
 // matching declaration; they cannot acquire distinguishable Kotlin entry identity without changing the CLR ABI.

@@ -1027,8 +1027,8 @@ static class RoundtripMetadata
             AttrClass(AKObject, Ctor()),
             AttrClass(AKInner, Ctor(Param("System.Int32"))), // source `inner` + leading physical outer slots
             AttrClass(AKRichEnum, Ctor(Param("System.String"), Param(ByteArrayType()))), // explicit rich-enum entry/API map
-            AttrClass(AKBasicEnum, Ctor(Param("System.String"), Param(ByteArrayType()))), // explicit basic-enum ordered values
-            AttrClass(AKBasicEnumOrdinal, Ctor(Param("System.Int32"))), // declaration ordinal on each explicit enum literal
+            AttrClass(AKBasicEnum, Ctor(Param("System.String"), Param(ByteArrayType()))), // basic-enum ordered values
+            AttrClass(AKBasicEnumOrdinal, Ctor(Param("System.Int32"))), // declaration ordinal on each Kotlin basic-enum literal
             AttrClass(AKCompanion, Ctor(Param("System.String"), Param(ByteArrayType()))), // #275 — source companion owner/name/representation
             AttrClass(AKCompanionExt, Ctor(Param("System.String"), Param(ByteArrayType()))), // #382 — a companion extension's associated Kotlin type
             AttrClass(AKPropertyAccessor, Ctor(Param("System.String"), Param(ByteArrayType()))), // method-generic Kotlin property accessor association

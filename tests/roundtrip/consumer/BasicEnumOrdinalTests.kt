@@ -3,6 +3,7 @@ package roundtrip.consumer
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import roundtrip.basicenum.BasicEnumHolder
+import roundtrip.basicenum.GenericBasicEnumHolder
 import roundtrip.basicenum.producerBasicOrdinal
 import roundtrip.basicenum.producerGenericOrdinal
 import roundtrip.entries.BasicEntry
@@ -18,6 +19,18 @@ class BasicEnumOrdinalRoundtripTests {
         assertEquals(1, producerBasicOrdinal(BasicEntry.SECOND))
         assertEquals(1, BasicEntry.entries[1].ordinal)
         assertEquals(1, enumValues<BasicEntry>()[1].ordinal)
+        assertEquals(BasicEntry.SECOND, BasicEntry.valueOf("SECOND"))
+        assertEquals(BasicEntry.SECOND, enumValueOf<BasicEntry>("SECOND"))
+        val numericName = try {
+            BasicEntry.valueOf("1")
+            false
+        } catch (e: IllegalArgumentException) { true }
+        val reifiedNumericName = try {
+            enumValueOf<BasicEntry>("1")
+            false
+        } catch (e: IllegalArgumentException) { true }
+        assertEquals(true, numericName)
+        assertEquals(true, reifiedNumericName)
     }
 
     @TestAttribute
@@ -35,5 +48,9 @@ class BasicEnumOrdinalRoundtripTests {
         assertEquals(2, consumerGenericOrdinal(BasicEnumHolder.Nested.LAST))
         assertEquals(2, producerGenericOrdinal(BasicEnumHolder.Nested.LAST))
         assertEquals(2, consumerReifiedOrdinal(BasicEnumHolder.Nested.LAST))
+        assertEquals(1, GenericBasicEnumHolder.Nested.LAST.ordinal)
+        assertEquals(1, consumerGenericOrdinal(GenericBasicEnumHolder.Nested.LAST))
+        assertEquals(1, producerGenericOrdinal(GenericBasicEnumHolder.Nested.LAST))
+        assertEquals(1, consumerReifiedOrdinal(GenericBasicEnumHolder.Nested.LAST))
     }
 }

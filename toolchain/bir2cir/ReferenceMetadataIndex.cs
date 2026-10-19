@@ -139,6 +139,7 @@ sealed partial class ReferenceMetadataIndex
     readonly HashSet<string> _dotKtOwners = new(StringComparer.Ordinal);              // types authored by a DotKt-emitted assembly
     readonly Dictionary<string, RichEnumMetadata> _richEnums = new(StringComparer.Ordinal);
     readonly Dictionary<string, BasicEnumMetadata> _basicEnums = new(StringComparer.Ordinal);
+    readonly HashSet<string> _conflictingBasicEnums = new(StringComparer.Ordinal);
     // Trusted [KotlinType(G<*,...>)] on a compiler-generated non-generic interface is the explicit existential ABI
     // relation. No physical-name suffix participates in recognition.
     readonly Dictionary<string, string> _existentialPhysicalBySemanticOwner = new(StringComparer.Ordinal);
@@ -743,7 +744,7 @@ sealed partial class ReferenceMetadataIndex
                     var existing = _basicEnums[owner];
                     if (existing.Underlying != kv.Value.Underlying ||
                         !existing.Entries.SequenceEqual(kv.Value.Entries))
-                        throw new InvalidOperationException($"conflicting Kotlin basic-enum metadata for '{owner}'");
+                        _conflictingBasicEnums.Add(owner);
                 }
             }
             foreach (var kv in asm.DotKt.ExistentialPhysicalBySemanticOwner)
@@ -2393,9 +2394,17 @@ sealed partial class ReferenceMetadataIndex
         return false;
     }
 
-    public bool TryKotlinBasicEnum(string ownerFqn, out BasicEnumMetadata metadata) =>
-        _basicEnums.TryGetValue(
-            StripGenericArity(DottedFqn(BareOwnerFqn(ownerFqn))), out metadata);
+    public bool TryKotlinBasicEnum(string ownerFqn, out BasicEnumMetadata metadata)
+    {
+        metadata = null;
+        if (IsLocalEmittedType(ownerFqn)) return false;
+        var owner = StripGenericArity(DottedFqn(BareOwnerFqn(ownerFqn)));
+        // Unrelated DLLs may contain same-named private enums. Their maps are ambiguous only if an external
+        // operation actually selects that owner; merely referencing both DLLs must not override local declarations.
+        if (_conflictingBasicEnums.Contains(owner))
+            throw new InvalidOperationException($"conflicting Kotlin basic-enum metadata for '{owner}'");
+        return _basicEnums.TryGetValue(owner, out metadata);
+    }
 
     public bool TryKotlinRichEnumStaticApi(
         string ownerFqn, string sourceMemberName, int paramCount, out string physicalMemberName)
