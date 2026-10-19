@@ -6,6 +6,10 @@ import roundtrip.annotationproperties.ImportedLabel
 import roundtrip.annotationproperties.ImportedArrays
 import roundtrip.annotationproperties.producedLabel
 import roundtrip.annotationproperties.producedArrays
+import roundtrip.annotationproperties.ImportedTags
+import roundtrip.annotationproperties.ImportedTypes
+import roundtrip.annotationproperties.producedTags
+import roundtrip.annotationproperties.producedTypes
 
 class AnnotationPropertyRoundtripTests {
     @TestAttribute
@@ -23,6 +27,18 @@ class AnnotationPropertyRoundtripTests {
         val local = ImportedArrays(arrayOf("consumer"), intArrayOf(19))
         assertEquals("consumer", local.names[0])
         assertEquals(19, local.counts[0])
+        assertEquals("two", producedTags().tags[1])
+        assertEquals("consumer", ImportedTags("consumer").tags[0])
+    }
+
+    @TestAttribute
+    fun annotationAndEnumPropertiesSurviveDllImport() {
+        val produced = producedTypes()
+        assertEquals("nested", produced.nested.value)
+        assertEquals(DeprecationLevel.WARNING, produced.kind)
+        val local = ImportedTypes(ImportedLabel("consumer"), DeprecationLevel.ERROR)
+        assertEquals("consumer", local.nested.value)
+        assertEquals(DeprecationLevel.ERROR, local.kind)
     }
 
     @TestAttribute

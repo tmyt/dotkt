@@ -4,6 +4,8 @@ import kotlin.clr.ClrField
 
 annotation class UserAnnotationLabel(val value: String, val code: Int = 7)
 annotation class UserAnnotationArrays(val names: Array<String>, val counts: IntArray)
+annotation class UserAnnotationTags(vararg val tags: String)
+annotation class UserAnnotationTypes(val nested: UserAnnotationLabel, val kind: DeprecationLevel)
 annotation class UserFieldAnnotation(@ClrField val value: String)
 
 class AnnotationPropertyTests {
@@ -22,6 +24,22 @@ class AnnotationPropertyTests {
         assertEquals("second", label.names[1])
         assertEquals(2, label.counts.size)
         assertEquals(5, label.counts[1])
+        assertEquals("second", UserAnnotationTags("first", "second").tags[1])
+    }
+
+    @TestAttribute
+    fun annotationAndEnumPropertiesKeepTheirDeclaredTypes() {
+        val label = UserAnnotationTypes(UserAnnotationLabel("nested"), DeprecationLevel.WARNING)
+        assertEquals("nested", label.nested.value)
+        assertEquals(DeprecationLevel.WARNING, label.kind)
+    }
+
+    @TestAttribute
+    fun stdlibAnnotationPropertiesUseTheSameAccessorContract() {
+        val deprecated = Deprecated("message")
+        assertEquals("message", deprecated.message)
+        assertEquals("", deprecated.replaceWith.expression)
+        assertEquals("imported", ReplaceWith("expression", "imported").imports[0])
     }
 
     @TestAttribute
