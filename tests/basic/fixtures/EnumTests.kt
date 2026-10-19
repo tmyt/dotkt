@@ -612,8 +612,12 @@ class EnumTests {
         assertEquals(-2, rich(EnumPlanet.EARTH, EnumPlanet.JUPITER))
         val basic: (EnumBasic, EnumBasic) -> Int = EnumBasic::compareTo
         assertEquals(-2, basic(EnumBasic.A, EnumBasic.C))
+        val basicBound = EnumBasic.A::compareTo
+        assertEquals(-2, basicBound(EnumBasic.C))
         val explicit: (EnumExplicitInt, EnumExplicitInt) -> Int = EnumExplicitInt::compareTo
         assertEquals(-2, explicit(EnumExplicitInt.FOUR, EnumExplicitInt.ZERO))
+        val explicitBound = EnumExplicitInt.FOUR::compareTo
+        assertEquals(-2, explicitBound(EnumExplicitInt.ZERO))
     }
 
     @TestAttribute

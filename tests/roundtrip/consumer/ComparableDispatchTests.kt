@@ -38,6 +38,10 @@ class ComparableDispatchTests {
         assertEnumComparison(EntryRichComparisonOrder.FIRST, EntryRichComparisonOrder.SECOND)
         val native: (ExplicitComparisonOrder, ExplicitComparisonOrder) -> Int = ExplicitComparisonOrder::compareTo
         assertTrue(native(ExplicitComparisonOrder.FIRST, ExplicitComparisonOrder.SECOND) == -1)
+        val nativeBound = ExplicitComparisonOrder.FIRST::compareTo
+        assertTrue(nativeBound(ExplicitComparisonOrder.SECOND) == -1)
+        val basicBound = ComparisonOrder.FIRST::compareTo
+        assertTrue(basicBound(ComparisonOrder.SECOND) == -1)
         val clrControl: (RichComparisonOrder, RichComparisonOrder) -> Int = RichComparisonOrder::compareTo
         assertTrue(clrControl(RichComparisonOrder.FIRST, RichComparisonOrder.SECOND) == -1)
         assertTrue((RichComparisonOrder.FIRST as System.IComparable).CompareTo(RichComparisonOrder.SECOND) == 77)
