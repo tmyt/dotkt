@@ -7,6 +7,10 @@ import kotlin.coroutines.startCoroutine
 
 private fun <U, T : U> localCompanionWiden(value: T): U = value
 private fun <T> localCompanionNullable(value: T): T? = localCompanionWiden<T?, T>(value)
+private fun <Unused, U, T : U> consumerDiamondUpdate(cell: CompanionDiamond<U, T>, value: T): T {
+    cell.item = value
+    return cell.item
+}
 private class ImportedCompanionSink : CompanionSinkBase(), CompanionSink
 private class ImportedBoundedCompanionSink : BoundedCompanionSinkBase(), BoundedCompanionSink
 private open class LocalCompanionSinkBase { fun <T> count(values: List<T?>): Int = values.size }
@@ -39,6 +43,34 @@ private fun <T> runCompanion(block: suspend () -> T): T {
 }
 
 class NullableCompanionBoundTests {
+    @TestAttribute
+    fun inheritedGenericSetterKeepsAccessAndCallerFramesSeparate() {
+        val nullable = CompanionDiamond<Any?, Int?>(7)
+        check(companionDiamondUpdate<Any?, Int?>(nullable, null) == null)
+        check(consumerDiamondUpdate<String, Any?, Int?>(nullable, 9) == 9)
+        val left: CompanionLeft<Int?> = nullable
+        val right: CompanionRight<Int?> = nullable
+        val cell: CompanionCell<Int?> = nullable
+        check(left.item == 9 && right.item == 9 && cell.item == 9)
+        left.item = 11
+        check(nullable.item == 11 && right.item == 11)
+        right.item = null
+        check(nullable.item == null && cell.item == null)
+        check(companionDiamondPut<Any?, Int?>(nullable, 13) == 13)
+        check(companionDiamondPick<Any?, Int?, String>(nullable, 15, "method") == "method")
+        check(nullable.item == 15)
+        check(companionDiamondPick<Any?, Int?, Int>(nullable, null, null) == null)
+        check(nullable.item == null)
+        check(companionDiamondReference<Any?, Int?>(nullable)(17) == 17)
+        val reference = CompanionDiamond<Any, String>("before")
+        check(companionDiamondUpdate<Any, String>(reference, "producer") == "producer")
+        check(consumerDiamondUpdate<Int, Any, String>(reference, "consumer") == "consumer")
+        check(companionDiamondReference<Any, String>(reference)("bound") == "bound")
+        val nullableReference = CompanionDiamond<Any?, String?>("present")
+        check(companionDiamondUpdate<Any?, String?>(nullableReference, null) == null)
+        check(consumerDiamondUpdate<Long, Any?, String?>(nullableReference, "restored") == "restored")
+    }
+
     @TestAttribute
     fun importedBaseFillsLocalNullableGenericContracts() {
         val unbounded: ConsumerCompanionSink = ImportedBaseConsumerSink()

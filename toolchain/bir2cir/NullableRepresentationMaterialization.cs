@@ -112,9 +112,9 @@ static class NullableRepresentationMaterialization
                 // A fake override preserves the implementing declaration's ID, but its explicit member
                 // descriptors are written by kotc in the accessed owner's frame. The receiver/declaration
                 // relation is already stated in ownerType; the ID must not substitute the base owner's arity.
+                // Visibility metadata does not change that descriptor ownership.
                 var descriptorOwner = Text(use["k"]) == "new" ? use["type"] : use["ownerType"] ?? use["owner"];
-                if (use["memberOwnerTypeParams"] is JsonArray
-                    && TypeJson.Read(descriptorOwner) is TypeNode.Fqn descriptorType
+                if (TypeJson.Read(descriptorOwner) is TypeNode.Fqn descriptorType
                     && types.TryGetValue(descriptorType.Name, out var descriptorFrame))
                     return Mapping(descriptorFrame, selected.MethodFrame, descriptorType.Name);
                 return selected;
@@ -986,12 +986,21 @@ static class NullableRepresentationMaterialization
                  {"t":"fqn","name":"DescriptorBox","args":[{"t":"nullable","of":{"t":"tv","scope":"type","i":1}}]}],
                "recv":{"k":"this"},"args":[{"k":"local","name":"value"}],"ret":{"t":"fqn","name":"kotlin.Unit"}}]}]}]}
         """)!.AsObject();
+        var publicDescriptor = inheritedDescriptor.DeepClone().AsObject();
+        var publicCall = publicDescriptor["types"][2]["methods"][0]["body"][0].AsObject();
+        publicCall.Remove("memberOwnerTypeParams");
+        publicCall["sig"] = publicCall["memberSignature"].DeepClone();
+        publicCall.Remove("memberSignature");
         Apply(new[] { inheritedDescriptor }, _ => false);
         var rewrittenDescriptor = inheritedDescriptor["types"][2]["methods"][0]["body"][0];
         if (rewrittenDescriptor["memberOwnerTypeParams"] is not JsonArray { Count: 3 }
             || TypeJson.Read(rewrittenDescriptor["memberSignature"][0]) is not TypeNode.Fqn { Args: { } descriptorArguments }
             || descriptorArguments[0] != new TypeNode.Tv("type", 2))
             throw new InvalidOperationException("Inherited declaration identity replaced the explicit accessed-owner frame");
+        Apply(new[] { publicDescriptor }, _ => false);
+        if (TypeJson.Read(publicCall["sig"][0]) is not TypeNode.Fqn { Args: { } publicArguments }
+            || publicArguments[0] != new TypeNode.Tv("type", 2))
+            throw new InvalidOperationException("Public inherited descriptor lost its accessed-owner frame");
         var nongenericSource = new NullableRepresentationTypes(null, null, descriptorTypes, _ => false);
         var sourceSignature = JsonNode.Parse("""
         {"sig":[{"t":"fqn","name":"ImportedStore","args":[{"t":"fqn","name":"kotlin.String"}]}]}
