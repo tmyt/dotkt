@@ -496,10 +496,15 @@ static class KotlinOverrideSlotBridge
                 bridgeDescriptor["referenceMember"] = referenceMember;
             AddImplDescriptor(bridge, supIsInterface ? "clrInterfaceImpls" : "clrBaseImpls", bridgeDescriptor);
             // The bridge, not its typed forwarding target, owns this exact class slot.
+            bool PendingOwnerSelectsSlot(TypeNode pending) => semanticSlotReturn == null
+                ? ReferenceMetadataIndex.SourceDeclarationDescribesCall(pending, descriptorSpec)
+                : pending is TypeNode.Fqn pendingSpec
+                    && SupertypeGraph.Reachable(new Def { Base = pendingSpec }, defs, refs)
+                        .Any(edge => !edge.isInterface
+                            && ReferenceMetadataIndex.SourceDeclarationDescribesCall(edge.spec, semanticSpec));
             if (!supIsInterface
                 && TypeJson.Read(impl["pendingOverrideOwner"]) is TypeNode pendingOwner
-                && ReferenceMetadataIndex.SourceDeclarationDescribesCall(pendingOwner,
-                    semanticSlotReturn == null ? descriptorSpec : semanticSpec)
+                && PendingOwnerSelectsSlot(pendingOwner)
                 && (Str(impl["pendingOverrideMember"]) ?? Str(impl["name"])) == descriptorMember
                 && TypeJson.Read(impl["pendingOverrideReturn"]) is TypeNode pendingReturn
                 && ReferenceMetadataIndex.SourceDeclarationDescribesCall(pendingReturn, semanticSlotReturn ?? slotRet))

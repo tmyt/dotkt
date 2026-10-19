@@ -7,6 +7,8 @@ private class NativeGenericTextSource(override val Item: String?) : Source<Strin
 private class NativeGenericFixedSource(override val Item: Long?) : FixedSource
 private class NativeGenericMutableSource(override var Item: Long?) : MutableSource<Long?>
 private class NativeGenericBaseSource(override val Item: Int?) : BaseSource<Int?>()
+private class NativeGenericMidBaseSource(override val Item: Int?) : MidSource<String, Int?>()
+private class NativeGenericMutableMidBaseSource(override var Item: Long?) : MutableMidSource<Long?, String>()
 private fun <T> readNativeGenericSource(value: Source<T>): T = value.Item
 
 class NativeGenericNullableSlotTests {
@@ -51,7 +53,7 @@ class NativeGenericNullableSlotTests {
         check(slot.Item == 0L && Api.ReadMutable(value) == 0L)
     }
 
-    @TestAttribute fun abstractBaseGetterClosesInItsErasedApplicationFrame() {
+    @TestAttribute fun nativeBasePropertiesKeepTheirSelectedSlots() {
         val present = NativeGenericBaseSource(23)
         val absent = NativeGenericBaseSource(null)
         val slot: BaseSource<Int?> = present
@@ -59,5 +61,21 @@ class NativeGenericNullableSlotTests {
         check(present.Item == 23 && absent.Item == null)
         check(slot.Item == 23 && empty.Item == null)
         check(Api.ReadBase(present) == 23 && Api.ReadBase(absent) == null)
+
+        val middle = NativeGenericMidBaseSource(31)
+        val noMiddle = NativeGenericMidBaseSource(null)
+        val inherited: BaseSource<Int?> = middle
+        check(middle.Item == 31 && noMiddle.Item == null && inherited.Item == 31)
+        check(Api.ReadBase(middle) == 31 && Api.ReadBase(noMiddle) == null)
+
+        val mutable = NativeGenericMutableMidBaseSource(null)
+        val mutableBase: MutableBaseSource<Long?> = mutable
+        check(mutable.Item == null && mutableBase.Item == null && Api.ReadMutableBase(mutable) == null)
+        mutableBase.Item = 5_000_000_000L
+        check(mutable.Item == 5_000_000_000L && Api.ReadMutableBase(mutable) == 5_000_000_000L)
+        Api.WriteMutableBase(mutable, 6_000_000_000L)
+        check(mutable.Item == 6_000_000_000L && mutableBase.Item == 6_000_000_000L)
+        Api.WriteMutableBase(mutable, null)
+        check(mutable.Item == null && mutableBase.Item == null)
     }
 }
