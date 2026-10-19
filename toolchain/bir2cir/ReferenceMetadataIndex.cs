@@ -142,6 +142,7 @@ sealed partial class ReferenceMetadataIndex
     // Trusted [KotlinType(G<*,...>)] on a compiler-generated non-generic interface is the explicit existential ABI
     // relation. No physical-name suffix participates in recognition.
     readonly Dictionary<string, string> _existentialPhysicalBySemanticOwner = new(StringComparer.Ordinal);
+    readonly Dictionary<string, List<(string Owner, int[] Slots, string Declaration, string Invoke)>> _managedReferenceContracts = new(StringComparer.Ordinal);
     readonly HashSet<string> _existentialPhysicalOwners = new(StringComparer.Ordinal);
     readonly Dictionary<string, string> _existentialSemanticByPhysicalOwner = new(StringComparer.Ordinal);
     readonly HashSet<string> _fileClassOwners = new(StringComparer.Ordinal);          // trusted Kotlin top-level declaration hosts
@@ -756,6 +757,12 @@ sealed partial class ReferenceMetadataIndex
                 if (!_existentialSemanticByPhysicalOwner.TryAdd(physical, semantic)
                     || _existentialSemanticByPhysicalOwner[physical] != semantic)
                     throw new InvalidOperationException($"conflicting Kotlin existential physical owner '{physical}'");
+            }
+            foreach (var (semantic, contracts) in asm.DotKt.ManagedReferenceContracts)
+            {
+                if (!_managedReferenceContracts.TryGetValue(semantic, out var current))
+                    _managedReferenceContracts.Add(semantic, current = new());
+                current.AddRange(contracts);
             }
             foreach (var owner in asm.DotKt.FileClassOwners)
                 _fileClassOwners.Add(StripGenericArity(DottedFqn(owner)));
@@ -2728,6 +2735,53 @@ sealed partial class ReferenceMetadataIndex
         erasedSignature = selected.ParamTypeNodes;
         declarationResult = accessorKind == "get" ? fieldType : new TypeNode.Fqn("kotlin.Unit");
         physicalResult = selected.ReturnTypeNode ?? selected.ReturnType;
+        return true;
+    }
+
+    public bool TryManagedReferenceContract(TypeNode.Fqn sourceOwner, string sourceMember, string accessorKind,
+        int methodArity, IReadOnlyList<TypeNode> signature, int parameterCount, string declarationId,
+        out TypeNode.Fqn owner, out MemberBinding member, out string invoke)
+    {
+        owner = null;
+        member = null;
+        invoke = null;
+        if (!_managedReferenceContracts.TryGetValue(StripGenericArity(DottedFqn(sourceOwner.Name)), out var contracts)
+            || sourceOwner.Args == null) return false;
+        var matches = new List<(TypeNode.Fqn, MemberBinding, string)>();
+        foreach (var contract in contracts)
+        {
+            if (declarationId != null && declarationId != contract.Declaration) continue;
+            if (!TryMembersByBirOwner(contract.Owner, out var members)) continue;
+            foreach (var candidate in members.Where(candidate => !candidate.IsStatic
+                && candidate.MethodArity == methodArity && candidate.ParamCount == parameterCount))
+            {
+                if (declarationId != null)
+                {
+                    // Each marked interface owns one operational slot, linked to its source declaration by the
+                    // type carrier. The source spelling is still independently carried on the physical MethodDef.
+                    if (accessorKind is "get" or "set"
+                        ? candidate.SourcePropertyName != sourceMember || candidate.AccessorKind != accessorKind
+                        : candidate.SourceMethodName != sourceMember) continue;
+                }
+                else
+                {
+                    if (accessorKind is "get" or "set"
+                        ? candidate.SourcePropertyName != sourceMember || candidate.AccessorKind != accessorKind
+                        : candidate.SourceMethodName != sourceMember) continue;
+                    var source = candidate.KotlinParameterTypes ?? candidate.ParamTypeNodes;
+                    if (signature == null || source == null || source.Length != signature.Count
+                        || !source.Select((parameter, index) => ForeignStarDeclarationDescribesCall(
+                            candidate.NullableGenericParams?[index] ?? parameter,
+                            signature[index], sourceOwner.Args)).All(match => match)) continue;
+                }
+                if (contract.Slots.Any(index => index >= sourceOwner.Args.Length))
+                    throw new InvalidOperationException("Managed-reference contract application has an incomplete owner frame");
+                matches.Add((new TypeNode.Fqn(contract.Owner,
+                    contract.Slots.Select(index => sourceOwner.Args[index]).ToArray()), candidate, contract.Invoke));
+            }
+        }
+        if (matches.Count != 1) return false;
+        (owner, member, invoke) = matches[0];
         return true;
     }
 
@@ -5024,6 +5078,24 @@ sealed partial class ReferenceMetadataIndex
                             (string)valueRepresentation.ConstructorArguments[1].Value,
                             (string)valueRepresentation.ConstructorArguments[2].Value));
                     var exactPhysicalOwner = ExactPhysicalMetadataName(type);
+                    // A dedicated carrier describes operational dispatch, not a Kotlin supertype or value view.
+                    // Its slot vector explicitly maps the interface's physical frame into the source owner frame.
+                    if (dotKtAuthored && type.IsInterface && type.IsGenericType
+                        && HasAttribute(type.GetCustomAttributesData(), CompilerGeneratedAttr)
+                        && CarrierJsonOf(type.GetCustomAttributesData(), asm,
+                            RoundtripMetadata.AKManagedReferenceContract) is JsonObject referenceContract)
+                    {
+                        var arity = type.GetGenericArguments().Length;
+                        var slots = ((JsonArray)referenceContract["slots"]).Select(value => value.GetValue<int>()).ToArray();
+                        if (slots.Length != arity || slots.Any(index => index < 0)
+                            || slots.Distinct().Count() != slots.Length)
+                            throw new InvalidDataException("Malformed managed-reference contract frame");
+                        var semantic = StripGenericArity(DottedFqn(referenceContract["owner"].GetValue<string>()));
+                        if (!metadata.ManagedReferenceContracts.TryGetValue(semantic, out var contracts))
+                            metadata.ManagedReferenceContracts.Add(semantic, contracts = new());
+                        contracts.Add((exactPhysicalOwner, slots, referenceContract["declaration"]?.GetValue<string>(),
+                            referenceContract["invoke"].GetValue<string>()));
+                    }
                     AddExactPhysicalTypeName(metadata.ExactPhysicalTypeByDottedName,
                         OwnerIdentity(ownerFqn, type.IsGenericType ? type.GetGenericArguments().Length : 0),
                         exactPhysicalOwner);
@@ -5594,6 +5666,7 @@ sealed partial class ReferenceMetadataIndex
         attrs.ValidateCarrierTargets(
             KotlinStaticCarrierAttr,
             HandleKind.TypeDefinition);
+        attrs.ValidateCarrierTargets(RoundtripMetadata.AKManagedReferenceContract, HandleKind.TypeDefinition);
         attrs.ValidateCarrierTargets(
             KotlinRichEnumAttr,
             HandleKind.TypeDefinition);
@@ -5604,6 +5677,7 @@ sealed partial class ReferenceMetadataIndex
         {
             var type = reader.GetTypeDefinition(typeHandle);
             using (attrs.CarrierDocument(typeHandle, KotlinStaticCarrierAttr)) { }
+            using (attrs.CarrierDocument(typeHandle, RoundtripMetadata.AKManagedReferenceContract)) { }
             using (attrs.CarrierDocument(typeHandle, KotlinRichEnumAttr)) { }
             using (attrs.CarrierDocument(typeHandle, KotlinBasicEnumAttr)) { }
             foreach (var method in type.GetMethods())
@@ -8135,6 +8209,7 @@ sealed class ReferenceDotKtMetadata
     public readonly Dictionary<string, ReferenceMetadataIndex.RichEnumMetadata> RichEnums = new(StringComparer.Ordinal);
     public readonly Dictionary<string, BasicEnumMetadata> BasicEnums = new(StringComparer.Ordinal);
     public readonly Dictionary<string, string> ExistentialPhysicalBySemanticOwner = new(StringComparer.Ordinal);
+    public readonly Dictionary<string, List<(string Owner, int[] Slots, string Declaration, string Invoke)>> ManagedReferenceContracts = new(StringComparer.Ordinal);
     public readonly HashSet<string> FileClassOwners = new(StringComparer.Ordinal);         // trusted [KotlinFileClass] types
     public readonly Dictionary<string, bool> CompanionStaticByPhysicalOwner = new(StringComparer.Ordinal);
     public readonly Dictionary<string, string> SingletonCompanionCarrierBySemanticOwner = new(StringComparer.Ordinal);

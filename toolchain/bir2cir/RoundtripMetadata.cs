@@ -54,6 +54,7 @@ static class RoundtripMetadata
     const string AKPropertyAccessor = Ns + "KotlinPropertyAccessorAttribute";
     const string AKSourceMethod = Ns + "KotlinSourceMethodAttribute";
     const string AKInnerConstructorFactory = Ns + "KotlinInnerConstructorFactoryAttribute";
+    internal const string AKManagedReferenceContract = Ns + "KotlinManagedReferenceContractAttribute";
     const string AKDeclarationIdentity = Ns + "KotlinDeclarationIdentityAttribute";
     const string AKConstructorAdapter = Ns + "KotlinConstructorAdapterAttribute";
     internal const string AKPropertyStorage = Ns + "KotlinPropertyStorageAttribute";
@@ -199,6 +200,11 @@ static class RoundtripMetadata
 
     static void StampType(JsonObject to)
     {
+        if (to["managedReferenceContract"] is JsonObject referenceContract)
+        {
+            Append(to, JsonCarrierAttr(AKManagedReferenceContract, referenceContract));
+            to.Remove("managedReferenceContract");
+        }
         // [KotlinBasicEnum(version, bytes)] — explicit CLR enum values destroy the ordinal=value and
         // Enum.GetValues-order shortcuts. It must be stamped on the physical enum itself before returning from the
         // reference-type metadata path; downstream projection cannot recover declaration order from FieldDef order or
@@ -1026,6 +1032,7 @@ static class RoundtripMetadata
             AttrClass(AKPropertyAccessor, Ctor(Param("System.String"), Param(ByteArrayType()))), // method-generic Kotlin property accessor association
             AttrClass(AKSourceMethod, Ctor(Param("System.String"), Param(ByteArrayType()))), // renamed CLR method -> Kotlin source identity
             AttrClass(AKInnerConstructorFactory, Ctor(Param("System.String"), Param(ByteArrayType()))), // existential outer -> exact inner constructor
+            AttrClass(AKManagedReferenceContract, Ctor(Param("System.String"), Param(ByteArrayType()))),
             AttrClass(AKDeclarationIdentity, Ctor(Param("System.String"), Param(ByteArrayType()))), // #395 — frontend callable identity + source name
             AttrClass(AKConstructorAdapter, Ctor(Param("System.String"), Param(ByteArrayType()))), // alias ctor declaration -> terminal physical delegation
             AttrClass(AKPropertyStorage, Ctor(Param("System.String"), Param(ByteArrayType()))), // C# 14 property getter -> Kotlin-only storage facts

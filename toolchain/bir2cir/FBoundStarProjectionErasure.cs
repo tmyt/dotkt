@@ -15,7 +15,7 @@ using DotKt.Bir;
 // declaration, and rewrites only explicit star positions and erased runtime classifier tests/casts. Reference and
 // runtime builds both run it, so downstream compilations recognize the view from trusted DotKt metadata. BIR from an
 // older toolchain is unsupported: `G<Any>` is always the concrete Kotlin type and is never guessed back into `G<*>`.
-static class FBoundStarProjectionErasure
+static partial class FBoundStarProjectionErasure
 {
     const string CarrierMark = "$star";
     internal const int InnerFactoryBottomTypeArgument = -1;
@@ -31,6 +31,8 @@ static class FBoundStarProjectionErasure
     const string DelegationOuterSlotKey = "delegationOuterSlot";
     static Dictionary<string, List<JsonObject>> _localMethods = new(StringComparer.Ordinal);
     static Dictionary<(string Owner, string Identity), JsonObject> _localDeclarations = new();
+    static IReadOnlyDictionary<string, SupertypeGraph.Def> _sourceSupertypes = new Dictionary<string, SupertypeGraph.Def>();
+    static HashSet<string> _usedCarrierNames = new(StringComparer.Ordinal);
 
     sealed class Owner
     {
@@ -41,6 +43,7 @@ static class FBoundStarProjectionErasure
         public int Arity;
         public bool Needed;
         public readonly Dictionary<JsonObject, (JsonObject Slot, TypeNode[] Signature)> Slots = new();
+        public readonly Dictionary<JsonObject, ReferenceContract> ReferenceContracts = new();
     }
 
     public static IReadOnlyDictionary<string, string> ApplyAll(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs,
@@ -59,6 +62,7 @@ static class FBoundStarProjectionErasure
         var aliases = new Dictionary<string, string>(refs.Aliases, StringComparer.Ordinal);
         foreach (var alias in localClrAliases) aliases[alias.Key] = alias.Value;
         var supertypeDefs = SupertypeGraph.Collect(rootList);
+        _sourceSupertypes = supertypeDefs;
         // Snapshot declaration-owned edges before synthesis attaches carrier interfaces to the live definitions.
         var baseContracts = owners.Values.ToDictionary(owner => owner.Name, owner => SupertypeGraph.Reachable(
             new SupertypeGraph.Def { Base = TypeJson.Read(owner.Def["base"]) as TypeNode.Fqn },
@@ -626,6 +630,7 @@ static class FBoundStarProjectionErasure
     static void AllocateCarrierNames(IReadOnlyDictionary<string, Owner> owners, IEnumerable<string> declaredNames)
     {
         var used = declaredNames.ToHashSet(StringComparer.Ordinal);
+        _usedCarrierNames = used;
         foreach (var owner in owners.Values.OrderBy(o => o.Name, StringComparer.Ordinal))
         {
             var stem = owner.Name + CarrierMark;
@@ -1813,7 +1818,8 @@ static class FBoundStarProjectionErasure
                 var bound = IsBoundDeclarationType(obj, "type", refs, localClrAliases);
                 var projected = RewriteType(type, owners, refs, bound, localClrAliases,
                     preserveConstructedHead: IsExactLexicalType(obj, "type"));
-                if (IsCapturedInner(type, owners, refs) && projected != type)
+                if ((IsCapturedInner(type, owners, refs) || SignatureValueTypes.Of(type) is TypeNode.ByRef)
+                    && projected != type)
                 {
                     obj["kotlinType"] ??= Str(obj["nullableGeneric"]) ?? TypeNode.ToJson(type);
                     obj["type"] = TypeJson.Write(projected);
@@ -1932,6 +1938,16 @@ static class FBoundStarProjectionErasure
                         .Select(parameter => TypeJson.Read(parameter["type"])).ToArray() ?? Array.Empty<TypeNode>());
                 var key = MethodKey(slot);
                 if (key == null || !seen.Add(key)) continue;
+                if (CreateReferenceContract(owner, method, slot, refs) is { } referenceContract)
+                {
+                    owner.ReferenceContracts.Add(method, referenceContract);
+                    var referenceBridge = BridgeMethod(owner, method, owners, refs,
+                        slotTypeParams: slot["typeParams"] as JsonArray,
+                        referenceContract: referenceContract);
+                    DeclarationSignatureIdentity.RecordSelectedImplementationSlot(referenceBridge, slot);
+                    declared.Add(referenceBridge);
+                    continue;
+                }
                 methods.Add(slot);
                 if (requiresBridge)
                 {
@@ -2179,11 +2195,13 @@ static class FBoundStarProjectionErasure
     static JsonObject BridgeMethod(Owner owner, JsonObject method,
         IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs,
         string bridgeName = null, TypeNode.Fqn callOwner = null, string slotMemberName = null,
-        JsonArray slotTypeParams = null)
+        JsonArray slotTypeParams = null, ReferenceContract referenceContract = null)
     {
         var originalParams = method["params"] as JsonArray ?? new JsonArray();
         var methodDisplay = $"{owner.Name}.{MethodDisplay(method)}";
         var bridgeParams = EraseParams(originalParams, methodDisplay, owners, refs);
+        if (referenceContract != null)
+            RestoreReferenceParameters(originalParams, bridgeParams);
         var args = new JsonArray();
         var sig = new JsonArray();
         for (var i = 0; i < originalParams.Count; i++)
@@ -2192,7 +2210,7 @@ static class FBoundStarProjectionErasure
             var name = Str(p["name"]) ?? "p" + i;
             var originalType = RequiredParamType(p, i, methodDisplay);
             JsonNode value = new JsonObject { ["k"] = "local", ["name"] = name };
-            if (ContainsOwnerTv(originalType))
+            if (ContainsOwnerTv(originalType) && SignatureValueTypes.Of(originalType) is not TypeNode.ByRef)
                 value = new JsonObject
                 {
                     ["k"] = "cast",
@@ -2268,7 +2286,7 @@ static class FBoundStarProjectionErasure
         // of this bridge and was also unable to distinguish inherited same-signature slots.
         var descriptor = new JsonObject
         {
-            ["owner"] = TypeJson.Write(new TypeNode.Fqn(owner.ErasedName)),
+            ["owner"] = TypeJson.Write(referenceContract?.Owner ?? new TypeNode.Fqn(owner.ErasedName)),
             ["member"] = slotMemberName ?? bridge["name"]?.DeepClone(),
             ["arity"] = (method["typeParams"] as JsonArray)?.Count ?? 0,
             ["params"] = FunctionSignatureIdentity.Signature(bridgeParams),
@@ -4589,20 +4607,28 @@ static class FBoundStarProjectionErasure
             || StripSourceNullability(ExpressionType(call["recv"])) is TypeNode.Fqn receiverType
                 && (owners.Values.Any(owner => owner.ErasedName == receiverType.Name)
                     || refs.IsExistentialPhysicalOwner(receiverType.Name));
-        if (!starOwner && !erasedSmartCast && !existentialReceiver && !kotlinVariantOwner) return;
+        var selectedSignature = (call["sig"] ?? call["argTypes"] ?? ReferenceCallShape(call)) as JsonArray;
+        var referenceCall = !lexicalReceiver && selectedSignature?
+            .Any(type => SignatureValueTypes.Of(TypeJson.Read(type)) is TypeNode.ByRef) == true;
+        if (!starOwner && !erasedSmartCast && !existentialReceiver && !kotlinVariantOwner && !referenceCall) return;
 
         var pc = (call["sig"] as JsonArray)?.Count
             ?? (call["argTypes"] as JsonArray)?.Count
             ?? (call["args"] as JsonArray)?.Count ?? 0;
         var ga = (call["typeArgs"] as JsonArray)?.Count ?? 0;
-        var authoredSignature = ((call["sig"] ?? call["argTypes"]) as JsonArray)?
-            .Select(TypeJson.Read).ToArray();
+        var authoredSignature = selectedSignature?.Select(TypeJson.Read).ToArray();
         if (authoredSignature?.Any(t => t == null) == true) authoredSignature = null;
         if (start != null && start.Needed
             && FindDeclaringOwner(start, sourceMember, accessorKind, pc, ga, authoredSignature,
                 declarationId, owners) is { } found)
         {
             var (declaring, declaration) = found;
+            if (declaring.ReferenceContracts.TryGetValue(declaration, out var referenceContract))
+            {
+                BindReferenceContract(call, referenceContract,
+                    DeclarationOwnerArguments(declaring.Name), propertyCall, sourcePropertyName, accessorKind);
+                return;
+            }
             CloseDeclarationResult(TypeJson.Read(declaration["ret"]));
             BindOwner(declaring.ErasedName);
             call["virtual"] = true; // erased owner is an interface; CIR must carry callvirt explicitly
@@ -4646,6 +4672,24 @@ static class FBoundStarProjectionErasure
         // Cross-module equivalent of the local declaration walk above.  The emitted reference is the
         // authority for the physical existential slot; no reference-assembly or namespace special case
         // participates in the decision.
+        if (authoredSignature?.Any(type => SignatureValueTypes.Of(type) is TypeNode.ByRef) == true)
+        foreach (var (application, _) in SupertypeGraph.Reachable(new SupertypeGraph.Def { Base = f },
+                     _sourceSupertypes, refs))
+            if (refs.TryManagedReferenceContract(application, sourceMember, accessorKind, ga, authoredSignature, pc,
+                    declarationId, out var referenceOwner, out var referenceMember, out var referenceInvoke))
+            {
+                var referenceSlot = new JsonObject {
+                    ["name"] = referenceMember.Name,
+                    ["ret"] = TypeJson.Write(referenceMember.ReturnTypeNode),
+                    ["params"] = new JsonArray(referenceMember.ParamTypeNodes.Select((type, index) =>
+                        (JsonNode)new JsonObject { ["name"] = "p" + index, ["type"] = TypeJson.Write(type) }).ToArray()),
+                    [DeclarationIdentityBinding.Key] = referenceMember.DeclarationId,
+                };
+                BindReferenceContract(call, new ReferenceContract(referenceOwner, referenceSlot, referenceInvoke),
+                    Array.Empty<TypeNode>(), propertyCall, sourcePropertyName, accessorKind,
+                    constructedOwner: referenceOwner);
+                return;
+            }
         if (refs.TryStarProjectionMember(f, sourceMember, accessorKind, ga, authoredSignature, pc,
                 declarationId,
                 out var erasedOwner, out var erasedMethod, out var erasedSignature, out var declarationResult,
