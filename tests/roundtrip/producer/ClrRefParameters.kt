@@ -59,6 +59,15 @@ class OverridingReferenceWriter : ReferenceWriter<String, Int>() {
     }
 }
 
+interface ReferenceInterface<T> {
+    fun replace(first: ClrRef<ReferenceBox<T>>, second: ClrRef<ReferenceBox<T>>,
+                value: ReferenceBox<T>): ReferenceBox<T> {
+        first.value = value
+        return second.value
+    }
+}
+class StringReferenceInterface : ReferenceInterface<String>
+
 class ScalarReferenceWriter<Unused, T> {
     fun replace(first: ClrRef<T>, second: ClrRef<T>, value: T): T {
         first.value = value
@@ -66,9 +75,30 @@ class ScalarReferenceWriter<Unused, T> {
     }
 }
 
+class CovariantReferenceBox<out T>(val value: T)
+class CovariantReferenceWriter<T> {
+    fun keep(slot: ClrRef<CovariantReferenceBox<T>>) { slot.value = slot.value }
+}
+fun anyReferenceView(): CovariantReferenceBox<Any> = CovariantReferenceBox(1)
+
+interface ReferenceBound
+class ReferenceItem : ReferenceBound
+class BoundReferenceWriter<R, T : R> {
+    fun keep(slot: ClrRef<T>) { slot.value = slot.value }
+}
+
+open class ReferenceBoundBase
+open class ReferenceBoundMiddle : ReferenceBoundBase()
+class ReferenceBoundLeaf : ReferenceBoundMiddle()
+class ConstrainedReferenceBox<T : ReferenceBoundBase>(val value: T)
+class ConstrainedReferenceWriter<R : ReferenceBoundBase, T : R> {
+    fun keep(slot: ClrRef<ConstrainedReferenceBox<T>>) { slot.value = slot.value }
+}
+
 fun sameModuleReferenceAlias(): Boolean {
     var value = ReferenceBox("before")
     val replacement = ReferenceBox("after")
-    return ReferenceWriter<String, Int>().replace(byref(value), byref(value), replacement) === replacement
-        && value === replacement
+    check(ReferenceWriter<String, Int>().replace(byref(value), byref(value), replacement) === replacement)
+    val derived = DerivedReferenceWriter<Int, String>()
+    return derived.replace(byref(value), byref(value), replacement) === replacement && value === replacement
 }

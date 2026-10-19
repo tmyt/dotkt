@@ -138,18 +138,19 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   Independent consequences such as `R : Tag` from `R : T, T : Tag` remain physical;
   value flow between distinct generic slots uses explicit CIR conversions. Override selection uses Kotlin bounds,
   while its CLR slot wiring uses physical bounds, including when the base declaration comes from another DLL.
-- **Owner-dependent managed-reference parameters use exact operational contracts, not object transport.**
-  A generic member's `ClrRef<T>` parameter remains a real CLR managed reference. Its dedicated invariant interface
-  retains only owner parameters needed by the pointee and their constraints; unrelated owner arguments remain
-  erased. The selected interface is checked before dispatch and forwards the original reference, preserving aliases,
-  exceptional writes and virtual dispatch without boxing pointers, reflection argument arrays or copy-back storage.
-  Trusted `KotlinManagedReferenceContract` metadata preserves that edge across DLLs; the interface is not a Kotlin
-  supertype or an alternative user-facing reference type.
   Generated capture frames inherit those physical bounds through their explicit construction type arguments,
   including concrete bounds substituted on an override and captures nested inside other generated frames.
   Suspend members use the same physical constraints on their Task and cold-entry slots. Their state machines
   concatenate the enclosing owner's and the method's generic frames, preserving both across suspension and capture.
   The Task projection retains the Kotlin constraint and source-member metadata used by separately compiled consumers.
+- **Owner-dependent managed-reference parameters use exact operational contracts, not object transport.**
+  A generic member's `ClrRef<T>` parameter remains a real CLR managed reference. Its dedicated invariant interface
+  retains only owner parameters needed by the resolved physical pointee. Source bounds contribute their consequences
+  expressible in that frame, not extra invariant owner arguments. If projection removes every owner dependency, the
+  ordinary erased interface can forward the reference directly. Checks occur after argument evaluation and before
+  dispatch, preserving aliases, exceptional writes and virtual dispatch without boxing pointers, reflection argument
+  arrays or copy-back storage. Trusted `KotlinManagedReferenceContract` metadata preserves the exact edge across DLLs;
+  the interface is not a Kotlin supertype or an alternative user-facing reference type.
 - **An arbitrary imported CLR `G<*>` uses an `object` value slot plus exact reflection dispatch.** A foreign assembly
   cannot retroactively implement DotKt's existential interface. `is`/`as`, methods, properties, and fields therefore
   call the pure-Kotlin `DotKt.Runtime.CompilerServices` star runtime. `bir2cir` resolves overloads and supplies the

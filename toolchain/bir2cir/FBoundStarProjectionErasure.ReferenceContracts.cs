@@ -7,7 +7,7 @@ using DotKt.Bir;
 static partial class FBoundStarProjectionErasure
 {
     // A managed reference cannot pass through the object-valued existential ABI. Retain exactly the owner
-    // parameters required by its pointee (and their constraints) in a separate, invariant interface contract.
+    // parameters required by its physical pointee in a separate, invariant interface contract.
     // Other owner arguments remain erased: an unchecked view of an unrelated argument must not change this call.
     sealed record ReferenceContract(TypeNode.Fqn Owner, JsonObject Slot, string Invoke);
 
@@ -15,7 +15,7 @@ static partial class FBoundStarProjectionErasure
         && shape.Any(type => SignatureValueTypes.Of(TypeJson.Read(type)) is TypeNode.ByRef) ? shape : null;
 
     static ReferenceContract CreateReferenceContract(Owner owner, JsonObject method, JsonObject slot,
-        IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs)
+        ReferenceMetadataIndex refs)
     {
         var originals = method["params"] as JsonArray ?? new JsonArray();
         var dependencies = new HashSet<int>();
@@ -25,14 +25,6 @@ static partial class FBoundStarProjectionErasure
         if (dependencies.Count == 0) return null;
 
         var ownerParameters = owner.Def["typeParams"] as JsonArray ?? new JsonArray();
-        int previous;
-        do
-        {
-            previous = dependencies.Count;
-            foreach (var index in dependencies.ToArray())
-                if (index < ownerParameters.Count && ownerParameters[index] is JsonObject parameter)
-                    VisitVariables(parameter["constraints"], dependencies);
-        } while (previous != dependencies.Count);
         var indices = dependencies.OrderBy(index => index).ToArray();
         if (indices.Any(index => index < 0 || index >= ownerParameters.Count))
             throw new InvalidOperationException("Managed-reference contract has no exact owner parameter frame");
@@ -40,6 +32,10 @@ static partial class FBoundStarProjectionErasure
             .ToDictionary(pair => pair.index, pair => pair.position);
         var parameters = new JsonArray(indices.Select(index => {
             var parameter = ownerParameters[index].DeepClone();
+            if (parameter is JsonObject constrained && constrained["constraints"] is JsonArray bounds)
+                constrained["constraints"] = new JsonArray(bounds.SelectMany(bound =>
+                    ReferenceBounds(TypeJson.Read(bound), ownerParameters, dependencies, refs))
+                    .Distinct().Select(TypeJson.Write).ToArray());
             ReindexVariables(parameter, mapping);
             if (parameter is JsonObject declaration) declaration.Remove("variance");
             return parameter;
@@ -79,6 +75,40 @@ static partial class FBoundStarProjectionErasure
             owner.Def["interfaces"] = interfaces = new JsonArray();
         interfaces.Add(TypeJson.Write(implemented));
         return new ReferenceContract(implemented, slot, "$ref$invoke");
+    }
+
+    // A source bound T : R does not make R part of a ref T location's identity. Keep its consequences that can
+    // be stated in the pointee frame (T : R, R : Base => T : Base), including current nominal supertype edges.
+    static IEnumerable<TypeNode> ReferenceBounds(TypeNode bound, JsonArray parameters,
+        IReadOnlySet<int> retained, ReferenceMetadataIndex refs)
+    {
+        var visited = new HashSet<int>();
+        bool Fits(TypeNode type)
+        {
+            var variables = new HashSet<int>();
+            VisitVariables(TypeJson.Write(type), variables);
+            return variables.IsSubsetOf(retained);
+        }
+        IEnumerable<TypeNode> Visit(TypeNode current)
+        {
+            if (StripSourceNullability(current) is TypeNode.Tv { Scope: "type" } variable
+                && !retained.Contains(variable.I))
+            {
+                if (!visited.Add(variable.I)) yield break;
+                if (parameters[variable.I] is JsonObject parameter && parameter["constraints"] is JsonArray bounds)
+                    foreach (var next in bounds)
+                        foreach (var result in Visit(TypeJson.Read(next))) yield return result;
+            }
+            else if (current != null)
+            {
+                if (Fits(current)) yield return current;
+                else if (StripSourceNullability(current) is TypeNode.Fqn nominal)
+                    foreach (var (ancestor, _) in SupertypeGraph.Reachable(
+                                 new SupertypeGraph.Def { Base = nominal }, _sourceSupertypes, refs))
+                        if (Fits(ancestor)) yield return ancestor;
+            }
+        }
+        return Visit(bound);
     }
 
     static JsonObject ReferenceInvoker(string ownerName, int arity, JsonObject slot)

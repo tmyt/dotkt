@@ -1818,7 +1818,8 @@ static partial class FBoundStarProjectionErasure
                 var bound = IsBoundDeclarationType(obj, "type", refs, localClrAliases);
                 var projected = RewriteType(type, owners, refs, bound, localClrAliases,
                     preserveConstructedHead: IsExactLexicalType(obj, "type"));
-                if (IsCapturedInner(type, owners, refs) && projected != type)
+                if ((IsCapturedInner(type, owners, refs) || SignatureValueTypes.Of(type) is TypeNode.ByRef)
+                    && projected != type)
                 {
                     obj["kotlinType"] ??= Str(obj["nullableGeneric"]) ?? TypeNode.ToJson(type);
                     obj["type"] = TypeJson.Write(projected);
@@ -1937,7 +1938,7 @@ static partial class FBoundStarProjectionErasure
                         .Select(parameter => TypeJson.Read(parameter["type"])).ToArray() ?? Array.Empty<TypeNode>());
                 var key = MethodKey(slot);
                 if (key == null || !seen.Add(key)) continue;
-                if (CreateReferenceContract(owner, method, slot, owners, refs) is { } referenceContract)
+                if (CreateReferenceContract(owner, method, slot, refs) is { } referenceContract)
                 {
                     owner.ReferenceContracts.Add(method, referenceContract);
                     var referenceBridge = BridgeMethod(owner, method, owners, refs,
