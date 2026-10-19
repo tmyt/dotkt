@@ -22,6 +22,10 @@ class EnumEntriesTests {
         assertTrue(entries.contains(EnumIntrColor.BLUE))
         assertEquals(1, entries.indexOf(EnumIntrColor.GREEN))
         assertEquals(1, entries.lastIndexOf(EnumIntrColor.GREEN))
+        val star: List<*> = entries
+        assertEquals(false, star.contains(null))
+        assertEquals(false, star.contains("RED"))
+        assertEquals(-1, star.indexOf("RED"))
         val names = mutableListOf<String>()
         for (entry in entries) names.add(entry.name)
         assertEquals("RED|GREEN|BLUE", names.joinToString("|"))
