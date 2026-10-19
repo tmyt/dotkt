@@ -5,6 +5,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Preserve managed-reference identity and required storage constraints through inner-constructor factories, including DLL calls (#1104).
+
 - Keep imported inherited call argument descriptors in the selected declaration's frame, including reordered owner arguments (#1102).
 
 - Preserve managed-reference pointees and live aliasing through generic-owner member contracts, including DLL imports (#970).

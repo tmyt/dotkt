@@ -348,8 +348,11 @@ static class NullableRepresentationMaterialization
             };
             // A body-dispatch helper's storage companions are deliberately instantiated with object.
             // Its private value signature does not turn an erased dispatch fact into a CLR constraint.
-            var publishedSlot = !bodyOnlyStorage && new[] { "params", "ret", "fields", "properties", "base", "interfaces" }
-                .Any(key => Mentions(declaration[key]));
+            var publishedSlot = !bodyOnlyStorage && (
+                new[] { "params", "ret", "fields", "properties", "base", "interfaces" }
+                    .Any(key => Mentions(declaration[key]))
+                || declaration["ctors"] is JsonArray constructors
+                    && constructors.OfType<JsonObject>().Any(constructor => Mentions(constructor["params"])));
             if (publishedSlot)
             {
                 // The native/logical value and its storage face share the source classifier
