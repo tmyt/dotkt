@@ -2518,7 +2518,7 @@ internal fun BirEmitter.byrefBackingField(inner: IrExpression): String? {
  *  [filledExternalArgs].
  *
  *  Parameter descriptors use the selected declaration's frame; argument expressions retain the caller's frame.
- *  Both halves derive from the callee's PARAMETERS, never from "the expressions that happen to be present". Building
+ *  Both vectors retain the call's PARAMETER POSITIONS, never just "the expressions that happen to be present". Building
  *  them from provided expressions (the previous shape here and at the three sibling member paths) silently DELETED an
  *  omitted default's slot: no `defaultArg` placeholder was emitted, so a later provided argument slid into the omitted
  *  parameter's position. `sig` (emitted by the callers via [overloadSigField]) identifies the frontend-selected
