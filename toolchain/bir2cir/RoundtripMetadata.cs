@@ -205,10 +205,9 @@ static class RoundtripMetadata
             Append(to, JsonCarrierAttr(AKManagedReferenceContract, referenceContract));
             to.Remove("managedReferenceContract");
         }
-        // [KotlinBasicEnum(version, bytes)] — explicit CLR enum values destroy the ordinal=value and
-        // Enum.GetValues-order shortcuts. It must be stamped on the physical enum itself before returning from the
-        // reference-type metadata path; downstream projection cannot recover declaration order from FieldDef order or
-        // Enum.GetValues. A plain real enum carries no Kotlin metadata and still takes the early return.
+        // [KotlinBasicEnum(codec, content)] carries every basic enum's producer-owned ordinal/value map, including
+        // ordinary contiguous enums. Stamp it before the reference-type early return: downstream Kotlin operations
+        // must not rediscover declaration order from FieldDef layout or Enum.GetValues.
         if (to["basicEnum"] is JsonObject basicEnum)
         {
             if (to["entries"] is not JsonArray physicalEntries || basicEnum["entries"] is not JsonArray semanticEntries
@@ -1028,8 +1027,8 @@ static class RoundtripMetadata
             AttrClass(AKObject, Ctor()),
             AttrClass(AKInner, Ctor(Param("System.Int32"))), // source `inner` + leading physical outer slots
             AttrClass(AKRichEnum, Ctor(Param("System.String"), Param(ByteArrayType()))), // explicit rich-enum entry/API map
-            AttrClass(AKBasicEnum, Ctor(Param("System.String"), Param(ByteArrayType()))), // explicit basic-enum ordered values
-            AttrClass(AKBasicEnumOrdinal, Ctor(Param("System.Int32"))), // declaration ordinal on each explicit enum literal
+            AttrClass(AKBasicEnum, Ctor(Param("System.String"), Param(ByteArrayType()))), // basic-enum ordered values
+            AttrClass(AKBasicEnumOrdinal, Ctor(Param("System.Int32"))), // declaration ordinal on each Kotlin basic-enum literal
             AttrClass(AKCompanion, Ctor(Param("System.String"), Param(ByteArrayType()))), // #275 — source companion owner/name/representation
             AttrClass(AKCompanionExt, Ctor(Param("System.String"), Param(ByteArrayType()))), // #382 — a companion extension's associated Kotlin type
             AttrClass(AKPropertyAccessor, Ctor(Param("System.String"), Param(ByteArrayType()))), // method-generic Kotlin property accessor association

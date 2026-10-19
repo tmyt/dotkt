@@ -347,7 +347,7 @@
     },
     "basicEnumCarrier": {
       "type": "object",
-      "$comment": "bir2cir transient ordered map for a Kotlin-authored explicit basic enum. RoundtripMetadata consumes it into trusted [KotlinBasicEnum]; declaration entries retain their physical literal facts for ilemit.",
+      "$comment": "bir2cir transient ordered map for every Kotlin-authored basic enum. RoundtripMetadata consumes it into trusted [KotlinBasicEnum]; declaration entries retain their physical literal facts for ilemit.",
       "properties": {
         "underlying": { "type": "string" },
         "entries": {
@@ -380,7 +380,7 @@
         "richEnum": { "$ref": "#/$defs/richEnumCarrier" },
         "clrEnum": { "$ref": "#/$defs/clrEnumFact" },
         "basicEnum": { "$ref": "#/$defs/basicEnumCarrier" },
-        "underlying": { "$ref": "#/$defs/type", "$comment": "CIR-only exact CLR underlying type for an explicit native enum; absent on ordinary Int32 ordinal-valued basic enums." },
+        "underlying": { "$ref": "#/$defs/type", "$comment": "CIR-only exact CLR underlying type for a basic enum; ordinary Kotlin enums select Int32 and explicit CLR enums select their declared integral representation." },
         "mods":       { "$ref": "#/$defs/mods" },
         "vis":        { "$ref": "#/$defs/vis" },
         "typeParams": { "type": "array", "items": { "$ref": "#/$defs/typeParam" } },
@@ -493,7 +493,7 @@
         "ctors":      { "type": "array", "items": { "$ref": "#/$defs/ctorDecl" } },
         "methods":    { "type": "array", "items": { "$ref": "#/$defs/funDecl" } },
         "properties": { "type": "array", "items": { "$ref": "#/$defs/propDecl" } },
-        "entries":    { "type": "array", "items": { "type": "object" }, "description": "enum entries; an explicit CIR enum entry carries name/ordinal/underlying/physicalValue and may carry attrs authored by bir2cir for mechanical field stamping" },
+        "entries":    { "type": "array", "items": { "type": "object" }, "description": "enum entries; a basic CIR enum entry carries name/ordinal/underlying/physicalValue and may carry attrs authored by bir2cir for mechanical field stamping" },
         "pos":        { "$ref": "#/$defs/pos" }
       },
       "allOf": [
