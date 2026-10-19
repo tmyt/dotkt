@@ -111,7 +111,9 @@ static partial class ClrMemberResolution
                 f.Args?.Select(MethodImplComparisonType).ToArray()),
             TypeNode.Array array => new TypeNode.Array(
                 MethodImplComparisonType(array.Elem), array.Rank, array.SzArray),
-            TypeNode.Nullable nullable => new TypeNode.Nullable(MethodImplComparisonType(nullable.Of)),
+            // Compare the document's physical nullable wrapper with metadata's constructed Nullable`1<V>.
+            TypeNode.Nullable nullable => new TypeNode.Fqn("System.Nullable",
+                new[] { MethodImplComparisonType(nullable.Of) }),
             TypeNode.Oblivious oblivious => new TypeNode.Oblivious(MethodImplComparisonType(oblivious.Of)),
             TypeNode.ByRef byRef => new TypeNode.ByRef(MethodImplComparisonType(byRef.Of)),
             TypeNode.Ptr pointer => new TypeNode.Ptr(MethodImplComparisonType(pointer.Of)),
