@@ -144,13 +144,17 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   concatenate the enclosing owner's and the method's generic frames, preserving both across suspension and capture.
   The Task projection retains the Kotlin constraint and source-member metadata used by separately compiled consumers.
 - **Owner-dependent managed-reference parameters use exact operational contracts, not object transport.**
-  A generic member's `ClrRef<T>` parameter remains a real CLR managed reference. Its dedicated invariant interface
-  retains only owner parameters needed by the resolved physical pointee. Source bounds contribute their consequences
+  A generic member's or inner-constructor factory's `ClrRef<T>` parameter remains a real CLR managed reference.
+  Its dedicated invariant interface retains only owner parameters needed by the resolved physical pointee.
+  Source bounds contribute their consequences
   expressible in that frame, not extra invariant owner arguments. If projection removes every owner dependency, the
   ordinary erased interface can forward the reference directly. Checks occur after argument evaluation and before
   dispatch, preserving aliases, exceptional writes and virtual dispatch without boxing pointers, reflection argument
   arrays or copy-back storage. Trusted `KotlinManagedReferenceContract` metadata preserves the exact edge across DLLs;
   the interface is not a Kotlin supertype or an alternative user-facing reference type.
+  Constructors can be reached through legal declaration-site variance: widening `G<String>` to `G<Any>` does not
+  widen the actual constructor's `ref string` location to `ref object`. A mismatching factory contract therefore
+  throws `ClassCastException`, even without an unchecked cast; it does not convert or copy the managed reference.
 - **An arbitrary imported CLR `G<*>` uses an `object` value slot plus exact reflection dispatch.** A foreign assembly
   cannot retroactively implement DotKt's existential interface. `is`/`as`, methods, properties, and fields therefore
   call the pure-Kotlin `DotKt.Runtime.CompilerServices` star runtime. `bir2cir` resolves overloads and supplies the
@@ -1451,8 +1455,9 @@ CLR `ref`/`out` consumes an exact typed location, not a converted Kotlin value. 
 uses a separate physical storage representation, a local passed by reference retains the selected CLR
 parameter's element type for that local's storage lifetime. Ordinary initialization and assignments to it
 are checked value conversions into that type; loading it into a Kotlin value slot converts the value back
-as required. An unchecked Kotlin cast does not relax the native location's type requirement. Passing the
-same local twice preserves aliasing during the call, rather than using copy-in/copy-out temporaries.
+as required. Neither an unchecked Kotlin cast nor a variance conversion relaxes the native location's type
+requirement. Passing the same local twice preserves aliasing during the call, rather than using
+copy-in/copy-out temporaries.
 A generic Kotlin backing field addressed by `ref`/`out` likewise keeps its ordinary CLR type-variable slot,
 not the separate Kotlin value-storage companion. Its layout is fixed for the instance's entire lifetime,
 including ordinary property writes before and after a native call; those writes check the exact field type.

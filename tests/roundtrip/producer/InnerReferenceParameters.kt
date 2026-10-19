@@ -38,7 +38,19 @@ fun sameModuleInnerReferences(): Boolean {
     var value = ReferenceBox("before")
     val replacement = ReferenceBox("after")
     val writer = outer.Writer(byref(value), byref(value), replacement)
-    return value === replacement && writer.observed === replacement
+    var other = ReferenceBox(7)
+    val otherReplacement = ReferenceBox(42)
+    outer.GenericWriter<Int>(byref(value), byref(other), replacement, otherReplacement)
+    val scalar: InnerReferenceOwner<Any, Int> = InnerReferenceOwner<String, Int>()
+    var number = 7
+    scalar.ScalarWriter(byref(number), 42)
+    val bounded: BoundedInnerReferenceOwner<Any, ReferenceBoundLeaf> =
+        BoundedInnerReferenceOwner<Int, ReferenceBoundLeaf>()
+    var constrained = ConstrainedReferenceBox(ReferenceBoundLeaf())
+    val constrainedReplacement = ConstrainedReferenceBox(ReferenceBoundLeaf())
+    bounded.Writer(byref(constrained), constrainedReplacement)
+    return value === replacement && writer.observed === replacement && other === otherReplacement
+        && number == 42 && constrained === constrainedReplacement
 }
 
 fun <A, T> innerReferenceForward(outer: InnerReferenceOwner<A, T>, slot: ClrRef<ReferenceBox<T>>,
@@ -51,6 +63,12 @@ fun <A, T> sameModuleInnerReferenceOverload(outer: InnerReferenceOwner<A, T>, sl
 
 class BoundedInnerReferenceOwner<out Unrelated, T : ReferenceBoundBase> {
     inner class Writer(slot: ClrRef<ConstrainedReferenceBox<T>>, replacement: ConstrainedReferenceBox<T>) {
+        init { slot.value = replacement }
+    }
+}
+
+class VariantInnerReferenceOwner<out T> {
+    inner class Writer(slot: ClrRef<T>, replacement: T) {
         init { slot.value = replacement }
     }
 }

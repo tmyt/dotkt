@@ -54,6 +54,14 @@ class InnerReferenceParameterTests {
         } catch (expected: ClassCastException) {
             check(evaluation.calls == 1 && value === replacement)
         }
+        val variant: VariantInnerReferenceOwner<Any> = VariantInnerReferenceOwner<String>()
+        var widened: Any = "before"
+        try {
+            variant.Writer(byref(widened), "unwritten")
+            error("expected variance pointee mismatch")
+        } catch (expected: ClassCastException) {
+            check(widened == "before")
+        }
     }
 
     @TestAttribute
@@ -71,6 +79,9 @@ class InnerReferenceParameterTests {
         var number = 7
         scalar.ScalarWriter(byref(number), 42)
         check(number == 42)
+        var text = ReferenceBox("concrete")
+        check(scalar.Overloaded(byref(text), replacement).selection == 2)
+        check(text === replacement)
         val bounded: BoundedInnerReferenceOwner<Any, ReferenceBoundLeaf> =
             BoundedInnerReferenceOwner<Int, ReferenceBoundLeaf>()
         var constrained = ConstrainedReferenceBox(ReferenceBoundLeaf())
