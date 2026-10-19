@@ -2368,8 +2368,8 @@ static partial class FBoundStarProjectionErasure
         var ownTypeParams = InnerFactoryTypeParams(
             inner, capturedCount, directDependent, witnesses, methodIndex, owners, refs);
         var result = new TypeNode.Fqn(inner.ErasedName);
-        var carrierParams = new JsonArray(constructorParams.OfType<JsonObject>().Skip(1)
-            .Select(parameter => TypeJson.Write(RequiredParamType(parameter, 0, inner.Name + ".<init>"))).ToArray());
+        var constructorDeclaration = Str(constructor[DeclarationIdentityBinding.Key])
+            ?? throw new InvalidOperationException($"Inner constructor '{inner.Name}' has no declaration identity");
         var slot = new JsonObject
         {
             ["name"] = name,
@@ -2387,7 +2387,7 @@ static partial class FBoundStarProjectionErasure
             [InnerConstructorFactoryKey] = new JsonObject
             {
                 ["inner"] = inner.Name,
-                ["params"] = carrierParams,
+                ["declaration"] = constructorDeclaration,
                 // Position map, not type tokens: -1 is a direct owner-dependent Kotlin-bottom argument, while N
                 // selects factory MethodDef argument N. Transitively dependent source arguments remain ordinary
                 // method slots; only constraints that name the hidden outer or a bottom-fixed slot are omitted.
@@ -3993,7 +3993,7 @@ static partial class FBoundStarProjectionErasure
         else
         {
             if (!refs.TryExistentialInnerConstructorFactory(
-                     referencedOuter, innerType, authoredSignature.Skip(1).ToArray(),
+                     referencedOuter, innerType, Str(construction["constructorDeclarationId"]),
                      out physicalOwner, out physicalMethod, out physicalParameters, out physicalResult,
                      out physicalTypeArguments, out referenceOwner, out var referenceInvoke))
                 throw new InvalidOperationException(
