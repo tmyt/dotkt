@@ -208,7 +208,8 @@ static class KotlinOverrideSlotBridge
             bool supIsInterface, bool referencedSlot, bool interfaceSlotHasDefault,
             string identityName, string descriptorMember, string propertyAccessor,
             TypeNode[] slotParams, TypeNode slotRet, JsonObject impl, JsonArray slotTypeParams = null,
-            bool unitValueReturn = false, TypeNode[] slotSignature = null, string referenceMember = null)
+            bool unitValueReturn = false, TypeNode[] slotSignature = null, string referenceMember = null,
+            TypeNode semanticSlotReturn = null)
         {
             if (supIsInterface && enumerationSlots?.Owns(descriptorSpec, descriptorMember,
                     (impl["typeParams"] as JsonArray)?.Count ?? 0, slotParams, slotRet, PhysicalSlotType, refs) == true)
@@ -495,12 +496,18 @@ static class KotlinOverrideSlotBridge
                 bridgeDescriptor["referenceMember"] = referenceMember;
             AddImplDescriptor(bridge, supIsInterface ? "clrInterfaceImpls" : "clrBaseImpls", bridgeDescriptor);
             // The bridge, not its typed forwarding target, owns this exact class slot.
+            bool PendingOwnerSelectsSlot(TypeNode pending) => semanticSlotReturn == null
+                ? ReferenceMetadataIndex.SourceDeclarationDescribesCall(pending, descriptorSpec)
+                : pending is TypeNode.Fqn pendingSpec
+                    && SupertypeGraph.Reachable(new Def { Base = pendingSpec }, defs, refs)
+                        .Any(edge => !edge.isInterface
+                            && ReferenceMetadataIndex.SourceDeclarationDescribesCall(edge.spec, semanticSpec));
             if (!supIsInterface
                 && TypeJson.Read(impl["pendingOverrideOwner"]) is TypeNode pendingOwner
-                && ReferenceMetadataIndex.SourceDeclarationDescribesCall(pendingOwner, descriptorSpec)
+                && PendingOwnerSelectsSlot(pendingOwner)
                 && (Str(impl["pendingOverrideMember"]) ?? Str(impl["name"])) == descriptorMember
                 && TypeJson.Read(impl["pendingOverrideReturn"]) is TypeNode pendingReturn
-                && ReferenceMetadataIndex.SourceDeclarationDescribesCall(pendingReturn, slotRet))
+                && ReferenceMetadataIndex.SourceDeclarationDescribesCall(pendingReturn, semanticSlotReturn ?? slotRet))
             {
                 impl.Remove("pendingOverrideOwner");
                 impl.Remove("pendingOverrideMember");
@@ -519,9 +526,9 @@ static class KotlinOverrideSlotBridge
                 // constructed base rather than the interface), and the emitter resolves that base externally.
                 FillFromReference(cls, defs, spec, supIsInterface, candidates, ownArgs, isValue, refs, phase, sourceMapping, representations,
                     (semanticOwner, owner, isInterface, referenced, identity, member, accessor, parameters, ret, implementation,
-                            slotTypeParams, slotHasDefault, unitValueReturn, signature, referenceMember) =>
+                            slotTypeParams, slotHasDefault, unitValueReturn, signature, referenceMember, semanticReturn) =>
                         Fill(semanticOwner, owner, isInterface, referenced, slotHasDefault, identity, member, accessor,
-                            parameters, ret, implementation, slotTypeParams, unitValueReturn, signature, referenceMember),
+                            parameters, ret, implementation, slotTypeParams, unitValueReturn, signature, referenceMember, semanticReturn),
                     suspendValues: phase == Phase.SuspendValueBridges, inheritedSignatures: inheritedSignatures,
                     sourceParameters: sourceParameters, nativeAliases: !refBuild);
                 continue;
@@ -1412,7 +1419,7 @@ static class KotlinOverrideSlotBridge
     static void FillFromReference(Def cls, IReadOnlyDictionary<string, Def> defs, TypeNode.Fqn spec,
         bool supIsInterface, IEnumerable<JsonObject> methods, TypeNode[] ownArgs, ValueTypeOracle isValue,
         ReferenceMetadataIndex refs, Phase phase, NullableRepresentationTypes sourceMapping, GenericRepresentationPolicy representations,
-        Action<TypeNode.Fqn, TypeNode.Fqn, bool, bool, string, string, string, TypeNode[], TypeNode, JsonObject, JsonArray, bool, bool, TypeNode[], string> fill,
+        Action<TypeNode.Fqn, TypeNode.Fqn, bool, bool, string, string, string, TypeNode[], TypeNode, JsonObject, JsonArray, bool, bool, TypeNode[], string, TypeNode> fill,
         bool suspendValues = false, IReadOnlyDictionary<JsonObject, TypeNode[]> inheritedSignatures = null,
         IReadOnlyDictionary<JsonObject, TypeNode[]> sourceParameters = null, bool nativeAliases = false)
     {
@@ -1464,9 +1471,19 @@ static class KotlinOverrideSlotBridge
                 var selectedArgs = selectedSpec.Args ?? Array.Empty<TypeNode>();
                 var physicalSelectedSpec = accessorKind != null
                     ? (TypeNode.Fqn)sourceMapping.Slot(selectedSpec) : selectedSpec;
+                var nativeOwner = accessorKind != null && !refs.HasDotKtOwner(selectedSpec.Name)
+                    ? refs.ResolveNetType(selectedSpec.Name, selectedArgs.Length) : null;
+                if (nativeOwner != null)
+                {
+                    // Wait for the actual erased graph, then close this declaration through its reached
+                    // application. A native ancestor can fix Nullable<V> independently of Kotlin's arguments.
+                    if (phase != Phase.PhysicalBridges
+                        || refs.ResolveNetType(spec.Name, supArgs.Length) != nativeOwner) continue;
+                    physicalSelectedSpec = spec;
+                }
                 // Kotlin-owned applications close V? as object, while the implementing scalar getter keeps
-                // Nullable<V>. Close the owner and slot together; native CLR applications keep their own handling.
-                if (accessorKind != null && representations?.OwnsValueSlots(selectedSpec.Name) == true)
+                // Nullable<V>. Close the owner and slot together in that same argument frame.
+                else if (accessorKind != null && representations?.OwnsValueSlots(selectedSpec.Name) == true)
                     physicalSelectedSpec = (TypeNode.Fqn)NullableGenericErasure.EraseArgument(physicalSelectedSpec, isValue);
                 var physicalSelectedArgs = physicalSelectedSpec.Args ?? Array.Empty<TypeNode>();
                 var implementationSignature = suspendValues && sourceParameters != null
@@ -1706,7 +1723,11 @@ static class KotlinOverrideSlotBridge
                 fill(selectedSpec, descriptorOwner, descriptorIsInterface, true, accessorKind != null ? member : sourceIdentity,
                     descriptorMember, accessorKind, slotParams, slotRet, impl, selectedSlotTypeParams,
                     slotHasDefault, slotReturnsValue && IsUnitValueSlot(slotRet), slotSignature,
-                    !descriptorIsInterface && refs.HasDotKtOwner(selectedSpec.Name) ? selectedPhysicalMember : null);
+                    !descriptorIsInterface && refs.HasDotKtOwner(selectedSpec.Name) ? selectedPhysicalMember : null,
+                    // The pending class override is still a source-frame fact. Match it there when the
+                    // bridge takes ownership of the same native slot in its erased application frame.
+                    nativeOwner != null && !descriptorIsInterface && slotRet0 != null
+                        ? SupertypeGraph.SubstOwnerTvs(slotRet0, selectedArgs) : null);
                 // Flattened property override facts can name several distinct CLR obligations (a redeclared Kotlin
                 // accessor and its aliased BCL ancestor). Let each exact owner contribute its descriptor; the common
                 // Fill/AddImplDescriptor path deduplicates genuinely identical rows. Ordinary methods retain their
