@@ -3217,7 +3217,8 @@ internal sealed class AssemblyScanner : IDisposable
             if (IsCurrentAssembly(reader) && entity.Kind == HandleKind.TypeDefinition &&
                 _existentialCarriers.Contains((TypeDefinitionHandle)entity)) return true;
             if (!_publicTypeCatalog.TryResolveDefinition(reader, entity, out var resolved)) return false;
-            var attributes = new MetadataAttributes(resolved.Reader);
+            var attributes = IsCurrentAssembly(resolved.Reader)
+                ? _attrs : SignatureDecoderSeeds.Attributes(resolved.Reader);
             using var contract = attributes.CarrierDocument(resolved.Handle,
                 MetadataAttributes.DotKtNs + "KotlinManagedReferenceContractAttribute");
             return contract is not null;
