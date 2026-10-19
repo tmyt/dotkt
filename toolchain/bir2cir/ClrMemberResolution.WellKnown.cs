@@ -694,7 +694,9 @@ static partial class ClrMemberResolution
             args.Select(CanonicalInterfaceSlotTypeCore).ToArray()),
         TypeNode.Array array => new TypeNode.Array(
             CanonicalInterfaceSlotTypeCore(array.Elem), array.Rank, array.SzArray),
-        TypeNode.Nullable nullable => new TypeNode.Nullable(CanonicalInterfaceSlotTypeCore(nullable.Of)),
+        // A lowered nullable value slot and metadata's Nullable`1<V> denote the same CLI TypeSpec.
+        TypeNode.Nullable nullable => new TypeNode.Fqn("System.Nullable",
+            new[] { CanonicalInterfaceSlotTypeCore(nullable.Of) }),
         TypeNode.Oblivious oblivious => new TypeNode.Oblivious(CanonicalInterfaceSlotTypeCore(oblivious.Of)),
         TypeNode.ByRef byRef => new TypeNode.ByRef(CanonicalInterfaceSlotTypeCore(byRef.Of)),
         TypeNode.Ptr pointer => new TypeNode.Ptr(CanonicalInterfaceSlotTypeCore(pointer.Of)),

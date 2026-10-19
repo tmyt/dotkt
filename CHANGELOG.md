@@ -5,6 +5,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Match native nullable property and method slots by their physical CLR type across the document and metadata representations (#1095).
+
 - Preserve imported nullable value-type property overrides by closing their interface owner and getter in the same physical argument frame (#763).
 
 - Preserve projected declaration order for native CLR enum values, ordinals and generic comparisons without changing alias identity (#1050).
