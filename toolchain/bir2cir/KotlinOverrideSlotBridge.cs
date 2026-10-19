@@ -1464,9 +1464,19 @@ static class KotlinOverrideSlotBridge
                 var selectedArgs = selectedSpec.Args ?? Array.Empty<TypeNode>();
                 var physicalSelectedSpec = accessorKind != null
                     ? (TypeNode.Fqn)sourceMapping.Slot(selectedSpec) : selectedSpec;
+                var nativeOwner = accessorKind != null && !refs.HasDotKtOwner(selectedSpec.Name)
+                    ? refs.ResolveNetType(selectedSpec.Name, selectedArgs.Length) : null;
+                if (nativeOwner != null)
+                {
+                    // Wait for the actual erased graph, then close this declaration through its reached
+                    // application. A native ancestor can fix Nullable<V> independently of Kotlin's arguments.
+                    if (phase != Phase.PhysicalBridges
+                        || refs.ResolveNetType(spec.Name, supArgs.Length) != nativeOwner) continue;
+                    physicalSelectedSpec = spec;
+                }
                 // Kotlin-owned applications close V? as object, while the implementing scalar getter keeps
-                // Nullable<V>. Close the owner and slot together; native CLR applications keep their own handling.
-                if (accessorKind != null && representations?.OwnsValueSlots(selectedSpec.Name) == true)
+                // Nullable<V>. Close the owner and slot together in that same argument frame.
+                else if (accessorKind != null && representations?.OwnsValueSlots(selectedSpec.Name) == true)
                     physicalSelectedSpec = (TypeNode.Fqn)NullableGenericErasure.EraseArgument(physicalSelectedSpec, isValue);
                 var physicalSelectedArgs = physicalSelectedSpec.Args ?? Array.Empty<TypeNode>();
                 var implementationSignature = suspendValues && sourceParameters != null
