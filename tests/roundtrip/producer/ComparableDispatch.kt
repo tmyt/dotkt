@@ -9,6 +9,21 @@ enum class ExplicitComparisonOrder(value: Int) { FIRST(4), SECOND(-2) }
 
 enum class PlainRichComparisonOrder(val label: String) { FIRST("first"), SECOND("second") }
 
+enum class EntryRichComparisonOrder {
+    FIRST { override fun marker(): Int = 1 }, SECOND;
+    open fun marker(): Int = 2
+}
+
+fun compareRichBoundReference(left: EntryRichComparisonOrder, right: EntryRichComparisonOrder): Int {
+    val operation = left::compareTo
+    return operation(right)
+}
+
+fun compareRichUnboundReference(left: EntryRichComparisonOrder, right: EntryRichComparisonOrder): Int {
+    val operation = EntryRichComparisonOrder::compareTo
+    return operation(left, right)
+}
+
 interface ComparisonMarker<Tag>
 enum class RichComparisonOrder(val label: String) : ComparisonMarker<String>, System.IComparable {
     FIRST("first"), SECOND("second");

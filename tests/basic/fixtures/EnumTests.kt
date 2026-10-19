@@ -598,6 +598,25 @@ class EnumTests {
     }
 
     @TestAttribute
+    fun comparisonReferencesUseEnumDeclarationOrder() {
+        val perEntry: (EnumOp, EnumOp) -> Int = EnumOp::compareTo
+        val bound = EnumOp.PLUS::compareTo
+        assertEquals(-2, perEntry(EnumOp.PLUS, EnumOp.TIMES))
+        assertEquals(2, perEntry(EnumOp.TIMES, EnumOp.PLUS))
+        assertEquals(0, perEntry(EnumOp.PLUS, EnumOp.PLUS))
+        assertEquals(-2, bound(EnumOp.TIMES))
+        assertEquals(-2, EnumOp.PLUS.compareTo(EnumOp.TIMES))
+        val mixed: (EnumMixedEntryBody, EnumMixedEntryBody) -> Int = EnumMixedEntryBody::compareTo
+        assertEquals(-1, mixed(EnumMixedEntryBody.SPECIAL, EnumMixedEntryBody.PLAIN))
+        val rich: (EnumPlanet, EnumPlanet) -> Int = EnumPlanet::compareTo
+        assertEquals(-2, rich(EnumPlanet.EARTH, EnumPlanet.JUPITER))
+        val basic: (EnumBasic, EnumBasic) -> Int = EnumBasic::compareTo
+        assertEquals(-2, basic(EnumBasic.A, EnumBasic.C))
+        val explicit: (EnumExplicitInt, EnumExplicitInt) -> Int = EnumExplicitInt::compareTo
+        assertEquals(-2, explicit(EnumExplicitInt.FOUR, EnumExplicitInt.ZERO))
+    }
+
+    @TestAttribute
     fun inheritedMembers() {
         // EnumBasic is declared in the SIBLING file EnumCrossFileSupport.kt (same assembly) — the #90 cross-file
         // module-wide basic-enum collection. All members are INHERITED from System.Enum.

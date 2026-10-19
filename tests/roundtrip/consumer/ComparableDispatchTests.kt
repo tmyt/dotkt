@@ -26,6 +26,26 @@ class ComparableDispatchTests {
     }
 
     @TestAttribute
+    fun importedConcreteEnumReferencesKeepTheirKotlinComparison() {
+        val unbound: (EntryRichComparisonOrder, EntryRichComparisonOrder) -> Int = EntryRichComparisonOrder::compareTo
+        val bound = EntryRichComparisonOrder.FIRST::compareTo
+        assertTrue(unbound(EntryRichComparisonOrder.FIRST, EntryRichComparisonOrder.SECOND) == -1)
+        assertTrue(unbound(EntryRichComparisonOrder.SECOND, EntryRichComparisonOrder.FIRST) == 1)
+        assertTrue(unbound(EntryRichComparisonOrder.FIRST, EntryRichComparisonOrder.FIRST) == 0)
+        assertTrue(bound(EntryRichComparisonOrder.SECOND) == -1)
+        assertTrue(compareRichBoundReference(EntryRichComparisonOrder.FIRST, EntryRichComparisonOrder.SECOND) == -1)
+        assertTrue(compareRichUnboundReference(EntryRichComparisonOrder.FIRST, EntryRichComparisonOrder.SECOND) == -1)
+        assertEnumComparison(EntryRichComparisonOrder.FIRST, EntryRichComparisonOrder.SECOND)
+        val native: (ExplicitComparisonOrder, ExplicitComparisonOrder) -> Int = ExplicitComparisonOrder::compareTo
+        assertTrue(native(ExplicitComparisonOrder.FIRST, ExplicitComparisonOrder.SECOND) == -1)
+        val clrControl: (RichComparisonOrder, RichComparisonOrder) -> Int = RichComparisonOrder::compareTo
+        assertTrue(clrControl(RichComparisonOrder.FIRST, RichComparisonOrder.SECOND) == -1)
+        assertTrue((RichComparisonOrder.FIRST as System.IComparable).CompareTo(RichComparisonOrder.SECOND) == 77)
+        val authored: (ComparisonValue, ComparisonValue) -> Int = ComparisonValue::compareTo
+        assertTrue(authored(ComparisonValue(3), ComparisonValue(8)) == -5)
+    }
+
+    @TestAttribute
     fun inheritedEnumComparisonUsesItsComparableContract() {
         assertEnumComparison(ComparisonOrder.FIRST, ComparisonOrder.SECOND)
         assertEnumComparison(ExplicitComparisonOrder.FIRST, ExplicitComparisonOrder.SECOND)
