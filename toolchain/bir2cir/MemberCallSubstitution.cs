@@ -517,6 +517,8 @@ static class MemberCallSubstitution
         // `dotkt$CharSequence` param (its compiled ctor takes the adapter, not String). The M10 target
         // `kotlin.text.StringBuilder` is a @ClrTypeAlias, so it always resolves via the alias route.
         if (viaAlias) CoerceCharSequenceCtorArgs(newClrArgs, newClrArgTypes);
+        if (viaAlias && refs.IsKotlinHashStorageOwner(ownerFqn.Name))
+            KotlinHashStorageLowering.AddComparer(newClrArgs, newClrArgTypes, typeNode.Args[0]);
         var lowered = new JsonObject
         {
             ["k"] = "newClr",
@@ -552,11 +554,7 @@ static class MemberCallSubstitution
                 {
                     ["k"] = "var", ["name"] = resultName,
                     ["type"] = TypeJson.Write(targetType),
-                    ["init"] = new JsonObject
-                    {
-                        ["k"] = "newClr", ["type"] = TypeJson.Write(targetType),
-                        ["argTypes"] = new JsonArray(), ["args"] = new JsonArray(),
-                    },
+                    ["init"] = KotlinHashStorageLowering.Allocate(targetType, typeArguments[0]),
                 },
                 new JsonObject
                 {
@@ -780,19 +778,20 @@ static class MemberCallSubstitution
                     else
                         return null;
                 }
-                return CarryFactoryStaticType(node, new JsonObject
+                return CarryFactoryStaticType(node, KotlinHashStorageLowering.Literal(new JsonObject
                 {
                     ["k"] = "newMap", ["keyType"] = kt.DeepClone(), ["valType"] = vt.DeepClone(), ["entries"] = entries,
-                });
+                }));
             }
             var elemT = RepresentationArgument(0, NullableRepresentationFrame.Role.Ordinary);
             if (elemT == null) return null;                                     // can't reconstruct elem -> plain call
             var elems = new JsonArray();
             foreach (var el in factoryElements) elems.Add(el.DeepClone());
-            return CarryFactoryStaticType(node, new JsonObject
+            var literal = new JsonObject
             {
                 ["k"] = collKind == "set" ? "newSet" : "newList", ["elem"] = elemT.DeepClone(), ["elems"] = elems,
-            });
+            };
+            return CarryFactoryStaticType(node, collKind == "set" ? KotlinHashStorageLowering.Literal(literal) : literal);
         }
 
         if (arrKind != null)

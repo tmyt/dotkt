@@ -50,11 +50,11 @@ static class ObjectSlotRename
                 // reference-surface declaration (whose owner can have a different
                 // representation). Its source MethodDef identity is consumed here.
                 obj.Remove(DeclarationIdentityBinding.Key);
-                // Equals keeps its semantic fact until KotlinEqualityLowering consumes it.
+                // Equality and hashing keep their semantic facts until KotlinEqualityLowering consumes them.
                 // Native-array calls also need this fact at the helper-allocation boundary:
                 // Object slots use native storage, not a hoisted value-class body. MemberCallSubstitution
                 // consumes it when producing objMethod; reference-build bodies are squashed instead.
-                if (obj["method"]?.GetValue<string>() != "Equals"
+                if (obj["method"]?.GetValue<string>() is not ("Equals" or "GetHashCode")
                     && ((obj["k"] as JsonValue)?.GetValue<string>() != "callInstance"
                     || !AliasHelperHoist.UsesNativeArrayObjectSlot(TypeJson.OwnerName(obj["ownerType"]), true)))
                     obj.Remove("anySlot");
