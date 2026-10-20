@@ -3,8 +3,59 @@ package roundtriptests.comparabledispatch
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
 import roundtrip.comparabledispatch.*
+import GenericValueInterop.*
 
 class ComparableDispatchTests {
+    @TestAttribute
+    fun erasedComparisonAcceptsGenericOnlyForeignValues() {
+        val low = GenericOnlyComparable(3) as Comparable<GenericOnlyComparable>
+        val high = GenericOnlyComparable(8) as Comparable<GenericOnlyComparable>
+        assertTrue(low.compareTo(GenericOnlyComparable(8)) == -5)
+        assertTrue(compareValues(low, high) == -5)
+        assertTrue(compareValues(high, low) == 5)
+        assertTrue(compareValues(low, low) == 0)
+        assertTrue(compareValues(null, low) == -1)
+        assertTrue(compareValues(low, null) == 1)
+        assertTrue(compareValues<Comparable<GenericOnlyComparable>>(null, null) == 0)
+        assertTrue(compareValuesBy(3, 8) { GenericOnlyComparable(it) as Comparable<GenericOnlyComparable> } == -5)
+        val derived = DerivedComparable(1) as Comparable<GenericOnlyComparable>
+        assertTrue(compareValues(derived, high) == -7)
+        val valueLow = ValueComparable(2) as Comparable<ValueComparable>
+        val valueHigh = ValueComparable(6) as Comparable<ValueComparable>
+        assertTrue(compareValues(valueLow, valueHigh) == -4)
+    }
+
+    private fun erasedForeignCompare(receiver: Comparable<LeftComparison>, argument: ComparisonArgument): Int =
+        compareValues(receiver, argument as Comparable<LeftComparison>)
+
+    @TestAttribute
+    fun erasedComparisonDoesNotDependOnInterfaceEnumerationOrder() {
+        for (receiver in listOf(MultiComparable() as Comparable<LeftComparison>,
+            ReversedMultiComparable() as Comparable<LeftComparison>)) {
+            assertTrue(erasedForeignCompare(receiver, LeftArgument()) == 17)
+            assertTrue(erasedForeignCompare(receiver, RightArgument()) == 29)
+            assertTrue(try { erasedForeignCompare(receiver, BothArguments()); false }
+                catch (e: ClassCastException) { e.message == "Ambiguous CLR comparison interfaces" })
+            assertTrue(try { erasedForeignCompare(receiver, ComparisonArgument()); false }
+                catch (e: ClassCastException) { e.message == "No applicable CLR comparison interface" })
+        }
+    }
+
+    @TestAttribute
+    fun erasedComparisonPreservesNativePrecedenceAndExceptions() {
+        val dual = DualComparable() as Comparable<DualComparable>
+        assertTrue(dual.compareTo(DualComparable()) == 53)
+        assertTrue(compareValues(dual, dual) == 41)
+        val throwing = ThrowingComparable()
+        val view = throwing as Comparable<ThrowingComparable>
+        assertTrue(try { compareValues(view, view); false }
+            catch (failure: System.InvalidOperationException) { failure === throwing.Failure })
+        assertTrue(compareValues(1, 2) < 0)
+        assertTrue(compareValues("a", "b") < 0)
+        assertTrue(compareValues(ComparisonValue(3), ComparisonValue(8)) == -5)
+        assertTrue(compareValues(ComparisonOrder.FIRST, ComparisonOrder.SECOND) < 0)
+    }
+
     @TestAttribute
     fun comparableBoundDoesNotHideAnotherNullableBound() {
         val box = ComparisonBoundBox<Int?>(null)
