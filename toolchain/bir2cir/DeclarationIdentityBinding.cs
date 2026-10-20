@@ -215,11 +215,11 @@ static class DeclarationIdentityBinding
                     obj[ReferencedFactoryKey] = true;
                     return;
                 }
-                // An aliased owner's reference declaration is not a MethodDef on its CLR target. Its
+                // An aliased/native-array owner's reference declaration is not a MethodDef on its CLR target. Its
                 // representation belongs to the override/property/intrinsic binding passes. Do not replace
                 // their selected member with a reference-stub name or discard an unresolved property role.
                 if (deferUnknown && nodeKind is "callInstance" or "constrainedCall"
-                    && refs.TryResolveClrOwner(owner, out _, out _))
+                    && (refs.TryResolveClrOwner(owner, out _, out _) || AliasHelperHoist.IsNativeArrayOwner(owner)))
                     return;
                 obj["method"] = physicalName;
                 if (Str(obj["k"]) == "callStatic")

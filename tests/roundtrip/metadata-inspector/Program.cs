@@ -420,10 +420,14 @@ static void VerifyUnsignedArrayIdentities(string referencePath, string runtimePa
     using var referencePe = new PEReader(referenceStream);
     var reference = referencePe.GetMetadataReader();
     var sourceIds = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
-    var iteratorIds = new HashSet<string>(StringComparer.Ordinal);
+    var helperDeclarationIds = new HashSet<string>(StringComparer.Ordinal);
     foreach (var owner in new[] { "kotlin.UByteArray", "kotlin.UShortArray", "kotlin.UIntArray", "kotlin.ULongArray" })
     {
         var type = reference.TypeDefinitions.Single(handle => DefinitionName(reference, handle) == owner);
+        var sizeProperty = reference.GetTypeDefinition(type).GetProperties()
+            .Single(handle => reference.GetString(reference.GetPropertyDefinition(handle).Name) == "size");
+        var sizeGetter = reference.GetPropertyDefinition(sizeProperty).GetAccessors().Getter;
+        Require(!sizeGetter.IsNil, $"{owner}.size must retain its getter declaration");
         var methods = reference.GetTypeDefinition(type).GetMethods()
             .Where(handle => !reference.GetString(reference.GetMethodDefinition(handle).Name).StartsWith('.')).ToArray();
         Require(methods.Length == 8, $"{owner} must expose all eight Kotlin member declarations");
@@ -435,7 +439,8 @@ static void VerifyUnsignedArrayIdentities(string referencePath, string runtimePa
                 reference.GetMethodDefinition(method).GetCustomAttributes(), identityAttribute);
             var identity = payload.RootElement.GetProperty("id").GetString();
             Require(!string.IsNullOrEmpty(identity) && identities.Add(identity), $"{owner} has a missing or duplicate identity");
-            if (reference.GetString(reference.GetMethodDefinition(method).Name) == "iterator") iteratorIds.Add(identity!);
+            if (method == sizeGetter || reference.GetString(reference.GetMethodDefinition(method).Name) is "get" or "set" or "iterator")
+                helperDeclarationIds.Add(identity!);
         }
         sourceIds.Add(owner, identities);
     }
@@ -452,8 +457,8 @@ static void VerifyUnsignedArrayIdentities(string referencePath, string runtimePa
         using var payload = DecodeCarrierDocument(runtime, runtime.GetMethodDefinition(method).GetCustomAttributes(), identityAttribute);
         if (payload.RootElement.GetProperty("id").GetString() is string identity) helperIds.Add(identity);
     }
-    Require(iteratorIds.Count == 4 && iteratorIds.All(identity => helperIds.Contains(identity + "|alias-helper")),
-        "native-array iterator helpers lost their selected source declaration correspondence");
+    Require(helperDeclarationIds.Count == 16 && helperDeclarationIds.All(identity => helperIds.Contains(identity + "|alias-helper")),
+        "native-array get/set/iterator/size helpers lost their selected source declaration correspondence");
 
     var bir = JsonNode.Parse(File.ReadAllText(birPath))!;
     var selectedOwners = new HashSet<string>(StringComparer.Ordinal);
