@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
@@ -59,7 +60,30 @@ static class KotlinHashStorageLowering
         var storage = new TypeNode.Fqn(map ? "System.Collections.Generic.Dictionary" : "System.Collections.Generic.HashSet", types);
         var name = CallEvalLowering.FreshBindingId();
         JsonObject Local() => new() { ["k"] = "local", ["name"] = name };
-        var statements = new JsonArray(new JsonObject {
+        var statements = new JsonArray();
+        JsonObject Capture(JsonNode value, TypeNode slot)
+        {
+            var captured = CallEvalLowering.FreshBindingId();
+            // Snapshot every argument before storage can invoke user equality/hash callbacks.
+            // Keep the value erased here: the native storage check belongs to insertion, not argument evaluation.
+            statements.Add(new JsonObject {
+                ["k"] = "var", ["name"] = captured,
+                ["type"] = TypeJson.Write(new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"))),
+                ["init"] = value.DeepClone(),
+            });
+            return new JsonObject {
+                ["k"] = "cast", ["type"] = TypeJson.Write(slot),
+                ["e"] = new JsonObject { ["k"] = "local", ["name"] = captured },
+            };
+        }
+        var operands = new List<JsonNode[]>();
+        if (map)
+            foreach (var entry in ((JsonArray)literal["entries"]).OfType<JsonObject>())
+                operands.Add(new JsonNode[] { Capture(entry["key"], key), Capture(entry["value"], types[1]) });
+        else
+            foreach (var element in (JsonArray)literal["elems"])
+                operands.Add(new JsonNode[] { Capture(element, key) });
+        statements.Add(new JsonObject {
             ["k"] = "var", ["name"] = name, ["type"] = TypeJson.Write(storage),
             ["init"] = Allocate(storage, key),
         });
@@ -73,11 +97,7 @@ static class KotlinHashStorageLowering
                 ["args"] = new JsonArray(values.Select(value => value.DeepClone()).ToArray()),
             },
         });
-        if (map)
-            foreach (var entry in ((JsonArray)literal["entries"]).OfType<JsonObject>())
-                Accumulate(entry["key"], entry["value"]);
-        else
-            foreach (var element in (JsonArray)literal["elems"]) Accumulate(element);
+        foreach (var values in operands) Accumulate(values);
         return new JsonObject {
             ["k"] = "valueBlock", ["type"] = TypeJson.Write(storage),
             ["stmts"] = statements, ["result"] = Local(),

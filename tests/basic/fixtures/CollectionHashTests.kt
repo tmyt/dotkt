@@ -13,6 +13,15 @@ private class CollectionObservedHash {
     var calls = 0
     override fun hashCode(): Int { calls++; return 211 }
 }
+private var collectionHashTrace = ""
+private class CollectionHashKey(val id: Int) {
+    override fun hashCode(): Int { collectionHashTrace += "h$id;"; return id }
+    override fun equals(other: Any?): Boolean = other is CollectionHashKey && other.id == id
+}
+private fun collectionHashKey(id: Int): CollectionHashKey {
+    collectionHashTrace += "a$id;"
+    return CollectionHashKey(id)
+}
 
 class CollectionHashTests {
     @TestAttribute
@@ -66,6 +75,12 @@ class CollectionHashTests {
         check(setOf(*arrayOf(first, second)).size == 1)
         val ordered = linkedSetOf(first, second)
         check(ordered.size == 1 && ordered.contains(listOf(23, 42)))
+        collectionHashTrace = ""
+        check(mapOf(collectionHashKey(1) to 1, collectionHashKey(2) to 2).size == 2)
+        check(collectionHashTrace.startsWith("a1;a2;")) { "map argument/hash order: $collectionHashTrace" }
+        collectionHashTrace = ""
+        check(setOf(collectionHashKey(1), collectionHashKey(2)).size == 2)
+        check(collectionHashTrace.startsWith("a1;a2;")) { "set argument/hash order: $collectionHashTrace" }
     }
 
     @TestAttribute
