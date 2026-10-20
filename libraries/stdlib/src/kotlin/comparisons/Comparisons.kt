@@ -73,13 +73,12 @@ public fun <T : Comparable<*>> compareValues(a: T?, b: T?): Int {
     if (a == null) return if (b == null) 0 else -1
     if (b == null) return 1
 
-    // CLR adaptation: the JVM `(a as Comparable<Any>).compareTo(b)` unchecked cast lowers to the
-    // reified IComparable<object>, which a boxed primitive does NOT implement (Int32 : IComparable<int>
-    // only) -> InvalidCastException. Dispatch through the NON-generic System.IComparable instead.
+    // CLR adaptation: erased dispatch must accept native generic-only comparables as well as
+    // non-generic IComparable. Do not replace this with a reified IComparable<object> cast.
     return clrRawCompareTo(a, b)
 }
 
-/** CLR: erased-comparable dispatch through the NON-generic System.IComparable (see clr ComparisonsClr.kt). */
+/** CLR: erased-comparable dispatch (see clr ComparisonsClr.kt). */
 internal expect fun clrRawCompareTo(a: Any, b: Any): Int
 
 /**
