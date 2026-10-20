@@ -19,6 +19,8 @@ class ComparableDispatchTests {
         assertTrue(compareBy<Int> { GenericOnlyComparable(it) as Comparable<GenericOnlyComparable> }.compare(8, 3) == 5)
         assertTrue(compareValuesBy(3, 8, { 0 }, selector) == -5)
         assertTrue(compareBy<Int>({ 0 }, selector).compare(8, 3) == 5)
+        assertTrue(comparisonKeepSelector(selector) === selector)
+        assertTrue(compareValuesBy(3, 8, comparisonKeepSelector(selector)) == -5)
         assertTrue(listOf(8, 3, 5).sortedWith(compareBy(selector)).joinToString(",") == "3,5,8")
     }
 
@@ -37,6 +39,10 @@ class ComparableDispatchTests {
         assertTrue(compareValues(low, slot.value) == -5)
         slot.value = null
         assertTrue(slot.value == null && comparisonKeep(null) == null)
+        val broad = BroadComparison()
+        val typed: Comparable<Int> = comparisonTypedKeep(broad)
+        assertTrue(typed === broad && typed.compareTo(1) == 7)
+        assertTrue(comparisonTypedNested(typed).value === broad)
     }
 
     @TestAttribute
@@ -60,6 +66,25 @@ class ComparableDispatchTests {
         val genericArray: Any = arrayOf(GenericOnlyComparable(3))
         assertTrue(comparisonIs<Array<Comparable<*>>>(genericArray), "generic-only reified array")
         assertTrue(!comparisonIs<Array<Comparable<*>>>(generic), "scalar is not an array")
+        assertTrue(comparisonIs<Array<Array<Comparable<*>>>>(arrayOf(arrayOf(GenericOnlyComparable(3)))),
+            "nested generic-only reified array")
+        assertTrue(comparisonIs<Array<Comparable<GenericOnlyComparable>>>(genericArray), "typed generic-only array")
+        assertTrue(comparisonCast<Array<Comparable<GenericOnlyComparable>>>(genericArray) === genericArray)
+        assertTrue(comparisonSafeCast<Array<Comparable<GenericOnlyComparable>>>(genericArray) === genericArray)
+        @Suppress("UNCHECKED_CAST")
+        val directArray = genericArray as Array<Comparable<GenericOnlyComparable>>
+        assertTrue(directArray === genericArray)
+        val nativeEnum: Any = ExplicitComparisonOrder.FIRST
+        assertTrue(comparisonIs<Comparable<ExplicitComparisonOrder>>(nativeEnum), "typed enum reified classifier")
+        assertTrue(comparisonCast<Comparable<ExplicitComparisonOrder>>(nativeEnum) === nativeEnum,
+            "typed enum reified cast identity")
+        assertTrue(comparisonSafeCast<Comparable<ExplicitComparisonOrder>>(nativeEnum) === nativeEnum,
+            "typed enum reified safe cast identity")
+        assertTrue(comparisonSafeCast<Comparable<ExplicitComparisonOrder>>(Any()) == null)
+        assertTrue(comparisonCast<Comparable<ExplicitComparisonOrder>?>(null) == null)
+        assertTrue(try { comparisonCast<Comparable<ExplicitComparisonOrder>>(Any()); false }
+            catch (e: ClassCastException) { true })
+        assertTrue(comparisonSafeCast<Comparable<ExplicitComparisonOrder>>(null) == null)
         val absent: Any? = null
         assertTrue((absent as Comparable<*>?) == null)
         assertTrue((absent as? Comparable<*>) == null)
@@ -73,6 +98,7 @@ class ComparableDispatchTests {
         assertTrue(generic.compareTo(GenericOnlyComparable(8)) == -5)
         val operation = generic::compareTo
         assertTrue(operation(GenericOnlyComparable(8)) == -5)
+        assertTrue((ValueComparable(2) as Comparable<Any?>).compareTo(ValueComparable(3)) == -1)
         assertTrue((NullAwareComparable() as Comparable<Any?>).compareTo(null) == 1)
         assertTrue((NullableValueComparable() as Comparable<Any?>).compareTo(null) == 17)
         assertTrue((NullableValueComparable() as Comparable<Any?>).compareTo(23) == 23)

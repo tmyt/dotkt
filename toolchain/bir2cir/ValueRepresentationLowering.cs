@@ -79,6 +79,20 @@ sealed class ValueRepresentationLowering
 
     internal bool HasClassifier(TypeNode type) => Classifier(type).Binding != null;
 
+    bool OpaqueScalar(TypeNode type)
+    {
+        var (binding, shape) = Classifier(type);
+        if (binding == null || shape.Length != 0) return false;
+        while (type is TypeNode.Nullable or TypeNode.Oblivious)
+            type = type is TypeNode.Nullable nullable ? nullable.Of : ((TypeNode.Oblivious)type).Of;
+        return type is TypeNode.Fqn application && AliasVarianceRepresentation.RequiresErasure(application, refs,
+            localParameters.GetValueOrDefault(application.Name), aliases.GetValueOrDefault(application.Name));
+    }
+
+    // The predicate owns logical membership; the token describes only the admitted
+    // value's physical slot. Reified checks must not reopen a native generic face.
+    internal TypeNode ClassifierType(TypeNode type) => OpaqueScalar(type) ? new TypeNode.Fqn("kotlin.Any") : type;
+
     internal JsonNode ComponentPredicate(TypeNode type, JsonNode actualType)
     {
         var (binding, shape) = Classifier(type);
@@ -281,13 +295,8 @@ sealed class ValueRepresentationLowering
             if (binding == null) return;
             // A logical variant alias has no single native interface that every admitted
             // value implements. Its declaration-owned classifier is the entire scalar guard.
-            var unwrapped = source;
-            while (unwrapped is TypeNode.Nullable or TypeNode.Oblivious)
-                unwrapped = unwrapped is TypeNode.Nullable n1 ? n1.Of : ((TypeNode.Oblivious)unwrapped).Of;
-            var opaque = shape.Length == 0 && unwrapped is TypeNode.Fqn application
-                && AliasVarianceRepresentation.RequiresErasure(application, refs,
-                    localParameters.GetValueOrDefault(application.Name), aliases.GetValueOrDefault(application.Name));
-            var physical = opaque ? new TypeNode.Fqn("kotlin.Any") : source;
+            var opaque = OpaqueScalar(source);
+            var physical = ClassifierType(source);
             string temp;
             do temp = "$valueClassifier$" + suffix++; while (!names.Add(temp));
             var any = new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"));
