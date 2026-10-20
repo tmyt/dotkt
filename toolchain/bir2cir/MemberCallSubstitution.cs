@@ -2203,7 +2203,8 @@ static class MemberCallSubstitution
 
     // Construct one source-selected operation; its caller owns declaration binding and frame materialization.
     internal static JsonObject StaticCollectionOperation(JsonObject node, TypeNode.Fqn owner,
-        ReferenceMetadataIndex refs, SubstCtx context, CollectionOperationPhase phase = CollectionOperationPhase.Physical)
+        ReferenceMetadataIndex refs, SubstCtx context, CollectionOperationPhase phase = CollectionOperationPhase.Physical,
+        TypeNode.Fqn preferredOwner = null)
     {
         var family = owner.Name switch {
             "kotlin.collections.Collection" => 0,
@@ -2217,9 +2218,9 @@ static class MemberCallSubstitution
         };
         if (family < 0) return null;
         var member = Str(node["method"]);
-        // Native membership needs the mutable declaration's actual family too;
-        // unrelated readonly interfaces cannot choose its Contains slot.
-        if (family >= 4 && member is not ("contains" or "containsAll")) return null;
+        // Mutable defaults retain their own family and source-selected closure;
+        // unrelated readonly interfaces cannot choose their membership or Count.
+        if (family >= 4 && member is not ("contains" or "containsAll" or "isEmpty")) return null;
         var arguments = node["args"] as JsonArray ?? new JsonArray();
         var helper = (member, arguments.Count) switch {
             ("size", 0) when family != 2 && Str(node["prop"]) == "get" => "projectedViewCountErased",
@@ -2237,7 +2238,10 @@ static class MemberCallSubstitution
         };
         if (helper == null || node["recv"] == null) return null;
         var element = CollElemArg(node, refs, context, owner);
-        var preferred = StaticCollectionPreference(owner, refs, family switch {
+        // Variant aliases use the operation's declared static view, not its
+        // initializer's view. Only invariant mutable families borrow a local witness.
+        var selectedOwner = family >= 4 ? preferredOwner ?? owner : owner;
+        var preferred = StaticCollectionPreference(selectedOwner, refs, family switch {
             0 => "System.Collections.Generic.IReadOnlyCollection`1",
             1 => "System.Collections.Generic.IReadOnlySet`1",
             3 => "System.Collections.Generic.IReadOnlyList`1",
@@ -2346,14 +2350,41 @@ static class MemberCallSubstitution
                 || CollectionHelperSig("kotlin.collections.ClrCollectionDefaultsKt", helper).Count != arguments.Count)
                 throw new InvalidOperationException("Static List operation lost its shared family, caller view or exact helper shape: " + member);
         }
+        foreach (var (owner, family, native) in new[] {
+            ("kotlin.collections.MutableSet", 4, "System.Collections.Generic.ISet`1"),
+            ("kotlin.collections.MutableCollection", 5, "System.Collections.Generic.ICollection`1"),
+            ("kotlin.collections.MutableList", 6, "System.Collections.Generic.IList`1"),
+        })
+        {
+            var operation = StaticCollectionOperation(new JsonObject {
+                ["method"] = "isEmpty", ["args"] = new JsonArray(),
+                ["recv"] = new JsonObject { ["k"] = "local", ["name"] = "source" },
+            }, new TypeNode.Fqn(owner, new TypeNode[] { new TypeNode.Star() }), refs, new SubstCtx(),
+                CollectionOperationPhase.Source, new TypeNode.Fqn(owner, new[] { variable }));
+            if (Str(operation?["method"]) != "clrProjectedViewIsEmpty"
+                || operation["args"][2]["value"].GetValue<int>() != family
+                || TypeJson.Read(operation["args"][1]["type"]) is not TypeNode.Fqn selected
+                || selected.Name != native || selected.Args is not [TypeNode.Tv { Scope: "method", I: 1 }])
+                throw new InvalidOperationException("Mutable emptiness lost its exact source witness or family");
+        }
+        foreach (var owner in new[] { "kotlin.collections.Collection", "kotlin.collections.Set", "kotlin.collections.List" })
+        {
+            var operation = StaticCollectionOperation(new JsonObject {
+                ["method"] = "isEmpty", ["args"] = new JsonArray(),
+                ["recv"] = new JsonObject { ["k"] = "local", ["name"] = "source" },
+            }, new TypeNode.Fqn(owner, new TypeNode[] { new TypeNode.Fqn("kotlin.Any") }), refs, new SubstCtx(),
+                CollectionOperationPhase.Source, new TypeNode.Fqn(owner, new[] { variable }));
+            if (TypeJson.Read(operation["args"][1]["type"]) is not TypeNode.Fqn { Args: [TypeNode.Fqn { Name: "kotlin.Any" }] })
+                throw new InvalidOperationException("Variant collection operation borrowed an initializer's exact view");
+        }
         Console.WriteLine("[static collection preference] self-test OK (exact, star, caller frame, no origin carrier)");
     }
 
     internal static JsonNode CollectionDefaultCall(JsonObject node, TypeNode.Fqn ownerFqnNode,
         JsonArray args, ReferenceMetadataIndex refs, SubstCtx ctx,
-        CollectionOperationPhase phase = CollectionOperationPhase.Physical)
+        CollectionOperationPhase phase = CollectionOperationPhase.Physical, TypeNode.Fqn preferredOwner = null)
     {
-        if (StaticCollectionOperation(node, ownerFqnNode, refs, ctx, phase) is { } operation) return operation;
+        if (StaticCollectionOperation(node, ownerFqnNode, refs, ctx, phase, preferredOwner) is { } operation) return operation;
         var ownerFqn = ownerFqnNode.Name;
         var member = Str(node["method"]);
         var projected = HasProjectedCollectionReceiver(node, ownerFqnNode, ctx, refs);

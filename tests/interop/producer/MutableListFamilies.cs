@@ -31,6 +31,7 @@ public sealed class DualMutableList : List<int>, IList<object>
     bool ICollection<object>.IsReadOnly => false;
     object IList<object>.this[int index] { get => objects[index]; set => objects[index] = value; }
     public DualMutableList() { Add(7); Add(9); }
+    public void ClearObjects() => objects.Clear();
     void ICollection<object>.Add(object value) => objects.Add(value);
     void ICollection<object>.Clear() => objects.Clear();
     bool ICollection<object>.Contains(object value) => objects.Contains(value);

@@ -5,6 +5,7 @@ private fun familySetSize(value: Set<*>): Int = value.size
 private fun familyMutableSetSize(value: MutableSet<*>): Int = value.size
 private fun familySetEmpty(value: Set<*>): Boolean = value.isEmpty()
 private fun familyMutableSetEmpty(value: MutableSet<*>): Boolean = value.isEmpty()
+private fun familyCollectionCount(value: Collection<Any?>): Int = value.size
 private class FamilyEmptyOverride : List<Int> by listOf(7, 9) {
     var calls = 0
     override fun isEmpty(): Boolean { calls++; return true }
@@ -13,6 +14,13 @@ private class FamilyOwnedSet : Set<Int> by setOf(7, 9)
 private class FamilyOwnedMutableSet : MutableSet<Int> by mutableSetOf(7, 9)
 
 class CollectionCountFamilyTests {
+    @TestAttribute fun covariantWideningUsesTheDeclaredCollectionView() {
+        val value: Any = CollectionStorageInterop.ObjectCollectionAndIntList()
+        val ints = value as Collection<Int>
+        val objects: Collection<Any?> = ints
+        check(objects.size == 3 && familyCollectionCount(objects) == 3)
+    }
+
     @TestAttribute fun kotlinSetImplementationsKeepTheirCollectionAbi() {
         for (set in arrayOf<Set<*>>(setOf(7, 9), emptySet<Int>(), FamilyOwnedSet())) {
             check(familySetSize(set) == if (set.isEmpty()) 0 else 2)

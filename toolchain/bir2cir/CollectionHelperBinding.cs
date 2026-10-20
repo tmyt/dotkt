@@ -16,6 +16,8 @@ static class CollectionHelperBinding
         AliasConstructorDelegationExpansion constructors = null)
     {
         var inputs = roots.ToArray();
+        var closedViews = references == null ? new Dictionary<string, TypeNode.Fqn>()
+            : ForeignStarProjectionBinding.CollectClosedViewHints(inputs, references);
         var concreteIteratorTypes = inputs.SelectMany(MemberCallSubstitution.CollectConcreteIteratorTypes)
             .ToHashSet(StringComparer.Ordinal);
         var localHelpers = inputs.OfType<JsonObject>()
@@ -135,7 +137,10 @@ static class CollectionHelperBinding
                     return obj;
                 call = (MemberCallSubstitution.CollectionMutationCall(obj, owner, args, references, context)
                     ?? MemberCallSubstitution.CollectionDefaultCall(obj, owner, args, references, context,
-                        MemberCallSubstitution.CollectionOperationPhase.Source)) as JsonObject;
+                        MemberCallSubstitution.CollectionOperationPhase.Source,
+                        obj["recv"] is JsonObject receiver && Text(receiver["k"]) == "local"
+                            && Text(receiver["name"]) is string local && closedViews.TryGetValue(local, out var exact)
+                            && exact.Name == owner.Name ? exact : null)) as JsonObject;
                 if (call == null) return obj;
             }
             var sourceArguments = ((JsonArray)call["typeArgs"]).Select(TypeJson.Read).Select(SourceArgument).ToArray();

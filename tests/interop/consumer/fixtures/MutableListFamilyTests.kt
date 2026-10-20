@@ -8,6 +8,10 @@ private fun mutableSize(value: MutableList<*>): Int = value.size
 private fun mutableEmpty(value: MutableList<*>): Boolean = value.isEmpty()
 private fun mutableFirst(value: MutableList<*>): Any? = value[0]
 private fun nullableMutableSize(value: MutableList<*>?): Int = value?.size ?: -1
+private fun <T> selectedEmpty(value: MutableList<T>): Boolean {
+    val star: MutableList<*> = value
+    return star.isEmpty()
+}
 
 private class AuthoredMutableList : AbstractMutableList<Int>() {
     override val size: Int get() = 1
@@ -83,11 +87,17 @@ class MutableListFamilyTests {
     }
 
     @TestAttribute fun sourceAuthoredExactMutableWitnessIsNotReopened() {
-        val source: Any = DualMutableList()
+        val native = DualMutableList()
+        val source: Any = native
         val exact = source as MutableList<Any?>
         check(exact.size == 3 && exact[0] == "a")
         val star: MutableList<*> = exact
         check(star.size == 3 && star[1] == "b")
+        check(!star.isEmpty())
+        check(!selectedEmpty(exact))
+        native.ClearObjects()
+        check(star.size == 0 && star.isEmpty() && selectedEmpty(exact))
+        check(!selectedEmpty(source as MutableList<Int>))
     }
 
     @TestAttribute fun authoredEmptinessOverrideStillWins() {

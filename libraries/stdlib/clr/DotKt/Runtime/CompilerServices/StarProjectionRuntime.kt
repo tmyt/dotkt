@@ -1187,7 +1187,7 @@ internal fun projectedSetEnumeratorErased(receiver: Any, sourceWitness: Any?): A
     return projectedFamilyEnumerator(receiver, family)
 }
 
-private fun projectedMembershipFamily(receiver: Any, sourceWitness: Any?, family: Int): StarProjectionType? {
+private fun projectedOperationFamily(receiver: Any, sourceWitness: Any?, family: Int): StarProjectionType? {
     val preferred = if (sourceWitness == null) null else sourceWitness as StarProjectionType
     if (family == 0) return projectedCollectionFamily(receiver, preferred)
     if (family == 1) return projectedSetFamily(receiver, sourceWitness)
@@ -1209,7 +1209,7 @@ internal fun projectedMembershipContainsErased(receiver: Any, sourceWitness: Any
     // List membership retains its existing equality/iteration default. The new
     // native operation here belongs to a Set, including a Collection view of it.
     if (family == 6) return null
-    var view = projectedMembershipFamily(receiver, sourceWitness, family) ?: return null
+    var view = projectedOperationFamily(receiver, sourceWitness, family) ?: return null
     if (family == 0 || family == 5) {
         val definition = if (family == 5) "System.Collections.Generic.ISet`1"
             else "System.Collections.Generic.IReadOnlySet`1"
@@ -1269,7 +1269,7 @@ internal fun projectedFamilyEnumerator(receiver: Any, family: StarProjectionType
 internal fun projectedViewEnumeratorErased(receiver: Any, preferredView: Any?, family: Int): Any? {
     if (family == 1) return projectedSetEnumeratorErased(receiver, preferredView)
     if (family == 4 || family == 5 || family == 6) {
-        val view = projectedMembershipFamily(receiver, preferredView, family) ?: return null
+        val view = projectedOperationFamily(receiver, preferredView, family) ?: return null
         return projectedFamilyEnumerator(receiver, view)
     }
     val preferred = if (preferredView == null) null else preferredView as StarProjectionType
@@ -1296,6 +1296,15 @@ private fun projectedCollectionFamily(receiver: Any, preferred: StarProjectionTy
 @PublishedApi
 internal fun projectedViewCountErased(receiver: Any, preferredView: Any?, family: Int): Int {
     if (family == 1) return projectedSetViewCount(receiver, preferredView)
+    if (family == 4 || family == 5 || family == 6) {
+        val view = projectedOperationFamily(receiver, preferredView, family)
+        if (view == null) {
+            if (family == 6 && receiver is StarProjectionRawList && !rawListIsMapStorage(receiver)) return receiver.count
+            if (family == 5 && receiver is StarProjectionRawCollection) return receiver.count
+            throw UnsupportedOperationException("Projected receiver has no mutable CLR collection surface")
+        }
+        return projectedParentCollectionCount(receiver, view, "System.Collections.Generic.ICollection`1")
+    }
     val preferred = if (preferredView == null) null else preferredView as StarProjectionType
     if (family == 3) return projectedListViewCount(receiver, preferred)
     val view = projectedCollectionFamily(receiver, preferred)
