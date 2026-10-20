@@ -292,10 +292,44 @@ private class ClrMapNativeValueIterator<V>(private val raw: ClrNativeMapAccess) 
     }
 }
 
-private class ClrNativeMapValueCollection<V>(private val raw: ClrNativeMapAccess) : AbstractMutableCollection<V>() {
+private class ClrNativeMapValueCollection<V>(private val raw: ClrNativeMapAccess) : MutableCollection<V> {
     override val size: Int get() = raw.count()
+    override fun isEmpty(): Boolean = size == 0
     override fun iterator(): MutableIterator<V> = ClrMapNativeValueIterator(raw)
+    override fun contains(element: V): Boolean {
+        val cursor = raw.GetEnumerator()
+        try { while (cursor.MoveNext()) if (cursor.value() == element) return true }
+        finally { cursor.close() }
+        return false
+    }
+    override fun containsAll(elements: Collection<V>): Boolean {
+        for (element in elements) if (!contains(element)) return false
+        return true
+    }
     override fun add(element: V): Boolean = throw UnsupportedOperationException("add is not supported by MutableMap.values")
+    override fun addAll(elements: Collection<V>): Boolean =
+        if (elements.isEmpty()) false else throw UnsupportedOperationException("addAll is not supported by MutableMap.values")
+    override fun remove(element: V): Boolean {
+        val cursor = raw.GetEnumerator()
+        try {
+            while (cursor.MoveNext()) if (cursor.value() == element) {
+                raw.rawRemove(cursor.key())
+                return true
+            }
+        } finally { cursor.close() }
+        return false
+    }
+    private fun removeMatching(elements: Collection<V>, retain: Boolean): Boolean {
+        val remove = ArrayList<Any?>()
+        val cursor = raw.GetEnumerator()
+        try {
+            while (cursor.MoveNext()) if (elements.contains(cursor.value() as V) != retain) remove.add(cursor.key())
+        } finally { cursor.close() }
+        for (key in remove) raw.rawRemove(key)
+        return !remove.isEmpty()
+    }
+    override fun removeAll(elements: Collection<V>): Boolean = removeMatching(elements, false)
+    override fun retainAll(elements: Collection<V>): Boolean = removeMatching(elements, true)
     override fun clear() = raw.rawClear()
 }
 

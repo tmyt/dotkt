@@ -85,6 +85,18 @@ class GenericOnlyDictionaryTests {
         map["new"] = "extra"
         check(keys.size == 2 && values.size == 2)
         check(values.remove("extra") && !map.containsKey("new"))
+        map["first"] = "duplicate"
+        map["second"] = "duplicate"
+        check(values.containsAll(listOf("changed", "duplicate")))
+        check(values.remove("duplicate") && map.size == 2)
+        check(values.removeAll(listOf("duplicate")) && map.size == 1)
+        map["discard"] = "discard"
+        check(values.retainAll(listOf("changed")) && map.size == 1)
+        val iterator = values.iterator()
+        check(iterator.next() == "changed")
+        iterator.remove()
+        check(map.isEmpty())
+        map["key"] = "again"
         check(keys.remove("key") && map.isEmpty())
     }
 
