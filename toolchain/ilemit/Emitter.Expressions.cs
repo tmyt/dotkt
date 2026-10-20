@@ -675,44 +675,6 @@ sealed partial class Emitter
                 return EmitNativeClrEnumParse(e);
             }
             case "objMethod": return EmitObjMethod(e);
-            case "newMap":
-            {
-                // `mapOf(k to v, …)` -> new Dictionary<K,V> { [k]=v, … } via set_Item.
-                var kt = MapType(e.GetProperty("keyType"));
-                var vt = MapType(e.GetProperty("valType"));
-                var mapCtor = RequiredRef<ConstructorInfo>(e, "ctorRef", "newMap");
-                var setItem = RequiredRef<MethodInfo>(e, "setItemRef", "newMap");
-                // Which BCL map a Kotlin map literal becomes is the minting pass's decision, already recorded on the
-                // constructor's declaring type — reading it back is mechanical; naming `Dictionary`2` would not be.
-                var dt = mapCtor.DeclaringType;
-                EmitConstructor(_il, OpCodes.Newobj, mapCtor);
-                foreach (var en in e.GetProperty("entries").EnumerateArray())
-                {
-                    _il.Emit(OpCodes.Dup);
-                    EmitArg(en.GetProperty("key"), kt);
-                    EmitArg(en.GetProperty("value"), vt);
-                    EmitMethod(_il, OpCodes.Callvirt, setItem);
-                }
-                return dt;
-            }
-            case "newSet":
-            {
-                // `setOf(...)` -> new HashSet<elem> { ... } via repeated Add (Add returns bool -> pop).
-                var elem = MapType(e.GetProperty("elem"));
-                var setCtor = RequiredRef<ConstructorInfo>(e, "ctorRef", "newSet");
-                var add = RequiredRef<MethodInfo>(e, "addRef", "newSet");
-                // Same rule as the list and the map: the constructed type is read off the named constructor.
-                var setT = setCtor.DeclaringType;
-                EmitConstructor(_il, OpCodes.Newobj, setCtor);
-                foreach (var item in e.GetProperty("elems").EnumerateArray())
-                {
-                    _il.Emit(OpCodes.Dup);
-                    EmitArg(item, elem);
-                    EmitMethod(_il, OpCodes.Callvirt, add);
-                    _il.Emit(OpCodes.Pop);
-                }
-                return setT;
-            }
             case "throwExpr":
             {
                 // A throwing expression (error()/TODO()/exhaustive-when else): construct + throw; no value reaches a merge.

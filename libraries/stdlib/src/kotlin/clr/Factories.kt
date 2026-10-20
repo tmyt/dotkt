@@ -14,8 +14,8 @@ package kotlin.clr
 // Marks a collection FACTORY top-level function (`listOf`/`setOf`/`mapOf`/`mutableListOf`/`emptyList`/...): a call to it
 // CONSTRUCTS the backing BCL collection directly (`kind` = "list" -> `List<T>`, "set" -> `HashSet<T>`, "map" ->
 // `Dictionary<K,V>`) instead of calling the Kotlin body. bir2cir reads this marker off the REFERENCE assembly (NOT kotc)
-// and emits the `{k:newList/newSet/newMap}` node — the SAME node kotc used to synthesize from its retired
-// LIST_FACTORIES/SET_FACTORIES/MAP_FACTORIES name tables. The element/key/value TYPES come from the call's `typeArgs`
+// and authors the physical allocation: lists use `newList`; sets/maps use ordinary valueBlock/newClr/call nodes
+// with an explicit Kotlin comparer. The element/key/value TYPES come from the call's `typeArgs`
 // (`typeArgs[0]` for the list/set element, `[0]`/`[1]` for the map key/value); the ELEMENTS from the single vararg
 // argument (kotc emits it as a `newArray` node), the lone non-vararg element, or none (`emptyList()`). `mapOf`
 // additionally splits each `a to b` Pair-LITERAL argument (a `new kotlin.Pair(k,v)` node) into a key/value entry — but a

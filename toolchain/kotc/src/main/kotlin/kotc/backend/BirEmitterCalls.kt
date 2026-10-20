@@ -1422,7 +1422,7 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 	// recognized here: kotc emits the plain top-level `callStatic kotlin.collections.listOf(...)` (the faithful IR;
 	// the vararg argument itself rides as a `newArray` node). bir2cir reads the `@kotlin.clr.ClrCollectionFactory`
 	// (kind list/set/map) / `@kotlin.clr.ClrArrayFactory` (vararg/sized) marker from the selected local declaration
-	// or ref.dll binding and re-emits the same `{k:newList/newSet/newMap/newArray/newArraySized}` construction node — the
+	// or ref.dll binding and authors the physical collection/array allocation — the
 	// element/key/value types from the call's `typeArgs`, the elements from the vararg arg. The `mapOf(a to b)`
 	// literal-split (and its "do NOT force-split a non-literal Pair" guard — `mapOf(pairVar)` stays a real call)
 	// is bir2cir's.

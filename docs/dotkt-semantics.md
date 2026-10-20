@@ -695,6 +695,19 @@ largest value with `NaN == NaN` structurally and `NaN.compareTo(NaN) == 0`. On t
   objects retain reference identity, and explicit CLR `Equals` calls/nonvirtual `super.equals` retain their native
   targets. None of these operations remember an originating collection view or wrap/copy the collection.
 
+Kotlin `Any.hashCode()` uses the same runtime collection families through concrete, Any, generic,
+callable-reference and DLL paths. Native collection aliases receive structural hashes; actual authored/native
+hash overrides and nonvirtual `super.hashCode()` retain their targets. Arrays keep identity hashes, and scalar
+and string hashes remain CLR-native. Collection contents are read on each call, not cached by object history.
+Consequently, the same native `List<int>` can have a structural hash through Kotlin `hashCode()` while C#
+`Object.GetHashCode()` still returns its native identity hash.
+
+Kotlin `HashMap`, `LinkedHashMap`, `HashSet` and map/set factories install a native `IEqualityComparer` that
+uses Kotlin equality and hashing. This also governs lookup from C# and the container's `Comparer` property;
+for example, `hashSetOf(0.0, -0.0).size` is `2`. Explicit projected CLR constructors retain their native default
+or explicitly selected comparer, which may define a different relation from Kotlin equality. Receiving a
+Kotlin-created container does not rewrite ordinary CLR object hashing or change its physical container type.
+
 The **primitive** operators stay IEEE (matching Kotlin, and `il-nancmp`-green): `-0.0 == 0.0` → `true`,
 `Double.NaN == Double.NaN` → `false`, and direct `<`/`>`/`<=`/`>=` (which desugar to the IEEE compare intrinsics, not
 `.compareTo`) are unaffected. Coverage: `tests/basic/fixtures/FloatTests.kt`,

@@ -466,8 +466,6 @@ static partial class ClrMemberResolution
             // constructor named. It reads `elem` like its siblings; only the surrounding isinst differs.
             case "safeCastValue": ResolveNullableConversion(node, "nullableWrap"); break;
             case "newList": ResolveCollectionTemplate(node, "newList"); break;
-            case "newSet": ResolveCollectionTemplate(node, "newSet"); break;
-            case "newMap": ResolveCollectionTemplate(node, "newMap"); break;
             case "field": ResolveFieldAccess(node, write: false); break;
             case "setFieldExpr": ResolveFieldAccess(node, write: true); break;
             case "setField": ResolveFieldAccess(node, write: true); break;

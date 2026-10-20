@@ -8,22 +8,6 @@ using DotKt.Bir;
 // Explicit projected CLR constructors retain their selected native comparer.
 static class KotlinHashStorageLowering
 {
-    internal static void Apply(JsonNode node)
-    {
-        if (node is JsonArray array)
-        {
-            foreach (var item in array) if (item != null) Apply(item);
-            return;
-        }
-        if (node is not JsonObject obj) return;
-        foreach (var child in obj.Select(pair => pair.Value).ToArray()) if (child != null) Apply(child);
-        if (obj["k"]?.GetValue<string>() is not ("newMap" or "newSet")) return;
-        var replacement = Literal(obj);
-        if (obj["sty"] != null) replacement["sty"] = obj["sty"].DeepClone();
-        obj.Clear();
-        foreach (var pair in replacement) obj[pair.Key] = pair.Value?.DeepClone();
-    }
-
     internal static void AddComparer(JsonArray args, JsonArray signature, TypeNode key)
     {
         var comparer = new TypeNode.Fqn("DotKt.Runtime.CompilerServices.NativeHashComparer", new[] { key });
@@ -52,12 +36,20 @@ static class KotlinHashStorageLowering
 
     // Express literals using existing allocation/call nodes, with every constructor argument explicit.
     // No emitter-side knowledge of Kotlin hashing or a hidden constructor operand is necessary.
-    internal static JsonObject Literal(JsonObject literal)
+    internal static JsonObject MapLiteral(TypeNode key, TypeNode value,
+        IEnumerable<(JsonNode Key, JsonNode Value)> entries) => Literal(
+            new TypeNode.Fqn("System.Collections.Generic.Dictionary", new[] { key, value }),
+            "set_Item", "void", entries.Select(entry => new[] { entry.Key, entry.Value }));
+
+    internal static JsonObject SetLiteral(TypeNode element, IEnumerable<JsonNode> elements) => Literal(
+        new TypeNode.Fqn("System.Collections.Generic.HashSet", new[] { element }),
+        "Add", "System.Boolean", elements.Select(value => new[] { value }));
+
+    static JsonObject Literal(TypeNode.Fqn storage, string accumulator, string resultType,
+        IEnumerable<JsonNode[]> sourceOperands)
     {
-        var map = literal["k"]?.GetValue<string>() == "newMap";
-        var key = TypeJson.Read(literal[map ? "keyType" : "elem"]);
-        var types = map ? new[] { key, TypeJson.Read(literal["valType"]) } : new[] { key };
-        var storage = new TypeNode.Fqn(map ? "System.Collections.Generic.Dictionary" : "System.Collections.Generic.HashSet", types);
+        var types = storage.Args;
+        var key = types[0];
         var name = CallEvalLowering.FreshBindingId();
         JsonObject Local() => new() { ["k"] = "local", ["name"] = name };
         var statements = new JsonArray();
@@ -77,12 +69,8 @@ static class KotlinHashStorageLowering
             };
         }
         var operands = new List<JsonNode[]>();
-        if (map)
-            foreach (var entry in ((JsonArray)literal["entries"]).OfType<JsonObject>())
-                operands.Add(new JsonNode[] { Capture(entry["key"], key), Capture(entry["value"], types[1]) });
-        else
-            foreach (var element in (JsonArray)literal["elems"])
-                operands.Add(new JsonNode[] { Capture(element, key) });
+        foreach (var arguments in sourceOperands)
+            operands.Add(arguments.Select((value, index) => (JsonNode)Capture(value, types[index])).ToArray());
         statements.Add(new JsonObject {
             ["k"] = "var", ["name"] = name, ["type"] = TypeJson.Write(storage),
             ["init"] = Allocate(storage, key),
@@ -91,9 +79,9 @@ static class KotlinHashStorageLowering
             ["k"] = "exprStmt",
             ["expr"] = new JsonObject {
                 ["k"] = "clrInstance", ["type"] = TypeJson.Write(storage),
-                ["method"] = map ? "set_Item" : "Add", ["recv"] = Local(),
+                ["method"] = accumulator, ["recv"] = Local(),
                 ["argTypes"] = new JsonArray(types.Select(TypeJson.Write).ToArray()),
-                ["ret"] = TypeJson.Fqn(map ? "void" : "System.Boolean"),
+                ["ret"] = TypeJson.Fqn(resultType),
                 ["args"] = new JsonArray(values.Select(value => value.DeepClone()).ToArray()),
             },
         });

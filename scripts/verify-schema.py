@@ -29,7 +29,7 @@ TYPE_TAGS = {"fqn", "tv", "star", "projection", "fn", "nullable", "oblivious", "
 # member of another assembly. Frozen like KINDS/TYPE_TAGS, so a new carrier key is a deliberate vocabulary
 # change. `declaringType` is the shape's discriminator (no other document shape has it), which is what
 # catches a parallel member-identity spelling invented under some other key.
-MEMBER_REF_KEYS = {"memberRef", "baseCtorRef", "clrOverrideRef", "ctorRef", "addRef", "setItemRef", "addRangeRef", "toArrayRef",
+MEMBER_REF_KEYS = {"memberRef", "baseCtorRef", "clrOverrideRef", "ctorRef", "addRef", "addRangeRef", "toArrayRef",
                     "enumerableGetRef", "enumerableGetErasedRef", "currentRef", "currentErasedRef", "moveNextRef",
                     "combineRef", "removeRef", "compareExchangeRef", "hasValueRef", "valueRef", "invokeRef", "delegateCtorRef",
                     "fieldRef", "attributeCtorRef"}
@@ -43,7 +43,6 @@ MEMBER_REF_KIND_BY_CARRIER = {
     "clrOverrideRef": {"method", "propertyAccessor", "eventAccessor"},
     "ctorRef": {"ctor"},
     "addRef": {"method"},
-    "setItemRef": {"method", "propertyAccessor"},
     "addRangeRef": {"method"},
     "toArrayRef": {"method"},
     "enumerableGetRef": {"method"},
@@ -66,8 +65,6 @@ MEMBER_REF_KIND_BY_CARRIER = {
 # a node, because an emitter handed one and not the other is back to filling the gap by name.
 COLLECTION_TEMPLATE_REFS = {
     "newList": ("ctorRef", "addRef"),
-    "newSet": ("ctorRef", "addRef"),
-    "newMap": ("ctorRef", "setItemRef"),
     # A spread argument accumulates into a list and hands over its array: four members, same rule.
     "spreadConcat": ("ctorRef", "addRef", "addRangeRef", "toArrayRef"),
     # An inlined `for` walks the enumerator protocol; both arms are named because which one the emitter can
@@ -330,7 +327,7 @@ KINDS = {
     "callInstance", "callStatic", "callLocal", "localFunRef", "objMethod", "delegateInvoke",
     "binOp", "unaryOp", "conv", "cast", "samConvert", "isInst", "isInstRef", "objEq", "concat", "cond",
     "new", "newArray", "newArraySized", "newArrayInit", "arrayGet", "arraySet", "arrayLen",
-    "newList", "newSet", "newMap", "newClosure", "newDelegate", "newSam", "newSuspendLambda",
+    "newList", "newClosure", "newDelegate", "newSam", "newSuspendLambda",
     "newBoundDelegate", "newBoundClrDelegate", "newClrStaticDelegate",
     "companionValue",                           # #275 BIR-only semantic access; bir2cir resolves the nested carrier.
     "enumValue", "enumBits", "enumName", "enumValues", "enumParse", "enumOrdinal", "default", "defaultArg", "classRef", "console",

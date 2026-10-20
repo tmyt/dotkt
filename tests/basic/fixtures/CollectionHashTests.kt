@@ -1,6 +1,7 @@
 import NUnit.Framework.TestAttribute
 
 private fun <T> collectionGenericHash(value: T): Int = value?.hashCode() ?: 0
+private fun <T> collectionNullableSet(value: T?): HashSet<T?> = hashSetOf(value)
 private fun sameCollectionHash(left: Any, right: Any) {
     check(left == right)
     check(left.hashCode() == right.hashCode())
@@ -32,6 +33,13 @@ class CollectionHashTests {
         sameCollectionHash(first, second)
         sameCollectionHash(mapOf(1 to "a", 2 to "b"), mapOf(2 to "b", 1 to "a"))
         sameCollectionHash(setOf(1, 2), setOf(2, 1))
+        check(arrayListOf(23, 42).hashCode() == arrayListOf(23, 42).hashCode())
+        val map = HashMap<Int, String>()
+        map[1] = "a"
+        check(map.hashCode() == hashMapOf(1 to "a").hashCode())
+        val linked = LinkedHashMap<Int, String>()
+        linked[1] = "a"
+        check(linked.hashCode() == map.hashCode())
     }
 
     @TestAttribute
@@ -97,6 +105,11 @@ class CollectionHashTests {
         sameCollectionHash(changing, listOf(1))
         changing.add(2)
         sameCollectionHash(changing, listOf(1, 2))
+        val keys = listOf(listOf(1), listOf(1), listOf(2))
+        check(keys.distinct().size == 2)
+        check(keys.toSet().size == 2)
+        check(keys.groupBy { it }.size == 2)
+        check(setOf(listOf(1)).intersect(setOf(listOf(1))).size == 1)
     }
 
     @TestAttribute
@@ -135,5 +148,9 @@ class CollectionHashTests {
         check(hashSetOf(Double.NaN, Double.NaN).size == 1)
         check(hashSetOf(0.0, -0.0).size == 2)
         check(hashSetOf<Any?>(null, null).size == 1)
+        val nullable = collectionNullableSet<Int>(null)
+        nullable.add(1)
+        check(nullable.contains(null) && nullable.contains(1) && nullable.size == 2)
+        check(HashSet(nullable).size == 2)
     }
 }
