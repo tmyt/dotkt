@@ -970,9 +970,10 @@ private fun erasedMutableCollectionMethod(receiver: Any, name: String, parameter
     return match ?: throw IllegalStateException("Missing ICollection member " + name)
 }
 
-private fun erasedMutableListView(receiver: Any): StarProjectionType? =
+private fun erasedMutableListView(receiver: Any, sourceWitness: Any? = null): StarProjectionType? =
     findErasedProjectedView(receiver,
-        "System.Collections.Generic.IList`1", "System.Collections.Generic.IList`1")
+        "System.Collections.Generic.IList`1", "System.Collections.Generic.IList`1",
+        elementWitness = (sourceWitness as? StarProjectionType)?.getGenericArguments()?.get(0))
 
 // bir2cir supplies trusted map-only class-alias storage definitions, exactly as for collection classifiers.
 // Cache those physical type tokens; do not infer Kotlin storage meaning from runtime CLR class names.
@@ -1437,8 +1438,8 @@ internal fun mutableListSetErased(receiver: Any, index: Int, element: Any?) {
 }
 
 @PublishedApi
-internal fun mutableListInsertErased(receiver: Any, index: Int, element: Any?) {
-    val view = erasedMutableListView(receiver)
+internal fun mutableListInsertErased(receiver: Any, index: Int, element: Any?, sourceWitness: Any? = null) {
+    val view = erasedMutableListView(receiver, sourceWitness)
     if (view == null && receiver is StarProjectionRawList && !rawListIsMapStorage(receiver)) {
         receiver.insert(index, element)
         return

@@ -10,6 +10,22 @@ private fun writableSlice(source: Any): MutableList<Any?> {
     return list.subList(0, list.size) as MutableList<Any?>
 }
 
+private fun insertThroughProjectedParameter(list: MutableList<in String>) {
+    list.add(0, "parameter")
+}
+
+private fun checkProjectedIteratorWrites(source: Any, first: Any?, second: Any?) {
+    val list = source as MutableList<*>
+    val iterator = list.listIterator() as MutableListIterator<Any?>
+    check(iterator.next() == first)
+    iterator.set("iterator")
+    iterator.add("added")
+    check(list.size == 3 && list[0] == "iterator" && list[1] == "added" && list[2] == second)
+    check(iterator.previous() == "added")
+    iterator.remove()
+    check(list.size == 2 && list[0] == "iterator" && list[1] == second)
+}
+
 private fun checkRemoval(source: Any, first: Any?, second: Any?) {
     val list = source as MutableList<*>
     check(list.removeAt(0) == first)
@@ -88,6 +104,8 @@ class MutableListMutationTests {
         dictionary.Add("map", 17)
         checkSliceWrites(dictionary, "x", "y")
         check(dictionary.Count == 1)
+        checkProjectedIteratorWrites(RawMutableList(), 7, 9)
+        checkProjectedIteratorWrites(MutableListWithDictionaryStorage(), "x", "y")
     }
 
     @TestAttribute fun projectedAndExactGenericWritesKeepTheirNativeContract() {
@@ -104,6 +122,8 @@ class MutableListMutationTests {
         independent.add(1, "inserted")
         check(independent.removeAt(2) == "y" && independent.size == 2)
         check(independent[0] == "set" && independent[1] == "inserted" && dictionary.Count == 1)
+        insertThroughProjectedParameter(selected)
+        check(selected.size == 3 && selected[0] == "parameter" && dictionary.Count == 1)
         val native = DualMutableList()
         val exact = (native as Any) as MutableList<Any?>
         check(exact.set(0, "exact") == "a")
@@ -119,6 +139,16 @@ class MutableListMutationTests {
         try { list.removeAt(0) } catch (_: IllegalStateException) { rejected = true }
         check(rejected && native.Count == 2)
         check(((native as Any) as MutableList<Any?>).size == 3)
+    }
+
+    @TestAttribute fun projectedInsertRetainsAnExactSourceWitness() {
+        val native = DualMutableList()
+        val exact = (native as Any) as MutableList<Any?>
+        val projected: MutableList<in Any?> = exact
+        projected.add(1, "selected")
+        check(exact.size == 4 && exact[0] == "a" && exact[1] == "selected" && exact[2] == "b")
+        val integers = (native as Any) as MutableList<Int>
+        check(native.Count == 2 && integers[0] == 7 && integers[1] == 9)
     }
 
     @TestAttribute fun nativeFailuresKeepIdentityAndEvaluateInputsOnce() {
