@@ -1542,23 +1542,27 @@ internal fun BirEmitter.accessorMethod(acc: IrSimpleFunction, propName: String, 
 	return """{"name":${str(propName)}${declarationIdField(acc)}${explicitClrNameField(acc)}${propertyAccessorFact(property, kind)},"static":$isStatic$kotlinStatic,"override":$isOverrideClass,"virtual":$virtual,"abstract":$isAbstract,"objectOverride":false,"vis":${str(vis)}${typeParamsJson(acc.typeParameters)},"params":[$ps],"ret":${str(ret)}${retCtxFnTypeField(acc)}${funModsJson(acc)},"body":[$body]$accAttrs${overridesJson(acc)}}"""
 }
 
-/** A user `annotation class Ann(val v: Int, …)` -> a plain BIR class carrying the pure-Kotlin `"annotation":true`
- *  FLAG (ctor params -> public fields). "This is an annotation" is a Kotlin-language fact; "annotations extend
+/** A user `annotation class Ann(val v: Int, …)` retains its Kotlin constructor, property/accessor identities and
+ *  backing fields, plus the pure-Kotlin `"annotation":true` flag. "This is an annotation" is a Kotlin-language fact; "annotations extend
  *  System.Attribute on the CLR" is the Kotlin<->CLR relation, so kotc emits ONLY the flag (base:null) and
  *  bir2cir DERIVES `base = System.Attribute` from it (annotation-base-lowering-to-bir2cir, USER 2026-07-02).
  *  kotc names NO CLR base type here. */
 internal fun BirEmitter.annotationDef(klass: IrClass): String {
 	rejectClrEnumOnNonEnum(klass)
 	val primary = klass.declarations.filterIsInstance<IrConstructor>().singleOrNull { it.isPrimary }
-	val ctorParams = primary?.parameters?.filter { it.kind == IrParameterKind.Regular }.orEmpty()
-	val fields = ctorParams.joinToString(",") { """{"name":${str(it.name.asString())},"type":${birType(it.type).toJson()}}""" }
-	val assigns = ctorParams.joinToString(",") { """{"k":"setField","ownerType":${fqnJson(typeName(klass))},"recv":{"k":"this"},"name":${str(it.name.asString())},"value":{"k":"local","name":${str(it.name.asString())}}}""" }
+	val sourceProperties = klass.declarations.filterIsInstance<IrProperty>()
+	val accessors = sourceProperties.filter { it.getter != null && !isClrField(it) }
+	val methods = accessors.joinToString(",") { accessorMethod(it.getter!!, it.name.asString(), true) }
+	val properties = accessors.joinToString(",") { property ->
+		"""{"name":${str(property.name.asString())},"type":${birType(property.getter!!.returnType).toJson()}${kotlinPropertyAccessors(property, false)}}"""
+	}
+	val fields = instanceStorageFields(klass).joinToString(",")
 	// An expect annotation without a source constructor uses the synthesized empty constructor;
 	// only an actual IR constructor owns a declaration identity.
-	val constructorIdentity = primary?.let { declarationIdField(it) + ",\"declarationSourceName\":\".ctor\"" }.orEmpty()
-	val ctor = """{"params":[$fields]$constructorIdentity,"baseArgs":[],"thisArgs":null,"vis":"public","body":[$assigns]}"""
+	val ctor = primary?.let { ctor(klass, it) }
+		?: """{"params":[],"baseArgs":[],"thisArgs":null,"vis":"public","body":[]}"""
 	val visibility = sourceTypeVisibilityField(klass)
-	return """{"name":${str(typeName(klass))},"kind":"class"${semanticOwnerJson(klass)}${classModsJson(annotation = true)}$visibility,"abstract":false,"base":null,"interfaces":[],"fields":[$fields],"ctors":[$ctor],"methods":[],"attrs":[${attrsJson(klass.annotations)}]}"""
+	return """{"name":${str(typeName(klass))},"kind":"class"${semanticOwnerJson(klass)}${classModsJson(annotation = true)}$visibility,"abstract":false,"base":null,"interfaces":[],"fields":[$fields],"ctors":[$ctor],"methods":[$methods],"properties":[$properties],"attrs":[${attrsJson(klass.annotations)}]}"""
 }
 
 /** The `attrs` JSON for a declaration: each annotation -> a .NET custom attribute application. The `attr` type is a
