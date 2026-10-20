@@ -534,7 +534,7 @@ static class MemberCallSubstitution
     }
 
     internal static JsonNode MapCopyConstruction(TypeNode targetType, TypeNode[] typeArguments, JsonNode source,
-        Action<JsonObject> bindHelper = null)
+        Action<JsonObject> bindHelper = null, JsonNode sourcePreference = null)
     {
         var sourceName = CallEvalLowering.FreshBindingId();
         var resultName = CallEvalLowering.FreshBindingId();
@@ -564,10 +564,14 @@ static class MemberCallSubstitution
                         ["k"] = "callStatic",
                         ["owner"] = TypeJson.Write(new TypeNode.Fqn("kotlin.collections.ClrMapDefaultsKt")),
                         ["method"] = "clrMapPutAll",
-                        ["sig"] = new JsonArray(TypeJson.Fqn("kotlin.Any"), TypeJson.Fqn("kotlin.Any")),
+                        ["sig"] = MapHelperSig("clrMapPutAll"),
                         ["typeArgs"] = new JsonArray(typeArguments.Select(TypeJson.Write).ToArray()),
                         ["ret"] = TypeJson.Write(new TypeNode.Fqn("kotlin.Unit")),
-                        ["args"] = new JsonArray(Local(resultName), Local(sourceName)),
+                        ["args"] = new JsonArray(Local(resultName), Local(sourceName),
+                            StaticCollectionPreference(new TypeNode.Fqn("kotlin.collections.MutableMap", typeArguments), null,
+                                "System.Collections.Generic.IDictionary`2", CollectionOperationPhase.Source),
+                            sourcePreference?.DeepClone() ?? new JsonObject {
+                                ["k"] = "const", ["type"] = TypeJson.Write(new TypeNode.Nullable(ObjType)), ["value"] = null }),
                     },
                 }),
             ["result"] = Local(resultName),
@@ -2081,6 +2085,9 @@ static class MemberCallSubstitution
         if (node["recv"] != null) hargs.Add(node["recv"].DeepClone());
         foreach (var a in args) hargs.Add(a?.DeepClone());
         var (k, v) = MapKvArgs(node, refs, ctx, ownerFqn);
+        hargs.Add(StaticCollectionPreference(new TypeNode.Fqn(ownerFqn.Name, new[] { k, v }), refs,
+            "System.Collections.Generic.IDictionary`2"));
+        if (helperMethod == "clrMapPutAll") hargs.Add(MapSourcePreference(args[0], refs, ctx));
         var call = new JsonObject
         {
             ["k"] = "callStatic",
@@ -2301,12 +2308,20 @@ static class MemberCallSubstitution
         CollectionOperationPhase phase = CollectionOperationPhase.Physical)
     {
         var arguments = CollectionPreferenceArguments(owner.Args, refs?.NullableTypeFrames.GetValueOrDefault(owner.Name), phase);
-        if (arguments is not { Length: 1 } || HasProjection(arguments[0]))
+        var arity = nativeOwner == "System.Collections.Generic.IDictionary`2" ? 2 : 1;
+        if (arguments?.Length != arity || arguments.Any(HasProjection))
             return new JsonObject { ["k"] = "const", ["type"] = TypeJson.Write(new TypeNode.Nullable(ObjType)), ["value"] = null };
         return new JsonObject { ["k"] = "classRef", ["type"] = TypeJson.Write(new TypeNode.Fqn(nativeOwner,
-            new[] { phase == CollectionOperationPhase.Source ? arguments[0]
-                : NullableGenericErasure.EraseArgument(arguments[0], refs == null ? _isValue : refs.IsValueType) })) };
+            arguments.Select(argument => phase == CollectionOperationPhase.Source ? argument
+                : NullableGenericErasure.EraseArgument(argument, refs == null ? _isValue : refs.IsValueType)).ToArray())) };
     }
+
+    internal static JsonNode MapSourcePreference(JsonNode source, ReferenceMetadataIndex refs, SubstCtx context,
+        CollectionOperationPhase phase = CollectionOperationPhase.Physical) =>
+        RecvStaticType(source as JsonObject, context, allowExprShapes: true) is TypeNode.Fqn owner
+            && owner.Name is "kotlin.collections.Map" or "kotlin.collections.MutableMap"
+                ? StaticCollectionPreference(owner, refs, "System.Collections.Generic.IDictionary`2", phase)
+                : new JsonObject { ["k"] = "const", ["type"] = TypeJson.Write(new TypeNode.Nullable(ObjType)), ["value"] = null };
 
     static bool HasProjection(TypeNode type) => type switch {
         TypeNode.Star or TypeNode.Projection => true,
@@ -2391,7 +2406,14 @@ static class MemberCallSubstitution
             if (TypeJson.Read(operation["args"][1]["type"]) is not TypeNode.Fqn { Args: [TypeNode.Fqn { Name: "kotlin.Any" }] })
                 throw new InvalidOperationException("Variant collection operation borrowed an initializer's exact view");
         }
-        Console.WriteLine("[static collection preference] self-test OK (exact, star, caller frame, no origin carrier)");
+        var mapOwner = new TypeNode.Fqn("kotlin.collections.Map", new TypeNode[] { variable, ObjType });
+        if (TypeJson.Read(StaticCollectionPreference(mapOwner, refs, "System.Collections.Generic.IDictionary`2",
+                CollectionOperationPhase.Source)["type"]) is not TypeNode.Fqn {
+                    Name: "System.Collections.Generic.IDictionary`2", Args: [TypeNode.Tv { Scope: "method", I: 1 }, TypeNode.Fqn] }
+            || Str(StaticCollectionPreference(new TypeNode.Fqn(mapOwner.Name,
+                new TypeNode[] { variable, new TypeNode.Star() }), refs, "System.Collections.Generic.IDictionary`2")["k"]) != "const")
+            throw new InvalidOperationException("Static dictionary preference lost its two source arguments or star guard");
+        Console.WriteLine("[static collection preference] self-test OK (exact, star, caller frame, dictionary pair, no origin carrier)");
     }
 
     internal static JsonNode CollectionDefaultCall(JsonObject node, TypeNode.Fqn ownerFqnNode,
@@ -2585,7 +2607,9 @@ static class MemberCallSubstitution
             "clrMapReplaceKVV" => new[] { any, k, v, v },
             _ => throw new InvalidOperationException($"bir2cir: no authored descriptor for map helper {method}"),
         };
-        return new JsonArray(ps.Select(TypeJson.Write).ToArray());
+        return new JsonArray(ps.Concat(method == "clrMapPutAll"
+            ? new TypeNode[] { new TypeNode.Nullable(any), new TypeNode.Nullable(any) }
+            : new TypeNode[] { new TypeNode.Nullable(any) }).Select(TypeJson.Write).ToArray());
     }
 
     // The first TWO top-level type arguments of a map owner token (`kotlin.collections.Map[gp:K,gp:V]`); `object` when

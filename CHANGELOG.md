@@ -5,6 +5,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Dispatch Kotlin Map operations over generic-only CLR dictionaries, retaining their identity, static interface selection and live mutable views (#772).
+
 - Preserve unsigned-array Kotlin declaration identities through frontend calls and native-array helper allocation (#810).
 
 - Use the same eligible CLR list contract for projected mutable list reads and writes, including raw lists and dictionary-adjacent independent lists (#807).
