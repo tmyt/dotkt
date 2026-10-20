@@ -187,8 +187,12 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   unique interface whose argument type accepts the right-hand value. With no such interface, or more than one
   applicable interface, comparison throws `ClassCastException`; reflection enumeration order never selects a slot.
   Interface invocation preserves explicit/inherited implementations and propagates the original comparison exception.
-  This dispatch does not change the physical `Comparable<*>` ABI: materialized selector functions can still fail
-  before reaching it when their result is narrowed to non-generic `IComparable` (tracked in #769).
+  The generic-only path uses reflection on each comparison and requires the comparison-interface/member metadata
+  to be retained when trimming or NativeAOT is used. Native types may implement their generic and non-generic
+  comparison slots differently, so direct typed `compareTo` and erased `compareValues` can return different results.
+  This dispatch does not change the physical `Comparable<*>` / `Comparable<Any?>` ABI: generic-only values can still
+  fail when entering a slot represented by non-generic `IComparable`. Materialized selector results are a confirmed
+  example of this separate compiler representation problem (tracked in #769).
   A caller-supplied Kotlin alias argument
   in `System.Collections.Generic.List<List<String>>` uses the ordinary `object` element ABI; an explicitly native
   `System.Collections.Generic.List<System.Collections.Generic.IReadOnlyList<String>>` keeps that exact native argument.

@@ -6,13 +6,9 @@ using DotKt.Bir;
 
 // Non-generic `System.IComparable` bridge. A Kotlin `class C : Comparable<C>` lowers (via the stdlib's
 // `@ClrTypeAlias("System.IComparable")` on `kotlin.Comparable`) to `C : System.IComparable<C>` — the GENERIC
-// interface only. But the CLR-side natural-ordering dispatch spine is the NON-generic `System.IComparable`:
-// the stdlib's `compareValues` casts `a as IComparable` and ilemit's constrained-compareTo emits the value-type-safe
-// `IComparable.CompareTo(object)` fallback (a boxed primitive implements IComparable but NOT a reified
-// `IComparable<object>`). Every comparable BCL type (Int32/String/DateTime/...) therefore implements BOTH faces;
-// a user Kotlin type that implements only the generic face hits `EntryPointNotFoundException` (SAM-shim
-// `a.compareTo(b)` inside the rt's `sortWith`) or `InvalidCastException` (`compareValues`) the moment a compiled
-// stdlib body sorts it. Mirror the BCL convention: for every emitted CLASS whose lowered interfaces include
+// interface only. Native erased consumers and physical `Comparable<*>` slots still require the NON-generic
+// face. The stdlib's generic-only `compareValues` dispatch does not remove that ABI requirement. Mirror the
+// BCL convention: for every emitted CLASS whose lowered interfaces include
 // `kotlin.Comparable<X>` (or an explicitly projected `System.IComparable<X>`), add `System.IComparable` + a
 // `CompareTo(Any)` bridge that casts the arg to X and forwards to the generic CompareTo. This runs at the final
 // semantic boundary, before BirTypeLowering: a legal covariant override returning `Nothing` must retain that stamp

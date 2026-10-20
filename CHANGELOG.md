@@ -5,7 +5,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
-- Support foreign generic-only comparable values in `compareValues`, preserving native erased dispatch and rejecting ambiguous generic comparison slots (#769). Materialized selector results remain tracked separately within the issue.
+- Support foreign generic-only comparable values in `compareValues`, preserving native erased dispatch and rejecting ambiguous generic comparison slots (#769). Physical non-generic `Comparable<*>` slot boundaries, including materialized selector results, remain tracked within the issue.
 
 - Keep file-private callable identities distinct across same-named source files without changing CLR facade allocation (#1054).
 
