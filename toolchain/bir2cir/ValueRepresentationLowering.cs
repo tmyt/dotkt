@@ -14,6 +14,7 @@ sealed class ValueRepresentationLowering
     internal const string MemberAttribute = "kotlin.clr.ClrValueMember";
     readonly Dictionary<string, ValueRepresentationBinding> bindings = new(StringComparer.Ordinal);
     readonly Dictionary<string, string> aliases;
+    readonly Dictionary<string, JsonArray> localParameters = new(StringComparer.Ordinal);
     readonly Dictionary<string, string> adapters = new(StringComparer.Ordinal);
     readonly Dictionary<string, (string Owner, JsonObject Method, string Slot)> members = new(StringComparer.Ordinal);
     readonly Dictionary<string, (string Owner, JsonObject Method)> locals = new(StringComparer.Ordinal);
@@ -47,6 +48,7 @@ sealed class ValueRepresentationLowering
         {
             if (Text(declaration["name"]) is string name)
             {
+                if (declaration["typeParams"] is JsonArray parameters) localParameters[name] = parameters;
                 if (Attribute(declaration, "kotlin.clr.ClrTypeAlias") is { } alias) aliases[name] = Argument(alias, 0);
                 if (Attribute(declaration, TypeAttribute) is { } attribute)
                     bindings[name] = new(Argument(attribute, 0), Argument(attribute, 1), Argument(attribute, 2));
@@ -277,6 +279,15 @@ sealed class ValueRepresentationLowering
             var nullable = source is TypeNode.Nullable;
             var (binding, shape) = Classifier(source);
             if (binding == null) return;
+            // A logical variant alias has no single native interface that every admitted
+            // value implements. Its declaration-owned classifier is the entire scalar guard.
+            var unwrapped = source;
+            while (unwrapped is TypeNode.Nullable or TypeNode.Oblivious)
+                unwrapped = unwrapped is TypeNode.Nullable n1 ? n1.Of : ((TypeNode.Oblivious)unwrapped).Of;
+            var opaque = shape.Length == 0 && unwrapped is TypeNode.Fqn application
+                && AliasVarianceRepresentation.RequiresErasure(application, refs,
+                    localParameters.GetValueOrDefault(application.Name), aliases.GetValueOrDefault(application.Name));
+            var physical = opaque ? new TypeNode.Fqn("kotlin.Any") : source;
             string temp;
             do temp = "$valueClassifier$" + suffix++; while (!names.Add(temp));
             var any = new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"));
@@ -291,7 +302,7 @@ sealed class ValueRepresentationLowering
                     ["k"] = "cond", ["type"] = TypeJson.Fqn("kotlin.Boolean"),
                     ["cond"] = Helper(binding.Classifier, new[] { Local(), Shape(shape) },
                         new TypeNode[] { any, new TypeNode.Fqn("kotlin.String") }, new TypeNode.Fqn("kotlin.Boolean")),
-                    ["then"] = new JsonObject { ["k"] = "isInst", ["type"] = TypeJson.Write(source), ["e"] = Local() },
+                    ["then"] = new JsonObject { ["k"] = "isInst", ["type"] = TypeJson.Write(physical), ["e"] = Local() },
                     ["else"] = Bool(false),
                 },
             };
@@ -300,6 +311,14 @@ sealed class ValueRepresentationLowering
             JsonNode result;
             if (kind == "cast")
             {
+                if (opaque && !nullable)
+                    statements.Add(new JsonObject { ["k"] = "if", ["branches"] = new JsonArray(new JsonObject {
+                        ["cond"] = new JsonObject { ["k"] = "objEq", ["lhs"] = Local(), ["rhs"] = Null() },
+                        ["body"] = new JsonArray(new JsonObject { ["k"] = "throw", ["value"] = new JsonObject {
+                            ["k"] = "new", ["type"] = TypeJson.Fqn("kotlin.NullPointerException"),
+                            ["argTypes"] = new JsonArray(), ["args"] = new JsonArray(),
+                        } }),
+                    }) });
                 statements.Add(new JsonObject { ["k"] = "if", ["branches"] = new JsonArray(new JsonObject {
                     ["cond"] = new JsonObject { ["k"] = "unaryOp", ["op"] = "!", ["e"] = matches },
                     ["body"] = new JsonArray(new JsonObject { ["k"] = "throw", ["value"] = new JsonObject {
@@ -307,12 +326,12 @@ sealed class ValueRepresentationLowering
                         ["argTypes"] = new JsonArray(), ["args"] = new JsonArray(),
                     } }),
                 }) });
-                result = new JsonObject { ["k"] = "cast", ["type"] = TypeJson.Write(source), ["e"] = Local() };
+                result = new JsonObject { ["k"] = "cast", ["type"] = TypeJson.Write(opaque ? any : source), ["e"] = Local() };
             }
             else if (kind == "isInst") result = matches;
             else result = new JsonObject {
                 ["k"] = "cond", ["type"] = TypeJson.Write(source is TypeNode.Nullable ? source : new TypeNode.Nullable(source)),
-                ["cond"] = matches, ["then"] = new JsonObject { ["k"] = kind, ["type"] = TypeJson.Write(source), ["e"] = Local() },
+                ["cond"] = matches, ["then"] = new JsonObject { ["k"] = kind, ["type"] = TypeJson.Write(physical), ["e"] = Local() },
                 ["else"] = Null(),
             };
             Replace(operation, new JsonObject { ["k"] = "valueBlock", ["stmts"] = statements, ["result"] = result });

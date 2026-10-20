@@ -14,9 +14,8 @@ static class AliasVarianceRepresentation
     {
         if (application.Args is not { Length: > 0 } arguments) return false;
         if (binding == null && !refs.Aliases.TryGetValue(application.Name, out binding)) return false;
-        if (BirTypeLowering.AliasHeadRequiresSourceIdentity(application.Name, binding)
-            && !BirTypeLowering.ProjectedAliasHasReifiedGenericHead(application.Name, binding, arguments, refs.Aliases))
-            return false;
+        // Ordinary values must admit every Kotlin-variant view of the generic declaration.
+        // A collapsed native head does not make those values implement its non-generic face.
         if (sourceParameters == null)
         {
             sourceParameters = refs.OwnerTypeParamDeclarations(application.Name);

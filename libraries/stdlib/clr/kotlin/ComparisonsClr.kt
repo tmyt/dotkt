@@ -6,7 +6,9 @@ package kotlin.comparisons
 
 import DotKt.Runtime.CompilerServices.StarProjectionInvocationException
 import DotKt.Runtime.CompilerServices.StarProjectionType
+import DotKt.Runtime.CompilerServices.starProjectionHasView
 import DotKt.Runtime.CompilerServices.starProjectionRuntimeType
+import DotKt.Runtime.CompilerServices.starProjectionTypeAcceptsNull
 
 @kotlin.clr.ClrTypeAlias("System.IComparable")
 internal interface ClrRawComparable {
@@ -19,17 +21,49 @@ private fun comparisonRuntimeType(name: String): StarProjectionType = error("CLR
 
 private val genericComparisonDefinition = comparisonRuntimeType("System.IComparable`1")
 
-internal actual fun clrRawCompareTo(a: Any, b: Any): Int {
+internal actual fun clrRawCompareTo(a: Any, b: Any): Int = clrErasedCompareTo(a, b)
+
+@kotlin.clr.ClrTypeAlias("System.Array")
+private interface ComparisonArrayStorage
+
+@PublishedApi
+internal fun clrComparableMatches(value: Any?, arrayShape: String): Boolean =
+    if (arrayShape.length == 0) value != null && clrComparableComponentMatches(value.starProjectionRuntimeType())
+    else value != null && comparisonArrayTypeMatches(value.starProjectionRuntimeType(), arrayShape, 0)
+
+private fun comparisonArrayTypeMatches(type: StarProjectionType, shape: String, index: Int): Boolean {
+    if (!type.isSzArray) return false
+    val component = type.getElementType()!!
+    if (index + 1 < shape.length) {
+        if (shape[index + 1] == 'o' && component == (ComparisonArrayStorage::class as StarProjectionType)) return true
+        return comparisonArrayTypeMatches(component, shape, index + 1)
+    }
+    return component == (Any::class as StarProjectionType) || clrComparableComponentMatches(component)
+}
+
+@PublishedApi
+internal fun clrComparableComponentMatches(component: StarProjectionType): Boolean =
+    (ClrRawComparable::class as StarProjectionType).isAssignableFrom(component) ||
+        starProjectionHasView(component, genericComparisonDefinition)
+
+@PublishedApi
+internal fun clrComparableClassifier(arrayShape: String): (Any?) -> Boolean = { clrComparableMatches(it, arrayShape) }
+
+@PublishedApi
+internal fun clrErasedCompareTo(a: Any, b: Any?): Int {
     // Preserve native erased dispatch, including authored bridges and its exceptions.
     if (a is ClrRawComparable) return a.compareTo(b)
 
     // compareValues has no exact closed Comparable witness. A generic-only CLR
     // value is comparable here only when exactly one interface accepts b.
-    val argumentType = b.starProjectionRuntimeType()
+    val argumentType = b?.starProjectionRuntimeType()
     var selected: StarProjectionType? = null
     for (face in a.starProjectionRuntimeType().getInterfaces()) {
-        if (!face.isGenericType || face.getGenericTypeDefinition() != genericComparisonDefinition
-            || !face.getGenericArguments()[0].isAssignableFrom(argumentType)) continue
+        if (!face.isGenericType || face.getGenericTypeDefinition() != genericComparisonDefinition) continue
+        val parameter = face.getGenericArguments()[0]
+        if (argumentType == null) {
+            if (!starProjectionTypeAcceptsNull(parameter)) continue
+        } else if (!parameter.isAssignableFrom(argumentType)) continue
         if (selected != null) throw ClassCastException("Ambiguous CLR comparison interfaces")
         selected = face
     }

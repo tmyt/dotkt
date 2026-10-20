@@ -82,3 +82,9 @@ class DependentEnumComparisonBox<Tag, T> where T : Enum<T>, T : ComparisonMarker
 class ComparisonValue(val rank: Int) : Comparable<ComparisonValue> {
     override fun compareTo(other: ComparisonValue): Int = rank - other.rank
 }
+
+class ComparisonSlot(var value: Comparable<*>?)
+fun comparisonKeep(value: Comparable<*>?): Comparable<*>? = value
+fun comparisonNested(value: Comparable<*>?): ComparisonBoundBox<Comparable<*>?> = ComparisonBoundBox(value)
+fun comparisonArray(value: Comparable<*>?): Array<Comparable<*>?> = arrayOf(value, null)
+inline fun <reified T> comparisonIs(value: Any?): Boolean = value is T
