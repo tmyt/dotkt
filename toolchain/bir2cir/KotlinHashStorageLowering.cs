@@ -8,7 +8,30 @@ using DotKt.Bir;
 // Explicit projected CLR constructors retain their selected native comparer.
 static class KotlinHashStorageLowering
 {
-    internal static void AddComparer(JsonArray args, JsonArray signature, TypeNode key)
+    const string StorageSignature = "kotlinHashStorageSignature";
+
+    internal static void RequestComparer(JsonObject construction) => construction[StorageSignature] = true;
+
+    // These generated native signatures are applications of the storage owner's frame, not independent source
+    // declaration types. Close them only after Kotlin value representation (including existential carriers) settles.
+    internal static void Complete(JsonNode node)
+    {
+        if (node is JsonArray array)
+        {
+            foreach (var child in array) if (child != null) Complete(child);
+            return;
+        }
+        if (node is not JsonObject obj) return;
+        foreach (var child in obj.Select(pair => pair.Value).ToList()) if (child != null) Complete(child);
+        if (!obj.Remove(StorageSignature)) return;
+        var storage = (TypeNode.Fqn)TypeJson.Read(obj["type"]);
+        if (obj["k"]!.GetValue<string>() == "newClr")
+            AddComparer((JsonArray)obj["args"], (JsonArray)obj["argTypes"], storage.Args[0]);
+        else
+            obj["argTypes"] = new JsonArray(storage.Args.Select(TypeJson.Write).ToArray());
+    }
+
+    static void AddComparer(JsonArray args, JsonArray signature, TypeNode key)
     {
         var comparer = new TypeNode.Fqn("DotKt.Runtime.CompilerServices.NativeHashComparer", new[] { key });
         signature.Add(TypeJson.Write(comparer));
@@ -23,14 +46,12 @@ static class KotlinHashStorageLowering
         });
     }
 
-    internal static JsonObject Allocate(TypeNode type, TypeNode key)
+    internal static JsonObject Allocate(TypeNode type)
     {
-        var args = new JsonArray();
-        var signature = new JsonArray();
-        AddComparer(args, signature, key);
         return new JsonObject {
             ["k"] = "newClr", ["type"] = TypeJson.Write(type),
-            ["argTypes"] = signature, ["args"] = args,
+            ["argTypes"] = new JsonArray(), ["args"] = new JsonArray(),
+            [StorageSignature] = true,
         };
     }
 
@@ -49,7 +70,6 @@ static class KotlinHashStorageLowering
         IEnumerable<JsonNode[]> sourceOperands)
     {
         var types = storage.Args;
-        var key = types[0];
         var name = CallEvalLowering.FreshBindingId();
         JsonObject Local() => new() { ["k"] = "local", ["name"] = name };
         var statements = new JsonArray();
@@ -73,7 +93,7 @@ static class KotlinHashStorageLowering
             operands.Add(arguments.Select((value, index) => (JsonNode)Capture(value, types[index])).ToArray());
         statements.Add(new JsonObject {
             ["k"] = "var", ["name"] = name, ["type"] = TypeJson.Write(storage),
-            ["init"] = Allocate(storage, key),
+            ["init"] = Allocate(storage),
         });
         void Accumulate(params JsonNode[] values) => statements.Add(new JsonObject {
             ["k"] = "exprStmt",
@@ -81,6 +101,7 @@ static class KotlinHashStorageLowering
                 ["k"] = "clrInstance", ["type"] = TypeJson.Write(storage),
                 ["method"] = accumulator, ["recv"] = Local(),
                 ["argTypes"] = new JsonArray(types.Select(TypeJson.Write).ToArray()),
+                [StorageSignature] = true,
                 ["ret"] = TypeJson.Fqn(resultType),
                 ["args"] = new JsonArray(values.Select(value => value.DeepClone()).ToArray()),
             },

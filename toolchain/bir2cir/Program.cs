@@ -1337,6 +1337,7 @@ sealed class Pipeline
             // `sty`, so this is the last point at which the stamp exists to be checked. A stale stamp surviving here
             // is a pass that changed a node's result type without carrying `sty` with it.
             CheckStySanity(outputName, substituted);
+            KotlinHashStorageLowering.Complete(substituted);
             KotlinPropertyAccessors.AllocateAll(substituted, refs, localPropertyAccessors);
             var collisionProjection = substituted.DeepClone();
             var physicalProjection = BirTypeLowering.Lower(

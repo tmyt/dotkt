@@ -14,6 +14,7 @@ private class CollectionObservedHash {
     var calls = 0
     override fun hashCode(): Int { calls++; return 211 }
 }
+private class CollectionProjectedKey<T>(val value: T)
 private var collectionHashTrace = ""
 private class CollectionHashKey(val id: Int) {
     override fun hashCode(): Int { collectionHashTrace += "h$id;"; return id }
@@ -89,6 +90,11 @@ class CollectionHashTests {
         collectionHashTrace = ""
         check(setOf(collectionHashKey(1), collectionHashKey(2)).size == 2)
         check(collectionHashTrace.startsWith("a1;a2;")) { "set argument/hash order: $collectionHashTrace" }
+        val projected: CollectionProjectedKey<*> = CollectionProjectedKey(42)
+        check(mapOf(projected to "star")[projected] == "star")
+        check(setOf(projected).contains(projected))
+        val wrapped = listOf(projected)
+        check(hashMapOf(wrapped to "nested")[listOf(projected)] == "nested")
     }
 
     @TestAttribute

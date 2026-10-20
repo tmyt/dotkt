@@ -517,8 +517,6 @@ static class MemberCallSubstitution
         // `dotkt$CharSequence` param (its compiled ctor takes the adapter, not String). The M10 target
         // `kotlin.text.StringBuilder` is a @ClrTypeAlias, so it always resolves via the alias route.
         if (viaAlias) CoerceCharSequenceCtorArgs(newClrArgs, newClrArgTypes);
-        if (viaAlias && refs.IsKotlinHashStorageOwner(ownerFqn.Name))
-            KotlinHashStorageLowering.AddComparer(newClrArgs, newClrArgTypes, typeNode.Args[0]);
         var lowered = new JsonObject
         {
             ["k"] = "newClr",
@@ -526,6 +524,8 @@ static class MemberCallSubstitution
             ["argTypes"] = newClrArgTypes,
             ["args"] = newClrArgs,
         };
+        if (viaAlias && refs.IsKotlinHashStorageOwner(ownerFqn.Name))
+            KotlinHashStorageLowering.RequestComparer(lowered);
         // A projected CLR declaration keeps the constructor selected by kotc. Alias constructors instead
         // undergo a representation mapping above and do not retain the source declaration's physical shape.
         if (!viaAlias && node["memberSignature"] is JsonArray selectedSignature)
@@ -554,7 +554,7 @@ static class MemberCallSubstitution
                 {
                     ["k"] = "var", ["name"] = resultName,
                     ["type"] = TypeJson.Write(targetType),
-                    ["init"] = KotlinHashStorageLowering.Allocate(targetType, typeArguments[0]),
+                    ["init"] = KotlinHashStorageLowering.Allocate(targetType),
                 },
                 new JsonObject
                 {
