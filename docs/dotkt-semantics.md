@@ -889,12 +889,21 @@ Consequences and remaining implementation limitations:
 - **Authored maps preserve their original views and overrides.** Kotlin map calls dispatch through compiler-owned
   read/mutation capabilities. Their native dictionary facade translates CLR-specific indexer, mutation, pair and
   enumeration contracts without replacing Kotlin entries or copying the map. Native key/value collection adapters
-  remain live over the original views. BCL-backed fallback behavior below is unchanged.
+  remain live over the original views. Native maps use their non-generic dictionary face where available;
+  generic-only `IDictionary<K,V>` implementations use their selected closed interface contract.
+- **Generic-only native dictionary dispatch retains partial source type information.** An exact implemented
+  construction is preferred; otherwise the known key/value bounds and their variance select a uniquely compatible
+  contract. A sole native contract can still serve an erased/widened Kotlin view. A star is unknown, not `object`;
+  genuinely ambiguous multiple contracts are rejected rather than selected by reflection order or argument values.
+  This preference belongs to the operation's static view, not to an originating view remembered across `Any` storage.
 - **BCL-backed `Map.keys`/`values`/`entries` are SNAPSHOTS, not live views** (Kotlin's are live): `keys`/`entries` return an
   identity-bearing Kotlin `Set`, `values` a
   BCL List. Entry VALUES are live (`entry.value`/`setValue` read/write through the backing map), but a key
   added/removed after taking the view is not reflected in it. `MutableMap.keys` is a live identity-bearing Kotlin view:
-  remove/clear write through and add is unsupported. `MutableMap.values` still binds directly to `IDictionary.Values`.
+  remove/clear write through and add is unsupported. `MutableMap.values` is also a live Kotlin collection, including
+  when obtained from the `HashMap`/`LinkedHashMap` aliases: removing a value, bulk removal/retention and iterator
+  removal update the same backing dictionary; adding is unsupported. Its iterators snapshot keys and read current
+  values. These Kotlin views do not replace the native `Values` property when directly calling a projected CLR API.
 - **`Map.iterator()` and `MutableMap.iterator()` retain their Kotlin-selected declarations**. The frontend declaration identity selects distinct,
   stable physical MethodDef names after erasure; neither declaration order nor an emitter-local `$dupN` repair
   chooses the call target. Destructuring `for ((k,v) in m)` therefore follows the overload selected by Kotlin for

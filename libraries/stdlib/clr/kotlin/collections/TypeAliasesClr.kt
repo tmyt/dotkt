@@ -225,11 +225,10 @@ public actual class HashMap<K, V> : MutableMap<K, V> {
     @kotlin.clr.ClrIntrinsic("Clear")
     actual override fun clear() { TODO("clr binding should be implemented") }
 
-    // Keys use the identity-bearing live Kotlin view; ValueCollection still binds directly through ICollection<V>.
+    // Keys and values use live Kotlin views; entries keep their live-value snapshot.
     // Entries use the ClrMapDefaults identity-bearing snapshot of live entry objects.
     actual override val keys: MutableSet<K> get() = clrMapMutableKeys<K, V>(this)
-    @kotlin.clr.ClrIntrinsic("Values")
-    actual override val values: MutableCollection<V> get() = TODO("clr binding should be implemented")
+    actual override val values: MutableCollection<V> get() = clrMapMutableValues<K, V>(this)
     actual override val entries: MutableSet<MutableMap.MutableEntry<K, V>>
         get() = clrMapMutableEntries(this)
 }
@@ -292,10 +291,9 @@ public actual class LinkedHashMap<K, V> : MutableMap<K, V> {
     actual override fun clear() { TODO("clr binding should be implemented") }
 
     // OrderedDictionary preserves insertion order (incl. across removals). Keys use the live Kotlin identity view,
-    // Values bind directly, and entries use the identity-bearing live-entry snapshot; all enumerate in map order.
+    // values use the same backing-map view, and entries keep their live-value snapshot; all enumerate in map order.
     actual override val keys: MutableSet<K> get() = clrMapMutableKeys<K, V>(this)
-    @kotlin.clr.ClrIntrinsic("Values")
-    actual override val values: MutableCollection<V> get() = TODO("clr binding should be implemented")
+    actual override val values: MutableCollection<V> get() = clrMapMutableValues<K, V>(this)
     actual override val entries: MutableSet<MutableMap.MutableEntry<K, V>>
         get() = clrMapMutableEntries(this)
 }

@@ -100,7 +100,9 @@ static class CollectionHelperBinding
                     ? constructors.CollectionCopyConstructorKind(constructed.Name, constructorSignature.Select(TypeJson.Read).ToArray(), constructed.Args)
                     : references?.CollectionCopyConstructorKind(constructed.Name, constructorSignature.Select(TypeJson.Read).ToArray(), constructed.Args)) == "map")
                 return MemberCallSubstitution.MapCopyConstruction(constructed, constructed.Args,
-                    constructorArguments[0], BindAuthoredCall);
+                    constructorArguments[0], BindAuthoredCall,
+                    MemberCallSubstitution.MapSourcePreference(constructorArguments[0], references, context,
+                        MemberCallSubstitution.CollectionOperationPhase.Source));
             if (Text(obj["k"]) != "callInstance"
                 || obj["clrOwnerResolved"]?.GetValue<bool>() == true
                 || TypeJson.Read(obj["ownerType"]) is not TypeNode.Fqn owner
@@ -124,6 +126,11 @@ static class CollectionHelperBinding
                 var callArguments = new JsonArray(obj["recv"]?.DeepClone()
                     ?? throw new InvalidOperationException("Map member has no receiver"));
                 foreach (var argument in args) callArguments.Add(argument?.DeepClone());
+                callArguments.Add(MemberCallSubstitution.StaticMapPreference(
+                    new TypeNode.Fqn(owner.Name, new[] { keyType, valueType }), references,
+                    MemberCallSubstitution.CollectionOperationPhase.Source));
+                if (helper == "clrMapPutAll") callArguments.Add(MemberCallSubstitution.MapSourcePreference(
+                    args[0], references, context, MemberCallSubstitution.CollectionOperationPhase.Source));
                 call = new JsonObject {
                     ["k"] = "callStatic", ["owner"] = TypeJson.Fqn(HelperOwner), ["method"] = helper,
                     ["sig"] = MemberCallSubstitution.MapHelperSig(helper),
@@ -161,7 +168,8 @@ static class CollectionHelperBinding
         var root = JsonNode.Parse("""
         {"fileClass":"kotlin.collections.ClrMapDefaultsKt","methods":[
           {"name":"clrMapKeys","declarationId":"map-keys","static":true,"typeParams":["K","V"],
-           "params":[{"name":"m","type":{"t":"fqn","name":"kotlin.Any"}}],
+           "params":[{"name":"m","type":{"t":"fqn","name":"kotlin.Any"}},
+                     {"name":"view","type":{"t":"nullable","of":{"t":"fqn","name":"kotlin.Any"}}}],
            "ret":{"t":"fqn","name":"kotlin.collections.Set","args":[{"t":"tv","scope":"method","i":0}]},"body":[]},
           {"name":"use","declarationId":"map-use","static":true,"typeParams":["A","B"],"params":[],
            "ret":{"t":"fqn","name":"kotlin.Unit"},"body":[
@@ -202,7 +210,9 @@ static class CollectionHelperBinding
         {"fileClass":"kotlin.collections.ClrMapDefaultsKt","methods":[
           {"name":"clrMapPutAll","declarationId":"copy-map","static":true,"typeParams":["K","V"],
            "params":[{"name":"to","type":{"t":"fqn","name":"kotlin.Any"}},
-                     {"name":"from","type":{"t":"fqn","name":"kotlin.Any"}}],
+                     {"name":"from","type":{"t":"fqn","name":"kotlin.Any"}},
+                     {"name":"view","type":{"t":"nullable","of":{"t":"fqn","name":"kotlin.Any"}}},
+                     {"name":"fromView","type":{"t":"nullable","of":{"t":"fqn","name":"kotlin.Any"}}}],
            "ret":{"t":"fqn","name":"kotlin.Unit"},"body":[]},
           {"name":"copy","declarationId":"copy-caller","static":true,"typeParams":["K","V"],
            "params":[],"ret":{"t":"fqn","name":"kotlin.Unit"}}]}

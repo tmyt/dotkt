@@ -127,8 +127,10 @@ static class FaithfulHints
     // (2 type-args) for Map. `op` is DeepCloned because the helper node takes ownership of its argument tree.
     public static JsonObject CollToString(JsonNode op, CollKind kind, TypeNode[] args) =>
         kind == CollKind.Map
-            ? Helper(MapDefaults, "clrMapToString", new JsonArray { op.DeepClone() },
-                new JsonArray { TypeJson.Fqn("kotlin.Any") }, CollTypeArgs(kind, args))
+            ? Helper(MapDefaults, "clrMapToString", new JsonArray { op.DeepClone(),
+                    MemberCallSubstitution.StaticMapPreference(new TypeNode.Fqn("kotlin.collections.Map", args), null,
+                        MemberCallSubstitution.CollectionOperationPhase.Source) },
+                new JsonArray { TypeJson.Fqn("kotlin.Any"), TypeJson.Write(new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"))) }, CollTypeArgs(kind, args))
             : Helper(CollDefaults, "clrCollToString", new JsonArray { op.DeepClone() },
                 new JsonArray { CollectionMethodTv() }, CollTypeArgs(kind, args));
 
