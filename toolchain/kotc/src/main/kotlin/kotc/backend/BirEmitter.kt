@@ -195,8 +195,10 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 	): String {
 			val owner = when (val parent = fn.parent) {
 				is IrClass -> typeName(parent)
+				// A private callable belongs to its Kotlin source file, not the potentially shared CLR facade.
+				// Use the selected declaration's parent file even when its body is emitted in a different file.
 				is IrFile -> if (visOf(fn) == "private")
-					parent.packageFqName.asString() + "|file:" + fileClassName(parent)
+					parent.packageFqName.asString() + "|file:" + str(parent.fileEntry.name)
 					else parent.packageFqName.asString()
 				is org.jetbrains.kotlin.ir.declarations.IrPackageFragment -> parent.packageFqName.asString()
 				else -> semanticOwnerName(fn)

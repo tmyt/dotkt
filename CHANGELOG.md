@@ -5,6 +5,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Keep file-private callable identities distinct across same-named source files without changing CLR facade allocation (#1054).
+
 - Align Kotlin collection `hashCode()` and hash-container comparers with structural equality across generic and DLL calls, while preserving explicit native CLR hashing and comparers (#1065).
 
 - Preserve user-defined annotation property accessors and private backing storage, including DLL imports and array-valued properties (#1067).

@@ -51,7 +51,7 @@ PROJECTS=(
 # Reviewed on the v0.9.8 main baseline at the start of #227. Updating a suite requires updating this number in
 # the same change, making otherwise-silent test proliferation or accidental deletion an explicit review event.
 declare -A EXPECTED_DISCOVERED=(
-	["tests/basic"]=771
+	["tests/basic"]=773
 	["tests/coroutines"]=267
 	["tests/roundtrip/consumer"]=588
 	["tests/roundtrip/bidirectional/consumer"]=43
@@ -149,6 +149,14 @@ for proj in "${PROJECTS[@]}"; do
 		fi
 	fi
 	if [[ "$proj" == "tests/basic" ]]; then
+		if python3 "$ROOT/tests/basic/assert-private-file-declaration-ids-bir.py" \
+			"$dir/obj/$CONFIGURATION/net10.0/bir" \
+			>"$ROOT/build/nunit-$name.private-file-identities.log" 2>&1; then
+			echo "  source-file private declarations and selected calls retain separate identities"
+		else
+			echo "  PRIVATE FILE IDENTITY BIR FAIL — see build/nunit-$name.private-file-identities.log"
+			tail -25 "$ROOT/build/nunit-$name.private-file-identities.log"; rc=1
+		fi
 		if python3 "$ROOT/tests/basic/assert-captured-local-extension-bir.py" \
 			"$dir/obj/$CONFIGURATION/net10.0/bir/CapturedLocalExtensionReceiverTests.bir.json" \
 			>"$ROOT/build/nunit-$name.captured-local-extension.log" 2>&1; then
