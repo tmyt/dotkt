@@ -5,6 +5,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Preserve foreign CLR Set equality comparers in direct, projected and widened membership calls, including `containsAll`, without replacing Kotlin-authored overrides (#804).
+
 - Support foreign generic-only comparable values through `compareValues`, selectors and ordinary Kotlin comparable slots, with identity-preserving erased values and logical classifiers while retaining exact native CLR declarations and managed-reference locations (#769).
 
 - Keep file-private callable identities distinct across same-named source files without changing CLR facade allocation (#1054).

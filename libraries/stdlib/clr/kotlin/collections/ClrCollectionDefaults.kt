@@ -36,6 +36,7 @@ import DotKt.Runtime.CompilerServices.projectedCollectionCountErased
 import DotKt.Runtime.CompilerServices.projectedListCountErased
 import DotKt.Runtime.CompilerServices.projectedMutableListCountErased
 import DotKt.Runtime.CompilerServices.projectedSetCountErased
+import DotKt.Runtime.CompilerServices.projectedMembershipContainsErased
 import DotKt.Runtime.CompilerServices.projectedViewEnumeratorErased
 import DotKt.Runtime.CompilerServices.projectedViewCountErased
 import DotKt.Runtime.CompilerServices.projectedMutableSetCountErased
@@ -78,6 +79,8 @@ public fun <T> clrProjectedViewIsEmpty(source: Any, preferredView: Any?, family:
 public fun <T> clrProjectedViewContains(source: Any, preferredView: Any?, family: Int, element: T): Boolean {
     val slots = source as? KotlinCollectionDefaultSlots
     if (slots != null) return slots.dotktContains(element)
+    val native = projectedMembershipContainsErased(source, preferredView, family, element)
+    if (native != null) return native
     val iterator = clrProjectedViewIterator<Any?>(source, preferredView, family)
     while (iterator.hasNext()) if (iterator.next() == element) return true
     return false
@@ -193,6 +196,8 @@ public fun <T> clrProjectedMutableCollIsEmpty(c: Any): Boolean {
 public fun <T> clrProjectedCollContains(c: Any, element: T): Boolean {
     val slots = c as? KotlinCollectionDefaultSlots
     if (slots != null) return slots.dotktContains(element)
+    val native = projectedMembershipContainsErased(c, null, 1, element)
+    if (native != null) return native
     val iterator = iteratorOverRawEnumerable(c)
     while (iterator.hasNext()) if (iterator.next() == element) return true
     return false
@@ -358,6 +363,9 @@ public fun <T> clrListAddAllAt(list: MutableList<T>, index: Int, elements: Colle
 }
 
 public fun <T> clrCollContains(c: Collection<T>, element: T): Boolean {
+    // Keep the generic Collection operation's own static preference for foreign
+    // values; authored default bodies must not recurse through their own slots.
+    if (c !is KotlinCollectionDefaultSlots) return c.contains(element)
     for (x in c) if (x == element) return true
     return false
 }

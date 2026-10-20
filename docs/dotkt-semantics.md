@@ -233,6 +233,11 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   Projected `isEmpty()` first honors the Kotlin-owned override slot. Its foreign default uses the actual
   collection Count, including raw `ICollection.Count`, without requiring a generic collection face or enumerating
   the receiver. Existential Collection `size` and this projected `isEmpty` default share the selected Count view.
+  Foreign Set membership invokes `Contains` on the selected native Set contract, retaining its equality comparer
+  for closed, star-projected and widened calls, including `containsAll`. Incompatible candidate types return false;
+  null is not converted to a default non-nullable value. Kotlin-authored membership overrides remain authoritative.
+  Collection views of a Set use an eligible Set membership slot for their selected element closure when available;
+  mutable operations retain their mutable family rather than selecting an unrelated read-only view.
   Independent List/Set contracts select their actual closed Collection parent interfaces, so dictionary entry
   storage is not a competing view. Multiple independent eligible closures remain ambiguous; reflection order
   never establishes independence. Compiler-derived map-only storage definitions also exclude List interfaces

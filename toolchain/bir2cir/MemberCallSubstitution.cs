@@ -2210,10 +2210,16 @@ static class MemberCallSubstitution
             "kotlin.collections.Set" => 1,
             "kotlin.collections.Iterable" => 2,
             "kotlin.collections.List" => 3,
+            "kotlin.collections.MutableSet" => 4,
+            "kotlin.collections.MutableCollection" => 5,
+            "kotlin.collections.MutableList" => 6,
             _ => -1,
         };
         if (family < 0) return null;
         var member = Str(node["method"]);
+        // Native membership needs the mutable declaration's actual family too;
+        // unrelated readonly interfaces cannot choose its Contains slot.
+        if (family >= 4 && member is not ("contains" or "containsAll")) return null;
         var arguments = node["args"] as JsonArray ?? new JsonArray();
         var helper = (member, arguments.Count) switch {
             ("size", 0) when family != 2 && Str(node["prop"]) == "get" => "projectedViewCountErased",
@@ -2231,10 +2237,15 @@ static class MemberCallSubstitution
         };
         if (helper == null || node["recv"] == null) return null;
         var element = CollElemArg(node, refs, context, owner);
-        var preferred = StaticCollectionPreference(owner, refs,
-            family == 1 ? "System.Collections.Generic.IReadOnlySet`1"
-                : family == 0 ? "System.Collections.Generic.IReadOnlyCollection`1"
-                : family == 3 ? "System.Collections.Generic.IReadOnlyList`1" : "System.Collections.Generic.IEnumerable`1", phase);
+        var preferred = StaticCollectionPreference(owner, refs, family switch {
+            0 => "System.Collections.Generic.IReadOnlyCollection`1",
+            1 => "System.Collections.Generic.IReadOnlySet`1",
+            3 => "System.Collections.Generic.IReadOnlyList`1",
+            4 => "System.Collections.Generic.ISet`1",
+            5 => "System.Collections.Generic.ICollection`1",
+            6 => "System.Collections.Generic.IList`1",
+            _ => "System.Collections.Generic.IEnumerable`1",
+        }, phase);
         var familyArgument = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("kotlin.Int"), ["value"] = family };
         var helperArguments = new JsonArray(preferred, familyArgument);
         foreach (var argument in arguments) helperArguments.Add(argument?.DeepClone());
