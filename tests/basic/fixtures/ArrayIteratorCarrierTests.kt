@@ -137,4 +137,47 @@ class ArrayIteratorCarrierTests {
         check(primitiveFactory().nextInt() == 9)
         check(unsignedFactory().next() == UInt.MAX_VALUE)
     }
+
+    @TestAttribute fun unboundUnsignedIteratorReferencesUseNativeReceivers() {
+        val bytes: (UByteArray) -> Iterator<UByte> = UByteArray::iterator
+        val shorts: (UShortArray) -> Iterator<UShort> = UShortArray::iterator
+        val ints: (UIntArray) -> Iterator<UInt> = UIntArray::iterator
+        val longs: (ULongArray) -> Iterator<ULong> = ULongArray::iterator
+        check(bytes(ubyteArrayOf(UByte.MAX_VALUE)).next() == UByte.MAX_VALUE)
+        check(shorts(ushortArrayOf(UShort.MAX_VALUE)).next() == UShort.MAX_VALUE)
+        check(ints(uintArrayOf(UInt.MAX_VALUE)).next() == UInt.MAX_VALUE)
+        check(longs(ulongArrayOf(ULong.MAX_VALUE)).next() == ULong.MAX_VALUE)
+    }
+
+    @TestAttribute fun boundUnsignedIteratorReferencesUseNativeReceivers() {
+        val bytes = ubyteArrayOf(UByte.MAX_VALUE)
+        val shorts = ushortArrayOf(UShort.MAX_VALUE)
+        val ints = uintArrayOf(UInt.MAX_VALUE)
+        val longs = ulongArrayOf(ULong.MAX_VALUE)
+        val byteIterator = bytes::iterator
+        val shortIterator = shorts::iterator
+        val intIterator = ints::iterator
+        val longIterator = longs::iterator
+        check(byteIterator().next() == UByte.MAX_VALUE)
+        check(shortIterator().next() == UShort.MAX_VALUE)
+        check(intIterator().next() == UInt.MAX_VALUE)
+        check(longIterator().next() == ULong.MAX_VALUE)
+    }
+
+    @TestAttribute fun splicedUnsignedSearchesKeepNativeStorageAccess() {
+        val bytes = ubyteArrayOf(1u, UByte.MAX_VALUE, UByte.MAX_VALUE)
+        val shorts = ushortArrayOf(1u, UShort.MAX_VALUE, UShort.MAX_VALUE)
+        val ints = uintArrayOf(1u, UInt.MAX_VALUE, UInt.MAX_VALUE)
+        val longs = ulongArrayOf(1uL, ULong.MAX_VALUE, ULong.MAX_VALUE)
+        check(bytes.indexOfFirst { it == UByte.MAX_VALUE } == 1)
+        check(bytes.indexOfLast { it == UByte.MAX_VALUE } == 2)
+        check(shorts.indexOfFirst { it == UShort.MAX_VALUE } == 1)
+        check(shorts.indexOfLast { it == UShort.MAX_VALUE } == 2)
+        check(ints.indexOfFirst { it == UInt.MAX_VALUE } == 1)
+        check(ints.indexOfLast { it == UInt.MAX_VALUE } == 2)
+        check(longs.indexOfFirst { it == ULong.MAX_VALUE } == 1)
+        check(longs.indexOfLast { it == ULong.MAX_VALUE } == 2)
+        check(uintArrayOf().indexOfFirst { true } == -1)
+        check(uintArrayOf().indexOfLast { true } == -1)
+    }
 }

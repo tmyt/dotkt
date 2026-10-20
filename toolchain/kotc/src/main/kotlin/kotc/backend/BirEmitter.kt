@@ -77,7 +77,6 @@ import org.jetbrains.kotlin.ir.types.isBoxedArray
 import org.jetbrains.kotlin.ir.types.isPrimitiveType
 import org.jetbrains.kotlin.ir.types.isUnsignedType
 import org.jetbrains.kotlin.ir.util.isPrimitiveArray
-import org.jetbrains.kotlin.ir.util.isUnsignedArray
 import org.jetbrains.kotlin.ir.util.defaultType
 import org.jetbrains.kotlin.ir.types.makeNotNull
 import org.jetbrains.kotlin.ir.util.fqNameWhenAvailable
@@ -143,7 +142,7 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 		return direct
 	}
 
-	/** Semantic identity for a declaration that has an emitted method representation.
+	/** Semantic identity for a Kotlin declaration, independent of its eventual CLR representation.
 	 * Identity is independent of modality: bir2cir needs the selected declaration's frame even for virtual calls.
 	 * Whether a CLR name can change independently of an override chain is a separate bir2cir allocation decision.
 	 * Projected CLR members participate only through their trusted identity carrier. */
@@ -169,9 +168,9 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 			?: if (projectedClrOwner == null) declarationId(fn) else null
 		if (fn !is IrSimpleFunction) return null
 		val owner = fn.parent as? IrClass ?: return null
-		// Native array and compile-time-handle classifiers deliberately have no MethodDefs in the emitted module.
-		if (owner.defaultType.isUnsignedArray() ||
-			owner.fqNameWhenAvailable?.asString() in CLR_COMPILE_TIME_INTRINSIC_CLASSES) return null
+		// Compiler-provided compile-time handles are vocabulary, not ordinary callable declarations.
+		// Native array member declarations remain Kotlin facts; bir2cir owns their storage/helper allocation.
+		if (owner.fqNameWhenAvailable?.asString() in CLR_COMPILE_TIME_INTRINSIC_CLASSES) return null
 		// A dll2klib-projected Kotlin member can be virtual because its already allocated MethodDef participates in an
 		// interface/override slot. Its trusted metadata identity is nevertheless the exact FIR-selected declaration and
 		// must survive at every call site; rejecting it on modality sends the backend back to erased-signature overload

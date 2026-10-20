@@ -51,7 +51,7 @@ PROJECTS=(
 # Reviewed on the v0.9.8 main baseline at the start of #227. Updating a suite requires updating this number in
 # the same change, making otherwise-silent test proliferation or accidental deletion an explicit review event.
 declare -A EXPECTED_DISCOVERED=(
-	["tests/basic"]=774
+	["tests/basic"]=777
 	["tests/coroutines"]=267
 	["tests/roundtrip/consumer"]=597
 	["tests/roundtrip/bidirectional/consumer"]=43
@@ -149,6 +149,15 @@ for proj in "${PROJECTS[@]}"; do
 		fi
 	fi
 	if [[ "$proj" == "tests/basic" ]]; then
+		if dotnet "$METADATA_INSPECTOR_DLL" --unsigned-array-identities "$STDLIB_REF_DLL" \
+			"$ROOT/build/clr-stdlib-rt/dll/DotKt.Stdlib.dll" \
+			"$dir/obj/$CONFIGURATION/net10.0/bir/ArrayIteratorCarrierTests.bir.json" \
+			>"$ROOT/build/nunit-$name.unsigned-array-identities.log" 2>&1; then
+			echo "  unsigned array declarations, calls and native helpers retain exact source identities"
+		else
+			echo "  UNSIGNED ARRAY IDENTITY FAIL — see build/nunit-$name.unsigned-array-identities.log"
+			tail -25 "$ROOT/build/nunit-$name.unsigned-array-identities.log"; rc=1
+		fi
 		if python3 "$ROOT/tests/basic/assert-private-file-declaration-ids-bir.py" \
 			"$dir/obj/$CONFIGURATION/net10.0/bir" \
 			>"$ROOT/build/nunit-$name.private-file-identities.log" 2>&1; then
