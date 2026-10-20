@@ -6,6 +6,22 @@ import SetArgumentInterop.ObjectMutableSetAndIntSet
 
 private fun widen(value: Set<Any?>): Set<Any?> = value
 private fun forward(value: Set<*>): Set<Any?> = widen(value)
+private fun <T> genericContains(value: MutableSet<T>, element: T): Boolean = value.contains(element)
+
+private class AuthoredMembershipList : AbstractMutableList<String>() {
+    override val size: Int get() = 1
+    override fun get(index: Int): String = "value"
+    override fun contains(element: String): Boolean = element == "needle"
+    override fun containsAll(elements: Collection<String>): Boolean = false
+    override fun add(index: Int, element: String) { throw UnsupportedOperationException() }
+    override fun removeAt(index: Int): String = throw UnsupportedOperationException()
+    override fun set(index: Int, element: String): String = throw UnsupportedOperationException()
+}
+
+private class AuthoredMembershipSet : MutableSet<String> by mutableSetOf("value") {
+    override fun contains(element: String): Boolean = element == "needle"
+    override fun containsAll(elements: Collection<String>): Boolean = false
+}
 
 class SetMembershipTests {
     @TestAttribute fun comparerSurvivesClosedStarAndWidenedMembership() {
@@ -22,6 +38,11 @@ class SetMembershipTests {
         @Suppress("UNCHECKED_CAST")
         val concrete = source as HashSet<String>
         check(concrete.containsAll(listOf("A", "a")))
+        @Suppress("UNCHECKED_CAST")
+        val strings = source as Collection<String>
+        val objects = source as Collection<Any?>
+        check(strings.size == 1 && strings.contains("A") && strings.containsAll(listOf("A")))
+        check(objects.size == 2 && !objects.contains("A") && !objects.containsAll(listOf("A")))
         check(!wide.contains("unrelated") && !wide.contains(42) && !wide.contains(null))
         check(wide.size == 1 && wide === source)
     }
@@ -44,6 +65,15 @@ class SetMembershipTests {
         check(projected.contains("a"))
         val collection = source as MutableCollection<String>
         check(collection.contains("A") && collection.containsAll(listOf("A")))
+        check(genericContains(source as MutableSet<String>, "A"))
+        val authoredList: MutableList<String> = AuthoredMembershipList()
+        val authoredCollection: MutableCollection<String> = authoredList
+        val authoredSet: MutableSet<String> = AuthoredMembershipSet()
+        check(authoredList.contains("needle") && !authoredList.contains("value"))
+        check(!authoredList.containsAll(emptyList()))
+        check(authoredCollection.contains("needle") && !authoredCollection.containsAll(emptyList()))
+        check(authoredSet.contains("needle") && !authoredSet.contains("value"))
+        check(!authoredSet.containsAll(emptyList()))
     }
 
     @TestAttribute fun readonlySetInvokesItsInterfaceNotPublicLookalikeOrEnumerator() {
@@ -87,5 +117,10 @@ class SetMembershipTests {
         val erased: Any = raw
         val list = erased as MutableList<*>
         check(list.contains("value") && !list.contains("absent"))
+        val mixed: Any = ListAndUnrelatedSet()
+        @Suppress("UNCHECKED_CAST")
+        val projected = mixed as MutableList<in String>
+        check(projected.contains("value") && !projected.contains("absent"))
+        check(projected.containsAll(listOf("value")))
     }
 }

@@ -74,3 +74,18 @@ public sealed class NullableIntSet : HashSet<int?>
 {
     public NullableIntSet() { Add(null); Add(2); }
 }
+
+public sealed class ListAndUnrelatedSet : List<string>, IReadOnlySet<int>
+{
+    private readonly HashSet<int> values = new() { 7 };
+    public ListAndUnrelatedSet() { Add("value"); }
+    int IReadOnlyCollection<int>.Count => values.Count;
+    bool IReadOnlySet<int>.Contains(int value) => values.Contains(value);
+    IEnumerator<int> IEnumerable<int>.GetEnumerator() => values.GetEnumerator();
+    public bool IsProperSubsetOf(IEnumerable<int> other) => values.IsProperSubsetOf(other);
+    public bool IsProperSupersetOf(IEnumerable<int> other) => values.IsProperSupersetOf(other);
+    public bool IsSubsetOf(IEnumerable<int> other) => values.IsSubsetOf(other);
+    public bool IsSupersetOf(IEnumerable<int> other) => values.IsSupersetOf(other);
+    public bool Overlaps(IEnumerable<int> other) => values.Overlaps(other);
+    public bool SetEquals(IEnumerable<int> other) => values.SetEquals(other);
+}
