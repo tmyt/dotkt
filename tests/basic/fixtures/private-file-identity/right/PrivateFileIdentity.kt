@@ -1,12 +1,19 @@
 package privatefileidentity.probe
 
 private var rightReadCount = 0
+private var rightInlineCount = 0
 
 @kotlin.clr.ClrName("readRightFilePrivate")
 @Suppress("UNCHECKED_CAST")
 private fun <T> read(raw: Any?): T {
     rightReadCount++
     return raw as T
+}
+
+@kotlin.clr.ClrName("executeRightFilePrivate")
+private inline fun <T> execute(block: () -> T): T {
+    rightInlineCount++
+    return block()
 }
 
 @get:kotlin.clr.ClrName("getRightFilePrivateValue")
@@ -20,3 +27,5 @@ fun rightFilePrivateReference(): () -> Int {
 }
 fun rightFilePrivateReads(): Int = rightReadCount
 fun rightFilePrivateValue(): Int = scopedValue
+fun rightFilePrivateInline(): Int = execute { 59 }
+fun rightFilePrivateInlineReads(): Int = rightInlineCount

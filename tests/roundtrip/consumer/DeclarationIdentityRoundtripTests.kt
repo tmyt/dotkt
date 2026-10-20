@@ -1,4 +1,5 @@
 import NUnit.Framework.TestAttribute
+import roundtrip.privatefileidentity.*
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import roundtrip.identity.roundtripIdentityFunction
 import roundtrip.identity.roundtripIdentityProperty
@@ -139,5 +140,21 @@ class DeclarationIdentityRoundtripTests {
             RoundtripCompanionExtensionIdentity::erasedSuspendCompanionCallable
         assertEquals(324, runCrossModuleSuspend { readSuspendRef(readOnly) })
         assertEquals(325, runCrossModuleSuspend { mutableSuspendRef(mutable) })
+    }
+
+    @TestAttribute
+    fun dllDefaultsRetainTheProducersFilePrivateIdentities() {
+        val leftBefore = leftFilePrivateReads()
+        val rightBefore = rightFilePrivateReads()
+        check(leftFilePrivateDefault() == 31)
+        check(leftFilePrivateReads() == leftBefore + 1)
+        check(rightFilePrivateReads() == rightBefore)
+        check(rightFilePrivateDefault() == 37)
+        check(leftFilePrivateReads() == leftBefore + 1)
+        check(rightFilePrivateReads() == rightBefore + 1)
+        check(leftFilePrivateDefault(71) == 71)
+        check(rightFilePrivateDefault(73) == 73)
+        check(leftFilePrivateReads() == leftBefore + 1)
+        check(rightFilePrivateReads() == rightBefore + 1)
     }
 }

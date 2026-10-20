@@ -27,18 +27,20 @@ def main():
                 selected[side] = document
     assert set(selected) == {"left", "right"}, "both same-named source fixtures must be emitted"
     assert selected["left"]["fileClass"] == selected["right"]["fileClass"], "fixture facades must still coincide"
-    identities = []
+    identities = {"read": [], "execute": []}
     for side, document in selected.items():
-        declaration = next(method for method in document["methods"] if method["name"] == "read")
-        identity = declaration["declarationId"]
-        assert isinstance(identity, str) and identity, f"missing {side} private identity"
-        identities.append(identity)
-        calls = [node for node in objects(document)
-                 if node.get("k") in {"callStatic", "callInstance", "newDelegate"} and node.get("method") == "read"]
-        assert calls, f"missing {side} selected private call"
-        assert all(node.get("declarationId") == identity for node in calls), f"{side} private call changed declaration"
-    assert len(set(identities)) == 2, "same facade must not conflate separate file-private declarations"
-    print("source-file private declaration identities and selected call edges are distinct and exact")
+        for name in identities:
+            declaration = next(method for method in document["methods"] if method["name"] == name)
+            identity = declaration["declarationId"]
+            assert isinstance(identity, str) and identity, f"missing {side} private {name} identity"
+            identities[name].append(identity)
+            calls = [node for node in objects(document)
+                     if (node.get("k") in {"callStatic", "callInstance", "newDelegate"} and node.get("method") == name)
+                     or (node.get("k") == "callInline" and node["callee"]["name"] == f"privatefileidentity.probe.{name}")]
+            assert calls, f"missing {side} selected private {name} call"
+            assert all(node.get("declarationId") == identity for node in calls), f"{side} private {name} call changed declaration"
+    assert all(len(set(pair)) == 2 for pair in identities.values()), "same facade must not conflate separate file-private declarations"
+    print("source-file private identities, selected calls and inline targets are distinct and exact")
 
 
 if __name__ == "__main__":

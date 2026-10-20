@@ -9,6 +9,7 @@ import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.coroutines.startCoroutine
 import kotlin.math.sin
 import kotlin.reflect.KProperty
+import privatefileidentity.probe.*
 
 private val Map<Int, Int>.identityProperty: Int get() = 11
 @get:kotlin.clr.ClrName("identityPropertyMutableMap")
@@ -306,5 +307,45 @@ class DeclarationIdentityTests {
         var written by delegate
         written = 7
         assertEquals(907, delegate.setterResult)
+    }
+
+    @TestAttribute
+    fun selectedPrivateFunctionsSurviveDirectDefaultAndReferenceCalls() {
+        val leftBefore = leftFilePrivateReads()
+        val rightBefore = rightFilePrivateReads()
+        fun counts(left: Int, right: Int) {
+            check(leftFilePrivateReads() == leftBefore + left)
+            check(rightFilePrivateReads() == rightBefore + right)
+        }
+        check(leftFilePrivateDirect() == 17)
+        counts(1, 0)
+        check(rightFilePrivateDirect() == 23)
+        counts(1, 1)
+        check(leftFilePrivateDefault() == 31)
+        counts(2, 1)
+        check(rightFilePrivateDefault() == 37)
+        counts(2, 2)
+        check(leftFilePrivateReference()() == 43)
+        counts(3, 2)
+        check(rightFilePrivateReference()() == 47)
+        counts(3, 3)
+    }
+
+    @TestAttribute
+    fun privateGetterIdentitiesRemainSourceFileScoped() {
+        check(leftFilePrivateValue() == 107)
+        check(rightFilePrivateValue() == 211)
+    }
+
+    @TestAttribute
+    fun privateInlineBodiesAreSelectedBySourceFileIdentity() {
+        val leftBefore = leftFilePrivateInlineReads()
+        val rightBefore = rightFilePrivateInlineReads()
+        check(leftFilePrivateInline() == 53)
+        check(leftFilePrivateInlineReads() == leftBefore + 1)
+        check(rightFilePrivateInlineReads() == rightBefore)
+        check(rightFilePrivateInline() == 59)
+        check(leftFilePrivateInlineReads() == leftBefore + 1)
+        check(rightFilePrivateInlineReads() == rightBefore + 1)
     }
 }
