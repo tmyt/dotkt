@@ -135,12 +135,13 @@ static class CollectionHelperBinding
                 if (!IsInterface(owner.Name)
                     || !(owner.Name.StartsWith("kotlin.collections.", StringComparison.Ordinal) || owner.Name == "kotlin.sequences.Sequence"))
                     return obj;
-                call = (MemberCallSubstitution.CollectionMutationCall(obj, owner, args, references, context)
+                var preferred = obj["recv"] is JsonObject receiver && Text(receiver["k"]) == "local"
+                    && Text(receiver["name"]) is string local && closedViews.TryGetValue(local, out var exact)
+                    && exact.Name == owner.Name ? exact : null;
+                call = (MemberCallSubstitution.CollectionMutationCall(obj, owner, args, references, context,
+                        MemberCallSubstitution.CollectionOperationPhase.Source, preferred)
                     ?? MemberCallSubstitution.CollectionDefaultCall(obj, owner, args, references, context,
-                        MemberCallSubstitution.CollectionOperationPhase.Source,
-                        obj["recv"] is JsonObject receiver && Text(receiver["k"]) == "local"
-                            && Text(receiver["name"]) is string local && closedViews.TryGetValue(local, out var exact)
-                            && exact.Name == owner.Name ? exact : null)) as JsonObject;
+                        MemberCallSubstitution.CollectionOperationPhase.Source, preferred)) as JsonObject;
                 if (call == null) return obj;
             }
             var sourceArguments = ((JsonArray)call["typeArgs"]).Select(TypeJson.Read).Select(SourceArgument).ToArray();

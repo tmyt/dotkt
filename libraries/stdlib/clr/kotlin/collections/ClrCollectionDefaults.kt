@@ -259,6 +259,10 @@ public fun <T> clrProjectedListSet(list: Any, index: Int, element: T): Any? {
     return old
 }
 
+public fun <T> clrProjectedListAddAt(list: Any, sourceWitness: Any?, index: Int, element: T) {
+    mutableListInsertErased(list, index, element, sourceWitness)
+}
+
 public fun <T> clrProjectedListRemoveAt(list: Any, index: Int): Any? {
     val old = mutableListGetErased(list, index)
     mutableListRemoveAtErased(list, index)

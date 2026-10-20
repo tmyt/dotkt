@@ -337,6 +337,9 @@ internal fun kotlinCollectionCastCandidate(value: Any?, witness: Int, dictionary
 private interface StarProjectionRawList {
     @property:kotlin.clr.ClrProperty(kotlin.clr.READ, "Count") val count: Int
     @kotlin.clr.ClrIntrinsic("get_Item") fun get(index: Int): Any?
+    @kotlin.clr.ClrIntrinsic("set_Item") fun set(index: Int, element: Any?)
+    @kotlin.clr.ClrIntrinsic("Insert") fun insert(index: Int, element: Any?)
+    @kotlin.clr.ClrIntrinsic("RemoveAt") fun removeAt(index: Int)
 }
 
 @kotlin.clr.ClrTypeAlias("System.Collections.ICollection")
@@ -967,27 +970,10 @@ private fun erasedMutableCollectionMethod(receiver: Any, name: String, parameter
     return match ?: throw IllegalStateException("Missing ICollection member " + name)
 }
 
-private fun erasedMutableListView(receiver: Any): StarProjectionType {
-    var match: StarProjectionType? = null
-    for (candidate in receiver.starProjectionRuntimeType().getInterfaces()) {
-        if (!candidate.isGenericType
-            || candidate.getGenericTypeDefinition().fullName != "System.Collections.Generic.IList`1") continue
-        if (match != null && match != candidate)
-            throw IllegalStateException("Ambiguous mutable list view")
-        match = candidate
-    }
-    return match ?: throw UnsupportedOperationException("MutableList has no mutable CLR list surface")
-}
-
-private fun erasedMutableListMethod(receiver: Any, name: String, parameterCount: Int): StarProjectionMethod {
-    var match: StarProjectionMethod? = null
-    for (candidate in erasedMutableListView(receiver).getMethods()) {
-        if (candidate.name != name || candidate.getParameters().size != parameterCount) continue
-        if (match != null) throw IllegalStateException("Ambiguous IList member " + name)
-        match = candidate
-    }
-    return match ?: throw IllegalStateException("Missing IList member " + name)
-}
+private fun erasedMutableListView(receiver: Any, sourceWitness: Any? = null): StarProjectionType? =
+    findErasedProjectedView(receiver,
+        "System.Collections.Generic.IList`1", "System.Collections.Generic.IList`1",
+        elementWitness = (sourceWitness as? StarProjectionType)?.getGenericArguments()?.get(0))
 
 // bir2cir supplies trusted map-only class-alias storage definitions, exactly as for collection classifiers.
 // Cache those physical type tokens; do not infer Kotlin storage meaning from runtime CLR class names.
@@ -1316,8 +1302,7 @@ internal fun projectedViewCountErased(receiver: Any, preferredView: Any?, family
 
 @PublishedApi
 internal fun projectedMutableListCountErased(receiver: Any): Int {
-    val view = findErasedProjectedView(receiver,
-        "System.Collections.Generic.IList`1", "System.Collections.Generic.IList`1")
+    val view = erasedMutableListView(receiver)
     if (view == null && receiver is StarProjectionRawList && !rawListIsMapStorage(receiver)) return receiver.count
     val list = view ?: throw UnsupportedOperationException("Projected receiver has no mutable CLR List surface")
     return projectedParentCollectionCount(receiver, list, "System.Collections.Generic.ICollection`1")
@@ -1427,8 +1412,7 @@ internal fun mutableCollectionReplaceErased(receiver: Any, elements: Array<Any?>
 
 @PublishedApi
 internal fun mutableListGetErased(receiver: Any, index: Int): Any? {
-    val view = findErasedProjectedView(receiver,
-        "System.Collections.Generic.IList`1", "System.Collections.Generic.IList`1")
+    val view = erasedMutableListView(receiver)
     if (view == null && receiver is StarProjectionRawList && !rawListIsMapStorage(receiver)) return receiver.get(index)
     val list = view ?: throw UnsupportedOperationException("Projected receiver has no mutable CLR List surface")
     return try {
@@ -1440,17 +1424,29 @@ internal fun mutableListGetErased(receiver: Any, index: Int): Any? {
 
 @PublishedApi
 internal fun mutableListSetErased(receiver: Any, index: Int, element: Any?) {
+    val view = erasedMutableListView(receiver)
+    if (view == null && receiver is StarProjectionRawList && !rawListIsMapStorage(receiver)) {
+        receiver.set(index, element)
+        return
+    }
+    val list = view ?: throw UnsupportedOperationException("Projected receiver has no mutable CLR List surface")
     try {
-        erasedMutableListMethod(receiver, "set_Item", 2).invoke(receiver, arrayOf(index, element))
+        erasedProjectedMethod(list, "set_Item", 2).invoke(receiver, arrayOf(index, element))
     } catch (failure: StarProjectionInvocationException) {
         throw (failure.innerException ?: failure)
     }
 }
 
 @PublishedApi
-internal fun mutableListInsertErased(receiver: Any, index: Int, element: Any?) {
+internal fun mutableListInsertErased(receiver: Any, index: Int, element: Any?, sourceWitness: Any? = null) {
+    val view = erasedMutableListView(receiver, sourceWitness)
+    if (view == null && receiver is StarProjectionRawList && !rawListIsMapStorage(receiver)) {
+        receiver.insert(index, element)
+        return
+    }
+    val list = view ?: throw UnsupportedOperationException("Projected receiver has no mutable CLR List surface")
     try {
-        erasedMutableListMethod(receiver, "Insert", 2).invoke(receiver, arrayOf(index, element))
+        erasedProjectedMethod(list, "Insert", 2).invoke(receiver, arrayOf(index, element))
     } catch (failure: StarProjectionInvocationException) {
         throw (failure.innerException ?: failure)
     }
@@ -1458,8 +1454,14 @@ internal fun mutableListInsertErased(receiver: Any, index: Int, element: Any?) {
 
 @PublishedApi
 internal fun mutableListRemoveAtErased(receiver: Any, index: Int) {
+    val view = erasedMutableListView(receiver)
+    if (view == null && receiver is StarProjectionRawList && !rawListIsMapStorage(receiver)) {
+        receiver.removeAt(index)
+        return
+    }
+    val list = view ?: throw UnsupportedOperationException("Projected receiver has no mutable CLR List surface")
     try {
-        erasedMutableListMethod(receiver, "RemoveAt", 1).invoke(receiver, arrayOf(index))
+        erasedProjectedMethod(list, "RemoveAt", 1).invoke(receiver, arrayOf(index))
     } catch (failure: StarProjectionInvocationException) {
         throw (failure.innerException ?: failure)
     }

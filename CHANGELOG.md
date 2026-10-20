@@ -5,6 +5,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Use the same eligible CLR list contract for projected mutable list reads and writes, including raw lists and dictionary-adjacent independent lists (#807).
+
 - Preserve source-authored exact mutable collection views through projected `isEmpty` defaults without losing authored overrides or genuine ambiguity (#806).
 
 - Preserve foreign CLR Set equality comparers in direct, projected and widened membership calls, including `containsAll`, without replacing Kotlin-authored overrides (#804).

@@ -2146,7 +2146,8 @@ static class MemberCallSubstitution
                 OwnerElemArg(owner), args) : null;
 
     internal static JsonNode CollectionMutationCall(JsonObject node, TypeNode.Fqn ownerFqnNode,
-        JsonArray args, ReferenceMetadataIndex refs, SubstCtx ctx)
+        JsonArray args, ReferenceMetadataIndex refs, SubstCtx ctx,
+        CollectionOperationPhase phase = CollectionOperationPhase.Physical, TypeNode.Fqn preferredOwner = null)
     {
         var ownerFqn = ownerFqnNode.Name;
         var member = Str(node["method"]);
@@ -2173,13 +2174,26 @@ static class MemberCallSubstitution
                 CollElemArg(node, refs, ctx, ownerFqnNode), args);
         }
 
+        // Projected Insert must select the same eligible mutable List as reads and the other writes,
+        // even when the receiver has no source-authored closed-view hint (for example, a parameter).
+        // Exact native list calls retain their direct intrinsic dispatch.
+        if (ownerFqn == "kotlin.collections.MutableList" && (member is "add" or "Insert") && args.Count == 2
+            && HasProjectedCollectionReceiver(node, ownerFqnNode, ctx, refs))
+        {
+            var preferred = StaticCollectionPreference(preferredOwner ?? ownerFqnNode, refs,
+                "System.Collections.Generic.IList`1", phase);
+            var insertArguments = new JsonArray(preferred);
+            foreach (var argument in args) insertArguments.Add(argument?.DeepClone());
+            return CollDefaultCall(node, "kotlin.collections.ClrCollectionDefaultsKt", "clrProjectedListAddAt",
+                CollElemArg(node, refs, ctx, ownerFqnNode), insertArguments);
+        }
+
         // PRE-Rule-2 semantic override: MutableList.set(i,e) / removeAt(i) @ClrIntrinsic(set_Item/RemoveAt), but the
         // BCL slots are VOID while Kotlin RETURNS the previous/removed element — binding the intrinsic directly
         // underflows the stack when the result is consumed (`val old = list.set(i,e)` -> InvalidProgramException).
         // Route to the ClrCollectionDefaults wrappers (clrListSet/clrListRemoveAt) that read the old element, perform
         // the void mutation, and return it. `retType` carries the concrete element type for the boxing/convert at the
-        // call site (the helper's own `!!0` is out of scope). The void-returning 2-arg add(i,e) Insert form is left
-        // on the intrinsic path.
+        // call site (the helper's own `!!0` is out of scope).
         if (ownerFqn == "kotlin.collections.MutableList"
             && (((member is "set" or "set_Item") && args.Count == 2) || ((member is "removeAt" or "RemoveAt") && args.Count == 1)))
         {
@@ -2478,6 +2492,8 @@ static class MemberCallSubstitution
             (_, "clrListRemoveAt") => new TypeNode[] { Gen("kotlin.collections.MutableList"), new TypeNode.Fqn("kotlin.Int") },
             (_, "clrProjectedListSet") => new TypeNode[]
                 { new TypeNode.Fqn("kotlin.Any"), new TypeNode.Fqn("kotlin.Int"), tv },
+            (_, "clrProjectedListAddAt") => new TypeNode[]
+                { new TypeNode.Fqn("kotlin.Any"), new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any")), new TypeNode.Fqn("kotlin.Int"), tv },
             (_, "clrProjectedListRemoveAt") => new TypeNode[]
                 { new TypeNode.Fqn("kotlin.Any"), new TypeNode.Fqn("kotlin.Int") },
             // MutableIterable is declaration-site covariant. A legal Kotlin view such as MutableIterable<Any?> over
