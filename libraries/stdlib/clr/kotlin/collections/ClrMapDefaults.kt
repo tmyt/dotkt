@@ -293,6 +293,7 @@ private class ClrMapNativeValueIterator<V>(private val raw: ClrNativeMapAccess) 
 }
 
 private class ClrNativeMapValueCollection<V>(private val raw: ClrNativeMapAccess) : MutableCollection<V> {
+    override fun toString(): String = clrCollToString(this)
     override val size: Int get() = raw.count()
     override fun isEmpty(): Boolean = size == 0
     override fun iterator(): MutableIterator<V> = ClrMapNativeValueIterator(raw)

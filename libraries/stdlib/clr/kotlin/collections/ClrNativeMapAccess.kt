@@ -16,19 +16,46 @@ private interface ClrMapDisposable {
     @kotlin.clr.ClrIntrinsic("Dispose") fun dispose()
 }
 
-// A call supplies its static dictionary closure as a preference, not a cast: Kotlin Map's
-// covariance can describe IDictionary<string, object> while the actual closure contains strings.
-// Prefer an exact implemented closure, otherwise require a unique dictionary contract. Never
-// select a contract from an argument's runtime value or from reflection enumeration order.
-private fun nativeMapView(source: Any, preferred: StarProjectionType?): StarProjectionType? {
+private class ClrNativeMapViewPreference(val key: StarProjectionType?, val keyVariance: Int,
+    val value: StarProjectionType?, val valueVariance: Int) {
+    fun exact(arguments: Array<StarProjectionType>): Boolean = key == arguments[0] && value == arguments[1]
+    private fun compatible(bound: StarProjectionType?, variance: Int, actual: StarProjectionType): Boolean =
+        bound == null || when (variance) {
+            1 -> bound.isAssignableFrom(actual)
+            -1 -> actual.isAssignableFrom(bound)
+            else -> bound == actual
+        }
+    fun compatible(arguments: Array<StarProjectionType>): Boolean =
+        compatible(key, keyVariance, arguments[0]) && compatible(value, valueVariance, arguments[1])
+}
+
+// CLR representation vocabulary supplied by bir2cir. A null argument is a star/unknown
+// position; it is not System.Object. Variance is invariant=0, out=1, in=-1.
+@PublishedApi
+internal fun clrMapViewPreference(key: Any?, keyVariance: Int, value: Any?, valueVariance: Int): Any =
+    ClrNativeMapViewPreference(key as StarProjectionType?, keyVariance, value as StarProjectionType?, valueVariance)
+
+// A view is a preference, not an invariant cast. Preserve partial source constraints and
+// choose an exact or uniquely compatible implemented face; a sole actual face remains usable
+// through Kotlin's erased views. Argument values and reflection order never choose a face.
+private fun nativeMapView(source: Any, preferred: ClrNativeMapViewPreference?): StarProjectionType? {
     var match: StarProjectionType? = null
     var ambiguous = false
+    var compatible: StarProjectionType? = null
+    var compatibleAmbiguous = false
     for (face in source.starProjectionRuntimeType().getInterfaces()) {
         if (!face.isGenericType || face.getGenericTypeDefinition().fullName != "System.Collections.Generic.IDictionary`2") continue
-        if (face == preferred) return face
+        val arguments = face.getGenericArguments()
+        if (preferred != null && preferred.exact(arguments)) return face
         if (match != null && match != face) ambiguous = true
         match = face
+        if (preferred == null || preferred.compatible(arguments)) {
+            if (compatible != null && compatible != face) compatibleAmbiguous = true
+            compatible = face
+        }
     }
+    if (compatibleAmbiguous) throw IllegalStateException("Ambiguous projected dictionary view")
+    if (compatible != null) return compatible
     if (ambiguous) throw IllegalStateException("Ambiguous projected dictionary view")
     return match
 }
@@ -43,7 +70,7 @@ internal class ClrNativeMapAccess(private val source: Any, preferred: Any?) {
     // Only generic-only implementations need an existential interface dispatch plan.
     private val raw: ClrRawDictionary? = source as? ClrRawDictionary
     private val view: StarProjectionType? = if (raw != null) null
-        else nativeMapView(source, preferred as? StarProjectionType)
+        else nativeMapView(source, preferred as ClrNativeMapViewPreference?)
 
     fun count(): Int = if (view == null) (source as ClrRawCollection).count()
         else projectedParentCollectionCount(source, view, "System.Collections.Generic.ICollection`1")

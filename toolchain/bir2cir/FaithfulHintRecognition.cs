@@ -128,8 +128,8 @@ static class FaithfulHints
     public static JsonObject CollToString(JsonNode op, CollKind kind, TypeNode[] args) =>
         kind == CollKind.Map
             ? Helper(MapDefaults, "clrMapToString", new JsonArray { op.DeepClone(),
-                    MemberCallSubstitution.StaticCollectionPreference(new TypeNode.Fqn("kotlin.collections.Map", args), null,
-                        "System.Collections.Generic.IDictionary`2", MemberCallSubstitution.CollectionOperationPhase.Source) },
+                    MemberCallSubstitution.StaticMapPreference(new TypeNode.Fqn("kotlin.collections.Map", args), null,
+                        MemberCallSubstitution.CollectionOperationPhase.Source) },
                 new JsonArray { TypeJson.Fqn("kotlin.Any"), TypeJson.Write(new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"))) }, CollTypeArgs(kind, args))
             : Helper(CollDefaults, "clrCollToString", new JsonArray { op.DeepClone() },
                 new JsonArray { CollectionMethodTv() }, CollTypeArgs(kind, args));

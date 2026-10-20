@@ -126,9 +126,9 @@ static class CollectionHelperBinding
                 var callArguments = new JsonArray(obj["recv"]?.DeepClone()
                     ?? throw new InvalidOperationException("Map member has no receiver"));
                 foreach (var argument in args) callArguments.Add(argument?.DeepClone());
-                callArguments.Add(MemberCallSubstitution.StaticCollectionPreference(
+                callArguments.Add(MemberCallSubstitution.StaticMapPreference(
                     new TypeNode.Fqn(owner.Name, new[] { keyType, valueType }), references,
-                    "System.Collections.Generic.IDictionary`2", MemberCallSubstitution.CollectionOperationPhase.Source));
+                    MemberCallSubstitution.CollectionOperationPhase.Source));
                 if (helper == "clrMapPutAll") callArguments.Add(MemberCallSubstitution.MapSourcePreference(
                     args[0], references, context, MemberCallSubstitution.CollectionOperationPhase.Source));
                 call = new JsonObject {

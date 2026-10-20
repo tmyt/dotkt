@@ -67,3 +67,24 @@ public static class NativeDictionaries
     public static object Raw() => new Hashtable { ["key"] = "raw" };
     public static object Generic() => new Dictionary<string, int> { ["key"] = 42 };
 }
+
+// Distinct key/value types catch swapped type/method frames; V may also be Nullable<int>.
+public sealed class ReverseDictionary<V> : GenericOnlyDictionary<string, V>, IDictionary<int, string>
+{
+    private readonly Dictionary<int, string> numbers = new() { [7] = "reverse", [8] = "other" };
+    string IDictionary<int, string>.this[int key] { get => numbers[key]; set => numbers[key] = value; }
+    ICollection<int> IDictionary<int, string>.Keys => numbers.Keys;
+    ICollection<string> IDictionary<int, string>.Values => numbers.Values;
+    int ICollection<KeyValuePair<int, string>>.Count => numbers.Count;
+    bool ICollection<KeyValuePair<int, string>>.IsReadOnly => false;
+    void IDictionary<int, string>.Add(int key, string value) => numbers.Add(key, value);
+    void ICollection<KeyValuePair<int, string>>.Add(KeyValuePair<int, string> value) => ((ICollection<KeyValuePair<int, string>>)numbers).Add(value);
+    void ICollection<KeyValuePair<int, string>>.Clear() => numbers.Clear();
+    bool ICollection<KeyValuePair<int, string>>.Contains(KeyValuePair<int, string> value) => ((ICollection<KeyValuePair<int, string>>)numbers).Contains(value);
+    bool IDictionary<int, string>.ContainsKey(int key) => numbers.ContainsKey(key);
+    void ICollection<KeyValuePair<int, string>>.CopyTo(KeyValuePair<int, string>[] array, int index) => ((ICollection<KeyValuePair<int, string>>)numbers).CopyTo(array, index);
+    bool IDictionary<int, string>.Remove(int key) => numbers.Remove(key);
+    bool ICollection<KeyValuePair<int, string>>.Remove(KeyValuePair<int, string> value) => ((ICollection<KeyValuePair<int, string>>)numbers).Remove(value);
+    bool IDictionary<int, string>.TryGetValue(int key, out string value) => numbers.TryGetValue(key, out value);
+    IEnumerator<KeyValuePair<int, string>> IEnumerable<KeyValuePair<int, string>>.GetEnumerator() => numbers.GetEnumerator();
+}

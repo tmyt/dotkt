@@ -2,6 +2,7 @@ import NUnit.Framework.TestAttribute
 import DictionaryContracts.GenericOnlyDictionary
 import DictionaryContracts.DualDictionary
 import DictionaryContracts.NativeDictionaries
+import DictionaryContracts.ReverseDictionary
 
 private fun dictionaryStrings(): GenericOnlyDictionary<String, String> {
     val native = GenericOnlyDictionary<String, String>()
@@ -13,7 +14,11 @@ private fun projectedDictionarySize(map: Map<*, *>): Int = map.size
 
 private class DictionaryGenericFrame<V> {
     fun <K> get(map: Map<K, V>, key: K): V? = map[key]
+    fun <K, M : Map<K, V>> copy(map: M): Map<K, V> = HashMap<K, V>(map)
 }
+
+private fun <M : Map<Int, Int>> boundedDictionaryCopy(from: M): Map<Int, Int> = HashMap<Int, Int>(from)
+private fun <M : Map<Int, Int>> boundedDictionaryPutAll(to: MutableMap<Int, Int>, from: M) { to.putAll(from) }
 
 class GenericOnlyDictionaryTests {
     @TestAttribute fun classifiersAndCastsPreserveTheOriginalDictionary() {
@@ -151,6 +156,12 @@ class GenericOnlyDictionaryTests {
         check(generic.size == 1 && generic["key"] == 42)
         check(generic.put("key", 43) == 42)
         check(generic.entries.single().value == 43)
+        check(listOf(generic.values).toString() == "[[43]]")
+        check(generic.values.remove(43) && generic.isEmpty())
+        val concrete = hashMapOf("key" to 42)
+        check(concrete.values.remove(42) && concrete.isEmpty())
+        val ordered = linkedMapOf("key" to 43)
+        check(ordered.values.remove(43) && ordered.isEmpty())
     }
 
     @TestAttribute fun nullableValuesAndCallerGenericFramesRetainTheirContracts() {
@@ -163,5 +174,51 @@ class GenericOnlyDictionaryTests {
         check(frame.get(map, "value") == 42 && frame.get(map, "missing") == null)
         check(map.put("value", null) == 42)
         check(map.put("value", 43) == null && frame.get(map, "value") == 43)
+    }
+
+    @TestAttribute fun mapExtensionsAndBoundedCopiesRetainSelectedContracts() {
+        val value: Any = DualDictionary()
+        val map = value as Map<Int, Int>
+        check(map.toMutableMap()[7] == 42)
+        check(boundedDictionaryCopy(map)[8] == 43)
+        val copy = HashMap<Int, Int>()
+        boundedDictionaryPutAll(copy, map)
+        check(copy[7] == 42)
+        var total = 0
+        for ((key, number) in map) total += number
+        check(total == 85)
+        total = 0
+        map.forEach { (key, number) -> total += number }
+        check(total == 85 && map.filter { it.key == 7 }[7] == 42)
+    }
+
+    @TestAttribute fun widenedAndPartialViewsKeepTheirKnownTypeConstraints() {
+        val native = DualDictionary()
+        native.Add("key", "text")
+        val value: Any = native
+        val texts = value as Map<String, String>
+        val widened: Map<String, Any> = texts
+        check(widened.size == 1 && widened["key"] == "text")
+        check((value as Map<String, *>).size == 1)
+        check((value as Map<*, String>).size == 1)
+        check(widened.toMutableMap()["key"] == "text")
+    }
+
+    @TestAttribute fun multipleContractsDistinguishTypeMethodAndNullableFrames() {
+        val native = ReverseDictionary<Int>()
+        native.Add("key", 42)
+        val map = (native as Any) as Map<String, Int>
+        val frame = DictionaryGenericFrame<Int>()
+        check(frame.get(map, "key") == 42)
+        val copy = frame.copy<String, Map<String, Int>>(map)
+        check(copy.size == 1 && copy["key"] == 42)
+        val nullable = ReverseDictionary<Int?>()
+        nullable.Add("key", 43)
+        nullable.Add("null", null)
+        val nullableMap = (nullable as Any) as Map<String, Int?>
+        val nullableFrame = DictionaryGenericFrame<Int?>()
+        check(nullableFrame.get(nullableMap, "key") == 43)
+        val nullableCopy = nullableFrame.copy<String, Map<String, Int?>>(nullableMap)
+        check(nullableCopy.size == 2 && nullableCopy["key"] == 43 && nullableCopy["null"] == null)
     }
 }
