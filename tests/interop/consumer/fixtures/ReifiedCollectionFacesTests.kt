@@ -106,6 +106,7 @@ class ReifiedCollectionFacesTests {
         check((value as MutableCollection<Any>).size == 1)
         val selected: MutableCollection<*> = value as MutableCollection<String>
         check(selected.size == 2)
+        check(!selected.isEmpty())
     }
 
     @TestAttribute fun concreteMutableCollectionReturnsKeepTheirInterface() {

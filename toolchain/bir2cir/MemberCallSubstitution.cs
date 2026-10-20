@@ -2238,7 +2238,10 @@ static class MemberCallSubstitution
         };
         if (helper == null || node["recv"] == null) return null;
         var element = CollElemArg(node, refs, context, owner);
-        var preferred = StaticCollectionPreference(preferredOwner ?? owner, refs, family switch {
+        // Variant aliases use the operation's declared static view, not its
+        // initializer's view. Only invariant mutable families borrow a local witness.
+        var selectedOwner = family >= 4 ? preferredOwner ?? owner : owner;
+        var preferred = StaticCollectionPreference(selectedOwner, refs, family switch {
             0 => "System.Collections.Generic.IReadOnlyCollection`1",
             1 => "System.Collections.Generic.IReadOnlySet`1",
             3 => "System.Collections.Generic.IReadOnlyList`1",
@@ -2363,6 +2366,16 @@ static class MemberCallSubstitution
                 || TypeJson.Read(operation["args"][1]["type"]) is not TypeNode.Fqn selected
                 || selected.Name != native || selected.Args is not [TypeNode.Tv { Scope: "method", I: 1 }])
                 throw new InvalidOperationException("Mutable emptiness lost its exact source witness or family");
+        }
+        foreach (var owner in new[] { "kotlin.collections.Collection", "kotlin.collections.Set", "kotlin.collections.List" })
+        {
+            var operation = StaticCollectionOperation(new JsonObject {
+                ["method"] = "isEmpty", ["args"] = new JsonArray(),
+                ["recv"] = new JsonObject { ["k"] = "local", ["name"] = "source" },
+            }, new TypeNode.Fqn(owner, new TypeNode[] { new TypeNode.Fqn("kotlin.Any") }), refs, new SubstCtx(),
+                CollectionOperationPhase.Source, new TypeNode.Fqn(owner, new[] { variable }));
+            if (TypeJson.Read(operation["args"][1]["type"]) is not TypeNode.Fqn { Args: [TypeNode.Fqn { Name: "kotlin.Any" }] })
+                throw new InvalidOperationException("Variant collection operation borrowed an initializer's exact view");
         }
         Console.WriteLine("[static collection preference] self-test OK (exact, star, caller frame, no origin carrier)");
     }

@@ -97,6 +97,7 @@ class MutableListFamilyTests {
         check(!selectedEmpty(exact))
         native.ClearObjects()
         check(star.size == 0 && star.isEmpty() && selectedEmpty(exact))
+        check(!selectedEmpty(source as MutableList<Int>))
     }
 
     @TestAttribute fun authoredEmptinessOverrideStillWins() {
