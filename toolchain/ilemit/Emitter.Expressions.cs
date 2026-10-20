@@ -589,7 +589,7 @@ sealed partial class Emitter
                 // A VALUE/GENERIC source flowing into ANY target that isn't already itself must be boxed first: an
                 // unboxed !!T / struct feeding `castclass` (ref target) is invalid IL, and feeding `unbox.any` (value /
                 // generic target) reads a raw value as a boxed-obj pointer. Box independently of the target kind --
-                // e.g. `(x: T) as IComparable` in compareValues, or a value flowing into a differing generic slot.
+                // e.g. `(x: T) as System.IComparable`, or a value flowing into a differing generic slot.
                 if (NeedsBoxToRef(castSrc)) _il.Emit(OpCodes.Box, castSrc);
                 _il.Emit(toRef ? OpCodes.Castclass : OpCodes.Unbox_Any, t);
                 return t;

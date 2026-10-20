@@ -52,3 +52,48 @@ public sealed class ThrowingComparable : System.IComparable<ThrowingComparable>
     public System.InvalidOperationException Failure { get; } = new("foreign comparison");
     public int CompareTo(ThrowingComparable other) => throw Failure;
 }
+
+public sealed class NullAwareComparable : System.IComparable<NullAwareComparable>
+{
+    public int CompareTo(NullAwareComparable other) => other is null ? 1 : 0;
+}
+
+public sealed class NullableValueComparable : System.IComparable<int?>
+{
+    public int CompareTo(int? other) => other ?? 17;
+}
+
+public sealed class NonNullableValueComparable : System.IComparable<int>
+{
+    public int CompareTo(int other) => other + 1;
+}
+
+public abstract class NativeComparisonBase
+{
+    public NativeComparisonBase() { }
+    public abstract System.IComparable Apply(System.IComparable value);
+    public abstract System.IComparable Item { get; set; }
+}
+
+public static class NativeComparisonApi
+{
+    public static System.IComparable Echo(System.IComparable value) => value;
+    public static bool ReplaceAliased(ref System.IComparable first, ref System.IComparable second,
+        System.IComparable next)
+    {
+        first = next;
+        return object.ReferenceEquals(second, next);
+    }
+    public static void CopyOut(out System.IComparable value, System.IComparable next) => value = next;
+    public static ref System.IComparable Address(ref System.IComparable value) => ref value;
+    public static bool HasNativeShape(NativeComparisonBase value)
+    {
+        var method = value.GetType().GetMethod("Apply", new[] { typeof(System.IComparable) });
+        return method?.ReturnType == typeof(System.IComparable)
+            && value.GetType().GetProperty("Item", System.Reflection.BindingFlags.Public
+                | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.DeclaredOnly)
+                ?.PropertyType == typeof(System.IComparable);
+    }
+    public static bool HasOpaqueSlot(object value) =>
+        value.GetType().GetProperty("value")?.PropertyType == typeof(object);
+}

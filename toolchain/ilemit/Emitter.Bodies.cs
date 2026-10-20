@@ -662,9 +662,9 @@ sealed partial class Emitter
             // Same fixed declaration as every other nullable wrap; the return type is the owner it anchors onto.
             EmitConstructor(_il, OpCodes.Newobj,
                 AnchorOn(_methodRetType, WellKnown<ConstructorInfo>("NullableT.ctor")));
-        // A value type / `gp:T` returned where the method declares ANY reference type must BOX (C2: the
-        // `compareBy { it }` selector lambda returns `it: Int` declared `kotlin.Comparable[object]` = System.IComparable
-        // — the boxed Int IS an IComparable). `box` alone yields the tracked type `O`; when the return is a NON-object
+        // A value type / `gp:T` returned where the method declares ANY reference type must BOX, including
+        // exact native interface returns (for example a boxed Int returned as System.IComparable).
+        // `box` alone yields the tracked type `O`; when the return is a NON-object
         // reference (an interface / concrete ref type) add `castclass <ret>` so the boxed value verifies as that slot
         // (mirrors the `cast` emitter's box+castclass). Previously only `== object` boxed, so a value flowing into a
         // non-object reference return (`IComparable`) landed unboxed -> a value reinterpreted as a reference -> NRE.

@@ -13,11 +13,14 @@ package kotlin
 /**
  * Classes which inherit from this interface have a defined total ordering between their instances.
  */
-// Type-alias to the BCL System.IComparable<in T> (a TYPE binding, like List->IReadOnlyList): a CLR primitive
-// (System.Int32) implements IComparable<int> but NOT kotlin.Comparable, so `sorted`'s `toTypedArray<Comparable<T>>`
-// type-arg must resolve to IComparable<T> for the element cast to succeed. compareTo -> IComparable.CompareTo (consistent
-// with the bound-drop + the constrained-call compareTo lowering, which already use System.IComparable).
+// Native inheritance and exact calls use the BCL comparison interfaces. Ordinary
+// Kotlin values and classifiers also admit generic-only and value-type closures.
 @kotlin.clr.ClrTypeAlias("System.IComparable")
+@kotlin.clr.ClrValueRepresentation(
+    "kotlin.comparisons.ComparisonsKt.clrComparableMatches",
+    "kotlin.comparisons.ComparisonsKt.clrComparableClassifier",
+    "kotlin.comparisons.ComparisonsKt.clrComparableComponentMatches",
+)
 public actual interface Comparable<in T> {
     /**
      * Compares this object with the specified object for order. Returns zero if this object is equal

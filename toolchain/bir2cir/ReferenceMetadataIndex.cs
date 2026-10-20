@@ -1600,9 +1600,9 @@ sealed partial class ReferenceMetadataIndex
         var genericArity = arguments?.Count ?? 0;
         if (TryResolveClrOwner(sourceOwner, out var aliasOwner, out _))
         {
-            // Some Kotlin generic surfaces already have a non-generic CLR face selected by BirTypeLowering from
-            // their argument shape (Comparable<*> -> System.IComparable). That face is the exact representation;
-            // routing the same value through the opaque reflection ABI would discard a valid nominal conversion.
+            // A collapsed alias head is an operational/declaration face, not a constructed generic owner.
+            // Ordinary variant values may still use opaque storage and their declaration-owned classifier;
+            // this path must not invent a closed native owner from that storage.
             if (BirTypeLowering.AliasHeadRequiresSourceIdentity(sourceOwner, aliasOwner)
                 && !BirTypeLowering.ProjectedAliasHasReifiedGenericHead(
                     sourceOwner, aliasOwner, arguments, Aliases)) return null;

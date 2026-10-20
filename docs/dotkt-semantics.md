@@ -179,9 +179,12 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   declaration metadata over an opaque CLR slot, and member access binds to the exact closed interface implemented by
   the runtime object. Declaration-variant aliases with a reified generic physical head also use opaque ordinary value slots: matching CLR variance flags
   do not admit Kotlin's value-element conversions. Exact native declarations and construction witnesses remain
-  reified. An application whose selected physical head is non-generic does not need that generic variance erasure:
-  `Comparable<*>` and `Comparable<Any?>` retain non-generic `IComparable` in ordinary and nested value slots, including
-  nullable slots. C# therefore observes `IComparable`, not `object`, at those positions; their nullability is unchanged.
+  reified. This includes `Comparable<*>` and `Comparable<Any?>`: an ordinary Kotlin comparable value can be a foreign
+  generic-only `IComparable<T>` and need not implement non-generic `IComparable`. Ordinary and nested Kotlin value
+  slots therefore use `object`, preserving the original reference and nullability; C# observes that opaque slot in
+  Kotlin-produced APIs. Explicit native `System.IComparable` declarations, native generic interfaces, overrides and
+  managed-reference locations retain their exact CLR signatures. Kotlin comparable classifiers accept either the
+  non-generic or any generic comparison face, without choosing one closure merely to test or cast a value.
   Erased stdlib comparisons (`compareValues`) preserve non-generic CLR
   `IComparable` dispatch when available. A foreign value implementing only generic `IComparable<T>` uses the
   unique interface whose argument type accepts the right-hand value. With no such interface, or more than one
@@ -190,9 +193,11 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   The generic-only path uses reflection on each comparison and requires the comparison-interface/member metadata
   to be retained when trimming or NativeAOT is used. Native types may implement their generic and non-generic
   comparison slots differently, so direct typed `compareTo` and erased `compareValues` can return different results.
-  This dispatch does not change the physical `Comparable<*>` / `Comparable<Any?>` ABI: generic-only values can still
-  fail when entering a slot represented by non-generic `IComparable`. Materialized selector results are a confirmed
-  example of this separate compiler representation problem (tracked in #769).
+  Typed `compareTo` retains its exact generic interface when available; its erased fallback shares the same unique
+  applicable-interface rule. For a null argument, only reference or nullable value-type generic parameters are
+  applicable; reflection must not silently substitute a default non-nullable value. `compareValues` still handles
+  null ordering before invoking this dispatch. Selector results, stored comparable values and DLL calls share the
+  ordinary opaque value ABI rather than reintroducing a non-generic interface cast.
   A caller-supplied Kotlin alias argument
   in `System.Collections.Generic.List<List<String>>` uses the ordinary `object` element ABI; an explicitly native
   `System.Collections.Generic.List<System.Collections.Generic.IReadOnlyList<String>>` keeps that exact native argument.

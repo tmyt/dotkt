@@ -34,7 +34,7 @@ static class KotlinRuntimeTypeWitness
     };
 
     internal static JsonNode Known(TypeNode type) => Create(KotlinTypeWitness.Constant(KotlinTypeWitness.Flags(type)),
-        new JsonObject { ["k"] = "classRef", ["type"] = TypeJson.Write(type),
+        new JsonObject { ["k"] = "classRef", ["type"] = TypeJson.Write(ValueRepresentations?.ClassifierType(type) ?? type),
             [ClassifierKey] = true },
         ValueRepresentations?.Predicate(type) ?? new JsonObject {
             ["k"] = "const", ["type"] = TypeJson.Write(PredicateType), ["value"] = null,
