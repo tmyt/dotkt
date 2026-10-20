@@ -778,20 +778,19 @@ static class MemberCallSubstitution
                     else
                         return null;
                 }
-                return CarryFactoryStaticType(node, KotlinHashStorageLowering.Literal(new JsonObject
+                return CarryFactoryStaticType(node, new JsonObject
                 {
                     ["k"] = "newMap", ["keyType"] = kt.DeepClone(), ["valType"] = vt.DeepClone(), ["entries"] = entries,
-                }));
+                });
             }
             var elemT = RepresentationArgument(0, NullableRepresentationFrame.Role.Ordinary);
             if (elemT == null) return null;                                     // can't reconstruct elem -> plain call
             var elems = new JsonArray();
             foreach (var el in factoryElements) elems.Add(el.DeepClone());
-            var literal = new JsonObject
+            return CarryFactoryStaticType(node, new JsonObject
             {
                 ["k"] = collKind == "set" ? "newSet" : "newList", ["elem"] = elemT.DeepClone(), ["elems"] = elems,
-            };
-            return CarryFactoryStaticType(node, collKind == "set" ? KotlinHashStorageLowering.Literal(literal) : literal);
+            });
         }
 
         if (arrKind != null)

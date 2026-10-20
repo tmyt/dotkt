@@ -7,6 +7,22 @@ using DotKt.Bir;
 // Explicit projected CLR constructors retain their selected native comparer.
 static class KotlinHashStorageLowering
 {
+    internal static void Apply(JsonNode node)
+    {
+        if (node is JsonArray array)
+        {
+            foreach (var item in array) if (item != null) Apply(item);
+            return;
+        }
+        if (node is not JsonObject obj) return;
+        foreach (var child in obj.Select(pair => pair.Value).ToArray()) if (child != null) Apply(child);
+        if (obj["k"]?.GetValue<string>() is not ("newMap" or "newSet")) return;
+        var replacement = Literal(obj);
+        if (obj["sty"] != null) replacement["sty"] = obj["sty"].DeepClone();
+        obj.Clear();
+        foreach (var pair in replacement) obj[pair.Key] = pair.Value?.DeepClone();
+    }
+
     internal static void AddComparer(JsonArray args, JsonArray signature, TypeNode key)
     {
         var comparer = new TypeNode.Fqn("DotKt.Runtime.CompilerServices.NativeHashComparer", new[] { key });
