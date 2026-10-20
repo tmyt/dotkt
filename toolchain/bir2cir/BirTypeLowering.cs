@@ -222,7 +222,7 @@ static class BirTypeLowering
         // expression / statement type positions
         "dynRet", "funcType", "typeArgs", "constraints", "recvType", "iface", "excType",
         "_capturedGenericResult",
-        "keyType", "valType", "iterType", "accessOwner", "accessorOwner", "elem",
+        "iterType", "accessOwner", "accessorOwner", "elem",
         "samType", "closureType",
         // W1-S1 (#46): the clrGeneric* FIR-resolved member descriptor — the callee's DECLARED param types (OPEN,
         // method-tv positional), lowered to the CLR vocabulary for exact scalar memberRef resolution (replaces `shapes`).
@@ -853,14 +853,14 @@ static class BirTypeLowering
         if (node is JsonObject obj)
         {
             var here = force || IsAttributeClass(obj);
-            // ROOT-V DEPTH: a collection-CONSTRUCTION node's element/value type key is a generic type-argument of the
+            // ROOT-V DEPTH: a list-CONSTRUCTION node's element type key is a generic type-argument of the
             // built collection (depth >= 1), so it collapses like a `typeArgs` element — the literal `listOf(listOf(…))`
             // must build a `List<IList<..>>` so it inhabits the collapsed consumer slot (pairnest). Native arrays
             // use their ordinary element form, matching the declaration-owned ordinary generic parameter.
             var nodeK = (obj["k"] as JsonValue)?.GetValue<string>();
             if (nodeK == "new") ValidateCurrentNew(obj);
             if (nodeK == "conv") ValidateCurrentConv(obj);
-            var collCtor = nodeK is "newList" or "newSet" or "newMap";
+            var collCtor = nodeK == "newList";
             var arrayStorage = nodeK is "newArray" or "newArrayInit" or "newArraySized" or "spreadConcat"
                 or "arrayGet" or "arraySet" or "forArray";
             var copy = new JsonObject();
@@ -907,7 +907,7 @@ static class BirTypeLowering
                     copy[kv.Key] = LowerOwnerValued(kv.Value, refBuild, here);   // primitive-array owner stays kotlin.IntArray
                 else if (arrayStorage && kv.Key == "elem")
                     copy[kv.Key] = LowerTypeValued(kv.Value, refBuild, here, typeArg: false);
-                else if (kv.Key == "typeArgs" || (collCtor && kv.Key is "elem" or "keyType" or "valType"))
+                else if (kv.Key == "typeArgs" || (collCtor && kv.Key == "elem"))
                     copy[kv.Key] = LowerTypeValued(kv.Value, refBuild, here, typeArg: true);   // Root V: depth>=1 positions collapse
                 // `to` is intentionally shared by two node kinds. Its role belongs to the parent discriminator:
                 // a conversion names a Type, while a range loop names an expression. Do not classify the value by
@@ -1118,7 +1118,7 @@ static class BirTypeLowering
     // contains descriptors rather than raw types, so a non-Type object is an ordinary subtree and is walked
     // structurally rather than interpreted as a type.
     // `typeArg` = this value sits at generic-argument DEPTH (a call/ctor `typeArgs` list element, or a collection-
-    // construction element/value key on newList/newSet/newMap), so its element HEADS collapse per the Root-V rule.
+    // construction element key on newList), so its element HEADS collapse per the Root-V rule.
     // Default false: a `type`/`ret`/`argTypes`/`sig`/`base` head is depth-0 (keeps covariant); only its NESTED Args
     // collapse via LowerType's own `typeArg:true` recursion.
     static JsonNode LowerTypeValued(JsonNode val, bool refBuild, bool force, bool typeArg = false)

@@ -156,11 +156,10 @@ static partial class SuspendColdLowering
                 ? Direct(o, true, "recv", "arg")
                 : Direct(o, true, "recv"),
             "constrainedCall" => Call(o, hasReceiver: true),
-            "newArray" or "newList" or "newSet" => List(o, "elems"),
+            "newArray" or "newList" => List(o, "elems"),
             "newArraySized" => Direct(o, false, "size"),
             "newArrayInit" => Direct(o, false, "size", "init"),
             "spreadConcat" => ListMember(o, "parts", "e"),
-            "newMap" => MapEntries(o),
             _ => null,
         };
     }
@@ -191,18 +190,6 @@ static partial class SuspendColdLowering
         var count = (o[key] as JsonArray)?.Count ?? 0;
         return FromSlots(o, false,
             Enumerable.Range(0, count).Select(i => new EvalOrderSlot(key, i, member)).ToList());
-    }
-
-    static EvalOrder MapEntries(JsonObject o)
-    {
-        var slots = new List<EvalOrderSlot>();
-        if (o["entries"] is JsonArray entries)
-            for (var i = 0; i < entries.Count; i++)
-            {
-                slots.Add(new EvalOrderSlot("entries", i, "key"));
-                slots.Add(new EvalOrderSlot("entries", i, "value"));
-            }
-        return FromSlots(o, false, slots);
     }
 
     static EvalOrder Call(JsonObject o, bool hasReceiver)

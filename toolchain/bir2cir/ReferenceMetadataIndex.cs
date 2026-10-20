@@ -1397,6 +1397,17 @@ sealed partial class ReferenceMetadataIndex
         return result.OrderBy(name => name, StringComparer.Ordinal).ToArray();
     }
 
+    HashSet<string> _kotlinHashStorageDefinitions;
+
+    public bool IsKotlinHashStorageOwner(string owner)
+    {
+        if (!TryResolveClrOwner(owner, out var physical, out var kind) || kind != "class") return false;
+        _kotlinHashStorageDefinitions ??= KotlinEqualityStorageDefinitions("Map")
+            .Concat(KotlinEqualityStorageDefinitions("Set"))
+            .Select(BareOwnerFqn).ToHashSet(StringComparer.Ordinal);
+        return _kotlinHashStorageDefinitions.Contains(BareOwnerFqn(physical));
+    }
+
     // The static counterpart of kotlinCollectionStorageMatches. Reflection supplies the exact
     // constructed interface identities, including substitutions through foreign base classes.
     // A Kotlin subclass must not turn an inherited alias's storage into a permanent nominal marker.

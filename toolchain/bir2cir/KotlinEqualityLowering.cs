@@ -2,8 +2,8 @@ using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 
-// A Kotlin Any.equals call has one meaning regardless of its receiver's static
-// type. Native CLR Equals calls and nonvirtual super calls retain their target.
+// Kotlin Any equality and hashing have one meaning regardless of the receiver's static
+// type. Native CLR object calls and nonvirtual super calls retain their target.
 static class KotlinEqualityLowering
 {
     internal static JsonObject Call(JsonNode left, JsonNode right, bool nullSafe) => new()
@@ -45,12 +45,24 @@ static class KotlinEqualityLowering
             return;
         }
         if (kind is not ("objMethod" or "callInstance")) return;
-        if (obj["method"]?.GetValue<string>() != "Equals") return;
+        var method = obj["method"]?.GetValue<string>();
+        if (method is not ("Equals" or "GetHashCode")) return;
         var semanticCall = kind == "objMethod" || (kind == "callInstance" && obj["anySlot"]?.GetValue<bool>() == true);
         if (!semanticCall) return;
         if (preserveSuperIntent && obj["super"]?.GetValue<bool>() == true) return;
         obj.Remove("anySlot");
         if (obj["super"]?.GetValue<bool>() == true) return;
+        if (method == "GetHashCode")
+        {
+            Replace(obj, new JsonObject {
+                ["k"] = "callStatic",
+                ["owner"] = TypeJson.Fqn("DotKt.Runtime.CompilerServices.KotlinEqualityKt"),
+                ["method"] = "kotlinInstanceHashCode",
+                ["sig"] = new JsonArray { AnyNullable() },
+                ["args"] = new JsonArray { obj["recv"]?.DeepClone() },
+            });
+            return;
+        }
         var right = kind == "objMethod" ? obj["arg"] : (obj["args"] as JsonArray)?[0];
         var replacement = Call(obj["recv"], right, nullSafe: false);
         Replace(obj, replacement);

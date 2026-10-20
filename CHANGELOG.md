@@ -5,6 +5,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Align Kotlin collection `hashCode()` and hash-container comparers with structural equality across generic and DLL calls, while preserving explicit native CLR hashing and comparers (#1065).
+
 - Preserve user-defined annotation property accessors and private backing storage, including DLL imports and array-valued properties (#1067).
 
 - Preserve ordinary Kotlin enum ordinal maps across DLL boundaries, including nested enums and generic callers (#1109).

@@ -50,13 +50,11 @@ static class PhysicalOperandNormalization
     // Value-list keys whose elements ilemit evaluates while a construction receiver (and, for an array, its index)
     // is already on the CLR stack. These are deliberately keyed by NODE KIND: arrays such as `sig`, `argTypes`,
     // `typeArgs`, and declaration `params` are type/signature vocabulary, not ordered value operands. A boundary in even
-    // the FIRST listed element therefore starts non-empty and must move. `newMap.entries` is handled separately below
-    // because each entry contributes two ordered operands (`key`, then `value`).
+    // the FIRST listed element therefore starts non-empty and must move.
     static readonly Dictionary<string, string> ConstructionValueLists = new(StringComparer.Ordinal)
     {
         ["newArray"] = "elems",
         ["newList"] = "elems",
-        ["newSet"] = "elems",
     };
 
     // Node kinds whose value operands are named fields rather than `recv` + `args`. Keep the physical evaluation
@@ -314,15 +312,10 @@ static class PhysicalOperandNormalization
         if (k != null && ConstructionValueLists.TryGetValue(k, out var valueListKey)
             && o[valueListKey] is JsonArray values)
         {
-            // ilemit has already pushed the new array/list/set (and an array index) before it evaluates an element.
+            // ilemit has already pushed the new array/list (and an array index) before it evaluates an element.
             // Consequently no element inherits the enclosing expression's empty-stack position, including element 0.
             HoistOrdered(values.Count, i => values[i], (i, v) => values[i] = v,
                 atEmpty: false, pre, scope, spillAllAfterHoist: true);
-            return o;
-        }
-        if (k == "newMap" && o["entries"] is JsonArray entries)
-        {
-            HoistMapEntries(entries, pre, scope);
             return o;
         }
         if (k == "spreadConcat" && o["parts"] is JsonArray spreadParts)
@@ -390,25 +383,6 @@ static class PhysicalOperandNormalization
     // These value slots follow emitter-authored operands: the enum Type token, or a named managed pointer.
     static bool HasImplicitPrefix(JsonObject o) => K(o) == "enumParse"
         || K(o) == "byrefStore" && o["ptr"] == null;
-
-    // Dictionary construction evaluates entry 0 key, entry 0 value, entry 1 key, entry 1 value, ... while the
-    // dictionary receiver is live on the stack. Flatten that stream so a boundary-valued key/value moves and every
-    // side-effecting value before a later hoist spills in Kotlin order. Treating an entry object as one operand would
-    // lose the key-before-value boundary and would ask SpillType to type a schema container rather than an expression.
-    static void HoistMapEntries(JsonArray entries, List<JsonNode> pre, BirScope scope)
-    {
-        var slots = new List<(JsonObject Entry, string Key)>();
-        foreach (var entry in entries)
-            if (entry is JsonObject eo)
-            {
-                if (eo["key"] != null) slots.Add((eo, "key"));
-                if (eo["value"] != null) slots.Add((eo, "value"));
-            }
-        HoistOrdered(slots.Count,
-            i => slots[i].Entry[slots[i].Key],
-            (i, v) => slots[i].Entry[slots[i].Key] = v,
-            atEmpty: false, pre, scope, spillAllAfterHoist: true);
-    }
 
     // A spread-concatenated vararg is accumulated through `List.Add`/`AddRange`: ilemit loads that accumulator before
     // each part's expression. The value stream is `parts[i].e`; `spread` is only the already-decided Add/AddRange
@@ -559,14 +533,6 @@ static class PhysicalOperandNormalization
             && o[valueListKey] is JsonArray values)
         {
             foreach (var value in values) if (WillHoist(value, atEmpty: false)) return true;
-            return false;
-        }
-        if (k == "newMap" && o["entries"] is JsonArray entries)
-        {
-            foreach (var entry in entries)
-                if (entry is JsonObject eo
-                    && (WillHoist(eo["key"], atEmpty: false) || WillHoist(eo["value"], atEmpty: false)))
-                    return true;
             return false;
         }
         if (k == "spreadConcat" && o["parts"] is JsonArray spreadParts)

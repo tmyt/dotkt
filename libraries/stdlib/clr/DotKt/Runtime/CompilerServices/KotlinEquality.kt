@@ -41,18 +41,19 @@ private fun Any.nativeObjectEquals(other: Any?): Boolean = (this as NativeEquali
 @kotlin.clr.ClrIntrinsic("System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode")
 private fun equalityIdentityHash(value: Any): Int = error("CLR binding")
 
-private fun nestedEqualityHash(value: Any?): Int {
+@PublishedApi
+internal fun kotlinHashCode(value: Any?): Int {
     if (value === null) return 0
     if (value is String || value.starProjectionRuntimeType().isValueType)
         return (value as NativeEqualityObject).nativeHashCode()
     val plan = equalityTypePlan(value.starProjectionRuntimeType())
-    return if (plan.family < 0) (value as NativeEqualityObject).nativeHashCode()
+    return if (plan.family < 0 || plan.nativeHashOverride) (value as NativeEqualityObject).nativeHashCode()
         else structuralHash(value, plan.family, plan.storage)
 }
 
-// A real stdlib equals override needs the corresponding real hash override.
-// Nested aliases use the same logical family here; public native alias hashing
-// and hash-container storage are not reconstructed or redesigned by this helper.
+@PublishedApi
+internal fun kotlinInstanceHashCode(value: Any?): Int = kotlinHashCode(value!!)
+
 @PublishedApi
 internal fun structuralHash(value: Any, family: Int, storage: StarProjectionType? = null): Int {
     val view = equalityView(value, family, storage) ?: return equalityIdentityHash(value)
@@ -64,10 +65,10 @@ internal fun structuralHash(value: Any, family: Int, storage: StarProjectionType
             if (family == 2) {
                 val entry = element!!
                 val access = equalityEntryAccess(entry.starProjectionRuntimeType())
-                hash += nestedEqualityHash(invokeEquality(access.key, entry, equalityNoArguments)) xor
-                    nestedEqualityHash(invokeEquality(access.value, entry, equalityNoArguments))
+                hash += kotlinHashCode(invokeEquality(access.key, entry, equalityNoArguments)) xor
+                    kotlinHashCode(invokeEquality(access.value, entry, equalityNoArguments))
             } else {
-                val elementHash = nestedEqualityHash(element)
+                val elementHash = kotlinHashCode(element)
                 hash = if (family == 0) 31 * hash + elementHash else hash + elementHash
             }
         }
@@ -77,6 +78,15 @@ internal fun structuralHash(value: Any, family: Int, storage: StarProjectionType
 
 private val objectType = Any().starProjectionRuntimeType()
 private val objectEqualsSlot = findObjectEqualsSlot()
+private val objectHashSlot = findObjectHashSlot()
+
+private fun findObjectHashSlot(): StarProjectionMethod {
+    for (method in objectType.getMethods()) {
+        if (!method.isStatic && method.isVirtual && method.name.nativeObjectEquals("GetHashCode")
+            && method.getParameters().size == 0) return method
+    }
+    error("Missing System.Object.GetHashCode slot")
+}
 
 private fun findObjectEqualsSlot(): StarProjectionMethod {
     for (method in objectType.getMethods()) {
@@ -88,11 +98,15 @@ private fun findObjectEqualsSlot(): StarProjectionMethod {
 }
 
 private fun hasNativeEqualsOverride(type: StarProjectionType): Boolean {
+    return hasNativeObjectOverride(type, objectEqualsSlot)
+}
+
+private fun hasNativeObjectOverride(type: StarProjectionType, slot: StarProjectionMethod): Boolean {
     for (method in type.getMethods()) {
         if (!method.isVirtual) continue
         val root = method.getBaseDefinition()
-        if (root.metadataToken == objectEqualsSlot.metadataToken
-            && root.module.nativeObjectEquals(objectEqualsSlot.module)
+        if (root.metadataToken == slot.metadataToken
+            && root.module.nativeObjectEquals(slot.module)
             && !method.declaringType!!.nativeObjectEquals(objectType)) return true
     }
     return false
@@ -120,19 +134,19 @@ internal fun kotlinInstanceEquals(left: Any?, right: Any?): Boolean {
 }
 
 internal fun classifyEqualityType(type: StarProjectionType): EqualityTypePlan {
-    if (hasNativeEqualsOverride(type)) return EqualityTypePlan(-1, null)
+    if (hasNativeEqualsOverride(type)) return EqualityTypePlan(-1, null, true)
     var storage: StarProjectionType? = type
     while (storage != null) {
         val definition = if (storage.isGenericType) storage.getGenericTypeDefinition() else storage
         for (candidate in listEqualityStorage)
-            if (definition.nativeObjectEquals(candidate)) return EqualityTypePlan(0, storage)
+            if (definition.nativeObjectEquals(candidate)) return EqualityTypePlan(0, storage, hasNativeObjectOverride(type, objectHashSlot))
         for (candidate in setEqualityStorage)
-            if (definition.nativeObjectEquals(candidate)) return EqualityTypePlan(1, storage)
+            if (definition.nativeObjectEquals(candidate)) return EqualityTypePlan(1, storage, hasNativeObjectOverride(type, objectHashSlot))
         for (candidate in mapEqualityStorage)
-            if (definition.nativeObjectEquals(candidate)) return EqualityTypePlan(2, storage)
+            if (definition.nativeObjectEquals(candidate)) return EqualityTypePlan(2, storage, hasNativeObjectOverride(type, objectHashSlot))
         storage = storage.baseType
     }
-    return EqualityTypePlan(-1, null)
+    return EqualityTypePlan(-1, null, true)
 }
 
 private fun equalityView(value: Any, family: Int, storage: StarProjectionType?): StarProjectionType? {

@@ -524,6 +524,8 @@ static class MemberCallSubstitution
             ["argTypes"] = newClrArgTypes,
             ["args"] = newClrArgs,
         };
+        if (viaAlias && refs.IsKotlinHashStorageOwner(ownerFqn.Name))
+            KotlinHashStorageLowering.RequestComparer(lowered);
         // A projected CLR declaration keeps the constructor selected by kotc. Alias constructors instead
         // undergo a representation mapping above and do not retain the source declaration's physical shape.
         if (!viaAlias && node["memberSignature"] is JsonArray selectedSignature)
@@ -552,11 +554,7 @@ static class MemberCallSubstitution
                 {
                     ["k"] = "var", ["name"] = resultName,
                     ["type"] = TypeJson.Write(targetType),
-                    ["init"] = new JsonObject
-                    {
-                        ["k"] = "newClr", ["type"] = TypeJson.Write(targetType),
-                        ["argTypes"] = new JsonArray(), ["args"] = new JsonArray(),
-                    },
+                    ["init"] = KotlinHashStorageLowering.Allocate(targetType),
                 },
                 new JsonObject
                 {
@@ -763,7 +761,7 @@ static class MemberCallSubstitution
                 var kt = RepresentationArgument(0, NullableRepresentationFrame.Role.Ordinary);
                 var vt = RepresentationArgument(1, NullableRepresentationFrame.Role.Ordinary);
                 if (kt == null || vt == null) return null;                       // can't reconstruct K,V -> plain call
-                var entries = new JsonArray();
+                var entries = new List<(JsonNode Key, JsonNode Value)>();
                 // The selected declaration distinguishes a vararg Pair pack from a single Pair.
                 // Each element must be an INLINE Pair construction to be split, in either
                 // of the two shapes kotc can now emit: a `new kotlin.Pair(k,v)` LITERAL, or a `callStatic .to(k,v)` — the
@@ -776,22 +774,22 @@ static class MemberCallSubstitution
                 foreach (var el in factoryElements)
                 {
                     if (el is JsonObject eo && PairKV(eo) is JsonArray pa && pa.Count == 2)
-                        entries.Add(new JsonObject { ["key"] = pa[0].DeepClone(), ["value"] = pa[1].DeepClone() });
+                        entries.Add((pa[0].DeepClone(), pa[1].DeepClone()));
                     else
                         return null;
                 }
-                return CarryFactoryStaticType(node, new JsonObject
-                {
-                    ["k"] = "newMap", ["keyType"] = kt.DeepClone(), ["valType"] = vt.DeepClone(), ["entries"] = entries,
-                });
+                return CarryFactoryStaticType(node,
+                    KotlinHashStorageLowering.MapLiteral(TypeJson.Read(kt), TypeJson.Read(vt), entries));
             }
             var elemT = RepresentationArgument(0, NullableRepresentationFrame.Role.Ordinary);
             if (elemT == null) return null;                                     // can't reconstruct elem -> plain call
             var elems = new JsonArray();
             foreach (var el in factoryElements) elems.Add(el.DeepClone());
-            return CarryFactoryStaticType(node, new JsonObject
+            return CarryFactoryStaticType(node, collKind == "set"
+                ? KotlinHashStorageLowering.SetLiteral(TypeJson.Read(elemT), elems)
+                : new JsonObject
             {
-                ["k"] = collKind == "set" ? "newSet" : "newList", ["elem"] = elemT.DeepClone(), ["elems"] = elems,
+                ["k"] = "newList", ["elem"] = elemT.DeepClone(), ["elems"] = elems,
             });
         }
 
@@ -894,7 +892,7 @@ static class MemberCallSubstitution
     // A collection factory's source call already carries the frontend's exact instantiated result type — including
     // the distinction between List/MutableList/ArrayList and Map/MutableMap/concrete map faces. Preserve that fact on
     // the construction which replaces the call instead of asking an early structural consumer to guess the surface
-    // from `newList`/`newMap`. BirTypeLowering consumes and removes `sty` before CIR, like every other call rewrite.
+    // from a literal's physical allocation. BirTypeLowering consumes and removes `sty` before CIR.
     static JsonObject CarryFactoryStaticType(JsonObject source, JsonObject construction)
     {
         if (source["sty"] is JsonNode sty) construction["sty"] = sty.DeepClone();
@@ -1022,7 +1020,7 @@ static class MemberCallSubstitution
             var topLevelPropertyAccess = Str(node["prop"]);
             // Collection/array FACTORY (`listOf`/`setOf`/`mapOf`/`arrayOf`/`intArrayOf`/`arrayOfNulls`): a
             // @ClrCollectionFactory/@ClrArrayFactory marker on the selected local or referenced declaration -> re-emit the
-            // newList/newSet/newMap/newArray/newArraySized CONSTRUCTION node (the recognition kotc used to do via its
+            // physical collection/array construction (the recognition kotc used to do via its
             // LIST/SET/MAP/ARRAY_FACTORY tables). Handled first so a factory never falls through to the plain top-level
             // owner-attribution below. A non-decomposable form (`mapOf(pairVariable)` — not a `to`-Pair literal) returns
             // null here and stays a plain call to the real factory body.

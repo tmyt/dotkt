@@ -698,7 +698,7 @@ static class PhysicalValueCoercion
             && locals.TryGetValue(name, out var local)) return local;
         if (Str(expression["k"]) == "field" && TemporaryFieldKey(expression) is string key
             && fields.TryGetValue(key, out var retained)) return retained;
-        return Str(expression["k"]) is "newList" or "newSet" or "newMap"
+        return Str(expression["k"]) == "newList"
             && expression["ctorRef"] is JsonObject constructor
             ? TypeJson.Read(constructor["declaringType"]) : null;
     }
@@ -847,16 +847,8 @@ static class PhysicalValueCoercion
             case "newArray":
                 CoerceArray(node["elems"] as JsonArray, TypeJson.Read(node["elem"]), scope, index);
                 break;
-            case "newList": case "newSet":
+            case "newList":
                 CoerceArray(node["elems"] as JsonArray, TypeJson.Read(node["elem"]), scope, index);
-                break;
-            case "newMap":
-                if (node["entries"] is JsonArray entries)
-                    foreach (var entry in entries.OfType<JsonObject>())
-                    {
-                        CoerceSlot(entry, "key", TypeJson.Read(node["keyType"]), scope, index);
-                        CoerceSlot(entry, "value", TypeJson.Read(node["valType"]), scope, index);
-                    }
                 break;
             case "cond":
                 var result = TypeJson.Read(node["type"]);

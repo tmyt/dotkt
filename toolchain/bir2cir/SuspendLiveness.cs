@@ -112,7 +112,7 @@ static class SuspendLiveness
         "k", "type", "ret", "sty", "dynRet", "owner", "ownerType", "sig", "argTypes", "resolvedMemberParams",
         "typeArgs", "shapeTypes", "elem", "excType", "closureType", "funcType",
         "calleeOwner", "method", "name", "op", "member", "accessor", "dispatch", "pos", "mods",
-        "keyType", "valType", "local",
+        "local",
     };
 
     // The node kinds that reference a local through a bare STRING property instead of a `{k:"local"}` node.

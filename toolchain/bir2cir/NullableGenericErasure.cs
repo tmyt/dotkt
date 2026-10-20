@@ -549,7 +549,7 @@ static class NullableGenericErasure
     // `f<Int?>(1, null)` canonicalizes its `typeArgs` above, so the callee's `!!0[]` parameter IS an `object[]` and a
     // pack that kept `Nullable<int32>` elements would be the one array the call cannot accept.
     //
-    // A COLLECTION construction's element (`newList`/`newSet`, and `newMap`'s `keyType`/`valType`) is a reified
+    // A list construction's element (`newList`) is a reified
     // argument too and is absent for one reason: MemberCallSubstitution BUILDS those nodes long after this sweep,
     // from the call's own `typeArgs` — which this sweep has already canonicalized — so they arrive at `object`
     // rather than being erased into it. Adding them here would be listing a kind this pass never sees.
