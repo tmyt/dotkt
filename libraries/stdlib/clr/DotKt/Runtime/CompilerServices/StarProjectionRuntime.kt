@@ -1187,6 +1187,62 @@ internal fun projectedSetEnumeratorErased(receiver: Any, sourceWitness: Any?): A
     return projectedFamilyEnumerator(receiver, family)
 }
 
+private fun projectedMembershipFamily(receiver: Any, sourceWitness: Any?, family: Int): StarProjectionType? {
+    val preferred = if (sourceWitness == null) null else sourceWitness as StarProjectionType
+    if (family == 0) return projectedCollectionFamily(receiver, preferred)
+    if (family == 1) return projectedSetFamily(receiver, sourceWitness)
+    val definition = when (family) {
+        4 -> "System.Collections.Generic.ISet`1"
+        5 -> "System.Collections.Generic.ICollection`1"
+        6 -> "System.Collections.Generic.IList`1"
+        else -> return null
+    }
+    return findErasedProjectedView(receiver, definition, definition,
+        excludeDictionaryStorage = family != 4, elementWitness = preferred?.getGenericArguments()?.get(0))
+}
+
+@PublishedApi
+internal fun projectedMembershipContainsErased(receiver: Any, sourceWitness: Any?, family: Int, element: Any?): Boolean? {
+    // Authored default bodies may call the collection helpers themselves. They
+    // retain Kotlin dispatch/iteration, rather than recursing through their slots.
+    if (receiver is KotlinCollectionDefaultSlots) return null
+    // List membership retains its existing equality/iteration default. The new
+    // native operation here belongs to a Set, including a Collection view of it.
+    if (family == 6) return null
+    var view = projectedMembershipFamily(receiver, sourceWitness, family) ?: return null
+    if (family == 0 || family == 5) {
+        val definition = if (family == 5) "System.Collections.Generic.ISet`1"
+            else "System.Collections.Generic.IReadOnlySet`1"
+        view = findErasedProjectedView(receiver, definition, "System.Collections.Generic.ISet`1",
+            requiredElement = view.getGenericArguments()[0]) ?: return null
+    }
+    val parameter = view.getGenericArguments()[0]
+    val definition = view.getGenericTypeDefinition().fullName
+    var contains: StarProjectionMethod? = null
+    if (definition == "System.Collections.Generic.IReadOnlySet`1") {
+        contains = erasedProjectedMethod(view, "Contains", 1)
+    } else if (definition == "System.Collections.Generic.ISet`1") {
+        // ISet inherits Contains from its own ICollection<T> parent, not an
+        // unrelated collection or a same-named public method on the receiver.
+        for (parent in view.getInterfaces()) {
+            if (!parent.isGenericType
+                || parent.getGenericTypeDefinition().fullName != "System.Collections.Generic.ICollection`1"
+                || parent.getGenericArguments()[0] != parameter) continue
+            if (contains != null) throw IllegalStateException("Ambiguous collection membership slot")
+            contains = erasedProjectedMethod(parent, "Contains", 1)
+        }
+    }
+    val selected = contains ?: return null
+    if (element == null) {
+        if (!starProjectionTypeAcceptsNull(parameter)) return false
+    } else if (!parameter.isAssignableFrom(element.starProjectionRuntimeType())) return false
+    return try {
+        selected.invoke(receiver, arrayOf(element)) as Boolean
+    } catch (failure: StarProjectionInvocationException) {
+        throw (failure.innerException ?: failure)
+    }
+}
+
 internal fun projectedFamilyEnumeratorMethod(family: StarProjectionType): StarProjectionMethod {
     var enumerable: StarProjectionType? = null
     for (parent in family.getInterfaces()) {
@@ -1212,6 +1268,10 @@ internal fun projectedFamilyEnumerator(receiver: Any, family: StarProjectionType
 @PublishedApi
 internal fun projectedViewEnumeratorErased(receiver: Any, preferredView: Any?, family: Int): Any? {
     if (family == 1) return projectedSetEnumeratorErased(receiver, preferredView)
+    if (family == 4 || family == 5 || family == 6) {
+        val view = projectedMembershipFamily(receiver, preferredView, family) ?: return null
+        return projectedFamilyEnumerator(receiver, view)
+    }
     val preferred = if (preferredView == null) null else preferredView as StarProjectionType
     val view = if (family == 0) projectedCollectionFamily(receiver, preferred)
         else if (family == 3) projectedListFamily(receiver, preferred)

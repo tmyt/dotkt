@@ -295,6 +295,12 @@ static class CollectionHelperBinding
             new JsonObject { ["k"] = "local", ["name"] = "value" }));
         body.Add(Call("kotlin.collections.Collection", variable, "containsAll",
             new JsonObject { ["k"] = "local", ["name"] = "values" }));
+        body.Add(Call("kotlin.collections.MutableSet", variable, "contains",
+            new JsonObject { ["k"] = "local", ["name"] = "value" }));
+        body.Add(Call("kotlin.collections.MutableCollection", new TypeNode.Star(), "containsAll",
+            new JsonObject { ["k"] = "local", ["name"] = "values" }));
+        body.Add(Call("kotlin.collections.MutableList", new TypeNode.Projection("out", variable), "contains",
+            new JsonObject { ["k"] = "local", ["name"] = "value" }));
         var nestedIterator = JsonNode.Parse("""
         {"k":"newObject","synthClass":{"name":"kotlin.collections.NestedIteratorProbe","methods":[
           {"name":"iterator","abstract":false,"params":[],"body":[]}]}}
@@ -316,6 +322,8 @@ static class CollectionHelperBinding
             ["kotlin.collections.List"] = "System.Collections.Generic.IReadOnlyList",
             ["kotlin.collections.MutableCollection"] = "System.Collections.Generic.ICollection",
             ["kotlin.collections.Set"] = "System.Collections.Generic.IReadOnlyCollection",
+            ["kotlin.collections.MutableSet"] = "System.Collections.Generic.ISet",
+            ["kotlin.collections.MutableList"] = "System.Collections.Generic.IList",
             ["kotlin.collections.Iterable"] = "System.Collections.Generic.IEnumerable",
         };
         var root = new JsonObject { ["fileClass"] = helperOwner, ["methods"] = methods,
@@ -342,7 +350,16 @@ static class CollectionHelperBinding
             || TypeJson.Read(body[6]["args"][1]["type"]) is not TypeNode.Fqn {
                 Name: "System.Collections.Generic.IEnumerable`1", Args: [TypeNode.Tv { Scope: "method", I: 0 }] }
             || Text(body[7][DeclarationIdentityBinding.Key]) != "clrProjectedViewContains"
-            || Text(body[8][DeclarationIdentityBinding.Key]) != "clrProjectedViewContainsAll")
+            || Text(body[8][DeclarationIdentityBinding.Key]) != "clrProjectedViewContainsAll"
+            || Text(body[9][DeclarationIdentityBinding.Key]) != "clrProjectedViewContains"
+            || body[9]["args"][2]["value"].GetValue<int>() != 4
+            || TypeJson.Read(body[9]["args"][1]["type"]) is not TypeNode.Fqn {
+                Name: "System.Collections.Generic.ISet`1", Args: [TypeNode.Tv { Scope: "method", I: 0 }] }
+            || Text(body[10][DeclarationIdentityBinding.Key]) != "clrProjectedViewContainsAll"
+            || body[10]["args"][2]["value"].GetValue<int>() != 5
+            || Text(body[10]["args"][1]["k"]) != "const"
+            || Text(body[11][DeclarationIdentityBinding.Key]) != "clrProjectedViewContains"
+            || body[11]["args"][2]["value"].GetValue<int>() != 6)
             throw new InvalidOperationException("Source collection helper selection changed projection, default index or exact-owner routing");
         NullableRepresentationMaterialization.Apply(new[] { root }, _ => false,
             policy: new GenericRepresentationPolicy(aliases));
