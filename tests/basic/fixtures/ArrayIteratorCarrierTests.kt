@@ -137,4 +137,15 @@ class ArrayIteratorCarrierTests {
         check(primitiveFactory().nextInt() == 9)
         check(unsignedFactory().next() == UInt.MAX_VALUE)
     }
+
+    @TestAttribute fun unboundUnsignedIteratorReferencesRetainTheirSelectedDeclaration() {
+        val bytes: (UByteArray) -> Iterator<UByte> = UByteArray::iterator
+        val shorts: (UShortArray) -> Iterator<UShort> = UShortArray::iterator
+        val ints: (UIntArray) -> Iterator<UInt> = UIntArray::iterator
+        val longs: (ULongArray) -> Iterator<ULong> = ULongArray::iterator
+        check(bytes(ubyteArrayOf(UByte.MAX_VALUE)).next() == UByte.MAX_VALUE)
+        check(shorts(ushortArrayOf(UShort.MAX_VALUE)).next() == UShort.MAX_VALUE)
+        check(ints(uintArrayOf(UInt.MAX_VALUE)).next() == UInt.MAX_VALUE)
+        check(longs(ulongArrayOf(ULong.MAX_VALUE)).next() == ULong.MAX_VALUE)
+    }
 }

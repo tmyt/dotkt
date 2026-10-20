@@ -23,6 +23,13 @@ const int IsInfixFunctionFlag = 1 << 9;
 // names. Star-projection existential association is metadata-authoritative and does not depend on this spelling.
 const string HoistedMarker = "$companion$";
 
+if (args.Length == 4 && args[0] == "--unsigned-array-identities")
+{
+    VerifyUnsignedArrayIdentities(args[1], args[2], args[3]);
+    Console.WriteLine("unsigned array source identities, selected calls and allocated helpers: OK");
+    return;
+}
+
 if (args.Length == 4 && args[0] == "--number-representation")
 {
     NumberMetadataInspector.Verify(args[1], args[2], args[3]);
@@ -404,6 +411,62 @@ static void VerifyKlibClassSupertypes(string path, string className, IReadOnlyLi
         return;
     }
     throw new InvalidDataException($"KLIB class '{className}' not found");
+}
+
+static void VerifyUnsignedArrayIdentities(string referencePath, string runtimePath, string birPath)
+{
+    const string identityAttribute = "DotKt.Runtime.CompilerServices.KotlinDeclarationIdentityAttribute";
+    using var referenceStream = File.OpenRead(referencePath);
+    using var referencePe = new PEReader(referenceStream);
+    var reference = referencePe.GetMetadataReader();
+    var sourceIds = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+    var iteratorIds = new HashSet<string>(StringComparer.Ordinal);
+    foreach (var owner in new[] { "kotlin.UByteArray", "kotlin.UShortArray", "kotlin.UIntArray", "kotlin.ULongArray" })
+    {
+        var type = reference.TypeDefinitions.Single(handle => DefinitionName(reference, handle) == owner);
+        var methods = reference.GetTypeDefinition(type).GetMethods()
+            .Where(handle => !reference.GetString(reference.GetMethodDefinition(handle).Name).StartsWith('.')).ToArray();
+        Require(methods.Length == 8, $"{owner} must expose all eight Kotlin member declarations");
+        var identities = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var method in methods)
+        {
+            Require(HasMethodAttribute(reference, method, identityAttribute), $"{owner} member lost its source identity");
+            using var payload = DecodeCarrierDocument(reference,
+                reference.GetMethodDefinition(method).GetCustomAttributes(), identityAttribute);
+            var identity = payload.RootElement.GetProperty("id").GetString();
+            Require(!string.IsNullOrEmpty(identity) && identities.Add(identity), $"{owner} has a missing or duplicate identity");
+            if (reference.GetString(reference.GetMethodDefinition(method).Name) == "iterator") iteratorIds.Add(identity!);
+        }
+        sourceIds.Add(owner, identities);
+    }
+    Require(sourceIds.Values.SelectMany(ids => ids).Distinct(StringComparer.Ordinal).Count() == 32,
+        "unsigned array declaration identities conflate different source classifiers");
+
+    using var runtimeStream = File.OpenRead(runtimePath);
+    using var runtimePe = new PEReader(runtimeStream);
+    var runtime = runtimePe.GetMetadataReader();
+    var helperIds = new HashSet<string>(StringComparer.Ordinal);
+    foreach (var method in runtime.MethodDefinitions)
+    {
+        if (!HasMethodAttribute(runtime, method, identityAttribute)) continue;
+        using var payload = DecodeCarrierDocument(runtime, runtime.GetMethodDefinition(method).GetCustomAttributes(), identityAttribute);
+        if (payload.RootElement.GetProperty("id").GetString() is string identity) helperIds.Add(identity);
+    }
+    Require(iteratorIds.Count == 4 && iteratorIds.All(identity => helperIds.Contains(identity + "|alias-helper")),
+        "native-array iterator helpers lost their selected source declaration correspondence");
+
+    var bir = JsonNode.Parse(File.ReadAllText(birPath))!;
+    var selectedOwners = new HashSet<string>(StringComparer.Ordinal);
+    foreach (var call in DescendantObjects(bir))
+    {
+        if (call["k"]?.GetValue<string>() != "callInstance"
+            || call["ownerType"] is not JsonObject owner || owner["t"]?.GetValue<string>() != "fqn"
+            || owner["name"]?.GetValue<string>() is not string name || !sourceIds.TryGetValue(name, out var identities)) continue;
+        var identity = call["declarationId"]?.GetValue<string>();
+        Require(identity != null && identities.Contains(identity), $"{name} call lost or changed its selected source declaration");
+        if (call["method"]?.GetValue<string>() == "iterator") selectedOwners.Add(name);
+    }
+    Require(selectedOwners.SetEquals(sourceIds.Keys), "fixture must exercise selected iterator calls for all four unsigned arrays");
 }
 
 static void VerifySuspendInlineDeclarations(string dllPath, string path)

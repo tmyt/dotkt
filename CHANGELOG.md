@@ -5,6 +5,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Preserve unsigned-array Kotlin declaration identities through frontend calls and native-array helper allocation (#810).
+
 - Use the same eligible CLR list contract for projected mutable list reads and writes, including raw lists and dictionary-adjacent independent lists (#807).
 
 - Preserve source-authored exact mutable collection views through projected `isEmpty` defaults without losing authored overrides or genuine ambiguity (#806).
