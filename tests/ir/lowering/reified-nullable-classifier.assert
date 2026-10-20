@@ -5,7 +5,10 @@
 +"method":"IsInstanceOfType"
 +"method":"get_IsGenericTypeDefinition"
 +"method":"starProjectionHasView"
-+"k":"classRef","type":{"t":"fqn","name":"System.IComparable\u00601"}
+# Comparable's logical predicate must not require a generic CLR interface after it succeeds.
++"k":"classRef","type":{"t":"fqn","name":"System.Object"}
++"method":"clrComparableClassifier"
+-"k":"classRef","type":{"t":"fqn","name":"System.IComparable\u00601"}
 +"name":"Item2"
 +"k":"if","branches":[{"cond":
 +"name":"System.InvalidCastException"
