@@ -24,8 +24,8 @@ internal interface KClassSlots : KotlinClassifierMarker, KAnnotatedElementSlots,
 
 @kotlin.clr.ClrTypeAlias("System.Type")
 private interface NativeReflectionType {
-    @get:kotlin.clr.ClrProperty(kotlin.clr.READ, "Name") val name: String
-    @get:kotlin.clr.ClrProperty(kotlin.clr.READ, "FullName") val fullName: String?
+    @kotlin.clr.ClrProperty(kotlin.clr.READ, "Name") val name: String
+    @kotlin.clr.ClrProperty(kotlin.clr.READ, "FullName") val fullName: String?
     @kotlin.clr.ClrIntrinsic("IsInstanceOfType") fun isInstance(value: Any?): Boolean
     @kotlin.clr.ClrIntrinsic("GetCustomAttributes") fun attributes(inherit: Boolean): Array<Any>
 }
