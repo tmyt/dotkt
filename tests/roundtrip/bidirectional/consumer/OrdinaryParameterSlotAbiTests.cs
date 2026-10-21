@@ -15,5 +15,9 @@ public class OrdinaryParameterSlotAbiTests
         Assert.That(parameters[0].ParameterType.GetElementType(), Is.EqualTo(typeof(Box<string, string>)));
         Assert.That(parameters[1].ParameterType.IsInterface, Is.True);
         Assert.That(parameters[1].ParameterType.IsAssignableFrom(typeof(Box<string, string>)), Is.True);
+        var property = typeof(PropertyOwner).GetProperty("box")!;
+        Assert.That(property.PropertyType, Is.EqualTo(typeof(Box<string, string>)));
+        Assert.That(property.GetMethod!.ReturnType, Is.EqualTo(property.PropertyType));
+        Assert.That(property.SetMethod!.GetParameters()[0].ParameterType, Is.EqualTo(property.PropertyType));
     }
 }

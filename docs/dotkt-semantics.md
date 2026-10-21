@@ -110,7 +110,7 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   `G<Any>` uses the declaration-owned non-generic carrier, retaining its exact Kotlin type in metadata. Passing an
   unchecked `G<X>` view does not add a closed CLR construction check or copy the object; typed member operations
   still perform their required conversions. Source overload identity remains distinct when physical slots coincide.
-  Native CLR declarations and overrides, managed-reference locations, constructors and generated linkage methods
+  Native CLR declarations and overrides, managed-reference locations, constructors, property accessors and generated linkage methods
   keep their existing exact contracts. This parameter rule does not change invariant fields or returns.
 - **Declaration-site variance on a Kotlin class or interface uses the same nominal existential value representation.**
   CLR classes are invariant, and CLR interface variance does not relate value-type instantiations. Kotlin permits

@@ -26,6 +26,8 @@ class TrackedSlot<F>(var last: F) : Slot<F>() {
 
 interface SlotUse { fun use(slot: Slot<Any>, owner: Any): Boolean }
 
+class PropertyOwner(var box: Box<String>)
+
 fun choose(slot: Slot<String>): Int = 17
 fun choose(slot: Slot<Int>): Int = 29
 

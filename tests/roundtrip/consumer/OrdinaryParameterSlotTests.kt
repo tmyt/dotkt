@@ -68,5 +68,8 @@ class OrdinaryParameterSlotTests {
         check(location === value)
         check(NativeBoxApi.ReplaceAliased(byref(location), byref(location)))
         check(location.value == "second")
+        val property = PropertyOwner(value)
+        property.box = location
+        check(property.box === location)
     }
 }

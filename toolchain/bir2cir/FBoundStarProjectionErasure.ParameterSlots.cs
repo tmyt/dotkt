@@ -4,13 +4,14 @@ using DotKt.Bir;
 static partial class FBoundStarProjectionErasure
 {
     // A source Kotlin method consumes an erased generic view, not proof of one CLR construction.
-    // Constructors, generated linkage methods and native overrides retain their existing contracts.
+    // Constructors, property accessors, generated linkage methods and native overrides retain their contracts.
     static bool IsOrdinaryKotlinParameter(JsonObject parameter,
         IReadOnlyDictionary<string, JsonObject> definitions, ReferenceMetadataIndex refs)
     {
         if (!IsParameterTypeSlot(parameter, "type")
             || parameter.Parent?.Parent is not JsonObject method
             || method[DeclarationIdentityBinding.Key] == null
+            || KotlinPropertyAccessors.TryIdentity(method, out _, out _)
             || method.Parent is not JsonArray entries || entries.Parent is not JsonObject owner
             || !ReferenceEquals(owner["methods"], entries)
             || Bool(method["generated"]) || Bool(owner["generated"]) || HasClrTypeAlias(owner)
