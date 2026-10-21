@@ -79,8 +79,7 @@ static partial class FBoundStarProjectionErasure
                         || OwnerConstrainedMethodLowering.HasMethodDependentBounds(method)
                         || method[OwnerConstrainedMethodLowering.OverrideBoundsKey] != null)
                         OwnerConstrainedMethodLowering.Record(method, definition);
-        foreach (var owner in owners.Values.Where(owner => owner.Needed && IsInner(owner.Def)
-                     && InnerCapturedCount(owner.Def) > 0))
+        foreach (var owner in owners.Values.Where(owner => owner.Needed))
             AddFieldAccessors(owner);
         var sourceSignatures = defs.Values
             .SelectMany(definition => (definition["methods"] as JsonArray)?.OfType<JsonObject>()
@@ -2066,7 +2065,8 @@ static partial class FBoundStarProjectionErasure
                     out var property, out var role) && property == name && role == "get")) continue;
             foreach (var kind in new[] { "get", "set" })
             {
-                if (kind == "set" && Bool(field["readOnly"])) continue;
+                // readOnly restricts the projected Kotlin surface, not storage (a var may have an internal setter).
+                if (kind == "set" && Bool(field["initOnly"])) continue;
                 // An authored getter/setter already owns this property role; do not add a competing declaration.
                 if (methods.OfType<JsonObject>().Any(method => KotlinPropertyAccessors.TryIdentity(method,
                         out var property, out var role) && property == name && role == kind)) continue;
@@ -3094,7 +3094,7 @@ static partial class FBoundStarProjectionErasure
                     existentialTypeParameters, existentialMethodParameters);
                 LowerProjectedConstruction(obj, owners, defs, refs);
                 BindStarFieldThroughCanonicalGetter(obj, owners, defs, refs);
-                BindCapturedInnerField(obj, owners, defs, refs);
+                BindProjectedFieldStorage(obj, owners, defs, refs);
                 BindProjectedConstraintMember(obj, typeParameterDeclarations, methodParameterDeclarations,
                     defs, refs);
                 BindInheritedStarMember(obj, owners, defs, refs);
@@ -3252,6 +3252,7 @@ static partial class FBoundStarProjectionErasure
                 // A star-projected inner construction is replaced while visiting the receiver below this call.  Its
                 // result is the inner existential carrier, so bind the immediately-following member only after that
                 // receiver seam is visible.  The initial pass above is still required for ordinary star receivers.
+                BindProjectedFieldStorage(obj, owners, defs, refs);
                 BindInheritedStarMember(obj, owners, defs, refs);
                 if (Str(obj["k"]) == "callInstance"
                     && TypeJson.Read(obj["ownerType"]) is TypeNode.Fqn erasedOwner
@@ -3746,7 +3747,7 @@ static partial class FBoundStarProjectionErasure
     }
 
     // Direct storage access uses only a slot explicitly synthesized for that field, never a custom property accessor.
-    static void BindCapturedInnerField(JsonObject field, IReadOnlyDictionary<string, Owner> owners,
+    static void BindProjectedFieldStorage(JsonObject field, IReadOnlyDictionary<string, Owner> owners,
         IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs)
     {
         var kind = Str(field["k"]);
@@ -3754,7 +3755,7 @@ static partial class FBoundStarProjectionErasure
             || Bool(field[ExactOuterKey]) || field["recv"] is not JsonObject receiver
             || Str(receiver["k"]) == "this" || Bool(receiver[ExactOuterKey])
             || TypeJson.Read(field["ownerType"]) is not TypeNode.Fqn owner
-            || !IsCapturedInner(owner, owners, refs) || Str(field["name"]) is not string name) return;
+            || Str(field["name"]) is not string name) return;
         var setter = kind is "setFieldExpr" or "setField";
         var role = setter ? "set" : "get";
         if (owners.TryGetValue(owner.Name, out var local))
@@ -4229,6 +4230,7 @@ static partial class FBoundStarProjectionErasure
                     }
                     BindProjectedArrayRead(obj, owners, refs);
                     BindProjectedArrayGenericCall(obj, owners, refs);
+                    BindProjectedFieldStorage(obj, owners, defs, refs);
                     BindInheritedStarMember(obj, owners, defs, refs);
                     break;
                 case JsonArray array:

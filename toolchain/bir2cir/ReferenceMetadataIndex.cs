@@ -2734,7 +2734,6 @@ sealed partial class ReferenceMetadataIndex
         erasedSignature = null;
         declarationResult = physicalResult = null;
         if (sourceOwner == null || sourceName == null || accessorKind is not ("get" or "set")
-            || !TryInnerCapturedCount(sourceOwner.Name, out var captured) || captured <= 0
             || !TryExistentialPhysicalOwner(sourceOwner.Name, out var carrier)
             || !TryMembersByBirOwner(carrier, out var members)
             || !TryExistentialSemanticOwner(carrier, out var semanticOwner)) return false;
