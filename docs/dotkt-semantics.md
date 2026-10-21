@@ -112,6 +112,8 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   still perform their required conversions. Source overload identity remains distinct when physical slots coincide.
   Native CLR declarations and overrides, managed-reference locations, constructors, property accessors and generated linkage methods
   keep their existing exact contracts. This parameter rule does not change invariant fields or returns.
+  Captured generic calls retain their declaration-owned construction witnesses independently of carrier parameters;
+  erasing a value slot must not replace the selected method's captured type frame with its upper bound.
 - **Declaration-site variance on a Kotlin class or interface uses the same nominal existential value representation.**
   CLR classes are invariant, and CLR interface variance does not relate value-type instantiations. Kotlin permits
   both conversions, so every ordinary parameter, return,

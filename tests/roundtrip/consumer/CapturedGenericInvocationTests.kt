@@ -102,5 +102,7 @@ class CapturedGenericInvocationTests {
     @TestAttribute fun capturedGenericResultPreservesCarrierAndIdentity() {
         check(readCapturedKeyResult(FirstKey) === FirstKey)
         check(readCapturedKeyResult(OtherKey) === OtherKey)
+        check(echoCapturedKey(FirstKey as Key<*>) === FirstKey)
+        check(echoCapturedKey(OtherKey as Key<*>) === OtherKey)
     }
 }

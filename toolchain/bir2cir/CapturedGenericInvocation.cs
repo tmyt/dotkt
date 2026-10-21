@@ -14,11 +14,15 @@ static class CapturedGenericInvocation
     static Dictionary<string, List<(string Owner, JsonObject Method)>> _localDeclarations;
     static Dictionary<string, string> _localTypeNames;
     static Dictionary<string, JsonObject> _localTypeDefinitions;
+    static readonly Dictionary<string, TypeNode[]> _parameterWitnesses = new(StringComparer.Ordinal);
+    static readonly Dictionary<string, NullableRepresentationFrame> _methodWitnessFrames = new(StringComparer.Ordinal);
     static bool _flattenMissingOwners;
 
     public static void PreserveSourceFacts(IReadOnlyList<JsonNode> roots, ReferenceMetadataIndex refs)
     {
         _next = 0;
+        _parameterWitnesses.Clear();
+        _methodWitnessFrames.Clear();
         var locals = SupertypeGraph.Collect(roots);
         foreach (var root in roots) Visit(root);
 
@@ -61,6 +65,23 @@ static class CapturedGenericInvocation
             }
             foreach (var child in obj.ToList()) Visit(child.Value);
         }
+    }
+
+    // Snapshot allocated constructor arguments before ordinary value slots become existential carriers.
+    public static void CaptureParameterWitnesses(IEnumerable<JsonNode> roots)
+    {
+        void Visit(JsonObject owner)
+        {
+            foreach (var method in (owner["methods"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
+                if (Str(method[DeclarationIdentityBinding.Key]) is string identity)
+                {
+                    _parameterWitnesses[identity] = ((JsonArray)method["params"]).OfType<JsonObject>()
+                        .Select(parameter => TypeJson.Read(parameter["type"])).ToArray();
+                    _methodWitnessFrames[identity] = NullableRepresentationTypes.DeclarationMethodFrame(method);
+                }
+            foreach (var child in (owner["types"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()) Visit(child);
+        }
+        foreach (var root in roots.OfType<JsonObject>()) Visit(root);
     }
 
     public static void PrepareLocalDeclarations(IEnumerable<JsonNode> roots, bool flattenMissingOwners)
@@ -152,6 +173,13 @@ static class CapturedGenericInvocation
                 .Select(SignatureValueTypes.Of).ToArray()
                 ?? throw new InvalidOperationException("Captured invocation has no selected parameter vector");
             var declaredReturn = SignatureValueTypes.Of(TypeJson.Read(member["returnType"]));
+            var parameterWitnesses = target != null && _parameterWitnesses.TryGetValue(target, out var localWitnesses)
+                ? localWitnesses.Select(type => BirTypeLowering.LowerPhysicalType(
+                    type, refs.Aliases, refs.IsValueType, refs.PhysicalTypeNames, typeArg: false)).ToArray()
+                : refs.CapturedParameterWitnesses(target, declarationParams);
+            var witnessFrame = target != null && _methodWitnessFrames.TryGetValue(target, out var localFrame)
+                ? localFrame : refs.NullableMethodFrame(target);
+            captureSlots = captureSlots.Select(slot => witnessFrame?.SourcePosition(slot) ?? slot).ToArray();
             if (captureIndices.Any(index => index < 0 || index >= arguments.Count)
                 || declarationParams.Length != arguments.Count)
                 throw new InvalidOperationException("Captured invocation argument does not match selected declaration");
@@ -176,6 +204,7 @@ static class CapturedGenericInvocation
                     ? owner.Args?[tv.I] ?? throw new InvalidOperationException("Captured super invocation has no base frame") : tv);
                 var superFrame = new JsonArray(selectedFrame.Select(parameter => (JsonNode)CloneParameter(parameter, CloseSuper)).ToArray());
                 var superParameters = declarationParams.Select(CloseSuper).ToArray();
+                parameterWitnesses = parameterWitnesses.Select(CloseSuper).ToArray();
                 var superReturn = CloseSuper(declaredReturn);
                 var superCall = (JsonObject)obj.DeepClone();
                 superCall.Remove(ClrMemberResolution.ResolvedMethodTypeParamsKey);
@@ -223,6 +252,25 @@ static class CapturedGenericInvocation
             TypeNode CloseDeclaration(TypeNode type) => Map(type, tv => tv.Scope == "type"
                 ? liftedOwner.Args?[tv.I] ?? throw new InvalidOperationException("Captured invocation has no owner frame")
                 : tv);
+            var witnessArguments = new List<int>();
+            var witnessOwners = new List<TypeNode>();
+            var witnessPositions = new List<int>();
+            var witnessSlots = new List<int>();
+            foreach (var argument in captureIndices)
+            {
+                if (argument >= parameterWitnesses.Length
+                    || SignatureValueTypes.Of(CloseDeclaration(parameterWitnesses[argument])) is not TypeNode.Fqn { Args: { } parts } witness)
+                    throw new InvalidOperationException("Captured argument has no declaration-owned construction witness");
+                for (var position = 0; position < parts.Length; position++)
+                    if (parts[position] is TypeNode.Tv { Scope: "method" } variable && captureSlots.Contains(variable.I))
+                    {
+                        witnessArguments.Add(argument);
+                        witnessOwners.Add(new TypeNode.Fqn(_localTypeDefinitions.ContainsKey(witness.Name)
+                            ? witness.Name : PhysicalName(witness, refs)));
+                        witnessPositions.Add(position);
+                        witnessSlots.Add(variable.I);
+                    }
+            }
             var frame = new JsonArray();
             foreach (var parameter in selectedFrame) frame.Add(CloneParameter(parameter, CloseDeclaration));
             foreach (var parameter in ownerFrame.Concat(methodFrame))
@@ -299,8 +347,10 @@ static class CapturedGenericInvocation
                 ["args"] = new JsonArray(ClassRef(new TypeNode.Fqn(name)), Constant(Int, 0), Constant(String, "Invoke"),
                     Array(String, parameterTypes.Select(type => (JsonNode)Constant(String, RuntimeKey(type, refs)))),
                     Array(Type, fallback.Select(type => (JsonNode)ClassRef(type))),
-                    Array(Int, captureIndices.Select(index => (JsonNode)Constant(Int, index + (isInstance ? 1 : 0)))),
-                    Array(Int, captureSlots.Select(slot => (JsonNode)Constant(Int, slot))),
+                    Array(Int, witnessArguments.Select(index => (JsonNode)Constant(Int, index + (isInstance ? 1 : 0)))),
+                    Array(Type, witnessOwners.Select(type => (JsonNode)ClassRef(type))),
+                    Array(Int, witnessPositions.Select(slot => (JsonNode)Constant(Int, slot))),
+                    Array(Int, witnessSlots.Select(slot => (JsonNode)Constant(Int, slot))),
                     Array(Object, values)),
             };
             // The reference twin describes this runtime helper using trusted stdlib aliases. Select that exact
@@ -308,7 +358,8 @@ static class CapturedGenericInvocation
             var runtimeType = new TypeNode.Fqn("DotKt.Runtime.CompilerServices.StarProjectionType");
             var sourceSignature = new TypeNode[] { runtimeType, new TypeNode.Fqn("kotlin.Int"),
                 new TypeNode.Fqn("kotlin.String"), new TypeNode.Array(new TypeNode.Fqn("kotlin.String")),
-                new TypeNode.Array(runtimeType), new TypeNode.Fqn("kotlin.IntArray"), new TypeNode.Fqn("kotlin.IntArray"),
+                new TypeNode.Array(runtimeType), new TypeNode.Fqn("kotlin.IntArray"), new TypeNode.Array(runtimeType),
+                new TypeNode.Fqn("kotlin.IntArray"), new TypeNode.Fqn("kotlin.IntArray"),
                 new TypeNode.Array(new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"))) };
             var localRuntime = _localDeclarations.Values.SelectMany(bindings => bindings)
                 .Where(binding => binding.Owner == RuntimeOwner && Str(binding.Method["name"]) == Str(runtimeCall["method"])
@@ -349,7 +400,7 @@ static class CapturedGenericInvocation
     static readonly TypeNode Int = new TypeNode.Fqn("int");
     static readonly TypeNode String = new TypeNode.Fqn("string");
     static readonly TypeNode Type = new TypeNode.Fqn("System.Type");
-    static readonly TypeNode[] RuntimeSignature = { Type, Int, String, new TypeNode.Array(String), new TypeNode.Array(Type), new TypeNode.Array(Int), new TypeNode.Array(Int), new TypeNode.Array(Object) };
+    static readonly TypeNode[] RuntimeSignature = { Type, Int, String, new TypeNode.Array(String), new TypeNode.Array(Type), new TypeNode.Array(Int), new TypeNode.Array(Type), new TypeNode.Array(Int), new TypeNode.Array(Int), new TypeNode.Array(Object) };
     static JsonObject Local(int index) => new() { ["k"] = "local", ["name"] = "p" + index };
     static JsonObject Cast(TypeNode type, JsonNode value) => new() { ["k"] = "cast", ["type"] = TypeJson.Write(type), ["e"] = value };
     static JsonObject ClassRef(TypeNode type) => new() { ["k"] = "classRef", ["type"] = TypeJson.Write(type) };

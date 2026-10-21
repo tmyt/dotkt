@@ -512,6 +512,8 @@ internal fun starProjectionInvokeCapturedHelper(
     parameterTypeKeys: Array<String>,
     authoredTypeArguments: Array<StarProjectionType>,
     capturedArgumentIndices: IntArray,
+    capturedOwners: Array<StarProjectionType>,
+    capturedOwnerPositions: IntArray,
     capturedMethodSlots: IntArray,
     arguments: Array<Any?>,
 ): Any? {
@@ -521,11 +523,20 @@ internal fun starProjectionInvokeCapturedHelper(
     if (!method.isStatic || parameters.size != arguments.size)
         throw IllegalStateException("Projected helper declaration does not match its call")
     val inferred = arrayOfNulls<StarProjectionType>(authoredTypeArguments.size)
-    for (index in capturedArgumentIndices) {
-        val argument = arguments[index]
-        if (argument != null)
-            starProjectionBindConstructionSlots(parameters[index].parameterType,
-                argument.starProjectionRuntimeType(), inferred, true, capturedMethodSlots)
+    var capture = 0
+    while (capture < capturedArgumentIndices.size) {
+        val argument = arguments[capturedArgumentIndices[capture]]
+        val view = if (argument == null) null
+            else starProjectionClosedView(argument.starProjectionRuntimeType(), capturedOwners[capture])
+        if (view != null) {
+            val actual = view.getGenericArguments()[capturedOwnerPositions[capture]]
+            val slot = capturedMethodSlots[capture]
+            val previous = inferred[slot]
+            if (previous != null && previous != actual)
+                throw IllegalStateException("Conflicting projected declaration type argument")
+            inferred[slot] = actual
+        }
+        capture++
     }
     val closedArguments = Array<StarProjectionType>(authoredTypeArguments.size) { slot ->
         inferred[slot] ?: authoredTypeArguments[slot]
@@ -546,11 +557,13 @@ internal fun starProjectionInvokeCapturedHelperUnit(
     parameterTypeKeys: Array<String>,
     authoredTypeArguments: Array<StarProjectionType>,
     capturedArgumentIndices: IntArray,
+    capturedOwners: Array<StarProjectionType>,
+    capturedOwnerPositions: IntArray,
     capturedMethodSlots: IntArray,
     arguments: Array<Any?>,
 ) {
     starProjectionInvokeCapturedHelper(declaringType, metadataToken, memberName, parameterTypeKeys,
-        authoredTypeArguments, capturedArgumentIndices, capturedMethodSlots, arguments)
+        authoredTypeArguments, capturedArgumentIndices, capturedOwners, capturedOwnerPositions, capturedMethodSlots, arguments)
 }
 
 // A boxed generic value receiver must be written back even when its method throws. Keep the invoke result separate
