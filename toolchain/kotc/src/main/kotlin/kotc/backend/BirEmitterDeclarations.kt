@@ -1213,7 +1213,7 @@ internal fun BirEmitter.innerClassDef(inner: IrClass): String {
 	// chain while rendering the declaration: Leaf.this.__outer reaches Middle, and another __outer reaches Outer.
 	// Each edge is an explicit Kotlin inner relation; bir2cir later supplies the constructed CLR owner TypeSpecs.
 	val saved = java.util.IdentityHashMap<IrValueDeclaration, String?>()
-	val immediate = """{"k":"field","ownerType":${fqnJson(typeName(inner))},"recv":{"k":"this"},"name":"__outer","outer":true,"memberVisibility":"private"}"""
+	val immediate = """{"k":"field","ownerType":${birType(inner.defaultType).toJson()},"recv":{"k":"this"},"name":"__outer","outer":true,"memberVisibility":"private"}"""
 	for ((declaration, receiver) in innerEnclosingReceivers(inner, immediate)) {
 		saved[declaration] = captureSubst[declaration]
 		captureSubst[declaration] = receiver
