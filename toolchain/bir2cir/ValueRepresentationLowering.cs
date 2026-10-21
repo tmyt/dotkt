@@ -324,7 +324,7 @@ sealed class ValueRepresentationLowering
             JsonNode result;
             if (kind == "cast")
             {
-                if (opaque && !nullable)
+                if (!nullable)
                     statements.Add(new JsonObject { ["k"] = "if", ["branches"] = new JsonArray(new JsonObject {
                         ["cond"] = new JsonObject { ["k"] = "objEq", ["lhs"] = Local(), ["rhs"] = Null() },
                         ["body"] = new JsonArray(new JsonObject { ["k"] = "throw", ["value"] = new JsonObject {
@@ -573,6 +573,14 @@ sealed class ValueRepresentationLowering
             {"k":"exprStmt","expr":{"k":"callStatic","sig":[{"t":"fqn","name":"Union"}]}}]}]}
         """);
         var policy = new ValueRepresentationLowering(new[] { root }, null, false);
+        var nullCast = JsonNode.Parse("""
+            {"k":"cast","type":{"t":"fqn","name":"Union"},
+             "e":{"k":"const","type":{"t":"nullable","of":{"t":"fqn","name":"kotlin.Any"}},"value":null}}
+            """);
+        policy.BindOperations(nullCast);
+        if (TypeJson.OwnerName(nullCast["stmts"]?[1]?["branches"]?[0]?["body"]?[0]?["value"]?["type"])
+            != "kotlin.NullPointerException")
+            throw new InvalidOperationException("A non-null classified cast lost its Kotlin null exception");
         var scalar = policy.Predicate(new TypeNode.Fqn("Union"));
         var vector = policy.Predicate(new TypeNode.Array(new TypeNode.Fqn("Union")));
         var projected = policy.Predicate(new TypeNode.Array(new TypeNode.Array(
