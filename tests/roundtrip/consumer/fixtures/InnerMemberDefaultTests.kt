@@ -22,6 +22,10 @@ class InnerMemberDefaultTests {
     }
 
     @TestAttribute fun nestedGenericDefaultsCloseTheirActualEnclosingFrames() {
+        check(GenericMemberDefaultOuter("outer").Middle(41).pair() == Pair("outer", 41))
+        check(GenericMemberDefaultOuter(16).Middle("own").pair() == Pair(16, "own"))
+        check(GenericMemberDefaultOuter<Int?>(null).Middle("own").pair() == Pair(null, "own"))
+        check(GenericMemberDefaultOuter("outer").Middle<Int?>(null).pair() == Pair("outer", null))
         val text = GenericMemberDefaultOuter("text").Middle(42).Leaf()
         check(text.outerValue() == "text" && text.middleValue() == 42)
         val number = GenericMemberDefaultOuter(17).Middle("middle").Leaf()
@@ -33,12 +37,17 @@ class InnerMemberDefaultTests {
     @TestAttribute fun carriedClosuresRetainTheLexicalEnclosingCapture() {
         val outer = MemberDefaultOuter(23)
         check(outer.Inner().callback() == 23 && outer.reads == 1)
+        check(outer.Inner().hiddenDefault() == 123 && outer.Inner().hiddenCallback() == 123)
         check(GenericMemberDefaultOuter("captured").Middle(1).Leaf().callback() == "captured")
         check(GenericMemberDefaultOuter(42).Middle("middle").Leaf().callback() == 42)
         check(GenericMemberDefaultOuter<Int?>(null).Middle(1).Leaf().callback() == null)
     }
 
-    @TestAttribute fun existingPublicInlineEnclosingAccessRemainsValid() {
+    @TestAttribute fun inlinePayloadAndOrdinaryCallsRetainEnclosingAccess() {
+        check(MemberDefaultOuter(24).Inner().withSeed { it + 1 } == 25)
+        check(GenericMemberDefaultOuter("inline").Middle(1).Leaf().withSeed { it + "!" } == "inline!")
+        check(GenericMemberDefaultOuter(43).Middle("middle").Leaf().withSeed { it + 1 } == 44)
+        check(GenericMemberDefaultOuter<Int?>(null).Middle(1).Leaf().withSeed { it } == null)
         check(MemberDefaultOuter(24).Inner().inlineValue() == 24)
         check(GenericMemberDefaultOuter("inline").Middle(1).Leaf().inlineValue() == "inline")
         check(GenericMemberDefaultOuter(43).Middle("middle").Leaf().inlineValue() == 43)
