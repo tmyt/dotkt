@@ -1607,6 +1607,7 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 				?.let { birType(it) } ?: error("No selected indexer owner for ${callee.name} on ${recv.type}")
 			val (ixArgs, ixArgTypes) = clrCallArgs(call, ixDeclaration)
 			val ixSignature = overloadSigField(ixDeclaration)
+			val ixTypeArgs = typeArgsJson(call)
 			// The get accessor returning a generic param (`IList<T>.get` -> T) reports the SUBSTITUTED ret (gp:T):
 			// ilemit then hands back gp:T (matching the stack), so the value<->collection boundary box/unbox is
 			// correctly typed (else a value-type instantiation NullRefs/garbages). Needs ClrRef("gp:") -> MapType.
@@ -1615,7 +1616,7 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 			val ixVirtual = isVirtualInstanceCall(call, callee)
 			val ixRet = if (name == "get") retH.toJson() else fqnJson("kotlin.Unit")
 			// The selected operator supplies all indices, followed by the assigned value for set.
-			return """{"k":"callInstance","virtual":$ixVirtual,"ownerType":${str(mt)},"method":${str(name)},"prop":"index-$name"$ixSignature,"argTypes":[$ixArgTypes],"ret":$ixRet,"recv":${expr(recv)},"args":[$ixArgs]${superTag(call)}}"""
+			return """{"k":"callInstance","virtual":$ixVirtual,"ownerType":${str(mt)},"method":${str(name)},"prop":"index-$name"$ixSignature$ixTypeArgs,"argTypes":[$ixArgTypes],"ret":$ixRet,"recv":${expr(recv)},"args":[$ixArgs]${superTag(call)}}"""
 		}
 	}
 
