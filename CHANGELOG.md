@@ -5,6 +5,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Preserve ordinary functions and properties named `entries`, including their side effects and DLL calls,
+  without confusing their result types with the enum's synthesized entries property (#1111).
+
 ## 0.9.16 (2026-10-21)
 
 ### Release highlights
