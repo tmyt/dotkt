@@ -1562,7 +1562,9 @@ internal fun BirEmitter.annotationDef(klass: IrClass): String {
 	val ctor = primary?.let { ctor(klass, it) }
 		?: """{"params":[],"baseArgs":[],"thisArgs":null,"vis":"public","body":[]}"""
 	val visibility = sourceTypeVisibilityField(klass)
-	return """{"name":${str(typeName(klass))},"kind":"class"${semanticOwnerJson(klass)}${classModsJson(annotation = true)}$visibility,"abstract":false,"base":null,"interfaces":[],"fields":[$fields],"ctors":[$ctor],"methods":[$methods],"properties":[$properties],"attrs":[${attrsJson(klass.annotations)}]}"""
+	val interfaces = klass.superTypes.filter { (it.classifierOrNull?.owner as? IrClass)?.kind == ClassKind.INTERFACE }
+		.joinToString(",") { birType(it).toJson() }
+	return """{"name":${str(typeName(klass))},"kind":"class"${semanticOwnerJson(klass)}${classModsJson(annotation = true)}$visibility,"abstract":false,"base":null,"interfaces":[$interfaces],"fields":[$fields],"ctors":[$ctor],"methods":[$methods],"properties":[$properties],"attrs":[${attrsJson(klass.annotations)}]}"""
 }
 
 /** The `attrs` JSON for a declaration: each annotation -> a .NET custom attribute application. The `attr` type is a

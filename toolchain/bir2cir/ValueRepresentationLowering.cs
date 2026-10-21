@@ -4,7 +4,7 @@ using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 
-sealed record ValueRepresentationBinding(string Classifier, string ClassifierFactory, string ComponentClassifier);
+sealed record ValueRepresentationBinding(string Classifier, string ClassifierFactory, string ComponentClassifier, string InterfaceMarker);
 
 // Declaration-owned Kotlin classifiers can be narrower than their CLR alias face.
 // The trusted stdlib supplies all type/member/classifier choices. No source name selects a rule.
@@ -51,7 +51,7 @@ sealed class ValueRepresentationLowering
                 if (declaration["typeParams"] is JsonArray parameters) localParameters[name] = parameters;
                 if (Attribute(declaration, "kotlin.clr.ClrTypeAlias") is { } alias) aliases[name] = Argument(alias, 0);
                 if (Attribute(declaration, TypeAttribute) is { } attribute)
-                    bindings[name] = new(Argument(attribute, 0), Argument(attribute, 1), Argument(attribute, 2));
+                    bindings[name] = new(Argument(attribute, 0), Argument(attribute, 1), Argument(attribute, 2), Argument(attribute, 3));
             }
             var owner = Text(declaration["fileClass"]) ?? Text(declaration["name"]);
             foreach (var method in (declaration["methods"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
@@ -78,6 +78,10 @@ sealed class ValueRepresentationLowering
     }
 
     internal bool HasClassifier(TypeNode type) => Classifier(type).Binding != null;
+
+    internal IReadOnlyDictionary<string, string> InterfaceMarkers => bindings
+        .Where(entry => !string.IsNullOrEmpty(entry.Value.InterfaceMarker))
+        .ToDictionary(entry => entry.Key, entry => entry.Value.InterfaceMarker, StringComparer.Ordinal);
 
     bool OpaqueScalar(TypeNode type)
     {
@@ -320,7 +324,7 @@ sealed class ValueRepresentationLowering
             JsonNode result;
             if (kind == "cast")
             {
-                if (opaque && !nullable)
+                if (!nullable)
                     statements.Add(new JsonObject { ["k"] = "if", ["branches"] = new JsonArray(new JsonObject {
                         ["cond"] = new JsonObject { ["k"] = "objEq", ["lhs"] = Local(), ["rhs"] = Null() },
                         ["body"] = new JsonArray(new JsonObject { ["k"] = "throw", ["value"] = new JsonObject {
@@ -550,7 +554,7 @@ sealed class ValueRepresentationLowering
         {"fileClass":"Helpers","types":[{"name":"Union","kind":"class","attrs":[
           {"attr":{"t":"fqn","name":"kotlin.clr.ClrTypeAlias"},"args":[{"value":"System.Object"}]},
           {"attr":{"t":"fqn","name":"kotlin.clr.ClrValueRepresentation"},"args":[
-           {"value":"Helpers.matches"},{"value":"Helpers.classifier"},{"value":"Helpers.component"}]}],
+           {"value":"Helpers.matches"},{"value":"Helpers.classifier"},{"value":"Helpers.component"},{"value":""}]}],
           "methods":[{"name":"convert","declarationId":"convert","params":[],"ret":{"t":"fqn","name":"kotlin.Int"},"abstract":true,"attrs":[
            {"attr":{"t":"fqn","name":"kotlin.clr.ClrValueMember"},"args":[{"value":"Helpers.convert"},{"value":"Slots.convert"}]}]}]},
           {"name":"Child","kind":"class","base":{"t":"fqn","name":"Union"},"methods":[
@@ -569,6 +573,14 @@ sealed class ValueRepresentationLowering
             {"k":"exprStmt","expr":{"k":"callStatic","sig":[{"t":"fqn","name":"Union"}]}}]}]}
         """);
         var policy = new ValueRepresentationLowering(new[] { root }, null, false);
+        var nullCast = JsonNode.Parse("""
+            {"k":"cast","type":{"t":"fqn","name":"Union"},
+             "e":{"k":"const","type":{"t":"nullable","of":{"t":"fqn","name":"kotlin.Any"}},"value":null}}
+            """);
+        policy.BindOperations(nullCast);
+        if (TypeJson.OwnerName(nullCast["stmts"]?[1]?["branches"]?[0]?["body"]?[0]?["value"]?["type"])
+            != "kotlin.NullPointerException")
+            throw new InvalidOperationException("A non-null classified cast lost its Kotlin null exception");
         var scalar = policy.Predicate(new TypeNode.Fqn("Union"));
         var vector = policy.Predicate(new TypeNode.Array(new TypeNode.Fqn("Union")));
         var projected = policy.Predicate(new TypeNode.Array(new TypeNode.Array(
@@ -606,6 +618,22 @@ sealed class ValueRepresentationLowering
             || Text(bridge["body"][0]["value"][DeclarationIdentityBinding.Key]) != "child-convert"
             || Text(bridge["clrInterfaceImpls"][0]["member"]) != "convert")
             throw new InvalidOperationException("Nominal slots lost exact override/member bindings");
+        var markerRoot = JsonNode.Parse("""
+            {"types":[{"name":"Tag","kind":"interface","attrs":[
+              {"attr":{"t":"fqn","name":"kotlin.clr.ClrTypeAlias"},"args":[{"value":"System.Object"}]},
+              {"attr":{"t":"fqn","name":"kotlin.clr.ClrValueRepresentation"},"args":[
+                {"value":"Helpers.matches"},{"value":"Helpers.classifier"},
+                {"value":"Helpers.component"},{"value":"Slots.Tag"}]}]},
+              {"name":"Implementation","kind":"class","interfaces":[{"t":"fqn","name":"Tag"}],
+                "fields":[{"name":"value","type":{"t":"fqn","name":"Tag"}}]}]}
+            """);
+        var markers = new ValueRepresentationLowering(new[] { markerRoot }, null, false).InterfaceMarkers;
+        var projectedMarker = BirTypeLowering.Lower(markerRoot, false,
+            new Dictionary<string, string> { ["Tag"] = "System.Object" }, interfaceMarkers: markers);
+        if (TypeJson.OwnerName(projectedMarker["types"][1]["interfaces"][0]) != "Slots.Tag"
+            || TypeJson.OwnerName(projectedMarker["types"][1]["fields"][0]["type"]) != "System.Object"
+            || TypeJson.OwnerName(markerRoot["types"][1]["interfaces"][0]) != "Tag")
+            throw new InvalidOperationException("Interface marker projection changed the value alias or source identity");
         Console.WriteLine("[value representation] self-test OK (source carriers, bounds, exact adapters, nominal slots, array classifiers)");
     }
 }

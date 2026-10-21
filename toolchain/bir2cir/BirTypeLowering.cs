@@ -829,12 +829,14 @@ static class BirTypeLowering
     static IReadOnlyDictionary<string, string> _physicalTypeNames =
         new Dictionary<string, string>(StringComparer.Ordinal);
     static IReadOnlySet<string> _localTypeNames = new HashSet<string>(StringComparer.Ordinal);
+    static IReadOnlyDictionary<string, string> _interfaceMarkers = new Dictionary<string, string>(StringComparer.Ordinal);
 
     public static JsonNode Lower(JsonNode root, bool refBuild, IReadOnlyDictionary<string, string> aliases = null,
         ValueTypeOracle isValueFqn = null, string file = null,
         IReadOnlyDictionary<string, string> physicalTypeNames = null,
         IReadOnlySet<string> localTypeNames = null,
-        IReadOnlyDictionary<string, NullableRepresentationFrame> nullableFrames = null)
+        IReadOnlyDictionary<string, NullableRepresentationFrame> nullableFrames = null,
+        IReadOnlyDictionary<string, string> interfaceMarkers = null)
     {
         _aliases = aliases ?? new Dictionary<string, string>(StringComparer.Ordinal);
         _isValueFqn = isValueFqn ?? (_ => false);
@@ -842,6 +844,7 @@ static class BirTypeLowering
         _physicalTypeNames = physicalTypeNames ?? new Dictionary<string, string>(StringComparer.Ordinal);
         _localTypeNames = localTypeNames ?? new HashSet<string>(StringComparer.Ordinal);
         _nullableFrames = nullableFrames;
+        _interfaceMarkers = interfaceMarkers ?? new Dictionary<string, string>(StringComparer.Ordinal);
         return LowerNode(root, refBuild, force: false);
     }
 
@@ -920,6 +923,10 @@ static class BirTypeLowering
                         _ => throw new InvalidDataException(
                             $"{_file}: malformed current node: field `to` is not defined for k={nodeK ?? "<missing>"}"),
                     };
+                else if (kv.Key == "interfaces" && kv.Value is JsonArray interfaces && (!refBuild || here))
+                    copy[kv.Key] = new JsonArray(interfaces.Select(type =>
+                        TypeJson.OwnerName(type) is string source && _interfaceMarkers.TryGetValue(source, out var marker)
+                            ? (JsonNode)TypeJson.Fqn(marker) : LowerTypeValued(type, refBuild, here)).ToArray());
                 else if (TypeKeys.Contains(kv.Key))
                     copy[kv.Key] = LowerTypeValued(kv.Value, refBuild, here);
                 else

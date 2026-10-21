@@ -634,6 +634,16 @@ encoding, which the JIT honors and which a single-threaded run cannot itself obs
   (`[Box]` / `[Box]`), where JVM's default form would visibly differ by hash. Same class of
   unspecified-behavior host-convention divergence as the rest of this section — accepted, document only.
 
+## 5-annotation. `Annotation` admits Kotlin implementations and native CLR attributes
+
+Kotlin annotation instances, ordinary classes implementing `Annotation`, and native CLR attributes satisfy the
+same Kotlin classifier, including casts and reified checks. Ordinary `Annotation` value slots use `System.Object`
+so all these objects retain their identity without wrappers. Kotlin interface implementations use an explicit
+compiler-owned marker; authored annotation classes also remain real `System.Attribute` subclasses.
+Kotlin-generated APIs can therefore expose `object` to C# where their source declares `Annotation`; native CLR
+`System.Attribute` signatures remain exact. Like the other declaration-owned union classifiers below, this does
+not implement full Kotlin reflection: `Annotation::class` names its physical alias, `System.Object`.
+
 ## 5-number. `Number` values keep native CLR boxing; authored subclasses use nominal slots
 
 Kotlin `Byte`, `Short`, `Int`, `Long`, `Float`, and `Double` are Number subtypes, but their native CLR value types

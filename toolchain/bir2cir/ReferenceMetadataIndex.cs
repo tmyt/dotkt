@@ -5120,7 +5120,8 @@ sealed partial class ReferenceMetadataIndex
                         metadata.ValueRepresentations.Add(ownerFqn, new ValueRepresentationBinding(
                             (string)valueRepresentation.ConstructorArguments[0].Value,
                             (string)valueRepresentation.ConstructorArguments[1].Value,
-                            (string)valueRepresentation.ConstructorArguments[2].Value));
+                            (string)valueRepresentation.ConstructorArguments[2].Value,
+                            (string)valueRepresentation.ConstructorArguments[3].Value));
                     var exactPhysicalOwner = ExactPhysicalMetadataName(type);
                     // A dedicated carrier describes operational dispatch, not a Kotlin supertype or value view.
                     // Its slot vector explicitly maps the interface's physical frame into the source owner frame.
