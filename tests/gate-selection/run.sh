@@ -52,6 +52,15 @@ assert_suites dll2klib-test tests/special/dll2klib-e2e/run.sh "$FULL_SUITES"
 assert_suites schema-consumers scripts/verify-schema.py 'schema dll2klib'
 assert_suites schema-contract docs/bir-cir.schema.json 'schema dll2klib'
 
+# MSBuild and target-universe evaluate the in-repo targets; DLL-to-KLIB E2E invokes the tools directly.
+targets_suites='msbuild targetuniverse'
+assert_suites in-repo-targets-consumers eng/KotlinClr.targets "$targets_suites"
+plan="$(bash "$ROOT/scripts/gate.sh" --dry-run eng/KotlinClr.targets)"
+grep -qx 'clean stdlib rebuild: no' <<<"$plan" || die "in-repo targets do not bake the stdlib"
+mixed_suites="$(suite_line eng/KotlinClr.targets tests/msbuild/run.sh tests/target-universe/run.sh \
+	scripts/verify-schema.py)"
+[[ "$mixed_suites" == "schema $targets_suites dll2klib" ]] || die "overlapping in-repo targets consumers were lost or duplicated: '$mixed_suites'"
+
 # Backend edits affect direct lowering, in-repo builds, CLR import and packaged consumers.
 # The C#-only ABI oracle, upstream checksum and policy self-tests do not consume these tools.
 compiler_suites='compiler_tests schema sanity lowering msbuild targetuniverse pinvoke dll2klib packagedsdk'
