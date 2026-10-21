@@ -20,6 +20,7 @@ package kotlin
     "DotKt.Runtime.CompilerServices.EnumRuntimeKt.enumMatches",
     "DotKt.Runtime.CompilerServices.EnumRuntimeKt.enumClassifier",
     "DotKt.Runtime.CompilerServices.EnumRuntimeKt.enumComponentMatches",
+    "",
 )
 public actual abstract class Enum<E : Enum<E>> actual constructor(name: String, ordinal: Int) : Comparable<E> {
     public actual companion object {}

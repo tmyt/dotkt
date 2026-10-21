@@ -5,6 +5,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Preserve Kotlin `Annotation` membership for authored annotations, ordinary implementations and native CLR
+  attributes, including casts, generic calls and DLL boundaries (#1116).
+
 - Require exact entry names for ordinary and native enum Kotlin `valueOf` calls, rejecting numeric strings
   without changing explicit CLR `System.Enum.Parse` calls (#1113).
 

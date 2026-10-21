@@ -15,4 +15,11 @@ package kotlin
  * See [Kotlin language documentation](https://kotlinlang.org/docs/reference/annotations.html) for more information
  * on annotations.
  */
+@kotlin.clr.ClrTypeAlias("System.Object")
+@kotlin.clr.ClrValueRepresentation(
+    "DotKt.Runtime.CompilerServices.AnnotationRuntimeKt.annotationMatches",
+    "DotKt.Runtime.CompilerServices.AnnotationRuntimeKt.annotationClassifier",
+    "DotKt.Runtime.CompilerServices.AnnotationRuntimeKt.annotationComponentMatches",
+    "DotKt.Runtime.CompilerServices.KotlinAnnotationMarker",
+)
 public actual interface Annotation

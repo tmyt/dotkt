@@ -5,11 +5,13 @@ package kotlin.clr
 // stdlib bindings, never facts inferred by the frontend or CIL emitter.
 // Classifier helpers receive a String with one character per outer-to-inner vector:
 // 'o' for existing open System.Array storage, 'a' for exact array storage, empty for a scalar.
+// An interface marker preserves implemented-interface membership independently of the value-slot alias.
 @Target(AnnotationTarget.CLASS)
 internal annotation class ClrValueRepresentation(
     val classifier: String,
     val classifierFactory: String,
     val componentClassifier: String,
+    val interfaceMarker: String,
 )
 
 @Target(AnnotationTarget.FUNCTION)

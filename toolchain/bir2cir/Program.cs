@@ -1348,11 +1348,11 @@ sealed class Pipeline
             var collisionProjection = substituted.DeepClone();
             var physicalProjection = BirTypeLowering.Lower(
                 collisionProjection, refBuild: false, declarationCollisionAliases, isValueFqn, outputName,
-                refs.PhysicalTypeNames, emittedLocalTypes, refs.NullableTypeFrames);
+                refs.PhysicalTypeNames, emittedLocalTypes, refs.NullableTypeFrames, valueRepresentations.InterfaceMarkers);
             FunctionSignatureIdentity.Complete(physicalProjection);
             declarationCollisionProjection.Add(physicalProjection);
             var lowered = BirTypeLowering.Lower(substituted, _options.RefBuild, refs.Aliases, isValueFqn, outputName,
-                refs.PhysicalTypeNames, emittedLocalTypes, refs.NullableTypeFrames);
+                refs.PhysicalTypeNames, emittedLocalTypes, refs.NullableTypeFrames, valueRepresentations.InterfaceMarkers);
             // The erasure can collapse two Kotlin declarations onto ONE CLR signature, where only one of them can
             // ever be called and the other is unreachable. Checked HERE, on the lowered tree, because that is where
             // the physical signature is final: `T?` reaches `object` through this pass and `Any?` reaches it through
