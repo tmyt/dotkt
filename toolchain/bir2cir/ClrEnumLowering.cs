@@ -26,7 +26,7 @@ static class ClrEnumLowering
 
     public static Dictionary<string, BasicEnumMetadata> Apply(IEnumerable<JsonNode> roots)
     {
-        // Only explicitly-valued enums need a non-contiguous local use-site map.
+        // Every basic enum's declaration map owns its entry names, even when values equal ordinals.
         var result = new Dictionary<string, BasicEnumMetadata>(StringComparer.Ordinal);
         foreach (var root in roots)
         {
@@ -49,6 +49,7 @@ static class ClrEnumLowering
                         ordinaryEntries.Add(new BasicEnumEntry(entry["name"].GetValue<string>(), ordinal, value));
                     }
                     StampMetadata(type, "System.Int32", ordinaryEntries);
+                    result.Add(type["name"].GetValue<string>(), new BasicEnumMetadata("System.Int32", ordinaryEntries));
                     continue;
                 }
                 var owner = Str(type["name"]);

@@ -65,7 +65,8 @@ static class EnumValueLowering
                 && obj["arg"] is JsonNode parseArg
                 && TypeJson.OwnerName(parseType) is string parseOwner
                 && (localExplicitEnums.TryGetValue(parseOwner, out var localParse)
-                    || refs.TryKotlinBasicEnum(parseOwner, out localParse)))
+                    || refs.TryKotlinBasicEnum(parseOwner, out localParse)
+                    || refs.TryNativeEnumEntries(parseOwner, out localParse)))
             {
                 RewriteExplicitParse(obj, parseType, parseArg, parseOwner, localParse);
             }
