@@ -3251,6 +3251,7 @@ static partial class FBoundStarProjectionErasure
                 // A star-projected inner construction is replaced while visiting the receiver below this call.  Its
                 // result is the inner existential carrier, so bind the immediately-following member only after that
                 // receiver seam is visible.  The initial pass above is still required for ordinary star receivers.
+                BindProjectedFieldStorage(obj, owners, defs, refs);
                 BindInheritedStarMember(obj, owners, defs, refs);
                 if (Str(obj["k"]) == "callInstance"
                     && TypeJson.Read(obj["ownerType"]) is TypeNode.Fqn erasedOwner
@@ -4228,6 +4229,7 @@ static partial class FBoundStarProjectionErasure
                     }
                     BindProjectedArrayRead(obj, owners, refs);
                     BindProjectedArrayGenericCall(obj, owners, refs);
+                    BindProjectedFieldStorage(obj, owners, defs, refs);
                     BindInheritedStarMember(obj, owners, defs, refs);
                     break;
                 case JsonArray array:
