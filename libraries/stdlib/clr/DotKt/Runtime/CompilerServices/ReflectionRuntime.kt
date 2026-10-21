@@ -16,7 +16,7 @@ internal interface KDeclarationContainerSlots {
 }
 
 @PublishedApi
-internal interface KClassSlots : KotlinClassifierMarker, KAnnotatedElementSlots, KDeclarationContainerSlots {
+internal interface KClassSlots {
     fun dotktSimpleName(): String?
     fun dotktQualifiedName(): String?
     fun dotktIsInstance(value: Any?): Boolean
