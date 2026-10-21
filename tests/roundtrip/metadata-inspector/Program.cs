@@ -1680,11 +1680,22 @@ static void VerifyUnsafeAccessorDll(string path, string producerPath)
     Require(lateinitWrappers.Length == 1 &&
             md.GetTypeDefinition(lateinitWrappers[0].GetDeclaringType()).GetGenericParameters().Count == 2,
         "generic lateinit default query must retain one correctly framed private-target accessor holder");
-    Require(wrappers.Length == 17 && wrappers.All(method =>
+    foreach (var name in new[] {
+        "roundtrip.innermemberdefaults.GenericMemberDefaultOuter+Middle",
+        "roundtrip.innermemberdefaults.GenericMemberDefaultOuter+Middle+Leaf",
+    })
+    {
+        var owner = producerMd.TypeDefinitions.Single(handle => StripArities(DefinitionName(producerMd, handle)) == name);
+        var capture = producerMd.GetTypeDefinition(owner).GetFields().Select(producerMd.GetFieldDefinition)
+            .Single(field => producerMd.GetString(field.Name) == "__outer");
+        Require((capture.Attributes & FieldAttributes.FieldAccessMask) == FieldAttributes.Private,
+            $"inner member-default fixture widened its lexical capture on {name}");
+    }
+    Require(wrappers.Length == 19 && wrappers.All(method =>
             (method.Attributes & MethodAttributes.MemberAccessMask) == MethodAttributes.Assembly &&
             (method.Attributes & MethodAttributes.Static) != 0 && method.RelativeVirtualAddress != 0),
         $"generic UnsafeAccessor holders do not expose only compiler-generated internal wrappers " +
-        $"(found {wrappers.Length}, expected 17)");
+        $"(found {wrappers.Length}, expected 19)");
 }
 
 static void VerifyLayerBoundary(string birPath, string cirPath)
