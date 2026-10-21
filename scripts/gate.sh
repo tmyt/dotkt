@@ -23,6 +23,7 @@
 #   other *.md / docs/** / CHANGELOG*  -> nothing
 #   tests/<suite>/**                   -> that suite
 #   scripts/gate.sh                    -> verify-gate-selection
+#   eng/KotlinClr.targets              -> MSBuild + target-universe + DLL-to-KLIB E2E
 #   scripts/{lib,build-stdlib*,dotkt,  -> FULL   (shared build machinery — affects every stage)
 #     gen-*}.sh
 #   scripts/pack-nuget.sh              -> FULL + verify-packaged-sdk
@@ -145,7 +146,8 @@ classify() { # <path>
 		tests/target-universe/*)
 			want targetuniverse; reason "$p -> host/target metadata-universe calibration" ;;
 		eng/KotlinClr.targets)
-			want msbuild; reason "$p -> in-repo MSBuild integration" ;;
+			want msbuild; want targetuniverse; want dll2klib
+			reason "$p -> in-repo MSBuild + target-universe + DLL-to-KLIB E2E consumers" ;;
 		# ---- anything else ----------------------------------------------------------------------
 		*)
 			NEED_FULL=1; reason "$p -> FULL (unrecognized path: conservative fallback)" ;;
