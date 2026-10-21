@@ -13,7 +13,9 @@ static partial class FBoundStarProjectionErasure
             || method[DeclarationIdentityBinding.Key] == null
             || method.Parent is not JsonArray entries || entries.Parent is not JsonObject owner
             || !ReferenceEquals(owner["methods"], entries)
-            || Bool(method["generated"]) || Bool(owner["generated"])) return false;
+            || Bool(method["generated"]) || Bool(owner["generated"]) || HasClrTypeAlias(owner)
+            || (method["attrs"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()
+                .Any(attribute => TypeJson.OwnerName(attribute["attr"]) == "kotlin.clr.ClrIntrinsic")) return false;
         foreach (var edge in (method["overrides"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
         {
             var name = TypeJson.OwnerName(edge["owner"]);
