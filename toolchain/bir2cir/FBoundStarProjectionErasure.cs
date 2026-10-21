@@ -2065,7 +2065,8 @@ static partial class FBoundStarProjectionErasure
                     out var property, out var role) && property == name && role == "get")) continue;
             foreach (var kind in new[] { "get", "set" })
             {
-                if (kind == "set" && Bool(field["readOnly"])) continue;
+                // readOnly restricts the projected Kotlin surface, not storage (a var may have an internal setter).
+                if (kind == "set" && Bool(field["initOnly"])) continue;
                 // An authored getter/setter already owns this property role; do not add a competing declaration.
                 if (methods.OfType<JsonObject>().Any(method => KotlinPropertyAccessors.TryIdentity(method,
                         out var property, out var role) && property == name && role == kind)) continue;

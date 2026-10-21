@@ -1,8 +1,14 @@
 import NUnit.Framework.TestAttribute
 import kotlin.clr.ClrField
 
-class ProjectedFieldBox<T>(seed: T) { @ClrField var value: T = seed }
+open class ProjectedFieldBox<T>(seed: T) { @ClrField var value: T = seed }
+class ProjectedFieldMiddle<A, B>(seed: B) : ProjectedFieldBox<B>(seed)
 class ProjectedReadonlyFieldBox<T>(seed: T) { @ClrField val value: T = seed }
+class ProjectedCovariantFieldBox<out T>(seed: T) { @ClrField val value: T = seed }
+class ProjectedRestrictedFieldBox<T>(seed: T) {
+    @ClrField var value: T = seed
+        internal set
+}
 private class ProjectedMixedFieldBox<T>(seed: T) {
     @ClrField var raw: T = seed
     var reads: Int = 0
@@ -41,6 +47,8 @@ class ProjectedClrFieldTests {
         check(nullableView.value == 43)
         val readonly: ProjectedReadonlyFieldBox<*> = ProjectedReadonlyFieldBox(44)
         check(readonly.value == 44)
+        val inherited: ProjectedFieldMiddle<*, *> = ProjectedFieldMiddle<Int, String>("inherited")
+        check(inherited.value == "inherited")
     }
 
     @TestAttribute fun legalOutReadsAndInWritesUseTheSameStorage() {
@@ -56,6 +64,27 @@ class ProjectedClrFieldTests {
         check(nullableReader.value == 42)
         nullableWriter.value = null
         check(nullableReader.value == null)
+        val inherited = ProjectedFieldMiddle<Int, Any?>("before")
+        val inheritedWriter: ProjectedFieldMiddle<*, in String> = inherited
+        inheritedWriter.value = "after"
+        check(inherited.value == "after")
+    }
+
+    @TestAttribute fun restrictedSetterStillWritesStorageInsideItsModule() {
+        val concrete = ProjectedRestrictedFieldBox<Any?>("before")
+        val writer: ProjectedRestrictedFieldBox<in String> = concrete
+        writer.value = "after"
+        val reader: ProjectedRestrictedFieldBox<*> = concrete
+        check(reader.value == "after" && concrete.value == "after")
+    }
+
+    @TestAttribute fun declarationSiteVarianceUsesTheSameNativeField() {
+        val exact = ProjectedCovariantFieldBox("covariant")
+        val wide: ProjectedCovariantFieldBox<Any?> = exact
+        val projected: ProjectedCovariantFieldBox<*> = exact
+        check(exact.value == "covariant" && wide.value == "covariant" && projected.value == "covariant")
+        val number: ProjectedCovariantFieldBox<Any?> = ProjectedCovariantFieldBox(42)
+        check(number.value == 42)
     }
 
     @TestAttribute fun projectedFieldEvaluationIsOnceAndInSourceOrder() {

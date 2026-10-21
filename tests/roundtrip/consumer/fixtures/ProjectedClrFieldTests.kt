@@ -1,8 +1,11 @@
 import NUnit.Framework.TestAttribute
 import fieldprojection.FieldBox
 import fieldprojection.FieldMiddle
+import fieldprojection.CovariantFieldBox
 import fieldprojection.ReadonlyFieldBox
+import fieldprojection.RestrictedFieldBox
 import fieldprojection.readField
+import fieldprojection.writeRestrictedField
 
 class ReferencedProjectedClrFieldTests {
     @TestAttribute fun referencedStarFieldReadsPreserveNativeInstantiations() {
@@ -13,6 +16,7 @@ class ReferencedProjectedClrFieldTests {
         val numberView: FieldBox<*> = number
         val nullableView: FieldBox<*> = nullable
         check(textView.value === text.value && readField(text) == "reference")
+        check(textView === text && textView.value === text.value)
         check(numberView.value == 42 && readField(number) == 42)
         check(nullableView.value == null && readField(nullable) == null)
         val readonly: ReadonlyFieldBox<*> = ReadonlyFieldBox(43)
@@ -31,6 +35,19 @@ class ReferencedProjectedClrFieldTests {
         check(readField(nullable) == 44)
         nullableWriter.value = null
         check(readField(nullable) == null)
+        val restricted = RestrictedFieldBox<Any?>("before")
+        writeRestrictedField(restricted, "after")
+        val restrictedView: RestrictedFieldBox<*> = restricted
+        check(restrictedView.value == "after")
+    }
+
+    @TestAttribute fun referencedDeclarationSiteVarianceReadsTheNativeField() {
+        val exact = CovariantFieldBox("covariant")
+        val wide: CovariantFieldBox<Any?> = exact
+        val projected: CovariantFieldBox<*> = exact
+        check(exact.value == "covariant" && wide.value == "covariant" && projected.value == "covariant")
+        val number: CovariantFieldBox<Any?> = CovariantFieldBox(42)
+        check(number.value == 42)
     }
 
     @TestAttribute fun inheritedFieldsKeepTheirActualDeclaringConstruction() {
