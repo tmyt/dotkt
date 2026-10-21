@@ -659,7 +659,7 @@ static class DeclarationIdentityBinding
                         && selectedParameters.OfType<JsonObject>().Any(p => p[FunctionSignatureIdentity.Key] != null
                             || TypeJson.Read(p["type"]) is TypeNode.Mod))
                         obj["calleeParams"] = FunctionSignatureIdentity.Signature(selectedParameters);
-                    // A trusted overlay can deliberately change selected declaration slots while retaining their
+                    // A representation pass can deliberately change selected declaration slots while retaining their
                     // Kotlin surface in metadata. Rewrite only those physical slots: an ordinary call's remaining
                     // descriptor is already substituted into the caller's owner/method frame and must stay there.
                     if (physicalParameterIndices.TryGetValue(id, out var rewrittenIndices))

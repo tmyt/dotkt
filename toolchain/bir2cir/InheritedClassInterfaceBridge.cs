@@ -190,7 +190,8 @@ static class InheritedClassInterfaceBridge
 
                 if (Bool(cls.Node["abstract"])) continue;
 
-                var inherited = FindSelectedBaseMethod(cls, defs, iface.Name, name, methodArity, slotParams, slotRet);
+                var inherited = FindSelectedBaseMethod(cls, defs, iface.Name, name, methodArity, slotParams, slotRet,
+                    Str(im[DeclarationIdentityBinding.Key]));
                 if (inherited == null) continue;
                 classMethods.Add(BuildBridge(iface, ifaceSpec, ifaceArgs, im, slotParams, slotRet, inherited.Value));
             }
@@ -251,13 +252,16 @@ static class InheritedClassInterfaceBridge
     }
 
     static MethodMatch? FindSelectedBaseMethod(Def cls, Dictionary<string, Def> defs, string ifaceName, string name, int methodArity,
-        TypeNode[] slotParams, TypeNode slotRet)
+        TypeNode[] slotParams, TypeNode slotRet, string slotDeclarationId)
     {
         if (cls.Node["inheritedClassMethods"] is not JsonArray facts) return null;
         var selected = facts.OfType<JsonObject>().Where(fact =>
             Str(fact["member"]) == name
             && fact["params"] is JsonArray ps && ps.Count == slotParams.Length
-            && ps.OfType<JsonObject>().Select(p => TypeJson.Read(p["type"])).SequenceEqual(slotParams)
+            && (slotDeclarationId != null
+                ? (fact["overrides"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()
+                    .Any(edge => Str(edge[DeclarationIdentityBinding.Key]) == slotDeclarationId)
+                : ps.OfType<JsonObject>().Select(p => TypeJson.Read(p["type"])).SequenceEqual(slotParams))
             && TypeJson.Read(fact["ret"]) == slotRet
             && fact["inheritedImplementation"] is JsonObject implementation
             && ((implementation["typeParams"] as JsonArray)?.Count ?? 0) == methodArity

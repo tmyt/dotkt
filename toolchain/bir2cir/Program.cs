@@ -194,7 +194,8 @@ sealed class Pipeline
         // CLR-only facts for the compiler-provided stdlib are authored in a checked sidecar so the common Kotlin
         // sources remain upstream-identical. Apply those exact declaration-identity bindings before any pass snapshots
         // source names or annotations. Ordinary app/library builds cannot opt into this trusted-stdlib input.
-        var stdlibPhysicalParameterIndices = StdlibBindingOverlay.Apply(birRoots, _options.StdlibBindings);
+        var physicalParameterIndices = StdlibBindingOverlay.Apply(birRoots, _options.StdlibBindings)
+            .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
         DeclarationSignatureIdentity.Capture(birRoots);
         ComparableRepresentationLowering.Apply(birRoots, _options.RefBuild);
         // #395: snapshot frontend declaration identity before ANY Kotlin-to-CLR representation pass can rename,
@@ -908,17 +909,17 @@ sealed class Pipeline
         // F-BOUND STAR PROJECTION: CLR has no legal/reified `Node<*>` TypeSpec for `Node<N : Node<N>>`.
         // Materialize a deterministic non-generic existential view in bir2cir and make every closed Node<N> implement
         // it. Runs before interface-slot normalization and suspend lowering, in ref and runtime builds alike.
+        CapturedGenericInvocation.CaptureParameterWitnesses(staged.Select(s => s.Root));
+        var physicalDeclarationSources = new Dictionary<string, string>(StringComparer.Ordinal);
         var localExistentialOwners =
-            FBoundStarProjectionErasure.ApplyAll(staged.Select(s => s.Root).ToList(), refs, sharedCells);
+            FBoundStarProjectionErasure.ApplyAll(staged.Select(s => s.Root).ToList(), refs, sharedCells,
+                physicalParameterIndices, physicalDeclarationSources);
         // Closure/SAM synthesis ran while captures still carried their Kotlin constructed types, and suspend-lambda
         // state machines will copy those same declarations later. An erased smart cast can now deliver an existential
         // carrier to generated storage; make each capture declaration/construction/field agree on that exact physical
         // representation before state-machine materialization and final member binding.
         ExistentialCaptureAlignment.ApplyAll(
             staged.Select(s => s.Root).ToList(), localExistentialOwners, refs);
-        var existentialReceiverMembers =
-            ExistentialReceiverBinding.Collect(staged.Select(s => s.Root));
-
         // KOTLIN FAKE-OVERRIDE -> CLR INTERFACE SLOT: if a concrete class implements an interface using a public
         // NON-VIRTUAL method inherited from its base class, Kotlin considers the member implemented but CLR implicit
         // interface binding does not. Materialize the exact forwarding member in CIR/BIR-space before suspend lowering
@@ -980,7 +981,8 @@ sealed class Pipeline
         // cold lowering, then has no authoritative physical binding and falls back to the erased overload set. The
         // runtime and reference builds therefore execute the same declaration transform and physical allocation.
         var suspendCalleeRet = SuspendColdLowering.ApplyAll(staged.Select(s => s.Root).ToList(), refs,
-            localTypeFqns, attributeTopLevelOwner, localExistentialOwners, isValueFqn, declarationSemanticSignatures);
+            localTypeFqns, attributeTopLevelOwner, localExistentialOwners, isValueFqn, declarationSemanticSignatures,
+            physicalParameterIndices, physicalDeclarationSources);
 
         // PHASE 1.6 — SUSPEND LAMBDA LOWERING (bundle-6 P3 wave-2b, LIVE): replace each `newSuspendLambda`
         // node with `new <mangled>_lambdaN$sm(captures..., null)` + synthesize its SuspendLambda state machine
@@ -1025,7 +1027,7 @@ sealed class Pipeline
         // the final Task/cold shapes. Star views already exist, and all types are still in the Kotlin vocabulary.
         KotlinOverrideSlotBridge.ApplyAll(
             staged.Select(s => s.Root).ToList(), isValueFqn, refs, localTypeFqns, _options.RefBuild, genericRepresentations,
-            covariantBridgedSlots);
+            covariantBridgedSlots, localExistentialOwners);
 
         // The final override bridge deliberately runs after the main F-bound/star rewrite because suspend lowering
         // can create additional physical slots. Project any Kotlin star types copied into those late declarations
@@ -1238,6 +1240,10 @@ sealed class Pipeline
         var finalLocalDeclarationIds = DeclarationIdentityBinding.CollectDeclarationIds(staged.Select(s => s.Root));
         var declarationCollisionAliases = DeclarationIdentityBinding.CollisionAliases(
             staged.Select(s => s.Root), refs.Aliases);
+        // Cold entries, state machines and their capture fields are now materialized. Index those actual
+        // declarations together with the source-to-slot relation carried by their allocating passes.
+        var existentialReceiverMembers = ExistentialReceiverBinding.Collect(
+            staged.Select(s => s.Root), physicalDeclarationSources);
         foreach (var (substituted, outputName) in staged)
         {
             // §11 CONTINUATION-ERASURE (bundle-6 bug #5 ROOT): make the coroutine ABI monomorphic on
@@ -1369,7 +1375,7 @@ sealed class Pipeline
         DeclarationIdentityBinding.ApplyLocal(
             loweredRoots.Select(s => s.Root), declarationPhysicalNames,
             declarationSemanticCarrierIds, declarationSemanticSignatures,
-            stdlibPhysicalParameterIndices, refs);
+            physicalParameterIndices, refs);
         KotlinPropertyAccessors.FinalizePhysicalProperties(loweredRoots.Select(s => s.Root));
 
         // SAME-UNIT CONSTRUCTOR BINDING: resolve `new`, `this(...)`, and local `super(...)` to declaration indices
