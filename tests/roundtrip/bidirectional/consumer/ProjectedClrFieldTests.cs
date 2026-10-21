@@ -11,7 +11,7 @@ public class ProjectedClrFieldAbiTests
         foreach (var (instance, expectedType, replacement) in new[] {
             (ProjectedClrFieldSurfaceKt.stringFieldBox(), typeof(string), (object)"changed"),
             (ProjectedClrFieldSurfaceKt.intFieldBox(), typeof(int), (object)43),
-            (ProjectedClrFieldSurfaceKt.nullableFieldBox(), typeof(int?), (object)44),
+            (ProjectedClrFieldSurfaceKt.nullableFieldBox(), typeof(object), (object)44),
         }) {
             var field = instance.GetType().GetField("value", BindingFlags.Instance | BindingFlags.Public)!;
             Assert.That(field, Is.Not.Null);
