@@ -198,13 +198,8 @@ static class RoundtripMetadata
                 throw new InvalidOperationException("semantic companion reached metadata emission without representation lowering");
     }
 
-    static void StampType(JsonObject to)
+    static void StampBasicEnum(JsonObject to)
     {
-        if (to["managedReferenceContract"] is JsonObject referenceContract)
-        {
-            Append(to, JsonCarrierAttr(AKManagedReferenceContract, referenceContract));
-            to.Remove("managedReferenceContract");
-        }
         // [KotlinBasicEnum(codec, content)] carries every basic enum's producer-owned ordinal/value map, including
         // ordinary contiguous enums. Stamp it before the reference-type early return: downstream Kotlin operations
         // must not rediscover declaration order from FieldDef layout or Enum.GetValues.
@@ -225,6 +220,16 @@ static class RoundtripMetadata
             Append(to, JsonCarrierAttr(AKBasicEnum, basicEnum));
             to.Remove("basicEnum");
         }
+    }
+
+    static void StampType(JsonObject to)
+    {
+        if (to["managedReferenceContract"] is JsonObject referenceContract)
+        {
+            Append(to, JsonCarrierAttr(AKManagedReferenceContract, referenceContract));
+            to.Remove("managedReferenceContract");
+        }
+        StampBasicEnum(to);
         // A real CLR enum does not need the nullable/type-class carriers below. A rich enum is a `kind:"class"`
         // singleton and does take the normal reference-type metadata path.
         if ((to["kind"] as JsonValue)?.GetValue<string>() == "enum") return;
@@ -695,7 +700,7 @@ static class RoundtripMetadata
     {
         if (root is not JsonObject o) return;
         // Source projection hand-offs are consumed only by Stamp in metadata-bearing builds.
-        // Runtime linkage IDs below do not carry source-slot facts; rich-enum maps also have a runtime consumer.
+        // Runtime linkage IDs below do not carry source-slot facts; enum maps also have runtime consumers.
         o.Remove("kotlinType");
         o.Remove("retKotlinType");
         o.Remove(KotlinSupertypesRecord.PreKey);
@@ -703,10 +708,10 @@ static class RoundtripMetadata
         var runtimeRichEnum = o["richEnum"]?.DeepClone();
         o.Remove("richEnum");
         o.Remove("enumRich");
-        o.Remove("basicEnum");
         StripAttrs(o, "attrs");
         // Generic enum operations need this exact physical API map at runtime, including for stdlib-owned enums.
         if (runtimeRichEnum != null) Append(o, JsonCarrierAttr(AKRichEnum, runtimeRichEnum));
+        StampBasicEnum(o);
         StripDecls(o["methods"], hasParams: true);
         StripDecls(o["fields"]);
         StripDecls(o["properties"]);
@@ -1057,7 +1062,9 @@ static class RoundtripMetadata
         };
         if (runtimeOnly) types = new JsonArray(TypeAliasAttributeDefinition(),
             AttrClass(AKDeclarationIdentity, Ctor(Param("System.String"), Param(ByteArrayType()))),
-            AttrClass(AKRichEnum, Ctor(Param("System.String"), Param(ByteArrayType()))));
+            AttrClass(AKRichEnum, Ctor(Param("System.String"), Param(ByteArrayType()))),
+            AttrClass(AKBasicEnum, Ctor(Param("System.String"), Param(ByteArrayType()))),
+            AttrClass(AKBasicEnumOrdinal, Ctor(Param("System.Int32"))));
         return new JsonObject
         {
             ["fileClass"] = "",     // no top-level funs/fields -> ilemit defines no file-class type for this file

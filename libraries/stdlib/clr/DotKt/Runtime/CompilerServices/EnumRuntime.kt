@@ -160,6 +160,9 @@ private interface EnumRuntimeArray {
     @property:kotlin.clr.ClrProperty(kotlin.clr.READ, "Length")
     val length: Int
 
+    @kotlin.clr.ClrIntrinsic("GetValue")
+    fun getValue(index: Int): Any?
+
     @kotlin.clr.ClrIntrinsic("SetValue")
     fun setValue(value: Any?, index: Int)
 }
@@ -232,13 +235,52 @@ internal fun kotlinEnumValues(typeToken: Any): Any {
     return values
 }
 
-private fun EnumRuntimeType.enumValuesMethod(api: String): EnumRuntimeMethod {
-    val valuesType = makeArrayType()
+@PublishedApi
+internal fun kotlinEnumValueOf(typeToken: Any, name: String): Any {
+    val type = typeToken as EnumRuntimeType
+    if (type.assembly.isCompilerAssembly()) {
+        val attributes = type.getCustomAttributesData()
+        for (index in 0 until attributes.count) {
+            val attribute = attributes[index]
+            if (attribute.isCompilerCarrier(RICH_ENUM, type.assembly)) {
+                val method = type.enumStaticMethod(richEnumApi(attribute, "valueOf"), true)
+                try { return method.invoke(null, arrayOf<Any?>(name))!! }
+                catch (failure: StarProjectionInvocationException) { throw (failure.innerException ?: failure) }
+            }
+            if (!attribute.isCompilerCarrier(BASIC_ENUM, type.assembly)) continue
+            val document = enumCarrierDocument(attribute)
+            try {
+                val entries = document.root.getProperty("entries")
+                for (entryIndex in 0 until entries.getArrayLength()) {
+                    val entry = entries.getItem(entryIndex)
+                    if (entry.getProperty("name").getString() == name) {
+                        val ordinal = entry.getProperty("ordinal").getInt32()
+                        return (kotlinEnumValues(typeToken) as EnumRuntimeArray).getValue(ordinal)!!
+                    }
+                }
+            } finally { document.dispose() }
+            throw IllegalArgumentException("No enum constant ${type.fullName}.$name")
+        }
+        error("Missing enum declaration metadata")
+    }
+    // A native CLR enum's literal declarations are the facts projected by dll2klib, not Enum.Parse's grammar.
+    for (field in type.getFields(EnumRuntimeBindingFlags.DECLARED_STATIC_PUBLIC_NON_PUBLIC)) {
+        if (field.isProjectedEntry(false) && field.name == name) return field.getValue(null)!!
+    }
+    throw IllegalArgumentException("No enum constant ${type.fullName}.$name")
+}
+
+private fun EnumRuntimeType.enumValuesMethod(api: String): EnumRuntimeMethod = enumStaticMethod(api, false)
+
+private fun EnumRuntimeType.enumStaticMethod(api: String, valueOf: Boolean): EnumRuntimeMethod {
+    val resultType = if (valueOf) this else makeArrayType()
     val markerType = EnumCarrierMarker::class as EnumRuntimeType
     var selected: EnumRuntimeMethod? = null
     for (method in getMethods(EnumRuntimeBindingFlags.DECLARED_STATIC_PUBLIC)) {
-        if (method.name != api || method.returnType != valuesType || method.isGenericMethod ||
-            method.getParameters().size != 0) continue
+        if (method.name != api || method.returnType != resultType || method.isGenericMethod) continue
+        val parameters = method.getParameters()
+        if (parameters.size != (if (valueOf) 1 else 0)) continue
+        if (valueOf && parameters[0].parameterType != (String::class as StarProjectionType)) continue
         val attributes = method.getCustomAttributesData()
         for (index in 0 until attributes.count) {
             if (attributes[index].attributeType != markerType) continue
@@ -277,6 +319,12 @@ private interface EnumCarrierJsonElement {
     fun getProperty(name: String): EnumCarrierJsonElement
     @kotlin.clr.ClrIntrinsic("GetString")
     fun getString(): String?
+    @kotlin.clr.ClrIntrinsic("GetArrayLength")
+    fun getArrayLength(): Int
+    @kotlin.clr.ClrIntrinsic("get_Item")
+    fun getItem(index: Int): EnumCarrierJsonElement
+    @kotlin.clr.ClrIntrinsic("GetInt32")
+    fun getInt32(): Int
 }
 
 @kotlin.clr.ClrIntrinsic("System.Text.Json.JsonDocument.Parse")
@@ -285,16 +333,22 @@ private fun enumCarrierJson(json: String, options: EnumCarrierJsonOptions): Enum
 @kotlin.clr.ClrIntrinsic("System.Activator.CreateInstance")
 private fun <T> enumCarrierDefault(): T = error("CLR binding")
 
+private fun richEnumValuesApi(attribute: EnumRuntimeAttribute): String = richEnumApi(attribute, "values")
+
+private fun richEnumApi(attribute: EnumRuntimeAttribute, api: String): String {
+    val document = enumCarrierDocument(attribute)
+    try { return document.root.getProperty(api).getString()!! }
+    finally { document.dispose() }
+}
+
 @OptIn(ExperimentalUnsignedTypes::class)
-private fun richEnumValuesApi(attribute: EnumRuntimeAttribute): String {
+private fun enumCarrierDocument(attribute: EnumRuntimeAttribute): EnumCarrierJsonDocument {
     val arguments = attribute.constructorArguments
     check(arguments[0].value == "bir-json/1")
     @Suppress("UNCHECKED_CAST")
     val content = arguments[1].value as EnumRuntimeList<EnumRuntimeAttributeArgument>
     val bytes = UByteArray(content.count) { content[it].value as UByte }
-    val document = enumCarrierJson(enumCarrierEncoding().getString(bytes), enumCarrierDefault<EnumCarrierJsonOptions>())
-    try { return document.root.getProperty("values").getString()!! }
-    finally { document.dispose() }
+    return enumCarrierJson(enumCarrierEncoding().getString(bytes), enumCarrierDefault<EnumCarrierJsonOptions>())
 }
 
 private fun EnumRuntimeField.isProjectedEntry(explicit: Boolean): Boolean =

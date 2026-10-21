@@ -5,6 +5,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Require exact entry names for ordinary and native enum Kotlin `valueOf` calls, rejecting numeric strings
+  without changing explicit CLR `System.Enum.Parse` calls (#1113).
+
 - Include the target-universe consumer when selecting change-aware gates for in-repo MSBuild
   target edits (#1085).
 
