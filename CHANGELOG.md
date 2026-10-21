@@ -5,6 +5,24 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+## 0.9.16 (2026-10-21)
+
+### Release highlights
+
+- All five packages and SDK defaults use `0.9.16`; the embedded Kotlin compiler and
+  upstream common standard-library baseline remain **2.4.21**.
+- Strengthen DLL-boundary generic contracts, including ordinary unchecked parameter views,
+  inner accessor/default frames, generic indexing, inherited slots and managed-reference aliasing.
+- Preserve collection equality/comparers and live projected views, native generic-only dictionary
+  and comparable operations, and enum entries, comparisons and cross-DLL ordinal maps.
+- Ordinary Kotlin generic reference parameters can now use non-generic CLR carrier signatures.
+  C# consumers of Kotlin-authored APIs may need source changes; native CLR declarations and
+  managed-reference location contracts remain exact.
+- Rebuild dependent Kotlin-produced DLLs with this toolchain; older compiler-generated artifacts
+  remain unsupported. Atomicfu, kotlinx.coroutines and UI integration libraries are not bundled.
+
+### Toolchain and SDK
+
 - Preserve unchecked generic views through ordinary Kotlin method parameters without narrowing their raw classifier; retain native CLR and managed-reference contracts (#1026).
 
 - Preserve resolved method type arguments on imported generic indexing operators, including get/set and inherited dispatch (#993).
