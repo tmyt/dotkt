@@ -1342,6 +1342,9 @@ sealed partial class ReferenceMetadataIndex
 
     internal IEnumerable<MemberBinding> ValueMembers => _declarationById.Values.Where(member => member.ValueAdapter != null);
 
+    internal bool UsesObjectValueSlots(string owner) => _ownerAlias.GetValueOrDefault(owner) == "System.Object"
+        && _assemblies.Any(assembly => assembly.DotKt.ValueRepresentations.ContainsKey(owner));
+
     // A compiler-authored nominal bridge is identified by its exact MethodImpl declaration,
     // not its spelling or body. Protected bridges remain callable nonvirtually by descendants.
     internal MemberBinding ValueSlotBridge(string owner, string slotOwner, string slotMember)
