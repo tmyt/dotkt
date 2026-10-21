@@ -1484,14 +1484,11 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 	// EACH, in that (Kotlin) order, so the short circuit neither skips a bound nor reads the subject early.
 	// The Kotlin<->CLR range relation lives in bir2cir.
 
-	// Preserve the enum API's Kotlin identity. In particular, entries is a list-valued property, not values().
+	// Enum entries already uses the selected static-property accessor path above. Ordinary same-named
+	// functions and properties must retain their declarations, regardless of their result's type arguments.
 	val enumDeclarationOwner = (callee.parent as? IrClass)
 		?: (callee.correspondingPropertySymbol?.owner?.parent as? IrClass)
-	val enumResultOwner = if (name == "entries" || name == "<get-entries>")
-		((call.type as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)
-			?.type?.classifierOrNull?.owner as? IrClass
-	else null
-	val enumApiOwner = (enumDeclarationOwner ?: enumResultOwner)?.let { owner ->
+	val enumApiOwner = enumDeclarationOwner?.let { owner ->
 		when {
 			owner.kind == ClassKind.ENUM_CLASS -> owner
 			owner.isCompanion -> (owner.parent as? IrClass)?.takeIf { it.kind == ClassKind.ENUM_CLASS }
@@ -1500,14 +1497,6 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 	}
 	enumApiOwner?.let { ec ->
 		val enumType = birType(ec.defaultType).toJson()
-		// K2 may expose the synthesized entries getter without a corresponding
-		// property symbol after KLIB dependencies are present. Its special IR
-		// name still carries the same Kotlin declaration identity.
-		val isEntriesGetter =
-			callee.correspondingPropertySymbol?.owner?.name?.asString() == "entries" ||
-				name == "entries" || name == "<get-entries>"
-		if (isEntriesGetter)
-			return """{"k":"callStatic","ownerType":$enumType,"method":"entries","prop":"get","sig":[],"args":[],"ret":${birType(call.type).toJson()},"dotktFrontendDeclarationConsumed":true}"""
 		// Rich enum -> the synthesized static values()/valueOf() methods on the class.
 		if (ec.origin.toString() == "DEFINED" && isRichEnum(ec)) {
 			if (name == "values")
