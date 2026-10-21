@@ -20,3 +20,23 @@ open class DeepOuter<X> {
         }
     }
 }
+
+interface Values<A, B> {
+    val own: A
+    val enclosing: B
+}
+
+open class TypedOuter<X>(val seed: X) {
+    val storage = Cell<X?>(null)
+    open inner class Body<T>(val item: T) : Values<T, X> {
+        override val own: T get() = item
+        override val enclosing: X get() = seed
+    }
+}
+
+open class PlainOuter<X>(val seed: X) {
+    open inner class Body<T>(val item: T) : Values<T, X> {
+        override val own: T get() = item
+        override val enclosing: X get() = seed
+    }
+}
