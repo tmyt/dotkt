@@ -11,6 +11,6 @@ package kotlin.reflect
     "",
 )
 public interface KDeclarationContainer {
-    @get:kotlin.clr.ClrValueMember("DotKt.Runtime.CompilerServices.ReflectionRuntimeKt.declarationContainerMembers", "DotKt.Runtime.CompilerServices.KDeclarationContainerSlots.dotktMembers")
+    @kotlin.clr.ClrValueMember("DotKt.Runtime.CompilerServices.ReflectionRuntimeKt.declarationContainerMembers", "DotKt.Runtime.CompilerServices.KDeclarationContainerSlots.dotktMembers")
     public val members: Collection<KCallable<*>>
 }

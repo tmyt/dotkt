@@ -11,6 +11,6 @@ package kotlin.reflect
     "",
 )
 public interface KAnnotatedElement {
-    @get:kotlin.clr.ClrValueMember("DotKt.Runtime.CompilerServices.ReflectionRuntimeKt.annotatedElementAnnotations", "DotKt.Runtime.CompilerServices.KAnnotatedElementSlots.dotktAnnotations")
+    @kotlin.clr.ClrValueMember("DotKt.Runtime.CompilerServices.ReflectionRuntimeKt.annotatedElementAnnotations", "DotKt.Runtime.CompilerServices.KAnnotatedElementSlots.dotktAnnotations")
     public val annotations: List<Annotation>
 }

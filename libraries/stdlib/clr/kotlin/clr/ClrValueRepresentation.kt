@@ -16,5 +16,5 @@ internal annotation class ClrValueRepresentation(
     val sourceClassifier: String,
 )
 
-@Target(AnnotationTarget.FUNCTION, AnnotationTarget.PROPERTY_GETTER)
+@Target(AnnotationTarget.FUNCTION, AnnotationTarget.PROPERTY)
 internal annotation class ClrValueMember(val adapter: String, val slot: String)

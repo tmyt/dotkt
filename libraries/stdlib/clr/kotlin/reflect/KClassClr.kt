@@ -11,10 +11,10 @@ package kotlin.reflect
     "",
 )
 public actual interface KClass<T : Any> : KDeclarationContainer, KAnnotatedElement, KClassifier {
-    @get:kotlin.clr.ClrValueMember("DotKt.Runtime.CompilerServices.ReflectionRuntimeKt.kClassSimpleName", "DotKt.Runtime.CompilerServices.KClassSlots.dotktSimpleName")
+    @kotlin.clr.ClrValueMember("DotKt.Runtime.CompilerServices.ReflectionRuntimeKt.kClassSimpleName", "DotKt.Runtime.CompilerServices.KClassSlots.dotktSimpleName")
     public actual val simpleName: String?
 
-    @get:kotlin.clr.ClrValueMember("DotKt.Runtime.CompilerServices.ReflectionRuntimeKt.kClassQualifiedName", "DotKt.Runtime.CompilerServices.KClassSlots.dotktQualifiedName")
+    @kotlin.clr.ClrValueMember("DotKt.Runtime.CompilerServices.ReflectionRuntimeKt.kClassQualifiedName", "DotKt.Runtime.CompilerServices.KClassSlots.dotktQualifiedName")
     public actual val qualifiedName: String?
 
     @SinceKotlin("1.1")
