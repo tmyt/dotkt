@@ -5,8 +5,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
-- Include target-universe and DLL-to-KLIB E2E consumers when selecting change-aware gates for
-  in-repo MSBuild target edits (#1085).
+- Include the target-universe consumer when selecting change-aware gates for in-repo MSBuild
+  target edits (#1085).
 
 - Preserve ordinary functions and properties named `entries`, including their side effects and DLL calls,
   without confusing their result types with the enum's synthesized entries property (#1111).
