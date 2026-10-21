@@ -5,6 +5,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Preserve unchecked generic views through ordinary Kotlin method parameters without narrowing their raw classifier; retain native CLR and managed-reference contracts (#1026).
+
 - Preserve resolved method type arguments on imported generic indexing operators, including get/set and inherited dispatch (#993).
 
 - Preserve imported inner accessor override frames, including enclosing nullable companions and constructed generic arguments (#988).

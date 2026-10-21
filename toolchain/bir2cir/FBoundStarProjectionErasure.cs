@@ -47,7 +47,8 @@ static partial class FBoundStarProjectionErasure
     }
 
     public static IReadOnlyDictionary<string, string> ApplyAll(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs,
-        IReadOnlyList<SharedSyntheticSynthesis.CellStorage> sharedCells = null)
+        IReadOnlyList<SharedSyntheticSynthesis.CellStorage> sharedCells = null,
+        IDictionary<string, int[]> physicalParameterIndices = null)
     {
         OwnerConstrainedMethodLowering.Reset(refs);
         var rootList = roots.OfType<JsonObject>().ToList();
@@ -87,7 +88,8 @@ static partial class FBoundStarProjectionErasure
             .ToDictionary(method => method, method => (method["params"] as JsonArray)?.OfType<JsonObject>()
                 .Select(parameter => TypeJson.Read(parameter["type"])).ToArray() ?? Array.Empty<TypeNode>());
         foreach (var root in rootList) AlignCapturedInnerBaseValues(root, BirScope.Empty, null, owners, defs, refs);
-        foreach (var root in rootList) ProjectParameterDeclarations(root, owners, refs, localClrAliases);
+        foreach (var root in rootList)
+            ProjectParameterDeclarations(root, owners, defs, refs, localClrAliases, physicalParameterIndices);
         foreach (var owner in owners.Values.Where(o => o.Needed))
             Synthesize(owner, owners, defs, refs, baseContracts[owner.Name], aliases, sourceSignatures);
         foreach (var root in rootList) RecordDeclarationSurfaces(root, owners, refs);
@@ -1189,6 +1191,10 @@ static partial class FBoundStarProjectionErasure
         switch (node)
         {
             case JsonObject obj:
+                if (IsOrdinaryKotlinParameter(obj, defs, refs)
+                    && StripSourceNullability(TypeJson.Read(obj["type"])) is TypeNode.Fqn { Args: { Length: > 0 } } parameterType
+                    && owners.TryGetValue(parameterType.Name, out var parameterOwner))
+                    parameterOwner.Needed = true;
                 if (TryVarianceProjectedArrayOwner(obj, defs, refs, out var arrayOwner)
                     && owners.TryGetValue(arrayOwner.Name, out var projectedOwner))
                     projectedOwner.Needed = true;
@@ -1807,7 +1813,8 @@ static partial class FBoundStarProjectionErasure
     // Bridge construction must consume the actual parameter ABI, rather than manufacture a narrowing conversion
     // to the earlier source construction. Source metadata and selection signatures remain independent facts.
     static void ProjectParameterDeclarations(JsonNode node, IReadOnlyDictionary<string, Owner> owners,
-        ReferenceMetadataIndex refs, IReadOnlyDictionary<string, string> localClrAliases)
+        IReadOnlyDictionary<string, JsonObject> definitions, ReferenceMetadataIndex refs,
+        IReadOnlyDictionary<string, string> localClrAliases, IDictionary<string, int[]> physicalParameterIndices)
     {
         if (node is JsonObject obj)
         {
@@ -1816,7 +1823,22 @@ static partial class FBoundStarProjectionErasure
                 var bound = IsBoundDeclarationType(obj, "type", refs, localClrAliases);
                 var projected = RewriteType(type, owners, refs, bound, localClrAliases,
                     preserveConstructedHead: IsExactLexicalType(obj, "type"));
-                if ((IsCapturedInner(type, owners, refs) || SignatureValueTypes.Of(type) is TypeNode.ByRef)
+                var ordinary = IsOrdinaryKotlinParameter(obj, definitions, refs);
+                if (ordinary)
+                {
+                    var valueSlot = ProjectOrdinaryParameter(projected, owners, refs);
+                    if (valueSlot != projected && physicalParameterIndices != null)
+                    {
+                        var parameters = (JsonArray)obj.Parent;
+                        var declaration = (JsonObject)parameters.Parent;
+                        var identity = Str(declaration[DeclarationIdentityBinding.Key]);
+                        physicalParameterIndices[identity] =
+                            (physicalParameterIndices.TryGetValue(identity, out var prior) ? prior : Array.Empty<int>())
+                            .Append(parameters.IndexOf(obj)).Distinct().ToArray();
+                    }
+                    projected = valueSlot;
+                }
+                if ((ordinary || IsCapturedInner(type, owners, refs) || SignatureValueTypes.Of(type) is TypeNode.ByRef)
                     && projected != type)
                 {
                     obj["kotlinType"] ??= Str(obj["nullableGeneric"]) ?? TypeNode.ToJson(type);
@@ -1824,11 +1846,11 @@ static partial class FBoundStarProjectionErasure
                 }
             }
             foreach (var child in obj.Select(pair => pair.Value).Where(value => value != null).ToList())
-                ProjectParameterDeclarations(child, owners, refs, localClrAliases);
+                ProjectParameterDeclarations(child, owners, definitions, refs, localClrAliases, physicalParameterIndices);
         }
         else if (node is JsonArray array)
             foreach (var child in array.Where(value => value != null).ToList())
-                ProjectParameterDeclarations(child, owners, refs, localClrAliases);
+                ProjectParameterDeclarations(child, owners, definitions, refs, localClrAliases, physicalParameterIndices);
     }
 
     // Kotlin's Array is mutable and invariant. If its element is a declaration-site variant Kotlin construction,

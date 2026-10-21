@@ -194,7 +194,8 @@ sealed class Pipeline
         // CLR-only facts for the compiler-provided stdlib are authored in a checked sidecar so the common Kotlin
         // sources remain upstream-identical. Apply those exact declaration-identity bindings before any pass snapshots
         // source names or annotations. Ordinary app/library builds cannot opt into this trusted-stdlib input.
-        var stdlibPhysicalParameterIndices = StdlibBindingOverlay.Apply(birRoots, _options.StdlibBindings);
+        var physicalParameterIndices = StdlibBindingOverlay.Apply(birRoots, _options.StdlibBindings)
+            .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
         DeclarationSignatureIdentity.Capture(birRoots);
         ComparableRepresentationLowering.Apply(birRoots, _options.RefBuild);
         // #395: snapshot frontend declaration identity before ANY Kotlin-to-CLR representation pass can rename,
@@ -909,7 +910,8 @@ sealed class Pipeline
         // Materialize a deterministic non-generic existential view in bir2cir and make every closed Node<N> implement
         // it. Runs before interface-slot normalization and suspend lowering, in ref and runtime builds alike.
         var localExistentialOwners =
-            FBoundStarProjectionErasure.ApplyAll(staged.Select(s => s.Root).ToList(), refs, sharedCells);
+            FBoundStarProjectionErasure.ApplyAll(staged.Select(s => s.Root).ToList(), refs, sharedCells,
+                physicalParameterIndices);
         // Closure/SAM synthesis ran while captures still carried their Kotlin constructed types, and suspend-lambda
         // state machines will copy those same declarations later. An erased smart cast can now deliver an existential
         // carrier to generated storage; make each capture declaration/construction/field agree on that exact physical
@@ -1369,7 +1371,7 @@ sealed class Pipeline
         DeclarationIdentityBinding.ApplyLocal(
             loweredRoots.Select(s => s.Root), declarationPhysicalNames,
             declarationSemanticCarrierIds, declarationSemanticSignatures,
-            stdlibPhysicalParameterIndices, refs);
+            physicalParameterIndices, refs);
         KotlinPropertyAccessors.FinalizePhysicalProperties(loweredRoots.Select(s => s.Root));
 
         // SAME-UNIT CONSTRUCTOR BINDING: resolve `new`, `this(...)`, and local `super(...)` to declaration indices
