@@ -79,8 +79,7 @@ static partial class FBoundStarProjectionErasure
                         || OwnerConstrainedMethodLowering.HasMethodDependentBounds(method)
                         || method[OwnerConstrainedMethodLowering.OverrideBoundsKey] != null)
                         OwnerConstrainedMethodLowering.Record(method, definition);
-        foreach (var owner in owners.Values.Where(owner => owner.Needed && IsInner(owner.Def)
-                     && InnerCapturedCount(owner.Def) > 0))
+        foreach (var owner in owners.Values.Where(owner => owner.Needed))
             AddFieldAccessors(owner);
         var sourceSignatures = defs.Values
             .SelectMany(definition => (definition["methods"] as JsonArray)?.OfType<JsonObject>()
@@ -3094,7 +3093,7 @@ static partial class FBoundStarProjectionErasure
                     existentialTypeParameters, existentialMethodParameters);
                 LowerProjectedConstruction(obj, owners, defs, refs);
                 BindStarFieldThroughCanonicalGetter(obj, owners, defs, refs);
-                BindCapturedInnerField(obj, owners, defs, refs);
+                BindProjectedFieldStorage(obj, owners, defs, refs);
                 BindProjectedConstraintMember(obj, typeParameterDeclarations, methodParameterDeclarations,
                     defs, refs);
                 BindInheritedStarMember(obj, owners, defs, refs);
@@ -3746,7 +3745,7 @@ static partial class FBoundStarProjectionErasure
     }
 
     // Direct storage access uses only a slot explicitly synthesized for that field, never a custom property accessor.
-    static void BindCapturedInnerField(JsonObject field, IReadOnlyDictionary<string, Owner> owners,
+    static void BindProjectedFieldStorage(JsonObject field, IReadOnlyDictionary<string, Owner> owners,
         IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs)
     {
         var kind = Str(field["k"]);
@@ -3754,7 +3753,7 @@ static partial class FBoundStarProjectionErasure
             || Bool(field[ExactOuterKey]) || field["recv"] is not JsonObject receiver
             || Str(receiver["k"]) == "this" || Bool(receiver[ExactOuterKey])
             || TypeJson.Read(field["ownerType"]) is not TypeNode.Fqn owner
-            || !IsCapturedInner(owner, owners, refs) || Str(field["name"]) is not string name) return;
+            || Str(field["name"]) is not string name) return;
         var setter = kind is "setFieldExpr" or "setField";
         var role = setter ? "set" : "get";
         if (owners.TryGetValue(owner.Name, out var local))
