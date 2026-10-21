@@ -57,7 +57,7 @@ static class BirTypeLowering
             TypeNode.Nullable nullable => new TypeNode.Nullable(Bound(nullable.Of)),
             _ => type,
         };
-        var lowered = arguments.Select(argument =>
+        var lowered = arguments?.Select(argument =>
             LowerPhysicalType(Bound(argument), aliases, null, null, typeArg: true)).ToArray();
         return PhysicalHead(kotlinFqn, bcl, lowered)
             is TypeNode.Fqn { Args: not null };

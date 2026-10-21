@@ -330,6 +330,10 @@ sealed partial class Emitter
             case "System.Type":
                 WriteSerString(writer, value is Type t ? t.AssemblyQualifiedName : (string)value);
                 return;
+            case "System.Object" when value is Type token:
+                writer.Write((byte)0x50); // Boxed CLASS token, ECMA-335 II.23.3.
+                WriteSerString(writer, token.AssemblyQualifiedName);
+                return;
             default:
                 throw new NotSupportedException($"custom attribute fixed argument type '{type}' is not supported");
         }

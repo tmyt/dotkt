@@ -650,6 +650,8 @@ sealed class ValueRepresentationLowering
             throw new InvalidOperationException("CLR-only binding carrier lost its explicit common classifier target");
         var arguments = new TypeNode[] { new TypeNode.Fqn("kotlin.String") };
         if (BirTypeLowering.PhysicalHead("Logical", "System.Object", arguments) != new TypeNode.Fqn("System.Object")
+            || BirTypeLowering.ProjectedAliasHasReifiedGenericHead("Logical", "System.Object", null,
+                new Dictionary<string, string>())
             || BirTypeLowering.ProjectedAliasHasReifiedGenericHead("Logical", "System.Object", arguments,
                 new Dictionary<string, string>())
             || BirTypeLowering.PhysicalHead("Native", "System.Collections.Generic.List", arguments)
