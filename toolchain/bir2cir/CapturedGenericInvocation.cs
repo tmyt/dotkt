@@ -389,7 +389,8 @@ static class CapturedGenericInvocation
             runtimeCall.Remove("argTypes");
             ForeignStarProjectionBinding.RequireRuntimeFallback();
             JsonObject invocation = receiverPlan == null ? runtimeCall
-                : CapturedValueReceiverInvocation.Invoke(receiverPlan, obj["recv"], runtimeCall, name);
+                : CapturedValueReceiverInvocation.Invoke(receiverPlan, obj["recv"], runtimeCall, name,
+                    RuntimeSignature.Length - 1);
             var replacement = returnsVoid || result == null || IsObject(result) ? invocation : Cast(result, invocation);
             obj.Clear();
             foreach (var item in replacement.ToList()) { replacement.Remove(item.Key); obj[item.Key] = item.Value; }

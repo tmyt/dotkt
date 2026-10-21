@@ -90,7 +90,8 @@ static class CapturedValueReceiverInvocation
             receiver, contractReceiver, result);
     }
 
-    internal static JsonObject Invoke(Plan plan, JsonNode receiver, JsonObject factory, string prefix)
+    internal static JsonObject Invoke(Plan plan, JsonNode receiver, JsonObject factory, string prefix,
+        int valueArgumentIndex)
     {
         var pointer = prefix + "$address";
         var values = prefix + "$values";
@@ -108,8 +109,8 @@ static class CapturedValueReceiverInvocation
         statements.Add(Variable(pointer, new TypeNode.ByRef(plan.Receiver),
             new JsonObject { ["k"] = "byrefOf", ["inner"] = location }));
         var factoryArguments = (JsonArray)factory["args"];
-        var valueArray = factoryArguments[7].DeepClone();
-        factoryArguments[7] = Local(values);
+        var valueArray = factoryArguments[valueArgumentIndex].DeepClone();
+        factoryArguments[valueArgumentIndex] = Local(values);
         statements.Add(Variable(values, Values, valueArray));
         statements.Add(Variable(helper, plan.CallerContract, new JsonObject { ["k"] = "cast",
             ["type"] = TypeJson.Write(plan.CallerContract), ["e"] = factory }));

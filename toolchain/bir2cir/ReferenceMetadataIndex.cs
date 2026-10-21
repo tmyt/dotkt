@@ -440,9 +440,13 @@ sealed partial class ReferenceMetadataIndex
         // such as a suspend-function value represented by object.
         var requiresParameterValidation = _declarationFamilyCounts.TryGetValue(
             DeclarationFamilyOf(binding), out var familyCount) && familyCount > 1;
+        // A selected carrier slot also admits its recorded source classifier's construction. Other parameters
+        // still validate in the exact physical frame; do not turn different generic positions into wildcards.
         var physicalMatches = selectedSignature.All(type => type != null)
             && selectedSignature.Select((type, index) =>
-                DeclarationDescribesCall(type, completedCallSignature[index])).All(matchesCall => matchesCall);
+                DeclarationDescribesCall(type, completedCallSignature[index])
+                || IsExistentialValueParameter(type)
+                    && SemanticDeclarationDescribesCall(type, completedCallSignature[index])).All(matchesCall => matchesCall);
         // A super call can carry the selected declaration's constructed signature rather than its open
         // descriptor. Validate that exact instantiation through the same inheritance projection used by the
         // emitted memberRef; a type variable is not a wildcard and must not select another overload.
@@ -2901,7 +2905,7 @@ sealed partial class ReferenceMetadataIndex
         if (candidates.Count != 1) return false;
         erasedOwner = candidateOwner;
         erasedMember = candidates[0].Name;
-        erasedSignature = candidates[0].ParamTypeNodes ?? Array.Empty<TypeNode>();
+        erasedSignature = candidates[0].SignatureParameters ?? candidates[0].ParamTypeNodes ?? Array.Empty<TypeNode>();
         declarationResult = declarations[0].NullableGenericRet
             ?? declarations[0].SuspendReturnType
             ?? declarations[0].KotlinReturnType

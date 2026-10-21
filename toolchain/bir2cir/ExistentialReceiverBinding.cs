@@ -21,17 +21,22 @@ static class ExistentialReceiverBinding
         internal readonly Dictionary<string, List<Member>> Members = new(StringComparer.Ordinal);
         internal readonly Dictionary<string, string> SemanticOwnerByPhysical = new(StringComparer.Ordinal);
         internal readonly Dictionary<string, string[]> Bases = new(StringComparer.Ordinal);
+        internal readonly Dictionary<(string Owner, string Name), TypeNode> Fields = new();
+        internal IReadOnlyDictionary<string, string> SourceDeclarations = new Dictionary<string, string>();
     }
 
     internal sealed record Member(string Name, string SourceName, string AccessorKind,
-        TypeNode[] Parameters, TypeNode Return, int GenericArity, string DeclarationId = null)
+        TypeNode[] Parameters, TypeNode Return, int GenericArity, string DeclarationId = null,
+        TypeNode[] SignatureParameters = null, string SourceDeclarationId = null)
     {
         public int ParamCount => Parameters.Length;
     }
 
-    public static Index Collect(IEnumerable<JsonNode> roots)
+    public static Index Collect(IEnumerable<JsonNode> roots,
+        IReadOnlyDictionary<string, string> sourceDeclarations = null)
     {
         var index = new Index();
+        if (sourceDeclarations != null) index.SourceDeclarations = sourceDeclarations;
         foreach (var root in roots) CollectTypes(root, index);
         return index;
     }
@@ -42,6 +47,10 @@ static class ExistentialReceiverBinding
         foreach (var type in types.OfType<JsonObject>())
         {
             var name = Str(type["name"]);
+            if (name != null)
+                foreach (var field in (type["fields"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
+                    if (Str(field["name"]) is string fieldName && TypeJson.Read(field["type"]) is TypeNode fieldType)
+                        index.Fields[(name, fieldName)] = fieldType;
             if (name != null && ExistentialSemanticOwner(type) is string semanticOwner
                 && type["methods"] is JsonArray methods)
             {
@@ -61,7 +70,11 @@ static class ExistentialReceiverBinding
                                 .Where(t => t != null).ToArray() ?? Array.Empty<TypeNode>(),
                             TypeJson.Read(method["ret"]),
                             (method["typeParams"] as JsonArray)?.Count ?? 0,
-                            Str(method[DeclarationIdentityBinding.Key])));
+                            Str(method[DeclarationIdentityBinding.Key]),
+                            FunctionSignatureIdentity.Signature(method["params"] as JsonArray ?? new JsonArray())
+                                .Select(TypeJson.Read).ToArray(),
+                            Str(method[DeclarationIdentityBinding.Key]) is string identity
+                                ? index.SourceDeclarations.GetValueOrDefault(identity) : null));
                     }
                 index.Members[name] = slots;
                 index.SemanticOwnerByPhysical[name] = semanticOwner;
@@ -84,7 +97,8 @@ static class ExistentialReceiverBinding
         index.SemanticOwnerByPhysical["ProbeCarrier"] = "ProbeSource";
         index.Members["ProbeCarrier"] = new List<Member> {
             new("physicalSlot", "sourceMember", null, new TypeNode[] { any }, any, 0,
-                FBoundStarProjectionErasure.ExistentialSlotIdentity("source-id", "ProbeSource")),
+                FBoundStarProjectionErasure.ExistentialSlotIdentity("source-id", "ProbeSource"),
+                SourceDeclarationId: "source-id"),
         };
         var call = (JsonObject)JsonNode.Parse("""
         {"k":"callInstance","ownerType":{"t":"fqn","name":"ProbeCarrier"},"method":"sourceMember",
@@ -217,7 +231,7 @@ static class ExistentialReceiverBinding
             && (index.SemanticOwnerByPhysical.ContainsKey(authoredOwner.Name)
                 || refs.IsExistentialPhysicalOwner(authoredOwner.Name))
             ? authoredOwner
-            : ReceiverType(call["recv"], vars) as TypeNode.Fqn;
+            : ReceiverType(call["recv"], vars, index) as TypeNode.Fqn;
         if (receiverType == null || (!index.SemanticOwnerByPhysical.ContainsKey(receiverType.Name)
             && !refs.IsExistentialPhysicalOwner(receiverType.Name))) return;
 
@@ -230,6 +244,7 @@ static class ExistentialReceiverBinding
         if (authoredSignature?.Any(t => t == null) == true) authoredSignature = null;
         string physicalMethod = null;
         TypeNode[] physicalParameters = null;
+        TypeNode[] physicalSignature = null;
         TypeNode physicalResult = null;
 
         var physicalOwner = receiverType;
@@ -248,11 +263,10 @@ static class ExistentialReceiverBinding
                     if (index.Members.TryGetValue(owner, out var members))
                         candidates.AddRange(members
                             .Where(m => m.ParamCount == pc && m.GenericArity == ga
-                                && m.SourceName == sourceMethod && m.AccessorKind == accessorKind
+                                && (selectedId != null || m.SourceName == sourceMethod) && m.AccessorKind == accessorKind
                                 && (selectedId == null || m.DeclarationId == selectedId
-                                    || m.DeclarationId == FBoundStarProjectionErasure.ExistentialSlotIdentity(
-                                        selectedId, index.SemanticOwnerByPhysical[owner]))
-                                && SignatureMatches(m.Parameters, authoredSignature))
+                                    || m.SourceDeclarationId == selectedId)
+                                && (selectedId != null || SignatureMatches(m.Parameters, authoredSignature)))
                             .Select(member => (owner, member)));
                     if (index.Bases.TryGetValue(owner, out var parents)) next.AddRange(parents);
                 }
@@ -270,6 +284,7 @@ static class ExistentialReceiverBinding
                 physicalOwner = new TypeNode.Fqn(candidates[0].Owner);
                 physicalMethod = candidates[0].Slot.Name;
                 physicalParameters = candidates[0].Slot.Parameters;
+                physicalSignature = candidates[0].Slot.SignatureParameters ?? physicalParameters;
                 physicalResult = candidates[0].Slot.Return;
             }
         }
@@ -296,7 +311,8 @@ static class ExistentialReceiverBinding
             {
                 physicalOwner = new TypeNode.Fqn(erasedOwner);
                 physicalMethod = erasedMethod;
-                physicalParameters = erasedSignature;
+                physicalParameters = erasedSignature.Select(SignatureValueTypes.Of).ToArray();
+                physicalSignature = erasedSignature;
                 physicalResult = erasedResult;
             }
         }
@@ -326,6 +342,8 @@ static class ExistentialReceiverBinding
         }
         if (physicalParameters != null)
             call["sig"] = new JsonArray(physicalParameters.Select(TypeJson.Write).ToArray());
+        if (physicalSignature != null)
+            call["calleeParams"] = new JsonArray(physicalSignature.Select(TypeJson.Write).ToArray());
         call["virtual"] = true;
         AlignResult(call, physicalResult, expectedResult);
     }
@@ -357,7 +375,8 @@ static class ExistentialReceiverBinding
         left.Name == right.Name
         && left.GenericArity == right.GenericArity
         && Equals(left.Return, right.Return)
-        && left.Parameters.SequenceEqual(right.Parameters);
+        && left.Parameters.SequenceEqual(right.Parameters)
+        && (left.SignatureParameters ?? left.Parameters).SequenceEqual(right.SignatureParameters ?? right.Parameters);
 
     static bool IsReachableReferenceCarrier(TypeNode.Fqn receiver, string declaration, ReferenceMetadataIndex refs)
     {
@@ -376,12 +395,15 @@ static class ExistentialReceiverBinding
         return false;
     }
 
-    static TypeNode ReceiverType(JsonNode receiver, IReadOnlyDictionary<string, TypeNode> vars)
+    static TypeNode ReceiverType(JsonNode receiver, IReadOnlyDictionary<string, TypeNode> vars, Index index)
     {
         if (receiver is not JsonObject obj) return null;
         if (Str(obj["k"]) == "cast") return TypeJson.Read(obj["type"]);
         if (Str(obj["k"]) == "local" && Str(obj["name"]) is string name
             && vars.TryGetValue(name, out var type)) return type;
+        if (Str(obj["k"]) == "field" && TypeJson.Read(obj["ownerType"]) is TypeNode.Fqn owner
+            && Str(obj["name"]) is string field && index.Fields.TryGetValue((owner.Name, field), out var declared))
+            return SupertypeGraph.SubstOwnerTvs(declared, owner.Args ?? Array.Empty<TypeNode>());
         return TypeJson.Read(obj["sty"]) ?? TypeJson.Read(obj["ret"]) ?? TypeJson.Read(obj["type"]);
     }
 

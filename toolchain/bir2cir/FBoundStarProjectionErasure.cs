@@ -48,7 +48,8 @@ static partial class FBoundStarProjectionErasure
 
     public static IReadOnlyDictionary<string, string> ApplyAll(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs,
         IReadOnlyList<SharedSyntheticSynthesis.CellStorage> sharedCells = null,
-        IDictionary<string, int[]> physicalParameterIndices = null)
+        IDictionary<string, int[]> physicalParameterIndices = null,
+        IDictionary<string, string> physicalDeclarationSources = null)
     {
         OwnerConstrainedMethodLowering.Reset(refs);
         var rootList = roots.OfType<JsonObject>().ToList();
@@ -92,6 +93,12 @@ static partial class FBoundStarProjectionErasure
             ProjectParameterDeclarations(root, owners, defs, refs, localClrAliases, physicalParameterIndices);
         foreach (var owner in owners.Values.Where(o => o.Needed))
             Synthesize(owner, owners, defs, refs, baseContracts[owner.Name], aliases, sourceSignatures);
+        if (physicalDeclarationSources != null)
+            foreach (var owner in owners.Values.Where(owner => owner.Needed))
+                foreach (var (declaration, allocated) in owner.Slots)
+                    if (Str(declaration[DeclarationIdentityBinding.Key]) is string source
+                        && Str(allocated.Slot[DeclarationIdentityBinding.Key]) is string physical)
+                        physicalDeclarationSources[physical] = source;
         foreach (var root in rootList) RecordDeclarationSurfaces(root, owners, refs);
         var generatedMethodFrames = OwnerConstrainedMethodLowering.PropagateCapturedBounds(defs, ContainsOwnerTv,
             bound => ProjectOwnerMethodBound(bound, owners, refs, physical: false));
@@ -4751,6 +4758,7 @@ static partial class FBoundStarProjectionErasure
             BindOwner(erasedOwner);
             call["method"] = erasedMethod;
             call["sig"] = new JsonArray(erasedSignature.Select(TypeJson.Write).ToArray());
+            call["calleeParams"] = call["sig"].DeepClone();
             call["virtual"] = true;
             MarkPhysicalPropertyCall(call, propertyCall, sourcePropertyName, accessorKind);
             AlignResult(physicalResult, declarationResult, ownerArguments);
