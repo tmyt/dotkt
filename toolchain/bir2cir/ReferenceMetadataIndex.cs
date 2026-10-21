@@ -3402,11 +3402,13 @@ sealed partial class ReferenceMetadataIndex
     public bool TrySelectedOverrideDeclaration(string ownerFqn, string sourceMember, string accessorKind,
         int methodArity, IReadOnlyList<TypeNode> signature, TypeNode[] ownerTypeArguments,
         JsonArray selectedTypeParams, TypeNode[] implementationOwnerTypeArguments,
-        bool selectedSuspend, out ReferencedMethodDeclaration declaration, bool semanticConstraints = false)
+        bool selectedSuspend, out ReferencedMethodDeclaration declaration, bool semanticConstraints = false,
+        string selectedDeclarationId = null)
     {
         declaration = null;
         if (!TryMembersByBirOwner(ownerFqn, out var list)) return false;
         var matches = list.Where(member => !member.IsStatic && !member.IsPropertyBridge
+                && (selectedDeclarationId == null || member.DeclarationId == selectedDeclarationId)
                 && (accessorKind == null
                     ? member.SourcePropertyName == null
                         && (member.DeclarationSourceName ?? member.SourceMethodName ?? member.Name) == sourceMember
@@ -3419,7 +3421,10 @@ sealed partial class ReferenceMetadataIndex
                     selectedTypeParams,
                     ownerTypeArguments, implementationOwnerTypeArguments,
                     semanticConstraints ? null : PhysicalConstraintType)
-                && AccessorSignatureMatches(member, signature, ownerTypeArguments, kotlinParameters: true)
+                // An explicit override identity selects the declaration even when its value slots were projected.
+                // Comparing its exact construction to the implementer's carrier must not undo that selection.
+                && (selectedDeclarationId != null
+                    || AccessorSignatureMatches(member, signature, ownerTypeArguments, kotlinParameters: true))
                 && member.ParamTypeNodes != null && member.ReturnTypeNode != null
                 && (!selectedSuspend || member.SuspendReturnType != null))
             .ToList();
@@ -4264,7 +4269,9 @@ sealed partial class ReferenceMetadataIndex
                         : DeclaredSlot(member.NullableGenericRet, member.ReturnTypeNode);
                 declaredParams = new SlotFact[argCount];
                 for (var i = 0; i < argCount; i++)
-                    declaredParams[i] = explicitNullableFrame
+                    declaredParams[i] = propertyName == null && IsExistentialValueParameter(member.ParamTypeNodes[i])
+                        ? new SlotFact(member.ParamTypeNodes[i], false)
+                        : explicitNullableFrame
                         ? FramedSlot(member.NullableGenericParams?[i], member.ParamTypeNodes[i], selectedPhysicalMember == null)
                         : selectedPhysicalMember != null
                         ? new SlotFact(member.ParamTypeNodes[i], false)

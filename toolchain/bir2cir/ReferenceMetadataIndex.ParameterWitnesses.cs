@@ -3,6 +3,13 @@ using DotKt.Bir;
 
 sealed partial class ReferenceMetadataIndex
 {
+    bool IsExistentialValueParameter(TypeNode type) => type switch {
+        TypeNode.Nullable nullable => IsExistentialValueParameter(nullable.Of),
+        TypeNode.Oblivious oblivious => IsExistentialValueParameter(oblivious.Of),
+        TypeNode.Fqn named => IsExistentialPhysicalOwner(named.Name),
+        _ => false,
+    };
+
     // Value slots may be nominal carriers while a captured method still needs its source constructor's frame.
     // Consume the producer's KotlinType correspondence, not the carrier name or a method body.
     internal TypeNode[] CapturedParameterWitnesses(string identity, IReadOnlyList<TypeNode> physical)

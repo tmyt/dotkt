@@ -1553,7 +1553,8 @@ static class KotlinOverrideSlotBridge
                         implementationSignature, supArgs,
                         semanticSelection ? AuthoredMethodTypeParameters(impl) : impl["typeParams"] as JsonArray, ownArgs,
                         selectedSuspend: suspendValues || semanticSelection && IsSuspendMethod(impl), out _,
-                        semanticConstraints: semanticSelection))
+                        semanticConstraints: semanticSelection,
+                        selectedDeclarationId: Str(o[DeclarationIdentityBinding.Key])))
                     continue;
                 if (suspendValues)
                 {

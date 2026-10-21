@@ -45,15 +45,15 @@ class OrdinaryParameterSlotTests {
 
     @TestAttribute
     fun sameModuleAndImportedSuspendParametersKeepColdSignatures() {
-        var result = ""
+        var observed = ""
         val block: suspend () -> String = {
             localForward(Box("local")) + importedForward(Box("imported"))
         }
         block.startCoroutine(object : Continuation<String> {
             override val context: CoroutineContext get() = EmptyCoroutineContext
-            override fun resumeWith(value: Result<String>) { result = value.getOrThrow() }
+            override fun resumeWith(result: Result<String>) { observed = result.getOrThrow() }
         })
-        check(result == "localimported")
+        check(observed == "localimported")
     }
 
     @TestAttribute
@@ -73,9 +73,9 @@ class OrdinaryParameterSlotTests {
     fun nativeAndKotlinSlotsShareAnExactForwardingBridge() {
         val value = Box("shared")
         val receiver = SharedReceiver()
-        check((receiver as KotlinBoxReceiver).Accept(value) === value)
-        check((receiver as KotlinBoxBase).Accept(value) === value)
-        check(NativeBoxApi.Dispatch(receiver, value) === value)
+        check((receiver as KotlinBoxReceiver).Accept(value) === value) { "Kotlin interface dispatch" }
+        check((receiver as KotlinBoxBase).Accept(value) === value) { "Kotlin base dispatch" }
+        check(NativeBoxApi.Dispatch(receiver, value) === value) { "native interface dispatch" }
     }
 
     @TestAttribute
