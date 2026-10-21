@@ -118,12 +118,16 @@ static class KotlinOverrideSlotBridge
         IReadOnlyDictionary<JsonObject, TypeNode[]> sourceParameters = null)
     {
         var emitBridges = phase != Phase.DeclarationMoves;
-        var defs = SupertypeGraph.Collect(roots);
+        var rootList = roots.ToArray();
+        var defs = SupertypeGraph.Collect(rootList);
         var frames = refs.NullableTypeFrames.ToDictionary(pair => pair.Key, pair => pair.Value);
         foreach (var def in defs.Values)
             if (KotlinSupertypesRecord.ReadNullableFrame(def.Node) is { } frame) frames[def.Name] = frame;
+        // Override markers retain Kotlin applications even after the live graph uses declaration order.
+        var sourceApplications = new InnerApplicationFrames(rootList, refs)
+            .Project(frames, retainPhysicalOrder: true);
         NullableRepresentationTypes SourceMapping(Def def) => new(
-            KotlinSupertypesRecord.ReadNullableFrame(def.Node), null, frames, isValue, policy: representations);
+            KotlinSupertypesRecord.ReadNullableFrame(def.Node), null, sourceApplications, isValue, policy: representations);
         var annotationLocalTypes = localTypeNames ?? defs.Keys.ToHashSet(StringComparer.Ordinal);
         TypeNode[] AnnotationArguments(TypeNode.Fqn type) =>
             BirTypeLowering.AnnotationArguments(type, refs.Aliases, isValue, refs.PhysicalTypeNames,
