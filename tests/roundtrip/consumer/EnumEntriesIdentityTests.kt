@@ -8,6 +8,7 @@ import roundtrip.entriesidentity.IdentityEntry
 import roundtrip.entriesidentity.entries
 import roundtrip.entriesidentity.entryArgument
 import roundtrip.entriesidentity.entrySource
+import roundtrip.entriesidentity.extensionEntrySource
 import roundtrip.entriesidentity.readEntryTrace
 import roundtrip.entriesidentity.resetEntryTrace
 
@@ -34,5 +35,9 @@ class EnumEntriesIdentityRoundtripTests {
         assertEquals("c", readEntryTrace())
         assertTrue(entrySource().entries() === IdentityEntry.entries)
         assertEquals("crm", readEntryTrace())
+        assertTrue(extensionEntrySource().entries() === IdentityEntry.entries)
+        assertEquals("crmrx", readEntryTrace())
+        assertTrue(extensionEntrySource().entries === IdentityEntry.entries)
+        assertEquals("crmrxry", readEntryTrace())
     }
 }

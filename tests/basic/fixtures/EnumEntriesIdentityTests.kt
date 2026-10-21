@@ -41,6 +41,20 @@ private fun entrySource(): EntryIdentitySource {
     entryTrace += "r"
     return EntryIdentitySource()
 }
+private class EntryIdentityExtensionSource
+private fun extensionEntrySource(): EntryIdentityExtensionSource {
+    entryTrace += "r"
+    return EntryIdentityExtensionSource()
+}
+private fun EntryIdentityExtensionSource.entries(): EnumEntries<IdentityEntry> {
+    entryTrace += "x"
+    return IdentityEntry.entries
+}
+private val EntryIdentityExtensionSource.entries: EnumEntries<IdentityEntry>
+    get() {
+        entryTrace += "y"
+        return IdentityEntry.entries
+    }
 
 class EnumEntriesIdentityTests {
     @TestAttribute
@@ -76,5 +90,9 @@ class EnumEntriesIdentityTests {
         assertEquals("c", entryTrace)
         assertTrue(entrySource().entries() === IdentityEntry.entries)
         assertEquals("crm", entryTrace)
+        assertTrue(extensionEntrySource().entries() === IdentityEntry.entries)
+        assertEquals("crmrx", entryTrace)
+        assertTrue(extensionEntrySource().entries === IdentityEntry.entries)
+        assertEquals("crmrxry", entryTrace)
     }
 }
