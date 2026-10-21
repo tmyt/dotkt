@@ -4,6 +4,7 @@ import NUnit.Framework.TestAttribute
 import GenericValueInterop.NativeBoxApi
 import GenericValueInterop.NativeBoxReceiver
 import kotlin.clr.byref
+import kotlin.coroutines.*
 import roundtrip.genericvalueinterop.Box
 import roundtrip.parameterslots.*
 import roundtrip.uncheckedslot.*
@@ -18,7 +19,65 @@ class NativeReceiver : NativeBoxReceiver {
     override fun Accept(value: Box<String>): Any = value
 }
 
+class SharedReceiver : KotlinBoxBase(), KotlinBoxReceiver, NativeBoxReceiver {
+    override fun Accept(value: Box<String>): Any = value
+}
+
+private class LocalChoices<T> {
+    fun choose(slot: Slot<String>): Int = 17
+    fun choose(slot: Slot<Int>): Int = 29
+}
+
+private fun chooseLocal(owner: LocalChoices<*>, slot: Slot<Int>): Int = owner.choose(slot)
+private fun chooseImported(owner: SlotChoices<*>, slot: Slot<Int>): Int = owner.choose(slot)
+private suspend fun localSink(value: Box<String>): String = value.value
+private suspend fun localForward(value: Box<String>): String = localSink(value)
+
 class OrdinaryParameterSlotTests {
+    @TestAttribute
+    fun starOwnerOverloadsKeepBothSelectedDeclarations() {
+        val integers = TrackedSlot(42)
+        check(chooseLocal(LocalChoices<String>(), integers) == 29)
+        check(chooseImported(SlotChoices<String>(), integers) == 29)
+        val choices: SlotChoices<*> = SlotChoices<Int>()
+        check(choices.choose(TrackedSlot("text")) == 17)
+    }
+
+    @TestAttribute
+    fun sameModuleAndImportedSuspendParametersKeepColdSignatures() {
+        var result = ""
+        val block: suspend () -> String = {
+            localForward(Box("local")) + importedForward(Box("imported"))
+        }
+        block.startCoroutine(object : Continuation<String> {
+            override val context: CoroutineContext get() = EmptyCoroutineContext
+            override fun resumeWith(value: Result<String>) { result = value.getOrThrow() }
+        })
+        check(result == "localimported")
+    }
+
+    @TestAttribute
+    fun typeVariableSlotsAndGeneratedOverridesStayImplemented() {
+        val value = Box("generated")
+        val handler: TypedHandler<Box<String>> = BoxHandler()
+        check(handler.handle(value) === value)
+        val anonymous: KotlinBoxReceiver = object : KotlinBoxReceiver {
+            override fun Accept(value: Box<String>): Any = value
+        }
+        check(anonymous.Accept(value) === value)
+        class Local : KotlinBoxReceiver { override fun Accept(value: Box<String>): Any = value }
+        check((Local() as KotlinBoxReceiver).Accept(value) === value)
+    }
+
+    @TestAttribute
+    fun nativeAndKotlinSlotsShareAnExactForwardingBridge() {
+        val value = Box("shared")
+        val receiver = SharedReceiver()
+        check((receiver as KotlinBoxReceiver).Accept(value) === value)
+        check((receiver as KotlinBoxBase).Accept(value) === value)
+        check(NativeBoxApi.Dispatch(receiver, value) === value)
+    }
+
     @TestAttribute
     @Suppress("UNCHECKED_CAST")
     fun localAndImportedParametersKeepTheUncheckedIdentity() {

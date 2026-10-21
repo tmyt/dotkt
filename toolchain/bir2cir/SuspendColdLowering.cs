@@ -401,7 +401,8 @@ static partial class SuspendColdLowering
     public static IReadOnlyDictionary<string, TypeNode> ApplyAll(IReadOnlyList<JsonNode> roots,
         ReferenceMetadataIndex refs, IReadOnlySet<string> localTypeFqns, bool appBuild,
         IReadOnlyDictionary<string, string> localExistentialOwners, ValueTypeOracle isValueFqn,
-        IReadOnlyDictionary<string, JsonObject> sourceSignatures = null)
+        IReadOnlyDictionary<string, JsonObject> sourceSignatures = null,
+        IDictionary<string, int[]> physicalParameterIndices = null)
     {
         _refs = refs;   // #10: EmitAwaitPoint reads it to resolve the .NET awaitable pattern for each `.await()`.
         _isValueFqn = isValueFqn ?? (_ => false);
@@ -433,6 +434,12 @@ static partial class SuspendColdLowering
         //    CLASSIFIER, not a filter: nothing is dropped for shape or resolvability. Each admitted member is classified
         //    into abstract / segmentable / call-time-throw by FunGen.
         var entries = DeclaredSuspendEntries(roots);
+        // Cold entries retain every authored parameter position and append completion. Carry the selected
+        // representation changes with the new identity when this pass allocates that physical projection.
+        foreach (var entry in entries)
+            if (Str(entry.Method[DeclarationIdentityBinding.Key]) is string identity
+                && physicalParameterIndices?.TryGetValue(identity, out var indices) == true)
+                physicalParameterIndices[identity + "|cold"] = indices;
         // Closure-class registry (for the suspendCoroutine intrinsic inliner): kotc materializes the intrinsic's
         // `{ c -> … }` block as a top-level closure class; the inliner resolves its `invoke` body by name here.
         var closures = new Dictionary<string, JsonObject>(StringComparer.Ordinal);

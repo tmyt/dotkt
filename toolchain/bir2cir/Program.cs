@@ -983,7 +983,8 @@ sealed class Pipeline
         // cold lowering, then has no authoritative physical binding and falls back to the erased overload set. The
         // runtime and reference builds therefore execute the same declaration transform and physical allocation.
         var suspendCalleeRet = SuspendColdLowering.ApplyAll(staged.Select(s => s.Root).ToList(), refs,
-            localTypeFqns, attributeTopLevelOwner, localExistentialOwners, isValueFqn, declarationSemanticSignatures);
+            localTypeFqns, attributeTopLevelOwner, localExistentialOwners, isValueFqn, declarationSemanticSignatures,
+            physicalParameterIndices);
 
         // PHASE 1.6 — SUSPEND LAMBDA LOWERING (bundle-6 P3 wave-2b, LIVE): replace each `newSuspendLambda`
         // node with `new <mangled>_lambdaN$sm(captures..., null)` + synthesize its SuspendLambda state machine
@@ -1028,7 +1029,7 @@ sealed class Pipeline
         // the final Task/cold shapes. Star views already exist, and all types are still in the Kotlin vocabulary.
         KotlinOverrideSlotBridge.ApplyAll(
             staged.Select(s => s.Root).ToList(), isValueFqn, refs, localTypeFqns, _options.RefBuild, genericRepresentations,
-            covariantBridgedSlots);
+            covariantBridgedSlots, localExistentialOwners);
 
         // The final override bridge deliberately runs after the main F-bound/star rewrite because suspend lowering
         // can create additional physical slots. Project any Kotlin star types copied into those late declarations

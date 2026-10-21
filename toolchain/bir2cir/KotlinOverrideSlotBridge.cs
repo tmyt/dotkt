@@ -109,17 +109,33 @@ static class KotlinOverrideSlotBridge
     // The bridge half.
     public static void ApplyAll(IEnumerable<JsonNode> roots, ValueTypeOracle isValue, ReferenceMetadataIndex refs,
         IReadOnlySet<string> localTypeNames, bool refBuild, GenericRepresentationPolicy representations,
-        IReadOnlySet<CovariantInterfaceReturnBridge.BridgedSlot> covariantBridgedSlots = null) =>
-        ApplyAll(roots, isValue, refs, representations, Phase.PhysicalBridges, localTypeNames, covariantBridgedSlots, refBuild);
+        IReadOnlySet<CovariantInterfaceReturnBridge.BridgedSlot> covariantBridgedSlots = null,
+        IReadOnlyDictionary<string, string> localCarriers = null) =>
+        ApplyAll(roots, isValue, refs, representations, Phase.PhysicalBridges, localTypeNames, covariantBridgedSlots,
+            refBuild, localCarriers: localCarriers);
 
     static void ApplyAll(IEnumerable<JsonNode> roots, ValueTypeOracle isValue, ReferenceMetadataIndex refs,
         GenericRepresentationPolicy representations, Phase phase, IReadOnlySet<string> localTypeNames,
         IReadOnlySet<CovariantInterfaceReturnBridge.BridgedSlot> covariantBridgedSlots = null, bool refBuild = false,
-        IReadOnlyDictionary<JsonObject, TypeNode[]> sourceParameters = null)
+        IReadOnlyDictionary<JsonObject, TypeNode[]> sourceParameters = null,
+        IReadOnlyDictionary<string, string> localCarriers = null)
     {
         var emitBridges = phase != Phase.DeclarationMoves;
         var rootList = roots.ToArray();
         var defs = SupertypeGraph.Collect(rootList);
+        bool CarrierParameterSeam(TypeNode left, TypeNode right)
+        {
+            TypeNode Core(TypeNode type) => type switch {
+                TypeNode.Nullable nullable => Core(nullable.Of),
+                TypeNode.Oblivious oblivious => Core(oblivious.Of),
+                _ => type,
+            };
+            bool Matches(TypeNode exact, TypeNode view) => Core(exact) is TypeNode.Fqn { Args: { Length: > 0 } } construction
+                && Core(view) is TypeNode.Fqn carrier
+                && (localCarriers?.TryGetValue(construction.Name, out var local) == true && local == carrier.Name
+                    || refs.TryExistentialPhysicalOwner(construction.Name, out var referenced) && referenced == carrier.Name);
+            return phase == Phase.PhysicalBridges && (Matches(left, right) || Matches(right, left));
+        }
         var frames = refs.NullableTypeFrames.ToDictionary(pair => pair.Key, pair => pair.Value);
         foreach (var def in defs.Values)
             if (KotlinSupertypesRecord.ReadNullableFrame(def.Node) is { } frame) frames[def.Name] = frame;
@@ -151,7 +167,8 @@ static class KotlinOverrideSlotBridge
                     exactBridgeSources[method] = sourceAssociation;
         foreach (var cls in defs.Values.Where(d => d.Kind is "class" or "interface").ToList())
             ApplyClass(cls, defs, isValue, refs, phase, refBuild, exactBridgeSources, localTypeNames,
-                covariantBridgedSlots, AnnotationArguments, SourceMapping(cls), sourceParameters, representations);
+                covariantBridgedSlots, AnnotationArguments, SourceMapping(cls), sourceParameters, representations,
+                CarrierParameterSeam);
         // A class-level inherited-DIM bridge consumes the exact MethodImpl descriptor synthesized on its interface.
         // Declarations may appear in either order and in different input files, so first finish every interface/class's
         // own slot allocation above, then inspect classes. Reading the live method arrays during the first loop would
@@ -180,7 +197,8 @@ static class KotlinOverrideSlotBridge
         IReadOnlySet<string> localTypeNames,
         IReadOnlySet<CovariantInterfaceReturnBridge.BridgedSlot> covariantBridgedSlots,
         Func<TypeNode.Fqn, TypeNode[]> annotationArguments, NullableRepresentationTypes sourceMapping,
-        IReadOnlyDictionary<JsonObject, TypeNode[]> sourceParameters, GenericRepresentationPolicy representations)
+        IReadOnlyDictionary<JsonObject, TypeNode[]> sourceParameters, GenericRepresentationPolicy representations,
+        Func<TypeNode, TypeNode, bool> CarrierParameterSeam)
     {
         var emitBridges = phase != Phase.DeclarationMoves;
         if (cls.Node["methods"] is not JsonArray methods) return;
@@ -279,6 +297,10 @@ static class KotlinOverrideSlotBridge
                 if (fit[i] == Fit.Foreign && SameSourceFunctionRepresentation(slotParams[i],
                         SupertypeGraph.SubstOwnerTvs(declT, ownArgs), sourceMapping.OwnerFrame))
                     fit[i] = Fit.Bridge;
+                // The selected override may join an ordinary carrier slot to an exact native/generated slot,
+                // or specialize a bare source T as G<X>. Preserve both declarations with an exact forwarder.
+                if (fit[i] == Fit.Foreign && CarrierParameterSeam(slotParams[i],
+                        SupertypeGraph.SubstOwnerTvs(declT, ownArgs))) fit[i] = Fit.Bridge;
                 // Equal runtime function carriers do not imply equal CLR
                 // signature discriminators. MethodImpl requires the selected
                 // slot's modifier too; preserve the body row and forward from
@@ -579,11 +601,11 @@ static class KotlinOverrideSlotBridge
                 var impl = Implementer(cls, defs, methods.OfType<JsonObject>(), spec.Name, name, semanticName,
                     Str(slot[DeclarationIdentityBinding.Key]), propertyName, accessorKind,
                     methodArity, selectionParams, slot["typeParams"] as JsonArray, supArgs, ownArgs,
-                    semanticSlotTypeParams: SourceMethodTypeParameters(slot))
+                    semanticSlotTypeParams: SourceMethodTypeParameters(slot), carrierSeam: CarrierParameterSeam)
                     ?? Implementer(cls, defs, candidates.Where(inheritedOwners.ContainsKey), spec.Name, name, semanticName,
                         Str(slot[DeclarationIdentityBinding.Key]), propertyName, accessorKind,
                         methodArity, selectionParams, slot["typeParams"] as JsonArray, supArgs, ownArgs,
-                        inheritedSignatures, SourceMethodTypeParameters(slot));
+                        inheritedSignatures, SourceMethodTypeParameters(slot), CarrierParameterSeam);
                 if (impl == null) continue;
                 // A locally-emitted Kotlin interface may itself be @ClrTypeAlias-bound to a referenced CLR
                 // interface. Its Kotlin accessor keeps the dedicated property name, while the MethodImpl descriptor
@@ -2065,7 +2087,8 @@ static class KotlinOverrideSlotBridge
         string propertyName, string accessorKind, int methodArity,
         TypeNode[] slotParams, JsonArray slotTypeParams, TypeNode[] slotOwnerArgs, TypeNode[] ownArgs,
         IReadOnlyDictionary<JsonObject, TypeNode[]> inheritedSignatures = null,
-        JsonArray semanticSlotTypeParams = null)
+        JsonArray semanticSlotTypeParams = null,
+        Func<TypeNode, TypeNode, bool> carrierSeam = null)
     {
         JsonObject found = null;
         var ownerFrame = KotlinSupertypesRecord.ReadNullableFrame(cls.Node);
@@ -2109,6 +2132,7 @@ static class KotlinOverrideSlotBridge
                     ?? (ps[i] as JsonObject)?["type"]);
                 var declared = t == null ? null : SupertypeGraph.SubstOwnerTvs(t, ownArgs);
                 ok = declared != null && (ErasureAligned(slotParams[i], declared)
+                    || carrierSeam?.Invoke(slotParams[i], declared) == true
                     || IsCompanionScalarSeam(slotParams[i], declared)
                     || SameSourceRepresentationVariables(slotParams[i], declared, ownerFrame)
                     || SameSourceFunctionRepresentation(slotParams[i], declared, ownerFrame));

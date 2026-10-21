@@ -1193,7 +1193,8 @@ static partial class FBoundStarProjectionErasure
             case JsonObject obj:
                 if (IsOrdinaryKotlinParameter(obj, defs, refs)
                     && StripSourceNullability(TypeJson.Read(obj["type"])) is TypeNode.Fqn { Args: { Length: > 0 } } parameterType
-                    && owners.TryGetValue(parameterType.Name, out var parameterOwner))
+                    && owners.TryGetValue(parameterType.Name, out var parameterOwner)
+                    && Str(parameterOwner.Def["kind"]) is "class" or "interface" && !refs.IsValueType(parameterType))
                     parameterOwner.Needed = true;
                 if (TryVarianceProjectedArrayOwner(obj, defs, refs, out var arrayOwner)
                     && owners.TryGetValue(arrayOwner.Name, out var projectedOwner))
@@ -1940,6 +1941,9 @@ static partial class FBoundStarProjectionErasure
         if (owner.Def["methods"] is JsonArray declared)
         {
             var originals = declared.OfType<JsonObject>().ToList();
+            var collisions = originals.Where(method => !Bool(method["static"]))
+                .GroupBy(MethodKey).Where(group => group.Count() > 1)
+                .SelectMany(group => group).ToHashSet();
             foreach (var method in originals)
             {
                 if (Bool(method["static"])) continue;
@@ -1950,7 +1954,7 @@ static partial class FBoundStarProjectionErasure
                 // interface slot in its own naming domain rather than making the source member virtual and
                 // requiring its eventual allocated name to be propagated across an implicit interface match.
                 var requiresBridge = ContainsOwnerTvInSignature(method) || !IsPublic(method)
-                    || method[DeclarationIdentityBinding.ExplicitNameKey] != null;
+                    || method[DeclarationIdentityBinding.ExplicitNameKey] != null || collisions.Contains(method);
                 var slot = InterfaceSlot(method, requiresBridge ? StarMethodName(owner, method) : null,
                     owner.Name, owners, refs);
                 owner.Slots[method] = (slot, sourceSignatures.GetValueOrDefault(method)

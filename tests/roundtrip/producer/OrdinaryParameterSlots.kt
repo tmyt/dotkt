@@ -26,6 +26,22 @@ class TrackedSlot<F>(var last: F) : Slot<F>() {
 
 interface SlotUse { fun use(slot: Slot<Any>, owner: Any): Boolean }
 
+class SlotChoices<T> {
+    fun choose(slot: Slot<String>): Int = 17
+    fun choose(slot: Slot<Int>): Int = 29
+}
+
+interface TypedHandler<T> { fun handle(value: T): Any }
+class BoxHandler : TypedHandler<Box<String>> {
+    override fun handle(value: Box<String>): Any = value
+}
+
+interface KotlinBoxReceiver { fun Accept(value: Box<String>): Any }
+open class KotlinBoxBase { open fun Accept(value: Box<String>): Any = "base" }
+
+suspend fun importedSink(value: Box<String>): String = value.value
+suspend fun importedForward(value: Box<String>): String = importedSink(value)
+
 class PropertyOwner(var box: Box<String>)
 
 fun choose(slot: Slot<String>): Int = 17
