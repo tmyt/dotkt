@@ -133,12 +133,26 @@ static class EnumIntrinsicLowering
         var parameter = new TypeNode.Tv("method", 0);
         var genericValues = new JsonObject { ["k"] = "enumValues", ["type"] = TypeJson.Write(parameter) };
         var runtimeLookup = EnumValueLowering.Apply(genericValues, ReferenceMetadataIndex.Build(System.Array.Empty<string>()),
-            new HashSet<string>(), new Dictionary<string, BasicEnumMetadata>());
+            new HashSet<string>(), new Dictionary<string, BasicEnumMetadata>(), new Dictionary<string, BasicEnumMetadata>());
         if (!runtimeLookup || Str(genericValues["k"]) != "cast" || TypeJson.Read(genericValues["type"]) != new TypeNode.Array(parameter)
             || Str(genericValues["e"]?["method"]) != "kotlinEnumValues"
             || Str(genericValues["e"]?["args"]?[0]?["k"]) != "classRef"
             || TypeJson.Read(genericValues["e"]?["args"]?[0]?["type"]) != parameter)
             throw new System.InvalidOperationException("Generic enum values lost their ordered runtime operation or exact type frame");
+        var declaration = JsonNode.Parse("""
+            {"types":[{"kind":"enum","name":"Ordinary","entries":[
+                {"name":"FIRST","ordinal":0},{"name":"SECOND","ordinal":1}]}]}
+            """);
+        var physicalEnums = ClrEnumLowering.Apply(new[] { declaration }, out var parseEnums);
+        var ordinal = new JsonObject {
+            ["k"] = "enumOrdinal", ["type"] = TypeJson.Fqn("Ordinary"),
+            ["e"] = new JsonObject { ["k"] = "local", ["name"] = "value" },
+        };
+        EnumValueLowering.Apply(ordinal, ReferenceMetadataIndex.Build(System.Array.Empty<string>()),
+            new HashSet<string> { "Ordinary" }, physicalEnums, parseEnums);
+        if (!parseEnums.ContainsKey("Ordinary") || physicalEnums.ContainsKey("Ordinary")
+            || ordinal.ContainsKey("type") || ordinal.ContainsKey("values"))
+            throw new System.InvalidOperationException("Exact enum name tables changed ordinary ordinal's constant-time form");
         var ordinary = TypeJson.Fqn("EnumType");
         var companion = TypeJson.Fqn("StorageType");
         var frame = new NullableRepresentationFrame(1, System.Array.Empty<int>(),

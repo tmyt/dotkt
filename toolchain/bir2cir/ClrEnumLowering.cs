@@ -24,10 +24,12 @@ static class ClrEnumLowering
         ["kotlin.ULong"] = ("System.UInt64", ulong.MinValue, ulong.MaxValue),
     };
 
-    public static Dictionary<string, BasicEnumMetadata> Apply(IEnumerable<JsonNode> roots)
+    public static Dictionary<string, BasicEnumMetadata> Apply(IEnumerable<JsonNode> roots,
+        out Dictionary<string, BasicEnumMetadata> parseMetadata)
     {
-        // Every basic enum's declaration map owns its entry names, even when values equal ordinals.
+        // Parsing needs every declaration name; only explicit physical values need ordinal remapping.
         var result = new Dictionary<string, BasicEnumMetadata>(StringComparer.Ordinal);
+        parseMetadata = new Dictionary<string, BasicEnumMetadata>(StringComparer.Ordinal);
         foreach (var root in roots)
         {
             if (root is not JsonObject ro || ro["types"] is not JsonArray types) continue;
@@ -49,7 +51,7 @@ static class ClrEnumLowering
                         ordinaryEntries.Add(new BasicEnumEntry(entry["name"].GetValue<string>(), ordinal, value));
                     }
                     StampMetadata(type, "System.Int32", ordinaryEntries);
-                    result.Add(type["name"].GetValue<string>(), new BasicEnumMetadata("System.Int32", ordinaryEntries));
+                    parseMetadata.Add(type["name"].GetValue<string>(), new BasicEnumMetadata("System.Int32", ordinaryEntries));
                     continue;
                 }
                 var owner = Str(type["name"]);
@@ -96,8 +98,10 @@ static class ClrEnumLowering
                 type.Remove("clrEnum");
                 StampMetadata(type, physical.Clr, ordered);
                 RemoveSourceMarker(type);
-                if (!result.TryAdd(owner, new BasicEnumMetadata(physical.Clr, ordered)))
+                var metadata = new BasicEnumMetadata(physical.Clr, ordered);
+                if (!result.TryAdd(owner, metadata))
                     Fail(type, $"duplicate explicit enum declaration '{owner}'");
+                parseMetadata.Add(owner, metadata);
             }
         }
         return result;

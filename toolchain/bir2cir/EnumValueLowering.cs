@@ -11,10 +11,11 @@ static class EnumValueLowering
         JsonNode root,
         ReferenceMetadataIndex refs,
         ISet<string> localBasicEnums,
-        IReadOnlyDictionary<string, BasicEnumMetadata> localExplicitEnums)
+        IReadOnlyDictionary<string, BasicEnumMetadata> localExplicitEnums,
+        IReadOnlyDictionary<string, BasicEnumMetadata> localParseEnums)
     {
         var runtimeLookup = false;
-        Walk(root, refs, localBasicEnums, localExplicitEnums, ref runtimeLookup);
+        Walk(root, refs, localBasicEnums, localExplicitEnums, localParseEnums, ref runtimeLookup);
         return runtimeLookup;
     }
 
@@ -22,7 +23,8 @@ static class EnumValueLowering
         JsonNode node,
         ReferenceMetadataIndex refs,
         ISet<string> localBasicEnums,
-        IReadOnlyDictionary<string, BasicEnumMetadata> localExplicitEnums, ref bool runtimeLookup)
+        IReadOnlyDictionary<string, BasicEnumMetadata> localExplicitEnums,
+        IReadOnlyDictionary<string, BasicEnumMetadata> localParseEnums, ref bool runtimeLookup)
     {
         if (node is JsonObject obj)
         {
@@ -64,7 +66,7 @@ static class EnumValueLowering
                 && obj["type"] is JsonNode parseType
                 && obj["arg"] is JsonNode parseArg
                 && TypeJson.OwnerName(parseType) is string parseOwner
-                && (localExplicitEnums.TryGetValue(parseOwner, out var localParse)
+                && (localParseEnums.TryGetValue(parseOwner, out var localParse)
                     || refs.TryKotlinBasicEnum(parseOwner, out localParse)
                     || refs.TryNativeEnumEntries(parseOwner, out localParse)))
             {
@@ -164,11 +166,11 @@ static class EnumValueLowering
             }
 
             foreach (var kv in obj)
-                if (kv.Value != null) Walk(kv.Value, refs, localBasicEnums, localExplicitEnums, ref runtimeLookup);
+                if (kv.Value != null) Walk(kv.Value, refs, localBasicEnums, localExplicitEnums, localParseEnums, ref runtimeLookup);
         }
         else if (node is JsonArray arr)
             foreach (var item in arr)
-                if (item != null) Walk(item, refs, localBasicEnums, localExplicitEnums, ref runtimeLookup);
+                if (item != null) Walk(item, refs, localBasicEnums, localExplicitEnums, localParseEnums, ref runtimeLookup);
     }
 
     static JsonArray Values(BasicEnumMetadata metadata) => new(metadata.Entries.Select(entry => (JsonNode)new JsonObject
