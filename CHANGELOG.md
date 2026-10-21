@@ -5,6 +5,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Preserve `KClass` values in locals, annotation constructor arguments and DLL signatures, including ordinary
+  Kotlin implementations and logical parent interfaces (#1117, #978).
+
 - Preserve Kotlin `Annotation` membership for authored annotations, ordinary implementations and native CLR
   attributes, including casts, generic calls and DLL boundaries (#1116).
   Direct non-null classified casts now reject null with `NullPointerException`; existing reified-cast exception

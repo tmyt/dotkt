@@ -33,7 +33,7 @@ static class BirTypeLowering
     // Preserve the semantic head until PhysicalHead can select a collapsed classifier. This includes applications
     // that always erase their arguments, and aliases whose collapse depends on the final lowered arguments.
     internal static bool AliasHeadRequiresSourceIdentity(string source, string bcl) =>
-        ErasesGenericApplicationToNonGenericClassifier(source) || bcl == "System.IComparable";
+        ErasesGenericApplicationToNonGenericClassifier(source) || bcl is "System.IComparable" or "System.Object";
 
     // A pre-lowering projection pass must ask the same head-selection rule as the final type lowering. Remove only
     // the existential shell that FBoundStarProjectionErasure itself will erase, lower the resulting arguments, and
@@ -313,9 +313,9 @@ static class BirTypeLowering
     internal static TypeNode PhysicalHead(string kotlinFqn, string bcl, TypeNode[] loweredArgs,
         IReadOnlyDictionary<string, NullableRepresentationFrame> nullableFrames = null)
     {
-        // The Kotlin enum base is a union of native enums and singleton classes, not System.Enum. Its source
-        // identity survives in metadata; the shared value view cannot retain the self-referential argument.
-        if (ErasesGenericApplicationToNonGenericClassifier(kotlinFqn) && loweredArgs != null)
+        // An object-valued binding has no CLR generic TypeDef. Its source arguments remain metadata facts,
+        // not physical arguments of System.Object (including the native/singleton enum union).
+        if ((ErasesGenericApplicationToNonGenericClassifier(kotlinFqn) || bcl == "System.Object") && loweredArgs != null)
             return new TypeNode.Fqn("System.Object");
         // A leaf: a @ClrTypeAlias type — a foundational primitive (kotlin.Int -> System.Int32) or a non-primitive
         // BCL (StringBuilder/Regex/IComparable/…) -> the BCL FQN. Otherwise the name stands: user / stdlib /

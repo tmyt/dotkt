@@ -525,6 +525,9 @@ sealed class Pipeline
             // `kotlin.Nothing`. BEFORE the suspend transform, whose `__cond$` machinery already stores nothing for a
             // `throwExpr` arm — so one rule covers the plain and the state-machine lowering alike.
             NothingValueTermination.Apply(bir.Root);
+            // Fold literal Kotlin names while their semantic accessors and fully-spliced receivers remain visible.
+            // Other reads belong to the declaration-owned value adapter, including user implementations of KClass.
+            if (!_options.RefBuild) KClassMemberBinding.Apply(bir.Root);
             valueRepresentations.BindOperations(bir.Root);
             // NULLABLE-INSTANTIATION WITNESS ABI (#316/#466): every raw inline/default payload is materialized now,
             // while exact declaration identities and Kotlin type arguments are still present. Record structurally
@@ -753,10 +756,6 @@ sealed class Pipeline
             // This is representation-independent and therefore applies to reference builds too.
             InheritedDefaultFakeOverrideElision.Apply(bir.Root);
             var hoisted = _options.RefBuild ? bir.Root : AliasHelperHoist.Apply(bir.Root, refs, genericRepresentations);
-            // Consume class-literal property semantics before reference identity binding replaces Kotlin
-            // accessor names/roles with MethodDef names. Its System.Type representation owns this call,
-            // not the reference surface's abstract KClass accessor.
-            if (!_options.RefBuild) hoisted = KClassMemberBinding.Apply(hoisted);
             // CLR override allocation: ordinary functions carrying @ClrIntrinsic receive the external slot name;
             // Kotlin property accessors keep their dedicated name and receive an explicit interface/base MethodImpl
             // binding instead. Derived from the frontend's `overrides` closure plus reference metadata. Runs before

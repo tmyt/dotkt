@@ -49,9 +49,15 @@ sealed class ValueRepresentationLowering
             if (Text(declaration["name"]) is string name)
             {
                 if (declaration["typeParams"] is JsonArray parameters) localParameters[name] = parameters;
-                if (Attribute(declaration, "kotlin.clr.ClrTypeAlias") is { } alias) aliases[name] = Argument(alias, 0);
-                if (Attribute(declaration, TypeAttribute) is { } attribute)
-                    bindings[name] = new(Argument(attribute, 0), Argument(attribute, 1), Argument(attribute, 2), Argument(attribute, 3));
+                var attribute = Attribute(declaration, TypeAttribute);
+                var source = attribute == null ? name : Argument(attribute, 4) switch { "" => name, var target => target };
+                if (Attribute(declaration, "kotlin.clr.ClrTypeAlias") is { } alias)
+                {
+                    aliases[name] = Argument(alias, 0);
+                    aliases[source] = Argument(alias, 0);
+                }
+                if (attribute != null)
+                    bindings[source] = new(Argument(attribute, 0), Argument(attribute, 1), Argument(attribute, 2), Argument(attribute, 3));
             }
             var owner = Text(declaration["fileClass"]) ?? Text(declaration["name"]);
             foreach (var method in (declaration["methods"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
@@ -554,7 +560,7 @@ sealed class ValueRepresentationLowering
         {"fileClass":"Helpers","types":[{"name":"Union","kind":"class","attrs":[
           {"attr":{"t":"fqn","name":"kotlin.clr.ClrTypeAlias"},"args":[{"value":"System.Object"}]},
           {"attr":{"t":"fqn","name":"kotlin.clr.ClrValueRepresentation"},"args":[
-           {"value":"Helpers.matches"},{"value":"Helpers.classifier"},{"value":"Helpers.component"},{"value":""}]}],
+           {"value":"Helpers.matches"},{"value":"Helpers.classifier"},{"value":"Helpers.component"},{"value":""},{"value":""}]}],
           "methods":[{"name":"convert","declarationId":"convert","params":[],"ret":{"t":"fqn","name":"kotlin.Int"},"abstract":true,"attrs":[
            {"attr":{"t":"fqn","name":"kotlin.clr.ClrValueMember"},"args":[{"value":"Helpers.convert"},{"value":"Slots.convert"}]}]}]},
           {"name":"Child","kind":"class","base":{"t":"fqn","name":"Union"},"methods":[
@@ -623,7 +629,7 @@ sealed class ValueRepresentationLowering
               {"attr":{"t":"fqn","name":"kotlin.clr.ClrTypeAlias"},"args":[{"value":"System.Object"}]},
               {"attr":{"t":"fqn","name":"kotlin.clr.ClrValueRepresentation"},"args":[
                 {"value":"Helpers.matches"},{"value":"Helpers.classifier"},
-                {"value":"Helpers.component"},{"value":"Slots.Tag"}]}]},
+                {"value":"Helpers.component"},{"value":"Slots.Tag"},{"value":""}]}]},
               {"name":"Implementation","kind":"class","interfaces":[{"t":"fqn","name":"Tag"}],
                 "fields":[{"name":"value","type":{"t":"fqn","name":"Tag"}}]}]}
             """);
@@ -634,6 +640,21 @@ sealed class ValueRepresentationLowering
             || TypeJson.OwnerName(projectedMarker["types"][1]["fields"][0]["type"]) != "System.Object"
             || TypeJson.OwnerName(markerRoot["types"][1]["interfaces"][0]) != "Tag")
             throw new InvalidOperationException("Interface marker projection changed the value alias or source identity");
+        var externalRoot = markerRoot.DeepClone();
+        externalRoot["types"][0]["name"] = "Carrier.Tag";
+        externalRoot["types"][0]["attrs"][1]["args"][4]["value"] = "Tag";
+        var external = new ValueRepresentationLowering(new[] { externalRoot }, null, false);
+        if (external.InterfaceMarkers.GetValueOrDefault("Tag") != "Slots.Tag"
+            || external.InterfaceMarkers.ContainsKey("Carrier.Tag")
+            || external.AliasFace(new TypeNode.Fqn("Tag")) != new TypeNode.Fqn("System.Object"))
+            throw new InvalidOperationException("CLR-only binding carrier lost its explicit common classifier target");
+        var arguments = new TypeNode[] { new TypeNode.Fqn("kotlin.String") };
+        if (BirTypeLowering.PhysicalHead("Logical", "System.Object", arguments) != new TypeNode.Fqn("System.Object")
+            || BirTypeLowering.ProjectedAliasHasReifiedGenericHead("Logical", "System.Object", arguments,
+                new Dictionary<string, string>())
+            || BirTypeLowering.PhysicalHead("Native", "System.Collections.Generic.List", arguments)
+                is not TypeNode.Fqn { Args.Length: 1 })
+            throw new InvalidOperationException("Non-generic object alias retained semantic type arguments or erased a native construction");
         Console.WriteLine("[value representation] self-test OK (source carriers, bounds, exact adapters, nominal slots, array classifiers)");
     }
 }

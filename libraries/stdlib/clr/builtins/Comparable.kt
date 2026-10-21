@@ -21,6 +21,7 @@ package kotlin
     "kotlin.comparisons.ComparisonsKt.clrComparableClassifier",
     "kotlin.comparisons.ComparisonsKt.clrComparableComponentMatches",
     "",
+    "",
 )
 public actual interface Comparable<in T> {
     /**

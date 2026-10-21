@@ -16,6 +16,7 @@ package kotlin
     "DotKt.Runtime.CompilerServices.NumberRuntimeKt.numberClassifier",
     "DotKt.Runtime.CompilerServices.NumberRuntimeKt.numberComponentMatches",
     "",
+    "",
 )
 public actual abstract class Number {
     /**

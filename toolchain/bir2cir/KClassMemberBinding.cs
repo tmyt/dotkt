@@ -9,7 +9,8 @@ using DotKt.Bir;
 //     after inline-splice substitution): `{"k":"classRef","type":<Kotlin FQN>}` = a static `typeof`.
 //   • `getType`   — a BOUND class reference on a value (`1::class`, `"x"::class`, `x::class`): `{"k":"getType","e":<expr>}`
 //     = a run-time `<expr>.GetType()`, reflecting the value's RUNTIME class.
-// KClass is @ClrTypeAlias-ed onto System.Type. This pass owns the Kotlin<->CLR NAME reversal (#138). Because it runs
+// Native class literals are System.Type values; ordinary KClass implementations remain supported. This pass owns
+// the statically-known Kotlin<->CLR NAME reversal (#138). Because it runs
 // BEFORE BirTypeLowering, every `type`/`sty` slot is still a pure Kotlin FQN (`kotlin.Int`, `kotlin.String`, a user
 // FQN), so where the Kotlin type identity is statically known it CONST-FOLDS the accessor straight off that token —
 // `qualifiedName` = the FQN verbatim, `simpleName` = its last `.`-segment. No CLR->Kotlin reverse TABLE is needed: the
@@ -21,7 +22,7 @@ using DotKt.Bir;
 //     class == the static type;
 //     `1::class` -> "Int"/"kotlin.Int", `"x"::class` -> "String"/"kotlin.String" — the reported failures. (Not folding a
 //     side-effecting `foo()::class` receiver keeps `foo()`'s evaluation.)
-// Everything else keeps the faithful run-time `System.Type.Name`/`.FullName` read:
+// Everything else keeps its semantic member read for the declaration-owned runtime adapter:
 //   • a BOUND `getType` on an OPEN/interface static type (`x: Any`, `list: List<Int>`) — the runtime class is a subtype,
 //     so the name is genuinely dynamic. Closing that (CLR-renamed builtins + generic backtick mangling surfacing at run
 //     time) needs a run-time CLR->Kotlin reverse-map HELPER (a stdlib runtime fn this pass would route to) — §5g of
@@ -35,7 +36,7 @@ using DotKt.Bir;
 //   • a BOUND `getType` on a `classRef` — the DOUBLE class literal `(Int::class)::class`, whose receiver is a KClass,
 //     not an Int. A classRef's type slot names the REFERENCED type, so reading it as the value's type would fold to
 //     the wrong name; see [CarriesItsOwnType]. Routed to the run-time read like any other KClass-typed receiver.
-// Non-ref only (the ref stdlib keeps KClass pure Kotlin). Bottom-up rewrite, mirroring ClrEventSubscriptionBinding.
+// Non-ref only. Mutate operations in place so declaration/ownership indices keep their existing nodes.
 static class KClassMemberBinding
 {
     // Kotlin builtin types that are FINAL (no subtypes), so a bound `value::class` on one is statically resolvable
@@ -62,17 +63,20 @@ static class KClassMemberBinding
     {
         if (node is JsonObject obj)
         {
-            var copy = new JsonObject();
-            foreach (var kv in obj) copy[kv.Key] = kv.Value == null ? null : Walk(kv.Value);   // children first (bottom-up)
-            return Transform(copy) ?? copy;
+            foreach (var child in obj.ToArray()) if (child.Value != null) Walk(child.Value);
+            if (Transform(obj) is JsonObject replacement)
+            {
+                obj.Clear();
+                foreach (var field in replacement) obj[field.Key] = field.Value?.DeepClone();
+            }
+            return obj;
         }
         if (node is JsonArray arr)
         {
-            var copy = new JsonArray();
-            foreach (var item in arr) copy.Add(item == null ? null : Walk(item));
-            return copy;
+            foreach (var item in arr) if (item != null) Walk(item);
+            return arr;
         }
-        return node.DeepClone();
+        return node;
     }
 
     static JsonNode Transform(JsonObject node)
@@ -97,17 +101,7 @@ static class KClassMemberBinding
             };
         }
 
-        // Dynamic — keep the faithful System.Type reflection read (§5g: the CLR->Kotlin run-time helper is a sequenced
-        // stdlib follow-up). KClass is @ClrTypeAlias-ed onto System.Type, so bind the BCL member.
-        return new JsonObject
-        {
-            ["k"] = "clrPropGet",
-            ["type"] = TypeJson.Fqn("System.Type"),
-            ["name"] = simple ? "Name" : "FullName",
-            ["ret"] = TypeJson.Fqn("System.String"),
-            ["static"] = false,
-            ["recv"] = recv.DeepClone(),
-        };
+        return null;
     }
 
     // The statically-known Kotlin FQN a `::class` receiver names, or null when the class is only known at run time.
