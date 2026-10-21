@@ -71,6 +71,27 @@ static class EnumValueLowering
                 RewriteExplicitParse(obj, parseType, parseArg, parseOwner, localParse);
             }
 
+            if (kind == "enumParse" && TypeJson.Read(obj["type"]) is TypeNode.Tv parseParameter)
+            {
+                runtimeLookup = true;
+                var argument = obj["arg"].DeepClone();
+                var position = obj["pos"]?.DeepClone();
+                obj.Clear();
+                obj["k"] = "cast";
+                obj["type"] = TypeJson.Write(parseParameter);
+                obj["e"] = new JsonObject
+                {
+                    ["k"] = "callStatic",
+                    ["owner"] = TypeJson.Fqn("DotKt.Runtime.CompilerServices.EnumRuntimeKt"),
+                    ["method"] = "kotlinEnumValueOf",
+                    ["sig"] = new JsonArray(TypeJson.Fqn("kotlin.Any"), TypeJson.Fqn("kotlin.String")),
+                    ["args"] = new JsonArray(
+                        new JsonObject { ["k"] = "classRef", ["type"] = TypeJson.Write(parseParameter) }, argument),
+                    ["ret"] = TypeJson.Fqn("kotlin.Any"),
+                };
+                if (position != null) obj["pos"] = position;
+            }
+
             if (kind is "enumName" or "enumOrdinal"
                 && obj["e"] is JsonNode receiver
                 && obj["type"] is JsonNode enumType

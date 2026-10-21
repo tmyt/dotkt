@@ -42,10 +42,14 @@ class EnumParseNameTests {
     fun reifiedParsingUsesTheSelectedEnumDeclaration() {
         assertEquals(ParseNameMode.FIRST, parseExactName<ParseNameMode>("FIRST"))
         assertEquals(ParseNameExplicit.SECOND, parseExactName<ParseNameExplicit>("SECOND"))
+        assertEquals(ParseNameRich.SECOND, parseExactName<ParseNameRich>("SECOND"))
         assertEquals(DayOfWeek.Monday, parseExactName<DayOfWeek>("Monday"))
         assertTrue(parseNameFails { parseExactName<ParseNameMode>("1") })
         assertTrue(parseNameFails { parseExactName<ParseNameExplicit>("-4") })
+        assertTrue(parseNameFails { parseExactName<ParseNameRich>("1") })
+        assertTrue(parseNameFails { parseExactName<ParseNameEmpty>("0") })
         assertTrue(parseNameFails { parseExactName<DayOfWeek>("1") })
+        assertTrue(parseNameFails { parseExactName<DayOfWeek>(" Monday ") })
     }
 
     @TestAttribute
