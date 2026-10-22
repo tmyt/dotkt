@@ -94,7 +94,7 @@ class NominalListClassifierTests {
         check(nominalIs<List<*>?>(value))
         check(nominalChecked<MutableList<*>?>(value) == null)
         var rejected = false
-        try { value as List<*> } catch (_: ClassCastException) { rejected = true }
+        try { value as List<*> } catch (_: NullPointerException) { rejected = true }
         check(rejected)
     }
 

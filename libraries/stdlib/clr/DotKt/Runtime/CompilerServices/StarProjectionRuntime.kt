@@ -327,6 +327,8 @@ internal fun kotlinCollectionCastCandidate(value: Any?, witness: Int, dictionary
     readOnlyDictionary: StarProjectionType, set: StarProjectionType, readOnlySet: StarProjectionType,
     list: StarProjectionType, genericList: StarProjectionType, readOnlyList: StarProjectionType,
     collection: StarProjectionType, readOnlyCollection: StarProjectionType): Any? {
+    if (value == null && (witness and 1) == 0)
+        throw NullPointerException("null cannot be cast to a non-null type")
     if (!kotlinCollectionMatches(value, witness, dictionary, readOnlyDictionary, set, readOnlySet,
             list, genericList, readOnlyList, collection, readOnlyCollection))
         throw ClassCastException("Value is not an instance of the requested Kotlin collection classifier")

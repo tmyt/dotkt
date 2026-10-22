@@ -81,8 +81,10 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   their open CLR definition and use raw base/interface membership, just like a direct classifier check; they do
   not test `Object` or a fabricated `G<Object>` construction. Checked reified `as` and `as?` use
   the same classifier, with throwing and null-producing failure respectively. The existing nullability/nominal
-  operation still owns null rejection, including the Kotlin `ClassCastException` for a null checked cast;
-  a `reified T` used only by `T::class`, for example, receives none. Calls construct a witness from a concrete source
+  operation still owns null rejection: checked casts governed by the witness, including direct casts to Kotlin
+  collection classifiers, throw `NullPointerException` for null when the target is non-null, while a non-null value
+  with the wrong classifier throws `ClassCastException`. Nullable targets accept null.
+  A `reified T` used only by `T::class`, for example, receives no witness. Calls construct a witness from a concrete source
   type and forward it when the argument is another reified parameter. The facts
   are separate compiler-internal ABI: `[KotlinDeclarationIdentity]` carries semantic `reified` indices and physical
   witness indices across a DLL boundary; `dll2klib` restores the former and hides the latter. If the

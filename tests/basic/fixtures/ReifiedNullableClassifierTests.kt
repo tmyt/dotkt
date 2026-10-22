@@ -8,6 +8,16 @@ private inline fun <reified T> nullableClassifierForward(value: Any?): Boolean =
 private inline fun <reified T> nullableClassifierAddNull(value: Any?): Boolean = nullableClassifierMatches<T?>(value)
 private inline fun <reified T> nullableClassifierSafeCast(value: Any?): T? = value as? T
 private inline fun <reified T> nullableClassifierCast(value: Any?): T = value as T
+private inline fun <reified T> nullableClassifierNullableCast(value: Any?): T? = value as T?
+private fun nullableClassifierNativeNullException(value: Any): Boolean = value is System.NullReferenceException
+private fun nullableClassifierDirectList(value: Any?): List<*> = value as List<*>
+private fun nullableClassifierDirectMap(value: Any?): Map<*, *> = value as Map<*, *>
+private inline fun <reified T> nullableClassifierRejectsNull(): Boolean = try {
+    nullableClassifierCast<T>(null)
+    false
+} catch (failure: NullPointerException) {
+    nullableClassifierNativeNullException(failure)
+}
 private inline fun <reified T> nullableClassifierDelegate(): (Any?) -> Boolean = { it is T }
 private inline fun <reified T> nullableClassifierEffectMatches(noinline next: () -> Any?): Boolean = next() is T
 private inline fun <reified T> nullableClassifierEffectSafeCast(noinline next: () -> Any?): T? = next() as? T
@@ -90,16 +100,54 @@ class ReifiedNullableClassifierTests {
         try { nullableClassifierCast<Int?>("wrong") } catch (_: InvalidCastException) { rejected = true }
         ClassicAssert.IsTrue(rejected)
         var stringNullRejected = false
-        try { nullableClassifierCast<String>(null) } catch (_: ClassCastException) { stringNullRejected = true }
+        try { nullableClassifierCast<String>(null) } catch (_: NullPointerException) { stringNullRejected = true }
         ClassicAssert.IsTrue(stringNullRejected)
         var listNullRejected = false
-        try { nullableClassifierCast<List<*>>(null) } catch (_: ClassCastException) { listNullRejected = true }
+        try { nullableClassifierCast<List<*>>(null) } catch (_: NullPointerException) { listNullRejected = true }
         ClassicAssert.IsTrue(listNullRejected)
         ClassicAssert.IsNull(nullableClassifierCast<String?>(null))
         ClassicAssert.IsNull(nullableClassifierCast<List<*>?>(null))
         var wrongStringRejected = false
         try { nullableClassifierCast<String>(42) } catch (_: InvalidCastException) { wrongStringRejected = true }
         ClassicAssert.IsTrue(wrongStringRejected)
+    }
+
+    @TestAttribute
+    fun nonNullCheckedCastsDistinguishNullFromWrongClassifiers() {
+        ClassicAssert.IsTrue(nullableClassifierRejectsNull<String>(), "String")
+        ClassicAssert.IsTrue(nullableClassifierRejectsNull<Int>(), "Int")
+        ClassicAssert.IsTrue(nullableClassifierRejectsNull<List<*>>(), "List")
+        ClassicAssert.IsTrue(nullableClassifierRejectsNull<Map<*, *>>(), "Map")
+        ClassicAssert.IsTrue(nullableClassifierRejectsNull<Number>(), "Number")
+        ClassicAssert.IsTrue(nullableClassifierRejectsNull<Comparable<*>>(), "Comparable")
+        ClassicAssert.IsTrue(nullableClassifierRejectsNull<kotlin.reflect.KClass<*>>(), "KClass")
+        var directNullRejected = false
+        try { nullableClassifierDirectList(null) } catch (failure: NullPointerException) {
+            directNullRejected = nullableClassifierNativeNullException(failure)
+        }
+        ClassicAssert.IsTrue(directNullRejected, "direct List")
+        directNullRejected = false
+        try { nullableClassifierDirectMap(null) } catch (failure: NullPointerException) {
+            directNullRejected = nullableClassifierNativeNullException(failure)
+        }
+        ClassicAssert.IsTrue(directNullRejected, "direct Map")
+        var rejected = false
+        try { nullableClassifierCast<List<*>>(Any()) } catch (_: ClassCastException) { rejected = true }
+        ClassicAssert.IsTrue(rejected)
+    }
+
+    @TestAttribute
+    fun explicitlyNullableTargetsKeepNullAcrossReifiedFrames() {
+        ClassicAssert.IsNull(nullableClassifierNullableCast<String>(null))
+        ClassicAssert.IsNull(nullableClassifierNullableCast<Int>(null))
+        ClassicAssert.IsNull(nullableClassifierNullableCast<List<*>>(null))
+        ClassicAssert.IsNull(nullableClassifierNullableCast<Number>(null))
+        ClassicAssert.IsNull(nullableClassifierNullableCast<kotlin.reflect.KClass<*>>(null))
+        ClassicAssert.AreEqual(42, nullableClassifierNullableCast<Int>(42))
+        ClassicAssert.IsFalse(nullableClassifierMatches<String>(null))
+        ClassicAssert.IsTrue(nullableClassifierMatches<String?>(null))
+        ClassicAssert.IsNull(nullableClassifierSafeCast<String>(null))
+        ClassicAssert.IsNull(nullableClassifierSafeCast<String>(42))
     }
 
     @TestAttribute
@@ -133,5 +181,10 @@ class ReifiedNullableClassifierTests {
         value = "wrong"
         try { nullableClassifierEffectCast<Int?>(next) } catch (_: InvalidCastException) { }
         ClassicAssert.AreEqual(9, count)
+        value = null
+        var nullRejected = false
+        try { nullableClassifierEffectCast<String>(next) } catch (_: NullPointerException) { nullRejected = true }
+        ClassicAssert.IsTrue(nullRejected)
+        ClassicAssert.AreEqual(10, count)
     }
 }

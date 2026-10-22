@@ -100,7 +100,7 @@ class NumberTests {
         check(uncheckedNull == null && inheritedBoundNull == null)
         check(boundedNumberSafe<Number>(null) == null)
         rejected = false
-        try { numberCast<Number>(null) } catch (_: ClassCastException) { rejected = true }
+        try { numberCast<Number>(null) } catch (_: NullPointerException) { rejected = true }
         check(rejected)
     }
 

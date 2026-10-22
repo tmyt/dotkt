@@ -87,10 +87,10 @@ class ReifiedNullabilityTests {
         try { checkedCast<Int?>("wrong") } catch (_: InvalidCastException) { rejected = true }
         ClassicAssert.IsTrue(rejected)
         var stringNullRejected = false
-        try { checkedCast<String>(null) } catch (_: ClassCastException) { stringNullRejected = true }
+        try { checkedCast<String>(null) } catch (_: NullPointerException) { stringNullRejected = true }
         ClassicAssert.IsTrue(stringNullRejected)
         var listNullRejected = false
-        try { checkedCast<List<*>>(null) } catch (_: ClassCastException) { listNullRejected = true }
+        try { checkedCast<List<*>>(null) } catch (_: NullPointerException) { listNullRejected = true }
         ClassicAssert.IsTrue(listNullRejected)
         ClassicAssert.IsNull(checkedCast<String?>(null))
         ClassicAssert.IsNull(checkedCast<List<*>?>(null))
