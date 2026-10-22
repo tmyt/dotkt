@@ -670,12 +670,12 @@ narrowing; this does not make a boxed Long usable as an Int.
 As with other unchecked class-bound casts, that raw bound guard admits null; the original generic cast and
 its typed consumer keep their existing null handling. Direct and reified non-null Number casts still reject null.
 
-This is not a Kotlin-reflection implementation. Under the existing `KClass` = `System.Type` contract (§2, §5g),
+This is not a Kotlin-reflection implementation. Under the native class-token contract (§2, §5g),
 `Number::class` names its physical alias, `System.Object`. A generic `T::class`
 without classifier operations receives no semantic witness and reports its physical type argument: instantiating it
 with Number also exposes Object, whose CLR membership accepts non-numbers. These CLR reflection tokens are
-not the semantic classifier used by Kotlin `is`/`as` operations. `KClass.isInstance` itself remains an unbound CLR
-stdlib stub; this change does not implement that reflection API.
+not the semantic classifier used by Kotlin `is`/`as` operations. Native `KClass.isInstance` uses that physical
+CLR type's membership; an ordinary Kotlin implementation retains its own method.
 
 `Array<Number>` uses `object[]`, following the existing nullable/opaque array component-storage contract. Array
 stores/reads and generic forwarding preserve the allocation and its identity. Such an erased allocation cannot
@@ -1189,7 +1189,7 @@ See §10.3 for the round-trip view.
 
 ## 5g. `KClass.simpleName`/`qualifiedName` report Kotlin names for the statically-known `::class` case (#138)
 
-`T::class` binds `kotlin.reflect.KClass` onto `System.Type` (intensionally faithful: `Foo::class`→`typeof` = an UNBOUND
+`T::class` produces a native `System.Type` token (`Foo::class`→`typeof` = an UNBOUND
 `classRef`; `x::class`→`GetType()` = a BOUND `getType`, reflecting the value's runtime class). **Kotlin contract
 (restored):** the NAME accessors report the Kotlin name — not the .NET reflection name — whenever the receiver's Kotlin
 type is **statically known**. bir2cir `KClassMemberBinding` runs BEFORE `BirTypeLowering`, so the receiver's type slot is
@@ -1227,6 +1227,14 @@ not reach:
 Closing these needs a small **runtime CLR→Kotlin reverse-map helper** (a stdlib runtime function `KClassMemberBinding`
 routes the dynamic `getType` to) — a cross-layer stdlib piece, not a bir2cir-only const-fold. It does **not** belong in
 kotc or ilemit.
+
+Ordinary `KClass<T>` values use Object slots: native tokens and Kotlin implementations retain their original
+identity, without wrapping. Type arguments remain in Kotlin metadata rather than becoming arguments of Object.
+Declaration-owned classifiers and nominal interface slots also preserve `KClassifier`, `KAnnotatedElement` and
+`KDeclarationContainer` membership. A CLR-only binding carrier names the unchanged common `KClassifier`
+declaration explicitly. Name/isInstance accessors dispatch to either the native type or the selected Kotlin
+implementation. Native annotations can be read; reflective enumeration of native callable members remains
+unimplemented. This is not full Kotlin reflection or a new semantic runtime-type witness.
 
 ## 5h. An auto-property's backing field is a compiler-generated `<Name>k__BackingField` (#228)
 

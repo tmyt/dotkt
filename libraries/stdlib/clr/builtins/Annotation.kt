@@ -21,5 +21,6 @@ package kotlin
     "DotKt.Runtime.CompilerServices.AnnotationRuntimeKt.annotationClassifier",
     "DotKt.Runtime.CompilerServices.AnnotationRuntimeKt.annotationComponentMatches",
     "DotKt.Runtime.CompilerServices.KotlinAnnotationMarker",
+    "",
 )
 public actual interface Annotation

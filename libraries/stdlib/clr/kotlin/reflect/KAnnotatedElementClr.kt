@@ -2,6 +2,15 @@
 
 package kotlin.reflect
 
+@kotlin.clr.ClrTypeAlias("System.Object")
+@kotlin.clr.ClrValueRepresentation(
+    "DotKt.Runtime.CompilerServices.ReflectionRuntimeKt.annotatedElementMatches",
+    "DotKt.Runtime.CompilerServices.ReflectionRuntimeKt.annotatedElementClassifier",
+    "DotKt.Runtime.CompilerServices.ReflectionRuntimeKt.annotatedElementComponentMatches",
+    "DotKt.Runtime.CompilerServices.KAnnotatedElementSlots",
+    "",
+)
 public interface KAnnotatedElement {
+    @kotlin.clr.ClrValueMember("DotKt.Runtime.CompilerServices.ReflectionRuntimeKt.annotatedElementAnnotations", "DotKt.Runtime.CompilerServices.KAnnotatedElementSlots.dotktAnnotations")
     public val annotations: List<Annotation>
 }

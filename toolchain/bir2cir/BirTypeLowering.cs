@@ -33,7 +33,7 @@ static class BirTypeLowering
     // Preserve the semantic head until PhysicalHead can select a collapsed classifier. This includes applications
     // that always erase their arguments, and aliases whose collapse depends on the final lowered arguments.
     internal static bool AliasHeadRequiresSourceIdentity(string source, string bcl) =>
-        ErasesGenericApplicationToNonGenericClassifier(source) || bcl == "System.IComparable";
+        ErasesGenericApplicationToNonGenericClassifier(source) || bcl is "System.IComparable" or "System.Object";
 
     // A pre-lowering projection pass must ask the same head-selection rule as the final type lowering. Remove only
     // the existential shell that FBoundStarProjectionErasure itself will erase, lower the resulting arguments, and
@@ -57,7 +57,7 @@ static class BirTypeLowering
             TypeNode.Nullable nullable => new TypeNode.Nullable(Bound(nullable.Of)),
             _ => type,
         };
-        var lowered = arguments.Select(argument =>
+        var lowered = arguments?.Select(argument =>
             LowerPhysicalType(Bound(argument), aliases, null, null, typeArg: true)).ToArray();
         return PhysicalHead(kotlinFqn, bcl, lowered)
             is TypeNode.Fqn { Args: not null };
@@ -313,9 +313,9 @@ static class BirTypeLowering
     internal static TypeNode PhysicalHead(string kotlinFqn, string bcl, TypeNode[] loweredArgs,
         IReadOnlyDictionary<string, NullableRepresentationFrame> nullableFrames = null)
     {
-        // The Kotlin enum base is a union of native enums and singleton classes, not System.Enum. Its source
-        // identity survives in metadata; the shared value view cannot retain the self-referential argument.
-        if (ErasesGenericApplicationToNonGenericClassifier(kotlinFqn) && loweredArgs != null)
+        // An object-valued binding has no CLR generic TypeDef. Its source arguments remain metadata facts,
+        // not physical arguments of System.Object (including the native/singleton enum union).
+        if ((ErasesGenericApplicationToNonGenericClassifier(kotlinFqn) || bcl == "System.Object") && loweredArgs != null)
             return new TypeNode.Fqn("System.Object");
         // A leaf: a @ClrTypeAlias type — a foundational primitive (kotlin.Int -> System.Int32) or a non-primitive
         // BCL (StringBuilder/Regex/IComparable/…) -> the BCL FQN. Otherwise the name stands: user / stdlib /
@@ -829,14 +829,14 @@ static class BirTypeLowering
     static IReadOnlyDictionary<string, string> _physicalTypeNames =
         new Dictionary<string, string>(StringComparer.Ordinal);
     static IReadOnlySet<string> _localTypeNames = new HashSet<string>(StringComparer.Ordinal);
-    static IReadOnlyDictionary<string, string> _interfaceMarkers = new Dictionary<string, string>(StringComparer.Ordinal);
+    static IReadOnlyDictionary<string, IReadOnlyList<string>> _interfaceMarkers = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
 
     public static JsonNode Lower(JsonNode root, bool refBuild, IReadOnlyDictionary<string, string> aliases = null,
         ValueTypeOracle isValueFqn = null, string file = null,
         IReadOnlyDictionary<string, string> physicalTypeNames = null,
         IReadOnlySet<string> localTypeNames = null,
         IReadOnlyDictionary<string, NullableRepresentationFrame> nullableFrames = null,
-        IReadOnlyDictionary<string, string> interfaceMarkers = null)
+        IReadOnlyDictionary<string, IReadOnlyList<string>> interfaceMarkers = null)
     {
         _aliases = aliases ?? new Dictionary<string, string>(StringComparer.Ordinal);
         _isValueFqn = isValueFqn ?? (_ => false);
@@ -844,7 +844,7 @@ static class BirTypeLowering
         _physicalTypeNames = physicalTypeNames ?? new Dictionary<string, string>(StringComparer.Ordinal);
         _localTypeNames = localTypeNames ?? new HashSet<string>(StringComparer.Ordinal);
         _nullableFrames = nullableFrames;
-        _interfaceMarkers = interfaceMarkers ?? new Dictionary<string, string>(StringComparer.Ordinal);
+        _interfaceMarkers = interfaceMarkers ?? new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
         return LowerNode(root, refBuild, force: false);
     }
 
@@ -924,9 +924,11 @@ static class BirTypeLowering
                             $"{_file}: malformed current node: field `to` is not defined for k={nodeK ?? "<missing>"}"),
                     };
                 else if (kv.Key == "interfaces" && kv.Value is JsonArray interfaces && (!refBuild || here))
-                    copy[kv.Key] = new JsonArray(interfaces.Select(type =>
-                        TypeJson.OwnerName(type) is string source && _interfaceMarkers.TryGetValue(source, out var marker)
-                            ? (JsonNode)TypeJson.Fqn(marker) : LowerTypeValued(type, refBuild, here)).ToArray());
+                    copy[kv.Key] = new JsonArray(interfaces.SelectMany(type =>
+                        TypeJson.OwnerName(type) is string source && _interfaceMarkers.TryGetValue(source, out var markers)
+                            ? markers.Select(marker => (JsonNode)TypeJson.Fqn(marker))
+                            : new[] { LowerTypeValued(type, refBuild, here) })
+                        .DistinctBy(type => SupertypeGraph.TypeKey((TypeNode.Fqn)TypeJson.Read(type))).ToArray());
                 else if (TypeKeys.Contains(kv.Key))
                     copy[kv.Key] = LowerTypeValued(kv.Value, refBuild, here);
                 else

@@ -18,6 +18,8 @@ sealed class ValueRepresentationLowering
     readonly Dictionary<string, string> adapters = new(StringComparer.Ordinal);
     readonly Dictionary<string, (string Owner, JsonObject Method, string Slot)> members = new(StringComparer.Ordinal);
     readonly Dictionary<string, (string Owner, JsonObject Method)> locals = new(StringComparer.Ordinal);
+    readonly Dictionary<string, SupertypeGraph.Def> sourceHierarchy;
+    IReadOnlyDictionary<string, IReadOnlyList<string>> interfaceMarkers;
     readonly ReferenceMetadataIndex refs;
     readonly bool referenceBuild;
 
@@ -32,26 +34,36 @@ sealed class ValueRepresentationLowering
     {
         refs = references;
         referenceBuild = refBuild;
+        sourceHierarchy = SupertypeGraph.Collect(roots);
         aliases = new Dictionary<string, string>(refs?.Aliases ?? new Dictionary<string, string>(), StringComparer.Ordinal);
         foreach (var assembly in refs?.Assemblies ?? Array.Empty<ReferenceAssembly>())
             foreach (var (name, binding) in assembly.DotKt.ValueRepresentations) bindings[name] = binding;
         foreach (var member in refs?.ValueMembers ?? Array.Empty<MemberBinding>())
+        {
             members[member.DeclarationId] = (member.Owner, new JsonObject {
-                ["name"] = member.DeclarationSourceName ?? member.Name,
+                ["name"] = member.SourcePropertyName ?? member.DeclarationSourceName ?? member.Name,
+                [KotlinPropertyAccessors.KindKey] = member.AccessorKind,
                 [DeclarationIdentityBinding.Key] = member.DeclarationId,
                 ["abstract"] = member.IsAbstract,
                 ["params"] = new JsonArray((member.DeclarationSemanticParams ?? member.ParamTypeNodes)
                     .Select((type, index) => (JsonNode)new JsonObject { ["name"] = "p" + index, ["type"] = TypeJson.Write(type) }).ToArray()),
                 ["ret"] = TypeJson.Write(member.DeclarationSemanticReturn ?? member.ReturnTypeNode),
             }, member.ValueSlot);
+        }
         void Index(JsonObject declaration)
         {
             if (Text(declaration["name"]) is string name)
             {
                 if (declaration["typeParams"] is JsonArray parameters) localParameters[name] = parameters;
-                if (Attribute(declaration, "kotlin.clr.ClrTypeAlias") is { } alias) aliases[name] = Argument(alias, 0);
-                if (Attribute(declaration, TypeAttribute) is { } attribute)
-                    bindings[name] = new(Argument(attribute, 0), Argument(attribute, 1), Argument(attribute, 2), Argument(attribute, 3));
+                var attribute = Attribute(declaration, TypeAttribute);
+                var source = attribute == null ? name : Argument(attribute, 4) switch { "" => name, var target => target };
+                if (Attribute(declaration, "kotlin.clr.ClrTypeAlias") is { } alias)
+                {
+                    aliases[name] = Argument(alias, 0);
+                    aliases[source] = Argument(alias, 0);
+                }
+                if (attribute != null)
+                    bindings[source] = new(Argument(attribute, 0), Argument(attribute, 1), Argument(attribute, 2), Argument(attribute, 3));
             }
             var owner = Text(declaration["fileClass"]) ?? Text(declaration["name"]);
             foreach (var method in (declaration["methods"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
@@ -79,9 +91,42 @@ sealed class ValueRepresentationLowering
 
     internal bool HasClassifier(TypeNode type) => Classifier(type).Binding != null;
 
-    internal IReadOnlyDictionary<string, string> InterfaceMarkers => bindings
-        .Where(entry => !string.IsNullOrEmpty(entry.Value.InterfaceMarker))
-        .ToDictionary(entry => entry.Key, entry => entry.Value.InterfaceMarker, StringComparer.Ordinal);
+    internal IReadOnlyDictionary<string, IReadOnlyList<string>> InterfaceMarkers
+    {
+        get
+        {
+            if (interfaceMarkers != null) return interfaceMarkers;
+            var direct = bindings.Where(entry => !string.IsNullOrEmpty(entry.Value.InterfaceMarker))
+                .ToDictionary(entry => entry.Key, entry => entry.Value.InterfaceMarker, StringComparer.Ordinal);
+            var result = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
+            foreach (var source in direct.Keys)
+            {
+                var arity = sourceHierarchy.TryGetValue(source, out var declaration) ? declaration.Arity : refs?.OwnerArity(source) ?? 0;
+                var arguments = arity == 0 ? null : Enumerable.Range(0, arity).Select(index => (TypeNode)new TypeNode.Tv("type", index)).ToArray();
+                // Seed the shared source-graph walk with the declaration itself. A logical interface edge owes
+                // every mapped ancestor facet, not a fresh copy of an ancestor's CLR method declarations.
+                var seed = new SupertypeGraph.Def { Name = source,
+                    Interfaces = new[] { new TypeNode.Fqn(source, arguments) } };
+                result[source] = SupertypeGraph.Reachable(seed, sourceHierarchy, refs)
+                    .Select(edge => direct.GetValueOrDefault(edge.spec.Name)).Where(marker => marker != null)
+                    .Distinct(StringComparer.Ordinal).ToArray();
+            }
+            return interfaceMarkers = result;
+        }
+    }
+
+    string SelectedAdapter(JsonObject operation)
+    {
+        string Adapter(string id) => id == null ? null : adapters.GetValueOrDefault(id) ?? refs?.ValueAdapter(id);
+        if (Text(operation[DeclarationIdentityBinding.Key]) is string selected) return Adapter(selected);
+        if (operation["overrides"] is not JsonArray contracts) return null;
+        // A fake override has no declaration of its own. The frontend states its exact inherited contracts;
+        // use a unique adapter among those identities, never reconstruct a member from its owner/name.
+        var inherited = contracts.OfType<JsonObject>()
+            .Select(marker => Adapter(Text(marker[DeclarationIdentityBinding.Key])))
+            .Where(target => target != null).Distinct(StringComparer.Ordinal).ToArray();
+        return inherited.Length == 1 ? inherited[0] : null;
+    }
 
     bool OpaqueScalar(TypeNode type)
     {
@@ -265,8 +310,7 @@ sealed class ValueRepresentationLowering
                 return;
             }
             if (kind == "callInstance" && operation["super"]?.GetValue<bool>() != true
-                && Text(operation[DeclarationIdentityBinding.Key]) is string id
-                && (adapters.GetValueOrDefault(id) ?? refs?.ValueAdapter(id)) is string target)
+                && SelectedAdapter(operation) is string target)
             {
                 var arguments = new[] { operation["recv"] }.Concat(operation["args"] as JsonArray ?? new JsonArray()).ToArray();
                 var signature = new[] { new TypeNode.Fqn("kotlin.Any") }.Concat(
@@ -429,9 +473,11 @@ sealed class ValueRepresentationLowering
     // nominal interface map. Bridges are protected virtual implementation details: descendants
     // override the selected bridge, or call its inherited body NONvirtually. Thus a default
     // followed by a descendant override works across DLLs without rediscovering any body.
-    internal void SynthesizeSlots(IReadOnlyList<JsonNode> roots)
+    internal void SynthesizeSlots(IReadOnlyList<JsonNode> roots, ValueTypeOracle isValue)
     {
-        if (referenceBuild || members.Count == 0) return;
+        // Reference faces must retain these declarations too: downstream subclasses use
+        // their exact MethodImpl identities to inherit the runtime implementation.
+        if (members.Count == 0) return;
         var defs = SupertypeGraph.Collect(roots);
         var completed = new HashSet<string>(StringComparer.Ordinal);
         var active = new HashSet<string>(StringComparer.Ordinal);
@@ -444,11 +490,21 @@ sealed class ValueRepresentationLowering
             var reachable = SupertypeGraph.Reachable(cls, defs, refs).Select(edge => edge.spec.Name).ToHashSet(StringComparer.Ordinal);
             // Referenced physical bases can erase their Kotlin alias edge. The frontend's
             // flattened exact override identities still state which semantic family is selected.
-            foreach (var method in cls.Methods.OfType<JsonObject>())
+            var inheritedFacts = new[] { "inheritedClassMethods", KotlinPropertyAccessors.InheritedDefaultAccessorsKey,
+                    KotlinPropertyAccessors.InheritedDefaultMethodsKey }
+                .SelectMany(key => (cls.Node[key] as JsonArray ?? new JsonArray()).OfType<JsonObject>());
+            foreach (var method in cls.Methods.OfType<JsonObject>().Concat(inheritedFacts))
                 foreach (var marker in (method["overrides"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
                     if (Text(marker[DeclarationIdentityBinding.Key]) is string id && members.TryGetValue(id, out var selected))
                         reachable.Add(selected.Owner);
             var sourceMembers = members.Where(member => reachable.Contains(member.Value.Owner)).ToArray();
+            bool Selects(JsonObject fact, string sourceId) =>
+                (fact["overrides"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()
+                    .Any(marker => Text(marker[DeclarationIdentityBinding.Key]) == sourceId);
+            var inheritedImplementations = sourceMembers.Length == 0
+                ? Array.Empty<(TypeNode.Fqn Owner, JsonObject Method, JsonObject Fact, bool IsDefault)>()
+                : KotlinOverrideSlotBridge.SelectedInheritedImplementations(cls, defs, refs, isValue,
+                    (fact, _) => sourceMembers.Any(source => Selects(fact, source.Key)));
             foreach (var (sourceId, source) in sourceMembers)
             {
                 var split = source.Slot.LastIndexOf('.');
@@ -485,14 +541,20 @@ sealed class ValueRepresentationLowering
                 var arguments = new JsonArray(parameters.Select((parameter, index) => (JsonNode)new JsonObject {
                     ["k"] = "local", ["name"] = "p" + index, ["sty"] = parameter["type"]?.DeepClone() }).ToArray());
                 var target = own.SingleOrDefault();
+                var selectedBodies = target == null && (inherited == null || Bool(inherited["abstract"]))
+                    ? inheritedImplementations.Where(selected => refs?.UsesObjectValueSlots(selected.Owner.Name) != true
+                        && Selects(selected.Fact, sourceId)).ToArray()
+                    : Array.Empty<(TypeNode.Fqn Owner, JsonObject Method, JsonObject Fact, bool IsDefault)>();
+                if (selectedBodies.Length > 1) throw new InvalidOperationException("Ambiguous selected inherited value implementation");
+                var hasSelectedBody = selectedBodies.Length == 1;
                 if (target?["overrides"] is JsonArray selectedOverrides
                     && selectedOverrides.OfType<JsonObject>().Select(marker => Text(marker[DeclarationIdentityBinding.Key]))
                         .Where(id => id != null).All(members.ContainsKey))
                     target[DeclarationIdentityBinding.IndependentAliasSlotKey] = true;
                 var abstractSlot = target != null ? Bool(target["abstract"])
-                    : inherited != null ? Bool(inherited["abstract"]) : Bool(declaration["abstract"]);
+                    : hasSelectedBody ? false : inherited != null ? Bool(inherited["abstract"]) : Bool(declaration["abstract"]);
                 JsonObject forwarded = null;
-                if (!abstractSlot)
+                if (!abstractSlot && !hasSelectedBody)
                 {
                     if (target != null || inherited != null)
                     {
@@ -521,19 +583,44 @@ sealed class ValueRepresentationLowering
                     ["params"] = new JsonArray(parameters.Select((parameter, index) => (JsonNode)new JsonObject {
                         ["name"] = "p" + index, ["type"] = parameter["type"]?.DeepClone() }).ToArray()),
                     ["ret"] = declaration["ret"]?.DeepClone(),
-                    ["body"] = abstractSlot ? new JsonArray() : new JsonArray(new JsonObject { ["k"] = "return", ["value"] = forwarded }),
+                    ["body"] = abstractSlot || hasSelectedBody ? new JsonArray() : new JsonArray(new JsonObject { ["k"] = "return", ["value"] = forwarded }),
                     ["attrs"] = new JsonArray(),
                     ["clrInterfaceImpls"] = new JsonArray(new JsonObject {
                         ["owner"] = TypeJson.Fqn(slotOwner), ["member"] = slotMember, ["arity"] = 0,
                         ["params"] = signature, ["ret"] = declaration["ret"]?.DeepClone(),
                     }),
                 };
+                if (hasSelectedBody)
+                {
+                    var selected = selectedBodies[0];
+                    var body = KotlinOverrideSlotBridge.BuildBridge(cls, selected.Method,
+                        parameters.OfType<JsonObject>().Select(parameter => TypeJson.Read(parameter["type"])).ToArray(),
+                        TypeJson.Read(declaration["ret"]), name, isValue, refs, selected.Owner,
+                        virtualCall: !selected.IsDefault,
+                        callMember: Text(selected.Method[DeclarationIdentityBinding.ExplicitNameKey]) ?? Text(selected.Method["name"]));
+                    bridge["params"] = body["params"]?.DeepClone();
+                    bridge["body"] = body["body"]?.DeepClone();
+                }
                 cls.Methods.Add(MaterializedExecutable.Normalize(bridge));
                 bridges[(cls.Name, source.Slot)] = bridge;
                 var interfaces = cls.Node["interfaces"] as JsonArray ?? new JsonArray();
                 if (cls.Node["interfaces"] == null) cls.Node["interfaces"] = interfaces;
                 if (!interfaces.Any(type => TypeJson.OwnerName(type) == slotOwner)) interfaces.Add(TypeJson.Fqn(slotOwner));
             }
+            // Inherited accessor placeholders are not new source declarations. Their value-family
+            // obligations are the exact facet slots above, not a second abstract CLR property surface.
+            var placeholders = cls.Methods.OfType<JsonObject>().Where(method => Bool(method["abstract"])
+                && method[DeclarationIdentityBinding.Key] == null && SelectedAdapter(method) != null
+                && (method["overrides"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()
+                    .Select(marker => Text(marker[DeclarationIdentityBinding.Key])).Where(id => id != null)
+                    .All(members.ContainsKey)).ToArray();
+            var associations = placeholders.Select(method => Text(method[KotlinPropertyAccessors.AssociationKey]))
+                .Where(value => value != null).ToHashSet(StringComparer.Ordinal);
+            foreach (var placeholder in placeholders) cls.Methods.Remove(placeholder);
+            if (cls.Node["properties"] is JsonArray properties)
+                foreach (var property in properties.OfType<JsonObject>()
+                             .Where(property => associations.Contains(Text(property[KotlinPropertyAccessors.AssociationKey]))).ToArray())
+                    properties.Remove(property);
             active.Remove(cls.Name);
             completed.Add(cls.Name);
         }
@@ -554,7 +641,7 @@ sealed class ValueRepresentationLowering
         {"fileClass":"Helpers","types":[{"name":"Union","kind":"class","attrs":[
           {"attr":{"t":"fqn","name":"kotlin.clr.ClrTypeAlias"},"args":[{"value":"System.Object"}]},
           {"attr":{"t":"fqn","name":"kotlin.clr.ClrValueRepresentation"},"args":[
-           {"value":"Helpers.matches"},{"value":"Helpers.classifier"},{"value":"Helpers.component"},{"value":""}]}],
+           {"value":"Helpers.matches"},{"value":"Helpers.classifier"},{"value":"Helpers.component"},{"value":""},{"value":""}]}],
           "methods":[{"name":"convert","declarationId":"convert","params":[],"ret":{"t":"fqn","name":"kotlin.Int"},"abstract":true,"attrs":[
            {"attr":{"t":"fqn","name":"kotlin.clr.ClrValueMember"},"args":[{"value":"Helpers.convert"},{"value":"Slots.convert"}]}]}]},
           {"name":"Child","kind":"class","base":{"t":"fqn","name":"Union"},"methods":[
@@ -572,7 +659,15 @@ sealed class ValueRepresentationLowering
             {"k":"exprStmt","expr":{"k":"classRef","type":{"t":"fqn","name":"Union"}}},
             {"k":"exprStmt","expr":{"k":"callStatic","sig":[{"t":"fqn","name":"Union"}]}}]}]}
         """);
+        var referenceRoot = root.DeepClone();
         var policy = new ValueRepresentationLowering(new[] { root }, null, false);
+        var inheritedCall = JsonNode.Parse("""
+            {"k":"callInstance","overrides":[{"declarationId":"convert"}],
+             "recv":{"k":"local","name":"value"},"args":[],"sig":[],"ret":{"t":"fqn","name":"kotlin.Int"}}
+            """);
+        policy.BindOperations(inheritedCall);
+        if (Text(inheritedCall[DeclarationIdentityBinding.Key]) != "helper-convert")
+            throw new InvalidOperationException("A frontend-selected inherited contract lost its value adapter");
         var nullCast = JsonNode.Parse("""
             {"k":"cast","type":{"t":"fqn","name":"Union"},
              "e":{"k":"const","type":{"t":"nullable","of":{"t":"fqn","name":"kotlin.Any"}},"value":null}}
@@ -594,7 +689,7 @@ sealed class ValueRepresentationLowering
               "ret":{"t":"fqn","name":"Union"}}]
             """);
         policy.RecordSourceTypes(root);
-        policy.SynthesizeSlots(new[] { root });
+        policy.SynthesizeSlots(new[] { root }, _ => false);
         foreach (var key in new[] { "clrInterfaceImpls", "clrBaseImpls" })
             if (method[key][0].AsObject().ContainsKey("retKotlinType"))
                 throw new InvalidOperationException("Physical MethodImpl descriptor acquired source metadata");
@@ -618,22 +713,59 @@ sealed class ValueRepresentationLowering
             || Text(bridge["body"][0]["value"][DeclarationIdentityBinding.Key]) != "child-convert"
             || Text(bridge["clrInterfaceImpls"][0]["member"]) != "convert")
             throw new InvalidOperationException("Nominal slots lost exact override/member bindings");
+        new ValueRepresentationLowering(new[] { referenceRoot }, null, true)
+            .SynthesizeSlots(new[] { referenceRoot }, _ => false);
+        var referenceBridge = referenceRoot["types"][1]["methods"].AsArray().OfType<JsonObject>()
+            .SingleOrDefault(method => Bool(method["generated"]));
+        if (referenceBridge == null || Bool(referenceBridge["abstract"])
+            || Text(referenceBridge["name"]) != Text(bridge["name"])
+            || referenceBridge["params"].ToJsonString() != bridge["params"].ToJsonString()
+            || referenceBridge["ret"].ToJsonString() != bridge["ret"].ToJsonString()
+            || referenceBridge["clrInterfaceImpls"].ToJsonString() != bridge["clrInterfaceImpls"].ToJsonString())
+            throw new InvalidOperationException("Reference face dropped a runtime nominal-slot declaration");
         var markerRoot = JsonNode.Parse("""
             {"types":[{"name":"Tag","kind":"interface","attrs":[
               {"attr":{"t":"fqn","name":"kotlin.clr.ClrTypeAlias"},"args":[{"value":"System.Object"}]},
               {"attr":{"t":"fqn","name":"kotlin.clr.ClrValueRepresentation"},"args":[
                 {"value":"Helpers.matches"},{"value":"Helpers.classifier"},
-                {"value":"Helpers.component"},{"value":"Slots.Tag"}]}]},
-              {"name":"Implementation","kind":"class","interfaces":[{"t":"fqn","name":"Tag"}],
+                {"value":"Helpers.component"},{"value":"Slots.Tag"},{"value":""}]}]},
+              {"name":"Implementation","kind":"class","interfaces":[{"t":"fqn","name":"Tag"},{"t":"fqn","name":"Slots.Tag"}],
                 "fields":[{"name":"value","type":{"t":"fqn","name":"Tag"}}]}]}
             """);
         var markers = new ValueRepresentationLowering(new[] { markerRoot }, null, false).InterfaceMarkers;
         var projectedMarker = BirTypeLowering.Lower(markerRoot, false,
             new Dictionary<string, string> { ["Tag"] = "System.Object" }, interfaceMarkers: markers);
         if (TypeJson.OwnerName(projectedMarker["types"][1]["interfaces"][0]) != "Slots.Tag"
+            || projectedMarker["types"][1]["interfaces"].AsArray().Count != 1
             || TypeJson.OwnerName(projectedMarker["types"][1]["fields"][0]["type"]) != "System.Object"
             || TypeJson.OwnerName(markerRoot["types"][1]["interfaces"][0]) != "Tag")
             throw new InvalidOperationException("Interface marker projection changed the value alias or source identity");
+        var externalRoot = markerRoot.DeepClone();
+        externalRoot["types"][0]["name"] = "Carrier.Tag";
+        externalRoot["types"][0]["attrs"][1]["args"][4]["value"] = "Tag";
+        var external = new ValueRepresentationLowering(new[] { externalRoot }, null, false);
+        if (!external.InterfaceMarkers["Tag"].SequenceEqual(new[] { "Slots.Tag" })
+            || external.InterfaceMarkers.ContainsKey("Carrier.Tag")
+            || external.AliasFace(new TypeNode.Fqn("Tag")) != new TypeNode.Fqn("System.Object"))
+            throw new InvalidOperationException("CLR-only binding carrier lost its explicit common classifier target");
+        var inheritedMarkerRoot = markerRoot.DeepClone();
+        var derivedMarker = (JsonObject)inheritedMarkerRoot["types"][0].DeepClone();
+        derivedMarker["name"] = "DerivedTag";
+        derivedMarker["interfaces"] = new JsonArray(TypeJson.Fqn("Tag"));
+        derivedMarker["attrs"][1]["args"][3]["value"] = "Slots.DerivedTag";
+        inheritedMarkerRoot["types"].AsArray().Add(derivedMarker);
+        var inheritedMarkers = new ValueRepresentationLowering(new[] { inheritedMarkerRoot }, null, false).InterfaceMarkers;
+        if (!inheritedMarkers["DerivedTag"].SequenceEqual(new[] { "Slots.DerivedTag", "Slots.Tag" }))
+            throw new InvalidOperationException("A mapped interface lost its source ancestor facets");
+        var arguments = new TypeNode[] { new TypeNode.Fqn("kotlin.String") };
+        if (BirTypeLowering.PhysicalHead("Logical", "System.Object", arguments) != new TypeNode.Fqn("System.Object")
+            || BirTypeLowering.ProjectedAliasHasReifiedGenericHead("Logical", "System.Object", null,
+                new Dictionary<string, string>())
+            || BirTypeLowering.ProjectedAliasHasReifiedGenericHead("Logical", "System.Object", arguments,
+                new Dictionary<string, string>())
+            || BirTypeLowering.PhysicalHead("Native", "System.Collections.Generic.List", arguments)
+                is not TypeNode.Fqn { Args.Length: 1 })
+            throw new InvalidOperationException("Non-generic object alias retained semantic type arguments or erased a native construction");
         Console.WriteLine("[value representation] self-test OK (source carriers, bounds, exact adapters, nominal slots, array classifiers)");
     }
 }
