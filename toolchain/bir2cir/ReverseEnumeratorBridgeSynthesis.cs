@@ -401,7 +401,10 @@ static class ReverseEnumeratorBridgeSynthesis
         foreach (var (spec, isInterface) in SupertypeGraph.Reachable(def, defs, refs))
         {
             if (!isInterface) continue;
-            var physicalFace = BirTypeLowering.LowerPhysicalType(spec, refs.Aliases, refs.IsValueType,
+            // Reference declarations carry CLR arity; alias bindings use the Kotlin declaration owner.
+            var aliasOwner = Bare(spec.Name);
+            var declaration = refs.Aliases.ContainsKey(aliasOwner) ? new TypeNode.Fqn(aliasOwner, spec.Args) : spec;
+            var physicalFace = BirTypeLowering.LowerPhysicalType(declaration, refs.Aliases, refs.IsValueType,
                 refs.PhysicalTypeNames, typeArg: false, localTypeNames: localNames) as TypeNode.Fqn;
             if (physicalFace?.Args is not { Length: 1 } args) continue;
             // Bare names: a face stated by this unit carries no arity, one reached through a reference assembly does.
