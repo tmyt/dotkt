@@ -12,6 +12,17 @@ import roundtrip.kclassvalues.classIdentity
 import roundtrip.kclassvalues.annotatedIdentity
 import roundtrip.kclassvalues.boundedIdentity
 import roundtrip.kclassvalues.matches
+import roundtrip.kclassvalues.ImportedPlainBase
+import roundtrip.kclassvalues.ImportedDefault
+
+open class KClassValueImportedPlain : ImportedPlainBase<String>("plain"), KClass<Any>
+class KClassValueImportedPlainOverride : KClassValueImportedPlain() {
+    override val simpleName: String get() = "ImportedLater"
+}
+class KClassValueImportedDefault : ImportedDefault {
+    override fun equals(other: Any?): Boolean = this === other
+    override fun hashCode(): Int = 47
+}
 
 class KClassValueImportedDerived : ImportedManual() {
     override val simpleName: String get() = "Derived"
@@ -19,6 +30,31 @@ class KClassValueImportedDerived : ImportedManual() {
 }
 
 class KClassValueRoundtripTests {
+    @TestAttribute
+    fun referencedUnrelatedGenericBaseSatisfiesConsumerInterfaceSlots() {
+        val value: KClass<*> = KClassValueImportedPlain()
+        assertEquals("ImportedPlain", value.simpleName)
+        assertEquals("roundtrip.ImportedPlain", value.qualifiedName)
+        assertEquals(0, value.annotations.size)
+        assertEquals(0, value.members.size)
+        assertTrue(value.isInstance("plain"))
+        assertEquals(false, value.isInstance(42))
+        val later: KClass<*> = KClassValueImportedPlainOverride()
+        assertEquals("ImportedLater", later.simpleName)
+        assertTrue(later.isInstance("plain"))
+    }
+
+    @TestAttribute
+    fun referencedDefaultInterfaceBodiesSatisfyConsumerNominalSlots() {
+        val value: KClass<*> = KClassValueImportedDefault()
+        assertEquals("ImportedDefault", value.simpleName)
+        assertEquals("roundtrip.ImportedDefault", value.qualifiedName)
+        assertEquals(0, value.annotations.size)
+        assertEquals(0, value.members.size)
+        assertTrue(value.isInstance(42L))
+        assertEquals(false, value.isInstance(42))
+    }
+
     @TestAttribute
     fun importedAnnotationConstructorsAndGettersRetainKClassSignatures() {
         val value = ImportedTyped(Int::class)

@@ -39,14 +39,17 @@ sealed class ValueRepresentationLowering
         foreach (var assembly in refs?.Assemblies ?? Array.Empty<ReferenceAssembly>())
             foreach (var (name, binding) in assembly.DotKt.ValueRepresentations) bindings[name] = binding;
         foreach (var member in refs?.ValueMembers ?? Array.Empty<MemberBinding>())
+        {
             members[member.DeclarationId] = (member.Owner, new JsonObject {
-                ["name"] = member.DeclarationSourceName ?? member.Name,
+                ["name"] = member.SourcePropertyName ?? member.DeclarationSourceName ?? member.Name,
+                [KotlinPropertyAccessors.KindKey] = member.AccessorKind,
                 [DeclarationIdentityBinding.Key] = member.DeclarationId,
                 ["abstract"] = member.IsAbstract,
                 ["params"] = new JsonArray((member.DeclarationSemanticParams ?? member.ParamTypeNodes)
                     .Select((type, index) => (JsonNode)new JsonObject { ["name"] = "p" + index, ["type"] = TypeJson.Write(type) }).ToArray()),
                 ["ret"] = TypeJson.Write(member.DeclarationSemanticReturn ?? member.ReturnTypeNode),
             }, member.ValueSlot);
+        }
         void Index(JsonObject declaration)
         {
             if (Text(declaration["name"]) is string name)
@@ -470,7 +473,7 @@ sealed class ValueRepresentationLowering
     // nominal interface map. Bridges are protected virtual implementation details: descendants
     // override the selected bridge, or call its inherited body NONvirtually. Thus a default
     // followed by a descendant override works across DLLs without rediscovering any body.
-    internal void SynthesizeSlots(IReadOnlyList<JsonNode> roots)
+    internal void SynthesizeSlots(IReadOnlyList<JsonNode> roots, ValueTypeOracle isValue)
     {
         if (referenceBuild || members.Count == 0) return;
         var defs = SupertypeGraph.Collect(roots);
@@ -485,11 +488,21 @@ sealed class ValueRepresentationLowering
             var reachable = SupertypeGraph.Reachable(cls, defs, refs).Select(edge => edge.spec.Name).ToHashSet(StringComparer.Ordinal);
             // Referenced physical bases can erase their Kotlin alias edge. The frontend's
             // flattened exact override identities still state which semantic family is selected.
-            foreach (var method in cls.Methods.OfType<JsonObject>())
+            var inheritedFacts = new[] { "inheritedClassMethods", KotlinPropertyAccessors.InheritedDefaultAccessorsKey,
+                    KotlinPropertyAccessors.InheritedDefaultMethodsKey }
+                .SelectMany(key => (cls.Node[key] as JsonArray ?? new JsonArray()).OfType<JsonObject>());
+            foreach (var method in cls.Methods.OfType<JsonObject>().Concat(inheritedFacts))
                 foreach (var marker in (method["overrides"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
                     if (Text(marker[DeclarationIdentityBinding.Key]) is string id && members.TryGetValue(id, out var selected))
                         reachable.Add(selected.Owner);
             var sourceMembers = members.Where(member => reachable.Contains(member.Value.Owner)).ToArray();
+            bool Selects(JsonObject fact, string sourceId) =>
+                (fact["overrides"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()
+                    .Any(marker => Text(marker[DeclarationIdentityBinding.Key]) == sourceId);
+            var inheritedImplementations = sourceMembers.Length == 0
+                ? Array.Empty<(TypeNode.Fqn Owner, JsonObject Method, JsonObject Fact, bool IsDefault)>()
+                : KotlinOverrideSlotBridge.SelectedInheritedImplementations(cls, defs, refs, isValue,
+                    (fact, _) => sourceMembers.Any(source => Selects(fact, source.Key)));
             foreach (var (sourceId, source) in sourceMembers)
             {
                 var split = source.Slot.LastIndexOf('.');
@@ -526,14 +539,20 @@ sealed class ValueRepresentationLowering
                 var arguments = new JsonArray(parameters.Select((parameter, index) => (JsonNode)new JsonObject {
                     ["k"] = "local", ["name"] = "p" + index, ["sty"] = parameter["type"]?.DeepClone() }).ToArray());
                 var target = own.SingleOrDefault();
+                var selectedBodies = target == null && (inherited == null || Bool(inherited["abstract"]))
+                    ? inheritedImplementations.Where(selected => refs?.UsesObjectValueSlots(selected.Owner.Name) != true
+                        && Selects(selected.Fact, sourceId)).ToArray()
+                    : Array.Empty<(TypeNode.Fqn Owner, JsonObject Method, JsonObject Fact, bool IsDefault)>();
+                if (selectedBodies.Length > 1) throw new InvalidOperationException("Ambiguous selected inherited value implementation");
+                var hasSelectedBody = selectedBodies.Length == 1;
                 if (target?["overrides"] is JsonArray selectedOverrides
                     && selectedOverrides.OfType<JsonObject>().Select(marker => Text(marker[DeclarationIdentityBinding.Key]))
                         .Where(id => id != null).All(members.ContainsKey))
                     target[DeclarationIdentityBinding.IndependentAliasSlotKey] = true;
                 var abstractSlot = target != null ? Bool(target["abstract"])
-                    : inherited != null ? Bool(inherited["abstract"]) : Bool(declaration["abstract"]);
+                    : hasSelectedBody ? false : inherited != null ? Bool(inherited["abstract"]) : Bool(declaration["abstract"]);
                 JsonObject forwarded = null;
-                if (!abstractSlot)
+                if (!abstractSlot && !hasSelectedBody)
                 {
                     if (target != null || inherited != null)
                     {
@@ -562,19 +581,44 @@ sealed class ValueRepresentationLowering
                     ["params"] = new JsonArray(parameters.Select((parameter, index) => (JsonNode)new JsonObject {
                         ["name"] = "p" + index, ["type"] = parameter["type"]?.DeepClone() }).ToArray()),
                     ["ret"] = declaration["ret"]?.DeepClone(),
-                    ["body"] = abstractSlot ? new JsonArray() : new JsonArray(new JsonObject { ["k"] = "return", ["value"] = forwarded }),
+                    ["body"] = abstractSlot || hasSelectedBody ? new JsonArray() : new JsonArray(new JsonObject { ["k"] = "return", ["value"] = forwarded }),
                     ["attrs"] = new JsonArray(),
                     ["clrInterfaceImpls"] = new JsonArray(new JsonObject {
                         ["owner"] = TypeJson.Fqn(slotOwner), ["member"] = slotMember, ["arity"] = 0,
                         ["params"] = signature, ["ret"] = declaration["ret"]?.DeepClone(),
                     }),
                 };
+                if (hasSelectedBody)
+                {
+                    var selected = selectedBodies[0];
+                    var body = KotlinOverrideSlotBridge.BuildBridge(cls, selected.Method,
+                        parameters.OfType<JsonObject>().Select(parameter => TypeJson.Read(parameter["type"])).ToArray(),
+                        TypeJson.Read(declaration["ret"]), name, isValue, refs, selected.Owner,
+                        virtualCall: !selected.IsDefault,
+                        callMember: Text(selected.Method[DeclarationIdentityBinding.ExplicitNameKey]) ?? Text(selected.Method["name"]));
+                    bridge["params"] = body["params"]?.DeepClone();
+                    bridge["body"] = body["body"]?.DeepClone();
+                }
                 cls.Methods.Add(MaterializedExecutable.Normalize(bridge));
                 bridges[(cls.Name, source.Slot)] = bridge;
                 var interfaces = cls.Node["interfaces"] as JsonArray ?? new JsonArray();
                 if (cls.Node["interfaces"] == null) cls.Node["interfaces"] = interfaces;
                 if (!interfaces.Any(type => TypeJson.OwnerName(type) == slotOwner)) interfaces.Add(TypeJson.Fqn(slotOwner));
             }
+            // Inherited accessor placeholders are not new source declarations. Their value-family
+            // obligations are the exact facet slots above, not a second abstract CLR property surface.
+            var placeholders = cls.Methods.OfType<JsonObject>().Where(method => Bool(method["abstract"])
+                && method[DeclarationIdentityBinding.Key] == null && SelectedAdapter(method) != null
+                && (method["overrides"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()
+                    .Select(marker => Text(marker[DeclarationIdentityBinding.Key])).Where(id => id != null)
+                    .All(members.ContainsKey)).ToArray();
+            var associations = placeholders.Select(method => Text(method[KotlinPropertyAccessors.AssociationKey]))
+                .Where(value => value != null).ToHashSet(StringComparer.Ordinal);
+            foreach (var placeholder in placeholders) cls.Methods.Remove(placeholder);
+            if (cls.Node["properties"] is JsonArray properties)
+                foreach (var property in properties.OfType<JsonObject>()
+                             .Where(property => associations.Contains(Text(property[KotlinPropertyAccessors.AssociationKey]))).ToArray())
+                    properties.Remove(property);
             active.Remove(cls.Name);
             completed.Add(cls.Name);
         }
@@ -642,7 +686,7 @@ sealed class ValueRepresentationLowering
               "ret":{"t":"fqn","name":"Union"}}]
             """);
         policy.RecordSourceTypes(root);
-        policy.SynthesizeSlots(new[] { root });
+        policy.SynthesizeSlots(new[] { root }, _ => false);
         foreach (var key in new[] { "clrInterfaceImpls", "clrBaseImpls" })
             if (method[key][0].AsObject().ContainsKey("retKotlinType"))
                 throw new InvalidOperationException("Physical MethodImpl descriptor acquired source metadata");

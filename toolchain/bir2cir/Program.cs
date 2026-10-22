@@ -948,7 +948,7 @@ sealed class Pipeline
         // survive to CIR — and on Kotlin's own supertype graph. Non-ref builds only.
         if (!_options.RefBuild)
             KotlinCollectionSlotSynthesis.ApplyAll(staged.Select(s => s.Root).ToList(), refs, isValueFqn);
-        valueRepresentations.SynthesizeSlots(staged.Select(s => s.Root).ToList());
+        valueRepresentations.SynthesizeSlots(staged.Select(s => s.Root).ToList(), isValueFqn);
 
         // NOMINAL COLLECTION CLASSIFIER IDENTITIES: the operational aliases intentionally share BCL faces
         // (Collection/Set -> IReadOnlyCollection, MutableCollection/MutableSet -> ICollection), which otherwise makes

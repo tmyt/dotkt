@@ -24,11 +24,70 @@ open class KClassValueManual : KClassValueOtherBase("base"), KClass<Any> {
 
 class KClassValueClassifierOnly : KClassifier
 class KClassValueHolder(val type: KClass<*>)
+open class KClassValuePlainBase<T>(val expected: T) {
+    override fun equals(other: Any?): Boolean = this === other
+    override fun hashCode(): Int = 31
+    open val simpleName: String? get() = "Plain"
+    open val qualifiedName: String? get() = "example.Plain"
+    open val annotations: List<Annotation> get() = listOf(KClassValueAnnotation(Int::class))
+    open val members: Collection<KCallable<*>> get() = emptyList()
+    open fun isInstance(value: Any?): Boolean = value == expected
+}
+open class KClassValueInherited : KClassValuePlainBase<String>("plain"), KClass<Any>
+class KClassValueInheritedOverride : KClassValueInherited() {
+    override val simpleName: String get() = "Later"
+}
+interface KClassValueDefault : KClass<Any> {
+    override val simpleName: String get() = "Default"
+    override val qualifiedName: String get() = "example.Default"
+    override val annotations: List<Annotation> get() = listOf(KClassValueAnnotation(Long::class))
+    override val members: Collection<KCallable<*>> get() = emptyList()
+    override fun isInstance(value: Any?): Boolean = value is Long
+}
+class KClassValueDefaultUser : KClassValueDefault {
+    override fun equals(other: Any?): Boolean = this === other
+    override fun hashCode(): Int = 37
+}
+abstract class KClassValueAbstract : KClass<Any> {
+    override fun equals(other: Any?): Boolean = this === other
+    override fun hashCode(): Int = 41
+}
+class KClassValueDefaultAfterAbstract : KClassValueAbstract(), KClassValueDefault
+interface KClassValueOtherOverload {
+    fun isInstance(value: KClass<*>): Boolean = false
+}
+abstract class KClassValueAbstractOverload : KClass<Any>, KClassValueOtherOverload
 private fun kClassValueIdentity(value: KClass<*>): KClass<*> = value
 private fun <T : KClassifier> kClassifierValueIdentity(value: T): T = value
 private inline fun <reified T> kClassValueMatches(value: Any?): Boolean = value is T
 
 class KClassValueTests {
+    @TestAttribute
+    fun unrelatedGenericClassCanSupplyAllNominalSlots() {
+        val value: KClass<*> = KClassValueInherited()
+        assertEquals("Plain", value.simpleName)
+        assertEquals("example.Plain", value.qualifiedName)
+        assertEquals(Int::class, (value.annotations.single() as KClassValueAnnotation).type)
+        assertEquals(0, value.members.size)
+        assertTrue(value.isInstance("plain"))
+        assertEquals(false, value.isInstance(42))
+        val later: KClass<*> = KClassValueInheritedOverride()
+        assertEquals("Later", later.simpleName)
+        assertTrue(later.isInstance("plain"))
+    }
+
+    @TestAttribute
+    fun selectedInterfaceDefaultsSupplySlotsIncludingThroughAbstractBase() {
+        for (value in arrayOf<KClass<*>>(KClassValueDefaultUser(), KClassValueDefaultAfterAbstract())) {
+            assertEquals("Default", value.simpleName)
+            assertEquals("example.Default", value.qualifiedName)
+            assertEquals(Long::class, (value.annotations.single() as KClassValueAnnotation).type)
+            assertEquals(0, value.members.size)
+            assertTrue(value.isInstance(42L))
+            assertEquals(false, value.isInstance(42))
+        }
+    }
+
     @TestAttribute
     fun annotationConstructionAndPropertyReadKeepClassIdentity() {
         val value: Any = KClassValueAnnotation(String::class)
