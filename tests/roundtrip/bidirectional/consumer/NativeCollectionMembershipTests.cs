@@ -63,4 +63,23 @@ public class NativeCollectionMembershipTests
             Assert.That(copy, Is.EqualTo(new[] { "value" }));
         }
     }
+
+    [Test]
+    public void NativeDictionaryViewsRetainTheirAuthoredMembershipDelegation()
+    {
+        var keys = new MembershipCallCounter();
+        var values = new MembershipCallCounter();
+        var value = NativeCollectionMembershipKt.authoredMembershipMap(keys, values);
+        var native = (IDictionary<string, string>)value;
+        Assert.That(native.ContainsKey("KEY"), Is.True);
+        Assert.That(native.Keys.Contains("KEY"), Is.True);
+        Assert.That(native.Keys.Contains("absent"), Is.False);
+        Assert.That(NativeCollectionMembershipKt.kotlinKeyMembership(value, "KEY"), Is.True);
+        Assert.That(keys.calls(), Is.EqualTo(4));
+        Assert.That(native.Values.Contains("VALUE"), Is.True);
+        Assert.That(native.Values.Contains("absent"), Is.False);
+        Assert.That(NativeCollectionMembershipKt.kotlinValueMembership(value, "VALUE"), Is.True);
+        Assert.That(values.calls(), Is.EqualTo(3));
+        Assert.That(native.Keys.IsReadOnly && native.Values.IsReadOnly, Is.True);
+    }
 }

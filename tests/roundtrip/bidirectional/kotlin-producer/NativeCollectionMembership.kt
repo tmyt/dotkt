@@ -69,3 +69,27 @@ fun explicitDefaultMembershipSet(): Any = object : AbstractSet<String>() {
 }
 
 fun defaultMembershipSubList(): Any = listOf("prefix", "value", "suffix").subList(1, 2)
+
+private class NativeMembershipMap(
+    private val keysCounter: MembershipCallCounter,
+    private val valuesCounter: MembershipCallCounter,
+) : AbstractMap<String, String>() {
+    override val entries: Set<Map.Entry<String, String>> get() = mapOf("Key" to "Value").entries
+    override fun containsKey(key: String): Boolean {
+        keysCounter.record()
+        return key.equals("key", ignoreCase = true)
+    }
+    override fun containsValue(value: String): Boolean {
+        valuesCounter.record()
+        return value.equals("value", ignoreCase = true)
+    }
+}
+
+fun authoredMembershipMap(keysCounter: MembershipCallCounter, valuesCounter: MembershipCallCounter): Any =
+    NativeMembershipMap(keysCounter, valuesCounter)
+
+@Suppress("UNCHECKED_CAST")
+fun kotlinKeyMembership(value: Any, key: String): Boolean = (value as Map<String, String>).keys.contains(key)
+
+@Suppress("UNCHECKED_CAST")
+fun kotlinValueMembership(value: Any, item: String): Boolean = (value as Map<String, String>).values.contains(item)
