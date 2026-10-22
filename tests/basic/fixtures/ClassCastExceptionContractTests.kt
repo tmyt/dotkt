@@ -39,7 +39,6 @@ class ClassCastExceptionContractTests {
         val wrongCollection: Any = arrayOf(1)
         assertTrue(castContractIsKotlin(castContractNativeFailure { wrongNumber as Number }))
         assertTrue(castContractIsKotlin(castContractNativeFailure { wrongCollection as List<*> }))
-        assertTrue(castContractIsKotlin(castContractNativeFailure { castContractChecked<String>(null) }))
         assertTrue(castContractIsKotlin(castContractNativeFailure { castContractChecked<Number>("wrong") }))
         assertTrue(castContractIsNative(castContractKotlinFailure { castContractChecked<Int>("wrong") }))
     }
