@@ -5,6 +5,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Allow unrelated DLLs to contain unused same-named private rich enums, while preserving local enum declarations
+  and cross-DLL inline metadata (#1114).
+
 - Preserve `KClass` values in locals, annotation constructor arguments and DLL signatures, including ordinary
   Kotlin implementations and logical parent interfaces (#1117, #978).
 

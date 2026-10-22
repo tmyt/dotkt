@@ -138,6 +138,7 @@ sealed partial class ReferenceMetadataIndex
     readonly HashSet<string> _byRefLikePhysicalOwners = new(StringComparer.Ordinal);
     readonly HashSet<string> _dotKtOwners = new(StringComparer.Ordinal);              // types authored by a DotKt-emitted assembly
     readonly Dictionary<string, RichEnumMetadata> _richEnums = new(StringComparer.Ordinal);
+    readonly HashSet<string> _conflictingRichEnums = new(StringComparer.Ordinal);
     readonly Dictionary<string, BasicEnumMetadata> _basicEnums = new(StringComparer.Ordinal);
     readonly HashSet<string> _conflictingBasicEnums = new(StringComparer.Ordinal);
     // Trusted [KotlinType(G<*,...>)] on a compiler-generated non-generic interface is the explicit existential ABI
@@ -624,6 +625,7 @@ sealed partial class ReferenceMetadataIndex
     readonly Dictionary<string, string> _collectionFactories = new(StringComparer.Ordinal); // @ClrCollectionFactory fun name -> "list"/"set"/"map"
     readonly Dictionary<DefaultKey, Dictionary<int, string>> _kotlinDefaults = new();
     readonly Dictionary<string, Dictionary<int, string>> _kotlinDefaultsByDeclarationId = new(StringComparer.Ordinal);
+    readonly HashSet<string> _conflictingDefaultDeclarationIds = new(StringComparer.Ordinal);
     // #146: OWNERLESS default-arg index "name|paramCount" -> defaults. DefaultArgSplice now runs at PHASE 1 (before
     // MemberCallSubstitution attributes the owner), so the omitted call is still `owner:null method:col2 sig:[…]`.
     // Built from _kotlinDefaults: a key with a SINGLE owner, or several owners whose defaults AGREE, maps to those
@@ -647,6 +649,7 @@ sealed partial class ReferenceMetadataIndex
     // inline fn sharing a name|pc|ga cannot leak in.
     readonly Dictionary<string, List<string>> _ownerlessInlineCandidates = new(StringComparer.Ordinal);
     readonly Dictionary<string, string> _inlinePayloadByDeclarationId = new(StringComparer.Ordinal);
+    readonly HashSet<string> _conflictingInlineDeclarationIds = new(StringComparer.Ordinal);
 
     // ---- .NET-interop resolution (A2 / #61): the LONG-LIVED metadata universe over the exact compile references.
     // NetInteropBinding resolves a dll2klib-projected owner FQN
@@ -733,11 +736,12 @@ sealed partial class ReferenceMetadataIndex
                 if (!_richEnums.TryAdd(owner, kv.Value))
                 {
                     var existing = _richEnums[owner];
-                    if (existing.Values != kv.Value.Values || existing.ValueOf != kv.Value.ValueOf ||
+                    if (existing.Name != kv.Value.Name || existing.Ordinal != kv.Value.Ordinal ||
+                        existing.Values != kv.Value.Values || existing.ValueOf != kv.Value.ValueOf ||
                         existing.EntryFields.Count != kv.Value.EntryFields.Count ||
                         existing.EntryFields.Any(entry =>
                             !kv.Value.EntryFields.TryGetValue(entry.Key, out var field) || field != entry.Value))
-                        throw new InvalidOperationException($"conflicting Kotlin rich-enum metadata for '{owner}'");
+                        _conflictingRichEnums.Add(owner);
                 }
             }
             foreach (var kv in asm.DotKt.BasicEnums)
@@ -985,7 +989,7 @@ sealed partial class ReferenceMetadataIndex
             foreach (var kv in asm.DotKt.KotlinDefaultsByDeclarationId)
                 if (!_kotlinDefaultsByDeclarationId.TryAdd(kv.Key, kv.Value)
                     && !SameDefaults(_kotlinDefaultsByDeclarationId[kv.Key], kv.Value))
-                    throw new InvalidOperationException($"conflicting defaults for Kotlin declaration identity '{kv.Key}'");
+                    _conflictingDefaultDeclarationIds.Add(kv.Key);
             foreach (var kv in asm.DotKt.CollectionFactories) _collectionFactories.TryAdd(kv.Key, kv.Value);
             // §4.2 (#75 S4b): merge candidate lists across assemblies — every overload sharing owner|name|pc|ga is kept; the
             // call site disambiguates by paramSig. (No poisoning: structural selection replaces the recv0-key collision.)
@@ -997,7 +1001,7 @@ sealed partial class ReferenceMetadataIndex
             foreach (var kv in asm.DotKt.InlinePayloadsByDeclarationId)
                 if (!_inlinePayloadByDeclarationId.TryAdd(kv.Key, kv.Value)
                     && _inlinePayloadByDeclarationId[kv.Key] != kv.Value)
-                    throw new InvalidOperationException($"conflicting inline declaration identity '{kv.Key}'");
+                    _conflictingInlineDeclarationIds.Add(kv.Key);
         }
         // A flattened Kotlin identity cannot distinguish where nested CLR generic slots are owned. Current-format
         // external classifiers carry the exact TypeDef spelling, so exact physical indexes remain authoritative;
@@ -1042,6 +1046,8 @@ sealed partial class ReferenceMetadataIndex
 
     public JsonObject InlineByDeclarationIdentity(string id)
     {
+        if (id != null && _conflictingInlineDeclarationIds.Contains(id))
+            throw new InvalidOperationException($"conflicting inline declaration identity '{id}'");
         if (id == null || !_inlinePayloadByDeclarationId.TryGetValue(id, out var json)) return null;
         return JsonNode.Parse(json) as JsonObject
             ?? throw new InvalidDataException($"malformed inline payload for declaration identity '{id}'");
@@ -1105,8 +1111,12 @@ sealed partial class ReferenceMetadataIndex
         return _kotlinDefaultsOwnerless.TryGetValue(method + "|" + paramCount, out var ownerless) ? ownerless : null;
     }
 
-    public Dictionary<int, string> KotlinDefaultsForDeclarationIdentity(string id) =>
-        id != null ? _kotlinDefaultsByDeclarationId.GetValueOrDefault(id) : null;
+    public Dictionary<int, string> KotlinDefaultsForDeclarationIdentity(string id)
+    {
+        if (id != null && _conflictingDefaultDeclarationIds.Contains(id))
+            throw new InvalidOperationException($"conflicting defaults for Kotlin declaration identity '{id}'");
+        return id != null ? _kotlinDefaultsByDeclarationId.GetValueOrDefault(id) : null;
+    }
 
     // Resolve the declaration exactly as the later scalar-member binding does, then read optional/default metadata
     // from that MethodDef. A call through a derived receiver names the derived type but can select a base declaration;
@@ -1217,6 +1227,7 @@ sealed partial class ReferenceMetadataIndex
         return true;
     }
 
+    // A PE row token is module-local, not part of the selected declaration's ABI.
     static bool SameDeclarationBinding(MemberBinding a, MemberBinding b) =>
         a.Owner == b.Owner && a.Name == b.Name && a.ParamCount == b.ParamCount
         && a.Intrinsic == b.Intrinsic && a.IsAbstract == b.IsAbstract && a.IsStatic == b.IsStatic
@@ -1227,7 +1238,7 @@ sealed partial class ReferenceMetadataIndex
         && Same(a.ParamTypeNodes, b.ParamTypeNodes) && a.IsVirtual == b.IsVirtual
         && Same(a.KotlinReturnType, b.KotlinReturnType) && Same(a.NullableGenericRet, b.NullableGenericRet)
         && Same(a.NullableGenericParams, b.NullableGenericParams) && Same(a.ReturnTypeNode, b.ReturnTypeNode)
-        && a.MetadataToken == b.MetadataToken && a.SourcePropertyName == b.SourcePropertyName
+        && a.SourcePropertyName == b.SourcePropertyName
         && a.AccessorKind == b.AccessorKind && a.AssociatedPropertyName == b.AssociatedPropertyName
         && a.IsPropertyBridge == b.IsPropertyBridge && a.DeclarationId == b.DeclarationId
         && a.DeclarationSourceName == b.DeclarationSourceName
@@ -1258,7 +1269,7 @@ sealed partial class ReferenceMetadataIndex
 
     static bool Same(TypeNode[] a, TypeNode[] b) =>
         ReferenceEquals(a, b) || a != null && b != null && a.Length == b.Length
-        && a.Select(TypeNode.ToJson).SequenceEqual(b.Select(TypeNode.ToJson));
+        && a.Select((type, index) => Same(type, b[index])).All(equal => equal);
 
     // Cross-assembly suspend-call resolution (bundle-6 P3 wave 2a): does the referenced owner declare a suspend
     // member of this name? The cold entry is the naming-convention linkage (`<name>$dotkt_suspend` on the same
@@ -2400,8 +2411,7 @@ sealed partial class ReferenceMetadataIndex
             StripGenericArity(DottedFqn(BareOwnerFqn(physicalOwner))), out semanticOwner);
     public bool TryKotlinRichEnumStaticApis(string ownerFqn, out string values, out string valueOf)
     {
-        var bare = StripGenericArity(DottedFqn(BareOwnerFqn(ownerFqn)));
-        if (_richEnums.TryGetValue(bare, out var metadata))
+        if (TryKotlinRichEnum(ownerFqn, out var metadata))
         {
             values = metadata.Values;
             valueOf = metadata.ValueOf;
@@ -2410,6 +2420,18 @@ sealed partial class ReferenceMetadataIndex
         values = null;
         valueOf = null;
         return false;
+    }
+
+    bool TryKotlinRichEnum(string ownerFqn, out RichEnumMetadata metadata)
+    {
+        metadata = null;
+        if (IsLocalEmittedType(ownerFqn)) return false;
+        var owner = StripGenericArity(DottedFqn(BareOwnerFqn(ownerFqn)));
+        // Private declarations in unrelated DLLs may share a source name. Keep their
+        // metadata, but diagnose ambiguity only when a referenced operation selects it.
+        if (_conflictingRichEnums.Contains(owner))
+            throw new InvalidOperationException($"conflicting Kotlin rich-enum metadata for '{owner}'");
+        return _richEnums.TryGetValue(owner, out metadata);
     }
 
     public bool TryKotlinBasicEnum(string ownerFqn, out BasicEnumMetadata metadata)
@@ -2427,8 +2449,7 @@ sealed partial class ReferenceMetadataIndex
     public bool TryKotlinRichEnumStaticApi(
         string ownerFqn, string sourceMemberName, int paramCount, out string physicalMemberName)
     {
-        var bare = StripGenericArity(DottedFqn(BareOwnerFqn(ownerFqn)));
-        if (_richEnums.TryGetValue(bare, out var metadata))
+        if (TryKotlinRichEnum(ownerFqn, out var metadata))
         {
             if (paramCount == 0 && sourceMemberName == "values")
             {
@@ -2447,8 +2468,7 @@ sealed partial class ReferenceMetadataIndex
 
     public bool TryKotlinRichEnumEntryField(string ownerFqn, string entryName, out string physicalField)
     {
-        var bare = StripGenericArity(DottedFqn(BareOwnerFqn(ownerFqn)));
-        if (_richEnums.TryGetValue(bare, out var metadata) &&
+        if (TryKotlinRichEnum(ownerFqn, out var metadata) &&
             metadata.EntryFields.TryGetValue(entryName, out physicalField))
             return true;
         physicalField = null;
@@ -2458,8 +2478,7 @@ sealed partial class ReferenceMetadataIndex
     public bool TryKotlinRichEnumInstanceFields(
         string ownerFqn, out string nameField, out string ordinalField)
     {
-        var bare = StripGenericArity(DottedFqn(BareOwnerFqn(ownerFqn)));
-        if (_richEnums.TryGetValue(bare, out var metadata))
+        if (TryKotlinRichEnum(ownerFqn, out var metadata))
         {
             nameField = metadata.Name;
             ordinalField = metadata.Ordinal;
@@ -7670,8 +7689,90 @@ sealed partial class ReferenceMetadataIndex
         return new TypeNode.Fqn(prim ?? DottedFqn(StripGenericArity(type.FullName ?? type.Name)));
     }
 
+    static void SelfTestRichEnumSelection()
+    {
+        if (Same(new TypeNode[] { null }, new TypeNode[] { new TypeNode.Fqn("System.String") }))
+            throw new InvalidOperationException("An absent nullable-generic carrier matched a concrete type");
+        var first = new RichEnumMetadata(new Dictionary<string, string> { ["FIRST"] = "firstField" },
+            "nameField", "ordinalField", "valuesApi", "parseApi");
+        var second = first with { EntryFields = new Dictionary<string, string> { ["OTHER"] = "otherField" } };
+        var a = new ReferenceDotKtMetadata();
+        var b = new ReferenceDotKtMetadata();
+        a.RichEnums["CollisionRich"] = first;
+        b.RichEnums["CollisionRich"] = second;
+        a.RichEnums["NameConflict"] = first;
+        b.RichEnums["NameConflict"] = first with { Name = "differentNameField" };
+        a.RichEnums["OrdinalConflict"] = first;
+        b.RichEnums["OrdinalConflict"] = first with { Ordinal = "differentOrdinalField" };
+        a.RichEnums["UniqueInternalRich"] = first;
+        a.RichEnums["IdenticalRich"] = first;
+        b.RichEnums["IdenticalRich"] = first;
+        a.KotlinDefaultsByDeclarationId["default-conflict"] = new() { [0] = "a" };
+        b.KotlinDefaultsByDeclarationId["default-conflict"] = new() { [0] = "b" };
+        a.KotlinDefaultsByDeclarationId["unique-default"] = new() { [0] = "retained" };
+        a.InlinePayloadsByDeclarationId["inline-conflict"] = "{\"body\":[]}";
+        b.InlinePayloadsByDeclarationId["inline-conflict"] = "{\"body\":[{\"k\":\"return\"}]}";
+        a.InlinePayloadsByDeclarationId["unique-inline"] = "{\"body\":[]}";
+        var sharedDeclaration = new MemberBinding("CollisionRich", "read", 1, null, false, false,
+            DeclarationId: "same-declaration", ReturnTypeNode: new TypeNode.Fqn("System.Int32"),
+            MetadataToken: 0x06000001, ParamTypeNodes: new TypeNode[] { new TypeNode.Fqn("System.String") },
+            NullableGenericParams: new TypeNode[] { null });
+        a.MemberBindings.Add(sharedDeclaration);
+        b.MemberBindings.Add(sharedDeclaration with {
+            MetadataToken = 0x06000005, NullableGenericParams = new TypeNode[] { null },
+        });
+        var assemblies = new List<ReferenceAssembly> {
+            new("a.dll", "a", "1", a), new("b.dll", "b", "1", b),
+        };
+        var catalog = Build(Array.Empty<string>())._compileRefs;
+        foreach (var order in new[] { assemblies, assemblies.AsEnumerable().Reverse().ToList() })
+        {
+            // Building an index must not reject an unused collision or discard other metadata.
+            var index = new ReferenceMetadataIndex(order, catalog);
+            if (index.KotlinDefaultsForDeclarationIdentity("unique-default")?[0] != "retained"
+                || index.InlineByDeclarationIdentity("unique-inline")?["body"]?.AsArray().Count != 0)
+                throw new InvalidOperationException("Unused collisions discarded unrelated inline/default metadata");
+            foreach (var owner in new[] { "UniqueInternalRich", "IdenticalRich" })
+                if (!index.TryKotlinRichEnumStaticApis(owner, out var values, out var parse)
+                    || values != first.Values || parse != first.ValueOf
+                    || !index.TryKotlinRichEnumStaticApi(owner, "valueOf", 1, out var api) || api != first.ValueOf
+                    || !index.TryKotlinRichEnumEntryField(owner, "FIRST", out var field) || field != "firstField"
+                    || !index.TryKotlinRichEnumInstanceFields(owner, out var name, out var ordinal)
+                    || name != first.Name || ordinal != first.Ordinal)
+                    throw new InvalidOperationException("Rich-enum indexing lost unambiguous producer metadata");
+            Func<string, bool>[] queries = {
+                owner => index.TryKotlinRichEnumStaticApis(owner, out _, out _),
+                owner => index.TryKotlinRichEnumStaticApi(owner, "values", 0, out _),
+                owner => index.TryKotlinRichEnumEntryField(owner, "FIRST", out _),
+                owner => index.TryKotlinRichEnumInstanceFields(owner, out _, out _),
+            };
+            foreach (var owner in new[] { "CollisionRich", "NameConflict", "OrdinalConflict" })
+                foreach (var query in queries)
+                {
+                    var ambiguous = false;
+                    try { query(owner); }
+                    catch (InvalidOperationException) { ambiguous = true; }
+                    if (!ambiguous) throw new InvalidOperationException("Rich-enum selection chose ambiguous metadata");
+                }
+            foreach (Action query in new Action[] {
+                () => index.KotlinDefaultsForDeclarationIdentity("default-conflict"),
+                () => index.InlineByDeclarationIdentity("inline-conflict"),
+            })
+            {
+                var ambiguous = false;
+                try { query(); }
+                catch (InvalidOperationException) { ambiguous = true; }
+                if (!ambiguous) throw new InvalidOperationException("Selection chose ambiguous inline/default metadata");
+            }
+            index.SetLocalEmittedTypes(new HashSet<string> { "CollisionRich", "UniqueInternalRich" });
+            if (queries.Any(query => query("CollisionRich") || query("UniqueInternalRich")))
+                throw new InvalidOperationException("Referenced rich-enum metadata replaced a local declaration");
+        }
+    }
+
     internal static void SelfTest()
     {
+        SelfTestRichEnumSelection();
         var returnSource = new TypeNode.Tv("method", 0);
         var returnStorage = new TypeNode.Tv("method", 1);
         var objectReturn = new TypeNode.Fqn("System.Object");

@@ -53,7 +53,7 @@ PROJECTS=(
 declare -A EXPECTED_DISCOVERED=(
 	["tests/basic"]=805
 	["tests/coroutines"]=267
-	["tests/roundtrip/consumer"]=635
+	["tests/roundtrip/consumer"]=637
 	["tests/roundtrip/bidirectional/consumer"]=45
 	["tests/interop/consumer"]=449
 )
@@ -295,6 +295,14 @@ for proj in "${PROJECTS[@]}"; do
 	# standard KLIB companion_object_name + nested class graph. Inspect both artifacts so a mutually-compatible
 	# producer/consumer bug cannot make the behavioral test pass while either interchange boundary is malformed.
 	if [[ "$proj" == "tests/roundtrip/consumer" ]]; then
+		if python3 "$ROOT/tests/roundtrip/assert-private-rich-inline-cir.py" \
+			"$dir/obj/$CONFIGURATION/net10.0/cir/PrivateRichEnumCollisionTests.cir.json" \
+			>"$ROOT/build/nunit-$name.private-rich-inline.log" 2>&1; then
+			echo "  private-enum metadata survives actual cross-DLL inline splicing"
+		else
+			echo "  PRIVATE RICH INLINE METADATA FAIL"
+			tail -25 "$ROOT/build/nunit-$name.private-rich-inline.log"; rc=1
+		fi
 		producer_dll="$ROOT/tests/roundtrip/producer/bin/$CONFIGURATION/net10.0/RoundtripProducer.dll"
 		producer_klib="$dir/obj/$CONFIGURATION/net10.0/klib/RoundtripProducer.klib"
 		if dotnet "$METADATA_INSPECTOR_DLL" --number-representation "$STDLIB_REF_DLL" "$producer_dll" "$producer_klib" \
