@@ -95,6 +95,12 @@ class KClassValueTests {
         assertEquals(String::class, annotation.type)
         assertTrue(annotation.type.isInstance("hello"))
         assertEquals(false, annotation.type.isInstance(42))
+        val property = KClassValueAnnotation::type
+        assertEquals(String::class, property.get(annotation))
+        assertEquals(0, property.annotations.size)
+        val bound = annotation::type
+        assertEquals(String::class, bound.get())
+        assertEquals(0, bound.annotations.size)
     }
 
     @TestAttribute

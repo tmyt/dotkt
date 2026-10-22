@@ -63,6 +63,12 @@ class KClassValueRoundtripTests {
         assertEquals(String::class, makeTyped().type)
         assertTrue(classIdentity(type) === type)
         assertTrue(type.isInstance(42))
+        val property = ImportedTyped::type
+        assertEquals(Int::class, property.get(value))
+        assertEquals(0, property.annotations.size)
+        val bound = value::type
+        assertEquals(Int::class, bound.get())
+        assertEquals(0, bound.annotations.size)
     }
 
     @TestAttribute

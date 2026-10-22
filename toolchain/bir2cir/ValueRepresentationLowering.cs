@@ -475,7 +475,9 @@ sealed class ValueRepresentationLowering
     // followed by a descendant override works across DLLs without rediscovering any body.
     internal void SynthesizeSlots(IReadOnlyList<JsonNode> roots, ValueTypeOracle isValue)
     {
-        if (referenceBuild || members.Count == 0) return;
+        // Reference faces must retain these declarations too: downstream subclasses use
+        // their exact MethodImpl identities to inherit the runtime implementation.
+        if (members.Count == 0) return;
         var defs = SupertypeGraph.Collect(roots);
         var completed = new HashSet<string>(StringComparer.Ordinal);
         var active = new HashSet<string>(StringComparer.Ordinal);
@@ -657,6 +659,7 @@ sealed class ValueRepresentationLowering
             {"k":"exprStmt","expr":{"k":"classRef","type":{"t":"fqn","name":"Union"}}},
             {"k":"exprStmt","expr":{"k":"callStatic","sig":[{"t":"fqn","name":"Union"}]}}]}]}
         """);
+        var referenceRoot = root.DeepClone();
         var policy = new ValueRepresentationLowering(new[] { root }, null, false);
         var inheritedCall = JsonNode.Parse("""
             {"k":"callInstance","overrides":[{"declarationId":"convert"}],
@@ -710,6 +713,16 @@ sealed class ValueRepresentationLowering
             || Text(bridge["body"][0]["value"][DeclarationIdentityBinding.Key]) != "child-convert"
             || Text(bridge["clrInterfaceImpls"][0]["member"]) != "convert")
             throw new InvalidOperationException("Nominal slots lost exact override/member bindings");
+        new ValueRepresentationLowering(new[] { referenceRoot }, null, true)
+            .SynthesizeSlots(new[] { referenceRoot }, _ => false);
+        var referenceBridge = referenceRoot["types"][1]["methods"].AsArray().OfType<JsonObject>()
+            .SingleOrDefault(method => Bool(method["generated"]));
+        if (referenceBridge == null || Bool(referenceBridge["abstract"])
+            || Text(referenceBridge["name"]) != Text(bridge["name"])
+            || referenceBridge["params"].ToJsonString() != bridge["params"].ToJsonString()
+            || referenceBridge["ret"].ToJsonString() != bridge["ret"].ToJsonString()
+            || referenceBridge["clrInterfaceImpls"].ToJsonString() != bridge["clrInterfaceImpls"].ToJsonString())
+            throw new InvalidOperationException("Reference face dropped a runtime nominal-slot declaration");
         var markerRoot = JsonNode.Parse("""
             {"types":[{"name":"Tag","kind":"interface","attrs":[
               {"attr":{"t":"fqn","name":"kotlin.clr.ClrTypeAlias"},"args":[{"value":"System.Object"}]},
