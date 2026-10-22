@@ -59,6 +59,44 @@ private class ListMutationAbstractBase : AbstractMutableList<Int>() {
     override fun removeAt(index: Int): Int { backing.removeAt(index); return 88 }
 }
 
+private class ListMutationUnitResults(private val backing: MutableList<Unit> = mutableListOf(Unit)) : MutableList<Unit> by backing {
+    var gets = 0
+    override fun get(index: Int) { gets++; backing[index] }
+    override fun set(index: Int, element: Unit) { backing[index] = element }
+    override fun removeAt(index: Int) { backing.removeAt(index) }
+}
+
+private open class ListMutationSelectedBody<T>(
+    protected val items: MutableList<T>, private val setResult: T, private val removeResult: T,
+) {
+    fun set(index: Int, element: T): T { items[index] = element; return setResult }
+    fun removeAt(index: Int): T { items.removeAt(index); return removeResult }
+}
+
+private class ListMutationSelectedResults<T>(private val backing: MutableList<T>, setResult: T, removeResult: T) :
+    ListMutationSelectedBody<T>(backing, setResult, removeResult), MutableList<T> {
+    var gets = 0
+    override val size: Int get() = backing.size
+    override fun get(index: Int): T { gets++; return backing[index] }
+    override fun isEmpty(): Boolean = backing.isEmpty()
+    override fun contains(element: T): Boolean = backing.contains(element)
+    override fun containsAll(elements: Collection<T>): Boolean = backing.containsAll(elements)
+    override fun indexOf(element: T): Int = backing.indexOf(element)
+    override fun lastIndexOf(element: T): Int = backing.lastIndexOf(element)
+    override fun iterator(): MutableIterator<T> = backing.iterator()
+    override fun listIterator(): MutableListIterator<T> = backing.listIterator()
+    override fun listIterator(index: Int): MutableListIterator<T> = backing.listIterator(index)
+    override fun subList(fromIndex: Int, toIndex: Int): MutableList<T> = backing.subList(fromIndex, toIndex)
+    override fun add(element: T): Boolean = backing.add(element)
+    override fun add(index: Int, element: T) { backing.add(index, element) }
+    override fun addAll(elements: Collection<T>): Boolean = backing.addAll(elements)
+    override fun addAll(index: Int, elements: Collection<T>): Boolean = backing.addAll(index, elements)
+    override fun remove(element: T): Boolean = backing.remove(element)
+    override fun removeAll(elements: Collection<T>): Boolean = backing.removeAll(elements)
+    override fun retainAll(elements: Collection<T>): Boolean = backing.retainAll(elements)
+    override fun clear() { backing.clear() }
+}
+
 private fun <T> listMutationExactSet(list: MutableList<T>, value: T): T = list.set(0, value)
 private fun <T> listMutationExactRemove(list: MutableList<T>): T = list.removeAt(0)
 private fun listMutationProjectedSet(list: MutableList<in String>, value: String): Any? = list.set(0, value)
@@ -85,6 +123,9 @@ class ListMutationResultTests {
         check(listMutationExactSet(nullable, null) == null)
         check(listMutationExactRemove(nullable) == null)
         check(nullable.gets == 0 && nullable.lastElement == null)
+        val units = ListMutationUnitResults()
+        val unitResult: Any? = listMutationExactSet(units, Unit)
+        check(unitResult === Unit && listMutationProjectedRemove(units) === Unit && units.gets == 0)
     }
 
     @TestAttribute fun mutationsDoNotReadTheGetterAndPreserveExceptionsAndReceiver() {
@@ -111,10 +152,26 @@ class ListMutationResultTests {
         check(listMutationProjectedRemove(inherited) == "derived-remove")
         check(inherited.gets == 0 && inherited.sets == 1 && inherited.removals == 1)
         val root = ListMutationAbstractBase()
+        check(listMutationExactSet(root, 6) == 77)
+        check(listMutationProjectedRemove(root) == 88)
+        val mutableRoot: MutableList<Int> = root
+        check(mutableRoot.addAll(0, listOf(5)))
         val slice = root.subList(0, 1)
         check(slice.set(0, 6) == 77)
         check(slice.removeAt(0) == 88)
         check(root.gets == 0 && root.size == 0 && slice.size == 0)
+    }
+
+    @TestAttribute fun inheritedNonCollectionBodiesSupplyMutationSlots() {
+        val strings = ListMutationSelectedResults(mutableListOf("old"), "selected-set", "selected-remove")
+        check(listMutationProjectedSet(strings, "new") == "selected-set")
+        check(listMutationExactRemove(strings) == "selected-remove" && strings.gets == 0)
+        val ints = ListMutationSelectedResults(mutableListOf(5), 77, 88)
+        check(listMutationExactSet(ints, 6) == 77)
+        check(listMutationProjectedRemove(ints) == 88 && ints.gets == 0)
+        val nullable = ListMutationSelectedResults<Int?>(mutableListOf(5), null, null)
+        check(listMutationExactSet(nullable, null) == null)
+        check(listMutationProjectedRemove(nullable) == null && nullable.gets == 0)
     }
 
     @TestAttribute fun nativeVoidMutationsStillReturnThePreviousValue() {

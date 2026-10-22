@@ -178,6 +178,9 @@ static class KotlinCollectionSlotSynthesis
 
     internal static bool IsMapContractOwner(string owner) => owner is Map or MutableMap;
 
+    internal static bool OwnsSupplementalOverride(JsonObject marker) =>
+        OwnsMapOverride(marker) || Slots.Any(slot => MatchesOverride(marker, slot));
+
     sealed class Def
     {
         public string Name;
@@ -192,7 +195,7 @@ static class KotlinCollectionSlotSynthesis
     public static void ApplyAll(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs, ValueTypeOracle isValue)
     {
         var rootList = roots.ToList();
-        var inherited = KotlinOverrideSlotBridge.SelectedInheritedMapMethods(rootList, refs, isValue);
+        var inherited = KotlinOverrideSlotBridge.SelectedInheritedCollectionMethods(rootList, refs, isValue);
         var defs = new Dictionary<string, Def>(StringComparer.Ordinal);
         foreach (var root in rootList) Collect(root, defs);
         foreach (var def in defs.Values.Where(d => d.Kind is "class" or "interface").ToList())
@@ -224,9 +227,8 @@ static class KotlinCollectionSlotSynthesis
         IReadOnlyList<(TypeNode.Fqn Owner, JsonObject Method)> inheritedMethods)
     {
         if (cls.Methods == null) return;
-        // A class whose BASE CHAIN already carries a slot interface needs nothing of its own: that base's bridge
-        // forwards VIRTUALLY and therefore already reaches this class's override. Re-implementing the interface here
-        // would rebuild the interface map and silently drop the slots this class does not itself declare.
+        // Reuse each slot already supplied by a local base: its virtual forwarding reaches overriding bodies.
+        // Sibling slots on the same capability remain independent and may need their own bridge.
         var inherited = InheritedSlots(cls, defs);
 
         var newBridges = new List<JsonObject>();
