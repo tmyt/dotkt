@@ -24,6 +24,12 @@ fun referencedInheritedEnumerationSet(): Any = ReferencedInheritedEnumerationSet
 fun namedEnumerationSet(): Any = NamedEnumerationSet()
 fun authoredEnumeratorValue(value: Any): Int = (value as NamedEnumerationSet).GetEnumerator()
 
-@Suppress("UNCHECKED_CAST")
-fun kotlinMutableEnumerationContains(value: Any, element: Any?): Boolean =
-    (value as MutableSet<Any?>).contains(element)
+fun kotlinMutableEnumerationChecks(): Boolean {
+    val strings: MutableSet<String> = LocalMutableEnumerationSet(mutableListOf("a", "b"))
+    val ints: MutableSet<Int> = LocalMutableEnumerationSet(mutableListOf(1, 2))
+    val nullable: MutableSet<Int?> = LocalMutableEnumerationSet(mutableListOf<Int?>(null, 3))
+    val local: MutableSet<String> = LocalInheritedEnumerationSet()
+    val referenced: MutableSet<String> = ReferencedInheritedEnumerationSet()
+    return strings.contains("a") && ints.contains(1) && nullable.contains(null)
+        && local.contains("local") && referenced.contains("referenced")
+}

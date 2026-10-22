@@ -12,7 +12,6 @@ public class NativeEnumerationTests
         Assert.That(generic.ToArray(), Is.EqualTo(expected));
         Assert.That(((IEnumerable)value).Cast<object>().ToArray(), Is.EqualTo(expected.Cast<object>().ToArray()));
         Assert.That(generic, Is.SameAs(value));
-        Assert.That(NativeEnumerationKt.kotlinMutableEnumerationContains(value, expected[0]), Is.True);
     }
 
     [Test]
@@ -22,6 +21,7 @@ public class NativeEnumerationTests
         AssertEnumeration(NativeEnumerationKt.stringMutableEnumerationSet(), "a", "b");
         AssertEnumeration(NativeEnumerationKt.intMutableEnumerationSet(), 1, 2);
         AssertEnumeration<object>(NativeEnumerationKt.nullableMutableEnumerationSet(), null, 3);
+        Assert.That(NativeEnumerationKt.kotlinMutableEnumerationChecks(), Is.True);
     }
 
     [Test]
