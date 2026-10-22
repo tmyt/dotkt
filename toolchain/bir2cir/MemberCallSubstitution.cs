@@ -2197,8 +2197,8 @@ static class MemberCallSubstitution
         // PRE-Rule-2 semantic override: MutableList.set(i,e) / removeAt(i) @ClrIntrinsic(set_Item/RemoveAt), but the
         // BCL slots are VOID while Kotlin RETURNS the previous/removed element — binding the intrinsic directly
         // underflows the stack when the result is consumed (`val old = list.set(i,e)` -> InvalidProgramException).
-        // Route to the ClrCollectionDefaults wrappers (clrListSet/clrListRemoveAt) that read the old element, perform
-        // the void mutation, and return it. `retType` carries the concrete element type for the boxing/convert at the
+        // ClrCollectionDefaults dispatches to Kotlin's value-returning slots; only native void slots need a preceding
+        // read to emulate the result. `retType` carries the concrete element type for the boxing/convert at the
         // call site (the helper's own `!!0` is out of scope).
         if (ownerFqn == "kotlin.collections.MutableList"
             && (((member is "set" or "set_Item") && args.Count == 2) || ((member is "removeAt" or "RemoveAt") && args.Count == 1)))

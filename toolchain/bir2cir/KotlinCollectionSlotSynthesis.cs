@@ -120,6 +120,13 @@ static class KotlinCollectionSlotSynthesis
         new() { DeclaringInterface = MutableList, Member = "addAll", Arity = 2,
                 SlotInterface = ListSlots, SlotMember = "dotktAddAllAt", Bridge = "dotkt$slot$addAllAt",
                 Parameters = new[] { ParameterCarrier.Exact, ParameterCarrier.ErasedCollection } },
+        new() { DeclaringInterface = MutableList, Member = "set", Arity = 2,
+                SlotInterface = ListSlots, SlotMember = "dotktSet", Bridge = "dotkt$slot$set",
+                Parameters = new[] { ParameterCarrier.Exact, ParameterCarrier.ErasedInput },
+                EraseReturn = true, NullableReturn = true },
+        new() { DeclaringInterface = MutableList, Member = "removeAt", Arity = 1,
+                SlotInterface = ListSlots, SlotMember = "dotktRemoveAt", Bridge = "dotkt$slot$removeAt",
+                Parameters = new[] { ParameterCarrier.Exact }, EraseReturn = true, NullableReturn = true },
     }.Concat(MapSlotDefinitions()).ToArray();
 
     static IEnumerable<Slot> MapSlotDefinitions()

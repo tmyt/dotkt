@@ -178,4 +178,7 @@ internal interface KotlinMutableCollectionSlots {
 internal interface KotlinMutableListSlots {
     /** Physical carrier of `MutableList.addAll(index, elements)`; [elements] is the receiver's own `Collection<E>`. */
     fun dotktAddAllAt(index: Int, elements: Any): Boolean
+    /** Preserve the Kotlin result independently of the native void `IList` mutations. */
+    fun dotktSet(index: Int, element: Any?): Any?
+    fun dotktRemoveAt(index: Int): Any?
 }

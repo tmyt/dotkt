@@ -5,6 +5,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Preserve Kotlin-authored `MutableList.set` and `removeAt` return values without inserting an extra getter,
+  through both exact and projected list views (#1129).
+
 - Satisfy inherited CLR enumeration slots on Kotlin collection subclasses, including generic mutable sets
   and user-declared `GetEnumerator` methods (#1126).
 
