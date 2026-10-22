@@ -2212,7 +2212,15 @@ static class MemberCallSubstitution
                 _ => "clrListRemoveAt",
             };
             var elem = projected ? CollElemArg(node, refs, ctx, ownerFqnNode) : OwnerElemArg(ownerFqnNode);
-            var listCall = (JsonObject)CollDefaultCall(node, "kotlin.collections.ClrCollectionDefaultsKt", listHelper, elem, args);
+            var listArguments = args;
+            if (projected)
+            {
+                var preferred = StaticCollectionPreference(preferredOwner ?? ownerFqnNode, refs,
+                    "System.Collections.Generic.IList`1", phase);
+                listArguments = new JsonArray(preferred);
+                foreach (var argument in args) listArguments.Add(argument?.DeepClone());
+            }
+            var listCall = (JsonObject)CollDefaultCall(node, "kotlin.collections.ClrCollectionDefaultsKt", listHelper, elem, listArguments);
             if (RetToken(node) is JsonNode lret && !IsTvType(lret)) listCall["ret"] = lret;
             return listCall;
         }
@@ -2567,12 +2575,10 @@ static class MemberCallSubstitution
                 new[] { new TypeNode.Fqn("kotlin.Any") },
             (_, "clrListSet") => new TypeNode[] { Gen("kotlin.collections.MutableList"), new TypeNode.Fqn("kotlin.Int"), tv },
             (_, "clrListRemoveAt") => new TypeNode[] { Gen("kotlin.collections.MutableList"), new TypeNode.Fqn("kotlin.Int") },
-            (_, "clrProjectedListSet") => new TypeNode[]
-                { new TypeNode.Fqn("kotlin.Any"), new TypeNode.Fqn("kotlin.Int"), tv },
-            (_, "clrProjectedListAddAt") => new TypeNode[]
+            (_, "clrProjectedListSet" or "clrProjectedListAddAt") => new TypeNode[]
                 { new TypeNode.Fqn("kotlin.Any"), new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any")), new TypeNode.Fqn("kotlin.Int"), tv },
             (_, "clrProjectedListRemoveAt") => new TypeNode[]
-                { new TypeNode.Fqn("kotlin.Any"), new TypeNode.Fqn("kotlin.Int") },
+                { new TypeNode.Fqn("kotlin.Any"), new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any")), new TypeNode.Fqn("kotlin.Int") },
             // MutableIterable is declaration-site covariant. A legal Kotlin view such as MutableIterable<Any?> over
             // MutableList<Int> cannot be passed as CLR IEnumerable<object>: CLR generic variance does not apply to
             // value-type arguments. The helper therefore receives the physical object erased and adapts its exact

@@ -1426,8 +1426,8 @@ internal fun mutableCollectionReplaceErased(receiver: Any, elements: Array<Any?>
 }
 
 @PublishedApi
-internal fun mutableListGetErased(receiver: Any, index: Int): Any? {
-    val view = erasedMutableListView(receiver)
+internal fun mutableListGetErased(receiver: Any, index: Int, sourceWitness: Any? = null): Any? {
+    val view = erasedMutableListView(receiver, sourceWitness)
     if (view == null && receiver is StarProjectionRawList && !rawListIsMapStorage(receiver)) return receiver.get(index)
     val list = view ?: throw UnsupportedOperationException("Projected receiver has no mutable CLR List surface")
     return try {
@@ -1438,8 +1438,8 @@ internal fun mutableListGetErased(receiver: Any, index: Int): Any? {
 }
 
 @PublishedApi
-internal fun mutableListSetErased(receiver: Any, index: Int, element: Any?) {
-    val view = erasedMutableListView(receiver)
+internal fun mutableListSetErased(receiver: Any, index: Int, element: Any?, sourceWitness: Any? = null) {
+    val view = erasedMutableListView(receiver, sourceWitness)
     if (view == null && receiver is StarProjectionRawList && !rawListIsMapStorage(receiver)) {
         receiver.set(index, element)
         return
@@ -1468,8 +1468,8 @@ internal fun mutableListInsertErased(receiver: Any, index: Int, element: Any?, s
 }
 
 @PublishedApi
-internal fun mutableListRemoveAtErased(receiver: Any, index: Int) {
-    val view = erasedMutableListView(receiver)
+internal fun mutableListRemoveAtErased(receiver: Any, index: Int, sourceWitness: Any? = null) {
+    val view = erasedMutableListView(receiver, sourceWitness)
     if (view == null && receiver is StarProjectionRawList && !rawListIsMapStorage(receiver)) {
         receiver.removeAt(index)
         return
