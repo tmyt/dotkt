@@ -49,6 +49,7 @@ public class NativeCollectionMembershipTests
     {
         foreach (var value in new[] {
             NativeCollectionMembershipKt.defaultMembershipSet(),
+            NativeCollectionMembershipKt.explicitDefaultMembershipSet(),
             NativeCollectionMembershipKt.defaultMembershipSubList(),
         })
         {

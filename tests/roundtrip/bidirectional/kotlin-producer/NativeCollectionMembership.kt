@@ -58,4 +58,14 @@ fun defaultMembershipSet(): Any = object : AbstractSet<String>() {
     override fun iterator(): Iterator<String> = listOf("value").iterator()
 }
 
+fun explicitDefaultMembershipSet(): Any = object : AbstractSet<String>() {
+    private var depth: Int = 0
+    override val size: Int get() = 1
+    override fun iterator(): Iterator<String> = listOf("value").iterator()
+    override fun contains(element: String): Boolean {
+        check(depth++ == 0)
+        try { return clrCollContains(this, element) } finally { depth-- }
+    }
+}
+
 fun defaultMembershipSubList(): Any = listOf("prefix", "value", "suffix").subList(1, 2)

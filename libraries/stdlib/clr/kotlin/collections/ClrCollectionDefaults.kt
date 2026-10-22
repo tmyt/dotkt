@@ -366,10 +366,19 @@ public fun <T> clrListAddAllAt(list: MutableList<T>, index: Int, elements: Colle
     return changed
 }
 
-public fun <T> clrCollContains(c: Collection<T>, element: T): Boolean {
+/** Native storage queries honor authored slots; default bodies retain their non-dispatching search below. */
+public fun <T> clrCollStorageContains(c: Collection<T>, element: T): Boolean {
     val slots = c as? KotlinCollectionDefaultSlots
     if (slots != null) return slots.dotktContains(element)
-    return c.contains(element)
+    return clrCollContains(c, element)
+}
+
+public fun <T> clrCollContains(c: Collection<T>, element: T): Boolean {
+    // Keep the generic Collection operation's own static preference for foreign
+    // values; authored default bodies must not recurse through their own slots.
+    if (c !is KotlinCollectionDefaultSlots) return c.contains(element)
+    for (x in c) if (x == element) return true
+    return false
 }
 
 public fun <T> clrCollContainsAll(c: Collection<T>, elements: Collection<T>): Boolean {
@@ -685,7 +694,7 @@ private class ClrSubList<T>(private val backing: List<T>, private val fromIndex:
         return backing[fromIndex + index]
     }
     override fun isEmpty(): Boolean = clrCollIsEmpty(this)
-    override fun contains(element: T): Boolean = indexOf(element) >= 0
+    override fun contains(element: T): Boolean = clrCollContains(this, element)
     override fun containsAll(elements: Collection<T>): Boolean = clrCollContainsAll(this, elements)
     override fun indexOf(element: T): Int = clrListIndexOf(this, element)
     override fun lastIndexOf(element: T): Int = clrListLastIndexOf(this, element)
