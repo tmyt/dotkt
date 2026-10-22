@@ -66,6 +66,9 @@ Binding the identities directly would make `hasNext()` consume an element or req
 
 bir2cir authors both halves as ordinary CIR — the adapter's TypeDef, fields, constructor, method bodies, and the `GetEnumerator()`/`dotkt$NonGenericGetEnumerator()` pair on each qualifying class, each carrying the exact MethodImpl descriptor of the slot it fills. The adapter cannot be written in Kotlin, because `IEnumerator<T>` and the non-generic `IEnumerator` declare two `Current` slots that differ only in return type; it is emitted once per module, since its CLR identity never appears in a signature.
 
+Inherited interfaces read from reference metadata resolve through the same alias declarations as local interfaces;
+CLR arity in a referenced owner's spelling must not hide its native enumeration obligation.
+
 ## Member behavior
 
 Members with direct BCL equivalents are substituted from stdlib metadata, for example `size` to `Count` and indexed access to the CLR indexer. Members without a one-to-one BCL operation retain real Kotlin bodies that use bound primitive members. This keeps stdlib policy in the stdlib rather than adding symbol recognition to the compiler.

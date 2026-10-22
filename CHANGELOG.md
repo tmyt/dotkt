@@ -5,6 +5,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Satisfy inherited CLR enumeration slots on Kotlin collection subclasses, including generic mutable sets
+  and user-declared `GetEnumerator` methods (#1126).
+
 - Preserve Kotlin-authored collection membership overrides through native `ICollection<T>.Contains`,
   including dictionary Keys/Values views, while retaining non-dispatching defaults and foreign operation views (#1125).
 
