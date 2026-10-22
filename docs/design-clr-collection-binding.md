@@ -78,6 +78,10 @@ slot as Kotlin callers, including a native dictionary's checked Keys/Values view
 their own search rather than reentering that dispatcher;
 foreign collection calls retain their static operation view.
 
+Kotlin `MutableList.set` and `removeAt` dispatch through their value-returning Kotlin slots without an extra getter.
+Each operation has its own capability so unrelated list defaults do not acquire new implementation obligations.
+Only foreign native lists emulate the result with a read followed by the void CLR mutation; native `IList` signatures stay unchanged.
+
 Authored `Map` and `MutableMap` implementations carry independent read and mutation capabilities selected by
 Kotlin override identity. Map dispatchers preserve their original getters, views, and overrides, including through
 erased or inherited references. One canonical stdlib carrier, also declared in its reference twin,

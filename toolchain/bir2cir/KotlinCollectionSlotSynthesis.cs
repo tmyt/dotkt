@@ -51,6 +51,8 @@ static class KotlinCollectionSlotSynthesis
     const string ListDefaultSlots = "DotKt.Runtime.CompilerServices.KotlinListDefaultSlots";
     const string CollectionSlots = "DotKt.Runtime.CompilerServices.KotlinMutableCollectionSlots";
     const string ListSlots = "DotKt.Runtime.CompilerServices.KotlinMutableListSlots";
+    const string ListSetSlot = "DotKt.Runtime.CompilerServices.KotlinMutableListSetSlot";
+    const string ListRemoveAtSlot = "DotKt.Runtime.CompilerServices.KotlinMutableListRemoveAtSlot";
     const string Map = "kotlin.collections.Map";
     const string MutableMap = "kotlin.collections.MutableMap";
     internal const string MapSlots = "DotKt.Runtime.CompilerServices.KotlinMapDefaultSlots";
@@ -120,7 +122,17 @@ static class KotlinCollectionSlotSynthesis
         new() { DeclaringInterface = MutableList, Member = "addAll", Arity = 2,
                 SlotInterface = ListSlots, SlotMember = "dotktAddAllAt", Bridge = "dotkt$slot$addAllAt",
                 Parameters = new[] { ParameterCarrier.Exact, ParameterCarrier.ErasedCollection } },
+        new() { DeclaringInterface = MutableList, Member = "set", Arity = 2,
+                SlotInterface = ListSetSlot, SlotMember = "dotktSet", Bridge = "dotkt$slot$set",
+                Parameters = new[] { ParameterCarrier.Exact, ParameterCarrier.ErasedInput },
+                EraseReturn = true, NullableReturn = true },
+        new() { DeclaringInterface = MutableList, Member = "removeAt", Arity = 1,
+                SlotInterface = ListRemoveAtSlot, SlotMember = "dotktRemoveAt", Bridge = "dotkt$slot$removeAt",
+                Parameters = new[] { ParameterCarrier.Exact }, EraseReturn = true, NullableReturn = true },
     }.Concat(MapSlotDefinitions()).ToArray();
+
+    static readonly HashSet<string> SlotInterfaces = Slots.Select(slot => slot.SlotInterface)
+        .ToHashSet(StringComparer.Ordinal);
 
     static IEnumerable<Slot> MapSlotDefinitions()
     {
@@ -171,6 +183,10 @@ static class KotlinCollectionSlotSynthesis
 
     internal static bool IsMapContractOwner(string owner) => owner is Map or MutableMap;
 
+    internal static bool OwnsSupplementalOverride(JsonObject marker) =>
+        OwnsMapOverride(marker) || Slots.Any(slot => slot.DeclaringInterface == MutableList
+            && slot.EraseReturn && MatchesOverride(marker, slot));
+
     sealed class Def
     {
         public string Name;
@@ -185,7 +201,7 @@ static class KotlinCollectionSlotSynthesis
     public static void ApplyAll(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs, ValueTypeOracle isValue)
     {
         var rootList = roots.ToList();
-        var inherited = KotlinOverrideSlotBridge.SelectedInheritedMapMethods(rootList, refs, isValue);
+        var inherited = KotlinOverrideSlotBridge.SelectedInheritedCollectionMethods(rootList, refs, isValue);
         var defs = new Dictionary<string, Def>(StringComparer.Ordinal);
         foreach (var root in rootList) Collect(root, defs);
         foreach (var def in defs.Values.Where(d => d.Kind is "class" or "interface").ToList())
@@ -217,9 +233,8 @@ static class KotlinCollectionSlotSynthesis
         IReadOnlyList<(TypeNode.Fqn Owner, JsonObject Method)> inheritedMethods)
     {
         if (cls.Methods == null) return;
-        // A class whose BASE CHAIN already carries a slot interface needs nothing of its own: that base's bridge
-        // forwards VIRTUALLY and therefore already reaches this class's override. Re-implementing the interface here
-        // would rebuild the interface map and silently drop the slots this class does not itself declare.
+        // Reuse each slot already supplied by a local base: its virtual forwarding reaches overriding bodies.
+        // Sibling slots on the same capability remain independent and may need their own bridge.
         var inherited = InheritedSlots(cls, defs);
 
         var newBridges = new List<JsonObject>();
@@ -272,9 +287,7 @@ static class KotlinCollectionSlotSynthesis
         {
             if (!defs.TryGetValue(baseSpec.Name, out var local)) break;
             foreach (var i in local.Interfaces)
-                if (i.Name == IteratorSlots || i.Name == CollectionDefaultSlots || i.Name == ListDefaultSlots
-                    || i.Name == CollectionSlots || i.Name == ListSlots
-                    || i.Name == MapSlots || i.Name == MutableMapSlots) found.Interfaces.Add(i.Name);
+                if (SlotInterfaces.Contains(i.Name)) found.Interfaces.Add(i.Name);
             // A local base not yet visited still ANSWERS for its own declarations: the decision below is
             // declaration-driven, so a base that WILL receive the interface is detected by the same predicate
             // rather than by visit order.

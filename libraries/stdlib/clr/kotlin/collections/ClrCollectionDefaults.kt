@@ -1,8 +1,9 @@
 /*
  * CLR ref/runtime split: default implementations for Collection/List members that have NO equivalent on the substituted
  * BCL types (IReadOnlyCollection<T> / IReadOnlyList<T> only expose Count / this[i] / GetEnumerator). The backend routes a
- * member call `recv.isEmpty()` / `recv.contains(e)` / ... to these statics (mirrors the iterator() bridge). The bodies use
- * ONLY BCL-bound members (size->Count, get->get_Item, iterator->GetEnumerator) so they never recurse into a routed member.
+ * member call `recv.isEmpty()` / `recv.contains(e)` / ... to these statics (mirrors the iterator() bridge). Supplemental
+ * Kotlin slots preserve authored overrides. Native defaults use BCL-bound members (size->Count, get->get_Item,
+ * iterator->GetEnumerator) rather than reentering a routed member.
  * See docs/design-clr-collection-binding.md.
  */
 @file:Suppress("NOTHING_TO_INLINE", "UNCHECKED_CAST")
@@ -12,6 +13,8 @@ package kotlin.collections
 import DotKt.Runtime.CompilerServices.KotlinMutableCollectionSlots
 import DotKt.Runtime.CompilerServices.KotlinMutableIteratorSlots
 import DotKt.Runtime.CompilerServices.KotlinMutableListSlots
+import DotKt.Runtime.CompilerServices.KotlinMutableListSetSlot
+import DotKt.Runtime.CompilerServices.KotlinMutableListRemoveAtSlot
 import DotKt.Runtime.CompilerServices.KotlinCollectionDefaultSlots
 import DotKt.Runtime.CompilerServices.KotlinListDefaultSlots
 import DotKt.Runtime.CompilerServices.listIteratorHasNextErased
@@ -254,6 +257,8 @@ public fun <T> clrProjectedListAddAllAt(list: Any, index: Int, elements: Collect
 }
 
 public fun <T> clrProjectedListSet(list: Any, index: Int, element: T): Any? {
+    val slots = list as? KotlinMutableListSetSlot
+    if (slots != null) return slots.dotktSet(index, element)
     val old = mutableListGetErased(list, index)
     mutableListSetErased(list, index, element)
     return old
@@ -264,6 +269,8 @@ public fun <T> clrProjectedListAddAt(list: Any, sourceWitness: Any?, index: Int,
 }
 
 public fun <T> clrProjectedListRemoveAt(list: Any, index: Int): Any? {
+    val slots = list as? KotlinMutableListRemoveAtSlot
+    if (slots != null) return slots.dotktRemoveAt(index)
     val old = mutableListGetErased(list, index)
     mutableListRemoveAtErased(list, index)
     return old
@@ -404,24 +411,27 @@ public fun <T> clrCollToString(c: Collection<T>): String {
 
 // `MutableList.set(i,e)` / `removeAt(i)` RETURN the previous/removed element in Kotlin, but `IList<T>.set_Item` /
 // `RemoveAt` are VOID on the BCL — binding the calls directly to the void slots underflows the stack when the return is
-// consumed (`val old = list.set(i,e)` -> InvalidProgramException). These wrappers read the old element first (get_Item),
-// then perform the void mutation, and return it — the list mirror of ClrMapDefaults.clrMapPut. The backend should route
-// `MutableList.set`/`removeAt` here (a pre-intrinsic-rule override, like MutableCollection.add -> clrCollAdd).
-/** Raw IList set_Item — VOID on the BCL (the previous-value-returning wrapper is [clrListSet]). */
+// consumed (`val old = list.set(i,e)` -> InvalidProgramException). Kotlin implementers have their own value-returning
+// slots. Only foreign native lists need the previous-value emulation: read, perform the void mutation, then return.
+/** Raw IList set_Item — VOID on the BCL (the value-returning wrapper is [clrListSet]). */
 @kotlin.clr.ClrIntrinsic("set_Item")
 public fun <T> MutableList<T>.clrListNativeSet(index: Int, element: T): Unit = TODO("clr binding should be implemented")
 
-/** Raw IList RemoveAt — VOID on the BCL (the removed-value-returning wrapper is [clrListRemoveAt]). */
+/** Raw IList RemoveAt — VOID on the BCL (the value-returning wrapper is [clrListRemoveAt]). */
 @kotlin.clr.ClrIntrinsic("RemoveAt")
 public fun <T> MutableList<T>.clrListNativeRemoveAt(index: Int): Unit = TODO("clr binding should be implemented")
 
 public fun <T> clrListSet(list: MutableList<T>, index: Int, element: T): T {
+    val slots = list as? KotlinMutableListSetSlot
+    if (slots != null) return slots.dotktSet(index, element) as T
     val old = list[index]
     list.clrListNativeSet(index, element)
     return old
 }
 
 public fun <T> clrListRemoveAt(list: MutableList<T>, index: Int): T {
+    val slots = list as? KotlinMutableListRemoveAtSlot
+    if (slots != null) return slots.dotktRemoveAt(index) as T
     val old = list[index]
     list.clrListNativeRemoveAt(index)
     return old

@@ -895,7 +895,7 @@ static class KotlinOverrideSlotBridge
         }
     }
 
-    internal static Dictionary<string, List<(TypeNode.Fqn Owner, JsonObject Method)>> SelectedInheritedMapMethods(
+    internal static Dictionary<string, List<(TypeNode.Fqn Owner, JsonObject Method)>> SelectedInheritedCollectionMethods(
         IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs, ValueTypeOracle isValue)
     {
         var defs = SupertypeGraph.Collect(roots);
@@ -907,7 +907,7 @@ static class KotlinOverrideSlotBridge
             var signatures = new Dictionary<JsonObject, TypeNode[]>();
             CollectInheritedClassMethods(cls, defs, refs, isValue, methods, owners, signatures,
                 suspendValues: false, includeFact: fact => fact["overrides"] is JsonArray overrides
-                    && overrides.OfType<JsonObject>().Any(KotlinCollectionSlotSynthesis.OwnsMapOverride));
+                    && overrides.OfType<JsonObject>().Any(KotlinCollectionSlotSynthesis.OwnsSupplementalOverride));
             if (methods.Count != 0)
                 selected[cls.Name] = methods.Select(method => (owners[method], method)).ToList();
         }
