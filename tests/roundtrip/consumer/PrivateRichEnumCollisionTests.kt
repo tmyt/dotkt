@@ -11,7 +11,9 @@ class PrivateRichEnumCollisionTests {
     fun unusedPrivateEnumsDoNotBlockIndependentLibrariesOrPublishedInlineBodies() {
         assertEquals(10, producerAState())
         assertEquals(30, producerBState())
-        assertEquals(73, publishedEnumCode())
+        assertEquals("a0", producerADefault())
+        assertEquals("b1", producerBDefault())
+        assertEquals(73, publishedEnumCode { it })
     }
 
     @TestAttribute
