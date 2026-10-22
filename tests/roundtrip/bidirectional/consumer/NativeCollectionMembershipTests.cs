@@ -26,7 +26,7 @@ public class NativeCollectionMembershipTests
         var integers = new MembershipCallCounter();
         AssertMembership(NativeCollectionMembershipKt.intMembershipSet(integers), 42, 7, integers);
         var nullable = new MembershipCallCounter();
-        AssertMembership<int?>(NativeCollectionMembershipKt.nullableMembershipSet(nullable), null, 7, nullable);
+        AssertMembership<object>(NativeCollectionMembershipKt.nullableMembershipSet(nullable), null, 7, nullable);
     }
 
     [Test]
