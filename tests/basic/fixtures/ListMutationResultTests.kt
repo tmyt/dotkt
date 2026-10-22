@@ -71,6 +71,7 @@ private open class ListMutationSelectedBody<T>(
 ) {
     fun set(index: Int, element: T): T { items[index] = element; return setResult }
     fun removeAt(index: Int): T { items.removeAt(index); return removeResult }
+    fun addAll(index: Int, elements: Collection<T>): Boolean = items.addAll(index, elements)
 }
 
 private class ListMutationSelectedResults<T>(private val backing: MutableList<T>, setResult: T, removeResult: T) :
@@ -90,7 +91,6 @@ private class ListMutationSelectedResults<T>(private val backing: MutableList<T>
     override fun add(element: T): Boolean = backing.add(element)
     override fun add(index: Int, element: T) { backing.add(index, element) }
     override fun addAll(elements: Collection<T>): Boolean = backing.addAll(elements)
-    override fun addAll(index: Int, elements: Collection<T>): Boolean = backing.addAll(index, elements)
     override fun remove(element: T): Boolean = backing.remove(element)
     override fun removeAll(elements: Collection<T>): Boolean = backing.removeAll(elements)
     override fun retainAll(elements: Collection<T>): Boolean = backing.retainAll(elements)

@@ -969,10 +969,11 @@ enumerator and cannot carry Kotlin's remove-capable `MutableIterator<E>`. DotKt 
   and `clrMutableIterator`);
 - every emitted Kotlin class declaring one of the members gains the compiler-owned
   `DotKt.Runtime.CompilerServices.KotlinMutableIteratorSlots` / `KotlinMutableCollectionSlots` /
-  `KotlinMutableListSlots` interface with an exact MethodImpl per member, so the dispatcher reaches the OVERRIDE by
+  `KotlinMutableListSlots` (or the independent `KotlinMutableListSetSlot` / `KotlinMutableListRemoveAtSlot`)
+  interface with an exact MethodImpl per member, so the dispatcher reaches the OVERRIDE by
   ordinary virtual dispatch;
-- frontend-selected implementations inherited from non-collection bases feed that same slot map; their declaration
-  and generic frame are preserved rather than requiring the base declaration itself to override a collection;
+- value-returning List mutations use frontend-selected implementations inherited from non-collection bases; their
+  declaration and generic frame are preserved rather than requiring the base declaration to override a collection;
 - a receiver with no such interface runs a BCL adapter. Mutable-iterator dispatch accepts its receiver through an
   erased physical parameter: Kotlin permits a value-typed `MutableIterable<Int>` to widen to `MutableIterable<Any?>`,
   while CLR generic variance deliberately does not lift value-type instantiations. An alias local for such a widened

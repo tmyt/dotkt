@@ -79,6 +79,7 @@ their own search rather than reentering that dispatcher;
 foreign collection calls retain their static operation view.
 
 Kotlin `MutableList.set` and `removeAt` dispatch through their value-returning Kotlin slots without an extra getter.
+Each operation has its own capability so unrelated list defaults do not acquire new implementation obligations.
 Only foreign native lists emulate the result with a read followed by the void CLR mutation; native `IList` signatures stay unchanged.
 
 Authored `Map` and `MutableMap` implementations carry independent read and mutation capabilities selected by

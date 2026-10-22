@@ -13,6 +13,8 @@ package kotlin.collections
 import DotKt.Runtime.CompilerServices.KotlinMutableCollectionSlots
 import DotKt.Runtime.CompilerServices.KotlinMutableIteratorSlots
 import DotKt.Runtime.CompilerServices.KotlinMutableListSlots
+import DotKt.Runtime.CompilerServices.KotlinMutableListSetSlot
+import DotKt.Runtime.CompilerServices.KotlinMutableListRemoveAtSlot
 import DotKt.Runtime.CompilerServices.KotlinCollectionDefaultSlots
 import DotKt.Runtime.CompilerServices.KotlinListDefaultSlots
 import DotKt.Runtime.CompilerServices.listIteratorHasNextErased
@@ -255,7 +257,7 @@ public fun <T> clrProjectedListAddAllAt(list: Any, index: Int, elements: Collect
 }
 
 public fun <T> clrProjectedListSet(list: Any, index: Int, element: T): Any? {
-    val slots = list as? KotlinMutableListSlots
+    val slots = list as? KotlinMutableListSetSlot
     if (slots != null) return slots.dotktSet(index, element)
     val old = mutableListGetErased(list, index)
     mutableListSetErased(list, index, element)
@@ -267,7 +269,7 @@ public fun <T> clrProjectedListAddAt(list: Any, sourceWitness: Any?, index: Int,
 }
 
 public fun <T> clrProjectedListRemoveAt(list: Any, index: Int): Any? {
-    val slots = list as? KotlinMutableListSlots
+    val slots = list as? KotlinMutableListRemoveAtSlot
     if (slots != null) return slots.dotktRemoveAt(index)
     val old = mutableListGetErased(list, index)
     mutableListRemoveAtErased(list, index)
@@ -420,7 +422,7 @@ public fun <T> MutableList<T>.clrListNativeSet(index: Int, element: T): Unit = T
 public fun <T> MutableList<T>.clrListNativeRemoveAt(index: Int): Unit = TODO("clr binding should be implemented")
 
 public fun <T> clrListSet(list: MutableList<T>, index: Int, element: T): T {
-    val slots = list as? KotlinMutableListSlots
+    val slots = list as? KotlinMutableListSetSlot
     if (slots != null) return slots.dotktSet(index, element) as T
     val old = list[index]
     list.clrListNativeSet(index, element)
@@ -428,7 +430,7 @@ public fun <T> clrListSet(list: MutableList<T>, index: Int, element: T): T {
 }
 
 public fun <T> clrListRemoveAt(list: MutableList<T>, index: Int): T {
-    val slots = list as? KotlinMutableListSlots
+    val slots = list as? KotlinMutableListRemoveAtSlot
     if (slots != null) return slots.dotktRemoveAt(index) as T
     val old = list[index]
     list.clrListNativeRemoveAt(index)

@@ -167,7 +167,7 @@ internal interface KotlinMutableCollectionSlots {
 }
 
 /**
- * Kotlin `MutableList` defaults and mutation results not represented by the native `IList<E>` slots.
+ * The Kotlin-only `MutableList` slots that `System.Collections.Generic.IList<E>` does not carry.
  *
  * Deliberately NOT derived from [KotlinMutableCollectionSlots]: the Kotlin frontend materializes inherited interface
  * members as fresh abstract declarations, so a derived interface would restate `dotktRemoveAll`/`dotktRetainAll`/
@@ -178,8 +178,16 @@ internal interface KotlinMutableCollectionSlots {
 internal interface KotlinMutableListSlots {
     /** Physical carrier of `MutableList.addAll(index, elements)`; [elements] is the receiver's own `Collection<E>`. */
     fun dotktAddAllAt(index: Int, elements: Any): Boolean
-    /** Physical carrier of the Kotlin `set` result, independent of native void `set_Item`. */
+}
+
+/** Kotlin's `set` result is independent of native void `set_Item` and other list operations. */
+@PublishedApi
+internal interface KotlinMutableListSetSlot {
     fun dotktSet(index: Int, element: Any?): Any?
-    /** Physical carrier of the Kotlin `removeAt` result, independent of native void `RemoveAt`. */
+}
+
+/** Kotlin's `removeAt` result is independent of native void `RemoveAt` and other list operations. */
+@PublishedApi
+internal interface KotlinMutableListRemoveAtSlot {
     fun dotktRemoveAt(index: Int): Any?
 }
