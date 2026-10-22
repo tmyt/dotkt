@@ -24,6 +24,12 @@ fun referencedInheritedEnumerationSet(): Any = ReferencedInheritedEnumerationSet
 fun namedEnumerationSet(): Any = NamedEnumerationSet()
 fun authoredEnumeratorValue(value: Any): Int = (value as NamedEnumerationSet).GetEnumerator()
 
+private fun <T> enumerateFromKotlin(values: Iterable<T>): List<T> {
+    val result = mutableListOf<T>()
+    for (value in values) result.add(value)
+    return result
+}
+
 fun kotlinMutableEnumerationChecks(): Boolean {
     val strings: MutableSet<String> = LocalMutableEnumerationSet(mutableListOf("a", "b"))
     val ints: MutableSet<Int> = LocalMutableEnumerationSet(mutableListOf(1, 2))
@@ -32,4 +38,9 @@ fun kotlinMutableEnumerationChecks(): Boolean {
     val referenced: MutableSet<String> = ReferencedInheritedEnumerationSet()
     return strings.contains("a") && ints.contains(1) && nullable.contains(null)
         && local.contains("local") && referenced.contains("referenced")
+        && enumerateFromKotlin(strings) == listOf("a", "b")
+        && enumerateFromKotlin(ints) == listOf(1, 2)
+        && enumerateFromKotlin(nullable) == listOf<Int?>(null, 3)
+        && enumerateFromKotlin(local) == listOf("local")
+        && enumerateFromKotlin(referenced) == listOf("referenced")
 }

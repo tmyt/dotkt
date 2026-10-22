@@ -10,7 +10,17 @@ public class NativeEnumerationTests
     {
         var generic = (IEnumerable<T>)value;
         Assert.That(generic.ToArray(), Is.EqualTo(expected));
-        Assert.That(((IEnumerable)value).Cast<object>().ToArray(), Is.EqualTo(expected.Cast<object>().ToArray()));
+        var raw = ((IEnumerable)value).GetEnumerator();
+        var rawValues = new List<object>();
+        try
+        {
+            while (raw.MoveNext()) rawValues.Add(raw.Current);
+        }
+        finally
+        {
+            (raw as IDisposable)?.Dispose();
+        }
+        Assert.That(rawValues, Is.EqualTo(expected.Cast<object>().ToArray()));
         Assert.That(generic, Is.SameAs(value));
     }
 
