@@ -954,9 +954,14 @@ sealed partial class Emitter
                 : sm != null ? p.GetProperty("setSig").EnumerateArray().SkipLast(1).Select(MapSignatureSlot).ToArray()
                 : Array.Empty<DeclaredSignatureSlot>();
             var propertyType = MapSignatureSlot(p.GetProperty("type"));
+            // The Property signature must carry the same instance/static convention as its linked accessor.
+            // Omitting HASTHIS makes an instance override's signature differ from its inherited Property row.
+            var convention = (gm ?? sm).IsStatic
+                ? CallingConventions.Standard
+                : CallingConventions.Standard | CallingConventions.HasThis;
             var pb = ti.TB.DefineProperty(
                 p.GetProperty("name").GetString(),
-                PropertyAttributes.None, CallingConventions.Standard,
+                PropertyAttributes.None, convention,
                 propertyType.Type, propertyType.Required, propertyType.Optional,
                 propertySlots.Select(slot => slot.Type).ToArray(),
                 propertySlots.Select(slot => slot.Required).ToArray(),
