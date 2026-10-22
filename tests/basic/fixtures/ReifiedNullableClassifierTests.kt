@@ -10,6 +10,8 @@ private inline fun <reified T> nullableClassifierSafeCast(value: Any?): T? = val
 private inline fun <reified T> nullableClassifierCast(value: Any?): T = value as T
 private inline fun <reified T> nullableClassifierNullableCast(value: Any?): T? = value as T?
 private fun nullableClassifierNativeNullException(value: Any): Boolean = value is System.NullReferenceException
+private fun nullableClassifierDirectList(value: Any?): List<*> = value as List<*>
+private fun nullableClassifierDirectMap(value: Any?): Map<*, *> = value as Map<*, *>
 private inline fun <reified T> nullableClassifierRejectsNull(): Boolean = try {
     nullableClassifierCast<T>(null)
     false
@@ -119,6 +121,16 @@ class ReifiedNullableClassifierTests {
         ClassicAssert.IsTrue(nullableClassifierRejectsNull<Number>(), "Number")
         ClassicAssert.IsTrue(nullableClassifierRejectsNull<Comparable<*>>(), "Comparable")
         ClassicAssert.IsTrue(nullableClassifierRejectsNull<kotlin.reflect.KClass<*>>(), "KClass")
+        var directNullRejected = false
+        try { nullableClassifierDirectList(null) } catch (failure: NullPointerException) {
+            directNullRejected = nullableClassifierNativeNullException(failure)
+        }
+        ClassicAssert.IsTrue(directNullRejected, "direct List")
+        directNullRejected = false
+        try { nullableClassifierDirectMap(null) } catch (failure: NullPointerException) {
+            directNullRejected = nullableClassifierNativeNullException(failure)
+        }
+        ClassicAssert.IsTrue(directNullRejected, "direct Map")
         var rejected = false
         try { nullableClassifierCast<List<*>>(Any()) } catch (_: ClassCastException) { rejected = true }
         ClassicAssert.IsTrue(rejected)

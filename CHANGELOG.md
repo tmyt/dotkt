@@ -5,8 +5,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
-- Reject null in checked non-null reified casts with `NullPointerException`, without changing nullable casts,
-  safe casts or non-null classifier failures (#1123).
+- Reject null in checked non-null reified and Kotlin collection casts with `NullPointerException`, without
+  changing nullable casts, safe casts or non-null classifier failures (#1123).
 
 - Emit correct instance property signatures so ordinary CLR reflection resolves native property overrides
   without ambiguity (#1121).
