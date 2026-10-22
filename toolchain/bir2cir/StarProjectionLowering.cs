@@ -386,8 +386,12 @@ static class StarProjectionLowering
         return count
             ? Call(listKind == 4 ? "projectedMutableListCountErased" : "projectedListCountErased",
                 new TypeNode[] { Any }, Int, checkedReceiver)
-            : Call(listKind == 4 ? "mutableListGetErased" : "projectedListGetErased", new TypeNode[] { Any, Int }, AnyN,
-                checkedReceiver, args[0].DeepClone());
+            : listKind == 4
+                ? Call("mutableListGetErased", new TypeNode[] { Any, Int, AnyN }, AnyN,
+                    checkedReceiver, args[0].DeepClone(),
+                    new JsonObject { ["k"] = "const", ["type"] = TypeJson.Write(AnyN), ["value"] = null })
+                : Call("projectedListGetErased", new TypeNode[] { Any, Int }, AnyN,
+                    checkedReceiver, args[0].DeepClone());
     }
 
     static JsonObject Call(string method, IReadOnlyList<TypeNode> signature, TypeNode result,

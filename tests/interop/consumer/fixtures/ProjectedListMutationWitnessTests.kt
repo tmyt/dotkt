@@ -4,8 +4,9 @@ import MutableListInterop.DualMutableList
 import NUnit.Framework.TestAttribute
 
 private fun <T> mutateSelectedList(list: MutableList<T>, value: T, old: T) {
-    val projected: MutableList<in T> = list
     val mutation = {
+        val projected: MutableList<in T> = list
+        check(projected[0] == old)
         check(projected.set(0, value) == old)
         check(projected.removeAt(0) == value)
     }
