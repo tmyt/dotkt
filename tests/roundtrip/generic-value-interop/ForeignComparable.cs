@@ -90,9 +90,7 @@ public static class NativeComparisonApi
     {
         var method = value.GetType().GetMethod("Apply", new[] { typeof(System.IComparable) });
         return method?.ReturnType == typeof(System.IComparable)
-            && value.GetType().GetProperty("Item", System.Reflection.BindingFlags.Public
-                | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.DeclaredOnly)
-                ?.PropertyType == typeof(System.IComparable);
+            && value.GetType().GetProperty("Item")?.PropertyType == typeof(System.IComparable);
     }
     public static bool HasOpaqueSlot(object value) =>
         value.GetType().GetProperty("value")?.PropertyType == typeof(object);

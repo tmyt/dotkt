@@ -5,6 +5,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Emit correct instance property signatures so ordinary CLR reflection resolves native property overrides
+  without ambiguity (#1121).
+
 - Allow unrelated DLLs to contain unused same-named private rich enums, while preserving local enum declarations
   and cross-DLL inline metadata (#1114).
 
