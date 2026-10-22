@@ -366,6 +366,13 @@ public fun <T> clrListAddAllAt(list: MutableList<T>, index: Int, elements: Colle
     return changed
 }
 
+/** Native storage queries honor authored slots; default bodies retain their non-dispatching search below. */
+public fun <T> clrCollStorageContains(c: Collection<T>, element: T): Boolean {
+    val slots = c as? KotlinCollectionDefaultSlots
+    if (slots != null) return slots.dotktContains(element)
+    return clrCollContains(c, element)
+}
+
 public fun <T> clrCollContains(c: Collection<T>, element: T): Boolean {
     // Keep the generic Collection operation's own static preference for foreign
     // values; authored default bodies must not recurse through their own slots.

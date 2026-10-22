@@ -32,7 +32,7 @@ public fun clrAuthoredMapCheckMutable(source: Any) { mutableMapSlots(source) }
 /** A native dictionary exposes read-only ICollection views, independently of Kotlin's mutable view contract. */
 private class ClrAuthoredMapCollection<T>(private val source: Any) : AbstractCollection<T>() {
     override val size: Int get() = DotKt.Runtime.CompilerServices.projectedCollectionCountErased(source)
-    override fun contains(element: T): Boolean = clrCollContains(source as Collection<Any?>, element)
+    override fun contains(element: T): Boolean = clrCollStorageContains(source as Collection<Any?>, element)
     override fun iterator(): Iterator<T> = clrProjectedIterator(source)
 }
 

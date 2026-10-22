@@ -70,6 +70,11 @@ bir2cir authors both halves as ordinary CIR — the adapter's TypeDef, fields, c
 
 Members with direct BCL equivalents are substituted from stdlib metadata, for example `size` to `Count` and indexed access to the CLR indexer. Members without a one-to-one BCL operation retain real Kotlin bodies that use bound primitive members. This keeps stdlib policy in the stdlib rather than adding symbol recognition to the compiler.
 
+Native `ICollection<T>.Contains` on a Kotlin read-only collection uses the same declaration-owned membership
+slot as Kotlin callers, including a native dictionary's checked Keys/Values views. Default membership bodies perform
+their own search rather than reentering that dispatcher;
+foreign collection calls retain their static operation view.
+
 Authored `Map` and `MutableMap` implementations carry independent read and mutation capabilities selected by
 Kotlin override identity. Map dispatchers preserve their original getters, views, and overrides, including through
 erased or inherited references. One canonical stdlib carrier, also declared in its reference twin,

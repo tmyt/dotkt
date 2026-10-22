@@ -5,6 +5,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Preserve Kotlin-authored collection membership overrides through native `ICollection<T>.Contains`,
+  including dictionary Keys/Values views, while retaining non-dispatching defaults and foreign operation views (#1125).
+
 - Reject null in checked non-null reified and Kotlin collection casts with `NullPointerException`, without
   changing nullable casts, safe casts or non-null classifier failures (#1123).
 

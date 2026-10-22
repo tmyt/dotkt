@@ -127,7 +127,7 @@ static class ReadOnlyCollectionStorageSynthesis
                 ["k"] = "const", ["type"] = TypeJson.Write(Bool), ["value"] = true,
             }))),
             Method("Contains", Bool, new JsonArray(Parameter("element", Element)), new JsonArray(Return(
-                StorageHelper(refs, "clrCollContains", "kotlin.collections.Collection", Bool, ReadOnlySelf())))),
+                StorageHelper(refs, "clrCollStorageContains", "kotlin.collections.Collection", Bool, ReadOnlySelf())))),
             Method("CopyTo", Void, (JsonArray)copy["params"].DeepClone(), (JsonArray)copy["body"].DeepClone()),
             Method("Add", Void, new JsonArray(Parameter("element", Element)), Unsupported()),
             Method("Remove", Bool, new JsonArray(Parameter("element", Element)), Unsupported()),
