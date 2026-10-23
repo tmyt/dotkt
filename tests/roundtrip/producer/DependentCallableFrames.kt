@@ -27,3 +27,11 @@ class Owner<Tag, T> where T : Base<T>, T : Marker<Tag> {
 class Factory<Tag, T> where T : Base<T>, T : Marker<Tag> {
     fun constructOnly() { Owner<Tag, T>() }
 }
+
+class ConstructorCapture<Tag, T> where T : Base<T>, T : Marker<Tag> {
+    val label: String
+    init {
+        val operation = Base<T>::compare
+        label = operation.toString()
+    }
+}

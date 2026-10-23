@@ -249,6 +249,18 @@ static class OwnerConstrainedMethodLowering
                 || TypeJson.Read(staticCapture["typeParams"][1][FBoundStarProjectionErasure.ErasedInnerConstraintKey][0])
                     != new TypeNode.Array(new TypeNode.Tv("method", 0)))
                 throw new InvalidOperationException("Static capture lost its method-scope source frame");
+            staticRoot["methods"].AsArray().Remove(lexicalMethod);
+            lexicalOwner["ctors"] = lexicalOwner["methods"].DeepClone();
+            lexicalOwner["ctors"][0].AsObject().Remove("name");
+            lexicalOwner["ctors"][0]["params"] = new JsonArray();
+            lexicalOwner["methods"] = new JsonArray();
+            staticCapture["typeParams"][1]["constraints"] = new JsonArray(
+                TypeJson.Write(new TypeNode.Array(new TypeNode.Tv("method", 0))));
+            staticCapture["typeParams"][1].AsObject().Remove(FBoundStarProjectionErasure.ErasedInnerConstraintKey);
+            PropagateCapturedBounds(new Dictionary<string, JsonObject> { ["Lexical"] = lexicalOwner },
+                _ => false, type => type, new[] { staticRoot });
+            if (staticCapture["typeParams"][1]["constraints"].AsArray().Count != 0)
+                throw new InvalidOperationException("Static capture lost its constructor source frame");
             staticCapture["generated"] = false;
             staticCapture["typeParams"][1]["constraints"] = new JsonArray(
                 TypeJson.Write(new TypeNode.Array(new TypeNode.Tv("method", 0))));
@@ -364,18 +376,22 @@ static class OwnerConstrainedMethodLowering
         Func<TypeNode, TypeNode> projectedBound, IEnumerable<JsonObject> roots = null)
     {
         var changed = new Dictionary<string, HashSet<int>>(StringComparer.Ordinal);
-        var declarations = definitions.Values.Concat(roots ?? Enumerable.Empty<JsonObject>())
+        var owners = definitions.Values.Concat(roots ?? Enumerable.Empty<JsonObject>()).ToArray();
+        var declarations = owners
             .SelectMany(owner => (owner["methods"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()
                 .Select(method => (Method: method, Owner: owner))).ToArray();
+        var callers = declarations.Concat(owners.SelectMany(owner =>
+            (owner["ctors"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()
+                .Select(constructor => (Method: constructor, Owner: owner))));
         var capturedMethods = declarations.Where(entry => entry.Method["generated"]?.GetValue<bool>() == true
                 && entry.Method[DeclarationIdentityBinding.Key] is JsonValue)
             .GroupBy(entry => entry.Method[DeclarationIdentityBinding.Key].GetValue<string>(), StringComparer.Ordinal)
             .Where(group => group.Count() == 1).ToDictionary(group => group.Key, group => group.Single(), StringComparer.Ordinal);
         var registered = Methods.Select(entry => entry.Method).ToHashSet();
         var pending = new Queue<(JsonObject Method, JsonObject Owner, JsonArray Parameters, JsonArray OriginalParameters)>();
-        // A captured owner parameter can be used in a nongeneric method. Such a caller need not itself have
+        // A captured owner parameter can be used in a nongeneric method or constructor. Such a caller need not have
         // owner-dependent method bounds, but its physical frame is still the authority for the captured row.
-        foreach (var (method, owner) in Methods.Concat(declarations).Distinct())
+        foreach (var (method, owner) in Methods.Concat(callers).Distinct())
         {
             var parameters = (method["typeParams"] as JsonArray)?.DeepClone().AsArray() ?? new JsonArray();
             var original = (JsonArray)parameters.DeepClone();

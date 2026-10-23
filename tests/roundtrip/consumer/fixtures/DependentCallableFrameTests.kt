@@ -1,5 +1,6 @@
 import NUnit.Framework.TestAttribute
 import roundtrip.dependentframes.Factory
+import roundtrip.dependentframes.ConstructorCapture
 import roundtrip.dependentframes.Item
 import roundtrip.dependentframes.IntItem
 import roundtrip.dependentframes.Owner
@@ -22,5 +23,10 @@ class DependentCallableFrameTests {
         Factory<Int, IntItem>().constructOnly()
         val value = Item()
         check(Owner<String, Item>().unbound(value, value) == 1)
+    }
+
+    @TestAttribute fun constructorCapturesKeepTheirPhysicalOwnerFrame() {
+        check(ConstructorCapture<String, Item>().label.isNotEmpty())
+        check(ConstructorCapture<Int, IntItem>().label.isNotEmpty())
     }
 }
