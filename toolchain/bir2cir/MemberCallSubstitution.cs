@@ -728,9 +728,9 @@ static class MemberCallSubstitution
     }
 
     // A `callStatic owner=null` to a @ClrCollectionFactory/@ClrArrayFactory top-level fun -> its construction node, or
-    // null when the call is not a factory (or is a non-decomposable mapOf -> left as a plain call). The element/key/value
+    // null when the call is not marked (or its map entries cannot be decomposed -> left as a plain call). The element/key/value
     // Collection TYPES come from the call's `typeArgs` (the canonical source for empty/single-element factories and
-    // mapOf's [K,V]); an array factory additionally prefers its instantiated result stamp, which states the allocation
+    // a map factory's [K,V]); an array factory additionally prefers its instantiated result stamp, which states the allocation
     // element even when a spread input is narrower. Collection elements come from a declared literal vararg pack,
     // a non-vararg element, or an empty argument vector; forwarded collection packs retain the ordinary call.
     // Array factories additionally handle forwarded arrays and spreadConcat directly.
@@ -785,14 +785,8 @@ static class MemberCallSubstitution
                 if (kt == null || vt == null) return null;                       // can't reconstruct K,V -> plain call
                 var entries = new List<(JsonNode Key, JsonNode Value)>();
                 // The selected declaration distinguishes a vararg Pair pack from a single Pair.
-                // Each element must be an INLINE Pair construction to be split, in either
-                // of the two shapes kotc can now emit: a `new kotlin.Pair(k,v)` LITERAL, or a `callStatic .to(k,v)` — the
-                // `a to b` idiom (#52 Phase 3 stopped kotc synthesizing `new kotlin.Pair` for `to`; it emits the plain
-                // infix `to` call, whose body IS `Pair(this, that)`, so its two args ARE the key/value). Splitting both
-                // avoids building the real body's `Pair<K,V>[]` vararg array, which would ArrayTypeMismatch under reified
-                // generics when the elements are more-specifically-typed (`Pair<String,String>` into `Pair<String,Any>[]`).
-                // A non-inline Pair (`mapOf(pairVar)`) matches neither shape and aborts the substitution -> the real
-                // mapOf body runs (the single-element homogeneous case that does NOT hit the covariance mismatch).
+                // Decompose only inline Pair constructions or the selected Pair-producing infix call. An opaque Pair
+                // value cannot be split from its source shape, so retain that exact factory's ordinary body instead.
                 foreach (var el in factoryElements)
                 {
                     if (el is JsonObject eo && PairKV(eo) is JsonArray pa && pa.Count == 2)
@@ -1040,16 +1034,16 @@ static class MemberCallSubstitution
             // properties bind through their exact metadata association; local properties retain the semantic role until
             // the common forward allocator runs.
             var topLevelPropertyAccess = Str(node["prop"]);
-            // Collection/array FACTORY (`listOf`/`setOf`/`mapOf`/`arrayOf`/`intArrayOf`/`arrayOfNulls`): a
+            // Collection/array FACTORY (`listOf`/`hashSetOf`/`hashMapOf`/`arrayOf`/`intArrayOf`/`arrayOfNulls`): a
             // @ClrCollectionFactory/@ClrArrayFactory marker on the selected local or referenced declaration -> re-emit the
             // physical collection/array construction (the recognition kotc used to do via its
             // LIST/SET/MAP/ARRAY_FACTORY tables). Handled first so a factory never falls through to the plain top-level
-            // owner-attribution below. A non-decomposable form (`mapOf(pairVariable)` — not a `to`-Pair literal) returns
+            // owner-attribution below. A non-decomposable form (`hashMapOf(pairVariable)` — not a `to`-Pair literal) returns
             // null here and stays a plain call to the real factory body.
             var exactFactory = (node[DeclarationIdentityBinding.ReferencedFactoryKey] as JsonValue)?
                 .TryGetValue<bool>(out var selectedFactory) == true && selectedFactory;
             if (TryFactorySubst(node, refs, ctx) is JsonNode factoryNode) return factoryNode;
-            // A selected factory that cannot be represented as a construction (notably mapOf(pairVariable)) must call
+            // A selected factory that cannot be represented as a construction (notably hashMapOf(pairVariable)) must call
             // that exact declaration's body. Keep its semantic node intact for the late identity binder instead of
             // falling through to any erased owner/name/signature resolver in this pass.
             if (exactFactory) return null;

@@ -9,9 +9,8 @@ using DotKt.Bir;
 // lowercase), and has NO equivalent for `CopyTo`/`IsReadOnly` at all. So a Kotlin class DIRECTLY implementing the aliased
 // interface (kotlin.collections.AbstractMutable{Collection,List,Set}, a MutableMap keys/values view, a user class) is
 // missing those BCL slots → the CLR loader rejects any CONCRETE type in the hierarchy ("Method 'Contains' ... does not
-// have an implementation" → TypeLoadException), which ilemit's ResolveType swallows and reports as "cannot resolve .NET
-// type kotlin.collections.ArrayDeque`1". (Latent until ArrayDeque: every other runnable concrete collection is a BCL type
-// — mutableListOf → List<T>, mutableMapOf → Dictionary<K,V> — never the Kotlin class.)
+// have an implementation" → TypeLoadException). Concrete Kotlin-backed collections need these native slots regardless
+// of whether other collection factories happen to allocate native BCL storage.
 //
 // Fill each missing slot with an ordinary public forwarding member, keyed on the DIRECTLY-listed alias. An IList face
 // needs only IndexOf here; the ICollection face comes from a base or the direct ICollection listing. Contains and
