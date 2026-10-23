@@ -16,7 +16,6 @@ package kotlin.collections
  *
  * @sample samples.collections.Collections.Sets.singletonReadOnlySet
  */
-@kotlin.clr.ClrCollectionFactory("set")
 public actual fun <T> setOf(element: T): Set<T> {
     val set = LinkedHashSet<T>(mapCapacity(1))
     set.add(element)

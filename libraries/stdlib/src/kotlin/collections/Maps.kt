@@ -56,7 +56,6 @@ public fun <K, V> emptyMap(): Map<K, V> = LinkedHashMap()
  *
  * @sample samples.collections.Maps.Instantiation.mapFromPairs
  */
-@kotlin.clr.ClrCollectionFactory("map")
 public fun <K, V> mapOf(vararg pairs: Pair<K, V>): Map<K, V> =
     if (pairs.size > 0) pairs.toMap(LinkedHashMap(mapCapacity(pairs.size))) else emptyMap()
 
@@ -101,7 +100,6 @@ public inline fun <K, V> mutableMapOf(): MutableMap<K, V> = LinkedHashMap()
  * @sample samples.collections.Maps.Instantiation.mutableMapFromPairs
  * @sample samples.collections.Maps.Instantiation.emptyMutableMap
  */
-@kotlin.clr.ClrCollectionFactory("map")
 public fun <K, V> mutableMapOf(vararg pairs: Pair<K, V>): MutableMap<K, V> =
     LinkedHashMap<K, V>(mapCapacity(pairs.size)).apply { putAll(pairs) }
 
