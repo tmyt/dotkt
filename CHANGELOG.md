@@ -5,6 +5,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Carry the source frame's physical constraint plan into generated static callable adapters, preserving
+  dependent-bound references without strengthening unrelated owner or body-dispatch frames (#1087).
+
 - Preserve declared abstract iterator dispatch in inherited collection operations and referenced receivers,
   rather than replacing mutable iterators with read-only enumeration adapters (#1132).
 

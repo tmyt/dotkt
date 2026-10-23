@@ -101,7 +101,7 @@ static partial class FBoundStarProjectionErasure
                         physicalDeclarationSources[physical] = source;
         foreach (var root in rootList) RecordDeclarationSurfaces(root, owners, refs);
         var generatedMethodFrames = OwnerConstrainedMethodLowering.PropagateCapturedBounds(defs, ContainsOwnerTv,
-            bound => ProjectOwnerMethodBound(bound, owners, refs, physical: false));
+            bound => ProjectOwnerMethodBound(bound, owners, refs, physical: false), rootList);
         foreach (var root in rootList) EraseProjectedAliasConstraints(root, refs);
         foreach (var (name, definition) in defs)
         {
