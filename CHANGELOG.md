@@ -5,6 +5,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Retain exact source list witnesses through projected `MutableList.set` and `removeAt` reads and writes,
+  without hiding genuinely ambiguous native list views (#1130).
+
 - Preserve Kotlin-authored `MutableList.set` and `removeAt` return values without inserting an extra getter,
   through both exact and projected list views (#1129).
 

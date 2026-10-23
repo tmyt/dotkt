@@ -256,11 +256,11 @@ public fun <T> clrProjectedListAddAllAt(list: Any, index: Int, elements: Collect
     return changed
 }
 
-public fun <T> clrProjectedListSet(list: Any, index: Int, element: T): Any? {
+public fun <T> clrProjectedListSet(list: Any, sourceWitness: Any?, index: Int, element: T): Any? {
     val slots = list as? KotlinMutableListSetSlot
     if (slots != null) return slots.dotktSet(index, element)
-    val old = mutableListGetErased(list, index)
-    mutableListSetErased(list, index, element)
+    val old = mutableListGetErased(list, index, sourceWitness)
+    mutableListSetErased(list, index, element, sourceWitness)
     return old
 }
 
@@ -268,11 +268,11 @@ public fun <T> clrProjectedListAddAt(list: Any, sourceWitness: Any?, index: Int,
     mutableListInsertErased(list, index, element, sourceWitness)
 }
 
-public fun <T> clrProjectedListRemoveAt(list: Any, index: Int): Any? {
+public fun <T> clrProjectedListRemoveAt(list: Any, sourceWitness: Any?, index: Int): Any? {
     val slots = list as? KotlinMutableListRemoveAtSlot
     if (slots != null) return slots.dotktRemoveAt(index)
-    val old = mutableListGetErased(list, index)
-    mutableListRemoveAtErased(list, index)
+    val old = mutableListGetErased(list, index, sourceWitness)
+    mutableListRemoveAtErased(list, index, sourceWitness)
     return old
 }
 
@@ -793,7 +793,7 @@ private class ClrProjectedMutableSubList<T>(
     }
     override fun set(index: Int, element: T): T {
         checkElement(index)
-        return clrProjectedListSet<T>(backing, start + index, element) as T
+        return clrProjectedListSet<T>(backing, null, start + index, element) as T
     }
     override fun add(element: T): Boolean { add(size, element); return true }
     override fun add(index: Int, element: T) {
@@ -811,7 +811,7 @@ private class ClrProjectedMutableSubList<T>(
     }
     override fun removeAt(index: Int): T {
         checkElement(index)
-        val removed = clrProjectedListRemoveAt<T>(backing, start + index) as T
+        val removed = clrProjectedListRemoveAt<T>(backing, null, start + index) as T
         resized(-1)
         return removed
     }

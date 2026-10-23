@@ -98,6 +98,10 @@ Raw `IList` remains a fallback only when no eligible generic mutable List exists
 generic ambiguity or a getter exception. Map-owned List storage is excluded, and source-authored exact
 interface witnesses and Kotlin emptiness overrides remain authoritative.
 
+Projected indexed insertion, replacement and removal carry the source-selected exact List preference through
+the complete native operation, including the getter used to emulate a mutation's result. An absent preference
+still requires one eligible actual List; the inserted value does not select a view.
+
 For-loops over opaque collection values consume the authored iterator operation and its static family selection.
 Exact BCL enumerable sources can use the CLR enumeration protocol directly. Kotlin iterator consumers receive
 the protocol adapter because they expect `hasNext()` and `next()`; this adapter does not replace the collection value.
