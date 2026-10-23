@@ -14,10 +14,8 @@ static class MemberCallSubstitution
     // Whether to attribute referenced top-level stdlib funs to their file-class owner (APP build only; OFF for the
     // stdlib self-build, where every such fun is local — see the StdlibMode == App gate at the call site in the Driver).
     static bool _attributeTopLevelOwner;
-    // FQNs of local types that declare their OWN concrete (non-abstract, nullary) `iterator()` — e.g. the concrete
-    // `kotlin.collections.LinkedHashSet`. A `this.iterator()` on such a type binds to that real slot and must NOT be
-    // rerouted to the ClrIteratorBridge (which returns the base `Iterator`, not the declared `MutableIterator`). The
-    // reroute is ONLY for the AbstractMutable* bases whose abstract iterator() slot vanished onto the BCL IEnumerable face.
+    // Real Kotlin iterator declarations, including abstract slots, take precedence over the
+    // IEnumerable adapter. The adapter cannot preserve an authored MutableIterator return contract.
     static HashSet<string> _typesWithDeclaredIterator = new(StringComparer.Ordinal);
     internal readonly record struct LocalPropertyAccessorKey(
         string Owner, string Property, string Kind, int MethodArity, int ParameterCount);
