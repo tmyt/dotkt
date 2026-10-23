@@ -18,7 +18,7 @@ static class CollectionHelperBinding
         var inputs = roots.ToArray();
         var closedViews = references == null ? new Dictionary<string, TypeNode.Fqn>()
             : ForeignStarProjectionBinding.CollectClosedViewHints(inputs, references);
-        var concreteIteratorTypes = inputs.SelectMany(MemberCallSubstitution.CollectConcreteIteratorTypes)
+        var declaredIteratorTypes = inputs.SelectMany(MemberCallSubstitution.CollectDeclaredIteratorTypes)
             .ToHashSet(StringComparer.Ordinal);
         var localHelpers = inputs.OfType<JsonObject>()
             .SelectMany(root => (root["methods"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()
@@ -112,8 +112,9 @@ static class CollectionHelperBinding
             if (!aliases.ContainsKey(owner.Name))
             {
                 call = MemberCallSubstitution.MissingCollectionIteratorCall(obj, owner, args,
-                    concreteIteratorTypes.Contains(owner.Name)
-                        || references?.DeclaresConcreteIterator(owner.Name) == true) as JsonObject;
+                    declaredIteratorTypes.Contains(owner.Name)
+                        || references?.DeclaresExactInstanceMember(owner.Name, "iterator", 0,
+                            Array.Empty<TypeNode>(), owner.Args) == true) as JsonObject;
                 if (call == null) return obj;
             }
             else if (owner.Name is "kotlin.collections.Map" or "kotlin.collections.MutableMap")
@@ -323,11 +324,16 @@ static class CollectionHelperBinding
         """)!;
         var iteratorOwner = new TypeNode.Fqn("kotlin.collections.NestedIteratorProbe", new TypeNode[] { variable });
         var iteratorCall = Call(iteratorOwner.Name, variable, "iterator");
-        var concreteIterators = MemberCallSubstitution.CollectConcreteIteratorTypes(nestedIterator);
-        if (!concreteIterators.Contains(iteratorOwner.Name)
+        var abstractIterator = nestedIterator.DeepClone();
+        abstractIterator["synthClass"]["name"] = "kotlin.collections.AbstractIteratorProbe";
+        abstractIterator["synthClass"]["methods"][0]["abstract"] = true;
+        var declaredIterators = MemberCallSubstitution.CollectDeclaredIteratorTypes(
+            new JsonArray(nestedIterator, abstractIterator));
+        if (!declaredIterators.Contains(iteratorOwner.Name)
+            || !declaredIterators.Contains("kotlin.collections.AbstractIteratorProbe")
             || MemberCallSubstitution.MissingCollectionIteratorCall(iteratorCall, iteratorOwner, new JsonArray(), true) != null
             || MemberCallSubstitution.MissingCollectionIteratorCall(iteratorCall, iteratorOwner, new JsonArray(), false) == null)
-            throw new InvalidOperationException("Source iterator binding lost an unhoisted concrete declaration");
+            throw new InvalidOperationException("Source iterator binding lost an unhoisted iterator declaration");
         var methods = new JsonArray(new[] { "clrProjectedViewIsEmpty", "clrProjectedViewIterator",
                 "clrProjectedViewContains", "clrProjectedViewContainsAll", "clrProjectedViewListIterator", "clrProjectedCollAdd" }
             .Select(name => (JsonNode)Helper(name)).ToArray());
