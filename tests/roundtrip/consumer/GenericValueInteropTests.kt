@@ -7,6 +7,12 @@ import GenericValueInterop.NativeBoxApi
 import kotlin.clr.byref
 import roundtrip.genericvalueinterop.*
 
+private fun replaceAliasedBoxParameter(box: Box<String>): Boolean {
+    val initial = box
+    return NativeBoxApi.ReplaceAliased(byref(box), byref(box)) &&
+        box.value == "second" && initial.value == "initial" && box !== initial
+}
+
 class GenericValueInteropTests {
     @TestAttribute
     fun nativeManagedReferencesObserveAliasingDuringTheCall() {
@@ -16,6 +22,14 @@ class GenericValueInteropTests {
         assertEquals("second", box.value)
         assertEquals("initial", initial.value)
         assertTrue(box !== initial)
+
+        var fromFactory = createBox()
+        val factoryInitial = fromFactory
+        assertTrue(NativeBoxApi.ReplaceAliased(byref(fromFactory), byref(fromFactory)))
+        assertEquals("second", fromFactory.value)
+        assertEquals("initial", factoryInitial.value)
+        assertTrue(fromFactory !== factoryInitial)
+        assertTrue(replaceAliasedBoxParameter(createBox()))
     }
 
     @TestAttribute

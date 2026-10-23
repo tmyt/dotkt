@@ -5,6 +5,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Cover native managed-reference aliasing for Kotlin generic values received from a separate-DLL factory
+  or source parameter, alongside direct construction (#974).
+
 - Carry the source frame's physical constraint plan into generated static callable adapters, preserving
   dependent-bound references without strengthening unrelated owner or body-dispatch frames (#1087).
 
