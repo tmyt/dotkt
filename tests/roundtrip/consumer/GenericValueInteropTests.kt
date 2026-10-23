@@ -13,6 +13,13 @@ private fun replaceAliasedBoxParameter(box: Box<String>): Boolean {
         box.value == "second" && initial.value == "initial" && box !== initial
 }
 
+private fun replaceAliasedBoxLocal(box: Box<String>): Boolean {
+    var local = box
+    val initial = local
+    return NativeBoxApi.ReplaceAliased(byref(local), byref(local)) &&
+        local.value == "second" && initial.value == "initial" && local !== initial
+}
+
 class GenericValueInteropTests {
     @TestAttribute
     fun nativeManagedReferencesObserveAliasingDuringTheCall() {
@@ -30,6 +37,7 @@ class GenericValueInteropTests {
         assertEquals("initial", factoryInitial.value)
         assertTrue(fromFactory !== factoryInitial)
         assertTrue(replaceAliasedBoxParameter(createBox()))
+        assertTrue(replaceAliasedBoxLocal(createBox()))
     }
 
     @TestAttribute
