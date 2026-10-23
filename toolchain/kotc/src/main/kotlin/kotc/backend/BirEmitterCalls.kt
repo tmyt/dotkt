@@ -1418,14 +1418,10 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 	// callable-ref / non-lambda action (`repeat(n, ::fn)` — not an IrFunctionExpression) falls through to the plain
 	// `callStatic kotlin.repeat`, which bir2cir's RepeatInlineLowering re-emits as a delegate counter loop.
 
-	// Collection/array factories (`listOf`/`setOf`/`mapOf`/`arrayOf`/`intArrayOf`/`arrayOfNulls`/…) are not
-	// recognized here: kotc emits the plain top-level `callStatic kotlin.collections.listOf(...)` (the faithful IR;
-	// the vararg argument itself rides as a `newArray` node). bir2cir reads the `@kotlin.clr.ClrCollectionFactory`
-	// (kind list/set/map) / `@kotlin.clr.ClrArrayFactory` (vararg/sized) marker from the selected local declaration
-	// or ref.dll binding and authors the physical collection/array allocation — the
-	// element/key/value types from the call's `typeArgs`, the elements from the vararg arg. The `mapOf(a to b)`
-	// literal-split (and its "do NOT force-split a non-literal Pair" guard — `mapOf(pairVar)` stays a real call)
-	// is bir2cir's.
+	// Collection/array factories are ordinary top-level callStatic nodes here; their varargs remain newArray nodes.
+	// Only bir2cir interprets a selected declaration's ClrCollectionFactory/ClrArrayFactory binding and authors its
+	// physical allocation, including decomposition of a marked hash-map factory's inline Pair arguments. Unmarked
+	// ordered factories and non-decomposable arguments retain their ordinary Kotlin calls.
 
 	// Unsigned<->signed byte-array reinterpret (#76) — `UByteArray.toByteArray()` / `ByteArray.toUByteArray()` — is
 	// NOT lowered here: it is a CLR-representation fact ("UByteArray IS byte[]"), so kotc emits the FAITHFUL top-level

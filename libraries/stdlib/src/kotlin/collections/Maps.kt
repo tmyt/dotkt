@@ -40,7 +40,7 @@ private object EmptyMap : Map<Any?, Nothing>, Serializable {
 // CLR deviation: a fresh Dictionary-backed map, NOT the EmptyMap singleton. Map/MutableMap alias IDictionary on the
 // CLR, and the pure-Kotlin EmptyMap object cannot satisfy the full IDictionary surface (its un-renamed `get` leaves
 // get_Item unimplemented -> the type fails to LOAD). Read-only-ness is Kotlin-frontend-enforced, exactly as for the
-// Dictionary that mapOf(pairs) returns. See docs/dotkt-semantics.md.
+// mutable backing maps returned by mapOf(pairs). See docs/dotkt-semantics.md.
 @kotlin.clr.ClrCollectionFactory("map")
 public fun <K, V> emptyMap(): Map<K, V> = LinkedHashMap()
 
@@ -56,7 +56,6 @@ public fun <K, V> emptyMap(): Map<K, V> = LinkedHashMap()
  *
  * @sample samples.collections.Maps.Instantiation.mapFromPairs
  */
-@kotlin.clr.ClrCollectionFactory("map")
 public fun <K, V> mapOf(vararg pairs: Pair<K, V>): Map<K, V> =
     if (pairs.size > 0) pairs.toMap(LinkedHashMap(mapCapacity(pairs.size))) else emptyMap()
 
@@ -101,7 +100,6 @@ public inline fun <K, V> mutableMapOf(): MutableMap<K, V> = LinkedHashMap()
  * @sample samples.collections.Maps.Instantiation.mutableMapFromPairs
  * @sample samples.collections.Maps.Instantiation.emptyMutableMap
  */
-@kotlin.clr.ClrCollectionFactory("map")
 public fun <K, V> mutableMapOf(vararg pairs: Pair<K, V>): MutableMap<K, V> =
     LinkedHashMap<K, V>(mapCapacity(pairs.size)).apply { putAll(pairs) }
 

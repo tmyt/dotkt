@@ -223,21 +223,10 @@ static class MapVarianceRealign
                 if (it != null) Walk(it, env, calleeTypeParams, aliases, constraints, refs, nullableArgument, typeFrames);
     }
 
-    // CONSTRUCTION-ARGUMENT covariance realign (il-bymap regression, klib migration #80): a collection-factory
-    // LITERAL (`mapOf(...)`/`listOf(...)`/`setOf(...)`) passed directly as a `new` node's argument infers its OWN
-    // typeArgs from the literal's element/pair VALUES (Kotlin's lower-bound inference — e.g. `mapOf("k1" to
-    // "Alice", "k2" to 30)` with String/Int values infers `V = Comparable<Any>`, the tightest common supertype of
-    // the two value literals), which can be NARROWER than the constructor's declared parameter type when the
-    // target slot's Kotlin type is wider (`User(data: Map<String, Any?>)`). Kotlin accepts this with NO cast —
-    // `Map`/`List`/`Set` are declaration-site covariant (`out V`) — but MemberCallSubstitution's `TryFactorySubst`
-    // builds the literal's runtime `Dictionary<K,V>`/`List<E>`/`HashSet<E>` straight off those narrower typeArgs,
-    // and the CLR's generic collection instantiations are INVARIANT: passing a `Dictionary<string,IComparable>`
-    // where `IDictionary<string,object>` is expected is unverifiable (ilverify StackUnexpected — the ctor argument
-    // slot never reconciles the two). Realign the factory call's `typeArgs` to the constructor's use-site
-    // `argTypes` slot HERE, before MemberCallSubstitution builds the literal, so it is constructed at the WIDE
-    // type Kotlin already type-checked the assignment against — the same "realign to the actually-intended type"
-    // move as `Realign`/`OwnerVarianceRealign` above, just sourced from the ENCLOSING slot instead of a callee
-    // constraint. BIR-space (Kotlin FQNs) — runs before type lowering + MemberCallSubstitution.
+    // A marked collection literal can infer narrower element arguments than a constructor's selected slot accepts.
+    // When that slot requires an invariant native collection construction, author the fresh allocation at the wider
+    // use-site arguments that Kotlin already accepted. This affects only a directly supplied factory construction,
+    // not an existing collection's identity. It runs in BIR space before physical factory substitution.
     static void RealignFactoryCtorArgTypes(JsonObject newNode, ReferenceMetadataIndex refs,
         System.Func<TypeNode, TypeNode> nullableArgument)
     {

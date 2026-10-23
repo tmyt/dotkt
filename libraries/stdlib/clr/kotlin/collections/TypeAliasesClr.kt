@@ -356,6 +356,11 @@ public actual class HashSet<E> : MutableSet<E> {
 }
 
 
+private class LinkedHashSetKey(val value: Any?) {
+    override fun equals(other: Any?): Boolean = other is LinkedHashSetKey && value == other.value
+    override fun hashCode(): Int = value?.hashCode() ?: 0
+}
+
 // #169: LinkedHashSet CONTRACTS insertion-order iteration (and setOf/mutableSetOf return LinkedHashSet, so they inherit
 // it). .NET has NO insertion-ordered GENERIC set (`HashSet<E>` loses order after a removal), so — exactly as Kotlin/JVM
 // backs LinkedHashSet with a LinkedHashMap — this is a REAL pure-Kotlin class backed by the (now insertion-ordered)
@@ -367,9 +372,9 @@ public actual class LinkedHashSet<E> : MutableSet<E> {
     override fun equals(other: Any?): Boolean = DotKt.Runtime.CompilerServices.structuralEquals(this, other, 1)
     override fun hashCode(): Int = DotKt.Runtime.CompilerServices.structuralHash(this, 1)
 
-    // Backing insertion-ordered map: keys are the set elements (order-preserving via OrderedDictionary); the value is an
-    // unused placeholder. Reading the value never happens, so the V?-local landmine (ClrMapDefaults) is not in play.
-    private val map: LinkedHashMap<E, Boolean>
+    // Non-null wrapper keys allow null elements without violating the native map's key contract. Values retain the
+    // original elements, in insertion order; wrappers use the same Kotlin equality/hash semantics as set operations.
+    private val map: LinkedHashMap<LinkedHashSetKey, E>
 
     public actual constructor() { map = LinkedHashMap() }
     public actual constructor(initialCapacity: Int) { map = LinkedHashMap(initialCapacity) }
@@ -380,17 +385,17 @@ public actual class LinkedHashSet<E> : MutableSet<E> {
 
     actual override val size: Int get() = map.size
     actual override fun isEmpty(): Boolean = map.isEmpty()
-    actual override fun contains(element: E): Boolean = map.containsKey(element)
+    actual override fun contains(element: E): Boolean = map.containsKey(LinkedHashSetKey(element))
     actual override fun containsAll(elements: Collection<E>): Boolean = clrCollContainsAll(this, elements)
 
     // From MutableSet
 
-    // Insertion-ordered iterator: snapshot the backing map's (ordered) keys, then delete via the live set on remove().
-    // NB the snapshot is built by iterating map.keys DIRECTLY (not clrSetSnapshot(this), which would re-enter this
+    // Insertion-ordered iterator: snapshot the backing map's values, then delete via the live set on remove().
+    // NB the snapshot is built by iterating map.values DIRECTLY (not clrSetSnapshot(this), which would re-enter this
     // set's own GetEnumerator bridge -> infinite recursion).
     actual override fun iterator(): MutableIterator<E> {
         val snapshot = ArrayList<E>(map.size)
-        for (k in map.keys) snapshot.add(k)
+        for (element in map.values) snapshot.add(element)
         return object : MutableIterator<E> {
             private var index = 0
             private var lastEl: E? = null
@@ -412,13 +417,15 @@ public actual class LinkedHashSet<E> : MutableSet<E> {
         }
     }
     actual override fun add(element: E): Boolean {
-        if (map.containsKey(element)) return false
-        map.put(element, true)
+        val key = LinkedHashSetKey(element)
+        if (map.containsKey(key)) return false
+        map.put(key, element)
         return true
     }
     actual override fun remove(element: E): Boolean {
-        if (!map.containsKey(element)) return false
-        map.remove(element)
+        val key = LinkedHashSetKey(element)
+        if (!map.containsKey(key)) return false
+        map.remove(key)
         return true
     }
     actual override fun addAll(elements: Collection<E>): Boolean {

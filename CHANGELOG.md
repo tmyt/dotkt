@@ -5,6 +5,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Preserve insertion order in mutable map/set factories by retaining their Kotlin implementations,
+  rather than replacing ordered factories with unordered native hash storage (#169).
+  Ordered Set implementations and their factory/conversion paths also retain null elements.
+
 - Cover native managed-reference aliasing for Kotlin generic values received from a separate-DLL factory
   or source parameter, alongside direct construction (#974).
 
