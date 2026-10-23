@@ -22,6 +22,15 @@ private fun <T> verifyInheritedIteratorOperations(first: T, second: T, absent: T
     check(collection.isEmpty() && items.isEmpty() && collection.iteratorCalls > 0)
 }
 
+private fun <T> verifyInheritedDequeIterator(first: T, second: T) {
+    val deque = ArrayDeque(listOf(first, second))
+    val iterator: MutableIterator<T> = deque.iterator()
+    check(iterator.hasNext() && iterator.next() == first)
+    iterator.remove()
+    check(deque.size == 1 && deque[0] == second)
+    check(iterator.hasNext() && iterator.next() == second && !iterator.hasNext())
+}
+
 class InheritedMutableIteratorSlotTests {
     @TestAttribute fun inheritedContainsAndRemoveUseTheAuthoredMutableIterator() {
         val items = mutableListOf("value", "other")
@@ -40,6 +49,8 @@ class InheritedMutableIteratorSlotTests {
     }
 
     @TestAttribute fun concreteAndNativeIteratorPathsRemainValid() {
+        verifyInheritedDequeIterator(7, 9)
+        verifyInheritedDequeIterator("first", "second")
         val set = linkedSetOf(7, 9)
         val mutable = set.iterator()
         check(mutable.hasNext() && mutable.next() == 7)

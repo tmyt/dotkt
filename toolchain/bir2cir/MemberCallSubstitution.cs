@@ -14,9 +14,10 @@ static class MemberCallSubstitution
     // Whether to attribute referenced top-level stdlib funs to their file-class owner (APP build only; OFF for the
     // stdlib self-build, where every such fun is local — see the StdlibMode == App gate at the call site in the Driver).
     static bool _attributeTopLevelOwner;
-    // Real Kotlin iterator declarations, including abstract slots, take precedence over the
+    // Real Kotlin iterator declarations, including abstract and inherited slots, take precedence over the
     // IEnumerable adapter. The adapter cannot preserve an authored MutableIterator return contract.
     static HashSet<string> _typesWithDeclaredIterator = new(StringComparer.Ordinal);
+    static IReadOnlyDictionary<string, SupertypeGraph.Def> _iteratorTypeDefinitions;
     internal readonly record struct LocalPropertyAccessorKey(
         string Owner, string Property, string Kind, int MethodArity, int ParameterCount);
 
@@ -121,6 +122,7 @@ static class MemberCallSubstitution
         _localPropertyOwners = _localPropertyAccessors.Keys.Select(key => key.Owner)
             .ToHashSet(StringComparer.Ordinal);
         _typesWithDeclaredIterator = CollectDeclaredIteratorTypes(root);
+        _iteratorTypeDefinitions = SupertypeGraph.Collect(new[] { root });
         return Rewrite(root, refs, new SubstCtx());
     }
 
@@ -211,6 +213,23 @@ static class MemberCallSubstitution
         }
         Walk(root);
         return set;
+    }
+
+    internal static bool HasDeclaredIterator(TypeNode.Fqn owner, IReadOnlySet<string> declaredTypes,
+        IReadOnlyDictionary<string, SupertypeGraph.Def> definitions, ReferenceMetadataIndex references,
+        IReadOnlyDictionary<string, string> aliases, bool sourceFrames = false)
+    {
+        foreach (var (candidate, _) in SupertypeGraph.Reachable(
+            new SupertypeGraph.Def { Base = owner }, definitions, references, sourceFrames))
+        {
+            // An alias's source declaration is implemented through its native face, not a Kotlin MethodDef.
+            if (aliases?.ContainsKey(candidate.Name) == true) continue;
+            if (declaredTypes.Contains(candidate.Name)
+                || references?.DeclaresExactInstanceMember(candidate.Name, "iterator", 0,
+                    Array.Empty<TypeNode>(), candidate.Args) == true)
+                return true;
+        }
+        return false;
     }
 
     // Lexical type environment carried DOWN the walk: a name->type-token map for the enclosing decl's params, and a
@@ -1389,12 +1408,12 @@ static class MemberCallSubstitution
         // abstract or concrete iterator must instead keep ordinary virtual dispatch, including its mutable
         // return contract. Replacing it with a read-only bridge drops the authored protocol and mutation slots.
         // Local declarations and referenced declaration signatures are equally authoritative; a body is not needed.
-        if (instance && ownerFqnNode != null && node["args"] is JsonArray itArgs
+        if (instance && ownerFqnNode != null && Str(node["method"]) == "iterator"
+            && node["args"] is JsonArray { Count: 0 } itArgs
             && !refs.TryResolveClrOwner(ownerToken, out _, out _)
             && MissingCollectionIteratorCall(node, ownerFqnNode, itArgs,
-                _typesWithDeclaredIterator.Contains(ReferenceMetadataIndex.BareOwnerFqn(ownerToken))
-                    || refs.DeclaresExactInstanceMember(ownerToken, "iterator", 0,
-                        Array.Empty<TypeNode>(), ownerFqnNode.Args)) is { } iteratorCall)
+                HasDeclaredIterator(ownerFqnNode, _typesWithDeclaredIterator, _iteratorTypeDefinitions,
+                    refs, refs.Aliases)) is { } iteratorCall)
             return iteratorCall;
 
         // A CLR array cannot host the Kotlin declaration's instance body. Native-array declarations retain that
