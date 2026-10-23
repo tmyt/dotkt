@@ -1,6 +1,7 @@
 package roundtrip.genericvalueinterop
 
 class Box<T>(var value: T)
+fun createBox(): Box<String> = Box("initial")
 class Cell<T>(@kotlin.clr.ClrField var value: T)
 
 class Selected {
