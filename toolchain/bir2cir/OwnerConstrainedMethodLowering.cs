@@ -209,7 +209,57 @@ static class OwnerConstrainedMethodLowering
             }
         }
         finally { Methods.Remove(unrelated); }
-        Console.WriteLine("[method bound dependencies] self-test OK (non-generic binding, storage companion, retained constraint, named capture)");
+        var staticCapture = JsonNode.Parse("""
+          {"name":"capture","declarationId":"capture-static","generated":true,
+           "typeParams":["T",{"name":"S","constraints":[{"t":"array","elem":{"t":"tv","scope":"method","i":0}}]}],
+           "body":[]}
+          """).AsObject();
+        staticCapture[NullableRepresentationTypes.MethodFrameKey] =
+            new NullableRepresentationFrame(1, Array.Empty<int>(), storageIndices: new[] { 0 }).ToJson().ToJsonString();
+        staticCapture[NullableGenericErasure.MethodTypeParameterBoundsPre] = "{\"bounds\":{\"0\":[]}}";
+        var staticSourceFacts = staticCapture[NullableGenericErasure.MethodTypeParameterBoundsPre].DeepClone();
+        var lexicalOwner = JsonNode.Parse("""
+          {"name":"Lexical","typeParams":["T",{"name":"S","erasedInnerConstraints":[
+            {"t":"array","elem":{"t":"tv","scope":"type","i":0}}]}],
+           "methods":[{"name":"use","body":[{"k":"newDelegate","declarationId":"capture-static",
+             "typeArgs":[{"t":"tv","scope":"type","i":0},{"t":"tv","scope":"type","i":1}]}]}]}
+          """).AsObject();
+        var staticRoot = new JsonObject { ["fileClass"] = "CaptureStatics", ["methods"] = new JsonArray(staticCapture) };
+        try
+        {
+            PropagateCapturedBounds(new Dictionary<string, JsonObject> { ["Lexical"] = lexicalOwner },
+                _ => false, type => type, new[] { staticRoot });
+            if (staticCapture["typeParams"][1]["constraints"].AsArray().Count != 0
+                || TypeJson.Read(staticCapture["typeParams"][1][FBoundStarProjectionErasure.ErasedInnerConstraintKey][0])
+                    != new TypeNode.Array(new TypeNode.Tv("method", 0))
+                || !JsonNode.DeepEquals(staticSourceFacts, staticCapture[NullableGenericErasure.MethodTypeParameterBoundsPre]))
+                throw new InvalidOperationException("Static capture strengthened its source frame or changed Kotlin bounds");
+            staticCapture["typeParams"][1]["constraints"] = new JsonArray(
+                TypeJson.Write(new TypeNode.Array(new TypeNode.Tv("method", 0))));
+            staticCapture["typeParams"][1].AsObject().Remove(FBoundStarProjectionErasure.ErasedInnerConstraintKey);
+            var lexicalMethod = (JsonObject)lexicalOwner["methods"][0].DeepClone();
+            lexicalMethod["typeParams"] = lexicalOwner["typeParams"].DeepClone();
+            lexicalMethod["typeParams"][1][FBoundStarProjectionErasure.ErasedInnerConstraintKey] = new JsonArray(
+                TypeJson.Write(new TypeNode.Array(new TypeNode.Tv("method", 0))));
+            lexicalMethod["body"][0]["typeArgs"] = new JsonArray(
+                TypeJson.Write(new TypeNode.Tv("method", 0)), TypeJson.Write(new TypeNode.Tv("method", 1)));
+            staticRoot["methods"].AsArray().Add(lexicalMethod);
+            PropagateCapturedBounds(new Dictionary<string, JsonObject>(), _ => false, type => type, new[] { staticRoot });
+            if (staticCapture["typeParams"][1]["constraints"].AsArray().Count != 0
+                || TypeJson.Read(staticCapture["typeParams"][1][FBoundStarProjectionErasure.ErasedInnerConstraintKey][0])
+                    != new TypeNode.Array(new TypeNode.Tv("method", 0)))
+                throw new InvalidOperationException("Static capture lost its method-scope source frame");
+            staticCapture["generated"] = false;
+            staticCapture["typeParams"][1]["constraints"] = new JsonArray(
+                TypeJson.Write(new TypeNode.Array(new TypeNode.Tv("method", 0))));
+            staticCapture["typeParams"][1].AsObject().Remove(FBoundStarProjectionErasure.ErasedInnerConstraintKey);
+            PropagateCapturedBounds(new Dictionary<string, JsonObject> { ["Lexical"] = lexicalOwner },
+                _ => false, type => type, new[] { staticRoot });
+            if (staticCapture["typeParams"][1]["constraints"].AsArray().Count != 1)
+                throw new InvalidOperationException("A callable use changed an ordinary method's constraints");
+        }
+        finally { Methods.RemoveAll(entry => ReferenceEquals(entry.Method, staticCapture)); }
+        Console.WriteLine("[method bound dependencies] self-test OK (non-generic binding, storage companion, retained constraint, named/static capture)");
     }
 
     static TypeNode MapVariables(TypeNode type, Func<TypeNode.Tv, TypeNode> map) => type switch
@@ -311,11 +361,21 @@ static class OwnerConstrainedMethodLowering
 
     internal static Dictionary<string, HashSet<int>> PropagateCapturedBounds(
         IReadOnlyDictionary<string, JsonObject> definitions, Func<TypeNode, bool> dependsOnOwner,
-        Func<TypeNode, TypeNode> projectedBound)
+        Func<TypeNode, TypeNode> projectedBound, IEnumerable<JsonObject> roots = null)
     {
         var changed = new Dictionary<string, HashSet<int>>(StringComparer.Ordinal);
+        var declarations = definitions.Values.Concat(roots ?? Enumerable.Empty<JsonObject>())
+            .SelectMany(owner => (owner["methods"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()
+                .Select(method => (Method: method, Owner: owner))).ToArray();
+        var capturedMethods = declarations.Where(entry => entry.Method["generated"]?.GetValue<bool>() == true
+                && entry.Method[DeclarationIdentityBinding.Key] is JsonValue)
+            .GroupBy(entry => entry.Method[DeclarationIdentityBinding.Key].GetValue<string>(), StringComparer.Ordinal)
+            .Where(group => group.Count() == 1).ToDictionary(group => group.Key, group => group.Single(), StringComparer.Ordinal);
+        var registered = Methods.Select(entry => entry.Method).ToHashSet();
         var pending = new Queue<(JsonObject Method, JsonObject Owner, JsonArray Parameters, JsonArray OriginalParameters)>();
-        foreach (var (method, owner) in Methods)
+        // A captured owner parameter can be used in a nongeneric method. Such a caller need not itself have
+        // owner-dependent method bounds, but its physical frame is still the authority for the captured row.
+        foreach (var (method, owner) in Methods.Concat(declarations).Distinct())
         {
             var parameters = (method["typeParams"] as JsonArray)?.DeepClone().AsArray() ?? new JsonArray();
             var original = (JsonArray)parameters.DeepClone();
@@ -339,13 +399,24 @@ static class OwnerConstrainedMethodLowering
                     "new" => obj["type"],
                     _ => null,
                 };
-                if (TypeJson.Read(constructionType) is TypeNode.Fqn constructed
-                    && definitions.TryGetValue(constructed.Name, out var target)
+                var constructed = TypeJson.Read(constructionType) as TypeNode.Fqn;
+                JsonObject target = null;
+                JsonObject capturedMethodOwner = null;
+                var targetScope = "type";
+                if (kind == "newDelegate" && obj[DeclarationIdentityBinding.Key] is JsonValue methodIdentity
+                    && capturedMethods.TryGetValue(methodIdentity.GetValue<string>(), out var capturedMethod))
+                {
+                    target = capturedMethod.Method;
+                    capturedMethodOwner = capturedMethod.Owner;
+                    targetScope = "method";
+                }
+                else if (constructed != null) definitions.TryGetValue(constructed.Name, out target);
+                if (target != null
                     && target["generated"]?.GetValue<bool>() == true
                     && target["typeParams"] is JsonArray targetParameters)
                 {
                     var arguments = obj["typeArgs"] is JsonArray explicitArguments
-                        ? explicitArguments.Select(TypeJson.Read).ToArray() : constructed.Args;
+                        ? explicitArguments.Select(TypeJson.Read).ToArray() : constructed?.Args;
                     if (arguments != null && arguments.Length == targetParameters.Count)
                     {
                         var positions = new Dictionary<(string, int), int>();
@@ -353,7 +424,7 @@ static class OwnerConstrainedMethodLowering
                             if (arguments[i] is TypeNode.Tv tv) positions.TryAdd((tv.Scope, tv.I), i);
                         JsonArray Rebind(JsonArray bounds) => new(bounds.Select(bound => TypeJson.Write(
                             MapVariables(TypeJson.Read(bound), tv => positions.TryGetValue((tv.Scope, tv.I), out var index)
-                                ? new TypeNode.Tv("type", index) : tv))).ToArray());
+                                ? new TypeNode.Tv(targetScope, index) : tv))).ToArray());
                         var targetChanged = false;
                         for (var i = 0; i < arguments.Length; i++)
                         {
@@ -397,7 +468,11 @@ static class OwnerConstrainedMethodLowering
                             // Only an unmaterialized row is also a Kotlin source bound.
                             // Companion-bearing rows belong to the physical dispatch plan,
                             // never to the source metadata carrier.
-                            if (KotlinSupertypesRecord.ReadNullableFrame(target) == null)
+                            if (targetScope == "method")
+                            {
+                                if (registered.Add(target)) Record(target, capturedMethodOwner);
+                            }
+                            else if (KotlinSupertypesRecord.ReadNullableFrame(target) == null)
                                 KotlinSupertypesRecord.Merge(target, new JsonObject { ["bounds"] = new JsonObject {
                                     [i.ToString()] = parameter["constraints"]?.DeepClone() ?? new JsonArray() } });
                             parameter["constraints"] = constraints;
@@ -409,12 +484,20 @@ static class OwnerConstrainedMethodLowering
                             if (erased != null) plans[i.ToString()] = dispatch.DeepClone();
                             else plans.Remove(i.ToString());
                             target[DispatchBoundsKey] = plans.ToJsonString();
-                            if (!changed.TryGetValue(constructed.Name, out var slots))
-                                changed[constructed.Name] = slots = new HashSet<int>();
-                            slots.Add(i);
+                            if (targetScope == "type")
+                            {
+                                if (!changed.TryGetValue(constructed.Name, out var slots))
+                                    changed[constructed.Name] = slots = new HashSet<int>();
+                                slots.Add(i);
+                            }
                             targetChanged = true;
                         }
-                        if (targetChanged && target["methods"] is JsonArray methods)
+                        if (targetChanged && targetScope == "method")
+                        {
+                            var parameters = target["typeParams"].AsArray();
+                            pending.Enqueue((target, capturedMethodOwner, parameters, (JsonArray)parameters.DeepClone()));
+                        }
+                        else if (targetChanged && target["methods"] is JsonArray methods)
                             foreach (var method in methods.OfType<JsonObject>())
                             {
                                 var parameters = method["typeParams"] as JsonArray ?? new JsonArray();
