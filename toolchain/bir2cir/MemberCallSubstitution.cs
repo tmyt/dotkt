@@ -14,11 +14,10 @@ static class MemberCallSubstitution
     // Whether to attribute referenced top-level stdlib funs to their file-class owner (APP build only; OFF for the
     // stdlib self-build, where every such fun is local — see the StdlibMode == App gate at the call site in the Driver).
     static bool _attributeTopLevelOwner;
-    // FQNs of local types that declare their OWN concrete (non-abstract, nullary) `iterator()` — e.g. the concrete
-    // `kotlin.collections.LinkedHashSet`. A `this.iterator()` on such a type binds to that real slot and must NOT be
-    // rerouted to the ClrIteratorBridge (which returns the base `Iterator`, not the declared `MutableIterator`). The
-    // reroute is ONLY for the AbstractMutable* bases whose abstract iterator() slot vanished onto the BCL IEnumerable face.
-    static HashSet<string> _typesWithConcreteIterator = new(StringComparer.Ordinal);
+    // Real Kotlin iterator declarations, including abstract and inherited slots, take precedence over the
+    // IEnumerable adapter. The adapter cannot preserve an authored MutableIterator return contract.
+    static HashSet<string> _typesWithDeclaredIterator = new(StringComparer.Ordinal);
+    static IReadOnlyDictionary<string, SupertypeGraph.Def> _iteratorTypeDefinitions;
     internal readonly record struct LocalPropertyAccessorKey(
         string Owner, string Property, string Kind, int MethodArity, int ParameterCount);
 
@@ -122,7 +121,8 @@ static class MemberCallSubstitution
             ?? new Dictionary<LocalPropertyAccessorKey, IReadOnlyList<LocalPropertyAccessor>>();
         _localPropertyOwners = _localPropertyAccessors.Keys.Select(key => key.Owner)
             .ToHashSet(StringComparer.Ordinal);
-        _typesWithConcreteIterator = CollectConcreteIteratorTypes(root);
+        _typesWithDeclaredIterator = CollectDeclaredIteratorTypes(root);
+        _iteratorTypeDefinitions = SupertypeGraph.Collect(new[] { root });
         return Rewrite(root, refs, new SubstCtx());
     }
 
@@ -187,9 +187,9 @@ static class MemberCallSubstitution
         return true;
     }
 
-    // Local type FQNs that DECLARE a concrete nullary `iterator()` of their own (a real slot, so a self-call binds to it
-    // instead of the ClrIteratorBridge reroute below). A concrete generic collection class (LinkedHashSet) is the case.
-    internal static HashSet<string> CollectConcreteIteratorTypes(JsonNode root)
+    // Abstract and concrete declarations both provide a real virtual iterator slot. Only an owner without
+    // a declared nullary instance protocol needs the IEnumerable-to-Iterator fallback below.
+    internal static HashSet<string> CollectDeclaredIteratorTypes(JsonNode root)
     {
         var set = new HashSet<string>(StringComparer.Ordinal);
         void Walk(JsonNode node)
@@ -197,12 +197,13 @@ static class MemberCallSubstitution
             if (node is JsonObject owner)
             {
                 // The source-binding pass runs before anonymous/local classes are hoisted into root.types.
-                // Their authored methods are still declarations and must protect a concrete iterator as well.
+                // Their authored methods are still declarations and must protect the iterator slot as well.
                 if ((owner["name"] as JsonValue)?.GetValue<string>() is string name
                     && owner["methods"] is JsonArray ms
                     && ms.OfType<JsonObject>().Any(m =>
                         (m["name"] as JsonValue)?.GetValue<string>() == "iterator"
-                        && (m["abstract"] as JsonValue)?.GetValue<bool>() != true
+                        && (m["static"] as JsonValue)?.GetValue<bool>() != true
+                        && ((m["typeParams"] as JsonArray)?.Count ?? 0) == 0
                         && (m["params"] as JsonArray) is { Count: 0 }))
                     set.Add(name);
                 foreach (var child in owner.Select(pair => pair.Value)) Walk(child);
@@ -212,6 +213,23 @@ static class MemberCallSubstitution
         }
         Walk(root);
         return set;
+    }
+
+    internal static bool HasDeclaredIterator(TypeNode.Fqn owner, IReadOnlySet<string> declaredTypes,
+        IReadOnlyDictionary<string, SupertypeGraph.Def> definitions, ReferenceMetadataIndex references,
+        IReadOnlyDictionary<string, string> aliases, bool sourceFrames = false)
+    {
+        foreach (var (candidate, _) in SupertypeGraph.Reachable(
+            new SupertypeGraph.Def { Base = owner }, definitions, references, sourceFrames))
+        {
+            // An alias's source declaration is implemented through its native face, not a Kotlin MethodDef.
+            if (aliases?.ContainsKey(candidate.Name) == true) continue;
+            if (declaredTypes.Contains(candidate.Name)
+                || references?.DeclaresExactInstanceMember(candidate.Name, "iterator", 0,
+                    Array.Empty<TypeNode>(), candidate.Args) == true)
+                return true;
+        }
+        return false;
     }
 
     // Lexical type environment carried DOWN the walk: a name->type-token map for the enclosing decl's params, and a
@@ -1386,20 +1404,16 @@ static class MemberCallSubstitution
                             sourceAccessorKind);
         }
 
-        // A Kotlin-collection `iterator()` on an EMITTED (non-@ClrTypeAlias) collection type — a `kotlin.collections.
-        // AbstractMutable*` self-call: its abstract iterator() slot vanished when its collection supertype substituted
-        // to the BCL IEnumerable face, so `this.iterator()` finds no slot. Route it to the ClrIteratorBridge over the
-        // receiver (the exact target the @ClrTypeAlias-interface path — Rule 5 — uses; here the owner is a CLASS not in
-        // the alias table, so that rule never reaches it). Element type = the owner's first type-arg. GUARD: a type that
-        // DECLARES its own concrete iterator() keeps a real slot — leave its `.iterator()` call alone so it binds to the
-        // declared `MutableIterator`-returning method (the bridge returns the base `Iterator`, dropping remove()/set()).
-        // Covers BOTH a same-file declarer (the stdlib self-build's concrete LinkedHashSet, via the local scan) AND a
-        // NON-local one (an APP's `linkedSetOf(..).iterator().remove()`, via the ref.dll — EntryPointNotFound otherwise).
-        if (instance && ownerFqnNode != null && node["args"] is JsonArray itArgs
+        // An unaliased collection with no declared iterator can use its native IEnumerable face. A declared
+        // abstract or concrete iterator must instead keep ordinary virtual dispatch, including its mutable
+        // return contract. Replacing it with a read-only bridge drops the authored protocol and mutation slots.
+        // Local declarations and referenced declaration signatures are equally authoritative; a body is not needed.
+        if (instance && ownerFqnNode != null && Str(node["method"]) == "iterator"
+            && node["args"] is JsonArray { Count: 0 } itArgs
             && !refs.TryResolveClrOwner(ownerToken, out _, out _)
             && MissingCollectionIteratorCall(node, ownerFqnNode, itArgs,
-                _typesWithConcreteIterator.Contains(ReferenceMetadataIndex.BareOwnerFqn(ownerToken))
-                    || refs.DeclaresConcreteIterator(ownerToken)) is { } iteratorCall)
+                HasDeclaredIterator(ownerFqnNode, _typesWithDeclaredIterator, _iteratorTypeDefinitions,
+                    refs, refs.Aliases)) is { } iteratorCall)
             return iteratorCall;
 
         // A CLR array cannot host the Kotlin declaration's instance body. Native-array declarations retain that
@@ -2145,9 +2159,9 @@ static class MemberCallSubstitution
     }
 
     internal static JsonNode MissingCollectionIteratorCall(JsonObject node, TypeNode.Fqn owner,
-        JsonArray args, bool declaresConcreteIterator) =>
+        JsonArray args, bool declaresIterator) =>
         owner.Name.StartsWith("kotlin.collections.", StringComparison.Ordinal)
-            && Str(node["method"]) == "iterator" && args.Count == 0 && !declaresConcreteIterator
+            && Str(node["method"]) == "iterator" && args.Count == 0 && !declaresIterator
             ? CollDefaultCall(node, "kotlin.collections.ClrIteratorBridgeKt", "iteratorOverEnumerable",
                 OwnerElemArg(owner), args) : null;
 

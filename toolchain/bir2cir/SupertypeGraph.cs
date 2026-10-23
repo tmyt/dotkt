@@ -72,7 +72,7 @@ static class SupertypeGraph
     // (transitively, so a base interface's redeclared slot is reached) and the base-class chain. Bounded by a visited
     // set keyed on the constructed spec, so cyclic or repeated metadata terminates.
     public static IEnumerable<(TypeNode.Fqn spec, bool isInterface)> Reachable(Def cls,
-        IReadOnlyDictionary<string, Def> defs, ReferenceMetadataIndex refs)
+        IReadOnlyDictionary<string, Def> defs, ReferenceMetadataIndex refs, bool sourceFrames = false)
     {
         var queue = new Queue<(TypeNode.Fqn, bool)>();
         foreach (var i in cls.Interfaces) queue.Enqueue((i, true));
@@ -96,6 +96,19 @@ static class SupertypeGraph
             // naming the intermediate type is looked up under a spec the emitter never asks about; and a .NET
             // interface that merely EXTENDS the declaring one hands over none of its base's members to reflection.
             if (refs == null) continue;
+            // Before frame materialization, Kotlin applications must follow the producer-authored source edges,
+            // not the physical graph's extra storage parameters. Late callers retain the physical graph below.
+            if (sourceFrames)
+            {
+                if (!refs.TryReferenceSourceTypeShape(spec, out var arity, out var baseType, out var interfaces))
+                    continue;
+                var sourceArgs = EffectiveArgs(spec, arity);
+                if (sourceArgs == null) continue;
+                foreach (var parent in interfaces)
+                    queue.Enqueue(((TypeNode.Fqn)SubstOwnerTvs(parent, sourceArgs), true));
+                if (baseType != null) queue.Enqueue(((TypeNode.Fqn)SubstOwnerTvs(baseType, sourceArgs), false));
+                continue;
+            }
             var refArgs = spec.Args ?? Array.Empty<TypeNode>();
             foreach (var (parent, parentIsInterface) in refs.ReferencedSupertypes(spec))
                 if (SubstOwnerTvs(parent, refArgs) is TypeNode.Fqn constructed)

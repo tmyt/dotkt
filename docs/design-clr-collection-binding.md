@@ -73,6 +73,12 @@ CLR arity in a referenced owner's spelling must not hide its native enumeration 
 
 Members with direct BCL equivalents are substituted from stdlib metadata, for example `size` to `Count` and indexed access to the CLR indexer. Members without a one-to-one BCL operation retain real Kotlin bodies that use bound primitive members. This keeps stdlib policy in the stdlib rather than adding symbol recognition to the compiler.
 
+A declared Kotlin `iterator()` keeps its virtual slot whether abstract or concrete, in the current module or a
+reference assembly, including a slot inherited from a base declaration. Early binding follows source hierarchy
+metadata; after frame materialization the physical hierarchy is authoritative. Only an owner without that declared
+protocol uses the native enumeration fallback. A read-only
+enumeration adapter must not replace an authored mutable iterator or its removal contract.
+
 Native `ICollection<T>.Contains` on a Kotlin read-only collection uses the same declaration-owned membership
 slot as Kotlin callers, including a native dictionary's checked Keys/Values views. Default membership bodies perform
 their own search rather than reentering that dispatcher;

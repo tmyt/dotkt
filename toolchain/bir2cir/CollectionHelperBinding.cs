@@ -18,8 +18,9 @@ static class CollectionHelperBinding
         var inputs = roots.ToArray();
         var closedViews = references == null ? new Dictionary<string, TypeNode.Fqn>()
             : ForeignStarProjectionBinding.CollectClosedViewHints(inputs, references);
-        var concreteIteratorTypes = inputs.SelectMany(MemberCallSubstitution.CollectConcreteIteratorTypes)
+        var declaredIteratorTypes = inputs.SelectMany(MemberCallSubstitution.CollectDeclaredIteratorTypes)
             .ToHashSet(StringComparer.Ordinal);
+        var iteratorTypeDefinitions = SupertypeGraph.Collect(inputs);
         var localHelpers = inputs.OfType<JsonObject>()
             .SelectMany(root => (root["methods"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()
                 .Select(method => (Owner: Text(root["fileClass"]), Method: method))).ToArray();
@@ -111,9 +112,10 @@ static class CollectionHelperBinding
             JsonObject call;
             if (!aliases.ContainsKey(owner.Name))
             {
+                if (Text(obj["method"]) != "iterator" || args.Count != 0) return obj;
                 call = MemberCallSubstitution.MissingCollectionIteratorCall(obj, owner, args,
-                    concreteIteratorTypes.Contains(owner.Name)
-                        || references?.DeclaresConcreteIterator(owner.Name) == true) as JsonObject;
+                    MemberCallSubstitution.HasDeclaredIterator(owner, declaredIteratorTypes,
+                        iteratorTypeDefinitions, references, aliases, sourceFrames: true)) as JsonObject;
                 if (call == null) return obj;
             }
             else if (owner.Name is "kotlin.collections.Map" or "kotlin.collections.MutableMap")
@@ -323,11 +325,24 @@ static class CollectionHelperBinding
         """)!;
         var iteratorOwner = new TypeNode.Fqn("kotlin.collections.NestedIteratorProbe", new TypeNode[] { variable });
         var iteratorCall = Call(iteratorOwner.Name, variable, "iterator");
-        var concreteIterators = MemberCallSubstitution.CollectConcreteIteratorTypes(nestedIterator);
-        if (!concreteIterators.Contains(iteratorOwner.Name)
+        var abstractIterator = nestedIterator.DeepClone();
+        abstractIterator["synthClass"]["name"] = "kotlin.collections.AbstractIteratorProbe";
+        abstractIterator["synthClass"]["methods"][0]["abstract"] = true;
+        var declaredIterators = MemberCallSubstitution.CollectDeclaredIteratorTypes(
+            new JsonArray(nestedIterator, abstractIterator));
+        if (!declaredIterators.Contains(iteratorOwner.Name)
+            || !declaredIterators.Contains("kotlin.collections.AbstractIteratorProbe")
             || MemberCallSubstitution.MissingCollectionIteratorCall(iteratorCall, iteratorOwner, new JsonArray(), true) != null
             || MemberCallSubstitution.MissingCollectionIteratorCall(iteratorCall, iteratorOwner, new JsonArray(), false) == null)
-            throw new InvalidOperationException("Source iterator binding lost an unhoisted concrete declaration");
+            throw new InvalidOperationException("Source iterator binding lost an unhoisted iterator declaration");
+        var iteratorDefinitions = new Dictionary<string, SupertypeGraph.Def> {
+            ["probe.Derived"] = new() { Base = iteratorOwner },
+        };
+        if (!MemberCallSubstitution.HasDeclaredIterator(new TypeNode.Fqn("probe.Derived"), declaredIterators,
+                iteratorDefinitions, null, new Dictionary<string, string>())
+            || MemberCallSubstitution.HasDeclaredIterator(new TypeNode.Fqn("probe.Derived"), declaredIterators,
+                iteratorDefinitions, null, new Dictionary<string, string> { [iteratorOwner.Name] = "System.Object" }))
+            throw new InvalidOperationException("Iterator binding lost inheritance or treated an alias as a Kotlin slot");
         var methods = new JsonArray(new[] { "clrProjectedViewIsEmpty", "clrProjectedViewIterator",
                 "clrProjectedViewContains", "clrProjectedViewContainsAll", "clrProjectedViewListIterator", "clrProjectedCollAdd" }
             .Select(name => (JsonNode)Helper(name)).ToArray());

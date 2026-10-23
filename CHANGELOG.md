@@ -5,6 +5,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Preserve declared abstract iterator dispatch in inherited collection operations and referenced receivers,
+  rather than replacing mutable iterators with read-only enumeration adapters (#1132).
+
 - Retain exact source list witnesses through projected `MutableList.set` and `removeAt` reads and writes,
   without hiding genuinely ambiguous native list views (#1130).
 
