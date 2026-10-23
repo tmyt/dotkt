@@ -375,27 +375,27 @@ class ExceptionTests {
         assertEquals("spread-before", excHoistLog[7])
         assertEquals("spread-try", excHoistLog[8])
 
-        // Factory arguments are all evaluated before the substituted HashSet/Dictionary consumes them. The first
-        // hash therefore cannot run before the later key-producing expression just because the first key held a try.
+        // Explicit hash factories exercise native construction substitution. All arguments must be evaluated before
+        // hashing starts, even when the first key holds a try. Ordered factories above retain their Kotlin bodies.
         excHoistLog.clear()
-        val orderedSet = setOf(
+        val nativeSet = hashSetOf(
             try { excHoistMarkedKey("set-try", 20) }
             catch (e: Exception) { ExcHoistHashKey(-1) },
             excHoistMarkedKey("set-later", 21),
         )
-        assertEquals(2, orderedSet.size)
+        assertEquals(2, nativeSet.size)
         assertEquals("set-try", excHoistLog[0])
         assertEquals("set-later", excHoistLog[1])
         assertEquals("hash20", excHoistLog[2])
         assertEquals("hash21", excHoistLog[3])
 
         excHoistLog.clear()
-        val orderedMap = mapOf(
+        val nativeMap = hashMapOf(
             (try { excHoistMarkedKey("map-key-try", 22) }
             catch (e: Exception) { ExcHoistHashKey(-1) }) to 1,
             excHoistMarkedKey("map-key-later", 23) to 2,
         )
-        assertEquals(2, orderedMap.size)
+        assertEquals(2, nativeMap.size)
         assertEquals("map-key-try", excHoistLog[0])
         assertEquals("map-key-later", excHoistLog[1])
         assertEquals("hash22", excHoistLog[2])
