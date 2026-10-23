@@ -346,14 +346,15 @@ static class NullableRepresentationMaterialization
                     || function.Ctx?.Any(Contains) == true,
                 _ => false,
             };
-            // A body-dispatch helper's storage companions are deliberately instantiated with object.
-            // Its private value signature does not turn an erased dispatch fact into a CLR constraint.
-            var publishedSlot = !bodyOnlyStorage && (
-                new[] { "params", "ret", "fields", "properties", "base", "interfaces" }
+            // An owner can forward its storage parameter from a member body even without a value-bearing signature.
+            // Its frame must carry the same classifier proof as a method receiving that storage value. Body-dispatch
+            // helpers remain deliberately instantiated with object; their private slots do not publish CLR bounds.
+            var requiresPhysicalBounds = !bodyOnlyStorage && (scope == "type"
+                || new[] { "params", "ret", "fields", "properties", "base", "interfaces" }
                     .Any(key => Mentions(declaration[key]))
                 || declaration["ctors"] is JsonArray constructors
                     && constructors.OfType<JsonObject>().Any(constructor => Mentions(constructor["params"])));
-            if (publishedSlot)
+            if (requiresPhysicalBounds)
             {
                 // The native/logical value and its storage face share the source classifier
                 // bound. Preserve that erased classifier on both: an addressed value uses
@@ -370,7 +371,7 @@ static class NullableRepresentationMaterialization
             }
             expanded[variable.I] = new JsonObject {
                 ["name"] = expanded[variable.I].DeepClone(),
-                [publishedSlot ? "constraints" : FBoundStarProjectionErasure.ErasedInnerConstraintKey] =
+                [requiresPhysicalBounds ? "constraints" : FBoundStarProjectionErasure.ErasedInnerConstraintKey] =
                     new JsonArray(projected.Select(TypeJson.Write).ToArray()),
             };
         }
@@ -843,9 +844,21 @@ static class NullableRepresentationMaterialization
         privateBoundMethod["params"] = new JsonArray();
         var boundOwner = (JsonObject)privateBoundMethod.DeepClone();
         boundOwner["base"] = TypeJson.Write(new TypeNode.Fqn("Base", new TypeNode[] { new TypeNode.Tv("type", 0) }));
+        var memberBoundOwner = (JsonObject)privateBoundMethod.DeepClone();
+        memberBoundOwner["methods"] = JsonNode.Parse("""
+          [{"params":[{"name":"value","type":{"t":"tv","scope":"type","i":0}}],
+            "ret":{"t":"fqn","name":"kotlin.Unit"}}]
+          """);
+        var bodyBoundOwner = (JsonObject)privateBoundMethod.DeepClone();
+        bodyBoundOwner["methods"] = JsonNode.Parse("""
+          [{"params":[],"ret":{"t":"fqn","name":"kotlin.Unit"},
+            "body":[{"k":"var","name":"value","type":{"t":"tv","scope":"type","i":0}}]}]
+          """);
         AppendParameters(boundMethod, boundFrame, policy: boundPolicy);
         AppendParameters(privateBoundMethod, boundFrame, policy: boundPolicy);
         AppendParameters(boundOwner, boundFrame, "type", policy: boundPolicy);
+        AppendParameters(memberBoundOwner, boundFrame, "type", policy: boundPolicy);
+        AppendParameters(bodyBoundOwner, boundFrame, "type", policy: boundPolicy);
         var carrierBound = new TypeNode.Fqn("ValueBound", new TypeNode[] { new TypeNode.Star() });
         if (TypeJson.Read(boundMethod["typeParams"][0]["constraints"][0]) != carrierBound
             || boundMethod["typeParams"][0]["constraints"].AsArray().Count != 2
@@ -855,6 +868,8 @@ static class NullableRepresentationMaterialization
             || !boundMethod["typeParams"][1]["constraints"].AsArray().Select(TypeJson.Read).Contains(carrierBound)
             || privateBoundMethod["typeParams"][0]["constraints"] != null
             || !boundOwner["typeParams"][0]["constraints"].AsArray().Select(TypeJson.Read).Contains(carrierBound)
+            || !memberBoundOwner["typeParams"][0]["constraints"].AsArray().Select(TypeJson.Read).Contains(carrierBound)
+            || !bodyBoundOwner["typeParams"][0]["constraints"].AsArray().Select(TypeJson.Read).Contains(carrierBound)
             || TypeJson.Read(privateBoundMethod["typeParams"][0][FBoundStarProjectionErasure.ErasedInnerConstraintKey][0]) != carrierBound)
             throw new InvalidOperationException("Storage bound lost its physical role, narrowed a native bound, or constrained a boxed private body");
         var scalarBoundPolicy = new GenericRepresentationPolicy(new Dictionary<string, string>(), roots: new[] {

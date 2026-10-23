@@ -149,6 +149,9 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   while its CLR slot wiring uses physical bounds, including when the base declaration comes from another DLL.
   Generated capture frames inherit those physical bounds through their explicit construction type arguments,
   including concrete bounds substituted on an override and captures nested inside other generated frames.
+  An owner's storage companions retain the source bounds' classifier consequences even when they are forwarded
+  only from a member body. Moving the same value into a callable adapter must not demand a proof absent from
+  its enclosing frame. Private body-dispatch method companions retain their separate erased-storage contract.
   Suspend members use the same physical constraints on their Task and cold-entry slots. Their state machines
   concatenate the enclosing owner's and the method's generic frames, preserving both across suspension and capture.
   The Task projection retains the Kotlin constraint and source-member metadata used by separately compiled consumers.
