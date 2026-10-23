@@ -5,6 +5,21 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+## 0.9.17 (2026-10-24)
+
+### Release highlights
+
+- All five packages and SDK defaults use `0.9.17`; the embedded Kotlin compiler and
+  upstream common standard-library baseline remain **2.4.21**.
+- Preserve ordered Map/Set factory behavior and nullable ordered-Set elements, alongside
+  inherited iterator dispatch, collection membership overrides and projected mutable-list results.
+- Preserve reflection-visible property signatures, `KClass` and annotation identity, and
+  private enum metadata across DLL boundaries.
+- Tighten checked null casts and enum `valueOf` entry-name matching, and preserve dependent-bound
+  frames in generated callable adapters.
+
+### Fixes and regression coverage
+
 - Preserve insertion order in mutable map/set factories by retaining their Kotlin implementations,
   rather than replacing ordered factories with unordered native hash storage (#169).
   Ordered Set implementations and their factory/conversion paths also retain null elements.
