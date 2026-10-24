@@ -1737,6 +1737,9 @@ failing closed is the same shape Kotlin/JVM emits (`ACONST_NULL; ATHROW` after s
   subclasses use that same native base. The two frontend views remain distinct as described in §8b.
   `as?` still produces null on failure, and unrelated exceptions are not wrapped or reclassified.
   No separate runtime `kotlin.ClassCastException` CLR class is emitted; C# consumers use `System.InvalidCastException`.
+- An explicit source cast to a non-null reference target rejects null with `NullPointerException` before the
+  nominal cast, including native CLR types and arrays with generic elements. Nullable and safe casts retain their
+  null behavior; this does not add null checks to unchecked bare type-parameter casts or internal coercions.
 - A public CLR class can legally implement an `internal` or otherwise inaccessible interface. That interface edge is
   omitted from the Kotlin supertype list, while every independently public interface edge remains visible. If the
   hidden interface supplies a public slot through a default `MethodImpl`, or the class supplies it through a private
