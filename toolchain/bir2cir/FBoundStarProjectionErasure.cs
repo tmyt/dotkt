@@ -344,7 +344,7 @@ static partial class FBoundStarProjectionErasure
                 BindProjectedArrayRead(obj, owners, refs);
                 BindProjectedArrayGenericCall(obj, owners, refs);
                 BindCarrierArgumentMerge(obj, owners, defs, refs);
-                BindCarrierPropertyResult(obj, owners, refs);
+                BindCarrierPropertyResult(obj, owners, defs, refs);
                 BindDeclarationCarrierResult(obj, owners, refs);
                 BindInheritedStarMember(obj, owners, defs, refs);
                 if (obj["body"] is JsonArray && obj["params"] is JsonArray)
@@ -1759,8 +1759,8 @@ static partial class FBoundStarProjectionErasure
         return HasKotlinVariantParameter(application, refs.OwnerTypeParamDeclarations(application.Name));
     }
 
-    // A foreign alias cannot be retrofitted with a nominal carrier. Kotlin variance includes value arguments,
-    // unlike CLR interface variance, and requires
+    // A foreign alias cannot be retrofitted with a nominal carrier. Kotlin collection interface casts erase their
+    // arguments; Kotlin variance also includes value arguments, unlike CLR interface variance. Both require
     // an opaque reference slot instead; the exact source application still travels in KotlinType metadata.
     static bool RequiresOpaqueVariantAlias(TypeNode.Fqn application,
         IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs,
@@ -3683,12 +3683,15 @@ static partial class FBoundStarProjectionErasure
     }
 
     static void BindCarrierPropertyResult(JsonObject call, IReadOnlyDictionary<string, Owner> owners,
-        ReferenceMetadataIndex refs)
+        IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs)
     {
         if (Str(call["k"]) != "callInstance"
             || !KotlinPropertyAccessors.TryCallIdentity(call, out var property, out var accessor)
             || accessor != "get"
             || TypeJson.Read(call["ownerType"]) is not TypeNode.Fqn owner
+            // A reference twin must not replace the current unit's declaration or generic frame.
+            // Local declaration results are bound by BindDeclarationCarrierResult instead.
+            || defs.ContainsKey(owner.Name)
             || !refs.HasDotKtOwner(owner.Name)
             || call["sig"] is not JsonArray signature
             || !refs.TrySelectedMethodDeclaration(owner.Name, property, 0,

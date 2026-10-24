@@ -84,6 +84,10 @@ static class AliasVarianceRepresentation
             if (!NeedsOpaqueValue(new TypeNode.Fqn(source, new[] { new TypeNode.Fqn("kotlin.Any") }), invariant,
                 typeof(System.Collections.Generic.ICollection<>)))
                 throw new InvalidOperationException("Kotlin mutable collection casts must not require an invariant CLR construction");
+        if (!NeedsOpaqueValue(new TypeNode.Fqn("kotlin.collections.MutableMap", new[] {
+                new TypeNode.Fqn("kotlin.Any"), new TypeNode.Fqn("kotlin.Any") }),
+            JsonNode.Parse("""["K","V"]""").AsArray(), typeof(System.Collections.Generic.IDictionary<,>)))
+            throw new InvalidOperationException("Kotlin mutable map casts must not require an invariant CLR construction");
         if (NeedsOpaqueValue(new TypeNode.Fqn("System.Collections.Generic.ICollection", new[] { new TypeNode.Fqn("kotlin.Any") }),
             invariant, typeof(System.Collections.Generic.ICollection<>)))
             throw new InvalidOperationException("A native CLR interface lost its exact construction contract");

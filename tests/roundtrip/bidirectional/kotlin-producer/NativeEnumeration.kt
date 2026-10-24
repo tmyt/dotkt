@@ -1,4 +1,6 @@
 import roundtrip.enumeration.ReferencedMutableEnumerationSet
+import roundtrip.enumeration.erasedEnumerationView
+import roundtrip.enumeration.consumeErasedEnumerationView
 
 private open class LocalMutableEnumerationSet<T>(private val storage: MutableList<T>) : AbstractMutableSet<T>() {
     override val size: Int get() = storage.size
@@ -43,4 +45,75 @@ fun kotlinMutableEnumerationChecks(): Boolean {
         && enumerateFromKotlin(nullable) == listOf<Int?>(null, 3)
         && enumerateFromKotlin(local) == listOf("local")
         && enumerateFromKotlin(referenced) == listOf("referenced")
+}
+
+@Suppress("UNCHECKED_CAST")
+fun kotlinErasedSetIdentity(value: Any): Any = value as MutableSet<Any?>
+
+@Suppress("UNCHECKED_CAST")
+fun kotlinErasedSetConcreteIdentity(value: Any): Any = value as MutableSet<String>
+
+private class ErasedEnumerationSetBox(val view: MutableSet<Any?>)
+
+fun kotlinCrossModuleErasedSetChecks(value: Any, element: Any?): Boolean {
+    val view = erasedEnumerationView(value)
+    return view === value && consumeErasedEnumerationView(view, element) && view.contains(element)
+}
+
+@Suppress("UNCHECKED_CAST")
+fun kotlinErasedSetChecks(value: Any, present: Any?, added: Any?): Boolean {
+    val view = value as MutableSet<Any?>
+    check(view === value && view.contains(present))
+    val query = { view.contains(present) }
+    check(query())
+    check(ErasedEnumerationSetBox(view).view.contains(present))
+    val array = arrayOf(view)
+    check(array[0] === value && array[0].contains(present))
+    check(view.containsAll(listOf(present)))
+    check(view.add(added) && !view.add(added))
+    check(view.contains(added))
+    check(view.remove(added) && !view.remove(added))
+    view.clear()
+    return view.size == 0 && view.isEmpty()
+}
+
+@Suppress("UNCHECKED_CAST")
+fun kotlinErasedSetNativeConsumer(value: Any): Boolean {
+    val view = value as MutableSet<String>
+    val copy = System.Collections.Generic.List<String>(view as System.Collections.Generic.IEnumerable<String>)
+    return copy.Count == 2
+}
+
+@Suppress("UNCHECKED_CAST")
+fun kotlinErasedMutableInterfaceChecks(): Boolean {
+    val rawList: Any = mutableListOf("x")
+    val list = rawList as MutableList<Any?>
+    check(list.add("y") && list.set(0, "z") == "x")
+    check(list.remove("y") && list[0] == "z" && list.size == 1)
+    check((rawList as MutableCollection<Any?>).contains("z"))
+    val rawMap: Any = mutableMapOf("k" to 1)
+    val map = rawMap as MutableMap<Any?, Any?>
+    check(map.put("k", 2) == 1)
+    map["new"] = 3
+    check(map.remove("new") == 3)
+    return map["k"] == 2 && map.size == 1
+}
+
+@Suppress("UNCHECKED_CAST")
+fun kotlinErasedMutableCastControls(): Boolean {
+    val readonly: Any = object : AbstractSet<String>() {
+        override val size: Int get() = 1
+        override fun iterator(): Iterator<String> = listOf("a").iterator()
+    }
+    check(readonly as? MutableSet<Any?> == null)
+    check(readonly !is MutableSet<*>)
+    val none: Any? = null
+    check(none as? MutableSet<Any?> == null && none as MutableSet<Any?>? == null)
+    var nullRejected = false
+    try { none as MutableSet<Any?> } catch (_: NullPointerException) { nullRejected = true }
+    val wrong: Any = "not a set"
+    check(wrong as? MutableSet<Any?> == null)
+    var wrongRejected = false
+    try { wrong as MutableSet<Any?> } catch (_: ClassCastException) { wrongRejected = true }
+    return nullRejected && wrongRejected
 }

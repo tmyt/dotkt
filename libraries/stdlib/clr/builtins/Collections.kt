@@ -97,9 +97,8 @@ public actual interface MutableSet<E> : Set<E>, MutableCollection<E> {
     actual override fun clear(): Unit
 }
 
-// Map and MutableMap share IDictionary as their operational CLR alias. This does not make their value-slot ABI
-// identical: Map's Kotlin covariance is incompatible with invariant IDictionary<K,V>, so bir2cir carries Map
-// values as object with Kotlin type metadata. MutableMap retains its exact invariant dictionary face.
+// Map and MutableMap share IDictionary as their operational CLR alias. Their ordinary Kotlin values use object
+// with Kotlin type metadata: neither Kotlin variance nor unchecked interface casts imply a closed CLR dictionary.
 // Constructors, inheritance and selected CLR declarations keep their exact physical types; widening Map values
 // preserves the original reference without casting between unrelated IDictionary constructions.
 // Kotlin map members route through ClrMapDefaults and authored-map capability slots. Native IDictionary slots

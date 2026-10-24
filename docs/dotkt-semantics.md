@@ -1014,11 +1014,13 @@ Two consequences worth stating:
   a concurrent-modification error out of an invalidated BCL enumerator. (A Kotlin implementer that OVERRIDES one of
   the members defines its own behavior for these forms, exactly as on any other platform.)
 
-## 5c-bis. Read-only collection values preserve Kotlin variance and identity
+## 5c-bis. Collection interface values preserve erased views, variance and identity
 
 CLR interface variance only relates reference-type arguments: `IReadOnlyList<int>` is not an
 `IReadOnlyList<object>`. Kotlin permits `List<Int>` to widen to `List<Any>`, including after an ordinary generic
-return or opaque storage. Ordinary values of declaration-variant aliases therefore use `object`, retaining their
+return or opaque storage. Unchecked casts of invariant Kotlin collection interfaces likewise test the raw Kotlin
+classifier, not a closed CLR element construction: `MutableSet<String> as MutableSet<Any?>` preserves the same object.
+Ordinary values of Kotlin collection interface aliases and other declaration-variant aliases use `object`, retaining their
 full Kotlin source type in metadata. Widening does not introduce a wrapper or copy: `===`, indexed updates, additions,
 removals and later size observations retain the original collection. The rule applies recursively in arrays and
 generic containers, and to both reference-element and value-element instantiations.
