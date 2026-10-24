@@ -29,7 +29,7 @@ public class NativeCollectionMembershipTests
         var nullable = new MembershipCallCounter();
         Check<object>(NativeCollectionMembershipKt.nullableIndexList(nullable), null, 7, nullable);
         var inherited = new MembershipCallCounter();
-        Check(NativeCollectionMembershipKt.inheritedIndexList(inherited), "needle", "value", inherited);
+        Check(NativeCollectionMembershipKt.inheritedIndexList(inherited), "derived", "value", inherited);
         var failure = new InvalidOperationException("native index failure");
         var throwing = (IList<string>)NativeCollectionMembershipKt.throwingIndexList(failure);
         Assert.That(Assert.Throws<InvalidOperationException>(() => throwing.IndexOf("value")), Is.SameAs(failure));

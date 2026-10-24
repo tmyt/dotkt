@@ -109,7 +109,7 @@ private open class NativeIndexList<T>(
 
 private class InheritedNativeIndexList(counter: MembershipCallCounter) :
     NativeIndexList<String>("needle", "value", counter) {
-    override fun indexOf(element: String): Int = super.indexOf(element)
+    override fun indexOf(element: String): Int = super.indexOf(if (element == "derived") "needle" else element)
 }
 
 fun stringIndexList(counter: MembershipCallCounter): Any = NativeIndexList("needle", "value", counter)
