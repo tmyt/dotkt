@@ -51,7 +51,7 @@ PROJECTS=(
 # Reviewed on the v0.9.8 main baseline at the start of #227. Updating a suite requires updating this number in
 # the same change, making otherwise-silent test proliferation or accidental deletion an explicit review event.
 declare -A EXPECTED_DISCOVERED=(
-	["tests/basic"]=819
+	["tests/basic"]=820
 	["tests/coroutines"]=267
 	["tests/roundtrip/consumer"]=640
 	["tests/roundtrip/bidirectional/consumer"]=54
@@ -150,6 +150,14 @@ for proj in "${PROJECTS[@]}"; do
 		fi
 	fi
 	if [[ "$proj" == "tests/basic" ]]; then
+		if python3 "$ROOT/tests/basic/assert-checked-reference-casts-bir.py" \
+			"$dir/obj/$CONFIGURATION/net10.0/bir/CheckedReferenceCastTests.bir.json" \
+			>"$ROOT/build/nunit-$name.checked-reference-casts-bir.log" 2>&1; then
+			echo "  explicit non-null reference casts retain Kotlin null rejection"
+		else
+			echo "  CHECKED REFERENCE CAST BIR FAIL — see build/nunit-$name.checked-reference-casts-bir.log"
+			tail -25 "$ROOT/build/nunit-$name.checked-reference-casts-bir.log"; rc=1
+		fi
 		if python3 "$ROOT/tests/basic/assert-qualified-rich-enum-owners.py" \
 			"$dir/obj/$CONFIGURATION/net10.0/bir/QualifiedRichEnumTests.bir.json" \
 			"$dir/obj/$CONFIGURATION/net10.0/cir/QualifiedRichEnumTests.cir.json" \

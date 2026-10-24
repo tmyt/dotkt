@@ -71,7 +71,7 @@ private fun <T : ArrBoundedNode> arrCheckGenericCasts(item: T) {
     try { bad as Array<T> } catch (e: System.InvalidCastException) { rejected = true }
     check(rejected)
     rejected = false
-    try { none as Array<T> } catch (e: System.InvalidCastException) { rejected = true }
+    try { none as Array<T> } catch (e: NullPointerException) { rejected = true }
     check(rejected)
     val nested: Any = arrayOf(arrayOf<ArrBoundedNode>(item))
     check((nested as Array<Array<T>>) === nested)

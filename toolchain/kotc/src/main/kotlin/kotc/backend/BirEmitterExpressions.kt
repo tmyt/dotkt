@@ -308,6 +308,24 @@ private fun BirEmitter.innerConstructorOuterSlotJson(
 	else TypeNode.Fqn(outerName, outerArguments).toJson()
 }
 
+// Casts are pure type assertions: checking their shared input once before a chain preserves exception order and
+// keeps each cast visible to value-type readers. Safe casts may manufacture null and must remain a boundary;
+// a value already bound by an evaluation plan is likewise consumed through that binding, never re-evaluated.
+private fun BirEmitter.castExpression(node: IrTypeOperatorCall, requireNonNullInput: Boolean = false): String {
+	val checked = requireNonNullInput || (node.operator == IrTypeOperator.CAST && needsNonNullCheck(node.typeOperand))
+	val nested = if (checked) (node.argument as? IrTypeOperatorCall)?.takeIf {
+		(it.operator == IrTypeOperator.CAST || it.operator == IrTypeOperator.IMPLICIT_CAST) && planReads[it] == null
+	} else null
+	val original = if (nested != null) styStamped(nested, castExpression(nested, requireNonNullInput = true))
+		else expr(node.argument)
+	val operand = if (checked && nested == null)
+		wrapNonNullValue(original, node.argument.type, str("null cannot be cast to a non-null type"))
+	else original
+	return nullableValueUnwrapElem(node.argument.type, node.typeOperand)?.let { elem ->
+		"""{"k":"nullableValue","elem":${elem.toJson()},"e":$operand}"""
+	} ?: """{"k":"cast","type":${birType(node.typeOperand).toJson()},"reifiedTypeOperand":${node.operator == IrTypeOperator.CAST && node.typeOperand.hasReifiedRuntimeOperand()},"e":$operand}"""
+}
+
 internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 	is IrConst -> """{"k":"const","type":${birType(node.type).toJson()},"value":${constJson(node)}}"""
 	is IrGetValue -> {
@@ -520,10 +538,7 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 		// `Nullable<T>.Value` — `unbox.any int` over a `Nullable<int>` struct is invalid IL / garbage (the C1
 		// miscompile when FIR carries the smart-cast as an explicit IMPLICIT_CAST node instead of narrowing the
 		// IrGetValue directly). The twin of the IrGetValue narrowing path above.
-		IrTypeOperator.CAST, IrTypeOperator.IMPLICIT_CAST ->
-			nullableValueUnwrapElem(node.argument.type, node.typeOperand)?.let { elem ->
-				"""{"k":"nullableValue","elem":${elem.toJson()},"e":${expr(node.argument)}}"""
-			} ?: """{"k":"cast","type":${birType(node.typeOperand).toJson()},"reifiedTypeOperand":${node.operator == IrTypeOperator.CAST && node.typeOperand.hasReifiedRuntimeOperand()},"e":${expr(node.argument)}}"""
+		IrTypeOperator.CAST, IrTypeOperator.IMPLICIT_CAST -> castExpression(node)
 		// `x as? T` -> null on mismatch. Reference T: `isinst T` (null or ref). Value T: `T?` (Nullable<T>).
 		IrTypeOperator.SAFE_CAST -> {
 			// A value primitive OR an unsigned inline-class (`UInt`/…, #126) `T` -> the value-type nullable path
@@ -578,7 +593,7 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 			val (res, end) = spliced
 			val goto = """{"k":"goto","id":$end}"""
 			// Unlike the NON-spliced arm below, the value stored into the splice result-local needs NO return-site
-			// coerceValue/wrapReturnNonNull: a `return@lambda <value-type-nullable>` into a bare-value slot is only
+			// coerceValue/wrapNonNullValue: a `return@lambda <value-type-nullable>` into a bare-value slot is only
 			// well-typed via a smart-cast, which Fir2Ir always materializes as a narrowed IrGetValue or an IMPLICIT_CAST
 			// — both already `nullableValue`-unwrapped by expr()'s leaf arms — so node.value is already the bare `Int`;
 			// and a splice target is always a LAMBDA literal, never a postcondition-registered public fn. Verified a
@@ -600,7 +615,7 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 			// statement-position returns. Skip Nothing values (`return TODO()` already throws) and inline splices,
 			// which took the branch above.
 			val postMsg = postconditionReturns[node.returnTargetSymbol]
-			val v = if (postMsg != null && !node.value.type.isNothing()) wrapReturnNonNull(v0, valueRetType, postMsg) else v0
+			val v = if (postMsg != null && !node.value.type.isNothing()) wrapNonNullValue(v0, valueRetType, postMsg) else v0
 			"""{"k":"returnExpr","value":$v}"""
 		}
 		else if (node.value is IrGetObjectValue) """{"k":"returnExpr"}"""

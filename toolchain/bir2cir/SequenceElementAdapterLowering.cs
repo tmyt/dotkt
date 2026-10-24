@@ -55,7 +55,7 @@ static class SequenceElementAdapterLowering
         {
             if (node is JsonObject obj)
             {
-                if (IsElementBoundary(obj, method["ret"], out _)) boundaries.Add(obj);
+                if (IsElementBoundary(obj, method["ret"], out _, out _)) boundaries.Add(obj);
                 foreach (var child in obj.Select(kv => kv.Value).Where(child => child != null))
                     CollectBoundaries(child);
             }
@@ -65,9 +65,8 @@ static class SequenceElementAdapterLowering
 
         CollectBoundaries(value);
         if (boundaries.Count != 1
-            || !IsElementBoundary(boundaries[0], method["ret"], out var operand))
+            || !IsElementBoundary(boundaries[0], method["ret"], out var operand, out var sourceSequence))
             throw Malformed(method, $"expected one sequence-element cast boundary, found {boundaries.Count}");
-        var sourceSequence = (TypeNode.Fqn)TypeJson.Read(operand["sty"]);
 
         JsonNode Rewrite(JsonNode node)
         {
@@ -107,18 +106,55 @@ static class SequenceElementAdapterLowering
     }
 
     static bool IsElementBoundary(JsonObject node, JsonNode resultType,
-        out JsonObject operand)
+        out JsonObject operand, out TypeNode.Fqn sourceSequence)
     {
         operand = null;
+        sourceSequence = null;
         if (Str(node["k"]) != "cast"
             || !JsonNode.DeepEquals(node["type"], resultType)
             || node["e"] is not JsonObject source
-            || TypeJson.Read(source["sty"]) is not TypeNode.Fqn sequence
+            // The source may be a typed value block, not just a sty-bearing call/local. Read the same
+            // node-local type facts as other consumers; do not recognize a particular guard or temporary name.
+            || NodeType.Of(source) is not TypeNode.Fqn sequence
             || sequence.Name != Sequence
             || sequence.Args is not { Length: 1 })
             return false;
         operand = source;
+        sourceSequence = sequence;
         return true;
+    }
+
+    internal static void SelfTest()
+    {
+        var sourceType = new TypeNode.Fqn(Sequence, new TypeNode[] {
+            new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any")),
+        });
+        var target = TypeJson.Write(new TypeNode.Fqn(Sequence, new TypeNode[] { new TypeNode.Tv("method", 0) }));
+        var direct = new JsonObject {
+            ["k"] = "local", ["name"] = "input", ["sty"] = TypeJson.Write(sourceType),
+        };
+        var guarded = new JsonObject {
+            ["k"] = "valueBlock",
+            ["stmts"] = new JsonArray(new JsonObject {
+                ["k"] = "var", ["name"] = "bound", ["type"] = TypeJson.Write(sourceType), ["init"] = direct.DeepClone(),
+            }),
+            ["result"] = new JsonObject {
+                ["k"] = "cond", ["cond"] = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("kotlin.Boolean"), ["value"] = true },
+                ["then"] = new JsonObject { ["k"] = "local", ["name"] = "bound" },
+                ["else"] = new JsonObject { ["k"] = "throwExpr", ["value"] = new JsonObject {
+                    ["k"] = "new", ["type"] = TypeJson.Fqn("kotlin.NullPointerException"),
+                    ["args"] = new JsonArray(), ["argTypes"] = new JsonArray(),
+                } },
+            },
+        };
+        foreach (var source in new[] { direct, guarded })
+        {
+            var cast = new JsonObject { ["k"] = "cast", ["type"] = target.DeepClone(), ["e"] = source.DeepClone() };
+            if (!IsElementBoundary(cast, target, out _, out var actual)
+                || !JsonNode.DeepEquals(TypeJson.Write(actual), TypeJson.Write(sourceType)))
+                throw new InvalidOperationException("Sequence element adapters must retain typed expression source facts");
+        }
+        Console.WriteLine("[sequence element adapters] self-test OK (direct and guarded source type facts)");
     }
 
     static string Str(JsonNode node) =>

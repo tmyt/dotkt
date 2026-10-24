@@ -5,6 +5,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Reject null in explicit casts to non-null reference types at the cast itself, without changing nullable,
+  safe, unchecked type-parameter or internal conversions (#1148).
+
 - Preserve the declaration-owned qualified identity of local rich enums when reading `name` and `ordinal`,
   including private, public, nested and cross-file enums (#1145).
 
