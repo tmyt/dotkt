@@ -5,6 +5,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Retain selected native mutable-list views in projected iterators and live sublists, including
+  subsequent mutation and nested slices (#1157).
+
 - Preserve value-returning imported Kotlin `operator set` calls, including generic cross-DLL `super.set`,
   while native indexed-property setters keep their Unit result (#1155).
 

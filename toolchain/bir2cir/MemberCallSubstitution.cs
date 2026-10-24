@@ -2192,8 +2192,15 @@ static class MemberCallSubstitution
                     "clrListAddAllAt" => "clrProjectedListAddAllAt",
                     _ => slotHelper,
                 };
+            var mutationArguments = args;
+            if (slotHelper == "clrProjectedListAddAllAt")
+            {
+                mutationArguments = new JsonArray(StaticCollectionPreference(preferredOwner ?? ownerFqnNode, refs,
+                    "System.Collections.Generic.IList`1", phase));
+                foreach (var argument in args) mutationArguments.Add(argument?.DeepClone());
+            }
             return CollDefaultCall(node, "kotlin.collections.ClrCollectionDefaultsKt", slotHelper,
-                CollElemArg(node, refs, ctx, ownerFqnNode), args);
+                CollElemArg(node, refs, ctx, ownerFqnNode), mutationArguments);
         }
 
         // Projected Insert must select the same eligible mutable List as reads and the other writes,
@@ -2528,6 +2535,23 @@ static class MemberCallSubstitution
         var member = Str(node["method"]);
         var projected = HasProjectedCollectionReceiver(node, ownerFqnNode, ctx, refs);
         var elem = projected ? CollElemArg(node, refs, ctx, ownerFqnNode) : OwnerElemArg(ownerFqnNode);
+        if (projected && ownerFqn == "kotlin.collections.MutableList")
+        {
+            var stateHelper = (member, args.Count) switch
+            {
+                ("listIterator", 0) => "clrProjectedMutableListIterator",
+                ("listIterator", 1) => "clrProjectedMutableListListIterator",
+                ("subList", 2) => "clrProjectedMutableListSubList",
+                _ => null,
+            };
+            if (stateHelper != null)
+            {
+                var stateArguments = new JsonArray(StaticCollectionPreference(preferredOwner ?? ownerFqnNode, refs,
+                    "System.Collections.Generic.IList`1", phase));
+                foreach (var argument in args) stateArguments.Add(argument?.DeepClone());
+                return CollDefaultCall(node, "kotlin.collections.ClrCollectionDefaultsKt", stateHelper, elem, stateArguments);
+            }
+        }
         if (member == "iterator" && args.Count == 0)
         {
             if (ownerFqn is "kotlin.collections.MutableIterable"
@@ -2544,11 +2568,9 @@ static class MemberCallSubstitution
         {
             if (ownerFqn == "kotlin.collections.MutableList")
                 return CollDefaultCall(node, "kotlin.collections.ClrCollectionDefaultsKt",
-                    projected
-                        ? (args.Count == 0 ? "clrProjectedMutableListIterator" : "clrProjectedMutableListListIterator")
-                        : "clrMutableListListIterator",
+                    "clrMutableListListIterator",
                     elem,
-                    args.Count == 0 && !projected
+                    args.Count == 0
                         ? new JsonArray { new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("int"), ["value"] = 0 } }
                         : args);
             if (projected)
@@ -2560,7 +2582,7 @@ static class MemberCallSubstitution
         if (CollectionDefaults.TryGetValue(member, out var helperMethod))
         {
             if (helperMethod == "clrListSubList" && ownerFqn == "kotlin.collections.MutableList")
-                helperMethod = projected ? "clrProjectedMutableListSubList" : "clrMutableListSubList";
+                helperMethod = "clrMutableListSubList";
             else if (projected)
                 helperMethod = helperMethod switch
                 {
@@ -2601,7 +2623,8 @@ static class MemberCallSubstitution
             (_, "clrProjectedCollAddAll" or "clrProjectedCollRemoveAll" or "clrProjectedCollRetainAll") =>
                 new TypeNode[] { new TypeNode.Fqn("kotlin.Any"), Gen("kotlin.collections.Collection") },
             (_, "clrProjectedListAddAllAt") => new TypeNode[]
-                { new TypeNode.Fqn("kotlin.Any"), new TypeNode.Fqn("kotlin.Int"), Gen("kotlin.collections.Collection") },
+                { new TypeNode.Fqn("kotlin.Any"), new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any")),
+                    new TypeNode.Fqn("kotlin.Int"), Gen("kotlin.collections.Collection") },
             (_, "clrCollAddAll" or "clrCollRemoveAll" or "clrCollRetainAll") =>
                 new TypeNode[] { Gen("kotlin.collections.MutableCollection"), Gen("kotlin.collections.Collection") },
             (_, "clrListAddAllAt") => new TypeNode[]
@@ -2640,9 +2663,16 @@ static class MemberCallSubstitution
             (_, "clrProjectedViewContainsAll") => new TypeNode[] {
                 new TypeNode.Fqn("kotlin.Any"), new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any")), new TypeNode.Fqn("kotlin.Int"), Gen("kotlin.collections.Collection") },
             (_, "clrMutableListListIterator") => new TypeNode[] { Gen("kotlin.collections.MutableList"), new TypeNode.Fqn("kotlin.Int") },
-            (_, "clrProjectedMutableListIterator" or "clrProjectedListIterator") =>
+            (_, "clrProjectedMutableListIterator") =>
+                new TypeNode[] { new TypeNode.Fqn("kotlin.Any"), new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any")) },
+            (_, "clrProjectedMutableListListIterator") => new TypeNode[]
+                { new TypeNode.Fqn("kotlin.Any"), new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any")), new TypeNode.Fqn("kotlin.Int") },
+            (_, "clrProjectedMutableListSubList") => new TypeNode[]
+                { new TypeNode.Fqn("kotlin.Any"), new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any")),
+                    new TypeNode.Fqn("kotlin.Int"), new TypeNode.Fqn("kotlin.Int") },
+            (_, "clrProjectedListIterator") =>
                 new TypeNode[] { new TypeNode.Fqn("kotlin.Any") },
-            (_, "clrProjectedMutableListListIterator" or "clrProjectedListListIterator") => new TypeNode[]
+            (_, "clrProjectedListListIterator") => new TypeNode[]
                 { new TypeNode.Fqn("kotlin.Any"), new TypeNode.Fqn("kotlin.Int") },
             (_, "clrListIndexOf" or "clrListLastIndexOf") => new TypeNode[] { Gen("kotlin.collections.List"), tv },
             (_, "clrProjectedListIndexOf" or "clrProjectedListLastIndexOf") =>
@@ -2650,7 +2680,7 @@ static class MemberCallSubstitution
             (_, "clrListListIterator") => new TypeNode[] { Gen("kotlin.collections.List"), new TypeNode.Fqn("kotlin.Int") },
             (_, "clrListSubList") => new TypeNode[] { Gen("kotlin.collections.List"), new TypeNode.Fqn("kotlin.Int"), new TypeNode.Fqn("kotlin.Int") },
             (_, "clrMutableListSubList") => new TypeNode[] { Gen("kotlin.collections.MutableList"), new TypeNode.Fqn("kotlin.Int"), new TypeNode.Fqn("kotlin.Int") },
-            (_, "clrProjectedListSubList" or "clrProjectedMutableListSubList") => new TypeNode[]
+            (_, "clrProjectedListSubList") => new TypeNode[]
                 { new TypeNode.Fqn("kotlin.Any"), new TypeNode.Fqn("kotlin.Int"), new TypeNode.Fqn("kotlin.Int") },
             _ => throw new InvalidOperationException($"bir2cir: no authored descriptor for collection helper {owner}.{method}"),
         };
