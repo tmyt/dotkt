@@ -93,3 +93,52 @@ fun kotlinKeyMembership(value: Any, key: String): Boolean = (value as Map<String
 
 @Suppress("UNCHECKED_CAST")
 fun kotlinValueMembership(value: Any, item: String): Boolean = (value as Map<String, String>).values.contains(item)
+
+private open class NativeIndexList<T>(
+    private val needle: T,
+    private val stored: T,
+    private val counter: MembershipCallCounter,
+) : AbstractList<T>() {
+    override val size: Int get() = 1
+    override fun get(index: Int): T { check(index == 0); return stored }
+    override fun indexOf(element: T): Int {
+        counter.record()
+        return if (element == needle) 0 else -1
+    }
+}
+
+private class InheritedNativeIndexList(counter: MembershipCallCounter) :
+    NativeIndexList<String>("needle", "value", counter) {
+    override fun indexOf(element: String): Int = super.indexOf(element)
+}
+
+fun stringIndexList(counter: MembershipCallCounter): Any = NativeIndexList("needle", "value", counter)
+fun intIndexList(counter: MembershipCallCounter): Any = NativeIndexList(42, 7, counter)
+fun nullableIndexList(counter: MembershipCallCounter): Any = NativeIndexList<Int?>(null, 7, counter)
+fun inheritedIndexList(counter: MembershipCallCounter): Any = InheritedNativeIndexList(counter)
+
+fun throwingIndexList(failure: Throwable): Any = object : AbstractList<String>() {
+    override val size: Int get() = 1
+    override fun get(index: Int): String { check(index == 0); return "value" }
+    override fun indexOf(element: String): Int = throw failure
+}
+
+fun defaultIndexList(): Any = object : AbstractList<String>() {
+    override val size: Int get() = 1
+    override fun get(index: Int): String { check(index == 0); return "value" }
+}
+
+fun explicitDefaultIndexList(): Any = object : AbstractList<String>() {
+    private var depth: Int = 0
+    override val size: Int get() = 1
+    override fun get(index: Int): String { check(index == 0); return "value" }
+    override fun indexOf(element: String): Int {
+        check(depth++ == 0)
+        try { return clrListIndexOf(this, element) } finally { depth-- }
+    }
+}
+
+class ForeignIndexList : BidirectionalInterop.NativeReadOnlyIndexBase()
+
+@Suppress("UNCHECKED_CAST")
+fun kotlinIndexOf(value: Any, element: Any?): Int = (value as List<Any?>).indexOf(element)

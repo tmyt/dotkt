@@ -4,6 +4,51 @@ using NUnit.Framework;
 
 public class NativeCollectionMembershipTests
 {
+    [Test]
+    public void NativeReadOnlyIndexOfPreservesOverridesAndNonDispatchingDefaults()
+    {
+        void Check<T>(object value, T needle, T stored, MembershipCallCounter counter)
+        {
+            var native = (IList<T>)value;
+            Assert.That(NativeCollectionMembershipKt.kotlinIndexOf(value, needle), Is.EqualTo(0));
+            Assert.That(native.IndexOf(needle), Is.EqualTo(0));
+            Assert.That(native.IndexOf(stored), Is.EqualTo(-1));
+            Assert.That(NativeCollectionMembershipKt.kotlinIndexOf(value, stored), Is.EqualTo(-1));
+            Assert.That(counter.calls(), Is.EqualTo(4));
+            Assert.That(native, Is.SameAs(value));
+            Assert.That(native.IsReadOnly, Is.True);
+            Assert.That(native.Count, Is.EqualTo(1));
+            Assert.That(native[0], Is.EqualTo(stored));
+            Assert.Throws<NotSupportedException>(() => native.Add(needle));
+        }
+
+        var strings = new MembershipCallCounter();
+        Check(NativeCollectionMembershipKt.stringIndexList(strings), "needle", "value", strings);
+        var integers = new MembershipCallCounter();
+        Check(NativeCollectionMembershipKt.intIndexList(integers), 42, 7, integers);
+        var nullable = new MembershipCallCounter();
+        Check<int?>(NativeCollectionMembershipKt.nullableIndexList(nullable), null, 7, nullable);
+        var inherited = new MembershipCallCounter();
+        Check(NativeCollectionMembershipKt.inheritedIndexList(inherited), "needle", "value", inherited);
+        var failure = new InvalidOperationException("native index failure");
+        var throwing = (IList<string>)NativeCollectionMembershipKt.throwingIndexList(failure);
+        Assert.That(Assert.Throws<InvalidOperationException>(() => throwing.IndexOf("value")), Is.SameAs(failure));
+
+        foreach (var value in new[] {
+            NativeCollectionMembershipKt.defaultIndexList(),
+            NativeCollectionMembershipKt.explicitDefaultIndexList(),
+            NativeCollectionMembershipKt.defaultMembershipSubList(),
+            new ForeignIndexList(),
+        })
+        {
+            var native = (IList<string>)value;
+            Assert.That(native.IndexOf("value"), Is.EqualTo(0));
+            Assert.That(native.IndexOf("absent"), Is.EqualTo(-1));
+            Assert.That(NativeCollectionMembershipKt.kotlinIndexOf(value, "value"), Is.EqualTo(0));
+        }
+        Assert.That(NativeCollectionMembershipKt.kotlinIndexOf(new List<string> { "value" }, "value"), Is.EqualTo(0));
+    }
+
     private static void AssertMembership<T>(object value, T needle, T stored, MembershipCallCounter counter)
     {
         var native = (ICollection<T>)value;

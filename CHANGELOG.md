@@ -5,6 +5,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Preserve Kotlin-authored `indexOf` overrides through native read-only `IList<T>.IndexOf`, including generic
+  elements and inherited overrides, without changing non-dispatching defaults or foreign lookup (#1151).
+
 - Reject null in explicit casts to non-null reference types at the cast itself, without changing nullable,
   safe, unchecked type-parameter or internal conversions (#1148).
 

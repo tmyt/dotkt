@@ -437,6 +437,13 @@ public fun <T> clrListRemoveAt(list: MutableList<T>, index: Int): T {
     return old
 }
 
+/** Native storage dispatch is separate from default search, so an authored default cannot reenter its slot. */
+public fun <T> clrListStorageIndexOf(list: List<T>, element: T): Int {
+    val slots = list as? KotlinListDefaultSlots
+    if (slots != null) return slots.dotktIndexOf(element)
+    return clrListIndexOf(list, element)
+}
+
 public fun <T> clrListIndexOf(list: List<T>, element: T): Int {
     var i = 0
     for (x in list) { if (x == element) return i; i++ }
