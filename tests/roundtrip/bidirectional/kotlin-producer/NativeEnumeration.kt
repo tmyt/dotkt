@@ -8,6 +8,8 @@ private open class LocalMutableEnumerationSet<T>(private val storage: MutableLis
     override fun contains(element: T): Boolean = storage.contains(element)
     override fun containsAll(elements: Collection<T>): Boolean = storage.containsAll(elements)
     override fun add(element: T): Boolean = if (storage.contains(element)) false else storage.add(element)
+    override fun remove(element: T): Boolean = storage.remove(element)
+    override fun clear() = storage.clear()
 }
 
 private class LocalInheritedEnumerationSet : LocalMutableEnumerationSet<String>(mutableListOf("local"))
