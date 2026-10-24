@@ -1593,13 +1593,11 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 			val (ixArgs, ixArgTypes) = clrCallArgs(call, ixDeclaration)
 			val ixSignature = overloadSigField(ixDeclaration)
 			val ixTypeArgs = typeArgsJson(call)
-			// The get accessor returning a generic param (`IList<T>.get` -> T) reports the SUBSTITUTED ret (gp:T):
-			// ilemit then hands back gp:T (matching the stack), so the value<->collection boundary box/unbox is
-			// correctly typed (else a value-type instantiation NullRefs/garbages). Needs ClrRef("gp:") -> MapType.
-			val retH = birType(call.type)
+			// Imported Kotlin operators retain their source result, including value-returning set.
+			// A native indexed property's setter already has Unit as its frontend result.
+			val ixRet = birType(call.type).toJson()
 			// Retain the frontend dispatch fact until bir2cir binds the selected indexer or Kotlin operator.
 			val ixVirtual = isVirtualInstanceCall(call, callee)
-			val ixRet = if (name == "get") retH.toJson() else fqnJson("kotlin.Unit")
 			// The selected operator supplies all indices, followed by the assigned value for set.
 			return """{"k":"callInstance","virtual":$ixVirtual,"ownerType":${str(mt)},"method":${str(name)},"prop":"index-$name"$ixSignature$ixTypeArgs,"argTypes":[$ixArgTypes],"ret":$ixRet,"recv":${expr(recv)},"args":[$ixArgs]${superTag(call)}}"""
 		}
