@@ -1525,8 +1525,8 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 	dispatchReceiver(call)?.takeIf { (it.type.classifierOrNull?.owner as? IrClass)?.kind == ClassKind.ENUM_CLASS }?.let { rc ->
 		val rec = (rc.type.classifierOrNull?.owner as? IrClass)
 		if (rec != null && rec.origin.toString() == "DEFINED" && isRichEnum(rec)) when (callee.correspondingPropertySymbol?.owner?.name?.asString()) {
-			"name" -> return """{"k":"field","ownerType":${fqnJson(rec.name.asString())},"recv":${expr(rc)},"name":"__name"}"""
-			"ordinal" -> return """{"k":"field","ownerType":${fqnJson(rec.name.asString())},"recv":${expr(rc)},"name":"__ordinal"}"""
+			"name" -> return """{"k":"field","ownerType":${birType(rec.defaultType).toJson()},"recv":${expr(rc)},"name":"__name"}"""
+			"ordinal" -> return """{"k":"field","ownerType":${birType(rec.defaultType).toJson()},"recv":${expr(rc)},"name":"__ordinal"}"""
 		}
 		when (callee.correspondingPropertySymbol?.owner?.name?.asString()) {
 			"name" -> return """{"k":"enumName","e":${expr(rc)},"type":${birType(rec!!.defaultType).toJson()}}"""

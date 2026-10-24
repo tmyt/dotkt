@@ -5,6 +5,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Preserve the declaration-owned qualified identity of local rich enums when reading `name` and `ordinal`,
+  including private, public, nested and cross-file enums (#1145).
+
 ## 0.9.17 (2026-10-24)
 
 ### Release highlights
