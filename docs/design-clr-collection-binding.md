@@ -16,8 +16,10 @@ Status: implemented design record. This document records the collection identiti
 | `Map<K,V>` | `IDictionary<K,V>` plus Kotlin read-only map behavior |
 | `MutableMap<K,V>` | `IDictionary<K,V>` |
 
-These are exact declaration, implementation and native interop interfaces. Ordinary values of declaration-variant
-aliases use `object`, retaining their Kotlin source types in metadata. Factories return ordinary BCL implementations;
+These are exact declaration, implementation and native interop interfaces. Ordinary Kotlin collection-interface
+values use `object`, retaining their Kotlin source types in metadata, so unchecked casts do not demand a different
+invariant CLR construction. This includes invariant mutable interfaces as well as declaration-variant aliases.
+Factories return ordinary BCL implementations;
 widening passes the same reference without requiring CLR variance between value-element instantiations.
 The mapping is declared by stdlib `@ClrTypeAlias` and `@ClrIntrinsic` metadata and applied by bir2cir; kotc does not hard-code it.
 
@@ -39,6 +41,11 @@ to Collection or Iterable deliberately drops the originating Set family: the ope
 view and can therefore be ambiguous even when the Set operation was unique. The same object entering the same
 static parameter has the same behavior regardless of its earlier casts or generic storage. No collection adapter,
 per-object provenance registry or identity normalization participates in this policy.
+
+Ordinary invariant mutable operations test for their exact eligible native view and call the selected CLR member
+directly when it exists. The same runtime selector verifies eligibility, including dictionary-storage exclusions;
+its immutable type/view decisions use weak keys, not collection-instance history. A missing exact view keeps the
+existing erased path. Value-returning Kotlin mutation slots take precedence over native old-value emulation.
 
 Projected mutable List append uses the same selected `IList<T>` family as indexed insertion. Its native `Add` and
 before/after `Count` come from that List's own `ICollection<T>` parent, not from unrelated collection faces on the

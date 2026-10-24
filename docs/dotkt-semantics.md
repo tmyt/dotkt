@@ -896,13 +896,14 @@ opaque value slot (`object`), with the full Kotlin application
 retained in metadata. This applies recursively in fields, method slots and generic containers. The original
 reference is retained: widening a Map does not copy or wrap it, so identity and subsequent updates are preserved.
 Constructors, physical inheritance edges and selected CLR member declarations retain their exact reified types.
-`MutableMap<K,V>` is invariant and keeps its exact dictionary face unless an explicit projection requires erasure.
+`MutableMap<K,V>` also uses an opaque ordinary value slot: an unchecked Kotlin cast must not require its new
+invariant arguments to match the object's CLR dictionary construction.
 Classifier tests and casts still check the dictionary classifier; an opaque slot does not mean every object is a Map.
 
 Consequences and remaining implementation limitations:
 
 - **A Kotlin `Map` value slot surfaces to C# as `object`**, with Kotlin metadata restoring `Map<K,V>` for Kotlin
-  consumers. Concrete dictionaries and mutable dictionary declarations remain reified. `emptyMap()` returns a fresh
+  consumers. Concrete dictionary classes and exact native dictionary declarations remain reified. `emptyMap()` returns a fresh
   Dictionary-backed map.
 - **`Map.get` is null-on-missing** (Kotlin semantics), synthesized as `ContainsKey` + `get_Item` in
   `kotlin.collections.ClrMapDefaults` (the generic CLR indexer throws); `put`/`remove` return the previous value.
@@ -1014,11 +1015,13 @@ Two consequences worth stating:
   a concurrent-modification error out of an invalidated BCL enumerator. (A Kotlin implementer that OVERRIDES one of
   the members defines its own behavior for these forms, exactly as on any other platform.)
 
-## 5c-bis. Read-only collection values preserve Kotlin variance and identity
+## 5c-bis. Collection interface values preserve erased views, variance and identity
 
 CLR interface variance only relates reference-type arguments: `IReadOnlyList<int>` is not an
 `IReadOnlyList<object>`. Kotlin permits `List<Int>` to widen to `List<Any>`, including after an ordinary generic
-return or opaque storage. Ordinary values of declaration-variant aliases therefore use `object`, retaining their
+return or opaque storage. Unchecked casts of invariant Kotlin collection interfaces likewise test the raw Kotlin
+classifier, not a closed CLR element construction: `MutableSet<String> as MutableSet<Any?>` preserves the same object.
+Ordinary values of Kotlin collection interface aliases and other declaration-variant aliases use `object`, retaining their
 full Kotlin source type in metadata. Widening does not introduce a wrapper or copy: `===`, indexed updates, additions,
 removals and later size observations retain the original collection. The rule applies recursively in arrays and
 generic containers, and to both reference-element and value-element instantiations.
@@ -2417,7 +2420,7 @@ Concretely:
 | `fun <T> f(x: T?)` | `object` — no CLR slot expresses an unconstrained `T?` |
 | Open `Box<T?>` | `Box<N(T)>` in the declaration's explicit frame |
 | Open Kotlin `Array<T>`, `Array<T?>`, star/use-site-projected array value slots | `System.Array`, retaining the allocation's runtime component |
-| `List<Int?>` / `MutableList<Int?>` | `object` / `IList<object>`; the list's own nullable-element storage remains boxed |
+| `List<Int?>` / `MutableList<Int?>` ordinary values | `object`; the exact native list's nullable-element storage remains boxed |
 | `Map<String, Int?>`, `Pair<Int?, String>`, `Box<Int?>` | `object`, `Pair<object, string>`, `Box<object>` |
 | `Array<Int?>` | `object[]` |
 | `(Int) -> Int?` | `Func<object, object>` — ordinary Kotlin function carrier |
@@ -2762,7 +2765,7 @@ Current deliberate limits are:
 - `suspend fun` has no Continuation parameter — it returns `Task<T>`, and it starts **hot** (like C# `async`), not cold. §4.
 - A `Span`/`ref struct` value is fine inside a `suspend fun` — until it has to survive a suspension, or be captured by a (non-inline) lambda; both are compile-time errors, mirroring C# CS4007/CS4012/CS8352. §4d.
 - A `CharSequence` parameter surfaces to C# as `string`; a `StringBuilder` passed as `CharSequence` is **snapshotted** by an implicit `.toString()` — no live view. §5b.
-- A Kotlin `Map` value slot surfaces to C# as `object`, preserving Kotlin covariance; `MutableMap` retains its exact dictionary face. Authored maps preserve their views; BCL-backed read views remain snapshots. §5c.
+- Kotlin `Map` and `MutableMap` value slots surface to C# as `object`, preserving Kotlin covariance and unchecked casts; exact native dictionary declarations remain reified. Authored maps preserve their views; BCL-backed read views remain snapshots. §5c.
 - A function type of 17..22 parameters is not `System.Func`/`Action` (they stop at 16) but the stdlib's canonical
   `KFunc`/`KAction` — one definition for the whole platform. An extension receiver counts toward the arity, and
   23 and above has no CLR delegate at all and is refused — the frontend accepts it, the representation cannot.

@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Runtime.InteropServices;
 
 namespace MutableMutationInterop;
 
@@ -24,4 +25,17 @@ public sealed class GenericFailureList : List<int>, IList<int>
     void IList<int>.Insert(int index, int value) { Writes++; throw Failure; }
     void IList<int>.RemoveAt(int index) { Writes++; throw Failure; }
     void ICollection<int>.Add(int value) { Writes++; throw Failure; }
+}
+
+public sealed class DynamicStringList : List<string>, IDynamicInterfaceCastable
+{
+    public int InterfaceChecks;
+    public DynamicStringList() { Add("a"); Add("b"); }
+    bool IDynamicInterfaceCastable.IsInterfaceImplemented(RuntimeTypeHandle type, bool throwIfNotImplemented)
+    {
+        InterfaceChecks++;
+        return false;
+    }
+    RuntimeTypeHandle IDynamicInterfaceCastable.GetInterfaceImplementation(RuntimeTypeHandle type) =>
+        throw new NotSupportedException();
 }

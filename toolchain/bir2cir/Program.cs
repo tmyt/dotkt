@@ -69,6 +69,7 @@ static class Bir2Cir
                 ComparableRepresentationLowering.SelfTest();
                 ValueRepresentationLowering.SelfTest();
                 AliasVarianceRepresentation.SelfTest();
+                ExactMutableViewDispatch.SelfTest();
                 KotlinCollectionClassifierLowering.SelfTest();
                 GenericArrayStorageLowering.SelfTest();
                 RoundtripMetadata.RuntimeLinkageSelfTest();

@@ -1640,7 +1640,8 @@ sealed partial class ReferenceMetadataIndex
     public bool TryForeignStarMethod(TypeNode.Fqn sourceOwner, string sourceName, string propertyAccess,
         int methodArity, IReadOnlyList<TypeNode> callSignature,
         out string openDeclaringType, out TypeNode declaringView, out int metadataToken, out string runtimeName,
-        out string[] runtimeParameterKeys, out TypeNode declarationReturn, out bool returnsVoid)
+        out string[] runtimeParameterKeys, out TypeNode declarationReturn, out bool returnsVoid,
+        out MethodInfo selectedDeclaration)
     {
         openDeclaringType = null;
         declaringView = null;
@@ -1649,6 +1650,7 @@ sealed partial class ReferenceMetadataIndex
         runtimeParameterKeys = null;
         declarationReturn = null;
         returnsVoid = false;
+        selectedDeclaration = null;
         if (sourceOwner?.Args is not { Length: > 0 } ownerArgs || sourceName == null
             || callSignature == null) return false;
 
@@ -1724,6 +1726,7 @@ sealed partial class ReferenceMetadataIndex
             return false;
         }
         if (openDeclaration == null) return false;
+        selectedDeclaration = openDeclaration;
         openDeclaringType = ExactPhysicalMetadataName(declaring);
         metadataToken = openDeclaration.MetadataToken;
         runtimeName = openDeclaration.Name;

@@ -191,7 +191,8 @@ static partial class FBoundStarProjectionErasure
         }
         ForeignStarProjectionBinding.ApplyAll(rootList,
             owners.Values.Where(owner => owner.Needed).ToDictionary(
-                owner => owner.Name, owner => owner.ErasedName, StringComparer.Ordinal), refs, localClrAliases);
+                owner => owner.Name, owner => owner.ErasedName, StringComparer.Ordinal), refs, localClrAliases,
+            type => RewriteType(type, owners, refs, localClrAliases: localClrAliases));
         // Factory allocation above used the source constraint graph. Freeze that same classification before value
         // projection can erase a dependent alias bound to Object and make its sibling constraints appear independent.
         var innerDependencies = owners.Values.Where(owner => owner.Needed && IsInner(owner.Def))
@@ -344,7 +345,7 @@ static partial class FBoundStarProjectionErasure
                 BindProjectedArrayRead(obj, owners, refs);
                 BindProjectedArrayGenericCall(obj, owners, refs);
                 BindCarrierArgumentMerge(obj, owners, defs, refs);
-                BindCarrierPropertyResult(obj, owners, refs);
+                BindCarrierPropertyResult(obj, owners, defs, refs);
                 BindDeclarationCarrierResult(obj, owners, refs);
                 BindInheritedStarMember(obj, owners, defs, refs);
                 if (obj["body"] is JsonArray && obj["params"] is JsonArray)
@@ -473,6 +474,12 @@ static partial class FBoundStarProjectionErasure
                         || IsBoundDeclarationType(obj, key, refs, localClrAliases);
                     var childArrayShape = preserveArrayShape
                         || IsNativeArrayDeclarationSlot(obj, key, refs, localClrAliases);
+                    if (key == "typeArgs" && value is JsonArray methodArguments)
+                    {
+                        RewriteMethodArguments(obj, methodArguments, owners, refs, localClrAliases,
+                            childBoundDeclaration, childArrayShape);
+                        continue;
+                    }
                     if (key is "argTypes" or "memberSignature" && value is JsonArray argumentTypes
                         && obj["args"] is JsonArray argumentValues)
                     {
@@ -1759,8 +1766,8 @@ static partial class FBoundStarProjectionErasure
         return HasKotlinVariantParameter(application, refs.OwnerTypeParamDeclarations(application.Name));
     }
 
-    // A foreign alias cannot be retrofitted with a nominal carrier. Kotlin variance includes value arguments,
-    // unlike CLR interface variance, and requires
+    // A foreign alias cannot be retrofitted with a nominal carrier. Kotlin collection interface casts erase their
+    // arguments; Kotlin variance also includes value arguments, unlike CLR interface variance. Both require
     // an opaque reference slot instead; the exact source application still travels in KotlinType metadata.
     static bool RequiresOpaqueVariantAlias(TypeNode.Fqn application,
         IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs,
@@ -3064,6 +3071,38 @@ static partial class FBoundStarProjectionErasure
             if (child != null) AlignCapturedInnerBaseValues(child, scope, returnType, owners, defs, refs);
     }
 
+    static void RewriteMethodArguments(JsonObject call, JsonArray arguments,
+        IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs,
+        IReadOnlyDictionary<string, string> localClrAliases, bool boundDeclaration, bool preserveArrayShape)
+    {
+        var identity = Str(call[DeclarationIdentityBinding.Key]);
+        var owner = TypeJson.Read(call["calleeOwner"] ?? call["ownerType"] ?? call["owner"]) as TypeNode.Fqn;
+        var frame = owner != null && identity != null
+            && _localDeclarations.TryGetValue((owner.Name, identity), out var selected)
+            ? NullableRepresentationTypes.DeclarationMethodFrame(selected)
+            : refs.NullableMethodFrame(identity);
+        if (frame != null && frame.PhysicalArity != arguments.Count)
+            throw new InvalidOperationException("Selected method arguments disagree with the declaration's representation frame");
+        for (var index = 0; index < arguments.Count; index++)
+        {
+            var argument = TypeJson.Read(arguments[index]);
+            if (argument == null) continue;
+            // Opaque alias values have a separate CLR construction witness. Preserve that alias head,
+            // not arbitrary Kotlin construction heads: captured/variant classes still need their
+            // allocated nominal carrier, and arrays retain the existing component-storage contract.
+            var witness = frame == null || frame.PhysicalSlot(index).Representation
+                is NullableRepresentationFrame.Role.Ordinary or NullableRepresentationFrame.Role.Nullable;
+            arguments[index] = TypeJson.Write(RewriteType(argument, owners, refs,
+                boundDeclaration, localClrAliases,
+                preserveArrayShape: preserveArrayShape,
+                preserveConstructedHead: witness
+                    && StripSourceNullability(argument) is TypeNode.Fqn alias
+                    && RequiresOpaqueVariantAlias(alias, owners, refs, localClrAliases)
+                    && !ContainsExistentialProjection(alias)
+                    && !ProjectionCanChangeConstruction(alias, owners, refs)));
+        }
+    }
+
     static void Rewrite(JsonNode node, IReadOnlyDictionary<string, Owner> owners,
         IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs,
         IReadOnlySet<int> existentialTypeParameters = null,
@@ -3225,6 +3264,12 @@ static partial class FBoundStarProjectionErasure
                         || IsBoundDeclarationType(obj, key, refs, localClrAliases);
                     var childArrayShape = preserveArrayShape
                         || IsNativeArrayDeclarationSlot(obj, key, refs, localClrAliases);
+                    if (key == "typeArgs" && value is JsonArray methodArguments)
+                    {
+                        RewriteMethodArguments(obj, methodArguments, owners, refs, localClrAliases,
+                            childBoundDeclaration, childArrayShape);
+                        continue;
+                    }
                     if (key is "argTypes" or "memberSignature" && value is JsonArray argumentTypes
                         && obj["args"] is JsonArray argumentValues)
                     {
@@ -3683,12 +3728,15 @@ static partial class FBoundStarProjectionErasure
     }
 
     static void BindCarrierPropertyResult(JsonObject call, IReadOnlyDictionary<string, Owner> owners,
-        ReferenceMetadataIndex refs)
+        IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs)
     {
         if (Str(call["k"]) != "callInstance"
             || !KotlinPropertyAccessors.TryCallIdentity(call, out var property, out var accessor)
             || accessor != "get"
             || TypeJson.Read(call["ownerType"]) is not TypeNode.Fqn owner
+            // A reference twin must not replace the current unit's declaration or generic frame.
+            // Local declaration results are bound by BindDeclarationCarrierResult instead.
+            || defs.ContainsKey(owner.Name)
             || !refs.HasDotKtOwner(owner.Name)
             || call["sig"] is not JsonArray signature
             || !refs.TrySelectedMethodDeclaration(owner.Name, property, 0,

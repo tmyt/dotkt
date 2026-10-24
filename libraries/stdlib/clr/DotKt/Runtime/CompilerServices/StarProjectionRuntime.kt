@@ -103,6 +103,9 @@ internal interface StarProjectionField {
 @kotlin.clr.ClrTypeAlias("System.Type")
 @PublishedApi
 internal interface StarProjectionType {
+    @property:kotlin.clr.ClrProperty(kotlin.clr.READ, "IsCOMObject")
+    val isComObject: Boolean
+
     @property:kotlin.clr.ClrProperty(kotlin.clr.READ, "IsValueType")
     val isValueType: Boolean
 

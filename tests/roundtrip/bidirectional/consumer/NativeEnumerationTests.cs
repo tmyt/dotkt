@@ -6,6 +6,39 @@ using NUnit.Framework;
 
 public class NativeEnumerationTests
 {
+    [Test]
+    public void UncheckedMutableCollectionViewsKeepIdentityAndErasedOperations()
+    {
+        void Check(object value, object present, object added)
+        {
+            Assert.That(NativeEnumerationKt.kotlinErasedSetIdentity(value), Is.SameAs(value));
+            Assert.That(NativeEnumerationKt.kotlinErasedSetConcreteIdentity(value), Is.SameAs(value));
+            Assert.That(NativeEnumerationKt.kotlinCrossModuleErasedSetChecks(value, present), Is.True);
+            Assert.That(NativeEnumerationKt.kotlinErasedSetChecks(value, present, added), Is.True);
+        }
+        var strings = NativeEnumerationKt.stringMutableEnumerationSet();
+        Assert.That(((ICollection<string>)strings).Contains("a"), Is.True);
+        Assert.That(NativeEnumerationKt.kotlinErasedSetNativeConsumer(strings), Is.True);
+        Check(strings, "a", "c");
+        Assert.That(((ICollection<string>)strings).Count, Is.Zero);
+        var integers = NativeEnumerationKt.intMutableEnumerationSet();
+        Assert.That(((ICollection<int>)integers).Contains(1), Is.True);
+        Assert.Throws<InvalidCastException>(() => _ = (ICollection<object>)integers);
+        Check(integers, 1, 9);
+        Assert.That(((ICollection<int>)integers).Count, Is.Zero);
+        Check(NativeEnumerationKt.nullableMutableEnumerationSet(), null, 9);
+        Check(new HashSet<string> { "a", "b" }, "a", "c");
+        Check(new HashSet<int> { 1, 2 }, 1, 9);
+        Check(new HashSet<int?> { null, 3 }, null, 9);
+        Assert.That(NativeEnumerationKt.kotlinErasedMutableInterfaceChecks(), Is.True);
+        var nativeList = new List<string> { "x" };
+        var nativeMap = new Dictionary<string, int> { ["k"] = 1 };
+        Assert.That(NativeEnumerationKt.kotlinErasedMutableNativeChecks(nativeList, nativeMap), Is.True);
+        Assert.That(nativeList, Is.EqualTo(new[] { "z" }));
+        Assert.That(nativeMap["k"], Is.EqualTo(2));
+        Assert.That(NativeEnumerationKt.kotlinErasedMutableCastControls(), Is.True);
+    }
+
     private static void AssertEnumeration<T>(object value, params T[] expected)
     {
         var generic = (IEnumerable<T>)value;
