@@ -181,7 +181,7 @@ static class ReadOnlyCollectionStorageSynthesis
                 ["args"] = new JsonArray(Local("index")),
             })), face),
             Method("IndexOf", Int, new JsonArray(Parameter("element", Element)), new JsonArray(Return(
-                StorageHelper(refs, "clrListIndexOf", "kotlin.collections.List", Int, ReadOnlySelf(readOnly)))), face),
+                StorageHelper(refs, "clrListStorageIndexOf", "kotlin.collections.List", Int, ReadOnlySelf(readOnly)))), face),
             Method("set_Item", Void, new JsonArray(Parameter("index", Int), Parameter("value", Element)), Unsupported(), face),
             Method("Insert", Void, new JsonArray(Parameter("index", Int), Parameter("element", Element)), Unsupported(), face),
             Method("RemoveAt", Void, new JsonArray(Parameter("index", Int)), Unsupported(), face),
