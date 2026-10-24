@@ -62,6 +62,24 @@ static partial class ClrMemberResolution
         bool? ownerArgumentsAreMethodSlots = null)
         => MemberRefOf(member, kind, openOwner, ownerArgs, ownerArgumentsAreMethodSlots).Write();
 
+    // The caller already selected this MethodDef. Do not run another overload search for the fast branch.
+    internal static JsonObject ExactInstanceCall(ReferenceMetadataIndex refs, MethodInfo method,
+        TypeNode.Fqn declaringOwner, JsonNode receiver, JsonArray arguments)
+    {
+        if (method.IsStatic || method.IsGenericMethod)
+            throw new InvalidOperationException("Exact instance dispatch requires a non-generic instance MethodDef");
+        _refs = refs;
+        var reference = MemberRefOf(method, MemberRefNode.Kinds.Method, method.DeclaringType, declaringOwner.Args);
+        return new JsonObject {
+            ["k"] = "callInstance", ["ownerType"] = TypeJson.Write(reference.DeclaringType),
+            ["method"] = method.Name, ["virtual"] = true,
+            ["recv"] = new JsonObject { ["k"] = "cast", ["type"] = TypeJson.Write(reference.DeclaringType), ["e"] = receiver },
+            ["sig"] = new JsonArray(reference.ParameterTypes.Select(TypeJson.Write).ToArray()),
+            ["ret"] = TypeJson.Write(PhysicalTypeOf(method.ReturnType, declaringOwner.Args, typeArg: false)),
+            ["args"] = arguments, ["memberRef"] = reference.Write(), [DeclarationIdentityBoundKey] = true,
+        };
+    }
+
     /// <summary>The scalar reference for a resolved field.</summary>
     internal static JsonNode FieldRefJson(FieldInfo field, Type openOwner, TypeNode[] ownerArgs)
         => FieldRefOf(field, openOwner, ownerArgs).Write();

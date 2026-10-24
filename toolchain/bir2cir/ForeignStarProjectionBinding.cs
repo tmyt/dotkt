@@ -150,6 +150,7 @@ static class ForeignStarProjectionBinding
     static bool TryRewriteStaticHelper(JsonObject node, ReferenceMetadataIndex refs, out JsonObject rewritten)
     {
         rewritten = null;
+        if (ExactMutableViewDispatch.TryCount(node, refs, out rewritten)) return true;
         if (node["projectedHelperReceiver"] is not JsonValue receiverFact) return false;
         var receiverIndex = receiverFact.GetValue<int>();
         var owner = TypeJson.OwnerName(node["owner"]);
@@ -323,7 +324,7 @@ static class ForeignStarProjectionBinding
         var methodArity = (obj["typeArgs"] as JsonArray)?.Count ?? 0;
         var methodFound = refs.TryForeignStarMethod(owner, sourceName, propertyAccess, methodArity, signature,
             out var openType, out var declaringView, out var token, out var runtimeName, out var runtimeParameterKeys,
-            out var declarationReturn, out var returnsVoid);
+            out var declarationReturn, out var returnsVoid, out var selectedDeclaration);
         if (!methodFound && kind is "clrPropGet" or "clrPropSet"
             && refs.TryForeignStarField(owner, sourceName, out openType, out declaringView, out token,
                 out var fieldDeclarationType))
@@ -438,6 +439,24 @@ static class ForeignStarProjectionBinding
             returnsVoid ? new TypeNode.Fqn("kotlin.Unit") : AnyN,
             receiver.DeepClone(),
             new JsonObject { ["k"] = "newArray", ["elem"] = TypeJson.Write(AnyN), ["elems"] = arguments });
+        if (methodArity == 0 && !adaptDelegate
+            && ExactMutableViewDispatch.TrySourceView(owner, refs, out var nativeView, out var family))
+        {
+            var ownerArgs = refs.NullableTypeFrames.GetValueOrDefault(owner.Name)?.OrdinaryArguments(owner.Args) ?? owner.Args;
+            var directOwner = ExactMutableViewDispatch.CloseDeclaring((TypeNode.Fqn)declaringView, ownerArgs);
+            rewritten = ExactMutableViewDispatch.Wrap(receiver, nativeView, family,
+                returnsVoid ? new TypeNode.Fqn("kotlin.Unit") : projectedResult,
+                nativeReceiver => ClrMemberResolution.ExactInstanceCall(refs, selectedDeclaration,
+                    directOwner, nativeReceiver, (JsonArray)arguments.DeepClone()),
+                fallbackReceiver => {
+                    var fallback = (JsonObject)invoke.DeepClone();
+                    fallback["args"][0] = fallbackReceiver;
+                    return returnsVoid || IsObjectish(projectedResult) ? fallback : new JsonObject {
+                        ["k"] = "cast", ["type"] = TypeJson.Write(projectedResult), ["e"] = fallback,
+                    };
+                });
+            return true;
+        }
         if (returnsVoid)
         {
             rewritten = invoke;
