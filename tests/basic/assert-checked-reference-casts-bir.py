@@ -46,6 +46,12 @@ for name in ("checkedString", "checkedAny", "checkedClass", "checkedInterface",
     assert bindings[0]["init"]["k"] == "local", (name, bindings)
     assert any(node.get("k") == "objEq" for node in nodes), name
 
+chain = body("checkedChain")
+assert len(null_throws(chain)) == 1
+chain_casts = [node for node in chain if node.get("k") == "cast"]
+assert len(chain_casts) == 2 and chain_casts[0]["e"]["k"] == "cast", chain_casts
+assert chain_casts[1]["e"]["k"] == "valueBlock", chain_casts
+
 for name in ("unchecked", "nullableString", "safeString", "nullableProjectedArray", "safeProjectedArray",
              "nullableProjectedNative", "safeProjectedNative"):
     assert not null_throws(body(name)), name

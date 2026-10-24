@@ -26,6 +26,7 @@ static class Bir2Cir
                 AliasConstructorDelegationExpansion.SelfTest();
                 AliasHelperHoist.SelfTest();
                 StdlibBindingOverlay.SelfTest();
+                SequenceElementAdapterLowering.SelfTest();
                 DeclarationIdentityBinding.SelfTest();
                 DeclarationSignatureIdentity.SelfTest();
                 ForeignStarProjectionBinding.SelfTest();

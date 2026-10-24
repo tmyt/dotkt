@@ -18,6 +18,7 @@ private fun checkedNamedParameter(__nn0: Any?): String = __nn0 as String
 private fun <T> checkedGenericOperand(value: T): String = value as String
 private fun checkedNullableValue(value: Int?): Any = value as Any
 private fun checkedUnit(): Any = Unit as Any
+private fun checkedChain(value: Any?): Any = (value as String?) as Any
 private fun nullableString(value: Any?): String? = value as String?
 private fun safeString(value: Any?): String? = value as? String
 private fun nullableProjectedArray(value: Any?): Array<*>? = value as Array<*>?
@@ -49,6 +50,8 @@ class CheckedReferenceCastTests {
         expectNullCast { checkedNamedParameter(null) }
         expectNullCast { checkedGenericOperand<String?>(null) }
         expectNullCast { checkedNullableValue(null) }
+        expectNullCast { checkedChain(null) }
+        expectNullCast { (42 as? String) as Any }
 
         var evaluations = 0
         expectNullCast { checkedString(run { evaluations++; null }) }
@@ -77,10 +80,17 @@ class CheckedReferenceCastTests {
         assertEquals(true, checkedGenericOperand(marker) === marker)
         assertEquals(42, checkedNullableValue(42))
         assertEquals(true, checkedUnit() === Unit)
+        assertEquals(true, checkedChain(marker) === marker)
+        var chainMismatch = false
+        try { checkedChain(42) } catch (_: ClassCastException) { chainMismatch = true }
+        assertEquals(true, chainMismatch)
 
         val values: List<Int>? = listOf(1, 2)
         assertEquals("[1, 2]", "${values as Any}")
         assertEquals("[1, 2]", (values as Any).toString())
+        assertEquals("[1, 2]", "${(values as Any) as Any}")
+        assertEquals("[1, 2]", "${(values as Any?) as Any}")
+        assertEquals("[1, 2]", ((values as Any?) as Any).toString())
         val mapping: Map<String, Int>? = mapOf("one" to 1)
         assertEquals("{one=1}", "${mapping as Any}")
         assertEquals("{one=1}", (mapping as Any).toString())
