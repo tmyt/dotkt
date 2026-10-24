@@ -5,6 +5,7 @@ import MutableListInterop.*
 import MutableMutationInterop.*
 import CollectionStorageInterop.MutableListWithDictionaryStorage
 import MixedCollectionContracts.ListWithMutableDictionary
+import kotlin.collections.clrProjectedListAdd
 
 private fun writableSlice(source: Any): MutableList<Any?> {
     val list = source as MutableList<*>
@@ -93,10 +94,10 @@ private class AuthoredMutationList(
 private fun checkAppendFailure(source: Any, expected: System.Exception) {
     var receivers = 0
     var elements = 0
-    fun receiver(): MutableList<in Int> { receivers++; return source as MutableList<in Int> }
+    fun receiver(): Any { receivers++; return source }
     fun element(): Int { elements++; return 7 }
     var caught: System.Exception? = null
-    try { receiver().add(element()) } catch (failure: System.Exception) { caught = failure }
+    try { clrProjectedListAdd<Int>(receiver(), null, element()) } catch (failure: System.Exception) { caught = failure }
     check(caught === expected && receivers == 1 && elements == 1)
 }
 
@@ -180,14 +181,14 @@ class MutableListMutationTests {
         val independent = (dictionary as Any) as MutableList<String>
         val independentProjected: MutableList<in String> = independent
         check(independentProjected.add("list") && independent.size == 3 && dictionary.Count == 1)
-        val raw = (RawMutableList() as Any) as MutableList<in String>
-        check(raw.add("raw") && raw.size == 3)
+        val raw = RawMutableList()
+        check(clrProjectedListAdd<String>(raw, null, "raw") && raw.Count == 3)
 
-        val ambiguous = (DualMutableList() as Any) as MutableList<in String>
+        val ambiguous = DualMutableList()
         var rejected = false
-        try { ambiguous.add("must not choose from this value") }
+        try { clrProjectedListAdd<String>(ambiguous, null, "must not choose from this value") }
         catch (_: IllegalStateException) { rejected = true }
-        check(rejected)
+        check(rejected && ambiguous.Count == 2)
 
         var calls = 0
         val backing = mutableListOf<Any?>()
