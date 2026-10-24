@@ -138,7 +138,7 @@ internal fun <T> BirEmitter.withReturnPostcondition(fn: IrSimpleFunction, emit: 
 }
 
 /**
- * Enforce a Kotlin non-null reference value contract: bind once, yield the non-null value, or throw Kotlin NPE.
+ * Enforce a Kotlin non-null value contract: bind once, yield the non-null value, or throw Kotlin NPE.
  * Used by explicit checked casts and public return postconditions. The compiler-only name cannot alias a source
  * parameter; source locals already use their declaration-owned slots.
  */

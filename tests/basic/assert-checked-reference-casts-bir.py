@@ -30,16 +30,24 @@ def null_throws(nodes):
 
 
 for name in ("checkedString", "checkedAny", "checkedClass", "checkedInterface",
-             "checkedNativeInterface", "checkedArray", "checkedNamedParameter"):
+             "checkedNativeInterface", "checkedArray", "checkedProjectedArray", "checkedProjectedNative",
+             "checkedNamedParameter"):
     nodes = body(name)
     assert len(null_throws(nodes)) == 1, name
-    bindings = [node for node in nodes if node.get("k") == "var"
-                and isinstance(node.get("init"), dict) and node["init"].get("k") == "cast"]
+    casts = [node for node in nodes if node.get("k") == "cast"]
+    assert len(casts) == 1, (name, casts)
+    operand = casts[0]["e"]
+    assert operand["k"] == "valueBlock", (name, operand)
+    assert len(null_throws(list(objects(operand)))) == 1, name
+    bindings = [node for node in operand["stmts"] if node.get("k") == "var"]
     assert len(bindings) == 1, (name, bindings)
     assert "$" in bindings[0]["name"], (name, bindings)
+    assert bindings[0]["type"] == {"t": "nullable", "of": {"t": "fqn", "name": "kotlin.Any"}}, (name, bindings)
+    assert bindings[0]["init"]["k"] == "local", (name, bindings)
     assert any(node.get("k") == "objEq" for node in nodes), name
 
-for name in ("unchecked", "nullableString", "safeString"):
+for name in ("unchecked", "nullableString", "safeString", "nullableProjectedArray", "safeProjectedArray",
+             "nullableProjectedNative", "safeProjectedNative"):
     assert not null_throws(body(name)), name
 
-print("Explicit non-null reference casts retain a bind-once Kotlin NPE guard; nullable/safe/unchecked casts do not")
+print("Explicit non-null reference casts bind/check their source before casting; nullable/safe/unchecked casts do not")

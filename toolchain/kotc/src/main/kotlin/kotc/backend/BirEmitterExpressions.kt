@@ -521,14 +521,17 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 		// miscompile when FIR carries the smart-cast as an explicit IMPLICIT_CAST node instead of narrowing the
 		// IrGetValue directly). The twin of the IrGetValue narrowing path above.
 		IrTypeOperator.CAST, IrTypeOperator.IMPLICIT_CAST -> {
-			val value = nullableValueUnwrapElem(node.argument.type, node.typeOperand)?.let { elem ->
-				"""{"k":"nullableValue","elem":${elem.toJson()},"e":${expr(node.argument)}}"""
-			} ?: """{"k":"cast","type":${birType(node.typeOperand).toJson()},"reifiedTypeOperand":${node.operator == IrTypeOperator.CAST && node.typeOperand.hasReifiedRuntimeOperand()},"e":${expr(node.argument)}}"""
 			// An explicit Kotlin `as` rejects null at the operation, even when its result is discarded. Internal
 			// coercions and unchecked bare type-parameter casts do not acquire this concrete reference contract.
-			if (node.operator == IrTypeOperator.CAST && needsNonNullCheck(node.typeOperand))
-				wrapNonNullValue(value, node.typeOperand, str("null cannot be cast to a non-null type"))
-			else value
+			// Check the source before casting: classifier rejection must not preempt Kotlin's null exception, and
+			// preserving its original type keeps value-based collection recognition intact through an `as Any`.
+			val original = expr(node.argument)
+			val operand = if (node.operator == IrTypeOperator.CAST && needsNonNullCheck(node.typeOperand))
+				wrapNonNullValue(original, node.argument.type, str("null cannot be cast to a non-null type"))
+			else original
+			nullableValueUnwrapElem(node.argument.type, node.typeOperand)?.let { elem ->
+				"""{"k":"nullableValue","elem":${elem.toJson()},"e":$operand}"""
+			} ?: """{"k":"cast","type":${birType(node.typeOperand).toJson()},"reifiedTypeOperand":${node.operator == IrTypeOperator.CAST && node.typeOperand.hasReifiedRuntimeOperand()},"e":$operand}"""
 		}
 		// `x as? T` -> null on mismatch. Reference T: `isinst T` (null or ref). Value T: `T?` (Nullable<T>).
 		IrTypeOperator.SAFE_CAST -> {
