@@ -16,6 +16,8 @@ private fun insertThroughProjectedParameter(list: MutableList<in String>) {
     list.add(0, "parameter")
 }
 
+private fun appendThroughProjectedParameter(list: MutableList<in String>): Boolean = list.add("parameter")
+
 private fun checkProjectedIteratorWrites(source: Any, first: Any?, second: Any?) {
     val list = source as MutableList<*>
     val iterator = list.listIterator() as MutableListIterator<Any?>
@@ -91,13 +93,16 @@ private class AuthoredMutationList(
     override fun removeAt(index: Int): Any? { removals++; return backing.removeAt(index) }
 }
 
-private fun checkAppendFailure(source: Any, expected: System.Exception) {
+private fun checkAppendFailure(source: Any, expected: System.Exception, lowered: Boolean) {
     var receivers = 0
     var elements = 0
     fun receiver(): Any { receivers++; return source }
     fun element(): Int { elements++; return 7 }
     var caught: System.Exception? = null
-    try { clrProjectedListAdd<Int>(receiver(), null, element()) } catch (failure: System.Exception) { caught = failure }
+    try {
+        if (lowered) (receiver() as MutableList<in Int>).add(element())
+        else clrProjectedListAdd<Int>(receiver(), null, element())
+    } catch (failure: System.Exception) { caught = failure }
     check(caught === expected && receivers == 1 && elements == 1)
 }
 
@@ -181,6 +186,8 @@ class MutableListMutationTests {
         val independent = (dictionary as Any) as MutableList<String>
         val independentProjected: MutableList<in String> = independent
         check(independentProjected.add("list") && independent.size == 3 && dictionary.Count == 1)
+        check(appendThroughProjectedParameter(independent) && independent.size == 4 && independent[3] == "parameter")
+        check(dictionary.Count == 1)
         val raw = RawMutableList()
         check(clrProjectedListAdd<String>(raw, null, "raw") && raw.Count == 3)
 
@@ -199,10 +206,10 @@ class MutableListMutationTests {
         val authoredProjected: MutableList<in Any?> = authoredExact
         check(!authoredProjected.add("unchanged") && calls == 1 && authoredExact.isEmpty())
         val rawFailure = RawFailureList()
-        checkAppendFailure(rawFailure, rawFailure.Failure)
+        checkAppendFailure(rawFailure, rawFailure.Failure, false)
         check(rawFailure.Writes == 1 && rawFailure.Count == 2)
         val genericFailure = GenericFailureList()
-        checkAppendFailure(genericFailure, genericFailure.Failure)
+        checkAppendFailure(genericFailure, genericFailure.Failure, true)
         check(genericFailure.Writes == 1 && genericFailure.Count == 2)
     }
 
