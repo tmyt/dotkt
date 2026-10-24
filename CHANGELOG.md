@@ -5,6 +5,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Preserve mutable iterator contracts for inherited collection protocols, including default set mutation
+  bodies and cross-DLL calls; readonly enumerable adaptation remains readonly (#1160).
+
 - Retain selected native mutable-list views in projected iterators and live sublists, including
   subsequent mutation and nested slices (#1157).
 

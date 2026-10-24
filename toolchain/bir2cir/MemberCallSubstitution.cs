@@ -1398,14 +1398,13 @@ static class MemberCallSubstitution
                             sourceAccessorKind);
         }
 
-        // An unaliased collection with no declared iterator can use its native IEnumerable face. A declared
-        // abstract or concrete iterator must instead keep ordinary virtual dispatch, including its mutable
-        // return contract. Replacing it with a read-only bridge drops the authored protocol and mutation slots.
+        // An undeclared iterator still owes the source call's readonly or mutable protocol. A declared
+        // abstract or concrete iterator instead keeps ordinary virtual dispatch.
         // Local declarations and referenced declaration signatures are equally authoritative; a body is not needed.
         if (instance && ownerFqnNode != null && Str(node["method"]) == "iterator"
             && node["args"] is JsonArray { Count: 0 } itArgs
             && !refs.TryResolveClrOwner(ownerToken, out _, out _)
-            && MissingCollectionIteratorCall(node, ownerFqnNode, itArgs,
+            && MissingCollectionIteratorCall(node, itArgs,
                 HasDeclaredIterator(ownerFqnNode, _typesWithDeclaredIterator, _iteratorTypeDefinitions,
                     refs, refs.Aliases)) is { } iteratorCall)
             return iteratorCall;
@@ -2152,12 +2151,17 @@ static class MemberCallSubstitution
         call[DeclarationIdentityBinding.Key] = helper.DeclarationId;
     }
 
-    internal static JsonNode MissingCollectionIteratorCall(JsonObject node, TypeNode.Fqn owner,
-        JsonArray args, bool declaresIterator) =>
-        owner.Name.StartsWith("kotlin.collections.", StringComparison.Ordinal)
-            && Str(node["method"]) == "iterator" && args.Count == 0 && !declaresIterator
-            ? CollDefaultCall(node, "kotlin.collections.ClrIteratorBridgeKt", "iteratorOverEnumerable",
-                OwnerElemArg(owner), args) : null;
+    internal static JsonNode MissingCollectionIteratorCall(JsonObject node, JsonArray args, bool declaresIterator)
+    {
+        if (Str(node["method"]) != "iterator" || args.Count != 0 || declaresIterator
+            || TypeJson.Read(node["ret"] ?? node["sty"]) is not TypeNode.Fqn { Args: { Length: 1 } elements } protocol
+            || protocol.Name is not ("kotlin.collections.Iterator" or "kotlin.collections.MutableIterator"))
+            return null;
+        // Both the protocol and its element come from the selected call, not the owner's name or first argument.
+        return protocol.Name == "kotlin.collections.MutableIterator"
+            ? CollDefaultCall(node, "kotlin.collections.ClrCollectionDefaultsKt", "clrMutableIterator", elements[0], args)
+            : CollDefaultCall(node, "kotlin.collections.ClrIteratorBridgeKt", "iteratorOverEnumerable", elements[0], args);
+    }
 
     internal static JsonNode CollectionMutationCall(JsonObject node, TypeNode.Fqn ownerFqnNode,
         JsonArray args, ReferenceMetadataIndex refs, SubstCtx ctx,
