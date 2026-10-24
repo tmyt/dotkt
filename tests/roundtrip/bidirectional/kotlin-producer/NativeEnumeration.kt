@@ -89,14 +89,15 @@ fun kotlinErasedSetNativeConsumer(value: Any): Boolean {
     return copy.Count == 2
 }
 
+fun kotlinErasedMutableInterfaceChecks(): Boolean =
+    kotlinErasedMutableNativeChecks(mutableListOf("x"), mutableMapOf("k" to 1))
+
 @Suppress("UNCHECKED_CAST")
-fun kotlinErasedMutableInterfaceChecks(): Boolean {
-    val rawList: Any = mutableListOf("x")
+fun kotlinErasedMutableNativeChecks(rawList: Any, rawMap: Any): Boolean {
     val list = rawList as MutableList<Any?>
     check(list.add("y") && list.set(0, "z") == "x")
     check(list.remove("y") && list[0] == "z" && list.size == 1)
     check((rawList as MutableCollection<Any?>).contains("z"))
-    val rawMap: Any = mutableMapOf("k" to 1)
     val map = rawMap as MutableMap<Any?, Any?>
     check(map.put("k", 2) == 1)
     map["new"] = 3

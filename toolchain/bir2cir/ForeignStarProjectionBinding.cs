@@ -813,7 +813,9 @@ static class ForeignStarProjectionBinding
         // uses it only when that exact implemented view exists; otherwise the unique actual closure remains valid.
         TypeNode.Fqn selectedHint = AliasVarianceRepresentation.RequiresErasure(owner, refs)
             && owner.Args?.Any(ContainsExistential) == false ? owner : null;
-        if (!AliasVarianceRepresentation.RequiresErasure(owner, refs) && (!preferExplicit || selectedHint == null)
+        var variantValue = AliasVarianceRepresentation.RequiresErasure(owner, refs)
+            && AliasVarianceRepresentation.HasSourceVariance(owner, refs);
+        if (!variantValue && (!preferExplicit || selectedHint == null)
             && receiver is JsonObject { } obj && Str(obj["k"]) == "local"
             && Str(obj["name"]) is string name && _closedViewHints.TryGetValue(name, out var hint)
             && SameForeignProjectionOwner(hint, owner, refs)

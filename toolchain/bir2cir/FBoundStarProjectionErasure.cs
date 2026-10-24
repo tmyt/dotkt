@@ -3095,7 +3095,8 @@ static partial class FBoundStarProjectionErasure
                 preserveArrayShape: preserveArrayShape || witness,
                 preserveConstructedHead: witness
                     && !(StripSourceNullability(argument) is TypeNode.Fqn variant
-                        && ProjectionCanChangeConstruction(variant, owners, refs))));
+                        && (ContainsExistentialProjection(variant)
+                            || ProjectionCanChangeConstruction(variant, owners, refs)))));
         }
     }
 

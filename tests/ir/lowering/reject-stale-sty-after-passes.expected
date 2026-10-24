@@ -1,5 +1,5 @@
 # The §2.7 chokepoint rejects an unrepaired disagreement between the selected return and frontend stamp.
-# MutableList<String> and MutableList<Any> retain distinct invariant CLR constructions; neither is an opaque
-# variant value or nullable-erasure seam. No representation pass owns a conversion between these stamps.
+# Native IList<String> and IList<Any> retain distinct invariant CLR constructions; neither is an opaque
+# Kotlin collection value or nullable-erasure seam. No representation pass owns a conversion between these stamps.
 carries a stale 'sty'
 erasedReadKeptItsFrontendStamp

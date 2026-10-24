@@ -2266,7 +2266,8 @@ static class MemberCallSubstitution
         var member = Str(node["method"]);
         // Mutable defaults retain their own family and source-selected closure;
         // unrelated readonly interfaces cannot choose their membership or Count.
-        if (family >= 4 && member is not ("contains" or "containsAll" or "isEmpty")) return null;
+        if (family >= 4 && member is not ("contains" or "containsAll" or "isEmpty")
+            && !(family == 5 && member == "size")) return null;
         var arguments = node["args"] as JsonArray ?? new JsonArray();
         var helper = (member, arguments.Count) switch {
             ("size", 0) when family != 2 && Str(node["prop"]) == "get" => "projectedViewCountErased",
@@ -2439,6 +2440,17 @@ static class MemberCallSubstitution
             || TypeJson.Read(append["args"][1]["type"]) is not TypeNode.Fqn {
                 Name: "System.Collections.Generic.IList`1", Args: [TypeNode.Tv { Scope: "method", I: 1 }] })
             throw new InvalidOperationException("Projected append lost the selected List witness");
+        var mutableCount = StaticCollectionOperation(new JsonObject {
+            ["method"] = "size", ["prop"] = "get",
+            ["recv"] = new JsonObject { ["k"] = "local", ["name"] = "source" },
+        }, new TypeNode.Fqn("kotlin.collections.MutableCollection", new TypeNode[] { new TypeNode.Star() }),
+            refs, new SubstCtx(), CollectionOperationPhase.Source,
+            new TypeNode.Fqn("kotlin.collections.MutableCollection", new[] { variable }));
+        if (Str(mutableCount?["method"]) != "projectedViewCountErased"
+            || TypeJson.Read(mutableCount["args"][1]["type"]) is not TypeNode.Fqn {
+                Name: "System.Collections.Generic.ICollection`1", Args: [TypeNode.Tv { Scope: "method", I: 1 }] }
+            || mutableCount["args"][2]["value"].GetValue<int>() != 5)
+            throw new InvalidOperationException("Mutable collection Count lost its selected source view before classifier erasure");
         foreach (var (member, arity, helper) in new[] {
             ("get", 1, "clrProjectedViewGet"), ("isEmpty", 0, "clrProjectedViewIsEmpty"),
             ("contains", 1, "clrProjectedViewContains"), ("containsAll", 1, "clrProjectedViewContainsAll"),

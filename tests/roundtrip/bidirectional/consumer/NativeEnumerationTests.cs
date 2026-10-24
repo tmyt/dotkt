@@ -31,6 +31,11 @@ public class NativeEnumerationTests
         Check(new HashSet<int> { 1, 2 }, 1, 9);
         Check(new HashSet<int?> { null, 3 }, null, 9);
         Assert.That(NativeEnumerationKt.kotlinErasedMutableInterfaceChecks(), Is.True);
+        var nativeList = new List<string> { "x" };
+        var nativeMap = new Dictionary<string, int> { ["k"] = 1 };
+        Assert.That(NativeEnumerationKt.kotlinErasedMutableNativeChecks(nativeList, nativeMap), Is.True);
+        Assert.That(nativeList, Is.EqualTo(new[] { "z" }));
+        Assert.That(nativeMap["k"], Is.EqualTo(2));
         Assert.That(NativeEnumerationKt.kotlinErasedMutableCastControls(), Is.True);
     }
 

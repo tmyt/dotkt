@@ -12,7 +12,9 @@
 # The one-argument add retains the selected Kotlin method's Boolean result and exact storage parameter.
 +"name":"add","genericArity":0,"returnType":{"t":"fqn","name":"System.Boolean"},"callingConvention":"instance","parameterTypes":[{"t":"tv","scope":"type","i":1}]
 
-# A local subclass with no declaration of its own still needs the inherited external interface slot.
-+"type":{"t":"fqn","name":"System.Collections.Generic.ICollection","args":[{"t":"fqn","name":"System.Int32"}]},"method":"Clear"
-+"declaringType":{"t":"fqn","name":"System.Collections.Generic.ICollection\u00601","args":[{"t":"fqn","name":"System.Int32"}]},"name":"Clear"
+# A local subclass with no declaration of its own still selects the inherited external interface slot.
+# Its opaque Kotlin collection receiver goes through the exact-token runtime, with the static closure retained.
++"method":"starProjectionInvokeUnit"
++"k":"classRef","type":{"t":"fqn","name":"System.Collections.Generic.ICollection\u00601","args":[{"t":"fqn","name":"System.Int32"}]}
++"k":"const","type":{"t":"fqn","name":"System.String"},"value":"Clear"
 -"method":"clrCollAdd"

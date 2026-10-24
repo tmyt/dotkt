@@ -59,7 +59,7 @@ private interface ClrRawMutableList {
 @kotlin.clr.ClrTypeAlias("System.Collections.Generic.IList`1")
 private interface ClrExactMutableList<T> {
     @property:kotlin.clr.ClrProperty(kotlin.clr.READ, "Count") val count: Int
-    @kotlin.clr.ClrIntrinsic("Add") fun add(element: T): Unit
+    @kotlin.clr.ClrIntrinsic("Add") fun nativeAdd(element: T): Unit
 }
 
 private class ClrErasedMutableIteratorAdapter<T>(private val iterator: Any) : MutableIterator<T> {
@@ -175,7 +175,7 @@ public fun <T> clrListAdd(list: MutableList<T>, element: T): Boolean {
     val native = (list as Any) as? ClrExactMutableList<T>
     if (native == null) return mutableListAddErased(list, element, null)
     val before = native.count
-    native.add(element)
+    native.nativeAdd(element)
     return native.count != before
 }
 

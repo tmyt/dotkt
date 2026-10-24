@@ -1,8 +1,7 @@
-# MutableMap retains the exact native dictionary carrier. Source storage companions must not enter its two slots.
-# Preserve caller-frame permutation exactly once, while retaining the independent Kotlin mutability guard.
+# A MutableMap cast checks its Kotlin classifier, not a closed invariant CLR dictionary construction.
+# Neither a caller-frame permutation nor concrete arguments impose an extra native cast on this opaque value.
 +"method":"kotlinCollectionCastCandidate"
 +"k":"const","type":{"t":"fqn","name":"System.Int32"},"value":20
 +"k":"cast","e":
-+"name":"System.Collections.Generic.IDictionary","args":[{"t":"tv","scope":"method","i":1},{"t":"tv","scope":"method","i":0}]}
-+"name":"System.Collections.Generic.IDictionary","args":[{"t":"fqn","name":"System.String"},{"t":"fqn","name":"System.Int32"}]}
--"name":"System.Collections.Generic.IDictionary","args":[{"t":"tv","scope":"method","i":1},{"t":"tv","scope":"method","i":0},{"t":"tv"
++"ret":{"t":"fqn","name":"System.Object"},"body":[{"k":"return","value":{"k":"cast","e":
+-"name":"System.Collections.Generic.IDictionary","args":

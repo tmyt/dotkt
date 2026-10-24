@@ -32,6 +32,11 @@ static class AliasVarianceRepresentation
     static bool NeedsOpaqueValue(TypeNode.Fqn application, JsonArray parameters, Type physical) =>
         HasUnrepresentableVariance(parameters, physical) || (KotlinTypeWitness.Flags(application) & ~1) != 0;
 
+    internal static bool HasSourceVariance(TypeNode.Fqn application, ReferenceMetadataIndex refs) =>
+        OrdinaryParameters(refs.OwnerTypeParamDeclarations(application.Name),
+            refs.NullableTypeFrames.GetValueOrDefault(application.Name))?.OfType<JsonObject>()
+            .Any(parameter => parameter["variance"]?.GetValue<string>() is "in" or "out") == true;
+
     // Companions describe representations of source arguments, not new CLR
     // alias parameters. The explicit declaration frame owns this correspondence.
     static JsonArray OrdinaryParameters(JsonArray parameters, NullableRepresentationFrame frame)

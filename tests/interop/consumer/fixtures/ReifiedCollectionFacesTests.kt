@@ -109,7 +109,7 @@ class ReifiedCollectionFacesTests {
         check(!selected.isEmpty())
     }
 
-    @TestAttribute fun concreteMutableCollectionReturnsKeepTheirInterface() {
+    @TestAttribute fun uncheckedMutableCollectionReturnsKeepTheirClassifierAndIdentity() {
         val value = ReifiedCollectionFaces.ExactViews()
         check(exactMutableCollection(value) === value)
         check(exactSafeMutableCollection(value) === value)
@@ -117,9 +117,8 @@ class ReifiedCollectionFacesTests {
         check(exactNullableMutableCollection(null) == null)
         check(exactNullableMutableCollection(value)!!.size == 1)
         val wrongElement: Any = mutableListOf(1)
-        check(exactSafeMutableCollection(wrongElement) == null)
-        var rejected = false
-        try { exactMutableCollection(wrongElement) } catch (_: System.InvalidCastException) { rejected = true }
-        check(rejected)
+        check(exactSafeMutableCollection(wrongElement) === wrongElement)
+        check(exactMutableCollection(wrongElement) === wrongElement)
+        check(exactMutableCollection(wrongElement).contains(1))
     }
 }
