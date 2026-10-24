@@ -520,10 +520,16 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 		// `Nullable<T>.Value` — `unbox.any int` over a `Nullable<int>` struct is invalid IL / garbage (the C1
 		// miscompile when FIR carries the smart-cast as an explicit IMPLICIT_CAST node instead of narrowing the
 		// IrGetValue directly). The twin of the IrGetValue narrowing path above.
-		IrTypeOperator.CAST, IrTypeOperator.IMPLICIT_CAST ->
-			nullableValueUnwrapElem(node.argument.type, node.typeOperand)?.let { elem ->
+		IrTypeOperator.CAST, IrTypeOperator.IMPLICIT_CAST -> {
+			val value = nullableValueUnwrapElem(node.argument.type, node.typeOperand)?.let { elem ->
 				"""{"k":"nullableValue","elem":${elem.toJson()},"e":${expr(node.argument)}}"""
 			} ?: """{"k":"cast","type":${birType(node.typeOperand).toJson()},"reifiedTypeOperand":${node.operator == IrTypeOperator.CAST && node.typeOperand.hasReifiedRuntimeOperand()},"e":${expr(node.argument)}}"""
+			// An explicit Kotlin `as` rejects null at the operation, even when its result is discarded. Internal
+			// coercions and unchecked bare type-parameter casts do not acquire this concrete reference contract.
+			if (node.operator == IrTypeOperator.CAST && needsNonNullCheck(node.typeOperand))
+				wrapNonNullValue(value, node.typeOperand, str("null cannot be cast to a non-null type"))
+			else value
+		}
 		// `x as? T` -> null on mismatch. Reference T: `isinst T` (null or ref). Value T: `T?` (Nullable<T>).
 		IrTypeOperator.SAFE_CAST -> {
 			// A value primitive OR an unsigned inline-class (`UInt`/…, #126) `T` -> the value-type nullable path
@@ -578,7 +584,7 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 			val (res, end) = spliced
 			val goto = """{"k":"goto","id":$end}"""
 			// Unlike the NON-spliced arm below, the value stored into the splice result-local needs NO return-site
-			// coerceValue/wrapReturnNonNull: a `return@lambda <value-type-nullable>` into a bare-value slot is only
+			// coerceValue/wrapNonNullValue: a `return@lambda <value-type-nullable>` into a bare-value slot is only
 			// well-typed via a smart-cast, which Fir2Ir always materializes as a narrowed IrGetValue or an IMPLICIT_CAST
 			// — both already `nullableValue`-unwrapped by expr()'s leaf arms — so node.value is already the bare `Int`;
 			// and a splice target is always a LAMBDA literal, never a postcondition-registered public fn. Verified a
@@ -600,7 +606,7 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 			// statement-position returns. Skip Nothing values (`return TODO()` already throws) and inline splices,
 			// which took the branch above.
 			val postMsg = postconditionReturns[node.returnTargetSymbol]
-			val v = if (postMsg != null && !node.value.type.isNothing()) wrapReturnNonNull(v0, valueRetType, postMsg) else v0
+			val v = if (postMsg != null && !node.value.type.isNothing()) wrapNonNullValue(v0, valueRetType, postMsg) else v0
 			"""{"k":"returnExpr","value":$v}"""
 		}
 		else if (node.value is IrGetObjectValue) """{"k":"returnExpr"}"""

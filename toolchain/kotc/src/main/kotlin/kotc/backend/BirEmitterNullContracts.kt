@@ -138,17 +138,17 @@ internal fun <T> BirEmitter.withReturnPostcondition(fn: IrSimpleFunction, emit: 
 }
 
 /**
- * Wrap a genuine return VALUE in the non-null return POSTCONDITION: bind it to a fresh temp of the (non-null
- * reference) return type, yield it when non-null, else `throw NullPointerException(<msg>)` — the same
- * bind-check-throw shape as a reference `x!!`. `retType` is `fn.returnType`; `msgJson` is the registered message.
+ * Enforce a Kotlin non-null reference value contract: bind once, yield the non-null value, or throw Kotlin NPE.
+ * Used by explicit checked casts and public return postconditions. The compiler-only name cannot alias a source
+ * parameter; source locals already use their declaration-owned slots.
  */
-internal fun BirEmitter.wrapReturnNonNull(valueJson: String, retType: IrType, msgJson: String): String {
-	val nv = "__nn${scopeCounter++}"
+internal fun BirEmitter.wrapNonNullValue(valueJson: String, valueType: IrType, msgJson: String): String {
+	val nv = "dotkt\$nonNullValue${scopeCounter++}"
 	val nvLoc = """{"k":"local","name":${str(nv)}}"""
 	val throwNpe = throwExpr(newExc("kotlin.NullPointerException", msgJson))
 	return valueBlockJson(
 		type = null,
-		stmts = """{"k":"var","name":${str(nv)},"type":${birType(retType).toJson()},"init":$valueJson}""",
+		stmts = """{"k":"var","name":${str(nv)},"type":${birType(valueType).toJson()},"init":$valueJson}""",
 		result = """{"k":"cond","cond":{"k":"unaryOp","op":"!","e":{"k":"objEq","lhs":$nvLoc,"rhs":${nullConstJson()}}},"then":$nvLoc,"else":$throwNpe}""",
 	)
 }
