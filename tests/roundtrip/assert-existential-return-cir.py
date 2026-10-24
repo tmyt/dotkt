@@ -102,9 +102,10 @@ composed_casts = [
     node.get("type", {}).get("name")
     for node in objects(referenced_composed[0].get("body", []))
     if node.get("k") == "cast"
+    # Null-check comparisons and exception construction are not generic classifier casts.
+    and node.get("type", {}).get("name") not in {"System.Object", "System.Exception"}
 ]
 if sorted(composed_casts) != sorted([
-    "System.Object",
     "starprojection.ReferencedExistentialFusibleFlow$star",
     "starprojection.ReferencedExistentialFlow$star",
 ]):

@@ -4444,7 +4444,7 @@ static partial class FBoundStarProjectionErasure
             "cast" or "isInst" => TypeJson.Read(operand?["type"]),
             "callInstance" or "callStatic" =>
                 TypeJson.Read(operand?["dynRet"]) ?? TypeJson.Read(operand?["sty"]),
-            _ => TypeJson.Read(operand?["sty"]) ?? TypeJson.Read(operand?["type"]),
+            _ => NodeType.Of(operand),
         };
         if (target.Args is not { } targetArguments || targetArguments.Any(ContainsExplicitExistential)
             || StripSourceNullability(sourceType) is not TypeNode.Fqn source)
