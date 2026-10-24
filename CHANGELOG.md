@@ -5,6 +5,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Preserve the selected mutable List view when appending through a projected Kotlin interface, without including
+  unrelated native Collection or dictionary-storage faces (#1158).
+
 - Preserve Kotlin-authored `indexOf` overrides through native read-only `IList<T>.IndexOf`, including generic
   elements and inherited overrides, without changing non-dispatching defaults or foreign lookup (#1151).
 

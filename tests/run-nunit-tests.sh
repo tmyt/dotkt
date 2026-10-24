@@ -55,7 +55,7 @@ declare -A EXPECTED_DISCOVERED=(
 	["tests/coroutines"]=267
 	["tests/roundtrip/consumer"]=640
 	["tests/roundtrip/bidirectional/consumer"]=55
-	["tests/interop/consumer"]=453
+	["tests/interop/consumer"]=454
 )
 
 # Validate the baseline map before doing any expensive work. A new/renamed suite without a reviewed count is a

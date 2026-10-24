@@ -12,6 +12,7 @@ public sealed class RawFailureList : ArrayList, IList
     object IList.this[int index] { get => base[index]; set { Writes++; throw Failure; } }
     void IList.Insert(int index, object value) { Writes++; throw Failure; }
     void IList.RemoveAt(int index) { Writes++; throw Failure; }
+    int IList.Add(object value) { Writes++; throw Failure; }
 }
 
 public sealed class GenericFailureList : List<int>, IList<int>
@@ -22,4 +23,5 @@ public sealed class GenericFailureList : List<int>, IList<int>
     int IList<int>.this[int index] { get => base[index]; set { Writes++; throw Failure; } }
     void IList<int>.Insert(int index, int value) { Writes++; throw Failure; }
     void IList<int>.RemoveAt(int index) { Writes++; throw Failure; }
+    void ICollection<int>.Add(int value) { Writes++; throw Failure; }
 }
