@@ -53,7 +53,11 @@ static class ExactMutableViewDispatch
             ["args"] = new JsonArray(Local(), new JsonObject { ["k"] = "classRef", ["type"] = TypeJson.Write(view) },
                 new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("kotlin.Int"), ["value"] = family }),
         };
-        var condition = Binary("&&", nativeTest, eligible);
+        // A custom interface cast may execute user code. Check immutable metadata eligibility first,
+        // and preserve a null receiver's original argument evaluation before its eventual failure.
+        var nonNull = new JsonObject { ["k"] = "binOp", ["op"] = "!=", ["lhs"] = Local(),
+            ["rhs"] = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Write(new TypeNode.Nullable(Any)), ["value"] = null } };
+        var condition = Binary("&&", nonNull, Binary("&&", eligible, nativeTest));
         var statements = new JsonArray(new JsonObject {
             ["k"] = "var", ["name"] = name, ["type"] = TypeJson.Write(Any), ["init"] = receiver.DeepClone(),
         });
@@ -232,6 +236,11 @@ static class ExactMutableViewDispatch
             || branches[1]["else"]?.GetValue<bool>() != true
             || branches[1]["body"][0]["expr"]["method"]?.GetValue<string>() != "fallback")
             throw new InvalidOperationException("Exact mutable void dispatch lost its executable fallback branch");
+        var condition = branches[0]["cond"];
+        if (condition["cond"]?["k"]?.GetValue<string>() != "binOp"
+            || condition["cond"]?["op"]?.GetValue<string>() != "!="
+            || condition["then"]?["cond"]?["method"]?.GetValue<string>() != "canUseExactMutableView")
+            throw new InvalidOperationException("Exact mutable dispatch probed an interface before null/metadata eligibility");
         var receivers = 0;
         void Walk(JsonNode node)
         {

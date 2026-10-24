@@ -248,6 +248,11 @@ class MutableListMutationTests {
             checkInvariantFailure<Any?>((erased as Any) as MutableList<Any?>, 7, erased.Failure, operation)
         }
         check(exact.Writes == 4 && erased.Writes == 4 && exact.Count == 2 && erased.Count == 2)
+        val nativeDynamic = DynamicStringList()
+        val dynamic = (nativeDynamic as Any) as MutableList<Any?>
+        nativeDynamic.InterfaceChecks = 0
+        check(dynamic.size == 2 && dynamic[0] == "a")
+        check(nativeDynamic.InterfaceChecks == 0)
     }
 
     @TestAttribute fun kotlinMutationOverridesRemainAuthoritative() {

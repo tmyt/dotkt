@@ -11,7 +11,13 @@ private class ExactMutableWeakCache<K : Any, V : Any> {
 
 private class ExactMutableTypeCell public constructor() {
     val views = ExactMutableWeakCache<StarProjectionType, ExactMutableChoiceCell>()
+    @kotlin.concurrent.Volatile
+    var classified: Boolean = false
+    var stableInterfaces: Boolean = false
 }
+
+@kotlin.clr.ClrTypeAlias("System.Runtime.InteropServices.IDynamicInterfaceCastable")
+private interface ExactMutableDynamicInterfaces
 
 private class ExactMutableChoiceCell public constructor() {
     @kotlin.concurrent.Volatile
@@ -26,14 +32,28 @@ private fun enterExactMutableCell(cell: Any): Unit = error("CLR binding")
 @kotlin.clr.ClrIntrinsic("System.Threading.Monitor.Exit")
 private fun exitExactMutableCell(cell: Any): Unit = error("CLR binding")
 
-// Called only after bir2cir's invariant native-interface test. That test alone is insufficient:
+// Called before bir2cir's invariant native-interface test. That test alone is insufficient:
 // dictionary entry storage can be ineligible, and CLR arrays have special interface covariance.
 // Reuse the real operation selector, without throwing before the operation's arguments are evaluated.
 @PublishedApi
 internal fun canUseExactMutableView(receiver: Any, sourceView: Any?, family: Int): Boolean {
     if (sourceView == null) return false
     val preferred = sourceView as StarProjectionType
-    val cell = exactMutableViews.get(receiver.starProjectionRuntimeType()).views.get(preferred)
+    val runtimeType = receiver.starProjectionRuntimeType()
+    val typeCell = exactMutableViews.get(runtimeType)
+    if (!typeCell.classified) {
+        enterExactMutableCell(typeCell)
+        try {
+            if (!typeCell.classified) {
+                // Custom/COM interface casts can execute user code or depend on the instance.
+                // Keep those operations on the original path rather than cache an instance-varying decision.
+                typeCell.stableInterfaces = !runtimeType.isComObject && receiver !is ExactMutableDynamicInterfaces
+                typeCell.classified = true
+            }
+        } finally { exitExactMutableCell(typeCell) }
+    }
+    if (!typeCell.stableInterfaces) return false
+    val cell = typeCell.views.get(preferred)
     val bit = 1 shl family
     // Publish allowed before the release store to known; a hit's acquire read needs no monitor.
     if ((cell.known and bit) != 0) return (cell.allowed and bit) != 0
