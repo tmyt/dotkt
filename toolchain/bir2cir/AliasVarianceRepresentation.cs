@@ -3,7 +3,8 @@ using System.Text.Json.Nodes;
 using DotKt.Bir;
 
 // Kotlin declaration-site variance includes value-type arguments; CLR interface variance does not.
-// A variant alias therefore cannot use any one reified CLR construction as its ordinary value ABI,
+// Kotlin collection interface casts also erase their element arguments, even for invariant mutable interfaces.
+// These aliases therefore cannot use any one reified CLR construction as their ordinary value ABI,
 // even when its CLR declaration has matching variance flags.
 // Keep the source application in metadata, but carry the original reference through an opaque value slot.
 // Exact CLR declarations (constructors, inheritance and bound member descriptors) remain reified.
@@ -25,8 +26,11 @@ static class AliasVarianceRepresentation
         var ordinary = OrdinaryParameters(sourceParameters, sourceFrame);
         var physical = refs.ResolveNetType(binding, ordinary.Count);
         if (physical == null || !physical.IsGenericType || physical.IsValueType) return false;
-        return HasUnrepresentableVariance(ordinary, physical);
+        return NeedsOpaqueValue(application, ordinary, physical);
     }
+
+    static bool NeedsOpaqueValue(TypeNode.Fqn application, JsonArray parameters, Type physical) =>
+        HasUnrepresentableVariance(parameters, physical) || (KotlinTypeWitness.Flags(application) & ~1) != 0;
 
     // Companions describe representations of source arguments, not new CLR
     // alias parameters. The explicit declaration frame owns this correspondence.
@@ -76,6 +80,13 @@ static class AliasVarianceRepresentation
         var contravariant = JsonNode.Parse("""[{"name":"T","variance":"in"}]""").AsArray();
         var invariant = JsonNode.Parse("""["T"]""").AsArray();
         var map = JsonNode.Parse("""["K",{"name":"V","variance":"out"}]""").AsArray();
+        foreach (var source in new[] { "kotlin.collections.MutableCollection", "kotlin.collections.MutableList", "kotlin.collections.MutableSet" })
+            if (!NeedsOpaqueValue(new TypeNode.Fqn(source, new[] { new TypeNode.Fqn("kotlin.Any") }), invariant,
+                typeof(System.Collections.Generic.ICollection<>)))
+                throw new InvalidOperationException("Kotlin mutable collection casts must not require an invariant CLR construction");
+        if (NeedsOpaqueValue(new TypeNode.Fqn("System.Collections.Generic.ICollection", new[] { new TypeNode.Fqn("kotlin.Any") }),
+            invariant, typeof(System.Collections.Generic.ICollection<>)))
+            throw new InvalidOperationException("A native CLR interface lost its exact construction contract");
         if (!HasUnrepresentableVariance(map, typeof(System.Collections.Generic.IDictionary<,>))
             || !HasUnrepresentableVariance(covariant, typeof(System.Collections.Generic.IList<>))
             || !HasUnrepresentableVariance(covariant, typeof(System.Collections.Generic.IReadOnlyList<>))
