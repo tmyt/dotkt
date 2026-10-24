@@ -27,7 +27,7 @@ public class NativeCollectionMembershipTests
         var integers = new MembershipCallCounter();
         Check(NativeCollectionMembershipKt.intIndexList(integers), 42, 7, integers);
         var nullable = new MembershipCallCounter();
-        Check<int?>(NativeCollectionMembershipKt.nullableIndexList(nullable), null, 7, nullable);
+        Check<object>(NativeCollectionMembershipKt.nullableIndexList(nullable), null, 7, nullable);
         var inherited = new MembershipCallCounter();
         Check(NativeCollectionMembershipKt.inheritedIndexList(inherited), "needle", "value", inherited);
         var failure = new InvalidOperationException("native index failure");
