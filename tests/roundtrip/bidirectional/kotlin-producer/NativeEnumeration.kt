@@ -56,6 +56,7 @@ fun kotlinErasedSetIdentity(value: Any): Any = value as MutableSet<Any?>
 fun kotlinErasedSetConcreteIdentity(value: Any): Any = value as MutableSet<String>
 
 private class ErasedEnumerationSetBox(val view: MutableSet<Any?>)
+private class ErasedEnumerationGenericBox<T>(val value: T)
 
 fun kotlinCrossModuleErasedSetChecks(value: Any, element: Any?): Boolean {
     val view = erasedEnumerationView(value)
@@ -69,6 +70,8 @@ fun kotlinErasedSetChecks(value: Any, present: Any?, added: Any?): Boolean {
     val query = { view.contains(present) }
     check(query())
     check(ErasedEnumerationSetBox(view).view.contains(present))
+    val box = ErasedEnumerationGenericBox(view)
+    check(box.value === value && box.value.contains(present))
     val array = arrayOf(view)
     check(array[0] === value && array[0].contains(present))
     check(view.containsAll(listOf(present)))
@@ -115,6 +118,7 @@ fun kotlinErasedMutableCastControls(): Boolean {
     try { none as MutableSet<Any?> } catch (_: NullPointerException) { nullRejected = true }
     val wrong: Any = "not a set"
     check(wrong as? MutableSet<Any?> == null)
+    check((mutableListOf("not a set") as Any) as? MutableSet<Any?> == null)
     var wrongRejected = false
     try { wrong as MutableSet<Any?> } catch (_: ClassCastException) { wrongRejected = true }
     return nullRejected && wrongRejected

@@ -473,6 +473,12 @@ static partial class FBoundStarProjectionErasure
                         || IsBoundDeclarationType(obj, key, refs, localClrAliases);
                     var childArrayShape = preserveArrayShape
                         || IsNativeArrayDeclarationSlot(obj, key, refs, localClrAliases);
+                    if (key == "typeArgs" && value is JsonArray methodArguments)
+                    {
+                        RewriteMethodArguments(obj, methodArguments, owners, refs, localClrAliases,
+                            childBoundDeclaration, childArrayShape);
+                        continue;
+                    }
                     if (key is "argTypes" or "memberSignature" && value is JsonArray argumentTypes
                         && obj["args"] is JsonArray argumentValues)
                     {
@@ -3064,6 +3070,35 @@ static partial class FBoundStarProjectionErasure
             if (child != null) AlignCapturedInnerBaseValues(child, scope, returnType, owners, defs, refs);
     }
 
+    static void RewriteMethodArguments(JsonObject call, JsonArray arguments,
+        IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs,
+        IReadOnlyDictionary<string, string> localClrAliases, bool boundDeclaration, bool preserveArrayShape)
+    {
+        var identity = Str(call[DeclarationIdentityBinding.Key]);
+        var owner = TypeJson.Read(call["calleeOwner"] ?? call["ownerType"] ?? call["owner"]) as TypeNode.Fqn;
+        var frame = owner != null && identity != null
+            && _localDeclarations.TryGetValue((owner.Name, identity), out var selected)
+            ? NullableRepresentationTypes.DeclarationMethodFrame(selected)
+            : refs.NullableMethodFrame(identity);
+        if (frame != null && frame.PhysicalArity != arguments.Count)
+            throw new InvalidOperationException("Selected method arguments disagree with the declaration's representation frame");
+        for (var index = 0; index < arguments.Count; index++)
+        {
+            var argument = TypeJson.Read(arguments[index]);
+            if (argument == null) continue;
+            // A call vector carries construction witnesses and value companions, just like a constructed owner.
+            // Opaque value storage must not erase its separate CLR construction witness.
+            var witness = frame == null || frame.PhysicalSlot(index).Representation
+                is NullableRepresentationFrame.Role.Ordinary or NullableRepresentationFrame.Role.Nullable;
+            arguments[index] = TypeJson.Write(RewriteType(argument, owners, refs,
+                boundDeclaration, localClrAliases,
+                preserveArrayShape: preserveArrayShape || witness,
+                preserveConstructedHead: witness
+                    && !(StripSourceNullability(argument) is TypeNode.Fqn variant
+                        && ProjectionCanChangeConstruction(variant, owners, refs))));
+        }
+    }
+
     static void Rewrite(JsonNode node, IReadOnlyDictionary<string, Owner> owners,
         IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs,
         IReadOnlySet<int> existentialTypeParameters = null,
@@ -3225,6 +3260,12 @@ static partial class FBoundStarProjectionErasure
                         || IsBoundDeclarationType(obj, key, refs, localClrAliases);
                     var childArrayShape = preserveArrayShape
                         || IsNativeArrayDeclarationSlot(obj, key, refs, localClrAliases);
+                    if (key == "typeArgs" && value is JsonArray methodArguments)
+                    {
+                        RewriteMethodArguments(obj, methodArguments, owners, refs, localClrAliases,
+                            childBoundDeclaration, childArrayShape);
+                        continue;
+                    }
                     if (key is "argTypes" or "memberSignature" && value is JsonArray argumentTypes
                         && obj["args"] is JsonArray argumentValues)
                     {

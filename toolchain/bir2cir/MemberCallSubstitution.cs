@@ -1914,7 +1914,7 @@ static class MemberCallSubstitution
     // representation. A closed defaults-helper signature would assert a CLR construction the original object
     // need not implement; the projected helper instead resolves its actual closed interface at runtime.
     static bool HasProjectedCollectionReceiver(JsonObject node, TypeNode.Fqn owner, SubstCtx ctx,
-        ReferenceMetadataIndex refs)
+        ReferenceMetadataIndex refs, bool includeOpaqueValue = true)
     {
         static bool ContainsProjection(TypeNode type) => type switch
         {
@@ -1934,7 +1934,7 @@ static class MemberCallSubstitution
         };
 
         if (ContainsProjection(owner)
-            || refs != null && AliasVarianceRepresentation.RequiresErasure(owner, refs)) return true;
+            || includeOpaqueValue && refs != null && AliasVarianceRepresentation.RequiresErasure(owner, refs)) return true;
         if (ctx == null || node["recv"] is not JsonObject receiver)
             return false;
         if (Str(receiver["k"]) == "local" && Str(receiver["name"]) is string local
@@ -2165,9 +2165,11 @@ static class MemberCallSubstitution
     {
         var ownerFqn = ownerFqnNode.Name;
         var member = Str(node["method"]);
-        if (ownerFqn == "kotlin.collections.MutableList" && (member is "add" or "Add") && args.Count == 1
-            && HasProjectedCollectionReceiver(node, ownerFqnNode, ctx, refs))
+        if (ownerFqn == "kotlin.collections.MutableList" && (member is "add" or "Add") && args.Count == 1)
         {
+            if (!HasProjectedCollectionReceiver(node, ownerFqnNode, ctx, refs, includeOpaqueValue: false))
+                return CollDefaultCall(node, "kotlin.collections.ClrCollectionDefaultsKt", "clrListAdd",
+                    CollElemArg(node, refs, ctx, ownerFqnNode), args);
             var preferred = StaticCollectionPreference(preferredOwner ?? ownerFqnNode, refs,
                 "System.Collections.Generic.IList`1", phase);
             return CollDefaultCall(node, "kotlin.collections.ClrCollectionDefaultsKt", "clrProjectedListAdd",
@@ -2583,6 +2585,7 @@ static class MemberCallSubstitution
         {
             ("kotlin.collections.ClrIteratorBridgeKt", "iteratorOverEnumerable") => new[] { Gen("kotlin.collections.ClrEnumerable") },
             (_, "clrCollAdd") => new TypeNode[] { Gen("kotlin.collections.MutableCollection"), tv },
+            (_, "clrListAdd") => new TypeNode[] { Gen("kotlin.collections.MutableList"), tv },
             (_, "clrProjectedCollAdd") => new TypeNode[] { new TypeNode.Fqn("kotlin.Any"), tv },
             (_, "clrProjectedListAdd") => new TypeNode[]
                 { new TypeNode.Fqn("kotlin.Any"), new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any")), tv },

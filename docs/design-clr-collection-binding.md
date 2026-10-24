@@ -16,8 +16,10 @@ Status: implemented design record. This document records the collection identiti
 | `Map<K,V>` | `IDictionary<K,V>` plus Kotlin read-only map behavior |
 | `MutableMap<K,V>` | `IDictionary<K,V>` |
 
-These are exact declaration, implementation and native interop interfaces. Ordinary values of declaration-variant
-aliases use `object`, retaining their Kotlin source types in metadata. Factories return ordinary BCL implementations;
+These are exact declaration, implementation and native interop interfaces. Ordinary Kotlin collection-interface
+values use `object`, retaining their Kotlin source types in metadata, so unchecked casts do not demand a different
+invariant CLR construction. This includes invariant mutable interfaces as well as declaration-variant aliases.
+Factories return ordinary BCL implementations;
 widening passes the same reference without requiring CLR variance between value-element instantiations.
 The mapping is declared by stdlib `@ClrTypeAlias` and `@ClrIntrinsic` metadata and applied by bir2cir; kotc does not hard-code it.
 
