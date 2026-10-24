@@ -2165,6 +2165,14 @@ static class MemberCallSubstitution
     {
         var ownerFqn = ownerFqnNode.Name;
         var member = Str(node["method"]);
+        if (ownerFqn == "kotlin.collections.MutableList" && (member is "add" or "Add") && args.Count == 1
+            && HasProjectedCollectionReceiver(node, ownerFqnNode, ctx, refs))
+        {
+            var preferred = StaticCollectionPreference(preferredOwner ?? ownerFqnNode, refs,
+                "System.Collections.Generic.IList`1", phase);
+            return CollDefaultCall(node, "kotlin.collections.ClrCollectionDefaultsKt", "clrProjectedListAdd",
+                CollElemArg(node, refs, ctx, ownerFqnNode), new JsonArray(preferred, args[0]?.DeepClone()));
+        }
         if (ownerFqn.StartsWith("kotlin.collections.", StringComparison.Ordinal)
             && CollectionSlotHelper(member, args.Count, ownerFqn) is string slotHelper)
         {
@@ -2417,6 +2425,18 @@ static class MemberCallSubstitution
             || TypeJson.Read(Preference(ObjType)["type"]) is not TypeNode.Fqn { Name: "System.Collections.Generic.IReadOnlySet`1", Args.Length: 1 }
             || Str(Preference(new TypeNode.Projection("out", ObjType))["k"]) != "const")
             throw new InvalidOperationException("Static collection preference lost exact/star or caller-frame ownership");
+        var projectedList = new TypeNode.Fqn("kotlin.collections.MutableList", new TypeNode[] {
+            new TypeNode.Projection("in", ObjType) });
+        var append = CollectionMutationCall(new JsonObject {
+            ["method"] = "add", ["recv"] = new JsonObject { ["k"] = "local", ["name"] = "source" },
+        }, projectedList, new JsonArray(new JsonObject { ["k"] = "local", ["name"] = "value" }),
+            refs, new SubstCtx(), CollectionOperationPhase.Source,
+            new TypeNode.Fqn(projectedList.Name, new[] { variable }));
+        if (Str(append?["method"]) != "clrProjectedListAdd"
+            || append["args"] is not JsonArray { Count: 3 }
+            || TypeJson.Read(append["args"][1]["type"]) is not TypeNode.Fqn {
+                Name: "System.Collections.Generic.IList`1", Args: [TypeNode.Tv { Scope: "method", I: 1 }] })
+            throw new InvalidOperationException("Projected append lost the selected List witness");
         foreach (var (member, arity, helper) in new[] {
             ("get", 1, "clrProjectedViewGet"), ("isEmpty", 0, "clrProjectedViewIsEmpty"),
             ("contains", 1, "clrProjectedViewContains"), ("containsAll", 1, "clrProjectedViewContainsAll"),
@@ -2564,6 +2584,8 @@ static class MemberCallSubstitution
             ("kotlin.collections.ClrIteratorBridgeKt", "iteratorOverEnumerable") => new[] { Gen("kotlin.collections.ClrEnumerable") },
             (_, "clrCollAdd") => new TypeNode[] { Gen("kotlin.collections.MutableCollection"), tv },
             (_, "clrProjectedCollAdd") => new TypeNode[] { new TypeNode.Fqn("kotlin.Any"), tv },
+            (_, "clrProjectedListAdd") => new TypeNode[]
+                { new TypeNode.Fqn("kotlin.Any"), new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any")), tv },
             (_, "clrProjectedCollAddAll" or "clrProjectedCollRemoveAll" or "clrProjectedCollRetainAll") =>
                 new TypeNode[] { new TypeNode.Fqn("kotlin.Any"), Gen("kotlin.collections.Collection") },
             (_, "clrProjectedListAddAllAt") => new TypeNode[]
