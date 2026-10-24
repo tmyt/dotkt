@@ -14,6 +14,7 @@ private class ExactMutableTypeCell public constructor() {
 }
 
 private class ExactMutableChoiceCell public constructor() {
+    @kotlin.concurrent.Volatile
     var known: Int = 0
     var allowed: Int = 0
 }
@@ -34,6 +35,8 @@ internal fun canUseExactMutableView(receiver: Any, sourceView: Any?, family: Int
     val preferred = sourceView as StarProjectionType
     val cell = exactMutableViews.get(receiver.starProjectionRuntimeType()).views.get(preferred)
     val bit = 1 shl family
+    // Publish allowed before the release store to known; a hit's acquire read needs no monitor.
+    if ((cell.known and bit) != 0) return (cell.allowed and bit) != 0
     enterExactMutableCell(cell)
     try {
         if ((cell.known and bit) != 0) return (cell.allowed and bit) != 0

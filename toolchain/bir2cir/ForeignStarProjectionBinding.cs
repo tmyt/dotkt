@@ -50,15 +50,17 @@ static class ForeignStarProjectionBinding
     static int _nextTemp;
     static int _nextDelegateAdapter;
     static bool _bindProjectedHelpers;
+    static Func<TypeNode, TypeNode> _projectValueType;
     public static bool UsedRuntimeFallback { get; private set; }
 
     internal static void RequireRuntimeFallback() => UsedRuntimeFallback = true;
 
     public static void ApplyAll(IEnumerable<JsonNode> roots,
         IReadOnlyDictionary<string, string> localExistentialOwners, ReferenceMetadataIndex refs,
-        IReadOnlyDictionary<string, string> localClrAliases)
+        IReadOnlyDictionary<string, string> localClrAliases, Func<TypeNode, TypeNode> projectValueType)
     {
         _localClrAliases = localClrAliases ?? new Dictionary<string, string>(StringComparer.Ordinal);
+        _projectValueType = projectValueType;
         ApplyAll(roots, localExistentialOwners, refs, resetUsage: true);
     }
 
@@ -151,6 +153,7 @@ static class ForeignStarProjectionBinding
     {
         rewritten = null;
         if (ExactMutableViewDispatch.TryCount(node, refs, out rewritten)) return true;
+        if (ExactMutableViewDispatch.TryListMutation(node, refs, out rewritten)) return true;
         if (node["projectedHelperReceiver"] is not JsonValue receiverFact) return false;
         var receiverIndex = receiverFact.GetValue<int>();
         var owner = TypeJson.OwnerName(node["owner"]);
@@ -440,10 +443,9 @@ static class ForeignStarProjectionBinding
             receiver.DeepClone(),
             new JsonObject { ["k"] = "newArray", ["elem"] = TypeJson.Write(AnyN), ["elems"] = arguments });
         if (methodArity == 0 && !adaptDelegate
-            && ExactMutableViewDispatch.TrySourceView(owner, refs, out var nativeView, out var family))
+            && ExactMutableViewDispatch.TrySourceView(owner, refs, _projectValueType, out var nativeView, out var family))
         {
-            var ownerArgs = refs.NullableTypeFrames.GetValueOrDefault(owner.Name)?.OrdinaryArguments(owner.Args) ?? owner.Args;
-            var directOwner = ExactMutableViewDispatch.CloseDeclaring((TypeNode.Fqn)declaringView, ownerArgs);
+            var directOwner = ExactMutableViewDispatch.CloseDeclaring((TypeNode.Fqn)declaringView, nativeView.Args);
             rewritten = ExactMutableViewDispatch.Wrap(receiver, nativeView, family,
                 returnsVoid ? new TypeNode.Fqn("kotlin.Unit") : projectedResult,
                 nativeReceiver => ClrMemberResolution.ExactInstanceCall(refs, selectedDeclaration,

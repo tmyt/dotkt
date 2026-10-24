@@ -62,6 +62,13 @@ static partial class ClrMemberResolution
         bool? ownerArgumentsAreMethodSlots = null)
         => MemberRefOf(member, kind, openOwner, ownerArgs, ownerArgumentsAreMethodSlots).Write();
 
+    // Use the same complete projection for a native type test and its selected MemberRef.
+    internal static TypeNode.Fqn PhysicalInstanceView(ReferenceMetadataIndex refs, TypeNode.Fqn view)
+    {
+        _refs = refs;
+        return new TypeNode.Fqn(view.Name, view.Args.Select(argument => PhysicalOwnerArg(argument, typeArg: true)).ToArray());
+    }
+
     // The caller already selected this MethodDef. Do not run another overload search for the fast branch.
     internal static JsonObject ExactInstanceCall(ReferenceMetadataIndex refs, MethodInfo method,
         TypeNode.Fqn declaringOwner, JsonNode receiver, JsonArray arguments)
@@ -70,13 +77,18 @@ static partial class ClrMemberResolution
             throw new InvalidOperationException("Exact instance dispatch requires a non-generic instance MethodDef");
         _refs = refs;
         var reference = MemberRefOf(method, MemberRefNode.Kinds.Method, method.DeclaringType, declaringOwner.Args);
+        var parameters = method.GetParameters();
+        var adapted = new JsonArray(arguments.Select((argument, index) => (JsonNode)new JsonObject {
+            ["k"] = "cast", ["type"] = TypeJson.Write(PhysicalTypeOf(parameters[index].ParameterType,
+                declaringOwner.Args, typeArg: false)), ["e"] = argument.DeepClone(),
+        }).ToArray());
         return new JsonObject {
             ["k"] = "callInstance", ["ownerType"] = TypeJson.Write(reference.DeclaringType),
             ["method"] = method.Name, ["virtual"] = true,
             ["recv"] = new JsonObject { ["k"] = "cast", ["type"] = TypeJson.Write(reference.DeclaringType), ["e"] = receiver },
             ["sig"] = new JsonArray(reference.ParameterTypes.Select(TypeJson.Write).ToArray()),
             ["ret"] = TypeJson.Write(PhysicalTypeOf(method.ReturnType, declaringOwner.Args, typeArg: false)),
-            ["args"] = arguments, ["memberRef"] = reference.Write(), [DeclarationIdentityBoundKey] = true,
+            ["args"] = adapted, ["memberRef"] = reference.Write(), [DeclarationIdentityBoundKey] = true,
         };
     }
 

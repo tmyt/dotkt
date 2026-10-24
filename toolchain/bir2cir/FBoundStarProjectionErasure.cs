@@ -191,7 +191,8 @@ static partial class FBoundStarProjectionErasure
         }
         ForeignStarProjectionBinding.ApplyAll(rootList,
             owners.Values.Where(owner => owner.Needed).ToDictionary(
-                owner => owner.Name, owner => owner.ErasedName, StringComparer.Ordinal), refs, localClrAliases);
+                owner => owner.Name, owner => owner.ErasedName, StringComparer.Ordinal), refs, localClrAliases,
+            type => RewriteType(type, owners, refs, localClrAliases: localClrAliases));
         // Factory allocation above used the source constraint graph. Freeze that same classification before value
         // projection can erase a dependent alias bound to Object and make its sibling constraints appear independent.
         var innerDependencies = owners.Values.Where(owner => owner.Needed && IsInner(owner.Def))

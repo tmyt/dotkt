@@ -55,13 +55,6 @@ private interface ClrRawMutableList {
     @kotlin.clr.ClrIntrinsic("RemoveAt") fun removeAt(index: Int): Unit
 }
 
-/** An exact invariant native face, not an ordinary Kotlin collection value. */
-@kotlin.clr.ClrTypeAlias("System.Collections.Generic.IList`1")
-private interface ClrExactMutableList<T> {
-    @property:kotlin.clr.ClrProperty(kotlin.clr.READ, "Count") val count: Int
-    @kotlin.clr.ClrIntrinsic("Add") fun nativeAdd(element: T): Unit
-}
-
 private class ClrErasedMutableIteratorAdapter<T>(private val iterator: Any) : MutableIterator<T> {
     override fun hasNext(): Boolean = mutableIteratorHasNextErased(iterator)
     override fun next(): T = mutableIteratorNextErased(iterator) as T
@@ -169,15 +162,6 @@ public fun <T> clrProjectedCollAdd(c: Any, element: T): Boolean = mutableCollect
 
 public fun <T> clrProjectedListAdd(list: Any, sourceWitness: Any?, element: T): Boolean =
     mutableListAddErased(list, element, sourceWitness)
-
-/** An invariant source view can prove its exact native face without reflection or changing object identity. */
-public fun <T> clrListAdd(list: MutableList<T>, element: T): Boolean {
-    val native = (list as Any) as? ClrExactMutableList<T>
-    if (native == null) return mutableListAddErased(list, element, null)
-    val before = native.count
-    native.nativeAdd(element)
-    return native.count != before
-}
 
 private fun <T> clrProjectedCollSnapshot(source: Any): ArrayList<T> {
     val out = ArrayList<T>()

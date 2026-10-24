@@ -42,6 +42,11 @@ view and can therefore be ambiguous even when the Set operation was unique. The 
 static parameter has the same behavior regardless of its earlier casts or generic storage. No collection adapter,
 per-object provenance registry or identity normalization participates in this policy.
 
+Ordinary invariant mutable operations test for their exact eligible native view and call the selected CLR member
+directly when it exists. The same runtime selector verifies eligibility, including dictionary-storage exclusions;
+its immutable type/view decisions use weak keys, not collection-instance history. A missing exact view keeps the
+existing erased path. Value-returning Kotlin mutation slots take precedence over native old-value emulation.
+
 Projected mutable List append uses the same selected `IList<T>` family as indexed insertion. Its native `Add` and
 before/after `Count` come from that List's own `ICollection<T>` parent, not from unrelated collection faces on the
 receiver. An exact source preference wins when implemented; otherwise genuine ambiguity remains an error. A raw

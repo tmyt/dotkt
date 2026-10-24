@@ -18,6 +18,27 @@ private fun insertThroughProjectedParameter(list: MutableList<in String>) {
 
 private fun appendThroughProjectedParameter(list: MutableList<in String>): Boolean = list.add("parameter")
 
+private fun <T> checkInvariantFailure(list: MutableList<T>, value: T, expected: System.Exception, operation: Int) {
+    var receivers = 0
+    var indices = 0
+    var elements = 0
+    fun receiver(): MutableList<T> { receivers++; return list }
+    fun index(): Int { indices++; return 0 }
+    fun element(): T { elements++; return value }
+    var caught: System.Exception? = null
+    try {
+        when (operation) {
+            0 -> receiver().set(index(), element())
+            1 -> receiver().removeAt(index())
+            2 -> receiver().add(index(), element())
+            else -> receiver().add(element())
+        }
+    } catch (failure: System.Exception) { caught = failure }
+    check(caught === expected && receivers == 1)
+    check(indices == (if (operation == 3) 0 else 1))
+    check(elements == (if (operation == 1) 0 else 1))
+}
+
 private fun checkProjectedIteratorWrites(source: Any, first: Any?, second: Any?) {
     val list = source as MutableList<*>
     val iterator = list.listIterator() as MutableListIterator<Any?>
@@ -220,6 +241,13 @@ class MutableListMutationTests {
         val generic = GenericFailureList()
         checkFailure(generic, generic.Failure)
         check(generic.Writes == 3 && generic.Count == 2)
+        val exact = GenericFailureList()
+        val erased = GenericFailureList()
+        for (operation in 0..3) {
+            checkInvariantFailure<Int>((exact as Any) as MutableList<Int>, 7, exact.Failure, operation)
+            checkInvariantFailure<Any?>((erased as Any) as MutableList<Any?>, 7, erased.Failure, operation)
+        }
+        check(exact.Writes == 4 && erased.Writes == 4 && exact.Count == 2 && erased.Count == 2)
     }
 
     @TestAttribute fun kotlinMutationOverridesRemainAuthoritative() {
