@@ -69,6 +69,12 @@ static partial class ClrMemberResolution
         return new TypeNode.Fqn(view.Name, view.Args.Select(argument => PhysicalOwnerArg(argument, typeArg: true)).ToArray());
     }
 
+    internal static TypeNode DeclaredMethodReturn(ReferenceMetadataIndex refs, MethodInfo method)
+    {
+        _refs = refs;
+        return RefReturnOf(method);
+    }
+
     // The caller already selected this MethodDef. Do not run another overload search for the fast branch.
     internal static JsonObject ExactInstanceCall(ReferenceMetadataIndex refs, MethodInfo method,
         TypeNode.Fqn declaringOwner, JsonNode receiver, JsonArray arguments)
@@ -82,12 +88,15 @@ static partial class ClrMemberResolution
             ["k"] = "cast", ["type"] = TypeJson.Write(PhysicalTypeOf(parameters[index].ParameterType,
                 declaringOwner.Args, typeArg: false)), ["e"] = argument.DeepClone(),
         }).ToArray());
+        var result = PhysicalTypeOf(method.ReturnType, declaringOwner.Args, typeArg: false);
         return new JsonObject {
             ["k"] = "callInstance", ["ownerType"] = TypeJson.Write(reference.DeclaringType),
             ["method"] = method.Name, ["virtual"] = true,
             ["recv"] = new JsonObject { ["k"] = "cast", ["type"] = TypeJson.Write(reference.DeclaringType), ["e"] = receiver },
             ["sig"] = new JsonArray(reference.ParameterTypes.Select(TypeJson.Write).ToArray()),
-            ["ret"] = TypeJson.Write(PhysicalTypeOf(method.ReturnType, declaringOwner.Args, typeArg: false)),
+            // This producer has already closed the result in the caller's frame. The matching exact stamp
+            // discharges ConstructedMemberReturnSubstitution's contract and prevents a second substitution.
+            ["ret"] = TypeJson.Write(result), ["sty"] = TypeJson.Write(result),
             ["args"] = adapted, ["memberRef"] = reference.Write(), [DeclarationIdentityBoundKey] = true,
         };
     }

@@ -168,7 +168,14 @@ static class ExactMutableViewDispatch
             "clrProjectedListRemoveAt" => new TypeNode.Fqn("DotKt.Runtime.CompilerServices.KotlinMutableListRemoveAtSlot"),
             _ => null,
         };
-        var resultType = TypeJson.Read(call["ret"]) ?? Any;
+        // A call without an explicit use-site result still has its selected declaration's result.
+        // In particular, void Insert helpers cannot be placed in an object-valued conditional.
+        if (!refs.TryResolveStaticMemberSignature(TypeJson.OwnerName(call["owner"]), operation,
+                helperArguments.Length, true, ((JsonArray)call["sig"]).Select(TypeJson.Read).ToArray(), null,
+                out _, out var helperDeclaration, out _)) return false;
+        var helperResult = HelperSlot(ClrMemberResolution.DeclaredMethodReturn(refs, helperDeclaration));
+        var resultType = helperResult is TypeNode.Fqn { Name: "void" or "System.Void" }
+            ? helperResult : TypeJson.Read(call["ret"]) ?? helperResult;
         var dispatch = Wrap(captured[0], view, 6, resultType,
             receiver => {
                 var native = ClrMemberResolution.ExactInstanceCall(refs, mutation, mutationOwner,
@@ -256,6 +263,16 @@ static class ExactMutableViewDispatch
         Walk(block);
         if (receivers != 1 || !HasProjection(new TypeNode.Array(new TypeNode.Star())))
             throw new InvalidOperationException("Exact mutable dispatch lost single evaluation or nested projection ownership");
+        var closedResult = new TypeNode.Fqn("NestedValue", new TypeNode[] {
+            new TypeNode.Tv("type", 0), new TypeNode.Tv("method", 1),
+        });
+        var closedCall = new JsonObject {
+            ["k"] = "callInstance", ["ownerType"] = TypeJson.Write(new TypeNode.Fqn(view.Name, new TypeNode[] { closedResult })),
+            ["ret"] = TypeJson.Write(closedResult), ["sty"] = TypeJson.Write(closedResult),
+        };
+        ConstructedMemberReturnSubstitution.ApplyMaterialized(closedCall);
+        if (TypeJson.Read(closedCall["ret"]) != closedResult || TypeJson.Read(closedCall["sty"]) != closedResult)
+            throw new InvalidOperationException("Exact native result reapplied a caller-owned generic frame");
         Console.WriteLine("[exact mutable dispatch] self-test OK (short circuit, executable void fallback, single receiver, nested projection)");
     }
 }

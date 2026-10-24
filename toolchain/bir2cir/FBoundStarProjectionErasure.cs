@@ -3087,17 +3087,19 @@ static partial class FBoundStarProjectionErasure
         {
             var argument = TypeJson.Read(arguments[index]);
             if (argument == null) continue;
-            // A call vector carries construction witnesses and value companions, just like a constructed owner.
-            // Opaque value storage must not erase its separate CLR construction witness.
+            // Opaque alias values have a separate CLR construction witness. Preserve that alias head,
+            // not arbitrary Kotlin construction heads: captured/variant classes still need their
+            // allocated nominal carrier, and arrays retain the existing component-storage contract.
             var witness = frame == null || frame.PhysicalSlot(index).Representation
                 is NullableRepresentationFrame.Role.Ordinary or NullableRepresentationFrame.Role.Nullable;
             arguments[index] = TypeJson.Write(RewriteType(argument, owners, refs,
                 boundDeclaration, localClrAliases,
-                preserveArrayShape: preserveArrayShape || witness,
+                preserveArrayShape: preserveArrayShape,
                 preserveConstructedHead: witness
-                    && !(StripSourceNullability(argument) is TypeNode.Fqn variant
-                        && (ContainsExistentialProjection(variant)
-                            || ProjectionCanChangeConstruction(variant, owners, refs)))));
+                    && StripSourceNullability(argument) is TypeNode.Fqn alias
+                    && RequiresOpaqueVariantAlias(alias, owners, refs, localClrAliases)
+                    && !ContainsExistentialProjection(alias)
+                    && !ProjectionCanChangeConstruction(alias, owners, refs)));
         }
     }
 
