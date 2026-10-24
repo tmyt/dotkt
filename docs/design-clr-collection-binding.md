@@ -40,6 +40,11 @@ view and can therefore be ambiguous even when the Set operation was unique. The 
 static parameter has the same behavior regardless of its earlier casts or generic storage. No collection adapter,
 per-object provenance registry or identity normalization participates in this policy.
 
+Projected mutable List append uses the same selected `IList<T>` family as indexed insertion. Its native `Add` and
+before/after `Count` come from that List's own `ICollection<T>` parent, not from unrelated collection faces on the
+receiver. An exact source preference wins when implemented; otherwise genuine ambiguity remains an error. A raw
+`IList` is used only when no eligible generic List exists and the raw face is not map storage.
+
 List Count, indexed reads, queries and iteration likewise share the selected List family and its actual parents.
 The explicit `listIterator` and `subList` operations retain their requested backing view in the newly created
 iterator or live slice; this is operation state, not originating-view metadata on the transported collection.

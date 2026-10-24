@@ -28,6 +28,7 @@ import DotKt.Runtime.CompilerServices.mutableCollectionRemoveErased
 import DotKt.Runtime.CompilerServices.mutableCollectionReplaceErased
 import DotKt.Runtime.CompilerServices.mutableListGetErased
 import DotKt.Runtime.CompilerServices.mutableListInsertErased
+import DotKt.Runtime.CompilerServices.mutableListAddErased
 import DotKt.Runtime.CompilerServices.mutableListIteratorAddErased
 import DotKt.Runtime.CompilerServices.mutableListIteratorSetErased
 import DotKt.Runtime.CompilerServices.mutableListRemoveAtErased
@@ -158,6 +159,9 @@ public fun <T> clrCollAdd(c: MutableCollection<T>, element: T): Boolean {
 
 /** Projected `MutableCollection.add`; the receiver's exact invariant collection element is known only at runtime. */
 public fun <T> clrProjectedCollAdd(c: Any, element: T): Boolean = mutableCollectionAddErased(c, element)
+
+public fun <T> clrProjectedListAdd(list: Any, sourceWitness: Any?, element: T): Boolean =
+    mutableListAddErased(list, element, sourceWitness)
 
 private fun <T> clrProjectedCollSnapshot(source: Any): ArrayList<T> {
     val out = ArrayList<T>()

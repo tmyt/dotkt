@@ -4,6 +4,8 @@ import NUnit.Framework.TestAttribute
 import MutableListInterop.*
 import MutableMutationInterop.*
 import CollectionStorageInterop.MutableListWithDictionaryStorage
+import MixedCollectionContracts.ListWithMutableDictionary
+import kotlin.collections.clrProjectedListAdd
 
 private fun writableSlice(source: Any): MutableList<Any?> {
     val list = source as MutableList<*>
@@ -13,6 +15,8 @@ private fun writableSlice(source: Any): MutableList<Any?> {
 private fun insertThroughProjectedParameter(list: MutableList<in String>) {
     list.add(0, "parameter")
 }
+
+private fun appendThroughProjectedParameter(list: MutableList<in String>): Boolean = list.add("parameter")
 
 private fun checkProjectedIteratorWrites(source: Any, first: Any?, second: Any?) {
     val list = source as MutableList<*>
@@ -89,6 +93,19 @@ private class AuthoredMutationList(
     override fun removeAt(index: Int): Any? { removals++; return backing.removeAt(index) }
 }
 
+private fun checkAppendFailure(source: Any, expected: System.Exception, lowered: Boolean) {
+    var receivers = 0
+    var elements = 0
+    fun receiver(): Any { receivers++; return source }
+    fun element(): Int { elements++; return 7 }
+    var caught: System.Exception? = null
+    try {
+        if (lowered) (receiver() as MutableList<in Int>).add(element())
+        else clrProjectedListAdd<Int>(receiver(), null, element())
+    } catch (failure: System.Exception) { caught = failure }
+    check(caught === expected && receivers == 1 && elements == 1)
+}
+
 class MutableListMutationTests {
     @TestAttribute fun removeAtAndIteratorRemoveUseTheEligibleList() {
         checkRemoval(RawMutableList(), 7, 9)
@@ -149,6 +166,51 @@ class MutableListMutationTests {
         check(exact.size == 4 && exact[0] == "a" && exact[1] == "selected" && exact[2] == "b")
         val integers = (native as Any) as MutableList<Int>
         check(native.Count == 2 && integers[0] == 7 && integers[1] == 9)
+    }
+
+    @TestAttribute fun projectedAppendRetainsTheSelectedListAndItsCollectionParent() {
+        val native = DualMutableList()
+        val exact = (native as Any) as MutableList<Any?>
+        val projected: MutableList<in Any?> = exact
+        check(projected.add(17) && projected.add(null))
+        check(exact.size == 5 && exact[3] == 17 && exact[4] == null)
+        val integers = (native as Any) as MutableList<Int>
+        check(native.Count == 2 && integers[0] == 7 && integers[1] == 9)
+
+        val mixed = ListWithMutableDictionary()
+        val mixedExact = (mixed as Any) as MutableList<Int>
+        val mixedProjected: MutableList<in Int> = mixedExact
+        check(mixedProjected.add(23) && mixed.Count == 1 && mixedExact[0] == 23)
+        val dictionary = MutableListWithDictionaryStorage()
+        dictionary.Add("map", 17)
+        val independent = (dictionary as Any) as MutableList<String>
+        val independentProjected: MutableList<in String> = independent
+        check(independentProjected.add("list") && independent.size == 3 && dictionary.Count == 1)
+        check(appendThroughProjectedParameter(independent) && independent.size == 4 && independent[3] == "parameter")
+        check(dictionary.Count == 1)
+        val raw = RawMutableList()
+        check(clrProjectedListAdd<String>(raw, null, "raw") && raw.Count == 3)
+
+        val ambiguous = DualMutableList()
+        var rejected = false
+        try { clrProjectedListAdd<String>(ambiguous, null, "must not choose from this value") }
+        catch (_: IllegalStateException) { rejected = true }
+        check(rejected && ambiguous.Count == 2)
+
+        var calls = 0
+        val backing = mutableListOf<Any?>()
+        val authored = object : MutableList<Any?> by backing {
+            override fun add(element: Any?): Boolean { calls++; return false }
+        }
+        val authoredExact = (authored as Any) as MutableList<Any?>
+        val authoredProjected: MutableList<in Any?> = authoredExact
+        check(!authoredProjected.add("unchanged") && calls == 1 && authoredExact.isEmpty())
+        val rawFailure = RawFailureList()
+        checkAppendFailure(rawFailure, rawFailure.Failure, false)
+        check(rawFailure.Writes == 1 && rawFailure.Count == 2)
+        val genericFailure = GenericFailureList()
+        checkAppendFailure(genericFailure, genericFailure.Failure, true)
+        check(genericFailure.Writes == 1 && genericFailure.Count == 2)
     }
 
     @TestAttribute fun nativeFailuresKeepIdentityAndEvaluateInputsOnce() {

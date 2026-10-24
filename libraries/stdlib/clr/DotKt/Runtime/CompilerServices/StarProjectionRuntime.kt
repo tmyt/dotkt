@@ -341,6 +341,7 @@ private interface StarProjectionRawList {
     @kotlin.clr.ClrIntrinsic("get_Item") fun get(index: Int): Any?
     @kotlin.clr.ClrIntrinsic("set_Item") fun set(index: Int, element: Any?)
     @kotlin.clr.ClrIntrinsic("Insert") fun insert(index: Int, element: Any?)
+    @kotlin.clr.ClrIntrinsic("Add") fun add(element: Any?): Int
     @kotlin.clr.ClrIntrinsic("RemoveAt") fun removeAt(index: Int)
 }
 
@@ -1447,6 +1448,34 @@ internal fun mutableListSetErased(receiver: Any, index: Int, element: Any?, sour
     val list = view ?: throw UnsupportedOperationException("Projected receiver has no mutable CLR List surface")
     try {
         erasedProjectedMethod(list, "set_Item", 2).invoke(receiver, arrayOf(index, element))
+    } catch (failure: StarProjectionInvocationException) {
+        throw (failure.innerException ?: failure)
+    }
+}
+
+@PublishedApi
+internal fun mutableListAddErased(receiver: Any, element: Any?, sourceWitness: Any?): Boolean {
+    val view = erasedMutableListView(receiver, sourceWitness)
+    if (view == null && receiver is StarProjectionRawList && !rawListIsMapStorage(receiver)) {
+        val before = receiver.count
+        receiver.add(element)
+        return receiver.count != before
+    }
+    val list = view ?: throw UnsupportedOperationException("Projected receiver has no mutable CLR List surface")
+    var collection: StarProjectionType? = null
+    for (parent in list.getInterfaces()) {
+        if (parent.isGenericType && parent.getGenericTypeDefinition().fullName == "System.Collections.Generic.ICollection`1") {
+            if (collection != null && collection != parent) throw IllegalStateException("Ambiguous mutable List collection parent")
+            collection = parent
+        }
+    }
+    val selected = collection ?: throw IllegalStateException("Missing mutable List collection parent")
+    try {
+        val count = erasedProjectedMethod(selected, "get_Count", 0)
+        val add = erasedProjectedMethod(selected, "Add", 1)
+        val before = count.invoke(receiver, arrayOfNulls<Any?>(0)) as Int
+        add.invoke(receiver, arrayOf(element))
+        return (count.invoke(receiver, arrayOfNulls<Any?>(0)) as Int) != before
     } catch (failure: StarProjectionInvocationException) {
         throw (failure.innerException ?: failure)
     }
