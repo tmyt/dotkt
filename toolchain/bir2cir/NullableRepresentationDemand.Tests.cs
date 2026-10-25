@@ -105,6 +105,17 @@ static partial class NullableRepresentationDemand
             == new TypeNode.Tv("type", 3), "captured nullable-storage position");
         Malformed(() => frame.WithEnclosingPrefix(outerRoles, 0));
         Malformed(() => capturedRoles.WithEnclosingPrefix(outerRoles, 2));
+        var firstFrame = new NullableRepresentationFrame(2, new[] { 1 }, new[] { 3, 1, 2, 0 },
+            storageIndices: new[] { 0 });
+        var secondFrame = new NullableRepresentationFrame(2, new[] { 0 }, new[] { 4, 1, 3, 0, 2 },
+            storageIndices: new[] { 1 }, nullableStorageIndices: new[] { 0 });
+        var composedFrame = firstFrame.Concat(secondFrame);
+        Check(composedFrame.SourceArity == 4 && composedFrame.PhysicalArity == 9
+            && composedFrame.PhysicalOrder.SequenceEqual(new[] { 6, 1, 4, 0, 8, 3, 7, 2, 5 })
+            && composedFrame.PhysicalSlot(0) == new NullableRepresentationFrame.Slot(0, NullableRepresentationFrame.Role.Storage)
+            && composedFrame.PhysicalSlot(4) == new NullableRepresentationFrame.Slot(2, NullableRepresentationFrame.Role.NullableStorage)
+            && composedFrame.PhysicalSlot(6) == new NullableRepresentationFrame.Slot(3, NullableRepresentationFrame.Role.Storage),
+            "composition preserves each producer's source identity, companion role and physical permutation");
         var retainedOuter = capturedRoles.RetainSources(new[] { 1 });
         Check(retainedOuter.PhysicalArity == 4 && retainedOuter.StorageIndices.SequenceEqual(new[] { 0 })
             && retainedOuter.NullableStorageIndices.SequenceEqual(new[] { 0 })

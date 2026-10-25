@@ -217,6 +217,10 @@ static class CompanionExtensionBinding
         var groupName = containerName + "." + groupSimpleName;
         var markerName = groupName + "." + markerSimpleName;
         var receiverTypeParams = ReceiverTypeParameters(receiverClassifier, localTypes, refs);
+        var receiverFrame = (localTypes.TryGetValue(receiverClassifier, out var receiverDeclaration)
+            ? KotlinSupertypesRecord.ReadNullableFrame(receiverDeclaration)
+            : refs.NullableTypeFrames.GetValueOrDefault(receiverClassifier))
+            ?? new NullableRepresentationFrame(receiverTypeParams.Count, Array.Empty<int>());
         var physicalReceiverTypeParams = PhysicalReceiverTypeParameters(receiverTypeParams);
         var blockArity = receiverTypeParams.Count;
         var receiverArguments = Enumerable.Range(0, blockArity)
@@ -266,7 +270,7 @@ static class CompanionExtensionBinding
             implementations.Add(declaration);
             if (blockArity != 0)
                 implementations.Add(WrapperImplementation(
-                    declaration, sourceName, coreName, containerName, receiverTypeParams));
+                    declaration, sourceName, coreName, containerName, receiverTypeParams, receiverFrame));
         }
 
         var properties = new Dictionary<string, PropertyParts>(StringComparer.Ordinal);
@@ -326,13 +330,13 @@ static class CompanionExtensionBinding
             PrepareImplementationAccessor(parts.Getter, getterCoreName, implementations);
             if (blockArity != 0)
                 implementations.Add(WrapperImplementation(
-                    parts.Getter, getterPhysicalName, getterCoreName, containerName, receiverTypeParams));
+                    parts.Getter, getterPhysicalName, getterCoreName, containerName, receiverTypeParams, receiverFrame));
             if (parts.Setter != null)
             {
                 PrepareImplementationAccessor(parts.Setter, setterCoreName, implementations);
                 if (blockArity != 0)
                     implementations.Add(WrapperImplementation(
-                        parts.Setter, setterPhysicalName, setterCoreName, containerName, receiverTypeParams));
+                        parts.Setter, setterPhysicalName, setterCoreName, containerName, receiverTypeParams, receiverFrame));
             }
 
             var getterSignature = SignatureAccessor(parts.Getter, getterPhysicalName, markerSimpleName);
@@ -541,7 +545,8 @@ static class CompanionExtensionBinding
         string wrapperName,
         string coreName,
         string containerName,
-        JsonArray blockTypeParams)
+        JsonArray blockTypeParams,
+        NullableRepresentationFrame receiverFrame)
     {
         var blockArity = blockTypeParams.Count;
         var wrapper = (JsonObject)core.DeepClone();
@@ -570,6 +575,14 @@ static class CompanionExtensionBinding
                 combined.Add(shifted);
             }
         wrapper["typeParams"] = combined;
+        var ownFrame = NullableRepresentationTypes.DeclarationMethodFrame(core)
+            ?? new NullableRepresentationFrame(ownTypeParams?.Count ?? 0, Array.Empty<int>());
+        if (receiverFrame.PhysicalArity != blockArity || ownFrame.PhysicalArity != (ownTypeParams?.Count ?? 0))
+            throw new InvalidOperationException("Companion-extension declaration frame disagrees with its physical parameters");
+        var wrapperFrame = receiverFrame.Concat(ownFrame);
+        if (wrapperFrame.RequiresMetadata)
+            wrapper[NullableRepresentationTypes.MethodFrameKey] = wrapperFrame.ToJson().ToJsonString();
+        else wrapper.Remove(NullableRepresentationTypes.MethodFrameKey);
 
         var parameters = wrapper["params"] as JsonArray ?? new JsonArray();
         foreach (var parameter in parameters.OfType<JsonObject>())

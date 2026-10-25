@@ -115,6 +115,22 @@ internal sealed class NullableRepresentationFrame
             prefix.Concat(PhysicalOrder.Where(index => !captured.Contains(index))), StorageIndices, NullableStorageIndices);
     }
 
+    // Compose independent declaration frames without changing either emitted physical parameter vector.
+    public NullableRepresentationFrame Concat(NullableRepresentationFrame following)
+    {
+        int[] Join(IReadOnlyList<int> first, IReadOnlyList<int> second) =>
+            first.Concat(second.Select(index => SourceArity + index)).ToArray();
+        var combined = new NullableRepresentationFrame(SourceArity + following.SourceArity,
+            Join(NullableIndices, following.NullableIndices),
+            storageIndices: Join(StorageIndices, following.StorageIndices),
+            nullableStorageIndices: Join(NullableStorageIndices, following.NullableStorageIndices));
+        IEnumerable<int> Rebase(NullableRepresentationFrame frame, int offset) =>
+            frame.PhysicalOrder.Select(index => frame._canonical[index])
+                .Select(slot => Array.IndexOf(combined._canonical, new Slot(offset + slot.SourceIndex, slot.Representation)));
+        return new NullableRepresentationFrame(combined.SourceArity, combined.NullableIndices,
+            Rebase(this, 0).Concat(Rebase(following, SourceArity)), combined.StorageIndices, combined.NullableStorageIndices);
+    }
+
     public NullableRepresentationFrame RetainSources(IReadOnlyList<int> retained)
     {
         if (retained.Any(index => index < 0 || index >= SourceArity) || retained.Distinct().Count() != retained.Count)
