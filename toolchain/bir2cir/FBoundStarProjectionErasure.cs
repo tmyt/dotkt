@@ -3176,7 +3176,8 @@ static partial class FBoundStarProjectionErasure
             arguments[index] = TypeJson.Write(RewriteType(argument, owners, refs,
                 boundDeclaration, localClrAliases,
                 preserveArrayShape: preserveArrayShape,
-                preserveConstructedHead: witness && (_nativeProofs?.ExactMethodArgument(selected, identity, index) == true
+                preserveConstructedHead: witness && !ContainsExistentialProjection(argument)
+                    && (_nativeProofs?.ExactMethodArgument(selected, identity, index) == true
                     || StripSourceNullability(argument) is TypeNode.Fqn alias
                     && RequiresOpaqueVariantAlias(alias, owners, refs, localClrAliases)
                     && !ContainsExistentialProjection(alias)
@@ -5301,7 +5302,10 @@ static partial class FBoundStarProjectionErasure
                 argument, owners, refs, boundDeclaration, localClrAliases,
                 preserveArrayShape: nativeOwner || frame != null && frame.PhysicalSlot(index).Representation
                     is NullableRepresentationFrame.Role.Ordinary or NullableRepresentationFrame.Role.Nullable,
+                // An exact declaration proof does not make an existential argument reifiable. Its existing
+                // constrained-storage projection must choose a valid bound, not manufacture G<Object> for G<*>.
                 preserveConstructedHead: _nativeProofs?.ExactTypeArgument(application.Name, index) == true
+                    && !ContainsExistentialProjection(argument)
                     || frame != null && frame.PhysicalSlot(index).Representation
                     is NullableRepresentationFrame.Role.Ordinary or NullableRepresentationFrame.Role.Nullable
                     // Kotlin declaration-site variance uses the nominal carrier
