@@ -101,4 +101,21 @@ public static class NativeMaps
     public static int UseFloats(Dictionary<double, string> source) =>
         source.Count == 2 && source[0.0] == "positive" && source[-0.0] == "negative" ? 2 : -1;
     public static object FirstValue(Dictionary<string, object> source) => source["value"];
+    public static object NullableKeyDictionaryView(object source) => new NullableKeyDictionary((IDictionary<string, string>)source);
+
+    // Retain Dictionary's structural Kotlin equality contract, but expose the
+    // backing map through the exact public readonly surface used by equality.
+    private sealed class NullableKeyDictionary : Dictionary<string, string>, IReadOnlyDictionary<string, string>
+    {
+        private readonly IDictionary<string, string> source;
+        public NullableKeyDictionary(IDictionary<string, string> source) => this.source = source;
+        string IReadOnlyDictionary<string, string>.this[string key] => source[key];
+        IEnumerable<string> IReadOnlyDictionary<string, string>.Keys => source.Keys;
+        IEnumerable<string> IReadOnlyDictionary<string, string>.Values => source.Values;
+        bool IReadOnlyDictionary<string, string>.ContainsKey(string key) => source.ContainsKey(key);
+        bool IReadOnlyDictionary<string, string>.TryGetValue(string key, out string value) => source.TryGetValue(key, out value);
+        int IReadOnlyCollection<KeyValuePair<string, string>>.Count => source.Count;
+        IEnumerator<KeyValuePair<string, string>> IEnumerable<KeyValuePair<string, string>>.GetEnumerator() => source.GetEnumerator();
+        IEnumerator IEnumerable.GetEnumerator() => source.GetEnumerator();
+    }
 }

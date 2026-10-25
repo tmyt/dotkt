@@ -34,6 +34,11 @@ class NullableMapInteropTests {
         orderedPeer["key"] = "null"
         check(nullable != (nativePeer as Any) && (nativePeer as Any) != nullable)
         check(nullable != (orderedPeer as Any) && (orderedPeer as Any) != nullable)
+        val nullableValue: Any = linkedMapOf<String?, String?>(null to null, "key" to "value")
+        val foreign = NativeMaps.NullableKeyDictionaryView(nullableValue)
+        check(nullableValue == foreign && foreign == nullableValue)
+        val unequal = NativeMaps.NullableKeyDictionaryView(linkedMapOf<String?, String?>(null to "different", "key" to "value"))
+        check(nullableValue != unequal && unequal != nullableValue)
     }
 
     @TestAttribute
