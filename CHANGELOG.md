@@ -5,6 +5,20 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+## 0.9.18 (2026-10-26)
+
+### Release highlights
+
+- All five packages and SDK defaults use `0.9.18`; the embedded Kotlin compiler and
+  upstream common standard-library baseline remain **2.4.21**.
+- Support nullable Kotlin map keys and provide explicit native dictionary copies for CLR APIs.
+  Kotlin maps no longer have concrete BCL dictionary identity; use `toClrDictionary()` or
+  `toClrOrderedDictionary()` when a native concrete dictionary is required.
+- Preserve dependent generic bounds, collection overrides and mutable view contracts across DLL boundaries.
+- Correct checked null casts and declaration-owned local enum access.
+
+### Fixes and regression coverage
+
 - Support nullable keys in Kotlin hash maps and ordered maps, including live views and CLR dictionary interfaces.
   Add `toClrDictionary()` and `toClrOrderedDictionary()` for explicit independent shallow copies when a CLR API
   requires a concrete native dictionary; Kotlin map implementations no longer have concrete BCL dictionary identity.
