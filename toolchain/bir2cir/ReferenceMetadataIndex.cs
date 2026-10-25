@@ -2504,7 +2504,15 @@ sealed partial class ReferenceMetadataIndex
     // stdlib reference/runtime twins need not carry the same physical GenericParamConstraint rows.
     internal JsonArray PhysicalOwnerTypeParamDeclarations(string owner)
     {
-        var type = ResolveRefType(owner, OwnerArity(owner)) ?? PhysicalTypeNamed(owner, OwnerArity(owner));
+        if (owner == null || IsLocalEmittedType(owner)) return null;
+        var physicalName = owner;
+        // Only admitted Kotlin declarations own referenced proof rows. Compiler implementation types can be
+        // synthesized locally after the initial projection and can share private names in multiple libraries.
+        // The declaration map also supplies exact nested/relocated TypeDef identities for public Kotlin owners.
+        if (HasDotKtOwner(owner)
+            && !_physicalTypeBySemanticName.TryGetValue(StripGenericArity(DottedFqn(owner)), out physicalName))
+            return null;
+        var type = ResolveRefType(physicalName, OwnerArity(owner)) ?? PhysicalTypeNamed(physicalName, OwnerArity(owner));
         if (type == null) return null;
         type = PhysicalProofOwner(type);
         return type == null ? null : new JsonArray(type.GetGenericArguments().Select(GenericParamDeclaration).ToArray());
@@ -7805,6 +7813,18 @@ sealed partial class ReferenceMetadataIndex
     internal static void SelfTest()
     {
         SelfTestRichEnumSelection();
+        var physicalProofs = Build(new[] { typeof(object).Assembly.Location });
+        physicalProofs._dotKtOwners.Add("System.Collections.Generic.List");
+        if (physicalProofs.PhysicalOwnerTypeParamDeclarations("System.Collections.Generic.List`1") != null)
+            throw new InvalidOperationException("An unadmitted Kotlin implementation type supplied reference proof rows");
+        physicalProofs._dotKtOwners.Add("Published.Nested");
+        physicalProofs._physicalTypeBySemanticName["Published.Nested"] = "System.Collections.Generic.List`1";
+        if (physicalProofs.PhysicalOwnerTypeParamDeclarations("Published.Nested")?.Count != 1
+            || physicalProofs.PhysicalOwnerTypeParamDeclarations("System.Collections.Generic.Dictionary`2")?.Count != 2)
+            throw new InvalidOperationException("Physical proof lookup lost an admitted/foreign declaration identity");
+        physicalProofs.SetLocalEmittedTypes(new HashSet<string> { "Published.Nested" });
+        if (physicalProofs.PhysicalOwnerTypeParamDeclarations("Published.Nested") != null)
+            throw new InvalidOperationException("Reference proof rows replaced a local declaration");
         var returnSource = new TypeNode.Tv("method", 0);
         var returnStorage = new TypeNode.Tv("method", 1);
         var objectReturn = new TypeNode.Fqn("System.Object");

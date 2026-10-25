@@ -14,6 +14,7 @@ static partial class FBoundStarProjectionErasure
         readonly Dictionary<string, JsonObject> methods;
         readonly Dictionary<string, Dictionary<int, List<TypeNode>>> foreignTypes = new(StringComparer.Ordinal);
         readonly Dictionary<string, Dictionary<int, List<TypeNode>>> foreignMethods = new(StringComparer.Ordinal);
+        readonly Dictionary<string, Dictionary<int, List<TypeNode>>> lateLocalTypes = new(StringComparer.Ordinal);
 
         public NativeProofPlan(IReadOnlyList<JsonObject> roots,
             IReadOnlyDictionary<string, JsonObject> definitions, ReferenceMetadataIndex references)
@@ -182,11 +183,22 @@ static partial class FBoundStarProjectionErasure
 
         IReadOnlyDictionary<int, List<TypeNode>> TypeRows(string owner)
         {
+            if (lateLocalTypes.TryGetValue(owner, out var physicalRows)) return physicalRows;
             if (definitions.TryGetValue(owner, out var local)) return Rows(local);
             if (!foreignTypes.TryGetValue(owner, out var constraints))
                 foreignTypes[owner] = constraints = ReadRows(references.PhysicalOwnerTypeParamDeclarations(owner), false,
                     references.NullableTypeFrames.GetValueOrDefault(owner), physicalDeclaration: true);
             return constraints;
+        }
+
+        public void RegisterPhysicalLocalDefinitions(IReadOnlyDictionary<string, JsonObject> physicalDefinitions)
+        {
+            foreach (var (name, declaration) in physicalDefinitions)
+                if (!definitions.ContainsKey(name))
+                    // Late synthesis owns these already-physical rows. A same-named implementation in a reference
+                    // assembly cannot supply their constraints; do not rerun source proof demand or projection.
+                    lateLocalTypes[name] = ReadRows(declaration["typeParams"] as JsonArray, false,
+                        KotlinSupertypesRecord.ReadNullableFrame(declaration), physicalDeclaration: true);
         }
 
         IReadOnlyDictionary<int, List<TypeNode>> MethodRows(string identity)
@@ -292,7 +304,19 @@ static partial class FBoundStarProjectionErasure
             var overrideBound = new TypeNode.Fqn("System.IO.Stream");
             var overridingMethod = new JsonObject { [OwnerConstrainedMethodLowering.OverrideBoundsKey] =
                 new JsonArray(new JsonObject { ["index"] = 0, ["bound"] = TypeJson.Write(overrideBound) }).ToJsonString() };
+            var lateLocal = JsonNode.Parse("""
+              {"kind":"class","name":"LateLocal","typeParams":["Tag",
+                {"name":"T","constraints":[{"t":"fqn","name":"System.Collections.Generic.IEnumerable`1",
+                  "args":[{"t":"tv","scope":"type","i":0}]}]},
+                {"name":"Storage","constraints":[{"t":"fqn","name":"System.IDisposable"}]}]}
+              """).AsObject();
+            KotlinSupertypesRecord.Merge(lateLocal, new JsonObject {
+                [NullableRepresentationFrame.MetadataKey] = new NullableRepresentationFrame(2,
+                    Array.Empty<int>(), storageIndices: new[] { 1 }).ToJson(),
+            });
+            plan.RegisterPhysicalLocalDefinitions(new Dictionary<string, JsonObject> { ["LateLocal"] = lateLocal });
             if (!plan.ExactTypeArgument("Owner", 1) || plan.ExactTypeArgument("Owner", 2)
+                || !plan.ExactTypeArgument("LateLocal", 1) || plan.ExactTypeArgument("LateLocal", 2)
                 || plan.ExactTypeArgument("SelfOwner", 0)
                 || plan.ReadRows(physical, false).Count != 0
                 || !plan.ReadRows(physical, false, physicalDeclaration: true)[0]

@@ -374,6 +374,7 @@ static partial class FBoundStarProjectionErasure
         var defs = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
         foreach (var root in rootList.OfType<JsonObject>())
             CollectDefinitions(root, defs);
+        _nativeProofs?.RegisterPhysicalLocalDefinitions(defs);
         var owners = localExistentialOwners.ToDictionary(
             pair => pair.Key,
             pair => new Owner
