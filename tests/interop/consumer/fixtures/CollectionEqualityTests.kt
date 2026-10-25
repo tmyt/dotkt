@@ -41,13 +41,19 @@ class CollectionEqualityTests {
 
     @TestAttribute
     fun mapEqualityUsesLookupRatherThanACartesianEntryScan() {
+        var smallerCalls = 0
         for (size in arrayOf(32, 64)) {
             val left = HashMap<LookupKey, Int>()
             val right = HashMap<LookupKey, Int>()
             for (index in 0 until size) { left[LookupKey(index)] = index; right[LookupKey(index)] = index }
             LookupKey.Calls = 0
             check(left == right)
-            check(LookupKey.Calls <= size * 2)
+            val calls = LookupKey.Calls
+            check(calls > 0)
+            // Doubling the input doubles lookup work, while a Cartesian entry scan grows approximately fourfold.
+            // Allow constant-factor storage differences without assuming a fixed number of queries per key.
+            if (smallerCalls != 0) check(calls <= smallerCalls * 3)
+            smallerCalls = calls
         }
     }
 

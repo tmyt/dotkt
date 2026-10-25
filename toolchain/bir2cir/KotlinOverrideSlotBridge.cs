@@ -231,7 +231,7 @@ static class KotlinOverrideSlotBridge
             string identityName, string descriptorMember, string propertyAccessor,
             TypeNode[] slotParams, TypeNode slotRet, JsonObject impl, JsonArray slotTypeParams = null,
             bool unitValueReturn = false, TypeNode[] slotSignature = null, string referenceMember = null,
-            TypeNode semanticSlotReturn = null)
+            TypeNode semanticSlotReturn = null, JsonObject selectedLocalSlot = null)
         {
             if (supIsInterface && enumerationSlots?.Owns(descriptorSpec, descriptorMember,
                     (impl["typeParams"] as JsonArray)?.Count ?? 0, slotParams, slotRet, PhysicalSlotType, refs) == true)
@@ -432,6 +432,11 @@ static class KotlinOverrideSlotBridge
                             SupertypeGraph.SubstOwnerTvs(
                                 FunctionSignatureIdentity.DeclarationType(TypeJson.Read(discriminator)), ownArgs), slotParams[i]));
                 AddImplDescriptor(impl, supIsInterface ? "clrInterfaceImpls" : "clrBaseImpls", descriptor);
+                // Late declaration-signature allocation can add modifiers to this authored body after an
+                // exact local slot was attached. Preserve the selected declaration ID so that pass can
+                // retarget the relation to an exact forwarding bridge, including compiler-generated slots.
+                if (selectedLocalSlot != null)
+                    DeclarationSignatureIdentity.RecordSelectedImplementationSlot(impl, selectedLocalSlot);
                 return;
             }
             // A CLR interface can implement a base-interface slot only through a FINAL MethodImpl body. Keep the
@@ -718,7 +723,8 @@ static class KotlinOverrideSlotBridge
                                     SupertypeGraph.SubstOwnerTvs(
                                         FunctionSignatureIdentity.DeclarationType(TypeJson.Read(discriminator)), supArgs), slotParams[index])
                                 : slotParams[index]).ToArray()
-                        : null);
+                        : null,
+                    selectedLocalSlot: descriptorOwner.Name == spec.Name ? slot : null);
             }
         }
 
@@ -2076,11 +2082,11 @@ static class KotlinOverrideSlotBridge
                   {"name":"Element","kind":"interface","methods":[]},
                   {"name":"Base","kind":"class","abstract":true,"methods":[
                     {"name":"NativeAccept","kotlinSourceMember":"accept","declarationId":"selected-base",
-                     "virtual":true,"abstract":true,"vis":"public","params":[{"name":"value","type":{"t":"fqn","name":"Element"}}],
+                     "virtual":true,"abstract":true,"vis":"public","params":[{"name":"value","type":{"t":"fqn","name":"System.Object"}}],
                      "ret":{"t":"fqn","name":"kotlin.Boolean"}}]},
                   {"name":"Derived","kind":"class","methods":[
                     {"name":"accept","declarationId":"selected-body","override":true,"virtual":true,"vis":"public",
-                     "params":[{"name":"value","type":{"t":"fqn","name":"Element"}}],"ret":{"t":"fqn","name":"kotlin.Boolean"},
+                     "params":[{"name":"value","type":{"t":"fqn","name":"System.Object"}}],"ret":{"t":"fqn","name":"kotlin.Boolean"},
                      "body":[{"k":"return","value":{"k":"const","type":{"t":"fqn","name":"kotlin.Boolean"},"value":false}}],
                      "overrides":[{"owner":{"t":"fqn","name":"Base"},"member":"accept","kind":"method","declarationId":"selected-base"}]}]}]}
                 """).AsObject();
@@ -2091,8 +2097,21 @@ static class KotlinOverrideSlotBridge
                 refBuild: false, new GenericRepresentationPolicy(new Dictionary<string, string>()));
             var descriptors = root["types"][2]["methods"][0][kind == "interface" ? "clrInterfaceImpls" : "clrBaseImpls"] as JsonArray;
             if (descriptors is not { Count: 1 } || Str(descriptors[0]["member"]) != "NativeAccept"
-                || TypeJson.Read(descriptors[0]["params"][0]) != new TypeNode.Fqn("Element"))
+                || TypeJson.Read(descriptors[0]["params"][0]) != new TypeNode.Fqn("System.Object"))
                 throw new InvalidOperationException("Exact renamed " + kind + " slot lost its selected MethodImpl");
+            var implementation = root["types"][2]["methods"][0].AsObject();
+            var modified = TypeJson.Write(new TypeNode.Mod(false, new TypeNode.Fqn("SignatureMarker"),
+                new TypeNode.Fqn("System.Object")));
+            implementation["params"][0]["type"] = modified.DeepClone();
+            DeclarationSignatureIdentity.BindSelectedOverrides(new[] { root },
+                new Dictionary<string, JsonArray> { ["selected-body"] = new JsonArray(modified) }, refs, _ => false);
+            var relationKey = kind == "interface" ? "clrInterfaceImpls" : "clrBaseImpls";
+            var members = root["types"][2]["methods"].AsArray();
+            if (members.Count != 2 || implementation[relationKey]?.AsArray().Count != 0
+                || TypeJson.Read(members[1]["params"][0]["type"]) != new TypeNode.Fqn("System.Object")
+                || members[1][relationKey]?.AsArray().Count != 1
+                || Str(members[1][relationKey][0]["member"]) != "NativeAccept")
+                throw new InvalidOperationException("Late signature allocation retained a modified body on an exact " + kind + " slot");
         }
     }
 

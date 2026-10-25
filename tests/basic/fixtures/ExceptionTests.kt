@@ -375,8 +375,8 @@ class ExceptionTests {
         assertEquals("spread-before", excHoistLog[7])
         assertEquals("spread-try", excHoistLog[8])
 
-        // Explicit hash factories exercise native construction substitution. All arguments must be evaluated before
-        // hashing starts, even when the first key holds a try. Ordered factories above retain their Kotlin bodies.
+        // The explicit hash-set factory exercises native construction substitution. All arguments must be evaluated
+        // before hashing starts, even when the first key holds a try.
         excHoistLog.clear()
         val nativeSet = hashSetOf(
             try { excHoistMarkedKey("set-try", 20) }
@@ -389,16 +389,19 @@ class ExceptionTests {
         assertEquals("hash20", excHoistLog[2])
         assertEquals("hash21", excHoistLog[3])
 
+        // HashMap retains its Kotlin factory body. Arguments still evaluate once, in order, before any hashing;
+        // the number of hashCode calls per key is an implementation detail of the backing storage.
         excHoistLog.clear()
-        val nativeMap = hashMapOf(
+        val mapWithTry = hashMapOf(
             (try { excHoistMarkedKey("map-key-try", 22) }
             catch (e: Exception) { ExcHoistHashKey(-1) }) to 1,
             excHoistMarkedKey("map-key-later", 23) to 2,
         )
-        assertEquals(2, nativeMap.size)
+        assertEquals(2, mapWithTry.size)
         assertEquals("map-key-try", excHoistLog[0])
         assertEquals("map-key-later", excHoistLog[1])
-        assertEquals("hash22", excHoistLog[2])
-        assertEquals("hash23", excHoistLog[3])
+        assertTrue(excHoistLog.drop(2).all { it == "hash22" || it == "hash23" })
+        assertTrue(excHoistLog.contains("hash22"))
+        assertTrue(excHoistLog.contains("hash23"))
     }
 }
