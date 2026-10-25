@@ -31,7 +31,8 @@ private fun <T> checkInheritedIterator(first: T, second: T) {
     check(otherIterator.next() == first)
     otherIterator.remove()
     check(otherValues.size == 1 && otherValues[0] == second)
-    other.clear()
+    val otherCollection: MutableCollection<T> = other
+    otherCollection.clear()
     check(otherValues.isEmpty())
 }
 
