@@ -36,6 +36,9 @@ elif args[0] in ("build", "pack"):
     with open(os.environ["TRACE"], "a") as trace:
         trace.write(args[0] + "\n")
     sys.exit(0)
+elif Path(args[0]).stem == "dll2klib":
+    stage, kind = "dll2klib", "refs"
+    output = Path(args[args.index("--out") + 1]) / "Framework.klib"
 else:
     stage = Path(args[0]).stem
     output = Path(args[1])
@@ -108,7 +111,10 @@ class StdlibBuildTests(unittest.TestCase):
         self.assertIn(stage, calls)
         self.assertEqual(calls[-1], stage, calls)
         self.assertNotIn("pack", calls)
-        self.assertFalse(list((self.root / "build").rglob("*.toolstamp")))
+        # A completed reference-projection prerequisite may remain cached, but
+        # a failed stdlib artifact itself must never receive a success stamp.
+        for _, _, artifact in BUILDS.values():
+            self.assertFalse(Path(str(self.root / "build" / artifact) + ".toolstamp").exists())
         kind = stage.split(":")[0]
         output = self.root / "build" / BUILDS.get(kind, BUILDS["ref"])[2]
         if stage.endswith("ilemit") or kind == "klib":
@@ -123,6 +129,14 @@ class StdlibBuildTests(unittest.TestCase):
                 script = BUILDS[kind][0]
                 self.assert_failed_at(self.run_bash(f"bash scripts/{script}" +
                                       (" --emit" if kind != "klib" else ""), stage), stage)
+
+    def test_projection_failures_stop_all_stdlib_builders_without_stamp(self):
+        for script in ("build-stdlib.sh", *(build[0] for build in BUILDS.values())):
+            with self.subTest(script=script):
+                result = self.run_bash(f"bash scripts/{script}", "refs:dll2klib")
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(self.calls()[-1], "refs:dll2klib")
+                self.assertFalse(list((self.root / "build").rglob("*.toolstamp")))
 
     def test_partial_frontend_failures_stop_without_emit(self):
         for kind in ("ref", "rt"):
@@ -166,14 +180,27 @@ class StdlibBuildTests(unittest.TestCase):
         command = "bash scripts/pack-nuget.sh"
         result = self.run_bash(command)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual([c for c in self.calls() if ":" in c], list(STAGES))
+        self.assertEqual([c for c in self.calls() if ":" in c], ["refs:dll2klib", *STAGES])
         self.assertEqual(self.calls().count("pack"), 5)
-        self.assertEqual(len(list((self.root / "build").rglob("*.toolstamp"))), 3)
+        self.assertEqual(len(list((self.root / "build").rglob("*.toolstamp"))), 4)
         self.trace.unlink()
         result = self.run_bash(command)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertFalse([c for c in self.calls() if ":" in c], self.calls())
         self.assertEqual(self.calls().count("pack"), 5)
+
+    def test_framework_and_projector_changes_invalidate_the_dependent_artifacts(self):
+        command = "bash scripts/pack-nuget.sh"
+        for changed in ("refs/Framework.dll", "build/dll2klib-bin/dll2klib.dll"):
+            with self.subTest(changed=changed):
+                result = self.run_bash(command)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.trace.unlink()
+                self.write(changed, "changed input\n")
+                result = self.run_bash(command)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual([c for c in self.calls() if ":" in c], ["refs:dll2klib", *STAGES])
+                self.trace.unlink()
 
 
 if __name__ == "__main__":

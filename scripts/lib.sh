@@ -153,12 +153,22 @@ _toolstamp() {
 		| sha256sum \
 		| awk '{print $1}'
 }
-# Per-artifact input sets. klib: kotc + stdlib sources (a klib has no IL -> ilemit/bir2cir are irrelevant to
-# its bytes). ref: kotc + bir2cir + ilemit + targeting pack + sources. rt: the same plus the REF dll it
-# consumes through bir2cir's compile-reference set.
-_toolstamp_klib() { _toolstamp "$KOTC_INSTALL_DIR" "$STDLIB_SRC_DIR" "$STDLIB_BUILD_LIB" "$ROOT/scripts/build-stdlib-klib.sh"; }
-_toolstamp_ref()  { need_dotnet_reference_sets; _toolstamp "$KOTC_INSTALL_DIR" "$BIR2CIR_DLL" "$ILEMIT_DLL" "$DOTNET_REFPACK_DIR" "$STDLIB_SRC_DIR" "$STDLIB_BUILD_LIB" "$ROOT/scripts/build-stdlib-ref.sh"; }
-_toolstamp_rt()   { need_dotnet_reference_sets; _toolstamp "$KOTC_INSTALL_DIR" "$BIR2CIR_DLL" "$ILEMIT_DLL" "$STDLIB_REF_DLL" "$DOTNET_REFPACK_DIR" "$STDLIB_SRC_DIR" "$STDLIB_BUILD_LIB" "$ROOT/scripts/build-stdlib-rt.sh"; }
+# Every stdlib artifact includes the exact framework declaration catalog and its dll2klib projector.
+# klib adds kotc + sources (no IL: ilemit/bir2cir are irrelevant to its bytes). ref adds the backend tools;
+# rt also consumes the REF dll through bir2cir's compile-reference set.
+_stdlib_reference_stamp() {
+	need_tool dll2klib
+	need_dotnet_reference_sets
+	local refs=()
+	IFS=';' read -r -a refs <<< "$FRAMEWORK_COMPILE_REFS"
+	{ printf '%s\n' "$FRAMEWORK_COMPILE_REFS"; _toolstamp "$ROOT/build/dll2klib-bin" "${refs[@]}"; } | sha256sum | awk '{print $1}'
+}
+_toolstamp_with_stdlib_references() {
+	{ _stdlib_reference_stamp; _toolstamp "$@"; } | sha256sum | awk '{print $1}'
+}
+_toolstamp_klib() { _toolstamp_with_stdlib_references "$KOTC_INSTALL_DIR" "$STDLIB_SRC_DIR" "$STDLIB_BUILD_LIB" "$ROOT/scripts/build-stdlib-klib.sh"; }
+_toolstamp_ref()  { _toolstamp_with_stdlib_references "$KOTC_INSTALL_DIR" "$BIR2CIR_DLL" "$ILEMIT_DLL" "$STDLIB_SRC_DIR" "$STDLIB_BUILD_LIB" "$ROOT/scripts/build-stdlib-ref.sh"; }
+_toolstamp_rt()   { _toolstamp_with_stdlib_references "$KOTC_INSTALL_DIR" "$BIR2CIR_DLL" "$ILEMIT_DLL" "$STDLIB_REF_DLL" "$STDLIB_SRC_DIR" "$STDLIB_BUILD_LIB" "$ROOT/scripts/build-stdlib-rt.sh"; }
 # _stamp_fresh <artifact> <fingerprint>: true iff the artifact exists AND its sidecar records this fingerprint.
 _stamp_fresh() { [[ -e "$1" && -f "$1.toolstamp" && "$(cat "$1.toolstamp" 2>/dev/null)" == "$2" ]]; }
 
@@ -184,6 +194,30 @@ need_stdlib_rt() { # the stdlib RUNTIME dll; rebuild if missing OR toolchain cha
 }
 
 # --- stdlib source sets (shared by build-stdlib-ref.sh / build-stdlib-rt.sh) -----------------------
+# CLR actuals may expose real projected native types. Project the complete exact framework
+# reference catalog, independently per assembly, using the same reference-KLIB path as apps.
+# No native declaration is duplicated in the frontend stdlib, and no dependency graph is embedded.
+stdlib_reference_args() {
+	need_tool dll2klib
+	need_dotnet_reference_sets
+	local out="$ROOT/build/clr-stdlib-reference-klibs" stamp refs=()
+	IFS=';' read -r -a refs <<< "$FRAMEWORK_COMPILE_REFS"
+	stamp="$(_stdlib_reference_stamp)"
+	if ! _stamp_fresh "$out" "$stamp"; then
+		rm -rf "$out"
+		mkdir -p "$out"
+		printf '%s\n' "${refs[@]}" > "$out/references.rsp"
+		dotnet "$DLL2KLIB_DLL" --out "$out" --jobs 24 @"$out/references.rsp" > "$out/projection.log" 2>&1 || return $?
+		local reference
+		for reference in "${refs[@]}"; do
+			[[ -f "$out/$(basename "${reference%.dll}").klib" ]] || die "missing projected framework KLIB for $reference"
+		done
+		printf '%s\n' "$stamp" > "$out.toolstamp"
+	fi
+	local klibs=("$out"/*.klib)
+	STDLIB_REFERENCE_ARGS=(-classpath "$(IFS=:; echo "${klibs[*]}")")
+}
+
 # Sets the arrays STDLIB_COMMON/STDLIB_SRC/STDLIB_UNSIGNED/STDLIB_CLR and STDLIB_COMMON_CSV.
 # Common = the multiplatform expect/impl source; Platform(CLR) = the clr/ actuals (NOT common sources).
 collect_stdlib_sources() {

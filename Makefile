@@ -70,7 +70,8 @@ $(foreach t,$(TOOLS),$(eval $(call TOOL_RULE,$(t))))
 stdlib: stdlib-klib stdlib-ref stdlib-rt ## the CLR stdlib: frontend KLIB + reference dll + runtime dll
 
 stdlib-klib: $(FE_KLIB) ## kotlin-stdlib-clr-frontend.klib (kotc -classpath input)
-$(FE_KLIB): $(KOTC) $(STDLIB_SRC) scripts/build-stdlib-klib.sh scripts/lib.sh
+$(FE_KLIB): $(KOTC) $(STDLIB_SRC) scripts/build-stdlib-klib.sh scripts/lib.sh $(call tool_src,dll2klib) \
+               | build/dll2klib-bin/dll2klib.dll
 	SCRIPT_NAME=make bash -c 'source scripts/lib.sh; need_fe_klib'
 	@touch "$@"
 
@@ -79,8 +80,8 @@ $(FE_KLIB): $(KOTC) $(STDLIB_SRC) scripts/build-stdlib-klib.sh scripts/lib.sh
 # slow builds: the verify scripts' internal `dotnet build` refreshes the dlls even when nothing changed.
 stdlib-ref: $(STDLIB_REF) ## DotKt.Private.Stdlib.dll (compile-time @Clr metadata; bir2cir's --ref)
 $(STDLIB_REF): $(KOTC) $(STDLIB_SRC) $(STDLIB_BINDINGS) scripts/build-stdlib-ref.sh scripts/lib.sh \
-               $(call tool_src,bir2cir) $(call tool_src,ilemit) \
-               | build/bir2cir-bin/bir2cir.dll build/ilemit-bin/ilemit.dll
+               $(call tool_src,bir2cir) $(call tool_src,ilemit) $(call tool_src,dll2klib) \
+               | build/bir2cir-bin/bir2cir.dll build/ilemit-bin/ilemit.dll build/dll2klib-bin/dll2klib.dll
 	SCRIPT_NAME=make bash -c 'source scripts/lib.sh; need_stdlib_ref'
 	@touch "$@"
 	@test -f "$@" || { echo "make: stdlib-ref did not produce $@ (see build/clr-stdlib/*.err)"; exit 1; }
@@ -89,8 +90,8 @@ stdlib-rt: $(STDLIB_RT) ## DotKt.Stdlib.dll (the shipping runtime assembly)
 # The script exits 0 on success / nonzero on real failure (the old final-error-grep footgun — exit 1
 # exactly when the build was CLEAN — is fixed, so no compensating `|| true` here any more).
 $(STDLIB_RT): $(STDLIB_REF) $(STDLIB_SRC) $(STDLIB_BINDINGS) scripts/build-stdlib-rt.sh scripts/lib.sh \
-              $(call tool_src,bir2cir) $(call tool_src,ilemit) \
-              | build/bir2cir-bin/bir2cir.dll build/ilemit-bin/ilemit.dll
+              $(call tool_src,bir2cir) $(call tool_src,ilemit) $(call tool_src,dll2klib) \
+              | build/bir2cir-bin/bir2cir.dll build/ilemit-bin/ilemit.dll build/dll2klib-bin/dll2klib.dll
 	SCRIPT_NAME=make bash -c 'source scripts/lib.sh; need_stdlib_rt'
 	@touch "$@"
 	@test -f "$@" || { echo "make: stdlib-rt did not produce $@ (see build/clr-stdlib-rt/*.err)"; exit 1; }

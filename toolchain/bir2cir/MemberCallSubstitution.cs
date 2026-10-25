@@ -781,22 +781,9 @@ static class MemberCallSubstitution
             }
             if (collKind == "map")
             {
-                var kt = RepresentationArgument(0, NullableRepresentationFrame.Role.Ordinary);
-                var vt = RepresentationArgument(1, NullableRepresentationFrame.Role.Ordinary);
-                if (kt == null || vt == null) return null;                       // can't reconstruct K,V -> plain call
-                var entries = new List<(JsonNode Key, JsonNode Value)>();
-                // The selected declaration distinguishes a vararg Pair pack from a single Pair.
-                // Decompose only inline Pair constructions or the selected Pair-producing infix call. An opaque Pair
-                // value cannot be split from its source shape, so retain that exact factory's ordinary body instead.
-                foreach (var el in factoryElements)
-                {
-                    if (el is JsonObject eo && PairKV(eo) is JsonArray pa && pa.Count == 2)
-                        entries.Add((pa[0].DeepClone(), pa[1].DeepClone()));
-                    else
-                        return null;
-                }
-                return CarryFactoryStaticType(node,
-                    KotlinHashStorageLowering.MapLiteral(TypeJson.Read(kt), TypeJson.Read(vt), entries));
+                // Map bodies own their null-capable storage and concrete result
+                // classifier. A native dictionary literal cannot express that contract.
+                return null;
             }
             var elemT = RepresentationArgument(0, NullableRepresentationFrame.Role.Ordinary);
             if (elemT == null) return null;                                     // can't reconstruct elem -> plain call
@@ -921,21 +908,6 @@ static class MemberCallSubstitution
     // run, so they apply the rule themselves rather than inheriting it from a sweep that has already gone by.
     static TypeNode CanonicalArrayElem(TypeNode elem)
         => elem == null ? null : NullableGenericErasure.EraseArgument(elem, _isValue);
-
-    // An INLINE Pair construction's two operands (key, value), or null if `el` is not one. Two shapes: a `new
-    // kotlin.Pair(k,v)` literal, or a `callStatic .to(k,v)` — the `a to b` idiom whose stdlib body is `Pair(this,
-    // that)` (so its two args ARE the operands). By the time this runs the `to` call has been owner-attributed to its
-    // file class (bottom-up transform), so match on method="to" + a `kotlin.Pair` return, not on owner=null.
-    static JsonArray PairKV(JsonObject el)
-    {
-        var k = (el["k"] as JsonValue)?.GetValue<string>();
-        if (k == "new" && TypeJson.OwnerName(el["type"]) == "kotlin.Pair" && el["args"] is JsonArray na && na.Count == 2)
-            return na;
-        if (k == "callStatic" && (el["method"] as JsonValue)?.GetValue<string>() == "to"
-            && TypeJson.OwnerName(el["ret"]) == "kotlin.Pair" && el["args"] is JsonArray ta && ta.Count == 2)
-            return ta;
-        return null;
-    }
 
     // The i-th call type argument (a structured Type node), or null when absent. The canonical element/key/value source.
     static JsonNode TypeArgAt(JsonArray typeArgs, int i) => typeArgs != null && i < typeArgs.Count ? typeArgs[i] : null;

@@ -4,6 +4,7 @@
 package kotc.pipeline
 
 import org.jetbrains.kotlin.KtPsiSourceFile
+import org.jetbrains.kotlin.backend.common.loadMetadataKlibs
 import org.jetbrains.kotlin.cli.common.CLIConfigurationKeys
 import org.jetbrains.kotlin.cli.common.checkKotlinPackageUsageForPsi
 import org.jetbrains.kotlin.cli.common.diagnosticsCollector
@@ -15,6 +16,7 @@ import org.jetbrains.kotlin.cli.common.prepareNativeSessions
 import org.jetbrains.kotlin.cli.jvm.compiler.EnvironmentConfigFiles
 import org.jetbrains.kotlin.cli.jvm.compiler.KotlinCoreEnvironment
 import org.jetbrains.kotlin.cli.jvm.config.K2MetadataConfigurationKeys
+import org.jetbrains.kotlin.cli.jvm.config.JvmClasspathRoot
 import org.jetbrains.kotlin.cli.jvm.config.jvmClasspathRoots
 import org.jetbrains.kotlin.cli.jvm.config.jvmModularRoots
 import org.jetbrains.kotlin.cli.pipeline.CheckCompilationErrors
@@ -48,6 +50,14 @@ object ClrStdlibFrontendPipelinePhase : PipelinePhase<ConfigurationPipelineArtif
 			friendDependencies(configuration[K2MetadataConfigurationKeys.FRIEND_PATHS] ?: emptyList())
 			dependsOnDependencies(refinedPaths.map { it.absolutePath })
 		}
+		// Platform actuals can expose declarations from ordinary reference KLIBs.
+		// Load the declared classpath just as the application frontend does; these
+		// libraries remain dependencies rather than being embedded in the stdlib.
+		val klibs = loadMetadataKlibs(
+			libraryPaths = configuration.get(CLIConfigurationKeys.CONTENT_ROOTS).orEmpty()
+				.filterIsInstance<JvmClasspathRoot>().map { it.file.path },
+			configuration = configuration,
+		).all
 
 		val environment = KotlinCoreEnvironment.createForProduction(
 			rootDisposable,
@@ -63,7 +73,7 @@ object ClrStdlibFrontendPipelinePhase : PipelinePhase<ConfigurationPipelineArtif
 			ktFiles,
 			configuration,
 			rootModuleName,
-			resolvedLibraries = emptyList(),
+			resolvedLibraries = klibs,
 			libraryList,
 			extensionRegistrars,
 			metadataCompilationMode = false,

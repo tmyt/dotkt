@@ -9,9 +9,9 @@
 // simply never happened.
 //
 // The rule under test is about mapped-away PARAMETERS, not about HashSet: every constructor the same mapping table
-// covers is asserted here — HashSet, HashMap (Dictionary) and LinkedHashMap (OrderedDictionary) all lose the
-// load-factor slot — alongside LinkedHashSet, which is a real Kotlin class whose constructor keeps both arguments
-// and must be unaffected. Every side effect is captured into `mcaLog` and asserted positionally, which is stronger
+// covers is asserted here — HashSet loses the load-factor slot — alongside HashMap, LinkedHashMap and LinkedHashSet,
+// whose Kotlin-owned constructors retain both arguments. Every side effect is captured into `mcaLog` and asserted
+// positionally, which is stronger
 // than a value assertion: a mapped-away argument evaluated zero or twice only shows up in the log. The two
 // `Nothing`-typed shapes are where this meets #197's termination: an argument that both must be evaluated and
 // never returns.
@@ -23,7 +23,7 @@ val mcaLog = mutableListOf<String>()
 /** Records its tag and returns a capacity — an initialCapacity with an OBSERVABLE evaluation. */
 fun mcaCap(tag: String): Int { mcaLog.add("cap$tag"); return 8 }
 
-/** Records its tag and returns a load factor — the argument the mapping discards. */
+/** Records its tag and returns a load factor — discarded by the HashSet mapping, retained by map actuals. */
 fun mcaLf(tag: String): Float { mcaLog.add("lf$tag"); return 0.75f }
 
 /** A mapped-away argument that THROWS: its evaluation is observable by not returning at all. */
@@ -63,9 +63,9 @@ class MappedConstructorArgumentTests {
         assertEquals("capA,lfA", mcaTrace())   // was "capA": the load factor was dropped unevaluated
     }
 
-    /** HashMap -> Dictionary: the same table entry, the same rule. */
+    /** Kotlin-owned HashMap retains both constructor arguments and their evaluation order. */
     @TestAttribute
-    fun hashMapEvaluatesTheMappedAwayLoadFactor() {
+    fun hashMapEvaluatesItsLoadFactor() {
         mcaLog.clear()
         val m = HashMap<Int, String>(mcaCap("B"), mcaLf("B"))
         m[1] = "x"
@@ -73,9 +73,9 @@ class MappedConstructorArgumentTests {
         assertEquals("capB,lfB", mcaTrace())   // was "capB"
     }
 
-    /** LinkedHashMap -> OrderedDictionary: likewise. */
+    /** Kotlin-owned LinkedHashMap likewise evaluates both retained arguments. */
     @TestAttribute
-    fun linkedHashMapEvaluatesTheMappedAwayLoadFactor() {
+    fun linkedHashMapEvaluatesItsLoadFactor() {
         mcaLog.clear()
         val m = LinkedHashMap<Int, Int>(mcaCap("C"), mcaLf("C"))
         m[1] = 10

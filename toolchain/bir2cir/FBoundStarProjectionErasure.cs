@@ -1481,7 +1481,8 @@ static partial class FBoundStarProjectionErasure
         array["funcType"] = TypeJson.Write(physicalFunction);
         if (LocalDelegateTarget(array) is not JsonObject targetMethod) return;
         if (TypeJson.Read(targetMethod["ret"]) is TypeNode originalReturn)
-            targetMethod["retKotlinType"] ??= TypeNode.ToJson(originalReturn);
+            targetMethod["retKotlinType"] ??= Str(targetMethod["nullableGenericRet"])
+                ?? TypeNode.ToJson(originalReturn);
         targetMethod["ret"] = TypeJson.Write(physicalElement);
         targetMethod[NormalizedInnerFactoryReturnKey] = true;
         if (targetMethod["body"] is JsonArray body)
@@ -4463,7 +4464,10 @@ static partial class FBoundStarProjectionErasure
             && originalReturn != distinctReturns[0]
             && LogicalTypeMatchesPhysical(originalReturn, distinctReturns[0]))
         {
-            declaration["retKotlinType"] ??= TypeNode.ToJson(originalReturn);
+            // Carrier inference runs after nullable frame expansion. Its originalReturn is already physical;
+            // retain the declaration snapshot rather than exporting companion arguments as Kotlin parameters.
+            declaration["retKotlinType"] ??= Str(declaration["nullableGenericRet"])
+                ?? TypeNode.ToJson(originalReturn);
             declaration["ret"] = TypeJson.Write(distinctReturns[0]);
             declaration[NormalizedInnerFactoryReturnKey] = true;
         }

@@ -1949,6 +1949,21 @@ static class KotlinOverrideSlotBridge
             || IsNativeSlotOwner("ReferencedSlot", localSlotOwners, name => name == "ReferencedSlot")
             || !IsNativeSlotOwner("NativeSlot", localSlotOwners, _ => false))
             throw new InvalidOperationException("Physical-only slot capture admitted a selected Kotlin declaration");
+        var constructedOverride = JsonNode.Parse("""
+            {"name":"accept","vis":"public","params":[{"name":"value","type":{"t":"fqn","name":"ElementBox","args":[{"t":"tv","scope":"type","i":0}]}}],
+             "overrides":[{"owner":{"t":"fqn","name":"Base"},"member":"accept","kind":"method","declarationId":"selected-base"}]}
+            """).AsObject();
+        var constructedOwner = new Def { Name = "Derived", Kind = "class", Node = new JsonObject() };
+        var constructedView = new TypeNode.Fqn("ElementBox$star");
+        JsonObject SelectedConstructedOverride(IEnumerable<JsonObject> candidates, string identity = "selected-base") =>
+            Implementer(constructedOwner, new Dictionary<string, Def>(), candidates, "Base", "NativeAccept", "accept",
+                identity, null, null, 0, new TypeNode[] { constructedView }, null, Array.Empty<TypeNode>(),
+                new TypeNode[] { new TypeNode.Tv("type", 0) }, carrierSeam: (slot, body) =>
+                    slot == constructedView && body is TypeNode.Fqn { Name: "ElementBox", Args.Length: 1 });
+        if (SelectedConstructedOverride(new[] { constructedOverride }) != constructedOverride
+            || SelectedConstructedOverride(new[] { constructedOverride }, "other-base") != null
+            || SelectedConstructedOverride(new[] { constructedOverride, (JsonObject)constructedOverride.DeepClone() }) != null)
+            throw new InvalidOperationException("Renamed local slot lost its exact unchanged-source constructed override");
         var suspendSource = new JsonObject {
             [DeclarationIdentityBinding.Key] = "selected-suspend",
             [KotlinPropertyAccessors.SuspendSourceParamsKey] = new JsonArray(),
@@ -2151,10 +2166,12 @@ static class KotlinOverrideSlotBridge
             // Suspend lowering has already split one declaration into hot/cold MethodDefs. An explicitly named DIM
             // gives the base projection its final explicit spelling, while the overriding projection keeps its own
             // physical name; `kotlinSourceMember` is the carried frontend identity that relates those two projections.
+            // An unchanged implementation still has that semantic name directly even when its local base was renamed.
             // The override closure below remains the independent proof that this candidate actually fills this slot.
             else if ((Str(m["name"]) != physicalName
                       && (slotDeclarationId == null
-                          || Str(m[DeclarationRename.SourceMemberKey]) != semanticName))
+                          || Str(m["name"]) != semanticName
+                              && Str(m[DeclarationRename.SourceMemberKey]) != semanticName))
                      || KotlinPropertyAccessors.TryIdentity(m, out _, out _)) continue;
             if (((m["typeParams"] as JsonArray)?.Count ?? 0) != methodArity) continue;
             // Generic constraints are part of a CLR MethodDef's implementation contract even when name, arity,

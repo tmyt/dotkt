@@ -34,12 +34,13 @@ rm -rf "$BIR" "$CIR" "$DLL"; mkdir -p "$BIR" "$CIR" "$DLL"
 
 collect_stdlib_sources
 stdlib_fragment_args
+stdlib_reference_args
 FLAGS=(-no-stdlib -Xallow-kotlin-package -Xexpect-actual-classes -Xstdlib-compilation -Xcontext-parameters -Xreturn-value-checker=check -XXLanguage:+UnnamedLocalVariables -Xcommon-sources="$STDLIB_COMMON_CSV" $STDLIB_OPTIN)
 
 info "SUBSTITUTE-mode kotc: ${#STDLIB_COMMON[@]}+${#STDLIB_SRC[@]}+${#STDLIB_UNSIGNED[@]}+${#STDLIB_CLR[@]} stdlib files -> BIR (@Clr ACTIVE)"
 run_stdlib_stage "$OUT/kotc.err" "$KOTC" \
 	"${STDLIB_COMMON[@]}" "${STDLIB_SRC[@]}" "${STDLIB_UNSIGNED[@]}" "${STDLIB_CLR[@]}" \
-	"${FLAGS[@]}" "${STDLIB_FRAGMENT_ARGS[@]}" -d "$BIR"
+	"${FLAGS[@]}" "${STDLIB_FRAGMENT_ARGS[@]}" "${STDLIB_REFERENCE_ARGS[@]}" -d "$BIR"
 bir_count="$(ls "$BIR"/*.bir.json 2>/dev/null | wc -l)"
 echo "BIR files: $bir_count"
 (( bir_count > 0 )) || die "frontend produced no BIR (see $OUT/kotc.err)"

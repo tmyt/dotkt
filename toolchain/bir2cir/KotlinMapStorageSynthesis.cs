@@ -7,7 +7,7 @@ using DotKt.Bir;
 // Kotlin Map operations and native IDictionary slots have different contracts. This physical
 // canonical stdlib carrier supplies the native face while dispatching through the selected Kotlin slots.
 // Its declared reference-twin surface and runtime definition share one identity across consuming modules.
-static class KotlinMapStorageSynthesis
+static partial class KotlinMapStorageSynthesis
 {
     const string CarrierName = "DotKt.Runtime.CompilerServices.dotkt$KotlinMapStorage";
     const string EnumeratorName = "dotkt$MapEnumeratorOverKotlinIterator";
@@ -103,15 +103,19 @@ static class KotlinMapStorageSynthesis
 
     static JsonObject Helper(ReferenceMetadataIndex refs, string name, TypeNode ret,
         TypeNode[] typeArgs, TypeNode[] sourceSignature, params JsonNode[] args)
+        => HelperOn(refs, Helpers, name, ret, typeArgs, sourceSignature, args);
+
+    static JsonObject HelperOn(ReferenceMetadataIndex refs, string owner, string name, TypeNode ret,
+        TypeNode[] typeArgs, TypeNode[] sourceSignature, params JsonNode[] args)
     {
-        var helper = refs.AuthoredKotlinHelper(Helpers, name, typeArgs.Length, sourceSignature);
+        var helper = refs.AuthoredKotlinHelper(owner, name, typeArgs.Length, sourceSignature);
         TypeNode NoWitness(TypeNode _) => throw new InvalidOperationException("Native map storage has no nullable witness");
         var closed = helper.NullableFrame?.Close(typeArgs, t => t, NoWitness, t => t, NoWitness) ?? typeArgs;
-        TypeNode Physical(TypeNode type) => BirTypeLowering.LowerPhysicalType(
+        TypeNode Physical(TypeNode type) => BirTypeLowering.CanonicalPhysicalSlotType(BirTypeLowering.LowerPhysicalType(
             FBoundStarProjectionErasure.ProjectReferencedValueType(type, refs), refs.Aliases,
-            refs.IsValueType, refs.PhysicalTypeNames, typeArg: false, nullableFrames: refs.NullableTypeFrames);
+            refs.IsValueType, refs.PhysicalTypeNames, typeArg: false, nullableFrames: refs.NullableTypeFrames));
         return new JsonObject {
-            ["k"] = "callStatic", ["owner"] = TypeJson.Fqn(Helpers), ["method"] = name,
+            ["k"] = "callStatic", ["owner"] = TypeJson.Fqn(owner), ["method"] = name,
             [DeclarationIdentityBinding.Key] = helper.DeclarationId,
             ["typeArgs"] = new JsonArray(closed.Select(TypeJson.Write).ToArray()),
             ["sig"] = new JsonArray(helper.ParamTypeNodes.Select(Physical).Select(TypeJson.Write).ToArray()),
@@ -233,11 +237,14 @@ static class KotlinMapStorageSynthesis
         methods.Add(Define(enumerable, "GetEnumerator", iterator, new JsonArray(), () => new JsonArray(Return(Enumerator()))));
         methods.Add(Define(F(RawEnumerable), "GetEnumerator", F("System.Collections.IEnumerator"),
             new JsonArray(), () => new JsonArray(Return(Enumerator()))));
+        AppendNativeFaces(refs, declarationOnly, methods);
         return new JsonObject {
             ["name"] = CarrierName, ["kind"] = "interface", ["vis"] = "public", ["generated"] = true,
             ["typeParams"] = new JsonArray("K", "V"), ["base"] = null,
             ["fields"] = new JsonArray(), ["ctors"] = new JsonArray(), ["methods"] = methods,
-            ["interfaces"] = new JsonArray(TypeJson.Write(dictionary), TypeJson.Fqn(KotlinCollectionSlotSynthesis.MapSlots)),
+            ["interfaces"] = new JsonArray(TypeJson.Write(dictionary),
+                TypeJson.Write(F("System.Collections.Generic.IReadOnlyDictionary", K, V)),
+                TypeJson.Fqn("System.Collections.IDictionary"), TypeJson.Fqn(KotlinCollectionSlotSynthesis.MapSlots)),
         };
     }
 }
