@@ -12,8 +12,7 @@ static class CollectionHelperBinding
     const string HelperOwner = "kotlin.collections.ClrMapDefaultsKt";
 
     public static void Apply(IEnumerable<JsonNode> roots, ReferenceMetadataIndex references,
-        IReadOnlyDictionary<string, string> aliases, Action<Action<JsonObject>> prepareHelpers = null,
-        AliasConstructorDelegationExpansion constructors = null)
+        IReadOnlyDictionary<string, string> aliases, Action<Action<JsonObject>> prepareHelpers = null)
     {
         var inputs = roots.ToArray();
         var closedViews = references == null ? new Dictionary<string, TypeNode.Fqn>()
@@ -92,18 +91,6 @@ static class CollectionHelperBinding
                 var child = obj[key];
                 if (child != null && Walk(child, context) is { } next && !ReferenceEquals(child, next)) obj[key] = next;
             }
-            if (Text(obj["k"]) == "new"
-                && TypeJson.Read(obj["type"]) is TypeNode.Fqn { Args.Length: 2 } constructed
-                && aliases.ContainsKey(constructed.Name)
-                && obj["args"] is JsonArray { Count: 1 } constructorArguments
-                && obj["argTypes"] is JsonArray constructorSignature
-                && (constructors != null
-                    ? constructors.CollectionCopyConstructorKind(constructed.Name, constructorSignature.Select(TypeJson.Read).ToArray(), constructed.Args)
-                    : references?.CollectionCopyConstructorKind(constructed.Name, constructorSignature.Select(TypeJson.Read).ToArray(), constructed.Args)) == "map")
-                return MemberCallSubstitution.MapCopyConstruction(constructed, constructed.Args,
-                    constructorArguments[0], BindAuthoredCall,
-                    MemberCallSubstitution.MapSourcePreference(constructorArguments[0], references, context,
-                        MemberCallSubstitution.CollectionOperationPhase.Source));
             if (Text(obj["k"]) != "callInstance"
                 || obj["clrOwnerResolved"]?.GetValue<bool>() == true
                 || TypeJson.Read(obj["ownerType"]) is not TypeNode.Fqn owner
@@ -199,42 +186,6 @@ static class CollectionHelperBinding
         Console.WriteLine("[map default binding] self-test OK (source selection, projected argument, canonical representation)");
         CollectionSelectionSelfTest();
         SemanticHelperSelfTest();
-        MapCopySelfTest();
-    }
-
-    static void MapCopySelfTest()
-    {
-        var key = new TypeNode.Tv("method", 0);
-        var value = new TypeNode.Tv("method", 1);
-        var map = new TypeNode.Fqn("kotlin.collections.MutableMap", new TypeNode[] { key, value });
-        var body = new JsonArray();
-        var root = JsonNode.Parse("""
-        {"fileClass":"kotlin.collections.ClrMapDefaultsKt","methods":[
-          {"name":"clrMapPutAll","declarationId":"copy-map","static":true,"typeParams":["K","V"],
-           "params":[{"name":"to","type":{"t":"fqn","name":"kotlin.Any"}},
-                     {"name":"from","type":{"t":"fqn","name":"kotlin.Any"}},
-                     {"name":"view","type":{"t":"nullable","of":{"t":"fqn","name":"kotlin.Any"}}},
-                     {"name":"fromView","type":{"t":"nullable","of":{"t":"fqn","name":"kotlin.Any"}}}],
-           "ret":{"t":"fqn","name":"kotlin.Unit"},"body":[]},
-          {"name":"copy","declarationId":"copy-caller","static":true,"typeParams":["K","V"],
-           "params":[],"ret":{"t":"fqn","name":"kotlin.Unit"}}]}
-        """)!.AsObject();
-        root["methods"][0]["body"].AsArray().Add(new JsonObject { ["k"] = "var", ["name"] = "storage", ["type"] = TypeJson.Write(map) });
-        root["methods"][1]["body"] = body;
-        var aliases = new Dictionary<string, string> { [map.Name] = "System.Collections.Generic.IDictionary" };
-        Apply(new[] { root }, null, aliases, bind => body.Add(MemberCallSubstitution.MapCopyConstruction(
-            map, new TypeNode[] { key, value }, new JsonObject { ["k"] = "callStatic", ["method"] = "ReadOnce" }, bind)));
-        var call = body[0]["stmts"][2]["expr"];
-        if (Text(call[DeclarationIdentityBinding.Key]) != "copy-map"
-            || Text(body[0]["stmts"][0]["init"]["method"]) != "ReadOnce")
-            throw new InvalidOperationException("Map copy lost source binding or source evaluation");
-        NullableRepresentationMaterialization.Apply(new[] { root }, _ => false,
-            policy: new GenericRepresentationPolicy(aliases));
-        if (((JsonArray)call["typeArgs"]).Count != 2
-            || TypeJson.Read(call["typeArgs"][0]) != key
-            || TypeJson.Read(call["typeArgs"][1]) != value)
-            throw new InvalidOperationException("Map copy helper changed its canonical key/value arguments");
-        Console.WriteLine("[map copy binding] self-test OK (source evaluation, exact helper, canonical arguments)");
     }
 
     static void SemanticHelperSelfTest()

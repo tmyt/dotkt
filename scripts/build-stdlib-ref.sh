@@ -6,8 +6,8 @@
 # runtime — fully substituted away at app-emit; the shipping RUNTIME assembly is DotKt.Stdlib.dll
 # (build-stdlib-rt.sh). The 'Private' name marks it as an internal reference face, not an external
 # artifact. Inputs: libraries/stdlib sources + kotc + the bir2cir/ilemit dlls. Outputs:
-# build/clr-stdlib/{bir,cir,dll} + *.err logs. NOTE: the pure-Kotlin stdlib is SELF-CONTAINED — it must
-# NOT reference any runtime assembly, so the kotc step takes no --ref on purpose.
+# build/clr-stdlib/{bir,cir,dll} + *.err logs. Framework declaration KLIBs supply the native types exposed by CLR
+# actuals. The reference twin does not depend on the executable runtime stdlib.
 source "$(dirname "$0")/lib.sh"
 
 usage() {
@@ -35,12 +35,13 @@ rm -rf "$BIR"; mkdir -p "$BIR"
 
 collect_stdlib_sources
 stdlib_fragment_args
+stdlib_reference_args
 FLAGS=(-no-stdlib -Xallow-kotlin-package -Xexpect-actual-classes -Xstdlib-compilation -Xcontext-parameters -Xreturn-value-checker=check -XXLanguage:+UnnamedLocalVariables -Xcommon-sources="$STDLIB_COMMON_CSV" $STDLIB_OPTIN)
 
 info "kotc: ${#STDLIB_COMMON[@]} common + ${#STDLIB_SRC[@]} src + ${#STDLIB_UNSIGNED[@]} unsigned + ${#STDLIB_CLR[@]} clr -> BIR (ref mode)"
 run_stdlib_stage "$OUT/kotc.err" "$KOTC" \
 	"${STDLIB_COMMON[@]}" "${STDLIB_SRC[@]}" "${STDLIB_UNSIGNED[@]}" "${STDLIB_CLR[@]}" \
-	"${FLAGS[@]}" "${STDLIB_FRAGMENT_ARGS[@]}" -d "$BIR"
+	"${FLAGS[@]}" "${STDLIB_FRAGMENT_ARGS[@]}" "${STDLIB_REFERENCE_ARGS[@]}" -d "$BIR"
 bir_count="$(ls "$BIR"/*.bir.json 2>/dev/null | wc -l)"
 echo "BIR files: $bir_count"
 (( bir_count > 0 )) || die "frontend produced no BIR (see $OUT/kotc.err)"

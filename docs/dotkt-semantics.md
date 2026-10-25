@@ -221,8 +221,8 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   A caller-supplied Kotlin alias argument
   in `System.Collections.Generic.List<List<String>>` uses the ordinary `object` element ABI; an explicitly native
   `System.Collections.Generic.List<System.Collections.Generic.IReadOnlyList<String>>` keeps that exact native argument.
-  When a projected map is passed to a stdlib copy constructor, the trusted collection-factory contract
-  performs an entry-wise copy instead of casting the source to an invariant `IDictionary<K,V>`.
+  Kotlin-owned map copy constructors perform an entry-wise copy of a projected source through the map contract,
+  without casting it to an invariant `IDictionary<K,V>`.
 - **Corollary — a star-projected collection classifier must erase its element arguments.** On the JVM `x is Map<*,*>` and a subsequent
   `x as Map<*,*>` erase to a raw `Map`, so a `Dictionary<int,int>` passes trivially. On the CLR the star projection
   erases to `Map<Any?,Any?>` = the generic `IDictionary<object,object>`, which a `Dictionary<int,int>` does **not**
@@ -753,8 +753,9 @@ and string hashes remain CLR-native. Collection contents are read on each call, 
 Consequently, the same native `List<int>` can have a structural hash through Kotlin `hashCode()` while C#
 `Object.GetHashCode()` still returns its native identity hash.
 
-Kotlin `HashMap`, `LinkedHashMap`, `HashSet` and map/set factories install a native `IEqualityComparer` that
-uses Kotlin equality and hashing. This also governs lookup from C# and the container's `Comparer` property;
+Kotlin `HashMap` and `LinkedHashMap` use private non-null hash keys that retain Kotlin equality and hashing,
+including the null key. `HashSet`, set factories and explicit native map copies install a native `IEqualityComparer`
+using that same relation. This also governs lookup from C# and native copies' `Comparer` property;
 for example, `hashSetOf(0.0, -0.0).size` is `2`. Explicit projected CLR constructors retain their native default
 or explicitly selected comparer, which may define a different relation from Kotlin equality. Receiving a
 Kotlin-created container does not rewrite ordinary CLR object hashing or change its physical container type.
@@ -911,8 +912,8 @@ Classifier tests and casts still check the dictionary classifier; an opaque slot
 Consequences and remaining implementation limitations:
 
 - **A Kotlin `Map` value slot surfaces to C# as `object`**, with Kotlin metadata restoring `Map<K,V>` for Kotlin
-  consumers. Concrete dictionary classes and exact native dictionary declarations remain reified. `emptyMap()` returns a fresh
-  Dictionary-backed map.
+  consumers. Concrete map classes and exact native dictionary declarations remain reified. `emptyMap()` returns a fresh
+  Kotlin `LinkedHashMap`.
 - **`Map.get` is null-on-missing** (Kotlin semantics), synthesized as `ContainsKey` + `get_Item` in
   `kotlin.collections.ClrMapDefaults` (the generic CLR indexer throws); `put`/`remove` return the previous value.
   Authored implementations dispatch to their original methods; native dictionary slots translate these conventions
@@ -932,7 +933,7 @@ Consequences and remaining implementation limitations:
   BCL List. Entry VALUES are live (`entry.value`/`setValue` read/write through the backing map), but a key
   added/removed after taking the view is not reflected in it. `MutableMap.keys` is a live identity-bearing Kotlin view:
   remove/clear write through and add is unsupported. `MutableMap.values` is also a live Kotlin collection, including
-  when obtained from the `HashMap`/`LinkedHashMap` aliases: removing a value, bulk removal/retention and iterator
+  when obtained from a native dictionary: removing a value, bulk removal/retention and iterator
   removal update the same backing dictionary; adding is unsupported. Its iterators snapshot keys and read current
   values. These Kotlin views do not replace the native `Values` property when directly calling a projected CLR API.
 - **`Map.iterator()` and `MutableMap.iterator()` retain their Kotlin-selected declarations**. The frontend declaration identity selects distinct,
@@ -957,14 +958,36 @@ Kotlin CONTRACTS insertion-order iteration for `LinkedHashMap`/`LinkedHashSet`, 
 `Dictionary<K,V>`/`HashSet<E>` broke this: those preserve insertion order only INCIDENTALLY and lose it after a
 removal (no guarantee). DotKt binds them to insertion-ordered containers instead (#169):
 
-- **`LinkedHashMap<K,V>` is `@ClrTypeAlias` → `System.Collections.Generic.OrderedDictionary<K,V>`** (.NET 9+), which
-  keeps insertion order across removals and exposes the same non-generic `IDictionary`/`ICollection` facades and
-  intrinsic members (`Count`/`ContainsKey`/`ContainsValue`/indexer/`Remove`/`Clear`/`Keys`/`Values`) the
-  `ClrMapDefaults` helpers rely on — a transparent swap for all of §5c's map behavior, now ordered.
+- **`HashMap<K,V>` and `LinkedHashMap<K,V>` are Kotlin-owned CLR classes**, not concrete BCL dictionary aliases.
+  Both accept null keys and values. Their native hash index uses private non-null keys; public iteration and every
+  native dictionary face expose the original Kotlin keys. `LinkedHashMap` preserves insertion order across removals;
+  replacing a key preserves its position and original key object, and removing/reinserting appends it.
+  Keys, values and entries are live views, including through read-only Kotlin views. Entry mutation and iterator
+  removal update the same map. `HashMap` does not contract an iteration order.
+  Both implement generic `IDictionary<K,V>`, `IReadOnlyDictionary<K,V>` and non-generic `IDictionary`/`ICollection`.
+  Native indexers retain CLR missing-key exceptions, `TryGetValue` and `Add` retain their native contracts, while
+  Kotlin lookup and mutation retain Kotlin return conventions. Explicit projected BCL constructors are unchanged.
 - **`LinkedHashSet<E>` is a pure-Kotlin `MutableSet`** backed by that `LinkedHashMap` (exactly as Kotlin/JVM backs it
   with a `LinkedHashMap`), since .NET has no ordered GENERIC set. It gets the `CollectionBclSlotSynthesis` `ICollection`
   slots + the reverse `GetEnumerator` bridge, so it flows through `Set`/`MutableSet` slots like any BCL set.
-- **Plain `HashMap`/`HashSet` stay UNORDERED** (`Dictionary`/`HashSet`) — Kotlin contracts no order for them.
+- **Plain `HashMap`/`HashSet` stay UNORDERED** — Kotlin contracts no order for them.
+
+Kotlin-owned map entry, key and value iterators are live and fail fast after structural mutation with
+`ConcurrentModificationException`; iterator-owned removal remains supported. Native dictionary enumerators and
+native key/value enumerators translate that failure to CLR `InvalidOperationException`. This does not change the
+remaining Kotlin snapshot views over native BCL maps described in §5c.
+
+The concrete CLR identity change means a Kotlin-created map can no longer be cast to BCL `Dictionary` or
+`OrderedDictionary`, and C# consumers of concrete Kotlin map return types see the Kotlin-owned class.
+Use `map.toClrDictionary()` or `map.toClrOrderedDictionary()` when a native API requires those concrete classes.
+These extensions return the actual projected native type, so `NativeApi.Use(map.toClrDictionary())` needs no cast
+or explicit helper type arguments. Nullable-declared key types are accepted when the actual keys are non-null.
+Each call makes an independent shallow copy: key/value objects are shared, but additions, removals and replacements
+are not. The ordered copy preserves source iteration order. Both use Kotlin key equality/hash by default (including
+distinct positive and negative floating zero), reject an encountered null key with `IllegalArgumentException`, never
+filter keys, and never return a partial copy. Conversion does not change native dictionaries received from CLR APIs.
+The existing §9c-bis nullable-generic limitation remains: `Int?` values use `object` generic storage, not CLR
+`Nullable<int>`, so this conversion cannot supply a native `Dictionary<string, int?>` parameter.
 
 ## 5c-quater. Mutable iterator and collection-only members dispatch through compiler-owned slot interfaces
 
@@ -1641,13 +1664,13 @@ nowhere to put — a rare shape, since a receiver and an argument normally each 
 
 **A parameter the CLR mapping maps AWAY is one of those readerless values**, and the rule is the same one: keep
 discarding the value, never the evaluation. `HashSet(initialCapacity, loadFactor)` is mapped onto the capacity-only
-BCL constructor because `System.Collections.Generic.HashSet<T>` has no load-factor concept (likewise `HashMap` onto
-`Dictionary` and `LinkedHashMap` onto `OrderedDictionary`), so the load factor's slot disappears — but
+BCL constructor because `System.Collections.Generic.HashSet<T>` has no load-factor concept, so the load factor's slot disappears — but
 `HashSet<Int>(cap(), computeLoadFactor())` still calls `computeLoadFactor()`, still calls it after `cap()`, and still
 propagates what it throws. Because the mapped-away argument is expressed as a plan binding nothing reads, the table
 above decides it: the `HashSet(16, 0.75f)` literal idiom is dropped and costs nothing. Ordering is preserved where it
 is observable, not textually — a capacity that is a literal stays in its slot and is therefore pushed after the load
 factor's evaluation, which no program can tell apart.
+Kotlin-owned `HashMap` and `LinkedHashMap` constructors retain both arguments and their evaluation order.
 
 **An `object` qualifier splits on whether this backend gives it an instance**, and the split follows the same rule:
 

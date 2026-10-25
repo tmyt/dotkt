@@ -46,7 +46,7 @@ static class KotlinHashStorageLowering
         });
     }
 
-    internal static JsonObject Allocate(TypeNode type)
+    static JsonObject Allocate(TypeNode type)
     {
         return new JsonObject {
             ["k"] = "newClr", ["type"] = TypeJson.Write(type),
@@ -57,11 +57,6 @@ static class KotlinHashStorageLowering
 
     // Express literals using existing allocation/call nodes, with every constructor argument explicit.
     // No emitter-side knowledge of Kotlin hashing or a hidden constructor operand is necessary.
-    internal static JsonObject MapLiteral(TypeNode key, TypeNode value,
-        IEnumerable<(JsonNode Key, JsonNode Value)> entries) => Literal(
-            new TypeNode.Fqn("System.Collections.Generic.Dictionary", new[] { key, value }),
-            "set_Item", "void", entries.Select(entry => new[] { entry.Key, entry.Value }));
-
     internal static JsonObject SetLiteral(TypeNode element, IEnumerable<JsonNode> elements) => Literal(
         new TypeNode.Fqn("System.Collections.Generic.HashSet", new[] { element }),
         "Add", "System.Boolean", elements.Select(value => new[] { value }));

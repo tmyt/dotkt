@@ -221,6 +221,27 @@ private fun mapStructuralEquals(left: Any, leftView: StarProjectionType, right: 
             val key = invokeEquality(access.key, entry, equalityNoArguments)
             if (key === null) {
                 if (!starProjectionTypeAcceptsNull(keyType)) return false
+                // A nullable CLR key slot does not promise native null-key lookup.
+                // Inspect the selected public entry contract for this one value;
+                // authored Kotlin maps keep their own lookup/override semantics.
+                if (left !is KotlinMapDefaultSlots) {
+                    val own = equalityEnumerator(left, leftView)
+                    var found = false
+                    try {
+                        while (own.MoveNext()) {
+                            val candidate = own.current()!!
+                            val candidateAccess = equalityEntryAccess(candidate.starProjectionRuntimeType())
+                            if (invokeEquality(candidateAccess.key, candidate, equalityNoArguments) === null) {
+                                if (!kotlinEquals(invokeEquality(candidateAccess.value, candidate, equalityNoArguments),
+                                        invokeEquality(access.value, entry, equalityNoArguments))) return false
+                                found = true
+                                break
+                            }
+                        }
+                    } finally { disposeEnumerator(own) }
+                    if (!found) return false
+                    continue
+                }
             } else if (!keyType.isAssignableFrom(key.starProjectionRuntimeType())) return false
             val arguments = arrayOf(key)
             if (!(invokeEquality(contains, left, arguments) as Boolean)) return false

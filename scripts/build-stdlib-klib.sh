@@ -42,6 +42,7 @@ rm -rf "$OUT"; mkdir -p "$OUT"
 # ConstValueProviderImpl into the serializer instead.
 collect_stdlib_sources
 stdlib_fragment_args
+stdlib_reference_args
 
 info "frontend klib sources: ${#STDLIB_COMMON[@]}+${#STDLIB_SRC[@]}+${#STDLIB_UNSIGNED[@]} common + ${#STDLIB_CLR[@]} clr"
 DOTKT_BUILD_KLIB=1 run_stdlib_stage "$OUT/kotc.err" "$KOTC" \
@@ -50,6 +51,7 @@ DOTKT_BUILD_KLIB=1 run_stdlib_stage "$OUT/kotc.err" "$KOTC" \
 	-Xreturn-value-checker=check -XXLanguage:+UnnamedLocalVariables \
 	-Xcommon-sources="$STDLIB_COMMON_CSV" $STDLIB_OPTIN \
 	"${STDLIB_FRAGMENT_ARGS[@]}" \
+	"${STDLIB_REFERENCE_ARGS[@]}" \
 	-d "$KLIB"
 
 [[ -f "$KLIB" ]] || die "expected packed KLIB at $KLIB (see $OUT/kotc.err)"

@@ -239,7 +239,7 @@ sealed class Pipeline
                     PrimitiveOperatorLowering.Apply(root, refs);
                     FaithfulHintRecognition.Apply(root, refs, sourceTopLevelFns);
                 }
-            }), constructors: aliasConstructorDelegations);
+            }));
         // Kotlin `reified` is a declaration fact; the hidden nullable-instantiation Boolean is a distinct CLR ABI
         // demand. Derive the latter from nullable-sensitive operations and exact call/lift correspondences as one
         // module-wide fixed point before per-file materialization starts.

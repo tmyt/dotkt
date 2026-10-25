@@ -2,8 +2,8 @@
 
 package DotKt.Runtime.CompilerServices
 
-// Minimal CLR reflection vocabulary for the runtime implementation below. The stdlib frontend is compiled without
-// projected BCL KLIBs, so these follow the same @ClrTypeAlias pattern as the array runtime helpers. They are erased to
+// Minimal CLR reflection vocabulary for the runtime implementation below. These internal bindings follow the same
+// @ClrTypeAlias pattern as the array runtime helpers. They are erased to
 // the named BCL types and never become DotKt runtime classifiers of their own.
 @kotlin.clr.ClrTypeAlias("System.Reflection.Module")
 @PublishedApi

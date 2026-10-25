@@ -3,7 +3,7 @@
  * Use of this source code is governed by the Apache 2.0 license that can be found in the license/LICENSE.txt file.
  */
 
-// CLR actuals for the map factories/helpers. All BODY (pure Kotlin factories over the @ClrIntrinsic LinkedHashMap).
+// CLR actuals for map factories/helpers over the null-capable Kotlin LinkedHashMap implementation.
 
 @file:Suppress("ACTUAL_WITHOUT_EXPECT", "NO_ACTUAL_FOR_EXPECT", "UNCHECKED_CAST", "NOTHING_TO_INLINE", "NO_ACTUAL_CLASS_MEMBER_FOR_EXPECTED_CLASS")
 

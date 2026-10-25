@@ -494,26 +494,14 @@ static class MemberCallSubstitution
             : new TypeNode.Fqn(bcl, ownerFqn.Args);
 
         var args = node["args"] as JsonArray ?? new JsonArray();
-        var sourceSignature = (node["argTypes"] as JsonArray)?.Select(TypeJson.Read).ToArray();
-
-        // A Kotlin collection copy constructor can accept a projected source that the corresponding invariant CLR
-        // constructor cannot consume (Map<String,V> as Map<out Any,V>). The trusted constructor marker states that
-        // copy semantics explicitly. Allocate the selected alias through its parameterless CLR constructor and copy
-        // through the covariance-safe raw collection helper; never manufacture an invariant cast from the bound.
-        if (sourceSignature != null
-            && refs.CollectionCopyConstructorKind(
-                ownerFqn.Name, sourceSignature, ownerFqn.Args ?? Array.Empty<TypeNode>()) == "map"
-            && args.Count == 1 && typeNode.Args is { Length: 2 } mapTypeArguments)
-            return MapCopyConstruction(typeNode, mapTypeArguments, args[0]);
 
         // JVM (initialCapacity: Int, loadFactor: Float) collection ctor -> the capacity-only (int) BCL ctor. .NET's
-        // HashSet/Dictionary have NO (int, float) constructor (loadFactor is a JVM hashtable concept), so a
+        // HashSet has NO (int, float) constructor (loadFactor is a JVM hashtable concept), so a
         // `HashSet<Int>(16, 0.75f)` call would mis-resolve to the `(IEnumerable, IEqualityComparer)` overload and throw
         // at run. Map away the trailing loadFactor SLOT (and its declared argType) so the overload key becomes a bare
         // (int). Gated on a @ClrTypeAlias owner whose declared 2nd ctor param is a Float — the loadFactor idiom is
         // unique to the stdlib collection aliases (no BCL type reaching here has a genuine (int, float) ctor), and it
-        // covers every alias that declares one at once (HashSet, HashMap's Dictionary, LinkedHashMap's
-        // OrderedDictionary), which is what makes this a rule about mapped-away parameters rather than a HashSet case.
+        // covers every alias that declares one, rather than recognizing a particular collection name.
         //
         // The mapped-away argument still EVALUATES (#278). Kotlin evaluates every argument expression a call supplies
         // exactly once, in argument order, whether or not the emitted CLR shape has a slot for its VALUE — so losing
@@ -550,53 +538,6 @@ static class MemberCallSubstitution
         if (!viaAlias && node["memberSignature"] is JsonArray selectedSignature)
             lowered["memberSignature"] = selectedSignature.DeepClone();
         return plan == null ? lowered : MaterialiseMappedArguments(plan, lowered, typeNode);
-    }
-
-    internal static JsonNode MapCopyConstruction(TypeNode targetType, TypeNode[] typeArguments, JsonNode source,
-        Action<JsonObject> bindHelper = null, JsonNode sourcePreference = null)
-    {
-        var sourceName = CallEvalLowering.FreshBindingId();
-        var resultName = CallEvalLowering.FreshBindingId();
-        JsonObject Local(string name) => new() { ["k"] = "local", ["name"] = name };
-        var construction = new JsonObject
-        {
-            ["k"] = "valueBlock",
-            ["type"] = TypeJson.Write(targetType),
-            ["stmts"] = new JsonArray(
-                new JsonObject
-                {
-                    ["k"] = "var", ["name"] = sourceName,
-                    ["type"] = TypeJson.Write(new TypeNode.Fqn("kotlin.Any")),
-                    ["init"] = source.DeepClone(),
-                },
-                new JsonObject
-                {
-                    ["k"] = "var", ["name"] = resultName,
-                    ["type"] = TypeJson.Write(targetType),
-                    ["init"] = KotlinHashStorageLowering.Allocate(targetType),
-                },
-                new JsonObject
-                {
-                    ["k"] = "exprStmt",
-                    ["expr"] = new JsonObject
-                    {
-                        ["k"] = "callStatic",
-                        ["owner"] = TypeJson.Write(new TypeNode.Fqn("kotlin.collections.ClrMapDefaultsKt")),
-                        ["method"] = "clrMapPutAll",
-                        ["sig"] = MapHelperSig("clrMapPutAll"),
-                        ["typeArgs"] = new JsonArray(typeArguments.Select(TypeJson.Write).ToArray()),
-                        ["ret"] = TypeJson.Write(new TypeNode.Fqn("kotlin.Unit")),
-                        ["args"] = new JsonArray(Local(resultName), Local(sourceName),
-                            StaticMapPreference(new TypeNode.Fqn("kotlin.collections.MutableMap", typeArguments), null,
-                                CollectionOperationPhase.Source),
-                            sourcePreference?.DeepClone() ?? new JsonObject {
-                                ["k"] = "const", ["type"] = TypeJson.Write(new TypeNode.Nullable(ObjType)), ["value"] = null }),
-                    },
-                }),
-            ["result"] = Local(resultName),
-        };
-        bindHelper?.Invoke((JsonObject)construction["stmts"][2]["expr"]);
-        return construction;
     }
 
     /// Re-express the arguments of a call whose CLR shape KEEPS only the leading `keep` of them as a call-evaluation
@@ -729,9 +670,8 @@ static class MemberCallSubstitution
     }
 
     // A `callStatic owner=null` to a @ClrCollectionFactory/@ClrArrayFactory top-level fun -> its construction node, or
-    // null when the call is not marked (or its map entries cannot be decomposed -> left as a plain call). The element/key/value
-    // Collection TYPES come from the call's `typeArgs` (the canonical source for empty/single-element factories and
-    // a map factory's [K,V]); an array factory additionally prefers its instantiated result stamp, which states the allocation
+    // null when the selected factory retains its ordinary implementation. Collection element TYPES come from the call's
+    // `typeArgs`; an array factory additionally prefers its instantiated result stamp, which states the allocation
     // element even when a spread input is narrower. Collection elements come from a declared literal vararg pack,
     // a non-vararg element, or an empty argument vector; forwarded collection packs retain the ordinary call.
     // Array factories additionally handle forwarded arrays and spreadConcat directly.
@@ -781,22 +721,9 @@ static class MemberCallSubstitution
             }
             if (collKind == "map")
             {
-                var kt = RepresentationArgument(0, NullableRepresentationFrame.Role.Ordinary);
-                var vt = RepresentationArgument(1, NullableRepresentationFrame.Role.Ordinary);
-                if (kt == null || vt == null) return null;                       // can't reconstruct K,V -> plain call
-                var entries = new List<(JsonNode Key, JsonNode Value)>();
-                // The selected declaration distinguishes a vararg Pair pack from a single Pair.
-                // Decompose only inline Pair constructions or the selected Pair-producing infix call. An opaque Pair
-                // value cannot be split from its source shape, so retain that exact factory's ordinary body instead.
-                foreach (var el in factoryElements)
-                {
-                    if (el is JsonObject eo && PairKV(eo) is JsonArray pa && pa.Count == 2)
-                        entries.Add((pa[0].DeepClone(), pa[1].DeepClone()));
-                    else
-                        return null;
-                }
-                return CarryFactoryStaticType(node,
-                    KotlinHashStorageLowering.MapLiteral(TypeJson.Read(kt), TypeJson.Read(vt), entries));
+                // Map bodies own their null-capable storage and concrete result
+                // classifier. A native dictionary literal cannot express that contract.
+                return null;
             }
             var elemT = RepresentationArgument(0, NullableRepresentationFrame.Role.Ordinary);
             if (elemT == null) return null;                                     // can't reconstruct elem -> plain call
@@ -921,21 +848,6 @@ static class MemberCallSubstitution
     // run, so they apply the rule themselves rather than inheriting it from a sweep that has already gone by.
     static TypeNode CanonicalArrayElem(TypeNode elem)
         => elem == null ? null : NullableGenericErasure.EraseArgument(elem, _isValue);
-
-    // An INLINE Pair construction's two operands (key, value), or null if `el` is not one. Two shapes: a `new
-    // kotlin.Pair(k,v)` literal, or a `callStatic .to(k,v)` — the `a to b` idiom whose stdlib body is `Pair(this,
-    // that)` (so its two args ARE the operands). By the time this runs the `to` call has been owner-attributed to its
-    // file class (bottom-up transform), so match on method="to" + a `kotlin.Pair` return, not on owner=null.
-    static JsonArray PairKV(JsonObject el)
-    {
-        var k = (el["k"] as JsonValue)?.GetValue<string>();
-        if (k == "new" && TypeJson.OwnerName(el["type"]) == "kotlin.Pair" && el["args"] is JsonArray na && na.Count == 2)
-            return na;
-        if (k == "callStatic" && (el["method"] as JsonValue)?.GetValue<string>() == "to"
-            && TypeJson.OwnerName(el["ret"]) == "kotlin.Pair" && el["args"] is JsonArray ta && ta.Count == 2)
-            return ta;
-        return null;
-    }
 
     // The i-th call type argument (a structured Type node), or null when absent. The canonical element/key/value source.
     static JsonNode TypeArgAt(JsonArray typeArgs, int i) => typeArgs != null && i < typeArgs.Count ? typeArgs[i] : null;

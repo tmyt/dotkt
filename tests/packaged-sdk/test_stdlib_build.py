@@ -6,6 +6,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+import time
 import unittest
 
 
@@ -22,6 +23,7 @@ COMPILER = r'''#!/usr/bin/env python3
 import os
 from pathlib import Path
 import sys
+import time
 
 args = sys.argv[1:]
 if Path(sys.argv[0]).name == "kotc":
@@ -36,6 +38,9 @@ elif args[0] in ("build", "pack"):
     with open(os.environ["TRACE"], "a") as trace:
         trace.write(args[0] + "\n")
     sys.exit(0)
+elif Path(args[0]).stem == "dll2klib":
+    stage, kind = "dll2klib", "refs"
+    output = Path(args[args.index("--out") + 1]) / "Framework.klib"
 else:
     stage = Path(args[0]).stem
     output = Path(args[1])
@@ -46,9 +51,22 @@ with open(os.environ["TRACE"], "a") as trace:
     trace.write(name + "\n")
 output.parent.mkdir(parents=True, exist_ok=True)
 output.write_text("partial output\n")
+if stage == "dll2klib" and os.environ.get("PROJECTION_STARTED"):
+    sentinel = output.parent / ("owned-" + str(os.getpid()))
+    sentinel.write_text("this invocation owns its generation\n")
+    Path(os.environ["PROJECTION_STARTED"]).write_text(str(sentinel))
+    deadline = time.monotonic() + 20
+    while not Path(os.environ["PROJECTION_RELEASE"]).exists():
+        if time.monotonic() >= deadline:
+            sys.exit("projection release timed out")
+        time.sleep(0.01)
+    if not sentinel.exists():
+        sys.exit("concurrent builder deleted an active projection")
 if name == os.environ.get("FAIL_STAGE"):
     print("error: compiler failed after writing partial output", file=sys.stderr)
     sys.exit(41)
+if stage == "dll2klib":
+    output.write_text("complete projection\n")
 '''
 
 
@@ -108,7 +126,10 @@ class StdlibBuildTests(unittest.TestCase):
         self.assertIn(stage, calls)
         self.assertEqual(calls[-1], stage, calls)
         self.assertNotIn("pack", calls)
-        self.assertFalse(list((self.root / "build").rglob("*.toolstamp")))
+        # A completed reference-projection prerequisite may remain cached, but
+        # a failed stdlib artifact itself must never receive a success stamp.
+        for _, _, artifact in BUILDS.values():
+            self.assertFalse(Path(str(self.root / "build" / artifact) + ".toolstamp").exists())
         kind = stage.split(":")[0]
         output = self.root / "build" / BUILDS.get(kind, BUILDS["ref"])[2]
         if stage.endswith("ilemit") or kind == "klib":
@@ -123,6 +144,14 @@ class StdlibBuildTests(unittest.TestCase):
                 script = BUILDS[kind][0]
                 self.assert_failed_at(self.run_bash(f"bash scripts/{script}" +
                                       (" --emit" if kind != "klib" else ""), stage), stage)
+
+    def test_projection_failures_stop_all_stdlib_builders_without_stamp(self):
+        for script in ("build-stdlib.sh", *(build[0] for build in BUILDS.values())):
+            with self.subTest(script=script):
+                result = self.run_bash(f"bash scripts/{script}", "refs:dll2klib")
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(self.calls()[-1], "refs:dll2klib")
+                self.assertFalse(list((self.root / "build").rglob("*.toolstamp")))
 
     def test_partial_frontend_failures_stop_without_emit(self):
         for kind in ("ref", "rt"):
@@ -166,14 +195,58 @@ class StdlibBuildTests(unittest.TestCase):
         command = "bash scripts/pack-nuget.sh"
         result = self.run_bash(command)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual([c for c in self.calls() if ":" in c], list(STAGES))
+        self.assertEqual([c for c in self.calls() if ":" in c], ["refs:dll2klib", *STAGES])
         self.assertEqual(self.calls().count("pack"), 5)
-        self.assertEqual(len(list((self.root / "build").rglob("*.toolstamp"))), 3)
+        self.assertEqual(len(list((self.root / "build").rglob("*.toolstamp"))), 4)
         self.trace.unlink()
         result = self.run_bash(command)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertFalse([c for c in self.calls() if ":" in c], self.calls())
         self.assertEqual(self.calls().count("pack"), 5)
+
+    def test_framework_and_projector_changes_invalidate_the_dependent_artifacts(self):
+        command = "bash scripts/pack-nuget.sh"
+        for changed in ("refs/Framework.dll", "build/dll2klib-bin/dll2klib.dll"):
+            with self.subTest(changed=changed):
+                result = self.run_bash(command)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.trace.unlink()
+                self.write(changed, "changed input\n")
+                result = self.run_bash(command)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual([c for c in self.calls() if ":" in c], ["refs:dll2klib", *STAGES])
+                self.trace.unlink()
+
+    def test_parallel_frontend_and_reference_builds_do_not_delete_active_projection(self):
+        started = self.root / "projection-started"
+        release = self.root / "projection-release"
+        first = subprocess.Popen(["bash", "scripts/build-stdlib-klib.sh"], cwd=self.root,
+                                 env=dict(self.env, PROJECTION_STARTED=str(started), PROJECTION_RELEASE=str(release)),
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            deadline = time.monotonic() + 10
+            while not started.exists() and first.poll() is None and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertTrue(started.exists(), "first projector did not reach the synchronization point")
+            second = self.run_bash("bash scripts/build-stdlib-ref.sh --emit")
+            self.assertEqual(second.returncode, 0, second.stdout + second.stderr)
+        finally:
+            release.touch()
+            stdout, stderr = first.communicate(timeout=25)
+        self.assertEqual(first.returncode, 0, stdout + stderr)
+
+    def test_failed_new_catalog_cannot_poison_restored_successful_catalog(self):
+        command = 'source scripts/lib.sh; stdlib_reference_args; printf "%s\\n" "${STDLIB_REFERENCE_ARGS[1]}"'
+        first = self.run_bash(command)
+        self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+        self.assertEqual(Path(first.stdout.strip()).read_text(), "complete projection\n")
+        self.write("refs/Framework.dll", "changed reference\n")
+        failed = self.run_bash(command, "refs:dll2klib")
+        self.assertNotEqual(failed.returncode, 0)
+        self.write("refs/Framework.dll", "fixture reference\n")
+        restored = self.run_bash(command)
+        self.assertEqual(restored.returncode, 0, restored.stdout + restored.stderr)
+        self.assertEqual(Path(restored.stdout.strip()).read_text(), "complete projection\n")
 
 
 if __name__ == "__main__":

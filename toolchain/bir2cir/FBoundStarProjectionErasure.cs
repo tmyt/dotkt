@@ -544,8 +544,8 @@ static partial class FBoundStarProjectionErasure
     }
 
     // A declaration selected in another owner is an exact linkage fact, not a Kotlin value slot this pass owns.
-    // In particular an @ClrTypeAlias constructor's memberSignature may contain a source projection
-    // (LinkedHashMap(Map<out K, V>)); its physical descriptor is IDictionary<K, V>, never object.  Keep the
+    // In particular an @ClrTypeAlias constructor's memberSignature may contain a source projection;
+    // its physical descriptor retains the declared native interface, never object. Keep the
     // projection's bound while still lowering its aliases.  A Kotlin-local constructor is deliberately excluded:
     // its declaration is rewritten by this pass too, so its memberSignature must follow the same existential ABI.
     static bool IsBoundDeclarationType(JsonObject owner, string key, ReferenceMetadataIndex refs,
@@ -919,7 +919,7 @@ static partial class FBoundStarProjectionErasure
     // A CLR GenericParamConstraint cannot encode a use-site projection on an invariant physical alias. The exact
     // Kotlin bound was recorded above, so weaken only that constraint row to Object here. Direct declaration/value
     // slots are handled later by the ordinary existential rewrite, while a selected constructor/member descriptor
-    // remains on its exact reifiable face (for example OrderedDictionary(IDictionary<K,V>)).
+    // remains on its exact declared native face.
     static void EraseProjectedAliasConstraints(JsonNode node, ReferenceMetadataIndex refs)
     {
         switch (node)
@@ -1481,7 +1481,8 @@ static partial class FBoundStarProjectionErasure
         array["funcType"] = TypeJson.Write(physicalFunction);
         if (LocalDelegateTarget(array) is not JsonObject targetMethod) return;
         if (TypeJson.Read(targetMethod["ret"]) is TypeNode originalReturn)
-            targetMethod["retKotlinType"] ??= TypeNode.ToJson(originalReturn);
+            targetMethod["retKotlinType"] ??= Str(targetMethod["nullableGenericRet"])
+                ?? TypeNode.ToJson(originalReturn);
         targetMethod["ret"] = TypeJson.Write(physicalElement);
         targetMethod[NormalizedInnerFactoryReturnKey] = true;
         if (targetMethod["body"] is JsonArray body)
@@ -4463,7 +4464,10 @@ static partial class FBoundStarProjectionErasure
             && originalReturn != distinctReturns[0]
             && LogicalTypeMatchesPhysical(originalReturn, distinctReturns[0]))
         {
-            declaration["retKotlinType"] ??= TypeNode.ToJson(originalReturn);
+            // Carrier inference runs after nullable frame expansion. Its originalReturn is already physical;
+            // retain the declaration snapshot rather than exporting companion arguments as Kotlin parameters.
+            declaration["retKotlinType"] ??= Str(declaration["nullableGenericRet"])
+                ?? TypeNode.ToJson(originalReturn);
             declaration["ret"] = TypeJson.Write(distinctReturns[0]);
             declaration[NormalizedInnerFactoryReturnKey] = true;
         }

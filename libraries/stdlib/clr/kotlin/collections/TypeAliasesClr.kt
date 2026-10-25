@@ -3,8 +3,8 @@
  * Use of this source code is governed by the Apache 2.0 license that can be found in the license/LICENSE.txt file.
  */
 
-// CLR actuals for the JVM `typealias ArrayList/HashMap/LinkedHashMap/HashSet/LinkedHashSet` declarations.
-// Each collection class is `@ClrIntrinsic`-bound to its BCL counterpart (List / Dictionary / HashSet). Members with a
+// CLR collection aliases and platform implementations. Null-capable map actuals live in HashMapsClr.kt.
+// Native collection aliases bind to their BCL counterparts (List / HashSet). Members with a
 // clean 1:1 BCL equivalent carry `@ClrIntrinsic("<member>")` and keep a `TODO` body (pure metadata, never emitted).
 // Members with no 1:1 equivalent (containsAll/addAll/iterator/subList/keys/entries, plus the return-the-old-element
 // `set`/`removeAt` wrappers) carry a REAL Kotlin body (Rule 3): it must use only the intrinsic siblings.
@@ -172,131 +172,14 @@ private class ArrayListSubList<E>(
 }
 
 
-@SinceKotlin("1.1")
+// Native dictionary declarations retain their Kotlin map-only storage meaning for
+// classifier/equality bindings. Kotlin's null-capable implementations are actual
+// classes, not these native views; explicit projected constructors remain native.
 @kotlin.clr.ClrTypeAlias("System.Collections.Generic.Dictionary")
-public actual class HashMap<K, V> : MutableMap<K, V> {
-    public actual constructor()
-    public actual constructor(initialCapacity: Int)
-    public actual constructor(initialCapacity: Int, loadFactor: Float)
-    @kotlin.clr.ClrCollectionFactory("map")
-    public actual constructor(original: Map<out K, V>)
+internal abstract class ClrNativeHashMap<K, V> : MutableMap<K, V>
 
-    // From Map
-
-    @kotlin.clr.ClrIntrinsic("Count")
-    actual override val size: Int get() = TODO("clr binding should be implemented")
-    actual override fun isEmpty(): Boolean = size == 0
-    @kotlin.clr.ClrIntrinsic("ContainsKey")
-    actual override fun containsKey(key: K): Boolean = TODO("clr binding should be implemented")
-    @kotlin.clr.ClrIntrinsic("ContainsValue")
-    actual override fun containsValue(value: V): Boolean = TODO("clr binding should be implemented")
-    @kotlin.clr.ClrIntrinsic("get_Item")
-    private fun nativeGet(key: K): V = TODO("clr binding should be implemented")
-    actual override operator fun get(key: K): V? = if (containsKey(key)) nativeGet(key) else null
-
-    // From MutableMap
-
-    // NOTE (put/remove): never hold the previous value as a `V?` LOCAL — a nullable unconstrained-generic local
-    // erases to a bare `gp:V` slot and a null flowing into it is invalid IL / NRE for a value instantiation (the
-    // same landmine documented on ClrMapDefaults). Structure the bodies so only a KNOWN-PRESENT value (guarded by
-    // containsKey) ever sits in a V-typed local; the null flows directly into the object-erased return.
-    @kotlin.clr.ClrIntrinsic("set_Item")
-    private fun nativeSet(key: K, value: V): Unit = TODO("clr binding should be implemented")
-    actual override fun put(key: K, value: V): V? {
-        if (containsKey(key)) {
-            val old = nativeGet(key)
-            nativeSet(key, value)
-            return old
-        }
-        nativeSet(key, value)
-        return null
-    }
-    @kotlin.clr.ClrIntrinsic("Remove")
-    private fun nativeRemove(key: K): Boolean = TODO("clr binding should be implemented")
-    actual override fun remove(key: K): V? {
-        if (containsKey(key)) {
-            val old = nativeGet(key)
-            nativeRemove(key)
-            return old
-        }
-        return null
-    }
-    actual override fun putAll(from: Map<out K, V>) = clrMapPutAll<K, V>(this, from)
-    @kotlin.clr.ClrIntrinsic("Clear")
-    actual override fun clear() { TODO("clr binding should be implemented") }
-
-    // Keys and values use live Kotlin views; entries keep their live-value snapshot.
-    // Entries use the ClrMapDefaults identity-bearing snapshot of live entry objects.
-    actual override val keys: MutableSet<K> get() = clrMapMutableKeys<K, V>(this)
-    actual override val values: MutableCollection<V> get() = clrMapMutableValues<K, V>(this)
-    actual override val entries: MutableSet<MutableMap.MutableEntry<K, V>>
-        get() = clrMapMutableEntries(this)
-}
-
-
-// #169: LinkedHashMap CONTRACTS insertion-order iteration (and mapOf/mutableMapOf return LinkedHashMap, so they inherit
-// it). .NET's `Dictionary<K,V>` only preserves insertion order incidentally and LOSES it after a removal — a real
-// Kotlin-contract violation. `System.Collections.Generic.OrderedDictionary<K,V>` (.NET 9+) is an insertion-ordered
-// dictionary that keeps order across removals; it implements the SAME non-generic `IDictionary`/`ICollection` facades
-// the ClrMapDefaults helpers use (verified) and the SAME intrinsic members (Count/ContainsKey/ContainsValue/get_Item/
-// set_Item/Remove/Clear/Keys/Values) + ctors, so this is a pure alias swap — no member changes.
-@SinceKotlin("1.1")
 @kotlin.clr.ClrTypeAlias("System.Collections.Generic.OrderedDictionary")
-public actual class LinkedHashMap<K, V> : MutableMap<K, V> {
-    public actual constructor()
-    public actual constructor(initialCapacity: Int)
-    public actual constructor(initialCapacity: Int, loadFactor: Float)
-    @kotlin.clr.ClrCollectionFactory("map")
-    public actual constructor(original: Map<out K, V>)
-
-    // From Map
-
-    @kotlin.clr.ClrIntrinsic("Count")
-    actual override val size: Int get() = TODO("clr binding should be implemented")
-    actual override fun isEmpty(): Boolean = size == 0
-    @kotlin.clr.ClrIntrinsic("ContainsKey")
-    actual override fun containsKey(key: K): Boolean = TODO("clr binding should be implemented")
-    @kotlin.clr.ClrIntrinsic("ContainsValue")
-    actual override fun containsValue(value: V): Boolean = TODO("clr binding should be implemented")
-    @kotlin.clr.ClrIntrinsic("get_Item")
-    private fun nativeGet(key: K): V = TODO("clr binding should be implemented")
-    actual override fun get(key: K): V? = if (containsKey(key)) nativeGet(key) else null
-
-    // From MutableMap
-
-    // put/remove: the null-safe containsKey-guarded shape — see the NOTE on HashMap above.
-    @kotlin.clr.ClrIntrinsic("set_Item")
-    private fun nativeSet(key: K, value: V): Unit = TODO("clr binding should be implemented")
-    actual override fun put(key: K, value: V): V? {
-        if (containsKey(key)) {
-            val old = nativeGet(key)
-            nativeSet(key, value)
-            return old
-        }
-        nativeSet(key, value)
-        return null
-    }
-    @kotlin.clr.ClrIntrinsic("Remove")
-    private fun nativeRemove(key: K): Boolean = TODO("clr binding should be implemented")
-    actual override fun remove(key: K): V? {
-        if (containsKey(key)) {
-            val old = nativeGet(key)
-            nativeRemove(key)
-            return old
-        }
-        return null
-    }
-    actual override fun putAll(from: Map<out K, V>) = clrMapPutAll<K, V>(this, from)
-    @kotlin.clr.ClrIntrinsic("Clear")
-    actual override fun clear() { TODO("clr binding should be implemented") }
-
-    // OrderedDictionary preserves insertion order (incl. across removals). Keys use the live Kotlin identity view,
-    // values use the same backing-map view, and entries keep their live-value snapshot; all enumerate in map order.
-    actual override val keys: MutableSet<K> get() = clrMapMutableKeys<K, V>(this)
-    actual override val values: MutableCollection<V> get() = clrMapMutableValues<K, V>(this)
-    actual override val entries: MutableSet<MutableMap.MutableEntry<K, V>>
-        get() = clrMapMutableEntries(this)
-}
+internal abstract class ClrNativeOrderedMap<K, V> : MutableMap<K, V>
 
 
 @SinceKotlin("1.1")
@@ -372,8 +255,8 @@ public actual class LinkedHashSet<E> : MutableSet<E> {
     override fun equals(other: Any?): Boolean = DotKt.Runtime.CompilerServices.structuralEquals(this, other, 1)
     override fun hashCode(): Int = DotKt.Runtime.CompilerServices.structuralHash(this, 1)
 
-    // Non-null wrapper keys allow null elements without violating the native map's key contract. Values retain the
-    // original elements, in insertion order; wrappers use the same Kotlin equality/hash semantics as set operations.
+    // Values retain the original elements in insertion order; these private keys use
+    // the same Kotlin equality/hash semantics as set operations.
     private val map: LinkedHashMap<LinkedHashSetKey, E>
 
     public actual constructor() { map = LinkedHashMap() }

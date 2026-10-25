@@ -231,7 +231,7 @@ static class KotlinOverrideSlotBridge
             string identityName, string descriptorMember, string propertyAccessor,
             TypeNode[] slotParams, TypeNode slotRet, JsonObject impl, JsonArray slotTypeParams = null,
             bool unitValueReturn = false, TypeNode[] slotSignature = null, string referenceMember = null,
-            TypeNode semanticSlotReturn = null)
+            TypeNode semanticSlotReturn = null, JsonObject selectedLocalSlot = null)
         {
             if (supIsInterface && enumerationSlots?.Owns(descriptorSpec, descriptorMember,
                     (impl["typeParams"] as JsonArray)?.Count ?? 0, slotParams, slotRet, PhysicalSlotType, refs) == true)
@@ -386,7 +386,11 @@ static class KotlinOverrideSlotBridge
                     || cls.Kind == "class" && reimplementsInterface
                         && descriptorMember != Str(impl["name"])
                     || cls.Kind == "class" && overridesInheritedDefault);
-            var needsExplicitSlot = needsExplicitPropertySlot || needsExactInterfaceSlot;
+            // A local base can have adopted a CLR name while its selected source override kept its own name.
+            // Equal parameter/return types do not bind those differently named MethodDefs without a MethodImpl.
+            var needsExactLocalBaseSlot = !supIsInterface && !referencedSlot
+                && descriptorMember != Str(impl["name"]);
+            var needsExplicitSlot = needsExplicitPropertySlot || needsExactInterfaceSlot || needsExactLocalBaseSlot;
             var constructedSlotTypeParams = SubstituteOwnerTypeParameterConstraints(
                 slotTypeParams, semanticSpec.Args ?? Array.Empty<TypeNode>());
             if (phase == Phase.PhysicalBridges && !needsSignatureBridge && cls.Kind == "class"
@@ -427,7 +431,12 @@ static class KotlinOverrideSlotBridge
                         descriptor["params"][i] = TypeJson.Write(new TypeNode.Mod(false,
                             SupertypeGraph.SubstOwnerTvs(
                                 FunctionSignatureIdentity.DeclarationType(TypeJson.Read(discriminator)), ownArgs), slotParams[i]));
-                AddImplDescriptor(impl, "clrInterfaceImpls", descriptor);
+                AddImplDescriptor(impl, supIsInterface ? "clrInterfaceImpls" : "clrBaseImpls", descriptor);
+                // Late declaration-signature allocation can add modifiers to this authored body after an
+                // exact local slot was attached. Preserve the selected declaration ID so that pass can
+                // retarget the relation to an exact forwarding bridge, including compiler-generated slots.
+                if (selectedLocalSlot != null)
+                    DeclarationSignatureIdentity.RecordSelectedImplementationSlot(impl, selectedLocalSlot);
                 return;
             }
             // A CLR interface can implement a base-interface slot only through a FINAL MethodImpl body. Keep the
@@ -714,7 +723,8 @@ static class KotlinOverrideSlotBridge
                                     SupertypeGraph.SubstOwnerTvs(
                                         FunctionSignatureIdentity.DeclarationType(TypeJson.Read(discriminator)), supArgs), slotParams[index])
                                 : slotParams[index]).ToArray()
-                        : null);
+                        : null,
+                    selectedLocalSlot: descriptorOwner.Name == spec.Name ? slot : null);
             }
         }
 
@@ -1942,6 +1952,7 @@ static class KotlinOverrideSlotBridge
 
     internal static void SelfTest()
     {
+        ExactRenamedSlotSelfTest();
         var localSlotOwners = SupertypeGraph.Collect(new[] { JsonNode.Parse("""
             {"types":[{"name":"LocalSlot","kind":"interface","methods":[]}]}
             """) });
@@ -1949,6 +1960,21 @@ static class KotlinOverrideSlotBridge
             || IsNativeSlotOwner("ReferencedSlot", localSlotOwners, name => name == "ReferencedSlot")
             || !IsNativeSlotOwner("NativeSlot", localSlotOwners, _ => false))
             throw new InvalidOperationException("Physical-only slot capture admitted a selected Kotlin declaration");
+        var constructedOverride = JsonNode.Parse("""
+            {"name":"accept","vis":"public","params":[{"name":"value","type":{"t":"fqn","name":"ElementBox","args":[{"t":"tv","scope":"type","i":0}]}}],
+             "overrides":[{"owner":{"t":"fqn","name":"Base"},"member":"accept","kind":"method","declarationId":"selected-base"}]}
+            """).AsObject();
+        var constructedOwner = new Def { Name = "Derived", Kind = "class", Node = new JsonObject() };
+        var constructedView = new TypeNode.Fqn("ElementBox$star");
+        JsonObject SelectedConstructedOverride(IEnumerable<JsonObject> candidates, string identity = "selected-base") =>
+            Implementer(constructedOwner, new Dictionary<string, Def>(), candidates, "Base", "NativeAccept", "accept",
+                identity, null, null, 0, new TypeNode[] { constructedView }, null, Array.Empty<TypeNode>(),
+                new TypeNode[] { new TypeNode.Tv("type", 0) }, carrierSeam: (slot, body) =>
+                    slot == constructedView && body is TypeNode.Fqn { Name: "ElementBox", Args.Length: 1 });
+        if (SelectedConstructedOverride(new[] { constructedOverride }) != constructedOverride
+            || SelectedConstructedOverride(new[] { constructedOverride }, "other-base") != null
+            || SelectedConstructedOverride(new[] { constructedOverride, (JsonObject)constructedOverride.DeepClone() }) != null)
+            throw new InvalidOperationException("Renamed local slot lost its exact unchanged-source constructed override");
         var suspendSource = new JsonObject {
             [DeclarationIdentityBinding.Key] = "selected-suspend",
             [KotlinPropertyAccessors.SuspendSourceParamsKey] = new JsonArray(),
@@ -2044,6 +2070,49 @@ static class KotlinOverrideSlotBridge
             || !overrideBounds.OfType<JsonObject>().Select(row => row["index"].GetValue<int>()).SequenceEqual(new[] { 0, 1 }))
             throw new InvalidOperationException("Selected override failed to transfer its bound plan to the matching storage companion");
         Console.WriteLine("[override representation seam] self-test OK (permuted frame, distinct source, scope, nested rejection)");
+    }
+
+    static void ExactRenamedSlotSelfTest()
+    {
+        var refs = ReferenceMetadataIndex.Build(Array.Empty<string>());
+        foreach (var kind in new[] { "interface", "class" })
+        {
+            var root = JsonNode.Parse("""
+                {"types":[
+                  {"name":"Element","kind":"interface","methods":[]},
+                  {"name":"Base","kind":"class","abstract":true,"methods":[
+                    {"name":"NativeAccept","kotlinSourceMember":"accept","declarationId":"selected-base",
+                     "virtual":true,"abstract":true,"vis":"public","params":[{"name":"value","type":{"t":"fqn","name":"System.Object"}}],
+                     "ret":{"t":"fqn","name":"kotlin.Boolean"}}]},
+                  {"name":"Derived","kind":"class","methods":[
+                    {"name":"accept","declarationId":"selected-body","override":true,"virtual":true,"vis":"public",
+                     "params":[{"name":"value","type":{"t":"fqn","name":"System.Object"}}],"ret":{"t":"fqn","name":"kotlin.Boolean"},
+                     "body":[{"k":"return","value":{"k":"const","type":{"t":"fqn","name":"kotlin.Boolean"},"value":false}}],
+                     "overrides":[{"owner":{"t":"fqn","name":"Base"},"member":"accept","kind":"method","declarationId":"selected-base"}]}]}]}
+                """).AsObject();
+            root["types"][1]["kind"] = kind;
+            if (kind == "interface") root["types"][2]["interfaces"] = new JsonArray(TypeJson.Fqn("Base"));
+            else root["types"][2]["base"] = TypeJson.Fqn("Base");
+            ApplyAll(new[] { root }, _ => false, refs, new HashSet<string> { "Element", "Base", "Derived" },
+                refBuild: false, new GenericRepresentationPolicy(new Dictionary<string, string>()));
+            var descriptors = root["types"][2]["methods"][0][kind == "interface" ? "clrInterfaceImpls" : "clrBaseImpls"] as JsonArray;
+            if (descriptors is not { Count: 1 } || Str(descriptors[0]["member"]) != "NativeAccept"
+                || TypeJson.Read(descriptors[0]["params"][0]) != new TypeNode.Fqn("System.Object"))
+                throw new InvalidOperationException("Exact renamed " + kind + " slot lost its selected MethodImpl");
+            var implementation = root["types"][2]["methods"][0].AsObject();
+            var modified = TypeJson.Write(new TypeNode.Mod(false, new TypeNode.Fqn("SignatureMarker"),
+                new TypeNode.Fqn("System.Object")));
+            implementation["params"][0]["type"] = modified.DeepClone();
+            DeclarationSignatureIdentity.BindSelectedOverrides(new[] { root },
+                new Dictionary<string, JsonArray> { ["selected-body"] = new JsonArray(modified) }, refs, _ => false);
+            var relationKey = kind == "interface" ? "clrInterfaceImpls" : "clrBaseImpls";
+            var members = root["types"][2]["methods"].AsArray();
+            if (members.Count != 2 || implementation[relationKey]?.AsArray().Count != 0
+                || TypeJson.Read(members[1]["params"][0]["type"]) != new TypeNode.Fqn("System.Object")
+                || members[1][relationKey]?.AsArray().Count != 1
+                || Str(members[1][relationKey][0]["member"]) != "NativeAccept")
+                throw new InvalidOperationException("Late signature allocation retained a modified body on an exact " + kind + " slot");
+        }
     }
 
     static bool IsNullableValueSlot(TypeNode slot, TypeNode declared, ReferenceMetadataIndex refs,
@@ -2151,10 +2220,12 @@ static class KotlinOverrideSlotBridge
             // Suspend lowering has already split one declaration into hot/cold MethodDefs. An explicitly named DIM
             // gives the base projection its final explicit spelling, while the overriding projection keeps its own
             // physical name; `kotlinSourceMember` is the carried frontend identity that relates those two projections.
+            // An unchanged implementation still has that semantic name directly even when its local base was renamed.
             // The override closure below remains the independent proof that this candidate actually fills this slot.
             else if ((Str(m["name"]) != physicalName
                       && (slotDeclarationId == null
-                          || Str(m[DeclarationRename.SourceMemberKey]) != semanticName))
+                          || Str(m["name"]) != semanticName
+                              && Str(m[DeclarationRename.SourceMemberKey]) != semanticName))
                      || KotlinPropertyAccessors.TryIdentity(m, out _, out _)) continue;
             if (((m["typeParams"] as JsonArray)?.Count ?? 0) != methodArity) continue;
             // Generic constraints are part of a CLR MethodDef's implementation contract even when name, arity,

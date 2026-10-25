@@ -575,14 +575,6 @@ sealed partial class ReferenceMetadataIndex
         return true;
     }
 
-    public string CollectionCopyConstructorKind(
-        string owner, TypeNode[] signature, TypeNode[] ownerArgs)
-    {
-        return TryAliasConstructorAdapter(owner, signature, ownerArgs, out var adapter)
-            ? adapter.CollectionFactoryKind
-            : null;
-    }
-
     static bool SameTypeSequence(IReadOnlyList<TypeNode> left, IReadOnlyList<TypeNode> right)
     {
         if (left.Count != right.Count) return false;
@@ -598,7 +590,6 @@ sealed partial class ReferenceMetadataIndex
         ["statements"] = adapter.Statements.DeepClone(),
         ["arguments"] = adapter.Arguments.DeepClone(),
         ["terminalSignature"] = new JsonArray(adapter.TerminalSignature.Select(TypeJson.Write).ToArray()),
-        ["collectionFactoryKind"] = adapter.CollectionFactoryKind,
     }.ToJsonString();
     // Reference-owner hierarchy in BIR's dotted Kotlin vocabulary.  Calls retain their Kotlin
     // receiver owner in BIR; inherited CLR MemberRefs are selected later by bir2cir, so that pass
@@ -6217,14 +6208,11 @@ sealed partial class ReferenceMetadataIndex
             var arguments = payload["arguments"] as JsonArray
                 ?? throw new FormatException("constructor-adapter carrier has no arguments");
             var terminal = ReadCarrierTypes(payload, "terminalSignature");
-            var collectionFactoryKind = payload["collectionFactoryKind"] is JsonValue kindValue
-                ? kindValue.GetValue<string>()
-                : null;
             if (parameters.Length != signature.Length)
                 throw new FormatException("constructor-adapter parameter/signature lengths differ");
             return new AliasConstructorAdapter(
                 parameters, signature, (JsonArray)statements.DeepClone(),
-                (JsonArray)arguments.DeepClone(), terminal, collectionFactoryKind);
+                (JsonArray)arguments.DeepClone(), terminal);
         }
         catch (Exception ex) when (ex is not InvalidDataException)
         {
