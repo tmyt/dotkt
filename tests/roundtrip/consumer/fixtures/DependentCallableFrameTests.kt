@@ -17,6 +17,9 @@ import roundtrip.dependentnative.Outer as NativeOuter
 import roundtrip.dependentnative.Owner as NativeOwner
 import roundtrip.dependentnative.make as makeNativeOwner
 import roundtrip.dependentnative.oneHop as forwardNativeOwner
+import roundtrip.dependentnative.ForeignBoundBase
+import RoundtripDependentKotlinBound.Owner as ForeignKotlinBoundOwner
+import RoundtripDependentKotlinBound.Api as ForeignKotlinBoundApi
 
 private fun <Tag, T> constructImportedOwner(value: T): Int where T : Base<T>, T : Marker<Tag> =
     Owner<Tag, T>().bound(value, value)
@@ -31,7 +34,18 @@ private fun <Tag, T> constructImportedInnerOwner(): Int where T : VariantOuter<T
 private fun <Tag, T> constructImportedNativeOwner(value: T): Boolean where T : NativeMarker<Tag> =
     NativeOwner<Tag, T>(value).probe(value) && makeNativeOwner<Tag, T>(value, value) && forwardNativeOwner<Tag, T>(value)
 
+private class KotlinBoundOwner<Tag, T> where T : ForeignBoundBase<Tag> {
+    fun probe(): Boolean = ForeignKotlinBoundOwner<Tag, T>() != null && ForeignKotlinBoundApi.Probe<Tag, T>()
+}
+private fun <Tag, T> constructForeignKotlinBound(): Boolean where T : ForeignBoundBase<Tag> =
+    KotlinBoundOwner<Tag, T>().probe()
+
 class DependentCallableFrameTests {
+    @TestAttribute fun foreignClrConstraintsRetainTheirExactKotlinBoundHead() {
+        check(KotlinBoundOwner<String, ForeignBoundBase<String>>().probe())
+        check(constructForeignKotlinBound<String, ForeignBoundBase<String>>())
+    }
+
     @TestAttribute fun importedNativeProofRowsPreserveWitnessAndStorageFrames() {
         check(constructImportedNativeOwner<String, NativeItem<String>>(NativeItem<String>()))
         val inner = NativeOuter<Int>().Item()

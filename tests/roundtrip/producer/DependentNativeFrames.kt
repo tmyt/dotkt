@@ -1,6 +1,7 @@
 package roundtrip.dependentnative
 
 interface Marker<Tag> : RoundtripDependentNative.IMarker<Tag>
+open class ForeignBoundBase<Tag> : RoundtripDependentNative.Base()
 class Item<Tag> : Marker<Tag>
 class Outer<Tag> { inner class Item : Marker<Tag> }
 

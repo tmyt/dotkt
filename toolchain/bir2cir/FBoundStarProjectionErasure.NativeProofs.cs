@@ -96,8 +96,8 @@ static partial class FBoundStarProjectionErasure
                 IsTypeDefinition(declaration) ? KotlinSupertypesRecord.ReadNullableFrame(declaration)
                     : OwnerConstrainedMethodLowering.ReadMethodFrame(declaration));
 
-        Dictionary<int, List<TypeNode>> ReadRows(JsonArray parameters, bool nativeAncestors,
-            NullableRepresentationFrame frame = null)
+        internal Dictionary<int, List<TypeNode>> ReadRows(JsonArray parameters, bool nativeAncestors,
+            NullableRepresentationFrame frame = null, bool physicalDeclaration = false)
         {
             var result = new Dictionary<int, List<TypeNode>>();
             for (var index = 0; index < (parameters?.Count ?? 0); index++)
@@ -109,7 +109,7 @@ static partial class FBoundStarProjectionErasure
                     var bounds = constraints.Select(TypeJson.Read).OfType<TypeNode.Fqn>()
                         .SelectMany(bound => nativeAncestors
                             && OwnerConstrainedMethodLowering.HasConstructedDependency(bound, "type", index, frame)
-                            ? NativeAncestors(bound) : ExactNative(bound)
+                            ? NativeAncestors(bound) : (physicalDeclaration ? ExactPhysicalProof(bound) : ExactNative(bound))
                             ? new[] { NativeIdentity(bound) } : Enumerable.Empty<TypeNode.Fqn>()).Cast<TypeNode>().Distinct().ToList();
                     if (bounds.Count != 0) result[index] = bounds;
                 }
@@ -126,8 +126,16 @@ static partial class FBoundStarProjectionErasure
             return type != null;
         }
 
+        bool ExactPhysicalProof(TypeNode.Fqn bound) => !IsObjectish(bound) && !ContainsUseSiteProjection(bound)
+            && !references.IsExistentialPhysicalOwner(bound.Name) && ProofType(bound) != null;
+
+        // A physical GenericParamConstraint can name a DotKt TypeDef. Reading that exact metadata row must not
+        // reclassify the Kotlin declaration as a foreign value operation, which ResolveNetType deliberately refuses.
+        System.Type ProofType(TypeNode.Fqn bound) => references.ResolveForeignProjectionType(bound.Name, bound.Args)
+            ?? references.ResolveRefType(bound.Name, bound.Args?.Length ?? 0);
+
         TypeNode.Fqn NativeIdentity(TypeNode.Fqn bound) => new(
-            references.ResolveForeignProjectionType(bound.Name, bound.Args).FullName, bound.Args);
+            ProofType(bound).FullName, bound.Args);
 
         IEnumerable<TypeNode.Fqn> NativeAncestors(TypeNode.Fqn bound)
         {
@@ -169,7 +177,7 @@ static partial class FBoundStarProjectionErasure
             if (definitions.TryGetValue(owner, out var local)) return Rows(local);
             if (!foreignTypes.TryGetValue(owner, out var constraints))
                 foreignTypes[owner] = constraints = ReadRows(references.OwnerTypeParamDeclarations(owner), false,
-                    references.NullableTypeFrames.GetValueOrDefault(owner));
+                    references.NullableTypeFrames.GetValueOrDefault(owner), physicalDeclaration: true);
             return constraints;
         }
 
@@ -178,12 +186,41 @@ static partial class FBoundStarProjectionErasure
             if (identity == null) return new Dictionary<int, List<TypeNode>>();
             if (!foreignMethods.TryGetValue(identity, out var constraints))
                 foreignMethods[identity] = constraints = ReadRows(references.MethodTypeParamDeclarations(identity), false,
-                    references.NullableMethodFrame(identity));
+                    references.NullableMethodFrame(identity), physicalDeclaration: true);
             return constraints;
         }
 
         public IEnumerable<TypeNode> Bounds(JsonObject declaration, int index) =>
-            Rows(declaration).TryGetValue(index, out var constraints) ? constraints : Enumerable.Empty<TypeNode>();
+            Rows(declaration).TryGetValue(index, out var constraints)
+                ? constraints.Where(bound => !RetainedSourceProof(declaration, index, bound)
+                    && !(bound is TypeNode.Fqn named && ProofType(named)?.IsClass == true
+                        && constraints.OfType<TypeNode.Fqn>().Any(other => other != named
+                            && ProofType(other)?.IsClass == true
+                            && SupertypeGraph.Reaches(other, named, _sourceSupertypes, references))))
+                : Enumerable.Empty<TypeNode>();
+
+        bool RetainedSourceProof(JsonObject declaration, int index, TypeNode required)
+        {
+            if (required is not TypeNode.Fqn target || declaration["typeParams"]?[index] is not JsonObject parameter
+                || parameter["constraints"] is not JsonArray constraints) return false;
+            var typeDeclaration = IsTypeDefinition(declaration);
+            var frame = typeDeclaration ? KotlinSupertypesRecord.ReadNullableFrame(declaration)
+                : OwnerConstrainedMethodLowering.ReadMethodFrame(declaration);
+            foreach (var bound in constraints.Select(TypeJson.Read).OfType<TypeNode.Fqn>())
+            {
+                var ownsClassifier = definitions.TryGetValue(bound.Name, out var local) && IsSourceGeneric(local)
+                    || references.TryExistentialPhysicalOwner(bound.Name, out _);
+                if (ContainsUseSiteProjection(bound)
+                    || !typeDeclaration && ContainsOwnerTv(bound)
+                    || OwnerConstrainedMethodLowering.HasConstructedDependency(bound,
+                        typeDeclaration ? "type" : "method", index, frame) && (ownsClassifier || !typeDeclaration)) continue;
+                var alias = references.ResolveForeignProjectionType(bound.Name, bound.Args);
+                var existing = alias == null ? bound : new TypeNode.Fqn(alias.FullName,
+                    alias.IsGenericTypeDefinition ? bound.Args : null);
+                if (SupertypeGraph.Reaches(existing, target, _sourceSupertypes, references)) return true;
+            }
+            return false;
+        }
 
         public bool ExactTypeArgument(string owner, int index) => TypeRows(owner).ContainsKey(index);
 
@@ -211,9 +248,10 @@ static partial class FBoundStarProjectionErasure
             {"kind":"class","name":"Owner","typeParams":["Tag",
               {"name":"T","constraints":[{"t":"fqn","name":"Marker","args":[{"t":"tv","scope":"type","i":0}]}]},
               {"name":"Storage","constraints":[{"t":"fqn","name":"Marker","args":[{"t":"star"}]}]}]},
-            {"kind":"class","name":"SelfBase","typeParams":["T"],"base":{"t":"fqn","name":"System.Exception"}},
+            {"kind":"class","name":"SelfBase","typeParams":["T"],"base":{"t":"fqn","name":"System.IO.MemoryStream"}},
             {"kind":"class","name":"SelfOwner","typeParams":[
-              {"name":"Self","constraints":[{"t":"fqn","name":"SelfBase","args":[{"t":"tv","scope":"type","i":0}]}]}]}]}
+              {"name":"Self","constraints":[{"t":"fqn","name":"SelfBase","args":[{"t":"tv","scope":"type","i":0}]}]}]},
+            {"kind":"class","name":"System.IO.MemoryStream"}]}
           """).AsObject();
         var declaration = root["types"][1].AsObject();
         KotlinSupertypesRecord.Merge(declaration, new JsonObject {
@@ -231,8 +269,13 @@ static partial class FBoundStarProjectionErasure
             var definitions = _sourceSupertypes.ToDictionary(pair => pair.Key, pair => pair.Value.Node);
             var refs = ReferenceMetadataIndex.Build(new[] { typeof(object).Assembly.Location });
             var plan = new NativeProofPlan(roots, definitions, refs);
+            var physical = new JsonArray(new JsonObject { ["name"] = "T", ["constraints"] =
+                new JsonArray(TypeJson.Fqn("System.IO.MemoryStream")) });
             if (!plan.ExactTypeArgument("Owner", 1) || plan.ExactTypeArgument("Owner", 2)
                 || plan.ExactTypeArgument("SelfOwner", 0)
+                || plan.ReadRows(physical, false).Count != 0
+                || !plan.ReadRows(physical, false, physicalDeclaration: true)[0]
+                    .Contains(new TypeNode.Fqn("System.IO.MemoryStream"))
                 || !plan.Bounds(root["methods"][0].AsObject(), 1).Contains(new TypeNode.Fqn("System.IDisposable"))
                 || plan.Bounds(root["methods"][1].AsObject(), 1).Any()
                 || !JsonNode.DeepEquals(original, root))
