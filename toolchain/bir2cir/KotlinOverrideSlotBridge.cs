@@ -386,7 +386,11 @@ static class KotlinOverrideSlotBridge
                     || cls.Kind == "class" && reimplementsInterface
                         && descriptorMember != Str(impl["name"])
                     || cls.Kind == "class" && overridesInheritedDefault);
-            var needsExplicitSlot = needsExplicitPropertySlot || needsExactInterfaceSlot;
+            // A local base can have adopted a CLR name while its selected source override kept its own name.
+            // Equal parameter/return types do not bind those differently named MethodDefs without a MethodImpl.
+            var needsExactLocalBaseSlot = !supIsInterface && !referencedSlot
+                && descriptorMember != Str(impl["name"]);
+            var needsExplicitSlot = needsExplicitPropertySlot || needsExactInterfaceSlot || needsExactLocalBaseSlot;
             var constructedSlotTypeParams = SubstituteOwnerTypeParameterConstraints(
                 slotTypeParams, semanticSpec.Args ?? Array.Empty<TypeNode>());
             if (phase == Phase.PhysicalBridges && !needsSignatureBridge && cls.Kind == "class"
@@ -427,7 +431,7 @@ static class KotlinOverrideSlotBridge
                         descriptor["params"][i] = TypeJson.Write(new TypeNode.Mod(false,
                             SupertypeGraph.SubstOwnerTvs(
                                 FunctionSignatureIdentity.DeclarationType(TypeJson.Read(discriminator)), ownArgs), slotParams[i]));
-                AddImplDescriptor(impl, "clrInterfaceImpls", descriptor);
+                AddImplDescriptor(impl, supIsInterface ? "clrInterfaceImpls" : "clrBaseImpls", descriptor);
                 return;
             }
             // A CLR interface can implement a base-interface slot only through a FINAL MethodImpl body. Keep the
@@ -1942,6 +1946,7 @@ static class KotlinOverrideSlotBridge
 
     internal static void SelfTest()
     {
+        ExactRenamedSlotSelfTest();
         var localSlotOwners = SupertypeGraph.Collect(new[] { JsonNode.Parse("""
             {"types":[{"name":"LocalSlot","kind":"interface","methods":[]}]}
             """) });
@@ -2059,6 +2064,36 @@ static class KotlinOverrideSlotBridge
             || !overrideBounds.OfType<JsonObject>().Select(row => row["index"].GetValue<int>()).SequenceEqual(new[] { 0, 1 }))
             throw new InvalidOperationException("Selected override failed to transfer its bound plan to the matching storage companion");
         Console.WriteLine("[override representation seam] self-test OK (permuted frame, distinct source, scope, nested rejection)");
+    }
+
+    static void ExactRenamedSlotSelfTest()
+    {
+        var refs = ReferenceMetadataIndex.Build(Array.Empty<string>());
+        foreach (var kind in new[] { "interface", "class" })
+        {
+            var root = JsonNode.Parse("""
+                {"types":[
+                  {"name":"Element","kind":"interface","methods":[]},
+                  {"name":"Base","kind":"class","abstract":true,"methods":[
+                    {"name":"NativeAccept","kotlinSourceMember":"accept","declarationId":"selected-base",
+                     "virtual":true,"abstract":true,"vis":"public","params":[{"name":"value","type":{"t":"fqn","name":"Element"}}],
+                     "ret":{"t":"fqn","name":"kotlin.Boolean"}}]},
+                  {"name":"Derived","kind":"class","methods":[
+                    {"name":"accept","declarationId":"selected-body","override":true,"virtual":true,"vis":"public",
+                     "params":[{"name":"value","type":{"t":"fqn","name":"Element"}}],"ret":{"t":"fqn","name":"kotlin.Boolean"},
+                     "body":[{"k":"return","value":{"k":"const","type":{"t":"fqn","name":"kotlin.Boolean"},"value":false}}],
+                     "overrides":[{"owner":{"t":"fqn","name":"Base"},"member":"accept","kind":"method","declarationId":"selected-base"}]}]}]}
+                """).AsObject();
+            root["types"][1]["kind"] = kind;
+            if (kind == "interface") root["types"][2]["interfaces"] = new JsonArray(TypeJson.Fqn("Base"));
+            else root["types"][2]["base"] = TypeJson.Fqn("Base");
+            ApplyAll(new[] { root }, _ => false, refs, new HashSet<string> { "Element", "Base", "Derived" },
+                refBuild: false, new GenericRepresentationPolicy(new Dictionary<string, string>()));
+            var descriptors = root["types"][2]["methods"][0][kind == "interface" ? "clrInterfaceImpls" : "clrBaseImpls"] as JsonArray;
+            if (descriptors is not { Count: 1 } || Str(descriptors[0]["member"]) != "NativeAccept"
+                || TypeJson.Read(descriptors[0]["params"][0]) != new TypeNode.Fqn("Element"))
+                throw new InvalidOperationException("Exact renamed " + kind + " slot lost its selected MethodImpl");
+        }
     }
 
     static bool IsNullableValueSlot(TypeNode slot, TypeNode declared, ReferenceMetadataIndex refs,

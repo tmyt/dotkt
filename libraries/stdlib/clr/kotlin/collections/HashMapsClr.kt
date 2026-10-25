@@ -85,22 +85,24 @@ private class ClrMapEntry<K, V>(private val node: ClrMapNode) : MutableMap.Mutab
     override fun toString(): String = key.toString() + "=" + value.toString()
 }
 
-private class ClrMapEntries<K, V>(private val core: ClrMapCore) : AbstractMutableSet<MutableMap.MutableEntry<K, V>>() {
+// Query through Map.Entry: a read-only Map view can supply an entry that is not mutable.
+// Every produced entry is mutable and add is unsupported, so the owning map's mutable view cast is safe.
+private class ClrMapEntries<K, V>(private val core: ClrMapCore) : AbstractMutableSet<Map.Entry<K, V>>() {
     override val size: Int get() = core.size
-    override fun add(element: MutableMap.MutableEntry<K, V>): Boolean =
+    override fun add(element: Map.Entry<K, V>): Boolean =
         throw UnsupportedOperationException("Add is not supported on entries")
-    override fun contains(element: MutableMap.MutableEntry<K, V>): Boolean {
+    override fun contains(element: Map.Entry<K, V>): Boolean {
         val node = core.find(element.key) ?: return false
         return kotlinEquals(node.value, element.value)
     }
-    override fun remove(element: MutableMap.MutableEntry<K, V>): Boolean {
+    override fun remove(element: Map.Entry<K, V>): Boolean {
         val node = core.find(element.key) ?: return false
         if (!kotlinEquals(node.value, element.value)) return false
         core.remove(node)
         return true
     }
     override fun clear() = core.clear()
-    override fun iterator(): MutableIterator<MutableMap.MutableEntry<K, V>> = ClrMapEntryIterator(core)
+    override fun iterator(): MutableIterator<Map.Entry<K, V>> = ClrMapEntryIterator<K, V>(core)
 }
 
 private class ClrMapEntryIterator<K, V>(private val core: ClrMapCore) : MutableIterator<MutableMap.MutableEntry<K, V>> {
@@ -161,7 +163,7 @@ public actual class HashMap<K, V> private constructor(private val core: ClrMapCo
     actual override fun putAll(from: Map<out K, V>) { for ((key, value) in from) put(key, value) }
     actual override val keys: MutableSet<K> get() = super.keys
     actual override val values: MutableCollection<V> get() = super.values
-    actual override val entries: MutableSet<MutableMap.MutableEntry<K, V>> = ClrMapEntries(core)
+    actual override val entries: MutableSet<MutableMap.MutableEntry<K, V>> = ClrMapEntries<K, V>(core) as MutableSet<MutableMap.MutableEntry<K, V>>
     override fun toString(): String = clrMapString(this, core)
 }
 
@@ -182,6 +184,6 @@ public actual class LinkedHashMap<K, V> private constructor(private val core: Cl
     actual override fun putAll(from: Map<out K, V>) { for ((key, value) in from) put(key, value) }
     actual override val keys: MutableSet<K> get() = super.keys
     actual override val values: MutableCollection<V> get() = super.values
-    actual override val entries: MutableSet<MutableMap.MutableEntry<K, V>> = ClrMapEntries(core)
+    actual override val entries: MutableSet<MutableMap.MutableEntry<K, V>> = ClrMapEntries<K, V>(core) as MutableSet<MutableMap.MutableEntry<K, V>>
     override fun toString(): String = clrMapString(this, core)
 }

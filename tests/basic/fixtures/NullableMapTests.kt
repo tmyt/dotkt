@@ -5,6 +5,11 @@ private class CollidingMapKey(val id: Int) {
     override fun hashCode(): Int = 0
 }
 
+private class ReadonlyMapEntry(override val key: String?, override val value: String?) : Map.Entry<String?, String?> {
+    override fun equals(other: Any?): Boolean = other is Map.Entry<*, *> && key == other.key && value == other.value
+    override fun hashCode(): Int = (key?.hashCode() ?: 0) xor (value?.hashCode() ?: 0)
+}
+
 private fun exerciseNullableMap(map: MutableMap<String?, Int?>) {
     map.clear()
     val keys = map.keys
@@ -54,6 +59,22 @@ class NullableMapTests {
         val erased: Any = mutableMapOf<String?, Int>(null to 9)
         check((erased as Map<*, *>)[null] == 9)
         check(emptyMap<String?, Int>()[null] == null)
+        for (map in listOf<MutableMap<String?, String?>>(HashMap(), LinkedHashMap())) {
+            map[null] = "null"
+            map["key"] = null
+            val read: Map<String?, String?> = map
+            val nullEntry: Map.Entry<String?, String?> = ReadonlyMapEntry(null, "null")
+            val valueEntry: Map.Entry<String?, String?> = ReadonlyMapEntry("key", null)
+            check(read.entries.contains(nullEntry) && map.entries.contains(valueEntry))
+            check(read.entries.containsAll(listOf(nullEntry, valueEntry)))
+            val wrong: Map.Entry<String?, String?> = ReadonlyMapEntry(null, "wrong")
+            check(!read.entries.contains(wrong))
+            check(!map.entries.remove(wrong))
+            check(map.entries.remove(nullEntry) && !map.containsKey(null))
+            check(map.entries.remove(valueEntry) && map.isEmpty())
+            map[null] = "again"
+            check(map.entries.single().setValue(null) == "again" && map[null] == null)
+        }
     }
 
     @TestAttribute
@@ -76,6 +97,12 @@ class NullableMapTests {
         check(map.toString() == "{b=null, c=4, null=5}")
         check(map == linkedMapOf("b" to null, "c" to 4, null to 5))
         check(map.hashCode() == linkedMapOf("b" to null, "c" to 4, null to 5).hashCode())
+        val iterator = map.keys.iterator()
+        iterator.next()
+        map["added"] = 6
+        var invalidated = false
+        try { iterator.hasNext() } catch (error: ConcurrentModificationException) { invalidated = true }
+        check(invalidated)
     }
 
     @TestAttribute

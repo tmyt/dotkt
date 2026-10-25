@@ -8,6 +8,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 - Support nullable keys in Kotlin hash maps and ordered maps, including live views and CLR dictionary interfaces.
   Add `toClrDictionary()` and `toClrOrderedDictionary()` for explicit independent shallow copies when a CLR API
   requires a concrete native dictionary; Kotlin map implementations no longer have concrete BCL dictionary identity.
+  Their live iterators fail fast on structural mutation; native dictionary enumerators report CLR
+  `InvalidOperationException` while Kotlin iterators retain `ConcurrentModificationException`.
 
 - Project dependent Kotlin generic bounds consistently when constructing generic classes, including
   cross-DLL callers, erased owner forwarding and variant or captured-inner actual arguments (#1161).

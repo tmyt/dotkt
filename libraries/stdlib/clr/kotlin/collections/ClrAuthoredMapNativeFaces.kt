@@ -26,10 +26,12 @@ private interface ClrAuthoredDictionaryEnumeratorFace : ClrAuthoredRawEnumerator
 private class ClrAuthoredDictionaryEnumerator(source: Any) : ClrAuthoredDictionaryEnumeratorFace {
     private val iterator = clrProjectedIterator<Map.Entry<*, *>>((source as KotlinMapDefaultSlots).dotktMapEntries())
     private var currentEntry: Map.Entry<*, *>? = null
-    override fun MoveNext(): Boolean {
-        if (!iterator.hasNext()) { currentEntry = null; return false }
-        currentEntry = iterator.next()
-        return true
+    override fun MoveNext(): Boolean = try {
+        if (!iterator.hasNext()) { currentEntry = null; false }
+        else { currentEntry = iterator.next(); true }
+    } catch (error: ConcurrentModificationException) {
+        currentEntry = null
+        throw IllegalStateException(error.message, error)
     }
     override fun Reset(): Unit = throw UnsupportedOperationException("Reset is not supported")
     private fun selected(): Map.Entry<*, *> = currentEntry ?: throw IllegalStateException("Enumerator has no current entry")
@@ -54,10 +56,14 @@ private class ClrAuthoredRawEnumerator(source: Any) : ClrAuthoredRawEnumeratorFa
     private val iterator = clrProjectedIterator<Any?>(source)
     private var current: Any? = null
     private var valid = false
-    override fun MoveNext(): Boolean {
+    override fun MoveNext(): Boolean = try {
         valid = iterator.hasNext()
         current = if (valid) iterator.next() else null
-        return valid
+        valid
+    } catch (error: ConcurrentModificationException) {
+        valid = false
+        current = null
+        throw IllegalStateException(error.message, error)
     }
     override fun Reset(): Unit = throw UnsupportedOperationException("Reset is not supported")
     override val Current: Any? get() {

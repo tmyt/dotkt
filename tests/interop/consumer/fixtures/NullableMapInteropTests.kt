@@ -2,6 +2,8 @@ import NUnit.Framework.TestAttribute
 import NullableMapInterop.NativeMaps
 
 private class CopySourceMap<K, V>(private val backing: Map<K, V>) : Map<K, V> by backing
+private fun <K, V> genericNativeCopy(source: Map<K, V>) = source.toClrDictionary()
+private fun <K, V> genericOrderedNativeCopy(source: Map<K, V>) = source.toClrOrderedDictionary()
 
 class NullableMapInteropTests {
     @TestAttribute
@@ -9,9 +11,16 @@ class NullableMapInteropTests {
         NativeMaps.VerifyFaces(linkedMapOf<String?, String?>(null to "null", "key" to null))
         NativeMaps.VerifyFaces(hashMapOf<String?, String?>(null to "null", "key" to null))
         NativeMaps.VerifyFaces(mutableMapOf<String?, String?>(null to "null", "key" to null))
+        NativeMaps.VerifyReadonlyFaces(CopySourceMap(mapOf<String?, String?>(null to "null", "key" to null)))
         val native = System.Collections.Generic.Dictionary<String, Int>()
         native["key"] = 1
         check(native.Count == 1 && native["key"] == 1)
+        val nativeView = (native as Any) as Map<String, Int>
+        val widenedHash = HashMap<Any, Int>(nativeView)
+        val widenedOrdered = LinkedHashMap<Any, Int>(nativeView)
+        check(widenedHash["key"] == 1 && widenedOrdered["key"] == 1)
+        native["key"] = 2
+        check(widenedHash["key"] == 1 && widenedOrdered["key"] == 1)
         val ordered = System.Collections.Generic.OrderedDictionary<String, Int>()
         ordered["a"] = 1
         ordered["b"] = 2
@@ -32,6 +41,8 @@ class NullableMapInteropTests {
         val source = linkedMapOf<String?, String?>("a" to "one", "b" to null)
         check(NativeMaps.Use(source.toClrDictionary()) == 2)
         check(NativeMaps.UseOrdered(source.toClrOrderedDictionary()) == 2)
+        check(NativeMaps.Use(genericNativeCopy(source)) == 2)
+        check(NativeMaps.UseOrdered(genericOrderedNativeCopy(source)) == 2)
         check(NativeMaps.Use(CopySourceMap(source).toClrDictionary()) == 2)
         check(NativeMaps.Use(emptyMap<String?, String>().toClrDictionary()) == 0)
         check(NativeMaps.UseNumbers(mapOf<Int?, String>(1 to "one").toClrDictionary()) == 1)

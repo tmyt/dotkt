@@ -33,7 +33,15 @@ public fun clrAuthoredMapCheckMutable(source: Any) { mutableMapSlots(source) }
 private class ClrAuthoredMapCollection<T>(private val source: Any) : AbstractCollection<T>() {
     override val size: Int get() = DotKt.Runtime.CompilerServices.projectedCollectionCountErased(source)
     override fun contains(element: T): Boolean = clrCollStorageContains(source as Collection<Any?>, element)
-    override fun iterator(): Iterator<T> = clrProjectedIterator(source)
+    override fun iterator(): Iterator<T> = ClrAuthoredMapCollectionIterator(source)
+}
+
+private class ClrAuthoredMapCollectionIterator<T>(source: Any) : Iterator<T> {
+    private val iterator = clrProjectedIterator<T>(source)
+    override fun hasNext(): Boolean = try { iterator.hasNext() }
+        catch (error: ConcurrentModificationException) { throw IllegalStateException(error.message, error) }
+    override fun next(): T = try { iterator.next() }
+        catch (error: ConcurrentModificationException) { throw IllegalStateException(error.message, error) }
 }
 
 /** Only native dictionary boundaries use this checked, live view; Kotlin getters return their original view. */
@@ -44,11 +52,12 @@ internal class ClrAuthoredMapPair<K, V>(key: K, value: V)
 
 private class ClrAuthoredMapIterator<K, V>(source: Any) : Iterator<ClrAuthoredMapPair<K, V>> {
     private val iterator = clrProjectedIterator<Map.Entry<*, *>>(source)
-    override fun hasNext(): Boolean = iterator.hasNext()
-    override fun next(): ClrAuthoredMapPair<K, V> {
+    override fun hasNext(): Boolean = try { iterator.hasNext() }
+        catch (error: ConcurrentModificationException) { throw IllegalStateException(error.message, error) }
+    override fun next(): ClrAuthoredMapPair<K, V> = try {
         val entry = iterator.next()
-        return ClrAuthoredMapPair(entry.key as K, entry.value as V)
-    }
+        ClrAuthoredMapPair(entry.key as K, entry.value as V)
+    } catch (error: ConcurrentModificationException) { throw IllegalStateException(error.message, error) }
 }
 
 /** Source entries remain Kotlin entries; native enumeration materializes the CLR's value pair at that boundary. */

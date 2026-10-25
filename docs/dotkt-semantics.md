@@ -221,8 +221,8 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   A caller-supplied Kotlin alias argument
   in `System.Collections.Generic.List<List<String>>` uses the ordinary `object` element ABI; an explicitly native
   `System.Collections.Generic.List<System.Collections.Generic.IReadOnlyList<String>>` keeps that exact native argument.
-  When a projected map is passed to a stdlib copy constructor, the trusted collection-factory contract
-  performs an entry-wise copy instead of casting the source to an invariant `IDictionary<K,V>`.
+  Kotlin-owned map copy constructors perform an entry-wise copy of a projected source through the map contract,
+  without casting it to an invariant `IDictionary<K,V>`.
 - **Corollary — a star-projected collection classifier must erase its element arguments.** On the JVM `x is Map<*,*>` and a subsequent
   `x as Map<*,*>` erase to a raw `Map`, so a `Dictionary<int,int>` passes trivially. On the CLR the star projection
   erases to `Map<Any?,Any?>` = the generic `IDictionary<object,object>`, which a `Dictionary<int,int>` does **not**
@@ -971,6 +971,11 @@ removal (no guarantee). DotKt binds them to insertion-ordered containers instead
   with a `LinkedHashMap`), since .NET has no ordered GENERIC set. It gets the `CollectionBclSlotSynthesis` `ICollection`
   slots + the reverse `GetEnumerator` bridge, so it flows through `Set`/`MutableSet` slots like any BCL set.
 - **Plain `HashMap`/`HashSet` stay UNORDERED** — Kotlin contracts no order for them.
+
+Kotlin-owned map entry, key and value iterators are live and fail fast after structural mutation with
+`ConcurrentModificationException`; iterator-owned removal remains supported. Native dictionary enumerators and
+native key/value enumerators translate that failure to CLR `InvalidOperationException`. This does not change the
+remaining Kotlin snapshot views over native BCL maps described in §5c.
 
 The concrete CLR identity change means a Kotlin-created map can no longer be cast to BCL `Dictionary` or
 `OrderedDictionary`, and C# consumers of concrete Kotlin map return types see the Kotlin-owned class.

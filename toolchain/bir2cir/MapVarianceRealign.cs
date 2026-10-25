@@ -16,8 +16,8 @@ using DotKt.Bir;
 // source parameter and representation role: Map and MutableMap can have different companion layouts.
 static class MapVarianceRealign
 {
-    // The invariant BCL collection generics (their @ClrTypeAlias Kotlin FQNs). Type params here do NOT lift via CLR
-    // variance — unlike List/Collection/Iterable (`IReadOnly*<out T>` covariant), which stay untouched.
+    // Invariant collection applications include native aliases and Kotlin-owned classes. Their arguments do not
+    // lift via CLR variance, unlike List/Collection/Iterable (`IReadOnly*<out T>`), which stay untouched.
     public static readonly HashSet<string> InvariantCollections = new(StringComparer.Ordinal)
     {
         "kotlin.collections.Map", "kotlin.collections.MutableMap",

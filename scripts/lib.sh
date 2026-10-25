@@ -200,19 +200,26 @@ need_stdlib_rt() { # the stdlib RUNTIME dll; rebuild if missing OR toolchain cha
 stdlib_reference_args() {
 	need_tool dll2klib
 	need_dotnet_reference_sets
-	local out="$ROOT/build/clr-stdlib-reference-klibs" stamp refs=()
+	local base="$ROOT/build/clr-stdlib-reference-klibs" out stamp refs=()
 	IFS=';' read -r -a refs <<< "$FRAMEWORK_COMPILE_REFS"
 	stamp="$(_stdlib_reference_stamp)"
+	# Different catalogs never share mutable output. Equal catalogs can project concurrently:
+	# dll2klib stages uniquely and atomically publishes each complete per-assembly KLIB.
+	out="$base/$stamp"
 	if ! _stamp_fresh "$out" "$stamp"; then
-		rm -rf "$out"
+		rm -f "$out.toolstamp"
 		mkdir -p "$out"
-		printf '%s\n' "${refs[@]}" > "$out/references.rsp"
-		dotnet "$DLL2KLIB_DLL" --out "$out" --jobs 24 @"$out/references.rsp" > "$out/projection.log" 2>&1 || return $?
+		# Response files, logs and stamp staging belong to this invocation, not another builder.
+		local response
+		response="$(mktemp "$out/references.XXXXXX.rsp")"
+		printf '%s\n' "${refs[@]}" > "$response"
+		dotnet "$DLL2KLIB_DLL" --out "$out" --jobs 24 @"$response" > "$response.log" 2>&1 || return $?
 		local reference
 		for reference in "${refs[@]}"; do
 			[[ -f "$out/$(basename "${reference%.dll}").klib" ]] || die "missing projected framework KLIB for $reference"
 		done
-		printf '%s\n' "$stamp" > "$out.toolstamp"
+		printf '%s\n' "$stamp" > "$response.toolstamp"
+		mv -f "$response.toolstamp" "$out.toolstamp"
 	fi
 	local klibs=("$out"/*.klib)
 	STDLIB_REFERENCE_ARGS=(-classpath "$(IFS=:; echo "${klibs[*]}")")

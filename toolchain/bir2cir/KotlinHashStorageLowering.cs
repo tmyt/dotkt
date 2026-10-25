@@ -46,7 +46,7 @@ static class KotlinHashStorageLowering
         });
     }
 
-    internal static JsonObject Allocate(TypeNode type)
+    static JsonObject Allocate(TypeNode type)
     {
         return new JsonObject {
             ["k"] = "newClr", ["type"] = TypeJson.Write(type),
