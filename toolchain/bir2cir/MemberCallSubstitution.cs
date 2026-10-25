@@ -187,8 +187,8 @@ static class MemberCallSubstitution
         return true;
     }
 
-    // Abstract and concrete declarations both provide a real virtual iterator slot. Only an owner without
-    // a declared nullary instance protocol needs the IEnumerable-to-Iterator fallback below.
+    // Abstract and concrete declarations both provide a real virtual iterator slot. An owner without that
+    // declaration uses the source protocol's readonly enumeration or mutable-slot adapter.
     internal static HashSet<string> CollectDeclaredIteratorTypes(JsonNode root)
     {
         var set = new HashSet<string>(StringComparer.Ordinal);
@@ -202,6 +202,7 @@ static class MemberCallSubstitution
                     && owner["methods"] is JsonArray ms
                     && ms.OfType<JsonObject>().Any(m =>
                         (m["name"] as JsonValue)?.GetValue<string>() == "iterator"
+                        && !KotlinPropertyAccessors.TryIdentity(m, out _, out _)
                         && (m["static"] as JsonValue)?.GetValue<bool>() != true
                         && ((m["typeParams"] as JsonArray)?.Count ?? 0) == 0
                         && (m["params"] as JsonArray) is { Count: 0 }))
@@ -226,7 +227,7 @@ static class MemberCallSubstitution
             if (aliases?.ContainsKey(candidate.Name) == true) continue;
             if (declaredTypes.Contains(candidate.Name)
                 || references?.DeclaresExactInstanceMember(candidate.Name, "iterator", 0,
-                    Array.Empty<TypeNode>(), candidate.Args) == true)
+                    Array.Empty<TypeNode>(), candidate.Args, sourceNames: true) == true)
                 return true;
         }
         return false;
@@ -1398,14 +1399,13 @@ static class MemberCallSubstitution
                             sourceAccessorKind);
         }
 
-        // An unaliased collection with no declared iterator can use its native IEnumerable face. A declared
-        // abstract or concrete iterator must instead keep ordinary virtual dispatch, including its mutable
-        // return contract. Replacing it with a read-only bridge drops the authored protocol and mutation slots.
+        // An undeclared iterator still owes the source call's readonly or mutable protocol. A declared
+        // abstract or concrete iterator instead keeps ordinary virtual dispatch.
         // Local declarations and referenced declaration signatures are equally authoritative; a body is not needed.
         if (instance && ownerFqnNode != null && Str(node["method"]) == "iterator"
             && node["args"] is JsonArray { Count: 0 } itArgs
             && !refs.TryResolveClrOwner(ownerToken, out _, out _)
-            && MissingCollectionIteratorCall(node, ownerFqnNode, itArgs,
+            && MissingCollectionIteratorCall(node, itArgs,
                 HasDeclaredIterator(ownerFqnNode, _typesWithDeclaredIterator, _iteratorTypeDefinitions,
                     refs, refs.Aliases)) is { } iteratorCall)
             return iteratorCall;
@@ -2152,12 +2152,19 @@ static class MemberCallSubstitution
         call[DeclarationIdentityBinding.Key] = helper.DeclarationId;
     }
 
-    internal static JsonNode MissingCollectionIteratorCall(JsonObject node, TypeNode.Fqn owner,
-        JsonArray args, bool declaresIterator) =>
-        owner.Name.StartsWith("kotlin.collections.", StringComparison.Ordinal)
-            && Str(node["method"]) == "iterator" && args.Count == 0 && !declaresIterator
-            ? CollDefaultCall(node, "kotlin.collections.ClrIteratorBridgeKt", "iteratorOverEnumerable",
-                OwnerElemArg(owner), args) : null;
+    internal static JsonNode MissingCollectionIteratorCall(JsonObject node, JsonArray args, bool declaresIterator)
+    {
+        if (Str(node["method"]) != "iterator" || args.Count != 0 || declaresIterator
+            || KotlinPropertyAccessors.TryCallIdentity(node, out _, out _)
+            || node["typeArgs"] is JsonArray { Count: > 0 }
+            || TypeJson.Read(node["sty"] ?? node["ret"]) is not TypeNode.Fqn { Args: { Length: 1 } elements } protocol
+            || protocol.Name is not ("kotlin.collections.Iterator" or "kotlin.collections.MutableIterator"))
+            return null;
+        // The expression stamp names the caller's element; ret may still be in the selected declaration's frame.
+        return protocol.Name == "kotlin.collections.MutableIterator"
+            ? CollDefaultCall(node, "kotlin.collections.ClrCollectionDefaultsKt", "clrMutableIterator", elements[0], args)
+            : CollDefaultCall(node, "kotlin.collections.ClrIteratorBridgeKt", "iteratorOverEnumerable", elements[0], args);
+    }
 
     internal static JsonNode CollectionMutationCall(JsonObject node, TypeNode.Fqn ownerFqnNode,
         JsonArray args, ReferenceMetadataIndex refs, SubstCtx ctx,
