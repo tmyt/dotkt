@@ -2154,10 +2154,11 @@ static class MemberCallSubstitution
     internal static JsonNode MissingCollectionIteratorCall(JsonObject node, JsonArray args, bool declaresIterator)
     {
         if (Str(node["method"]) != "iterator" || args.Count != 0 || declaresIterator
-            || TypeJson.Read(node["ret"] ?? node["sty"]) is not TypeNode.Fqn { Args: { Length: 1 } elements } protocol
+            || node["typeArgs"] is JsonArray { Count: > 0 }
+            || TypeJson.Read(node["sty"] ?? node["ret"]) is not TypeNode.Fqn { Args: { Length: 1 } elements } protocol
             || protocol.Name is not ("kotlin.collections.Iterator" or "kotlin.collections.MutableIterator"))
             return null;
-        // Both the protocol and its element come from the selected call, not the owner's name or first argument.
+        // The expression stamp names the caller's element; ret may still be in the selected declaration's frame.
         return protocol.Name == "kotlin.collections.MutableIterator"
             ? CollDefaultCall(node, "kotlin.collections.ClrCollectionDefaultsKt", "clrMutableIterator", elements[0], args)
             : CollDefaultCall(node, "kotlin.collections.ClrIteratorBridgeKt", "iteratorOverEnumerable", elements[0], args);

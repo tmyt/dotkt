@@ -3,6 +3,16 @@ package roundtriptests.iteratorprotocol
 import NUnit.Framework.TestAttribute
 import roundtrip.iteratorprotocol.*
 
+private class GenericIteratorMethod {
+    var calls = 0
+    fun <T> iterator(): Iterator<T> { calls++; return emptyList<T>().iterator() }
+}
+
+private class GenericMutableIteratorMethod {
+    var calls = 0
+    fun <T> iterator(): MutableIterator<T> { calls++; return mutableListOf<T>().listIterator() }
+}
+
 private fun <T> checkInheritedIterator(first: T, second: T) {
     val values = mutableListOf(first, second)
     val set = inheritedIteratorSet(values)
@@ -40,6 +50,10 @@ class InheritedIteratorProtocolTests {
         check(items.size == 1)
         collection.clear()
         check(items.isEmpty())
+        val generic = GenericIteratorMethod()
+        check(!generic.iterator<String>().hasNext() && generic.calls == 1)
+        val genericMutable = GenericMutableIteratorMethod()
+        check(!genericMutable.iterator<Int>().hasNext() && genericMutable.calls == 1)
     }
 
     @TestAttribute fun referencedOwnersUseTheIteratorElementAndInheritedMutationBodies() {

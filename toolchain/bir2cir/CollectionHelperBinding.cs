@@ -339,17 +339,22 @@ static class CollectionHelperBinding
             throw new InvalidOperationException("Source iterator binding lost an unhoisted iterator declaration");
         var mutableCall = (JsonObject)iteratorCall.DeepClone();
         mutableCall["ownerType"] = TypeJson.Write(new TypeNode.Fqn("probe.OtherOwner", new TypeNode[] { boolType, variable }));
-        mutableCall["ret"] = TypeJson.Write(new TypeNode.Fqn("kotlin.collections.MutableIterator", new[] { variable }));
-        mutableCall["sty"] = mutableCall["ret"].DeepClone();
+        mutableCall["ret"] = TypeJson.Write(new TypeNode.Fqn("kotlin.collections.MutableIterator",
+            new TypeNode[] { new TypeNode.Tv("type", 0) }));
+        mutableCall["sty"] = TypeJson.Write(new TypeNode.Fqn("kotlin.collections.MutableIterator", new[] { variable }));
         var mutableHelper = MemberCallSubstitution.MissingCollectionIteratorCall(mutableCall, new JsonArray(), false);
         var readonlyCall = (JsonObject)mutableCall.DeepClone();
-        readonlyCall["ret"] = iteratorCall["ret"].DeepClone();
+        readonlyCall["ret"] = TypeJson.Write(new TypeNode.Fqn("kotlin.collections.Iterator",
+            new TypeNode[] { new TypeNode.Tv("type", 0) }));
         readonlyCall["sty"] = iteratorCall["sty"].DeepClone();
         var readonlyHelper = MemberCallSubstitution.MissingCollectionIteratorCall(readonlyCall, new JsonArray(), false);
+        var genericIteratorCall = (JsonObject)mutableCall.DeepClone();
+        genericIteratorCall["typeArgs"] = new JsonArray(TypeJson.Write(variable));
         if (Text(mutableHelper?["method"]) != "clrMutableIterator"
             || TypeJson.Read(mutableHelper?["typeArgs"]?[0]) != variable
             || Text(readonlyHelper?["method"]) != "iteratorOverEnumerable"
-            || TypeJson.Read(readonlyHelper?["typeArgs"]?[0]) != variable)
+            || TypeJson.Read(readonlyHelper?["typeArgs"]?[0]) != variable
+            || MemberCallSubstitution.MissingCollectionIteratorCall(genericIteratorCall, new JsonArray(), false) != null)
             throw new InvalidOperationException("Undeclared iterator binding lost its source protocol or element");
         var iteratorDefinitions = new Dictionary<string, SupertypeGraph.Def> {
             ["probe.Derived"] = new() { Base = iteratorOwner },
