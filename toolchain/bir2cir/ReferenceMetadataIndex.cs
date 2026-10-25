@@ -2500,6 +2500,10 @@ sealed partial class ReferenceMetadataIndex
         return value == null ? null : JsonNode.Parse(value) as JsonArray;
     }
 
+    internal JsonArray MethodTypeParamDeclarations(string declarationIdentity) =>
+        declarationIdentity != null && _declarationById.TryGetValue(declarationIdentity, out var declaration)
+            ? declaration.MethodTypeParams?.DeepClone() as JsonArray : null;
+
     public bool HasPublicParameterlessConstructor(TypeNode.Fqn owner)
     {
         if (owner == null) return false;

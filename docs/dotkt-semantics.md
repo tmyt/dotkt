@@ -146,6 +146,10 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   construction. It also permits generic functions to construct a class with the same dependent bounds, including
   when the actual argument is a variant class or captured inner class. Value storage keeps its existing contract;
   forwarding must not reintroduce an erased closed CLR obligation.
+  Source-class construction witnesses also retain the exact native ancestors implied by their bounds.
+  A method carries those additional proofs when its selected exact construction/call requires them, not merely
+  because an erased Kotlin value has a native ancestor. Its separate storage companions remain erased. Required
+  proof rows and existing representation frames preserve this distinction across DLLs without inspecting bodies.
   Invariant foreign CLR constructions retain their exact constraints: their declaration does not permit satisfying
   `I<T>` through a different construction `I<U>`. Self F-bounds also remain exact.
   Independent consequences such as `R : Tag` from `R : T, T : Tag` remain physical;

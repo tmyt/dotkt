@@ -11,6 +11,12 @@ import roundtrip.dependentframes.constructFromMethod
 import roundtrip.dependentframes.VariantOuter
 import roundtrip.dependentframes.InnerBoundOwner
 import roundtrip.dependentframes.constructInnerBoundOwner
+import roundtrip.dependentnative.Marker as NativeMarker
+import roundtrip.dependentnative.Item as NativeItem
+import roundtrip.dependentnative.Outer as NativeOuter
+import roundtrip.dependentnative.Owner as NativeOwner
+import roundtrip.dependentnative.make as makeNativeOwner
+import roundtrip.dependentnative.oneHop as forwardNativeOwner
 
 private fun <Tag, T> constructImportedOwner(value: T): Int where T : Base<T>, T : Marker<Tag> =
     Owner<Tag, T>().bound(value, value)
@@ -22,7 +28,16 @@ private class InnerHost : VariantOuter<String>() {
 private fun <Tag, T> constructImportedInnerOwner(): Int where T : VariantOuter<Tag>.Inner =
     InnerBoundOwner<Tag, T>().label()
 
+private fun <Tag, T> constructImportedNativeOwner(value: T): Boolean where T : NativeMarker<Tag> =
+    NativeOwner<Tag, T>(value).probe(value) && makeNativeOwner<Tag, T>(value, value) && forwardNativeOwner<Tag, T>(value)
+
 class DependentCallableFrameTests {
+    @TestAttribute fun importedNativeProofRowsPreserveWitnessAndStorageFrames() {
+        check(constructImportedNativeOwner<String, NativeItem<String>>(NativeItem<String>()))
+        val inner = NativeOuter<Int>().Item()
+        check(constructImportedNativeOwner<Int, NativeOuter<Int>.Item>(inner))
+    }
+
     @TestAttribute fun importedInnerBoundRetainsItsOuterVariance() {
         check(constructInnerBoundOwner<Any, InnerHost.Sub>() == 47)
         check(constructImportedInnerOwner<Any, InnerHost.Sub>() == 47)

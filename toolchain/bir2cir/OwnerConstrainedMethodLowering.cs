@@ -14,12 +14,15 @@ static class OwnerConstrainedMethodLowering
     static readonly List<(JsonObject Method, JsonObject Owner)> Methods = new();
     static ReferenceMetadataIndex References;
     static Func<TypeNode, TypeNode> PhysicalClassifier = _ => null;
+    static Func<JsonObject, int, IEnumerable<TypeNode>> NativeProofs = (_, _) => Enumerable.Empty<TypeNode>();
     internal static void Reset(ReferenceMetadataIndex references,
-        Func<TypeNode, TypeNode> physicalClassifier)
+        Func<TypeNode, TypeNode> physicalClassifier,
+        Func<JsonObject, int, IEnumerable<TypeNode>> nativeProofs = null)
     {
         Methods.Clear();
         References = references;
         PhysicalClassifier = physicalClassifier;
+        NativeProofs = nativeProofs ?? ((_, _) => Enumerable.Empty<TypeNode>());
     }
 
     internal static bool HasMethodDependentBounds(JsonObject method) =>
@@ -622,7 +625,9 @@ static class OwnerConstrainedMethodLowering
                 }
                 else retained.Add(constraint.DeepClone());
             }
-            parameter["constraints"] = retained;
+            foreach (var proof in NativeProofs(method, index))
+                if (!retained.Any(row => TypeJson.Read(row).Equals(proof))) retained.Add(TypeJson.Write(proof));
+            parameter["constraints"] = new JsonArray(retained.Select(TypeJson.Read).Distinct().Select(TypeJson.Write).ToArray());
             if (removed.Count > 0)
                 parameter[FBoundStarProjectionErasure.ErasedInnerConstraintKey] = removed;
         }
