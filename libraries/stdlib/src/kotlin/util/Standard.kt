@@ -12,10 +12,6 @@ import kotlin.contracts.*
 /**
  * An exception is thrown to indicate that a method body remains to be implemented.
  */
-// NOTE: NotImplementedError is deliberately NOT @ClrTypeAlias-bound to System.NotImplementedException. It stays a real
-// emitted Kotlin class because `TODO()` throws it (bir2cir PreconditionLowering lowers TODO() -> `new
-// kotlin.NotImplementedError(...)`) and Kotlin semantics make it an observable `Error` subtype a caller can catch by
-// that exact type — binding it away would change the thrown type. It stays a plain emitted class with a real body.
 public class NotImplementedError(message: String = "An operation is not implemented.") : Error(message)
 
 /**

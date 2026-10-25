@@ -147,15 +147,7 @@ public fun CharSequence.trim(vararg chars: Char): CharSequence = trim { it in ch
 /**
  * Returns a string having leading and trailing characters from the [chars] array removed.
  */
-public fun String.trim(vararg chars: Char): String {
-    // Direct String body (NOT `trim { it in chars }`, which inlines a `(this as CharSequence)` cast that has no CLR
-    // adapter when compiled into this non-inline stdlib method). Two-pointer over `this[i]` — a pure-Kotlin String body.
-    var start = 0
-    var end = length
-    while (start < end && this[start] in chars) start++
-    while (end > start && this[end - 1] in chars) end--
-    return substring(start, end)
-}
+public fun String.trim(vararg chars: Char): String = trim { it in chars }
 
 /**
  * Returns a subsequence of this char sequence having leading characters from the [chars] array removed.
@@ -165,13 +157,7 @@ public fun CharSequence.trimStart(vararg chars: Char): CharSequence = trimStart 
 /**
  * Returns a string having leading characters from the [chars] array removed.
  */
-public fun String.trimStart(vararg chars: Char): String {
-    // Direct String body (see String.trim(vararg)): pure-Kotlin two-pointer over `this[i]`, no CharSequence cast.
-    var start = 0
-    val end = length
-    while (start < end && this[start] in chars) start++
-    return substring(start, end)
-}
+public fun String.trimStart(vararg chars: Char): String = trimStart { it in chars }
 
 /**
  * Returns a subsequence of this char sequence having trailing characters from the [chars] array removed.
@@ -181,17 +167,12 @@ public fun CharSequence.trimEnd(vararg chars: Char): CharSequence = trimEnd { it
 /**
  * Returns a string having trailing characters from the [chars] array removed.
  */
-public fun String.trimEnd(vararg chars: Char): String {
-    // Direct String body (see String.trim(vararg)): pure-Kotlin two-pointer over `this[i]`, no CharSequence cast.
-    var end = length
-    while (end > 0 && this[end - 1] in chars) end--
-    return substring(0, end)
-}
+public fun String.trimEnd(vararg chars: Char): String = trimEnd { it in chars }
 
 /**
  * Returns a subsequence of this char sequence having leading and trailing whitespace removed.
  */
-public fun CharSequence.trim(): CharSequence = trim { it.isWhitespace() }
+public fun CharSequence.trim(): CharSequence = trim(Char::isWhitespace)
 
 /**
  * Returns a string having leading and trailing whitespace removed.
@@ -202,7 +183,7 @@ public inline fun String.trim(): String = (this as CharSequence).trim().toString
 /**
  * Returns a subsequence of this char sequence having leading whitespace removed.
  */
-public fun CharSequence.trimStart(): CharSequence = trimStart { it.isWhitespace() }
+public fun CharSequence.trimStart(): CharSequence = trimStart(Char::isWhitespace)
 
 /**
  * Returns a string having leading whitespace removed.
@@ -213,7 +194,7 @@ public inline fun String.trimStart(): String = (this as CharSequence).trimStart(
 /**
  * Returns a subsequence of this char sequence having trailing whitespace removed.
  */
-public fun CharSequence.trimEnd(): CharSequence = trimEnd { it.isWhitespace() }
+public fun CharSequence.trimEnd(): CharSequence = trimEnd(Char::isWhitespace)
 
 /**
  * Returns a string having trailing whitespace removed.
@@ -253,24 +234,8 @@ public fun CharSequence.padStart(length: Int, padChar: Char = ' '): CharSequence
  * as are necessary to reach that length.
  * @sample samples.text.Strings.padStart
  */
-// NOTE (CLR): SPLIT into a no-default `(length, padChar)` + a `(length)` overload instead of a single
-// `padChar: Char = ' '` default. A cross-module CHAR default cannot be honoured on the CLR: ilemit's constant
-// stamping (ConstArgValue) has no `char` case, so a `= ' '` default is mis-stamped and a defaulted call
-// (`"5".padStart(3)`) throws InvalidProgramException. The explicit-`' '` overload sidesteps the default-arg
-// mechanism entirely (a plain call passing ' '), keeping this pure Kotlin. Also: DIRECT String body (NOT
-// `(this as CharSequence).padStart(...)`), since that cast compiled into a non-inline stdlib method has no CLR
-// `<>dotkt_CharSequence` adapter to land on. Semantically identical to the CharSequence overload.
-public fun String.padStart(length: Int, padChar: Char): String {
-    if (length < 0) throw IllegalArgumentException("Desired length $length is less than zero.")
-    if (length <= this.length) return this
-    val sb = StringBuilder(length)
-    for (i in 1..(length - this.length)) sb.append(padChar)
-    sb.append(this)
-    return sb.toString()
-}
-
-/** Pads the string to the specified [length] at the beginning with spaces. */
-public fun String.padStart(length: Int): String = padStart(length, ' ')
+public fun String.padStart(length: Int, padChar: Char = ' '): String =
+    (this as CharSequence).padStart(length, padChar).toString()
 
 /**
  * Returns a char sequence with content of this char sequence padded at the end
@@ -304,20 +269,8 @@ public fun CharSequence.padEnd(length: Int, padChar: Char = ' '): CharSequence {
  * as are necessary to reach that length.
  * @sample samples.text.Strings.padEnd
  */
-// NOTE (CLR): SPLIT into `(length, padChar)` + `(length)` overloads (see String.padStart) — a cross-module CHAR
-// default is un-stampable by ilemit and throws InvalidProgramException on a defaulted call; the explicit-' '
-// overload avoids the default-arg mechanism. DIRECT String body (no `(this as CharSequence)` cast).
-public fun String.padEnd(length: Int, padChar: Char): String {
-    if (length < 0) throw IllegalArgumentException("Desired length $length is less than zero.")
-    if (length <= this.length) return this
-    val sb = StringBuilder(length)
-    sb.append(this)
-    for (i in 1..(length - this.length)) sb.append(padChar)
-    return sb.toString()
-}
-
-/** Pads the string to the specified [length] at the end with spaces. */
-public fun String.padEnd(length: Int): String = padEnd(length, ' ')
+public fun String.padEnd(length: Int, padChar: Char = ' '): String =
+    (this as CharSequence).padEnd(length, padChar).toString()
 
 /**
  * Returns `true` if this nullable char sequence is either `null` or empty.
@@ -354,15 +307,7 @@ public inline fun CharSequence.isNotEmpty(): Boolean = length > 0
  *
  * @sample samples.text.Strings.stringIsBlank
  */
-public fun CharSequence.isBlank(): Boolean {
-    // Index loop (NOT `all { it.isWhitespace() }`): the CharSequence *iterator* protocol hits an EntryPointNotFound on
-    // the CLR (Iterator.hasNext), whereas indexed `this[i]` over `length` is the working CharSequence access path. This
-    // keeps isBlank a pure-Kotlin stdlib body — no compiler lowering, correct for every CharSequence (not just String).
-    for (i in 0 until length) {
-        if (!this[i].isWhitespace()) return false
-    }
-    return true
-}
+public fun CharSequence.isBlank(): Boolean = all { it.isWhitespace() }
 
 /**
  * Returns `true` if this char sequence is not empty and contains some characters except whitespace characters.

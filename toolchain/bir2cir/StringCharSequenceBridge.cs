@@ -230,6 +230,9 @@ static class StringCharSequenceBridge
             case "var":
                 WrapVarInit(node, env);
                 return node;
+            case "setLocal":
+                WrapLocalStore(node, env);
+                return node;
             case "return":
                 WrapReturn(node, env);
                 return node;
@@ -574,6 +577,17 @@ static class StringCharSequenceBridge
         if (TypeJson.Read(node["type"]) is TypeNode tn && IsCharSeqT(tn) && node["init"] is JsonNode init
             && CoerceCharSeqArg(init, env, nonNullSlot: tn is TypeNode.Fqn) is JsonNode ci && !ReferenceEquals(ci, init))
             node["init"] = ci;
+    }
+
+    // Inline returns and ordinary reassignment both store into an already declared local.
+    // Its destination type owns the same conversion as an initializer or a method return.
+    static void WrapLocalStore(JsonObject node, Env env)
+    {
+        if (Str(node["name"]) is string name && env.Vars.TryGetValue(name, out var type)
+            && IsCharSeqT(type) && node["value"] is JsonNode value
+            && CoerceCharSeqArg(value, env, nonNullSlot: type is TypeNode.Fqn) is JsonNode converted
+            && !ReferenceEquals(converted, value))
+            node["value"] = converted;
     }
 
     // (c): a return of a String | StringBuilder | polymorphic if/else into a CharSequence return type.
