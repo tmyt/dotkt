@@ -4876,11 +4876,14 @@ sealed partial class ReferenceMetadataIndex
     // structural (including type-vs-method Tv scope/index), not a name/arity guess, so overloads
     // remain distinct.  Multiple identical candidates are treated as ambiguous and refused.
     public bool DeclaresExactInstanceMember(string ownerToken, string memberName, int methodArity,
-        IReadOnlyList<TypeNode> signature, TypeNode[] ownerTypeArguments)
+        IReadOnlyList<TypeNode> signature, TypeNode[] ownerTypeArguments, bool sourceNames = false)
     {
         if (ownerToken == null || memberName == null || IsAliasedOwner(ownerToken)
             || !TryMembersByBirOwner(ownerToken, out var list)) return false;
-        var candidates = list.Where(m => !m.IsStatic && m.Name == memberName && m.MethodArity == methodArity
+        // Protocol recognition precedes physical declaration binding; an accessor is not a source method slot.
+        var candidates = list.Where(m => !m.IsStatic && (!sourceNames || m.AccessorKind == null)
+            && (sourceNames ? m.DeclarationSourceName ?? m.SourceMethodName ?? m.Name : m.Name) == memberName
+            && m.MethodArity == methodArity
             && m.ParamTypeNodes is { Length: var length } && length == signature.Count).ToList();
         var matches = candidates.Where(m => m.ParamTypeNodes
             .Select((p, i) => p == signature[i]).All(x => x)).ToList();

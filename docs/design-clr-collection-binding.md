@@ -87,9 +87,11 @@ Members with direct BCL equivalents are substituted from stdlib metadata, for ex
 
 A declared Kotlin `iterator()` keeps its virtual slot whether abstract or concrete, in the current module or a
 reference assembly, including a slot inherited from a base declaration. Early binding follows source hierarchy
-metadata; after frame materialization the physical hierarchy is authoritative. Only an owner without that declared
-protocol uses the native enumeration fallback. A read-only
-enumeration adapter must not replace an authored mutable iterator or its removal contract.
+metadata and source declaration names, including `ClrName`-renamed methods; property accessors are not iterator
+method slots. After frame materialization the physical hierarchy is authoritative. An owner without a declared
+iterator uses the source call's protocol and element type: readonly iteration adapts native enumeration, while
+mutable iteration dispatches through `KotlinMutableIteratorSlots` before native mutable fallbacks. A readonly
+adapter must not replace an authored mutable iterator or its removal contract.
 
 Native `ICollection<T>.Contains` on a Kotlin read-only collection uses the same declaration-owned membership
 slot as Kotlin callers, including a native dictionary's checked Keys/Values views. Default membership bodies perform

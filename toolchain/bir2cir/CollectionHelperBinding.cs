@@ -330,10 +330,15 @@ static class CollectionHelperBinding
         var abstractIterator = nestedIterator.DeepClone();
         abstractIterator["synthClass"]["name"] = "kotlin.collections.AbstractIteratorProbe";
         abstractIterator["synthClass"]["methods"][0]["abstract"] = true;
+        var iteratorProperty = nestedIterator.DeepClone();
+        iteratorProperty["synthClass"]["name"] = "probe.IteratorProperty";
+        iteratorProperty["synthClass"]["methods"][0][KotlinPropertyAccessors.SourceNameKey] = "iterator";
+        iteratorProperty["synthClass"]["methods"][0][KotlinPropertyAccessors.KindKey] = "get";
         var declaredIterators = MemberCallSubstitution.CollectDeclaredIteratorTypes(
-            new JsonArray(nestedIterator, abstractIterator));
+            new JsonArray(nestedIterator, abstractIterator, iteratorProperty));
         if (!declaredIterators.Contains(iteratorOwner.Name)
             || !declaredIterators.Contains("kotlin.collections.AbstractIteratorProbe")
+            || declaredIterators.Contains("probe.IteratorProperty")
             || MemberCallSubstitution.MissingCollectionIteratorCall(iteratorCall, new JsonArray(), true) != null
             || MemberCallSubstitution.MissingCollectionIteratorCall(iteratorCall, new JsonArray(), false) == null)
             throw new InvalidOperationException("Source iterator binding lost an unhoisted iterator declaration");
@@ -350,11 +355,17 @@ static class CollectionHelperBinding
         var readonlyHelper = MemberCallSubstitution.MissingCollectionIteratorCall(readonlyCall, new JsonArray(), false);
         var genericIteratorCall = (JsonObject)mutableCall.DeepClone();
         genericIteratorCall["typeArgs"] = new JsonArray(TypeJson.Write(variable));
+        var propertyCall = (JsonObject)mutableCall.DeepClone();
+        propertyCall["prop"] = "get";
+        var preservedPropertyCall = (JsonObject)mutableCall.DeepClone();
+        KotlinPropertyAccessors.PreserveCallIdentity(preservedPropertyCall, "iterator", "get");
         if (Text(mutableHelper?["method"]) != "clrMutableIterator"
             || TypeJson.Read(mutableHelper?["typeArgs"]?[0]) != variable
             || Text(readonlyHelper?["method"]) != "iteratorOverEnumerable"
             || TypeJson.Read(readonlyHelper?["typeArgs"]?[0]) != variable
-            || MemberCallSubstitution.MissingCollectionIteratorCall(genericIteratorCall, new JsonArray(), false) != null)
+            || MemberCallSubstitution.MissingCollectionIteratorCall(genericIteratorCall, new JsonArray(), false) != null
+            || MemberCallSubstitution.MissingCollectionIteratorCall(propertyCall, new JsonArray(), false) != null
+            || MemberCallSubstitution.MissingCollectionIteratorCall(preservedPropertyCall, new JsonArray(), false) != null)
             throw new InvalidOperationException("Undeclared iterator binding lost its source protocol or element");
         var iteratorDefinitions = new Dictionary<string, SupertypeGraph.Def> {
             ["probe.Derived"] = new() { Base = iteratorOwner },
