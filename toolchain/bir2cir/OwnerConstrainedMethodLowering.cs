@@ -35,6 +35,14 @@ static class OwnerConstrainedMethodLowering
         method[NullableRepresentationTypes.MethodFrameKey] is JsonValue encoded
             ? NullableRepresentationFrame.Read(JsonNode.Parse(encoded.GetValue<string>())) : null;
 
+    internal static bool ProjectsBound(JsonObject method, int index, TypeNode bound,
+        Func<TypeNode, bool> dependsOnOwner = null) =>
+        (dependsOnOwner ?? FBoundStarProjectionErasure.ContainsOwnerTv)(bound)
+        || HasConstructedDependency(bound, "method", index, ReadMethodFrame(method))
+        || method[OverrideBoundsKey] is JsonValue encoded
+            && JsonNode.Parse(encoded.GetValue<string>()).AsArray().OfType<JsonObject>().Any(row =>
+                row["index"].GetValue<int>() == index && TypeJson.Read(row["bound"]).Equals(bound));
+
     static bool SameSourceParameter(int first, int second, NullableRepresentationFrame frame) =>
         frame == null ? first == second
             : frame.PhysicalSlot(first).SourceIndex == frame.PhysicalSlot(second).SourceIndex;
@@ -611,7 +619,7 @@ static class OwnerConstrainedMethodLowering
                         if (!retained.Any(row => JsonNode.DeepEquals(row, consequence)))
                             retained.Add(consequence.DeepClone());
                 }
-                else if (dependsOnOwner(bound) || HasConstructedDependency(bound, "method", index, frame))
+                else if (ProjectsBound(method, index, bound, dependsOnOwner))
                 {
                     removed.Add(TypeJson.Write(projectedBound(ProjectMethodVariables(bound, index, frame))));
                     // The source relation may not be an exact CLR construction (the actual argument can itself

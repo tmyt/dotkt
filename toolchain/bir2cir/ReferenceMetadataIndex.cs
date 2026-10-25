@@ -2500,9 +2500,40 @@ sealed partial class ReferenceMetadataIndex
         return value == null ? null : JsonNode.Parse(value) as JsonArray;
     }
 
-    internal JsonArray MethodTypeParamDeclarations(string declarationIdentity) =>
-        declarationIdentity != null && _declarationById.TryGetValue(declarationIdentity, out var declaration)
-            ? declaration.MethodTypeParams?.DeepClone() as JsonArray : null;
+    // Proof obligations come from the shipped declaration, not the Kotlin reference surface. In particular,
+    // stdlib reference/runtime twins need not carry the same physical GenericParamConstraint rows.
+    internal JsonArray PhysicalOwnerTypeParamDeclarations(string owner)
+    {
+        var type = ResolveRefType(owner, OwnerArity(owner)) ?? PhysicalTypeNamed(owner, OwnerArity(owner));
+        if (type == null) return null;
+        type = PhysicalProofOwner(type);
+        return type == null ? null : new JsonArray(type.GetGenericArguments().Select(GenericParamDeclaration).ToArray());
+    }
+
+    internal JsonArray PhysicalMethodTypeParamDeclarations(string declarationIdentity)
+    {
+        if (declarationIdentity == null || !_declarationById.TryGetValue(declarationIdentity, out var declaration))
+            return null;
+        var ownerName = declaration.DeclarationPhysicalOwner ?? declaration.Owner;
+        var owner = ResolveRefType(ownerName, OwnerArity(ownerName))
+            ?? PhysicalTypeNamed(ownerName, OwnerArity(ownerName));
+        if (owner == null) return null;
+        var selected = owner.GetMethods(MemberProbeFlags)
+            .Single(method => method.MetadataToken == declaration.MetadataToken);
+        var physicalOwner = PhysicalProofOwner(owner);
+        if (physicalOwner == null) return null;
+        var physical = physicalOwner == owner ? selected : PhysicalTwinOf(selected, owner)
+            ?? throw new InvalidOperationException($"Selected declaration '{declarationIdentity}' has no shipped MethodDef");
+        return new JsonArray(physical.GetGenericArguments().Select(GenericParamDeclaration).ToArray());
+    }
+
+    Type PhysicalProofOwner(Type reference)
+    {
+        var assembly = reference.Assembly.GetName().Name;
+        // A reference-only declaration absent from its required runtime twin has no physical rows. It must not
+        // become a runtime proof merely because PhysicalOwnerOf also returns null for ordinary non-twin assemblies.
+        return ManagedReferenceCatalog.PhysicalAssemblyName(assembly) == assembly ? reference : PhysicalOwnerOf(reference);
+    }
 
     public bool HasPublicParameterlessConstructor(TypeNode.Fqn owner)
     {

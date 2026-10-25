@@ -119,9 +119,7 @@ static partial class FBoundStarProjectionErasure
                 var retained = new JsonArray();
                 var removed = new JsonArray();
                 foreach (var constraint in constraints)
-                    if (ContainsOwnerPrefixTv(TypeJson.Read(constraint), prefix)
-                        || OwnerConstrainedMethodLowering.HasConstructedDependency(TypeJson.Read(constraint), "type", index,
-                            KotlinSupertypesRecord.ReadNullableFrame(definition)))
+                    if (ProjectsCapturedBound(definition, index, TypeJson.Read(constraint)))
                     {
                         removed.Add(TypeJson.Write(ProjectOwnerMethodBound(
                             TypeJson.Read(constraint), owners, refs, physical: false)));
@@ -2983,6 +2981,11 @@ static partial class FBoundStarProjectionErasure
             && !refs.TryResolveClrOwner(named.Name, out _, out _)
             && TryExistentialCarrier(named.Name, owners, refs, out var carrier)
                 ? new TypeNode.Fqn(carrier) : null;
+
+    static bool ProjectsCapturedBound(JsonObject declaration, int index, TypeNode bound) =>
+        ContainsOwnerPrefixTv(bound, Int(declaration["outerTypeParamCount"]) ?? 0)
+        || OwnerConstrainedMethodLowering.HasConstructedDependency(bound, "type", index,
+            KotlinSupertypesRecord.ReadNullableFrame(declaration));
 
     static void ProjectDependentTypeConstraints(JsonObject declaration,
         IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs)

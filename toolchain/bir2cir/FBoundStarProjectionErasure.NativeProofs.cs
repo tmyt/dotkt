@@ -94,10 +94,14 @@ static partial class FBoundStarProjectionErasure
         void Register(JsonObject declaration, bool nativeAncestors) =>
             rows[declaration] = ReadRows(declaration["typeParams"] as JsonArray, nativeAncestors,
                 IsTypeDefinition(declaration) ? KotlinSupertypesRecord.ReadNullableFrame(declaration)
-                    : OwnerConstrainedMethodLowering.ReadMethodFrame(declaration));
+                    : OwnerConstrainedMethodLowering.ReadMethodFrame(declaration),
+                projectsBound: !IsTypeDefinition(declaration)
+                    ? (index, bound) => OwnerConstrainedMethodLowering.ProjectsBound(declaration, index, bound)
+                    : Bool(declaration["generated"]) ? (index, bound) => ProjectsCapturedBound(declaration, index, bound) : null);
 
         internal Dictionary<int, List<TypeNode>> ReadRows(JsonArray parameters, bool nativeAncestors,
-            NullableRepresentationFrame frame = null, bool physicalDeclaration = false)
+            NullableRepresentationFrame frame = null, bool physicalDeclaration = false,
+            Func<int, TypeNode, bool> projectsBound = null)
         {
             var result = new Dictionary<int, List<TypeNode>>();
             for (var index = 0; index < (parameters?.Count ?? 0); index++)
@@ -107,6 +111,10 @@ static partial class FBoundStarProjectionErasure
                 if (parameters[index] is JsonObject parameter && parameter["constraints"] is JsonArray constraints)
                 {
                     var bounds = constraints.Select(TypeJson.Read).OfType<TypeNode.Fqn>()
+                        // These rows seed the declaration's *physical* contract, not every source bound.
+                        // Owner/dependent method bounds are projected by OwnerConstrainedMethodLowering; only
+                        // a selected exact construction/call may demand their exact native proof again.
+                        .Where(bound => projectsBound?.Invoke(index, bound) != true)
                         .SelectMany(bound => nativeAncestors
                             && OwnerConstrainedMethodLowering.HasConstructedDependency(bound, "type", index, frame)
                             ? NativeAncestors(bound) : (physicalDeclaration ? ExactPhysicalProof(bound) : ExactNative(bound))
@@ -176,7 +184,7 @@ static partial class FBoundStarProjectionErasure
         {
             if (definitions.TryGetValue(owner, out var local)) return Rows(local);
             if (!foreignTypes.TryGetValue(owner, out var constraints))
-                foreignTypes[owner] = constraints = ReadRows(references.OwnerTypeParamDeclarations(owner), false,
+                foreignTypes[owner] = constraints = ReadRows(references.PhysicalOwnerTypeParamDeclarations(owner), false,
                     references.NullableTypeFrames.GetValueOrDefault(owner), physicalDeclaration: true);
             return constraints;
         }
@@ -185,7 +193,7 @@ static partial class FBoundStarProjectionErasure
         {
             if (identity == null) return new Dictionary<int, List<TypeNode>>();
             if (!foreignMethods.TryGetValue(identity, out var constraints))
-                foreignMethods[identity] = constraints = ReadRows(references.MethodTypeParamDeclarations(identity), false,
+                foreignMethods[identity] = constraints = ReadRows(references.PhysicalMethodTypeParamDeclarations(identity), false,
                     references.NullableMethodFrame(identity), physicalDeclaration: true);
             return constraints;
         }
@@ -271,11 +279,30 @@ static partial class FBoundStarProjectionErasure
             var plan = new NativeProofPlan(roots, definitions, refs);
             var physical = new JsonArray(new JsonObject { ["name"] = "T", ["constraints"] =
                 new JsonArray(TypeJson.Fqn("System.IO.MemoryStream")) });
+            var dependentMethods = JsonNode.Parse("""
+              ["Tag",{"name":"R","constraints":[{"t":"fqn","name":"System.Collections.Generic.IComparer`1",
+                "args":[{"t":"tv","scope":"method","i":0}]}]},
+               {"name":"S","constraints":[{"t":"fqn","name":"System.Collections.Generic.IComparer`1",
+                "args":[{"t":"tv","scope":"type","i":0}]}]}]
+              """).AsArray();
+            var dependentMethod = new JsonObject { ["typeParams"] = dependentMethods.DeepClone() };
+            var capturedFrame = new JsonObject { ["generated"] = true, ["typeParams"] = new JsonArray("Tag",
+                new JsonObject { ["name"] = "R", ["constraints"] = new JsonArray(TypeJson.Write(
+                    new TypeNode.Fqn("System.Collections.Generic.IComparer`1", new TypeNode[] { new TypeNode.Tv("type", 0) }))) }) };
+            var overrideBound = new TypeNode.Fqn("System.IO.Stream");
+            var overridingMethod = new JsonObject { [OwnerConstrainedMethodLowering.OverrideBoundsKey] =
+                new JsonArray(new JsonObject { ["index"] = 0, ["bound"] = TypeJson.Write(overrideBound) }).ToJsonString() };
             if (!plan.ExactTypeArgument("Owner", 1) || plan.ExactTypeArgument("Owner", 2)
                 || plan.ExactTypeArgument("SelfOwner", 0)
                 || plan.ReadRows(physical, false).Count != 0
                 || !plan.ReadRows(physical, false, physicalDeclaration: true)[0]
                     .Contains(new TypeNode.Fqn("System.IO.MemoryStream"))
+                || plan.ReadRows(dependentMethods, false, projectsBound:
+                    (index, bound) => OwnerConstrainedMethodLowering.ProjectsBound(dependentMethod, index, bound)).Count != 0
+                || plan.ReadRows(dependentMethods, false, physicalDeclaration: true).Count != 2
+                || plan.ReadRows(capturedFrame["typeParams"].AsArray(), false, projectsBound:
+                    (index, bound) => ProjectsCapturedBound(capturedFrame, index, bound)).Count != 0
+                || !OwnerConstrainedMethodLowering.ProjectsBound(overridingMethod, 0, overrideBound)
                 || !plan.Bounds(root["methods"][0].AsObject(), 1).Contains(new TypeNode.Fqn("System.IDisposable"))
                 || plan.Bounds(root["methods"][1].AsObject(), 1).Any()
                 || !JsonNode.DeepEquals(original, root))
