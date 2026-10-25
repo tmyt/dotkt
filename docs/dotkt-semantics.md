@@ -132,18 +132,20 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   an enclosing-frame check. Construction, inheritance, lexical receivers, and the hidden enclosing-instance slot
   retain their exact CLR class head; nested type arguments still use their ordinary physical value representation.
   Other invariant fields and returns retain their existing contracts; imported CLR declaration signatures do not change.
-- **Generic members retain owner-dependent Kotlin constraints as metadata, not CLR constraint rows.**
+- **Generic declarations retain exact dependent Kotlin relations in metadata and representable CLR proofs.**
   For `G<in T>.f<R : T>` and constructed bounds such as `R : I<T>`, the receiver's exact CLR construction need not
   express the source view's subtype relation, particularly when Kotlin variance crosses a value-type argument.
-  The source MethodDef and existential slot retain owner-independent constraints; exact Kotlin bounds remain in
+  The source MethodDef and existential slot retain representable constraints; exact Kotlin bounds remain in
   DLL-to-KLIB metadata. The carrier forwards directly with the actual method arguments, preserving virtual dispatch,
   managed-reference aliasing and ordinary exception propagation without a per-call delegate allocation.
   Calls to members of an erased bound use its nominal existential interface or, for a foreign CLR generic, the
   existing exact reflection-dispatch ABI. The latter retains its usual trimming/AOT metadata requirements.
-  Constructed method bounds depending on another method parameter retain their exact logical construction when
-  the Kotlin declaration is invariant and has no use-site projection. Value storage still uses its existing
-  erased representation. Variant bounds use their nominal carrier; forwarding must not reintroduce an erased
-  closed CLR obligation. Bounds depending on the receiver's owner remain projected independently of this rule.
+  A compiler-owned constructed bound depending on another source parameter uses the declaration's nominal
+  classifier constraint, consistently on class, method, capture-frame and existential-slot declarations. This
+  retains the proof shared by exact instances and erased value carriers without demanding one closed CLR
+  construction. It also permits generic functions to construct a class with the same dependent bounds, including
+  when the actual argument is a variant class or captured inner class. Value storage keeps its existing contract;
+  forwarding must not reintroduce an erased closed CLR obligation.
   Invariant foreign CLR constructions retain their exact constraints: their declaration does not permit satisfying
   `I<T>` through a different construction `I<U>`. Self F-bounds also remain exact.
   Independent consequences such as `R : Tag` from `R : T, T : Tag` remain physical;

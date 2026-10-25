@@ -35,9 +35,20 @@ private class ValueItem<Tag>(private val stored: Tag) : ValueMarker<Tag> {
     override fun value(): Tag = stored
 }
 private fun <Tag, T> identity(value: T): T where T : ValueMarker<Tag> = value
+private fun <Tag, T> same(value: T, expected: Any): Boolean where T : ValueMarker<Tag> = value === expected
 private class ErasedOwner<Tag> {
-    fun <T> matches(value: T, expected: Any): Boolean where T : ValueMarker<Tag> = value === expected
+    fun <T> matches(value: T, expected: Any): Boolean where T : ValueMarker<Tag> = same<Tag, T>(value, expected)
 }
+
+private open class ActualBase<Tag>
+private class VariantActual<out X> : ActualBase<String>()
+private class ActualOwner<Tag, T> where T : ActualBase<Tag> { fun label(): Int = 41 }
+private fun <Tag, T> constructWithVariantActual(): Int where T : ActualBase<Tag> = ActualOwner<Tag, T>().label()
+
+private class Outer<Tag> { inner class Item : Marker<Tag> }
+private class MarkerOwner<Tag, T> where T : Marker<Tag> { fun label(): Int = 43 }
+private fun <Tag, T> constructWithInnerActual(value: T, expected: Any): Boolean where T : Marker<Tag> =
+    MarkerOwner<Tag, T>().label() == 43 && value === expected
 
 class DependentConstructionTests {
     @TestAttribute fun independentInvariantBoundsPermitOrdinaryConstruction() {
@@ -56,5 +67,14 @@ class DependentConstructionTests {
         @Suppress("UNCHECKED_CAST")
         val owner = ErasedOwner<Int>() as ErasedOwner<String>
         check(owner.matches<ValueMarker<String>>(viewed, original))
+    }
+
+    @TestAttribute fun variantActualRetainsItsBaseClassifierProof() {
+        check(constructWithVariantActual<String, VariantActual<Int>>() == 41)
+    }
+
+    @TestAttribute fun capturedInnerActualRetainsItsInterfaceClassifierProof() {
+        val item = Outer<Int>().Item()
+        check(constructWithInnerActual<Int, Outer<Int>.Item>(item, item))
     }
 }

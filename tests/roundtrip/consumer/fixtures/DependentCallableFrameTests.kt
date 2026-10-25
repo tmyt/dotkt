@@ -8,11 +8,26 @@ import roundtrip.dependentframes.Base
 import roundtrip.dependentframes.Marker
 import roundtrip.dependentframes.NullableItem
 import roundtrip.dependentframes.constructFromMethod
+import roundtrip.dependentframes.VariantOuter
+import roundtrip.dependentframes.InnerBoundOwner
+import roundtrip.dependentframes.constructInnerBoundOwner
 
 private fun <Tag, T> constructImportedOwner(value: T): Int where T : Base<T>, T : Marker<Tag> =
     Owner<Tag, T>().bound(value, value)
 
+private class InnerHost : VariantOuter<String>() {
+    inner class Sub : VariantOuter<String>.Inner()
+}
+
+private fun <Tag, T> constructImportedInnerOwner(): Int where T : VariantOuter<Tag>.Inner =
+    InnerBoundOwner<Tag, T>().label()
+
 class DependentCallableFrameTests {
+    @TestAttribute fun importedInnerBoundRetainsItsOuterVariance() {
+        check(constructInnerBoundOwner<Any, InnerHost.Sub>() == 47)
+        check(constructImportedInnerOwner<Any, InnerHost.Sub>() == 47)
+    }
+
     @TestAttribute fun importedGenericMethodCanConstructItsDependentOwner() {
         constructFromMethod<String, Item>()
         constructFromMethod<Int, IntItem>()

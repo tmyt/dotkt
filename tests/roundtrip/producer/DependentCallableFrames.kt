@@ -40,3 +40,11 @@ class ConstructorCapture<Tag, T> where T : Base<T>, T : Marker<Tag> {
         label = operation.toString()
     }
 }
+
+open class VariantOuter<out Tag> { open inner class Inner }
+
+class InnerBoundOwner<Tag, T> where T : VariantOuter<Tag>.Inner {
+    fun label(): Int = 47
+}
+
+fun <Tag, T> constructInnerBoundOwner(): Int where T : VariantOuter<Tag>.Inner = InnerBoundOwner<Tag, T>().label()

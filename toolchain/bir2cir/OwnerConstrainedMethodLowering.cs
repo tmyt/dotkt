@@ -13,13 +13,13 @@ static class OwnerConstrainedMethodLowering
     internal const string OverrideBoundsKey = "_ownerConstraintOverrideBounds";
     static readonly List<(JsonObject Method, JsonObject Owner)> Methods = new();
     static ReferenceMetadataIndex References;
-    static IReadOnlyDictionary<string, JsonObject> LocalTypes = new Dictionary<string, JsonObject>();
+    static Func<TypeNode, TypeNode> PhysicalClassifier = _ => null;
     internal static void Reset(ReferenceMetadataIndex references,
-        IReadOnlyDictionary<string, JsonObject> localTypes)
+        Func<TypeNode, TypeNode> physicalClassifier)
     {
         Methods.Clear();
         References = references;
-        LocalTypes = localTypes;
+        PhysicalClassifier = physicalClassifier;
     }
 
     internal static bool HasMethodDependentBounds(JsonObject method) =>
@@ -43,7 +43,7 @@ static class OwnerConstrainedMethodLowering
     {
         if (bound is TypeNode.Tv) return false;
         // An invariant foreign construction is already an exact CLR contract. Foreign constrained methods
-        // and delegate types require the same physical row; Kotlin declarations use their source variance below.
+        // and delegate types require the same physical row.
         var nominal = bound;
         while (nominal is TypeNode.Nullable or TypeNode.Oblivious)
             nominal = nominal is TypeNode.Nullable nullable ? nullable.Of : ((TypeNode.Oblivious)nominal).Of;
@@ -59,7 +59,6 @@ static class OwnerConstrainedMethodLowering
                 (parameter.GenericParameterAttributes & System.Reflection.GenericParameterAttributes.VarianceMask) == 0)
             && named.Args?.Any(argument => argument is TypeNode.Projection or TypeNode.Star) != true)
             return false;
-        if (nominal is TypeNode.Fqn kotlin && IsInvariantKotlinConstruction(kotlin)) return false;
         var changed = false;
         MapVariables(bound, tv => {
             // Representation companions are views of the same source parameter, not
@@ -70,39 +69,21 @@ static class OwnerConstrainedMethodLowering
         return changed;
     }
 
-    static bool IsInvariantKotlinConstruction(TypeNode.Fqn bound)
-    {
-        if (bound.Args is not { Length: > 0 } arguments
-            || arguments.Any(argument => argument is TypeNode.Projection or TypeNode.Star)
-            || References.TryResolveClrOwner(bound.Name, out _, out _)) return false;
-        var parameters = LocalTypes.TryGetValue(bound.Name, out var local)
-            ? FBoundStarProjectionErasure.IsSourceGeneric(local) ? TypeParameterFrame.CloneDeclarations(local) : null
-            : References.HasDotKtOwner(bound.Name) ? References.OwnerTypeParamDeclarations(bound.Name) : null;
-        return parameters?.Count == arguments.Length
-            && parameters.All(parameter => parameter is not JsonObject declaration || declaration["variance"] == null);
-    }
-
     internal static void SelfTest()
     {
-        var previousTypes = LocalTypes;
         var invariantReferences = References;
         try
         {
             References = ReferenceMetadataIndex.Build(Array.Empty<string>());
-            LocalTypes = JsonNode.Parse("""
-              [{"name":"Invariant","typeParams":["X"]},
-               {"name":"Covariant","typeParams":[{"name":"X","variance":"out"}]},
-               {"name":"Contravariant","typeParams":[{"name":"X","variance":"in"}]}]
-              """).AsArray().OfType<JsonObject>().ToDictionary(type => type["name"].GetValue<string>());
             var argument = new TypeNode.Tv("method", 0);
-            if (HasConstructedDependency(new TypeNode.Fqn("Invariant", new TypeNode[] { argument }), "method", 1)
-                || !HasConstructedDependency(new TypeNode.Fqn("Covariant", new TypeNode[] { argument }), "method", 1)
-                || !HasConstructedDependency(new TypeNode.Fqn("Contravariant", new TypeNode[] { argument }), "method", 1)
-                || !HasConstructedDependency(new TypeNode.Fqn("Invariant", new TypeNode[] {
+            var constructed = new TypeNode.Fqn("Constructed", new TypeNode[] { argument });
+            if (!HasConstructedDependency(constructed, "method", 1)
+                || HasConstructedDependency(constructed, "method", 0)
+                || !HasConstructedDependency(new TypeNode.Fqn("Constructed", new TypeNode[] {
                     new TypeNode.Projection("out", argument) }), "method", 1))
-                throw new InvalidOperationException("Dependent bounds lost their declaration-owned exactness or variance");
+                throw new InvalidOperationException("A constructed bound lost its independent source-parameter dependency");
         }
-        finally { LocalTypes = previousTypes; References = invariantReferences; }
+        finally { References = invariantReferences; }
         var bound = new TypeNode.Fqn("kotlin.Enum", new TypeNode[] {
             new TypeNode.Tv("method", 0), new TypeNode.Tv("method", 1),
         });
@@ -621,6 +602,8 @@ static class OwnerConstrainedMethodLowering
                     removed.Add(TypeJson.Write(SupertypeGraph.SubstOwnerTvs(
                         projectedBound(TypeJson.Read(slot["template"])),
                         slot["ownerArgs"].AsArray().Select(TypeJson.Read).ToArray())));
+                    if (PhysicalClassifier(bound) is TypeNode classifier)
+                        retained.Add(TypeJson.Write(classifier));
                     foreach (var consequence in slot["consequences"].AsArray())
                         if (!retained.Any(row => JsonNode.DeepEquals(row, consequence)))
                             retained.Add(consequence.DeepClone());
@@ -628,6 +611,10 @@ static class OwnerConstrainedMethodLowering
                 else if (dependsOnOwner(bound) || HasConstructedDependency(bound, "method", index, frame))
                 {
                     removed.Add(TypeJson.Write(projectedBound(ProjectMethodVariables(bound, index, frame))));
+                    // The source relation may not be an exact CLR construction (the actual argument can itself
+                    // be an existential carrier). Its declaration-owned classifier remains a valid physical proof.
+                    if (PhysicalClassifier(bound) is TypeNode classifier)
+                        retained.Add(TypeJson.Write(classifier));
                     foreach (var consequence in dependsOnOwner(bound)
                         ? IndependentBounds(bound, owner["typeParams"] as JsonArray) : Enumerable.Empty<TypeNode>())
                         if (!retained.Any(row => TypeJson.Read(row).Equals(consequence)))
