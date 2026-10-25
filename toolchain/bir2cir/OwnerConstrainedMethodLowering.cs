@@ -13,10 +13,16 @@ static class OwnerConstrainedMethodLowering
     internal const string OverrideBoundsKey = "_ownerConstraintOverrideBounds";
     static readonly List<(JsonObject Method, JsonObject Owner)> Methods = new();
     static ReferenceMetadataIndex References;
-    internal static void Reset(ReferenceMetadataIndex references)
+    static Func<TypeNode, TypeNode> PhysicalClassifier = _ => null;
+    static Func<JsonObject, int, IEnumerable<TypeNode>> NativeProofs = (_, _) => Enumerable.Empty<TypeNode>();
+    internal static void Reset(ReferenceMetadataIndex references,
+        Func<TypeNode, TypeNode> physicalClassifier,
+        Func<JsonObject, int, IEnumerable<TypeNode>> nativeProofs = null)
     {
         Methods.Clear();
         References = references;
+        PhysicalClassifier = physicalClassifier;
+        NativeProofs = nativeProofs ?? ((_, _) => Enumerable.Empty<TypeNode>());
     }
 
     internal static bool HasMethodDependentBounds(JsonObject method) =>
@@ -29,6 +35,14 @@ static class OwnerConstrainedMethodLowering
         method[NullableRepresentationTypes.MethodFrameKey] is JsonValue encoded
             ? NullableRepresentationFrame.Read(JsonNode.Parse(encoded.GetValue<string>())) : null;
 
+    internal static bool ProjectsBound(JsonObject method, int index, TypeNode bound,
+        Func<TypeNode, bool> dependsOnOwner = null) =>
+        (dependsOnOwner ?? FBoundStarProjectionErasure.ContainsOwnerTv)(bound)
+        || HasConstructedDependency(bound, "method", index, ReadMethodFrame(method))
+        || method[OverrideBoundsKey] is JsonValue encoded
+            && JsonNode.Parse(encoded.GetValue<string>()).AsArray().OfType<JsonObject>().Any(row =>
+                row["index"].GetValue<int>() == index && TypeJson.Read(row["bound"]).Equals(bound));
+
     static bool SameSourceParameter(int first, int second, NullableRepresentationFrame frame) =>
         frame == null ? first == second
             : frame.PhysicalSlot(first).SourceIndex == frame.PhysicalSlot(second).SourceIndex;
@@ -39,9 +53,8 @@ static class OwnerConstrainedMethodLowering
         NullableRepresentationFrame frame = null)
     {
         if (bound is TypeNode.Tv) return false;
-        // An invariant foreign construction is already an exact CLR contract. Unlike a Kotlin existential
-        // carrier or a variant foreign interface, satisfying I<U> cannot mean implementing I<V> for another V.
-        // Keep this proof: foreign constrained methods and delegate types require the same physical row.
+        // An invariant foreign construction is already an exact CLR contract. Foreign constrained methods
+        // and delegate types require the same physical row.
         var nominal = bound;
         while (nominal is TypeNode.Nullable or TypeNode.Oblivious)
             nominal = nominal is TypeNode.Nullable nullable ? nullable.Of : ((TypeNode.Oblivious)nominal).Of;
@@ -69,6 +82,19 @@ static class OwnerConstrainedMethodLowering
 
     internal static void SelfTest()
     {
+        var invariantReferences = References;
+        try
+        {
+            References = ReferenceMetadataIndex.Build(Array.Empty<string>());
+            var argument = new TypeNode.Tv("method", 0);
+            var constructed = new TypeNode.Fqn("Constructed", new TypeNode[] { argument });
+            if (!HasConstructedDependency(constructed, "method", 1)
+                || HasConstructedDependency(constructed, "method", 0)
+                || !HasConstructedDependency(new TypeNode.Fqn("Constructed", new TypeNode[] {
+                    new TypeNode.Projection("out", argument) }), "method", 1))
+                throw new InvalidOperationException("A constructed bound lost its independent source-parameter dependency");
+        }
+        finally { References = invariantReferences; }
         var bound = new TypeNode.Fqn("kotlin.Enum", new TypeNode[] {
             new TypeNode.Tv("method", 0), new TypeNode.Tv("method", 1),
         });
@@ -587,13 +613,19 @@ static class OwnerConstrainedMethodLowering
                     removed.Add(TypeJson.Write(SupertypeGraph.SubstOwnerTvs(
                         projectedBound(TypeJson.Read(slot["template"])),
                         slot["ownerArgs"].AsArray().Select(TypeJson.Read).ToArray())));
+                    if (PhysicalClassifier(bound) is TypeNode classifier)
+                        retained.Add(TypeJson.Write(classifier));
                     foreach (var consequence in slot["consequences"].AsArray())
                         if (!retained.Any(row => JsonNode.DeepEquals(row, consequence)))
                             retained.Add(consequence.DeepClone());
                 }
-                else if (dependsOnOwner(bound) || HasConstructedDependency(bound, "method", index, frame))
+                else if (ProjectsBound(method, index, bound, dependsOnOwner))
                 {
                     removed.Add(TypeJson.Write(projectedBound(ProjectMethodVariables(bound, index, frame))));
+                    // The source relation may not be an exact CLR construction (the actual argument can itself
+                    // be an existential carrier). Its declaration-owned classifier remains a valid physical proof.
+                    if (PhysicalClassifier(bound) is TypeNode classifier)
+                        retained.Add(TypeJson.Write(classifier));
                     foreach (var consequence in dependsOnOwner(bound)
                         ? IndependentBounds(bound, owner["typeParams"] as JsonArray) : Enumerable.Empty<TypeNode>())
                         if (!retained.Any(row => TypeJson.Read(row).Equals(consequence)))
@@ -601,7 +633,9 @@ static class OwnerConstrainedMethodLowering
                 }
                 else retained.Add(constraint.DeepClone());
             }
-            parameter["constraints"] = retained;
+            foreach (var proof in NativeProofs(method, index))
+                if (!retained.Any(row => TypeJson.Read(row).Equals(proof))) retained.Add(TypeJson.Write(proof));
+            parameter["constraints"] = new JsonArray(retained.Select(TypeJson.Read).Distinct().Select(TypeJson.Write).ToArray());
             if (removed.Count > 0)
                 parameter[FBoundStarProjectionErasure.ErasedInnerConstraintKey] = removed;
         }

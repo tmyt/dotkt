@@ -5,6 +5,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Project dependent Kotlin generic bounds consistently when constructing generic classes, including
+  cross-DLL callers, erased owner forwarding and variant or captured-inner actual arguments (#1161).
+
 - Preserve mutable iterator contracts for inherited collection protocols, including default set mutation
   bodies and cross-DLL calls; readonly enumerable adaptation remains readonly (#1160).
 
