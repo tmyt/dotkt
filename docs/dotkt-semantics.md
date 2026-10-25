@@ -140,8 +140,10 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   managed-reference aliasing and ordinary exception propagation without a per-call delegate allocation.
   Calls to members of an erased bound use its nominal existential interface or, for a foreign CLR generic, the
   existing exact reflection-dispatch ABI. The latter retains its usual trimming/AOT metadata requirements.
-  The same projection applies to constructed method bounds depending on another method parameter, such as
-  `fun <T, R : I<T>> helper(value: R)`: forwarding through that helper must not reintroduce the erased CLR obligation.
+  Constructed method bounds depending on another method parameter retain their exact logical construction when
+  the Kotlin declaration is invariant and has no use-site projection. Value storage still uses its existing
+  erased representation. Variant bounds use their nominal carrier; forwarding must not reintroduce an erased
+  closed CLR obligation. Bounds depending on the receiver's owner remain projected independently of this rule.
   Invariant foreign CLR constructions retain their exact constraints: their declaration does not permit satisfying
   `I<T>` through a different construction `I<U>`. Self F-bounds also remain exact.
   Independent consequences such as `R : Tag` from `R : T, T : Tag` remain physical;

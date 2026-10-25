@@ -51,13 +51,13 @@ static partial class FBoundStarProjectionErasure
         IDictionary<string, int[]> physicalParameterIndices = null,
         IDictionary<string, string> physicalDeclarationSources = null)
     {
-        OwnerConstrainedMethodLowering.Reset(refs);
+        var defs = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
+        OwnerConstrainedMethodLowering.Reset(refs, defs);
         var rootList = roots.OfType<JsonObject>().ToList();
         // A type-variable receiver's bound still names its constructed Kotlin owner here. Close that owner before
         // value projection replaces the bound with a non-generic carrier and loses the original application.
         ConstrainedTypeParameterReceiverBinding.CloseOpenOwners(rootList);
         var owners = new Dictionary<string, Owner>(StringComparer.Ordinal);
-        var defs = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
         foreach (var root in rootList) Collect(root, root, owners, defs);
         foreach (var root in rootList) NormalizeRedundantProjections(root, defs, refs);
         var localClrAliases = CollectLocalClrAliases(defs);

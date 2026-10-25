@@ -4,8 +4,27 @@ import roundtrip.dependentframes.ConstructorCapture
 import roundtrip.dependentframes.Item
 import roundtrip.dependentframes.IntItem
 import roundtrip.dependentframes.Owner
+import roundtrip.dependentframes.Base
+import roundtrip.dependentframes.Marker
+import roundtrip.dependentframes.NullableItem
+import roundtrip.dependentframes.constructFromMethod
+
+private fun <Tag, T> constructImportedOwner(value: T): Int where T : Base<T>, T : Marker<Tag> =
+    Owner<Tag, T>().bound(value, value)
 
 class DependentCallableFrameTests {
+    @TestAttribute fun importedGenericMethodCanConstructItsDependentOwner() {
+        constructFromMethod<String, Item>()
+        constructFromMethod<Int, IntItem>()
+        constructFromMethod<Int?, NullableItem>()
+    }
+
+    @TestAttribute fun genericConsumerCanConstructTheImportedDependentOwner() {
+        check(constructImportedOwner<String, Item>(Item()) == 1)
+        check(constructImportedOwner<Int, IntItem>(IntItem()) == 1)
+        check(constructImportedOwner<Int?, NullableItem>(NullableItem()) == 1)
+    }
+
     @TestAttribute fun importedDependentOwnerKeepsBoundAndUnboundTargets() {
         val owner = Owner<String, Item>()
         val first = Item()

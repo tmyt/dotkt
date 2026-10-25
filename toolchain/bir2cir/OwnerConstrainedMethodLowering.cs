@@ -13,10 +13,13 @@ static class OwnerConstrainedMethodLowering
     internal const string OverrideBoundsKey = "_ownerConstraintOverrideBounds";
     static readonly List<(JsonObject Method, JsonObject Owner)> Methods = new();
     static ReferenceMetadataIndex References;
-    internal static void Reset(ReferenceMetadataIndex references)
+    static IReadOnlyDictionary<string, JsonObject> LocalTypes = new Dictionary<string, JsonObject>();
+    internal static void Reset(ReferenceMetadataIndex references,
+        IReadOnlyDictionary<string, JsonObject> localTypes)
     {
         Methods.Clear();
         References = references;
+        LocalTypes = localTypes;
     }
 
     internal static bool HasMethodDependentBounds(JsonObject method) =>
@@ -39,9 +42,8 @@ static class OwnerConstrainedMethodLowering
         NullableRepresentationFrame frame = null)
     {
         if (bound is TypeNode.Tv) return false;
-        // An invariant foreign construction is already an exact CLR contract. Unlike a Kotlin existential
-        // carrier or a variant foreign interface, satisfying I<U> cannot mean implementing I<V> for another V.
-        // Keep this proof: foreign constrained methods and delegate types require the same physical row.
+        // An invariant foreign construction is already an exact CLR contract. Foreign constrained methods
+        // and delegate types require the same physical row; Kotlin declarations use their source variance below.
         var nominal = bound;
         while (nominal is TypeNode.Nullable or TypeNode.Oblivious)
             nominal = nominal is TypeNode.Nullable nullable ? nullable.Of : ((TypeNode.Oblivious)nominal).Of;
@@ -57,6 +59,7 @@ static class OwnerConstrainedMethodLowering
                 (parameter.GenericParameterAttributes & System.Reflection.GenericParameterAttributes.VarianceMask) == 0)
             && named.Args?.Any(argument => argument is TypeNode.Projection or TypeNode.Star) != true)
             return false;
+        if (nominal is TypeNode.Fqn kotlin && IsInvariantKotlinConstruction(kotlin)) return false;
         var changed = false;
         MapVariables(bound, tv => {
             // Representation companions are views of the same source parameter, not
@@ -67,8 +70,39 @@ static class OwnerConstrainedMethodLowering
         return changed;
     }
 
+    static bool IsInvariantKotlinConstruction(TypeNode.Fqn bound)
+    {
+        if (bound.Args is not { Length: > 0 } arguments
+            || arguments.Any(argument => argument is TypeNode.Projection or TypeNode.Star)
+            || References.TryResolveClrOwner(bound.Name, out _, out _)) return false;
+        var parameters = LocalTypes.TryGetValue(bound.Name, out var local)
+            ? FBoundStarProjectionErasure.IsSourceGeneric(local) ? TypeParameterFrame.CloneDeclarations(local) : null
+            : References.HasDotKtOwner(bound.Name) ? References.OwnerTypeParamDeclarations(bound.Name) : null;
+        return parameters?.Count == arguments.Length
+            && parameters.All(parameter => parameter is not JsonObject declaration || declaration["variance"] == null);
+    }
+
     internal static void SelfTest()
     {
+        var previousTypes = LocalTypes;
+        var invariantReferences = References;
+        try
+        {
+            References = ReferenceMetadataIndex.Build(Array.Empty<string>());
+            LocalTypes = JsonNode.Parse("""
+              [{"name":"Invariant","typeParams":["X"]},
+               {"name":"Covariant","typeParams":[{"name":"X","variance":"out"}]},
+               {"name":"Contravariant","typeParams":[{"name":"X","variance":"in"}]}]
+              """).AsArray().OfType<JsonObject>().ToDictionary(type => type["name"].GetValue<string>());
+            var argument = new TypeNode.Tv("method", 0);
+            if (HasConstructedDependency(new TypeNode.Fqn("Invariant", new TypeNode[] { argument }), "method", 1)
+                || !HasConstructedDependency(new TypeNode.Fqn("Covariant", new TypeNode[] { argument }), "method", 1)
+                || !HasConstructedDependency(new TypeNode.Fqn("Contravariant", new TypeNode[] { argument }), "method", 1)
+                || !HasConstructedDependency(new TypeNode.Fqn("Invariant", new TypeNode[] {
+                    new TypeNode.Projection("out", argument) }), "method", 1))
+                throw new InvalidOperationException("Dependent bounds lost their declaration-owned exactness or variance");
+        }
+        finally { LocalTypes = previousTypes; References = invariantReferences; }
         var bound = new TypeNode.Fqn("kotlin.Enum", new TypeNode[] {
             new TypeNode.Tv("method", 0), new TypeNode.Tv("method", 1),
         });

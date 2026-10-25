@@ -12,6 +12,11 @@ open class Base<T> {
 
 class Item : Base<Item>(), Marker<String>
 class IntItem : Base<IntItem>(), Marker<Int>
+class NullableItem : Base<NullableItem>(), Marker<Int?>
+
+fun <Tag, T> constructFromMethod() where T : Base<T>, T : Marker<Tag> {
+    Owner<Tag, T>()
+}
 
 class Owner<Tag, T> where T : Base<T>, T : Marker<Tag> {
     fun unbound(left: T, right: T): Int {
