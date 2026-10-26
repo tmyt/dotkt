@@ -68,11 +68,11 @@ for proj in "${PROJECTS[@]}"; do
 done
 
 # Extra DotKt-emitted assemblies (beyond the .ktproj-named one) to ALSO run ilverify over, per consumer project.
-# Space-separated list per project. The round-trip consumer's two <ProjectReference>s copy BOTH producer dlls into
-# its bin (the single-platform RoundtripProducer + the MPP RoundtripProducerMpp); verify all (§5 order).
+# Space-separated list per project. The round-trip consumer copies its referenced DotKt producer DLLs into
+# its bin; verify each producer as well as the consumer (§5 order).
 declare -A EXTRA_EMIT=(
 	["tests/coroutines"]="DotKt.Tests.CoroutineSupport.dll"
-	["tests/roundtrip/consumer"]="RoundtripProducer.dll RoundtripProducerMpp.dll RoundtripDefaultPropertySlot.dll"
+	["tests/roundtrip/consumer"]="RoundtripProducer.dll RoundtripProducerMpp.dll RoundtripDefaultPropertySlot.dll UpstreamStdlibProducer.dll"
 	["tests/roundtrip/bidirectional/consumer"]="BidirectionalKotlin.dll"
 	# The C#-producer dll is csc-emitted (not ilemit), so it needs no DotKt ilverify of its own; ilverify over the
 	# CONSUMER assembly (the .ktproj-named dll) is what proves the emitted interop IL is clean. No EXTRA_EMIT entry
