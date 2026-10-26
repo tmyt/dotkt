@@ -8,7 +8,7 @@
 // runtime/app assemblies substitute it away. Primitives (Int/Long/Byte/Short/Float/Double/Char/Boolean) carry it so the runtime
 // typealias-strip is annotation-driven instead of a hard-coded compiler list.
 //
-// This marker lives in a COMMON source set (not the platform `clr/` set) on purpose: the unsigned value classes
+// This marker lives in the COMMON fragment (`clr/common/`), not the platform fragment: the unsigned value classes
 // (UInt/UByte/UShort/ULong) are declared in common (`unsigned/src`, no platform actual) yet must carry @ClrTypeAlias to
 // be substituted to System.UInt32/Byte/UInt16/UInt64. A platform-only declaration is invisible to common sources, so the
 // annotation must be common; platform code (the primitive `actual`s in clr/builtins) still sees it (platform ⊇ common).

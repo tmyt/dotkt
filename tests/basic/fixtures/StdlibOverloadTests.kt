@@ -4,6 +4,26 @@ import NUnit.Framework.Legacy.ClassicAssert.IsNull as assertNull
 
 private fun <T : Comparable<T>> genericArrayMaximum(values: Array<T>): T = values.max()
 
+private class StdlibClosedIterableRange(
+    override val start: Int,
+    override val endInclusive: Int,
+) : ClosedRange<Int>, Iterable<Int> {
+    override fun iterator(): Iterator<Int> = (start..endInclusive).iterator()
+}
+
+private class StdlibOpenIterableRange(
+    override val start: Int,
+    override val endExclusive: Int,
+) : OpenEndRange<Int>, Iterable<Int> {
+    override fun iterator(): Iterator<Int> = (start..<endExclusive).iterator()
+}
+
+private fun <T, R> stdlibClosedMembership(range: R, value: T?): Boolean
+    where T : Comparable<T>, R : ClosedRange<T>, R : Iterable<T> = value in range
+
+private fun <T, R> stdlibOpenMembership(range: R, value: T?): Boolean
+    where T : Comparable<T>, R : OpenEndRange<T>, R : Iterable<T> = value in range
+
 class StdlibOverloadTests {
     @TestAttribute
     fun floatingArrayAggregatesKeepTheirSelectedOverload() {
@@ -50,6 +70,10 @@ class StdlibOverloadTests {
         assertEquals("1,3", (sequenceOf(1, 2, 3) - sequenceOf(2)).joinToString(","))
         assertEquals("1,2,4", (sequenceOf(1, 2) + listOf(4)).joinToString(","))
         assertEquals("2,3", (sequenceOf(1, 2, 3) - listOf(1)).joinToString(","))
+        val iterable: Iterable<Int> = listOf(1)
+        assertEquals("1,2", (iterable + sequenceOf(2)).joinToString(","))
+        assertEquals("1,2,3", (setOf(1, 2) + sequenceOf(3)).joinToString(","))
+        assertEquals("2", (setOf(1, 2) - sequenceOf(1)).joinToString(","))
     }
 
     @TestAttribute
@@ -81,5 +105,15 @@ class StdlibOverloadTests {
         val open: OpenEndRange<String> = "a"..<"m"
         check("a" in closed && "m" in closed && "z" !in closed)
         check("a" in open && "m" !in open && "z" !in open)
+        val closedIterable = StdlibClosedIterableRange(1, 3)
+        val openIterable = StdlibOpenIterableRange(1, 3)
+        val absent: Int? = null
+        val last: Int? = 3
+        check(last in closedIterable && last !in openIterable)
+        check(absent !in closedIterable && absent !in openIterable)
+        check(stdlibClosedMembership(closedIterable, last))
+        check(!stdlibOpenMembership(openIterable, last))
+        check(!stdlibClosedMembership(closedIterable, absent))
+        check(!stdlibOpenMembership(openIterable, absent))
     }
 }
