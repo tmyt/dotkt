@@ -17,6 +17,9 @@
 
   <ItemGroup>
     <ProjectReference Include="../producer/RoundtripProducer.ktproj" />
+    <!-- Keep the custom CharSequence producer separate: it exercises the synthetic
+         interface representation without changing the shared producer's representation. -->
+    <ProjectReference Include="../upstream-stdlib-producer/UpstreamStdlibProducer.ktproj" />
     <ProjectReference Include="../generic-value-interop/GenericValueInterop.csproj" />
     <ProjectReference Include="../default-property-slot-producer/RoundtripDefaultPropertySlot.ktproj" />
     <ProjectReference Include="../property-slot-producer/RoundtripPropertySlot.csproj" />

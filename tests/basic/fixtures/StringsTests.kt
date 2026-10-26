@@ -9,7 +9,7 @@
 //   il-structfloateqnull  -> STRUCTURAL Double?/Float? equality (nullable field) — float-equality family
 //
 // Coverage preserved (old case -> method):
-//   il-blank         -> blank_isBlankIsNotBlank      isBlank/isNotBlank pure-Kotlin index-loop body
+//   il-blank         -> blank_isBlankIsNotBlank      isBlank/isNotBlank upstream iterator-based body
 //   il-charminus     -> charminus_charArithmetic     Char-Char -> Int; Char+/-Int -> Char
 //   il-charseq       -> charseq_userCharSequence     user class : CharSequence (length/get/subSequence)
 //   il-charseqbcl    -> charseqbcl_computedReceiver   #148 computed/BCL-origin String receiver into stdlib ext

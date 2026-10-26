@@ -51,9 +51,9 @@ PROJECTS=(
 # Reviewed on the v0.9.8 main baseline at the start of #227. Updating a suite requires updating this number in
 # the same change, making otherwise-silent test proliferation or accidental deletion an explicit review event.
 declare -A EXPECTED_DISCOVERED=(
-	["tests/basic"]=827
+	["tests/basic"]=828
 	["tests/coroutines"]=267
-	["tests/roundtrip/consumer"]=649
+	["tests/roundtrip/consumer"]=653
 	["tests/roundtrip/bidirectional/consumer"]=56
 	["tests/interop/consumer"]=465
 )
@@ -68,11 +68,11 @@ for proj in "${PROJECTS[@]}"; do
 done
 
 # Extra DotKt-emitted assemblies (beyond the .ktproj-named one) to ALSO run ilverify over, per consumer project.
-# Space-separated list per project. The round-trip consumer's two <ProjectReference>s copy BOTH producer dlls into
-# its bin (the single-platform RoundtripProducer + the MPP RoundtripProducerMpp); verify all (§5 order).
+# Space-separated list per project. The round-trip consumer copies its referenced DotKt producer DLLs into
+# its bin; verify each producer as well as the consumer (§5 order).
 declare -A EXTRA_EMIT=(
 	["tests/coroutines"]="DotKt.Tests.CoroutineSupport.dll"
-	["tests/roundtrip/consumer"]="RoundtripProducer.dll RoundtripProducerMpp.dll RoundtripDefaultPropertySlot.dll"
+	["tests/roundtrip/consumer"]="RoundtripProducer.dll RoundtripProducerMpp.dll RoundtripDefaultPropertySlot.dll UpstreamStdlibProducer.dll"
 	["tests/roundtrip/bidirectional/consumer"]="BidirectionalKotlin.dll"
 	# The C#-producer dll is csc-emitted (not ilemit), so it needs no DotKt ilverify of its own; ilverify over the
 	# CONSUMER assembly (the .ktproj-named dll) is what proves the emitted interop IL is clean. No EXTRA_EMIT entry
@@ -150,6 +150,14 @@ for proj in "${PROJECTS[@]}"; do
 		fi
 	fi
 	if [[ "$proj" == "tests/basic" ]]; then
+		if python3 "$ROOT/tests/basic/assert-charsequence-local-stores-cir.py" \
+			"$dir/obj/$CONFIGURATION/net10.0/cir/CharSequenceLocalStoreTests.cir.json" \
+			>"$ROOT/build/nunit-$name.charsequence-local-stores.log" 2>&1; then
+			echo "  CharSequence direct-local stores and inline results retain adapted synthetic representation"
+		else
+			echo "  CHARSEQUENCE LOCAL STORE CIR FAIL — see build/nunit-$name.charsequence-local-stores.log"
+			tail -25 "$ROOT/build/nunit-$name.charsequence-local-stores.log"; rc=1
+		fi
 		if python3 "$ROOT/tests/basic/assert-checked-reference-casts-bir.py" \
 			"$dir/obj/$CONFIGURATION/net10.0/bir/CheckedReferenceCastTests.bir.json" \
 			>"$ROOT/build/nunit-$name.checked-reference-casts-bir.log" 2>&1; then
