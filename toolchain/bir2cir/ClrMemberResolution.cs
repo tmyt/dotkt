@@ -28,6 +28,7 @@ static partial class ClrMemberResolution
     static readonly Dictionary<int, JsonArray> KotlinSigSnapshots = new();
     static int _nextKotlinSigSnapshotId;
     static ReferenceMetadataIndex _refs;
+    static IReadOnlyDictionary<string, string> _localCarriers;
     static IReadOnlySet<string> _localTypes = new HashSet<string>();
     static IReadOnlySet<string> _externalCanonicalTypes = new HashSet<string>();
     static IReadOnlySet<string> _localDeclarationIds = new HashSet<string>();
@@ -187,9 +188,10 @@ static partial class ClrMemberResolution
     // The physical pass revisits only constructions after type lowering, when declared Unit/void and a generic
     // return instantiated with Unit are distinguishable, and records representation adapters against those slots.
     public static void ResolveLocalDelegateTargets(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs,
-        bool physicalDelegates = false)
+        bool physicalDelegates = false, IReadOnlyDictionary<string, string> localCarriers = null)
     {
         _refs = refs ?? throw new ArgumentNullException(nameof(refs));
+        _localCarriers = localCarriers;
         var rootList = roots.ToList();
         var owners = new Dictionary<string, List<JsonObject>>(StringComparer.Ordinal);
         void AddDeclarations(string owner, JsonArray methods)

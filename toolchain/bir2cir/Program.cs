@@ -1194,7 +1194,8 @@ sealed class Pipeline
         // declaration lookup and records that open signature explicitly for one-to-one emission.
         foreach (var stagedFile in staged)
             ClrMemberResolution.EnsurePlainCallDescriptors(stagedFile.Root);
-        ClrMemberResolution.ResolveLocalDelegateTargets(staged.Select(s => s.Root), refs);
+        ClrMemberResolution.ResolveLocalDelegateTargets(staged.Select(s => s.Root), refs,
+            localCarriers: localExistentialOwners);
 
         // Suspend/state-machine and bridge synthesis above can add classes after the initial source-declaration
         // inventory was collected. The final CLR-member stamping pass must see the complete emission-unit set so a
@@ -1389,7 +1390,7 @@ sealed class Pipeline
         // Compare fully physical method returns: closing a generic R with Unit still returns a value,
         // whereas a declared Kotlin Unit return has lowered to void. Adapt the delegate, not the method.
         ClrMemberResolution.ResolveLocalDelegateTargets(loweredRoots.Select(s => s.Root), refs,
-            physicalDelegates: true);
+            physicalDelegates: true, localCarriers: localExistentialOwners);
         // A call may retain a local receiver owner while its declaration lives on an inherited referenced
         // interface.  Resolve that local/external boundary only after every physically-lowered local declaration
         // is visible, so a stale shipped copy of a local owner can never win.
@@ -1536,7 +1537,7 @@ sealed class Pipeline
             // can be pointed at the delegate it physically constructs — and the void-to-value adapter that needs
             // can be authored as ordinary CIR. Runs after the last resolution pass, because the rule compares the
             // construction's FINAL function type with the slot's.
-            ClrMemberResolution.MaterializeDelegateSlots(lowered, refs, emittedLocalTypes);
+            ClrMemberResolution.MaterializeDelegateSlots(lowered, refs, emittedLocalTypes, localExistentialOwners);
             ForeignStarProjectionBinding.DropDeclarationSignatures(lowered);
             // THE STAMPING CHOKEPOINT: every node resolved against a .NET member carries that member's declared
             // return. Two omissions of exactly that shape — a generic method and a public field — each removed a

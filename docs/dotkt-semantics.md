@@ -109,14 +109,21 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   checks use the declaration's existential interface and preserve object identity. A statically proven
   constructed upcast retains its exact CLR edge instead, including an ordinary non-generic subclass of `G<X>`.
 - **Ordinary Kotlin generic reference values use the same erased view, including invariant declarations.**
-  Parameters, returns, fields, properties, locals, closure results, constructor value parameters, and source-container
-  elements carrying `G<X>` use the declaration-owned non-generic carrier, retaining their exact Kotlin types in
+  Parameters, returns, fields, properties, locals, closure results, constructor value parameters, and ordinary
+  source collection elements carrying `G<X>` use the declaration-owned non-generic carrier, retaining their exact Kotlin types in
   metadata. Storing an unchecked `G<X>` view does not add a closed CLR construction check or copy the object;
   typed member operations still perform their required conversions. Source overload identity remains distinct
   when physical slots coincide. Imported CLR signatures and native override slots remain exact; a Kotlin binding
   alias still follows its binding-owned representation rather than acquiring an arbitrary native signature.
-  An imported native generic container's arguments and a native delegate's signature keep their selected CLR
-  constructions, including nested Kotlin generic types; they are witnesses, not ordinary Kotlin storage slots.
+  Native generic owner/method instantiation witnesses and closed array allocation components retain a closed
+  invariant source-generic head, with nested arguments following their recorded declaration frame. Declaration-site
+  variance, opaque collection aliases, and explicit projections retain their existing carrier/object representations.
+  Imported native declaration signatures remain fully exact; native delegates adapt the necessary carrier-to-exact
+  value boundary, not managed references. A compiler-generated `Task<R>` bridge instead wraps the Kotlin result's
+  ordinary value representation: it is not an imported native declaration requesting an exact `R` construction.
+  Closed invariant CLR array components (including vararg arrays) keep the array contract described below; storing
+  an unchecked view into such an array can still fail its closed component check. This array contract is distinct
+  from ordinary Kotlin collection value storage.
   Captured generic calls retain their declaration-owned construction witnesses independently of carrier parameters;
   erasing a value slot must not replace the selected method's captured type frame with its upper bound.
 - **A native managed-reference location retains its exact pointee contract.** Passing a local or captured local to
@@ -125,7 +132,9 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   types. An incompatible unchecked value written into such a location throws `ClassCastException` and leaves the
   location unchanged; there is no temporary copy, copy-back, or reference-lifetime mode switch. A supported Kotlin
   `ClrRef<G<*>>` parameter instead points to the explicitly projected carrier slot: it can replace a `G<Int>` value
-  with `G<String>` while retaining identity, without inventing an invariant `G<object>` pointee.
+  with `G<String>` while retaining identity, without inventing an invariant `G<object>` pointee. Source managed-reference
+  pointees also preserve declaration-variant carriers and opaque collection aliases; declaring a source `ClrRef` does
+  not request a fully bound foreign CLR descriptor.
 - **Declaration-site variance uses that same nominal existential value representation.**
   CLR classes are invariant, and CLR interface variance does not relate value-type instantiations. Kotlin permits
   both conversions, so every ordinary parameter, return,

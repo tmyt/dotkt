@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using DotKt.Bir;
 
 static partial class ClrMemberResolution
@@ -32,6 +33,25 @@ static partial class ClrMemberResolution
             || HasRepresentationSlotSeam(sameSlot with { Params = new TypeNode[] { result } },
                 sameSlot with { Params = new TypeNode[] { new TypeNode.Fqn("Other.Reference") } }))
             throw new InvalidOperationException("Delegate adaptation lost exact native/storage variable identity");
+        var priorCarriers = _localCarriers;
+        _localCarriers = new Dictionary<string, string> { ["Source.Value"] = "Source.View" };
+        try
+        {
+            var exact = new TypeNode.Fqn("Source.Value", new TypeNode[] { result });
+            var carrier = new TypeNode.Fqn("Source.View");
+            var returningExact = new TypeNode.Fn(false, exact, Array.Empty<TypeNode>());
+            var returningCarrier = returningExact with { Ret = carrier };
+            var acceptingExact = new TypeNode.Fn(false, result, new TypeNode[] { exact });
+            var acceptingCarrier = acceptingExact with { Params = new TypeNode[] { carrier } };
+            if (!HasRepresentationSlotSeam(returningCarrier, returningExact)
+                || HasRepresentationSlotSeam(returningExact, returningCarrier)
+                || !HasRepresentationSlotSeam(acceptingExact, acceptingCarrier)
+                || HasRepresentationSlotSeam(acceptingCarrier, acceptingExact)
+                || HasRepresentationSlotSeam(acceptingExact with { Params = new TypeNode[] { new TypeNode.ByRef(exact) } },
+                    acceptingCarrier with { Params = new TypeNode[] { new TypeNode.ByRef(carrier) } }))
+                throw new InvalidOperationException("Nominal carrier delegate seams lost value direction or converted a managed reference");
+        }
+        finally { _localCarriers = priorCarriers; }
         Console.WriteLine("[function MethodImpl slots] self-test OK (exact family, arguments, receiver and generic frames)");
 
         static void Check(TypeNode left, TypeNode right, bool expected)

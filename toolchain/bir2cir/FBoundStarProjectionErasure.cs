@@ -523,7 +523,8 @@ static partial class FBoundStarProjectionErasure
                             type, owners, refs, childBoundDeclaration, localClrAliases,
                             preserveArrayShape: childArrayShape,
                             preserveConstructedHead: PreservesConstructionHead(obj, key)
-                                || IsArrayComponentSlot(obj, key) && PreservesArrayComponentHead(type, owners, refs)
+                                || (IsArrayComponentSlot(obj, key) || IsNativeLocationSlot(obj, key))
+                                    && PreservesNativeWitnessHead(type, owners, refs)
                                 || IsExactLexicalType(obj, key)
                                 || IsTypeDefinition(obj) && key == "base"
                                 || IsDeclarationOwnerDescriptor(obj) && key == "owner"));
@@ -557,8 +558,6 @@ static partial class FBoundStarProjectionErasure
         IReadOnlyDictionary<string, string> localClrAliases)
     {
         var kind = Str(owner["k"]);
-        if (_valueSlots?.IsNativeField(owner) == true && key is "type" or "elem" or "memberType") return true;
-        if (kind is "byrefLoad" or "byrefStore" && key == "elem") return true;
         if (kind == null && owner["params"] is JsonArray && key is "params" or "ret"
             && _valueSlots?.HasNativeMethodSignature(owner) == true) return true;
         if (IsDeclarationOwnerDescriptor(owner) && key is "params" or "ret"
@@ -626,9 +625,14 @@ static partial class FBoundStarProjectionErasure
         && Str(node["k"]) is "newArray" or "newArrayInit" or "newArraySized" or "spreadConcat"
             or "arrayGet" or "arraySet" or "forArray";
 
-    // A closed CLR array retains its allocation component independently of the Kotlin value view.
-    // Variant components already have their own writable carrier contract; explicit projections stay erased.
-    static bool PreservesArrayComponentHead(TypeNode type,
+    static bool IsNativeLocationSlot(JsonObject node, string key) =>
+        _valueSlots?.IsNativeField(node) == true && key is "type" or "elem" or "memberType"
+        || Str(node["k"]) is "byrefLoad" or "byrefStore" && key == "elem";
+
+    // Native instantiation witnesses and addressable source locations retain a closed invariant source head.
+    // This is not a fully bound foreign descriptor: nested slots still follow their declaration's frame.
+    // Variance, opaque aliases and explicit projections keep their established carrier/object representation.
+    static bool PreservesNativeWitnessHead(TypeNode type,
         IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs) =>
         StripSourceNullability(type) is TypeNode.Fqn component
         && !ContainsExistentialProjection(component)
@@ -1077,15 +1081,17 @@ static partial class FBoundStarProjectionErasure
                     preserveConstructedHead: PreservesConstructionHead(operation, "type")) != inner)
                 throw new InvalidOperationException("A bound CLR declaring owner became an ordinary value slot");
         }
-        var native = new TypeNode.Fqn("System.Collections.Generic.List", new TypeNode[] { inner });
-        var explicitNative = new TypeNode.Fqn("System.Collections.Generic.List", new TypeNode[] {
-            new TypeNode.Fqn("System.Collections.Generic.IReadOnlyList", new TypeNode[] { new TypeNode.Fqn("System.String") }),
+        // Empty references deliberately make this an unresolved owner, not an imported native contract.
+        // Native owner/method arguments are covered by the reference-backed cross-DLL roundtrip tests.
+        var unresolved = new TypeNode.Fqn("Unresolved.Container", new TypeNode[] { inner });
+        var explicitUnresolved = new TypeNode.Fqn(unresolved.Name, new TypeNode[] {
+            new TypeNode.Fqn("Unresolved.Other", new TypeNode[] { new TypeNode.Fqn("System.String") }),
         });
-        if (RewriteType(native, owners, refs, preserveConstructedHead: true)
-                != new TypeNode.Fqn(native.Name, new TypeNode[] { new TypeNode.Fqn("InnerView") })
-            || RewriteType(explicitNative, owners, refs, preserveConstructedHead: true) != explicitNative
-            || RewriteType(native, owners, refs, boundDeclaration: true) != native)
-            throw new InvalidOperationException("Operation owner arguments confused Kotlin values with exact native descriptors");
+        if (RewriteType(unresolved, owners, refs, preserveConstructedHead: true)
+                != new TypeNode.Fqn(unresolved.Name, new TypeNode[] { new TypeNode.Fqn("InnerView") })
+            || RewriteType(explicitUnresolved, owners, refs, preserveConstructedHead: true) != explicitUnresolved
+            || RewriteType(unresolved, owners, refs, boundDeclaration: true) != unresolved)
+            throw new InvalidOperationException("Unresolved operation arguments confused Kotlin values with bound descriptors");
         var constructionOwner = JsonNode.Parse("""
           {"kind":"class","typeParams":["P","T","Q","U"]}
           """).AsObject();
@@ -3209,15 +3215,16 @@ static partial class FBoundStarProjectionErasure
         {
             var argument = TypeJson.Read(arguments[index]);
             if (argument == null) continue;
-            // Ordinary values and selected constructor witnesses have distinct roles. The latter already carry
-            // their physical frame; otherwise only an exact proof or opaque-alias witness retains a class head.
+            // Method witnesses use the same native-instantiation role as owner arguments and addressed slots.
+            // Selected constructor factories additionally carry their already-authored physical frame.
             var witness = frame == null || frame.PhysicalSlot(index).Representation
                 is NullableRepresentationFrame.Role.Ordinary or NullableRepresentationFrame.Role.Nullable;
             arguments[index] = TypeJson.Write(RewriteType(argument, owners, refs,
                 boundDeclaration, localClrAliases,
                 preserveArrayShape: preserveArrayShape,
                 preserveConstructedHead: witness && !ContainsExistentialProjection(argument)
-                    && (Bool(call[InnerFactoryArgumentsKey])
+                    && (PreservesNativeWitnessHead(argument, owners, refs)
+                    || Bool(call[InnerFactoryArgumentsKey])
                     || _nativeProofs?.ExactMethodArgument(selected, identity, index) == true
                     || StripSourceNullability(argument) is TypeNode.Fqn alias
                     && RequiresOpaqueVariantAlias(alias, owners, refs, localClrAliases)
@@ -3430,7 +3437,8 @@ static partial class FBoundStarProjectionErasure
                             type, owners, refs, childBoundDeclaration, localClrAliases,
                             preserveArrayShape: childArrayShape,
                             preserveConstructedHead: PreservesConstructionHead(obj, key)
-                                || IsArrayComponentSlot(obj, key) && PreservesArrayComponentHead(type, owners, refs)
+                                || (IsArrayComponentSlot(obj, key) || IsNativeLocationSlot(obj, key))
+                                    && PreservesNativeWitnessHead(type, owners, refs)
                                 || IsExactLexicalType(obj, key)
                                 || IsTypeDefinition(obj) && key == "base"
                                 || IsDeclarationOwnerDescriptor(obj) && key == "owner"));
@@ -4505,7 +4513,8 @@ static partial class FBoundStarProjectionErasure
         }
         CollectReturns(declaration["body"]);
         var distinctReturns = returned.Distinct().ToArray();
-        if (!hasNonCarrierReturn && distinctReturns.Length == 1
+        if (_valueSlots?.HasNativeMethodSignature(declaration) != true
+            && !hasNonCarrierReturn && distinctReturns.Length == 1
             && TypeJson.Read(declaration["ret"]) is TypeNode originalReturn
             && originalReturn != distinctReturns[0]
             && LogicalTypeMatchesPhysical(originalReturn, distinctReturns[0]))
@@ -5360,7 +5369,7 @@ static partial class FBoundStarProjectionErasure
                     is NullableRepresentationFrame.Role.Ordinary or NullableRepresentationFrame.Role.Nullable,
                 // An exact declaration proof does not make an existential argument reifiable. Its existing
                 // constrained-storage projection must choose a valid bound, not manufacture G<Object> for G<*>.
-                preserveConstructedHead: (nativeArguments
+                preserveConstructedHead: (nativeArguments && PreservesNativeWitnessHead(argument, owners, refs)
                         || _nativeProofs?.ExactTypeArgument(application.Name, index) == true)
                     && !ContainsExistentialProjection(argument)
                     || frame != null && frame.PhysicalSlot(index).Representation
@@ -5450,11 +5459,11 @@ static partial class FBoundStarProjectionErasure
                     return new TypeNode.Array(writableElement, a.Rank, a.SzArray);
                 return new TypeNode.Array(RewriteType(
                     a.Elem, owners, refs, boundDeclaration, localClrAliases,
-                    preserveConstructedHead: PreservesArrayComponentHead(a.Elem, owners, refs),
+                    preserveConstructedHead: PreservesNativeWitnessHead(a.Elem, owners, refs),
                     preserveArrayShape: preserveArrayShape), a.Rank, a.SzArray);
             case TypeNode.ByRef b: return new TypeNode.ByRef(RewriteType(
-                b.Of, owners, refs, boundDeclaration || !ContainsExistentialProjection(b.Of),
-                localClrAliases, preserveArrayShape: true));
+                b.Of, owners, refs, boundDeclaration, localClrAliases,
+                preserveConstructedHead: PreservesNativeWitnessHead(b.Of, owners, refs), preserveArrayShape: true));
             case TypeNode.Mod m: return new TypeNode.Mod(m.Req,
                 RewriteType(m.M, owners, refs, boundDeclaration, localClrAliases),
                 RewriteType(m.Of, owners, refs, boundDeclaration, localClrAliases));
