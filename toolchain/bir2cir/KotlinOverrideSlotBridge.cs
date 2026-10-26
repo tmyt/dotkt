@@ -123,13 +123,8 @@ static class KotlinOverrideSlotBridge
         var defs = SupertypeGraph.Collect(rootList);
         bool CarrierParameterSeam(TypeNode left, TypeNode right)
         {
-            TypeNode Core(TypeNode type) => type switch {
-                TypeNode.Nullable nullable => Core(nullable.Of),
-                TypeNode.Oblivious oblivious => Core(oblivious.Of),
-                _ => type,
-            };
-            bool Matches(TypeNode exact, TypeNode view) => Core(exact) is TypeNode.Fqn { Args: { Length: > 0 } } construction
-                && Core(view) is TypeNode.Fqn carrier
+            bool Matches(TypeNode exact, TypeNode view) => CarrierCore(exact) is TypeNode.Fqn { Args: { Length: > 0 } } construction
+                && CarrierCore(view) is TypeNode.Fqn carrier
                 && (localCarriers?.TryGetValue(construction.Name, out var local) == true && local == carrier.Name
                     || refs.TryExistentialPhysicalOwner(construction.Name, out var referenced) && referenced == carrier.Name);
             return phase == Phase.PhysicalBridges && (Matches(left, right) || Matches(right, left));
@@ -332,6 +327,12 @@ static class KotlinOverrideSlotBridge
                     returnPosition: true, referencedSlot);
             if (retFit == Fit.Foreign && SameSourceRepresentationVariables(slotRet,
                     SupertypeGraph.SubstOwnerTvs(declRet, ownArgs), sourceMapping.OwnerFrame))
+                retFit = Fit.Bridge;
+            // A selected class/interface slot can return the existing carrier while its implementation retains
+            // the constructed generic result. This direction is a proven upcast, not a new slot representation.
+            if (retFit == Fit.Foreign && CarrierCore(slotRet) is TypeNode.Fqn { Args: null }
+                && CarrierCore(SupertypeGraph.SubstOwnerTvs(declRet, ownArgs)) is TypeNode.Fqn { Args: { Length: > 0 } }
+                && CarrierParameterSeam(slotRet, SupertypeGraph.SubstOwnerTvs(declRet, ownArgs)))
                 retFit = Fit.Bridge;
             if (retFit == Fit.Foreign)
             {
@@ -1865,6 +1866,12 @@ static class KotlinOverrideSlotBridge
     }
 
     enum Fit { Same, Bridge, Rewrite, Foreign }
+
+    static TypeNode CarrierCore(TypeNode type) => type switch {
+        TypeNode.Nullable nullable => CarrierCore(nullable.Of),
+        TypeNode.Oblivious oblivious => CarrierCore(oblivious.Of),
+        _ => type,
+    };
 
     static bool HasExistingSlotBridge(JsonArray methods, string key, TypeNode.Fqn owner, string member, int arity,
         TypeNode[] parameters, TypeNode result, JsonArray typeParams, ReferenceMetadataIndex refs, ValueTypeOracle isValue)

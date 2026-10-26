@@ -80,6 +80,8 @@ class UpstreamErasedStdlibTests {
         check(JoinedLocalUse().select(true) == 1 && JoinedLocalUse().select(false) == 2)
         val overriding: JoinedValueBase<Int> = JoinedValueDerived()
         check(overriding.select(true).select(42) == 2 && overriding.select(false).select(42) == 2)
+        val carriers: JoinedCarrierBase<Int> = JoinedCarrierDerived()
+        check(carriers.select().select(42) == 1)
         val arrays: JoinedArrayBase<Int> = JoinedArrayDerived()
         check(arrays.values(true)[0].select(42) == 2)
         check(UpstreamMapCopies.OverrideReturnMatches(arrays, "values"))

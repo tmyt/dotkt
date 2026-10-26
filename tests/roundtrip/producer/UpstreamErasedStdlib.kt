@@ -87,12 +87,22 @@ class DerivedJoinedLocalUse : JoinedLocalUse() {
 }
 
 open class JoinedValueBase<T> {
-    open fun select(first: Boolean): JoinedValue<T> = concreteJoinedValue(first)
+    open fun select(first: Boolean): JoinedValue<T> = directJoinedValue(first)
 }
 
 class JoinedValueDerived<T> : JoinedValueBase<T>() {
     override fun select(first: Boolean): JoinedValue<T> =
         if (first) ConcreteJoinedValue<T>() else ConcreteJoinedValue<T>()
+}
+
+open class JoinedCarrierBase<T> {
+    @Suppress("UNCHECKED_CAST")
+    open fun select(): JoinedValue<T> = BroadJoinedValue as JoinedValue<T>
+}
+
+class JoinedCarrierDerived<T> : JoinedCarrierBase<T>() {
+    @Suppress("UNCHECKED_CAST")
+    override fun select(): JoinedValue<T> = BroadJoinedValue as JoinedValue<T>
 }
 
 open class JoinedArrayBase<T> {

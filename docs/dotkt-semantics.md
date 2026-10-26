@@ -931,8 +931,9 @@ Classifier tests and casts still check the dictionary classifier; an opaque slot
 Consequences and remaining implementation limitations:
 
 - **A Kotlin `Map` value slot surfaces to C# as `object`**, with Kotlin metadata restoring `Map<K,V>` for Kotlin
-  consumers. Concrete map classes and exact native dictionary declarations remain reified. `emptyMap()` returns a fresh
-  Kotlin `LinkedHashMap`.
+  consumers. Concrete map classes and exact native dictionary declarations remain reified. `emptyMap()` uses the
+  upstream Kotlin empty-map implementation; Kotlin map factories do not promise a native dictionary interface.
+  Use `toClrDictionary()` or `toClrOrderedDictionary()` when a native API requires a concrete CLR dictionary.
 - **`Map.get` is null-on-missing** (Kotlin semantics), synthesized as `ContainsKey` + `get_Item` in
   `kotlin.collections.ClrMapDefaults` (the generic CLR indexer throws); `put`/`remove` return the previous value.
   Authored implementations dispatch to their original methods; native dictionary slots translate these conventions
