@@ -116,8 +116,11 @@ sealed class GenericRepresentationPolicy
     internal bool OwnsValueSlots(string owner) => owner != null && !UsesNativeOwnerSlots(owner)
         && (_localOwners.Contains(owner) || _references?.HasDotKtOwner(owner) == true);
 
+    internal bool IsBindingAlias(string owner) => owner != null
+        && _aliases.ContainsKey(ReferenceMetadataIndex.BareOwnerFqn(owner));
+
     internal bool UsesNativeOwnerSlots(string owner) => owner != null
-        && (_aliases.ContainsKey(ReferenceMetadataIndex.BareOwnerFqn(owner))
+        && (IsBindingAlias(owner)
             || _references?.TryResolveClrOwner(owner, out _, out _) == true);
 
     internal bool HasNativeConstraint(TypeNode.Fqn bound) => UsesNativeOwnerSlots(bound.Name)
@@ -142,7 +145,7 @@ sealed class GenericRepresentationPolicy
             .Any(attribute => TypeJson.OwnerName(attribute["attr"]) == "kotlin.clr.ClrIntrinsic")
         || (declaration["overrides"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()
             .Any(edge => TypeJson.OwnerName(edge["owner"]) is string owner
-                && !_aliases.ContainsKey(ReferenceMetadataIndex.BareOwnerFqn(owner))
+                && !IsBindingAlias(owner)
                 && !OwnsValueSlots(owner));
 
     public bool UsesStorageArguments(string owner) => false;

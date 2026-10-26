@@ -1,5 +1,7 @@
 import NUnit.Framework.TestAttribute
 import GenericValueInterop.NativeBoxApi
+import GenericValueInterop.NativeBoxContainer
+import GenericValueInterop.NativeBoxContainerFactory
 import kotlin.clr.byref
 import roundtrip.genericvalueinterop.Box
 import roundtrip.invariantstorage.*
@@ -43,6 +45,9 @@ class InvariantValueStorageTests {
     fun nativeLocationsRetainExactAliasingAndCheckIncompatibleWrites() {
         val items = arrayOf(Box("array"))
         check(NativeBoxApi.EchoBoxes(items) === items && items[0].value == "array")
+        val container = NativeBoxContainer(Box("container"))
+        check(NativeBoxApi.EchoContainer(container) === container && container.Value.value == "container")
+        check(NativeBoxApi.InvokeContainer(NativeBoxContainerFactory { container }) === container)
         var location = Box("before")
         check(NativeBoxApi.ReplaceAliased(byref(location), byref(location)))
         check(location.value == "second")

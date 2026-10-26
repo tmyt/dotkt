@@ -115,6 +115,8 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   typed member operations still perform their required conversions. Source overload identity remains distinct
   when physical slots coincide. Imported CLR signatures and native override slots remain exact; a Kotlin binding
   alias still follows its binding-owned representation rather than acquiring an arbitrary native signature.
+  An imported native generic container's arguments and a native delegate's signature keep their selected CLR
+  constructions, including nested Kotlin generic types; they are witnesses, not ordinary Kotlin storage slots.
   Captured generic calls retain their declaration-owned construction witnesses independently of carrier parameters;
   erasing a value slot must not replace the selected method's captured type frame with its upper bound.
 - **A native managed-reference location retains its exact pointee contract.** Passing a local or captured local to

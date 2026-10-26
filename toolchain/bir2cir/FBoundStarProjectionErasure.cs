@@ -5344,6 +5344,10 @@ static partial class FBoundStarProjectionErasure
         TypeNode[] Arguments(TypeNode.Fqn application)
         {
             var nativeOwner = IsNativeArrayOwner(application, refs, localClrAliases);
+            // Imported native arguments are exact CLR witnesses. A trusted Kotlin binding alias instead
+            // owns its storage projection, even when its physical head is a native generic definition.
+            var nativeArguments = nativeOwner && _valueSlots?.IsBindingAlias(application.Name) != true
+                && localClrAliases?.ContainsKey(application.Name) != true;
             var frame = nativeOwner ? null : owners.TryGetValue(application.Name, out var declaration)
                 ? KotlinSupertypesRecord.ReadNullableFrame(declaration.Def)
                 : refs?.NullableTypeFrames.GetValueOrDefault(application.Name);
@@ -5356,7 +5360,8 @@ static partial class FBoundStarProjectionErasure
                     is NullableRepresentationFrame.Role.Ordinary or NullableRepresentationFrame.Role.Nullable,
                 // An exact declaration proof does not make an existential argument reifiable. Its existing
                 // constrained-storage projection must choose a valid bound, not manufacture G<Object> for G<*>.
-                preserveConstructedHead: _nativeProofs?.ExactTypeArgument(application.Name, index) == true
+                preserveConstructedHead: (nativeArguments
+                        || _nativeProofs?.ExactTypeArgument(application.Name, index) == true)
                     && !ContainsExistentialProjection(argument)
                     || frame != null && frame.PhysicalSlot(index).Representation
                     is NullableRepresentationFrame.Role.Ordinary or NullableRepresentationFrame.Role.Nullable

@@ -7,6 +7,9 @@ public interface NativeBoxReceiver
     object Accept(Box<string, string> value);
 }
 
+public sealed class NativeBoxContainer<T>(T value) { public T Value { get; } = value; }
+public delegate NativeBoxContainer<Box<string, string>> NativeBoxContainerFactory();
+
 public static class NativeBoxApi
 {
     static Box<string, string> live = new("initial");
@@ -17,6 +20,8 @@ public static class NativeBoxApi
 
     public static Box<string, string> Echo(Box<string, string> value) => value;
     public static Box<string, string>[] EchoBoxes(Box<string, string>[] values) => values;
+    public static NativeBoxContainer<Box<string, string>> EchoContainer(NativeBoxContainer<Box<string, string>> value) => value;
+    public static NativeBoxContainer<Box<string, string>> InvokeContainer(NativeBoxContainerFactory factory) => factory();
     public static object Dispatch(NativeBoxReceiver receiver, Box<string, string> value) => receiver.Accept(value);
 
     public static bool ReplaceAliased(ref Box<string, string> first, ref Box<string, string> second)
