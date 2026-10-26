@@ -425,6 +425,7 @@ static class CompanionExtensionBinding
                 ["abstract"] = false,
                 ["specialName"] = true,
                 ["generated"] = true,
+                [GenericRepresentationPolicy.PhysicalDeclarationSignatureKey] = true,
                 ["vis"] = "public",
                 ["params"] = new JsonArray(new JsonObject
                 {

@@ -150,6 +150,15 @@ for proj in "${PROJECTS[@]}"; do
 		fi
 	fi
 	if [[ "$proj" == "tests/basic" ]]; then
+		if python3 "$ROOT/tests/basic/assert-inherited-mutable-iterator-cir.py" \
+			"$dir/obj/$CONFIGURATION/net10.0/bir/InheritedMutableIteratorSlotTests.bir.json" \
+			"$dir/obj/$CONFIGURATION/net10.0/cir/InheritedMutableIteratorSlotTests.cir.json" \
+			>"$ROOT/build/nunit-$name.inherited-mutable-iterator-cir.log" 2>&1; then
+			echo "  inherited iterator operations bind exact local/reference carrier slots"
+		else
+			echo "  INHERITED ITERATOR SLOT FAIL — see build/nunit-$name.inherited-mutable-iterator-cir.log"
+			tail -25 "$ROOT/build/nunit-$name.inherited-mutable-iterator-cir.log"; rc=1
+		fi
 		if python3 "$ROOT/tests/basic/assert-charsequence-local-stores-cir.py" \
 			"$dir/obj/$CONFIGURATION/net10.0/cir/CharSequenceLocalStoreTests.cir.json" \
 			>"$ROOT/build/nunit-$name.charsequence-local-stores.log" 2>&1; then

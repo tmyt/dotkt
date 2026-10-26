@@ -9,6 +9,7 @@ using DotKt.Bir;
 sealed class GenericRepresentationPolicy
 {
     internal const string NativeLocationKey = "_nativeLocation";
+    internal const string PhysicalDeclarationSignatureKey = "_physicalDeclarationSignature";
     readonly IReadOnlyDictionary<string, string> _aliases;
     readonly ReferenceMetadataIndex _references;
     readonly HashSet<string> _localOwners;
@@ -148,7 +149,8 @@ sealed class GenericRepresentationPolicy
     // A Kotlin binding alias owns its own value projection; merely overriding that
     // semantic surface does not select an exact imported CLR method signature.
     internal bool HasNativeMethodSignature(JsonObject declaration) =>
-        (declaration["attrs"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()
+        declaration[PhysicalDeclarationSignatureKey]?.GetValue<bool>() == true
+        || (declaration["attrs"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()
             .Any(attribute => TypeJson.OwnerName(attribute["attr"]) == "kotlin.clr.ClrIntrinsic")
         || (declaration["overrides"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()
             .Any(edge => TypeJson.OwnerName(edge["owner"]) is string owner
@@ -238,6 +240,22 @@ sealed class GenericRepresentationPolicy
             if (companionPolicy.IsNativeField(field) != native || companionPolicy.IsNativeField(use) != native)
                 throw new InvalidOperationException("Native companion storage selection leaked into a sibling field");
         }
+        var nullableRead = JsonNode.Parse("""
+        {"types":[{"name":"NativeNullableRead","kind":"class","typeParams":["T"],"fields":[
+          {"name":"value","type":{"t":"nullable","of":{"t":"tv","scope":"type","i":0}},
+           "attrs":[{"attr":{"t":"fqn","name":"kotlin.clr.ClrField"}}]}],"methods":[
+          {"name":"read","params":[],"ret":{"t":"nullable","of":{"t":"fqn","name":"kotlin.Any"}},
+           "body":[{"k":"return","value":{"k":"field","ownerType":{"t":"fqn","name":"NativeNullableRead","args":[{"t":"tv","scope":"type","i":0}]},
+             "name":"value","recv":{"k":"this"},"ret":{"t":"nullable","of":{"t":"tv","scope":"type","i":0}},
+             "sty":{"t":"nullable","of":{"t":"tv","scope":"type","i":0}}}}]}]}]}
+        """)!.AsObject();
+        var readPolicy = new GenericRepresentationPolicy(new Dictionary<string, string>(), roots: new[] { nullableRead });
+        NullableRepresentationMaterialization.Apply(new[] { nullableRead }, _ => false, policy: readPolicy);
+        var physicalRead = nullableRead["types"][0]["methods"][0]["body"][0]["value"];
+        var physicalField = TypeJson.Read(nullableRead["types"][0]["fields"][0]["type"]);
+        if (physicalField is not TypeNode.Tv || TypeJson.Read(physicalRead["ret"]) != physicalField
+            || TypeJson.Read(physicalRead["sty"]) != physicalField)
+            throw new InvalidOperationException("Native nullable field read lost its physical result frame");
         var policy = new GenericRepresentationPolicy(new Dictionary<string, string> {
             ["kotlin.collections.Map"] = "System.Collections.Generic.IDictionary",
             ["kotlin.collections.Collection"] = "System.Collections.Generic.IReadOnlyCollection",

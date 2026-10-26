@@ -614,6 +614,8 @@ static class NullableRepresentationMaterialization
                 var childPosition = key switch {
                     "type" when kind == null && mapping.IsNativeField(obj) => NullableGenericErasure.Pos.Argument,
                     "elem" when kind == null && mapping.IsNativeField(obj) => NullableGenericErasure.Pos.Argument,
+                    "ret" or "sty" when kind is "field" or "staticField" or "lateinitGet"
+                        && mapping.IsNativeField(obj) => NullableGenericErasure.Pos.Argument,
                     "ret" when obj[PreparedClosureDefaultFrames.ReturnArgumentKey]?.GetValue<bool>() == true
                         => NullableGenericErasure.Pos.Argument,
                     "typeArgs" => NullableGenericErasure.Pos.Argument,

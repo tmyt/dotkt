@@ -173,7 +173,8 @@ static partial class NullableRepresentationDemand
                         && policy.IsNativeField(owner.Declaration) != true
                         && TypeJson.Read(owner.Declaration["elem"]) is TypeNode.Tv cellVariable)
                         owner.Signature.Add(cellVariable, RepresentationRole.Storage);
-                    Scan(owner.Declaration["elem"], owner.Signature, typeFrames, methodFrames, localFrames, policy: policy);
+                    Scan(owner.Declaration["elem"], owner.Signature, typeFrames, methodFrames, localFrames,
+                        argument: policy?.IsNativeField(owner.Declaration) == true, policy: policy);
                 }
                 foreach (var key in new[] { "fields", "properties" })
                     foreach (var slot in (owner.Declaration[key] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
@@ -185,7 +186,8 @@ static partial class NullableRepresentationDemand
                             && policy.IsNativeField(slot) != true
                             && TypeJson.Read(slot["type"]) is TypeNode.Tv variable)
                             owner.Signature.Add(variable, RepresentationRole.Storage);
-                        Scan(slot["type"], owner.Signature, typeFrames, methodFrames, localFrames, policy: policy);
+                        Scan(slot["type"], owner.Signature, typeFrames, methodFrames, localFrames,
+                            argument: policy?.IsNativeField(slot) == true, policy: policy);
                         Scan(slot["init"], owner.Body, typeFrames, methodFrames, localFrames, policy: policy);
                     }
                 foreach (var ctor in (owner.Declaration["ctors"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
@@ -335,8 +337,10 @@ static partial class NullableRepresentationDemand
                         || key == "resolvedMemberParams" || key == ClrMemberResolution.ResolvedMemberReturnKey
                         || key == "argTypes" && ClrBoundNode.IsAny(Text(obj["k"]))) continue;
                     var storageElement = policy?.IsStorageElement(Text(obj["k"]), key) == true;
+                    var nativeFieldRead = key is "ret" or "sty"
+                        && Text(obj["k"]) is "field" or "staticField" or "lateinitGet" && policy?.IsNativeField(obj) == true;
                     Scan(value, result, types, methods, localFrames, key == "typeArgs" || storageElement
-                        || key == "elem" && NullableGenericErasure.IsArgumentElementKind(Text(obj["k"])), policy, storageElement);
+                        || nativeFieldRead || key == "elem" && NullableGenericErasure.IsArgumentElementKind(Text(obj["k"])), policy, storageElement);
                 }
         }
     }

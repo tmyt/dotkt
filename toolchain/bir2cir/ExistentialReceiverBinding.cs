@@ -249,7 +249,6 @@ static class ExistentialReceiverBinding
 
         var physicalOwner = receiverType;
         var selectedId = Str(call[DeclarationIdentityBinding.Key]);
-        if (index.Members.ContainsKey(receiverType.Name))
         {
             var visited = new HashSet<string>(StringComparer.Ordinal);
             var frontier = new List<string> { receiverType.Name };
@@ -268,7 +267,14 @@ static class ExistentialReceiverBinding
                                     || m.SourceDeclarationId == selectedId)
                                 && (selectedId != null || SignatureMatches(m.Parameters, authoredSignature)))
                             .Select(member => (owner, member)));
+                    else if (TryReferenceSlot(new TypeNode.Fqn(owner), out var referencedOwner, out var referencedSlot))
+                        candidates.Add((referencedOwner, referencedSlot));
                     if (index.Bases.TryGetValue(owner, out var parents)) next.AddRange(parents);
+                    else if (refs.TryReferenceTypeShape(new TypeNode.Fqn(owner), out _, out _, out var baseType, out var interfaces))
+                    {
+                        if (baseType != null) next.Add(baseType.Name);
+                        next.AddRange(interfaces.Select(parent => parent.Name));
+                    }
                 }
                 frontier = next;
             }
@@ -288,33 +294,33 @@ static class ExistentialReceiverBinding
                 physicalResult = candidates[0].Slot.Return;
             }
         }
-        else
+        bool TryReferenceSlot(TypeNode.Fqn referencedReceiver, out string declaringOwner, out Member slot)
         {
-            var sourceOwner = index.SemanticOwnerByPhysical.GetValueOrDefault(receiverType.Name);
-            if (sourceOwner == null)
-                refs.TryExistentialSemanticOwner(receiverType.Name, out sourceOwner);
-            var semanticOwner = TypeJson.Read(call["ownerType"]) as TypeNode.Fqn
-                ?? new TypeNode.Fqn(sourceOwner, Array.Empty<TypeNode>());
+            declaringOwner = null;
+            slot = null;
+            if (!refs.TryExistentialSemanticOwner(referencedReceiver.Name, out var sourceOwner)) return false;
+            var semanticOwner = authoredOwner != null
+                && (authoredOwner.Name == sourceOwner
+                    || refs.TryExistentialPhysicalOwner(authoredOwner.Name, out var authoredCarrier)
+                        && authoredCarrier == referencedReceiver.Name)
+                ? new TypeNode.Fqn(sourceOwner, authoredOwner.Args) : new TypeNode.Fqn(sourceOwner);
             // Splicing can retain a base member's declaration identity while projecting its receiver owner.
             // That selected declaration, not the receiver classifier, owns the existential slot.
             if (selectedId != null && refs.TryDeclarationIdentity(selectedId, out _, out var selectedOwner, out _, out _))
                 semanticOwner = new TypeNode.Fqn(selectedOwner);
-            if (refs.IsExistentialPhysicalOwner(semanticOwner.Name)
-                || refs.TryExistentialPhysicalOwner(semanticOwner.Name, out var authoredCarrier)
-                    && authoredCarrier == receiverType.Name)
-                semanticOwner = new TypeNode.Fqn(sourceOwner, semanticOwner.Args);
             if (refs.TryStarProjectionMember(semanticOwner, sourceMethod, accessorKind,
                     ga, authoredSignature, pc, Str(call[DeclarationIdentityBinding.Key]),
                     out var erasedOwner, out var erasedMethod, out var erasedSignature, out _,
                     out var erasedResult)
-                && IsReachableReferenceCarrier(receiverType, erasedOwner, refs))
+                && IsReachableReferenceCarrier(referencedReceiver, erasedOwner, refs))
             {
-                physicalOwner = new TypeNode.Fqn(erasedOwner);
-                physicalMethod = erasedMethod;
-                physicalParameters = erasedSignature.Select(SignatureValueTypes.Of).ToArray();
-                physicalSignature = erasedSignature;
-                physicalResult = erasedResult;
+                declaringOwner = erasedOwner;
+                slot = new Member(erasedMethod, sourceMethod, accessorKind,
+                    erasedSignature.Select(SignatureValueTypes.Of).ToArray(), erasedResult, ga,
+                    SignatureParameters: erasedSignature);
+                return true;
             }
+            return false;
         }
 
         if (physicalMethod == null) return; // ambiguous or absent: never guess a physical slot

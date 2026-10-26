@@ -629,6 +629,8 @@ static partial class FBoundStarProjectionErasure
 
     static bool IsNativeLocationSlot(JsonObject node, string key) =>
         _valueSlots?.IsNativeField(node) == true && key is "type" or "elem" or "memberType"
+        || _valueSlots?.IsNativeField(node) == true && key is "ret" or "sty"
+            && Str(node["k"]) is "field" or "staticField" or "lateinitGet"
         || Str(node["k"]) is "byrefLoad" or "byrefStore" && key == "elem";
 
     // Native instantiation witnesses and addressable source locations retain a closed invariant source head.
@@ -5221,6 +5223,7 @@ static partial class FBoundStarProjectionErasure
                 obj.Remove(ExactOuterKey);
                 obj.Remove(DelegationOuterSlotKey);
                 obj.Remove(GenericRepresentationPolicy.NativeLocationKey);
+                obj.Remove(GenericRepresentationPolicy.PhysicalDeclarationSignatureKey);
                 obj.Remove(InnerFactoryArgumentsKey);
                 foreach (var value in obj.Select(pair => pair.Value).ToList())
                     if (value != null) RemoveTransientMarkers(value);
