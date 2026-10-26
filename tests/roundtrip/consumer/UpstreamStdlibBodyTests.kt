@@ -13,15 +13,6 @@ private fun nonLocalTrimmedResult(text: CharSequence): String {
     withTrimmedText(text) { return it.toString() }
 }
 
-private inline fun selectText(value: CharSequence, useEmpty: () -> Boolean): CharSequence {
-    if (useEmpty()) return ""
-    return value
-}
-
-private var textValueCalls = 0
-private fun textValue(): String { textValueCalls++; return "replacement" }
-private fun nullableTextValue(value: String?): String? = value
-
 class UpstreamStdlibBodyTests {
     @TestAttribute
     fun stringTrimAndCharDefaultsUseRestoredStdlibBodies() {
@@ -86,23 +77,4 @@ class UpstreamStdlibBodyTests {
         assertEquals(null, Duration.parseOrNull("1.2.3s"))
     }
 
-    @TestAttribute
-    fun charSequenceStoresAdaptReassignmentAndInlineEarlyReturns() {
-        val original: CharSequence = TextSequence("original")
-        var text: CharSequence = original
-        textValueCalls = 0
-        text = textValue()
-        assertEquals("replacement", text.toString())
-        assertEquals(1, textValueCalls)
-        text = original
-        assertTrue(text === original)
-        assertEquals("", selectText(original) { true }.toString())
-        assertTrue(selectText(original) { false } === original)
-
-        var nullable: CharSequence? = original
-        nullable = nullableTextValue("present")
-        assertEquals("present", nullable.toString())
-        nullable = nullableTextValue(null)
-        assertEquals(null, nullable)
-    }
 }

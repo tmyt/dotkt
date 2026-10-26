@@ -8,7 +8,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 ### Changed
 
 - Restore upstream Kotlin 2.4.21 String trimming, padding and blank checks, Duration fractional parsing, and Standard source identity now that their obsolete backend workarounds are unnecessary. Guard the restored files byte-for-byte and exercise them across DLL boundaries.
-- Apply the String-to-CharSequence representation bridge to reassignment and inline-return local stores, preserving nullable values and single evaluation.
+- Apply the String-to-CharSequence representation bridge to direct local stores and inline-result temporaries, preserving nullable values and single evaluation.
 
 ## 0.9.18 (2026-10-26)
 
