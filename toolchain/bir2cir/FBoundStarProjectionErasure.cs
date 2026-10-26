@@ -615,6 +615,8 @@ static partial class FBoundStarProjectionErasure
     // Native memberRef/declaration descriptors separately remain fully bound above.
     static bool PreservesConstructionHead(JsonObject node, string key) =>
         key is "type" or "ownerType" && ClrBoundNode.IsAny(Str(node["k"]))
+        // Constraint dispatch still needs its selected semantic owner to bind the allocated physical slot.
+        || key == "iface" && Str(node["k"]) == "constrainedCall"
         || key == "type"
         && ((Str(node["k"]) is "new" or "newClr")
             || Str(node["k"]) == "var" && Bool(node[CallEvalLowering.ValueTemporaryKey])
@@ -654,12 +656,13 @@ static partial class FBoundStarProjectionErasure
         entries.Parent is JsonObject definition && IsTypeDefinition(definition)
             && ReferenceEquals(definition["interfaces"], entries);
 
-    // Override facts and MethodImpls name declarations on exact inheritance edges, not Kotlin value slots.
+    // Override facts, selected inherited implementations and MethodImpls name exact declaration edges, not values.
     static bool IsDeclarationOwnerDescriptor(JsonObject node) =>
         node.Parent is JsonArray entries && entries.Parent is JsonObject method
             && (ReferenceEquals(method["clrBaseImpls"], entries)
                 || ReferenceEquals(method["clrInterfaceImpls"], entries)
-                || ReferenceEquals(method["overrides"], entries));
+                || ReferenceEquals(method["overrides"], entries))
+        || node.Parent is JsonObject fact && ReferenceEquals(fact["inheritedImplementation"], node);
 
     static bool IsInnerConstructionOuterSlot(JsonObject node, int index,
         IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs)

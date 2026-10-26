@@ -13,33 +13,59 @@
     }]
   }, {
     "name": "ConstructedMemberReturnFrameProbe", "kind": "class", "typeParams": [{ "name": "T" }],
-    "base": null, "interfaces": [], "fields": [], "ctors": [], "properties": [], "attrs": [],
+    "abstract": true,
+    "base": null, "interfaces": [{ "t": "fqn", "name": "LocalResultBox", "args": [
+      { "t": "fqn", "name": "System.Tuple", "args": [{ "t": "fqn", "name": "Pairish", "args": [
+        { "t": "tv", "scope": "type", "i": 0 }, { "t": "tv", "scope": "type", "i": 0 }
+      ] }] }
+    ] }], "fields": [], "ctors": [], "properties": [], "attrs": [],
     "methods": [{
       "name": "probe", "static": false, "override": false, "virtual": false, "vis": "public",
       "params": [{
         "name": "box",
         "type": {
           "t": "fqn", "name": "LocalResultBox",
-          "args": [{ "t": "fqn", "name": "Pairish", "args": [{ "t": "tv", "scope": "type", "i": 0 }, { "t": "tv", "scope": "type", "i": 0 }] }]
+          "args": [{ "t": "fqn", "name": "System.Tuple", "args": [{ "t": "fqn", "name": "Pairish", "args": [{ "t": "tv", "scope": "type", "i": 0 }, { "t": "tv", "scope": "type", "i": 0 }] }] }]
         }
       }],
-      "ret": { "t": "fqn", "name": "Pairish", "args": [{ "t": "tv", "scope": "type", "i": 0 }, { "t": "tv", "scope": "type", "i": 0 }] },
+      "ret": { "t": "fqn", "name": "System.Tuple", "args": [{ "t": "fqn", "name": "Pairish", "args": [{ "t": "tv", "scope": "type", "i": 0 }, { "t": "tv", "scope": "type", "i": 0 }] }] },
       "body": [{
         "k": "return",
         "value": {
           "k": "callInstance", "virtual": true,
           "ownerType": {
             "t": "fqn", "name": "LocalResultBox",
-            "args": [{ "t": "fqn", "name": "Pairish", "args": [{ "t": "tv", "scope": "type", "i": 0 }, { "t": "tv", "scope": "type", "i": 0 }] }]
+            "args": [{ "t": "fqn", "name": "System.Tuple", "args": [{ "t": "fqn", "name": "Pairish", "args": [{ "t": "tv", "scope": "type", "i": 0 }, { "t": "tv", "scope": "type", "i": 0 }] }] }]
           },
           "method": "read", "sig": [],
-          "sty": { "t": "fqn", "name": "Pairish", "args": [{ "t": "tv", "scope": "type", "i": 0 }, { "t": "tv", "scope": "type", "i": 0 }] },
-          "ret": { "t": "fqn", "name": "Pairish", "args": [{ "t": "tv", "scope": "type", "i": 0 }, { "t": "tv", "scope": "type", "i": 0 }] },
-          "dynRet": { "t": "fqn", "name": "Pairish", "args": [{ "t": "tv", "scope": "type", "i": 0 }, { "t": "tv", "scope": "type", "i": 0 }] },
+          "sty": { "t": "fqn", "name": "System.Tuple", "args": [{ "t": "fqn", "name": "Pairish", "args": [{ "t": "tv", "scope": "type", "i": 0 }, { "t": "tv", "scope": "type", "i": 0 }] }] },
+          "ret": { "t": "fqn", "name": "System.Tuple", "args": [{ "t": "fqn", "name": "Pairish", "args": [{ "t": "tv", "scope": "type", "i": 0 }, { "t": "tv", "scope": "type", "i": 0 }] }] },
+          "dynRet": { "t": "fqn", "name": "System.Tuple", "args": [{ "t": "fqn", "name": "Pairish", "args": [{ "t": "tv", "scope": "type", "i": 0 }, { "t": "tv", "scope": "type", "i": 0 }] }] },
           "recv": { "k": "local", "name": "box" },
           "args": []
         }
       }]
+    }, {
+      "name": "probeLexical", "static": false, "override": false, "virtual": false, "vis": "public", "params": [],
+      "ret": { "t": "fqn", "name": "System.Tuple", "args": [{ "t": "fqn", "name": "Pairish", "args": [
+        { "t": "tv", "scope": "type", "i": 0 }, { "t": "tv", "scope": "type", "i": 0 }
+      ] }] },
+      "body": [{ "k": "return", "value": {
+        "k": "callInstance", "virtual": true, "ownerType": { "t": "fqn", "name": "LocalResultBox", "args": [
+          { "t": "fqn", "name": "System.Tuple", "args": [{ "t": "fqn", "name": "Pairish", "args": [
+            { "t": "tv", "scope": "type", "i": 0 }, { "t": "tv", "scope": "type", "i": 0 }
+          ] }] }
+        ] }, "method": "read", "sig": [], "args": [], "recv": { "k": "this" },
+        "sty": { "t": "fqn", "name": "System.Tuple", "args": [{ "t": "fqn", "name": "Pairish", "args": [
+          { "t": "tv", "scope": "type", "i": 0 }, { "t": "tv", "scope": "type", "i": 0 }
+        ] }] },
+        "ret": { "t": "fqn", "name": "System.Tuple", "args": [{ "t": "fqn", "name": "Pairish", "args": [
+          { "t": "tv", "scope": "type", "i": 0 }, { "t": "tv", "scope": "type", "i": 0 }
+        ] }] },
+        "dynRet": { "t": "fqn", "name": "System.Tuple", "args": [{ "t": "fqn", "name": "Pairish", "args": [
+          { "t": "tv", "scope": "type", "i": 0 }, { "t": "tv", "scope": "type", "i": 0 }
+        ] }] }
+      } }]
     }]
   }, {
     "name": "Pairish", "kind": "class", "typeParams": [{ "name": "A" }, { "name": "B" }],
@@ -65,46 +91,46 @@
     "name": "DerivedPasser", "kind": "class", "typeParams": [{ "name": "K" }, { "name": "V" }],
     "base": {
       "t": "fqn", "name": "PassBase",
-      "args": [{
+      "args": [{ "t": "fqn", "name": "System.Tuple", "args": [{
         "t": "fqn", "name": "Pairish",
         "args": [{ "t": "tv", "scope": "type", "i": 0 }, { "t": "tv", "scope": "type", "i": 1 }]
-      }]
+      }] }]
     },
     "interfaces": [{
       "t": "fqn", "name": "Passer",
-      "args": [{
+      "args": [{ "t": "fqn", "name": "System.Tuple", "args": [{
         "t": "fqn", "name": "Pairish",
         "args": [{ "t": "tv", "scope": "type", "i": 0 }, { "t": "tv", "scope": "type", "i": 1 }]
-      }]
+      }] }]
     }],
     "inheritedClassMethods": [{
       "member": "pass",
-      "params": [{ "name": "value", "type": {
+      "params": [{ "name": "value", "type": { "t": "fqn", "name": "System.Tuple", "args": [{
         "t": "fqn", "name": "Pairish",
         "args": [{ "t": "tv", "scope": "type", "i": 0 }, { "t": "tv", "scope": "type", "i": 1 }]
-      } }],
-      "ret": {
+      }] } }],
+      "ret": { "t": "fqn", "name": "System.Tuple", "args": [{
         "t": "fqn", "name": "Pairish",
         "args": [{ "t": "tv", "scope": "type", "i": 0 }, { "t": "tv", "scope": "type", "i": 1 }]
-      },
+      }] },
       "overrides": [{
-        "owner": { "t": "fqn", "name": "PassBase", "args": [{
+        "owner": { "t": "fqn", "name": "PassBase", "args": [{ "t": "fqn", "name": "System.Tuple", "args": [{
           "t": "fqn", "name": "Pairish",
           "args": [{ "t": "tv", "scope": "type", "i": 0 }, { "t": "tv", "scope": "type", "i": 1 }]
-        }] },
+        }] }] },
         "member": "pass", "kind": "method", "arity": 1
       }, {
-        "owner": { "t": "fqn", "name": "Passer", "args": [{
+        "owner": { "t": "fqn", "name": "Passer", "args": [{ "t": "fqn", "name": "System.Tuple", "args": [{
           "t": "fqn", "name": "Pairish",
           "args": [{ "t": "tv", "scope": "type", "i": 0 }, { "t": "tv", "scope": "type", "i": 1 }]
-        }] },
+        }] }] },
         "member": "pass", "kind": "method", "arity": 1
       }],
       "inheritedImplementation": {
-        "owner": { "t": "fqn", "name": "PassBase", "args": [{
+        "owner": { "t": "fqn", "name": "PassBase", "args": [{ "t": "fqn", "name": "System.Tuple", "args": [{
           "t": "fqn", "name": "Pairish",
           "args": [{ "t": "tv", "scope": "type", "i": 0 }, { "t": "tv", "scope": "type", "i": 1 }]
-        }] },
+        }] }] },
         "member": "pass", "kind": "method", "arity": 0, "typeParams": []
       }
     }],

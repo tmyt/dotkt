@@ -11,6 +11,12 @@ import roundtrip.invariantstorage.*
 
 private fun forwardedNativeBox(): Box<String> = Box("forwarded")
 private class LocalStoredBox<T>(val value: T)
+private interface LocalStoredCallback<T> { fun apply(value: T, transform: (T) -> Any): String }
+private class LocalStoredIntCallback : LocalStoredCallback<Int> {
+    override fun apply(value: Int, transform: (Int) -> Any): String = transform(value).toString()
+}
+private fun <C : LocalStoredCallback<Int>> invokeStoredCallback(callback: C): String =
+    callback.apply(1) { "$it!" }
 private class ForwardedNativeBoxCreator : NativeBoxCreator {
     override fun Create(): Box<String> = forwardedNativeBox()
 }
@@ -104,6 +110,7 @@ class InvariantValueStorageTests {
 
     @TestAttribute
     fun delegateRepresentationSeamsRespectReturnAndParameterDirection() {
+        check(invokeStoredCallback(LocalStoredIntCallback()) == "1!")
         check(NativeBoxApi.InvokeFactory(NativeBoxFactory { Box("delegate") }).value == "delegate")
         val localFactory = System.Func1<Box<String>> { Box("local") }
         check(localFactory().value == "local")

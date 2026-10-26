@@ -1,13 +1,19 @@
-# Pairish<T,T> is already closed over the caller's class frame. Use a constructed
-# type rather than an open array, whose System.Array value ABI would hide a second
-# substitution. Both result slots must retain this exact shape through both sweeps.
-+"method":"read","sig":[],"ret":{"t":"fqn","name":"Pairish","args":[{"t":"tv","scope":"type","i":0},{"t":"tv","scope":"type","i":0}]},"dynRet":{"t":"fqn","name":"Pairish","args":[{"t":"tv","scope":"type","i":0},{"t":"tv","scope":"type","i":0}]}
-# The old pass substituted the already-instantiated owner argument once per sweep.
--"dynRet":{"t":"fqn","name":"Pairish","args":[{"t":"fqn","name":"Pairish"
+# A native Tuple keeps its invariant Pairish<T,T> witness exact instead of erasing the result to a carrier.
+# The lexical-this call also retains its exact selected owner, so either sweep would visibly double-substitute
+# the caller-frame type variables if it ignored the result's frontend stamp.
++"ownerType":{"t":"fqn","name":"LocalResultBox","args":[{"t":"fqn","name":"System.Tuple","args":[{"t":"fqn","name":"Pairish","args":[{"t":"tv","scope":"type","i":0},{"t":"tv","scope":"type","i":0}]}]}]},"method":"read","sig":[]
++"recv":{"k":"this"},"ret":{"t":"fqn","name":"System.Tuple","args":[{"t":"fqn","name":"Pairish","args":[{"t":"tv","scope":"type","i":0},{"t":"tv","scope":"type","i":0}]}]},"dynRet":{"t":"fqn","name":"System.Tuple","args":[{"t":"fqn","name":"Pairish","args":[{"t":"tv","scope":"type","i":0},{"t":"tv","scope":"type","i":0}]}]}
+-"dynRet":{"t":"fqn","name":"System.Tuple","args":[{"t":"fqn","name":"Pairish","args":[{"t":"fqn","name":"System.Tuple"
+
+# The original ordinary receiver uses its carrier getter and an exact result projection; the logical return
+# metadata still records Tuple<Pairish<T,T>>, including the two caller-frame occurrences rather than companions.
++"k":"cast","type":{"t":"fqn","name":"System.Tuple","args":[{"t":"fqn","name":"Pairish","args":[{"t":"tv","scope":"type","i":0},{"t":"tv","scope":"type","i":0}]}]},"e":{"k":"callInstance","virtual":true,"ownerType":{"t":"fqn","name":"LocalResultBox$star"},"method":"$star$read$0"
++"bytes":"eyJ0IjoiZnFuIiwibmFtZSI6IlN5c3RlbS5UdXBsZSIsImFyZ3MiOlt7InQiOiJmcW4iLCJuYW1lIjoiUGFpcmlzaCIsImFyZ3MiOlt7InQiOiJ0diIsInNjb3BlIjoidHlwZSIsImkiOjB9LHsidCI6InR2Iiwic2NvcGUiOiJ0eXBlIiwiaSI6MH1dfV19"
 
 # The inherited-class/interface bridge also authors an already-closed result. It must stamp its synthesized call so
-# both sweeps preserve Pairish<K,V> instead of substituting it through PassBase<Pairish<K,V>> once per sweep.
+# both sweeps preserve Tuple<Pairish<K,V>> instead of reinterpreting it in the selected base declaration's frame.
 +"name":"DerivedPasser","kind":"class"
-+"ownerType":{"t":"fqn","name":"PassBase","args":[{"t":"fqn","name":"Pairish","args":[{"t":"tv","scope":"type","i":0},{"t":"tv","scope":"type","i":1}]}]},"virtual":false,"clrOwnerResolved":true,"recv":{"k":"this"},"method":"pass"
-+"dynRet":{"t":"fqn","name":"Pairish","args":[{"t":"tv","scope":"type","i":0},{"t":"tv","scope":"type","i":1}]},"ret":{"t":"fqn","name":"Pairish","args":[{"t":"tv","scope":"type","i":0},{"t":"tv","scope":"type","i":1}]}
--"ret":{"t":"fqn","name":"Pairish","args":[{"t":"fqn","name":"Pairish"
++"name":"pass","static":false,"override":false,"virtual":true,"abstract":false,"vis":"public","params":[{"name":"value","type":{"t":"fqn","name":"System.Tuple","args":[{"t":"fqn","name":"Pairish","args":[{"t":"tv","scope":"type","i":0},{"t":"tv","scope":"type","i":1}]}]}
++"ownerType":{"t":"fqn","name":"PassBase","args":[{"t":"fqn","name":"System.Tuple","args":[{"t":"fqn","name":"Pairish","args":[{"t":"tv","scope":"type","i":0},{"t":"tv","scope":"type","i":1}]}]}]},"virtual":false,"clrOwnerResolved":true,"recv":{"k":"this"},"method":"pass"
++"dynRet":{"t":"fqn","name":"System.Tuple","args":[{"t":"fqn","name":"Pairish","args":[{"t":"tv","scope":"type","i":0},{"t":"tv","scope":"type","i":1}]}]},"ret":{"t":"fqn","name":"System.Tuple","args":[{"t":"fqn","name":"Pairish","args":[{"t":"tv","scope":"type","i":0},{"t":"tv","scope":"type","i":1}]}]}
+-"ret":{"t":"fqn","name":"System.Tuple","args":[{"t":"fqn","name":"Pairish","args":[{"t":"fqn","name":"System.Tuple"
