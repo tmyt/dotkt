@@ -108,15 +108,23 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   `value as G<Any>` and `value as? G<Any>` do not test a closed CLR `G<object>` construction. Their runtime
   checks use the declaration's existential interface and preserve object identity. A statically proven
   constructed upcast retains its exact CLR edge instead, including an ordinary non-generic subclass of `G<X>`.
-- **Ordinary Kotlin method parameters accept the same erased generic reference view.** A parameter such as
-  `G<Any>` uses the declaration-owned non-generic carrier, retaining its exact Kotlin type in metadata. Passing an
-  unchecked `G<X>` view does not add a closed CLR construction check or copy the object; typed member operations
-  still perform their required conversions. Source overload identity remains distinct when physical slots coincide.
-  Native CLR declarations and overrides, managed-reference locations, constructors, property accessors and generated linkage methods
-  keep their existing exact contracts. This parameter rule does not change invariant fields or returns.
+- **Ordinary Kotlin generic reference values use the same erased view, including invariant declarations.**
+  Parameters, returns, fields, properties, locals, closure results, constructor value parameters, and source-container
+  elements carrying `G<X>` use the declaration-owned non-generic carrier, retaining their exact Kotlin types in
+  metadata. Storing an unchecked `G<X>` view does not add a closed CLR construction check or copy the object;
+  typed member operations still perform their required conversions. Source overload identity remains distinct
+  when physical slots coincide. Imported CLR signatures and native override slots remain exact; a Kotlin binding
+  alias still follows its binding-owned representation rather than acquiring an arbitrary native signature.
   Captured generic calls retain their declaration-owned construction witnesses independently of carrier parameters;
   erasing a value slot must not replace the selected method's captured type frame with its upper bound.
-- **Declaration-site variance on a Kotlin class or interface uses the same nominal existential value representation.**
+- **A native managed-reference location retains its exact pointee contract.** Passing a local or captured local to
+  an imported CLR `ref G<String>` parameter gives that declaration one exact location for the whole body, shared
+  by repeated aliases. Explicit `@ClrField` storage and live CLR ref-return delegates likewise retain their native
+  types. An incompatible unchecked value written into such a location throws `ClassCastException` and leaves the
+  location unchanged; there is no temporary copy, copy-back, or reference-lifetime mode switch. A supported Kotlin
+  `ClrRef<G<*>>` parameter instead points to the explicitly projected carrier slot: it can replace a `G<Int>` value
+  with `G<String>` while retaining identity, without inventing an invariant `G<object>` pointee.
+- **Declaration-site variance uses that same nominal existential value representation.**
   CLR classes are invariant, and CLR interface variance does not relate value-type instantiations. Kotlin permits
   both conversions, so every ordinary parameter, return,
   field, property, local, and nested value position carrying `G<X>` uses the declaration's non-generic existential
@@ -131,7 +139,7 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   fields, and nested value positions share the representation so forwarding or storing that value does not introduce
   an enclosing-frame check. Construction, inheritance, lexical receivers, and the hidden enclosing-instance slot
   retain their exact CLR class head; nested type arguments still use their ordinary physical value representation.
-  Other invariant fields and returns retain their existing contracts; imported CLR declaration signatures do not change.
+  Imported CLR declaration signatures do not change.
 - **Generic declarations retain exact dependent Kotlin relations in metadata and representable CLR proofs.**
   For `G<in T>.f<R : T>` and constructed bounds such as `R : I<T>`, the receiver's exact CLR construction need not
   express the source view's subtype relation, particularly when Kotlin variance crosses a value-type argument.

@@ -912,9 +912,10 @@ sealed class Pipeline
         // it. Runs before interface-slot normalization and suspend lowering, in ref and runtime builds alike.
         CapturedGenericInvocation.CaptureParameterWitnesses(staged.Select(s => s.Root));
         var physicalDeclarationSources = new Dictionary<string, string>(StringComparer.Ordinal);
+        genericRepresentations.RecordNativeFields(staged.Select(s => s.Root));
         var localExistentialOwners =
             FBoundStarProjectionErasure.ApplyAll(staged.Select(s => s.Root).ToList(), refs, sharedCells,
-                physicalParameterIndices, physicalDeclarationSources);
+                physicalParameterIndices, physicalDeclarationSources, genericRepresentations);
         // Closure/SAM synthesis ran while captures still carried their Kotlin constructed types, and suspend-lambda
         // state machines will copy those same declarations later. An erased smart cast can now deliver an existential
         // carrier to generated storage; make each capture declaration/construction/field agree on that exact physical
