@@ -4549,6 +4549,64 @@ static partial class FBoundStarProjectionErasure
         var locals = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
         var projectedLocals = new Dictionary<string, TypeNode.Fqn>(StringComparer.Ordinal);
         var projectedArrayLocals = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
+        bool TryJoinedCarrier(JsonNode expression, TypeNode semantic, out TypeNode.Fqn carrier)
+        {
+            carrier = null;
+            if (StripSourceNullability(semantic) is not TypeNode.Fqn { Args: { } } target) return false;
+            var leaves = new List<JsonNode>();
+            void CollectLeaves(JsonNode value)
+            {
+                if (value is JsonObject obj && Str(obj["k"]) == "valueBlock") CollectLeaves(obj["result"]);
+                else if (value is JsonObject conditional && Str(conditional["k"]) == "cond")
+                {
+                    CollectLeaves(conditional["then"]);
+                    CollectLeaves(conditional["else"]);
+                }
+                else leaves.Add(value);
+            }
+            CollectLeaves(expression);
+            var candidates = leaves.Select(ExpressionType).Select(type => TryPhysicalExistential(type, out var physical)
+                    ? physical as TypeNode.Fqn : null).OfType<TypeNode.Fqn>().Distinct().ToArray();
+            if (candidates.Length != 1 || !LogicalTypeMatchesPhysical(semantic, candidates[0])) return false;
+            var selected = candidates[0];
+            foreach (var leaf in leaves)
+            {
+                if (IsBottomExpression(leaf)) continue;
+                if (semantic is TypeNode.Nullable or TypeNode.Oblivious && leaf is JsonObject literal
+                    && Str(literal["k"]) == "const" && literal.ContainsKey("value") && literal["value"] == null)
+                    continue;
+                var source = StripSourceNullability(ExpressionType(leaf)) as TypeNode.Fqn;
+                if (source == selected) continue;
+                if (source == null || ProjectConstructedArguments(source, target.Name, defs, refs) == null)
+                    return false;
+            }
+            carrier = selected;
+            return true;
+        }
+
+        void NormalizeJoins(JsonNode node)
+        {
+            if (node is JsonObject obj)
+            {
+                if (Str(obj["k"]) == "localFun") return;
+                foreach (var child in obj.Select(pair => pair.Value).ToArray()) NormalizeJoins(child);
+                var slot = Str(obj["k"]) switch { "var" => "init", "return" => "value", _ => null };
+                var semantic = slot == "init" ? TypeJson.Read(obj["type"]) : TypeJson.Read(declaration["ret"]);
+                if (slot != null && obj[slot] is JsonNode value && TryJoinedCarrier(value, semantic, out var carrier))
+                {
+                    // A local join may be erased even inside a virtual method, but it cannot select a different
+                    // representation for that method's return slot. Such a family needs coordinated slot binding.
+                    if ((Bool(declaration["virtual"]) || Bool(declaration["override"]) || Bool(declaration["abstract"]))
+                        && (slot == "value" || LogicalTypeMatchesPhysical(TypeJson.Read(declaration["ret"]), carrier)))
+                        return;
+                    var rewritten = RetypeCovariantResult(value, (TypeNode.Fqn)StripSourceNullability(semantic), carrier, defs, refs);
+                    if (!ReferenceEquals(rewritten, value)) obj[slot] = rewritten;
+                }
+            }
+            else if (node is JsonArray array)
+                foreach (var child in array) NormalizeJoins(child);
+        }
+
         void Collect(JsonNode node)
         {
             switch (node)
@@ -4627,6 +4685,9 @@ static partial class FBoundStarProjectionErasure
         {
             var priorLocals = locals.Count;
             var priorProjections = projectedLocals.Count;
+            // One erased branch makes this an erased value join, provided every other branch proves the same
+            // Kotlin classifier. Exact constructed branches upcast to its existing carrier; no new ABI is chosen.
+            NormalizeJoins(declaration["body"]);
             Collect(declaration["body"]);
             Normalize(declaration["body"]);
             if (locals.Count == priorLocals && projectedLocals.Count == priorProjections) break;

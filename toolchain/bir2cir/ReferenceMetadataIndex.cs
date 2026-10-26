@@ -613,7 +613,7 @@ sealed partial class ReferenceMetadataIndex
     readonly Dictionary<(string Name, SignatureKey Signature), string> _extMemberIntrinsics = new();
     readonly Dictionary<string, (string Getter, string Conv)> _inlineBacking = new(StringComparer.Ordinal);
     readonly Dictionary<string, List<(string Owner, string RecvKey, TypeKey ParamKey)>> _topLevelStatics = new(StringComparer.Ordinal);
-    readonly Dictionary<string, string> _collectionFactories = new(StringComparer.Ordinal); // @ClrCollectionFactory fun name -> "list"/"set"/"map"
+    readonly Dictionary<string, string> _collectionFactories = new(StringComparer.Ordinal); // @ClrCollectionFactory fun name -> "list"/"set"
     readonly Dictionary<DefaultKey, Dictionary<int, string>> _kotlinDefaults = new();
     readonly Dictionary<string, Dictionary<int, string>> _kotlinDefaultsByDeclarationId = new(StringComparer.Ordinal);
     readonly HashSet<string> _conflictingDefaultDeclarationIds = new(StringComparer.Ordinal);

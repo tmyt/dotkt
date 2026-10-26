@@ -73,13 +73,9 @@ public fun <T : Comparable<*>> compareValues(a: T?, b: T?): Int {
     if (a == null) return if (b == null) 0 else -1
     if (b == null) return 1
 
-    // CLR adaptation: erased dispatch must accept native generic-only comparables as well as
-    // non-generic IComparable. Do not replace this with a reified IComparable<object> cast.
-    return clrRawCompareTo(a, b)
+    @Suppress("UNCHECKED_CAST")
+    return (a as Comparable<Any>).compareTo(b)
 }
-
-/** CLR: erased-comparable dispatch (see clr ComparisonsClr.kt). */
-internal expect fun clrRawCompareTo(a: Any, b: Any): Int
 
 /**
  * Creates a comparator using the sequence of functions to calculate a result of comparison.
@@ -284,7 +280,7 @@ public inline fun <T : Comparable<T>> nullsLast(): Comparator<T?> = nullsLast(na
  *
  * @sample samples.comparisons.Comparisons.naturalOrderComparator
  */
-public fun <T : Comparable<T>> naturalOrder(): Comparator<T> = NaturalOrderComparator()
+public fun <T : Comparable<T>> naturalOrder(): Comparator<T> = @Suppress("UNCHECKED_CAST") (NaturalOrderComparator as Comparator<T>)
 
 /**
  * Returns a comparator that compares [Comparable] objects in reversed natural order.
@@ -293,7 +289,7 @@ public fun <T : Comparable<T>> naturalOrder(): Comparator<T> = NaturalOrderCompa
  *
  * @sample samples.comparisons.Comparisons.nullsFirstLastWithComparator
  */
-public fun <T : Comparable<T>> reverseOrder(): Comparator<T> = ReverseOrderComparator()
+public fun <T : Comparable<T>> reverseOrder(): Comparator<T> = @Suppress("UNCHECKED_CAST") (ReverseOrderComparator as Comparator<T>)
 
 /**
  *  Returns a comparator that imposes the reverse ordering of this comparator.
@@ -303,6 +299,8 @@ public fun <T : Comparable<T>> reverseOrder(): Comparator<T> = ReverseOrderCompa
 @Suppress("EXTENSION_SHADOWED_BY_MEMBER")
 public fun <T> Comparator<T>.reversed(): Comparator<T> = when (this) {
     is ReversedComparator -> this.comparator
+    NaturalOrderComparator -> @Suppress("UNCHECKED_CAST") (ReverseOrderComparator as Comparator<T>)
+    ReverseOrderComparator -> @Suppress("UNCHECKED_CAST") (NaturalOrderComparator as Comparator<T>)
     else -> ReversedComparator(this)
 }
 
@@ -313,17 +311,14 @@ private class ReversedComparator<T>(public val comparator: Comparator<T>) : Comp
     fun reversed(): Comparator<T> = comparator
 }
 
-// CLR NOTE: on the JVM these are erased singleton objects unchecked-cast to Comparator<T>;
-// CLR generics are reified, so that cast is an InvalidCastException. They are genuinely
-// generic classes here (constructed per call), mirroring ReversedComparator above.
-private class NaturalOrderComparator<T : Comparable<T>> : Comparator<T> {
-    override fun compare(a: T, b: T): Int = a.compareTo(b)
+private object NaturalOrderComparator : Comparator<Comparable<Any>> {
+    override fun compare(a: Comparable<Any>, b: Comparable<Any>): Int = a.compareTo(b)
     @Suppress("VIRTUAL_MEMBER_HIDDEN")
-    fun reversed(): Comparator<T> = ReverseOrderComparator()
+    fun reversed(): Comparator<Comparable<Any>> = ReverseOrderComparator
 }
 
-private class ReverseOrderComparator<T : Comparable<T>> : Comparator<T> {
-    override fun compare(a: T, b: T): Int = b.compareTo(a)
+private object ReverseOrderComparator : Comparator<Comparable<Any>> {
+    override fun compare(a: Comparable<Any>, b: Comparable<Any>): Int = b.compareTo(a)
     @Suppress("VIRTUAL_MEMBER_HIDDEN")
-    fun reversed(): Comparator<T> = NaturalOrderComparator()
+    fun reversed(): Comparator<Comparable<Any>> = NaturalOrderComparator
 }

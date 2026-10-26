@@ -37,8 +37,7 @@ private object EmptyMap : Map<Any?, Nothing>, Serializable {
  * The returned map is serializable (JVM).
  * @sample samples.collections.Maps.Instantiation.emptyReadOnlyMap
  */
-@kotlin.clr.ClrCollectionFactory("map")
-public fun <K, V> emptyMap(): Map<K, V> = LinkedHashMap()
+public fun <K, V> emptyMap(): Map<K, V> = @Suppress("UNCHECKED_CAST") (EmptyMap as Map<K, V>)
 
 /**
  * Returns a new read-only map with the specified contents, given as a list of pairs
@@ -114,7 +113,6 @@ public inline fun <K, V> hashMapOf(): HashMap<K, V> = HashMap<K, V>()
  *
  * @sample samples.collections.Maps.Instantiation.hashMapFromPairs
  */
-@kotlin.clr.ClrCollectionFactory("map")
 public fun <K, V> hashMapOf(vararg pairs: Pair<K, V>): HashMap<K, V> = HashMap<K, V>(mapCapacity(pairs.size)).apply { putAll(pairs) }
 
 /**

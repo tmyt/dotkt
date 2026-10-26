@@ -252,7 +252,7 @@ static class MapVarianceRealign
             if (call["typeArgs"] is not JsonArray callTypeArgs || callTypeArgs.Count == 0) continue;
             if (TypeJson.Read(useSiteArgTypes[i]) is not TypeNode target) continue;
             if (UnwrapNullableOblivious(target) is not TypeNode.Fqn { Args: { } targetArgs }) continue;
-            var expected = kind == "map" ? 2 : 1;                       // map -> [K,V]; list/set -> [E]
+            const int expected = 1;                                  // list/set -> [E]
             var factoryFrame = Str(call[DeclarationIdentityBinding.Key]) is string id ? refs.NullableMethodFrame(id) : null;
             if (targetArgs.Length != expected || (factoryFrame?.SourceArity ?? callTypeArgs.Count) != expected) continue;
             TypeNode[] closedArgs;
