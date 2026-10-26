@@ -14,7 +14,7 @@ sealed class GenericRepresentationPolicy
     readonly HashSet<string> _localOwners;
     readonly HashSet<string> _existentialOwners = new(StringComparer.Ordinal);
     readonly HashSet<JsonObject> _nativeFields = new();
-    readonly HashSet<(string Owner, string Name, bool Static)> _nativeFieldNames = new();
+    readonly HashSet<(string Owner, string Name, bool Static, string Receiver)> _nativeFieldNames = new();
 
     public GenericRepresentationPolicy(IReadOnlyDictionary<string, string> aliases,
         ReferenceMetadataIndex references = null, IEnumerable<JsonNode> roots = null)
@@ -45,7 +45,7 @@ sealed class GenericRepresentationPolicy
     internal void RecordNativeFields(IEnumerable<JsonNode> roots)
     {
         var inputs = roots.ToArray();
-        var fields = new Dictionary<(string Owner, string Name, bool Static), JsonObject>();
+        var fields = new Dictionary<(string Owner, string Name, bool Static, string Receiver), JsonObject>();
         void IndexFields(JsonObject declaration)
         {
             var owner = Text(declaration["name"]) ?? Text(declaration["fileClass"]);
@@ -53,7 +53,7 @@ sealed class GenericRepresentationPolicy
                 if (owner != null && Text(field["name"]) is string name
                     && TypeJson.Read(field["type"]) != null)
                 {
-                    var key = (owner, name, field["static"]?.GetValue<bool>() == true);
+                    var key = FieldKey(owner, name, field["static"]?.GetValue<bool>() == true, field);
                     fields.Add(key, field);
                     // An explicit field export requests native typed storage even without an address use.
                     // An ordinary Kotlin property can also be published as a CLR field (notably a file value);
@@ -66,7 +66,7 @@ sealed class GenericRepresentationPolicy
                     }
                 }
             foreach (var cell in (declaration["refTypes"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
-                if (Text(cell["name"]) is string cellOwner) fields.Add((cellOwner, "v", false), cell);
+                if (Text(cell["name"]) is string cellOwner) fields.Add(FieldKey(cellOwner, "v", false, cell), cell);
             foreach (var child in (declaration["types"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
                 IndexFields(child);
         }
@@ -93,9 +93,9 @@ sealed class GenericRepresentationPolicy
                         if (location == null || Text(location["k"]) is not ("field" or "staticField")
                             || TypeJson.OwnerName(location["ownerType"] ?? location["owner"]) is not string owner
                             || Text(location["name"]) is not string name
-                            || !fields.TryGetValue((owner, name, Text(location["k"]) == "staticField"), out var declaration)) continue;
+                            || !fields.TryGetValue(FieldKey(owner, name, Text(location["k"]) == "staticField", location), out var declaration)) continue;
                         _nativeFields.Add(declaration);
-                        _nativeFieldNames.Add((owner, name, Text(location["k"]) == "staticField"));
+                        _nativeFieldNames.Add(FieldKey(owner, name, Text(location["k"]) == "staticField", location));
                     }
                 foreach (var (key, child) in obj)
                     if (key != "attrs") FindAddresses(child);
@@ -109,7 +109,14 @@ sealed class GenericRepresentationPolicy
         || Text(node["k"]) is "field" or "staticField" or "setField" or "setStaticField"
             && TypeJson.OwnerName(node["ownerType"] ?? node["owner"]) is string owner
             && Text(node["name"]) is string name
-            && _nativeFieldNames.Contains((owner, name, Text(node["k"]) is "staticField" or "setStaticField"));
+            && _nativeFieldNames.Contains(FieldKey(owner, name, Text(node["k"]) is "staticField" or "setStaticField", node));
+
+    // Before companion binding allocates physical storage names, the explicit association is part of a
+    // field's semantic identity. The same declaration object retains its location role after binding.
+    static (string Owner, string Name, bool Static, string Receiver) FieldKey(
+        string owner, string name, bool isStatic, JsonObject declarationOrUse) =>
+        (owner, name, isStatic, Text(declarationOrUse["companionReceiver"]) is string receiver
+            ? CompanionExtensionBinding.CanonicalReceiver(receiver) : null);
 
     static string Text(JsonNode node) => (node as JsonValue)?.TryGetValue<string>(out var text) == true ? text : null;
 
@@ -208,6 +215,29 @@ sealed class GenericRepresentationPolicy
             || TypeJson.Read(addressedField["memberType"]) != new TypeNode.Tv("type", 0)
             || ((JsonArray)addressedField["ownerType"]["args"]).Count != 2)
             throw new InvalidOperationException("Native field allocation changed an unrelated field or lost declaration correspondence");
+        var companionFields = JsonNode.Parse("""
+        {"fileClass":"CompanionFieldFrames","fields":[
+          {"name":"slot","static":true,"type":{"t":"fqn","name":"kotlin.String"},
+           "companionReceiver":"{\"t\":\"fqn\",\"name\":\"First\"}",
+           "attrs":[{"attr":{"t":"fqn","name":"kotlin.clr.ClrField"}}]},
+          {"name":"slot","static":true,"type":{"t":"fqn","name":"kotlin.String"},
+           "companionReceiver":"{\"t\":\"fqn\",\"name\":\"Second\"}"},
+          {"name":"slot","static":true,"type":{"t":"fqn","name":"kotlin.String"},
+           "companionReceiver":"{\"t\":\"fqn\",\"name\":\"Third\"}"},
+          {"name":"slot","static":true,"type":{"t":"fqn","name":"kotlin.String"}}],
+         "methods":[{"body":[{"k":"callStatic","sig":[{"t":"byRef","of":{"t":"fqn","name":"kotlin.String"}}],
+          "args":[{"k":"byrefOf","inner":{"k":"staticField","ownerType":{"t":"fqn","name":"CompanionFieldFrames"},
+           "name":"slot","companionReceiver":"{\"t\":\"fqn\",\"name\":\"Second\"}"}}]}]}]}
+        """)!.AsObject();
+        var companionPolicy = new GenericRepresentationPolicy(new Dictionary<string, string>(), roots: new[] { companionFields });
+        foreach (var (index, native) in new[] { (0, true), (1, true), (2, false), (3, false) })
+        {
+            var field = companionFields["fields"][index]!.AsObject();
+            var use = new JsonObject { ["k"] = "staticField", ["ownerType"] = TypeJson.Fqn("CompanionFieldFrames"),
+                ["name"] = "slot", ["companionReceiver"] = field["companionReceiver"]?.DeepClone() };
+            if (companionPolicy.IsNativeField(field) != native || companionPolicy.IsNativeField(use) != native)
+                throw new InvalidOperationException("Native companion storage selection leaked into a sibling field");
+        }
         var policy = new GenericRepresentationPolicy(new Dictionary<string, string> {
             ["kotlin.collections.Map"] = "System.Collections.Generic.IDictionary",
             ["kotlin.collections.Collection"] = "System.Collections.Generic.IReadOnlyCollection",

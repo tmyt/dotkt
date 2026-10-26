@@ -894,7 +894,7 @@ static class CompanionExtensionBinding
 
     static string NormalizeOwner(string owner) => owner.Replace('+', '.');
 
-    static string CanonicalReceiver(string receiver)
+    internal static string CanonicalReceiver(string receiver)
     {
         var classifier = ReceiverClassifier(JsonNode.Parse(receiver))
             ?? throw new InvalidOperationException(

@@ -496,7 +496,7 @@ static partial class FBoundStarProjectionErasure
                             if (argumentType == null) continue;
                             var exactValue = key == "argTypes" && index < argumentValues.Count
                                 && argumentValues[index] is JsonObject argument
-                                && (Str(argument["k"]) == "this" || Bool(argument[ExactOuterKey]));
+                                && Bool(argument[ExactOuterKey]);
                             var exactOuterSlot = IsInnerConstructionOuterSlot(obj, index, defs, refs);
                             argumentTypes[index] = TypeJson.Write(RewriteType(argumentType, owners, refs,
                                 childBoundDeclaration, localClrAliases,
@@ -3413,7 +3413,7 @@ static partial class FBoundStarProjectionErasure
                             if (argumentType == null) continue;
                             var exactValue = key == "argTypes" && index < argumentValues.Count
                                 && argumentValues[index] is JsonObject argument
-                                && (Str(argument["k"]) == "this" || Bool(argument[ExactOuterKey]));
+                                && Bool(argument[ExactOuterKey]);
                             var exactOuterSlot = IsInnerConstructionOuterSlot(obj, index, defs, refs);
                             argumentTypes[index] = TypeJson.Write(RewriteType(argumentType, owners, refs,
                                 childBoundDeclaration, localClrAliases,
