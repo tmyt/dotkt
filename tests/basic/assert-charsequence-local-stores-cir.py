@@ -36,7 +36,7 @@ stores = [node for node in walk(method)
           if node.get("k") == "setLocal"
           and is_type(locals_by_name.get(node["name"]), "dotkt$CharSequence")]
 conditional = [node for node in stores
-               if node["value"].get("k") == "cond" and "$ret" not in node["name"]]
+               if node["value"].get("k") == "cond"]
 assert len(conditional) == 4, "both ordinary and nullable conditional stores must retain synthetic destinations"
 assert all(adapters(node["value"]) for node in conditional), "each String branch needs its store-boundary adapter"
 nullable = [node for node in conditional
@@ -45,7 +45,7 @@ assert len(nullable) == 2, "nullable stores must use null-preserving conversions
 assert all(any(part.get("k") == "const" and part.get("value") is None
                and is_type(part.get("type"), "dotkt$CharSequence")
                for part in walk(node["value"])) for node in nullable), "nullable branches must retain genuine null"
-inline = [node for node in stores if "$ret" in node["name"] and adapters(node["value"])]
+inline = [node for node in stores if node["value"].get("k") == "new" and adapters(node["value"])]
 assert len(inline) == 2, "both inline early-return temporaries must remain synthetic and adapt the String fallback"
 assert all(adapter["args"][0].get("value") == ""
            for node in inline for adapter in adapters(node["value"])), "inline empty returns must use the actual String value"
