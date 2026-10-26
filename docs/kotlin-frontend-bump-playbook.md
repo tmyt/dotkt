@@ -68,9 +68,12 @@ tightening) — bisect, don't lump.
 A *full* bump = compiler + the matching stdlib SOURCE. Replace `libraries/stdlib/common` verbatim from upstream vX;
 do not 3-way-merge CLR adaptations into that subtree. Regenerate
 `tests/stdlib-common-upstream/upstream-vX.sha256`, update its recorded upstream tag/commit and the gate's
-`EXPECTED_VERSION`, then run `make verify-stdlib-upstream`. Refresh `libraries/stdlib/{src,unsigned/src}` by per-file
-3-way merge (base = the old tag's blob), preserving genuine Kotlin-semantic changes. CLR physical names, markers, and
-platform bodies live in `libraries/stdlib/clr/common` and `libraries/stdlib/clr/stdlib-bindings.json` instead.
+`EXPECTED_VERSION`. Refresh the corresponding `restored-vX.sha256` manifest only after comparing the restored files
+to the new upstream originals, then run `make verify-stdlib-upstream`. Refresh `libraries/stdlib/{src,unsigned/src}`
+by per-file 3-way merge (base = the old tag's blob), preserving genuine Kotlin-semantic changes. CLR annotation
+definitions belong in `libraries/stdlib/clr/common`; platform bodies and binding data belong under `clr/`.
+Some binding annotations still remain in the mirrored sources and need separate restoration work. Do not add
+per-declaration physical-name sidecar entries for collisions already handled by the general signature-identity rules.
 
 After the frontend BIR build, re-resolve every sidecar entry from the target declaration's `declarationId`, source
 name, complete parameter/return signature, and implementation identity. The overlay fails closed on stale IDs, but

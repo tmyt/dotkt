@@ -125,7 +125,6 @@ public abstract class SequenceScope<in T> internal constructor() {
      *
      * @sample samples.collections.Sequences.Building.buildSequenceYieldAll
      */
-    @kotlin.clr.ClrName("yieldAllSequence")
     public suspend fun yieldAll(sequence: Sequence<T>): Unit = yieldAll(sequence.iterator())
 }
 
