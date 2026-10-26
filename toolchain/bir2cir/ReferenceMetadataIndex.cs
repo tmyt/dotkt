@@ -2948,12 +2948,17 @@ sealed partial class ReferenceMetadataIndex
                 && m.SourcePropertyName == selectedSourceMember && m.AccessorKind == selectedAccessorKind
                 && DescribesSelectedDeclaration(m)).ToList();
         }
+        else if (declarations[0].DeclarationId is string selectedIdentity)
+        {
+            // The selected source and its allocated existential MethodDef share an authored edge, even when
+            // intrinsic/indexer lowering gave them different names. A known declaration ID is never a name lookup.
+            candidates = shapedCandidates.Where(m => m.SourcePropertyName == null
+                && m.SourceMethodDeclaration == selectedIdentity && DescribesSelectedDeclaration(m)).ToList();
+        }
         else
         {
-            // Owner-dependent slots carry their Kotlin source-method identity. Prefer that authoritative identity over
-            // an ordinary sibling whose physical @ClrName happens to equal it. Owner-independent slots intentionally
-            // retain the selected declaration's MethodDef name and need no source carrier, so use that exact physical
-            // identity only when no semantically matching carried slot exists.
+            // Generated declarations without a Kotlin declaration ID retain their explicit source-method name or
+            // unchanged physical descriptor. This role is distinct from selected source declarations above.
             var carriedCandidates = shapedCandidates.Where(m => m.SourcePropertyName == null
                 && m.SourceMethodName == selectedSourceMember && DescribesSelectedDeclaration(m)).ToList();
             candidates = carriedCandidates.Count != 0
@@ -4678,6 +4683,26 @@ sealed partial class ReferenceMetadataIndex
                 && member.SourcePropertyAssociation != null
                 && member.SourcePropertyAssociation == sources[0].PropertyAssociation)
             .ToList();
+        return ReferencedMethodImplRows(owner, sources[0], bridges);
+    }
+
+    // A private generated method's explicit source-declaration association is independent of its erased signature.
+    // Consume only that exact relation; same-name source overloads are never a bridge-selection fallback.
+    public IReadOnlyList<ReferencedPropertyMethodImpl> ReferencedMethodImpls(string ownerFqn, string sourceDeclaration)
+    {
+        var owner = StripGenericArity(DottedFqn(BareOwnerFqn(ownerFqn)));
+        if (sourceDeclaration == null || !_dotKtOwners.Contains(owner)
+            || !TryMembersByBirOwner(owner, out var members)) return Array.Empty<ReferencedPropertyMethodImpl>();
+        var sources = members.Where(member => member.DeclarationId == sourceDeclaration).ToList();
+        if (sources.Count != 1) return Array.Empty<ReferencedPropertyMethodImpl>();
+        return ReferencedMethodImplRows(owner, sources[0], members.Where(member =>
+            member.SourceMethodDeclaration == sourceDeclaration
+            && member.ParamTypeNodes != null && member.ReturnTypeNode != null));
+    }
+
+    IReadOnlyList<ReferencedPropertyMethodImpl> ReferencedMethodImplRows(string owner, MemberBinding source,
+        IEnumerable<MemberBinding> bridges)
+    {
         var result = new List<ReferencedPropertyMethodImpl>();
         foreach (var bridge in bridges)
         {
@@ -4698,7 +4723,7 @@ sealed partial class ReferenceMetadataIndex
                         declarationTypeParams = declarationCandidates[0].MethodTypeParams;
                 }
                 result.Add(new ReferencedPropertyMethodImpl(
-                    sources[0].Name,
+                    source.Name,
                     implementation.DeclarationOwner,
                     implementation.DeclarationMember,
                     bridge.ParamTypeNodes,
@@ -5432,10 +5457,11 @@ sealed partial class ReferenceMetadataIndex
                         var carriedProperty = dotKtAuthored
                             ? KotlinPropertyAccessorPayload(method.GetCustomAttributesData(), method.DeclaringType?.Assembly)
                             : null;
-                        var sourceMethodName = dotKtAuthored &&
-                            !HasAttribute(method.GetCustomAttributesData(), CompilerGeneratedAttr)
-                            ? KotlinSourceMethodName(method.GetCustomAttributesData(), method.DeclaringType?.Assembly)
+                        var sourceMethod = dotKtAuthored
+                            ? KotlinSourceMethodPayload(method.GetCustomAttributesData(), method.DeclaringType?.Assembly)
                             : null;
+                        var sourceMethodName = !HasAttribute(method.GetCustomAttributesData(), CompilerGeneratedAttr)
+                            ? sourceMethod?.Name : null;
                         var innerConstructorFactory = dotKtAuthored
                             ? KotlinInnerConstructorFactoryPayload(
                                 method.GetCustomAttributesData(), method.DeclaringType?.Assembly)
@@ -5559,6 +5585,7 @@ sealed partial class ReferenceMetadataIndex
                             innerConstructorFactory?.TypeArguments,
                             SemanticMethodTypeParameters(method, dotKtAuthored, declarationIdentity?.NullableFrame), declarationIdentity?.NullableFrame)
                         {
+                            SourceMethodDeclaration = sourceMethod?.SourceDeclaration,
                             ValueAdapter = dotKtAuthored ? method.GetCustomAttributesData().SingleOrDefault(attribute =>
                                 attribute.AttributeType.FullName == ValueRepresentationLowering.MemberAttribute)
                                 ?.ConstructorArguments[0].Value as string : null,
@@ -6844,7 +6871,9 @@ sealed partial class ReferenceMetadataIndex
         return new PropertyAccessorPayloadInfo(name, kind, association, sourceAssociation);
     }
 
-    static string KotlinSourceMethodName(
+    sealed record SourceMethodPayload(string Name, string SourceDeclaration);
+
+    static SourceMethodPayload KotlinSourceMethodPayload(
         IList<CustomAttributeData> attrs, Assembly declaringAssembly)
     {
         var trusted = attrs.Where(c =>
@@ -6856,11 +6885,15 @@ sealed partial class ReferenceMetadataIndex
             throw new InvalidDataException("expected exactly one trusted [KotlinSourceMethod]");
         var payload = CarrierJsonOf(attrs, declaringAssembly, KotlinSourceMethodAttr) as JsonObject
             ?? throw new InvalidDataException("malformed [KotlinSourceMethod] payload");
-        if (payload.Count != 1 ||
+        if (payload.Count is not (1 or 2) ||
             payload["name"] is not JsonValue nameValue ||
             !nameValue.TryGetValue<string>(out var name) || string.IsNullOrEmpty(name))
             throw new InvalidDataException("malformed [KotlinSourceMethod] payload");
-        return name;
+        string sourceDeclaration = null;
+        if (payload.Count == 2 && (payload["sourceDeclaration"] is not JsonValue source
+            || !source.TryGetValue<string>(out sourceDeclaration) || string.IsNullOrEmpty(sourceDeclaration)))
+            throw new InvalidDataException("malformed [KotlinSourceMethod] source declaration");
+        return new SourceMethodPayload(name, sourceDeclaration);
     }
 
     sealed record InnerConstructorFactoryPayloadInfo(
@@ -8515,6 +8548,7 @@ sealed record MemberBinding(string Owner, string Name, int ParamCount, string In
     // Capture the selected reference MethodDef while scanning it. A local type may shadow its owner
     // during stdlib self-compilation; resolving that owner again is not declaration identity.
     public TypeNode[] SignatureParameters { get; init; }
+    public string SourceMethodDeclaration { get; init; }
     public string ValueAdapter { get; init; }
     public string ValueSlot { get; init; }
     public bool SignatureAllocated { get; init; }

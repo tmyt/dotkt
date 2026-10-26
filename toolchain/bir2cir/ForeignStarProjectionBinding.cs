@@ -50,14 +50,14 @@ static class ForeignStarProjectionBinding
     static int _nextTemp;
     static int _nextDelegateAdapter;
     static bool _bindProjectedHelpers;
-    static Func<TypeNode, TypeNode> _projectValueType;
+    static Func<TypeNode, bool, TypeNode> _projectValueType;
     public static bool UsedRuntimeFallback { get; private set; }
 
     internal static void RequireRuntimeFallback() => UsedRuntimeFallback = true;
 
     public static void ApplyAll(IEnumerable<JsonNode> roots,
         IReadOnlyDictionary<string, string> localExistentialOwners, ReferenceMetadataIndex refs,
-        IReadOnlyDictionary<string, string> localClrAliases, Func<TypeNode, TypeNode> projectValueType)
+        IReadOnlyDictionary<string, string> localClrAliases, Func<TypeNode, bool, TypeNode> projectValueType)
     {
         _localClrAliases = localClrAliases ?? new Dictionary<string, string>(StringComparer.Ordinal);
         _projectValueType = projectValueType;
@@ -443,7 +443,8 @@ static class ForeignStarProjectionBinding
             receiver.DeepClone(),
             new JsonObject { ["k"] = "newArray", ["elem"] = TypeJson.Write(AnyN), ["elems"] = arguments });
         if (methodArity == 0 && !adaptDelegate
-            && ExactMutableViewDispatch.TrySourceView(owner, refs, _projectValueType, out var nativeView, out var family))
+            && ExactMutableViewDispatch.TrySourceView(owner, refs, type => _projectValueType(type, false),
+                out var nativeView, out var family))
         {
             var directOwner = ExactMutableViewDispatch.CloseDeclaring((TypeNode.Fqn)declaringView, nativeView.Args);
             rewritten = ExactMutableViewDispatch.Wrap(receiver, nativeView, family,
@@ -845,6 +846,11 @@ static class ForeignStarProjectionBinding
         if (selectedHint is { } view)
         {
             var arguments = refs.NullableTypeFrames.GetValueOrDefault(view.Name)?.OrdinaryArguments(view.Args) ?? view.Args;
+            // Translate a binding alias's ordinary source arguments before naming its physical declaring owner.
+            // Once that native head exists, its arguments are exact CLR witnesses and cannot recover this role.
+            // Native views keep their authored witnesses; alias arguments retain the same array role as inheritance.
+            if (AliasVarianceRepresentation.RequiresErasure(view, refs))
+                arguments = arguments.Select(type => _projectValueType(type, true)).ToArray();
             // MetadataLoadContext reports a method declared directly on an open generic as the bare definition.
             // In that case the selected preferred closure already is the declaring view; emitting the bare generic as a
             // classRef would be an invalid/absent CLR type token.

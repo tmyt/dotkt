@@ -198,7 +198,8 @@ static partial class FBoundStarProjectionErasure
         ForeignStarProjectionBinding.ApplyAll(rootList,
             owners.Values.Where(owner => owner.Needed).ToDictionary(
                 owner => owner.Name, owner => owner.ErasedName, StringComparer.Ordinal), refs, localClrAliases,
-            type => RewriteType(type, owners, refs, localClrAliases: localClrAliases));
+            (type, preserveArrayShape) => RewriteType(type, owners, refs, localClrAliases: localClrAliases,
+                preserveArrayShape: preserveArrayShape));
         // Factory allocation above used the source constraint graph. Freeze that same classification before value
         // projection can erase a dependent alias bound to Object and make its sibling constraints appear independent.
         var innerDependencies = owners.Values.Where(owner => owner.Needed && IsInner(owner.Def))
@@ -389,6 +390,10 @@ static partial class FBoundStarProjectionErasure
                 Def = defs.GetValueOrDefault(pair.Key),
             },
             StringComparer.Ordinal);
+        // Late producers add physical declarations without allocating source existential views. Their local
+        // definition still owns the classifier; a same-named implementation in a reference cannot supply it.
+        foreach (var (name, definition) in defs)
+            owners.TryAdd(name, new Owner { Name = name, Def = definition });
         var localClrAliases = new Dictionary<string, string>(
             knownClrAliases ?? new Dictionary<string, string>(StringComparer.Ordinal), StringComparer.Ordinal);
         foreach (var alias in CollectLocalClrAliases(defs)) localClrAliases.TryAdd(alias.Key, alias.Value);
@@ -1116,6 +1121,12 @@ static partial class FBoundStarProjectionErasure
             throw new InvalidOperationException("Exact construction erased an ordinary witness or retained a concrete storage head");
         if (RewriteType(construction, owners, refs) != new TypeNode.Fqn("ConstructionView"))
             throw new InvalidOperationException("An ordinary invariant value regained an exact construction head");
+        owners["LatePhysical"] = new Owner { Name = "LatePhysical",
+            Def = JsonNode.Parse("""{"kind":"class","typeParams":["T"]}""").AsObject() };
+        var latePhysical = new TypeNode.Fqn("LatePhysical", new TypeNode[] { variable });
+        if (RewriteType(latePhysical, owners, refs) != latePhysical
+            || TryExistentialCarrier("LatePhysical", owners, null, out _))
+            throw new InvalidOperationException("A late local physical declaration consulted foreign carrier metadata");
         var companionProjection = construction with { Args = construction.Args.Select((argument, index) =>
             constructionFrame.PhysicalSlot(index).Representation == NullableRepresentationFrame.Role.Storage
                 ? (TypeNode)new TypeNode.Projection("out", argument) : argument).ToArray() };
@@ -2294,7 +2305,8 @@ static partial class FBoundStarProjectionErasure
         }
         // A dependent existential slot may need a distinct physical name, but later override/bridge passes still need
         // the source declaration identity. Property accessors retain their explicit #397 identity; ordinary methods
-        // carry this pass-local source edge. Neither consumer recovers meaning from the replacement spelling.
+        // carry this source edge locally and in declaration metadata. Neither consumer recovers meaning from the
+        // replacement spelling, including a source operator whose CLR name was allocated before this pass.
         if (KotlinPropertyAccessors.TryIdentity(method, out var propertyName, out var propertyAccessor))
         {
             var association = Str(method[KotlinPropertyAccessors.AssociationKey])
@@ -2313,12 +2325,13 @@ static partial class FBoundStarProjectionErasure
                 ["association"] = association,
             };
         }
-        else if (replacementName != null)
+        else if (replacementName != null || method[DeclarationIdentityBinding.Key] != null)
         {
             slot[SourceMemberKey] = method["name"]?.DeepClone();
             RoundtripMetadata.AddSourceMethodIdentity(slot,
-                Str(method["name"])
-                ?? throw new InvalidOperationException("existential interface slot has no source method name"));
+                Str(method["declarationSourceName"]) ?? Str(method["name"])
+                ?? throw new InvalidOperationException("existential interface slot has no source method name"),
+                Str(method[DeclarationIdentityBinding.Key]));
         }
         // `suspend` is still a Kotlin declaration fact at this point.  The existential slot must
         // participate in the same later SuspendColdLowering as the generic declaration; dropping
@@ -4613,10 +4626,10 @@ static partial class FBoundStarProjectionErasure
     static bool TryExistentialCarrier(string semanticOwner, IReadOnlyDictionary<string, Owner> owners,
         ReferenceMetadataIndex refs, out string physicalOwner)
     {
-        if (owners.TryGetValue(semanticOwner, out var local) && local.Needed)
+        if (owners.TryGetValue(semanticOwner, out var local))
         {
             physicalOwner = local.ErasedName;
-            return true;
+            return local.Needed;
         }
         return refs.TryExistentialPhysicalOwner(semanticOwner, out physicalOwner);
     }

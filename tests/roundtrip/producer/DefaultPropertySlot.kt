@@ -39,6 +39,13 @@ interface ReferencedRenamedDefaultMethodSlot : Comparable<ReferencedRenamedDefau
     override fun compareTo(other: ReferencedRenamedDefaultMethodSlot): Int = 360
 }
 
+class ReferencedCompareMarker<T>(val value: T)
+
+interface ReferencedGenericRenamedDefaultMethodSlot<T> : Comparable<ReferencedGenericRenamedDefaultMethodSlot<T>> {
+    override fun compareTo(other: ReferencedGenericRenamedDefaultMethodSlot<T>): Int = 362
+    fun compareTo(other: ReferencedCompareMarker<T>): Int = 364
+}
+
 // The two declarations share source name, method arity and nullable-generic first parameter. A downstream override's
 // frontend edge identifies the exact sibling by the complete signature; the reference reader must preserve that edge
 // instead of refusing the overload set and leaving both CLR slots unimplemented.

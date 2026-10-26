@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Assert that existential calls and generated capture storage state exact physical carriers."""
 
+import base64
 import json
 import sys
 
@@ -23,6 +24,15 @@ if len(sys.argv) != 2:
 with open(sys.argv[1], encoding="utf-8") as stream:
     root = json.load(stream)
 
+
+def logical_return(method):
+    payloads = [attribute["args"] for attribute in method.get("retAttrs", [])
+                if attribute.get("attr", {}).get("name")
+                == "DotKt.Runtime.CompilerServices.KotlinTypeAttribute"]
+    if len(payloads) != 1 or len(payloads[0]) != 2 or payloads[0][0].get("value") != "bir-json/1":
+        raise SystemExit(f"{method.get('name')} lost its exact Kotlin return metadata: {payloads!r}")
+    return json.loads(base64.b64decode(payloads[0][1]["bytes"]))
+
 if any(node.get("generatedEqualsFieldRead") is not None for node in objects(root)):
     raise SystemExit("CIR: unconsumed generated-equality field-read fact")
 
@@ -33,7 +43,6 @@ semantic = {
     "args": [{"t": "tv", "scope": "method", "i": 0}],
 }
 
-exact_target = semantic
 for method_name in (
     "runtimeTypesExactGenericUpcast",
     "runtimeTypesNullableExactGenericUpcast",
@@ -49,12 +58,14 @@ for method_name in (
     exact_casts = [
         node
         for node in objects(exact_upcasts[0].get("body", []))
-        if node.get("k") == "cast" and node.get("type") == exact_target
+        if node.get("k") == "cast" and node.get("type") == physical
     ]
     if len(exact_casts) != 1:
         raise SystemExit(
-            f"{method_name} did not retain its exact constructed target: {exact_casts!r}"
+            f"{method_name} did not retain its exact ordinary carrier target: {exact_casts!r}"
         )
+    if exact_upcasts[0].get("ret") != physical or logical_return(exact_upcasts[0]) != semantic:
+        raise SystemExit(f"{method_name} lost the physical/logical return distinction")
 
 this_upcasts = [
     method
@@ -67,12 +78,14 @@ this_target = {
     "args": [{"t": "tv", "scope": "type", "i": 0}],
 }
 if len(this_upcasts) != 1 or not any(
-    node.get("k") == "cast" and node.get("type") == this_target
+    node.get("k") == "cast" and node.get("type") == physical
     for node in objects(this_upcasts[0].get("body", []))
 ):
     raise SystemExit(
-        f"a this-based exact generic upcast did not retain its construction: {this_upcasts!r}"
+        f"a this-based ordinary generic upcast did not retain its carrier: {this_upcasts!r}"
     )
+if this_upcasts[0].get("ret") != physical or logical_return(this_upcasts[0]) != this_target:
+    raise SystemExit("a this-based generic upcast lost its complete logical return")
 
 composed = [
     method
@@ -139,9 +152,9 @@ for method_name in ("runtimeTypesFuse", "runtimeTypesFuseViaRealignedLocal"):
         raise SystemExit(
             f"found {len(casts)} semantic projections in {method_name}, expected 1"
         )
-    if casts[0].get("type") != semantic:
+    if casts[0].get("type") != physical or logical_return(methods[0]) != semantic:
         raise SystemExit(
-            f"{method_name} does not project to the caller's semantic type: {casts[0]!r}"
+            f"{method_name} does not retain its physical carrier and caller-framed Kotlin result: {casts[0]!r}"
         )
 
 reference_methods = [
@@ -207,8 +220,9 @@ if len(returns) != 1 or returns[0].get("value", {}).get("k") != "cast":
 projection = returns[0]["value"]
 call = projection.get("e", {})
 if (
-    invoke.get("ret") != closure_semantic
-    or projection.get("type") != closure_semantic
+    invoke.get("ret") != physical
+    or logical_return(invoke) != closure_semantic
+    or projection.get("type") != physical
     or call.get("k") != "callInstance"
     or call.get("ownerType") != carrier
     or call.get("method") != "$star$fuse$0"
@@ -250,7 +264,8 @@ sam_projection = sam_returns[0].get("value", {}) if len(sam_returns) == 1 else {
 sam_call = sam_projection.get("e", {})
 if (
     sam_projection.get("k") != "cast"
-    or sam_projection.get("type") != closure_semantic
+    or sam_projection.get("type") != physical
+    or logical_return(sam_methods[0]) != closure_semantic
     or sam_call.get("ownerType") != carrier
     or sam_call.get("method") != "$star$fuse$0"
     or sam_call.get("recv", {}).get("name") != "fusible"
@@ -307,7 +322,7 @@ sm_projections = [
     for node in objects(invoke_suspends[0].get("body", []))
     if node.get("k") == "cast" and node.get("e") is sm_calls[0]
 ]
-if len(sm_projections) != 1 or sm_projections[0].get("type") != closure_semantic:
+if len(sm_projections) != 1 or sm_projections[0].get("type") != physical:
     raise SystemExit(
         f"{sm_name}.invokeSuspend does not explicitly project its carrier result: {invoke_suspends[0]!r}"
     )

@@ -53,7 +53,7 @@ PROJECTS=(
 declare -A EXPECTED_DISCOVERED=(
 	["tests/basic"]=832
 	["tests/coroutines"]=267
-	["tests/roundtrip/consumer"]=663
+	["tests/roundtrip/consumer"]=664
 	["tests/roundtrip/bidirectional/consumer"]=56
 	["tests/interop/consumer"]=465
 )
@@ -330,6 +330,26 @@ for proj in "${PROJECTS[@]}"; do
 	# standard KLIB companion_object_name + nested class graph. Inspect both artifacts so a mutually-compatible
 	# producer/consumer bug cannot make the behavioral test pass while either interchange boundary is malformed.
 	if [[ "$proj" == "tests/roundtrip/consumer" ]]; then
+		if python3 "$ROOT/tests/roundtrip/assert-imported-operator-carrier-cir.py" \
+			"$ROOT/tests/roundtrip/producer/obj/$CONFIGURATION/net10.0/cir/ValueReturningOperators.cir.json" \
+			"$dir/obj/$CONFIGURATION/net10.0/bir/ImportedSetResultTests.bir.json" \
+			"$dir/obj/$CONFIGURATION/net10.0/cir/ImportedSetResultTests.cir.json" \
+			>"$ROOT/build/nunit-$name.imported-operator-carrier.log" 2>&1; then
+			echo "  imported operators retain selected carrier identity and exact lexical super frames"
+		else
+			echo "  IMPORTED OPERATOR CARRIER FAIL"
+			tail -25 "$ROOT/build/nunit-$name.imported-operator-carrier.log"; rc=1
+		fi
+		if python3 "$ROOT/tests/roundtrip/assert-inherited-default-method-cir.py" \
+			"$ROOT/tests/roundtrip/producer/obj/$CONFIGURATION/net10.0/bir/DefaultPropertySlot.bir.json" \
+			"$ROOT/tests/roundtrip/producer/obj/$CONFIGURATION/net10.0/cir/DefaultPropertySlot.cir.json" \
+			"$dir/obj/$CONFIGURATION/net10.0/cir/InheritedGenericDefaultCollisionTests.cir.json" \
+			>"$ROOT/build/nunit-$name.inherited-default-method-cir.log" 2>&1; then
+			echo "  inherited defaults retain exact source IDs and native ancestor MethodImpls"
+		else
+			echo "  INHERITED DEFAULT METHOD SLOT FAIL"
+			tail -25 "$ROOT/build/nunit-$name.inherited-default-method-cir.log"; rc=1
+		fi
 		if python3 "$ROOT/tests/roundtrip/assert-private-rich-inline-cir.py" \
 			"$dir/obj/$CONFIGURATION/net10.0/cir/PrivateRichEnumCollisionTests.cir.json" \
 			>"$ROOT/build/nunit-$name.private-rich-inline.log" 2>&1; then

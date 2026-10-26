@@ -5888,10 +5888,14 @@ internal sealed class AssemblyScanner : IDisposable
             methodHandle, MetadataAttributes.DotKtNs + "KotlinSourceMethodAttribute");
         if (document is null) return null;
         var root = document.RootElement;
-        if (root.ValueKind != JsonValueKind.Object || root.EnumerateObject().Count() != 1 ||
+        if (root.ValueKind != JsonValueKind.Object || root.EnumerateObject().Count() is not (1 or 2) ||
             !root.TryGetProperty("name", out var nameNode) || nameNode.ValueKind != JsonValueKind.String ||
             string.IsNullOrEmpty(nameNode.GetString()))
             throw new InvalidDataException("malformed [KotlinSourceMethod] payload");
+        if (root.EnumerateObject().Count() == 2 &&
+            (!root.TryGetProperty("sourceDeclaration", out var source) || source.ValueKind != JsonValueKind.String
+                || string.IsNullOrEmpty(source.GetString())))
+            throw new InvalidDataException("malformed [KotlinSourceMethod] source declaration");
         return nameNode.GetString();
     }
 

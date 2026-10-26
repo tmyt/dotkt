@@ -182,7 +182,7 @@ static class KotlinOverrideSlotBridge
                 AddInheritedDefaultPropertyBridges(cls, defs, methods, ClassOwnArgs(cls), refs, isValue,
                     exactBridgeSources, inheritedBridges, ref ordinal, localTypeNames);
                 AddInheritedDefaultMethodBridges(cls, defs, methods, ClassOwnArgs(cls), refs, isValue,
-                    inheritedBridges, ref ordinal, localTypeNames);
+                    exactBridgeSources, inheritedBridges, ref ordinal, localTypeNames);
             }
         if (phase == Phase.PhysicalBridges)
             foreach (var method in defs.Values.SelectMany(def => def.Methods.OfType<JsonObject>()))
@@ -500,7 +500,13 @@ static class KotlinOverrideSlotBridge
                 if (phase == Phase.SuspendValueBridges && !fit.Contains(Fit.Bridge))
                     bridge[KotlinPropertyAccessors.SuspendTaskOnlyBridgeKey] = true;
                 if (propertyAccessor == null)
-                    RoundtripMetadata.AddSourceMethodIdentity(bridge, identityName);
+                {
+                    RoundtripMetadata.AddSourceMethodIdentity(bridge, identityName,
+                        Str(impl[DeclarationIdentityBinding.Key]));
+                    if (cls.Kind == "interface" && exactBridgeSources != null
+                        && Str(impl[DeclarationIdentityBinding.Key]) is string sourceIdentity)
+                        exactBridgeSources[bridge] = sourceIdentity;
+                }
                 bridges[key] = bridge;
                 methods.Add(bridge);
                 if (propertyAccessor != null)
@@ -970,6 +976,7 @@ static class KotlinOverrideSlotBridge
     // from its Kotlin name and an unrelated class/base method already occupies that physical signature.
     static void AddInheritedDefaultMethodBridges(Def cls, IReadOnlyDictionary<string, Def> defs,
         JsonArray methods, TypeNode[] ownArgs, ReferenceMetadataIndex refs, ValueTypeOracle isValue,
+        IReadOnlyDictionary<JsonObject, string> exactBridgeSources,
         Dictionary<string, JsonObject> bridges, ref int ordinal, IReadOnlySet<string> localTypeNames)
     {
         if (cls.Node[KotlinPropertyAccessors.InheritedDefaultMethodsKey] is not JsonArray inheritedFacts)
@@ -991,6 +998,11 @@ static class KotlinOverrideSlotBridge
             var factParams = factParamNodes.Select(TypeJson.Read).ToArray();
             if (methodArity < 0 || (implementationTypeParams?.Count ?? 0) != methodArity
                 || factParams.Any(type => type == null)) continue;
+            var selectedIdentities = (fact["overrides"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()
+                .Where(edge => TypeJson.OwnerName(edge["owner"]) == implementationOwner
+                    && Str(edge["member"]) == implementationMember)
+                .Select(edge => Str(edge[DeclarationIdentityBinding.Key])).Where(id => id != null).Distinct().ToArray();
+            var selectedIdentity = selectedIdentities.Length == 1 ? selectedIdentities[0] : null;
 
             foreach (var spec in reachable.Where(candidate => candidate.Name == implementationOwner)
                          .GroupBy(SupertypeGraph.TypeKey).Select(group => group.First()))
@@ -1006,7 +1018,10 @@ static class KotlinOverrideSlotBridge
                         && ((candidate["typeParams"] as JsonArray)?.Count ?? 0) == methodArity
                         && SameMethodTypeParameterShape(candidate["typeParams"] as JsonArray,
                             implementationTypeParams, supArgs, supArgs)
-                        && SignatureMatches(candidate, factParams, factRet, supArgs, refs, isValue)).ToList();
+                        && (selectedIdentity != null
+                            ? SourceDeclarationId(Str(candidate[DeclarationIdentityBinding.Key]))
+                                == SourceDeclarationId(selectedIdentity)
+                            : SignatureMatches(candidate, factParams, factRet, supArgs, refs, isValue))).ToList();
                     if (sources.Count == 0 || sources.Count > 1 && sources.Any(candidate =>
                             candidate[KotlinPropertyAccessors.SuspendSourceParamsKey] is not JsonArray
                             || TypeJson.Read(candidate[KotlinPropertyAccessors.SuspendSourceRetKey]) is null))
@@ -1030,25 +1045,45 @@ static class KotlinOverrideSlotBridge
                             memberName, null, spec, source, null, descriptors,
                             sourceOwnerArgs: supArgs, descriptorOwnerArgs: Array.Empty<TypeNode>(), virtualCall: false,
                             localTypeNames: localTypeNames);
+                        // This selected default can itself fill inherited CLR slots. Erasure can make an unrelated
+                        // class method capture those slots too, even when its own interface MethodDef is protected.
+                        // Reuse the exact source-to-bridge relation established while allocating those MethodImpls.
+                        if (Str(source[DeclarationIdentityBinding.Key]) is string sourceIdentity
+                            && exactBridgeSources != null)
+                            foreach (var exactBridge in sup.Methods.OfType<JsonObject>().Where(candidate =>
+                                         exactBridgeSources.TryGetValue(candidate, out var selected)
+                                         && selected == sourceIdentity && candidate["clrInterfaceImpls"] is JsonArray))
+                                AddInheritedDefaultBridge(cls, defs, methods, ownArgs, refs, isValue, bridges, ref ordinal,
+                                    memberName, null, spec, source, null, (JsonArray)exactBridge["clrInterfaceImpls"],
+                                    sourceOwnerArgs: supArgs, descriptorOwnerArgs: supArgs, virtualCall: true,
+                                    localTypeNames: localTypeNames);
                     }
                     continue;
                 }
 
-                if (refs == null
-                    || !refs.TrySelectedMethodDeclaration(spec.Name, implementationMember, methodArity,
-                        factParams, factRet, spec.Args ?? Array.Empty<TypeNode>(), SemanticMethodTypeParameters(implementation),
-                        refs.NullableTypeFrames.GetValueOrDefault(spec.Name)?.OrdinaryArguments(spec.Args ?? Array.Empty<TypeNode>())
-                            ?? spec.Args ?? Array.Empty<TypeNode>(),
-                        out var referencedDeclaration)
+                if (refs == null) continue;
+                var selectedArgs = spec.Args ?? Array.Empty<TypeNode>();
+                var semanticArgs = refs.NullableTypeFrames.GetValueOrDefault(spec.Name)?.OrdinaryArguments(selectedArgs)
+                    ?? selectedArgs;
+                ReferencedMethodDeclaration referencedDeclaration;
+                var found = selectedIdentity != null && refs.HasDotKtOwner(spec.Name)
+                    ? refs.TrySelectedOverrideDeclaration(spec.Name, implementationMember, null, methodArity,
+                        factParams, selectedArgs, SemanticMethodTypeParameters(implementation), semanticArgs,
+                        IsSuspendMethod(fact), out referencedDeclaration, semanticConstraints: true,
+                        selectedDeclarationId: selectedIdentity)
+                    : refs.TrySelectedMethodDeclaration(spec.Name, implementationMember, methodArity,
+                        factParams, factRet, selectedArgs, SemanticMethodTypeParameters(implementation), semanticArgs,
+                        out referencedDeclaration);
+                if (!found
                     || referencedDeclaration.Return == null
                     || referencedDeclaration.Parameters == null
                     || referencedDeclaration.Parameters.Any(type => type == null))
                     continue;
                 var specArgs = spec.Args ?? Array.Empty<TypeNode>();
-                var referencedSlotParams = referencedDeclaration.Parameters.Select(type => SupertypeGraph.SubstOwnerTvs(
-                    NullableGenericErasure.EraseNullableTv(type, isValue), specArgs)).ToArray();
+                var referencedSlotParams = referencedDeclaration.PhysicalParameters.Select(type =>
+                    SupertypeGraph.SubstOwnerTvs(type, specArgs)).ToArray();
                 var referencedSlotRet = SupertypeGraph.SubstOwnerTvs(
-                    NullableGenericErasure.EraseNullableTv(referencedDeclaration.Return, isValue), specArgs);
+                    referencedDeclaration.PhysicalReturn, specArgs);
                 var physicalMember = referencedDeclaration.PhysicalMember;
                 var physicalOwner = refs.ExactReflectedOwner(spec.Name, spec.Args?.Length ?? 0);
                 var descriptorOwner = new TypeNode.Fqn(physicalOwner, spec.Args);
@@ -1062,6 +1097,16 @@ static class KotlinOverrideSlotBridge
                     memberName, null, descriptorOwner, referencedSource, null, referencedDescriptors,
                     sourceOwnerArgs: Array.Empty<TypeNode>(), descriptorOwnerArgs: Array.Empty<TypeNode>(),
                     virtualCall: false, localTypeNames: localTypeNames);
+                foreach (var inheritedSlot in refs.ReferencedMethodImpls(spec.Name, referencedDeclaration.DeclarationId))
+                {
+                    var descriptors = new JsonArray(ImplDescriptor(inheritedSlot.DeclarationOwner,
+                        inheritedSlot.DeclarationMember, inheritedSlot.MethodArity,
+                        inheritedSlot.Parameters, inheritedSlot.Return, inheritedSlot.TypeParams));
+                    AddInheritedDefaultBridge(cls, defs, methods, ownArgs, refs, isValue, bridges, ref ordinal,
+                        memberName, null, descriptorOwner, referencedSource, null, descriptors,
+                        sourceOwnerArgs: Array.Empty<TypeNode>(), descriptorOwnerArgs: specArgs,
+                        virtualCall: true, localTypeNames: localTypeNames);
+                }
             }
         }
     }

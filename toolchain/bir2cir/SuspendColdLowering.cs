@@ -4100,8 +4100,7 @@ static partial class SuspendColdLowering
                 if (_m[key] is JsonNode indices) method[key] = indices.DeepClone();
             // The existential slot's source identity belongs to its public Task projection too. Without it,
             // a separately compiled consumer cannot select this slot from the original Kotlin declaration.
-            if (Str(_m[FBoundStarProjectionErasure.SourceMemberKey]) is string sourceMember)
-                RoundtripMetadata.AddSourceMethodIdentity(method, sourceMember);
+            RoundtripMetadata.CopySourceMethodIdentity(_m, method);
         }
 
         // A resolved MethodImpl descriptor names the declaration signature, not merely its logical source method.

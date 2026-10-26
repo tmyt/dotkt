@@ -52,10 +52,13 @@ assert constructions[0]["type"]["args"] == [
 
 slots = types["OwnerSuspendSink$star"]["methods"]
 for name in ("render", "echo"):
+    source_identity = payload(next(m for m in owner["methods"] if m["name"] == name),
+                              "KotlinDeclarationIdentityAttribute")["id"]
     task_slots = [m for m in slots if any(
         a["attr"].get("name") == "DotKt.Runtime.CompilerServices.KotlinSourceMethodAttribute"
         for a in m.get("attrs", []))
-        and payload(m, "KotlinSourceMethodAttribute") == {"name": name}]
+        and payload(m, "KotlinSourceMethodAttribute")
+        == {"name": name, "sourceDeclaration": source_identity}]
     assert len(task_slots) == 1, (name, task_slots)
     task = task_slots[0]
     cold = next(m for m in slots if m["name"] == task["name"] + "$dotkt_suspend")

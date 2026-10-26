@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Assert exact CLR carriers for projected covariant arrays and exact invariant projections."""
+"""Assert array storage, construction witnesses, and ordinary element-value carriers."""
 
+import base64
 import json
 import sys
 
@@ -284,14 +285,26 @@ if covariant_carrier not in collision_locals:
     raise SystemExit(f"a user __outer local in a generated frame was mistaken for lexical this: {collision_locals!r}")
 
 invariant = method("invariantProjectedValue")
-exact_invariant = fqn("InvariantValue", fqn("System.String"), fqn("System.String"))
+invariant_carrier = fqn("InvariantValue$star")
 parameters = invariant.get("params", [])
 if len(parameters) != 1 or parameters[0].get("type") != fqn("System.Array"):
     raise SystemExit(f"projected array did not retain open component storage: {parameters!r}")
 invariant_nodes = list(objects(invariant.get("body", [])))
-if not any(node.get("k") == "cast" and node.get("type") == exact_invariant for node in invariant_nodes):
-    raise SystemExit("invariant projected element access lost its exact constructed type")
-if not any(node.get("ownerType") == exact_invariant for node in invariant_nodes):
-    raise SystemExit("invariant projected element member did not use its exact constructed owner")
+if not any(node.get("k") == "cast" and node.get("type") == invariant_carrier for node in invariant_nodes):
+    raise SystemExit("projected invariant element access lost its ordinary value carrier")
+getters = [node for node in invariant_nodes if node.get("k") == "callInstance"
+           and node.get("ownerType") == invariant_carrier and node.get("sig") == []]
+if len(getters) != 1 or getters[0].get("ret") != fqn("System.Object"):
+    raise SystemExit(f"projected invariant element lost its exact carrier getter: {getters!r}")
+if not any(node.get("k") == "cast" and node.get("type") == fqn("System.String")
+           and node.get("e") is getters[0] for node in invariant_nodes):
+    raise SystemExit("the invariant element's declared String result was not checked at use")
+logical_parameters = [json.loads(base64.b64decode(attribute["args"][1]["bytes"]))
+                      for attribute in parameters[0].get("attrs", [])
+                      if attribute.get("attr", {}).get("name")
+                      == "DotKt.Runtime.CompilerServices.KotlinTypeAttribute"]
+if logical_parameters != [array({"t": "projection", "variance": "out",
+                                 "of": fqn("InvariantValue", fqn("kotlin.String"))})]:
+    raise SystemExit(f"projected invariant element lost its complete Kotlin type: {logical_parameters!r}")
 
-print("projected covariant array carriers and invariant projection are exact")
+print("projected arrays preserve storage witnesses and use typed ordinary element carriers")
