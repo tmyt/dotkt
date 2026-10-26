@@ -8,7 +8,7 @@
 // `hashSetOf`/`hashMapOf` in kotlin.collections, the unsigned `ubyteArrayOf`/... array factories — and a common source cannot
 // reference a platform-only declaration under the jar's multi-platform (`-Xcommon-sources`) compile. Placed in common,
 // both common and platform (clr/builtins/Library.kt) sources can annotate their factories. The other kotlin.clr bindings
-// (@ClrIntrinsic/@ClrTypeAlias/@ClrConv/@ClrProperty/@ClrRefArgument) stay platform-only.
+// (@ClrIntrinsic/@ClrConv/@ClrProperty/@ClrRefArgument) stay platform-only.
 package kotlin.clr
 
 // Marks a collection FACTORY top-level function (`listOf`/`hashSetOf`/`hashMapOf`/`mutableListOf`/`emptyList`/...): a call to it

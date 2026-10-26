@@ -69,28 +69,6 @@ static class StdlibBindingOverlay
                     + $"but the frontend supplied '{Str(method["name"])}'");
 
             var applied = false;
-            if (binding.ContainsKey("physicalName"))
-            {
-                var physicalName = RequiredStringFact(binding, "physicalName", source, id);
-                if (string.IsNullOrWhiteSpace(physicalName))
-                    throw new InvalidDataException(
-                        $"stdlib binding overlay '{source}' gives declaration '{id}' an empty physicalName");
-                if (!binding.ContainsKey("expectedPhysicalName"))
-                    throw new InvalidDataException(
-                        $"stdlib binding overlay '{source}' physicalName for declaration '{id}' has no expectedPhysicalName");
-                var expectedNode = binding["expectedPhysicalName"];
-                var expectedPhysicalName = expectedNode == null ? null : Str(expectedNode)
-                    ?? throw new InvalidDataException(
-                        $"stdlib binding overlay '{source}' declaration '{id}' has a non-string expectedPhysicalName");
-                var existingPhysicalName = Str(method["explicitClrName"]);
-                if (existingPhysicalName != expectedPhysicalName)
-                    throw new InvalidDataException(
-                        $"stdlib binding overlay '{source}' declaration '{id}' expected frontend physical name "
-                        + $"'{expectedPhysicalName ?? "<none>"}', but found '{existingPhysicalName ?? "<none>"}'");
-                method["explicitClrName"] = physicalName;
-                applied = true;
-            }
-
             if (binding.ContainsKey("sequenceElementAdapter"))
             {
                 var adapter = RequiredBooleanFact(binding, "sequenceElementAdapter", source, id);
@@ -266,8 +244,6 @@ static class StdlibBindingOverlay
                 {
                     ["declarationId"] = id,
                     ["sourceName"] = "source",
-                    ["physicalName"] = "physical",
-                    ["expectedPhysicalName"] = null,
                     ["sequenceElementAdapter"] = true,
                     ["implementationDeclarationId"] = id + ":implementation",
                     ["implementationSourceName"] = "implementation",
@@ -287,8 +263,7 @@ static class StdlibBindingOverlay
         var physicalParameterIndices = ApplyDocument(new[] { bir }, overlay, "selftest");
         var semanticRoot = new JsonObject { ["methods"] = new JsonArray { method.DeepClone() } };
         var semanticSignature = DeclarationIdentityBinding.PreserveSourceFacts(new[] { semanticRoot })[id];
-        if (Str(method["explicitClrName"]) != "physical"
-            || method["attrs"] is not JsonArray attrs
+        if (method["attrs"] is not JsonArray attrs
             || !attrs.OfType<JsonObject>().Any(attr => TypeJson.OwnerName(attr["attr"]) == SequenceElementAdapter)
             || TypeJson.Read(method["params"]![0]!["type"]) is not TypeNode.Fqn { Name: "System.Object" }
             || Str(method["params"]![0]!["kotlinType"]) != TypeNode.ToJson(new TypeNode.Fqn("System.Int32"))
@@ -297,11 +272,6 @@ static class StdlibBindingOverlay
             || !rewrittenIndices.SequenceEqual(new[] { 0 })
             || ((method["body"] as JsonArray)?[0]?["e"]?["v"] as JsonValue)?.GetValue<int>() != 1)
             throw new InvalidOperationException("StdlibBindingOverlay self-test failed");
-
-        var stalePhysicalName = overlay.DeepClone().AsObject();
-        stalePhysicalName["declarations"]![0]!["expectedPhysicalName"] = "unexpected";
-        ExpectInvalid(() => ApplyDocument(new[] { bir.DeepClone() }, stalePhysicalName, "selftest-stale-name"),
-            "stale physical name");
 
         var duplicateSelected = bir.DeepClone().AsObject();
         duplicateSelected["methods"]!.AsArray().Add(method.DeepClone());

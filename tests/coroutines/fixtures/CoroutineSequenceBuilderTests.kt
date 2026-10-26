@@ -48,8 +48,10 @@ class CoroutineSequenceBuilderTests {
         val s = sequence {
             yield("a")
             yieldAll(listOf("b", "c"))
+            yieldAll(sequenceOf("d", "e"))
+            yieldAll(listOf("f").iterator())
         }
-        assertEquals("a,b,c", s.toList().joinToString(","))   // a,b,c
+        assertEquals("a,b,c,d,e,f", s.toList().joinToString(","))
     }
 
     @TestAttribute
