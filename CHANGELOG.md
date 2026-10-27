@@ -8,6 +8,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 ### Changed
 
 - Preserve unchecked Kotlin generic reference views in invariant fields, constructor arguments, closure results and container elements across DLL boundaries, while retaining exact CLR interop signatures and native managed-reference locations.
+- Restore upstream empty-map and comparison bodies, including natural/reverse comparator singletons, using the compiler's general erased-type rules instead of stdlib workarounds.
 - Remove obsolete per-overload stdlib CLR renames in favor of the existing general signature-identity rules. Restore upstream MutableCollections, SequenceBuilder and Ranges sources, and keep CLR annotation definitions outside upstream source directories.
 - Restore upstream Kotlin 2.4.21 String trimming, padding and blank checks, Duration fractional parsing, and Standard source identity now that their obsolete backend workarounds are unnecessary. Guard the restored files byte-for-byte and exercise them across DLL boundaries.
 - Apply the String-to-CharSequence representation bridge to direct local stores and inline-result temporaries, preserving nullable values and single evaluation.

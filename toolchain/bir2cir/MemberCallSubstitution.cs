@@ -719,12 +719,6 @@ static class MemberCallSubstitution
                 // use the same ordinary argument as their native vararg wrapper.
                 return typeArgs[frame?.SourcePosition(index) ?? index];
             }
-            if (collKind == "map")
-            {
-                // Map bodies own their null-capable storage and concrete result
-                // classifier. A native dictionary literal cannot express that contract.
-                return null;
-            }
             var elemT = RepresentationArgument(0, NullableRepresentationFrame.Role.Ordinary);
             if (elemT == null) return null;                                     // can't reconstruct elem -> plain call
             var elems = new JsonArray();
@@ -2017,10 +2011,8 @@ static class MemberCallSubstitution
             ["typeArgs"] = new JsonArray { TypeJson.Write(k), TypeJson.Write(v) },
         };
         BindAuthoredHelper(call, refs, ctx);
-        // Carry the call's statically-known return (same rationale + `gp:` guard as Rule3HelperCall): a helper
-        // returning the BARE map value param (`getOrDefault` -> V) reflects as the callee's own `!!1` at the call
-        // site — boxing that out-of-scope token is invalid metadata -> BadImageFormatException at run (both the
-        // Map- and MutableMap-typed receivers). `retType` lets ilemit box/convert the concrete instantiation.
+        // Carry the closed caller result, not the helper declaration's bare method variable. Its physical
+        // representation is selected by the ordinary value projection; the helper binding owns its exact slot.
         if (RetToken(node) is JsonNode ret && !IsTvType(ret)) call["ret"] = ret;
         return call;
     }

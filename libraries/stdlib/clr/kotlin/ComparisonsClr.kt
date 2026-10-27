@@ -21,8 +21,6 @@ private fun comparisonRuntimeType(name: String): StarProjectionType = error("CLR
 
 private val genericComparisonDefinition = comparisonRuntimeType("System.IComparable`1")
 
-internal actual fun clrRawCompareTo(a: Any, b: Any): Int = clrErasedCompareTo(a, b)
-
 @kotlin.clr.ClrTypeAlias("System.Array")
 private interface ComparisonArrayStorage
 

@@ -5,23 +5,19 @@
 
 // The collection/array FACTORY binding markers. Defined in the COMMON source set (not the platform
 // clr/kotlin/clr/ClrIntrinsic.kt) because they annotate factory bodies that live in COMMON stdlib sources — `listOf`/
-// `hashSetOf`/`hashMapOf` in kotlin.collections, the unsigned `ubyteArrayOf`/... array factories — and a common source cannot
+// `hashSetOf` in kotlin.collections, the unsigned `ubyteArrayOf`/... array factories — and a common source cannot
 // reference a platform-only declaration under the jar's multi-platform (`-Xcommon-sources`) compile. Placed in common,
 // both common and platform (clr/builtins/Library.kt) sources can annotate their factories. The other kotlin.clr bindings
 // (@ClrIntrinsic/@ClrConv/@ClrProperty/@ClrRefArgument) stay platform-only.
 package kotlin.clr
 
-// Marks a collection FACTORY top-level function (`listOf`/`hashSetOf`/`hashMapOf`/`mutableListOf`/`emptyList`/...): a call to it
-// CONSTRUCTS the backing BCL collection directly (`kind` = "list" -> `List<T>`, "set" -> `HashSet<T>`, "map" ->
-// `Dictionary<K,V>`) instead of calling the Kotlin body. bir2cir reads this marker off the REFERENCE assembly (NOT kotc)
-// and authors the physical allocation: lists use `newList`; sets/maps use ordinary valueBlock/newClr/call nodes
-// with an explicit Kotlin comparer. The element/key/value TYPES come from the call's `typeArgs`
-// (`typeArgs[0]` for the list/set element, `[0]`/`[1]` for the map key/value); the ELEMENTS from the single vararg
-// argument (kotc emits it as a `newArray` node), the lone non-vararg element, or none (`emptyList()`). A marked map factory
-// additionally splits each `a to b` Pair-LITERAL argument (a `new kotlin.Pair(k,v)` node) into a key/value entry — but a
-// NON-literal Pair argument (`hashMapOf(pairVariable)`) is left as a plain call to its Kotlin body (never force-split).
-// Factories that populate insertion-ordered maps/sets retain their Kotlin bodies instead: generic hash-storage
-// allocation would discard the declaration's ordering contract.
+// Marks a collection FACTORY top-level function (`listOf`/`hashSetOf`/`mutableListOf`/`emptyList`/...): a call to it
+// CONSTRUCTS the backing BCL collection directly (`kind` = "list" -> `List<T>`, "set" -> `HashSet<T>`) instead of
+// calling the Kotlin body. bir2cir reads this marker off the REFERENCE assembly (NOT kotc) and authors the physical
+// allocation: lists use `newList`; sets use ordinary valueBlock/newClr/call nodes with an explicit Kotlin comparer.
+// The element type comes from the call's `typeArgs[0]`; elements come from its literal vararg pack, lone non-vararg
+// element, or empty argument vector. Forwarded packs retain the Kotlin call. Map factories and insertion-ordered
+// set factories retain their Kotlin bodies, which own their storage and ordering contracts.
 @Target(AnnotationTarget.FUNCTION, AnnotationTarget.CONSTRUCTOR)
 public annotation class ClrCollectionFactory(val kind: String)
 
