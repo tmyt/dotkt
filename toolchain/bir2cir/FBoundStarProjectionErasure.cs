@@ -542,7 +542,7 @@ static partial class FBoundStarProjectionErasure
                     if (value == null) continue;
                     if (TypeJson.Read(value) is TypeNode type)
                         arr[i] = TypeJson.Write(RewriteType(
-                            type, owners, refs, boundDeclaration, localClrAliases,
+                            type, owners, refs, boundDeclaration || _nativeProofs?.IsPhysicalConstraint(arr, type) == true, localClrAliases,
                             preserveArrayShape: preserveArrayShape,
                             preserveConstructedHead: IsInterfaceDeclarationList(arr)));
                     else
@@ -626,6 +626,7 @@ static partial class FBoundStarProjectionErasure
     // Native memberRef/declaration descriptors separately remain fully bound above.
     static bool PreservesConstructionHead(JsonObject node, string key) =>
         key is "type" or "ownerType" && ClrBoundNode.IsAny(Str(node["k"]))
+        || key == "ownerType" && Bool(node[GenericRepresentationPolicy.FieldAddressKey])
         // Constraint dispatch still needs its selected semantic owner to bind the allocated physical slot.
         || key == "iface" && Str(node["k"]) == "constrainedCall"
         || key == "type"
@@ -3598,7 +3599,7 @@ static partial class FBoundStarProjectionErasure
                     if (value == null) continue;
                     if (TypeJson.Read(value) is TypeNode type)
                         arr[i] = TypeJson.Write(RewriteType(
-                            type, owners, refs, boundDeclaration, localClrAliases,
+                            type, owners, refs, boundDeclaration || _nativeProofs?.IsPhysicalConstraint(arr, type) == true, localClrAliases,
                             preserveArrayShape: preserveArrayShape,
                             preserveConstructedHead: IsInterfaceDeclarationList(arr)));
                     else
@@ -4084,6 +4085,7 @@ static partial class FBoundStarProjectionErasure
     {
         var kind = Str(field["k"]);
         if (kind is not ("field" or "lateinitGet" or "setFieldExpr" or "setField")
+            || Bool(field[GenericRepresentationPolicy.FieldAddressKey])
             || Bool(field[ExactOuterKey]) || field["recv"] is not JsonObject receiver
             || Str(receiver["k"]) == "this" || Bool(receiver[ExactOuterKey])
             || TypeJson.Read(field["ownerType"]) is not TypeNode.Fqn owner
@@ -4130,7 +4132,7 @@ static partial class FBoundStarProjectionErasure
         ReferenceMetadataIndex refs)
     {
         // A lexical enclosing receiver is an exact class construction, not a value slot widened by Kotlin variance.
-        if (Bool(field[ExactOuterKey])) return;
+        if (Bool(field[ExactOuterKey]) || Bool(field[GenericRepresentationPolicy.FieldAddressKey])) return;
         var dataClassCopyDefault = Bool(field["dataClassCopyDefault"]);
         field.Remove("dataClassCopyDefault");
         var generatedEqualsFieldRead = Bool(field["generatedEqualsFieldRead"]);
@@ -5341,6 +5343,7 @@ static partial class FBoundStarProjectionErasure
                 obj.Remove(ExactOuterKey);
                 obj.Remove(DelegationOuterSlotKey);
                 obj.Remove(GenericRepresentationPolicy.NativeLocationKey);
+                obj.Remove(GenericRepresentationPolicy.FieldAddressKey);
                 obj.Remove(GenericRepresentationPolicy.PhysicalDeclarationSignatureKey);
                 obj.Remove(InnerFactoryArgumentsKey);
                 foreach (var value in obj.Select(pair => pair.Value).ToList())

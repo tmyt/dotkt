@@ -9,6 +9,7 @@ using DotKt.Bir;
 sealed class GenericRepresentationPolicy
 {
     internal const string NativeLocationKey = "_nativeLocation";
+    internal const string FieldAddressKey = "_nativeFieldAddress";
     internal const string PhysicalDeclarationSignatureKey = "_physicalDeclarationSignature";
     readonly Dictionary<string, string> _aliases;
     readonly ReferenceMetadataIndex _references;
@@ -105,10 +106,20 @@ sealed class GenericRepresentationPolicy
                         var location = Text(argument["k"]) == "byrefOf" ? argument["inner"] as JsonObject : argument;
                         if (location == null || Text(location["k"]) is not ("field" or "staticField")
                             || TypeJson.OwnerName(location["ownerType"] ?? location["owner"]) is not string owner
-                            || Text(location["name"]) is not string name
-                            || !fields.TryGetValue(FieldKey(owner, name, Text(location["k"]) == "staticField", location), out var declaration)) continue;
-                        _nativeFields.Add(declaration);
-                        _nativeFieldNames.Add(FieldKey(owner, name, Text(location["k"]) == "staticField", location));
+                            || Text(location["name"]) is not string name) continue;
+                        var key = FieldKey(owner, name, Text(location["k"]) == "staticField", location);
+                        if (fields.TryGetValue(key, out var declaration))
+                        {
+                            _nativeFields.Add(declaration);
+                            _nativeFieldNames.Add(key);
+                        }
+                        else if (_localDeclarations.ContainsKey(owner)
+                            || _references?.HasReferencedFieldLocation(TypeJson.Read(location["ownerType"] ?? location["owner"]) as TypeNode.Fqn,
+                                name, key.Item3) != true) continue;
+                        // An address use is not a value read. Keep this selected FieldDef through value projection;
+                        // other reads of the same referenced field may still use its ordinary carrier getter.
+                        location[FieldAddressKey] = true;
+                        location[NativeLocationKey] = true;
                     }
                 foreach (var (key, child) in obj)
                     if (key != "attrs") FindAddresses(child);
@@ -229,6 +240,24 @@ sealed class GenericRepresentationPolicy
             || TypeJson.Read(addressedField["memberType"]) != new TypeNode.Tv("type", 0)
             || ((JsonArray)addressedField["ownerType"]["args"]).Count != 2)
             throw new InvalidOperationException("Native field allocation changed an unrelated field or lost declaration correspondence");
+        var importedAddressRoot = JsonNode.Parse("""
+          {"fileClass":"ImportedFieldAddresses","methods":[{"name":"pass","typeParams":["T"],"params":[],"body":[
+            {"k":"callStatic","shapeTypes":[{"t":"byRef","of":{"t":"tv","scope":"method","i":0}}],"args":[
+              {"k":"field","ownerType":{"t":"fqn","name":"System.Runtime.CompilerServices.StrongBox`1","args":[{"t":"tv","scope":"method","i":0}]},
+               "name":"Value","recv":{"k":"local","name":"box"},"ret":{"t":"tv","scope":"method","i":0}}]},
+            {"k":"field","ownerType":{"t":"fqn","name":"System.Runtime.CompilerServices.StrongBox`1","args":[{"t":"tv","scope":"method","i":0}]},
+             "name":"Value","recv":{"k":"local","name":"box"},"ret":{"t":"tv","scope":"method","i":0}}]}]}
+          """)!.AsObject();
+        var importedPolicy = new GenericRepresentationPolicy(new Dictionary<string, string>(),
+            ReferenceMetadataIndex.Build(new[] { typeof(System.Runtime.CompilerServices.StrongBox<>).Assembly.Location }),
+            new[] { importedAddressRoot });
+        var addressedImport = importedAddressRoot["methods"][0]["body"][0]["args"][0].AsObject();
+        if (!importedPolicy.IsNativeField(addressedImport) || addressedImport[FieldAddressKey]?.GetValue<bool>() != true
+            || importedPolicy.IsNativeField(importedAddressRoot["methods"][0]["body"][1].AsObject()))
+            throw new InvalidOperationException("A selected referenced FieldDef address was lost or changed an ordinary value read");
+        NullableRepresentationMaterialization.Apply(new[] { importedAddressRoot }, _ => false, policy: importedPolicy);
+        if (TypeJson.Read(addressedImport["ret"]) != new TypeNode.Tv("method", 0))
+            throw new InvalidOperationException("Referenced field address result lost its native witness frame");
         var companionFields = JsonNode.Parse("""
         {"fileClass":"CompanionFieldFrames","fields":[
           {"name":"slot","static":true,"type":{"t":"fqn","name":"kotlin.String"},

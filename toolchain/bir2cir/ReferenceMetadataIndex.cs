@@ -2779,6 +2779,18 @@ sealed partial class ReferenceMetadataIndex
         return true;
     }
 
+    // Address-taking selects the actual declared FieldDef, never its synthesized ordinary-value getter.
+    internal bool HasReferencedFieldLocation(TypeNode.Fqn owner, string name, bool isStatic)
+    {
+        if (owner == null || name == null) return false;
+        var physical = RecordedPhysicalTypeName(owner.Name);
+        var declaration = ResolveRefType(physical, physical.Contains('`') || physical.Contains('+')
+            ? 0 : owner.Args?.Length ?? 0);
+        var field = declaration?.GetField(name, BindingFlags.Public | BindingFlags.NonPublic
+            | BindingFlags.DeclaredOnly | (isStatic ? BindingFlags.Static : BindingFlags.Instance));
+        return field != null && !field.IsLiteral;
+    }
+
     // Resolve the physical member exposed by a referenced generic's compiler-generated existential. A member whose
     // signature mentions an owner type parameter cannot reuse the Kotlin name: on G<object> the erased bridge would
     // collide with the real closed-generic slot, so FBoundStarProjectionErasure gives it an unspeakable physical name.
@@ -3517,7 +3529,7 @@ sealed partial class ReferenceMetadataIndex
 
     // Late bridge selection compares physical constraints, even while local declarations still use Kotlin
     // classifier names. Lower both sides into the same vocabulary; early semantic selection remains exact.
-    TypeNode PhysicalConstraintType(TypeNode type) => BirTypeLowering.CanonicalPhysicalSlotType(
+    internal TypeNode PhysicalConstraintType(TypeNode type) => BirTypeLowering.CanonicalPhysicalSlotType(
         BirTypeLowering.LowerPhysicalType(type, Aliases, IsValueType, PhysicalTypeNames,
             typeArg: true, nullableFrames: NullableTypeFrames));
 
@@ -7836,6 +7848,29 @@ sealed partial class ReferenceMetadataIndex
     internal static void SelfTest()
     {
         SelfTestRichEnumSelection();
+        var nativeDescriptors = Build(new[] { typeof(object).Assembly.Location });
+        nativeDescriptors._ownerAlias["ProofObject"] = "System.Object";
+        nativeDescriptors._ownerAlias["kotlin.Int"] = "System.Int32";
+        var aliasCall = JsonNode.Parse("""
+          {"k":"clrGenericStatic","type":{"t":"fqn","name":"System.Runtime.CompilerServices.Unsafe"},
+           "method":"As","typeArgs":[{"t":"tv","scope":"method","i":0}],
+           "resolvedMemberParams":[{"t":"fqn","name":"ProofObject"}]}
+          """).AsObject();
+        var primitiveCall = JsonNode.Parse("""
+          {"k":"clrGenericStatic","type":{"t":"fqn","name":"System.MemoryExtensions"},
+           "method":"AsSpan","typeArgs":[{"t":"tv","scope":"method","i":0}],
+           "resolvedMemberParams":[{"t":"array","elem":{"t":"tv","scope":"method","i":0}},
+             {"t":"fqn","name":"kotlin.Int"},{"t":"fqn","name":"kotlin.Int"}]}
+          """).AsObject();
+        if (ClrMemberResolution.SelectedGenericTypeParameters(aliasCall, nativeDescriptors).Count != 1
+            || ClrMemberResolution.SelectedGenericTypeParameters(primitiveCall, nativeDescriptors).Count != 1)
+            throw new InvalidOperationException("Native proof selection lost formal alias/primitive physical lowering");
+        var invalidDescriptor = aliasCall.DeepClone().AsObject();
+        invalidDescriptor["resolvedMemberParams"] = new JsonArray(TypeJson.Fqn("System.Int32"));
+        var rejected = false;
+        try { ClrMemberResolution.SelectedGenericTypeParameters(invalidDescriptor, nativeDescriptors); }
+        catch (InvalidOperationException) { rejected = true; }
+        if (!rejected) throw new InvalidOperationException("Native proof selection guessed from a unique method name");
         var physicalProofs = Build(new[] { typeof(object).Assembly.Location });
         physicalProofs._dotKtOwners.Add("System.Collections.Generic.List");
         if (physicalProofs.PhysicalOwnerTypeParamDeclarations("System.Collections.Generic.List`1") != null)

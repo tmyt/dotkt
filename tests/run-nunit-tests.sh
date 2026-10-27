@@ -330,6 +330,16 @@ for proj in "${PROJECTS[@]}"; do
 	# standard KLIB companion_object_name + nested class graph. Inspect both artifacts so a mutually-compatible
 	# producer/consumer bug cannot make the behavioral test pass while either interchange boundary is malformed.
 	if [[ "$proj" == "tests/roundtrip/consumer" ]]; then
+		if python3 "$ROOT/tests/roundtrip/assert-native-value-contracts-cir.py" \
+			"$ROOT/tests/roundtrip/producer/obj/$CONFIGURATION/net10.0/cir/ConstructorCarrierStorage.cir.json" \
+			"$dir/obj/$CONFIGURATION/net10.0/cir/NativeValueFramePreservationTests.cir.json" \
+			"$dir/obj/$CONFIGURATION/net10.0/cir/DependentCallableFrameTests.cir.json" \
+			>"$ROOT/build/nunit-$name.native-value-contracts.log" 2>&1; then
+			echo "  native locations and demanded constraints retain their exact physical contracts"
+		else
+			echo "  NATIVE VALUE CONTRACTS FAIL"
+			tail -25 "$ROOT/build/nunit-$name.native-value-contracts.log"; rc=1
+		fi
 		if python3 "$ROOT/tests/roundtrip/assert-inherited-source-forwarder-cir.py" \
 			"$ROOT/tests/roundtrip/producer/obj/$CONFIGURATION/net10.0/cir/Genq.cir.json" \
 			"$dir/obj/$CONFIGURATION/net10.0/bir/CrossModuleMetadataTests.bir.json" \

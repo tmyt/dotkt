@@ -989,19 +989,8 @@ static partial class ClrMemberResolution
             throw new InvalidOperationException(
                 $"bir2cir: generic external call '{ownerFqn?.Name ?? "<unknown>"}.{name ?? "<unknown>"}' "
                 + "does not resolve to a declaration in the reference set");
-        var flags = BindingFlags.Public | (instance ? BindingFlags.Instance : BindingFlags.Static);
         var arity = (node["typeArgs"] as JsonArray)?.Count ?? 0;
         var argCount = (node["args"] as JsonArray)?.Count ?? 0;
-        List<MethodInfo> Candidates(Type owner) => owner.GetMethods(flags)
-            .Where(m => m.Name == name && m.IsGenericMethodDefinition
-                        && m.GetGenericArguments().Length == arity
-                        && m.GetParameters().Length == argCount)
-            .ToList();
-        var cands = Candidates(open);
-        List<MethodInfo> InterfaceCandidates() => !instance
-            ? new List<MethodInfo>()
-            : SafeInterfaces(open).SelectMany(Candidates)
-                .GroupBy(m => (m.Module, m.MetadataToken)).Select(g => g.First()).ToList();
         var sig = (node["resolvedMemberParams"] as JsonArray)?.Select(TypeJson.Read).ToList();
         // THE DESCRIPTOR DECIDES, and it decides FIRST. Taking a lone same-name candidate without asking whether the
         // descriptor selects it is how a `string Make<T>(string)` on the class answered for an `I.Make<T>(int)`
@@ -1011,8 +1000,7 @@ static partial class ClrMemberResolution
             // This vector describes the selected OPEN declaration, not the call's argument values. Closing an
             // owner variable here makes M(T) and M(int) coincide on C<int> and repeats overload resolution after
             // the frontend has already selected one. Compare in the declaration frame before constructing its owner.
-            var win = TryPickDeclared(cands, sig, open)
-                      ?? TryPickDeclared(InterfaceCandidates(), sig, open);
+            var win = SelectedGenericDeclaration(open, name, arity, instance, sig);
             if (win != null)
             {
                 // The generic method DEFINITION is the identity; the call's own `typeArgs` instantiate it, exactly
@@ -1046,6 +1034,46 @@ static partial class ClrMemberResolution
         throw new InvalidOperationException(
             $"bir2cir: generic external call '{ownerFqn.Name}.{name}<{arity}>' carries no usable "
             + "frontend-resolved parameter vector");
+    }
+
+    // Proof demand and final MemberRef emission consume the same frontend-selected open descriptor. A lone
+    // same-name/arity MethodDef without that exact descriptor is never a selected declaration.
+    internal static JsonArray SelectedGenericTypeParameters(JsonObject node, ReferenceMetadataIndex refs)
+    {
+        _refs = refs;
+        if (ReadOwnerNode(node["type"]) is not TypeNode.Fqn owner
+            || ResolveOwnerType(owner) is not Type declaration
+            || node["resolvedMemberParams"] is not JsonArray parameters
+            || parameters.Select(TypeJson.Read).Any(type => type == null))
+            throw new InvalidOperationException("Native generic proof demand lacks its selected declaration descriptor");
+        // This caller runs before the full BIR vocabulary walk. Lower the selected formal parameters in their
+        // declaration role, not the call's value arguments, before sharing the physical descriptor matcher.
+        var signature = parameters.Select(TypeJson.Read).Select(type => BirTypeLowering.CanonicalPhysicalSlotType(
+            BirTypeLowering.LowerPhysicalType(type, refs.Aliases, refs.IsValueType, refs.PhysicalTypeNames,
+                typeArg: false, nullableFrames: refs.NullableTypeFrames))).ToList();
+        var selected = SelectedGenericDeclaration(declaration, (node["method"] as JsonValue)?.GetValue<string>(),
+            (node["typeArgs"] as JsonArray)?.Count ?? 0, (node["k"] as JsonValue)?.GetValue<string>() == "clrGenericInstance",
+            signature)
+            ?? throw new InvalidOperationException($"Native generic proof demand '{owner.Name}.{node["method"]}' "
+                + $"has no exact selected MethodDef for descriptor {parameters.ToJsonString()}; candidates: "
+                + string.Join("; ", declaration.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static)
+                    .Where(method => method.Name == (node["method"] as JsonValue)?.GetValue<string>())
+                    .Select(method => method.ToString())));
+        return new JsonArray(selected.GetGenericArguments().Select(ReferenceMetadataIndex.GenericParamDeclaration).ToArray());
+    }
+
+    static MethodInfo SelectedGenericDeclaration(Type owner, string name, int arity, bool instance,
+        List<TypeNode> signature)
+    {
+        var flags = BindingFlags.Public | (instance ? BindingFlags.Instance : BindingFlags.Static);
+        List<MethodInfo> Candidates(Type declaration) => declaration.GetMethods(flags)
+            .Where(method => method.Name == name && method.IsGenericMethodDefinition
+                && method.GetGenericArguments().Length == arity
+                && method.GetParameters().Length == signature.Count).ToList();
+        return TryPickDeclared(Candidates(owner), signature, owner)
+            ?? (!instance ? null : TryPickDeclared(SafeInterfaces(owner).SelectMany(Candidates)
+                .GroupBy(method => (method.Module, method.MetadataToken)).Select(group => group.First()).ToList(),
+                signature, owner));
     }
 
     static MethodInfo TryPickDeclared(List<MethodInfo> candidates, List<TypeNode> signature, Type declarationOwner)
