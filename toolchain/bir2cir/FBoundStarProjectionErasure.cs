@@ -567,7 +567,7 @@ static partial class FBoundStarProjectionErasure
             && _valueSlots?.HasNativeMethodSignature(owner) == true) return true;
         if (IsDeclarationOwnerDescriptor(owner) && key is "params" or "ret"
             && TypeJson.Read(owner["owner"]) is TypeNode.Fqn selectedOwner
-            && IsNativeArrayOwner(selectedOwner, refs, localClrAliases)) return true;
+            && IsNativeDescriptorOwner(selectedOwner, refs, localClrAliases)) return true;
         // Static declarations and lifted delegate targets name an exact MethodDef owner, not a value slot.
         if (kind is "callStatic" or "newDelegate" && key is "calleeOwner" or "ownerType" or "owner")
             return true;
@@ -604,10 +604,18 @@ static partial class FBoundStarProjectionErasure
                     .SelectMany(slotKey => (owner[slotKey] as JsonArray)?.OfType<JsonObject>()
                         ?? Enumerable.Empty<JsonObject>())
                     .Any(slot => TypeJson.Read(slot["owner"]) is TypeNode.Fqn nativeOwner
-                        && IsNativeArrayOwner(nativeOwner, refs, localClrAliases))
+                        && IsNativeDescriptorOwner(nativeOwner, refs, localClrAliases))
             || IsDeclarationOwnerDescriptor(owner)
                 && TypeJson.Read(owner["owner"]) is TypeNode.Fqn descriptorOwner
-                && IsNativeArrayOwner(descriptorOwner, refs, localClrAliases));
+                && IsNativeDescriptorOwner(descriptorOwner, refs, localClrAliases));
+
+    // A trusted binding alias still names a Kotlin declaration surface. Its MethodImpl signature must follow that
+    // declaration's value ABI; only the already-selected physical native owner freezes CLR witnesses and arrays.
+    static bool IsNativeDescriptorOwner(TypeNode.Fqn owner, ReferenceMetadataIndex refs,
+        IReadOnlyDictionary<string, string> localClrAliases) =>
+        _valueSlots?.IsBindingAlias(owner.Name) != true
+        && localClrAliases?.ContainsKey(owner.Name) != true
+        && IsNativeArrayOwner(owner, refs, localClrAliases);
 
     static bool IsNativeArrayOwner(TypeNode.Fqn owner, ReferenceMetadataIndex refs,
         IReadOnlyDictionary<string, string> localClrAliases) =>
@@ -1091,6 +1099,29 @@ static partial class FBoundStarProjectionErasure
                     preserveConstructedHead: PreservesConstructionHead(operation, "type")) != inner)
                 throw new InvalidOperationException("A bound CLR declaring owner became an ordinary value slot");
         }
+        var nativeRefs = ReferenceMetadataIndex.Build(new[] { typeof(object).Assembly.Location });
+        var bindingAliases = new Dictionary<string, string> {
+            ["SourceAlias"] = "System.Collections.Generic.IReadOnlyList`1",
+        };
+        var sourceDescriptor = new JsonObject { ["owner"] = TypeJson.Fqn("SourceAlias"),
+            ["params"] = new JsonArray(), ["ret"] = TypeJson.Write(inner) };
+        var nativeDescriptor = new JsonObject {
+            ["owner"] = TypeJson.Write(new TypeNode.Fqn("System.Collections.Generic.IReadOnlyList`1",
+                new TypeNode[] { inner })), ["params"] = new JsonArray(), ["ret"] = TypeJson.Write(inner),
+        };
+        var descriptorMethod = new JsonObject {
+            ["clrInterfaceImpls"] = new JsonArray(sourceDescriptor, nativeDescriptor),
+        };
+        if (IsBoundDeclarationType(sourceDescriptor, "ret", nativeRefs, bindingAliases)
+            || IsNativeArrayDeclarationSlot(sourceDescriptor, "ret", nativeRefs, bindingAliases)
+            || !IsBoundDeclarationType(nativeDescriptor, "ret", nativeRefs, bindingAliases)
+            || !IsNativeArrayDeclarationSlot(nativeDescriptor, "ret", nativeRefs, bindingAliases)
+            || RewriteType(inner, owners, nativeRefs,
+                boundDeclaration: IsBoundDeclarationType(sourceDescriptor, "ret", nativeRefs, bindingAliases))
+                != new TypeNode.Fqn("InnerView")
+            || RewriteType(inner, owners, nativeRefs,
+                boundDeclaration: IsBoundDeclarationType(nativeDescriptor, "ret", nativeRefs, bindingAliases)) != inner)
+            throw new InvalidOperationException("A source alias MethodImpl and an actual native descriptor lost their distinct value roles");
         // Empty references deliberately make this an unresolved owner, not an imported native contract.
         // Native owner/method arguments are covered by the reference-backed cross-DLL roundtrip tests.
         var unresolved = new TypeNode.Fqn("Unresolved.Container", new TypeNode[] { inner });
