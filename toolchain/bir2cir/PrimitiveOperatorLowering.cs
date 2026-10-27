@@ -94,11 +94,10 @@ static class PrimitiveOperatorLowering
                     new JsonObject { ["k"] = "local", ["name"] = "other", ["sty"] = TypeJson.Write(right) }),
             };
             var lowered = LowerIntrinsic(comparison, BirScope.Empty).AsObject();
-            var sameSlot = slot.Equals(right);
-            if ((lowered["lhs"]["k"].GetValue<string>() == "cast") != sameSlot
-                || (lowered["rhs"]["k"].GetValue<string>() == "cast") != sameSlot
-                || sameSlot && TypeJson.Read(lowered["lhs"]["type"]) != slot)
-                throw new InvalidOperationException("Identity lowering lost the selected value slot or narrowed distinct operands");
+            if (lowered["op"]?.GetValue<string>() != "==="
+                || !JsonNode.DeepEquals(lowered["lhs"], comparison["args"][0])
+                || !JsonNode.DeepEquals(lowered["rhs"], comparison["args"][1]))
+                throw new InvalidOperationException("Identity lowering decided a physical operand slot before value projection");
         }
         Console.WriteLine("[identity operand slots] self-test OK (same generic slot, distinct index/scope/nullability)");
     }
@@ -266,16 +265,11 @@ static class PrimitiveOperatorLowering
         // already uses == and must not acquire reference boxing from this operation.
         if (m == "EQEQEQ" && args.Count == 2)
         {
-            var left = StaticType.Surface(args[0], scope);
-            var right = StaticType.Surface(args[1], scope);
-            // Equal Kotlin generic operands share one value slot even when a selected
-            // declaration physically returns object. Preserve that slot before return
-            // realignment; a nullable or different source parameter remains a reference
-            // comparison, and must not be narrowed to its counterpart.
-            JsonNode Operand(int index) => left is TypeNode.Tv && left.Equals(right)
-                ? new JsonObject { ["k"] = "cast", ["type"] = TypeJson.Write(left), ["e"] = args[index]?.DeepClone() }
-                : args[index]?.DeepClone();
-            return new JsonObject { ["k"] = "binOp", ["op"] = "===", ["lhs"] = Operand(0), ["rhs"] = Operand(1) };
+            // Value projection may still erase an ordinary local. The final
+            // physical identity owner compares the actual resulting slots;
+            // matching Kotlin T stamps do not license an early extraction.
+            return new JsonObject { ["k"] = "binOp", ["op"] = "===",
+                ["lhs"] = args[0]?.DeepClone(), ["rhs"] = args[1]?.DeepClone() };
         }
         // `ieee754equals`: the ordered IEEE-754 float/double comparison (`-0.0 == 0.0`, `NaN != NaN`) -> raw CIL
         // `ceq` (`binOp ==`). For the NON-NULL direct `==` the operands already satisfy the raw CIR binOp contract. But

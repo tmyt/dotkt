@@ -36,7 +36,12 @@ static class KotlinCollectionClassifierLowering
         var operandType = TypeJson.Read(obj["type"]);
         while (operandType is TypeNode.Nullable or TypeNode.Oblivious)
             operandType = operandType is TypeNode.Nullable n ? n.Of : ((TypeNode.Oblivious)operandType).Of;
-        if (operandType is not TypeNode.Array)
+        // An ordinary generic cast still has a later erased-value owner. Do not
+        // discard its explicit source fact merely because it is not a collection.
+        var ordinaryVariable = operandType is TypeNode.Tv
+            && obj["reifiedTypeOperand"] is JsonValue fact
+            && fact.TryGetValue<bool>(out var reified) && !reified;
+        if (operandType is not TypeNode.Array && !ordinaryVariable)
             obj.Remove("reifiedTypeOperand");
         var witness = obj[KotlinTypeWitness.OperandKey]?.DeepClone();
         obj.Remove(KotlinTypeWitness.OperandKey);
@@ -167,6 +172,14 @@ static class KotlinCollectionClassifierLowering
             || OpaqueTestType(new TypeNode.Nullable(alias)) != new TypeNode.Nullable(any)
             || OpaqueTestType(new TypeNode.Oblivious(alias)) != new TypeNode.Oblivious(any))
             throw new InvalidOperationException("Opaque collection classifier lost source nullability");
+        var ordinary = JsonNode.Parse("""
+        {"k":"cast","type":{"t":"tv","scope":"method","i":0},"reifiedTypeOperand":false,
+         "e":{"k":"local","name":"value"}}
+        """).AsObject();
+        var next = 0;
+        Rewrite(ordinary, new HashSet<string>(), Array.Empty<string>(), null, ref next);
+        if (ordinary["reifiedTypeOperand"]?.GetValue<bool>() != false)
+            throw new InvalidOperationException("Collection classification consumed an unrelated ordinary generic cast fact");
         Console.WriteLine("[collection classifiers] self-test OK (opaque carrier, nullable and oblivious targets)");
     }
 
