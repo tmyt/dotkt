@@ -10,6 +10,8 @@ open class ReadOnlyIterable<T>(private val value: T) : Iterable<T> {
     override fun iterator(): Iterator<T> = listOf(value).iterator()
 }
 
+inline fun <T> inlineReadOnlyChild(crossinline value: () -> T): Iterable<T> = object : ReadOnlyIterable<T>(value()) {}
+
 class MutableIterableOnly<T>(private val values: MutableList<T>) : MutableIterable<T> {
     override fun iterator(): MutableIterator<T> = values.iterator()
 }

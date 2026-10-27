@@ -566,6 +566,17 @@ for proj in "${PROJECTS[@]}"; do
 			echo "  ORDINARY PARAMETER SLOT FAIL — see build/nunit-$name.ordinary-parameter-slots.log"
 			tail -25 "$ROOT/build/nunit-$name.ordinary-parameter-slots.log"; rc=1
 		fi
+		if python3 "$ROOT/tests/roundtrip/assert-source-result-identity-cir.py" \
+			"$ROOT/tests/roundtrip/producer/obj/$CONFIGURATION/net10.0/cir/InheritedInnerResults.cir.json" \
+			"$dir/obj/$CONFIGURATION/net10.0/cir/InheritedInnerResultTests.cir.json" \
+			"$ROOT/tests/roundtrip/producer/obj/$CONFIGURATION/net10.0/cir/IterableIdentity.cir.json" \
+			"$dir/obj/$CONFIGURATION/net10.0/cir/IterableIdentityTests.cir.json" \
+			>"$ROOT/build/nunit-$name.source-result-identity.log" 2>&1; then
+			echo "  caller-frame results and source iterable identities survive physical projection"
+		else
+			echo "  SOURCE RESULT/IDENTITY FAIL — see build/nunit-$name.source-result-identity.log"
+			tail -25 "$ROOT/build/nunit-$name.source-result-identity.log"; rc=1
+		fi
 		if python3 "$ROOT/tests/roundtrip/assert-default-companion-frame-cir.py" \
 			"$dir/obj/$CONFIGURATION/net10.0/cir/DefaultCompanionCallbackTests.cir.json" \
 			>"$ROOT/build/nunit-$name.default-companion-frame.log" 2>&1; then

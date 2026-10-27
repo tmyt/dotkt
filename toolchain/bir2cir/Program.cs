@@ -894,6 +894,12 @@ sealed class Pipeline
         if (attributeTopLevelOwner)
             foreach (var stagedFile in staged) CollectionIdentityRecord.RecordTypeEdges(stagedFile.Root);
 
+        // Kotlin classifier meaning is fixed by this complete source/inline supertype graph, before ownership
+        // and existential lowering manufacture operational CLR faces. Referenced Kotlin owners already carry
+        // their declaration-owned identities; only actual foreign bases contribute CLR classifier policy.
+        if (!_options.RefBuild)
+            KotlinCollectionIdentitySynthesis.ApplyAll(staged.Select(s => s.Root).ToList(), refs);
+
         foreach (var stagedFile in staged)
             BirTypeLowering.ValidatePointerVocabulary(stagedFile.Root, stagedFile.OutputName);
 
@@ -952,14 +958,6 @@ sealed class Pipeline
         if (!_options.RefBuild)
             KotlinCollectionSlotSynthesis.ApplyAll(staged.Select(s => s.Root).ToList(), refs, isValueFqn);
         valueRepresentations.SynthesizeSlots(staged.Select(s => s.Root).ToList(), isValueFqn);
-
-        // NOMINAL COLLECTION CLASSIFIER IDENTITIES: the operational aliases intentionally share BCL faces
-        // (Collection/Set -> IReadOnlyCollection, MutableCollection/MutableSet -> ICollection), which otherwise makes
-        // the Kotlin classifiers indistinguishable for emitted user implementations. Add the compiler-owned identity
-        // edge while the Kotlin supertype graph is still present. BCL-backed values are handled by their real generic
-        // collection faces in StarProjectionLowering's runtime classifier.
-        if (!_options.RefBuild)
-            KotlinCollectionIdentitySynthesis.ApplyAll(staged.Select(s => s.Root).ToList(), refs);
 
         // CONSTRUCTED MEMBER RESULT SUBSTITUTION (early): suspend lowering copies a call's result type into
         // state-machine fields/locals. Close every already-constructed receiver-relative return BEFORE that copy

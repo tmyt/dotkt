@@ -106,5 +106,8 @@ class IterableIdentityTests {
         assertTrue(value is Iterable<*> && value !is MutableIterable<*>)
         assertTrue(iterableCheckedCast<Iterable<Int>>(value).iterator().next() == 23)
         assertTrue(iterableSafeCast<MutableIterable<Int>>(value) == null)
+        val spliced: Any = inlineReadOnlyChild { "inline" }
+        assertTrue(spliced is Iterable<*> && spliced !is MutableIterable<*>)
+        assertTrue((spliced as Iterable<String>).iterator().next() == "inline")
     }
 }
