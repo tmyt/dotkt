@@ -292,13 +292,7 @@ static class RoundtripMetadata
                 BytesArg(Convert.ToBase64String(BirCarrier.EncodeBody(BirCarrier.JsonV1, sourceFacts)))));
             to.Remove(KotlinSupertypesRecord.PreKey);
         }
-        if ((to["kotlinType"] as JsonValue)?.GetValue<string>() is string kt)
-        {
-            Append(to, KotlinTypeAttr(kt));
-            // This is a bir2cir-only hand-off between lowering passes. Final CIR contains only the fully-authored
-            // attribute that ilemit emits 1:1; it must not retain an extra inference/input fact.
-            to.Remove("kotlinType");
-        }
+        StampRepresentationType(to);
         StampMethods(to["methods"]);
         StampFields(to["fields"]);
         StampProps(to["properties"]);
@@ -692,15 +686,18 @@ static class RoundtripMetadata
     // DotKt.Stdlib.dll — AND the user's own
     // annotations (kotlin.Deprecated / SinceKotlin / InlineOnly / PublishedApi / …). The predicate must preserve those
     // user annotations and drop only compiler-internal declaration-slot carriers that have no runtime stdlib meaning.
-    // Declaration IDs and assembly-level aliases are linkage facts and survive in both twins. The runtime ID
+    // Declaration IDs, representation-type associations and assembly-level aliases survive in both twins. The runtime ID
     // associates its exact physical MethodDef with the reference declaration without reconstructing an erased
     // signature. The frontend KLIB stays authoritative; dll2klib excludes both marked stdlib twins from projection.
     // ---------------------------------------------------------------------------------------------------------------
-    public static void StripRuntimeAttrs(JsonNode root)
+    public static void StripRuntimeAttrs(JsonNode root) => StripRuntimeAttrs(root, typeDeclaration: false);
+
+    static void StripRuntimeAttrs(JsonNode root, bool typeDeclaration)
     {
         if (root is not JsonObject o) return;
-        // Source projection hand-offs are consumed only by Stamp in metadata-bearing builds.
-        // Runtime linkage IDs below do not carry source-slot facts; enum maps also have runtime consumers.
+        // A representation TypeDef's source association describes that declaration in either twin. Ordinary
+        // source slots remain reference-only: a consumer reads those from the frontend KLIB/reference assembly.
+        var representationType = typeDeclaration ? o["kotlinType"]?.DeepClone() : null;
         o.Remove("kotlinType");
         o.Remove("retKotlinType");
         o.Remove(KotlinSupertypesRecord.PreKey);
@@ -709,6 +706,11 @@ static class RoundtripMetadata
         o.Remove("richEnum");
         o.Remove("enumRich");
         StripAttrs(o, "attrs");
+        if (representationType != null)
+        {
+            o["kotlinType"] = representationType;
+            StampRepresentationType(o);
+        }
         // Generic enum operations need this exact physical API map at runtime, including for stdlib-owned enums.
         if (runtimeRichEnum != null) Append(o, JsonCarrierAttr(AKRichEnum, runtimeRichEnum));
         StampBasicEnum(o);
@@ -717,7 +719,22 @@ static class RoundtripMetadata
         StripDecls(o["properties"]);
         StripDecls(o["ctors"], hasParams: true);
         if (o["types"] is JsonArray types)
-            foreach (var t in types) if (t is JsonObject to) StripRuntimeAttrs(to);
+            foreach (var t in types) if (t is JsonObject to) StripRuntimeAttrs(to, typeDeclaration: true);
+    }
+
+    static void StampRepresentationType(JsonObject declaration)
+    {
+        if ((declaration["kotlinType"] as JsonValue)?.GetValue<string>() is not string sourceType) return;
+        Append(declaration, KotlinTypeAttr(sourceType));
+        // The hand-off is consumed here; ilemit only emits the complete ordinary CIR attribute.
+        declaration.Remove("kotlinType");
+    }
+
+    internal static bool HasRepresentationTypeAssociations(JsonNode root)
+    {
+        if (root is not JsonObject o || o["types"] is not JsonArray types) return false;
+        return types.OfType<JsonObject>().Any(type => HasAttr(type, AKType)
+            || HasRepresentationTypeAssociations(type));
     }
 
     // The nullable-generic slot record (`nullableGeneric`/`nullableGenericRet`) is deliberately NOT dropped here,
@@ -750,7 +767,7 @@ static class RoundtripMetadata
             if (po["mods"] is JsonObject mods)
             {
                 // BIR-only slot role. Metadata builds consume it into [KotlinExtensionReceiver]; runtime builds emit
-                // no round-trip carriers but must consume the same frontend fact before CIR reaches ilemit.
+                // no source-slot carriers but must consume the same frontend fact before CIR reaches ilemit.
                 mods.Remove("extensionReceiver");
                 if (mods.Count == 0) po.Remove("mods");
             }
@@ -833,7 +850,27 @@ static class RoundtripMetadata
             || constructorPayload["id"]?.GetValue<string>() != "probe:constructor"
             || constructor["params"].ToJsonString() != constructorSignature)
             throw new InvalidOperationException("Constructor identity lost allocation ownership or exact signature");
-        Console.WriteLine("[runtime linkage] self-test OK (distinct IDs, opaque slots, exact signature modifiers)");
+        var sourceType = TypeJson.Fqn("Probe.Source").ToJsonString();
+        var representation = new JsonObject {
+            ["name"] = "Probe.Physical", ["kotlinType"] = sourceType,
+            ["fields"] = new JsonArray(new JsonObject { ["name"] = "value", ["kotlinType"] = sourceType }),
+            ["methods"] = new JsonArray(new JsonObject {
+                ["name"] = "get", ["retKotlinType"] = sourceType,
+                ["params"] = new JsonArray(new JsonObject { ["name"] = "value", ["kotlinType"] = sourceType }),
+            }),
+        };
+        var representationRoot = new JsonObject { ["types"] = new JsonArray(representation) };
+        StripRuntimeAttrs(representationRoot);
+        var representationArgs = representation["attrs"][0]["args"];
+        var restored = BirCarrier.DecodeBody(representationArgs[0]["value"].GetValue<string>(),
+            Convert.FromBase64String(representationArgs[1]["bytes"].GetValue<string>()));
+        if (!HasRepresentationTypeAssociations(representationRoot)
+            || restored.ToJsonString() != sourceType || representation.ContainsKey("kotlinType")
+            || representation["fields"][0]["kotlinType"] != null
+            || representation["methods"][0]["retKotlinType"] != null
+            || representation["methods"][0]["params"][0]["kotlinType"] != null)
+            throw new InvalidOperationException("Runtime representation association lost ownership or retained slot facts");
+        Console.WriteLine("[runtime linkage] self-test OK (distinct IDs, opaque slots, exact modifiers, representation types)");
     }
 
     // A compile-time-only carrier (round-trip surface / @Clr* binding / NRT) — dropped from the shipping runtime dll.
@@ -1072,6 +1109,7 @@ static class RoundtripMetadata
             AttrClass(AKTypeParameterBounds, Ctor(Param("System.String"), Param(ByteArrayType()))), // pre-erasure MethodDef type-parameter bounds
         };
         if (runtimeOnly) types = new JsonArray(TypeAliasAttributeDefinition(),
+            AttrClass(AKType, Ctor(Param("System.String"), Param(ByteArrayType()))),
             AttrClass(AKDeclarationIdentity, Ctor(Param("System.String"), Param(ByteArrayType()))),
             AttrClass(AKRichEnum, Ctor(Param("System.String"), Param(ByteArrayType()))),
             AttrClass(AKBasicEnum, Ctor(Param("System.String"), Param(ByteArrayType()))),

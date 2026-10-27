@@ -23,6 +23,13 @@ const int IsInfixFunctionFlag = 1 << 9;
 // names. Star-projection existential association is metadata-authoritative and does not depend on this spelling.
 const string HoistedMarker = "$companion$";
 
+if (args.Length == 6 && args[0] == "--representation-types")
+{
+    RepresentationTypeMetadataInspector.Verify(args[1], args[2], args[3], args[4], args[5]);
+    Console.WriteLine("representation source associations in reference/runtime PE, projected KLIB and consumer BIR: OK");
+    return;
+}
+
 if (args.Length == 4 && args[0] == "--unsigned-array-identities")
 {
     VerifyUnsignedArrayIdentities(args[1], args[2], args[3]);

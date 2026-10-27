@@ -8064,8 +8064,8 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
             _semanticCompanionTypes.Add(semantic);
             return semantic;
         }
-        if (_attrs.CarrierType(handle, MetadataAttributes.DotKtNs + "KotlinTypeAttribute") is { } carrier)
-            return FromTypeNode(carrier);
+        if (SourceTypeFromDefinition(reader, handle) is { } sourceType)
+            return sourceType;
         if (_delegateDefinitions.ContainsKey(name) && IsCanonicalLocalFunctionDelegate(name)
             && !def.GetGenericParameters().Any())
             return DecodeDelegate(handle);
@@ -8091,6 +8091,10 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
             _semanticCompanionTypes.Add(semantic);
             return semantic;
         }
+        // The exact referenced definition owns its source association, just as a local TypeDef does. Keep the
+        // trusted payload authoritative across assembly boundaries; never reconstruct it from the physical name.
+        if (SourceTypeFromReference(reader, handle) is { } sourceType)
+            return sourceType;
         var type = reader.GetTypeReference(handle);
         var metadataName = reader.GetString(type.Name);
         var ns = reader.GetString(type.Namespace);
@@ -8133,6 +8137,15 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
         RememberExternalNullableFrame(reader, handle, result);
         return result;
     }
+
+    private KType? SourceTypeFromDefinition(MetadataReader reader, TypeDefinitionHandle handle) =>
+        SignatureDecoderSeeds.Attributes(reader).CarrierType(
+            handle, MetadataAttributes.DotKtNs + "KotlinTypeAttribute") is { } source
+            ? FromTypeNode(source) : null;
+
+    private KType? SourceTypeFromReference(MetadataReader reader, TypeReferenceHandle handle) =>
+        _publicTypeCatalog.TryResolveDefinition(reader, handle, out var definition)
+            ? SourceTypeFromDefinition(definition.Reader, definition.Handle) : null;
 
     private void RememberExternalNullableFrame(MetadataReader reader, TypeReferenceHandle handle, KType type)
     {
@@ -8584,6 +8597,8 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
         var className = DefinitionKotlinClassName(_md, handle);
         if (_semanticTypeNames.TryGetValue(handle, out var semanticName))
             return platform ? Platform(semanticName) : Named(semanticName);
+        if (SourceTypeFromDefinition(_md, handle) is { } sourceType)
+            return sourceType;
         if (_delegateDefinitions.ContainsKey(name) && IsCanonicalLocalFunctionDelegate(name)
             && !def.GetGenericParameters().Any())
             return DecodeDelegate(handle);
@@ -8593,6 +8608,8 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
     {
         if (_companionCatalog.TryResolve(_md, handle, out var externalCompanion))
             return ExternalCompanion(externalCompanion, platform);
+        if (SourceTypeFromReference(_md, handle) is { } sourceType)
+            return sourceType;
         var name = ReferenceKotlinName(_md, handle);
         var className = ReferenceKotlinClassName(_md, handle);
         var metadataFull = ReferenceMetadataName(_md, handle);

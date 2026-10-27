@@ -123,7 +123,13 @@ static class SharedSyntheticSynthesis
         CollectRefs(types, referenced);
 
         if (referenced.Contains(CharSeq) && present.Add(CharSeq))
-            types.Add(JsonNode.Parse(CharSeqDef));
+        {
+            var representation = JsonNode.Parse(CharSeqDef).AsObject();
+            // Publish the source classifier at the representation owner. Readers consume this existing carrier
+            // for local definitions and referenced definitions alike, rather than reversing a generated CLR name.
+            representation["kotlinType"] = TypeJson.Fqn("kotlin.CharSequence").ToJsonString();
+            types.Add(representation);
+        }
     }
 
     public static void DropSyntheticTypeArgs(JsonNode node)

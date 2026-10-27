@@ -62,6 +62,7 @@ static class Bir2Cir
                 StarProjectionBoundLowering.FunctionSelfTest();
                 ClrMemberResolution.InheritedGenericResultSelfTest();
                 ClrMemberResolution.FunctionSlotComparisonSelfTest();
+                StringCharSequenceBridge.CallSignatureSelfTest();
                 ClrMemberResolution.NullableSlotComparisonSelfTest();
                 OwnerConstrainedMethodLowering.SelfTest();
                 StdlibSubstituteTypeParams.SelfTest();
@@ -1490,19 +1491,24 @@ sealed class Pipeline
         CapturedGenericInvocation.PrepareLocalDeclarations(loweredRoots.Select(file => file.Root),
             flattenMissingOwners: _options.SubstituteStdlibBuild);
         // PHASE 3B — metadata, exact external identities, and validation over the now-stable module graph.
+        bool runtimeRepresentationTypes = false;
         foreach (var (lowered, outputName) in loweredRoots)
         {
             // ROUNDTRIP METADATA (#71 S2): GENERATE every [Kotlin*]/[Nullable]/[NullableContext] attribute as ordinary
             // CIR `attrs`/`retAttrs` entries (ilemit then only STAMPS them via its generic BuildCab path — no Kotlin
             // knowledge left in ilemit). Runs on the fully-lowered decls so the materialized facts (nullableFlags,
             // suspendFnType, inlineBir, mods, suspendBridge, readOnly) are all present. SKIPPED in the runtime build
-            // (`!SubstituteStdlibBuild`) except for runtime declaration-linkage facts. Placed after
+            // (`!SubstituteStdlibBuild`) except for runtime linkage and representation-type associations. Placed after
             // the earlier reference-body squash, which preserves all captured metadata. The attribute-class DEFS
             // are emitted ONCE below (SynthDefsFile), not per-file.
             if (!_options.SubstituteStdlibBuild) RoundtripMetadata.Stamp(lowered);
-            // Runtime builds retain user annotations and minimal declaration linkage, but omit source projection
-            // metadata. Exact runtime MethodDefs are associated with their reference twins by declaration ID.
-            else RoundtripMetadata.StripRuntimeAttrs(lowered);
+            // Runtime builds retain declaration linkage and representation-type associations, not source slots.
+            // Exact runtime MethodDefs are associated with their reference twins by declaration ID.
+            else
+            {
+                RoundtripMetadata.StripRuntimeAttrs(lowered);
+                runtimeRepresentationTypes |= RoundtripMetadata.HasRepresentationTypeAssociations(lowered);
+            }
             // The Kotlin `suspend` modifier has no CLR meaning and every consumer of it is a bir2cir pass: the cold
             // lowering, and the [KotlinFunction(Suspend)] stamp just written (which is how a referenced module still
             // sees a suspend surface). CIR describes the physical graph, so the flag stops here — ilemit has no
@@ -1646,8 +1652,8 @@ sealed class Pipeline
         // #71 S2: emit the embedded round-trip attribute-class defs ONCE per assembly, as a dedicated synthetic CIR
         // file (glob-sorted first via the `000-` prefix so its TypeDefs precede the user types, minimizing dump churn).
         // Alias declarations also survive in a stdlib runtime assembly; projection still excludes that assembly
-        // by its explicit stdlib marker. Runtime twins also keep rich-enum API maps consumed by generic operations.
-        if (!_options.SubstituteStdlibBuild || localRichEnums.Count != 0 || birRoots.OfType<JsonObject>().Any(root =>
+        // by its explicit stdlib marker. Runtime twins also keep representation-type associations and rich-enum API maps.
+        if (!_options.SubstituteStdlibBuild || runtimeRepresentationTypes || localRichEnums.Count != 0 || birRoots.OfType<JsonObject>().Any(root =>
                 root["assemblyAttrs"] is JsonArray { Count: > 0 }))
         {
             const string synthName = "000-dotkt-roundtrip-attrs.cir.json";
