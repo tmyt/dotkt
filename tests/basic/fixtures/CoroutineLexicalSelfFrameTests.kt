@@ -1,4 +1,23 @@
 import NUnit.Framework.TestAttribute
+import kotlin.coroutines.Continuation
+import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.EmptyCoroutineContext
+
+private class LexicalInlineOwner<T>(val value: T) {
+    inline fun aliasValue(touch: () -> Unit): T { touch(); val self = this; return self.value }
+    inline fun closureValue(crossinline touch: () -> Unit): () -> T = { touch(); value }
+}
+
+private fun <T> inlineLexicalContinuation(value: Continuation<T>): Continuation<T> {
+    val owner = LexicalInlineOwner(value)
+    var calls = 0
+    check(owner.aliasValue { calls++ } === value)
+    val read = owner.closureValue { calls++ }
+    check(calls == 1)
+    val result = read()
+    check(result === value && calls == 2)
+    return result
+}
 
 private class LexicalPayload(private val value: Int) {
     override fun equals(other: Any?): Boolean = other is LexicalPayload && other.value == value
@@ -43,6 +62,16 @@ class CoroutineLexicalSelfFrameTests {
         check(failure.exceptionOrNull() === error && failure.hashCode() == error.hashCode())
         check(failure.toString() == "Failure($error)")
         check(failure == Result.failure<String>(error))
+        val owner = LexicalInlineOwner(Result.success(61))
+        var calls = 0
+        check(owner.aliasValue { calls++ }.getOrThrow() == 61)
+        val deferred = owner.closureValue { calls++ }
+        check(calls == 1 && deferred().getOrThrow() == 61 && calls == 2)
+        val completion = object : Continuation<Int> {
+            override val context: CoroutineContext get() = EmptyCoroutineContext
+            override fun resumeWith(result: Result<Int>) {}
+        }
+        check(inlineLexicalContinuation(completion) === completion)
     }
 
     @TestAttribute

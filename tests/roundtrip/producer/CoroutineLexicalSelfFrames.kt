@@ -4,6 +4,11 @@ import kotlin.coroutines.Continuation
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.EmptyCoroutineContext
 
+class LexicalInlineOwner<T>(val value: T) {
+    inline fun aliasValue(touch: () -> Unit): T { touch(); val self = this; return self.value }
+    inline fun closureValue(crossinline touch: () -> Unit): () -> T = { touch(); value }
+}
+
 class LexicalCompletion<T> : Continuation<T> {
     override val context: CoroutineContext get() = EmptyCoroutineContext
     var result: Result<T>? = null

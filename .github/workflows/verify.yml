@@ -77,6 +77,8 @@ jobs:
           build/clr-stdlib-frontend-klib
           build/clr-stdlib
           build/clr-stdlib-rt/dll
+          build/clr-stdlib-rt/cir/Result.cir.json
+          build/clr-stdlib-rt/cir/Continuation.cir.json
 
       - uses: actions/upload-artifact@v4
         with:

@@ -1,10 +1,23 @@
 package roundtriptests.coroutinelexicalself
 
 import NUnit.Framework.TestAttribute
+import kotlin.coroutines.Continuation
 import kotlin.coroutines.EmptyCoroutineContext
 import roundtrip.coroutinelexicalself.LexicalCompletion
+import roundtrip.coroutinelexicalself.LexicalInlineOwner
 import roundtrip.coroutinelexicalself.forwardLexicalResult
 import roundtrip.coroutinelexicalself.resumeLexicalCompletion
+
+private fun <T> inlineImportedContinuation(value: Continuation<T>): Continuation<T> {
+    val owner = LexicalInlineOwner(value)
+    var calls = 0
+    check(owner.aliasValue { calls++ } === value)
+    val read = owner.closureValue { calls++ }
+    check(calls == 1)
+    val result = read()
+    check(result === value && calls == 2)
+    return result
+}
 
 class CoroutineLexicalSelfFrameTests {
     @TestAttribute
@@ -28,5 +41,16 @@ class CoroutineLexicalSelfFrameTests {
         check(nullable.result!!.isSuccess && nullable.result!!.getOrThrow() == null)
         resumeLexicalCompletion(nullable.asContinuation(), forwardLexicalResult(Result.success(61)))
         check(nullable.result!!.getOrThrow() == 61 && nullable.resumes == 2)
+        val owner = LexicalInlineOwner(Result.success(67))
+        var calls = 0
+        check(owner.aliasValue { calls++ }.getOrThrow() == 67)
+        val deferred = owner.closureValue { calls++ }
+        check(calls == 1 && deferred().getOrThrow() == 67 && calls == 2)
+        check(inlineImportedContinuation(referenceSlot) === referenceSlot)
+        check(inlineImportedContinuation(values.asContinuation()) === values)
+        val star: Continuation<*> = references
+        check(star.context === EmptyCoroutineContext)
+        star.resumeWith(Result.failure(error))
+        check(references.result!!.exceptionOrNull() === error && references.resumes == 3)
     }
 }

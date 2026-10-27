@@ -34,7 +34,7 @@ for filename, (name, methods) in required.items():
         method, = [node for node in owner["methods"] if node.get("name") == method_name]
         assert method.get("body"), f"missing actual runtime body: {name}.{method_name}"
         own = [node for node in walk(method["body"]) if node.get("recv", {}).get("k") == "this"
-               and node.get("ownerType", {}).get("name") == name]
+               and "ownerType" in node]
         assert own, f"missing actual self operation: {name}.{method_name}"
         assert all(node["ownerType"] == exact for node in own), f"wrong lexical self owner: {name}.{method_name}"
         verified_methods.append(f"{name}`1.{method_name}")

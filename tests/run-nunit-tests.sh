@@ -357,6 +357,16 @@ for proj in "${PROJECTS[@]}"; do
 	# standard KLIB companion_object_name + nested class graph. Inspect both artifacts so a mutually-compatible
 	# producer/consumer bug cannot make the behavioral test pass while either interchange boundary is malformed.
 	if [[ "$proj" == "tests/roundtrip/consumer" ]]; then
+		if python3 "$ROOT/tests/roundtrip/assert-coroutine-lexical-inline.py" \
+			"$ROOT/tests/roundtrip/producer/obj/$CONFIGURATION/net10.0/cir/CoroutineLexicalSelfFrames.cir.json" \
+			"$dir/obj/$CONFIGURATION/net10.0/bir/CoroutineLexicalSelfFrameTests.bir.json" \
+			"$dir/obj/$CONFIGURATION/net10.0/cir/CoroutineLexicalSelfFrameTests.cir.json" \
+			>"$ROOT/build/nunit-$name.coroutine-lexical-inline.log" 2>&1; then
+			echo "  imported coroutine lexical aliases and captures retain consistent physical carriers"
+		else
+			echo "  COROUTINE LEXICAL INLINE FAIL"
+			tail -25 "$ROOT/build/nunit-$name.coroutine-lexical-inline.log"; rc=1
+		fi
 		if python3 "$ROOT/tests/roundtrip/assert-native-value-contracts-cir.py" \
 			"$ROOT/tests/roundtrip/producer/obj/$CONFIGURATION/net10.0/cir/ConstructorCarrierStorage.cir.json" \
 			"$dir/obj/$CONFIGURATION/net10.0/cir/NativeValueFramePreservationTests.cir.json" \
