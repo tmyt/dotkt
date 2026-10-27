@@ -165,6 +165,7 @@ for proj in "${PROJECTS[@]}"; do
 		fi
 	fi
 	if [[ "$proj" == "tests/basic" ]]; then
+		python3 "$ROOT/tests/assert-protected-family-cir.py" basic "$dir/obj/$CONFIGURATION/net10.0/cir" || rc=1
 		if python3 "$ROOT/tests/basic/assert-inherited-mutable-iterator-cir.py" \
 			"$dir/obj/$CONFIGURATION/net10.0/bir/InheritedMutableIteratorSlotTests.bir.json" \
 			"$dir/obj/$CONFIGURATION/net10.0/cir/InheritedMutableIteratorSlotTests.cir.json" \
@@ -903,12 +904,23 @@ for proj in "${PROJECTS[@]}"; do
 		fi
 	fi
 	# The emitted assembly is named after the .ktproj (e.g. DotKt.Tests.Basic.ktproj -> DotKt.Tests.Basic.dll).
+	if [[ "$proj" == "tests/roundtrip/consumer" ]]; then
+		python3 "$ROOT/tests/assert-protected-family-cir.py" producer "$ROOT/tests/roundtrip/producer/obj/$CONFIGURATION/net10.0/cir" || rc=1
+		python3 "$ROOT/tests/assert-protected-family-cir.py" consumer "$dir/obj/$CONFIGURATION/net10.0/cir" || rc=1
+	elif [[ "$proj" == "tests/interop/consumer" ]]; then
+		python3 "$ROOT/tests/assert-protected-family-cir.py" native "$dir/obj/$CONFIGURATION/net10.0/cir" || rc=1
+	fi
 	proj_file="$(find "$dir" -maxdepth 1 \( -name '*.ktproj' -o -name '*.csproj' \) | head -1)"
 	proj_base="$(basename "$proj_file")"
 	asm="${proj_base%.*}.dll"
 	# `dotnet build` above uses Debug. Restrict discovery to that configuration: a stale Release artifact from a
 	# developer's focused build must never make ILVerify inspect yesterday's DLL while tests execute today's Debug DLL.
 	emitted="$(find "$dir/bin/$CONFIGURATION" -name "$asm" 2>/dev/null | head -1)"
+	# Verify the same runtime whose bodies the suite actually executes, not only an unused build-tree copy.
+	runtime_copy="$(dirname "$emitted")/DotKt.Stdlib.dll"
+	if [[ ! -f "$runtime_copy" ]] || ! cmp -s "$STDLIB_RT_DLL" "$runtime_copy"; then
+		echo "  RUNTIME PROVENANCE FAIL — $runtime_copy differs from the verified stdlib"; rc=1; continue
+	fi
 	[[ "$proj_file" == *.ktproj && -f "$emitted" ]] && EMITTED+=("$emitted")
 	# Also collect any declared EXTRA_EMIT assembly (e.g. a ProjectReference'd producer dll copied into bin).
 	if [[ -v EXTRA_EMIT[$proj] ]]; then

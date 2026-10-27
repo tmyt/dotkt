@@ -24,6 +24,18 @@ private class LocalMappedFieldChild<T>(value: T) : ProtectedDefaultAccess.Mapped
     fun write(value: T) { Value = value }
 }
 
+private class LocalProtectedSignatureChild<T> : ProtectedFamilySignature.Base<T>() {
+    fun readToken(): Any = MakeToken()
+    fun fieldToken(): Any = Saved
+    fun describeToken(): String = Describe(MakeToken())
+}
+
+private fun <T> checkNativeProtectedSignature(child: LocalProtectedSignatureChild<T>) {
+    val token = child.readToken()
+    check(token === child.readToken() && token === child.fieldToken())
+    check(child.Calls == 2 && child.describeToken() == "native-token" && child.Calls == 3)
+}
+
 class ProtectedDefaultAccessTests {
     @TestAttribute fun defaultsKeepProtectedAccessFromUnrelatedCaller() {
         val child = LocalProtectedDefaultChild()
@@ -49,5 +61,8 @@ class ProtectedDefaultAccessTests {
         mapped.write("written local")
         check(mapped.read() == "written local")
         check((mapped as ProtectedDefaultAccess.IExplicitValue).Value == 283)
+        checkNativeProtectedSignature(LocalProtectedSignatureChild<String>())
+        checkNativeProtectedSignature(LocalProtectedSignatureChild<Int>())
+        checkNativeProtectedSignature(LocalProtectedSignatureChild<Int?>())
     }
 }

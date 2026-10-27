@@ -1725,13 +1725,6 @@ Kotlin-owned `HashMap` and `LinkedHashMap` constructors retain both arguments an
 The carrier's constructor preserves the full companion initializer order, and loading `$INSTANCE` observes it at the
 qualifier evaluation point.
 
-Kotlin visibility does not require a synthetic accessor when the physical CLR caller already has family access.
-A derived class, including its lexically nested closure, can access a protected instance member through a receiver
-of that derived declaration or a subclass. An arbitrary base-typed receiver does not acquire that permission.
-This is a declaration-family check: `Derived<T>` can use a `Derived<U>` receiver without changing the selected
-`Base<U>` member operand. Genuinely inaccessible crossings still use their exact accessor contracts; target member
-visibility and virtual versus explicit-super dispatch are not widened or changed.
-
 ## 7b. A slot whose type cannot be derived is a REFUSAL, not `kotlin.Any`
 
 Every local, state-machine field and plan binding the backend mints needs a declared type. Where the type could not
@@ -1896,7 +1889,14 @@ Sharing a namespace/package does not grant access. A nearer protected static hid
 only where the nearer member is accessible. Accessors retain their own visibility, so a public getter does not
 make its protected setter public. These rules also apply to Kotlin companion-block statics after DLL reimport.
 
-This surface requires Kotlin's `CompanionBlocksAndExtensions` analysis feature. Kotlin/CLR enables it as a target
+Kotlin visibility does not require a synthetic accessor when the physical CLR caller already has family access.
+A derived class, including its lexically nested closure, can access a protected instance member through a receiver
+of that derived declaration or a subclass. An arbitrary base-typed receiver does not acquire that permission.
+This is a declaration-family check: `Derived<T>` can use a `Derived<U>` receiver without changing the selected
+`Base<U>` member operand. Genuinely inaccessible crossings still use their exact accessor contracts; target member
+visibility and virtual versus explicit-super dispatch are not widened or changed.
+
+Direct CLR static-member access requires Kotlin's `CompanionBlocksAndExtensions` analysis feature. Kotlin/CLR enables it as a target
 capability for every `kotc` invocation; any other analysis host that consumes CLR reference KLIBs (including a future
 DotKt LSP/IDE integration) must install the same CLR language-version settings. A generic Kotlin LSP that is unaware
 of the CLR target configuration is not an authoritative analyzer for a `.ktproj` and may diagnose these direct static

@@ -78,7 +78,7 @@ static partial class UnsafeAccessorLowering
                         // existing accessor path; exact referenced metadata, not a source name, establishes visibility.
                         var name = _refs?.TryResolveClrOwner(owner.Name, out var alias, out _) == true ? alias : owner.Name;
                         name = ((TypeNode.Fqn)BirTypeLowering.CanonicalPhysicalSlotType(new TypeNode.Fqn(name))).Name;
-                        return _refs?.ResolveRefType(name, owner.Args?.Length ?? 0)?.IsVisible == true;
+                        return VisibleReferenced(caller, _refs?.ResolveRefType(name, owner.Args?.Length ?? 0));
                     }
                     if (host.NestedIn == null) return true; // Every local top-level type is assembly-accessible.
                     if (!Visible(caller, new TypeNode.Fqn(host.NestedIn))) return false;
@@ -91,6 +91,20 @@ static partial class UnsafeAccessorLowering
                     };
                 default: return false;
             }
+        }
+
+        bool VisibleReferenced(Host caller, Type declaration)
+        {
+            if (declaration == null) return false;
+            if (declaration.IsVisible) return true;
+            if (!declaration.IsNested || !VisibleReferenced(caller, declaration.DeclaringType)) return false;
+            if (declaration.IsNestedPublic) return true;
+            if (!declaration.IsNestedFamily && !declaration.IsNestedFamORAssem) return false;
+            // This is the exact referenced TypeDef identity, including its declared generic arity, not a new
+            // operand construction. Another assembly's internal/private type cannot gain family permission.
+            var enclosing = new TypeNode.Fqn(declaration.DeclaringType.FullName);
+            return Contexts(caller).Any(context =>
+                Derives((TypeNode.Fqn)TypeJson.Read(SelfType(context)), enclosing));
         }
 
         static TypeNode Head(TypeNode type) => type switch

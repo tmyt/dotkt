@@ -1,6 +1,8 @@
 import NUnit.Framework.TestAttribute
 import kotlin.clr.ClrField
 
+private class FamilyCaptureBox<T>(val value: T)
+
 private class FamilyOuter<T>(private val payload: T) {
     private open inner class Base {
         protected var index = 3
@@ -8,6 +10,8 @@ private class FamilyOuter<T>(private val payload: T) {
         protected open fun read(): Int = index + raw
         protected fun transform(block: (Int) -> Int): Int = block(index)
         protected val callback: () -> Int get() = { index }
+        protected fun stable(): Int = index + raw
+        protected fun <X> takeBox(box: FamilyCaptureBox<X>): Any? = box.value
         fun virtualRead(): Int = read()
     }
     private open inner class Derived : Base() {
@@ -15,6 +19,14 @@ private class FamilyOuter<T>(private val payload: T) {
         fun aliased(): Int { val self = this; self.index++; self.raw++; return self.index + self.raw }
         fun captured(): () -> Int { val delta = 1; return { index + raw + delta } }
         fun bound(): () -> Int = this::read
+        fun inheritedBound(): () -> Int = this::stable
+        fun <U> across(other: FamilyOuter<U>.Derived): Int = other.index + other.raw
+        fun starCall(box: FamilyCaptureBox<*>): Any? = takeBox(box)
+        fun aliasedStarCall(box: FamilyCaptureBox<*>): Any? { val self = this; return self.takeBox(box) }
+        fun capturedStarCall(box: FamilyCaptureBox<*>): () -> Any? {
+            val self = this
+            return { self.takeBox(box) }
+        }
         fun <D : Derived> viaBound(other: D): Int = other.index + other.raw
         fun functions(): Int = transform { it + raw } + callback()
         override fun read(): Int = super.read() + 100
@@ -25,6 +37,12 @@ private class FamilyOuter<T>(private val payload: T) {
         check(value.captured()() == 23 && value.viaBound(value) == 22)
         check(value.functions() == 30)
         check(value.virtualRead() == 122 && value.bound()() == 122)
+        check(value.inheritedBound()() == 22)
+        val peer = FamilyOuter("other construction").Derived()
+        check(value.across(peer) == 14)
+        val box = FamilyCaptureBox(payload)
+        check(value.starCall(box) == payload && value.aliasedStarCall(box) == payload)
+        check(value.capturedStarCall(box)() == payload)
         return payload
     }
 }
