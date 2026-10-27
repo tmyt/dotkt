@@ -397,8 +397,12 @@ Whenever the physical name differs from the Kotlin source name, bir2cir records 
 trusted `KotlinSourceMethod` carrier on that MethodDef. An explicit MethodImpl bridge carries the same identity so
 `dll2klib` can re-surface the implemented function under its Kotlin name. `ReferenceMetadataIndex` ignores that
 compiler-generated bridge copy and uses the source declaration's carrier to map a frontend-selected declaration back
-to its physical MethodDef. Neither consumer derives source identity from capitalization, a known method-name table,
-or a method body.
+to its physical MethodDef. A generated override bridge or source-associated ordinary existential slot additionally records
+`sourceDeclaration`, the selected source declaration ID. The binding layer uses that exact association to select the
+existential MethodDef even when the source method has a separately allocated CLR name, and uses the bridge's
+MethodImpl rows when an inherited default must fill an ancestor slot despite an unrelated physical-name collision.
+This association survives body stripping; neither consumer derives it from an erased signature, capitalization,
+a method-name table, or a body.
 
 A CLR Property signature has no method-generic parameter owner, so a method-generic extension accessor cannot be
 attached to a valid Property row when its receiver or context mentions `!!T`. bir2cir omits that unrepresentable row.

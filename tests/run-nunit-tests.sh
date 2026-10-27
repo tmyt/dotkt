@@ -53,7 +53,7 @@ PROJECTS=(
 declare -A EXPECTED_DISCOVERED=(
 	["tests/basic"]=832
 	["tests/coroutines"]=267
-	["tests/roundtrip/consumer"]=653
+	["tests/roundtrip/consumer"]=664
 	["tests/roundtrip/bidirectional/consumer"]=56
 	["tests/interop/consumer"]=465
 )
@@ -150,6 +150,15 @@ for proj in "${PROJECTS[@]}"; do
 		fi
 	fi
 	if [[ "$proj" == "tests/basic" ]]; then
+		if python3 "$ROOT/tests/basic/assert-inherited-mutable-iterator-cir.py" \
+			"$dir/obj/$CONFIGURATION/net10.0/bir/InheritedMutableIteratorSlotTests.bir.json" \
+			"$dir/obj/$CONFIGURATION/net10.0/cir/InheritedMutableIteratorSlotTests.cir.json" \
+			>"$ROOT/build/nunit-$name.inherited-mutable-iterator-cir.log" 2>&1; then
+			echo "  inherited iterator operations bind exact local/reference carrier slots"
+		else
+			echo "  INHERITED ITERATOR SLOT FAIL — see build/nunit-$name.inherited-mutable-iterator-cir.log"
+			tail -25 "$ROOT/build/nunit-$name.inherited-mutable-iterator-cir.log"; rc=1
+		fi
 		if python3 "$ROOT/tests/basic/assert-charsequence-local-stores-cir.py" \
 			"$dir/obj/$CONFIGURATION/net10.0/cir/CharSequenceLocalStoreTests.cir.json" \
 			>"$ROOT/build/nunit-$name.charsequence-local-stores.log" 2>&1; then
@@ -321,6 +330,56 @@ for proj in "${PROJECTS[@]}"; do
 	# standard KLIB companion_object_name + nested class graph. Inspect both artifacts so a mutually-compatible
 	# producer/consumer bug cannot make the behavioral test pass while either interchange boundary is malformed.
 	if [[ "$proj" == "tests/roundtrip/consumer" ]]; then
+		if python3 "$ROOT/tests/roundtrip/assert-native-value-contracts-cir.py" \
+			"$ROOT/tests/roundtrip/producer/obj/$CONFIGURATION/net10.0/cir/ConstructorCarrierStorage.cir.json" \
+			"$dir/obj/$CONFIGURATION/net10.0/cir/NativeValueFramePreservationTests.cir.json" \
+			"$dir/obj/$CONFIGURATION/net10.0/cir/DependentCallableFrameTests.cir.json" \
+			>"$ROOT/build/nunit-$name.native-value-contracts.log" 2>&1; then
+			echo "  native locations and demanded constraints retain their exact physical contracts"
+		else
+			echo "  NATIVE VALUE CONTRACTS FAIL"
+			tail -25 "$ROOT/build/nunit-$name.native-value-contracts.log"; rc=1
+		fi
+		if python3 "$ROOT/tests/roundtrip/assert-inherited-source-forwarder-cir.py" \
+			"$ROOT/tests/roundtrip/producer/obj/$CONFIGURATION/net10.0/cir/Genq.cir.json" \
+			"$dir/obj/$CONFIGURATION/net10.0/bir/CrossModuleMetadataTests.bir.json" \
+			"$dir/obj/$CONFIGURATION/net10.0/cir/CrossModuleMetadataTests.cir.json" \
+			>"$ROOT/build/nunit-$name.inherited-source-forwarder.log" 2>&1; then
+			echo "  physical inherited forwarders retain source declaration and CLR slot identities"
+		else
+			echo "  INHERITED SOURCE FORWARDER FAIL"
+			tail -25 "$ROOT/build/nunit-$name.inherited-source-forwarder.log"; rc=1
+		fi
+		if python3 "$ROOT/tests/roundtrip/assert-associated-generic-carrier-cir.py" \
+			"$ROOT/tests/roundtrip/producer/obj/$CONFIGURATION/net10.0/cir/CapturedGenericInvocation.cir.json" \
+			"$dir/obj/$CONFIGURATION/net10.0/bir/CapturedGenericInvocationTests.bir.json" \
+			"$dir/obj/$CONFIGURATION/net10.0/cir/CapturedGenericInvocationTests.cir.json" \
+			>"$ROOT/build/nunit-$name.associated-generic-carrier.log" 2>&1; then
+			echo "  generic carrier calls retain exact source association and independent method frames"
+		else
+			echo "  ASSOCIATED GENERIC CARRIER FAIL"
+			tail -25 "$ROOT/build/nunit-$name.associated-generic-carrier.log"; rc=1
+		fi
+		if python3 "$ROOT/tests/roundtrip/assert-imported-operator-carrier-cir.py" \
+			"$ROOT/tests/roundtrip/producer/obj/$CONFIGURATION/net10.0/cir/ValueReturningOperators.cir.json" \
+			"$dir/obj/$CONFIGURATION/net10.0/bir/ImportedSetResultTests.bir.json" \
+			"$dir/obj/$CONFIGURATION/net10.0/cir/ImportedSetResultTests.cir.json" \
+			>"$ROOT/build/nunit-$name.imported-operator-carrier.log" 2>&1; then
+			echo "  imported operators retain selected carrier identity and exact lexical super frames"
+		else
+			echo "  IMPORTED OPERATOR CARRIER FAIL"
+			tail -25 "$ROOT/build/nunit-$name.imported-operator-carrier.log"; rc=1
+		fi
+		if python3 "$ROOT/tests/roundtrip/assert-inherited-default-method-cir.py" \
+			"$ROOT/tests/roundtrip/producer/obj/$CONFIGURATION/net10.0/bir/DefaultPropertySlot.bir.json" \
+			"$ROOT/tests/roundtrip/producer/obj/$CONFIGURATION/net10.0/cir/DefaultPropertySlot.cir.json" \
+			"$dir/obj/$CONFIGURATION/net10.0/cir/InheritedGenericDefaultCollisionTests.cir.json" \
+			>"$ROOT/build/nunit-$name.inherited-default-method-cir.log" 2>&1; then
+			echo "  inherited defaults retain exact source IDs and native ancestor MethodImpls"
+		else
+			echo "  INHERITED DEFAULT METHOD SLOT FAIL"
+			tail -25 "$ROOT/build/nunit-$name.inherited-default-method-cir.log"; rc=1
+		fi
 		if python3 "$ROOT/tests/roundtrip/assert-private-rich-inline-cir.py" \
 			"$dir/obj/$CONFIGURATION/net10.0/cir/PrivateRichEnumCollisionTests.cir.json" \
 			>"$ROOT/build/nunit-$name.private-rich-inline.log" 2>&1; then
@@ -474,7 +533,8 @@ for proj in "${PROJECTS[@]}"; do
 			echo "  NESTED TYPE CARRIER FAIL — see build/nunit-$name.nested-type-carriers.log"
 			tail -25 "$ROOT/build/nunit-$name.nested-type-carriers.log"; rc=1
 		fi
-		if python3 "$ROOT/tests/roundtrip/assert-existential-return-cir.py" "$consumer_cir" \
+		if python3 "$ROOT/tests/roundtrip/assert-existential-return-cir.py" \
+			"$dir/obj/$CONFIGURATION/net10.0/bir/CrossModuleMetadataTests.bir.json" "$consumer_cir" \
 			>"$ROOT/build/nunit-$name.existential-return.log" 2>&1; then
 			echo "  referenced existential calls state physical returns + semantic projections"
 		else
@@ -490,12 +550,32 @@ for proj in "${PROJECTS[@]}"; do
 			tail -25 "$ROOT/build/nunit-$name.referenced-method-generic-unsafe-accessor.log"; rc=1
 		fi
 		if python3 "$ROOT/tests/roundtrip/assert-referenced-generic-owner-unsafe-accessor-cir.py" \
+			"$ROOT/tests/roundtrip/producer/obj/$CONFIGURATION/net10.0/cir/ReferencedProtectedGenericOwner.cir.json" \
 			"$referenced_generic_owner_cir" \
 			>"$ROOT/build/nunit-$name.referenced-generic-owner-unsafe-accessor.log" 2>&1; then
 			echo "  referenced generic-owner UnsafeAccessor physical frame + use projection OK"
 		else
 			echo "  REFERENCED GENERIC-OWNER UNSAFEACCESSOR FAIL — see build/nunit-$name.referenced-generic-owner-unsafe-accessor.log"
 			tail -25 "$ROOT/build/nunit-$name.referenced-generic-owner-unsafe-accessor.log"; rc=1
+		fi
+		if python3 "$ROOT/tests/roundtrip/assert-ordinary-parameter-slots-cir.py" \
+			"$dir/obj/$CONFIGURATION/net10.0/cir/OrdinaryParameterSlotTests.cir.json" \
+			>"$ROOT/build/nunit-$name.ordinary-parameter-slots.log" 2>&1; then
+			echo "  shared Kotlin/native slots retain the selected physical forwarding signature"
+		else
+			echo "  ORDINARY PARAMETER SLOT FAIL — see build/nunit-$name.ordinary-parameter-slots.log"
+			tail -25 "$ROOT/build/nunit-$name.ordinary-parameter-slots.log"; rc=1
+		fi
+		if python3 "$ROOT/tests/roundtrip/assert-source-result-identity-cir.py" \
+			"$ROOT/tests/roundtrip/producer/obj/$CONFIGURATION/net10.0/cir/InheritedInnerResults.cir.json" \
+			"$dir/obj/$CONFIGURATION/net10.0/cir/InheritedInnerResultTests.cir.json" \
+			"$ROOT/tests/roundtrip/producer/obj/$CONFIGURATION/net10.0/cir/IterableIdentity.cir.json" \
+			"$dir/obj/$CONFIGURATION/net10.0/cir/IterableIdentityTests.cir.json" \
+			>"$ROOT/build/nunit-$name.source-result-identity.log" 2>&1; then
+			echo "  caller-frame results and source iterable identities survive physical projection"
+		else
+			echo "  SOURCE RESULT/IDENTITY FAIL — see build/nunit-$name.source-result-identity.log"
+			tail -25 "$ROOT/build/nunit-$name.source-result-identity.log"; rc=1
 		fi
 		if python3 "$ROOT/tests/roundtrip/assert-default-companion-frame-cir.py" \
 			"$dir/obj/$CONFIGURATION/net10.0/cir/DefaultCompanionCallbackTests.cir.json" \

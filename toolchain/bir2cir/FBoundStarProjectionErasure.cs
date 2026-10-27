@@ -12,7 +12,7 @@ using DotKt.Bir;
 // is used for Kotlin's erased generic `is`/`as` checks (`x is G<T>`): JVM semantics test only the raw classifier.
 //
 // BIR faithfully carries `{t:"star"}`. This pass synthesizes the CLR-facing interface, attaches it to the generic
-// declaration, and rewrites only explicit star positions and erased runtime classifier tests/casts. Reference and
+// declaration, and uses it for ordinary generic reference values and erased runtime classifier tests/casts. Reference and
 // runtime builds both run it, so downstream compilations recognize the view from trusted DotKt metadata. BIR from an
 // older toolchain is unsupported: `G<Any>` is always the concrete Kotlin type and is never guessed back into `G<*>`.
 static partial class FBoundStarProjectionErasure
@@ -25,6 +25,7 @@ static partial class FBoundStarProjectionErasure
     const string ExistentialArrayElementProjectionKey = "_existentialArrayElementProjection";
     internal const string SourceMemberKey = "existentialSourceMember";
     internal const string InnerConstructorFactoryKey = "existentialInnerConstructorFactory";
+    const string InnerFactoryArgumentsKey = "_innerFactoryArguments";
     const string ExistentialResultProjectionKey = "_existentialResultProjection";
     internal const string ExactBridgeOwnerCallKey = "_exactExistentialBridgeOwnerCall";
     const string ExactOuterKey = "outer";
@@ -33,6 +34,7 @@ static partial class FBoundStarProjectionErasure
     static Dictionary<(string Owner, string Identity), JsonObject> _localDeclarations = new();
     static IReadOnlyDictionary<string, SupertypeGraph.Def> _sourceSupertypes = new Dictionary<string, SupertypeGraph.Def>();
     static HashSet<string> _usedCarrierNames = new(StringComparer.Ordinal);
+    static GenericRepresentationPolicy _valueSlots;
 
     sealed class Owner
     {
@@ -49,19 +51,22 @@ static partial class FBoundStarProjectionErasure
     public static IReadOnlyDictionary<string, string> ApplyAll(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs,
         IReadOnlyList<SharedSyntheticSynthesis.CellStorage> sharedCells = null,
         IDictionary<string, int[]> physicalParameterIndices = null,
-        IDictionary<string, string> physicalDeclarationSources = null)
+        IDictionary<string, string> physicalDeclarationSources = null,
+        GenericRepresentationPolicy valueSlots = null)
     {
         var defs = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
         var owners = new Dictionary<string, Owner>(StringComparer.Ordinal);
         OwnerConstrainedMethodLowering.Reset(refs, bound => PhysicalBoundClassifier(bound, owners, refs),
             (method, index) => _nativeProofs.Bounds(method, index));
         var rootList = roots.OfType<JsonObject>().ToList();
+        _valueSlots = valueSlots ?? new GenericRepresentationPolicy(refs.Aliases, refs, rootList);
         // A type-variable receiver's bound still names its constructed Kotlin owner here. Close that owner before
         // value projection replaces the bound with a non-generic carrier and loses the original application.
         ConstrainedTypeParameterReceiverBinding.CloseOpenOwners(rootList);
         foreach (var root in rootList) Collect(root, root, owners, defs);
         foreach (var root in rootList) NormalizeRedundantProjections(root, defs, refs);
         var localClrAliases = CollectLocalClrAliases(defs);
+        _valueSlots.RegisterLocalDefinitions(defs, localClrAliases);
         var aliases = new Dictionary<string, string>(refs.Aliases, StringComparer.Ordinal);
         foreach (var alias in localClrAliases) aliases[alias.Key] = alias.Value;
         var supertypeDefs = SupertypeGraph.Collect(rootList);
@@ -194,7 +199,8 @@ static partial class FBoundStarProjectionErasure
         ForeignStarProjectionBinding.ApplyAll(rootList,
             owners.Values.Where(owner => owner.Needed).ToDictionary(
                 owner => owner.Name, owner => owner.ErasedName, StringComparer.Ordinal), refs, localClrAliases,
-            type => RewriteType(type, owners, refs, localClrAliases: localClrAliases));
+            (type, preserveArrayShape) => RewriteType(type, owners, refs, localClrAliases: localClrAliases,
+                preserveArrayShape: preserveArrayShape));
         // Factory allocation above used the source constraint graph. Freeze that same classification before value
         // projection can erase a dependent alias bound to Object and make its sibling constraints appear independent.
         var innerDependencies = owners.Values.Where(owner => owner.Needed && IsInner(owner.Def))
@@ -388,6 +394,7 @@ static partial class FBoundStarProjectionErasure
         var localClrAliases = new Dictionary<string, string>(
             knownClrAliases ?? new Dictionary<string, string>(StringComparer.Ordinal), StringComparer.Ordinal);
         foreach (var alias in CollectLocalClrAliases(defs)) localClrAliases.TryAdd(alias.Key, alias.Value);
+        _valueSlots.RegisterLocalDefinitions(defs, localClrAliases);
         foreach (var root in rootList)
         {
             NormalizeRedundantProjections(root, defs, refs);
@@ -492,7 +499,7 @@ static partial class FBoundStarProjectionErasure
                             if (argumentType == null) continue;
                             var exactValue = key == "argTypes" && index < argumentValues.Count
                                 && argumentValues[index] is JsonObject argument
-                                && (Str(argument["k"]) == "this" || Bool(argument[ExactOuterKey]));
+                                && Bool(argument[ExactOuterKey]);
                             var exactOuterSlot = IsInnerConstructionOuterSlot(obj, index, defs, refs);
                             argumentTypes[index] = TypeJson.Write(RewriteType(argumentType, owners, refs,
                                 childBoundDeclaration, localClrAliases,
@@ -519,6 +526,8 @@ static partial class FBoundStarProjectionErasure
                             type, owners, refs, childBoundDeclaration, localClrAliases,
                             preserveArrayShape: childArrayShape,
                             preserveConstructedHead: PreservesConstructionHead(obj, key)
+                                || (IsArrayComponentSlot(obj, key) || IsNativeLocationSlot(obj, key))
+                                    && PreservesNativeWitnessHead(type, owners, refs)
                                 || IsExactLexicalType(obj, key)
                                 || IsTypeDefinition(obj) && key == "base"
                                 || IsDeclarationOwnerDescriptor(obj) && key == "owner"));
@@ -533,7 +542,7 @@ static partial class FBoundStarProjectionErasure
                     if (value == null) continue;
                     if (TypeJson.Read(value) is TypeNode type)
                         arr[i] = TypeJson.Write(RewriteType(
-                            type, owners, refs, boundDeclaration, localClrAliases,
+                            type, owners, refs, boundDeclaration || _nativeProofs?.IsPhysicalConstraint(arr, type) == true, localClrAliases,
                             preserveArrayShape: preserveArrayShape,
                             preserveConstructedHead: IsInterfaceDeclarationList(arr)));
                     else
@@ -552,6 +561,17 @@ static partial class FBoundStarProjectionErasure
         IReadOnlyDictionary<string, string> localClrAliases)
     {
         var kind = Str(owner["k"]);
+        // A final physical adapter selects an already-projected declaration. Its descriptor and narrowing
+        // conversions belong to that declaration, not to a fresh ordinary Kotlin value-slot projection.
+        if (Bool(owner[GenericRepresentationPolicy.PhysicalDeclarationSignatureKey])
+            && (kind == "callInstance" && key is "sig" or "calleeParams" or "ret" or "dynRet" or "sty"
+                || kind == "cast" && key == "type"
+                || kind is "nullableWrap" or "nullableValue" && key == "elem")) return true;
+        if (kind == null && owner["params"] is JsonArray && key is "params" or "ret"
+            && _valueSlots?.HasNativeMethodSignature(owner) == true) return true;
+        if (IsDeclarationOwnerDescriptor(owner) && key is "params" or "ret"
+            && TypeJson.Read(owner["owner"]) is TypeNode.Fqn selectedOwner
+            && IsNativeDescriptorOwner(selectedOwner, refs, localClrAliases)) return true;
         // Static declarations and lifted delegate targets name an exact MethodDef owner, not a value slot.
         if (kind is "callStatic" or "newDelegate" && key is "calleeOwner" or "ownerType" or "owner")
             return true;
@@ -588,10 +608,18 @@ static partial class FBoundStarProjectionErasure
                     .SelectMany(slotKey => (owner[slotKey] as JsonArray)?.OfType<JsonObject>()
                         ?? Enumerable.Empty<JsonObject>())
                     .Any(slot => TypeJson.Read(slot["owner"]) is TypeNode.Fqn nativeOwner
-                        && IsNativeArrayOwner(nativeOwner, refs, localClrAliases))
+                        && IsNativeDescriptorOwner(nativeOwner, refs, localClrAliases))
             || IsDeclarationOwnerDescriptor(owner)
                 && TypeJson.Read(owner["owner"]) is TypeNode.Fqn descriptorOwner
-                && IsNativeArrayOwner(descriptorOwner, refs, localClrAliases));
+                && IsNativeDescriptorOwner(descriptorOwner, refs, localClrAliases));
+
+    // A trusted binding alias still names a Kotlin declaration surface. Its MethodImpl signature must follow that
+    // declaration's value ABI; only the already-selected physical native owner freezes CLR witnesses and arrays.
+    static bool IsNativeDescriptorOwner(TypeNode.Fqn owner, ReferenceMetadataIndex refs,
+        IReadOnlyDictionary<string, string> localClrAliases) =>
+        _valueSlots?.IsBindingAlias(owner.Name) != true
+        && localClrAliases?.ContainsKey(owner.Name) != true
+        && IsNativeArrayOwner(owner, refs, localClrAliases);
 
     static bool IsNativeArrayOwner(TypeNode.Fqn owner, ReferenceMetadataIndex refs,
         IReadOnlyDictionary<string, string> localClrAliases) =>
@@ -604,11 +632,34 @@ static partial class FBoundStarProjectionErasure
     // Native memberRef/declaration descriptors separately remain fully bound above.
     static bool PreservesConstructionHead(JsonObject node, string key) =>
         key is "type" or "ownerType" && ClrBoundNode.IsAny(Str(node["k"]))
+        || key == "ownerType" && Bool(node[GenericRepresentationPolicy.FieldAddressKey])
+        // Constraint dispatch still needs its selected semantic owner to bind the allocated physical slot.
+        || key == "iface" && Str(node["k"]) == "constrainedCall"
         || key == "type"
         && ((Str(node["k"]) is "new" or "newClr")
             || Str(node["k"]) == "var" && Bool(node[CallEvalLowering.ValueTemporaryKey])
                 && node["init"] is JsonObject initializer && Str(initializer["k"]) == "new"
                 && TypeJson.Read(initializer["type"]) == TypeJson.Read(node["type"]));
+
+    static bool IsArrayComponentSlot(JsonObject node, string key) => key == "elem"
+        && Str(node["k"]) is "newArray" or "newArrayInit" or "newArraySized" or "spreadConcat"
+            or "arrayGet" or "arraySet" or "forArray";
+
+    static bool IsNativeLocationSlot(JsonObject node, string key) =>
+        _valueSlots?.IsNativeField(node) == true && key is "type" or "elem" or "memberType"
+        || _valueSlots?.IsNativeField(node) == true && key is "ret" or "sty"
+            && Str(node["k"]) is "field" or "staticField" or "lateinitGet"
+        || Str(node["k"]) is "byrefLoad" or "byrefStore" && key == "elem";
+
+    // Native instantiation witnesses and addressable source locations retain a closed invariant source head.
+    // This is not a fully bound foreign descriptor: nested slots still follow their declaration's frame.
+    // Variance, opaque aliases and explicit projections keep their established carrier/object representation.
+    static bool PreservesNativeWitnessHead(TypeNode type,
+        IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs) =>
+        StripSourceNullability(type) is TypeNode.Fqn component
+        && !ContainsExistentialProjection(component)
+        && RequiresKotlinValueCarrier(component, owners, refs)
+        && !ProjectionCanChangeConstruction(component, owners, refs);
 
     // Lexical receivers retain their declaring class, with the same projected argument slots as its TypeDef.
     // Consume the producer's role fact, never the spelling of a hidden outer field or temporary.
@@ -625,12 +676,13 @@ static partial class FBoundStarProjectionErasure
         entries.Parent is JsonObject definition && IsTypeDefinition(definition)
             && ReferenceEquals(definition["interfaces"], entries);
 
-    // Override facts and MethodImpls name declarations on exact inheritance edges, not Kotlin value slots.
+    // Override facts, selected inherited implementations and MethodImpls name exact declaration edges, not values.
     static bool IsDeclarationOwnerDescriptor(JsonObject node) =>
         node.Parent is JsonArray entries && entries.Parent is JsonObject method
             && (ReferenceEquals(method["clrBaseImpls"], entries)
                 || ReferenceEquals(method["clrInterfaceImpls"], entries)
-                || ReferenceEquals(method["overrides"], entries));
+                || ReferenceEquals(method["overrides"], entries))
+        || node.Parent is JsonObject fact && ReferenceEquals(fact["inheritedImplementation"], node);
 
     static bool IsInnerConstructionOuterSlot(JsonObject node, int index,
         IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs)
@@ -987,6 +1039,12 @@ static partial class FBoundStarProjectionErasure
                 Def = JsonNode.Parse("""{"kind":"class","typeParams":["T"]}""")!.AsObject() },
         };
         var refs = ReferenceMetadataIndex.Build(Array.Empty<string>());
+        _valueSlots = new GenericRepresentationPolicy(refs.Aliases, refs, new[] { JsonNode.Parse("""
+          {"types":[{"kind":"class","name":"Owner.Item","typeParams":["T"]},
+                    {"kind":"class","name":"Bound","typeParams":["T"]},
+                    {"kind":"class","name":"Construction","typeParams":["T"]},
+                    {"kind":"class","name":"Variant","typeParams":["T"]}]}
+          """) });
         OwnerConstrainedMethodLowering.Reset(refs, bound => PhysicalBoundClassifier(bound, owners, refs));
         var dependentType = JsonNode.Parse("""
           {"kind":"class","name":"Dependent","typeParams":["Tag",
@@ -1020,10 +1078,39 @@ static partial class FBoundStarProjectionErasure
             throw new InvalidOperationException("Dependent method/slot classifiers disagree or replaced the source bounds");
         OwnerConstrainedMethodLowering.Reset(refs, _ => null);
         if (RewriteType(inner, owners, refs) != new TypeNode.Fqn("InnerView")
-            || RewriteType(exact, owners, refs) != exact
+            || RewriteType(exact, owners, refs) != new TypeNode.Fqn("BoundView")
             || RewriteType(inner, owners, refs, boundDeclaration: true) != inner
             || RewriteType(inner, owners, refs, preserveConstructedHead: true) != inner)
-            throw new InvalidOperationException("Inner value projection changed an invariant owner or exact linkage slot");
+            throw new InvalidOperationException("Generic value projection lost its carrier or changed an exact linkage slot");
+        var physicalCall = new JsonObject {
+            ["k"] = "callInstance", [GenericRepresentationPolicy.PhysicalDeclarationSignatureKey] = true,
+            ["sig"] = new JsonArray(TypeJson.Write(exact)), ["calleeParams"] = new JsonArray(TypeJson.Write(exact)),
+            ["ret"] = TypeJson.Write(exact), ["dynRet"] = TypeJson.Write(exact), ["sty"] = TypeJson.Write(exact),
+            ["args"] = new JsonArray(new JsonObject {
+                ["k"] = "cast", [GenericRepresentationPolicy.PhysicalDeclarationSignatureKey] = true,
+                ["type"] = TypeJson.Write(exact), ["e"] = new JsonObject {
+                    ["k"] = "local", ["name"] = "value", ["sty"] = TypeJson.Write(exact) } }),
+        };
+        RewriteTypesOnly(physicalCall, owners, new Dictionary<string, JsonObject>(), refs, null);
+        if (TypeJson.Read(physicalCall["sig"][0]) != exact || TypeJson.Read(physicalCall["calleeParams"][0]) != exact
+            || TypeJson.Read(physicalCall["ret"]) != exact || TypeJson.Read(physicalCall["args"][0]["type"]) != exact
+            || TypeJson.Read(physicalCall["args"][0]["e"]["sty"]) != new TypeNode.Fqn("BoundView"))
+            throw new InvalidOperationException("A final physical adapter lost its declaration contract or froze ordinary operand values");
+        RemoveTransientMarkers(physicalCall);
+        if (physicalCall.ContainsKey(GenericRepresentationPolicy.PhysicalDeclarationSignatureKey)
+            || physicalCall["args"][0].AsObject().ContainsKey(GenericRepresentationPolicy.PhysicalDeclarationSignatureKey))
+            throw new InvalidOperationException("A physical adapter role escaped into serialized CIR");
+        var factoryArguments = new JsonArray(TypeJson.Write(inner), TypeJson.Write(
+            new TypeNode.Fqn("Owner.Item", new TypeNode[] { new TypeNode.Star() })));
+        RewriteMethodArguments(new JsonObject { [InnerFactoryArgumentsKey] = true }, factoryArguments,
+            owners, refs, null, false, false);
+        if (TypeJson.Read(factoryArguments[0]) != inner
+            || TypeJson.Read(factoryArguments[1]) != new TypeNode.Fqn("InnerView"))
+            throw new InvalidOperationException("Selected inner factory lost its exact witness or fabricated a projected construction");
+        var component = new TypeNode.Fqn("Bound", new TypeNode[] { new TypeNode.Fqn("kotlin.String") });
+        foreach (var element in new TypeNode[] { component, new TypeNode.Nullable(component) })
+            if (RewriteType(new TypeNode.Array(element), owners, refs) != new TypeNode.Array(element))
+                throw new InvalidOperationException("A closed invariant array lost its exact allocation component");
         foreach (var kind in new[] { "clrInstance", "clrStatic", "clrGenericInstance", "clrPropGet", "clrPropSet", "newClr" })
         {
             var operation = new JsonObject { ["k"] = kind, ["type"] = TypeJson.Write(inner) };
@@ -1035,15 +1122,40 @@ static partial class FBoundStarProjectionErasure
                     preserveConstructedHead: PreservesConstructionHead(operation, "type")) != inner)
                 throw new InvalidOperationException("A bound CLR declaring owner became an ordinary value slot");
         }
-        var native = new TypeNode.Fqn("System.Collections.Generic.List", new TypeNode[] { inner });
-        var explicitNative = new TypeNode.Fqn("System.Collections.Generic.List", new TypeNode[] {
-            new TypeNode.Fqn("System.Collections.Generic.IReadOnlyList", new TypeNode[] { new TypeNode.Fqn("System.String") }),
+        var nativeRefs = ReferenceMetadataIndex.Build(new[] { typeof(object).Assembly.Location });
+        var bindingAliases = new Dictionary<string, string> {
+            ["SourceAlias"] = "System.Collections.Generic.IReadOnlyList`1",
+        };
+        var sourceDescriptor = new JsonObject { ["owner"] = TypeJson.Fqn("SourceAlias"),
+            ["params"] = new JsonArray(), ["ret"] = TypeJson.Write(inner) };
+        var nativeDescriptor = new JsonObject {
+            ["owner"] = TypeJson.Write(new TypeNode.Fqn("System.Collections.Generic.IReadOnlyList`1",
+                new TypeNode[] { inner })), ["params"] = new JsonArray(), ["ret"] = TypeJson.Write(inner),
+        };
+        var descriptorMethod = new JsonObject {
+            ["clrInterfaceImpls"] = new JsonArray(sourceDescriptor, nativeDescriptor),
+        };
+        if (IsBoundDeclarationType(sourceDescriptor, "ret", nativeRefs, bindingAliases)
+            || IsNativeArrayDeclarationSlot(sourceDescriptor, "ret", nativeRefs, bindingAliases)
+            || !IsBoundDeclarationType(nativeDescriptor, "ret", nativeRefs, bindingAliases)
+            || !IsNativeArrayDeclarationSlot(nativeDescriptor, "ret", nativeRefs, bindingAliases)
+            || RewriteType(inner, owners, nativeRefs,
+                boundDeclaration: IsBoundDeclarationType(sourceDescriptor, "ret", nativeRefs, bindingAliases))
+                != new TypeNode.Fqn("InnerView")
+            || RewriteType(inner, owners, nativeRefs,
+                boundDeclaration: IsBoundDeclarationType(nativeDescriptor, "ret", nativeRefs, bindingAliases)) != inner)
+            throw new InvalidOperationException("A source alias MethodImpl and an actual native descriptor lost their distinct value roles");
+        // Empty references deliberately make this an unresolved owner, not an imported native contract.
+        // Native owner/method arguments are covered by the reference-backed cross-DLL roundtrip tests.
+        var unresolved = new TypeNode.Fqn("Unresolved.Container", new TypeNode[] { inner });
+        var explicitUnresolved = new TypeNode.Fqn(unresolved.Name, new TypeNode[] {
+            new TypeNode.Fqn("Unresolved.Other", new TypeNode[] { new TypeNode.Fqn("System.String") }),
         });
-        if (RewriteType(native, owners, refs, preserveConstructedHead: true)
-                != new TypeNode.Fqn(native.Name, new TypeNode[] { new TypeNode.Fqn("InnerView") })
-            || RewriteType(explicitNative, owners, refs, preserveConstructedHead: true) != explicitNative
-            || RewriteType(native, owners, refs, boundDeclaration: true) != native)
-            throw new InvalidOperationException("Operation owner arguments confused Kotlin values with exact native descriptors");
+        if (RewriteType(unresolved, owners, refs, preserveConstructedHead: true)
+                != new TypeNode.Fqn(unresolved.Name, new TypeNode[] { new TypeNode.Fqn("InnerView") })
+            || RewriteType(explicitUnresolved, owners, refs, preserveConstructedHead: true) != explicitUnresolved
+            || RewriteType(unresolved, owners, refs, boundDeclaration: true) != unresolved)
+            throw new InvalidOperationException("Unresolved operation arguments confused Kotlin values with bound descriptors");
         var constructionOwner = JsonNode.Parse("""
           {"kind":"class","typeParams":["P","T","Q","U"]}
           """).AsObject();
@@ -1061,8 +1173,15 @@ static partial class FBoundStarProjectionErasure
             || projectedConstruction.Args[2] != new TypeNode.Fqn("InnerView")
             || projectedConstruction.Args[3] != inner)
             throw new InvalidOperationException("Exact construction erased an ordinary witness or retained a concrete storage head");
-        if (RewriteType(construction, owners, refs) != projectedConstruction)
-            throw new InvalidOperationException("Retained value head and its construction disagree on native witness roles");
+        if (RewriteType(construction, owners, refs) != new TypeNode.Fqn("ConstructionView"))
+            throw new InvalidOperationException("An ordinary invariant value regained an exact construction head");
+        _valueSlots.RegisterLocalDefinitions(new Dictionary<string, JsonObject> {
+            ["LatePhysical"] = JsonNode.Parse("""{"kind":"class","generated":true,"typeParams":["T"]}""").AsObject(),
+        }, new Dictionary<string, string>());
+        var latePhysical = new TypeNode.Fqn("LatePhysical", new TypeNode[] { variable });
+        if (RewriteType(latePhysical, owners, refs) != latePhysical
+            || TryExistentialCarrier("LatePhysical", owners, null, out _))
+            throw new InvalidOperationException("A late local physical declaration consulted foreign carrier metadata");
         var companionProjection = construction with { Args = construction.Args.Select((argument, index) =>
             constructionFrame.PhysicalSlot(index).Representation == NullableRepresentationFrame.Role.Storage
                 ? (TypeNode)new TypeNode.Projection("out", argument) : argument).ToArray() };
@@ -1072,10 +1191,20 @@ static partial class FBoundStarProjectionErasure
         if (ConstructionHasHiddenWitness(companionProjection, owners, refs)
             || !ConstructionHasHiddenWitness(hiddenWitness, owners, refs))
             throw new InvalidOperationException("Projected constructor inferred a known companion or lost a hidden native witness");
+        var nominalProjection = construction with { Args = construction.Args.Select((argument, index) =>
+            index == 1 ? new TypeNode.Fqn("Bound", new TypeNode[] { new TypeNode.Star() }) : argument).ToArray() };
+        var foreignProjection = construction with { Args = construction.Args.Select((argument, index) =>
+            index == 1 ? new TypeNode.Fqn("System.Collections.Generic.List`1", new TypeNode[] { new TypeNode.Star() }) : argument).ToArray() };
+        if (ConstructionHasHiddenWitness(nominalProjection, owners, refs)
+            || !ConstructionHasHiddenWitness(foreignProjection, owners, refs))
+            throw new InvalidOperationException("Projected construction confused a known Kotlin carrier with a hidden foreign frame");
         owners["Variant"] = new Owner { Name = "Variant", ErasedName = "VariantView", Needed = true,
             Def = JsonNode.Parse("""
               {"kind":"class","typeParams":[{"name":"T","variance":"out"}]}
               """).AsObject() };
+        _valueSlots.RegisterLocalDefinitions(new Dictionary<string, JsonObject> {
+            ["Variant"] = owners["Variant"].Def,
+        }, new Dictionary<string, string>());
         var variant = new TypeNode.Fqn("Variant", new TypeNode[] { variable });
         var variantArguments = construction with { Args = Enumerable.Repeat<TypeNode>(variant, 4).ToArray() };
         if (((TypeNode.Fqn)RewriteType(variantArguments, owners, refs, preserveConstructedHead: true))
@@ -1136,7 +1265,74 @@ static partial class FBoundStarProjectionErasure
         if (((JsonArray)projectedInner["typeParams"][1]["constraints"]).Count != 0)
             throw new InvalidOperationException("Value projection resurrected a constraint on a bottom-fixed inner slot");
         NativeProofSelfTest();
+        LocalAliasDeclarationSelfTest();
         Console.WriteLine("[constraint projections] self-test OK (star, variance, annotation, exact bound, physical/source separation, native proof demand)");
+    }
+
+    static void LocalAliasDeclarationSelfTest()
+    {
+        var savedPolicy = _valueSlots;
+        try
+        {
+            var refs = ReferenceMetadataIndex.Build(new[] { typeof(object).Assembly.Location });
+            var root = JsonNode.Parse("""
+              {"fileClass":"AliasDeclarationProbe","types":[
+                {"kind":"interface","name":"SourceAlias","typeParams":[{"name":"T","variance":"out"}],
+                 "attrs":[{"attr":{"t":"fqn","name":"kotlin.clr.ClrTypeAlias"},"args":[
+                   {"k":"const","type":{"t":"fqn","name":"kotlin.String"},"value":"System.Collections.Generic.IReadOnlyCollection"}]}],
+                 "methods":[]},
+                {"kind":"class","name":"CapturedOnly","mods":{"inner":true},"outerTypeParamCount":1,
+                 "typeParams":["Outer"],"methods":[]},
+                {"kind":"class","name":"GeneratedCaptured","generated":true,"mods":{"inner":true},
+                 "outerTypeParamCount":1,"typeParams":["Outer"],"methods":[]},
+                {"kind":"class","name":"AliasHolder","fields":[{"name":"field",
+                 "type":{"t":"fqn","name":"SourceAlias","args":[{"t":"fqn","name":"kotlin.String"}]}}],"methods":[]}],
+               "methods":[{"name":"identity","typeParams":["T"],"params":[{"name":"value",
+                 "type":{"t":"fqn","name":"SourceAlias","args":[{"t":"tv","scope":"method","i":0}]}}],
+                 "ret":{"t":"fqn","name":"SourceAlias","args":[{"t":"tv","scope":"method","i":0}]},"body":[]},
+                {"name":"nested","params":[{"name":"value","type":{"t":"fn","suspend":false,"params":[],
+                  "ret":{"t":"fqn","name":"SourceAlias","args":[{"t":"fqn","name":"kotlin.String"}]}}}],
+                 "ret":{"t":"fqn","name":"kotlin.Unit"},"body":[]}]}
+              """).AsObject();
+            var definitions = new Dictionary<string, JsonObject>();
+            var carriers = new Dictionary<string, Owner>();
+            Collect(root, root, carriers, definitions);
+            var aliases = CollectLocalClrAliases(definitions);
+            _valueSlots = new GenericRepresentationPolicy(aliases, refs, new[] { root });
+            _valueSlots.RegisterLocalDefinitions(definitions, aliases);
+            var method = root["methods"][0].AsObject();
+            var parameter = method["params"][0].AsObject();
+            var field = root["types"][3]["fields"][0].AsObject();
+            var nested = root["methods"][1]["params"][0].AsObject();
+            var sourceParameter = TypeNode.ToJson(TypeJson.Read(parameter["type"]));
+            var sourceField = TypeNode.ToJson(TypeJson.Read(field["type"]));
+            var sourceNested = TypeNode.ToJson(TypeJson.Read(nested["type"]));
+            var projected = RewriteType(TypeJson.Read(parameter["type"]), carriers, refs);
+            if (projected != new TypeNode.Fqn("kotlin.Any") || carriers.ContainsKey("SourceAlias")
+                || !ProjectionCanChangeConstruction(TypeJson.Read(parameter["type"]) as TypeNode.Fqn, carriers, refs))
+                throw new InvalidOperationException("Local binding-alias projection depended on carrier eligibility");
+            var capturedOnly = new TypeNode.Fqn("CapturedOnly", new TypeNode[] { new TypeNode.Fqn("kotlin.String") });
+            var generatedCaptured = capturedOnly with { Name = "GeneratedCaptured" };
+            if (!IsCapturedInner(capturedOnly, carriers, refs)
+                || !RequiresKotlinValueCarrier(capturedOnly, carriers, refs)
+                || RequiresKotlinValueCarrier(generatedCaptured, carriers, refs)
+                || carriers.ContainsKey("GeneratedCaptured"))
+                throw new InvalidOperationException("Complete local facts confused a captured-only source inner with a generated physical declaration");
+            RecordDeclarationSurfaces(root, carriers, refs);
+            if (Str(parameter["kotlinType"]) != sourceParameter || Str(method["retKotlinType"]) != sourceParameter
+                || Str(field["kotlinType"]) != sourceField || Str(nested["kotlinType"]) != sourceNested)
+                throw new InvalidOperationException("Local alias parameter/return/field/nested source metadata was not preserved before projection");
+            RewriteTypesOnly(root, carriers, definitions, refs, aliases);
+            if (TypeJson.Read(parameter["type"]) != projected || TypeJson.Read(method["ret"]) != projected
+                || TypeJson.Read(field["type"]) != projected)
+                throw new InvalidOperationException("Early declaration slots disagree with the local alias value policy");
+            RewriteLateTypes(new[] { root }, new Dictionary<string, string>(), refs);
+            if (TypeJson.Read(parameter["type"]) != projected || TypeJson.Read(method["ret"]) != projected
+                || Str(parameter["kotlinType"]) != sourceParameter || Str(method["retKotlinType"]) != sourceParameter
+                || Str(field["kotlinType"]) != sourceField || Str(nested["kotlinType"]) != sourceNested)
+                throw new InvalidOperationException("Late projection changed local alias ABI or reconstructed its source metadata");
+        }
+        finally { _valueSlots = savedPolicy; }
     }
 
     static void RecordProjectionSlot(JsonObject declaration, string slot, string fact,
@@ -1179,7 +1375,7 @@ static partial class FBoundStarProjectionErasure
     // alias needs no nullable/existential companion; reverse projection must not guess a source owner.
     static bool ContainsGenericAlias(TypeNode type, ReferenceMetadataIndex refs) => type switch
     {
-        TypeNode.Fqn { Args: { } args } f => refs.Aliases.ContainsKey(f.Name)
+        TypeNode.Fqn { Args: { } args } f => _valueSlots?.IsBindingAlias(f.Name) == true
             || args.Any(argument => ContainsGenericAlias(argument, refs)),
         TypeNode.Nullable nullable => ContainsGenericAlias(nullable.Of, refs),
         TypeNode.Oblivious oblivious => ContainsGenericAlias(oblivious.Of, refs),
@@ -1198,7 +1394,7 @@ static partial class FBoundStarProjectionErasure
     static bool ContainsKotlinVariantType(TypeNode type,
         IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs) => type switch
     {
-        TypeNode.Fqn f => RequiresKotlinVariantCarrier(f, owners, refs)
+        TypeNode.Fqn f => RequiresKotlinValueCarrier(f, owners, refs)
             || RequiresOpaqueVariantAlias(f, owners, refs)
             || f.Args?.Any(argument => ContainsKotlinVariantType(argument, owners, refs)) == true,
         TypeNode.Nullable nullable => ContainsKotlinVariantType(nullable.Of, owners, refs),
@@ -1801,8 +1997,8 @@ static partial class FBoundStarProjectionErasure
     static bool ProjectionCanChangeConstruction(TypeNode.Fqn application,
         IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs)
     {
-        if (owners.TryGetValue(application.Name, out var local) && local.Def != null)
-            return HasKotlinVariantParameter(application, local.Def["typeParams"] as JsonArray);
+        if (_valueSlots.LocalDeclaration(application.Name) is JsonObject local)
+            return HasKotlinVariantParameter(application, local["typeParams"] as JsonArray);
         return HasKotlinVariantParameter(application, refs.OwnerTypeParamDeclarations(application.Name));
     }
 
@@ -1813,32 +2009,30 @@ static partial class FBoundStarProjectionErasure
         IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs,
         IReadOnlyDictionary<string, string> localClrAliases = null)
     {
-        var parameters = owners.TryGetValue(application.Name, out var local)
-            ? local.Def?["typeParams"] as JsonArray : null;
+        var local = _valueSlots?.LocalDeclaration(application.Name);
+        var parameters = local?["typeParams"] as JsonArray;
         return AliasVarianceRepresentation.RequiresErasure(application, refs, parameters,
-            localClrAliases?.GetValueOrDefault(application.Name),
-            local?.Def == null ? null : KotlinSupertypesRecord.ReadNullableFrame(local.Def));
+            _valueSlots?.BindingAlias(application.Name) ?? localClrAliases?.GetValueOrDefault(application.Name),
+            local == null ? null : KotlinSupertypesRecord.ReadNullableFrame(local));
     }
 
-    // CLR variance does not relate value-type instantiations, even for an interface. Kotlin permits those same
-    // subtype conversions for both classes and interfaces. Every closed construction implements the declaration's
-    // non-generic existential interface, so use that interface as the physical value-slot contract while retaining the
-    // authored construction in [KotlinType]. Constructors and inheritance edges remain exact closed class types.
-    static bool RequiresKotlinVariantCarrier(TypeNode.Fqn application,
+    // A Kotlin generic reference value does not prove a CLR construction, even when its declaration is invariant:
+    // unchecked casts retain the raw classifier. Ordinary source-owned slots therefore use the declaration carrier;
+    // construction, native location, inheritance and selected CLR descriptor roles retain their exact contracts.
+    static bool RequiresKotlinValueCarrier(TypeNode.Fqn application,
         IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs)
     {
         if (application.Args is not { Length: > 0 }) return false;
         // A compiler binding alias already owns the representation of this declaration. Its reflected Kotlin
         // interface variance must not allocate a nominal carrier or replace its preserved collection metadata.
-        if (refs.Aliases.ContainsKey(application.Name)) return false;
+        if (_valueSlots?.IsBindingAlias(application.Name) == true) return false;
         // Unchecked inner casts do not validate the enclosing generic frame. Their arguments, returns and
         // storage must share the raw classifier carrier rather than narrow back to a closed outer frame.
+        if (_valueSlots?.LocalDeclaration(application.Name) is JsonObject local)
+            return Str(local["kind"]) is "class" or "interface"
+                && IsSourceGeneric(local) && _valueSlots.OwnsValueSlots(application.Name);
         if (IsCapturedInner(application, owners, refs)) return true;
-        if (owners.TryGetValue(application.Name, out var local) && local.Def != null)
-            return Str(local.Def["kind"]) is "class" or "interface"
-                && HasKotlinVariantParameter(application, local.Def["typeParams"] as JsonArray);
-        if (!refs.HasDotKtOwner(application.Name)) return false;
-        if (!HasKotlinVariantParameter(application, refs.OwnerTypeParamDeclarations(application.Name))) return false;
+        if (!refs.HasDotKtOwner(application.Name) || !_valueSlots.OwnsValueSlots(application.Name)) return false;
         var arity = application.Args.Length;
         var physicalOwner = refs.TryExactPhysicalTypeName(application.Name, arity, out var exact)
             && exact != null ? exact : application.Name;
@@ -1934,7 +2128,7 @@ static partial class FBoundStarProjectionErasure
                 if (owners.TryGetValue(f.Name, out var owner)
                     && (runtimeClassifier || args.Any(IsExistentialArgument)
                         || Str(owner.Def?["kind"]) is "class" or "interface"
-                            && (HasKotlinVariantParameter(f, owner.Def?["typeParams"] as JsonArray)
+                            && (IsSourceGeneric(owner.Def)
                                 || IsInner(owner.Def) && (Int(owner.Def["outerTypeParamCount"]) ?? 0) > 0)))
                     owner.Needed = true;
                 foreach (var a in args) MarkNeededType(a, owners, false);
@@ -2243,7 +2437,8 @@ static partial class FBoundStarProjectionErasure
         }
         // A dependent existential slot may need a distinct physical name, but later override/bridge passes still need
         // the source declaration identity. Property accessors retain their explicit #397 identity; ordinary methods
-        // carry this pass-local source edge. Neither consumer recovers meaning from the replacement spelling.
+        // carry this source edge locally and in declaration metadata. Neither consumer recovers meaning from the
+        // replacement spelling, including a source operator whose CLR name was allocated before this pass.
         if (KotlinPropertyAccessors.TryIdentity(method, out var propertyName, out var propertyAccessor))
         {
             var association = Str(method[KotlinPropertyAccessors.AssociationKey])
@@ -2262,18 +2457,20 @@ static partial class FBoundStarProjectionErasure
                 ["association"] = association,
             };
         }
-        else if (replacementName != null)
+        else if (replacementName != null || method[DeclarationIdentityBinding.Key] != null)
         {
             slot[SourceMemberKey] = method["name"]?.DeepClone();
             RoundtripMetadata.AddSourceMethodIdentity(slot,
-                Str(method["name"])
-                ?? throw new InvalidOperationException("existential interface slot has no source method name"));
+                Str(method["declarationSourceName"]) ?? Str(method["name"])
+                ?? throw new InvalidOperationException("existential interface slot has no source method name"),
+                Str(method[DeclarationIdentityBinding.Key]));
         }
         // `suspend` is still a Kotlin declaration fact at this point.  The existential slot must
         // participate in the same later SuspendColdLowering as the generic declaration; dropping
         // mods here would cold-lower the call while leaving only an unlowered interface member.
         if (method["mods"] != null) slot["mods"] = method["mods"].DeepClone();
         CopyResultFacts(method, slot, owners, refs);
+        _nativeProofs?.TransferIndependentMethodProofs(method, slot);
         return slot;
     }
 
@@ -2386,6 +2583,8 @@ static partial class FBoundStarProjectionErasure
         // Kotlin modifiers rather than manufacturing a non-suspend body that calls a suspend slot.
         if (method["mods"] != null) bridge["mods"] = method["mods"].DeepClone();
         CopyResultFacts(method, bridge, owners, refs);
+        _nativeProofs?.TransferIndependentMethodProofs(method, bridge);
+        _nativeProofs?.TransferIndependentMethodProofs(method, descriptor);
         return bridge;
     }
 
@@ -2923,7 +3122,8 @@ static partial class FBoundStarProjectionErasure
                     // A variant Kotlin bound can already have an owner-independent nominal representation.
                     // Keep that same constraint on the carrier slot and its forwarding method; dropping it here
                     // would let the bridge instantiate the source method with an unconstrained CLR parameter.
-                    constraint = RewriteType(constraint, owners, refs);
+                    var physicalProof = _nativeProofs?.IsPhysicalConstraint(constraints, constraint) == true;
+                    constraint = RewriteType(constraint, owners, refs, boundDeclaration: physicalProof);
                     // No approximation of I<T> can constrain R on a carrier with hidden T. Kotlin metadata retains
                     // the original bound; only owner-independent constraints remain on the physical declarations.
                     if (ContainsOwnerTv(constraint)
@@ -2940,15 +3140,17 @@ static partial class FBoundStarProjectionErasure
                                 erased.Add(TypeJson.Write(consequence));
                         continue;
                     }
-                    var erasedConstraint = EraseOwnerTv(constraint, owners, refs);
+                    var erasedConstraint = physicalProof ? constraint : EraseOwnerTv(constraint, owners, refs);
                     // `R : T` becomes the existential top bound. It imposes no useful CLR constraint, and emitting an
                     // explicit System.Object constraint is both redundant and less portable across metadata readers.
                     if (!IsObjectish(erasedConstraint)) erased.Add(TypeJson.Write(erasedConstraint));
                 }
                 if (sourceMethod != null)
                     foreach (var proof in _nativeProofs.Bounds(sourceMethod, parameterIndex).Where(proof => !ContainsOwnerTv(proof)))
-                        if (!erased.Any(row => TypeJson.Read(row).Equals(proof))) erased.Add(TypeJson.Write(proof));
-                copy["constraints"] = new JsonArray(erased.Select(TypeJson.Read).Distinct().Select(TypeJson.Write).ToArray());
+                        if (!erased.Any(row => refs.PhysicalConstraintType(TypeJson.Read(row))
+                            == refs.PhysicalConstraintType(proof))) erased.Add(TypeJson.Write(proof));
+                copy["constraints"] = new JsonArray(erased.Select(TypeJson.Read)
+                    .DistinctBy(refs.PhysicalConstraintType).Select(TypeJson.Write).ToArray());
             }
             result.Add(copy);
         }
@@ -3169,16 +3371,17 @@ static partial class FBoundStarProjectionErasure
         {
             var argument = TypeJson.Read(arguments[index]);
             if (argument == null) continue;
-            // Opaque alias values have a separate CLR construction witness. Preserve that alias head,
-            // not arbitrary Kotlin construction heads: captured/variant classes still need their
-            // allocated nominal carrier, and arrays retain the existing component-storage contract.
+            // Method witnesses use the same native-instantiation role as owner arguments and addressed slots.
+            // Selected constructor factories additionally carry their already-authored physical frame.
             var witness = frame == null || frame.PhysicalSlot(index).Representation
                 is NullableRepresentationFrame.Role.Ordinary or NullableRepresentationFrame.Role.Nullable;
             arguments[index] = TypeJson.Write(RewriteType(argument, owners, refs,
                 boundDeclaration, localClrAliases,
                 preserveArrayShape: preserveArrayShape,
                 preserveConstructedHead: witness && !ContainsExistentialProjection(argument)
-                    && (_nativeProofs?.ExactMethodArgument(selected, identity, index) == true
+                    && (PreservesNativeWitnessHead(argument, owners, refs)
+                    || Bool(call[InnerFactoryArgumentsKey])
+                    || _nativeProofs?.ExactMethodArgument(selected, identity, index) == true
                     || StripSourceNullability(argument) is TypeNode.Fqn alias
                     && RequiresOpaqueVariantAlias(alias, owners, refs, localClrAliases)
                     && !ContainsExistentialProjection(alias)
@@ -3363,7 +3566,7 @@ static partial class FBoundStarProjectionErasure
                             if (argumentType == null) continue;
                             var exactValue = key == "argTypes" && index < argumentValues.Count
                                 && argumentValues[index] is JsonObject argument
-                                && (Str(argument["k"]) == "this" || Bool(argument[ExactOuterKey]));
+                                && Bool(argument[ExactOuterKey]);
                             var exactOuterSlot = IsInnerConstructionOuterSlot(obj, index, defs, refs);
                             argumentTypes[index] = TypeJson.Write(RewriteType(argumentType, owners, refs,
                                 childBoundDeclaration, localClrAliases,
@@ -3390,6 +3593,8 @@ static partial class FBoundStarProjectionErasure
                             type, owners, refs, childBoundDeclaration, localClrAliases,
                             preserveArrayShape: childArrayShape,
                             preserveConstructedHead: PreservesConstructionHead(obj, key)
+                                || (IsArrayComponentSlot(obj, key) || IsNativeLocationSlot(obj, key))
+                                    && PreservesNativeWitnessHead(type, owners, refs)
                                 || IsExactLexicalType(obj, key)
                                 || IsTypeDefinition(obj) && key == "base"
                                 || IsDeclarationOwnerDescriptor(obj) && key == "owner"));
@@ -3431,7 +3636,7 @@ static partial class FBoundStarProjectionErasure
                     if (value == null) continue;
                     if (TypeJson.Read(value) is TypeNode type)
                         arr[i] = TypeJson.Write(RewriteType(
-                            type, owners, refs, boundDeclaration, localClrAliases,
+                            type, owners, refs, boundDeclaration || _nativeProofs?.IsPhysicalConstraint(arr, type) == true, localClrAliases,
                             preserveArrayShape: preserveArrayShape,
                             preserveConstructedHead: IsInterfaceDeclarationList(arr)));
                     else
@@ -3544,10 +3749,18 @@ static partial class FBoundStarProjectionErasure
         var frame = owners.TryGetValue(owner.Name, out var declaration)
             ? KotlinSupertypesRecord.ReadNullableFrame(declaration.Def)
             : refs?.NullableTypeFrames.GetValueOrDefault(owner.Name);
-        return owner.Args.Where((argument, index) => frame == null
+        return owner.Args.Where((argument, index) => (frame == null
                 || frame.PhysicalSlot(index).Representation
                     is NullableRepresentationFrame.Role.Ordinary or NullableRepresentationFrame.Role.Nullable)
-            .Any(ContainsExistentialProjection);
+                && ContainsExistentialProjection(argument)
+                // A nested Kotlin application already has a declaration-owned exact carrier. It does not hide
+                // this owner's witness unless an actual native proof requires the concrete construction instead.
+                && (_nativeProofs?.ExactTypeArgument(owner.Name, index) == true
+                    || StripSourceNullability(argument) is not TypeNode.Fqn nominal
+                    || !TryExistentialCarrier(nominal.Name, owners, refs, out var carrier)
+                    || StripSourceNullability(RewriteType(argument, owners, refs))
+                        != new TypeNode.Fqn(carrier)))
+            .Any();
     }
 
     static bool ContainsManagedReference(TypeNode type) => type switch
@@ -3917,6 +4130,7 @@ static partial class FBoundStarProjectionErasure
     {
         var kind = Str(field["k"]);
         if (kind is not ("field" or "lateinitGet" or "setFieldExpr" or "setField")
+            || Bool(field[GenericRepresentationPolicy.FieldAddressKey])
             || Bool(field[ExactOuterKey]) || field["recv"] is not JsonObject receiver
             || Str(receiver["k"]) == "this" || Bool(receiver[ExactOuterKey])
             || TypeJson.Read(field["ownerType"]) is not TypeNode.Fqn owner
@@ -3963,7 +4177,7 @@ static partial class FBoundStarProjectionErasure
         ReferenceMetadataIndex refs)
     {
         // A lexical enclosing receiver is an exact class construction, not a value slot widened by Kotlin variance.
-        if (Bool(field[ExactOuterKey])) return;
+        if (Bool(field[ExactOuterKey]) || Bool(field[GenericRepresentationPolicy.FieldAddressKey])) return;
         var dataClassCopyDefault = Bool(field["dataClassCopyDefault"]);
         field.Remove("dataClassCopyDefault");
         var generatedEqualsFieldRead = Bool(field["generatedEqualsFieldRead"]);
@@ -4093,7 +4307,7 @@ static partial class FBoundStarProjectionErasure
         // Constructing an inner class through an ordinary value slot must therefore use the carrier's generated
         // factory too: casting G$star back to one guessed G<X> would fail for a value widened from G<Y>. A lexical
         // receiver and a direct construction retain their exact closed owner and stay on the ordinary `new` path.
-        var variantOuter = !exactOuterValue && RequiresKotlinVariantCarrier(selectedOuter, owners, refs);
+        var variantOuter = !exactOuterValue && RequiresKotlinValueCarrier(selectedOuter, owners, refs);
         if (!variantOuter && (suppliedOuter == null || !ContainsExistential(suppliedOuter,
                 existentialTypeParameters, existentialMethodParameters))) return;
 
@@ -4186,7 +4400,12 @@ static partial class FBoundStarProjectionErasure
             ["args"] = new JsonArray(arguments.Skip(1).Select(argument => argument?.DeepClone()).ToArray()),
         };
         if (physicalTypeArguments is { Length: > 0 })
+        {
             replacement["typeArgs"] = new JsonArray(physicalTypeArguments.Select(TypeJson.Write).ToArray());
+            // These arguments already came from the selected constructor's physical frame.
+            // Retain its exact witnesses while still projecting explicitly erased storage arguments.
+            replacement[InnerFactoryArgumentsKey] = true;
+        }
         if (declarationParameters != null) replacement["calleeParams"] = declarationParameters;
         if (construction["pos"] != null) replacement["pos"] = construction["pos"]?.DeepClone();
         if (referenceContract != null)
@@ -4459,7 +4678,8 @@ static partial class FBoundStarProjectionErasure
         }
         CollectReturns(declaration["body"]);
         var distinctReturns = returned.Distinct().ToArray();
-        if (!hasNonCarrierReturn && distinctReturns.Length == 1
+        if (_valueSlots?.HasNativeMethodSignature(declaration) != true
+            && !hasNonCarrierReturn && distinctReturns.Length == 1
             && TypeJson.Read(declaration["ret"]) is TypeNode originalReturn
             && originalReturn != distinctReturns[0]
             && LogicalTypeMatchesPhysical(originalReturn, distinctReturns[0]))
@@ -4553,10 +4773,15 @@ static partial class FBoundStarProjectionErasure
     static bool TryExistentialCarrier(string semanticOwner, IReadOnlyDictionary<string, Owner> owners,
         ReferenceMetadataIndex refs, out string physicalOwner)
     {
-        if (owners.TryGetValue(semanticOwner, out var local) && local.Needed)
+        if (owners.TryGetValue(semanticOwner, out var local))
         {
             physicalOwner = local.ErasedName;
-            return true;
+            return local.Needed;
+        }
+        if (_valueSlots?.LocalDeclaration(semanticOwner) != null)
+        {
+            physicalOwner = null;
+            return false;
         }
         return refs.TryExistentialPhysicalOwner(semanticOwner, out physicalOwner);
     }
@@ -4791,7 +5016,7 @@ static partial class FBoundStarProjectionErasure
         var lexicalReceiver = call["recv"] is JsonObject receiver
             && (Str(receiver["k"]) == "this" || Bool(receiver[ExactOuterKey]));
         var kotlinVariantOwner = !lexicalReceiver
-            && RequiresKotlinVariantCarrier(f, owners, refs);
+            && RequiresKotlinValueCarrier(f, owners, refs);
         var erasedSmartCast = call["recv"] is JsonObject recv && Str(recv["k"]) == "cast"
             && !Bool(recv["_exactBridgeCast"])
             && TypeJson.Read(recv["type"]) is TypeNode.Fqn { Args: { } castArgs } castF
@@ -5162,6 +5387,10 @@ static partial class FBoundStarProjectionErasure
                 obj.Remove(ExactBridgeOwnerCallKey);
                 obj.Remove(ExactOuterKey);
                 obj.Remove(DelegationOuterSlotKey);
+                obj.Remove(GenericRepresentationPolicy.NativeLocationKey);
+                obj.Remove(GenericRepresentationPolicy.FieldAddressKey);
+                obj.Remove(GenericRepresentationPolicy.PhysicalDeclarationSignatureKey);
+                obj.Remove(InnerFactoryArgumentsKey);
                 foreach (var value in obj.Select(pair => pair.Value).ToList())
                     if (value != null) RemoveTransientMarkers(value);
                 break;
@@ -5296,6 +5525,10 @@ static partial class FBoundStarProjectionErasure
         TypeNode[] Arguments(TypeNode.Fqn application)
         {
             var nativeOwner = IsNativeArrayOwner(application, refs, localClrAliases);
+            // Imported native arguments are exact CLR witnesses. A trusted Kotlin binding alias instead
+            // owns its storage projection, even when its physical head is a native generic definition.
+            var nativeArguments = nativeOwner && _valueSlots?.IsBindingAlias(application.Name) != true
+                && localClrAliases?.ContainsKey(application.Name) != true;
             var frame = nativeOwner ? null : owners.TryGetValue(application.Name, out var declaration)
                 ? KotlinSupertypesRecord.ReadNullableFrame(declaration.Def)
                 : refs?.NullableTypeFrames.GetValueOrDefault(application.Name);
@@ -5308,7 +5541,8 @@ static partial class FBoundStarProjectionErasure
                     is NullableRepresentationFrame.Role.Ordinary or NullableRepresentationFrame.Role.Nullable,
                 // An exact declaration proof does not make an existential argument reifiable. Its existing
                 // constrained-storage projection must choose a valid bound, not manufacture G<Object> for G<*>.
-                preserveConstructedHead: _nativeProofs?.ExactTypeArgument(application.Name, index) == true
+                preserveConstructedHead: (nativeArguments && PreservesNativeWitnessHead(argument, owners, refs)
+                        || _nativeProofs?.ExactTypeArgument(application.Name, index) == true)
                     && !ContainsExistentialProjection(argument)
                     || frame != null && frame.PhysicalSlot(index).Representation
                     is NullableRepresentationFrame.Role.Ordinary or NullableRepresentationFrame.Role.Nullable
@@ -5328,7 +5562,7 @@ static partial class FBoundStarProjectionErasure
                 && RequiresOpaqueVariantAlias(f, owners, refs, localClrAliases):
                 return new TypeNode.Fqn("kotlin.Any");
             case TypeNode.Fqn f when !boundDeclaration
-                && RequiresKotlinVariantCarrier(f, owners, refs)
+                && RequiresKotlinValueCarrier(f, owners, refs)
                 && TryExistentialCarrier(f.Name, owners, refs, out var variantCarrier):
                 return new TypeNode.Fqn(variantCarrier);
             case TypeNode.Fqn { Args: { } nestedArgs } nestedForeign
@@ -5384,9 +5618,11 @@ static partial class FBoundStarProjectionErasure
             case TypeNode.Fqn { Args: { } args } f:
                 return new TypeNode.Fqn(f.Name, Arguments(f));
             case TypeNode.Nullable n: return new TypeNode.Nullable(RewriteType(
-                n.Of, owners, refs, boundDeclaration, localClrAliases, preserveArrayShape: preserveArrayShape));
+                n.Of, owners, refs, boundDeclaration, localClrAliases,
+                preserveConstructedHead: preserveConstructedHead, preserveArrayShape: preserveArrayShape));
             case TypeNode.Oblivious o: return new TypeNode.Oblivious(RewriteType(
-                o.Of, owners, refs, boundDeclaration, localClrAliases, preserveArrayShape: preserveArrayShape));
+                o.Of, owners, refs, boundDeclaration, localClrAliases,
+                preserveConstructedHead: preserveConstructedHead, preserveArrayShape: preserveArrayShape));
             case TypeNode.Array a:
                 if (!boundDeclaration && !preserveArrayShape && GenericArrayStorageLowering.NeedsStorage(a))
                     return new TypeNode.Fqn("System.Array");
@@ -5395,9 +5631,11 @@ static partial class FBoundStarProjectionErasure
                     return new TypeNode.Array(writableElement, a.Rank, a.SzArray);
                 return new TypeNode.Array(RewriteType(
                     a.Elem, owners, refs, boundDeclaration, localClrAliases,
+                    preserveConstructedHead: PreservesNativeWitnessHead(a.Elem, owners, refs),
                     preserveArrayShape: preserveArrayShape), a.Rank, a.SzArray);
             case TypeNode.ByRef b: return new TypeNode.ByRef(RewriteType(
-                b.Of, owners, refs, boundDeclaration, localClrAliases, preserveArrayShape: true));
+                b.Of, owners, refs, boundDeclaration, localClrAliases,
+                preserveConstructedHead: PreservesNativeWitnessHead(b.Of, owners, refs), preserveArrayShape: true));
             case TypeNode.Mod m: return new TypeNode.Mod(m.Req,
                 RewriteType(m.M, owners, refs, boundDeclaration, localClrAliases),
                 RewriteType(m.Of, owners, refs, boundDeclaration, localClrAliases));

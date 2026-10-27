@@ -40,10 +40,21 @@ private class KotlinBoundOwner<Tag, T> where T : ForeignBoundBase<Tag> {
 private fun <Tag, T> constructForeignKotlinBound(): Boolean where T : ForeignBoundBase<Tag> =
     KotlinBoundOwner<Tag, T>().probe()
 
+private class KotlinMethodBoundOwner<Tag, T> where T : ForeignBoundBase<Tag> {
+    fun probe(): Boolean = ForeignKotlinBoundApi.Probe<Tag, T>()
+}
+private fun <Tag, T> callForeignKotlinBound(): Boolean where T : ForeignBoundBase<Tag> =
+    ForeignKotlinBoundApi.Probe<Tag, T>()
+private fun <Tag, T> sourceBoundOnly(value: T): T where T : ForeignBoundBase<Tag> = value
+
 class DependentCallableFrameTests {
     @TestAttribute fun foreignClrConstraintsRetainTheirExactKotlinBoundHead() {
         check(KotlinBoundOwner<String, ForeignBoundBase<String>>().probe())
         check(constructForeignKotlinBound<String, ForeignBoundBase<String>>())
+        check(KotlinMethodBoundOwner<String, ForeignBoundBase<String>>().probe())
+        check(callForeignKotlinBound<String, ForeignBoundBase<String>>())
+        val source = ForeignBoundBase<String>()
+        check(sourceBoundOnly<String, ForeignBoundBase<String>>(source) === source)
     }
 
     @TestAttribute fun importedNativeProofRowsPreserveWitnessAndStorageFrames() {

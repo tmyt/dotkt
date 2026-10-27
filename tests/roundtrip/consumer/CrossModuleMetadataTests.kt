@@ -43,6 +43,8 @@ import genq.GenericSlots
 import genq.FunctionSlots
 import genq.InheritedNullableMiddle
 import genq.SlotDerived
+import genq.SlotBase
+import genq.SlotConsumer
 import genq.holderOf
 import genq.invokeNullable
 import genq.invokeNullableValue
@@ -268,6 +270,12 @@ class CrossModuleCaptureTests {
     // receiver's concrete instantiation so the collection reads Kotlin-format, not the raw BCL List.
 }
 
+private interface LocalProjectedSink<T> { fun write(value: T) }
+private class LocalAnySink : LocalProjectedSink<Any> { override fun write(value: Any) {} }
+private class LocalProjectedHolder<M : LocalProjectedSink<in String>>(private val value: M) {
+    fun write(text: String): M { value.write(text); return value }
+}
+
 class GenericMetadataRoundtripTests {
     @TestAttribute
     fun genericMemberTypeVariablesRoundTrip() {
@@ -326,10 +334,19 @@ class GenericMetadataRoundtripTests {
         val functionProperty: (String?) -> String = functionSlots.functionProperty
         ClassicAssert.AreEqual("property-null", functionProperty(null))
 
-        // The public CLR forwarding slot is synthesized after the initial erasure pass. Its parameter carrier must be
-        // propagated from SlotConsumer<T> and remain callable through the concrete derived type after re-import.
+        // Physical forwarding methods must not become new Kotlin declarations. The concrete, base and interface
+        // source views retain their selected inherited declaration and its nullable parameter through re-import.
         val derived = SlotDerived<String>()
         ClassicAssert.AreEqual("bridge", derived.accept(Slot<String?>("bridge")))
+        ClassicAssert.AreEqual("bridge-null", derived.accept(Slot(null)))
+        val base: SlotBase<String> = derived
+        ClassicAssert.AreEqual("base", base.accept(Slot("base")))
+        val contract: SlotConsumer<String> = derived
+        ClassicAssert.AreEqual("interface", contract.accept(Slot("interface")))
+        ClassicAssert.AreEqual("bridge-null", contract.accept(Slot(null)))
+        val ints = SlotDerived<Int>()
+        ClassicAssert.AreEqual("42", ints.accept(Slot(42)))
+        ClassicAssert.AreEqual("bridge-null", ints.accept(Slot(null)))
 
         // The inherited nullable-generic slot remains wired when reached through the intermediate base after re-import.
         // The synthetic lowering fixture separately forces a descriptor owner distinct from its CLR declarer.
@@ -620,6 +637,8 @@ class GenericMetadataRoundtripTests {
         ClassicAssert.AreEqual("callable", aliasProjectionDestination[0])
         val boundHolder = ReferencedUseSiteBoundHolder(projectedInput)
         ClassicAssert.IsTrue(boundHolder.write("class-bound") === projectedInput)
+        val localInput: LocalProjectedSink<in String> = LocalAnySink()
+        ClassicAssert.IsTrue(LocalProjectedHolder(localInput).write("local-class-bound") === localInput)
         val properties = referencedUseSiteProperties()
         properties.input.write("property-write")
         ClassicAssert.AreEqual("property-output", properties.output.read())

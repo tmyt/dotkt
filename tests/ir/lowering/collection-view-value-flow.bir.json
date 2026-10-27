@@ -549,8 +549,13 @@
           }
         },
         {
-          "k": "exprStmt",
-          "expr": {
+          "k": "var",
+          "name": "ordinaryCellRead",
+          "type": {
+            "t": "fqn", "name": "kotlin.collections.List",
+            "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+          },
+          "init": {
             "k": "field",
             "ownerType": {
               "t": "fqn",
@@ -593,8 +598,13 @@
           }
         },
         {
-          "k": "exprStmt",
-          "expr": {
+          "k": "var",
+          "name": "nativeCellRead",
+          "type": {
+            "t": "fqn", "name": "System.Collections.Generic.IList",
+            "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+          },
+          "init": {
             "k": "field",
             "ownerType": {
               "t": "fqn",

@@ -1038,6 +1038,7 @@ internal sealed class CompanionReferenceCatalog
         int PhysicalOwnerArity);
 
     private readonly Dictionary<string, CompanionCatalogEntry> _entries;
+    private readonly IReadOnlyDictionary<string, CompanionCatalogEntry[]> _classifierEntries;
 
     private CompanionReferenceCatalog(IEnumerable<CompanionCatalogEntry> entries)
     {
@@ -1053,6 +1054,15 @@ internal sealed class CompanionReferenceCatalog
                     $"companion carrier '{entry.MetadataName}' is ambiguous for assembly '{entry.AssemblyIdentity}'");
             _entries[key] = entry;
         }
+        // TypeNode classifiers use the BIR dotted owner path; CLR signatures use '+' for nesting. Both keys
+        // come from the discovered metadata definition, and only the trusted companion carrier supplies its
+        // Kotlin identity. No source name is reconstructed from a compiler-generated spelling.
+        _classifierEntries = _entries.Values.SelectMany(entry => new[] {
+                (Name: entry.MetadataName, Entry: entry),
+                (Name: entry.MetadataName.Replace('+', '.'), Entry: entry) })
+            .GroupBy(item => item.Name, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.Select(item => item.Entry).Distinct().ToArray(),
+                StringComparer.Ordinal);
     }
 
     public static CompanionReferenceCatalog Discover(IEnumerable<ReferenceMetadataSnapshot> inputs)
@@ -1154,6 +1164,19 @@ internal sealed class CompanionReferenceCatalog
 
     private bool TryGet(string assemblyIdentity, string metadataName, out CompanionCatalogEntry entry) =>
         _entries.TryGetValue(Key(assemblyIdentity, metadataName), out entry!);
+
+    public bool TryResolveClassifier(string name, out CompanionCatalogEntry entry)
+    {
+        entry = null!;
+        if (!_classifierEntries.TryGetValue(name, out var matches)) return false;
+        var selected = matches[0];
+        if (matches.Any(candidate => candidate.SemanticPackage != selected.SemanticPackage
+            || !candidate.SemanticClasses.SequenceEqual(selected.SemanticClasses)
+            || candidate.DefinitionPath != selected.DefinitionPath))
+            throw new InvalidDataException($"companion classifier '{name}' has conflicting definitions");
+        entry = selected;
+        return true;
+    }
 
     private static string Key(string assemblyIdentity, string metadataName) =>
         assemblyIdentity + "\0" + metadataName;
@@ -5865,10 +5888,14 @@ internal sealed class AssemblyScanner : IDisposable
             methodHandle, MetadataAttributes.DotKtNs + "KotlinSourceMethodAttribute");
         if (document is null) return null;
         var root = document.RootElement;
-        if (root.ValueKind != JsonValueKind.Object || root.EnumerateObject().Count() != 1 ||
+        if (root.ValueKind != JsonValueKind.Object || root.EnumerateObject().Count() is not (1 or 2) ||
             !root.TryGetProperty("name", out var nameNode) || nameNode.ValueKind != JsonValueKind.String ||
             string.IsNullOrEmpty(nameNode.GetString()))
             throw new InvalidDataException("malformed [KotlinSourceMethod] payload");
+        if (root.EnumerateObject().Count() == 2 &&
+            (!root.TryGetProperty("sourceDeclaration", out var source) || source.ValueKind != JsonValueKind.String
+                || string.IsNullOrEmpty(source.GetString())))
+            throw new InvalidDataException("malformed [KotlinSourceMethod] source declaration");
         return nameNode.GetString();
     }
 
@@ -7761,6 +7788,7 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
     private readonly ExternalSignatureDecoderCache _externalSignatureDecoders;
     private readonly PublicTypeCatalog _publicTypeCatalog;
     private readonly IReadOnlyDictionary<TypeDefinitionHandle, int> _semanticTypeNames;
+    private readonly IReadOnlyDictionary<string, int> _semanticCompanionClassifiers;
     private readonly bool _restoreKotlinCollections;
     private readonly IReadOnlyDictionary<string, TypeDefinitionHandle> _delegateDefinitions;
     private readonly Dictionary<KType, DelegateCatalogEntry> _externalDelegateTypes =
@@ -7808,6 +7836,9 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
         _delegateDefinitions = seeds.DelegateDefinitions;
         _seedValueTypeNames = seeds.ValueTypeNames;
         _semanticTypeNames = semanticTypeNames ?? new Dictionary<TypeDefinitionHandle, int>();
+        _semanticCompanionClassifiers = _semanticTypeNames.ToDictionary(
+            association => DefinitionKotlinName(md, association.Key), association => association.Value,
+            StringComparer.Ordinal);
         _restoreKotlinCollections = attrs.IsDotKtAssembly;
     }
 
@@ -8360,6 +8391,9 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
     // name creates a different Kotlin classifier even when its rendered text looks similar.
     private KType NamedCarrierClassifier(string name)
     {
+        if (_semanticCompanionClassifiers.TryGetValue(name, out var companionName)) return Named(companionName);
+        if (_companionCatalog.TryResolveClassifier(name, out var companion))
+            return ExternalCompanion(companion, platform: false);
         var physical = SignatureDecoderSeeds.PhysicalType(_md, name);
         if (!physical.IsNil && _publicTypeCatalog.TryResolveDefinition(_md, physical, out var definition)
             && SignatureDecoderSeeds.Attributes(definition.Reader).IsDotKtAssembly)

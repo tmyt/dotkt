@@ -3,14 +3,15 @@
 +"type":{"t":"fqn","name":"System.IDisposable"},"method":"Dispose"
 +"declaringType":{"t":"fqn","name":"System.IDisposable"},"name":"Dispose"
 
-# A Kotlin collection's declaration now has distinct source/storage roles. Both arguments close to String,
-# while its MemberRef retains the declaration's storage parameter rather than guessing a CLR interface slot.
-+"ownerType":{"t":"fqn","name":"kotlin.collections.ArrayDeque\u00602","args":[{"t":"fqn","name":"System.String"},{"t":"fqn","name":"System.String"}]}
-+"declaringType":{"t":"fqn","name":"kotlin.collections.ArrayDeque\u00602","args":[{"t":"fqn","name":"System.String"},{"t":"fqn","name":"System.String"}]},"name":"add"
-+"parameterTypes":[{"t":"fqn","name":"System.Int32"},{"t":"tv","scope":"type","i":1}]
+# An ordinary Kotlin generic collection uses its declaration-owned carrier, retaining ArrayDeque<String>
+# in KotlinType metadata. Its resolved MemberRefs still distinguish the selected two- and one-argument overloads.
++"ownerType":{"t":"fqn","name":"kotlin.collections.ArrayDeque$star"}
++"declaringType":{"t":"fqn","name":"kotlin.collections.ArrayDeque$star"},"name":"$star$add$20"
++"parameterTypes":[{"t":"fqn","name":"System.Int32"},{"t":"fqn","name":"System.Object"}]
++"bytes":"eyJ0IjoiZnFuIiwibmFtZSI6ImtvdGxpbi5jb2xsZWN0aW9ucy5BcnJheURlcXVlIiwiYXJncyI6W3sidCI6ImZxbiIsIm5hbWUiOiJrb3RsaW4uU3RyaW5nIn1dfQ=="
 
-# The one-argument add retains the selected Kotlin method's Boolean result and exact storage parameter.
-+"name":"add","genericArity":0,"returnType":{"t":"fqn","name":"System.Boolean"},"callingConvention":"instance","parameterTypes":[{"t":"tv","scope":"type","i":1}]
+# The one-argument add retains the selected Kotlin method's Boolean result and carrier value parameter.
++"name":"$star$add$19","genericArity":0,"returnType":{"t":"fqn","name":"System.Boolean"},"callingConvention":"instance","parameterTypes":[{"t":"fqn","name":"System.Object"}]
 
 # A local subclass with no declaration of its own still selects the inherited external interface slot.
 # Its opaque Kotlin collection receiver goes through the exact-token runtime, with the static closure retained.

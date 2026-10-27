@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import base64
 import json
 import sys
 
@@ -96,15 +97,36 @@ if len(nullable_calls) != 1 or nullable_calls[0].get("ret") != object_type or le
         f"calls={nullable_calls!r}, casts={nullable_casts!r}"
     )
 
-byref_object = {"t": "byRef", "of": object_type}
+field_owner = next(owner for owner in root["types"] if owner.get("name") == "InlinePrivateNullableField")
+field = next(field for field in field_owner["fields"] if field.get("name") == "stored")
+nullable_slot = {"t": "tv", "scope": "type", "i": 1}
+if field.get("type") != nullable_slot:
+    raise SystemExit(f"native nullable field lost its declared companion slot: {field!r}")
+field_logical = [json.loads(base64.b64decode(attribute["args"][1]["bytes"]))
+                 for attribute in field.get("attrs", [])
+                 if attribute.get("attr", {}).get("name")
+                 == "DotKt.Runtime.CompilerServices.KotlinNullableGenericAttribute"]
+if field_logical != [{"t": "nullable", "of": {"t": "tv", "scope": "type", "i": 0}}]:
+    raise SystemExit(f"native field lost its logical T? metadata: {field_logical!r}")
+field_carrier = {"t": "fqn", "name": "InlinePrivateNullableField$star"}
+field_bridges = [method for method in field_owner["methods"]
+                 if any(slot.get("owner") == field_carrier and slot.get("params") == []
+                        and slot.get("ret") == {"t": "fqn", "name": "System.Object"}
+                        for slot in method.get("clrInterfaceImpls", []))]
+if len(field_bridges) != 1:
+    raise SystemExit(f"native field lost its ordinary value getter bridge: {field_bridges!r}")
+bridge = field_bridges[0]
+boxed_reads = [node for node in objects(bridge["body"])
+               if node.get("k") == "cast" and node.get("type") == {"t": "fqn", "name": "System.Object"}
+               and node.get("e", {}).get("k") == "callInstance" and node["e"].get("ret") == nullable_slot]
+if len(boxed_reads) != 1:
+    raise SystemExit(f"native field getter did not box its actual nullable slot: {boxed_reads!r}")
 field_loads = [
     node
     for node in objects(root)
-    if node.get("k") == "byrefLoad"
-    and node.get("elem") == object_type
-    and node.get("ptr", {}).get("k") == "callStatic"
-    and node["ptr"].get("method", "").endswith("$stored$invoke")
-    and node["ptr"].get("ret") == byref_object
+    if node.get("k") == "callInstance" and node.get("ownerType") == field_carrier
+    and node.get("method") == bridge["name"] and node.get("sig") == []
+    and node.get("ret") == {"t": "fqn", "name": "System.Object"}
 ]
 field_casts = [
     node
@@ -115,10 +137,10 @@ field_casts = [
 ]
 if len(field_loads) != 2 or len(field_casts) != 2:
     raise SystemExit(
-        "the inline private nullable field must use byref<object> accessors before nullable Int projection: "
+        "the inlined private native field must use its carrier getter before nullable Int projection: "
         f"loads={field_loads!r}, casts={field_casts!r}"
     )
 
 print(
-    "UnsafeAccessor distinguishes unchecked-generic object ABI from nullable-generic method/field erasure"
+    "unchecked generic method ABI and native nullable field layout remain distinct from ordinary value reads"
 )

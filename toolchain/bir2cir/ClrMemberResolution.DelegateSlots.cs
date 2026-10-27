@@ -249,10 +249,11 @@ static partial class ClrMemberResolution
     /// rewrite has to see the construction's final `funcType`.
     /// </remarks>
     public static void MaterializeDelegateSlots(JsonNode root, ReferenceMetadataIndex refs,
-        IReadOnlySet<string> localTypes)
+        IReadOnlySet<string> localTypes, IReadOnlyDictionary<string, string> localCarriers = null)
     {
         if (root is not JsonObject file) return;
         _refs = refs;
+        _localCarriers = localCarriers;
         _localTypes = localTypes ?? new HashSet<string>();
         _adapterHost = file;
         _adapterScope = string.Concat(((file["fileClass"] as JsonValue)?.GetValue<string>() ?? "File")
@@ -326,10 +327,26 @@ static partial class ClrMemberResolution
             // because they represent the same source parameter. Native witnesses
             // and storage companions cross through the ordinary value adapter.
             && (IsObject(left) || IsObject(right) || left is TypeNode.Tv || right is TypeNode.Tv);
+        static TypeNode Core(TypeNode type) => type switch {
+            TypeNode.Nullable nullable => Core(nullable.Of),
+            TypeNode.Oblivious oblivious => Core(oblivious.Of),
+            _ => type,
+        };
+        static bool NeedsNominalDowncast(TypeNode value, TypeNode destination) =>
+            Core(destination) is TypeNode.Fqn { Args: { Length: > 0 } } exact
+            && Core(value) is TypeNode.Fqn carrier
+            && (_localCarriers?.TryGetValue(exact.Name, out var local) == true && local == carrier.Name
+                || _refs?.TryExistentialPhysicalOwner(exact.Name, out var referenced) == true
+                    && referenced == carrier.Name);
         if (natural.DelegateParams.Length != target.DelegateParams.Length)
             throw new InvalidOperationException("Delegate slot parameter count differs from its construction");
-        return natural.DelegateParams.Zip(target.DelegateParams, Seam).Any(seam => seam)
-            || Seam(natural.Ret, target.Ret);
+        // Returns flow from the natural method to the destination delegate; parameters flow in reverse.
+        // Exact->carrier reference covariance/contravariance is already delegate-compatible. Only the proven
+        // carrier->exact direction needs the value adapter's checked conversion, never a byref conversion.
+        return natural.DelegateParams.Zip(target.DelegateParams,
+                (source, destination) => Seam(source, destination) || NeedsNominalDowncast(destination, source))
+            .Any(seam => seam)
+            || Seam(natural.Ret, target.Ret) || NeedsNominalDowncast(natural.Ret, target.Ret);
     }
 
     static bool NeedsSlotAdapter(TypeNode.Fn natural, TypeNode.Fn target) =>

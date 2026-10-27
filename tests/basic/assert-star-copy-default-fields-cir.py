@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Assert star-copy defaults and owner-dependent results stay on exact existential carriers."""
 
+import base64
 import json
 import sys
 
@@ -213,28 +214,40 @@ if len(inherited_helpers) != 1:
         "CIR: expected one reordered inherited-frame helper, found "
         f"{len(inherited_helpers)}"
     )
-exact_nested = {
-    "t": "fqn",
-    "name": "DefaultArgStarNested",
-    "args": [{"t": "fqn", "name": "System.String"}] * 2,
-}
 inherited_locals = [
     node
     for node in inherited_helpers[0].get("body", [])
     if isinstance(node, dict)
     and node.get("k") == "var"
-    and node.get("type") == exact_nested
+    and node.get("type") == nested_carrier
     and isinstance(node.get("init"), dict)
     and node["init"].get("k") == "cast"
-    and node["init"].get("type") == exact_nested
+    and node["init"].get("type") == nested_carrier
     and node["init"].get("e", {}).get("ownerType", {}).get("name")
     == "DefaultArgStarBase$star"
     and node["init"].get("e", {}).get("ret") == nested_carrier
 ]
 if len(inherited_locals) != 1:
     raise SystemExit(
-        "CIR: Base<B> must project Derived<*, String>'s inherited result to Nested<String>: "
+        "CIR: the inherited nested result must use its ordinary value carrier: "
         f"{inherited_locals!r}"
     )
+derived = next(item for item in root["types"] if item.get("name") == "DefaultArgStarDerived")
+if derived.get("base") != {"t": "fqn", "name": "DefaultArgStarBase", "args": [
+        {"t": "tv", "scope": "type", "i": 1}, {"t": "tv", "scope": "type", "i": 2}]}:
+    raise SystemExit(f"CIR: inherited construction lost B's ordinary/storage frames: {derived.get('base')!r}")
+logical_parameters = [json.loads(base64.b64decode(attribute["args"][1]["bytes"]))
+                      for attribute in inherited_helpers[0]["params"][0].get("attrs", [])
+                      if attribute.get("attr", {}).get("name")
+                      == "DotKt.Runtime.CompilerServices.KotlinTypeAttribute"]
+if logical_parameters != [{"t": "fqn", "name": "DefaultArgStarDerived", "args": [
+        {"t": "star"}, {"t": "fqn", "name": "kotlin.String"}]}]:
+    raise SystemExit(f"CIR: reordered inherited source frame was lost: {logical_parameters!r}")
+typed_reads = [node for node in objects(inherited_helpers[0]["body"])
+               if node.get("k") == "cast" and node.get("type") == {"t": "fqn", "name": "System.String"}
+               and node.get("e", {}).get("ownerType") == nested_carrier
+               and node["e"].get("ret") == {"t": "fqn", "name": "System.Object"}]
+if len(typed_reads) != 1:
+    raise SystemExit(f"CIR: Base<B> did not retain the inherited result's String use: {typed_reads!r}")
 
 print("star-projected data-class reads and nested results use exact existential carriers")

@@ -78,7 +78,8 @@ if len(arguments) != 2 or arguments[1].get("k") != "cast" or arguments[1].get("t
 
 public_calls = [
     node
-    for node in objects(root.get("types", []))
+    for owner in root.get("types", []) if owner.get("name") != "PublicNullableCallable"
+    for node in objects(owner.get("methods", []))
     if node.get("k") == "callInstance" and node.get("method") == "echoPublic"
 ]
 if len(public_calls) != 1:
@@ -91,5 +92,18 @@ expected_public_owner = {
 }
 if public_call.get("ownerType") != expected_public_owner or public_call.get("sig") != [physical_object]:
     raise SystemExit(f"inherited public call disagrees with its local MethodDef owner/ABI: {public_call!r}")
+public_owner = next(owner for owner in root["types"] if owner.get("name") == "PublicNullableCallable")
+carrier_bridges = [method for method in public_owner["methods"]
+                   if any(slot.get("owner") == {"t": "fqn", "name": "PublicNullableCallable$star"}
+                          and slot.get("params") == [physical_object]
+                          for slot in method.get("clrInterfaceImpls", []))]
+if len(carrier_bridges) != 1:
+    raise SystemExit(f"public member lost its exact carrier slot: {carrier_bridges!r}")
+bridge_calls = [node for node in objects(carrier_bridges[0]["body"])
+                if node.get("k") == "callInstance" and node.get("method") == "echoPublic"]
+if len(bridge_calls) != 1 or bridge_calls[0].get("ownerType") != {
+        "t": "fqn", "name": "PublicNullableCallable", "args": [{"t": "tv", "scope": "type", "i": 0}]
+} or bridge_calls[0].get("sig") != [physical_object]:
+    raise SystemExit(f"public carrier bridge lost its selected declaration: {bridge_calls!r}")
 
 print("inherited callable references use their local base MethodDef owner and physical ABI")

@@ -2779,6 +2779,18 @@ sealed partial class ReferenceMetadataIndex
         return true;
     }
 
+    // Address-taking selects the actual declared FieldDef, never its synthesized ordinary-value getter.
+    internal bool HasReferencedFieldLocation(TypeNode.Fqn owner, string name, bool isStatic)
+    {
+        if (owner == null || name == null) return false;
+        var physical = RecordedPhysicalTypeName(owner.Name);
+        var declaration = ResolveRefType(physical, physical.Contains('`') || physical.Contains('+')
+            ? 0 : owner.Args?.Length ?? 0);
+        var field = declaration?.GetField(name, BindingFlags.Public | BindingFlags.NonPublic
+            | BindingFlags.DeclaredOnly | (isStatic ? BindingFlags.Static : BindingFlags.Instance));
+        return field != null && !field.IsLiteral;
+    }
+
     // Resolve the physical member exposed by a referenced generic's compiler-generated existential. A member whose
     // signature mentions an owner type parameter cannot reuse the Kotlin name: on G<object> the erased bridge would
     // collide with the real closed-generic slot, so FBoundStarProjectionErasure gives it an unspeakable physical name.
@@ -2948,12 +2960,19 @@ sealed partial class ReferenceMetadataIndex
                 && m.SourcePropertyName == selectedSourceMember && m.AccessorKind == selectedAccessorKind
                 && DescribesSelectedDeclaration(m)).ToList();
         }
+        else if (declarations[0].DeclarationId is string selectedIdentity)
+        {
+            // The selected source and its allocated existential MethodDef share an authored edge, even when
+            // intrinsic/indexer lowering gave them different names. A known declaration ID is never a name lookup.
+            // Source metadata and the physical slot can use different classifier vocabularies. Their explicit
+            // declaration association, not another signature match across those vocabularies, owns this edge.
+            candidates = shapedCandidates.Where(m => m.SourcePropertyName == null
+                && m.SourceMethodDeclaration == selectedIdentity).ToList();
+        }
         else
         {
-            // Owner-dependent slots carry their Kotlin source-method identity. Prefer that authoritative identity over
-            // an ordinary sibling whose physical @ClrName happens to equal it. Owner-independent slots intentionally
-            // retain the selected declaration's MethodDef name and need no source carrier, so use that exact physical
-            // identity only when no semantically matching carried slot exists.
+            // Generated declarations without a Kotlin declaration ID retain their explicit source-method name or
+            // unchanged physical descriptor. This role is distinct from selected source declarations above.
             var carriedCandidates = shapedCandidates.Where(m => m.SourcePropertyName == null
                 && m.SourceMethodName == selectedSourceMember && DescribesSelectedDeclaration(m)).ToList();
             candidates = carriedCandidates.Count != 0
@@ -3510,7 +3529,7 @@ sealed partial class ReferenceMetadataIndex
 
     // Late bridge selection compares physical constraints, even while local declarations still use Kotlin
     // classifier names. Lower both sides into the same vocabulary; early semantic selection remains exact.
-    TypeNode PhysicalConstraintType(TypeNode type) => BirTypeLowering.CanonicalPhysicalSlotType(
+    internal TypeNode PhysicalConstraintType(TypeNode type) => BirTypeLowering.CanonicalPhysicalSlotType(
         BirTypeLowering.LowerPhysicalType(type, Aliases, IsValueType, PhysicalTypeNames,
             typeArg: true, nullableFrames: NullableTypeFrames));
 
@@ -4678,6 +4697,26 @@ sealed partial class ReferenceMetadataIndex
                 && member.SourcePropertyAssociation != null
                 && member.SourcePropertyAssociation == sources[0].PropertyAssociation)
             .ToList();
+        return ReferencedMethodImplRows(owner, sources[0], bridges);
+    }
+
+    // A private generated method's explicit source-declaration association is independent of its erased signature.
+    // Consume only that exact relation; same-name source overloads are never a bridge-selection fallback.
+    public IReadOnlyList<ReferencedPropertyMethodImpl> ReferencedMethodImpls(string ownerFqn, string sourceDeclaration)
+    {
+        var owner = StripGenericArity(DottedFqn(BareOwnerFqn(ownerFqn)));
+        if (sourceDeclaration == null || !_dotKtOwners.Contains(owner)
+            || !TryMembersByBirOwner(owner, out var members)) return Array.Empty<ReferencedPropertyMethodImpl>();
+        var sources = members.Where(member => member.DeclarationId == sourceDeclaration).ToList();
+        if (sources.Count != 1) return Array.Empty<ReferencedPropertyMethodImpl>();
+        return ReferencedMethodImplRows(owner, sources[0], members.Where(member =>
+            member.SourceMethodDeclaration == sourceDeclaration
+            && member.ParamTypeNodes != null && member.ReturnTypeNode != null));
+    }
+
+    IReadOnlyList<ReferencedPropertyMethodImpl> ReferencedMethodImplRows(string owner, MemberBinding source,
+        IEnumerable<MemberBinding> bridges)
+    {
         var result = new List<ReferencedPropertyMethodImpl>();
         foreach (var bridge in bridges)
         {
@@ -4698,7 +4737,7 @@ sealed partial class ReferenceMetadataIndex
                         declarationTypeParams = declarationCandidates[0].MethodTypeParams;
                 }
                 result.Add(new ReferencedPropertyMethodImpl(
-                    sources[0].Name,
+                    source.Name,
                     implementation.DeclarationOwner,
                     implementation.DeclarationMember,
                     bridge.ParamTypeNodes,
@@ -5432,10 +5471,11 @@ sealed partial class ReferenceMetadataIndex
                         var carriedProperty = dotKtAuthored
                             ? KotlinPropertyAccessorPayload(method.GetCustomAttributesData(), method.DeclaringType?.Assembly)
                             : null;
-                        var sourceMethodName = dotKtAuthored &&
-                            !HasAttribute(method.GetCustomAttributesData(), CompilerGeneratedAttr)
-                            ? KotlinSourceMethodName(method.GetCustomAttributesData(), method.DeclaringType?.Assembly)
+                        var sourceMethod = dotKtAuthored
+                            ? KotlinSourceMethodPayload(method.GetCustomAttributesData(), method.DeclaringType?.Assembly)
                             : null;
+                        var sourceMethodName = !HasAttribute(method.GetCustomAttributesData(), CompilerGeneratedAttr)
+                            ? sourceMethod?.Name : null;
                         var innerConstructorFactory = dotKtAuthored
                             ? KotlinInnerConstructorFactoryPayload(
                                 method.GetCustomAttributesData(), method.DeclaringType?.Assembly)
@@ -5559,6 +5599,7 @@ sealed partial class ReferenceMetadataIndex
                             innerConstructorFactory?.TypeArguments,
                             SemanticMethodTypeParameters(method, dotKtAuthored, declarationIdentity?.NullableFrame), declarationIdentity?.NullableFrame)
                         {
+                            SourceMethodDeclaration = sourceMethod?.SourceDeclaration,
                             ValueAdapter = dotKtAuthored ? method.GetCustomAttributesData().SingleOrDefault(attribute =>
                                 attribute.AttributeType.FullName == ValueRepresentationLowering.MemberAttribute)
                                 ?.ConstructorArguments[0].Value as string : null,
@@ -6844,7 +6885,9 @@ sealed partial class ReferenceMetadataIndex
         return new PropertyAccessorPayloadInfo(name, kind, association, sourceAssociation);
     }
 
-    static string KotlinSourceMethodName(
+    sealed record SourceMethodPayload(string Name, string SourceDeclaration);
+
+    static SourceMethodPayload KotlinSourceMethodPayload(
         IList<CustomAttributeData> attrs, Assembly declaringAssembly)
     {
         var trusted = attrs.Where(c =>
@@ -6856,11 +6899,15 @@ sealed partial class ReferenceMetadataIndex
             throw new InvalidDataException("expected exactly one trusted [KotlinSourceMethod]");
         var payload = CarrierJsonOf(attrs, declaringAssembly, KotlinSourceMethodAttr) as JsonObject
             ?? throw new InvalidDataException("malformed [KotlinSourceMethod] payload");
-        if (payload.Count != 1 ||
+        if (payload.Count is not (1 or 2) ||
             payload["name"] is not JsonValue nameValue ||
             !nameValue.TryGetValue<string>(out var name) || string.IsNullOrEmpty(name))
             throw new InvalidDataException("malformed [KotlinSourceMethod] payload");
-        return name;
+        string sourceDeclaration = null;
+        if (payload.Count == 2 && (payload["sourceDeclaration"] is not JsonValue source
+            || !source.TryGetValue<string>(out sourceDeclaration) || string.IsNullOrEmpty(sourceDeclaration)))
+            throw new InvalidDataException("malformed [KotlinSourceMethod] source declaration");
+        return new SourceMethodPayload(name, sourceDeclaration);
     }
 
     sealed record InnerConstructorFactoryPayloadInfo(
@@ -7801,6 +7848,55 @@ sealed partial class ReferenceMetadataIndex
     internal static void SelfTest()
     {
         SelfTestRichEnumSelection();
+        var nativeDescriptors = Build(new[] { typeof(object).Assembly.Location });
+        nativeDescriptors._ownerAlias["ProofObject"] = "System.Object";
+        nativeDescriptors._ownerAlias["kotlin.Int"] = "System.Int32";
+        var aliasCall = JsonNode.Parse("""
+          {"k":"clrGenericStatic","type":{"t":"fqn","name":"System.Runtime.CompilerServices.Unsafe"},
+           "method":"As","typeArgs":[{"t":"tv","scope":"method","i":0}],
+           "resolvedMemberParams":[{"t":"fqn","name":"ProofObject"}]}
+          """).AsObject();
+        var primitiveCall = JsonNode.Parse("""
+          {"k":"clrGenericStatic","type":{"t":"fqn","name":"System.MemoryExtensions"},
+           "method":"AsSpan","typeArgs":[{"t":"tv","scope":"method","i":0}],
+           "resolvedMemberParams":[{"t":"array","elem":{"t":"tv","scope":"method","i":0}},
+             {"t":"fqn","name":"kotlin.Int"},{"t":"fqn","name":"kotlin.Int"}]}
+          """).AsObject();
+        if (ClrMemberResolution.SelectedGenericTypeParameters(aliasCall, nativeDescriptors).Count != 1
+            || ClrMemberResolution.SelectedGenericTypeParameters(primitiveCall, nativeDescriptors).Count != 1)
+            throw new InvalidOperationException("Native proof selection lost formal alias/primitive physical lowering");
+        var nativeClass = ClrMemberResolution.SelectedGenericTypeParameters(
+            new TypeNode.Fqn("System.Runtime.CompilerServices.Unsafe"), "As", 1, instance: false,
+            new TypeNode[] { new TypeNode.Fqn("ProofObject") }, nativeDescriptors);
+        if (nativeClass[0]["specialConstraints"] is not JsonArray flags
+            || !flags.Any(flag => flag?.GetValue<string>() == "class"))
+            throw new InvalidOperationException("Native proof selection required a source spelling for a CLR-only flag");
+        var ownerVariable = new TypeNode.Tv("type", 1);
+        TypeNode[] ConvertParameters(TypeNode argument) => new TypeNode[] {
+            new TypeNode.Fqn("System.Converter`2", new TypeNode[] { argument, new TypeNode.Tv("method", 0) }),
+        };
+        foreach (var argument in new TypeNode[] { ownerVariable, new TypeNode.Fqn("kotlin.String") })
+        {
+            var owner = new TypeNode.Fqn("System.Collections.Generic.List`1", new[] { argument });
+            if (ClrMemberResolution.SelectedGenericTypeParameters(owner, "ConvertAll", 1, true,
+                    ConvertParameters(argument), nativeDescriptors, new[] { argument }).Count != 1
+                || ClrMemberResolution.SelectedGenericTypeParameters(owner, "ConvertAll", 1, true,
+                    ConvertParameters(new TypeNode.Tv("type", 0)), nativeDescriptors).Count != 1)
+                throw new InvalidOperationException("Native proof selection confused override and open call owner frames");
+        }
+        var rejectedFrame = false;
+        try { ClrMemberResolution.SelectedGenericTypeParameters(
+            new TypeNode.Fqn("System.Collections.Generic.List`1", new TypeNode[] { ownerVariable }),
+            "ConvertAll", 1, true, ConvertParameters(new TypeNode.Tv("type", 0)), nativeDescriptors,
+            new TypeNode[] { ownerVariable }); }
+        catch (InvalidOperationException) { rejectedFrame = true; }
+        if (!rejectedFrame) throw new InvalidOperationException("A native override descriptor also accepted the unpermuted open frame");
+        var invalidDescriptor = aliasCall.DeepClone().AsObject();
+        invalidDescriptor["resolvedMemberParams"] = new JsonArray(TypeJson.Fqn("System.Int32"));
+        var rejected = false;
+        try { ClrMemberResolution.SelectedGenericTypeParameters(invalidDescriptor, nativeDescriptors); }
+        catch (InvalidOperationException) { rejected = true; }
+        if (!rejected) throw new InvalidOperationException("Native proof selection guessed from a unique method name");
         var physicalProofs = Build(new[] { typeof(object).Assembly.Location });
         physicalProofs._dotKtOwners.Add("System.Collections.Generic.List");
         if (physicalProofs.PhysicalOwnerTypeParamDeclarations("System.Collections.Generic.List`1") != null)
@@ -8515,6 +8611,7 @@ sealed record MemberBinding(string Owner, string Name, int ParamCount, string In
     // Capture the selected reference MethodDef while scanning it. A local type may shadow its owner
     // during stdlib self-compilation; resolving that owner again is not declaration identity.
     public TypeNode[] SignatureParameters { get; init; }
+    public string SourceMethodDeclaration { get; init; }
     public string ValueAdapter { get; init; }
     public string ValueSlot { get; init; }
     public bool SignatureAllocated { get; init; }

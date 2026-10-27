@@ -8,55 +8,79 @@ using DotKt.Bir;
 // applications use their declared frame; readonly aliases retain the same face in ordinary and nested slots.
 sealed class GenericRepresentationPolicy
 {
-    readonly IReadOnlyDictionary<string, string> _aliases;
+    internal const string NativeLocationKey = "_nativeLocation";
+    internal const string FieldAddressKey = "_nativeFieldAddress";
+    internal const string PhysicalDeclarationSignatureKey = "_physicalDeclarationSignature";
+    readonly Dictionary<string, string> _aliases;
     readonly ReferenceMetadataIndex _references;
-    readonly HashSet<string> _localOwners;
+    readonly Dictionary<string, JsonObject> _localDeclarations = new(StringComparer.Ordinal);
     readonly HashSet<string> _existentialOwners = new(StringComparer.Ordinal);
     readonly HashSet<JsonObject> _nativeFields = new();
-    readonly HashSet<(string Owner, string Name, bool Static)> _nativeFieldNames = new();
+    readonly HashSet<(string Owner, string Name, bool Static, string Receiver)> _nativeFieldNames = new();
 
     public GenericRepresentationPolicy(IReadOnlyDictionary<string, string> aliases,
         ReferenceMetadataIndex references = null, IEnumerable<JsonNode> roots = null)
     {
-        _aliases = aliases;
+        _aliases = new Dictionary<string, string>(aliases, StringComparer.Ordinal);
         _references = references;
-        _localOwners = new HashSet<string>(StringComparer.Ordinal);
         void Collect(JsonNode node)
         {
             if (node is not JsonObject declaration) return;
             if (declaration["kind"] != null && declaration["name"] is JsonValue name
                 && name.TryGetValue<string>(out var owner))
             {
-                _localOwners.Add(owner);
+                _localDeclarations[owner] = declaration;
                 if (FBoundStarProjectionErasure.IsSourceGeneric(declaration)) _existentialOwners.Add(owner);
             }
             foreach (var child in declaration["types"] as JsonArray ?? new JsonArray()) Collect(child);
             foreach (var cell in (declaration["refTypes"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
-                if (Text(cell["name"]) is string cellOwner) _localOwners.Add(cellOwner);
+                if (Text(cell["name"]) is string cellOwner) _localDeclarations[cellOwner] = cell;
         }
         var inputs = (roots ?? Array.Empty<JsonNode>()).ToArray();
         foreach (var root in inputs) Collect(root);
-        var fields = new Dictionary<(string Owner, string Name, bool Static), JsonObject>();
+        RecordNativeFields(inputs);
+    }
+
+    // Local ownership and declaration facts include aliases and generated physical types. Carrier eligibility is
+    // a separate source declaration decision; discovering a late physical type must never allocate it a carrier.
+    internal void RegisterLocalDefinitions(IReadOnlyDictionary<string, JsonObject> declarations,
+        IReadOnlyDictionary<string, string> aliases)
+    {
+        foreach (var (name, declaration) in declarations) _localDeclarations[name] = declaration;
+        foreach (var (name, target) in aliases) _aliases[name] = target;
+    }
+
+    internal JsonObject LocalDeclaration(string owner) => _localDeclarations.GetValueOrDefault(owner);
+    internal string BindingAlias(string owner) => owner == null ? null
+        : _aliases.GetValueOrDefault(ReferenceMetadataIndex.BareOwnerFqn(owner));
+
+    // Revisit newly materialized source/capture fields before value projection. Selected managed-reference
+    // parameter shapes own these locations; the late value-flow pass separately allocates exact native locals.
+    internal void RecordNativeFields(IEnumerable<JsonNode> roots)
+    {
+        var inputs = roots.ToArray();
+        var fields = new Dictionary<(string Owner, string Name, bool Static, string Receiver), JsonObject>();
         void IndexFields(JsonObject declaration)
         {
             var owner = Text(declaration["name"]) ?? Text(declaration["fileClass"]);
             foreach (var field in (declaration["fields"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
                 if (owner != null && Text(field["name"]) is string name
-                    && TypeJson.Read(field["type"]) is TypeNode.Tv)
+                    && TypeJson.Read(field["type"]) != null)
                 {
-                    var key = (owner, name, field["static"]?.GetValue<bool>() == true);
+                    var key = FieldKey(owner, name, field["static"]?.GetValue<bool>() == true, field);
                     fields.Add(key, field);
-                    // A published field is a native location even when this module never takes its address.
-                    // Property backing fields are private; compiler-generated captures are not user exports.
-                    if (Text(field["vis"]) != "private"
-                        && declaration["generated"]?.GetValue<bool>() != true)
+                    // An explicit field export requests native typed storage even without an address use.
+                    // An ordinary Kotlin property can also be published as a CLR field (notably a file value);
+                    // visibility alone does not turn its source-owned value slot into a native location.
+                    if ((field["attrs"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()
+                        .Any(attribute => TypeJson.OwnerName(attribute["attr"]) == "kotlin.clr.ClrField"))
                     {
                         _nativeFields.Add(field);
                         _nativeFieldNames.Add(key);
                     }
                 }
             foreach (var cell in (declaration["refTypes"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
-                if (Text(cell["name"]) is string cellOwner) fields.Add((cellOwner, "v", false), cell);
+                if (Text(cell["name"]) is string cellOwner) fields.Add(FieldKey(cellOwner, "v", false, cell), cell);
             foreach (var child in (declaration["types"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
                 IndexFields(child);
         }
@@ -70,7 +94,9 @@ sealed class GenericRepresentationPolicy
                 // The selected declaration supplies the managed-reference shape.
                 // Decide field layout while source bodies still exist in both
                 // reference and runtime builds, not after reference-body removal.
-                if (Text(obj["k"]) is "callStatic" or "callInstance" or "constrainedCall" or "callLocal" or "new"
+                var kind = Text(obj["k"]);
+                if ((kind is "callStatic" or "callInstance" or "constrainedCall" or "callLocal" or "new"
+                        || ClrBoundNode.IsAny(kind))
                     && (obj["shapeTypes"] ?? obj["sig"] ?? obj["memberSignature"] ?? obj["argTypes"]) is JsonArray parameters
                     && obj["args"] is JsonArray arguments && parameters.Count == arguments.Count)
                     for (var i = 0; i < parameters.Count; i++)
@@ -80,36 +106,56 @@ sealed class GenericRepresentationPolicy
                         var location = Text(argument["k"]) == "byrefOf" ? argument["inner"] as JsonObject : argument;
                         if (location == null || Text(location["k"]) is not ("field" or "staticField")
                             || TypeJson.OwnerName(location["ownerType"] ?? location["owner"]) is not string owner
-                            || Text(location["name"]) is not string name
-                            || !fields.TryGetValue((owner, name, Text(location["k"]) == "staticField"), out var declaration)
-                            || TypeJson.Read(declaration["type"] ?? declaration["elem"]) is not TypeNode.Tv) continue;
-                        _nativeFields.Add(declaration);
-                        _nativeFieldNames.Add((owner, name, Text(location["k"]) == "staticField"));
+                            || Text(location["name"]) is not string name) continue;
+                        var key = FieldKey(owner, name, Text(location["k"]) == "staticField", location);
+                        if (fields.TryGetValue(key, out var declaration))
+                        {
+                            _nativeFields.Add(declaration);
+                            _nativeFieldNames.Add(key);
+                        }
+                        else if (_localDeclarations.ContainsKey(owner)
+                            || _references?.HasReferencedFieldLocation(TypeJson.Read(location["ownerType"] ?? location["owner"]) as TypeNode.Fqn,
+                                name, key.Item3) != true) continue;
+                        // An address use is not a value read. Keep this selected FieldDef through value projection;
+                        // other reads of the same referenced field may still use its ordinary carrier getter.
+                        location[FieldAddressKey] = true;
+                        location[NativeLocationKey] = true;
                     }
                 foreach (var (key, child) in obj)
                     if (key != "attrs") FindAddresses(child);
             }
         }
         foreach (var root in inputs) FindAddresses(root);
+        foreach (var field in _nativeFields) field[NativeLocationKey] = true;
     }
 
-    internal bool IsNativeField(JsonObject node) => _nativeFields.Contains(node)
+    internal bool IsNativeField(JsonObject node) => node[NativeLocationKey]?.GetValue<bool>() == true || _nativeFields.Contains(node)
         || Text(node["k"]) is "field" or "staticField" or "setField" or "setStaticField"
             && TypeJson.OwnerName(node["ownerType"] ?? node["owner"]) is string owner
             && Text(node["name"]) is string name
-            && _nativeFieldNames.Contains((owner, name, Text(node["k"]) is "staticField" or "setStaticField"));
+            && _nativeFieldNames.Contains(FieldKey(owner, name, Text(node["k"]) is "staticField" or "setStaticField", node));
+
+    // Before companion binding allocates physical storage names, the explicit association is part of a
+    // field's semantic identity. The same declaration object retains its location role after binding.
+    static (string Owner, string Name, bool Static, string Receiver) FieldKey(
+        string owner, string name, bool isStatic, JsonObject declarationOrUse) =>
+        (owner, name, isStatic, Text(declarationOrUse["companionReceiver"]) is string receiver
+            ? CompanionExtensionBinding.CanonicalReceiver(receiver) : null);
 
     static string Text(JsonNode node) => (node as JsonValue)?.TryGetValue<string>(out var text) == true ? text : null;
 
     internal bool OwnsValueSlots(string owner) => owner != null && !UsesNativeOwnerSlots(owner)
-        && (_localOwners.Contains(owner) || _references?.HasDotKtOwner(owner) == true);
+        && (_localDeclarations.ContainsKey(owner) || _references?.HasDotKtOwner(owner) == true);
+
+    internal bool IsBindingAlias(string owner) => owner != null
+        && BindingAlias(owner) != null;
 
     internal bool UsesNativeOwnerSlots(string owner) => owner != null
-        && (_aliases.ContainsKey(ReferenceMetadataIndex.BareOwnerFqn(owner))
+        && (IsBindingAlias(owner)
             || _references?.TryResolveClrOwner(owner, out _, out _) == true);
 
     internal bool HasNativeConstraint(TypeNode.Fqn bound) => UsesNativeOwnerSlots(bound.Name)
-        || !_localOwners.Contains(bound.Name)
+        || !_localDeclarations.ContainsKey(bound.Name)
             && _references?.ResolveNetType(bound.Name, bound.Args?.Length ?? 0) != null;
 
     internal TypeNode StorageConstraint(TypeNode.Fqn bound) => OwnsValueSlots(bound.Name)
@@ -123,6 +169,17 @@ sealed class GenericRepresentationPolicy
         && !(declaration["overrides"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()
             .Any(edge => !OwnsValueSlots(TypeJson.OwnerName(edge["owner"])));
 
+    // A Kotlin binding alias owns its own value projection; merely overriding that
+    // semantic surface does not select an exact imported CLR method signature.
+    internal bool HasNativeMethodSignature(JsonObject declaration) =>
+        declaration[PhysicalDeclarationSignatureKey]?.GetValue<bool>() == true
+        || (declaration["attrs"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()
+            .Any(attribute => TypeJson.OwnerName(attribute["attr"]) == "kotlin.clr.ClrIntrinsic")
+        || (declaration["overrides"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()
+            .Any(edge => TypeJson.OwnerName(edge["owner"]) is string owner
+                && !IsBindingAlias(owner)
+                && !OwnsValueSlots(owner));
+
     public bool UsesStorageArguments(string owner) => false;
 
     public NullableRepresentationFrame.Role ApplicationRole(string owner, NullableRepresentationFrame.Role role) =>
@@ -135,7 +192,7 @@ sealed class GenericRepresentationPolicy
     // BirTypeLowering owns the eventual alias substitution for both positions.
     public TypeNode ProjectArgumentHead(TypeNode.Fqn source, bool storage, NullableRepresentationFrame frame) =>
         storage && OwnsValueSlots(source.Name) && source.Args is { Length: > 0 }
-            && (_localOwners.Contains(source.Name) ? _existentialOwners.Contains(source.Name)
+            && (_localDeclarations.ContainsKey(source.Name) ? _existentialOwners.Contains(source.Name)
                 : _references?.TryExistentialPhysicalOwner(source.Name, out _) == true)
             ? new TypeNode.Fqn(source.Name, source.Args.Select(_ => (TypeNode)new TypeNode.Star()).ToArray())
             : source;
@@ -159,8 +216,9 @@ sealed class GenericRepresentationPolicy
 
         var fieldRoot = JsonNode.Parse("""
         {"fileClass":"FieldFrames","types":[{"kind":"class","name":"FieldFrame","typeParams":["T"],
-          "fields":[{"name":"native","type":{"t":"tv","scope":"type","i":0}},
-                    {"name":"ordinary","vis":"private","type":{"t":"tv","scope":"type","i":0}}],
+          "fields":[{"name":"native","type":{"t":"tv","scope":"type","i":0},
+                     "attrs":[{"attr":{"t":"fqn","name":"kotlin.clr.ClrField"},"args":[]}]},
+                    {"name":"ordinary","type":{"t":"tv","scope":"type","i":0}}],
           "methods":[{"name":"pass","params":[],"ret":{"t":"fqn","name":"kotlin.Unit"},"body":[
             {"k":"callStatic","sig":[{"t":"byRef","of":{"t":"tv","scope":"method","i":0}}],
              "typeArgs":[{"t":"tv","scope":"type","i":0}],"args":[
@@ -182,6 +240,63 @@ sealed class GenericRepresentationPolicy
             || TypeJson.Read(addressedField["memberType"]) != new TypeNode.Tv("type", 0)
             || ((JsonArray)addressedField["ownerType"]["args"]).Count != 2)
             throw new InvalidOperationException("Native field allocation changed an unrelated field or lost declaration correspondence");
+        var importedAddressRoot = JsonNode.Parse("""
+          {"fileClass":"ImportedFieldAddresses","methods":[{"name":"pass","typeParams":["T"],"params":[],"body":[
+            {"k":"callStatic","shapeTypes":[{"t":"byRef","of":{"t":"tv","scope":"method","i":0}}],"args":[
+              {"k":"field","ownerType":{"t":"fqn","name":"System.Runtime.CompilerServices.StrongBox`1","args":[{"t":"tv","scope":"method","i":0}]},
+               "name":"Value","recv":{"k":"local","name":"box"},"ret":{"t":"tv","scope":"method","i":0}}]},
+            {"k":"field","ownerType":{"t":"fqn","name":"System.Runtime.CompilerServices.StrongBox`1","args":[{"t":"tv","scope":"method","i":0}]},
+             "name":"Value","recv":{"k":"local","name":"box"},"ret":{"t":"tv","scope":"method","i":0}}]}]}
+          """)!.AsObject();
+        var importedPolicy = new GenericRepresentationPolicy(new Dictionary<string, string>(),
+            ReferenceMetadataIndex.Build(new[] { typeof(System.Runtime.CompilerServices.StrongBox<>).Assembly.Location }),
+            new[] { importedAddressRoot });
+        var addressedImport = importedAddressRoot["methods"][0]["body"][0]["args"][0].AsObject();
+        if (!importedPolicy.IsNativeField(addressedImport) || addressedImport[FieldAddressKey]?.GetValue<bool>() != true
+            || importedPolicy.IsNativeField(importedAddressRoot["methods"][0]["body"][1].AsObject()))
+            throw new InvalidOperationException("A selected referenced FieldDef address was lost or changed an ordinary value read");
+        NullableRepresentationMaterialization.Apply(new[] { importedAddressRoot }, _ => false, policy: importedPolicy);
+        if (TypeJson.Read(addressedImport["ret"]) != new TypeNode.Tv("method", 0))
+            throw new InvalidOperationException("Referenced field address result lost its native witness frame");
+        var companionFields = JsonNode.Parse("""
+        {"fileClass":"CompanionFieldFrames","fields":[
+          {"name":"slot","static":true,"type":{"t":"fqn","name":"kotlin.String"},
+           "companionReceiver":"{\"t\":\"fqn\",\"name\":\"First\"}",
+           "attrs":[{"attr":{"t":"fqn","name":"kotlin.clr.ClrField"}}]},
+          {"name":"slot","static":true,"type":{"t":"fqn","name":"kotlin.String"},
+           "companionReceiver":"{\"t\":\"fqn\",\"name\":\"Second\"}"},
+          {"name":"slot","static":true,"type":{"t":"fqn","name":"kotlin.String"},
+           "companionReceiver":"{\"t\":\"fqn\",\"name\":\"Third\"}"},
+          {"name":"slot","static":true,"type":{"t":"fqn","name":"kotlin.String"}}],
+         "methods":[{"body":[{"k":"callStatic","sig":[{"t":"byRef","of":{"t":"fqn","name":"kotlin.String"}}],
+          "args":[{"k":"byrefOf","inner":{"k":"staticField","ownerType":{"t":"fqn","name":"CompanionFieldFrames"},
+           "name":"slot","companionReceiver":"{\"t\":\"fqn\",\"name\":\"Second\"}"}}]}]}]}
+        """)!.AsObject();
+        var companionPolicy = new GenericRepresentationPolicy(new Dictionary<string, string>(), roots: new[] { companionFields });
+        foreach (var (index, native) in new[] { (0, true), (1, true), (2, false), (3, false) })
+        {
+            var field = companionFields["fields"][index]!.AsObject();
+            var use = new JsonObject { ["k"] = "staticField", ["ownerType"] = TypeJson.Fqn("CompanionFieldFrames"),
+                ["name"] = "slot", ["companionReceiver"] = field["companionReceiver"]?.DeepClone() };
+            if (companionPolicy.IsNativeField(field) != native || companionPolicy.IsNativeField(use) != native)
+                throw new InvalidOperationException("Native companion storage selection leaked into a sibling field");
+        }
+        var nullableRead = JsonNode.Parse("""
+        {"types":[{"name":"NativeNullableRead","kind":"class","typeParams":["T"],"fields":[
+          {"name":"value","type":{"t":"nullable","of":{"t":"tv","scope":"type","i":0}},
+           "attrs":[{"attr":{"t":"fqn","name":"kotlin.clr.ClrField"}}]}],"methods":[
+          {"name":"read","params":[],"ret":{"t":"nullable","of":{"t":"fqn","name":"kotlin.Any"}},
+           "body":[{"k":"return","value":{"k":"field","ownerType":{"t":"fqn","name":"NativeNullableRead","args":[{"t":"tv","scope":"type","i":0}]},
+             "name":"value","recv":{"k":"this"},"ret":{"t":"nullable","of":{"t":"tv","scope":"type","i":0}},
+             "sty":{"t":"nullable","of":{"t":"tv","scope":"type","i":0}}}}]}]}]}
+        """)!.AsObject();
+        var readPolicy = new GenericRepresentationPolicy(new Dictionary<string, string>(), roots: new[] { nullableRead });
+        NullableRepresentationMaterialization.Apply(new[] { nullableRead }, _ => false, policy: readPolicy);
+        var physicalRead = nullableRead["types"][0]["methods"][0]["body"][0]["value"];
+        var physicalField = TypeJson.Read(nullableRead["types"][0]["fields"][0]["type"]);
+        if (physicalField is not TypeNode.Tv || TypeJson.Read(physicalRead["ret"]) != physicalField
+            || TypeJson.Read(physicalRead["sty"]) != physicalField)
+            throw new InvalidOperationException("Native nullable field read lost its physical result frame");
         var policy = new GenericRepresentationPolicy(new Dictionary<string, string> {
             ["kotlin.collections.Map"] = "System.Collections.Generic.IDictionary",
             ["kotlin.collections.Collection"] = "System.Collections.Generic.IReadOnlyCollection",

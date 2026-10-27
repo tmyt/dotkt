@@ -264,6 +264,13 @@ if (args.Length == 4 && args[0] == "--reified-witness-contract")
     return;
 }
 
+if (args.Length == 3 && args[0] == "--unsafe-accessors")
+{
+    VerifyUnsafeAccessorDll(args[1], args[2]);
+    Console.WriteLine("private/protected source metadata, exact UnsafeAccessors and value-carrier replacements: OK");
+    return;
+}
+
 if (args.Length != 7)
     throw new ArgumentException(
         "usage:\n" +
@@ -284,7 +291,8 @@ if (args.Length != 7)
         "  CompanionMetadataInspector --imported-enum-literals <producer.dll> <file.klib> <file.bir.json> <file.cir.json>\n" +
         "  CompanionMetadataInspector --klib-no-flags-enum <file.klib> <class>\n" +
         "  CompanionMetadataInspector --reified-witness-contract <producer.dll> <producer.klib> <package>\n" +
-        "  CompanionMetadataInspector --default-witness-contract <producer.dll> <consumer.dll>");
+        "  CompanionMetadataInspector --default-witness-contract <producer.dll> <consumer.dll>\n" +
+        "  CompanionMetadataInspector --unsafe-accessors <consumer.dll> <producer.dll>");
 
 VerifyLayerBoundary(args[2], args[3]);
 VerifyOwnershipLayerBoundary(args[4], args[5]);
@@ -1590,9 +1598,12 @@ static void VerifyUnsafeAccessorDll(string path, string producerPath)
 
     var secretAccessors = accessors.Where(pair =>
         md.GetString(pair.Definition.Name).Contains("$prop_get_secret_", StringComparison.Ordinal)).ToArray();
-    Require(secretAccessors.Length == 5, "unexpected prop_get<secret> UnsafeAccessor set");
-    Require(secretAccessors.Count(pair => md.GetTypeDefinition(pair.TypeHandle).GetGenericParameters().Count == 2) == 4,
+    Require(secretAccessors.Length == 2, "unexpected prop_get<secret> UnsafeAccessor set");
+    Require(secretAccessors.Count(pair => md.GetTypeDefinition(pair.TypeHandle).GetGenericParameters().Count == 2) == 1,
         "generic owner slots were not preserved on generic UnsafeAccessor holder types");
+    // Ordinary value-carrier calls replace three generic private property accessors, private generic/callable
+    // methods and the generic lateinit state accessor. Verify their original privacy and exact replacement edges.
+    UnsafeCarrierInspector.Verify(path, producerPath);
     // The captured inner default now uses its public carrier slot, not a private concrete getter accessor.
     // Select that slot from trusted source metadata rather than assuming its compiler-generated physical name.
     using var producerStream = File.OpenRead(producerPath);
@@ -1620,24 +1631,13 @@ static void VerifyUnsafeAccessorDll(string path, string producerPath)
             && TypeName(md, member.Parent) == DefinitionName(producerMd, innerCarrier)
             && md.GetString(member.Name) == innerGetterName),
         "captured inner default did not call its metadata-selected public carrier getter");
-    Require(secretAccessors.Any(pair => md.GetTypeDefinition(pair.TypeHandle).GetGenericParameters().Any(handle =>
-            md.GetGenericParameter(handle).GetConstraints().Any(constraint =>
-                TypeName(md, md.GetGenericParameterConstraint(constraint).Type) == "roundtrip.nc.PrivateDefaultBound"))),
-        "constrained owner UnsafeAccessor lost its exact generic interface constraint");
-    var identityAccessor = accessors.Single(pair =>
-        md.GetString(pair.Definition.Name).Contains("$identity", StringComparison.Ordinal));
-    Require(md.GetTypeDefinition(identityAccessor.TypeHandle).GetGenericParameters().Count == 2 &&
-            identityAccessor.Definition.GetGenericParameters().Count == 2,
-        "owner and method generic frames were not kept in their respective forms on the UnsafeAccessor");
+    Require(!accessors.Any(pair => md.GetString(pair.Definition.Name).Contains("$identity", StringComparison.Ordinal)),
+        "source-associated generic method should not acquire a second caller-side accessor");
     Require(accessors.Any(pair => md.GetString(pair.Definition.Name)
             .Contains("$privateTopLevelDefaultValue", StringComparison.Ordinal)),
         "top-level private default did not route through UnsafeAccessor");
-    var genericCallableAccessor = accessors.Single(pair =>
-        md.GetString(pair.Definition.Name).Contains("$secretValue", StringComparison.Ordinal));
-    Require(md.GetTypeDefinition(genericCallableAccessor.TypeHandle).GetGenericParameters().Any(handle =>
-            md.GetGenericParameter(handle).GetConstraints().Any(constraint =>
-                TypeName(md, md.GetGenericParameterConstraint(constraint).Type) == "roundtrip.nc.PrivateDefaultBound")),
-        "generic callable-reference UnsafeAccessor lost its exact owner interface constraint");
+    Require(!accessors.Any(pair => md.GetString(pair.Definition.Name).Contains("$secretValue", StringComparison.Ordinal)),
+        "source-associated callable should not acquire a second caller-side accessor");
 
     var wrappers = md.TypeDefinitions
         .Where(handle => DefinitionName(md, handle).StartsWith("dotkt$unsafe$holder$", StringComparison.Ordinal))
@@ -1658,7 +1658,7 @@ static void VerifyUnsafeAccessorDll(string path, string producerPath)
     var stateStatic = state.RootElement.GetProperty("static").GetBoolean();
     Require(stateOwner == StripArities(DefinitionName(producerMd, lateinitOwner)) && !stateStatic,
         "generic lateinit getter lost its exact instance initialization-state edge");
-    var stateAccessor = accessors.Single(pair =>
+    var stateAccessors = accessors.Where(pair =>
     {
         var attribute = pair.Definition.GetCustomAttributes().Select(md.GetCustomAttribute).Single(attribute =>
             AttributeName(md, attribute) == "System.Runtime.CompilerServices.UnsafeAccessorAttribute");
@@ -1674,12 +1674,9 @@ static void VerifyUnsafeAccessorDll(string path, string producerPath)
             signature.ReadSignatureTypeCode() == SignatureTypeCode.GenericTypeInstance &&
             signature.ReadSignatureTypeCode() == SignatureTypeCode.TypeHandle &&
             StripArities(TypeName(md, signature.ReadTypeHandle())) == stateOwner;
-    });
-    // Its one generic holder is shared by the Int and String instantiations.
-    var lateinitWrappers = wrappers.Where(method => method.GetDeclaringType() == stateAccessor.TypeHandle).ToArray();
-    Require(lateinitWrappers.Length == 1 &&
-            md.GetTypeDefinition(lateinitWrappers[0].GetDeclaringType()).GetGenericParameters().Count == 2,
-        "generic lateinit default query must retain one correctly framed private-target accessor holder");
+    }).ToArray();
+    Require(stateAccessors.Length == 0,
+        "metadata-selected carrier state query should not acquire a second caller-side accessor");
     foreach (var name in new[] {
         "roundtrip.innermemberdefaults.GenericMemberDefaultOuter+Middle",
         "roundtrip.innermemberdefaults.GenericMemberDefaultOuter+Middle+Leaf",
@@ -1691,11 +1688,11 @@ static void VerifyUnsafeAccessorDll(string path, string producerPath)
         Require((capture.Attributes & FieldAttributes.FieldAccessMask) == FieldAttributes.Private,
             $"inner member-default fixture widened its lexical capture on {name}");
     }
-    Require(wrappers.Length == 19 && wrappers.All(method =>
+    Require(wrappers.Length == 12 && wrappers.All(method =>
             (method.Attributes & MethodAttributes.MemberAccessMask) == MethodAttributes.Assembly &&
             (method.Attributes & MethodAttributes.Static) != 0 && method.RelativeVirtualAddress != 0),
         $"generic UnsafeAccessor holders do not expose only compiler-generated internal wrappers " +
-        $"(found {wrappers.Length}, expected 19)");
+        $"(found {wrappers.Length}, expected 12)");
 }
 
 static void VerifyLayerBoundary(string birPath, string cirPath)

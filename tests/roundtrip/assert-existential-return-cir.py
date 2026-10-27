@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Assert exact referenced existential result projection, including star-dependent nested carriers."""
 
+import base64
 import json
 import sys
 
@@ -15,11 +16,40 @@ def objects(node):
             yield from objects(value)
 
 
-if len(sys.argv) != 2:
-    raise SystemExit("usage: assert-existential-return-cir.py <CrossModuleMetadataTests.cir.json>")
+if len(sys.argv) != 3:
+    raise SystemExit("usage: assert-existential-return-cir.py <CrossModuleMetadataTests.bir.json> <CrossModuleMetadataTests.cir.json>")
 
 with open(sys.argv[1], encoding="utf-8") as stream:
+    source = json.load(stream)
+with open(sys.argv[2], encoding="utf-8") as stream:
     root = json.load(stream)
+
+
+def return_types(method):
+    return [json.loads(base64.b64decode(attribute["args"][1]["bytes"]))
+            for attribute in method.get("retAttrs", [])
+            if attribute.get("attr", {}).get("name")
+            == "DotKt.Runtime.CompilerServices.KotlinTypeAttribute"]
+
+for owner, argument in (("starprojection.ReferencedUseSiteBoundHolder`2", "starprojection.ReferencedUseSiteInvariant`1"),
+                        ("LocalProjectedHolder", "LocalProjectedSink")):
+    constructions = [node for node in objects(root) if node.get("k") == "new"
+                     and node.get("type", {}).get("name") == owner]
+    assert len(constructions) == 1, (owner, constructions)
+    construction = constructions[0]
+    carrier = argument.removesuffix("`1") + "$star"
+    expected = {"t": "fqn", "name": owner, "args": [
+        {"t": "fqn", "name": argument, "args": [{"t": "fqn", "name": "System.String"}]},
+        {"t": "fqn", "name": carrier}]}
+    assert construction["type"] == expected
+    if "memberRef" in construction:
+        assert construction["memberRef"]["declaringType"] == expected
+        assert construction["memberRef"]["parameterTypes"] == [{"t": "tv", "scope": "type", "i": 1}]
+    else:
+        declaration = next(item for item in root["types"] if item["name"] == owner)
+        constructor = declaration["ctors"][construction["localCtorIndex"]]
+        assert constructor["params"][0]["type"] == {"t": "tv", "scope": "type", "i": 1}
+        assert construction["argTypes"] == [{"t": "fqn", "name": carrier}]
 
 if any(node.get("_existentialResultProjection") is not None for node in objects(root)):
     raise SystemExit("CIR: unconsumed existential-result projection fact")
@@ -67,8 +97,13 @@ semantic = {
     "name": "starprojection.ReferencedExistentialFlow`1",
     "args": [{"t": "tv", "scope": "method", "i": 0}],
 }
-if casts[0].get("type") != semantic:
-    raise SystemExit(f"referenced result is not projected to the consumer's semantic type: {casts[0]!r}")
+if casts[0].get("type") != physical or methods[0]["ret"] != physical:
+    raise SystemExit(f"referenced result does not use the declared ordinary value carrier: {casts[0]!r}")
+for method_name in ("fuseReferencedExistential", "exactReferencedExistentialUpcast"):
+    source_method = next(method for method in source["methods"] if method["name"] == method_name)
+    physical_method = next(method for method in root["methods"] if method["name"] == method_name)
+    assert source_method["ret"] == semantic
+    assert return_types(physical_method) == [semantic], (method_name, physical_method.get("retAttrs"))
 
 referenced_exact = [
     method
@@ -82,11 +117,11 @@ if len(referenced_exact) != 1:
 exact_casts = [
     node
     for node in objects(referenced_exact[0].get("body", []))
-    if node.get("k") == "cast" and node.get("type") == semantic
+    if node.get("k") == "cast" and node.get("type") == physical
 ]
 if len(exact_casts) != 1:
     raise SystemExit(
-        f"referenced exact generic upcast did not retain its construction: {exact_casts!r}"
+        f"referenced generic upcast did not retain its declared value carrier: {exact_casts!r}"
     )
 
 referenced_composed = [
@@ -191,8 +226,8 @@ again_calls = [
     and str(node.get("method", "")).startswith("$star$again$")
     and node.get("ret") == nested_carrier
 ]
-if len(again_calls) != 2:
-    raise SystemExit(f"star-dependent chained results must use the carrier twice: {again_calls!r}")
+if len(again_calls) != 3:
+    raise SystemExit(f"all three captured/exact chained results must use the carrier: {again_calls!r}")
 for again_call in again_calls:
     member_ref = again_call.get("memberRef", {})
     if (
@@ -209,7 +244,7 @@ value_getters = [
     and node.get("ownerType", {}).get("name") == "starprojection.ReferencedStarNested$star"
     and node.get("ret", {}).get("name") == "System.Object"
 ]
-if len(value_getters) != 2:
+if len(value_getters) != 3:
     raise SystemExit(
         f"referenced nested value use must bind through the existential carrier: {value_getters!r}"
     )
@@ -250,14 +285,21 @@ for method_name, mixed_call in mixed_calls.items():
             f"mixed nested call/memberRef must state the physical carrier slot: {mixed_call!r}"
         )
 
-exact_nested = {
+source_exact_nested = {
     "t": "fqn",
     "name": "starprojection.ReferencedStarNested`2",
-    "args": [{"t": "fqn", "name": "System.String"}] * 2,
+    "args": [{"t": "fqn", "name": "kotlin.String"}],
 }
+source_exact_locals = [node for node in objects(source) if node.get("k") == "var"
+                       and any(call.get("k") == "callInstance" and call.get("method") == "exactNested"
+                               for call in objects(node.get("init")))]
+assert len(source_exact_locals) == 1 and source_exact_locals[0]["type"] == source_exact_nested
+source_exact_call = next(call for call in objects(source_exact_locals[0]["init"])
+                         if call.get("method") == "exactNested")
+assert source_exact_call["sty"] == source_exact_nested
 for source_name, projected_type in {
     "capturedNested": nested_carrier,
-    "exactNested": exact_nested,
+    "exactNested": nested_carrier,
 }.items():
     mixed_call = mixed_calls[source_name]
     matching_locals = [

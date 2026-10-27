@@ -907,9 +907,20 @@ static class RoundtripMetadata
     // DeclarationRename owns the source-to-physical decision and records the exact cross-module edge immediately on
     // that MethodDef. Keeping it in attrs lets every later structural pass copy it like other declaration metadata;
     // runtime builds remove it through the ordinary DotKt.Runtime.CompilerServices.* stripping rule.
-    internal static void AddSourceMethodIdentity(JsonObject method, string sourceName) =>
-        Append(method, JsonCarrierAttr(AKSourceMethod,
-            new JsonObject { ["name"] = sourceName }));
+    internal static void AddSourceMethodIdentity(JsonObject method, string sourceName, string sourceDeclaration = null)
+    {
+        var identity = new JsonObject { ["name"] = sourceName };
+        if (sourceDeclaration != null) identity["sourceDeclaration"] = sourceDeclaration;
+        Append(method, JsonCarrierAttr(AKSourceMethod, identity));
+    }
+
+    internal static void CopySourceMethodIdentity(JsonObject source, JsonObject target)
+    {
+        if (HasAttr(target, AKSourceMethod) || source["attrs"] is not JsonArray attributes) return;
+        foreach (var attribute in attributes.OfType<JsonObject>())
+            if (TypeJson.OwnerName(attribute["attr"]) == AKSourceMethod)
+                Append(target, (JsonObject)attribute.DeepClone());
+    }
 
     // The standard C# 14 Property graph carries receiver/name/accessor shape but cannot say that a private storage
     // field is Kotlin `const` or `lateinit`. Storage stays on the source file facade so every receiver observes the

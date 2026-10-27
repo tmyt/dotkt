@@ -425,6 +425,7 @@ static class CompanionExtensionBinding
                 ["abstract"] = false,
                 ["specialName"] = true,
                 ["generated"] = true,
+                [GenericRepresentationPolicy.PhysicalDeclarationSignatureKey] = true,
                 ["vis"] = "public",
                 ["params"] = new JsonArray(new JsonObject
                 {
@@ -894,7 +895,7 @@ static class CompanionExtensionBinding
 
     static string NormalizeOwner(string owner) => owner.Replace('+', '.');
 
-    static string CanonicalReceiver(string receiver)
+    internal static string CanonicalReceiver(string receiver)
     {
         var classifier = ReceiverClassifier(JsonNode.Parse(receiver))
             ?? throw new InvalidOperationException(

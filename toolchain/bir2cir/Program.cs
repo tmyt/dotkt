@@ -894,6 +894,12 @@ sealed class Pipeline
         if (attributeTopLevelOwner)
             foreach (var stagedFile in staged) CollectionIdentityRecord.RecordTypeEdges(stagedFile.Root);
 
+        // Kotlin classifier meaning is fixed by this complete source/inline supertype graph, before ownership
+        // and existential lowering manufacture operational CLR faces. Referenced Kotlin owners already carry
+        // their declaration-owned identities; only actual foreign bases contribute CLR classifier policy.
+        if (!_options.RefBuild)
+            KotlinCollectionIdentitySynthesis.ApplyAll(staged.Select(s => s.Root).ToList(), refs);
+
         foreach (var stagedFile in staged)
             BirTypeLowering.ValidatePointerVocabulary(stagedFile.Root, stagedFile.OutputName);
 
@@ -912,9 +918,10 @@ sealed class Pipeline
         // it. Runs before interface-slot normalization and suspend lowering, in ref and runtime builds alike.
         CapturedGenericInvocation.CaptureParameterWitnesses(staged.Select(s => s.Root));
         var physicalDeclarationSources = new Dictionary<string, string>(StringComparer.Ordinal);
+        genericRepresentations.RecordNativeFields(staged.Select(s => s.Root));
         var localExistentialOwners =
             FBoundStarProjectionErasure.ApplyAll(staged.Select(s => s.Root).ToList(), refs, sharedCells,
-                physicalParameterIndices, physicalDeclarationSources);
+                physicalParameterIndices, physicalDeclarationSources, genericRepresentations);
         // Closure/SAM synthesis ran while captures still carried their Kotlin constructed types, and suspend-lambda
         // state machines will copy those same declarations later. An erased smart cast can now deliver an existential
         // carrier to generated storage; make each capture declaration/construction/field agree on that exact physical
@@ -951,14 +958,6 @@ sealed class Pipeline
         if (!_options.RefBuild)
             KotlinCollectionSlotSynthesis.ApplyAll(staged.Select(s => s.Root).ToList(), refs, isValueFqn);
         valueRepresentations.SynthesizeSlots(staged.Select(s => s.Root).ToList(), isValueFqn);
-
-        // NOMINAL COLLECTION CLASSIFIER IDENTITIES: the operational aliases intentionally share BCL faces
-        // (Collection/Set -> IReadOnlyCollection, MutableCollection/MutableSet -> ICollection), which otherwise makes
-        // the Kotlin classifiers indistinguishable for emitted user implementations. Add the compiler-owned identity
-        // edge while the Kotlin supertype graph is still present. BCL-backed values are handled by their real generic
-        // collection faces in StarProjectionLowering's runtime classifier.
-        if (!_options.RefBuild)
-            KotlinCollectionIdentitySynthesis.ApplyAll(staged.Select(s => s.Root).ToList(), refs);
 
         // CONSTRUCTED MEMBER RESULT SUBSTITUTION (early): suspend lowering copies a call's result type into
         // state-machine fields/locals. Close every already-constructed receiver-relative return BEFORE that copy
@@ -1193,7 +1192,8 @@ sealed class Pipeline
         // declaration lookup and records that open signature explicitly for one-to-one emission.
         foreach (var stagedFile in staged)
             ClrMemberResolution.EnsurePlainCallDescriptors(stagedFile.Root);
-        ClrMemberResolution.ResolveLocalDelegateTargets(staged.Select(s => s.Root), refs);
+        ClrMemberResolution.ResolveLocalDelegateTargets(staged.Select(s => s.Root), refs,
+            localCarriers: localExistentialOwners);
 
         // Suspend/state-machine and bridge synthesis above can add classes after the initial source-declaration
         // inventory was collected. The final CLR-member stamping pass must see the complete emission-unit set so a
@@ -1388,7 +1388,7 @@ sealed class Pipeline
         // Compare fully physical method returns: closing a generic R with Unit still returns a value,
         // whereas a declared Kotlin Unit return has lowered to void. Adapt the delegate, not the method.
         ClrMemberResolution.ResolveLocalDelegateTargets(loweredRoots.Select(s => s.Root), refs,
-            physicalDelegates: true);
+            physicalDelegates: true, localCarriers: localExistentialOwners);
         // A call may retain a local receiver owner while its declaration lives on an inherited referenced
         // interface.  Resolve that local/external boundary only after every physically-lowered local declaration
         // is visible, so a stale shipped copy of a local owner can never win.
@@ -1535,7 +1535,7 @@ sealed class Pipeline
             // can be pointed at the delegate it physically constructs — and the void-to-value adapter that needs
             // can be authored as ordinary CIR. Runs after the last resolution pass, because the rule compares the
             // construction's FINAL function type with the slot's.
-            ClrMemberResolution.MaterializeDelegateSlots(lowered, refs, emittedLocalTypes);
+            ClrMemberResolution.MaterializeDelegateSlots(lowered, refs, emittedLocalTypes, localExistentialOwners);
             ForeignStarProjectionBinding.DropDeclarationSignatures(lowered);
             // THE STAMPING CHOKEPOINT: every node resolved against a .NET member carries that member's declared
             // return. Two omissions of exactly that shape — a generic method and a public field — each removed a

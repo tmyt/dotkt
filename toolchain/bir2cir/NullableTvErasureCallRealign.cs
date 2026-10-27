@@ -881,18 +881,18 @@ static partial class NullableTvErasureCallRealign
             decl.NullableErasureOwnershipKnown, ctx.IsNullableCompanion(derived));
     }
 
-    // A current call can state its result only in the frontend's expression stamp. That is the same source-type
-    // claim as ret/dynRet, not an absent result. The declaration still supplies the physical type; the stamp only
-    // identifies the use that must be realigned against it, including an already-materialized nullable frame.
+    // The expression stamp is already instantiated in the caller frame; ret can still be declaration-relative.
+    // Read the shared sty -> ret -> dynRet precedence rather than substituting a declaration result a second time.
+    // The selected declaration independently supplies the physical result used for realignment below.
     static TypeNode StampedResult(JsonObject obj)
-        => TypeJson.Read(obj["dynRet"]) ?? TypeJson.Read(obj["ret"]) ?? TypeJson.Read(obj["sty"]);
+        => NodeType.Stamp(obj);
 
     // Take the derived result type, ONLY when it is the object-erasure of what the call site stamped — the exact
     // erasure boundary, never a genuine widen/narrow. A direct-write `Ref<Int?>` (derived == stamped) is untouched.
     //
-    // A call may state its result in `ret`/`dynRet` or only in the frontend `sty` stamp — kotc emits an explicit `ret`
-    // for some generic calls and leaves others to be resolved from the member. Both are the same claim about the same
-    // value, so both are read, and a rewrite STATES the corrected type in `ret` even where none was written before:
+    // A call may state its result in `ret`/`dynRet` or only in the frontend `sty` stamp. The shared stamp reader prefers
+    // the instantiated expression type over declaration-relative results. A rewrite STATES the corrected physical
+    // type in `ret` even where none was written before:
     // that is what stops ilemit re-inferring the member's return from a call whose surrounding slots have moved, and
     // it is the same shape UncheckedGenericCastReturnErasure.ApplyReferenced uses at this boundary. `sty` moves with
     // it, per spec §2.7 — a stamp is a claim about the value produced, never a note about the node it used to be.
@@ -1271,6 +1271,20 @@ static partial class NullableTvErasureCallRealign
             || TypeJson.Read(stampedCall["ret"]) != physicalCallbackResult
             || TypeJson.Read(stampedCall["sty"]) != physicalCallbackResult)
             throw new InvalidOperationException("A sty-only function call lost its materialized physical result");
+        var callerResult = new TypeNode.Fqn("Result", new TypeNode[] { new TypeNode.Tv("type", 6) });
+        var declarationResult = new TypeNode.Fqn("Result", new TypeNode[] { new TypeNode.Tv("type", 2) });
+        var resultStamps = new JsonObject {
+            ["sty"] = TypeJson.Write(callerResult), ["ret"] = TypeJson.Write(declarationResult),
+            ["dynRet"] = TypeJson.Write(physicalCallbackResult),
+        };
+        if (StampedResult(resultStamps) != callerResult)
+            throw new InvalidOperationException("Nullable result flow ignored the instantiated caller-frame stamp");
+        resultStamps.Remove("sty");
+        if (StampedResult(resultStamps) != declarationResult)
+            throw new InvalidOperationException("Nullable result flow ignored its declared-result fallback");
+        resultStamps.Remove("ret");
+        if (StampedResult(resultStamps) != physicalCallbackResult || StampedResult(new JsonObject()) != null)
+            throw new InvalidOperationException("Nullable result flow lost its dynamic or unstamped fallback");
         var companionReturn = new TypeNode.Fqn("Box", new TypeNode[] { new TypeNode.Tv("type", 1) });
         var sourceReturn = new TypeNode.Fqn("Box", new TypeNode[] {
             new TypeNode.Nullable(new TypeNode.Tv("type", 0)) });

@@ -147,7 +147,8 @@ static class NullableRepresentationMaterialization
                 PreserveEdges(owner.Declaration, mapping);
                 if (owner.Declaration["fields"] is JsonArray fields)
                     foreach (var field in fields.OfType<JsonObject>())
-                        if (!mapping.IsNativeField(field)) PreserveSlot(field, "type", "nullableGeneric", mapping);
+                        PreserveSlot(field, "type", "nullableGeneric", mapping,
+                            nativeLocation: mapping.IsNativeField(field));
                 if (owner.Declaration["ctors"] is JsonArray constructors)
                     foreach (var constructor in constructors.OfType<JsonObject>())
                         PreserveParameters(constructor, mapping);
@@ -256,10 +257,10 @@ static class NullableRepresentationMaterialization
     }
 
     static void PreserveSlot(JsonObject declaration, string typeKey, string factKey,
-        NullableRepresentationTypes mapping)
+        NullableRepresentationTypes mapping, bool nativeLocation = false)
     {
         if (declaration[factKey] == null && TypeJson.Read(declaration[typeKey]) is TypeNode source
-            && !source.Equals(mapping.Slot(source)))
+            && !source.Equals(nativeLocation ? mapping.Argument(source) : mapping.Slot(source)))
             declaration[factKey] = TypeNode.ToJson(source);
     }
 
@@ -613,6 +614,8 @@ static class NullableRepresentationMaterialization
                 var childPosition = key switch {
                     "type" when kind == null && mapping.IsNativeField(obj) => NullableGenericErasure.Pos.Argument,
                     "elem" when kind == null && mapping.IsNativeField(obj) => NullableGenericErasure.Pos.Argument,
+                    "ret" or "sty" when kind is "field" or "staticField" or "lateinitGet"
+                        && mapping.IsNativeField(obj) => NullableGenericErasure.Pos.Argument,
                     "ret" when obj[PreparedClosureDefaultFrames.ReturnArgumentKey]?.GetValue<bool>() == true
                         => NullableGenericErasure.Pos.Argument,
                     "typeArgs" => NullableGenericErasure.Pos.Argument,

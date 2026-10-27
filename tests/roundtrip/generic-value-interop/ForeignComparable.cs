@@ -7,6 +7,11 @@ public class GenericOnlyComparable : System.IComparable<GenericOnlyComparable>
     int System.IComparable<GenericOnlyComparable>.CompareTo(GenericOnlyComparable other) => Rank - other.Rank;
 }
 
+public class NativeTextComparisonBase : System.IComparable<string>
+{
+    public int CompareTo(string other) => 77;
+}
+
 public sealed class DerivedComparable : GenericOnlyComparable
 {
     public DerivedComparable(int rank) : base(rank) { }

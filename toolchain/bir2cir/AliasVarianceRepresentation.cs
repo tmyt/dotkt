@@ -22,7 +22,7 @@ static class AliasVarianceRepresentation
             sourceParameters = refs.OwnerTypeParamDeclarations(application.Name);
             sourceFrame ??= refs.NullableTypeFrames.GetValueOrDefault(application.Name);
         }
-        if (sourceParameters?.Count != arguments.Length) return false;
+        if (!HasApplicationArity(arguments.Length, sourceParameters, sourceFrame)) return false;
         var ordinary = OrdinaryParameters(sourceParameters, sourceFrame);
         var physical = refs.ResolveNetType(binding, ordinary.Count);
         if (physical == null || !physical.IsGenericType || physical.IsValueType) return false;
@@ -31,6 +31,12 @@ static class AliasVarianceRepresentation
 
     static bool NeedsOpaqueValue(TypeNode.Fqn application, JsonArray parameters, Type physical) =>
         HasUnrepresentableVariance(parameters, physical) || (KotlinTypeWitness.Flags(application) & ~1) != 0;
+
+    // Referenced declaration slots retain source alias arguments, while materialized value applications carry
+    // the explicit representation frame. Both spell the same Kotlin alias and therefore choose the same value ABI.
+    static bool HasApplicationArity(int arity, JsonArray parameters, NullableRepresentationFrame frame) =>
+        parameters != null && (frame == null ? arity == parameters.Count
+            : arity == frame.SourceArity || arity == frame.PhysicalArity);
 
     internal static bool HasSourceVariance(TypeNode.Fqn application, ReferenceMetadataIndex refs) =>
         OrdinaryParameters(refs.OwnerTypeParamDeclarations(application.Name),
@@ -67,10 +73,13 @@ static class AliasVarianceRepresentation
         if (!RequiresErasure(application, refs)) return application.Args;
         var parameters = OrdinaryParameters(refs.OwnerTypeParamDeclarations(application.Name),
             refs.NullableTypeFrames.GetValueOrDefault(application.Name));
-        var arguments = refs.NullableTypeFrames.GetValueOrDefault(application.Name)
-            ?.OrdinaryArguments(application.Args) ?? application.Args;
+        var arguments = SourceArguments(application.Args, refs.NullableTypeFrames.GetValueOrDefault(application.Name));
         return ProjectVariantArguments(arguments, parameters);
     }
+
+    static TypeNode[] SourceArguments(TypeNode[] arguments, NullableRepresentationFrame frame) =>
+        frame == null || arguments.Length == frame.SourceArity && frame.SourceArity != frame.PhysicalArity
+            ? arguments : frame.OrdinaryArguments(arguments);
 
     static TypeNode[] ProjectVariantArguments(TypeNode[] arguments, JsonArray parameters) =>
         arguments.Select((argument, index) => {
@@ -106,6 +115,17 @@ static class AliasVarianceRepresentation
         var mapFrame = new NullableRepresentationFrame(2, Array.Empty<int>(), new[] { 2, 0, 3, 1 }, new[] { 0, 1 });
         if (!HasUnrepresentableVariance(OrdinaryParameters(framedMap, mapFrame), typeof(System.Collections.Generic.IDictionary<,>)))
             throw new InvalidOperationException("Alias variance treated storage companions as CLR alias parameters");
+        var sourceArguments = new TypeNode[] { new TypeNode.Fqn("Key"), new TypeNode.Fqn("Value") };
+        var physicalArguments = new TypeNode[] { new TypeNode.Fqn("KeyStorage"), sourceArguments[0],
+            new TypeNode.Fqn("ValueStorage"), sourceArguments[1] };
+        if (!HasApplicationArity(2, framedMap, mapFrame) || !HasApplicationArity(4, framedMap, mapFrame)
+            || HasApplicationArity(3, framedMap, mapFrame)
+            || !SourceArguments(sourceArguments, mapFrame).SequenceEqual(sourceArguments)
+            || !SourceArguments(physicalArguments, mapFrame).SequenceEqual(sourceArguments))
+            throw new InvalidOperationException("Alias variance confused source and materialized application frames");
+        var reorderedIdentity = new NullableRepresentationFrame(2, Array.Empty<int>(), new[] { 1, 0 });
+        if (!SourceArguments(sourceArguments, reorderedIdentity).SequenceEqual(sourceArguments.Reverse()))
+            throw new InvalidOperationException("An equal-arity alias frame lost its physical permutation");
         if (ProjectVariantArguments(new TypeNode[] { new TypeNode.Tv("type", 0) }, covariant)[0]
             is not TypeNode.Projection { Variance: "out", Of: TypeNode.Tv { I: 0 } })
             throw new InvalidOperationException("A variant readable owner argument became an exact CLR witness");

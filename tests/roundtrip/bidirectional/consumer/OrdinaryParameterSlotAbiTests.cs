@@ -16,8 +16,17 @@ public class OrdinaryParameterSlotAbiTests
         Assert.That(parameters[1].ParameterType.IsInterface, Is.True);
         Assert.That(parameters[1].ParameterType.IsAssignableFrom(typeof(Box<string, string>)), Is.True);
         var property = typeof(PropertyOwner).GetProperty("box")!;
-        Assert.That(property.PropertyType, Is.EqualTo(typeof(Box<string, string>)));
+        Assert.That(property.PropertyType.IsInterface, Is.True);
+        Assert.That(property.PropertyType.IsGenericType, Is.False);
+        Assert.That(property.PropertyType.IsAssignableFrom(typeof(Box<string, string>)), Is.True);
         Assert.That(property.GetMethod!.ReturnType, Is.EqualTo(property.PropertyType));
         Assert.That(property.SetMethod!.GetParameters()[0].ParameterType, Is.EqualTo(property.PropertyType));
+        foreach (var parameter in new[] { property.GetMethod.ReturnParameter, property.SetMethod.GetParameters()[0] })
+        {
+            var source = KotlinTypeMetadata.Read(parameter.GetCustomAttributesData());
+            KotlinTypeMetadata.Named(source, "roundtrip.genericvalueinterop.Box");
+            Assert.That(source.GetProperty("args").GetArrayLength(), Is.EqualTo(1));
+            KotlinTypeMetadata.Named(source.GetProperty("args")[0], "kotlin.String");
+        }
     }
 }

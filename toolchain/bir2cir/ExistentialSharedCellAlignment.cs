@@ -56,6 +56,7 @@ static class ExistentialSharedCellAlignment
                 || !definitions.TryGetValue(owner.Name, out var declarations)
                 || declarations[0]["fields"] is not JsonArray fields) return;
             var field = fields.OfType<JsonObject>().Single(field => Str(field["name"]) == slot.Field);
+            if (field[GenericRepresentationPolicy.NativeLocationKey]?.GetValue<bool>() == true) return;
             var declared = TypeJson.Read(field["type"]);
             var value = kind == "new"
                 ? ((JsonArray)write["args"])[slot.ConstructorParameter] : write["value"];
