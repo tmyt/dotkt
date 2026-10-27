@@ -51,9 +51,9 @@ PROJECTS=(
 # Reviewed on the v0.9.8 main baseline at the start of #227. Updating a suite requires updating this number in
 # the same change, making otherwise-silent test proliferation or accidental deletion an explicit review event.
 declare -A EXPECTED_DISCOVERED=(
-	["tests/basic"]=832
+	["tests/basic"]=838
 	["tests/coroutines"]=267
-	["tests/roundtrip/consumer"]=669
+	["tests/roundtrip/consumer"]=673
 	["tests/roundtrip/bidirectional/consumer"]=56
 	["tests/interop/consumer"]=465
 )
@@ -379,6 +379,16 @@ for proj in "${PROJECTS[@]}"; do
 		else
 			echo "  INHERITED DEFAULT METHOD SLOT FAIL"
 			tail -25 "$ROOT/build/nunit-$name.inherited-default-method-cir.log"; rc=1
+		fi
+		if python3 "$ROOT/tests/roundtrip/assert-array-content-inline-cir.py" \
+			"$ROOT/tests/roundtrip/producer/obj/$CONFIGURATION/net10.0/cir/ArrayContent.cir.json" \
+			"$dir/obj/$CONFIGURATION/net10.0/bir/ArrayContentTests.bir.json" \
+			"$dir/obj/$CONFIGURATION/net10.0/cir/ArrayContentTests.cir.json" \
+			>"$ROOT/build/nunit-$name.array-content-inline.log" 2>&1; then
+			echo "  array-content metadata survives actual cross-DLL inline splicing"
+		else
+			echo "  ARRAY CONTENT INLINE METADATA FAIL"
+			tail -25 "$ROOT/build/nunit-$name.array-content-inline.log"; rc=1
 		fi
 		if python3 "$ROOT/tests/roundtrip/assert-private-rich-inline-cir.py" \
 			"$dir/obj/$CONFIGURATION/net10.0/cir/PrivateRichEnumCollisionTests.cir.json" \

@@ -61,110 +61,50 @@ public actual fun BooleanArray.asList(): List<Boolean> { val r = ArrayList<Boole
 
 public actual fun CharArray.asList(): List<Char> { val r = ArrayList<Char>(); for (e in this) r.add(e); return r }
 
-// contentDeep{Equals,HashCode,ToString} are `inline` recursive ops over nested arrays. Since an `inline` function
-// cannot recurse, each public inline entry point delegates to a non-inline `@PublishedApi internal` recursive helper
-// below. Element dispatch covers `is Array<*>` plus the 9 primitive array kinds (reusing the primitive content ops
-// defined in this file). NOTE: cyclic (self-referential) arrays are NOT detected and would recurse infinitely; this
-// is acceptable as such arrays are extremely rare.
-@PublishedApi internal fun contentDeepToStringImpl(arr: Array<*>?): String {
-    if (arr == null) return "null"
-    val sb = StringBuilder("[")
-    for (i in arr.indices) {
-        if (i != 0) sb.append(", ")
-        val e: Any? = arr[i]
-        when (e) {
-            null -> sb.append("null")
-            is Array<*> -> sb.append(contentDeepToStringImpl(e))
-            is ByteArray -> sb.append(e.contentToString())
-            is ShortArray -> sb.append(e.contentToString())
-            is IntArray -> sb.append(e.contentToString())
-            is LongArray -> sb.append(e.contentToString())
-            is FloatArray -> sb.append(e.contentToString())
-            is DoubleArray -> sb.append(e.contentToString())
-            is BooleanArray -> sb.append(e.contentToString())
-            is CharArray -> sb.append(e.contentToString())
-            else -> sb.append(e.toString())
-        }
-    }
-    sb.append("]")
-    return sb.toString()
+@SinceKotlin("1.1")
+@kotlin.internal.LowPriorityInOverloadResolution
+@kotlin.jvm.JvmName("contentDeepEqualsInline")
+@kotlin.internal.InlineOnly
+public actual inline infix fun <T> Array<out T>.contentDeepEquals(other: Array<out T>): Boolean {
+    return this.contentDeepEquals(other)
 }
 
-@PublishedApi internal fun contentDeepEqualsImpl(a: Array<*>?, b: Array<*>?): Boolean {
-    if (a === b) return true
-    if (a == null || b == null || a.size != b.size) return false
-    for (i in a.indices) {
-        val x: Any? = a[i]; val y: Any? = b[i]
-        val eq = when {
-            x === y -> true
-            x == null || y == null -> false
-            x is Array<*> && y is Array<*> -> contentDeepEqualsImpl(x, y)
-            x is ByteArray && y is ByteArray -> x.contentEquals(y)
-            x is ShortArray && y is ShortArray -> x.contentEquals(y)
-            x is IntArray && y is IntArray -> x.contentEquals(y)
-            x is LongArray && y is LongArray -> x.contentEquals(y)
-            x is FloatArray && y is FloatArray -> x.contentEquals(y)
-            x is DoubleArray && y is DoubleArray -> x.contentEquals(y)
-            x is BooleanArray && y is BooleanArray -> x.contentEquals(y)
-            x is CharArray && y is CharArray -> x.contentEquals(y)
-            else -> x == y
-        }
-        if (!eq) return false
-    }
-    return true
-}
-
-@PublishedApi internal fun contentDeepHashCodeImpl(arr: Array<*>?): Int {
-    if (arr == null) return 0
-    var h = 1
-    for (e in arr) {
-        val eh = when (e) {
-            null -> 0
-            is Array<*> -> contentDeepHashCodeImpl(e)
-            is ByteArray -> e.contentHashCode()
-            is ShortArray -> e.contentHashCode()
-            is IntArray -> e.contentHashCode()
-            is LongArray -> e.contentHashCode()
-            is FloatArray -> e.contentHashCode()
-            is DoubleArray -> e.contentHashCode()
-            is BooleanArray -> e.contentHashCode()
-            is CharArray -> e.contentHashCode()
-            else -> e.hashCode()
-        }
-        h = 31 * h + eh
-    }
-    return h
+@SinceKotlin("1.4")
+@kotlin.jvm.JvmName("contentDeepEqualsNullable")
+@kotlin.internal.InlineOnly
+public actual inline infix fun <T> Array<out T>?.contentDeepEquals(other: Array<out T>?): Boolean {
+    return contentDeepEqualsImpl(other)
 }
 
 @SinceKotlin("1.1")
 @kotlin.internal.LowPriorityInOverloadResolution
+@kotlin.jvm.JvmName("contentDeepHashCodeInline")
 @kotlin.internal.InlineOnly
-public actual inline infix fun <T> Array<out T>.contentDeepEquals(other: Array<out T>): Boolean = contentDeepEqualsImpl(this, other)
+public actual inline fun <T> Array<out T>.contentDeepHashCode(): Int {
+    return this.contentDeepHashCode()
+}
 
 @SinceKotlin("1.4")
+@kotlin.jvm.JvmName("contentDeepHashCodeNullable")
 @kotlin.internal.InlineOnly
-@kotlin.clr.ClrName("contentDeepEqualsNullable")
-public actual inline infix fun <T> Array<out T>?.contentDeepEquals(other: Array<out T>?): Boolean = contentDeepEqualsImpl(this, other)
+public actual inline fun <T> Array<out T>?.contentDeepHashCode(): Int {
+    return contentDeepHashCodeImpl()
+}
 
 @SinceKotlin("1.1")
 @kotlin.internal.LowPriorityInOverloadResolution
+@kotlin.jvm.JvmName("contentDeepToStringInline")
 @kotlin.internal.InlineOnly
-public actual inline fun <T> Array<out T>.contentDeepHashCode(): Int = contentDeepHashCodeImpl(this)
+public actual inline fun <T> Array<out T>.contentDeepToString(): String {
+    return this.contentDeepToString()
+}
 
 @SinceKotlin("1.4")
+@kotlin.jvm.JvmName("contentDeepToStringNullable")
 @kotlin.internal.InlineOnly
-@kotlin.clr.ClrName("contentDeepHashCodeNullable")
-public actual inline fun <T> Array<out T>?.contentDeepHashCode(): Int = contentDeepHashCodeImpl(this)
-
-@SinceKotlin("1.1")
-@kotlin.internal.LowPriorityInOverloadResolution
-@kotlin.internal.InlineOnly
-public actual inline fun <T> Array<out T>.contentDeepToString(): String = contentDeepToStringImpl(this)
-
-@SinceKotlin("1.4")
-@kotlin.internal.InlineOnly
-@kotlin.clr.ClrName("contentDeepToStringNullable")
-public actual inline fun <T> Array<out T>?.contentDeepToString(): String = contentDeepToStringImpl(this)
+public actual inline fun <T> Array<out T>?.contentDeepToString(): String {
+    return contentDeepToStringImpl()
+}
 
 @SinceKotlin("1.4")
 @kotlin.internal.InlineOnly
@@ -222,7 +162,7 @@ public actual inline infix fun FloatArray?.contentEquals(other: FloatArray?): Bo
     if (this === other) return true
     if (this == null || other == null) return false
     if (this.size != other.size) return false
-    for (i in indices) if (this[i] != other[i]) return false
+    for (i in indices) if (!this[i].equals(other[i])) return false
     return true
 }
 
@@ -232,7 +172,7 @@ public actual inline infix fun DoubleArray?.contentEquals(other: DoubleArray?): 
     if (this === other) return true
     if (this == null || other == null) return false
     if (this.size != other.size) return false
-    for (i in indices) if (this[i] != other[i]) return false
+    for (i in indices) if (!this[i].equals(other[i])) return false
     return true
 }
 

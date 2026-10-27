@@ -2314,6 +2314,7 @@ static class MemberCallSubstitution
         TypeNode.Nullable n => HasProjection(n.Of),
         TypeNode.Oblivious o => HasProjection(o.Of),
         TypeNode.Fqn f => f.Args?.Any(HasProjection) == true,
+        TypeNode.Array a => HasProjection(a.Elem),
         _ => false,
     };
 
@@ -2344,6 +2345,27 @@ static class MemberCallSubstitution
             || TypeJson.Read(Preference(ObjType)["type"]) is not TypeNode.Fqn { Name: "System.Collections.Generic.IReadOnlySet`1", Args.Length: 1 }
             || Str(Preference(new TypeNode.Projection("out", ObjType))["k"]) != "const")
             throw new InvalidOperationException("Static collection preference lost exact/star or caller-frame ownership");
+        foreach (var element in new TypeNode[] {
+            new TypeNode.Array(new TypeNode.Star()),
+            new TypeNode.Nullable(new TypeNode.Array(new TypeNode.Star())),
+            new TypeNode.Array(new TypeNode.Array(new TypeNode.Projection("out", ObjType))),
+        })
+        {
+            var preference = Preference(element);
+            if (Str(preference["k"]) != "const" || preference["value"] != null)
+                throw new InvalidOperationException("An array-nested projection manufactured a closed collection witness");
+            var arrayMapPreference = StaticMapPreference(new TypeNode.Fqn("kotlin.collections.Map",
+                new[] { element, ObjType }), refs, CollectionOperationPhase.Source);
+            if (Str(arrayMapPreference["method"]) != "clrMapViewPreference"
+                || Str(arrayMapPreference["args"]?[0]?["k"]) != "const"
+                || arrayMapPreference["args"]?[0]?["value"] != null
+                || Str(arrayMapPreference["args"]?[2]?["k"]) != "classRef")
+                throw new InvalidOperationException("An array-nested projection lost the independent Map witness roles");
+        }
+        var concreteArray = new TypeNode.Array(new TypeNode.Fqn("kotlin.String"));
+        if (TypeJson.Read(Preference(concreteArray)["type"]) is not TypeNode.Fqn {
+                Args: [TypeNode.Array { Elem: TypeNode.Fqn { Name: "kotlin.String" } }] })
+            throw new InvalidOperationException("A concrete array lost its closed collection witness");
         var projectedList = new TypeNode.Fqn("kotlin.collections.MutableList", new TypeNode[] {
             new TypeNode.Projection("in", ObjType) });
         var append = CollectionMutationCall(new JsonObject {
