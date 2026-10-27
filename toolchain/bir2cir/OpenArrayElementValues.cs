@@ -63,6 +63,7 @@ static class OpenArrayElementValues
         var uses = new Dictionary<JsonObject, Slot>();
         var slots = new List<Slot>();
         var loopSlots = new Dictionary<JsonObject, Slot>();
+        var valueResults = new HashSet<JsonObject>();
         var bindings = new Dictionary<string, Slot>(StringComparer.Ordinal);
         foreach (var parameter in (method["params"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
             if (Text(parameter["name"]) is string name)
@@ -89,6 +90,17 @@ static class OpenArrayElementValues
             if (kind is "local" or "setLocal" && Text(obj["name"]) is string used
                 && scope.TryGetValue(used, out var slot)) uses[obj] = slot;
             if (kind == "arrayGet" && !location && Element(obj, scope) is { } read) reads[obj] = read;
+            if (!location && kind is "cond" or "valueBlock") valueResults.Add(obj);
+            if (kind == "valueBlock")
+            {
+                // The result reads the same lexical bindings established by
+                // both ordered statement lists, without exporting them outside.
+                var inner = new Dictionary<string, Slot>(scope, StringComparer.Ordinal);
+                foreach (var statement in (obj["stmts"] as JsonArray ?? new JsonArray())
+                    .Concat(obj["body"] as JsonArray ?? new JsonArray())) Bind(statement, inner);
+                Bind(obj["result"], inner, location);
+                return;
+            }
             if (kind == "forArray" && Text(obj["var"]) is string loopName)
             {
                 Bind(obj["array"], scope);
@@ -159,6 +171,7 @@ static class OpenArrayElementValues
 
         var casts = new Dictionary<JsonObject, TypeNode>();
         var constrained = new HashSet<JsonObject>();
+        var erasedResults = new HashSet<JsonObject>();
         void Plan(JsonNode node)
         {
             if (node is JsonArray array) { foreach (var child in array) Plan(child); return; }
@@ -169,6 +182,9 @@ static class OpenArrayElementValues
                 casts[obj] = Bound(target, new HashSet<TypeNode.Tv>());
             if (Text(obj["k"]) == "constrainedCall" && Origin(obj["recv"]) != null)
                 constrained.Add(obj);
+            if (valueResults.Contains(obj) && Origin(obj) != null
+                && (TypeJson.Read(obj["type"]) is TypeNode.Tv || TypeJson.Read(obj["sty"]) is TypeNode.Tv))
+                erasedResults.Add(obj);
             foreach (var (key, child) in obj)
                 if (key is not ("attrs" or "overrides" or DeclarationIdentityBinding.SemanticSignatureKey)) Plan(child);
         }
@@ -205,6 +221,11 @@ static class OpenArrayElementValues
             read["sty"] = TypeJson.Write(ObjectType);
         }
         foreach (var (loop, _) in loopSlots) loop["elem"] = TypeJson.Write(ObjectType);
+        foreach (var result in erasedResults)
+        {
+            if (TypeJson.Read(result["type"]) is TypeNode.Tv) result["type"] = TypeJson.Write(ObjectType);
+            if (result["sty"] != null) result["sty"] = TypeJson.Write(ObjectType);
+        }
         foreach (var slot in origins.Keys)
             if (slot.Type is TypeNode.Tv && Text(slot.Declaration["k"]) == "var")
                 slot.Declaration["type"] = TypeJson.Write(ObjectType);
@@ -256,6 +277,31 @@ static class OpenArrayElementValues
             || TypeJson.Read(method["body"][1]["type"]) != ObjectType
             || TypeJson.Read(method["body"][2]["value"]["type"]) != ObjectType)
             throw new InvalidOperationException("Open array values lost erased locals or their separate array signature");
+
+        foreach (var blockResult in new[] { false, true })
+        {
+            var expressionRoot = pristine.DeepClone().AsObject();
+            var expressionMethod = expressionRoot["methods"][0];
+            var read = expressionMethod["body"][0]["init"].DeepClone();
+            var variable = new TypeNode.Tv("method", 0);
+            var expression = blockResult ? new JsonObject {
+                ["k"] = "valueBlock", ["type"] = TypeJson.Write(variable), ["sty"] = TypeJson.Write(variable),
+                ["stmts"] = new JsonArray(new JsonObject {
+                    ["k"] = "var", ["name"] = "innerAlias", ["type"] = TypeJson.Write(variable), ["init"] = read,
+                }),
+                ["result"] = new JsonObject { ["k"] = "local", ["name"] = "innerAlias" },
+            } : new JsonObject {
+                ["k"] = "cond", ["type"] = TypeJson.Write(variable), ["sty"] = TypeJson.Write(variable),
+                ["cond"] = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("kotlin.Boolean"), ["value"] = true },
+                ["then"] = read, ["else"] = read.DeepClone(),
+            };
+            expressionMethod["body"][0]["init"] = expression;
+            ApplyAll(new[] { expressionRoot }, null);
+            if (TypeJson.Read(expression["type"]) != ObjectType || TypeJson.Read(expression["sty"]) != ObjectType
+                || TypeJson.Read(expressionMethod["body"][0]["type"]) != ObjectType
+                || blockResult && TypeJson.Read(expression["result"]["sty"]) != ObjectType)
+                throw new InvalidOperationException("Open array expression lost its erased merge or lexical result binding");
+        }
 
         var expanded = JsonNode.Parse(pristine.ToJsonString().Replace("\"i\":0", "\"i\":2")).AsObject();
         var expandedMethod = expanded["methods"][0].AsObject();

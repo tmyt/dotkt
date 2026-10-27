@@ -42,6 +42,8 @@ private fun <T : ArrayElementBoundNode> erasedArrayElementUses() {
     values[0]
     val direct: Any? = values[0]
     check(direct is ArrayElementBoundNode && direct !is ArrayElementBoundItem)
+    check(conditionalArrayValue(values, true) === direct && conditionalArrayValue(values, false) === direct)
+    check(blockArrayValue(values) === direct)
     val first = values[0]
     val alias = first
     check(first === alias)
@@ -68,6 +70,8 @@ private fun <T> erasedNullElementUses() {
     var alias = first
     alias = values[0]
     check(direct == null && alias == null && alias !is ArrayElementBoundNode)
+    check(conditionalArrayValue(values, true) == null && conditionalArrayValue(values, false) == null)
+    check(blockArrayValue(values) == null)
     check(alias.hashCode() == 0 && alias.toString() == "null")
     for (value in values) check(value == null)
 }
@@ -78,6 +82,34 @@ private fun <T : ArrayElementBoundNode> typedArrayElementReturn(): T {
     return values[0]
 }
 private fun <T> typedArrayElementCall(value: T): Boolean = value === value
+private fun <T> conditionalArrayValue(values: Array<T>, choose: Boolean): Any? {
+    val value = if (choose) values[0] else values[0]
+    return value
+}
+private fun <T> blockArrayValue(values: Array<T>): Any? {
+    val value = run { val alias = values[0]; alias }
+    return value
+}
+@Suppress("UNCHECKED_CAST")
+private fun <T : ArrayElementBoundNode> typedExpressionArrayReturn(choose: Boolean, block: Boolean): T {
+    val values = arrayOf(ArrayElementBoundNode()) as Array<T>
+    return if (block) run { val alias = values[0]; alias }
+        else if (choose) values[0] else values[0]
+}
+private fun <T> arrayReadSame(values: Array<T>, value: T): Boolean = values[0] === value
+private fun <T> arrayReadTwice(values: Array<T>): Boolean = values[0] === values[0]
+private fun <T> arraySavedAliasSame(values: Array<T>): Boolean {
+    val first = values[0]
+    val alias = first
+    return first === alias
+}
+private fun <T> typedArrayValue(values: Array<T>): T = values[0]
+private fun <T> typedArrayValueSame(values: Array<T>, value: T): Boolean = typedArrayValue(values) === value
+private class ArrayIdentityElement {
+    var equalityCalls = 0
+    override fun equals(other: Any?): Boolean { equalityCalls++; return other is ArrayIdentityElement }
+    override fun hashCode(): Int = 1
+}
 @Suppress("UNCHECKED_CAST")
 private fun <T : ArrayElementBoundNode> consumeTypedArrayElement(): Boolean {
     val values = arrayOf(ArrayElementBoundNode()) as Array<T>
@@ -162,6 +194,23 @@ class GenericArrayElementTests {
     }
 
     @TestAttribute
+    fun arrayIdentityUsesErasedValuesUntilARealTypedBoundary() {
+        val values = arrayOf(1000)
+        check(!arrayReadSame(values, 1000) && !arrayReadTwice(values))
+        check(arraySavedAliasSame(values))
+        check(typedArrayElementCall(1000) && typedArrayValueSame(values, 1000))
+        val boxed: Any = 1000
+        check(arrayReadSame(arrayOf(boxed), boxed) && arrayReadTwice(arrayOf(boxed)))
+        val first = ArrayIdentityElement()
+        val second = ArrayIdentityElement()
+        val references = arrayOf(first)
+        check(arrayReadSame(references, first) && !arrayReadSame(references, second))
+        check(arrayReadTwice(references) && arraySavedAliasSame(references))
+        check(typedArrayValueSame(references, first) && !typedArrayValueSame(references, second))
+        check(first.equalityCalls == 0 && second.equalityCalls == 0)
+    }
+
+    @TestAttribute
     fun nullableExpandedMethodFramesRetainTheirGenericBoundArguments() {
         val values = System.Collections.Generic.List<Int?>()
         values.Add(7)
@@ -178,6 +227,9 @@ class GenericArrayElementTests {
     @TestAttribute
     fun typedConsumersAndNativeLocationsKeepTheirExactChecks() {
         arrayElementMustReject { typedArrayElementReturn<ArrayElementBoundItem>() }
+        arrayElementMustReject { typedExpressionArrayReturn<ArrayElementBoundItem>(true, false) }
+        arrayElementMustReject { typedExpressionArrayReturn<ArrayElementBoundItem>(false, false) }
+        arrayElementMustReject { typedExpressionArrayReturn<ArrayElementBoundItem>(true, true) }
         arrayElementMustReject { consumeTypedArrayElement<ArrayElementBoundItem>() }
         arrayElementMustReject { arrayOf(ArrayElementBoundNode()) as Array<ArrayElementBoundItem> }
         arrayElementMustReject { reifiedArrayElementBoundary<ArrayElementBoundItem>(arrayOf(ArrayElementBoundNode())) }
