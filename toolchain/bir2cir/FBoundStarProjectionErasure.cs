@@ -1167,6 +1167,13 @@ static partial class FBoundStarProjectionErasure
         if (ConstructionHasHiddenWitness(companionProjection, owners, refs)
             || !ConstructionHasHiddenWitness(hiddenWitness, owners, refs))
             throw new InvalidOperationException("Projected constructor inferred a known companion or lost a hidden native witness");
+        var nominalProjection = construction with { Args = construction.Args.Select((argument, index) =>
+            index == 1 ? new TypeNode.Fqn("Bound", new TypeNode[] { new TypeNode.Star() }) : argument).ToArray() };
+        var foreignProjection = construction with { Args = construction.Args.Select((argument, index) =>
+            index == 1 ? new TypeNode.Fqn("System.Collections.Generic.List`1", new TypeNode[] { new TypeNode.Star() }) : argument).ToArray() };
+        if (ConstructionHasHiddenWitness(nominalProjection, owners, refs)
+            || !ConstructionHasHiddenWitness(foreignProjection, owners, refs))
+            throw new InvalidOperationException("Projected construction confused a known Kotlin carrier with a hidden foreign frame");
         owners["Variant"] = new Owner { Name = "Variant", ErasedName = "VariantView", Needed = true,
             Def = JsonNode.Parse("""
               {"kind":"class","typeParams":[{"name":"T","variance":"out"}]}
@@ -2439,6 +2446,7 @@ static partial class FBoundStarProjectionErasure
         // mods here would cold-lower the call while leaving only an unlowered interface member.
         if (method["mods"] != null) slot["mods"] = method["mods"].DeepClone();
         CopyResultFacts(method, slot, owners, refs);
+        _nativeProofs?.TransferIndependentMethodProofs(method, slot);
         return slot;
     }
 
@@ -2551,6 +2559,8 @@ static partial class FBoundStarProjectionErasure
         // Kotlin modifiers rather than manufacturing a non-suspend body that calls a suspend slot.
         if (method["mods"] != null) bridge["mods"] = method["mods"].DeepClone();
         CopyResultFacts(method, bridge, owners, refs);
+        _nativeProofs?.TransferIndependentMethodProofs(method, bridge);
+        _nativeProofs?.TransferIndependentMethodProofs(method, descriptor);
         return bridge;
     }
 
@@ -3088,7 +3098,8 @@ static partial class FBoundStarProjectionErasure
                     // A variant Kotlin bound can already have an owner-independent nominal representation.
                     // Keep that same constraint on the carrier slot and its forwarding method; dropping it here
                     // would let the bridge instantiate the source method with an unconstrained CLR parameter.
-                    constraint = RewriteType(constraint, owners, refs);
+                    var physicalProof = _nativeProofs?.IsPhysicalConstraint(constraints, constraint) == true;
+                    constraint = RewriteType(constraint, owners, refs, boundDeclaration: physicalProof);
                     // No approximation of I<T> can constrain R on a carrier with hidden T. Kotlin metadata retains
                     // the original bound; only owner-independent constraints remain on the physical declarations.
                     if (ContainsOwnerTv(constraint)
@@ -3105,15 +3116,17 @@ static partial class FBoundStarProjectionErasure
                                 erased.Add(TypeJson.Write(consequence));
                         continue;
                     }
-                    var erasedConstraint = EraseOwnerTv(constraint, owners, refs);
+                    var erasedConstraint = physicalProof ? constraint : EraseOwnerTv(constraint, owners, refs);
                     // `R : T` becomes the existential top bound. It imposes no useful CLR constraint, and emitting an
                     // explicit System.Object constraint is both redundant and less portable across metadata readers.
                     if (!IsObjectish(erasedConstraint)) erased.Add(TypeJson.Write(erasedConstraint));
                 }
                 if (sourceMethod != null)
                     foreach (var proof in _nativeProofs.Bounds(sourceMethod, parameterIndex).Where(proof => !ContainsOwnerTv(proof)))
-                        if (!erased.Any(row => TypeJson.Read(row).Equals(proof))) erased.Add(TypeJson.Write(proof));
-                copy["constraints"] = new JsonArray(erased.Select(TypeJson.Read).Distinct().Select(TypeJson.Write).ToArray());
+                        if (!erased.Any(row => refs.PhysicalConstraintType(TypeJson.Read(row))
+                            == refs.PhysicalConstraintType(proof))) erased.Add(TypeJson.Write(proof));
+                copy["constraints"] = new JsonArray(erased.Select(TypeJson.Read)
+                    .DistinctBy(refs.PhysicalConstraintType).Select(TypeJson.Write).ToArray());
             }
             result.Add(copy);
         }
@@ -3712,10 +3725,18 @@ static partial class FBoundStarProjectionErasure
         var frame = owners.TryGetValue(owner.Name, out var declaration)
             ? KotlinSupertypesRecord.ReadNullableFrame(declaration.Def)
             : refs?.NullableTypeFrames.GetValueOrDefault(owner.Name);
-        return owner.Args.Where((argument, index) => frame == null
+        return owner.Args.Where((argument, index) => (frame == null
                 || frame.PhysicalSlot(index).Representation
                     is NullableRepresentationFrame.Role.Ordinary or NullableRepresentationFrame.Role.Nullable)
-            .Any(ContainsExistentialProjection);
+                && ContainsExistentialProjection(argument)
+                // A nested Kotlin application already has a declaration-owned exact carrier. It does not hide
+                // this owner's witness unless an actual native proof requires the concrete construction instead.
+                && (_nativeProofs?.ExactTypeArgument(owner.Name, index) == true
+                    || StripSourceNullability(argument) is not TypeNode.Fqn nominal
+                    || !TryExistentialCarrier(nominal.Name, owners, refs, out var carrier)
+                    || StripSourceNullability(RewriteType(argument, owners, refs))
+                        != new TypeNode.Fqn(carrier)))
+            .Any();
     }
 
     static bool ContainsManagedReference(TypeNode type) => type switch

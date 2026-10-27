@@ -90,6 +90,16 @@ private class StoredNativeValueEcho : NativeValueEcho {
 private class StoredNativeBoundedValueEcho : NativeBoundedValueEcho {
     override fun <T : BoundCounter<Int>> Echo(value: T): T = Stored(value).value
 }
+private class GenericStoredNativeBoundedValueEcho<Tag> : NativeBoundedValueEcho {
+    override fun <T : BoundCounter<Int>> Echo(value: T): T = Stored(value).value
+}
+private class GenericNativeProofBridge<Tag> {
+    private fun <T : roundtrip.dependentnative.ForeignBoundBase<String>> checked(value: T): T {
+        check(RoundtripDependentKotlinBound.Api.Probe<String, T>())
+        return value
+    }
+    fun read(value: roundtrip.dependentnative.ForeignBoundBase<String>): Boolean = checked(value) === value
+}
 private fun <T : BoundCounter<Int>> readBoundCounter(value: T): Int = value.count()
 private fun <T> replaceThroughConstructor(value: T, replacement: T): T {
     var slot = value
@@ -350,6 +360,11 @@ class NativeValueFramePreservationTests {
     @TestAttribute
     fun aBoundedNativeOverrideKeepsItsPrivateStorageBodyUnconstrained() {
         check(readBoundCounter(StoredNativeBoundedValueEcho().Echo(NativeBoundCounter(42))) == 42)
+        val generic = GenericStoredNativeBoundedValueEcho<String>()
+        check(readBoundCounter(generic.Echo(NativeBoundCounter(23))) == 23)
+        val native: NativeBoundedValueEcho = generic
+        check(readBoundCounter(native.Echo(NativeBoundCounter(29))) == 29)
+        check(GenericNativeProofBridge<Int>().read(roundtrip.dependentnative.ForeignBoundBase<String>()))
     }
 
     @TestAttribute

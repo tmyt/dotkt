@@ -62,6 +62,30 @@ assert helpers[0]["typeParams"][0]["constraints"] == [
     {"t": "fqn", "name": "roundtrip.constructorcarrier.BoundCounter$star"}]
 assert "constraints" not in helpers[0]["typeParams"][1]
 
+for suffix in (".GenericStoredNativeBoundedValueEcho", ".GenericStoredNativeBoundedValueEcho$star"):
+    generic = next(item for item in native["types"] if item["name"].endswith(suffix))
+    public = next(item for item in generic["methods"] if item["name"] == "Echo")
+    assert public["typeParams"][0]["constraints"] == [exact]
+    bodies = [item for item in generic["methods"] if "$nullableBody$" in item["name"]]
+    assert len(bodies) == (1 if suffix.endswith("$star") else 2)
+    for body in bodies:
+        assert body["typeParams"][0]["constraints"] == [
+            {"t": "fqn", "name": "roundtrip.constructorcarrier.BoundCounter$star"}]
+        assert "constraints" not in body["typeParams"][1]
+
+proof = {"t": "fqn", "name": "roundtrip.dependentnative.ForeignBoundBase`1",
+         "args": [{"t": "fqn", "name": "System.String"}]}
+bridge_owner = next(item for item in native["types"] if item["name"].endswith(".GenericNativeProofBridge"))
+bridge_carrier = next(item for item in native["types"] if item["name"] == bridge_owner["name"] + "$star")
+slot = next(item for item in bridge_carrier["methods"]
+            if any(fact.get("name") == "checked" and fact.get("sourceDeclaration")
+                   for fact in facts(item, "KotlinSourceMethod")))
+forwarder = next(item for item in bridge_owner["methods"] if item.get("clrInterfaceImpls")
+                 and any(edge.get("owner", {}).get("name") == bridge_carrier["name"]
+                         and edge.get("member") == slot["name"] for edge in item["clrInterfaceImpls"]))
+for declaration in (slot, forwarder, *forwarder["clrInterfaceImpls"]):
+    assert proof in declaration["typeParams"][0]["constraints"]
+
 bound_name = "roundtrip.dependentnative.ForeignBoundBase"
 source_bound = {"t": "fqn", "name": bound_name + "$star"}
 for name in ("KotlinBoundOwner", "KotlinMethodBoundOwner"):

@@ -270,6 +270,12 @@ class CrossModuleCaptureTests {
     // receiver's concrete instantiation so the collection reads Kotlin-format, not the raw BCL List.
 }
 
+private interface LocalProjectedSink<T> { fun write(value: T) }
+private class LocalAnySink : LocalProjectedSink<Any> { override fun write(value: Any) {} }
+private class LocalProjectedHolder<M : LocalProjectedSink<in String>>(private val value: M) {
+    fun write(text: String): M { value.write(text); return value }
+}
+
 class GenericMetadataRoundtripTests {
     @TestAttribute
     fun genericMemberTypeVariablesRoundTrip() {
@@ -631,6 +637,8 @@ class GenericMetadataRoundtripTests {
         ClassicAssert.AreEqual("callable", aliasProjectionDestination[0])
         val boundHolder = ReferencedUseSiteBoundHolder(projectedInput)
         ClassicAssert.IsTrue(boundHolder.write("class-bound") === projectedInput)
+        val localInput: LocalProjectedSink<in String> = LocalAnySink()
+        ClassicAssert.IsTrue(LocalProjectedHolder(localInput).write("local-class-bound") === localInput)
         val properties = referencedUseSiteProperties()
         properties.input.write("property-write")
         ClassicAssert.AreEqual("property-output", properties.output.read())

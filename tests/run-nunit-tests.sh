@@ -533,7 +533,8 @@ for proj in "${PROJECTS[@]}"; do
 			echo "  NESTED TYPE CARRIER FAIL — see build/nunit-$name.nested-type-carriers.log"
 			tail -25 "$ROOT/build/nunit-$name.nested-type-carriers.log"; rc=1
 		fi
-		if python3 "$ROOT/tests/roundtrip/assert-existential-return-cir.py" "$consumer_cir" \
+		if python3 "$ROOT/tests/roundtrip/assert-existential-return-cir.py" \
+			"$dir/obj/$CONFIGURATION/net10.0/bir/CrossModuleMetadataTests.bir.json" "$consumer_cir" \
 			>"$ROOT/build/nunit-$name.existential-return.log" 2>&1; then
 			echo "  referenced existential calls state physical returns + semantic projections"
 		else

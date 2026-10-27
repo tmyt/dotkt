@@ -210,6 +210,17 @@ static partial class FBoundStarProjectionErasure
         IReadOnlyDictionary<int, List<TypeNode>> Rows(JsonObject declaration) =>
             rows.GetValueOrDefault(declaration) ?? new Dictionary<int, List<TypeNode>>();
 
+        // A physical slot/forwarder is authored from this exact method and retains its method frame. Transfer only
+        // proofs that the new non-generic owner can name; a private storage body has its own, separate requirements.
+        public void TransferIndependentMethodProofs(JsonObject source, JsonObject projection)
+        {
+            foreach (var (index, proofs) in Rows(source).ToArray())
+                foreach (var proof in proofs.Where(proof => !ContainsOwnerTv(proof)).ToArray())
+                    Add(projection, index, proof);
+            if (Str(projection[DeclarationIdentityBinding.Key]) is string identity)
+                methods[identity] = projection;
+        }
+
         // Required native GenericParamConstraint rows are physical descriptors, not source value bounds.
         // Resolve cloned declarations by their authored identity, retaining the same proof across late walks.
         public bool IsPhysicalConstraint(JsonArray constraints, TypeNode bound)
@@ -330,6 +341,8 @@ static partial class FBoundStarProjectionErasure
         var original = root.DeepClone();
         var oldGraph = _sourceSupertypes;
         var oldDeclarations = _localDeclarations;
+        var oldProofs = _nativeProofs;
+        var oldValueSlots = _valueSlots;
         try
         {
             var roots = new[] { root };
@@ -338,6 +351,18 @@ static partial class FBoundStarProjectionErasure
             var definitions = _sourceSupertypes.ToDictionary(pair => pair.Key, pair => pair.Value.Node);
             var refs = ReferenceMetadataIndex.Build(new[] { typeof(object).Assembly.Location });
             var plan = new NativeProofPlan(roots, definitions, refs);
+            _nativeProofs = plan;
+            _valueSlots = new GenericRepresentationPolicy(refs.Aliases, refs, roots);
+            var constructionOwners = definitions.ToDictionary(pair => pair.Key, pair => new Owner {
+                Name = pair.Key, ErasedName = pair.Key + "View", Def = pair.Value, Needed = true,
+            });
+            var projectedMarker = new TypeNode.Fqn("Marker", new TypeNode[] { new TypeNode.Star() });
+            var requiredConstruction = new TypeNode.Fqn("Owner", new TypeNode[] {
+                new TypeNode.Fqn("System.String"), projectedMarker, projectedMarker,
+            });
+            if (RewriteType(projectedMarker, constructionOwners, refs) != new TypeNode.Fqn("MarkerView")
+                || !ConstructionHasHiddenWitness(requiredConstruction, constructionOwners, refs))
+                throw new InvalidOperationException("A known carrier discarded its demanded native construction witness");
             var physical = new JsonArray(new JsonObject { ["name"] = "T", ["constraints"] =
                 new JsonArray(TypeJson.Fqn("System.IO.MemoryStream")) });
             var dependentMethods = JsonNode.Parse("""
@@ -372,6 +397,20 @@ static partial class FBoundStarProjectionErasure
                 || plan.IsPhysicalConstraint(copiedBounds, new TypeNode.Fqn("Unrequired"))
                 || plan.IsPhysicalConstraint(new JsonArray(TypeJson.Write(requiredBound)), requiredBound))
                 throw new InvalidOperationException("Native proof rows lost declaration/index ownership across cloning");
+            var sourceMethod = root["methods"][0].AsObject();
+            var methodProof = new TypeNode.Fqn("Marker", new TypeNode[] { new TypeNode.Tv("method", 0) });
+            plan.Add(sourceMethod, 1, methodProof);
+            var projectedMethod = new JsonObject { [DeclarationIdentityBinding.Key] = "authored-physical-slot",
+                ["typeParams"] = sourceMethod["typeParams"].DeepClone() };
+            plan.TransferIndependentMethodProofs(sourceMethod, projectedMethod);
+            var copiedMethod = projectedMethod.DeepClone().AsObject();
+            var privateBody = new JsonObject { [DeclarationIdentityBinding.Key] = "separate-private-storage-body",
+                ["typeParams"] = sourceMethod["typeParams"].DeepClone() };
+            plan.TransferIndependentMethodProofs(root["methods"][1].AsObject(), privateBody);
+            if (!plan.IsPhysicalConstraint(projectedMethod["typeParams"][1]["constraints"].AsArray(), methodProof)
+                || !plan.IsPhysicalConstraint(copiedMethod["typeParams"][1]["constraints"].AsArray(), methodProof)
+                || plan.IsPhysicalConstraint(privateBody["typeParams"][1]["constraints"].AsArray(), methodProof))
+                throw new InvalidOperationException("Authored physical method proof transfer changed a separate storage contract");
             if (!plan.ExactTypeArgument("Owner", 1) || plan.ExactTypeArgument("Owner", 2)
                 || !plan.ExactTypeArgument("LateLocal", 1) || plan.ExactTypeArgument("LateLocal", 2)
                 || plan.ExactTypeArgument("SelfOwner", 0)
@@ -389,6 +428,9 @@ static partial class FBoundStarProjectionErasure
                 || !JsonNode.DeepEquals(original, root))
                 throw new InvalidOperationException("Native proof demand strengthened storage/pure forwarding or changed source facts");
         }
-        finally { _sourceSupertypes = oldGraph; _localDeclarations = oldDeclarations; }
+        finally {
+            _sourceSupertypes = oldGraph; _localDeclarations = oldDeclarations;
+            _nativeProofs = oldProofs; _valueSlots = oldValueSlots;
+        }
     }
 }
