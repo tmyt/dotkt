@@ -43,6 +43,8 @@ import genq.GenericSlots
 import genq.FunctionSlots
 import genq.InheritedNullableMiddle
 import genq.SlotDerived
+import genq.SlotBase
+import genq.SlotConsumer
 import genq.holderOf
 import genq.invokeNullable
 import genq.invokeNullableValue
@@ -326,10 +328,19 @@ class GenericMetadataRoundtripTests {
         val functionProperty: (String?) -> String = functionSlots.functionProperty
         ClassicAssert.AreEqual("property-null", functionProperty(null))
 
-        // The public CLR forwarding slot is synthesized after the initial erasure pass. Its parameter carrier must be
-        // propagated from SlotConsumer<T> and remain callable through the concrete derived type after re-import.
+        // Physical forwarding methods must not become new Kotlin declarations. The concrete, base and interface
+        // source views retain their selected inherited declaration and its nullable parameter through re-import.
         val derived = SlotDerived<String>()
         ClassicAssert.AreEqual("bridge", derived.accept(Slot<String?>("bridge")))
+        ClassicAssert.AreEqual("bridge-null", derived.accept(Slot(null)))
+        val base: SlotBase<String> = derived
+        ClassicAssert.AreEqual("base", base.accept(Slot("base")))
+        val contract: SlotConsumer<String> = derived
+        ClassicAssert.AreEqual("interface", contract.accept(Slot("interface")))
+        ClassicAssert.AreEqual("bridge-null", contract.accept(Slot(null)))
+        val ints = SlotDerived<Int>()
+        ClassicAssert.AreEqual("42", ints.accept(Slot(42)))
+        ClassicAssert.AreEqual("bridge-null", ints.accept(Slot(null)))
 
         // The inherited nullable-generic slot remains wired when reached through the intermediate base after re-import.
         // The synthetic lowering fixture separately forces a descriptor owner distinct from its CLR declarer.

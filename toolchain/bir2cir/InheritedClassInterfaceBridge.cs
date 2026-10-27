@@ -193,7 +193,13 @@ static class InheritedClassInterfaceBridge
                 var inherited = FindSelectedBaseMethod(cls, defs, iface.Name, name, methodArity, slotParams, slotRet,
                     Str(im[DeclarationIdentityBinding.Key]));
                 if (inherited == null) continue;
-                classMethods.Add(BuildBridge(iface, ifaceSpec, ifaceArgs, im, slotParams, slotRet, inherited.Value));
+                var bridge = BuildBridge(iface, ifaceSpec, ifaceArgs, im, slotParams, slotRet, inherited.Value);
+                // This MethodDef satisfies a CLR slot; the Kotlin member remains the selected inherited declaration.
+                // Re-exporting the physical forwarder would hide that declaration and lose its source identity.
+                var declarationId = Str(inherited.Value.Method[DeclarationIdentityBinding.Key])
+                    ?? throw new InvalidOperationException("Selected inherited implementation has no declaration identity");
+                DeclarationIdentityBinding.MarkInheritedProjection(bridge, cls.Name, new[] { declarationId });
+                classMethods.Add(bridge);
             }
         }
     }

@@ -330,6 +330,16 @@ for proj in "${PROJECTS[@]}"; do
 	# standard KLIB companion_object_name + nested class graph. Inspect both artifacts so a mutually-compatible
 	# producer/consumer bug cannot make the behavioral test pass while either interchange boundary is malformed.
 	if [[ "$proj" == "tests/roundtrip/consumer" ]]; then
+		if python3 "$ROOT/tests/roundtrip/assert-inherited-source-forwarder-cir.py" \
+			"$ROOT/tests/roundtrip/producer/obj/$CONFIGURATION/net10.0/cir/Genq.cir.json" \
+			"$dir/obj/$CONFIGURATION/net10.0/bir/CrossModuleMetadataTests.bir.json" \
+			"$dir/obj/$CONFIGURATION/net10.0/cir/CrossModuleMetadataTests.cir.json" \
+			>"$ROOT/build/nunit-$name.inherited-source-forwarder.log" 2>&1; then
+			echo "  physical inherited forwarders retain source declaration and CLR slot identities"
+		else
+			echo "  INHERITED SOURCE FORWARDER FAIL"
+			tail -25 "$ROOT/build/nunit-$name.inherited-source-forwarder.log"; rc=1
+		fi
 		if python3 "$ROOT/tests/roundtrip/assert-associated-generic-carrier-cir.py" \
 			"$ROOT/tests/roundtrip/producer/obj/$CONFIGURATION/net10.0/cir/CapturedGenericInvocation.cir.json" \
 			"$dir/obj/$CONFIGURATION/net10.0/bir/CapturedGenericInvocationTests.bir.json" \

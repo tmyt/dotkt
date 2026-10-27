@@ -74,7 +74,7 @@
     "name": "Passer", "kind": "interface", "typeParams": [{ "name": "T" }],
     "base": null, "interfaces": [], "fields": [], "ctors": [], "properties": [], "attrs": [],
     "methods": [{
-      "name": "pass", "static": false, "override": false, "virtual": true, "abstract": true, "vis": "public",
+      "name": "pass", "declarationId": "constructed-pass-interface", "static": false, "override": false, "virtual": true, "abstract": true, "vis": "public",
       "params": [{ "name": "value", "type": { "t": "tv", "scope": "type", "i": 0 } }],
       "ret": { "t": "tv", "scope": "type", "i": 0 }, "body": []
     }]
@@ -82,7 +82,7 @@
     "name": "PassBase", "kind": "class", "typeParams": [{ "name": "T" }],
     "base": null, "interfaces": [], "fields": [], "ctors": [], "properties": [], "attrs": [],
     "methods": [{
-      "name": "pass", "static": false, "override": false, "virtual": false, "abstract": false, "vis": "public",
+      "name": "pass", "declarationId": "constructed-pass-base", "static": false, "override": false, "virtual": false, "abstract": false, "vis": "public",
       "params": [{ "name": "value", "type": { "t": "tv", "scope": "type", "i": 0 } }],
       "ret": { "t": "tv", "scope": "type", "i": 0 },
       "body": [{ "k": "return", "value": { "k": "local", "name": "value" } }]
@@ -118,13 +118,13 @@
           "t": "fqn", "name": "Pairish",
           "args": [{ "t": "tv", "scope": "type", "i": 0 }, { "t": "tv", "scope": "type", "i": 1 }]
         }] }] },
-        "member": "pass", "kind": "method", "arity": 1
+        "member": "pass", "kind": "method", "arity": 1, "declarationId": "constructed-pass-base"
       }, {
         "owner": { "t": "fqn", "name": "Passer", "args": [{ "t": "fqn", "name": "System.Tuple", "args": [{
           "t": "fqn", "name": "Pairish",
           "args": [{ "t": "tv", "scope": "type", "i": 0 }, { "t": "tv", "scope": "type", "i": 1 }]
         }] }] },
-        "member": "pass", "kind": "method", "arity": 1
+        "member": "pass", "kind": "method", "arity": 1, "declarationId": "constructed-pass-interface"
       }],
       "inheritedImplementation": {
         "owner": { "t": "fqn", "name": "PassBase", "args": [{ "t": "fqn", "name": "System.Tuple", "args": [{

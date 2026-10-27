@@ -25,10 +25,8 @@ using Def = SupertypeGraph.Def;
 // explicit-implementation shape and the JVM's bridge-method idiom; `CovariantInterfaceReturnBridge` is the same
 // construction for the covariant-return case, and this file is deliberately shaped like it.
 //
-// Being private, the bridge is not part of the Kotlin surface: dll2klib projects public and protected members only, so
-// the re-imported type carries the one `accept(x: Int?)` the author wrote, with a physical member behind it. A public
-// bridge would instead re-import as a second `accept(x: Any?)` overload and make `IntSink().accept("s")` compile.
-// Private is necessary and not sufficient — see CarryKotlinType for the one path that re-surfaces a private body.
+// The generated bridge is physical implementation machinery, not a Kotlin declaration. dll2klib excludes its
+// CompilerGenerated MethodDef and MethodImpl body; the authored or inherited source member owns the Kotlin API.
 //
 // ONE BRIDGE, ONE METHODIMPL PER SLOT IT FILLS. A slot is reached through the whole supertype graph — the constructed
 // interface, its own base interfaces (including a synthesized existential view), and the base-class
@@ -2528,6 +2526,9 @@ static class KotlinOverrideSlotBridge
             ["sig"] = callSig,
             ["calleeParams"] = impl["inheritedDeclarationSignature"]?.DeepClone()
                 ?? FunctionSignatureIdentity.Signature(declParams),
+            // The implementation has already been instantiated in this bridge's owner frame, including inherited
+            // and default targets. Preserve that call-site result rather than substituting the target owner twice.
+            ["sty"] = TypeJson.Write(implRet),
             ["dynRet"] = TypeJson.Write(implRet),
             ["ret"] = TypeJson.Write(implRet),
             ["args"] = callArgs,
@@ -2574,8 +2575,8 @@ static class KotlinOverrideSlotBridge
             ["virtual"] = true,
             ["abstract"] = false,
             ["objectOverride"] = false,
-            // PRIVATE is what keeps the bridge off the Kotlin surface: dll2klib projects public and protected members
-            // only, so the re-imported type carries the author's declaration and nothing else.
+            // Keep the implementation private; the generated fact below separately excludes this physical adapter
+            // from Kotlin source projection, including when dll2klib processes its MethodImpl rows.
             ["vis"] = "private",
             ["params"] = bridgeParams,
             ["ret"] = TypeJson.Write(slotRet),
@@ -2619,26 +2620,16 @@ static class KotlinOverrideSlotBridge
         return bridge;
     }
 
-    // The Kotlin type of a slot the bridge states physically, on BOTH round-trip channels every erased slot uses: the
-    // `[KotlinNullableGeneric]` carrier for the type node, and the NRT byte for its outer `?`. Neither alone restores
-    // `Int?` — the carrier's outer nullability is deliberately the byte's job — and a bridge carrying only the node
-    // re-imports as `Int`.
-    //
-    // It is not cosmetic here, and it is the reason a private bridge is not simply invisible. dll2klib deliberately
-    // re-surfaces a PRIVATE MethodImpl body under the interface member's name — a class that satisfies an interface
-    // slot only privately would otherwise re-import still carrying the abstract obligation — and it de-duplicates
-    // that against the class's public functions by SIGNATURE. Uncarried, the bridge re-surfaces as `accept(x: Any)`:
-    // a second overload beside the author's `accept(x: Int?)`, which makes `IntSink().accept("s")` compile and
-    // `IntSink().accept(3)` ambiguous. Carried, the two keys coincide, the bridge de-duplicates away, and the
-    // re-imported type carries exactly the one declaration that was written.
+    // Preserve the Kotlin value type represented by a physical bridge slot through both metadata channels:
+    // `[KotlinNullableGeneric]` carries its type tree and the NRT byte carries its outer nullability. Reference-side
+    // representation consumers need both facts even though the generated MethodDef is not a new Kotlin declaration.
     static void CarryKotlinType(JsonObject decl, string factKey, string flagsKey, TypeNode kotlin, TypeNode slot,
         ValueTypeOracle isValue)
     {
         decl[factKey] ??= TypeNode.ToJson(kotlin);
         // The byte walk describes the PHYSICAL slot, which is the bare `object` this bridge states, carrying the
         // Kotlin type's outer nullability onto it. Walking the Kotlin type instead would stamp nothing for an `Int?`
-        // — a value type's `?` is the structural `Nullable<V>` and contributes no NRT byte — and the slot would
-        // re-import as a non-null `Int`, which is a different overload again.
+        // — a value type's `?` is structural `Nullable<V>` and contributes no NRT byte — losing the nullable value fact.
         var shape = kotlin is TypeNode.Nullable ? new TypeNode.Nullable(slot) : slot;
         if (!decl.ContainsKey(flagsKey) && NullableFlags.Compute(shape, isValue) is JsonArray f) decl[flagsKey] = f;
     }
