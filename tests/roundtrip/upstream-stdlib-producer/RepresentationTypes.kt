@@ -15,6 +15,13 @@ fun <T> genericRepresentation(value: T, text: CharSequence): T {
     check(text.length > 0)
     return value
 }
+class RepresentationReceiver<T>(val value: T) {
+    fun <R> select(text: CharSequence, result: R): R {
+        check(text[1] == 'b')
+        return result
+    }
+    fun echo(text: CharSequence): CharSequence = text
+}
 fun <T : CharSequence> boundedRepresentation(value: T): T = value
 class RepresentationBox<T : CharSequence>(val value: T)
 fun boxedRepresentation(value: RepresentationBox<*>): Any? = value.value

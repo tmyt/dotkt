@@ -62,7 +62,7 @@ static class Bir2Cir
                 StarProjectionBoundLowering.FunctionSelfTest();
                 ClrMemberResolution.InheritedGenericResultSelfTest();
                 ClrMemberResolution.FunctionSlotComparisonSelfTest();
-                ClrMemberResolution.CallDescriptorSelfTest();
+                StringCharSequenceBridge.CallSignatureSelfTest();
                 ClrMemberResolution.NullableSlotComparisonSelfTest();
                 OwnerConstrainedMethodLowering.SelfTest();
                 StdlibSubstituteTypeParams.SelfTest();
@@ -864,13 +864,8 @@ sealed class Pipeline
             // call substitution; a user CharSequence implementation keeps the synthetic representation verbatim.
             IReadOnlyList<JsonNode> materializedDelegateAdapters = Array.Empty<JsonNode>();
             if (!_options.RefBuild)
-            {
-                // Adapt physical arguments only after the existing descriptor owner has normalized every
-                // frontend-selected declaration vector, including imported generic calls' open shapeTypes.
-                ClrMemberResolution.EnsurePlainCallDescriptors(substituted);
                 substituted = StringCharSequenceBridge.Apply(
                     substituted, refs, charSeqRetLambdas, out materializedDelegateAdapters);
-            }
             // The String/CharSequence call-boundary bridge may materialize a closure that captures a non-literal
             // `(P...) -> String` delegate and exposes `(P...) -> CharSequence` (#190). Assemble those late closure
             // ingredients now; all earlier source/inline/event closures were already consumed by the main passes.

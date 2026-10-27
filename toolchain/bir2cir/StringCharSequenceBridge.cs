@@ -4,7 +4,7 @@ using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 
-static class StringCharSequenceBridge
+static partial class StringCharSequenceBridge
 {
     const string CharSeq = "dotkt$CharSequence";
     const string Adapter = "dotkt$StringCharSequence";
@@ -259,12 +259,14 @@ static class StringCharSequenceBridge
         }
     }
 
-    // (a)+(b): a call arg whose DECLARED slot (positional in `sig`, the comma-joined param types with the extension
-    // receiver first) is a CharSequence and whose value is statically a String. `sig` may be LONGER than `args` when
-    // trailing defaulted params were dropped — pair only the present args.
+    // Read the already-authored declaration vector without consuming the frontend's open source shape. A source
+    // shape does not include hidden ABI arguments (for example nullable witnesses); promoting it to `sig` here
+    // would prematurely claim physical arity before the descriptor owner has finalized those extra slots.
+    // An existing `sig` wins because a preceding binding may already have authored the physical target.
     static void WrapCallArgs(JsonObject node, Env env)
     {
-        if (node["args"] is not JsonArray args || node["sig"] is not JsonArray sig) return;
+        if (node["args"] is not JsonArray args
+            || (node["sig"] as JsonArray ?? node["shapeTypes"] as JsonArray) is not JsonArray sig) return;
         var n = Math.Min(sig.Count, args.Count);
         for (var i = 0; i < n; i++)
         {

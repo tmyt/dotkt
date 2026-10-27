@@ -12,6 +12,7 @@ internal static class RepresentationTypeMetadataInspector
 
     internal static void Verify(string referencePath, string runtimePath, string producerPath, string klibPath, string birPath)
     {
+        var runtimeIdentity = System.Reflection.AssemblyName.GetAssemblyName(runtimePath);
         foreach (var path in new[] { referencePath, runtimePath })
         {
             using var pe = new PEReader(File.OpenRead(path));
@@ -73,11 +74,20 @@ internal static class RepresentationTypeMetadataInspector
                     "ordinary method acquired a generic physical signature");
                 var expected = name == "echoRepresentation" ? "dotkt$CharSequence" : "System.Version";
                 for (var slot = 0; slot < 2; slot++)
-                    Require(signature.ReadSignatureTypeCode() == SignatureTypeCode.TypeHandle
-                        && Name(metadata, signature.ReadTypeHandle()) == expected,
-                        "source metadata changed native parameter/return identity: " + name);
+                {
+                    Require(signature.ReadSignatureTypeCode() == SignatureTypeCode.TypeHandle,
+                        "source metadata changed native parameter/return kind: " + name);
+                    var type = signature.ReadTypeHandle();
+                    Require(Name(metadata, type) == expected, "native parameter/return identity changed: " + name);
+                    if (name == "echoRepresentation") RequireRuntimeTypeReference(metadata, type, runtimeIdentity);
+                }
                 Require(signature.RemainingBytes == 0, "ordinary physical signature acquired extra slots");
             }
+            var authoredPhysical = metadata.TypeDefinitions.Select(metadata.GetTypeDefinition)
+                .Single(type => TypeName(metadata, type) == Package + ".RepresentationText");
+            var implemented = authoredPhysical.GetInterfaceImplementations().Select(metadata.GetInterfaceImplementation).ToArray();
+            Require(implemented.Length == 1, "authored representation acquired an unexpected physical interface");
+            RequireRuntimeTypeReference(metadata, implemented[0].Interface, runtimeIdentity);
         }
 
         using var archive = ZipFile.OpenRead(klibPath);
@@ -152,6 +162,22 @@ internal static class RepresentationTypeMetadataInspector
         attribute.Constructor.Kind == HandleKind.MethodDefinition
             ? metadata.GetMethodDefinition((MethodDefinitionHandle)attribute.Constructor).GetDeclaringType()
             : metadata.GetMemberReference((MemberReferenceHandle)attribute.Constructor).Parent);
+
+    static void RequireRuntimeTypeReference(MetadataReader metadata, EntityHandle handle,
+        System.Reflection.AssemblyName expected)
+    {
+        Require(handle.Kind == HandleKind.TypeReference, "canonical representation was emitted as a local TypeDef");
+        var type = metadata.GetTypeReference((TypeReferenceHandle)handle);
+        Require(Name(metadata, handle) == "dotkt$CharSequence" && type.ResolutionScope.Kind == HandleKind.AssemblyReference,
+            "canonical representation has no direct runtime AssemblyRef");
+        var assembly = metadata.GetAssemblyReference((AssemblyReferenceHandle)type.ResolutionScope);
+        var key = (assembly.Flags & System.Reflection.AssemblyFlags.PublicKey) != 0
+            ? expected.GetPublicKey() : expected.GetPublicKeyToken();
+        Require(metadata.GetString(assembly.Name) == expected.Name && assembly.Version == expected.Version
+            && metadata.GetString(assembly.Culture) == (expected.CultureName ?? "")
+            && metadata.GetBlobBytes(assembly.PublicKeyOrToken).SequenceEqual(key ?? Array.Empty<byte>()),
+            "canonical representation references a different assembly than the supplied runtime twin");
+    }
 
     static bool Primitive(MetadataReader metadata, ref BlobReader signature, bool reference, string source,
         SignatureTypeCode runtime) => reference

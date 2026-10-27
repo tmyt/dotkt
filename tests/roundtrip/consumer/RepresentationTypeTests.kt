@@ -28,5 +28,17 @@ class RepresentationTypeTests {
         val native = System.Version(1, 2)
         check(nativeRepresentation(native) === native)
         check(nativeRepresentation(native).Major == 1)
+        val receiver = RepresentationReceiver(17)
+        var evaluations = 0
+        fun textOnce(): String {
+            evaluations++
+            return "abc"
+        }
+        check(receiver.select(textOnce(), "picked") == "picked")
+        check(evaluations == 1)
+        check(receiver.select(custom, 42) == 42)
+        check(receiver.echo(custom) === custom)
+        check(receiver.select(textOnce(), native) === native)
+        check(evaluations == 2 && receiver.value == 17)
     }
 }
