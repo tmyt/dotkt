@@ -53,7 +53,7 @@ PROJECTS=(
 declare -A EXPECTED_DISCOVERED=(
 	["tests/basic"]=852
 	["tests/coroutines"]=267
-	["tests/roundtrip/consumer"]=674
+	["tests/roundtrip/consumer"]=676
 	["tests/roundtrip/bidirectional/consumer"]=56
 	["tests/interop/consumer"]=465
 )
@@ -400,6 +400,16 @@ for proj in "${PROJECTS[@]}"; do
 		fi
 		producer_dll="$ROOT/tests/roundtrip/producer/bin/$CONFIGURATION/net10.0/RoundtripProducer.dll"
 		producer_klib="$dir/obj/$CONFIGURATION/net10.0/klib/RoundtripProducer.klib"
+		if dotnet "$METADATA_INSPECTOR_DLL" --representation-types "$STDLIB_REF_DLL" "$STDLIB_RT_DLL" \
+			"$ROOT/tests/roundtrip/upstream-stdlib-producer/bin/$CONFIGURATION/net10.0/UpstreamStdlibProducer.dll" \
+			"$dir/obj/$CONFIGURATION/net10.0/klib/UpstreamStdlibProducer.klib" \
+			"$dir/obj/$CONFIGURATION/net10.0/bir/RepresentationTypeTests.bir.json" \
+			>"$ROOT/build/nunit-$name.representation-types.log" 2>&1; then
+			echo "  trusted representation classifiers survive both twins and DLL projection"
+		else
+			echo "  REPRESENTATION TYPE METADATA FAIL"
+			tail -25 "$ROOT/build/nunit-$name.representation-types.log"; rc=1
+		fi
 		if dotnet "$METADATA_INSPECTOR_DLL" --number-representation "$STDLIB_REF_DLL" "$producer_dll" "$producer_klib" \
 			>"$ROOT/build/nunit-$name.number-representation.log" 2>&1; then
 			echo "  Number slots and source bounds survive reference/DLL/KLIB boundaries"

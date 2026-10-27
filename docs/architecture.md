@@ -38,6 +38,11 @@ The CLR stdlib has three deliberately separate views:
 
 The split prevents frontend declarations, binding metadata, and executable implementations from being treated as one interchangeable artifact.
 
+A compiler-authored representation declaration can carry its exact Kotlin classifier through the existing
+`KotlinType` metadata. That declaration association survives in both stdlib twins, unlike ordinary runtime
+parameter/result source-slot metadata. `dll2klib` decodes a local TypeDef and an exactly resolved referenced
+TypeRef from the same trusted definition metadata; it never recovers source identity from physical names.
+
 ## Binding invariants
 
 1. `kotlin.*` symbols come from the frontend KLIB; CLR declarations come from per-assembly reference KLIBs.
