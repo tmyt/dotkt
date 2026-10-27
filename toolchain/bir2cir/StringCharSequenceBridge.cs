@@ -214,8 +214,25 @@ static partial class StringCharSequenceBridge
         switch (Str(node["k"]))
         {
             case "callStatic":
-            case "callInstance":
                 WrapCallArgs(node, env);
+                return node;
+            case "callInstance":
+                // The resolved receiver is a physical interface slot just like a declared argument. Inline
+                // splicing can put a String directly here without an intervening CharSequence-typed local.
+                if (TypeJson.Read(node["ownerType"]) is TypeNode.Fqn { Name: CharSeq }
+                    && node["recv"] is JsonNode receiver)
+                {
+                    var converted = CoerceCharSeqArg(receiver, env, nonNullSlot: true);
+                    if (!ReferenceEquals(receiver, converted)) node["recv"] = converted;
+                }
+                WrapCallArgs(node, env);
+                return node;
+            case "cond":
+                // A conditional materializes its own declared join even when its consumer only needs object.
+                // Honor that slot here, rather than waiting for a later CharSequence argument or assignment.
+                if (TypeJson.Read(node["type"]) is TypeNode.Fqn { Name: CharSeq }
+                    or TypeNode.Nullable { Of: TypeNode.Fqn { Name: CharSeq } })
+                    CoerceCharSeqArg(node, env, nonNullSlot: TypeJson.Read(node["type"]) is TypeNode.Fqn);
                 return node;
             case "delegateInvoke":
                 WrapDelegateInvokeArgs(node, env);
@@ -503,9 +520,8 @@ static partial class StringCharSequenceBridge
         // `v == null ? (dotkt$CharSequence)null : new dotkt$StringCharSequence(v)`: the slot receives a genuine adapter or
         // a typed null, ilverify-clean, null-preserving. The non-null-String and `!!`/elvis cases already wrapped above.
         if (!nonNullSlot && IsStaticNullableString(a, env)) return WrapAdapterNullable(a, env);
-        // The slot is CharSequence (every caller gates on IsCharSeqT), so a `cond` reaching here unifies String/CharSeq
-        // branches — coerce each. `!!`/elvis desugars are a valueBlock (handled above), never a bare `cond`, so this
-        // only descends a genuine `if/else`.
+        // The target slot is CharSequence, so adapt each conditional result branch independently. This includes
+        // conditionals inside valueBlock results, such as the frontend's elvis and non-null-assertion shapes.
         if (Str(o["k"]) == "cond")
         {
             if (o["then"] is JsonNode t) { var ct = CoerceCharSeqArg(t, env, nonNullSlot); if (!ReferenceEquals(ct, t)) o["then"] = ct; }
