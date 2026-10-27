@@ -330,6 +330,16 @@ for proj in "${PROJECTS[@]}"; do
 	# standard KLIB companion_object_name + nested class graph. Inspect both artifacts so a mutually-compatible
 	# producer/consumer bug cannot make the behavioral test pass while either interchange boundary is malformed.
 	if [[ "$proj" == "tests/roundtrip/consumer" ]]; then
+		if python3 "$ROOT/tests/roundtrip/assert-associated-generic-carrier-cir.py" \
+			"$ROOT/tests/roundtrip/producer/obj/$CONFIGURATION/net10.0/cir/CapturedGenericInvocation.cir.json" \
+			"$dir/obj/$CONFIGURATION/net10.0/bir/CapturedGenericInvocationTests.bir.json" \
+			"$dir/obj/$CONFIGURATION/net10.0/cir/CapturedGenericInvocationTests.cir.json" \
+			>"$ROOT/build/nunit-$name.associated-generic-carrier.log" 2>&1; then
+			echo "  generic carrier calls retain exact source association and independent method frames"
+		else
+			echo "  ASSOCIATED GENERIC CARRIER FAIL"
+			tail -25 "$ROOT/build/nunit-$name.associated-generic-carrier.log"; rc=1
+		fi
 		if python3 "$ROOT/tests/roundtrip/assert-imported-operator-carrier-cir.py" \
 			"$ROOT/tests/roundtrip/producer/obj/$CONFIGURATION/net10.0/cir/ValueReturningOperators.cir.json" \
 			"$dir/obj/$CONFIGURATION/net10.0/bir/ImportedSetResultTests.bir.json" \

@@ -2952,8 +2952,10 @@ sealed partial class ReferenceMetadataIndex
         {
             // The selected source and its allocated existential MethodDef share an authored edge, even when
             // intrinsic/indexer lowering gave them different names. A known declaration ID is never a name lookup.
+            // Source metadata and the physical slot can use different classifier vocabularies. Their explicit
+            // declaration association, not another signature match across those vocabularies, owns this edge.
             candidates = shapedCandidates.Where(m => m.SourcePropertyName == null
-                && m.SourceMethodDeclaration == selectedIdentity && DescribesSelectedDeclaration(m)).ToList();
+                && m.SourceMethodDeclaration == selectedIdentity).ToList();
         }
         else
         {
