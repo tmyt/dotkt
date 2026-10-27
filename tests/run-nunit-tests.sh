@@ -550,12 +550,21 @@ for proj in "${PROJECTS[@]}"; do
 			tail -25 "$ROOT/build/nunit-$name.referenced-method-generic-unsafe-accessor.log"; rc=1
 		fi
 		if python3 "$ROOT/tests/roundtrip/assert-referenced-generic-owner-unsafe-accessor-cir.py" \
+			"$ROOT/tests/roundtrip/producer/obj/$CONFIGURATION/net10.0/cir/ReferencedProtectedGenericOwner.cir.json" \
 			"$referenced_generic_owner_cir" \
 			>"$ROOT/build/nunit-$name.referenced-generic-owner-unsafe-accessor.log" 2>&1; then
 			echo "  referenced generic-owner UnsafeAccessor physical frame + use projection OK"
 		else
 			echo "  REFERENCED GENERIC-OWNER UNSAFEACCESSOR FAIL — see build/nunit-$name.referenced-generic-owner-unsafe-accessor.log"
 			tail -25 "$ROOT/build/nunit-$name.referenced-generic-owner-unsafe-accessor.log"; rc=1
+		fi
+		if python3 "$ROOT/tests/roundtrip/assert-ordinary-parameter-slots-cir.py" \
+			"$dir/obj/$CONFIGURATION/net10.0/cir/OrdinaryParameterSlotTests.cir.json" \
+			>"$ROOT/build/nunit-$name.ordinary-parameter-slots.log" 2>&1; then
+			echo "  shared Kotlin/native slots retain the selected physical forwarding signature"
+		else
+			echo "  ORDINARY PARAMETER SLOT FAIL — see build/nunit-$name.ordinary-parameter-slots.log"
+			tail -25 "$ROOT/build/nunit-$name.ordinary-parameter-slots.log"; rc=1
 		fi
 		if python3 "$ROOT/tests/roundtrip/assert-default-companion-frame-cir.py" \
 			"$dir/obj/$CONFIGURATION/net10.0/cir/DefaultCompanionCallbackTests.cir.json" \

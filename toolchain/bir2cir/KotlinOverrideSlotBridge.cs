@@ -487,7 +487,7 @@ static class KotlinOverrideSlotBridge
                     $"dotkt$ovslot${SafeName(identityName)}${bridgeOrdinal}", isValue, refs,
                     callOwner: inheritedOwner,
                     callMember: inheritedOwner == null ? null : Str(impl[DeclarationIdentityBinding.ExplicitNameKey]),
-                    unitValueReturn: unitValueReturn);
+                    unitValueReturn: unitValueReturn, physicalImplementation: phase == Phase.PhysicalBridges);
                 if (slotSignature != null && bridge["params"] is JsonArray bridgeParameters)
                     for (var i = 0; i < slotSignature.Length; i++)
                         if (slotSignature[i] is TypeNode.Mod { Req: false } signature
@@ -1405,7 +1405,7 @@ static class KotlinOverrideSlotBridge
                     substitutedSource["typeParams"] = sourceTypeParams.DeepClone();
                 bridge = BuildBridge(cls, substitutedSource, slotParams, slotRet,
                     $"dotkt${(propertyBridge ? "$dimprop" : "$dimmethod")}${SafeName(propertyName)}${ordinal++}",
-                    isValue, refs, callOwner, virtualCall, callMember);
+                    isValue, refs, callOwner, virtualCall, callMember, physicalImplementation: true);
                 if (!propertyBridge)
                     RoundtripMetadata.AddSourceMethodIdentity(bridge, propertyName);
                 if (propertyBridge)
@@ -2469,9 +2469,12 @@ static class KotlinOverrideSlotBridge
     // still runs; a referenced CLR DIM is called non-virtually to avoid redispatch to the colliding class method.
     // Each argument is narrowed out of the slot's `object` into the declared type
     // (`unbox.any` for a value, `castclass` for a reference) and the result widened back.
+    // Only the final physical phase owns a frozen implementation descriptor; earlier suspend/value adapters still
+    // carry semantic signatures that the ordinary representation pass must project.
     internal static JsonObject BuildBridge(Def cls, JsonObject impl, TypeNode[] slotParams, TypeNode slotRet, string bridgeName,
         ValueTypeOracle isValue, ReferenceMetadataIndex refs, TypeNode.Fqn callOwner = null,
-        bool virtualCall = true, string callMember = null, bool unitValueReturn = false)
+        bool virtualCall = true, string callMember = null, bool unitValueReturn = false,
+        bool physicalImplementation = false)
     {
         var declParams = impl["params"] as JsonArray ?? new JsonArray();
         var bridgeParams = new JsonArray();
@@ -2492,12 +2495,14 @@ static class KotlinOverrideSlotBridge
                     ? new JsonObject
                     {
                         ["k"] = "nullableWrap",
+                        [GenericRepresentationPolicy.PhysicalDeclarationSignatureKey] = physicalImplementation,
                         ["elem"] = TypeJson.Write(nullable.Of),
                         ["e"] = new JsonObject { ["k"] = "local", ["name"] = pn },
                     }
                     : new JsonObject
                     {
                         ["k"] = "cast",
+                        [GenericRepresentationPolicy.PhysicalDeclarationSignatureKey] = physicalImplementation,
                         ["type"] = TypeJson.Write(declT),
                         ["e"] = new JsonObject { ["k"] = "local", ["name"] = pn },
                     });
@@ -2521,6 +2526,7 @@ static class KotlinOverrideSlotBridge
             // Synthesized by bir2cir with its exact CLR declaration owner: the later inherited-owner pass must not
             // reinterpret it as an ordinary Kotlin receiver call and rebind it to the slot this bridge implements.
             ["clrOwnerResolved"] = true,
+            [GenericRepresentationPolicy.PhysicalDeclarationSignatureKey] = physicalImplementation,
             ["recv"] = new JsonObject { ["k"] = "this" },
             ["method"] = callMember ?? Str(impl["name"]),
             ["sig"] = callSig,
@@ -2558,10 +2564,12 @@ static class KotlinOverrideSlotBridge
                     ? new JsonObject
                     {
                         ["k"] = "nullableValue",
+                        [GenericRepresentationPolicy.PhysicalDeclarationSignatureKey] = physicalImplementation,
                         ["elem"] = TypeJson.Write(nullable.Of),
                         ["e"] = value,
                     }
-                    : new JsonObject { ["k"] = "cast", ["type"] = TypeJson.Write(slotRet), ["e"] = value };
+                    : new JsonObject { ["k"] = "cast", ["type"] = TypeJson.Write(slotRet), ["e"] = value,
+                        [GenericRepresentationPolicy.PhysicalDeclarationSignatureKey] = physicalImplementation };
                 retCarried = true;
             }
             body.Add(new JsonObject { ["k"] = "return", ["value"] = value });

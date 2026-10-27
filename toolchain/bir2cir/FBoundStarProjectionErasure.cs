@@ -561,6 +561,12 @@ static partial class FBoundStarProjectionErasure
         IReadOnlyDictionary<string, string> localClrAliases)
     {
         var kind = Str(owner["k"]);
+        // A final physical adapter selects an already-projected declaration. Its descriptor and narrowing
+        // conversions belong to that declaration, not to a fresh ordinary Kotlin value-slot projection.
+        if (Bool(owner[GenericRepresentationPolicy.PhysicalDeclarationSignatureKey])
+            && (kind == "callInstance" && key is "sig" or "calleeParams" or "ret" or "dynRet" or "sty"
+                || kind == "cast" && key == "type"
+                || kind is "nullableWrap" or "nullableValue" && key == "elem")) return true;
         if (kind == null && owner["params"] is JsonArray && key is "params" or "ret"
             && _valueSlots?.HasNativeMethodSignature(owner) == true) return true;
         if (IsDeclarationOwnerDescriptor(owner) && key is "params" or "ret"
@@ -1076,6 +1082,24 @@ static partial class FBoundStarProjectionErasure
             || RewriteType(inner, owners, refs, boundDeclaration: true) != inner
             || RewriteType(inner, owners, refs, preserveConstructedHead: true) != inner)
             throw new InvalidOperationException("Generic value projection lost its carrier or changed an exact linkage slot");
+        var physicalCall = new JsonObject {
+            ["k"] = "callInstance", [GenericRepresentationPolicy.PhysicalDeclarationSignatureKey] = true,
+            ["sig"] = new JsonArray(TypeJson.Write(exact)), ["calleeParams"] = new JsonArray(TypeJson.Write(exact)),
+            ["ret"] = TypeJson.Write(exact), ["dynRet"] = TypeJson.Write(exact), ["sty"] = TypeJson.Write(exact),
+            ["args"] = new JsonArray(new JsonObject {
+                ["k"] = "cast", [GenericRepresentationPolicy.PhysicalDeclarationSignatureKey] = true,
+                ["type"] = TypeJson.Write(exact), ["e"] = new JsonObject {
+                    ["k"] = "local", ["name"] = "value", ["sty"] = TypeJson.Write(exact) } }),
+        };
+        RewriteTypesOnly(physicalCall, owners, new Dictionary<string, JsonObject>(), refs, null);
+        if (TypeJson.Read(physicalCall["sig"][0]) != exact || TypeJson.Read(physicalCall["calleeParams"][0]) != exact
+            || TypeJson.Read(physicalCall["ret"]) != exact || TypeJson.Read(physicalCall["args"][0]["type"]) != exact
+            || TypeJson.Read(physicalCall["args"][0]["e"]["sty"]) != new TypeNode.Fqn("BoundView"))
+            throw new InvalidOperationException("A final physical adapter lost its declaration contract or froze ordinary operand values");
+        RemoveTransientMarkers(physicalCall);
+        if (physicalCall.ContainsKey(GenericRepresentationPolicy.PhysicalDeclarationSignatureKey)
+            || physicalCall["args"][0].AsObject().ContainsKey(GenericRepresentationPolicy.PhysicalDeclarationSignatureKey))
+            throw new InvalidOperationException("A physical adapter role escaped into serialized CIR");
         var factoryArguments = new JsonArray(TypeJson.Write(inner), TypeJson.Write(
             new TypeNode.Fqn("Owner.Item", new TypeNode[] { new TypeNode.Star() })));
         RewriteMethodArguments(new JsonObject { [InnerFactoryArgumentsKey] = true }, factoryArguments,

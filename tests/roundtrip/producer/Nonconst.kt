@@ -33,8 +33,8 @@ class Bag(val items: List<String> = emptyList(), val n: Int = 1) { val size: Int
 class PrivateDefaultOwner(private val secret: String) {
     fun reveal(value: String = secret): String = value
 }
-// The same lexical edge through a constructed generic owner. The consumer-side accessor must preserve the
-// target owner's generic form instead of baking this call site's concrete argument into an unsupported signature.
+// The same lexical edge through a generic owner uses its source-associated carrier getter while the actual
+// declaration stays private. Lexically exact accesses still use correctly framed caller-side UnsafeAccessors.
 class GenericPrivateDefaultOwner<T>(private val secret: T) {
     fun reveal(value: T = secret): T = value
 }
