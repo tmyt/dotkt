@@ -28,7 +28,7 @@ static partial class FBoundStarProjectionErasure
     const string InnerFactoryArgumentsKey = "_innerFactoryArguments";
     const string ExistentialResultProjectionKey = "_existentialResultProjection";
     internal const string ExactBridgeOwnerCallKey = "_exactExistentialBridgeOwnerCall";
-    const string ExactOuterKey = "outer";
+    internal const string ExactOuterKey = "outer";
     const string DelegationOuterSlotKey = "delegationOuterSlot";
     static Dictionary<string, List<JsonObject>> _localMethods = new(StringComparer.Ordinal);
     static Dictionary<(string Owner, string Identity), JsonObject> _localDeclarations = new();
@@ -428,9 +428,9 @@ static partial class FBoundStarProjectionErasure
                 arguments[index] = argument["of"]!.DeepClone();
     }
 
-    public static void RemoveTransientFacts(IEnumerable<JsonNode> roots)
+    public static void RemoveTransientFacts(IEnumerable<JsonNode> roots, bool preserveExactOuter = false)
     {
-        foreach (var root in roots) RemoveTransientMarkers(root);
+        foreach (var root in roots) RemoveTransientMarkers(root, preserveExactOuter);
     }
 
     static void CollectDefinitions(JsonObject container, Dictionary<string, JsonObject> defs)
@@ -5377,7 +5377,7 @@ static partial class FBoundStarProjectionErasure
         }
     }
 
-    static void RemoveTransientMarkers(JsonNode node)
+    static void RemoveTransientMarkers(JsonNode node, bool preserveExactOuter = false)
     {
         switch (node)
         {
@@ -5385,18 +5385,18 @@ static partial class FBoundStarProjectionErasure
                 obj.Remove("_exactBridgeCast");
                 obj.Remove("reifiedTypeOperand");
                 obj.Remove(ExactBridgeOwnerCallKey);
-                obj.Remove(ExactOuterKey);
+                if (!preserveExactOuter) obj.Remove(ExactOuterKey);
                 obj.Remove(DelegationOuterSlotKey);
                 obj.Remove(GenericRepresentationPolicy.NativeLocationKey);
                 obj.Remove(GenericRepresentationPolicy.FieldAddressKey);
                 obj.Remove(GenericRepresentationPolicy.PhysicalDeclarationSignatureKey);
                 obj.Remove(InnerFactoryArgumentsKey);
                 foreach (var value in obj.Select(pair => pair.Value).ToList())
-                    if (value != null) RemoveTransientMarkers(value);
+                    if (value != null) RemoveTransientMarkers(value, preserveExactOuter);
                 break;
             case JsonArray array:
                 foreach (var value in array)
-                    if (value != null) RemoveTransientMarkers(value);
+                    if (value != null) RemoveTransientMarkers(value, preserveExactOuter);
                 break;
         }
     }

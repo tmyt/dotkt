@@ -1738,6 +1738,12 @@ The refusals cannot fire on the BIR the frontend produces — that is what makes
 diagnostics. They are witnessed instead by synthetic documents under `tests/ir/lowering/reject-*.bir.json`, so an
 assert cannot be silently defeated by a later change.
 
+The monomorphic coroutine value ABI does not change a generic declaration's lexical receiver. A method or
+backing-field operand on its own `this` retains the exact declaring frame, including generated forwarding methods
+and constructor stores. Explicit enclosing receiver locations retain their authored construction too. Ordinary
+parameters, peer values, allocations and inherited protocol edges still follow the erased ABI; preserving a lexical
+receiver never substitutes that receiver's frame for a separately selected ancestor's physical contract.
+
 The `kotlin.Any` that remains is **ABI**, not fallback: the cold entry's return slot genuinely IS `Any?`, a
 continuation genuinely IS `Continuation<Any>`, a resume result genuinely IS `Result<Any?>`. Site by site:
 

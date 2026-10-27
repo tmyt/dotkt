@@ -1189,7 +1189,7 @@ sealed class Pipeline
                 NullableTvErasureCallRealign.ApplyAfterUnsafeAccessorSynthesis(
                     stagedFile.Root, nullableTvDeclRets, isValueFqn, refs);
         }
-        FBoundStarProjectionErasure.RemoveTransientFacts(staged.Select(s => s.Root));
+        FBoundStarProjectionErasure.RemoveTransientFacts(staged.Select(s => s.Root), preserveExactOuter: true);
 
         // Resolve the Kotlin `lateinitGet` failure path to an ordinary UPAE construction before constructor binding.
         // This is deliberately after UnsafeAccessorLowering, which can rebuild a private-field lateinitGet around a
@@ -1257,12 +1257,15 @@ sealed class Pipeline
         foreach (var (substituted, outputName) in staged)
         {
             // §11 CONTINUATION-ERASURE (bundle-6 bug #5 ROOT): make the coroutine ABI monomorphic on
-            // kotlin.coroutines.Continuation<object>. Every Continuation[X] type token -> Continuation[kotlin.Any]
-            // (all positions), and the resumeWith(Result<X>) protocol boundary -> Result<object> (Option A: the
+            // kotlin.coroutines.Continuation<object>. Ordinary Continuation[X] surfaces -> Continuation[kotlin.Any],
+            // while exact lexical declaring-owner operands retain their actual frame. The Result<X> protocol boundary
+            // follows the same erased value contract (Option A: the
             // resumeWith method + its Result-construction call args). ALL builds (ref/rt agree), BEFORE type lowering
             // (kotlin.Any then lowers to object in rt/app, verbatim in ref). Un-blocks BlockOnSink/startCoroutine/
             // resumeWith dispatch (CLR interface variance does not lift value types; uniform erasure is the fix).
             ContinuationErasure.Apply(substituted, refs);
+            // Exact enclosing receiver facts outlive the ordinary value projection through this final ABI erasure.
+            FBoundStarProjectionErasure.RemoveTransientFacts(new[] { substituted });
             GenericDowncastRealignment.Apply(substituted, genericDowncastHierarchy);
             // GenericDowncastRealignment aligns a local's declared type with an erased
             // existential-carrier cast. Bind calls through that local to the exact synthesized
