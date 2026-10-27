@@ -10,9 +10,9 @@ sealed class GenericRepresentationPolicy
 {
     internal const string NativeLocationKey = "_nativeLocation";
     internal const string PhysicalDeclarationSignatureKey = "_physicalDeclarationSignature";
-    readonly IReadOnlyDictionary<string, string> _aliases;
+    readonly Dictionary<string, string> _aliases;
     readonly ReferenceMetadataIndex _references;
-    readonly HashSet<string> _localOwners;
+    readonly Dictionary<string, JsonObject> _localDeclarations = new(StringComparer.Ordinal);
     readonly HashSet<string> _existentialOwners = new(StringComparer.Ordinal);
     readonly HashSet<JsonObject> _nativeFields = new();
     readonly HashSet<(string Owner, string Name, bool Static, string Receiver)> _nativeFieldNames = new();
@@ -20,26 +20,38 @@ sealed class GenericRepresentationPolicy
     public GenericRepresentationPolicy(IReadOnlyDictionary<string, string> aliases,
         ReferenceMetadataIndex references = null, IEnumerable<JsonNode> roots = null)
     {
-        _aliases = aliases;
+        _aliases = new Dictionary<string, string>(aliases, StringComparer.Ordinal);
         _references = references;
-        _localOwners = new HashSet<string>(StringComparer.Ordinal);
         void Collect(JsonNode node)
         {
             if (node is not JsonObject declaration) return;
             if (declaration["kind"] != null && declaration["name"] is JsonValue name
                 && name.TryGetValue<string>(out var owner))
             {
-                _localOwners.Add(owner);
+                _localDeclarations[owner] = declaration;
                 if (FBoundStarProjectionErasure.IsSourceGeneric(declaration)) _existentialOwners.Add(owner);
             }
             foreach (var child in declaration["types"] as JsonArray ?? new JsonArray()) Collect(child);
             foreach (var cell in (declaration["refTypes"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
-                if (Text(cell["name"]) is string cellOwner) _localOwners.Add(cellOwner);
+                if (Text(cell["name"]) is string cellOwner) _localDeclarations[cellOwner] = cell;
         }
         var inputs = (roots ?? Array.Empty<JsonNode>()).ToArray();
         foreach (var root in inputs) Collect(root);
         RecordNativeFields(inputs);
     }
+
+    // Local ownership and declaration facts include aliases and generated physical types. Carrier eligibility is
+    // a separate source declaration decision; discovering a late physical type must never allocate it a carrier.
+    internal void RegisterLocalDefinitions(IReadOnlyDictionary<string, JsonObject> declarations,
+        IReadOnlyDictionary<string, string> aliases)
+    {
+        foreach (var (name, declaration) in declarations) _localDeclarations[name] = declaration;
+        foreach (var (name, target) in aliases) _aliases[name] = target;
+    }
+
+    internal JsonObject LocalDeclaration(string owner) => _localDeclarations.GetValueOrDefault(owner);
+    internal string BindingAlias(string owner) => owner == null ? null
+        : _aliases.GetValueOrDefault(ReferenceMetadataIndex.BareOwnerFqn(owner));
 
     // Revisit newly materialized source/capture fields before value projection. Selected managed-reference
     // parameter shapes own these locations; the late value-flow pass separately allocates exact native locals.
@@ -122,17 +134,17 @@ sealed class GenericRepresentationPolicy
     static string Text(JsonNode node) => (node as JsonValue)?.TryGetValue<string>(out var text) == true ? text : null;
 
     internal bool OwnsValueSlots(string owner) => owner != null && !UsesNativeOwnerSlots(owner)
-        && (_localOwners.Contains(owner) || _references?.HasDotKtOwner(owner) == true);
+        && (_localDeclarations.ContainsKey(owner) || _references?.HasDotKtOwner(owner) == true);
 
     internal bool IsBindingAlias(string owner) => owner != null
-        && _aliases.ContainsKey(ReferenceMetadataIndex.BareOwnerFqn(owner));
+        && BindingAlias(owner) != null;
 
     internal bool UsesNativeOwnerSlots(string owner) => owner != null
         && (IsBindingAlias(owner)
             || _references?.TryResolveClrOwner(owner, out _, out _) == true);
 
     internal bool HasNativeConstraint(TypeNode.Fqn bound) => UsesNativeOwnerSlots(bound.Name)
-        || !_localOwners.Contains(bound.Name)
+        || !_localDeclarations.ContainsKey(bound.Name)
             && _references?.ResolveNetType(bound.Name, bound.Args?.Length ?? 0) != null;
 
     internal TypeNode StorageConstraint(TypeNode.Fqn bound) => OwnsValueSlots(bound.Name)
@@ -169,7 +181,7 @@ sealed class GenericRepresentationPolicy
     // BirTypeLowering owns the eventual alias substitution for both positions.
     public TypeNode ProjectArgumentHead(TypeNode.Fqn source, bool storage, NullableRepresentationFrame frame) =>
         storage && OwnsValueSlots(source.Name) && source.Args is { Length: > 0 }
-            && (_localOwners.Contains(source.Name) ? _existentialOwners.Contains(source.Name)
+            && (_localDeclarations.ContainsKey(source.Name) ? _existentialOwners.Contains(source.Name)
                 : _references?.TryExistentialPhysicalOwner(source.Name, out _) == true)
             ? new TypeNode.Fqn(source.Name, source.Args.Select(_ => (TypeNode)new TypeNode.Star()).ToArray())
             : source;
