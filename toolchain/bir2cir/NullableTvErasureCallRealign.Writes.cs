@@ -650,6 +650,10 @@ static partial class NullableTvErasureCallRealign
         bool exactPropertyTarget, ValueTypeOracle isValue)
     {
         if (value is not JsonObject vo || src == null || target == null || src.Equals(target)) return null;
+        // A managed-reference argument names storage. Preserve its lvalue for
+        // the native-local allocator; an object-to-pointer value cast cannot
+        // supply the selected declaration's exact managed-reference location.
+        if (SignatureValueTypes.Of(target) is TypeNode.ByRef) return null;
         // A compiler-generated mutable-property-reference adapter can expose `value: kotlin.Any` even though its
         // explicitly resolved generic accessor closes to `String` (or another narrower CLR slot). The exact source
         // property/role/MethodSemantics/signature lookup above makes that target authoritative, so this is an ordinary

@@ -2608,6 +2608,13 @@ What this is observable as, beyond the boxing already listed above:
   An opaque declaration-variant alias component uses its erased `Object` component as valid storage; a different
   actual component must still provide the requested classifier. The erased component cannot identify the source
   alias or its type arguments, and it does not make an unrelated `String[]` a collection-component array.
+- **An open generic element is an erased value until a typed consumer requires extraction.** Reading `xs[0]`
+  from `Array<T>` does not by itself narrow to the caller's concrete `T`; ordinary local aliases, assignments,
+  loop variables, object consumers and constructor delegation can retain that erased value, including null.
+  An explicit non-reified generic cast checks its representative bound. Bound-member dispatch checks the
+  selected member's owner, while typed calls and returns still require their actual physical slots. A local
+  passed by managed reference keeps the selected native parameter's exact element type for its whole storage
+  lifetime; initialization and later assignments must satisfy that location, and repeated references alias it.
 - **Native array boundaries remain exact, with no manual conversion API.** CLR arguments, results, overrides,
   nested native generic constructions and supported `ref`/`out` or live-reference locations retain the selected
   declaration's native array shape. Crossing from open Kotlin storage checks that shape without copying or

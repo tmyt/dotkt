@@ -7,6 +7,40 @@ fun <T> deepEqualsInLibrary(first: Array<out T>?, second: Array<out T>?): Boolea
 fun <T> deepHashInLibrary(value: Array<out T>?): Int = value.contentDeepHashCode()
 fun <T> deepStringInLibrary(value: Array<out T>?): String = value.contentDeepToString()
 
+open class ImportedArrayBound {
+    open fun label(): String = "node"
+    override fun hashCode(): Int = 7
+    override fun toString(): String = "node"
+}
+class ImportedArrayItem : ImportedArrayBound() {
+    override fun label(): String = "item"
+}
+@Suppress("UNCHECKED_CAST")
+fun <T : ImportedArrayBound> importedErasedArrayContent(operation: String): Any? {
+    val node = ImportedArrayBound()
+    val first = arrayOf(node) as Array<T>
+    val second = arrayOf(node) as Array<T>
+    return when (operation) {
+        "equals" -> first.contentDeepEquals(second)
+        "hash" -> first.contentDeepHashCode()
+        else -> first.contentDeepToString()
+    }
+}
+@Suppress("UNCHECKED_CAST")
+fun <T> importedNullArrayContent(operation: String): Any? {
+    val first = arrayOfNulls<Any>(1) as Array<T>
+    val second = arrayOfNulls<Any>(1) as Array<T>
+    return when (operation) {
+        "equals" -> first.contentDeepEquals(second)
+        "hash" -> first.contentDeepHashCode()
+        else -> first.contentDeepToString()
+    }
+}
+fun <T : ImportedArrayBound> importedArrayVirtualLabel(values: Array<T>): String {
+    val value = values[0]
+    return value.label()
+}
+
 inline fun <T> inlineDeepEquals(first: Array<out T>?, second: Array<out T>?, transform: (Boolean) -> Boolean): Boolean = transform(first.contentDeepEquals(second))
 inline fun <T> inlineDeepHash(value: Array<out T>?, transform: (Int) -> Int): Int = transform(value.contentDeepHashCode())
 inline fun <T> inlineDeepString(value: Array<out T>?, transform: (String) -> String): String = transform(value.contentDeepToString())

@@ -72,6 +72,7 @@ static class Bir2Cir
                 ExactMutableViewDispatch.SelfTest();
                 KotlinCollectionClassifierLowering.SelfTest();
                 GenericArrayStorageLowering.SelfTest();
+                OpenArrayElementValues.SelfTest();
                 RoundtripMetadata.RuntimeLinkageSelfTest();
                 SuspendColdLowering.DeclarationRegistrySelfTest();
                 ReferenceMetadataIndex.SelfTest();
@@ -912,6 +913,12 @@ sealed class Pipeline
         TypeOwnershipLowering.RecordNestedSourceTypes(staged.Select(s => s.Root).ToList(), refs);
         TypeOwnershipLowering.ProjectInnerApplications(staged.Select(s => s.Root).ToList(), refs);
         NullableTvErasureCallRealign.ProjectDeclarationApplications(nullableTvDeclRets);
+
+        // Preserve open array elements as ordinary erased values before array materialization
+        // and constrained-receiver binding. Exact native locations are allocated separately by
+        // the final value-flow pass; no declaration signature or allocation witness changes.
+        if (!_options.RefBuild)
+            OpenArrayElementValues.ApplyAll(staged.Select(s => s.Root), refs, isValueFqn, genericRepresentations);
 
         // F-BOUND STAR PROJECTION: CLR has no legal/reified `Node<*>` TypeSpec for `Node<N : Node<N>>`.
         // Materialize a deterministic non-generic existential view in bir2cir and make every closed Node<N> implement

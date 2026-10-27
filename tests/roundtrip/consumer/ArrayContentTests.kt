@@ -21,6 +21,20 @@ private fun <T> checkImportedDeepContents(first: Array<out T>?, second: Array<ou
 
 class ArrayContentTests {
     @TestAttribute
+    fun importedGenericArrayOperationsDoNotForceTheCallersElementType() {
+        check(importedErasedArrayContent<ImportedArrayItem>("equals") == true)
+        check(importedErasedArrayContent<ImportedArrayItem>("hash") == 38)
+        check(importedErasedArrayContent<ImportedArrayItem>("string") == "[node]")
+        check(importedNullArrayContent<Int>("equals") == true)
+        check(importedNullArrayContent<Int>("hash") == 31)
+        check(importedNullArrayContent<Int>("string") == "[null]")
+        check(importedNullArrayContent<String>("equals") == true)
+        check(importedNullArrayContent<String>("hash") == 31)
+        check(importedNullArrayContent<String>("string") == "[null]")
+        check(importedArrayVirtualLabel(arrayOf(ImportedArrayItem())) == "item")
+    }
+
+    @TestAttribute
     fun importedInlineBodiesAndCallableReferencesUseSharedDeepOperations() {
         val first = makeArrayContents()
         val second = makeArrayContents()

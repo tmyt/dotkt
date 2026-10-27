@@ -7,7 +7,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Changed
 
-- Restore shared upstream deep-array equality and cycle-aware rendering, reuse the portable upstream deep hash, and preserve structural NaN/signed-zero equality for floating array contents.
+- Restore shared upstream deep-array equality and cycle-aware rendering, reuse the portable upstream deep hash, and preserve structural NaN/signed-zero equality for floating array contents. Keep open generic array element values erased until a typed consumer or exact native location requires extraction.
 - Preserve unchecked Kotlin generic reference views in invariant fields, constructor arguments, closure results and container elements across DLL boundaries, while retaining exact CLR interop signatures and native managed-reference locations.
 - Restore upstream empty-map and comparison bodies, including natural/reverse comparator singletons, using the compiler's general erased-type rules instead of stdlib workarounds.
 - Remove obsolete per-overload stdlib CLR renames in favor of the existing general signature-identity rules. Restore upstream MutableCollections, SequenceBuilder and Ranges sources, and keep CLR annotation definitions outside upstream source directories.

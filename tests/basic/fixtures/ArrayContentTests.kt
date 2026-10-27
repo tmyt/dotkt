@@ -1,6 +1,191 @@
 @file:OptIn(ExperimentalUnsignedTypes::class)
 
 import NUnit.Framework.TestAttribute
+import kotlin.clr.ClrRef
+import kotlin.clr.byref
+
+private open class ArrayElementBoundNode {
+    open fun label(): String = "node"
+    override fun hashCode(): Int = 7
+    override fun toString(): String = "node"
+}
+private class ArrayElementBoundItem : ArrayElementBoundNode() {
+    override fun label(): String = "item"
+}
+
+@Suppress("UNCHECKED_CAST")
+private fun <T : ArrayElementBoundNode> boundedArrayContent(operation: String): Any? {
+    val node = ArrayElementBoundNode()
+    val first = arrayOf(node) as Array<T>
+    val second = arrayOf(node) as Array<T>
+    return when (operation) {
+        "equals" -> first.contentDeepEquals(second)
+        "hash" -> first.contentDeepHashCode()
+        else -> first.contentDeepToString()
+    }
+}
+
+@Suppress("UNCHECKED_CAST")
+private fun <T> nullArrayContent(operation: String): Any? {
+    val first = arrayOfNulls<Any>(1) as Array<T>
+    val second = arrayOfNulls<Any>(1) as Array<T>
+    return when (operation) {
+        "equals" -> first.contentDeepEquals(second)
+        "hash" -> first.contentDeepHashCode()
+        else -> first.contentDeepToString()
+    }
+}
+
+@Suppress("UNCHECKED_CAST")
+private fun <T : ArrayElementBoundNode> erasedArrayElementUses() {
+    val values = arrayOf(ArrayElementBoundNode()) as Array<T>
+    values[0]
+    val direct: Any? = values[0]
+    check(direct is ArrayElementBoundNode && direct !is ArrayElementBoundItem)
+    val first = values[0]
+    val alias = first
+    check(first === alias)
+    var mutable = alias
+    mutable = values[0]
+    check((mutable as Any?) === direct)
+    check(mutable.label() == "node" && mutable.hashCode() == 7 && mutable.toString() == "node")
+    var visits = 0
+    for (value in values) {
+        check(value.label() == "node" && value.hashCode() == 7 && value.toString() == "node")
+        visits++
+    }
+    check(visits == 1)
+}
+
+@Suppress("UNCHECKED_CAST")
+private fun <T> erasedNullElementUses() {
+    val values = arrayOfNulls<Any>(1) as Array<T>
+    values[0]
+    val direct: Any? = values[0]
+    val first = values[0]
+    val second = values[0]
+    check(first === second)
+    var alias = first
+    alias = values[0]
+    check(direct == null && alias == null && alias !is ArrayElementBoundNode)
+    check(alias.hashCode() == 0 && alias.toString() == "null")
+    for (value in values) check(value == null)
+}
+
+@Suppress("UNCHECKED_CAST")
+private fun <T : ArrayElementBoundNode> typedArrayElementReturn(): T {
+    val values = arrayOf(ArrayElementBoundNode()) as Array<T>
+    return values[0]
+}
+private fun <T> typedArrayElementCall(value: T): Boolean = value === value
+@Suppress("UNCHECKED_CAST")
+private fun <T : ArrayElementBoundNode> consumeTypedArrayElement(): Boolean {
+    val values = arrayOf(ArrayElementBoundNode()) as Array<T>
+    return typedArrayElementCall<T>(values[0])
+}
+private fun <T> replaceNativeArrayElement(first: ClrRef<T>, second: ClrRef<T>, replacement: T) {
+    first.value = replacement
+    check(second.value == replacement)
+}
+private fun <T> nativeArrayElementLocal(values: Array<T>, replacement: T): Any? {
+    var value = values[0]
+    replaceNativeArrayElement(byref(value), byref(value), replacement)
+    return value
+}
+private fun <T : ArrayElementBoundNode> arrayElementVirtualLabel(values: Array<T>): String {
+    val value = values[0]
+    return value.label()
+}
+private fun <A, B, T : System.Collections.Generic.List<B?>> frameExpandedArrayElement(
+    first: A?, second: B?, values: Array<T>,
+): Int {
+    val value = values[0]
+    @Suppress("UNCHECKED_CAST")
+    val guarded = value as T
+    check(first == null && second == null)
+    return guarded.Count
+}
+private open class ArrayElementConstructorSink(val value: Any?)
+private class ArrayElementConstructorRead<T>(values: Array<T>) : ArrayElementConstructorSink(values[0])
+@Suppress("UNCHECKED_CAST")
+private fun <T> erasedConstructorElement(): Any? {
+    val values = arrayOfNulls<Any>(1) as Array<T>
+    return ArrayElementConstructorRead(values).value
+}
+@Suppress("UNCHECKED_CAST")
+private fun <T : ArrayElementBoundNode> invalidNativeArrayElementLocal(replacement: T): Any? {
+    val values = arrayOf(ArrayElementBoundNode()) as Array<T>
+    return nativeArrayElementLocal(values, replacement)
+}
+private inline fun <reified T> reifiedArrayElementBoundary(value: Any?): Any? = value as Array<T>
+private fun arrayElementMustReject(body: () -> Unit) {
+    var rejected = false
+    try { body() } catch (failure: System.InvalidCastException) { rejected = true }
+    check(rejected)
+}
+
+class GenericArrayElementTests {
+    @TestAttribute fun boundedDeepEqualsUsesTheErasedElement() {
+        check(boundedArrayContent<ArrayElementBoundItem>("equals") == true)
+    }
+    @TestAttribute fun boundedDeepHashUsesTheErasedElement() {
+        check(boundedArrayContent<ArrayElementBoundItem>("hash") == 38)
+    }
+    @TestAttribute fun boundedDeepStringUsesTheErasedElement() {
+        check(boundedArrayContent<ArrayElementBoundItem>("string") == "[node]")
+    }
+    @TestAttribute fun valueInstantiatedDeepEqualsRetainsNull() {
+        check(nullArrayContent<Int>("equals") == true)
+    }
+    @TestAttribute fun valueInstantiatedDeepHashRetainsNull() {
+        check(nullArrayContent<Int>("hash") == 31)
+    }
+    @TestAttribute fun valueInstantiatedDeepStringRetainsNull() {
+        check(nullArrayContent<Int>("string") == "[null]")
+    }
+    @TestAttribute fun referenceInstantiatedDeepEqualsRetainsNull() {
+        check(nullArrayContent<String>("equals") == true)
+    }
+    @TestAttribute fun referenceInstantiatedDeepHashRetainsNull() {
+        check(nullArrayContent<String>("hash") == 31)
+    }
+    @TestAttribute fun referenceInstantiatedDeepStringRetainsNull() {
+        check(nullArrayContent<String>("string") == "[null]")
+    }
+
+    @TestAttribute
+    fun ordinaryGenericReadsAliasesAndLoopsDoNotForceConcreteExtraction() {
+        erasedArrayElementUses<ArrayElementBoundItem>()
+        erasedNullElementUses<Int>()
+        erasedNullElementUses<String>()
+        check(arrayElementVirtualLabel(arrayOf(ArrayElementBoundItem())) == "item")
+    }
+
+    @TestAttribute
+    fun nullableExpandedMethodFramesRetainTheirGenericBoundArguments() {
+        val values = System.Collections.Generic.List<Int?>()
+        values.Add(7)
+        check(frameExpandedArrayElement<String, Int, System.Collections.Generic.List<Int?>>(
+            null, null, arrayOf(values)) == 1)
+    }
+
+    @TestAttribute
+    fun constructorDelegationReadsStayErasedForAnObjectConsumer() {
+        check(erasedConstructorElement<Int>() == null)
+        check(erasedConstructorElement<String>() == null)
+    }
+
+    @TestAttribute
+    fun typedConsumersAndNativeLocationsKeepTheirExactChecks() {
+        arrayElementMustReject { typedArrayElementReturn<ArrayElementBoundItem>() }
+        arrayElementMustReject { consumeTypedArrayElement<ArrayElementBoundItem>() }
+        arrayElementMustReject { arrayOf(ArrayElementBoundNode()) as Array<ArrayElementBoundItem> }
+        arrayElementMustReject { reifiedArrayElementBoundary<ArrayElementBoundItem>(arrayOf(ArrayElementBoundNode())) }
+        check(nativeArrayElementLocal(arrayOf(1), 2) == 2)
+        check(nativeArrayElementLocal(arrayOf("before"), "after") == "after")
+        arrayElementMustReject { invalidNativeArrayElementLocal(ArrayElementBoundItem()) }
+    }
+}
 
 private class ContentElement(private val value: Int) {
     override fun equals(other: Any?): Boolean = other is ContentElement && value == other.value
