@@ -7,6 +7,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Changed
 
+- Preserve exact generic declaring frames for lexical coroutine/result member access without changing the erased value ABI.
 - Adapt String receivers and conditional CharSequence joins at their declared physical boundaries, including inline bodies and nullable StringBuilder helpers.
 - Preserve trusted representation-type source associations across DLL boundaries so ordinary Kotlin CharSequence APIs and authored supertypes retain their Kotlin classifiers.
 - Restore shared upstream deep-array equality and cycle-aware rendering, reuse the portable upstream deep hash, and preserve structural NaN/signed-zero equality for floating array contents. Keep open generic array element values erased until a typed consumer or exact native location requires extraction.

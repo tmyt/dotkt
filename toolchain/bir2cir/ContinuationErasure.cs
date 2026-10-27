@@ -5,50 +5,20 @@ using System.Text;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 
-// bundle-6 bug #5 ROOT — the §11 "Continuation<object> uniformly" ABI erasure.
-//
-// The coroutine ABI must be MONOMORPHIC on kotlin.coroutines.Continuation<object>. CLR interface
-// contravariance (`in T`) does NOT lift value types (Continuation<object> is not a Continuation<int>),
-// AND the declared `in T` is illegal anyway because T sits inside Result<T> (an invariant reference
-// class) — so ilemit drops the variance and Continuation emits INVARIANT. The only shape that composes
-// for generic/value results is uniform erasure + boxing at the boundaries (JVM-equivalent erasure):
-// EVERY `kotlin.coroutines.Continuation[X]` type token becomes `Continuation[kotlin.Any]`, in ALL
-// positions. Then BlockOnSink : Continuation<object> IS the `Continuation<object>` that
-// startCoroutine/resume/resumeWith expect — exact match, no variance needed — and the
-// BlockOnSink → startCoroutine → createCoroutineUnintercepted → SM → resumeWith chain type-checks.
-//
-// The resumeWith(Result<T>) boundary (Codex-verified Option A): resumeWith stays `resumeWith(Result<object>)`
-// uniformly (the stdlib cold-core bases already hand-declare Result<Any?>; the Continuation interface
-// slot with T=object is Result<object>). kotlin.Result is emitted as an INVARIANT reference class, so
-// Result<int>/Result<Unit>/Result<object> are mutually incompatible.
-//
-// RESULT MONOMORPHIZATION (bundle-6 collops2 / windowed): the same invariance that forces the resumeWith
-// boundary to Result<object> forces kotlin.Result to be MONOMORPHIC on Result<object> EVERYWHERE — exactly
-// like Continuation<object>. kotlin.Result's payload is already `object` (get_value : object, the ctor takes
-// object), so the reference class `Result`1<T>` is a phantom-generic wrapper: T only names the get_value cast
-// at the use site, never the storage. The generic accessor family `getOrThrow<T>/getOrNull<T>/…` is declared
-// on `Result<T>`, but its body calls the NON-generic `throwOnFailure(Result<*>)` — star-projected to
-// `Result<object>`. Passing the accessor's `Result<!!T>` receiver into that `Result<object>` param is an
-// invariant-reference mismatch: the generic accessor method never fully resolves ("the method itself or the
-// containing type is not fully instantiated") when driven through a nested generic (windowedIterator →
-// SequenceBuilderIterator.resumeWith → getOrThrow<T> → throwOnFailure). The fix is to erase EVERY
-// `kotlin.Result[X]` / `@kotlin.Result[X]` TYPE token to Result<object> and every `Result.success/failure`
-// construction's type-arg to object, in ALL positions and ALL builds. The accessor's own type-parameter T
-// survives ONLY on the RETURN (`gp:T` + the `cast gp:T` on the object payload), so `getOrThrow<int>(Result<object>)
-// : int` still returns int — but there is no longer any cross-instantiation Result value, so throwOnFailure
-// always receives the exact `Result<object>` it declares. (getOrThrow's typeArgs at call sites stay source-typed
-// so the return type is right; only the resumeWith-DISCARDED receiver's typeArgs/retType are promoted to Any so
-// the popped value's hint is non-void — EraseResultReceiverTypeArgs, still scoped to the protocol.)
-//
-// Runs in ALL builds (ref/rt/app) so ref.dll + rt.dll signatures agree, BEFORE BirTypeLowering (it
-// emits kotlin.* tokens that then lower: kotlin.Any -> object in rt/app, kept verbatim in ref).
-static class ContinuationErasure
+// The cold coroutine protocol uses monomorphic Result/Continuation value surfaces where the earlier
+// existential projection has not already supplied its carrier. CLR variance cannot relate value-type
+// instantiations, so ordinary values, construction sites and inherited protocol edges share that ABI.
+// An exact lexical receiver is different: its own member operand must retain the actual declaring frame,
+// not name G<object> while loading this of G<T>. Source signatures remain in the existing metadata channel.
+// Runs in ref/runtime/app before BirTypeLowering; ilemit receives only the resulting physical contracts.
+static partial class ContinuationErasure
 {
     const string Cont = "kotlin.coroutines.Continuation";
     const string ResultFqn = "kotlin.Result";
     static readonly string[] MethodImplDescriptorKeys = { "clrInterfaceImpls", "clrBaseImpls" };
     static IReadOnlySet<string> _continuationTypeNames = new HashSet<string>(StringComparer.Ordinal) { Cont };
     static IReadOnlySet<string> _resultTypeNames = new HashSet<string>(StringComparer.Ordinal) { ResultFqn };
+    static IReadOnlyDictionary<string, string> _physicalTypeNames = new Dictionary<string, string>();
 
     // Supertype edges are source declaration facts too. Freeze them before nullable-frame allocation and
     // other representation passes; recording only member slots leaves Continuation<T>'s inherited contract
@@ -70,6 +40,7 @@ static class ContinuationErasure
 
     static void SetTypeNames(IReadOnlyDictionary<string, string> physicalTypeNames)
     {
+        _physicalTypeNames = physicalTypeNames;
         var continuationNames = new HashSet<string>(StringComparer.Ordinal) { Cont };
         if (physicalTypeNames.TryGetValue(Cont, out var physicalContinuation))
             continuationNames.Add(physicalContinuation);
@@ -116,6 +87,7 @@ static class ContinuationErasure
     internal static void SelfTest()
     {
         FunctionRewriteTests.Check("continuation erasure", EraseType);
+        LexicalOwnerSelfTest();
         var names = new Dictionary<string, string>
         {
             [Cont] = "kotlin.coroutines.Continuation`1",
@@ -220,7 +192,7 @@ static class ContinuationErasure
         // remains authoritative; this pass only changes the physical type below.
         if (HasCapturedSourceSurface(owner, fact)) return;
         if (TypeJson.Read(owner[slot]) is not TypeNode original) return;
-        var erased = EraseType(original);
+        var erased = ExactOuter(owner) && slot == "type" ? original : EraseType(original);
         if (TypeNode.ToJson(original) != TypeNode.ToJson(erased))
             owner[fact] = TypeNode.ToJson(original);
     }
@@ -230,13 +202,50 @@ static class ContinuationErasure
             ? owner["nullableGenericRet"] != null
             : owner["nullableGeneric"] != null);
 
-    static void Walk(JsonNode node, bool inResumeWith)
+    static bool ExactOuter(JsonObject node) => node[FBoundStarProjectionErasure.ExactOuterKey]?.GetValue<bool>() == true;
+
+    static TypeNode.Fqn Head(TypeNode type) => type switch
+    {
+        TypeNode.Fqn owner => owner,
+        TypeNode.Nullable nullable => Head(nullable.Of),
+        TypeNode.Oblivious oblivious => Head(oblivious.Of),
+        _ => null,
+    };
+
+    static bool SameDeclaration(string left, string right) => left == right
+        || right != null && _physicalTypeNames.TryGetValue(right, out var physicalRight) && left == physicalRight
+        || left != null && _physicalTypeNames.TryGetValue(left, out var physicalLeft) && right == physicalLeft;
+
+    static bool IsExactReceiverSlot(JsonObject node, string key, string lexicalOwner)
+    {
+        var kind = (node["k"] as JsonValue)?.GetValue<string>();
+        if (key == "ownerType" && node["recv"] is JsonObject receiver)
+        {
+            var selected = Head(TypeJson.Read(node[key]));
+            if (selected != null && (receiver["k"] as JsonValue)?.GetValue<string>() == "this"
+                && SameDeclaration(selected.Name, lexicalOwner)) return true;
+            // An enclosing receiver's own declaration, not an inherited/interface edge on that receiver.
+            if (selected != null && ExactOuter(receiver) && Head(NodeType.Of(receiver)) is { } enclosing
+                && SameDeclaration(selected.Name, enclosing.Name)
+                && (selected.Args ?? Array.Empty<TypeNode>()).SequenceEqual(enclosing.Args ?? Array.Empty<TypeNode>())) return true;
+        }
+        return key is "type" or "sty" or "memberType" or "ret" or "ownerType"
+            && (ExactOuter(node) || kind == "this" && Head(TypeJson.Read(node[key])) is { } self
+                && SameDeclaration(self.Name, lexicalOwner));
+    }
+
+    static void Walk(JsonNode node, bool inResumeWith, string lexicalOwner = null)
     {
         switch (node)
         {
             case JsonObject obj:
             {
+                if (obj["k"] == null && obj["kind"] is JsonValue kind
+                    && kind.GetValue<string>() is "class" or "interface" or "struct" or "enum" or "delegate")
+                    lexicalOwner = (obj["name"] as JsonValue)?.GetValue<string>();
                 var here = inResumeWith || IsResumeWithMethod(obj);
+                var exactKeys = obj.Select(pair => pair.Key)
+                    .Where(key => IsExactReceiverSlot(obj, key, lexicalOwner)).ToHashSet(StringComparer.Ordinal);
                 // Inside the erased resumeWith boundary, the `result` local is now Result<object> (invariant
                 // reference class). A generic Result-accessor whose EXTENSION RECEIVER (first arg) is that erased
                 // `result` — e.g. `getOrThrow<Unit>(result)` from the source `result.getOrThrow()` — is instantiated
@@ -268,9 +277,9 @@ static class ContinuationErasure
                     // elements erase to `Continuation<object>`/`Result<object>` for free via the array-recursion below
                     // (EraseType) — DEF and CALL sigs stay in agreement structurally, no sig-string special case needed.
                     if (TypeJson.Read(val) is TypeNode tn)
-                        obj[key] = TypeJson.Write(EraseType(tn));
+                        obj[key] = TypeJson.Write(exactKeys.Contains(key) ? tn : EraseType(tn));
                     else
-                        Walk(val, here);
+                        Walk(val, here, lexicalOwner);
                 }
                 break;
             }
@@ -283,7 +292,7 @@ static class ContinuationErasure
                     if (TypeJson.Read(val) is TypeNode tn)
                         arr[i] = TypeJson.Write(EraseType(tn));
                     else
-                        Walk(val, inResumeWith);
+                        Walk(val, inResumeWith, lexicalOwner);
                 }
                 break;
             }

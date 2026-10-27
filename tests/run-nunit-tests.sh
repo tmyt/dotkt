@@ -55,9 +55,9 @@ PROJECTS=(
 # Reviewed on the v0.9.8 main baseline at the start of #227. Updating a suite requires updating this number in
 # the same change, making otherwise-silent test proliferation or accidental deletion an explicit review event.
 declare -A EXPECTED_DISCOVERED=(
-	["tests/basic"]=856
+	["tests/basic"]=858
 	["tests/coroutines"]=267
-	["tests/roundtrip/consumer"]=678
+	["tests/roundtrip/consumer"]=679
 	["tests/roundtrip/charsequence-polymorphic-consumer"]=1
 	["tests/roundtrip/bidirectional/consumer"]=56
 	["tests/interop/consumer"]=465
@@ -107,6 +107,10 @@ fi
 python3 "$ROOT/tests/assert-charsequence-stdlib-il.py" \
 	"$ROOT/build/clr-stdlib-rt/dll/DotKt.Stdlib.dll" \
 	"$ROOT/build/nunit-charsequence-stdlib-il.log"
+python3 "$ROOT/tests/assert-coroutine-lexical-self.py" \
+	"$ROOT/build/clr-stdlib-rt/dll/DotKt.Stdlib.dll" \
+	"$ROOT/build/clr-stdlib-rt/cir" "$ROOT/build/clr-stdlib/cir" \
+	"$ROOT/build/nunit-coroutine-lexical-self-il.log"
 
 # Build the tiny local package used by PackageReferenceTests. It deliberately reaches the Kotlin consumer as a
 # NuGet package (not a ProjectReference), replacing the former Avalonia-specific surrogate with the exact contract
@@ -353,6 +357,16 @@ for proj in "${PROJECTS[@]}"; do
 	# standard KLIB companion_object_name + nested class graph. Inspect both artifacts so a mutually-compatible
 	# producer/consumer bug cannot make the behavioral test pass while either interchange boundary is malformed.
 	if [[ "$proj" == "tests/roundtrip/consumer" ]]; then
+		if python3 "$ROOT/tests/roundtrip/assert-coroutine-lexical-inline.py" \
+			"$ROOT/tests/roundtrip/producer/obj/$CONFIGURATION/net10.0/cir/CoroutineLexicalSelfFrames.cir.json" \
+			"$dir/obj/$CONFIGURATION/net10.0/bir/CoroutineLexicalSelfFrameTests.bir.json" \
+			"$dir/obj/$CONFIGURATION/net10.0/cir/CoroutineLexicalSelfFrameTests.cir.json" \
+			>"$ROOT/build/nunit-$name.coroutine-lexical-inline.log" 2>&1; then
+			echo "  imported coroutine lexical aliases and captures retain consistent physical carriers"
+		else
+			echo "  COROUTINE LEXICAL INLINE FAIL"
+			tail -25 "$ROOT/build/nunit-$name.coroutine-lexical-inline.log"; rc=1
+		fi
 		if python3 "$ROOT/tests/roundtrip/assert-native-value-contracts-cir.py" \
 			"$ROOT/tests/roundtrip/producer/obj/$CONFIGURATION/net10.0/cir/ConstructorCarrierStorage.cir.json" \
 			"$dir/obj/$CONFIGURATION/net10.0/cir/NativeValueFramePreservationTests.cir.json" \
