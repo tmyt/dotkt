@@ -335,6 +335,31 @@ static class PhysicalValueCoercion
             if (Str(edge["expr"]["k"]) != "cast"
                 || TypeJson.Read(edge["expr"]["e"]["ret"]) != new TypeNode.Fqn(expected))
                 throw new InvalidOperationException("Opaque reference projection lost an exact local/native result contract");
+        var valueResults = JsonNode.Parse("""
+          {"fileClass":"ValueResults","methods":[
+            {"name":"read","params":[],"ret":{"t":"fqn","name":"object"},"body":[]},
+            {"name":"probe","params":[],"ret":{"t":"fqn","name":"void"},"body":[]}]}
+          """).AsObject();
+        var valueBody = valueResults["methods"][1]["body"].AsArray();
+        JsonObject ReadAs(TypeNode type) => new() {
+            ["k"] = "callStatic", ["owner"] = TypeJson.Fqn("ValueResults"), ["method"] = "read",
+            ["sig"] = new JsonArray(), ["args"] = new JsonArray(), ["dynRet"] = TypeJson.Write(type),
+        };
+        var integer = new TypeNode.Fqn("System.Int32");
+        var nullableInteger = new TypeNode.Nullable(integer);
+        foreach (var type in new TypeNode[] { integer, nullableInteger, new TypeNode.Fqn("object") })
+            valueBody.Add(new JsonObject { ["k"] = "var", ["name"] = "value" + valueBody.Count,
+                ["type"] = TypeJson.Write(type), ["init"] = ReadAs(type) });
+        valueBody.Add(new JsonObject { ["k"] = "exprStmt", ["expr"] = ReadAs(integer) });
+        ApplyAll(new JsonNode[] { valueResults }, () => throw new InvalidOperationException("Unexpected Unit conversion"),
+            type => type.Name == "System.Int32");
+        foreach (var position in new[] { 0, 1 })
+            if (Str(valueBody[position]["init"]["k"]) != "cast"
+                || TypeJson.Read(valueBody[position]["init"]["type"]) != (position == 0 ? integer : nullableInteger)
+                || TypeJson.Read(valueBody[position]["init"]["e"]["dynRet"]) != new TypeNode.Fqn("object"))
+                throw new InvalidOperationException("Consumed erased invocation lost its concrete value projection");
+        if (Str(valueBody[2]["init"]["k"]) != "callStatic" || Str(valueBody[3]["expr"]["k"]) != "callStatic")
+            throw new InvalidOperationException("Object storage or discarded invocation acquired a premature extraction");
         ApplyAll(new JsonNode[] { root }, () => throw new InvalidOperationException("Unexpected Unit conversion"), _ => false,
             isExistentialOwner: owner => owner.Name is "Carrier" or "DerivedCarrier",
             isNativeReference: owner => owner.Name == "System.Collections.Generic.IReadOnlyList",
@@ -671,7 +696,7 @@ static class PhysicalValueCoercion
                     ["stmts"] = new JsonArray(effect), ["result"] = exit,
                 };
         }
-        var result = CoerceDeclaredResult(obj, scope, index);
+        var result = CoerceDeclaredResult(obj, scope, index, resultUsed);
         if (Str(obj["k"]) == "field" && TemporaryFieldKey(obj) is string fieldKey
             && scope.TemporaryFields.TryGetValue(fieldKey, out var retained)
             && ExprType(obj, scope, index) is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" })
@@ -990,7 +1015,7 @@ static class PhysicalValueCoercion
         };
     }
 
-    static JsonNode CoerceDeclaredResult(JsonObject expression, Scope scope, Index index)
+    static JsonNode CoerceDeclaredResult(JsonObject expression, Scope scope, Index index, bool resultUsed)
     {
         var declared = TypeJson.Read(expression["ret"]) ?? TypeJson.Read(expression["dynRet"]);
         if (declared == null) return expression;
@@ -1037,7 +1062,15 @@ static class PhysicalValueCoercion
             && (SignatureValueTypes.Of(actual) is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" }
                 || SignatureValueTypes.Of(declared) is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" })
             && IsReferenceSlot(actual, index.IsValue) && IsReferenceSlot(declared, index.IsValue);
+        // An erased invocation can have a concrete value-type use, too. The extraction belongs before that
+        // consumer (including arithmetic), not after it. Discarded calls and intentionally object-valued storage
+        // keep their deferred result; field/address locations are not invocation value projections.
+        var opaqueValueProjection = resultUsed && NeedsBox(declared, index.IsValue) && declared is not TypeNode.Tv
+            && SignatureValueTypes.Of(actual) is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" }
+            && Str(expression["k"]) is "clrStatic" or "clrInstance" or "clrGenericStatic" or "clrGenericInstance"
+                or "callStatic" or "callInstance" or "constrainedCall" or "delegateInvoke";
         if (!genericObjectProjection && !genericSlotProjection && !arrayStorageProjection && !opaqueReferenceProjection
+            && !opaqueValueProjection
             && !CollectionViewFaces.IsViewSeam(actual, declared)) return expression;
         var physical = expression.DeepClone().AsObject();
         // The inner expression leaves the exact member/declaration result on the CLR stack. Once the caller-facing

@@ -611,6 +611,7 @@ for proj in "${PROJECTS[@]}"; do
 		fi
 		if python3 "$ROOT/tests/roundtrip/assert-referenced-method-generic-unsafe-accessor-cir.py" \
 			"$referenced_method_generic_cir" \
+			"$ROOT/tests/roundtrip/producer/obj/$CONFIGURATION/net10.0/cir/ReferencedProtectedMethodGeneric.cir.json" \
 			>"$ROOT/build/nunit-$name.referenced-method-generic-unsafe-accessor.log" 2>&1; then
 			echo "  referenced method-generic UnsafeAccessor target/value arity remains coherent"
 		else
@@ -805,6 +806,13 @@ for proj in "${PROJECTS[@]}"; do
 		fi
 	fi
 	if [[ "$proj" == "tests/interop/consumer" ]]; then
+		if python3 "$ROOT/tests/assert-protected-family-cir.py" fields "$dir/obj/$CONFIGURATION/net10.0/cir" \
+			>"$ROOT/build/nunit-$name.protected-field-cir.log" 2>&1; then
+			echo "  direct protected fields retain their exact selected storage rather than interface properties"
+		else
+			echo "  PROTECTED FIELD CIR FAIL"
+			tail -25 "$ROOT/build/nunit-$name.protected-field-cir.log"; rc=1
+		fi
 		interop_dll="$dir/bin/$CONFIGURATION/net10.0/InteropConsumer.Tests.dll"
 		interop_klib="$dir/obj/$CONFIGURATION/net10.0/klib/InteropProducer.klib"
 		if python3 "$ROOT/tests/interop/assert-native-overload-identity.py" \

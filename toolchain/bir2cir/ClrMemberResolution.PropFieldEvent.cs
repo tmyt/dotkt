@@ -338,6 +338,15 @@ static partial class ClrMemberResolution
     // (@ClrField) has no accessor -> left as a plain `field` for ilemit's direct ldfld/stfld.
     static void ResolveFieldAccess(JsonObject node, bool write)
     {
+        // Direct family access already carries the exact referenced FieldDef. Its identity is authoritative;
+        // unresolved property/backing-field nodes below still require the ordinary nearest-declaration lookup.
+        if (node["memberRef"] is JsonObject selected && (string)selected["kind"] == MemberRefNode.Kinds.Field)
+        {
+            if (write) MarkWrittenDelegateSlot(node, SupertypeGraph.SubstOwnerTvs(
+                SignatureValueTypes.Of(TypeJson.Read(selected["returnType"])),
+                (TypeJson.Read(selected["declaringType"]) as TypeNode.Fqn)?.Args ?? Array.Empty<TypeNode>()));
+            return;
+        }
         if (ReadOwnerNode(node["ownerType"]) is not TypeNode.Fqn ownerFqn) return;
         // A generated support type may have a reference twin from an earlier ProjectReference while also being
         // re-emitted in this compilation unit. Same-emission ownership wins: its internal/private storage is legal

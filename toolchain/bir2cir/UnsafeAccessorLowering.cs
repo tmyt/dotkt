@@ -945,10 +945,12 @@ static partial class UnsafeAccessorLowering
 
         var targetStatic = kind is "staticField" or "staticFieldSet"
             || (target != null && Bool(target["static"]));
+        MemberRefNode selectedField = null;
         if (target == null && refs != null
             && ClrMemberResolution.ResolveFieldForUnsafeAccessor(refs, ownerType, targetName, targetStatic,
                 out var referencedOwnerParameters) is MemberRefNode referencedField)
         {
+            selectedField = referencedField;
             ownerType = referencedField.DeclaringType as TypeNode.Fqn
                 ?? throw new InvalidOperationException("UnsafeAccessor field has no exact declaring owner");
             ownerNode = TypeJson.Write(ownerType);
@@ -964,7 +966,18 @@ static partial class UnsafeAccessorLowering
             ?? access["ret"]?.DeepClone() ?? access["sty"]?.DeepClone();
         if (TypeJson.Read(fieldTypeNode) is not TypeNode fieldType) return;
         if (family.Allows(caller, access["recv"], ownerType, Str(target?["vis"]) ?? frontendVisibility,
-                targetStatic, scope, new[] { fieldType })) return;
+                targetStatic, scope, new[] { fieldType }))
+        {
+            if (selectedField != null)
+            {
+                // This exact FieldDef was selected before proving direct family access. Preserve that identity:
+                // a later property lookup must not replace it with a same-named interface accessor.
+                access["ownerType"] = ownerNode.DeepClone();
+                access["memberRef"] = selectedField.Write();
+                access[ClrMemberResolution.ResolvedMemberReturnKey] = TypeJson.Write(selectedField.ReturnType);
+            }
+            return;
+        }
         var declaredFieldTypeJson = TypeJson.Write(fieldType);
         var actualFieldType = ownerType.Args is { Length: > 0 }
             ? SubstituteOwnerSlots(fieldType, ownerType.Args) : fieldType;

@@ -2,7 +2,6 @@
 import json
 import sys
 
-
 def objects(node):
     if isinstance(node, dict):
         yield node
@@ -12,74 +11,30 @@ def objects(node):
         for value in node:
             yield from objects(value)
 
-
-if len(sys.argv) != 2:
-    raise SystemExit(
-        "usage: assert-referenced-method-generic-unsafe-accessor-cir.py "
-        "<ReferencedProtectedMethodGenericTests.cir.json>"
-    )
-
 with open(sys.argv[1], encoding="utf-8") as stream:
     root = json.load(stream)
-
-closures = [
-    item
-    for item in root.get("types", [])
-    if item.get("nestedIn") == "ReferencedProtectedMethodGenericText"
-]
-if len(closures) != 1:
-    raise SystemExit(f"found {len(closures)} lifted closures, expected 1")
-
-accessors = [
-    method
-    for method in closures[0].get("methods", [])
-    if method.get("generated")
-    and method.get("static")
-    and method.get("extern")
-    and method.get("name", "").startswith("dotkt$unsafe$")
-]
-if len(accessors) != 1:
-    raise SystemExit(f"found {len(accessors)} generated UnsafeAccessor methods, expected 1")
-
-accessor = accessors[0]
+with open(sys.argv[2], encoding="utf-8") as stream:
+    producer = json.load(stream)
+source, = [owner for owner in producer["types"]
+           if owner["name"] == "roundtrip.protectedmethodgeneric.ReferencedProtectedMethodGenericBase"]
+target, = [method for method in source["methods"] if method["name"] == "snapshot"]
+assert len(target["typeParams"]) == 2
+assert target["typeParams"][0]["constraints"] == [{"t": "tv", "scope": "method", "i": 1}]
+closure, = [owner for owner in root["types"] if owner.get("nestedIn") == "ReferencedProtectedMethodGenericText"]
 base = {"t": "fqn", "name": "roundtrip.protectedmethodgeneric.ReferencedProtectedMethodGenericBase"}
-physical_array = {"t": "fqn", "name": "System.Array"}
-string_type = {"t": "fqn", "name": "System.String"}
-call_array = {"t": "array", "elem": string_type}
-expected_params = [base, physical_array]
-actual_params = [param.get("type") for param in accessor.get("params", [])]
-if actual_params != expected_params:
-    raise SystemExit(
-        "method-generic UnsafeAccessor must declare target plus the original value parameter: "
-        f"{accessor!r}"
-    )
-expected_frame = [
-    {"name": "__method0", "constraints": [{"t": "tv", "scope": "method", "i": 1}]},
-    {"name": "__method1"},
-]
-if accessor.get("typeParams") != expected_frame or accessor.get("ret") != physical_array:
-    raise SystemExit(f"method-generic UnsafeAccessor lost its generic frame or physical return: {accessor!r}")
-
-calls = [
-    node
-    for node in objects(closures[0].get("methods", []))
-    if node.get("k") == "callStatic"
-    and node.get("owner", {}).get("name") == closures[0].get("name")
-    and node.get("method") == accessor.get("name")
-]
-if len(calls) != 1:
-    raise SystemExit(f"found {len(calls)} calls to the generated UnsafeAccessor, expected 1")
-
-call = calls[0]
-if (
-    call.get("sig") != expected_params
-    or len(call.get("args", [])) != 2
-    or call.get("typeArgs") != [string_type, string_type]
-    or call.get("ret") != physical_array
-):
-    raise SystemExit(f"UnsafeAccessor call and declaration are not arity/type coherent: {call!r}")
-if not any(node.get("k") == "cast" and node.get("type") == call_array
-           and node.get("e") is call for node in objects(closures[0].get("methods", []))):
-    raise SystemExit("concrete method-generic result must explicitly convert System.Array to string[]")
-
-print("referenced method-generic UnsafeAccessor retains target and value-parameter slots")
+storage = {"t": "fqn", "name": "System.Array"}
+assert target["ret"] == storage and [param["type"] for param in target["params"]] == [storage]
+string = {"t": "fqn", "name": "System.String"}
+call, = [node for node in objects(closure["methods"]) if node.get("k") == "callInstance"
+         and node.get("method") == "snapshot"]
+assert call["ownerType"] == base and call["typeArgs"] == [string, string]
+assert call["sig"] == [storage] and len(call["args"]) == 1 and call["virtual"] is False
+member = call["memberRef"]
+assert member == {"kind": "method", "assembly": "RoundtripProducer", "declaringType": base,
+                  "name": "snapshot", "genericArity": 2, "returnType": storage,
+                  "callingConvention": "instance", "parameterTypes": [storage]}
+assert any(node.get("k") == "cast" and node.get("type") == {"t": "array", "elem": string}
+           and node.get("e") is call for node in objects(closure["methods"]))
+assert not any(method.get("extern") and method.get("name", "").startswith("dotkt$unsafe$")
+               for method in closure["methods"])
+print("referenced direct method-generic family call retains exact member, full frame and array projection")

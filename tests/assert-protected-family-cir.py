@@ -19,13 +19,26 @@ def require(condition, message):
     if not condition:
         raise AssertionError(message)
 
-filename = "ProtectedDefaultAccessTests" if mode == "native" else "ProtectedFamilyAccessTests" if mode != "producer" else "ProtectedFamilyAccess"
+filename = "ExplicitFieldSlotTests" if mode == "fields" else "ProtectedDefaultAccessTests" if mode == "native" else "ProtectedFamilyAccessTests" if mode != "producer" else "ProtectedFamilyAccess"
 path = Path(directory) / (filename + ".cir.json")
 require(path.is_file(), f"Missing actual emitted CIR: {path}")
 document = json.loads(path.read_text())
 types = {node["name"]: node for node in document.get("types", [])}
 
-if mode == "native":
+if mode == "fields":
+    declaration = types["ProtectedFieldSlotSubclass"]
+    expected = {"kind": "field", "assembly": "FieldSlotBase",
+                "declaringType": {"t": "fqn", "name": "ExplicitFieldSlots.ProtectedFieldBase"},
+                "name": "Value", "genericArity": 0,
+                "returnType": {"t": "fqn", "name": "System.String"}}
+    for method_name, kind in [("read", "field"), ("write", "setFieldExpr")]:
+        method, = [method for method in declaration["methods"] if method["name"] == method_name]
+        field, = [node for node in walk(method["body"]) if node.get("k") == kind and node.get("name") == "Value"]
+        require(field.get("memberRef") == expected, "Protected field changed to a same-named interface slot")
+        require(field.get("ownerType") == expected["declaringType"] and field.get("recv") == {"k": "this"},
+                "Protected field lost its exact declaring owner/receiver")
+        require(field.get("member") != "accessor" and "accessor" not in field, "Field reclassified as a property")
+elif mode == "native":
     owner = "ProtectedFamilySignature.Base`1"
     token = {"t": "fqn", "name": owner + "+Token", "args": [{"t": "tv", "scope": "type", "i": 0}]}
     members = [node["memberRef"] for node in walk(document) if isinstance(node.get("memberRef"), dict)

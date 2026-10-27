@@ -1695,11 +1695,13 @@ static void VerifyUnsafeAccessorDll(string path, string producerPath)
         Require((capture.Attributes & FieldAttributes.FieldAccessMask) == FieldAttributes.Private,
             $"inner member-default fixture widened its lexical capture on {name}");
     }
-    Require(wrappers.Length == 12 && wrappers.All(method =>
+    // Three legal generic-owner family edges are now direct; two new genuine arbitrary-base crossings still
+    // need accessors. Their exact replacement/retained contracts are checked by the family CIR guards.
+    Require(wrappers.Length == 11 && wrappers.All(method =>
             (method.Attributes & MethodAttributes.MemberAccessMask) == MethodAttributes.Assembly &&
             (method.Attributes & MethodAttributes.Static) != 0 && method.RelativeVirtualAddress != 0),
         $"generic UnsafeAccessor holders do not expose only compiler-generated internal wrappers " +
-        $"(found {wrappers.Length}, expected 12)");
+        $"(found {wrappers.Length}, expected 11)");
 }
 
 static void VerifyLayerBoundary(string birPath, string cirPath)
