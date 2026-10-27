@@ -25,6 +25,16 @@ fun <T : Comparable<T>> reverseOrderInLibrary(): Comparator<T> = reverseOrder()
 
 fun <T> reversedInLibrary(comparator: Comparator<T>): Comparator<T> = comparator.reversed()
 
+class ComparatorStorage<T>(val comparator: Comparator<T>)
+
+class ComparatorProperty {
+    val comparator: Comparator<String> = reverseOrder()
+}
+
+val storedComparator: Comparator<Int> = naturalOrder()
+
+fun comparatorFactory(): () -> Comparator<Int> = { naturalOrder() }
+
 fun <T : Comparable<*>> compareValuesInLibrary(left: T?, right: T?): Int = compareValues(left, right)
 
 class OrderedValue(val rank: Int) : Comparable<OrderedValue> {

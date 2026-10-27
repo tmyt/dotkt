@@ -1,3 +1,8 @@
+using System.Collections.Generic;
+using System.Linq;
+using System.Reflection;
+using System.Text.Json.Nodes;
+
 namespace GenericValueInterop;
 
 public static class UpstreamMapCopies
@@ -29,9 +34,34 @@ public static class UpstreamMapCopies
         typeof(UpstreamMapCopies).GetMethod(nameof(NativeDelegate))!.ReturnType ==
             typeof(System.Func<System.Collections.Generic.IReadOnlyCollection<int>>);
 
-    public static bool HasConstructedReturn(object value, string method) =>
-        value.GetType().Assembly.GetType("roundtrip.upstreamerasedstdlib.UpstreamErasedStdlibKt")!
-            .GetMethod(method)!.ReturnType.IsGenericType;
+    public static bool HasErasedJoinedReturn(object value, string method)
+    {
+        var declaration = value.GetType().Assembly
+            .GetType("roundtrip.upstreamerasedstdlib.UpstreamErasedStdlibKt")!.GetMethod(method)!;
+        var carrier = declaration.ReturnType;
+        var source = JsonNode.Parse("""
+            {"t":"fqn","name":"roundtrip.upstreamerasedstdlib.JoinedValue","args":[{"t":"tv","scope":"method","i":0}]}
+            """);
+        var projection = JsonNode.Parse("""
+            {"t":"fqn","name":"roundtrip.upstreamerasedstdlib.JoinedValue","args":[{"t":"star"}]}
+            """);
+        return carrier.IsInterface && !carrier.IsGenericType && carrier.IsAssignableFrom(value.GetType())
+            && carrier.GetCustomAttributesData().Any(attribute => attribute.AttributeType.FullName ==
+                "System.Runtime.CompilerServices.CompilerGeneratedAttribute")
+            && JsonNode.DeepEquals(KotlinType(declaration.ReturnParameter.GetCustomAttributesData()), source)
+            && JsonNode.DeepEquals(KotlinType(carrier.GetCustomAttributesData()), projection);
+    }
+
+    static JsonNode KotlinType(IEnumerable<CustomAttributeData> attributes)
+    {
+        var attribute = attributes.Single(value => value.AttributeType.FullName ==
+            "DotKt.Runtime.CompilerServices.KotlinTypeAttribute");
+        if ((string)attribute.ConstructorArguments[0].Value! != "bir-json/1")
+            throw new System.InvalidOperationException("Unexpected Kotlin type metadata codec");
+        var bytes = ((IEnumerable<CustomAttributeTypedArgument>)attribute.ConstructorArguments[1].Value!)
+            .Select(value => (byte)value.Value!).ToArray();
+        return JsonNode.Parse(bytes)!;
+    }
 
     public static bool OverrideReturnMatches(object value, string method) =>
         value.GetType().GetMethod(method)!.ReturnType == value.GetType().BaseType!.GetMethod(method)!.ReturnType;
