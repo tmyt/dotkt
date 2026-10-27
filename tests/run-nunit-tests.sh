@@ -39,6 +39,9 @@ PROJECTS=(
 	# ProjectReference round-trip lane (docs/design-nunit-test-harness.md §3; playbook §3): a producer DotKt library
 	# is consumed via <ProjectReference> as its BUILT dll (dll2klib re-import, NOT source) by this NUnit consumer.
 	"tests/roundtrip/consumer"
+	# A local CharSequence implementation retains polymorphic receivers assembly-wide. Keep this independent
+	# of the pure consumer so its String-bound generic-frame controls keep their original representation.
+	"tests/roundtrip/charsequence-polymorphic-consumer"
 	# Bidirectional ProjectReference: Kotlin consumes C#, then a C# NUnit project consumes the emitted Kotlin library
 	# at compile time. This also supersedes the former reflection-only reverse-interop case.
 	"tests/roundtrip/bidirectional/consumer"
@@ -55,6 +58,7 @@ declare -A EXPECTED_DISCOVERED=(
 	["tests/basic"]=856
 	["tests/coroutines"]=267
 	["tests/roundtrip/consumer"]=678
+	["tests/roundtrip/charsequence-polymorphic-consumer"]=1
 	["tests/roundtrip/bidirectional/consumer"]=56
 	["tests/interop/consumer"]=465
 )
@@ -74,6 +78,7 @@ done
 declare -A EXTRA_EMIT=(
 	["tests/coroutines"]="DotKt.Tests.CoroutineSupport.dll"
 	["tests/roundtrip/consumer"]="RoundtripProducer.dll RoundtripProducerMpp.dll RoundtripDefaultPropertySlot.dll UpstreamStdlibProducer.dll"
+	["tests/roundtrip/charsequence-polymorphic-consumer"]="UpstreamStdlibProducer.dll"
 	["tests/roundtrip/bidirectional/consumer"]="BidirectionalKotlin.dll"
 	# The C#-producer dll is csc-emitted (not ilemit), so it needs no DotKt ilverify of its own; ilverify over the
 	# CONSUMER assembly (the .ktproj-named dll) is what proves the emitted interop IL is clean. No EXTRA_EMIT entry
@@ -319,6 +324,18 @@ for proj in "${PROJECTS[@]}"; do
 		else
 			echo "  INHERITED PROTECTED CALLABLE FAIL — see build/nunit-$name.inherited-protected-callable.log"
 			tail -25 "$ROOT/build/nunit-$name.inherited-protected-callable.log"; rc=1
+		fi
+	fi
+	if [[ "$proj" == "tests/roundtrip/charsequence-polymorphic-consumer" ]]; then
+		if python3 "$ROOT/tests/roundtrip/assert-charsequence-boundary-inline.py" --polymorphic \
+			"$ROOT/tests/roundtrip/upstream-stdlib-producer/obj/$CONFIGURATION/net10.0/cir/CharSequenceBoundaries.cir.json" \
+			"$dir/obj/$CONFIGURATION/net10.0/bir/CharSequencePolymorphicInlineTests.bir.json" \
+			"$dir/obj/$CONFIGURATION/net10.0/cir/CharSequencePolymorphicInlineTests.cir.json" \
+			>"$ROOT/build/nunit-$name.charsequence-boundary-inline.log" 2>&1; then
+			echo "  spliced polymorphic CharSequence receivers adapt Strings and retain custom values"
+		else
+			echo "  POLYMORPHIC CHARSEQUENCE INLINE RECEIVER FAIL"
+			tail -25 "$ROOT/build/nunit-$name.charsequence-boundary-inline.log"; rc=1
 		fi
 	fi
 	if [[ "$proj" == "tests/coroutines" ]]; then

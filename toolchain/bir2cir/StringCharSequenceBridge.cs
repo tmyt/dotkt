@@ -520,9 +520,8 @@ static partial class StringCharSequenceBridge
         // `v == null ? (dotkt$CharSequence)null : new dotkt$StringCharSequence(v)`: the slot receives a genuine adapter or
         // a typed null, ilverify-clean, null-preserving. The non-null-String and `!!`/elvis cases already wrapped above.
         if (!nonNullSlot && IsStaticNullableString(a, env)) return WrapAdapterNullable(a, env);
-        // The slot is CharSequence (every caller gates on IsCharSeqT), so a `cond` reaching here unifies String/CharSeq
-        // branches — coerce each. `!!`/elvis desugars are a valueBlock (handled above), never a bare `cond`, so this
-        // only descends a genuine `if/else`.
+        // The target slot is CharSequence, so adapt each conditional result branch independently. This includes
+        // conditionals inside valueBlock results, such as the frontend's elvis and non-null-assertion shapes.
         if (Str(o["k"]) == "cond")
         {
             if (o["then"] is JsonNode t) { var ct = CoerceCharSeqArg(t, env, nonNullSlot); if (!ReferenceEquals(ct, t)) o["then"] = ct; }

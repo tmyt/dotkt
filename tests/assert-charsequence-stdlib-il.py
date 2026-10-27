@@ -7,13 +7,15 @@ from pathlib import Path
 assembly, log = map(Path, sys.argv[1:])
 verifiers = sorted((Path.home() / ".dotnet").rglob("ILVerify.dll"))
 assert verifiers, "install dotnet-ilverify before running the text-boundary gate"
-runtimes = sorted(Path("/usr/share/dotnet/shared/Microsoft.NETCore.App").iterdir(),
-                  key=lambda path: tuple(map(int, path.name.split("."))))
+runtimes = [str(path) for path in Path("/usr/share/dotnet/shared/Microsoft.NETCore.App").iterdir()
+            if path.is_dir()]
+runtimes = subprocess.run(["sort", "-V"], input="\n".join(runtimes), text=True,
+                          stdout=subprocess.PIPE, check=True).stdout.splitlines()
 assert runtimes and assembly.is_file(), "missing stdlib runtime or shared framework"
 owners = (r"kotlin\.text\.(?:IndentKt|_StringsKt)|kotlin\.time\.Duration|"
           r"dotkt\$ClrH_kotlin_text_StringBuilder")
 command = ["dotnet", str(verifiers[-1]), str(assembly.resolve()),
-           "-r", str(runtimes[-1] / "*.dll"), "-s", "System.Private.CoreLib",
+           "-r", str(Path(runtimes[-1]) / "*.dll"), "-s", "System.Private.CoreLib",
            "--include", owners, "--statistics", "--verbose"]
 result = subprocess.run(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 log.write_text(result.stdout)
