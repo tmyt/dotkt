@@ -214,8 +214,25 @@ static partial class StringCharSequenceBridge
         switch (Str(node["k"]))
         {
             case "callStatic":
-            case "callInstance":
                 WrapCallArgs(node, env);
+                return node;
+            case "callInstance":
+                // The resolved receiver is a physical interface slot just like a declared argument. Inline
+                // splicing can put a String directly here without an intervening CharSequence-typed local.
+                if (TypeJson.Read(node["ownerType"]) is TypeNode.Fqn { Name: CharSeq }
+                    && node["recv"] is JsonNode receiver)
+                {
+                    var converted = CoerceCharSeqArg(receiver, env, nonNullSlot: true);
+                    if (!ReferenceEquals(receiver, converted)) node["recv"] = converted;
+                }
+                WrapCallArgs(node, env);
+                return node;
+            case "cond":
+                // A conditional materializes its own declared join even when its consumer only needs object.
+                // Honor that slot here, rather than waiting for a later CharSequence argument or assignment.
+                if (TypeJson.Read(node["type"]) is TypeNode.Fqn { Name: CharSeq }
+                    or TypeNode.Nullable { Of: TypeNode.Fqn { Name: CharSeq } })
+                    CoerceCharSeqArg(node, env, nonNullSlot: TypeJson.Read(node["type"]) is TypeNode.Fqn);
                 return node;
             case "delegateInvoke":
                 WrapDelegateInvokeArgs(node, env);

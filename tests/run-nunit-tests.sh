@@ -52,9 +52,9 @@ PROJECTS=(
 # Reviewed on the v0.9.8 main baseline at the start of #227. Updating a suite requires updating this number in
 # the same change, making otherwise-silent test proliferation or accidental deletion an explicit review event.
 declare -A EXPECTED_DISCOVERED=(
-	["tests/basic"]=852
+	["tests/basic"]=856
 	["tests/coroutines"]=267
-	["tests/roundtrip/consumer"]=676
+	["tests/roundtrip/consumer"]=678
 	["tests/roundtrip/bidirectional/consumer"]=56
 	["tests/interop/consumer"]=465
 )
@@ -97,6 +97,11 @@ if ! dotnet build "$METADATA_INSPECTOR_PROJECT" -c "$CONFIGURATION" --no-increme
 	tail -25 "$ROOT/build/nunit-metadata-inspector.build.log"
 	exit 1
 fi
+
+# Consumer verification does not inspect the bodies of referenced stdlib methods.
+python3 "$ROOT/tests/assert-charsequence-stdlib-il.py" \
+	"$ROOT/build/clr-stdlib-rt/dll/DotKt.Stdlib.dll" \
+	"$ROOT/build/nunit-charsequence-stdlib-il.log"
 
 # Build the tiny local package used by PackageReferenceTests. It deliberately reaches the Kotlin consumer as a
 # NuGet package (not a ProjectReference), replacing the former Avalonia-specific surrogate with the exact contract
@@ -390,6 +395,16 @@ for proj in "${PROJECTS[@]}"; do
 		else
 			echo "  ARRAY CONTENT INLINE METADATA FAIL"
 			tail -25 "$ROOT/build/nunit-$name.array-content-inline.log"; rc=1
+		fi
+		if python3 "$ROOT/tests/roundtrip/assert-charsequence-boundary-inline.py" \
+			"$ROOT/tests/roundtrip/upstream-stdlib-producer/obj/$CONFIGURATION/net10.0/cir/CharSequenceBoundaries.cir.json" \
+			"$dir/obj/$CONFIGURATION/net10.0/bir/CharSequenceBoundaryTests.bir.json" \
+			"$dir/obj/$CONFIGURATION/net10.0/cir/CharSequenceBoundaryTests.cir.json" \
+			>"$ROOT/build/nunit-$name.charsequence-boundary-inline.log" 2>&1; then
+			echo "  CharSequence inline metadata survives the actual DLL boundary"
+		else
+			echo "  CHARSEQUENCE INLINE METADATA FAIL"
+			tail -25 "$ROOT/build/nunit-$name.charsequence-boundary-inline.log"; rc=1
 		fi
 		if python3 "$ROOT/tests/roundtrip/assert-private-rich-inline-cir.py" \
 			"$dir/obj/$CONFIGURATION/net10.0/cir/PrivateRichEnumCollisionTests.cir.json" \

@@ -33,6 +33,7 @@ static class Bir2Cir
                 MemberCallSubstitution.StaticCollectionPreferenceSelfTest();
                 FunctionSignatureIdentity.SelfTest();
                 PhysicalValueCoercion.SelfTest();
+                StringCharSequenceBridge.SelfTest();
                 PrimitiveOperatorLowering.SelfTest();
                 KotlinPropertyAccessors.SelfTestAccessorSignatures();
                 LexicalDeclarationIds.SelfTest();
