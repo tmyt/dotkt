@@ -7865,6 +7865,32 @@ sealed partial class ReferenceMetadataIndex
         if (ClrMemberResolution.SelectedGenericTypeParameters(aliasCall, nativeDescriptors).Count != 1
             || ClrMemberResolution.SelectedGenericTypeParameters(primitiveCall, nativeDescriptors).Count != 1)
             throw new InvalidOperationException("Native proof selection lost formal alias/primitive physical lowering");
+        var nativeClass = ClrMemberResolution.SelectedGenericTypeParameters(
+            new TypeNode.Fqn("System.Runtime.CompilerServices.Unsafe"), "As", 1, instance: false,
+            new TypeNode[] { new TypeNode.Fqn("ProofObject") }, nativeDescriptors);
+        if (nativeClass[0]["specialConstraints"] is not JsonArray flags
+            || !flags.Any(flag => flag?.GetValue<string>() == "class"))
+            throw new InvalidOperationException("Native proof selection required a source spelling for a CLR-only flag");
+        var ownerVariable = new TypeNode.Tv("type", 1);
+        TypeNode[] ConvertParameters(TypeNode argument) => new TypeNode[] {
+            new TypeNode.Fqn("System.Converter`2", new TypeNode[] { argument, new TypeNode.Tv("method", 0) }),
+        };
+        foreach (var argument in new TypeNode[] { ownerVariable, new TypeNode.Fqn("kotlin.String") })
+        {
+            var owner = new TypeNode.Fqn("System.Collections.Generic.List`1", new[] { argument });
+            if (ClrMemberResolution.SelectedGenericTypeParameters(owner, "ConvertAll", 1, true,
+                    ConvertParameters(argument), nativeDescriptors, new[] { argument }).Count != 1
+                || ClrMemberResolution.SelectedGenericTypeParameters(owner, "ConvertAll", 1, true,
+                    ConvertParameters(new TypeNode.Tv("type", 0)), nativeDescriptors).Count != 1)
+                throw new InvalidOperationException("Native proof selection confused override and open call owner frames");
+        }
+        var rejectedFrame = false;
+        try { ClrMemberResolution.SelectedGenericTypeParameters(
+            new TypeNode.Fqn("System.Collections.Generic.List`1", new TypeNode[] { ownerVariable }),
+            "ConvertAll", 1, true, ConvertParameters(new TypeNode.Tv("type", 0)), nativeDescriptors,
+            new TypeNode[] { ownerVariable }); }
+        catch (InvalidOperationException) { rejectedFrame = true; }
+        if (!rejectedFrame) throw new InvalidOperationException("A native override descriptor also accepted the unpermuted open frame");
         var invalidDescriptor = aliasCall.DeepClone().AsObject();
         invalidDescriptor["resolvedMemberParams"] = new JsonArray(TypeJson.Fqn("System.Int32"));
         var rejected = false;

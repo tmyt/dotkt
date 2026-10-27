@@ -1040,50 +1040,67 @@ static partial class ClrMemberResolution
     // same-name/arity MethodDef without that exact descriptor is never a selected declaration.
     internal static JsonArray SelectedGenericTypeParameters(JsonObject node, ReferenceMetadataIndex refs)
     {
-        _refs = refs;
         if (ReadOwnerNode(node["type"]) is not TypeNode.Fqn owner
-            || ResolveOwnerType(owner) is not Type declaration
             || node["resolvedMemberParams"] is not JsonArray parameters
             || parameters.Select(TypeJson.Read).Any(type => type == null))
             throw new InvalidOperationException("Native generic proof demand lacks its selected declaration descriptor");
+        return SelectedGenericTypeParameters(owner, (node["method"] as JsonValue)?.GetValue<string>(),
+            (node["typeArgs"] as JsonArray)?.Count ?? 0,
+            (node["k"] as JsonValue)?.GetValue<string>() == "clrGenericInstance",
+            parameters.Select(TypeJson.Read).ToArray(), refs);
+    }
+
+    internal static JsonArray SelectedGenericTypeParameters(TypeNode.Fqn owner, string name, int arity,
+        bool instance, IReadOnlyList<TypeNode> parameters, ReferenceMetadataIndex refs,
+        TypeNode[] parameterOwnerArguments = null)
+    {
+        _refs = refs;
+        var declaration = ResolveOwnerType(owner)
+            ?? throw new InvalidOperationException("Native generic proof demand lacks its selected declaration owner");
         // This caller runs before the full BIR vocabulary walk. Lower the selected formal parameters in their
         // declaration role, not the call's value arguments, before sharing the physical descriptor matcher.
-        var signature = parameters.Select(TypeJson.Read).Select(type => BirTypeLowering.CanonicalPhysicalSlotType(
-            BirTypeLowering.LowerPhysicalType(type, refs.Aliases, refs.IsValueType, refs.PhysicalTypeNames,
-                typeArg: false, nullableFrames: refs.NullableTypeFrames))).ToList();
-        var selected = SelectedGenericDeclaration(declaration, (node["method"] as JsonValue)?.GetValue<string>(),
-            (node["typeArgs"] as JsonArray)?.Count ?? 0, (node["k"] as JsonValue)?.GetValue<string>() == "clrGenericInstance",
-            signature)
-            ?? throw new InvalidOperationException($"Native generic proof demand '{owner.Name}.{node["method"]}' "
-                + $"has no exact selected MethodDef for descriptor {parameters.ToJsonString()}; candidates: "
+        var signature = parameters.Select(CanonicalNativeFormalType).ToList();
+        var selected = SelectedGenericDeclaration(declaration, name, arity, instance, signature, parameterOwnerArguments)
+            ?? throw new InvalidOperationException($"Native generic proof demand '{owner.Name}.{name}' "
+                + $"has no exact selected MethodDef for descriptor {string.Join(", ", parameters)}; candidates: "
                 + string.Join("; ", declaration.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static)
-                    .Where(method => method.Name == (node["method"] as JsonValue)?.GetValue<string>())
+                    .Where(method => method.Name == name)
                     .Select(method => method.ToString())));
         return new JsonArray(selected.GetGenericArguments().Select(ReferenceMetadataIndex.GenericParamDeclaration).ToArray());
     }
 
     static MethodInfo SelectedGenericDeclaration(Type owner, string name, int arity, bool instance,
-        List<TypeNode> signature)
+        List<TypeNode> signature, TypeNode[] parameterOwnerArguments = null)
     {
         var flags = BindingFlags.Public | (instance ? BindingFlags.Instance : BindingFlags.Static);
         List<MethodInfo> Candidates(Type declaration) => declaration.GetMethods(flags)
             .Where(method => method.Name == name && method.IsGenericMethodDefinition
                 && method.GetGenericArguments().Length == arity
                 && method.GetParameters().Length == signature.Count).ToList();
-        return TryPickDeclared(Candidates(owner), signature, owner)
+        return TryPickDeclared(Candidates(owner), signature, owner, parameterOwnerArguments)
             ?? (!instance ? null : TryPickDeclared(SafeInterfaces(owner).SelectMany(Candidates)
                 .GroupBy(method => (method.Module, method.MetadataToken)).Select(group => group.First()).ToList(),
-                signature, owner));
+                signature, owner, parameterOwnerArguments));
     }
 
-    static MethodInfo TryPickDeclared(List<MethodInfo> candidates, List<TypeNode> signature, Type declarationOwner)
+    static TypeNode CanonicalNativeFormalType(TypeNode type) => BirTypeLowering.CanonicalPhysicalSlotType(
+        BirTypeLowering.LowerPhysicalType(type, _refs.Aliases, _refs.IsValueType, _refs.PhysicalTypeNames,
+            typeArg: false, nullableFrames: _refs.NullableTypeFrames));
+
+    static MethodInfo TryPickDeclared(List<MethodInfo> candidates, List<TypeNode> signature, Type declarationOwner,
+        TypeNode[] parameterOwnerArguments = null)
     {
         // The carried owner names the frontend-selected declaration/projection frame. Its own declaration is not
         // an inherited same-parameter member with a different return (Task<T>.GetAwaiter vs Task.GetAwaiter).
         // A projected completion on a class instead describes its constructed public interface surface: retain
         // that reflected frame rather than reopening I<string>.M(string) to the unrelated open I<T>.M(T) vector.
-        var exact = candidates.Where(candidate =>
-            Match(candidate.GetParameters(), signature, null) == MatchKind.Exact).ToList();
+        // Call descriptors are open declaration vectors. Override descriptors instead belong to the implementer's
+        // frame; substitute the explicitly selected native owner before exact comparison, never accept either frame.
+        var exact = candidates.Where(candidate => parameterOwnerArguments == null
+            ? Match(candidate.GetParameters(), signature, null) == MatchKind.Exact
+            : candidate.GetParameters().Select(parameter => CanonicalNativeFormalType(
+                SupertypeGraph.SubstOwnerTvs(RefTypeOf(parameter.ParameterType), parameterOwnerArguments)))
+                .SequenceEqual(signature)).ToList();
         var own = exact.Where(candidate => SameDeclType(candidate.DeclaringType, declarationOwner)).ToList();
         if (own.Count != 0) return own.Count == 1 ? own[0] : null;
         return exact.Count == 1 ? exact[0] : null;

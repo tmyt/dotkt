@@ -30,7 +30,7 @@ static partial class FBoundStarProjectionErasure
                 foreach (var method in (declaration["methods"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
                 {
                     Register(method, false);
-                    RegisterNativeOverrides(method, declaration);
+                    RegisterNativeOverrides(method);
                 }
             }
             bool changed;
@@ -98,7 +98,7 @@ static partial class FBoundStarProjectionErasure
             }
         }
 
-        void RegisterNativeOverrides(JsonObject method, JsonObject owner)
+        void RegisterNativeOverrides(JsonObject method)
         {
             if (method["typeParams"] is not JsonArray { Count: > 0 } parameters) return;
             foreach (var edge in (method["overrides"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
@@ -106,16 +106,14 @@ static partial class FBoundStarProjectionErasure
                 if (TypeJson.Read(edge["owner"]) is not TypeNode.Fqn selectedOwner
                     || _valueSlots.IsBindingAlias(selectedOwner.Name)
                     || _valueSlots.OwnsValueSlots(selectedOwner.Name)) continue;
-                if (!references.TrySelectedOverrideDeclaration(selectedOwner.Name, Str(edge["member"]),
-                    Str(edge["kind"]) switch { "getter" => "get", "setter" => "set", _ => null },
-                    parameters.Count, (method["params"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()
-                        .Select(parameter => TypeJson.Read(parameter["type"])).ToArray(),
-                    selectedOwner.Args, parameters,
-                    Enumerable.Range(0, (owner["typeParams"] as JsonArray)?.Count ?? 0)
-                        .Select(index => (TypeNode)new TypeNode.Tv("type", index)).ToArray(),
-                    IsSuspend(method), out var selected, selectedDeclarationId: Str(edge[DeclarationIdentityBinding.Key])))
-                    throw new InvalidOperationException("Native generic override proof lacks its selected declaration");
-                foreach (var (index, bounds) in ReadRows(selected.TypeParams, false, physicalDeclaration: true))
+                // A Kotlin inherited view need not encode CLR-only special flags. The selected native edge and
+                // stated override parameter descriptor identify its MethodDef before those constraints are seeded.
+                var selected = ClrMemberResolution.SelectedGenericTypeParameters(selectedOwner, Str(edge["member"]),
+                    parameters.Count, instance: true,
+                    (method["params"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()
+                        .Select(parameter => TypeJson.Read(parameter["type"])).ToArray(), references,
+                    parameterOwnerArguments: selectedOwner.Args ?? Array.Empty<TypeNode>());
+                foreach (var (index, bounds) in ReadRows(selected, false, physicalDeclaration: true))
                     foreach (var bound in bounds)
                         Add(method, index, SupertypeGraph.SubstOwnerTvs(bound, selectedOwner.Args ?? Array.Empty<TypeNode>()));
             }
