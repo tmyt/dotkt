@@ -1725,6 +1725,13 @@ Kotlin-owned `HashMap` and `LinkedHashMap` constructors retain both arguments an
 The carrier's constructor preserves the full companion initializer order, and loading `$INSTANCE` observes it at the
 qualifier evaluation point.
 
+Kotlin visibility does not require a synthetic accessor when the physical CLR caller already has family access.
+A derived class, including its lexically nested closure, can access a protected instance member through a receiver
+of that derived declaration or a subclass. An arbitrary base-typed receiver does not acquire that permission.
+This is a declaration-family check: `Derived<T>` can use a `Derived<U>` receiver without changing the selected
+`Base<U>` member operand. Genuinely inaccessible crossings still use their exact accessor contracts; target member
+visibility and virtual versus explicit-super dispatch are not widened or changed.
+
 ## 7b. A slot whose type cannot be derived is a REFUSAL, not `kotlin.Any`
 
 Every local, state-machine field and plan binding the backend mints needs a declared type. Where the type could not

@@ -55,9 +55,9 @@ PROJECTS=(
 # Reviewed on the v0.9.8 main baseline at the start of #227. Updating a suite requires updating this number in
 # the same change, making otherwise-silent test proliferation or accidental deletion an explicit review event.
 declare -A EXPECTED_DISCOVERED=(
-	["tests/basic"]=858
+	["tests/basic"]=860
 	["tests/coroutines"]=267
-	["tests/roundtrip/consumer"]=679
+	["tests/roundtrip/consumer"]=680
 	["tests/roundtrip/charsequence-polymorphic-consumer"]=1
 	["tests/roundtrip/bidirectional/consumer"]=56
 	["tests/interop/consumer"]=465
@@ -943,8 +943,9 @@ done
 if (( ${#EMITTED[@]} )); then
 	echo "=========================================================="
 	echo "ilverify (once per emitted suite assembly)"
+	# The runtime dependency's bodies require their own whole-assembly check; -r only supplies resolution.
 	# --audit-baseline: this is the COMPLETE emitted set, so a baseline key that masked nothing is a dead entry.
-	bash "$ROOT/tests/run-ilverify.sh" --audit-baseline "${EMITTED[@]}" || rc=1
+	bash "$ROOT/tests/run-ilverify.sh" --audit-baseline "$STDLIB_RT_DLL" "${EMITTED[@]}" || rc=1
 fi
 
 echo "=========================================================="
