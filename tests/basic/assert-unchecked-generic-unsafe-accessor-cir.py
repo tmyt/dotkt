@@ -42,32 +42,27 @@ for method in methods.values():
     matches = [
         node
         for node in objects(method.get("body", []))
-        if node.get("k") == "callStatic"
-        and node.get("owner", {}).get("name", "").startswith("dotkt$unsafe$holder$")
-        and node.get("method", "").startswith("dotkt$unsafe$")
-        and node.get("method", "").endswith("$invoke")
+        if node.get("k") == "callInstance" and node.get("method") == "read"
+        and node.get("ownerType") == {"t": "fqn", "name": "ProtectedGenericCast", "args": [int_type]}
     ]
-    if len(matches) != 1 or matches[0].get("ret") != int_type:
+    casts = [node for node in objects(method.get("body", []))
+             if node.get("k") == "cast" and node.get("type") == int_type and node.get("e") in matches]
+    if (len(matches) != 1 or len(casts) != 1 or matches[0].get("sig") != [{"t": "fqn", "name": "System.Object"}]
+            or matches[0].get("dynRet") != object_type or matches[0].get("calleeRet") != object_type):
         raise SystemExit(
-            f"{method['name']} must retain exactly one concrete Int use projection over its UnsafeAccessor: "
+            f"{method['name']} must project the direct call's physical object return before its operator: "
             f"{matches!r}"
         )
+    operator = method["body"][0]["value"]
+    operand = operator.get("lhs") if method["name"] == "add" else operator.get("e")
+    if operand is not casts[0]:
+        raise SystemExit(f"{method['name']} extracts the concrete value after rather than before its operator")
     calls.append(matches[0])
 
-holder_names = {call["owner"]["name"] for call in calls}
-if len(holder_names) != 1:
-    raise SystemExit(f"operator calls disagree on their generated holder: {holder_names!r}")
-holders = [item for item in root.get("types", []) if item.get("name") in holder_names]
-if len(holders) != 1:
-    raise SystemExit(f"found {len(holders)} matching UnsafeAccessor holders, expected 1")
-
-entry_names = {call["method"] for call in calls}
-entries = [method for method in holders[0].get("methods", []) if method.get("name") in entry_names]
-if len(entries) != 1 or entries[0].get("ret") != object_type:
-    raise SystemExit(
-        "the generated wrapper must retain the deferred unchecked-cast physical object return: "
-        f"{entries!r}"
-    )
+base = next(owner for owner in root["types"] if owner.get("name") == "ProtectedGenericCast")
+read = next(method for method in base["methods"] if method.get("name") == "read")
+if read.get("ret") != object_type:
+    raise SystemExit(f"the selected declaration lost its deferred object return: {read!r}")
 
 nullable_owners = [
     item for item in root.get("types", []) if item.get("name") == "ProtectedNullableInt"
@@ -79,9 +74,8 @@ if len(nullable_owners) != 1:
 nullable_calls = [
     node
     for node in objects(nullable_owners[0].get("methods", []))
-    if node.get("k") == "callStatic"
-    and node.get("owner", {}).get("name", "").startswith("dotkt$unsafe$holder$")
-    and "$prop_get_stored_$invoke" in node.get("method", "")
+    if node.get("k") == "callInstance" and node.get("method") == "prop_get<stored>"
+    and node.get("ownerType") == {"t": "fqn", "name": "ProtectedNullableProperty", "args": [int_type]}
 ]
 nullable_int = {"t": "nullable", "of": int_type}
 nullable_casts = [

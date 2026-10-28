@@ -20,61 +20,28 @@ if len(sys.argv) != 2:
 with open(sys.argv[1], encoding="utf-8") as stream:
     root = json.load(stream)
 
-def target_name(method):
-    names = [
-        argument.get("value", {}).get("value")
-        for attribute in method.get("attrs", [])
-        for argument in attribute.get("namedArgs", [])
-        if argument.get("name") == "Name"
-    ]
-    return names[0] if len(names) == 1 else None
-
-accessor_pairs = [
-    (owner, method)
-    for owner in root.get("types", [])
-    for method in owner.get("methods", [])
-    if method.get("extern") and target_name(method) is not None
-]
-targets = Counter(target_name(method) for _, method in accessor_pairs)
-if targets != Counter({"echo": 1, "select": 1, "selectMutable": 1}):
-    raise SystemExit(f"callable-reference UnsafeAccessors lost their selected physical targets: {targets!r}")
-
-holder, accessor = next(pair for pair in accessor_pairs if target_name(pair[1]) == "echo")
-holder_type_params = holder.get("typeParams", [])
-holder_type_param_names = [parameter if isinstance(parameter, str) else parameter.get("name")
-                           for parameter in holder_type_params]
-if holder_type_param_names != ["__owner0"]:
-    raise SystemExit(f"UnsafeAccessor holder lost the base owner's generic frame: {holder!r}")
-
-base_open = {
-    "t": "fqn",
-    "name": "ProtectedNullableCallable",
-    "args": [{"t": "tv", "scope": "type", "i": 0}],
-}
 physical_object = {"t": "fqn", "name": "object"}
-expected_signature = [base_open, physical_object]
-if [parameter.get("type") for parameter in accessor.get("params", [])] != expected_signature:
-    raise SystemExit(f"UnsafeAccessor did not copy the local MethodDef's physical signature: {accessor!r}")
-if accessor.get("ret") != physical_object:
-    raise SystemExit(f"UnsafeAccessor did not copy the local MethodDef's physical return: {accessor!r}")
-
-wrapper_calls = [
-    node
-    for node in objects(root.get("types", []))
-    if node.get("k") == "callStatic"
-    and node.get("owner", {}).get("name") == holder.get("name")
-    and node.get("method", "").endswith("$invoke")
-]
-if len(wrapper_calls) != 1:
-    raise SystemExit(f"found {len(wrapper_calls)} UnsafeAccessor wrapper calls, expected 1")
-call = wrapper_calls[0]
-if call.get("owner", {}).get("args") != [{"t": "fqn", "name": "System.Int32"}]:
-    raise SystemExit(f"wrapper call did not construct the inherited base owner with Int: {call!r}")
-if call.get("sig") != expected_signature or call.get("ret") != physical_object:
-    raise SystemExit(f"wrapper call disagrees with the selected local MethodDef ABI: {call!r}")
+closure_calls = [node for owner in root["types"] if owner.get("nestedIn")
+                 for node in objects(owner.get("methods", [])) if node.get("k") == "callInstance"
+                 and node.get("method") in {"echo", "select", "selectMutable"}]
+if Counter(call["method"] for call in closure_calls) != Counter({"echo": 1, "select": 1, "selectMutable": 1}):
+    raise SystemExit(f"callable closures lost their exact direct targets: {closure_calls!r}")
+call = next(call for call in closure_calls if call["method"] == "echo")
+if (call.get("ownerType") != {"t": "fqn", "name": "ProtectedNullableCallable", "args": [{"t": "fqn", "name": "System.Int32"}]}
+        or call.get("sig") != [physical_object] or call.get("ret") != physical_object
+        or call.get("calleeRet") != physical_object or call.get("virtual") is not True):
+    raise SystemExit(f"direct callable lost selected constructed owner/physical ABI: {call!r}")
 arguments = call.get("args", [])
-if len(arguments) != 2 or arguments[1].get("k") != "cast" or arguments[1].get("type") != physical_object:
+if len(arguments) != 1 or arguments[0].get("k") != "cast" or arguments[0].get("type") != physical_object:
     raise SystemExit(f"nullable-generic argument was not projected to the physical object slot: {call!r}")
+for call in closure_calls:
+    if call["method"] == "echo":
+        continue
+    if (call.get("ownerType") != {"t": "fqn", "name": "ProtectedErasedOverloadCallable"}
+            or call.get("sig") != [{"t": "fqn", "name": "System.Object"}]
+            or call.get("ret") != {"t": "fqn", "name": "System.Int32"}
+            or call.get("calleeRet") != call["ret"] or call.get("virtual") is not True):
+        raise SystemExit(f"overloaded callable lost selected physical declaration: {call!r}")
 
 public_calls = [
     node

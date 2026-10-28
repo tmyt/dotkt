@@ -123,6 +123,11 @@ static class SupertypeGraph
         IReadOnlyDictionary<string, Def> defs, ReferenceMetadataIndex refs) =>
         ReachesCore(from, owner, defs, refs, exactConstruction: false);
 
+    // CLI family access follows class inheritance only; an implemented interface grants no protected access.
+    public static bool ReachesClassDeclaration(TypeNode.Fqn from, TypeNode.Fqn owner,
+        IReadOnlyDictionary<string, Def> defs, ReferenceMetadataIndex refs) =>
+        ReachesCore(from, owner, defs, refs, exactConstruction: false, includeInterfaces: false);
+
     // Constructed reachability is used when authorization depends on the exact direct-interface instance. A class may
     // inherit `I<string>` through its base while directly re-listing only `I<int>`; matching names there would grant
     // the new declaration a MethodImpl for the wrong constructed slot.
@@ -131,7 +136,8 @@ static class SupertypeGraph
         ReachesCore(from, owner, defs, refs, exactConstruction: true);
 
     static bool ReachesCore(TypeNode.Fqn from, TypeNode.Fqn owner,
-        IReadOnlyDictionary<string, Def> defs, ReferenceMetadataIndex refs, bool exactConstruction)
+        IReadOnlyDictionary<string, Def> defs, ReferenceMetadataIndex refs, bool exactConstruction,
+        bool includeInterfaces = true)
     {
         var queue = new Queue<TypeNode.Fqn>();
         queue.Enqueue(from);
@@ -146,7 +152,7 @@ static class SupertypeGraph
             {
                 var args = EffectiveArgs(spec, def.Arity);
                 if (args == null) continue;
-                foreach (var parent in def.Interfaces)
+                foreach (var parent in includeInterfaces ? def.Interfaces : Array.Empty<TypeNode.Fqn>())
                     if (SubstOwnerTvs(parent, args) is TypeNode.Fqn constructed)
                         queue.Enqueue(constructed);
                 if (def.Base != null && SubstOwnerTvs(def.Base, args) is TypeNode.Fqn baseType)
@@ -155,8 +161,8 @@ static class SupertypeGraph
             }
             if (refs == null) continue;
             var refArgs = spec.Args ?? Array.Empty<TypeNode>();
-            foreach (var (parent, _) in refs.ReferencedSupertypes(spec))
-                if (SubstOwnerTvs(parent, refArgs) is TypeNode.Fqn constructed)
+            foreach (var (parent, isInterface) in refs.ReferencedSupertypes(spec))
+                if ((includeInterfaces || !isInterface) && SubstOwnerTvs(parent, refArgs) is TypeNode.Fqn constructed)
                     queue.Enqueue(constructed);
         }
         return false;

@@ -7,6 +7,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Changed
 
+- Preserve CLR-legal protected accesses through derived and lexically nested receivers without unnecessary inaccessible accessor holders.
 - Preserve exact generic declaring frames for lexical coroutine/result member access without changing the erased value ABI.
 - Adapt String receivers and conditional CharSequence joins at their declared physical boundaries, including inline bodies and nullable StringBuilder helpers.
 - Preserve trusted representation-type source associations across DLL boundaries so ordinary Kotlin CharSequence APIs and authored supertypes retain their Kotlin classifiers.

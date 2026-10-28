@@ -55,9 +55,9 @@ PROJECTS=(
 # Reviewed on the v0.9.8 main baseline at the start of #227. Updating a suite requires updating this number in
 # the same change, making otherwise-silent test proliferation or accidental deletion an explicit review event.
 declare -A EXPECTED_DISCOVERED=(
-	["tests/basic"]=858
+	["tests/basic"]=860
 	["tests/coroutines"]=267
-	["tests/roundtrip/consumer"]=679
+	["tests/roundtrip/consumer"]=680
 	["tests/roundtrip/charsequence-polymorphic-consumer"]=1
 	["tests/roundtrip/bidirectional/consumer"]=56
 	["tests/interop/consumer"]=465
@@ -165,6 +165,7 @@ for proj in "${PROJECTS[@]}"; do
 		fi
 	fi
 	if [[ "$proj" == "tests/basic" ]]; then
+		python3 "$ROOT/tests/assert-protected-family-cir.py" basic "$dir/obj/$CONFIGURATION/net10.0/cir" || rc=1
 		if python3 "$ROOT/tests/basic/assert-inherited-mutable-iterator-cir.py" \
 			"$dir/obj/$CONFIGURATION/net10.0/bir/InheritedMutableIteratorSlotTests.bir.json" \
 			"$dir/obj/$CONFIGURATION/net10.0/cir/InheritedMutableIteratorSlotTests.cir.json" \
@@ -610,6 +611,7 @@ for proj in "${PROJECTS[@]}"; do
 		fi
 		if python3 "$ROOT/tests/roundtrip/assert-referenced-method-generic-unsafe-accessor-cir.py" \
 			"$referenced_method_generic_cir" \
+			"$ROOT/tests/roundtrip/producer/obj/$CONFIGURATION/net10.0/cir/ReferencedProtectedMethodGeneric.cir.json" \
 			>"$ROOT/build/nunit-$name.referenced-method-generic-unsafe-accessor.log" 2>&1; then
 			echo "  referenced method-generic UnsafeAccessor target/value arity remains coherent"
 		else
@@ -804,6 +806,13 @@ for proj in "${PROJECTS[@]}"; do
 		fi
 	fi
 	if [[ "$proj" == "tests/interop/consumer" ]]; then
+		if python3 "$ROOT/tests/assert-protected-family-cir.py" fields "$dir/obj/$CONFIGURATION/net10.0/cir" \
+			>"$ROOT/build/nunit-$name.protected-field-cir.log" 2>&1; then
+			echo "  direct protected fields retain their exact selected storage rather than interface properties"
+		else
+			echo "  PROTECTED FIELD CIR FAIL"
+			tail -25 "$ROOT/build/nunit-$name.protected-field-cir.log"; rc=1
+		fi
 		interop_dll="$dir/bin/$CONFIGURATION/net10.0/InteropConsumer.Tests.dll"
 		interop_klib="$dir/obj/$CONFIGURATION/net10.0/klib/InteropProducer.klib"
 		if python3 "$ROOT/tests/interop/assert-native-overload-identity.py" \
@@ -903,12 +912,23 @@ for proj in "${PROJECTS[@]}"; do
 		fi
 	fi
 	# The emitted assembly is named after the .ktproj (e.g. DotKt.Tests.Basic.ktproj -> DotKt.Tests.Basic.dll).
+	if [[ "$proj" == "tests/roundtrip/consumer" ]]; then
+		python3 "$ROOT/tests/assert-protected-family-cir.py" producer "$ROOT/tests/roundtrip/producer/obj/$CONFIGURATION/net10.0/cir" || rc=1
+		python3 "$ROOT/tests/assert-protected-family-cir.py" consumer "$dir/obj/$CONFIGURATION/net10.0/cir" || rc=1
+	elif [[ "$proj" == "tests/interop/consumer" ]]; then
+		python3 "$ROOT/tests/assert-protected-family-cir.py" native "$dir/obj/$CONFIGURATION/net10.0/cir" || rc=1
+	fi
 	proj_file="$(find "$dir" -maxdepth 1 \( -name '*.ktproj' -o -name '*.csproj' \) | head -1)"
 	proj_base="$(basename "$proj_file")"
 	asm="${proj_base%.*}.dll"
 	# `dotnet build` above uses Debug. Restrict discovery to that configuration: a stale Release artifact from a
 	# developer's focused build must never make ILVerify inspect yesterday's DLL while tests execute today's Debug DLL.
 	emitted="$(find "$dir/bin/$CONFIGURATION" -name "$asm" 2>/dev/null | head -1)"
+	# Verify the same runtime whose bodies the suite actually executes, not only an unused build-tree copy.
+	runtime_copy="$(dirname "$emitted")/DotKt.Stdlib.dll"
+	if [[ ! -f "$runtime_copy" ]] || ! cmp -s "$STDLIB_RT_DLL" "$runtime_copy"; then
+		echo "  RUNTIME PROVENANCE FAIL — $runtime_copy differs from the verified stdlib"; rc=1; continue
+	fi
 	[[ "$proj_file" == *.ktproj && -f "$emitted" ]] && EMITTED+=("$emitted")
 	# Also collect any declared EXTRA_EMIT assembly (e.g. a ProjectReference'd producer dll copied into bin).
 	if [[ -v EXTRA_EMIT[$proj] ]]; then
@@ -943,8 +963,9 @@ done
 if (( ${#EMITTED[@]} )); then
 	echo "=========================================================="
 	echo "ilverify (once per emitted suite assembly)"
+	# The runtime dependency's bodies require their own whole-assembly check; -r only supplies resolution.
 	# --audit-baseline: this is the COMPLETE emitted set, so a baseline key that masked nothing is a dead entry.
-	bash "$ROOT/tests/run-ilverify.sh" --audit-baseline "${EMITTED[@]}" || rc=1
+	bash "$ROOT/tests/run-ilverify.sh" --audit-baseline "$STDLIB_RT_DLL" "${EMITTED[@]}" || rc=1
 fi
 
 echo "=========================================================="

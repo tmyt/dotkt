@@ -11,7 +11,7 @@ using DotKt.Bir;
 // kotc carries the accessed declaration's owner/method generic frames in BIR. Re-declare owner parameters on a
 // synthesized generic holder and method parameters on the accessor itself, preserving the exact form/index/constraints
 // required by .NET 9+'s strict UnsafeAccessor signature matcher. Invalid/old BIR is outside the toolchain contract.
-static class UnsafeAccessorLowering
+static partial class UnsafeAccessorLowering
 {
     const string AttributeFqn = "System.Runtime.CompilerServices.UnsafeAccessorAttribute";
     const string KindFqn = "System.Runtime.CompilerServices.UnsafeAccessorKind";
@@ -76,28 +76,32 @@ static class UnsafeAccessorLowering
             }, StringComparer.Ordinal);
         if (hosts.Count == 0) return;
 
+        var family = new FamilyAccess(roots, hosts, refs);
         var accessors = new Dictionary<string, AccessorDefinition>(StringComparer.Ordinal);
         foreach (var caller in callers)
         {
             // Snapshot source/synthesized executable members: accessors appended during this walk have no body and
             // must not become input to their own synthesis.
             foreach (var method in caller.Methods.OfType<JsonObject>().ToArray())
-                if (method["body"] is JsonNode body) Rewrite(body, caller, hosts, accessors, refs);
+                if (method["body"] is JsonNode body)
+                    Rewrite(body, caller, hosts, accessors, refs, BirScope.Empty.Extend(method), family);
             if (caller.Declaration["ctors"] is JsonArray ctors)
                 foreach (var ctor in ctors.OfType<JsonObject>())
                 {
-                    if (ctor["preStmts"] is JsonNode pre) Rewrite(pre, caller, hosts, accessors, refs);
-                    if (ctor["delegation"] is JsonNode delegation) Rewrite(delegation, caller, hosts, accessors, refs);
+                    var scope = BirScope.Empty.Extend(ctor);
+                    if (ctor["preStmts"] is JsonArray pre)
+                        scope = RewriteSequence(pre, caller, hosts, accessors, refs, scope, family);
+                    if (ctor["delegation"] is JsonNode delegation) Rewrite(delegation, caller, hosts, accessors, refs, scope, family);
                     // Constructor delegation arguments execute in the caller TypeDef just like its body. kotc keeps
                     // them in dedicated baseArgs/thisArgs vectors, so private sibling/file-class edges there need the
                     // same UnsafeAccessor projection (SafeContinuation(delegate, UNDECIDED_BOX) is the concrete case).
-                    if (ctor["baseArgs"] is JsonNode baseArgs) Rewrite(baseArgs, caller, hosts, accessors, refs);
-                    if (ctor["thisArgs"] is JsonNode thisArgs) Rewrite(thisArgs, caller, hosts, accessors, refs);
-                    if (ctor["body"] is JsonNode body) Rewrite(body, caller, hosts, accessors, refs);
+                    if (ctor["baseArgs"] is JsonNode baseArgs) Rewrite(baseArgs, caller, hosts, accessors, refs, scope, family);
+                    if (ctor["thisArgs"] is JsonNode thisArgs) Rewrite(thisArgs, caller, hosts, accessors, refs, scope, family);
+                    if (ctor["body"] is JsonNode body) Rewrite(body, caller, hosts, accessors, refs, scope, family);
                 }
             if (caller.Declaration["fields"] is JsonArray fields)
                 foreach (var field in fields.OfType<JsonObject>())
-                    if (field["init"] is JsonNode init) Rewrite(init, caller, hosts, accessors, refs);
+                    if (field["init"] is JsonNode init) Rewrite(init, caller, hosts, accessors, refs, BirScope.Empty, family);
         }
     }
 
@@ -130,27 +134,44 @@ static class UnsafeAccessorLowering
         return array;
     }
 
+    static BirScope RewriteSequence(JsonArray array, Host caller, IReadOnlyDictionary<string, Host> hosts,
+        Dictionary<string, AccessorDefinition> accessors, ReferenceMetadataIndex refs, BirScope scope, FamilyAccess family)
+    {
+        var inner = scope.Child();
+        foreach (var child in array.ToList())
+        {
+            if (child == null) continue;
+            Rewrite(child, caller, hosts, accessors, refs, inner, family);
+            if (child is JsonObject declaration) inner.Declare(declaration);
+        }
+        return inner;
+    }
+
     static void Rewrite(JsonNode node, Host caller, IReadOnlyDictionary<string, Host> hosts,
-        Dictionary<string, AccessorDefinition> accessors, ReferenceMetadataIndex refs)
+        Dictionary<string, AccessorDefinition> accessors, ReferenceMetadataIndex refs, BirScope scope, FamilyAccess family)
     {
         if (node is JsonArray array)
         {
-            foreach (var child in array.ToList()) if (child != null) Rewrite(child, caller, hosts, accessors, refs);
+            RewriteSequence(array, caller, hosts, accessors, refs, scope, family);
             return;
         }
-        if (node is not JsonObject obj) return;
+        if (node is not JsonObject obj || TypeJson.IsType(obj)) return;
 
-        foreach (var child in obj.Select(pair => pair.Value).Where(value => value != null).ToList())
-            Rewrite(child, caller, hosts, accessors, refs);
+        var inner = scope.Extend(obj);
+        if (Str(obj["k"]) == "valueBlock" && obj["stmts"] is JsonArray statements)
+            inner = RewriteSequence(statements, caller, hosts, accessors, refs, inner, family);
+        foreach (var pair in obj.ToList())
+            if (pair.Value != null && !(Str(obj["k"]) == "valueBlock" && pair.Key == "stmts"))
+                Rewrite(pair.Value, caller, hosts, accessors, refs, inner, family);
 
         var kind = Str(obj["k"]);
         if (kind is "callInstance" or "callStatic" or "constrainedCall")
-            RewriteMethod(obj, kind, caller, hosts, accessors, refs);
-        else if (kind == "newBoundDelegate") RewriteBoundDelegate(obj, caller, hosts, accessors, refs);
+            RewriteMethod(obj, kind, caller, hosts, accessors, refs, inner, family);
+        else if (kind == "newBoundDelegate") RewriteBoundDelegate(obj, caller, hosts, accessors, refs, inner, family);
         else if (kind == "new") RewriteConstructor(obj, caller, hosts, accessors, refs);
         else if (kind is "field" or "setField" or "setFieldExpr" or "lateinitGet"
             or "staticField" or "staticFieldSet")
-            RewriteField(obj, kind, caller, hosts, accessors, refs);
+            RewriteField(obj, kind, caller, hosts, accessors, refs, inner, family);
         else
         {
             obj.Remove("memberVisibility");
@@ -164,7 +185,7 @@ static class UnsafeAccessorLowering
 
     static void RewriteMethod(JsonObject access, string kind, Host caller,
         IReadOnlyDictionary<string, Host> hosts, Dictionary<string, AccessorDefinition> accessors,
-        ReferenceMetadataIndex refs)
+        ReferenceMetadataIndex refs, BirScope scope, FamilyAccess family)
     {
         // An existential forwarding bridge already targets its exact same-owner source MethodDef. Suspend lowering
         // may have projected that edge to the corresponding cold entry, but it remains a compiler-authored direct
@@ -291,6 +312,9 @@ static class UnsafeAccessorLowering
                     ?? throw new InvalidOperationException(
                         $"UnsafeAccessor target '{ownerType.Name}.{targetName}' has an untyped parameter")
             ).ToArray());
+        if (family.Allows(caller, access["recv"], ownerType, Str(target?["vis"]) ?? frontendVisibility,
+                targetStatic, scope, signature.Select(TypeJson.Read).Append(TypeJson.Read(declaredAccessorReturn))))
+            return;
         var key = $"{caller.Name}|method|{ownerType.Name}|{targetName}|{targetStatic}|{methodArity}|" +
                   string.Join(";", signature.Select(TypeKey)) + "|" + TypeKey(declaredAccessorReturn) +
                   "|declaration:" + targetDeclarationId;
@@ -506,7 +530,7 @@ static class UnsafeAccessorLowering
 
     static void RewriteBoundDelegate(JsonObject access, Host caller,
         IReadOnlyDictionary<string, Host> hosts, Dictionary<string, AccessorDefinition> accessors,
-        ReferenceMetadataIndex refs)
+        ReferenceMetadataIndex refs, BirScope scope, FamilyAccess family)
     {
         var frontendVisibility = Str(access["memberVisibility"]);
         var ownerTypeParams = access["memberOwnerTypeParams"] as JsonArray;
@@ -545,6 +569,8 @@ static class UnsafeAccessorLowering
             returnTypeNode = TypeJson.Read(access["funcType"]) is TypeNode.Fn fn
                 ? fn.Ret : new TypeNode.Fqn("kotlin.Unit", null);
         var declaredReturnType = TypeJson.Write(returnTypeNode);
+        if (family.Allows(caller, access["recv"], ownerType, Str(target?["vis"]) ?? frontendVisibility,
+                false, scope, signature.Select(TypeJson.Read).Append(returnTypeNode))) return;
         var key = $"{caller.Name}|bound|{ownerType.Name}|{targetName}|{methodArity}|" +
                   string.Join(";", signature.Select(TypeKey)) + "|" + TypeKey(declaredReturnType);
         var definition = EnsureAccessor(caller, accessors, key, targetName, 1, access["ownerType"],
@@ -880,7 +906,7 @@ static class UnsafeAccessorLowering
 
     static void RewriteField(JsonObject access, string kind, Host caller,
         IReadOnlyDictionary<string, Host> hosts, Dictionary<string, AccessorDefinition> accessors,
-        ReferenceMetadataIndex refs)
+        ReferenceMetadataIndex refs, BirScope scope, FamilyAccess family)
     {
         var frontendVisibility = Str(access["memberVisibility"]);
         var frontendFieldType = access["memberType"]?.DeepClone();
@@ -919,10 +945,12 @@ static class UnsafeAccessorLowering
 
         var targetStatic = kind is "staticField" or "staticFieldSet"
             || (target != null && Bool(target["static"]));
+        MemberRefNode selectedField = null;
         if (target == null && refs != null
             && ClrMemberResolution.ResolveFieldForUnsafeAccessor(refs, ownerType, targetName, targetStatic,
                 out var referencedOwnerParameters) is MemberRefNode referencedField)
         {
+            selectedField = referencedField;
             ownerType = referencedField.DeclaringType as TypeNode.Fqn
                 ?? throw new InvalidOperationException("UnsafeAccessor field has no exact declaring owner");
             ownerNode = TypeJson.Write(ownerType);
@@ -937,6 +965,19 @@ static class UnsafeAccessorLowering
         var fieldTypeNode = target?["type"]?.DeepClone() ?? frontendFieldType
             ?? access["ret"]?.DeepClone() ?? access["sty"]?.DeepClone();
         if (TypeJson.Read(fieldTypeNode) is not TypeNode fieldType) return;
+        if (family.Allows(caller, access["recv"], ownerType, Str(target?["vis"]) ?? frontendVisibility,
+                targetStatic, scope, new[] { fieldType }))
+        {
+            if (selectedField != null)
+            {
+                // This exact FieldDef was selected before proving direct family access. Preserve that identity:
+                // a later property lookup must not replace it with a same-named interface accessor.
+                access["ownerType"] = ownerNode.DeepClone();
+                access["memberRef"] = selectedField.Write();
+                access[ClrMemberResolution.ResolvedMemberReturnKey] = TypeJson.Write(selectedField.ReturnType);
+            }
+            return;
+        }
         var declaredFieldTypeJson = TypeJson.Write(fieldType);
         var actualFieldType = ownerType.Args is { Length: > 0 }
             ? SubstituteOwnerSlots(fieldType, ownerType.Args) : fieldType;

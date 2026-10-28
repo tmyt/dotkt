@@ -51,6 +51,7 @@ static class Bir2Cir
                 BirTypeLowering.SelfTestSlotReturns();
                 UncheckedGenericCastReturnErasure.SelfTest();
                 UnsafeAccessorLowering.SuperForwarderSelfTest();
+                UnsafeAccessorLowering.FamilyAccessSelfTest();
                 BirTypeLowering.SelfTestMethodImplMetadata();
                 SupertypeGraph.SelfTestDeclarationIdentity();
                 CollectionHelperBinding.SelfTest();

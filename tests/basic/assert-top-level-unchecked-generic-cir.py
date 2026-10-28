@@ -60,7 +60,23 @@ physical_read = [node for node in objects(physical["concrete"]["body"])
                  if node.get("k") == "callStatic" and node.get("method") == "read"]
 assert len(physical_read) == 1, physical_read
 assert physical["read"]["ret"] == {"t": "fqn", "name": "object"}, physical["read"]
-assert physical_read[0]["ret"] == {"t": "fqn", "name": "System.Int32"}, physical_read
+assert physical_read[0]["ret"] == physical_read[0]["calleeRet"] == {"t": "fqn", "name": "object"}, physical_read
+source_consumer = [node for node in objects(source["concrete"]["body"])
+                   if node.get("k") == "callStatic" and node.get("method") == "consumeInt"]
+assert len(source_consumer) == 1, source_consumer
+assert source_consumer[0]["declarationId"] == source["consumeInt"]["declarationId"], source_consumer
+assert source_consumer[0]["calleeOwner"] == {"t": "fqn", "name": bir["fileClass"]}, source_consumer
+consumers = [node for node in objects(physical["concrete"]["body"])
+             if node.get("k") == "callStatic" and node.get("method") == "consumeInt"]
+assert len(consumers) == 1, consumers
+consumer = consumers[0]
+integer = {"t": "fqn", "name": "System.Int32"}
+assert consumer["calleeOwner"] == {"t": "fqn", "name": cir["fileClass"]}, consumer
+assert consumer["sig"] == [integer] and consumer["calleeRet"] == integer, consumer
+assert len(consumer["args"]) == 1, consumer
+projection = consumer["args"][0]
+assert projection["k"] == "cast" and projection["type"] == integer, projection
+assert projection["e"] is physical_read[0], projection
 
 source_forward = [node for node in objects(source["forwarded"]["body"])
                   if node.get("k") == "callStatic" and node.get("method") == "identity"]

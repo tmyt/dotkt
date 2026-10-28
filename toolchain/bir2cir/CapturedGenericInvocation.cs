@@ -14,6 +14,7 @@ static class CapturedGenericInvocation
     static Dictionary<string, List<(string Owner, JsonObject Method)>> _localDeclarations;
     static Dictionary<string, string> _localTypeNames;
     static Dictionary<string, JsonObject> _localTypeDefinitions;
+    static Func<JsonNode, BirScope, TypeNode> _physicalType;
     static readonly Dictionary<string, TypeNode[]> _parameterWitnesses = new(StringComparer.Ordinal);
     static readonly Dictionary<string, NullableRepresentationFrame> _methodWitnessFrames = new(StringComparer.Ordinal);
     static bool _flattenMissingOwners;
@@ -88,6 +89,7 @@ static class CapturedGenericInvocation
     {
         _localDeclarations = new(StringComparer.Ordinal);
         var rootList = roots.OfType<JsonObject>().ToList();
+        _physicalType = PhysicalValueCoercion.ResultTypeOracle(rootList.Cast<JsonNode>().ToList());
         _localTypeNames = new(StringComparer.Ordinal);
         _flattenMissingOwners = flattenMissingOwners;
         _localTypeDefinitions = new(StringComparer.Ordinal);
@@ -115,7 +117,7 @@ static class CapturedGenericInvocation
     public static void Apply(JsonNode root, ReferenceMetadataIndex refs, HashSet<string> emittedLocalTypes)
     {
         var generated = new List<JsonObject>();
-        Walk(root, new JsonArray(), new JsonArray(), Str(root?["fileClass"]));
+        Walk(root, new JsonArray(), new JsonArray(), Str(root?["fileClass"]), BirScope.Empty);
         if (root is JsonObject file && generated.Count > 0)
         {
             var types = file["types"] as JsonArray;
@@ -123,10 +125,21 @@ static class CapturedGenericInvocation
             foreach (var type in generated) { types.Add(type); emittedLocalTypes.Add(Str(type["name"])); }
         }
 
-        void Walk(JsonNode node, JsonArray ownerFrame, JsonArray methodFrame, string lexicalOwner)
+        BirScope WalkSequence(JsonArray array, JsonArray ownerFrame, JsonArray methodFrame, string lexicalOwner, BirScope scope)
+        {
+            var inner = scope.Child();
+            foreach (var child in array.ToList())
+            {
+                Walk(child, ownerFrame, methodFrame, lexicalOwner, inner);
+                if (child is JsonObject declaration) inner.Declare(declaration);
+            }
+            return inner;
+        }
+
+        void Walk(JsonNode node, JsonArray ownerFrame, JsonArray methodFrame, string lexicalOwner, BirScope scope)
         {
             if (node is JsonArray array)
-            { foreach (var child in array.ToList()) Walk(child, ownerFrame, methodFrame, lexicalOwner); return; }
+            { WalkSequence(array, ownerFrame, methodFrame, lexicalOwner, scope); return; }
             if (node is not JsonObject obj) return;
             if (Str(obj["kind"]) is "class" or "interface" or "struct")
             {
@@ -135,7 +148,12 @@ static class CapturedGenericInvocation
             }
             if (obj["params"] is JsonArray && obj["body"] is JsonArray)
                 methodFrame = obj["typeParams"] as JsonArray ?? new JsonArray();
-            foreach (var child in obj.ToList()) Walk(child.Value, ownerFrame, methodFrame, lexicalOwner);
+            scope = scope.Extend(obj);
+            if (Str(obj["k"]) == "valueBlock" && obj["stmts"] is JsonArray statements)
+                scope = WalkSequence(statements, ownerFrame, methodFrame, lexicalOwner, scope);
+            foreach (var child in obj.ToList())
+                if (!(Str(obj["k"]) == "valueBlock" && child.Key == "stmts"))
+                    Walk(child.Value, ownerFrame, methodFrame, lexicalOwner, scope);
             if (obj[ArgumentKey] is not JsonArray captures) { obj.Remove(ResultKey); return; }
             var captureIndices = captures.OfType<JsonObject>().Select(capture => capture["argument"].GetValue<int>()).ToArray();
             var captureSlots = captures.OfType<JsonObject>().SelectMany(capture => (JsonArray)capture["slots"])
@@ -282,7 +300,18 @@ static class CapturedGenericInvocation
             }
             var isInstance = Str(obj["k"]) is "clrGenericInstance" or "callInstance";
             var parameterTypes = declarationParams.Select(CloseDeclaration).ToList();
-            if (isInstance) parameterTypes.Insert(0, liftedOwner);
+            if (isInstance)
+            {
+                // A selected member's declaring owner is not its receiver's physical value type. A nested thunk
+                // retains lexical family permission only if it also retains the actual qualifying receiver.
+                var receiver = obj["recv"];
+                var receiverType = Str(receiver?["k"]) == "this"
+                    ? new TypeNode.Fqn(lexicalOwner, ownerFrame.Count == 0 ? null
+                        : Enumerable.Range(0, ownerFrame.Count).Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray())
+                    : _physicalType(receiver, scope);
+                if (receiverType == null) throw new InvalidOperationException("Captured invocation has no physical receiver type");
+                parameterTypes.Insert(0, LiftCaller(receiverType));
+            }
             var forward = (JsonObject)obj.DeepClone();
             forward.Remove(ClrMemberResolution.ResolvedMethodTypeParamsKey);
             forward.Remove("sty");
