@@ -11,13 +11,15 @@ class ImportedArrayListViewTests {
     fun producerAndImportedInlineViewsKeepTheOriginalArrayAcrossDlls() {
         val values = arrayOf("first", "middle", "first")
         val ordinary = viewOf(values)
-        val inlined = inlineViewOf(values)
+        var inlineCalls = 0
+        val inlined = inlineViewOf(values) { inlineCalls++ }
         val sub = ordinary.subList(1, 3)
         val iterator = inlined.iterator()
         values[0] = "last"; values[2] = "last"
         check(ordinary[0] == "last" && sub[1] == "last" && iterator.next() == "last")
         val numbers = arrayOf(1, 2, 1)
-        val view = inlineViewOf(numbers)
+        val view = inlineViewOf(numbers) { inlineCalls++ }
+        check(inlineCalls == 2)
         numbers[0] = 3
         check(view[0] == 3)
         val primitive = intArrayOf(1, 2, 1)

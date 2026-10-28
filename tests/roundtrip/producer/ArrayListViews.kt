@@ -1,7 +1,10 @@
 package roundtrip.arrayviews
 
 fun <T> viewOf(values: Array<out T>): List<T> = values.asList()
-inline fun <T> inlineViewOf(values: Array<out T>): List<T> = values.asList()
+inline fun <T> inlineViewOf(values: Array<out T>, before: () -> Unit): List<T> {
+    before()
+    return values.asList()
+}
 fun intViewOf(values: IntArray): List<Int> = values.asList()
 
 class SharedArrayViews {
