@@ -200,8 +200,7 @@ sealed class Pipeline
         // CLR-only facts for the compiler-provided stdlib are authored in a checked sidecar so the common Kotlin
         // sources remain upstream-identical. Apply those exact declaration-identity bindings before any pass snapshots
         // source names or annotations. Ordinary app/library builds cannot opt into this trusted-stdlib input.
-        var physicalParameterIndices = StdlibBindingOverlay.Apply(birRoots, _options.StdlibBindings)
-            .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
+        StdlibBindingOverlay.Apply(birRoots, _options.StdlibBindings);
         DeclarationSignatureIdentity.Capture(birRoots);
         ComparableRepresentationLowering.Apply(birRoots, _options.RefBuild);
         // #395: snapshot frontend declaration identity before ANY Kotlin-to-CLR representation pass can rename,
@@ -927,6 +926,7 @@ sealed class Pipeline
         // Materialize a deterministic non-generic existential view in bir2cir and make every closed Node<N> implement
         // it. Runs before interface-slot normalization and suspend lowering, in ref and runtime builds alike.
         CapturedGenericInvocation.CaptureParameterWitnesses(staged.Select(s => s.Root));
+        var physicalParameterIndices = new Dictionary<string, int[]>(StringComparer.Ordinal);
         var physicalDeclarationSources = new Dictionary<string, string>(StringComparer.Ordinal);
         genericRepresentations.RecordNativeFields(staged.Select(s => s.Root));
         var localExistentialOwners =
