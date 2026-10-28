@@ -26,7 +26,6 @@ static class Bir2Cir
                 AliasConstructorDelegationExpansion.SelfTest();
                 AliasHelperHoist.SelfTest();
                 StdlibBindingOverlay.SelfTest();
-                SequenceElementAdapterLowering.SelfTest();
                 DeclarationIdentityBinding.SelfTest();
                 DeclarationSignatureIdentity.SelfTest();
                 ForeignStarProjectionBinding.SelfTest();
@@ -247,15 +246,8 @@ sealed class Pipeline
         // demand. Derive the latter from nullable-sensitive operations and exact call/lift correspondences as one
         // module-wide fixed point before per-file materialization starts.
         var nullableWitnessDemand = NullableWitnessDemand.Collect(birRoots, refs);
-        // The combined value-type oracle covers referenced/foundational values plus local structs/enums across every
-        // input file. The Sequence element-view boundary asks the nullable-generic rule whether its source element will
-        // be object-reified, so it shares this oracle instead of restating today's two stdlib source spellings. The
-        // declaration/use-axis nullable-generic passes below retain the same oracle.
         RoundtripMetadata.FreezeSuspendResults(birRoots);
         InheritedMemberOwnerBinding.ProjectOwners(birRoots, refs);
-        // The adapter authors source-generic applications. Include those applications in demand collection
-        // so their complete physical frames are materialized with the declaration and its callers.
-        if (!_options.RefBuild) SequenceElementAdapterLowering.Apply(birRoots);
         var genericRepresentations = new GenericRepresentationPolicy(representationAliases, refs, birRoots);
         var restoreDefaultFrames = DefaultArgSplice.PrepareInlineDefaults(birRoots, refs);
         var representationMethodFrames = NullableRepresentationMaterialization.Apply(

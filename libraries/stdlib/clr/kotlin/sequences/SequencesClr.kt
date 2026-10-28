@@ -3,9 +3,6 @@
  * Use of this source code is governed by the Apache 2.0 license that can be found in the license/LICENSE.txt file.
  */
 
-// Step-1 CLR stub mirroring the JVM `actual` declarations of this file.
-// Bodies are `TODO` pending the `@Clr`/BCL binding step (see docs/design-stdlib-compilation.md "THE CANONICAL ROADMAP").
-
 @file:Suppress("ACTUAL_WITHOUT_EXPECT", "NO_ACTUAL_FOR_EXPECT", "UNCHECKED_CAST", "NOTHING_TO_INLINE", "NO_ACTUAL_CLASS_MEMBER_FOR_EXPECTED_CLASS")
 
 package kotlin.sequences
@@ -19,18 +16,4 @@ internal actual class ConstrainedOnceSequence<T> actual constructor(sequence: Se
         sequenceRef = null
         return sequence.iterator()
     }
-}
-
-// The producer has already retained only values satisfying `is T`; this adapter changes the physical sequence element
-// interface from S to T without re-running that predicate or eagerly materializing the sequence. The same view
-// serves null filtering: its declaration body has already removed nulls before bir2cir replaces the final cast.
-internal class ClrSequenceElementAdapter<S, T>(private val sequence: Sequence<S>) : Sequence<T> {
-    override fun iterator(): Iterator<T> = ClrSequenceElementIterator<S, T>(sequence.iterator())
-}
-
-private class ClrSequenceElementIterator<S, T>(private val iterator: Iterator<S>) : Iterator<T> {
-    @Suppress("UNCHECKED_CAST")
-    override fun next(): T = iterator.next() as T
-
-    override fun hasNext(): Boolean = iterator.hasNext()
 }

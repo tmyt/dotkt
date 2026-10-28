@@ -68,10 +68,6 @@
 #   fieldRef, constructed generic-field closure, and the exact physical result stamp inside each caller-facing cast;
 #   ilemit emits those nodes one-to-one and owns no collection ABI inference.
 #
-#   Layer ownership (the reified sequence element face) — a marked stdlib declaration owns the Kotlin predicate,
-#   while bir2cir replaces only its final erased-platform cast with the concrete CLR element-view adapter.
-#   `sequence-element-adapter` pins that physical boundary and its malformed sibling pins the marker contract.
-#
 #   Declaration/override identity (#444) — an ordinary member's @ClrIntrinsic allocation is selected by its complete
 #   source declaration signature, method-generic arity, and constructed owner frame, never source name plus parameter
 #   count. `exact-intrinsic-override-signature` uses a compiler-authored metadata reference with resolvable wrong
