@@ -60,6 +60,14 @@ class ArrayCollectionConversionTests {
         val unchanged = arrayOf(31, 41)
         check(empty.into(unchanged) === unchanged && unchanged[0] == 31 && unchanged[1] == 41)
         check(empty.iteratorCalls == 0)
+        val partial = arrayOf(99, 98)
+        var rejected = false
+        try {
+            ArrayConversionCollection(listOf<Any?>(7, "bad")).into(partial)
+        } catch (failure: ClassCastException) {
+            rejected = true
+        }
+        check(rejected && partial[0] == 7 && partial[1] == 98)
     }
 
     @TestAttribute
@@ -93,6 +101,10 @@ class ArrayCollectionConversionTests {
     fun orEmptyPreservesIdentityAndAllocatesTheReifiedComponent() {
         val integers = arrayOf(7)
         check(integers.orEmpty() === integers)
+        val projected: Array<out Any?>? = integers
+        check(projected.orEmpty() === integers)
+        val missingProjected: Array<out Any?>? = null
+        assertInstanceOf<Array<Any?>>(missingProjected.orEmpty())
         val missing: Array<Int>? = null
         val result = missing.orEmpty()
         check(result.isEmpty())

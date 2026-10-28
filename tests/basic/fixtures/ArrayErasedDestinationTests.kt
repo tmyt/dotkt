@@ -15,6 +15,10 @@ private fun <T> checkErasedArrayDestination(values: List<T>, supplied: Array<Any
     assertInstanceOf<Array<Any?>>(result)
     for (index in values.indices) check(result[index] == values[index])
     if (reuse) check(supplied[values.size] == "tail")
+    val marker = Any()
+    val objects = result as Array<Any?>
+    objects[0] = marker
+    check(objects[0] === marker)
 }
 
 class ArrayErasedDestinationTests {

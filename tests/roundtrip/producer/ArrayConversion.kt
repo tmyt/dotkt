@@ -10,3 +10,4 @@ class LibraryArrayCollection<T>(private val values: List<T>) : AbstractCollectio
 
 inline fun <reified T> importedOrEmpty(value: Array<out T>?): Array<out T> = value.orEmpty()
 inline fun <reified T> importedTypedArray(value: Collection<T>): Array<T> = value.toTypedArray()
+inline fun <reified T> importedNullableTypedArray(value: Collection<T?>): Array<T?> = value.toTypedArray()

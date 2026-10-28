@@ -2646,15 +2646,15 @@ What this is observable as, beyond the boxing already listed above:
   A collection factory's native container element, key or value argument is such a witness too;
   storing an open array in that container checks its exact array shape at the insertion edge.
 
-Collection-to-array conversion uses the upstream common helpers. A supplied destination is reused when large enough;
-otherwise a new array retains the destination's actual CLR component. Spare entries are not modified: CLR follows
-the non-JVM contract, not JVM null termination. Reified `Collection<T>.toTypedArray()` allocates its native component
-directly and enumerates once, without an intermediate boxed array.
-
 An array element is therefore not a special case but the most visible instance of the general rule, and a generic
 that carries an element from an array into a collection stays consistent: `fun f(xs: Array<Int?>): List<Int?> =
 xs.toList()` forces `T = object` at the receiver and hands back a `List<object>`, which is exactly what the declared
 `List<Int?>` slot is.
+
+Collection-to-array conversion uses the upstream common helpers. A supplied destination is reused when large enough;
+otherwise a new array retains the destination's actual CLR component. Spare entries are not modified: CLR follows
+the non-JVM contract, not JVM null termination. Reified `Collection<T>.toTypedArray()` allocates its native component
+directly and enumerates once, without an intermediate boxed array.
 
 ### A .NET `G<int?>` has no Kotlin counterpart, and the crossing is REFUSED
 

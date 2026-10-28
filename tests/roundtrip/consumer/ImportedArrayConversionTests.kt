@@ -3,12 +3,15 @@ import NUnit.Framework.Legacy.ClassicAssert.IsInstanceOf as assertInstanceOf
 import roundtrip.arrayconversion.LibraryArrayCollection
 import roundtrip.arrayconversion.importedOrEmpty
 import roundtrip.arrayconversion.importedTypedArray
+import roundtrip.arrayconversion.importedNullableTypedArray
 
 class ImportedArrayConversionTests {
     @TestAttribute
     fun nestedInlineOrEmptyRetainsTheCallerElement() {
         val original = arrayOf(7, 9)
         check(importedOrEmpty(original) === original)
+        val projected: Array<out Any?>? = original
+        check(importedOrEmpty(projected) === original)
         val missing: Array<Int>? = null
         val integers = importedOrEmpty(missing)
         check(integers.isEmpty())
@@ -45,5 +48,12 @@ class ImportedArrayConversionTests {
         val durations = importedTypedArray(LibraryArrayCollection(listOf(duration)))
         check(durations[0].TotalSeconds == 5.0)
         assertInstanceOf<Array<System.TimeSpan>>(durations)
+        val optionalNumbers = importedNullableTypedArray<Int>(LibraryArrayCollection(listOf<Int?>(null, 7)))
+        check(optionalNumbers[0] == null && optionalNumbers[1] == 7)
+        assertInstanceOf<Array<Any?>>(optionalNumbers)
+        val optionalDurations = importedNullableTypedArray<System.TimeSpan>(
+            LibraryArrayCollection(listOf<System.TimeSpan?>(null, duration)))
+        check(optionalDurations[0] == null && optionalDurations[1]!!.TotalSeconds == 5.0)
+        assertInstanceOf<Array<Any?>>(optionalDurations)
     }
 }
