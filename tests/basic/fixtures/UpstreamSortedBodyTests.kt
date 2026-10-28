@@ -1,5 +1,7 @@
 import NUnit.Framework.TestAttribute
 
+private enum class SortPhase { FIRST, SECOND, THIRD }
+
 private class SortToken<T>(val priority: Int, val label: T) : Comparable<SortToken<T>> {
     override fun compareTo(other: SortToken<T>): Int = priority.compareTo(other.priority)
 }
@@ -40,6 +42,8 @@ class UpstreamSortedBodyTests {
         check(onlyIterable(listOf(a, b, c)).sortedWith(comparator) == natural)
         check(listOf(3, 1, 2).sorted() == listOf(1, 2, 3))
         check(listOf("c", "a", "b").sorted() == listOf("a", "b", "c"))
+        check(listOf(SortPhase.THIRD, SortPhase.FIRST, SortPhase.SECOND).sorted() ==
+            listOf(SortPhase.FIRST, SortPhase.SECOND, SortPhase.THIRD))
         check(listOf<Int?>(2, null, 1).sortedWith(Comparator { x, y -> compareValues(x, y) }) == listOf(null, 1, 2))
         val durations = listOf(System.TimeSpan(0, 0, 3), System.TimeSpan(0, 0, 1))
         val ordered = durations.sortedWith(Comparator { x, y -> x.TotalSeconds.compareTo(y.TotalSeconds) })

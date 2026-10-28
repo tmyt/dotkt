@@ -72,13 +72,10 @@ do not 3-way-merge CLR adaptations into that subtree. Regenerate
 to the new upstream originals, then run `make verify-stdlib-upstream`. Refresh `libraries/stdlib/{src,unsigned/src}`
 by per-file 3-way merge (base = the old tag's blob), preserving genuine Kotlin-semantic changes. CLR annotation
 definitions belong in `libraries/stdlib/clr/common`; platform bodies and binding data belong under `clr/`.
-Some binding annotations still remain in the mirrored sources and need separate restoration work. Do not add
-per-declaration physical-name sidecar entries for collisions already handled by the general signature-identity rules.
+Some binding annotations still remain in the mirrored sources and need separate restoration work. Physical overload
+collisions belong to the general signature-identity rules.
 
-After the frontend BIR build, re-resolve every sidecar entry from the target declaration's `declarationId`, source
-name, complete parameter/return signature, and implementation identity. The overlay fails closed on stale IDs, but
-the opaque hashes still need deliberate regeneration from `build/clr-stdlib/bir/*.bir.json`; never guess an ID or
-match only by name. Enumerate genuinely new `expect`s by signature and add only their required CLR actuals. Then do
+Enumerate genuinely new `expect`s by signature and add only their required CLR actuals. Then do
 the P6 pin/doc sweep. Do the doc sweep only after green (writing "2.X" while the gate is red is premature).
 
 ## Reasoning-vs-grind split (plan the budget this way)
