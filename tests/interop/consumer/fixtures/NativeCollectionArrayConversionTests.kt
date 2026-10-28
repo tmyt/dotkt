@@ -5,9 +5,14 @@ class NativeCollectionArrayConversionTests {
     @TestAttribute
     fun genericOnlyNativeCollectionsProduceExactArraysWithOneEnumeration() {
         val integers = Api.Integers()
-        val numbers = (integers as Collection<Int>).toTypedArray()
+        val integerView = integers as Collection<Int>
+        val numbers = integerView.toTypedArray()
         check(Api.SumIntegers(numbers) == 16 && integers.Enumerations == 1)
         check(Api.Component(numbers) == "System.Int32")
+        val widened: Collection<Any?> = integerView
+        val objects = widened.toTypedArray()
+        check(objects[0] == 7 && objects[1] == 9 && integers.Enumerations == 2)
+        check(Api.Component(objects) == "System.Object")
         val strings = Api.Names()
         val names = (strings as Collection<String>).toTypedArray()
         check(Api.FirstName(names) == "first" && names[1] == "second" && strings.Enumerations == 1)

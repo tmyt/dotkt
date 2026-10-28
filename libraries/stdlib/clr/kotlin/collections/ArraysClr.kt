@@ -1,5 +1,5 @@
 /*
- * Copyright 2010-2018 JetBrains s.r.o. and Kotlin Programming Language contributors.
+ * Copyright 2010-2022 JetBrains s.r.o. and Kotlin Programming Language contributors.
  * Use of this source code is governed by the Apache 2.0 license that can be found in the license/LICENSE.txt file.
  */
 
@@ -22,12 +22,10 @@ public actual inline fun <reified T> Array<out T>?.orEmpty(): Array<out T> = thi
  */
 @Suppress("UNCHECKED_CAST")
 public actual inline fun <reified T> Collection<T>.toTypedArray(): Array<T> {
+    // Unlike arrayOfNulls<T>, this keeps non-nullable CLR value components native.
     val result = dotktNewTypedArray(T::class as DotktType, size) as Array<T>
-    val iterator = iterator()
     var index = 0
-    while (iterator.hasNext()) {
-        result[index++] = iterator.next()
-    }
+    for (element in this) result[index++] = element
     return result
 }
 

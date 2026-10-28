@@ -69,6 +69,10 @@ class ArrayCollectionConversionTests {
         check(result.size == 2 && result[0] == 7 && result[1] == 9)
         check(integers.iteratorCalls == 1)
         assertInstanceOf<IntArray>(result)
+        val widened: Collection<Any?> = integers
+        val objects = widened.toTypedArray()
+        check(objects[0] == 7 && objects[1] == 9 && integers.iteratorCalls == 2)
+        assertInstanceOf<Array<Any?>>(objects)
         val nullable = ArrayConversionCollection(listOf<Int?>(null, 7))
         val boxed = nullable.toTypedArray()
         check(boxed[0] == null && boxed[1] == 7 && nullable.iteratorCalls == 1)
