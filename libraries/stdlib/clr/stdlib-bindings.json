@@ -3,16 +3,6 @@
   "version": 1,
   "declarations": [
     {
-      "declarationId": "dotkt-declaration-v1:3c97e22a6fa3bccaef29adcb325cffd0d55bd77de2c5c8f7c9a4e1a2752c93b3",
-      "sourceName": "filterIsInstance",
-      "sequenceElementAdapter": true
-    },
-    {
-      "declarationId": "dotkt-declaration-v1:ce2cf583158fd8af9c90a0a2f2e3b6eb07021c35d45b7a0145e2ab6c5411d720",
-      "sourceName": "filterNotNull",
-      "sequenceElementAdapter": true
-    },
-    {
       "declarationId": "dotkt-declaration-v1:c65a0c2d65ac83a15c4d5450b219778d92515463b9b2c74b35e522a779a6ea1b",
       "sourceName": "sorted",
       "implementationDeclarationId": "dotkt-declaration-v1:f7c81a91c4b9c6a59e7246b8a72d30e84d4ebe39aeecc4f280e41795159d63bd",

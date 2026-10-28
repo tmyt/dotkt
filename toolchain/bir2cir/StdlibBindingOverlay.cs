@@ -12,7 +12,6 @@ static class StdlibBindingOverlay
 {
     const string CodecType = "dotkt-stdlib-bindings";
     const int CodecVersion = 1;
-    const string SequenceElementAdapter = "kotlin.clr.ClrSequenceElementAdapter";
 
     public static void Apply(IEnumerable<JsonNode> roots, string path)
     {
@@ -68,16 +67,6 @@ static class StdlibBindingOverlay
                     + $"but the frontend supplied '{Str(method["name"])}'");
 
             var applied = false;
-            if (binding.ContainsKey("sequenceElementAdapter"))
-            {
-                var adapter = RequiredBooleanFact(binding, "sequenceElementAdapter", source, id);
-                if (!adapter)
-                    throw new InvalidDataException(
-                        $"stdlib binding overlay '{source}' gives declaration '{id}' a false sequenceElementAdapter");
-                AddMarker(method, SequenceElementAdapter);
-                applied = true;
-            }
-
             if (binding.ContainsKey("implementationDeclarationId"))
             {
                 var implementationId = RequiredStringFact(binding, "implementationDeclarationId", source, id);
@@ -129,19 +118,6 @@ static class StdlibBindingOverlay
             foreach (var type in types) IndexMethods(type, selectedIds, methods);
     }
 
-    static void AddMarker(JsonObject method, string marker)
-    {
-        var attrs = method["attrs"] as JsonArray;
-        if (attrs == null) method["attrs"] = attrs = new JsonArray();
-        if (attrs.OfType<JsonObject>().Any(attr => TypeJson.OwnerName(attr["attr"]) == marker)) return;
-        attrs.Add(new JsonObject
-        {
-            ["attr"] = TypeJson.Write(new TypeNode.Fqn(marker)),
-            ["argTypes"] = new JsonArray(),
-            ["args"] = new JsonArray(),
-        });
-    }
-
     static string Str(JsonNode node) =>
         (node as JsonValue)?.TryGetValue<string>(out var value) == true ? value : null;
 
@@ -153,12 +129,6 @@ static class StdlibBindingOverlay
             ? result
             : throw new InvalidDataException(
                 $"stdlib binding overlay '{source}' declaration '{declarationId}' has a non-string {key}");
-
-    static bool RequiredBooleanFact(JsonObject binding, string key, string source, string declarationId) =>
-        binding[key] is JsonValue value && value.TryGetValue<bool>(out var result)
-            ? result
-            : throw new InvalidDataException(
-                $"stdlib binding overlay '{source}' declaration '{declarationId}' has a non-boolean {key}");
 
     public static void SelfTest()
     {
@@ -203,7 +173,6 @@ static class StdlibBindingOverlay
                 {
                     ["declarationId"] = id,
                     ["sourceName"] = "source",
-                    ["sequenceElementAdapter"] = true,
                     ["implementationDeclarationId"] = id + ":implementation",
                     ["implementationSourceName"] = "implementation",
                 },
@@ -213,9 +182,7 @@ static class StdlibBindingOverlay
         ApplyDocument(new[] { bir }, overlay, "selftest");
         var semanticRoot = new JsonObject { ["methods"] = new JsonArray { method.DeepClone() } };
         var semanticSignature = DeclarationIdentityBinding.PreserveSourceFacts(new[] { semanticRoot })[id];
-        if (method["attrs"] is not JsonArray attrs
-            || !attrs.OfType<JsonObject>().Any(attr => TypeJson.OwnerName(attr["attr"]) == SequenceElementAdapter)
-            || TypeJson.Read(method["params"]![0]!["type"]) is not TypeNode.Fqn { Name: "System.Int32" }
+        if (TypeJson.Read(method["params"]![0]!["type"]) is not TypeNode.Fqn { Name: "System.Int32" }
             || method["params"]![0]!["kotlinType"] != null
             || TypeJson.Read(semanticSignature["params"]![0]) is not TypeNode.Fqn { Name: "System.Int32" }
             || ((method["body"] as JsonArray)?[0]?["e"]?["v"] as JsonValue)?.GetValue<int>() != 1)
@@ -230,11 +197,6 @@ static class StdlibBindingOverlay
         wrongShape["static"] = true;
         ExpectInvalid(() => ValidateImplementationSignature(method, wrongShape, "selftest-shape", id,
             id + ":implementation"), "implementation shape mismatch");
-
-        var nonBooleanAdapter = overlay.DeepClone().AsObject();
-        nonBooleanAdapter["declarations"]![0]!["sequenceElementAdapter"] = "yes";
-        ExpectInvalid(() => ApplyDocument(new[] { bir.DeepClone() }, nonBooleanAdapter, "selftest-adapter-type"),
-            "non-boolean sequence element adapter");
 
         var nonStringImplementation = overlay.DeepClone().AsObject();
         nonStringImplementation["declarations"]![0]!["implementationDeclarationId"] = true;

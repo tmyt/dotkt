@@ -28,10 +28,3 @@ public annotation class ClrCollectionFactory(val kind: String)
 // `intArrayOf`/... primitive factories). Replaces kotc's retired ARRAY_FACTORY_NAMES recognition.
 @Target(AnnotationTarget.FUNCTION)
 public annotation class ClrArrayFactory(val kind: String)
-
-// Marks a stdlib declaration whose body has already filtered an object-elemented Sequence to its generic result type,
-// but whose final unchecked Sequence<R> cast cannot change the CLR IEnumerable element interface. bir2cir replaces
-// that declaration-local cast with the typed sequence view; the original predicate remains ordinary Kotlin code.
-@Target(AnnotationTarget.FUNCTION)
-@Retention(AnnotationRetention.BINARY)
-internal annotation class ClrSequenceElementAdapter
