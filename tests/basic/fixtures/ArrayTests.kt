@@ -25,8 +25,7 @@
 //   il-ubytearr       -> ubytearr_unsignedArray        #53 UByteArray -> native Byte[]; to(U)ByteArray reinterpret
 //   il-genarrlam      -> genarrlam_nullableTvArray     #142/#4 Array(size){ mk<T?>(null) } in a generic class; nested Nullable(Tv) erasure read-back
 //
-// toTypedArrayAtValueElements is not migrated from a case: it is the #86 value-instantiation armor for the
-// `arrayOfNulls`-backed Array<T> factories (toTypedArray/plus/plusElement) — see the comment on the method.
+// Reified collection copies are also exercised at value and reference element instantiations.
 //
 // Top-level names are unique within this single battery assembly (one project = one namespace) and `Arr`-prefixed
 // to avoid clashing with sibling batteries and stdlib names.
@@ -507,8 +506,7 @@ class ArrayTests {
         assertEquals(6, typed.sum())                                         // 6
         assertEquals("[a, b, c]", arrayOf("a", "b").plus("c").toList().toString())          // [a, b, c] (reference)
 
-        // The collection-terminal `toArray` paths, which run through `arrayOfNulls(reference, size)` and
-        // `terminateCollectionToArray` rather than through a Kotlin array factory.
+        // ArrayDeque's Collection-to-typed-array extension, independently of its protected toArray overloads.
         val deque = ArrayDeque<Int>()
         deque.addLast(1)
         deque.addLast(2)
@@ -520,11 +518,7 @@ class ArrayTests {
         assertEquals("[[1, 2], [3, 4]]", listOf(1, 2, 3, 4).chunked(2).toString())           // [[1, 2], [3, 4]]
     }
 
-    // #86 — `toTypedArray` joins plus/plusElement as an `Array<T>` factory that allocates through the
-    // `arrayOfNulls<T>(n)` chain: the allocation's element slot is a nullable generic, and every element store has
-    // to agree with it on one representation. A producer/consumer disagreement there does not throw — it prints
-    // whatever the stale slot held — so each element is asserted individually at T=Int and T=Boolean, the two
-    // instantiations where the erased element and the declared element genuinely differ.
+    // Reified copies retain native value-component arrays and compose with the array append operations.
     @TestAttribute
     fun toTypedArrayAtValueElements() {
         val ints = listOf(1, 2, 3).toTypedArray()

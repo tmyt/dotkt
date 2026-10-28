@@ -7,6 +7,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Changed
 
+- Restore upstream array `orEmpty` and common collection-to-array helpers, preserve destination components and spare tails, and copy collections with one enumeration instead of boxed staging.
 - Preserve CLR-legal protected accesses through derived and lexically nested receivers without unnecessary inaccessible accessor holders.
 - Preserve exact generic declaring frames for lexical coroutine/result member access without changing the erased value ABI.
 - Adapt String receivers and conditional CharSequence joins at their declared physical boundaries, including inline bodies and nullable StringBuilder helpers.
