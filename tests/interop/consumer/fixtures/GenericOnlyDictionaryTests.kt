@@ -11,6 +11,7 @@ private fun dictionaryStrings(): GenericOnlyDictionary<String, String> {
 }
 
 private fun projectedDictionarySize(map: Map<*, *>): Int = map.size
+private fun <K, V> projectedDictionarySet(map: MutableMap<K, V>, key: K, value: V) { map[key] = value }
 
 private class DictionaryGenericFrame<V> {
     fun <K> get(map: Map<K, V>, key: K): V? = map[key]
@@ -118,6 +119,10 @@ class GenericOnlyDictionaryTests {
         check(copy.size == 2 && copy[7] == 42)
         check(numbers.put(7, 99) == 42 && texts["key"] == "text")
         check(numbers.keys.size == 2 && numbers.values.contains(99))
+        numbers[7] = 100
+        check(numbers[7] == 100 && texts["key"] == "text")
+        projectedDictionarySet(numbers, 7, 101)
+        check(numbers[7] == 101 && texts["key"] == "text")
         numbers.clear()
         check(numbers.isEmpty() && texts.size == 1)
         var rejected = false

@@ -14,9 +14,9 @@ static class StdlibBindingOverlay
     const int CodecVersion = 1;
     const string SequenceElementAdapter = "kotlin.clr.ClrSequenceElementAdapter";
 
-    public static IReadOnlyDictionary<string, int[]> Apply(IEnumerable<JsonNode> roots, string path)
+    public static void Apply(IEnumerable<JsonNode> roots, string path)
     {
-        if (path == null) return new Dictionary<string, int[]>(StringComparer.Ordinal);
+        if (path == null) return;
         JsonNode document;
         try
         {
@@ -27,10 +27,10 @@ static class StdlibBindingOverlay
             throw new InvalidDataException($"stdlib binding overlay '{path}' could not be read", ex);
         }
 
-        return ApplyDocument(roots, document, path);
+        ApplyDocument(roots, document, path);
     }
 
-    static IReadOnlyDictionary<string, int[]> ApplyDocument(
+    static void ApplyDocument(
         IEnumerable<JsonNode> roots, JsonNode document, string source)
     {
         if (document is not JsonObject root
@@ -50,7 +50,6 @@ static class StdlibBindingOverlay
         foreach (var birRoot in roots) IndexMethods(birRoot, selectedIds, methods);
 
         var seen = new HashSet<string>(StringComparer.Ordinal);
-        var physicalParameterIndices = new Dictionary<string, int[]>(StringComparer.Ordinal);
         foreach (var item in declarations)
         {
             if (item is not JsonObject binding
@@ -102,50 +101,10 @@ static class StdlibBindingOverlay
                 applied = true;
             }
 
-            if (binding.ContainsKey("physicalParameterTypes"))
-            {
-                if (binding["physicalParameterTypes"] is not JsonArray { Count: > 0 } physicalParameterTypes
-                    || method["params"] is not JsonArray parameters)
-                    throw new InvalidDataException(
-                        $"stdlib binding overlay '{source}' declaration '{id}' has malformed physicalParameterTypes");
-                var rewritten = new HashSet<int>();
-                foreach (var entry in physicalParameterTypes)
-                {
-                    if (entry is not JsonObject parameterBinding
-                        || Int(parameterBinding["index"]) is not int index
-                        || parameterBinding["expectedType"] is not JsonNode expectedType
-                        || parameterBinding["type"] is not JsonNode physicalType
-                        || index < 0 || index >= parameters.Count
-                        || parameters[index] is not JsonObject parameter)
-                        throw new InvalidDataException(
-                            $"stdlib binding overlay '{source}' declaration '{id}' has a malformed physical parameter binding");
-                    if (!rewritten.Add(index))
-                        throw new InvalidDataException(
-                            $"stdlib binding overlay '{source}' declaration '{id}' repeats physical parameter {index}");
-                    if (TypeJson.Read(expectedType) == null || !JsonNode.DeepEquals(parameter["type"], expectedType))
-                        throw new InvalidDataException(
-                            $"stdlib binding overlay '{source}' declaration '{id}' expected parameter {index} type "
-                            + $"'{expectedType.ToJsonString()}', but found '{parameter["type"]?.ToJsonString() ?? "<none>"}'");
-                    if (TypeJson.Read(physicalType) == null)
-                        throw new InvalidDataException(
-                            $"stdlib binding overlay '{source}' declaration '{id}' gives parameter {index} an invalid physical type");
-                    if (parameter["kotlinType"] != null)
-                        throw new InvalidDataException(
-                            $"stdlib binding overlay '{source}' declaration '{id}' parameter {index} already has a Kotlin type carrier");
-                    // The CLR slot and Kotlin surface intentionally diverge. RoundtripMetadata emits the source type
-                    // as [KotlinType], while declaration identity exposes the rewritten MethodDef signature to calls.
-                    parameter["kotlinType"] = TypeNode.ToJson(TypeJson.Read(parameter["type"])!);
-                    parameter["type"] = physicalType.DeepClone();
-                }
-                physicalParameterIndices[id] = rewritten.OrderBy(index => index).ToArray();
-                applied = true;
-            }
-
             if (!applied)
                 throw new InvalidDataException(
                     $"stdlib binding overlay '{source}' declaration '{id}' supplies no binding fact");
         }
-        return physicalParameterIndices;
     }
 
     static void ValidateImplementationSignature(
@@ -247,29 +206,18 @@ static class StdlibBindingOverlay
                     ["sequenceElementAdapter"] = true,
                     ["implementationDeclarationId"] = id + ":implementation",
                     ["implementationSourceName"] = "implementation",
-                    ["physicalParameterTypes"] = new JsonArray
-                    {
-                        new JsonObject
-                        {
-                            ["index"] = 0,
-                            ["expectedType"] = TypeJson.Fqn("System.Int32"),
-                            ["type"] = TypeJson.Fqn("System.Object"),
-                        },
-                    },
                 },
             },
         };
 
-        var physicalParameterIndices = ApplyDocument(new[] { bir }, overlay, "selftest");
+        ApplyDocument(new[] { bir }, overlay, "selftest");
         var semanticRoot = new JsonObject { ["methods"] = new JsonArray { method.DeepClone() } };
         var semanticSignature = DeclarationIdentityBinding.PreserveSourceFacts(new[] { semanticRoot })[id];
         if (method["attrs"] is not JsonArray attrs
             || !attrs.OfType<JsonObject>().Any(attr => TypeJson.OwnerName(attr["attr"]) == SequenceElementAdapter)
-            || TypeJson.Read(method["params"]![0]!["type"]) is not TypeNode.Fqn { Name: "System.Object" }
-            || Str(method["params"]![0]!["kotlinType"]) != TypeNode.ToJson(new TypeNode.Fqn("System.Int32"))
+            || TypeJson.Read(method["params"]![0]!["type"]) is not TypeNode.Fqn { Name: "System.Int32" }
+            || method["params"]![0]!["kotlinType"] != null
             || TypeJson.Read(semanticSignature["params"]![0]) is not TypeNode.Fqn { Name: "System.Int32" }
-            || !physicalParameterIndices.TryGetValue(id, out var rewrittenIndices)
-            || !rewrittenIndices.SequenceEqual(new[] { 0 })
             || ((method["body"] as JsonArray)?[0]?["e"]?["v"] as JsonValue)?.GetValue<int>() != 1)
             throw new InvalidOperationException("StdlibBindingOverlay self-test failed");
 
@@ -292,12 +240,6 @@ static class StdlibBindingOverlay
         nonStringImplementation["declarations"]![0]!["implementationDeclarationId"] = true;
         ExpectInvalid(() => ApplyDocument(new[] { bir.DeepClone() }, nonStringImplementation,
             "selftest-implementation-type"), "non-string implementation declaration identity");
-
-        var staleParameterType = overlay.DeepClone().AsObject();
-        staleParameterType["declarations"]![0]!["physicalParameterTypes"]![0]!["expectedType"] =
-            TypeJson.Fqn("System.String");
-        ExpectInvalid(() => ApplyDocument(new[] { bir.DeepClone() }, staleParameterType,
-            "selftest-stale-parameter"), "stale physical parameter type");
     }
 
     static void ExpectInvalid(Action action, string scenario)
