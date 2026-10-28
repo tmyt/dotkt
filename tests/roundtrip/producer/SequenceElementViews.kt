@@ -9,4 +9,7 @@ fun integers(source: Sequence<*>): Sequence<Int> = source.filterIsInstance<Int>(
 inline fun <reified T> selected(source: Sequence<*>): Sequence<T> =
     source.filter { it is T } as Sequence<T>
 
+inline fun <reified T> selectedInline(source: Sequence<*>, crossinline predicate: (T) -> Boolean): Sequence<T> =
+    (source.filter { it is T } as Sequence<T>).filter { predicate(it) }
+
 fun <S, T> view(source: Sequence<S>): Sequence<T> = source as Sequence<T>

@@ -23,6 +23,10 @@ class SequenceElementViewTests {
         check(source.filterIsInstance<Int>().toList() == listOf(7, 9) && reads == 13)
         check(selectSequence<String>(source).toList() == listOf("skip", "tail"))
         check(selectSequence<String?>(source).toList() == listOf(null, "skip", "tail"))
+        check(source.filterIsInstance<Int?>().toList() == listOf(null, 7, 9))
+        var sum = 0
+        for (value in source.filterIsInstance<Int>()) sum += value
+        check(sum == 16)
 
         val numbers = sequenceOf(1, 2)
         val widened: Sequence<Any> = numbers
@@ -51,6 +55,9 @@ class SequenceElementViewTests {
         check(nonNullSequence(durations).single() == duration)
         check(durations.filterNotNull().single() == duration)
         check(selectSequence<System.TimeSpan>(sequenceOf<Any?>(null, "other", duration)).single() == duration)
+        var seconds = 0.0
+        for (value in sequenceOf<Any?>(null, duration).filterIsInstance<System.TimeSpan>()) seconds += value.TotalSeconds
+        check(seconds == 7.0)
 
         val token = Any()
         check(nonNullSequence(sequenceOf(null, token)).single() === token)
