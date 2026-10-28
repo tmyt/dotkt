@@ -25,7 +25,6 @@ static class Bir2Cir
                 MemberRefNodeSelfTest.Run();
                 AliasConstructorDelegationExpansion.SelfTest();
                 AliasHelperHoist.SelfTest();
-                StdlibBindingOverlay.SelfTest();
                 DeclarationIdentityBinding.SelfTest();
                 DeclarationSignatureIdentity.SelfTest();
                 ForeignStarProjectionBinding.SelfTest();
@@ -80,7 +79,6 @@ static class Bir2Cir
                 ReferenceMetadataIndex.SelfTest();
                 NullableTvErasureCallRealign.SelfTest();
                 MapVarianceRealign.SelfTest();
-                DriverOptions.SelfTest();
                 return 0;
             }
             var options = DriverOptions.Parse(args);
@@ -90,7 +88,7 @@ static class Bir2Cir
         catch (UsageException ex)
         {
             Console.Error.WriteLine(ex.Message);
-            Console.Error.WriteLine("usage: bir2cir <out-dir> [--compile-refs <dll;dll;...>] [--build-stdlib=metadata|runtime --stdlib-bindings <path>] [--reflection-restricted] <file.bir.json>...");
+            Console.Error.WriteLine("usage: bir2cir <out-dir> [--compile-refs <dll;dll;...>] [--build-stdlib=metadata|runtime] [--reflection-restricted] <file.bir.json>...");
             return 1;
         }
         catch (Exception ex)
@@ -196,10 +194,6 @@ sealed class Pipeline
     List<CirFile> TransformFiles(IReadOnlyList<BirFile> birFiles, ReferenceMetadataIndex refs)
     {
         var birRoots = birFiles.Select(b => b.Root).ToList();
-        // CLR-only facts for the compiler-provided stdlib are authored in a checked sidecar so the common Kotlin
-        // sources remain upstream-identical. Apply those exact declaration-identity bindings before any pass snapshots
-        // source names or annotations. Ordinary app/library builds cannot opt into this trusted-stdlib input.
-        StdlibBindingOverlay.Apply(birRoots, _options.StdlibBindings);
         DeclarationSignatureIdentity.Capture(birRoots);
         ComparableRepresentationLowering.Apply(birRoots, _options.RefBuild);
         // #395: snapshot frontend declaration identity before ANY Kotlin-to-CLR representation pass can rename,
@@ -1770,7 +1764,7 @@ sealed class Pipeline
 enum BuildStdlibMode { App, Metadata, Runtime }
 
 sealed record DriverOptions(string OutDir, IReadOnlyList<string> CompileReferences, IReadOnlyList<string> Inputs,
-    BuildStdlibMode StdlibMode, bool ReflectionRestricted, string StdlibBindings)
+    BuildStdlibMode StdlibMode, bool ReflectionRestricted)
 {
     // The pure-Kotlin REFERENCE stdlib surface (`--build-stdlib=metadata` -> DotKt.Private.Stdlib.dll) keeps kotlin.*
     // type tokens verbatim and squashes bodies to a throw; EVERY other invocation — the runtime stdlib build and all
@@ -1794,7 +1788,6 @@ sealed record DriverOptions(string OutDir, IReadOnlyList<string> CompileReferenc
         var inputs = new List<string>();
         var mode = BuildStdlibMode.App;
         var reflectionRestricted = false;
-        string stdlibBindings = null;
 
         for (var i = 1; i < args.Length; i++)
         {
@@ -1813,11 +1806,6 @@ sealed record DriverOptions(string OutDir, IReadOnlyList<string> CompileReferenc
                 case "--build-stdlib=runtime":
                     mode = BuildStdlibMode.Runtime;
                     break;
-                case "--stdlib-bindings" when i + 1 < args.Length:
-                    stdlibBindings = args[++i];
-                    break;
-                case "--stdlib-bindings":
-                    throw new UsageException("bir2cir: --stdlib-bindings requires a path");
                 case "--reflection-restricted":
                     reflectionRestricted = true;
                     break;
@@ -1833,24 +1821,7 @@ sealed record DriverOptions(string OutDir, IReadOnlyList<string> CompileReferenc
 
         if (inputs.Count == 0)
             throw new UsageException("bir2cir: no BIR input files");
-        if (stdlibBindings != null && mode == BuildStdlibMode.App)
-            throw new UsageException("bir2cir: --stdlib-bindings is valid only with --build-stdlib");
-        if (stdlibBindings == null && mode != BuildStdlibMode.App)
-            throw new UsageException("bir2cir: --build-stdlib requires --stdlib-bindings <path>");
-
-        return new DriverOptions(outDir, refs, inputs, mode, reflectionRestricted, stdlibBindings);
-    }
-
-    public static void SelfTest()
-    {
-        try
-        {
-            Parse(new[] { "out", "--build-stdlib=metadata", "input.bir.json" });
-            throw new InvalidOperationException("DriverOptions self-test accepted a stdlib build without bindings");
-        }
-        catch (UsageException ex) when (ex.Message.Contains("requires --stdlib-bindings", StringComparison.Ordinal))
-        {
-        }
+        return new DriverOptions(outDir, refs, inputs, mode, reflectionRestricted);
     }
 }
 

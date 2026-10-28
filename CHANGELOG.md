@@ -7,6 +7,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Changed
 
+- Use the unchanged upstream collection sorting bodies and remove the remaining JSON body overlays, dedicated implementations and overlay build/CLI plumbing.
 - Keep upstream Sequence filtering bodies unchanged and remove their per-declaration JSON markers, lowering pass and redundant runtime adapters; ordinary erased Sequence views preserve lazy iteration across DLL boundaries. A filtered Kotlin Sequence does not promise an exact native `IEnumerable<T>` implementation; explicit native casts still test the actual CLR interface.
 - Use the general parameter ABI for mutable-map assignment and remove its stdlib-specific JSON receiver rewrite.
 - Restore upstream array `orEmpty` and common collection-to-array helpers, preserve destination components and spare tails, and copy collections with one enumeration instead of boxed staging.

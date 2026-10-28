@@ -87,7 +87,6 @@ class StdlibBuildTests(unittest.TestCase):
         for name in ("common/src", "clr/common", "src", "unsigned/src"):
             (self.root / "libraries/stdlib" / name).mkdir(parents=True, exist_ok=True)
         self.write("libraries/stdlib/src/Empty.kt", "// fixture source\n")
-        self.write("libraries/stdlib/clr/stdlib-bindings.json", "{}\n")
         self.write("toolchain/kotc/build/install/kotc/bin/kotc", COMPILER, executable=True)
         self.write("bin/dotnet", COMPILER, executable=True)
         self.write("gradlew", "#!/usr/bin/env bash\nexit 0\n", executable=True)
