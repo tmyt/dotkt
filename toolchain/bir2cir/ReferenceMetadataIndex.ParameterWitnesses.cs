@@ -30,9 +30,14 @@ sealed partial class ReferenceMetadataIndex
         return physical.Select((type, index) =>
         {
             var source = binding.KotlinParameterTypes?.ElementAtOrDefault(index);
-            if (Core(type) is not TypeNode.Fqn actual || Core(source) is not TypeNode.Fqn logical
-                || !TryExistentialPhysicalOwner(logical.Name, out var carrier) || actual.Name != carrier) return type;
-            return BirTypeLowering.LowerPhysicalType(types.Slot(source), Aliases, IsValueType, PhysicalTypeNames, typeArg: false);
+            if (Core(type) is not TypeNode.Fqn actual || Core(source) is not TypeNode.Fqn logical) return type;
+            var carrierValue = TryExistentialPhysicalOwner(logical.Name, out var carrier) && actual.Name == carrier;
+            // Opaque transport does not erase the producer's declared alias construction.
+            var opaqueAliasValue = actual.Name is "object" or "System.Object"
+                && AliasVarianceRepresentation.RequiresErasure(logical, this);
+            if (!carrierValue && !opaqueAliasValue) return type;
+            return BirTypeLowering.LowerPhysicalType(types.Slot(source), Aliases, IsValueType, PhysicalTypeNames,
+                typeArg: false, nullableFrames: opaqueAliasValue ? frames : null);
         }).ToArray();
     }
 }
