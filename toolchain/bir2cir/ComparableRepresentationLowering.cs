@@ -127,7 +127,30 @@ static class ComparableRepresentationLowering
             ["args"] = new JsonArray(Cast(Object, Local("receiver")), Cast(new TypeNode.Nullable(Object), Local("other"))),
             ["ret"] = TypeJson.Write(Result),
         };
-        return new JsonObject {
+        JsonObject FloatingComparison(string primitive, string method, JsonNode otherwise)
+        {
+            var floating = new TypeNode.Fqn(primitive);
+            JsonObject IsFloating(JsonNode value) => new() {
+                ["k"] = "isInst", ["type"] = TypeJson.Write(floating), ["e"] = value,
+            };
+            var comparison = FaithfulHints.FloatCall(method,
+                Cast(floating, Local("receiver")), Cast(floating, Cast(Object, Local("other"))));
+            comparison["ret"] = TypeJson.Write(Result);
+            comparison["sty"] = TypeJson.Write(Result);
+            return new JsonObject {
+                ["k"] = "cond", ["type"] = TypeJson.Write(Result),
+                ["cond"] = new JsonObject {
+                    ["k"] = "cond", ["type"] = TypeJson.Fqn("kotlin.Boolean"),
+                    ["cond"] = IsFloating(Local("receiver")),
+                    ["then"] = IsFloating(Cast(Object, Local("other"))),
+                    ["else"] = new JsonObject {
+                        ["k"] = "const", ["type"] = TypeJson.Fqn("kotlin.Boolean"), ["value"] = false,
+                    },
+                },
+                ["then"] = comparison, ["else"] = otherwise,
+            };
+        }
+        var helper = new JsonObject {
             ["name"] = name, [DeclarationIdentityBinding.Key] = identity,
             ["static"] = true, ["vis"] = "public", ["generated"] = true,
             ["virtual"] = false, ["override"] = false, ["abstract"] = false,
@@ -158,6 +181,13 @@ static class ComparableRepresentationLowering
                 },
             } }),
         };
+        // Kotlin's floating total order precedes native interface dispatch. Both
+        // operands must have the same floating type; all other slot selection and
+        // invalid-argument behavior remains with the existing native paths.
+        var result = helper["body"][0].AsObject();
+        result["value"] = FloatingComparison("kotlin.Double", "clrDoubleCompare",
+            FloatingComparison("kotlin.Float", "clrFloatCompare", result["value"].DeepClone()));
+        return helper;
     }
 
     static void EraseBounds(JsonNode node)
@@ -237,7 +267,21 @@ static class ComparableRepresentationLowering
                 || !JsonNode.DeepEquals(bounds["bounds"]["1"], otherBounds))
                 throw new InvalidOperationException("Comparable dispatch lost evaluation or source bound metadata");
         }
-        var branch = helpers[0]["body"][0]["value"]["else"];
+        var dispatch = helpers[0]["body"][0]["value"];
+        foreach (var (primitive, comparison) in new[] {
+            ("kotlin.Double", "clrDoubleCompare"), ("kotlin.Float", "clrFloatCompare") })
+        {
+            if (TypeJson.OwnerName(dispatch["cond"]["cond"]["type"]) != primitive
+                || Text(dispatch["cond"]["cond"]["e"]["name"]) != "receiver"
+                || TypeJson.OwnerName(dispatch["cond"]["then"]["type"]) != primitive
+                || Text(dispatch["cond"]["then"]["e"]["e"]["name"]) != "other"
+                || Text(dispatch["then"]["method"]) != comparison
+                || TypeJson.OwnerName(dispatch["then"]["ret"]) != "kotlin.Int"
+                || dispatch["then"]["args"].AsArray().Count != 2)
+                throw new InvalidOperationException("Comparable dispatch lost Kotlin floating total order");
+            dispatch = dispatch["else"];
+        }
+        var branch = dispatch["else"];
         if (TypeJson.Read(branch["then"]["type"]) is not TypeNode.Fqn { Name: "System.IComparable`1", Args.Length: 1 }
             || TypeJson.OwnerName(branch["else"]["cond"]["type"]) != "System.Enum"
             || Text(branch["else"]["then"]["method"]) != "kotlinEnumCompareTo"

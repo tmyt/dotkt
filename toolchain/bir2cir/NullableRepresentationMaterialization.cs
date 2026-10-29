@@ -10,7 +10,8 @@ static class NullableRepresentationMaterialization
 {
     public static IReadOnlyDictionary<string, NullableRepresentationFrame> Apply(IEnumerable<JsonNode> inputs, ValueTypeOracle isValue, ReferenceMetadataIndex references = null,
         Func<TypeNode.Fqn, bool, NullableRepresentationFrame, TypeNode> argumentHead = null,
-        GenericRepresentationPolicy policy = null)
+        GenericRepresentationPolicy policy = null,
+        IReadOnlyDictionary<string, NullableRepresentationFrame> declaredMethods = null)
     {
         var roots = inputs.ToArray();
         var importedMethods = new Dictionary<string, NullableRepresentationFrame>(StringComparer.Ordinal);
@@ -37,7 +38,8 @@ static class NullableRepresentationMaterialization
         }
         foreach (var root in roots) FindReferencedCalls(root);
         var applicationFrames = new InnerApplicationFrames(roots, references);
-        var demands = NullableRepresentationDemand.Collect(roots, importedTypes, importedMethods, policy, applicationFrames);
+        var demands = NullableRepresentationDemand.Collect(roots, importedTypes, importedMethods, policy, applicationFrames,
+            declaredMethods);
         var localBindings = NullableRepresentationDemand.BindLocalFunctions(roots);
         // Frames refer to immutable source arities. Snapshot before any declaration's parameters are expanded.
         var ownerFrames = demands.ToDictionary(owner => owner.Declaration, owner => owner.Frame);

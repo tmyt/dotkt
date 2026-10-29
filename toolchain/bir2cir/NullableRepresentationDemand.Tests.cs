@@ -222,6 +222,30 @@ static partial class NullableRepresentationDemand
             "independent instance body owns its frame without a private dispatch helper");
 
         var importedUse = Owner("ImportedUse", Applied("ForeignProducer", Tv()));
+        var publishedThin = Method("publishedThin", TypeJson.Fqn("kotlin.Unit"), new JsonArray());
+        publishedThin["static"] = true;
+        var thinCaller = Method("thinCaller", TypeJson.Fqn("kotlin.Unit"), new JsonArray(new JsonObject {
+            ["k"] = "callStatic", [DeclarationIdentityBinding.Key] = "publishedThin",
+            ["typeArgs"] = new JsonArray(Tv("method")),
+        }));
+        thinCaller["static"] = true;
+        var published = Collect(new[] { new JsonObject {
+            ["fileClass"] = "PublishedFrame", ["methods"] = new JsonArray(publishedThin, thinCaller),
+        } }, declaredMethods: new Dictionary<string, NullableRepresentationFrame> {
+            ["publishedThin"] = new(1, Array.Empty<int>(), storageIndices: new[] { 0 }),
+        }).Single().Methods;
+        Check(published.Single(method => ReferenceEquals(method.Declaration, publishedThin)).Frame.PhysicalArity == 2,
+            "a thin definition retains the exact published declaration frame");
+        Check(published.Single(method => ReferenceEquals(method.Declaration, thinCaller)).Frame.PhysicalArity == 2,
+            "calls of a thin local definition propagate its published frame");
+        var unrelated = publishedThin.DeepClone().AsObject();
+        var unpaired = Collect(new[] { new JsonObject {
+            ["fileClass"] = "UnpairedDefinition", ["methods"] = new JsonArray(unrelated),
+        } }, referencedMethods: new Dictionary<string, NullableRepresentationFrame> {
+            ["publishedThin"] = new(1, Array.Empty<int>(), storageIndices: new[] { 0 }),
+        }).Single().Methods.Single();
+        Check(unpaired.Frame.PhysicalArity == 1,
+            "an ordinary definition does not inherit an unrelated referenced declaration frame");
         var imported = Collect(new[] { importedUse }, new Dictionary<string, NullableRepresentationFrame> {
             ["ForeignProducer"] = new NullableRepresentationFrame(1, new[] { 0 }),
         });

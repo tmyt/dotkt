@@ -1034,43 +1034,14 @@ public actual fun FloatArray.sort(): Unit { TODO("clr binding should be implemen
 public actual fun CharArray.sort(): Unit { TODO("clr binding should be implemented") }
 
 public actual fun <T : Comparable<T>> Array<out T>.sort(): Unit {
-    // Stable O(n log n) bottom-up merge sort (the @Clr System.Array.Sort overload routing failed at runtime --
-    // EntryPointNotFound). Array<out T> is cast to Array<T> to write back (same object); aux is Array<Any?> as in
-    // MutableList.sortWith. @See [[stdlib-binding-status-and-pow-gap]] for the hand-written-sort perf note (#5).
-    val n = size
-    if (n < 2) return
-    @Suppress("UNCHECKED_CAST") val a = this as Array<T>
-    val aux = arrayOfNulls<Any?>(n)
-    var width = 1
-    while (width < n) {
-        var lo = 0
-        while (lo < n) {
-            val mid = if (lo + width < n) lo + width else n
-            val hi = if (lo + 2 * width < n) lo + 2 * width else n
-            var l = lo; var r = mid; var k = lo
-            while (l < mid && r < hi) {
-                if (a[l] <= a[r]) { aux[k] = a[l]; l = l + 1 } else { aux[k] = a[r]; r = r + 1 }
-                k = k + 1
-            }
-            while (l < mid) { aux[k] = a[l]; l = l + 1; k = k + 1 }
-            while (r < hi) { aux[k] = a[r]; r = r + 1; k = k + 1 }
-            var j = lo
-            @Suppress("UNCHECKED_CAST") while (j < hi) { a[j] = aux[j] as T; j = j + 1 }
-            lo = lo + 2 * width
-        }
-        width = width * 2
-    }
+    if (size > 1) sortArray(this, 0, size)
 }
-
-// Thin wrapper: Kotlin sort(fromIndex, toIndex) has an exclusive end index, while
-// .NET System.Array.Sort(array, index, length) takes a length. Adapt by subtracting.
-@kotlin.clr.ClrIntrinsic("System.Array.Sort")
-private fun <T : Comparable<T>> Array<out T>.nativeSort(index: Int, length: Int): Unit = TODO("@Clr System.Array.Sort(Array,int,int)")
 
 @SinceKotlin("1.4")
 @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
 public actual fun <T : Comparable<T>> Array<out T>.sort(fromIndex: Int = 0, toIndex: Int = size): Unit {
-    nativeSort(fromIndex, toIndex - fromIndex)
+    AbstractList.checkRangeIndexes(fromIndex, toIndex, size)
+    if (fromIndex < toIndex - 1) sortArray(this, fromIndex, toIndex)
 }
 
 // Adapt exclusive toIndex -> .NET length: System.Array.Sort(Array, index, length).
@@ -1136,46 +1107,15 @@ public actual fun CharArray.sort(fromIndex: Int = 0, toIndex: Int = size): Unit 
     nativeSort(fromIndex, toIndex - fromIndex)
 }
 
-// In-place stable insertion sort using the comparator. The .NET `Comparator<T>` is a `fun interface`
-// (not `IComparer`), so `System.Array.Sort(IComparer)` is unavailable; we sort directly. Insertion sort
-// is correct, stable, and in-place (no temp array, hence no reified element type). The receiver is
-// `Array<out T>`, whose `set` is unavailable through the `out` projection, so we cast to `Array<T>`
-// (file-level @Suppress("UNCHECKED_CAST")) to write the reordered elements back.
-// The .NET Comparator is a `fun interface` (not IComparer), so we sort directly. A STABLE O(n log n) bottom-up merge
-// sort with an Any?[] aux (`Array<Any?>(n){null}` -> object[]) + the file-level @Suppress("UNCHECKED_CAST"). Stable: a
-// left run wins ties (`<= 0`).
-internal fun <T> mergeSortArray(a: Array<T>, fromIndex: Int, toIndex: Int, comparator: Comparator<in T>) {
-    val n = toIndex - fromIndex
-    if (n < 2) return
-    val tmp = Array<Any?>(n) { null }
-    var width = 1
-    while (width < n) {
-        var lo = 0
-        while (lo < n) {
-            val mid = if (lo + width < n) lo + width else n
-            val hi = if (lo + 2 * width < n) lo + 2 * width else n
-            var l = lo; var r = mid; var k = lo
-            while (l < mid && r < hi) {
-                if (comparator.compare(a[fromIndex + l], a[fromIndex + r]) <= 0) { tmp[k] = a[fromIndex + l]; l = l + 1 }
-                else { tmp[k] = a[fromIndex + r]; r = r + 1 }
-                k = k + 1
-            }
-            while (l < mid) { tmp[k] = a[fromIndex + l]; l = l + 1; k = k + 1 }
-            while (r < hi) { tmp[k] = a[fromIndex + r]; r = r + 1; k = k + 1 }
-            var j = lo
-            while (j < hi) { a[fromIndex + j] = tmp[j] as T; j = j + 1 }
-            lo = lo + 2 * width
-        }
-        width = width * 2
-    }
+public actual fun <T> Array<out T>.sortWith(comparator: Comparator<in T>): Unit {
+    if (size > 1) sortArrayWith(this, 0, size, comparator)
 }
 
-public actual fun <T> Array<out T>.sortWith(comparator: Comparator<in T>): Unit =
-    mergeSortArray(this as Array<T>, 0, this.size, comparator)
-
 @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
-public actual fun <T> Array<out T>.sortWith(comparator: Comparator<in T>, fromIndex: Int = 0, toIndex: Int = size): Unit =
-    mergeSortArray(this as Array<T>, fromIndex, toIndex, comparator)
+public actual fun <T> Array<out T>.sortWith(comparator: Comparator<in T>, fromIndex: Int = 0, toIndex: Int = size): Unit {
+    AbstractList.checkRangeIndexes(fromIndex, toIndex, size)
+    sortArrayWith(this, fromIndex, toIndex, comparator)
+}
 
 public actual fun ByteArray.toTypedArray(): Array<Byte> = Array(size) { this[it] }
 

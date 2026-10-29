@@ -232,7 +232,9 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   The generic-only path uses reflection on each comparison and requires the comparison-interface/member metadata
   to be retained when trimming or NativeAOT is used. Native types may implement their generic and non-generic
   comparison slots differently, so direct typed `compareTo` and erased `compareValues` can return different results.
-  Typed `compareTo` retains its exact generic interface when available; its erased fallback shares the same unique
+  Float/Double comparisons use Kotlin's total order before either native comparison face; explicit CLR `CompareTo`
+  calls retain CLR semantics. For other values, typed `compareTo` retains its exact generic interface when available;
+  its erased fallback shares the same unique
   applicable-interface rule. For a null argument, only reference or nullable value-type generic parameters are
   applicable; reflection must not silently substitute a default non-nullable value. `compareValues` still handles
   null ordering before invoking this dispatch. Selector results, stored comparable values and DLL calls share the
@@ -746,7 +748,7 @@ largest value with `NaN == NaN` structurally and `NaN.compareTo(NaN) == 0`. On t
   stdlib total-order helper `clrDoubleEquals`/`clrFloatEquals` (`toBits()` bit-compare, NaN-canonicalized):
   `(-0.0 as Any) == (0.0 as Any)` and `(-0.0).equals(0.0)` → **`false`**, `(NaN as Any) == (NaN as Any)` and
   `Double.NaN.equals(Double.NaN)` → **`true`**.
-- A direct `Double`/`Float.compareTo` is routed to `clrDoubleCompare`/`clrFloatCompare` (JDK total-order algorithm):
+- Direct, generic and erased `Double`/`Float.compareTo` calls use `clrDoubleCompare`/`clrFloatCompare` (Kotlin total-order algorithm):
   `(-0.0).compareTo(0.0)` → **`-1`**, `Double.NaN.compareTo(1.0)` → **`1`**, `Double.NaN.compareTo(Double.NaN)` → **`0`**.
 
 - Kotlin `==` and `Any.equals` use the same virtual equality rule through concrete, Any, nullable, generic,

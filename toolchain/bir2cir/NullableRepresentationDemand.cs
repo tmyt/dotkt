@@ -85,7 +85,8 @@ static partial class NullableRepresentationDemand
     public static IReadOnlyList<OwnerDemand> Collect(IEnumerable<JsonNode> roots,
         IReadOnlyDictionary<string, NullableRepresentationFrame> referencedTypes = null,
         IReadOnlyDictionary<string, NullableRepresentationFrame> referencedMethods = null,
-        GenericRepresentationPolicy policy = null, InnerApplicationFrames applicationFrames = null)
+        GenericRepresentationPolicy policy = null, InnerApplicationFrames applicationFrames = null,
+        IReadOnlyDictionary<string, NullableRepresentationFrame> declaredMethods = null)
     {
         var rootList = roots.ToArray();
         var localBindings = BindLocalFunctions(rootList);
@@ -140,6 +141,19 @@ static partial class NullableRepresentationDemand
             for (var cursor = owner; cursor != null; cursor = cursor.CapturedOwner)
                 if (!seen.Add(cursor.Declaration)) throw new InvalidOperationException("Cyclic semantic owner capture");
         }
+
+        // A definition implementing an already published declaration keeps that
+        // declaration's representation frame even when its body needs fewer roles.
+        // Match the exact declaration identity, never a physical name/signature.
+        foreach (var method in owners.SelectMany(owner => owner.Methods).Where(method => !method.IsLocal))
+            if (Text(method.Declaration[DeclarationIdentityBinding.Key]) is string id
+                && declaredMethods?.GetValueOrDefault(id) is { } declaredFrame)
+            {
+                if (declaredFrame.SourceArity != (method.TypeParameters?.Count ?? 0))
+                    throw new InvalidOperationException("Published method frame has a different source arity");
+                foreach (var slot in declaredFrame.Companions)
+                    method.Signature.Add(new TypeNode.Tv("method", slot.SourceIndex), slot.Representation);
+            }
 
         bool changed;
         do
