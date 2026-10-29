@@ -29,12 +29,11 @@ public actual fun Double.toBits(): Long = if (this.isNaN()) 0x7ff8000000000000L 
 @kotlin.clr.ClrIntrinsic("System.BitConverter.DoubleToInt64Bits")
 public actual fun Double.toRawBits(): Long = TODO("clr binding should be implemented")
 
-// TODO(clr): companion receiver prepend, needs compiler fix
-// The @ClrIntrinsic clrName('.') split prepends the companion receiver, emitting a 2-arg
-// Int64BitsToDouble(companion, bits) call. The static bind cannot be fixed stdlib-side; keep TODO.
 @SinceKotlin("1.2")
+public actual fun Double.Companion.fromBits(bits: Long): Double = clrDoubleFromBits(bits)
+
 @kotlin.clr.ClrIntrinsic("System.BitConverter.Int64BitsToDouble")
-public actual fun Double.Companion.fromBits(bits: Long): Double = TODO("clr binding should be implemented")
+private fun clrDoubleFromBits(bits: Long): Double = TODO("clr binding should be implemented")
 
 @SinceKotlin("1.2")
 public actual fun Float.toBits(): Int = if (this.isNaN()) 0x7fc00000 else this.toRawBits()
@@ -43,12 +42,11 @@ public actual fun Float.toBits(): Int = if (this.isNaN()) 0x7fc00000 else this.t
 @kotlin.clr.ClrIntrinsic("System.BitConverter.SingleToInt32Bits")
 public actual fun Float.toRawBits(): Int = TODO("clr binding should be implemented")
 
-// TODO(clr): companion receiver prepend, needs compiler fix
-// The @ClrIntrinsic clrName('.') split prepends the companion receiver, emitting a 2-arg
-// Int32BitsToSingle(companion, bits) call. The static bind cannot be fixed stdlib-side; keep TODO.
 @SinceKotlin("1.2")
+public actual fun Float.Companion.fromBits(bits: Int): Float = clrFloatFromBits(bits)
+
 @kotlin.clr.ClrIntrinsic("System.BitConverter.Int32BitsToSingle")
-public actual fun Float.Companion.fromBits(bits: Int): Float = TODO("clr binding should be implemented")
+private fun clrFloatFromBits(bits: Int): Float = TODO("clr binding should be implemented")
 
 @SinceKotlin("1.4")
 @kotlin.clr.ClrIntrinsic("System.Numerics.BitOperations.PopCount")

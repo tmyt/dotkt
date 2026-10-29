@@ -3996,6 +3996,15 @@ sealed partial class ReferenceMetadataIndex
             return SemanticDeclarationDescribesCall(declaration, callProjectionOnly.Of);
         if (declaration is TypeNode.Fqn df && call is TypeNode.Fqn cf)
         {
+            // Companion declarations and materialized values can use different spellings of the same carrier.
+            // Validate that identity through trusted metadata, never by reconstructing a nested type name.
+            if (df.Args == null && cf.Args == null
+                && !IsLocalEmittedType(df.Name) && !IsLocalEmittedType(cf.Name)
+                && (TryCompanionPhysicalOwner(df.Name, out var declarationCompanion)
+                    || TryCompanionMetadataCarrier(df.Name, out declarationCompanion))
+                && (TryCompanionPhysicalOwner(cf.Name, out var callCompanion)
+                    || TryCompanionMetadataCarrier(cf.Name, out callCompanion)))
+                return declarationCompanion == callCompanion;
             // A preserved source descriptor can meet an already-projected value slot. The
             // producer's explicit existential-owner metadata establishes this equivalence;
             // neither a carrier name convention nor an erased object slot does so.
@@ -8113,6 +8122,22 @@ sealed partial class ReferenceMetadataIndex
             throw new InvalidOperationException("Source declaration slot selection admitted type-variable erasure");
         {
             var aliasIndex = Build(Array.Empty<string>());
+            const string companionSource = "probe.Owner.<companion:Named>";
+            const string companionPhysical = "probe.Owner+$Named";
+            aliasIndex._companionPhysicalOwnerBySemanticType[companionSource] = companionPhysical;
+            aliasIndex._companionSemanticTypeByPhysicalOwner["probe.Owner.$Named"] = companionSource;
+            aliasIndex._companionPhysicalOwnerBySemanticType["probe.Other.<companion:Named>"] = "probe.Other+$Named";
+            aliasIndex._companionSemanticTypeByPhysicalOwner["probe.Other.$Named"] = "probe.Other.<companion:Named>";
+            var semanticCompanion = new TypeNode.Fqn(companionSource);
+            foreach (var physical in new[] { companionPhysical, "probe.Owner.$Named" })
+                if (!aliasIndex.SemanticDeclarationDescribesCall(semanticCompanion, new TypeNode.Fqn(physical))
+                    || !aliasIndex.SemanticDeclarationDescribesCall(new TypeNode.Fqn(physical), semanticCompanion))
+                    throw new InvalidOperationException("Companion signature lost its trusted physical identity");
+            if (aliasIndex.SemanticDeclarationDescribesCall(semanticCompanion, new TypeNode.Fqn("probe.Owner+$Other"))
+                || aliasIndex.SemanticDeclarationDescribesCall(semanticCompanion, new TypeNode.Fqn("probe.Other+$Named"))
+                || aliasIndex.SemanticDeclarationDescribesCall(semanticCompanion,
+                    new TypeNode.Fqn(companionPhysical, new TypeNode[] { new TypeNode.Fqn("kotlin.Int") })))
+                throw new InvalidOperationException("Companion signature admitted an unrecorded carrier or generic arguments");
             const string owner = "probe.Alias";
             aliasIndex._ownerAlias[owner] = "probe.Native";
             aliasIndex._ownerArity[owner] = 3;
