@@ -395,6 +395,7 @@ static class MemberCallSubstitution
         var result = (node["k"] as JsonValue)?.GetValue<string>() switch
         {
             "new" => TransformNew(node, refs) ?? node,
+            "spreadConcat" => TransformSpread(node, ctx),
             "callInstance" => TransformCall(node, refs, instance: true, ctx) ?? node,
             "callStatic" => TransformCall(node, refs, instance: false, ctx) ?? node,
             "staticField" => TransformStaticField(node, refs) ?? node,
@@ -782,7 +783,7 @@ static class MemberCallSubstitution
                         },
                     };
                 spread["elem"] = TypeJson.Write(canonicalElem);
-                NormalizeFactorySpreadParts(spread, canonicalElem, ctx);
+                NormalizeSpreadParts(spread, canonicalElem, ctx);
                 return spread;
             }
             var arrElems = new JsonArray();
@@ -799,11 +800,18 @@ static class MemberCallSubstitution
         return null;
     }
 
-    // Retype each spreadConcat input to the factory's exact physical element without asking ilemit to infer a
-    // conversion. A spread is an enumerable boundary: Enumerable.Cast<T> consumes every CLR array through its
-    // non-generic IEnumerable face and boxes value elements. A direct part is a scalar boundary: an explicit cast
-    // makes boxing/reference conversion part of CIR. Equal physical types need neither wrapper.
-    static void NormalizeFactorySpreadParts(JsonObject spread, TypeNode targetElem, SubstCtx ctx)
+    static JsonObject TransformSpread(JsonObject spread, SubstCtx ctx)
+    {
+        var element = CanonicalArrayElem(TypeJson.Read(spread["elem"]));
+        spread["elem"] = TypeJson.Write(element);
+        NormalizeSpreadParts(spread, element, ctx);
+        return spread;
+    }
+
+    // A vararg pack owns its physical element conversions, independently of its callee.
+    // A generic array's System.Array value ABI does not prove IEnumerable<T>, even for
+    // equal logical elements. Normalize that boundary explicitly; ilemit only emits it.
+    static void NormalizeSpreadParts(JsonObject spread, TypeNode targetElem, SubstCtx ctx)
     {
         if (spread["parts"] is not JsonArray parts) return;
         var scope = BirScope.FromVars(ctx.VarTypes);
@@ -812,13 +820,16 @@ static class MemberCallSubstitution
             if (part["e"] is not JsonObject operand) continue;
             var isSpread = (part["spread"] as JsonValue)?.TryGetValue<bool>(out var spreadPart) == true && spreadPart;
             var source = StaticType.Surface(operand, scope);
-            var physicalSource = isSpread
-                ? CanonicalArrayElem(ArrayConstructionLowering.ArrayElementOf(source))
-                : (source == null ? null : NullableGenericErasure.EraseNullableTv(source, _isValue));
+            if (isSpread)
+            {
+                if (source is TypeNode.Fqn { Name: "System.Collections.Generic.IEnumerable", Args.Length: 1 } enumerable
+                    && enumerable.Args[0].Equals(targetElem)) continue;
+                part["e"] = ValueElementIterableCoercion.CastElements(operand, targetElem);
+                continue;
+            }
+            var physicalSource = source == null ? null : NullableGenericErasure.EraseNullableTv(source, _isValue);
             if (physicalSource != null && physicalSource.Equals(targetElem)) continue;
-            part["e"] = isSpread
-                ? ValueElementIterableCoercion.CastElements(operand, targetElem)
-                : new JsonObject
+            part["e"] = new JsonObject
                 {
                     ["k"] = "cast",
                     ["type"] = TypeJson.Write(targetElem),
