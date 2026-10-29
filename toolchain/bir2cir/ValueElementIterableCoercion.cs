@@ -112,8 +112,8 @@ static class ValueElementIterableCoercion
         }
     }
 
-    // A fully stated Enumerable.Cast<T> physical adapter. Besides this pass's nullable-value Iterable seam, array
-    // factory spread normalization uses it to turn a differently reified source array into IEnumerable<TTarget>.
+    // A fully stated Enumerable.Cast<T> physical adapter. Besides this pass's nullable-value Iterable seam,
+    // spread normalization uses it to expose the exact IEnumerable<TTarget> element contract.
     // The non-generic source slot is what makes value arrays legal: enumeration boxes each value before Cast<T>.
     internal static JsonObject CastElements(JsonNode source, TypeNode target)
     {

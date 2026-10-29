@@ -1,11 +1,10 @@
-// A vararg argument that MIXES literal elements with a spread — `f(1, *xs, 2)`.
+// Vararg arguments with lone or mixed spreads — `f(*xs)` and `f(1, *xs, 2)`.
 //
 // Spread packs use `spreadConcat`, including a lone spread; an all-literal pack builds an array directly.
-// The node accumulates into a `List<E>` and
-// hands over its `ToArray()`, and the four members it builds through — the constructor, `Add`, `AddRange`, `ToArray`
+// The node accumulates into a `List<E>` and hands over its `ToArray()`. The four members it builds through
+// — the constructor, `Add`, `AddRange`, `ToArray`
 // — plus the list type itself are named by bir2cir; the emitter builds through exactly those and names no BCL type
-// of its own (#400). Nothing in the standard library writes a mixed vararg, so without these methods the whole node
-// had no gate coverage and its only evidence was a throwaway probe.
+// of its own. These fixtures cover the ordinary vararg contract independently from stdlib factory bodies.
 //
 // One method per element shape the accumulator instantiation can take: a primitive (`List<int>`), a reference type,
 // a type this compilation is itself emitting (the emitter cannot reflect on `List<TypeBuilder>` and builds a

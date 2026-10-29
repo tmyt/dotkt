@@ -5,6 +5,9 @@ private fun <T> bodyMutableList(vararg values: T): MutableList<T> = mutableListO
 private fun <T> bodyArrayList(vararg values: T): ArrayList<T> = arrayListOf(*values)
 private fun <T> bodyHashSet(vararg values: T): HashSet<T> = hashSetOf(*values)
 private fun bodyIndices(values: Collection<*>): IntRange = values.indices
+private fun nullableBodyValue(value: Int): Int? = if (value < 0) null else value
+private fun mutateBodyPack(vararg values: Int) { values[0] = 99 }
+private inline fun mutateInlineBodyPack(vararg values: Int) { values[0] = 88 }
 
 private class FactoryHashValue(val value: Int, private val observe: (String) -> Unit) {
     override fun hashCode(): Int {
@@ -62,6 +65,16 @@ class CollectionFactoryBodyTests {
         check(nativeList[0].Ticks == 3L && nativeList[1].Ticks == 4L)
         val widened = bodyList<Any>(0, *arrayOf(1, 2), "last")
         check(widened == listOf<Any>(0, 1, 2, "last"))
+        val primitive = intArrayOf(1, 2)
+        mutateBodyPack(*primitive)
+        check(primitive[0] == 1)
+        mutateInlineBodyPack(*primitive)
+        check(primitive[0] == 1)
+        check(varargSpreadConcatInts(*uintArrayOf(UInt.MAX_VALUE).asIntArray()) == "-1")
+        val nullable = nullableBodyValue(7)
+        val absent = nullableBodyValue(-1)
+        check(bodyMutableList(nullable, *values)[0] == 7)
+        check(bodyMutableList(absent, *values)[0] == null)
     }
 
     @TestAttribute fun starProjectedIndicesKeepValueAndReferenceReceivers() {
@@ -96,5 +109,18 @@ class CollectionFactoryBodyTests {
         check(trace.contains("h") && trace.contains("e"))
         check(values.size == 2)
         check(values.contains(FactoryHashValue(1) {}))
+        trace = ""
+        fun failSource(): Array<FactoryHashValue> {
+            trace += "x"
+            throw IllegalStateException("expected spread failure")
+        }
+        var threw = false
+        try {
+            hashSetOf(value("d", 3), *failSource(), value("z", 4))
+        } catch (failure: IllegalStateException) {
+            check(failure.message == "expected spread failure")
+            threw = true
+        }
+        check(threw && trace == "dx")
     }
 }

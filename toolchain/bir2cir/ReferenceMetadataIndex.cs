@@ -1227,7 +1227,6 @@ sealed partial class ReferenceMetadataIndex
         && Same(a.DeclarationSemanticReturn, b.DeclarationSemanticReturn)
         && a.ArrayFactoryKind == b.ArrayFactoryKind
         && a.ArrayFactoryElementHint == b.ArrayFactoryElementHint
-        && Same(a.VarargPositions, b.VarargPositions)
         && Same(a.SemanticReifiedTypeParameterIndices, b.SemanticReifiedTypeParameterIndices)
         && Same(a.NullableWitnessTypeParameterIndices, b.NullableWitnessTypeParameterIndices)
         && SameFrame(a.NullableFrame, b.NullableFrame);
@@ -5594,10 +5593,6 @@ sealed partial class ReferenceMetadataIndex
                             LateinitState = dotKtAuthored ? ReadLateinitState(method) : null,
                             SignatureParameters = method.GetParameters().Select(DeclarationSignatureSlot).ToArray(),
                             SignatureReturn = DeclarationSignatureSlot(method.ReturnParameter),
-                            VarargPositions = method.GetParameters()
-                                .Where(parameter => parameter.GetCustomAttributesData().Any(attribute =>
-                                    attribute.AttributeType.FullName == "System.ParamArrayAttribute"))
-                                .Select(parameter => parameter.Position).ToArray(),
                         });
                         // [KotlinInline] raw-BIR carrier (#71/#75 S1): decode the versioned carrier now (the codec is
                         // BirCarrier, shared) and key it owner|name|pc|ga so InlineSplice can splice this external inline
@@ -8537,8 +8532,6 @@ sealed class ReferenceDotKtMetadata
     // type when the name is defined across multiple file-classes (CollectionsKt vs ArraysKt vs MapsKt). NOT consulted in
     // a stdlib self-build (the fun is local there; owner=null + FindStatic finds the sibling).
     public readonly Dictionary<string, List<(string Owner, string RecvKey, ReferenceMetadataIndex.TypeKey ParamKey)>> TopLevelStatics = new(StringComparer.Ordinal);
-    // Collection factory names used by map realignment, not construction lowering.
-    // Selected factory identity and parameter packing live in MemberBinding.
     // A defaulted parameter's default-value expression as BIR (from @KotlinDefault), for CROSS-MODULE splice of an
     // omitted argument. Keyed "ownerFqn|methodName|paramCount" -> (argPosition -> BIR-json string). The DefaultArgSplice
     // pass reads this to fill trailing omitted args BEFORE the CharSequence bridge + type lowering (so a String default
@@ -8593,7 +8586,6 @@ sealed record MemberBinding(string Owner, string Name, int ParamCount, string In
     public bool SignatureAllocated { get; init; }
     public LateinitStateTarget LateinitState { get; init; }
     public TypeNode SignatureReturn { get; init; }
-    public int[] VarargPositions { get; init; } = Array.Empty<int>();
 }
 
 sealed record ReferencedMethodDeclaration(string PhysicalMember, TypeNode[] Parameters, TypeNode Return,

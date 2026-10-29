@@ -19,6 +19,13 @@ class CollectionFactoryNativeTests {
         check(arrayList.size == 3 && arrayList[2] == "third")
         val singleton = listOf(System.TimeSpan.FromTicks(7))
         check(NativeArrayWrites.First(singleton as IReadOnlyList<System.TimeSpan>).Ticks == 7L)
+        val primitive = intArrayOf(1, 2, 3)
+        check(C1Net.Util.Sum(*primitive) == 6)
+        check(System.String.Concat(*arrayOf<Any?>("a", 2, null)) == "a2")
+        val foreign = System.Collections.Generic.List<Int>()
+        foreign.Add(5)
+        foreign.Add(6)
+        check((foreign as Collection<*>).indices.last == 1)
     }
 
     @TestAttribute fun factorySetsRetainNativeMutationAndKotlinComparer() {
