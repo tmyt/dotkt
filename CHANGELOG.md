@@ -7,6 +7,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Changed
 
+- Restore upstream signed integer parsing actuals, reusing the common overflow, bounds and radix checks instead of duplicate CLR-side parsers.
 - Restore upstream grouping counts and mutable-list fill/shuffle bodies, retaining existing CLR collection storage and closed-view collection indices. Preserve declaration-owned generic witnesses for captured alias arguments across DLL boundaries.
 - Restore upstream primitive array sorting and common range validation, including Kotlin NaN/signed-zero order, while preserving native array storage and explicit CLR sort behavior.
 - Restore upstream generic array and mutable-list stable sorting, including range validation, and retain Kotlin floating-point total order through generic Comparable calls. Keep runtime method representation frames aligned with their paired reference declarations.

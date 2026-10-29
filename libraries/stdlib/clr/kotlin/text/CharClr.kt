@@ -121,7 +121,7 @@ public actual fun Char.isHighSurrogate(): Boolean = TODO("clr binding should be 
 public actual fun Char.isLowSurrogate(): Boolean = TODO("clr binding should be implemented")
 
 // ASCII digit map (0-9, A-Z/a-z for radix > 10); -1 if not a valid digit in [radix].
-// Self-contained: relies only on primitive Char comparison and `Char - Char` (mirrors clrDigitOf in StringNumberConversionsClr).
+// Shared by the common integer parsers; uses primitive Char comparisons and subtraction.
 internal actual fun digitOf(char: Char, radix: Int): Int {
     val digit = when {
         char >= '0' && char <= '9' -> char - '0'
