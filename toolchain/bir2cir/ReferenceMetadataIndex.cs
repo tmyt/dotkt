@@ -530,24 +530,18 @@ sealed partial class ReferenceMetadataIndex
             throw new InvalidOperationException($"Compiler-authored helper '{owner}.{name}' has {matches.Length} exact source declarations");
         return matches[0];
     }
-    public bool TryDeclarationFactory(
+    public bool TryDeclarationArrayFactory(
         string id,
-        out string collectionKind,
         out string arrayKind,
         out string arrayElementHint)
     {
-        collectionKind = null;
         arrayKind = null;
         arrayElementHint = null;
         if (id == null || !_declarationById.TryGetValue(id, out var binding)) return false;
-        collectionKind = binding.CollectionFactoryKind;
         arrayKind = binding.ArrayFactoryKind;
         arrayElementHint = binding.ArrayFactoryElementHint;
-        return collectionKind != null || arrayKind != null;
+        return arrayKind != null;
     }
-
-    public int[] DeclarationFactoryVarargPositions(string id) =>
-        _declarationById[id].VarargPositions;
     // ownerFqn -> declared parameter count -> the ctor declarations of that arity (#86 D1). A list, because a
     // same-arity overload set must be REFUSED rather than resolved by arity alone.
     readonly Dictionary<string, Dictionary<int, List<CtorBinding>>> _ctorsByOwner = new(StringComparer.Ordinal);
@@ -613,7 +607,6 @@ sealed partial class ReferenceMetadataIndex
     readonly Dictionary<(string Name, SignatureKey Signature), string> _extMemberIntrinsics = new();
     readonly Dictionary<string, (string Getter, string Conv)> _inlineBacking = new(StringComparer.Ordinal);
     readonly Dictionary<string, List<(string Owner, string RecvKey, TypeKey ParamKey)>> _topLevelStatics = new(StringComparer.Ordinal);
-    readonly Dictionary<string, string> _collectionFactories = new(StringComparer.Ordinal); // @ClrCollectionFactory fun name -> "list"/"set"
     readonly Dictionary<DefaultKey, Dictionary<int, string>> _kotlinDefaults = new();
     readonly Dictionary<string, Dictionary<int, string>> _kotlinDefaultsByDeclarationId = new(StringComparer.Ordinal);
     readonly HashSet<string> _conflictingDefaultDeclarationIds = new(StringComparer.Ordinal);
@@ -981,7 +974,6 @@ sealed partial class ReferenceMetadataIndex
                 if (!_kotlinDefaultsByDeclarationId.TryAdd(kv.Key, kv.Value)
                     && !SameDefaults(_kotlinDefaultsByDeclarationId[kv.Key], kv.Value))
                     _conflictingDefaultDeclarationIds.Add(kv.Key);
-            foreach (var kv in asm.DotKt.CollectionFactories) _collectionFactories.TryAdd(kv.Key, kv.Value);
             // §4.2 (#75 S4b): merge candidate lists across assemblies — every overload sharing owner|name|pc|ga is kept; the
             // call site disambiguates by paramSig. (No poisoning: structural selection replaces the recv0-key collision.)
             foreach (var kv in asm.DotKt.InlinePayloads)
@@ -1063,10 +1055,6 @@ sealed partial class ReferenceMetadataIndex
         }
         return list;
     }
-
-    // Name index used by MapVarianceRealign for calls without a declaration identity.
-    // Collection construction itself requires TryDeclarationFactory's exact selected binding.
-    public string CollectionFactoryKind(string funName) => _collectionFactories.GetValueOrDefault(funName);
 
     /// The `method` component of a CONSTRUCTOR's @KotlinDefault key (#235). `.ctor` is the CLR's own constructor name and
     /// is unspeakable in Kotlin, so it can never collide with a real method a `new`'s owner declares.
@@ -1237,7 +1225,7 @@ sealed partial class ReferenceMetadataIndex
         && a.SignatureAllocated == b.SignatureAllocated
         && Same(a.DeclarationSemanticParams, b.DeclarationSemanticParams)
         && Same(a.DeclarationSemanticReturn, b.DeclarationSemanticReturn)
-        && a.CollectionFactoryKind == b.CollectionFactoryKind && a.ArrayFactoryKind == b.ArrayFactoryKind
+        && a.ArrayFactoryKind == b.ArrayFactoryKind
         && a.ArrayFactoryElementHint == b.ArrayFactoryElementHint
         && Same(a.VarargPositions, b.VarargPositions)
         && Same(a.SemanticReifiedTypeParameterIndices, b.SemanticReifiedTypeParameterIndices)
@@ -5496,9 +5484,6 @@ sealed partial class ReferenceMetadataIndex
                         var prop = ClrPropertyOf(method.GetCustomAttributesData());
                         var byrefPositions = ByrefPositionsOf(method);
                         var countRange = CountRangeOf(method);
-                        var collectionFactoryKind = isFileClass && method.IsStatic
-                            ? AttrStringArg(method.GetCustomAttributesData(), "kotlin.clr.ClrCollectionFactory")
-                            : null;
                         var arrayFactoryKind = isFileClass && method.IsStatic
                             ? AttrStringArg(method.GetCustomAttributesData(), "kotlin.clr.ClrArrayFactory")
                             : null;
@@ -5580,7 +5565,6 @@ sealed partial class ReferenceMetadataIndex
                             exactPhysicalOwner,
                             declarationIdentity?.SemanticParams,
                             declarationIdentity?.SemanticReturn,
-                            collectionFactoryKind,
                             arrayFactoryKind,
                             arrayFactoryElementHint,
                             countRange?.Start ?? -1,
@@ -5699,13 +5683,6 @@ sealed partial class ReferenceMetadataIndex
                             if (!metadata.TopLevelStatics.TryGetValue(method.Name, out var lst))
                                 metadata.TopLevelStatics[method.Name] = lst = new List<(string, string, TypeKey)>();
                             lst.Add((ownerFqn, rk, pk));
-                        }
-                        // Retain the collection name index for map realignment. Construction
-                        // lowering uses the selected declaration's MemberBinding instead.
-                        if (isFileClass && method.IsStatic)
-                        {
-                            if (collectionFactoryKind is string cf)
-                                metadata.CollectionFactories[method.Name] = cf;
                         }
                     }
                     // @KotlinDefault(index, bir) on a CONSTRUCTOR's params -> the splice source for a `new` that omits a
@@ -7197,7 +7174,7 @@ sealed partial class ReferenceMetadataIndex
                 $"trusted [KotlinStaticCarrier] '{carrierType.FullName}' contains an instance declaration");
     }
 
-    // The first constructor string argument of the attribute `fullName` (e.g. @ClrCollectionFactory("list") -> "list"),
+    // The first constructor string argument of the attribute `fullName` (e.g. @ClrArrayFactory("sized") -> "sized"),
     // or null when the attribute is absent / carries no string arg. Used for the factory-kind markers.
     static string AttrStringArg(IList<CustomAttributeData> attrs, string fullName)
     {
@@ -8562,7 +8539,6 @@ sealed class ReferenceDotKtMetadata
     public readonly Dictionary<string, List<(string Owner, string RecvKey, ReferenceMetadataIndex.TypeKey ParamKey)>> TopLevelStatics = new(StringComparer.Ordinal);
     // Collection factory names used by map realignment, not construction lowering.
     // Selected factory identity and parameter packing live in MemberBinding.
-    public readonly Dictionary<string, string> CollectionFactories = new(StringComparer.Ordinal);
     // A defaulted parameter's default-value expression as BIR (from @KotlinDefault), for CROSS-MODULE splice of an
     // omitted argument. Keyed "ownerFqn|methodName|paramCount" -> (argPosition -> BIR-json string). The DefaultArgSplice
     // pass reads this to fill trailing omitted args BEFORE the CharSequence bridge + type lowering (so a String default
@@ -8606,7 +8582,7 @@ sealed record MethodSlotIdentity(string PhysicalMember, JsonArray TypeParams, bo
 // (DeclarationTypeNode), the same one `ParamTypeNodes` uses, which keeps generic parameters as `Tv` — a declaration
 // the caller substitutes. The two are not interchangeable: `Iterable<E>.iterator()` is `Iterator` in the first and
 // `Iterator<!0>` in the second, and only the second says what the call site's type argument completes.
-sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic, int PropertyAccess = 0, string PropertyName = null, int[] ByrefPositions = null, bool Suspend = false, bool Conv = false, TypeNode ConvTo = null, TypeNode ReturnType = null, int MethodArity = 0, TypeNode[] ParamTypeNodes = null, bool IsVirtual = false, TypeNode KotlinReturnType = null, TypeNode SuspendReturnType = null, TypeNode NullableGenericRet = null, TypeNode[] NullableGenericParams = null, TypeNode ReturnTypeNode = null, int MetadataToken = 0, string SourcePropertyName = null, string AccessorKind = null, string AssociatedPropertyName = null, bool IsPropertyBridge = false, bool IsPublic = false, string PropertyAssociation = null, string SourcePropertyAssociation = null, string SourceMethodName = null, JsonArray MethodTypeParams = null, string DeclarationId = null, string DeclarationSourceName = null, string DeclarationPhysicalOwner = null, TypeNode[] DeclarationSemanticParams = null, TypeNode DeclarationSemanticReturn = null, string CollectionFactoryKind = null, string ArrayFactoryKind = null, string ArrayFactoryElementHint = null, int CountStart = -1, int CountEnd = -1, int[] SemanticReifiedTypeParameterIndices = null, int[] NullableWitnessTypeParameterIndices = null, TypeNode[] KotlinParameterTypes = null, string InnerConstructorOwner = null, string InnerConstructorDeclaration = null, int[] InnerConstructorTypeArguments = null, JsonArray SemanticMethodTypeParams = null, NullableRepresentationFrame NullableFrame = null)
+sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic, int PropertyAccess = 0, string PropertyName = null, int[] ByrefPositions = null, bool Suspend = false, bool Conv = false, TypeNode ConvTo = null, TypeNode ReturnType = null, int MethodArity = 0, TypeNode[] ParamTypeNodes = null, bool IsVirtual = false, TypeNode KotlinReturnType = null, TypeNode SuspendReturnType = null, TypeNode NullableGenericRet = null, TypeNode[] NullableGenericParams = null, TypeNode ReturnTypeNode = null, int MetadataToken = 0, string SourcePropertyName = null, string AccessorKind = null, string AssociatedPropertyName = null, bool IsPropertyBridge = false, bool IsPublic = false, string PropertyAssociation = null, string SourcePropertyAssociation = null, string SourceMethodName = null, JsonArray MethodTypeParams = null, string DeclarationId = null, string DeclarationSourceName = null, string DeclarationPhysicalOwner = null, TypeNode[] DeclarationSemanticParams = null, TypeNode DeclarationSemanticReturn = null, string ArrayFactoryKind = null, string ArrayFactoryElementHint = null, int CountStart = -1, int CountEnd = -1, int[] SemanticReifiedTypeParameterIndices = null, int[] NullableWitnessTypeParameterIndices = null, TypeNode[] KotlinParameterTypes = null, string InnerConstructorOwner = null, string InnerConstructorDeclaration = null, int[] InnerConstructorTypeArguments = null, JsonArray SemanticMethodTypeParams = null, NullableRepresentationFrame NullableFrame = null)
 {
     // Capture the selected reference MethodDef while scanning it. A local type may shadow its owner
     // during stdlib self-compilation; resolving that owner again is not declaration identity.

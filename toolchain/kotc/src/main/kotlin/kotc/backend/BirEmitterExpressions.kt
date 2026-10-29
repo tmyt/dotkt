@@ -641,15 +641,14 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 	is IrFunctionExpression -> lambda(node)
 	// A callable reference `::foo` -> a delegate bound to the referenced function (same Func/Action as a lambda).
 	is IrFunctionReference -> functionRef(node)
-	// A `vararg` argument -> a newArray. A spread `*a` (IrSpreadElement) passes an existing array: a lone
-	// spread is forwarded as-is; all-literal builds a fresh array; mixed `f(1,*a,2)` is a clean deferral.
+	// Every vararg pack is a fresh array. Preserve spread operands as a concatenation even for a lone spread,
+	// so a callee cannot mutate or retain the caller's source array through its vararg parameter.
 	is IrVararg -> {
 		val spreads = node.elements.filterIsInstance<IrSpreadElement>()
 		val directs = node.elements.filterIsInstance<IrExpression>()
 		when {
-			spreads.size == 1 && directs.isEmpty() -> expr(spreads[0].expression)
 			spreads.isEmpty() -> """{"k":"newArray","elem":${birType(node.varargElementType).toJson()},"elems":[${directs.joinToString(",") { expr(it) }}]}"""
-			// `f(1, *a, 2)` -> build a List<elem> (Add literals / AddRange spreads), then ToArray.
+			// bir2cir owns the physical accumulation and element conversions.
 			else -> {
 				val parts = node.elements.joinToString(",") { e ->
 					when (e) {

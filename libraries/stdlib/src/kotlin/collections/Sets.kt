@@ -33,7 +33,6 @@ internal object EmptySet : Set<Nothing>, Serializable {
  * Returns an empty read-only set.  The returned set is serializable (JVM).
  * @sample samples.collections.Collections.Sets.emptyReadOnlySet
  */
-@kotlin.clr.ClrCollectionFactory("set")
 public fun <T> emptySet(): Set<T> = EmptySet
 
 /**
@@ -84,7 +83,6 @@ public fun <T> mutableSetOf(vararg elements: T): MutableSet<T> = elements.toColl
 public inline fun <T> hashSetOf(): HashSet<T> = HashSet()
 
 /** Returns a new [HashSet] with the given elements. */
-@kotlin.clr.ClrCollectionFactory("set")
 public fun <T> hashSetOf(vararg elements: T): HashSet<T> = elements.toCollection(HashSet(mapCapacity(elements.size)))
 
 /**

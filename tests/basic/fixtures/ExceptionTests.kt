@@ -339,8 +339,8 @@ class ExceptionTests {
             try { listOf(excHoistMarked("nested-try", 11)) }
             catch (e: Exception) { listOf(-1) },
         )
-        // The factory rewrite carries the source call's exact result face: `newList` alone cannot distinguish this
-        // MutableList from the read-only List above when the first construction has to be spilled.
+        // Preserve the MutableList result contract independently from the read-only List above when the
+        // first construction has to be spilled.
         val nestedMutable = arrayOf(
             mutableListOf(16),
             try { mutableListOf(17) } catch (e: Exception) { mutableListOf(-1) },

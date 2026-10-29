@@ -16,7 +16,6 @@ import kotlin.internal.InlineOnly
  *
  * @sample samples.collections.Collections.Lists.singletonReadOnlyList
  */
-@kotlin.clr.ClrCollectionFactory("list")
 public actual fun <T> listOf(element: T): List<T> {
     val list = ArrayList<T>(1)
     list.add(element)

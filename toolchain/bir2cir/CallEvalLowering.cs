@@ -675,8 +675,8 @@ static class CallEvalLowering
     /// after this pass.
     ///
     /// Only kinds that can reach a plan are listed — what kotc emits, plus what the passes that author their own plans
-    /// build them over. The list-literal construction (`newList`) and the .NET property
-    /// accesses (`clrPropGet`/`clrPropSet`) are NOT kotc vocabulary, so `Apply` never sees them; later authors can,
+    /// build them over. The .NET property accesses (`clrPropGet`/`clrPropSet`) are NOT kotc vocabulary,
+    /// so `Apply` never sees them; later authors can,
     /// since `Materialise` is reachable from MemberCallSubstitution and from the suspend lowering. The exact-intrinsic
     /// count adapter authors an ordinary CLR call containing an eager `binOp`, both listed below. Other unlisted kinds
     /// take the CONSERVATIVE direction — the value is materialised into a local instead of being inlined — so a new

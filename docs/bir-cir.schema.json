@@ -689,7 +689,7 @@
         "binOp", "unaryOp", "conv", "cast", "isInst", "isInstRef", "objEq", "concat", "cond",
         "field", "setField", "staticField", "lateinitIsInitialized",
         "new", "newArray", "newArraySized", "newArrayInit", "arrayGet", "arraySet", "arrayLen",
-        "newList", "newClosure", "newDelegate", "newSam", "newSuspendLambda",
+        "newClosure", "newDelegate", "newSam", "newSuspendLambda",
         "newClrStaticDelegate", "companionValue",
         "enumValue", "enumBits", "enumName", "enumOrdinal", "enumValues", "enumParse", "default", "defaultArg", "callEval", "bindRef",
         "nullableWrap", "nullableValue", "nullableHasValue", "nullableNull",

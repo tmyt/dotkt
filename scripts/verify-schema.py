@@ -61,11 +61,9 @@ MEMBER_REF_KIND_BY_CARRIER = {
     "attributeCtorRef": {"ctor"},
 }
 
-# A collection literal says what to BUILD; these name the members it builds THROUGH. Both are required on such
-# a node, because an emitter handed one and not the other is back to filling the gap by name.
+# Synthesized operations name every CLR member they invoke before emission.
 COLLECTION_TEMPLATE_REFS = {
-    "newList": ("ctorRef", "addRef"),
-    # A spread argument accumulates into a list and hands over its array: four members, same rule.
+    # A spread argument accumulates into a list and hands over its array.
     "spreadConcat": ("ctorRef", "addRef", "addRangeRef", "toArrayRef"),
     # An inlined `for` walks the enumerator protocol; both arms are named because which one the emitter can
     # speak is a Reflection.Emit fact, not a choice about which member is meant.
@@ -327,7 +325,7 @@ KINDS = {
     "callInstance", "callStatic", "callLocal", "localFunRef", "objMethod", "delegateInvoke",
     "binOp", "unaryOp", "conv", "cast", "samConvert", "isInst", "isInstRef", "objEq", "concat", "cond",
     "new", "newArray", "newArraySized", "newArrayInit", "arrayGet", "arraySet", "arrayLen",
-    "newList", "newClosure", "newDelegate", "newSam", "newSuspendLambda",
+    "newClosure", "newDelegate", "newSam", "newSuspendLambda",
     "newBoundDelegate", "newBoundClrDelegate", "newClrStaticDelegate",
     "companionValue",                           # #275 BIR-only semantic access; bir2cir resolves the nested carrier.
     "enumValue", "enumBits", "enumName", "enumValues", "enumParse", "enumOrdinal", "default", "defaultArg", "classRef", "console",

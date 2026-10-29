@@ -72,14 +72,12 @@ private class ArrayAsCollection<T>(val values: Array<out T>, val isVarargs: Bool
  * Returns an empty read-only list.  The returned list is serializable (JVM).
  * @sample samples.collections.Collections.Lists.emptyReadOnlyList
  */
-@kotlin.clr.ClrCollectionFactory("list")
 public fun <T> emptyList(): List<T> = EmptyList
 
 /**
  * Returns a new read-only list of given elements.  The returned list is serializable (JVM).
  * @sample samples.collections.Collections.Lists.readOnlyList
  */
-@kotlin.clr.ClrCollectionFactory("list")
 public fun <T> listOf(vararg elements: T): List<T> = if (elements.size > 0) elements.asList() else emptyList()
 
 /**
@@ -119,7 +117,6 @@ public inline fun <T> arrayListOf(): ArrayList<T> = ArrayList()
  * Returns a new [MutableList] with the given elements.
  * @sample samples.collections.Collections.Lists.mutableList
  */
-@kotlin.clr.ClrCollectionFactory("list")
 public fun <T> mutableListOf(vararg elements: T): MutableList<T> =
     if (elements.size == 0) ArrayList() else elements.asArrayList()
 
@@ -127,7 +124,6 @@ public fun <T> mutableListOf(vararg elements: T): MutableList<T> =
  * Returns a new [ArrayList] with the given elements.
  * @sample samples.collections.Collections.Lists.arrayList
  */
-@kotlin.clr.ClrCollectionFactory("list")
 public fun <T> arrayListOf(vararg elements: T): ArrayList<T> =
     if (elements.size == 0) ArrayList() else elements.asArrayList()
 
@@ -229,13 +225,7 @@ internal expect inline fun <E> buildListInternal(capacity: Int, builderAction: M
  * Returns an [IntRange] of the valid indices for this collection.
  * @sample samples.collections.Collections.Collections.indicesOfCollection
  */
-public val <T> Collection<T>.indices: IntRange
-    // CLR: element-generic (NOT the star-projected `Collection<*>`). A `<*>` receiver lowers to the reified
-    // `IReadOnlyCollection<object>`, which a VALUE-element runtime list (ArrayList<int> : IReadOnlyCollection<int>)
-    // does NOT implement — CLR generic covariance excludes value-type args — so `size` (get_Count) throws
-    // EntryPointNotFound. Carrying the element type `T` keeps the receiver `IReadOnlyCollection<T>` and the size read
-    // covariance-safe for value elements (the same shape as `List<T>.lastIndex` below). Source-compatible: any
-    // `Collection<X>` binds T=X. (#30)
+public val Collection<*>.indices: IntRange
     get() = 0..size - 1
 
 /**

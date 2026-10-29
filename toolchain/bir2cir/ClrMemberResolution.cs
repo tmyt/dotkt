@@ -467,7 +467,6 @@ static partial class ClrMemberResolution
             // `x as? T` for a value T builds the same Nullable<T> as an ordinary wrap does, so it needs the same
             // constructor named. It reads `elem` like its siblings; only the surrounding isinst differs.
             case "safeCastValue": ResolveNullableConversion(node, "nullableWrap"); break;
-            case "newList": ResolveCollectionTemplate(node, "newList"); break;
             case "field": ResolveFieldAccess(node, write: false); break;
             case "setFieldExpr": ResolveFieldAccess(node, write: true); break;
             case "setField": ResolveFieldAccess(node, write: true); break;

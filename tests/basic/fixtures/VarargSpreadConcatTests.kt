@@ -1,7 +1,7 @@
 // A vararg argument that MIXES literal elements with a spread — `f(1, *xs, 2)`.
 //
-// This is the only source shape that mints the `spreadConcat` construction node: a lone spread forwards the existing
-// array and an all-literal list builds one directly, so neither reaches it. The node accumulates into a `List<E>` and
+// Spread packs use `spreadConcat`, including a lone spread; an all-literal pack builds an array directly.
+// The node accumulates into a `List<E>` and
 // hands over its `ToArray()`, and the four members it builds through — the constructor, `Add`, `AddRange`, `ToArray`
 // — plus the list type itself are named by bir2cir; the emitter builds through exactly those and names no BCL type
 // of its own (#400). Nothing in the standard library writes a mixed vararg, so without these methods the whole node
@@ -12,11 +12,8 @@
 // signature view instead), and the callee's own open type parameter. Each asserts ORDER as well as contents, because
 // a spread appended rather than spliced still gives the right length.
 //
-// A NULLABLE VALUE element (`vararg xs: Int?`) is deliberately absent. That shape canonicalizes the vararg's array
-// element to `object`, and a mixed spread into it miscompiles today: the literal parts reach `Add` unconverted,
-// which is invalid IL (InvalidProgramException on first call), and coercing them to the element slot then exposes a
-// second fault in how the values come back out. That is about how the accumulator's element slot is FILLED, not
-// about how its members are named, so it is tracked on its own rather than pinned here.
+// Nullable mixed elements, independent source storage and hash callbacks are also covered by
+// CollectionFactoryBodyTests; their packs use these same ordinary vararg rules.
 //
 // Top-level names are family-prefixed with `varargSpreadConcat` (one assembly = one namespace).
 import NUnit.Framework.TestAttribute
