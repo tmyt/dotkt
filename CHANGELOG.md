@@ -7,6 +7,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Changed
 
+- Restore upstream array fill range checks and make generic and primitive array iterators throw `NoSuchElementException` consistently after exhaustion without advancing their cursors.
 - Restore upstream array `asList` live views for generic, primitive and unsigned arrays, including iterators, sublists and floating-point search equality.
 - Use the unchanged upstream collection sorting bodies and remove the remaining JSON body overlays, dedicated implementations and overlay build/CLI plumbing.
 - Keep upstream Sequence filtering bodies unchanged and remove their per-declaration JSON markers, lowering pass and redundant runtime adapters; ordinary erased Sequence views preserve lazy iteration across DLL boundaries. A filtered Kotlin Sequence does not promise an exact native `IEnumerable<T>` implementation; explicit native casts still test the actual CLR interface.
