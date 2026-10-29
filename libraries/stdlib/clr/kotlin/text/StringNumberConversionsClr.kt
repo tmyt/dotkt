@@ -1,5 +1,5 @@
 /*
- * Copyright 2010-2024 JetBrains s.r.o. and Kotlin Programming Language contributors.
+ * Copyright 2010-2025 JetBrains s.r.o. and Kotlin Programming Language contributors.
  * Use of this source code is governed by the Apache 2.0 license that can be found in the license/LICENSE.txt file.
  */
 
@@ -12,38 +12,11 @@
     "PLATFORM_CLASS_MAPPED_TO_KOTLIN",
 )
 
-// Step-1 CLR stub mirroring the JVM `actual`; bodies are `TODO` pending the `@Clr`/BCL
-// binding step (see docs/design-stdlib-compilation.md "THE CANONICAL ROADMAP").
-
 package kotlin.text
-
-// --- Radix conversions ---
-// `digitOf`/`checkRadix` in CharClr.kt are themselves still TODO, so these implementations are self-contained and rely
-// only on primitive intrinsics (Char/Int/Long comparison, `Char + Int`, `Char - Char`) plus the BCL-bound StringBuilder
-// (`insert`/`toString`) and the standard exception types. The `expect` declarations are non-inline, so `inline` is
-// dropped here to allow the non-trivial bodies.
-
-private fun clrCheckRadix(radix: Int): Int {
-    if (radix < 2 || radix > 36) {
-        throw IllegalArgumentException("radix $radix was not in valid range 2..36")
-    }
-    return radix
-}
 
 // Maps a digit value 0..35 to its character: 0..9 then a..z.
 private fun clrDigitToChar(digit: Int): Char =
     if (digit < 10) '0' + digit else 'a' + (digit - 10)
-
-// Returns the value of [char] as a digit in the given [radix], or -1 if it is not a valid digit in that radix.
-private fun clrDigitOf(char: Char, radix: Int): Int {
-    val digit = when {
-        char >= '0' && char <= '9' -> char - '0'
-        char >= 'a' && char <= 'z' -> char - 'a' + 10
-        char >= 'A' && char <= 'Z' -> char - 'A' + 10
-        else -> -1
-    }
-    return if (digit >= 0 && digit < radix) digit else -1
-}
 
 private fun clrNumberFormatError(input: String): Nothing =
     throw NumberFormatException("For input string: \"$input\"")
@@ -56,7 +29,7 @@ public actual fun Short.toString(radix: Int): String = this.toInt().toString(rad
 
 @SinceKotlin("1.1")
 public actual fun Int.toString(radix: Int): String {
-    clrCheckRadix(radix)
+    checkRadix(radix)
     if (this == 0) return "0"
     val negative = this < 0
     var n = this
@@ -74,7 +47,7 @@ public actual fun Int.toString(radix: Int): String {
 
 @SinceKotlin("1.1")
 public actual fun Long.toString(radix: Int): String {
-    clrCheckRadix(radix)
+    checkRadix(radix)
     if (this == 0L) return "0"
     val negative = this < 0
     var n = this
@@ -92,100 +65,85 @@ public actual fun Long.toString(radix: Int): String {
 @kotlin.internal.InlineOnly
 public actual inline fun String?.toBoolean(): Boolean = this != null && this.equals("true", ignoreCase = true)
 
-// Integer parses delegate to the base-10 radix impl (below), NOT to System.<T>.Parse. Two reasons: (1) System.<T>.Parse
-// is CULTURE-sensitive and lenient (accepts leading/trailing whitespace, group separators) — JVM's is strict base-10;
-// (2) it throws System.FormatException, which a Kotlin `catch (e: NumberFormatException)` cannot catch. The radix impl
-// throws the real Kotlin NumberFormatException (full IllegalArgumentException hierarchy), matching JVM exactly.
-public actual fun String.toByte(): Byte = this.toByte(10)
+/**
+ * Parses the string to a [Byte] number.
+ *
+ * The string must consist of an optional leading `+` or `-` sign and decimal digits (`0-9`),
+ * and fit the valid [Byte] value range (within `Byte.MIN_VALUE..Byte.MAX_VALUE`),
+ * otherwise a [NumberFormatException] will be thrown.
+ *
+ * @throws NumberFormatException if the string is not a valid representation of a [Byte].
+ * @sample samples.text.Numbers.toByte
+ */
+public actual fun String.toByte(): Byte = toByteOrNull() ?: numberFormatError(this)
 
+/**
+ * Parses the string as a signed [Byte] number and returns the result.
+ * @throws NumberFormatException if the string is not a valid representation of a number.
+ * @throws IllegalArgumentException when [radix] is not a valid radix for string to number conversion.
+ */
 @SinceKotlin("1.1")
-public actual fun String.toByte(radix: Int): Byte {
-    val v = this.toInt(radix)
-    if (v < Byte.MIN_VALUE.toInt() || v > Byte.MAX_VALUE.toInt()) clrNumberFormatError(this)
-    return v.toByte()
-}
+public actual fun String.toByte(radix: Int): Byte = toByteOrNull(radix) ?: numberFormatError(this)
 
-public actual fun String.toShort(): Short = this.toShort(10)
+/**
+ * Parses the string to a [Short] number.
+ *
+ * The string must consist of an optional leading `+` or `-` sign and decimal digits (`0-9`),
+ * and fit the valid [Short] value range (within `Short.MIN_VALUE..Short.MAX_VALUE`),
+ * otherwise a [NumberFormatException] will be thrown.
+ *
+ * @throws NumberFormatException if the string is not a valid representation of a [Short].
+ * @sample samples.text.Numbers.toShort
+ */
+public actual fun String.toShort(): Short = toShortOrNull() ?: numberFormatError(this)
 
+/**
+ * Parses the string as a [Short] number and returns the result.
+ * @throws NumberFormatException if the string is not a valid representation of a number.
+ * @throws IllegalArgumentException when [radix] is not a valid radix for string to number conversion.
+ */
 @SinceKotlin("1.1")
-public actual fun String.toShort(radix: Int): Short {
-    val v = this.toInt(radix)
-    if (v < Short.MIN_VALUE.toInt() || v > Short.MAX_VALUE.toInt()) clrNumberFormatError(this)
-    return v.toShort()
-}
+public actual fun String.toShort(radix: Int): Short = toShortOrNull(radix) ?: numberFormatError(this)
 
-public actual fun String.toInt(): Int = this.toInt(10)
+/**
+ * Parses the string to an [Int] number.
+ *
+ * The string must consist of an optional leading `+` or `-` sign and decimal digits (`0-9`),
+ * and fit the valid [Int] value range (within `Int.MIN_VALUE..Int.MAX_VALUE`),
+ * otherwise a [NumberFormatException] will be thrown.
+ *
+ * @throws NumberFormatException if the string is not a valid representation of an [Int].
+ * @sample samples.text.Numbers.toInt
+ */
+public actual fun String.toInt(): Int = toIntOrNull() ?: numberFormatError(this)
 
+/**
+ * Parses the string as an [Int] number and returns the result.
+ * @throws NumberFormatException if the string is not a valid representation of a number.
+ * @throws IllegalArgumentException when [radix] is not a valid radix for string to number conversion.
+ */
 @SinceKotlin("1.1")
-public actual fun String.toInt(radix: Int): Int {
-    clrCheckRadix(radix)
-    val length = this.length
-    if (length == 0) clrNumberFormatError(this)
+public actual fun String.toInt(radix: Int): Int = toIntOrNull(radix) ?: numberFormatError(this)
 
-    val firstChar = this[0]
-    val isNegative = firstChar == '-'
-    val hasSign = isNegative || firstChar == '+'
-    val start = if (hasSign) 1 else 0
-    if (hasSign && length == 1) clrNumberFormatError(this)
-    // Accumulate on the negative side so Int.MIN_VALUE is representable; flip sign at the end if positive.
-    val limit = if (isNegative) Int.MIN_VALUE else -Int.MAX_VALUE
+/**
+ * Parses the string to a [Long] number.
+ *
+ * The string must consist of an optional leading `+` or `-` sign and decimal digits (`0-9`),
+ * and fit the valid [Long] value range (within `Long.MIN_VALUE..Long.MAX_VALUE`),
+ * otherwise a [NumberFormatException] will be thrown.
+ *
+ * @throws NumberFormatException if the string is not a valid representation of a [Long].
+ * @sample samples.text.Numbers.toLong
+ */
+public actual fun String.toLong(): Long = toLongOrNull() ?: numberFormatError(this)
 
-    val limitForMaxRadix = (-Int.MAX_VALUE) / 36
-    var limitBeforeMul = limitForMaxRadix
-    var result = 0
-    for (i in start until length) {
-        val digit = clrDigitOf(this[i], radix)
-        if (digit < 0) clrNumberFormatError(this)
-        if (result < limitBeforeMul) {
-            if (limitBeforeMul == limitForMaxRadix) {
-                limitBeforeMul = limit / radix
-                if (result < limitBeforeMul) clrNumberFormatError(this)
-            } else {
-                clrNumberFormatError(this)
-            }
-        }
-        result *= radix
-        if (result < limit + digit) clrNumberFormatError(this)
-        result -= digit
-    }
-    return if (isNegative) result else -result
-}
-
-public actual fun String.toLong(): Long = this.toLong(10)
-
+/**
+ * Parses the string as a [Long] number and returns the result.
+ * @throws NumberFormatException if the string is not a valid representation of a number.
+ * @throws IllegalArgumentException when [radix] is not a valid radix for string to number conversion.
+ */
 @SinceKotlin("1.1")
-public actual fun String.toLong(radix: Int): Long {
-    clrCheckRadix(radix)
-    val length = this.length
-    if (length == 0) clrNumberFormatError(this)
-
-    val firstChar = this[0]
-    val isNegative = firstChar == '-'
-    val hasSign = isNegative || firstChar == '+'
-    val start = if (hasSign) 1 else 0
-    if (hasSign && length == 1) clrNumberFormatError(this)
-    val limit = if (isNegative) Long.MIN_VALUE else -Long.MAX_VALUE
-
-    val limitForMaxRadix = (-Long.MAX_VALUE) / 36
-    var limitBeforeMul = limitForMaxRadix
-    var result = 0L
-    for (i in start until length) {
-        val digit = clrDigitOf(this[i], radix)
-        if (digit < 0) clrNumberFormatError(this)
-        if (result < limitBeforeMul) {
-            if (limitBeforeMul == limitForMaxRadix) {
-                limitBeforeMul = limit / radix
-                if (result < limitBeforeMul) clrNumberFormatError(this)
-            } else {
-                clrNumberFormatError(this)
-            }
-        }
-        result *= radix
-        if (result < limit + digit) clrNumberFormatError(this)
-        result -= digit
-    }
-    return if (isNegative) result else -result
-}
+public actual fun String.toLong(radix: Int): Long = toLongOrNull(radix) ?: numberFormatError(this)
 
 // System.<T>.Parse(string) uses the CURRENT culture, so e.g. "3,14".toDouble() silently succeeds in a comma-decimal
 // locale instead of throwing (JVM parses '.' only). Bind the InvariantCulture-taking overloads and route through them,
