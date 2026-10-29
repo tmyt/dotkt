@@ -6,8 +6,6 @@
 @file:Suppress("ACTUAL_WITHOUT_EXPECT", "NO_ACTUAL_FOR_EXPECT", "UNCHECKED_CAST", "NOTHING_TO_INLINE", "NO_ACTUAL_CLASS_MEMBER_FOR_EXPECTED_CLASS")
 
 // CLR `actual` declarations for kotlin.comparisons.
-// maxOf/minOf are inline (matching the expect) with Kotlin bodies; @Clr cannot bind inline functions.
-// Generic, three-argument and vararg overloads carry real Kotlin bodies.
 
 package kotlin.comparisons
 
@@ -49,7 +47,10 @@ public actual inline fun maxOf(a: Long, b: Long): Long = if (a >= b) a else b
  * If either value is `NaN`, returns `NaN`.
  */
 @SinceKotlin("1.1")
-public actual inline fun maxOf(a: Float, b: Float): Float = if (a >= b) a else b
+@kotlin.internal.InlineOnly
+public actual inline fun maxOf(a: Float, b: Float): Float {
+    return if (a.compareTo(b) >= 0) a else b
+}
 
 /**
  * Returns the greater of two values.
@@ -57,7 +58,10 @@ public actual inline fun maxOf(a: Float, b: Float): Float = if (a >= b) a else b
  * If either value is `NaN`, returns `NaN`.
  */
 @SinceKotlin("1.1")
-public actual inline fun maxOf(a: Double, b: Double): Double = if (a >= b) a else b
+@kotlin.internal.InlineOnly
+public actual inline fun maxOf(a: Double, b: Double): Double {
+    return if (a.compareTo(b) >= 0) a else b
+}
 
 /**
  * Returns the greater of three values.
@@ -221,7 +225,14 @@ public actual inline fun minOf(a: Long, b: Long): Long = if (a <= b) a else b
  * If either value is `NaN`, returns `NaN`.
  */
 @SinceKotlin("1.1")
-public actual inline fun minOf(a: Float, b: Float): Float = if (a <= b) a else b
+@kotlin.internal.InlineOnly
+public actual inline fun minOf(a: Float, b: Float): Float {
+    return when {
+        a.isNaN() -> a
+        b.isNaN() -> b
+        else -> if (a.compareTo(b) <= 0) a else b
+    }
+}
 
 /**
  * Returns the smaller of two values.
@@ -229,7 +240,14 @@ public actual inline fun minOf(a: Float, b: Float): Float = if (a <= b) a else b
  * If either value is `NaN`, returns `NaN`.
  */
 @SinceKotlin("1.1")
-public actual inline fun minOf(a: Double, b: Double): Double = if (a <= b) a else b
+@kotlin.internal.InlineOnly
+public actual inline fun minOf(a: Double, b: Double): Double {
+    return when {
+        a.isNaN() -> a
+        b.isNaN() -> b
+        else -> if (a.compareTo(b) <= 0) a else b
+    }
+}
 
 /**
  * Returns the smaller of three values.
