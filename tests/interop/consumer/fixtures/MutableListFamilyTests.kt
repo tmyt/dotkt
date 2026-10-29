@@ -101,7 +101,8 @@ class MutableListFamilyTests {
         try { mutableSize(list) } catch (_: IllegalStateException) { failures++ }
         try { mutableEmpty(list) } catch (_: IllegalStateException) { failures++ }
         try { mutableFirst(list) } catch (_: IllegalStateException) { failures++ }
-        check(failures == 3)
+        try { list.shuffle() } catch (_: IllegalStateException) { failures++ }
+        check(failures == 4)
     }
 
     @TestAttribute fun sourceAuthoredExactMutableWitnessIsNotReopened() {

@@ -38,5 +38,12 @@ class PortableCollectionHelperTests {
         check((copy as Any) !== input && copy.sorted() == before.sorted())
         input.clear()
         check(copy.sorted() == before.sorted())
+        val captured: MutableList<*> = mutableListOf(7, 9)
+        exchangeFirstTwo(captured)
+        check(captured[0] == 9 && captured[1] == 7)
+        val collection: MutableCollection<*> = captured
+        check(mutableAliasSize(collection) == 2)
+        val map: MutableMap<*, *> = mutableMapOf("a" to 1, "b" to 2)
+        check(mutableMapAliasSize(map) == 2)
     }
 }
