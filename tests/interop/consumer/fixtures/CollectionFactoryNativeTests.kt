@@ -6,6 +6,10 @@ import System.Collections.Generic.ISet
 
 class CollectionFactoryNativeTests {
     @TestAttribute fun factoryListsRetainTheirNativeClosedElementFaces() {
+        val emptyListView = emptyList<Int>() as IReadOnlyList<Int>
+        check(emptyListView.Count == 0)
+        val emptySetView = emptySet<Int>() as System.Collections.Generic.IReadOnlyCollection<Int>
+        check(emptySetView.Count == 0)
         val list = listOf(1, 2, 3)
         check(NativeArrayWrites.First(list as IReadOnlyList<Int>) == 1)
         check(NativeArrayWrites.Sum(list as IReadOnlyList<Int>) == 6)

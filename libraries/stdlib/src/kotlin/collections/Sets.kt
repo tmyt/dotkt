@@ -33,6 +33,7 @@ internal object EmptySet : Set<Nothing>, Serializable {
  * Returns an empty read-only set.  The returned set is serializable (JVM).
  * @sample samples.collections.Collections.Sets.emptyReadOnlySet
  */
+@kotlin.clr.ClrCollectionFactory("set")
 public fun <T> emptySet(): Set<T> = EmptySet
 
 /**
