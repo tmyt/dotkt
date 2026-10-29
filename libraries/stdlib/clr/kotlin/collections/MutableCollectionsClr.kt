@@ -7,6 +7,8 @@
 
 package kotlin.collections
 
+import kotlin.random.*
+
 /**
  * Sorts elements in the list in-place according to their natural sort order.
  *
@@ -39,23 +41,24 @@ public actual fun <T> MutableList<T>.sortWith(comparator: Comparator<in T>): Uni
  *
  * Each element in the list gets replaced with the [value].
  */
-@kotlin.internal.InlineOnly
 @SinceKotlin("1.2")
-public actual inline fun <T> MutableList<T>.fill(value: T) {
-    for (index in 0 until size) this[index] = value
+public actual fun <T> MutableList<T>.fill(value: T): Unit {
+    for (index in 0..lastIndex) {
+        this[index] = value
+    }
 }
 
 /**
- * Randomly shuffles elements in this mutable list.
+ * Randomly shuffles elements in this list in-place.
+ *
+ * See: [A modern version of Fisher-Yates shuffle algorithm](https://en.wikipedia.org/wiki/Fisher%E2%80%93Yates_shuffle#The_modern_algorithm).
  */
-@kotlin.internal.InlineOnly
 @SinceKotlin("1.2")
-public actual inline fun <T> MutableList<T>.shuffle() {
-    // Fisher-Yates over size/get/set using the default platform Random.
-    for (i in size - 1 downTo 1) {
-        val j = kotlin.random.Random.Default.nextInt(i + 1)
-        val tmp = this[i]
+public actual fun <T> MutableList<T>.shuffle(): Unit {
+    for (i in lastIndex downTo 1) {
+        val j = Random.nextInt(i + 1)
+        val copy = this[i]
         this[i] = this[j]
-        this[j] = tmp
+        this[j] = copy
     }
 }

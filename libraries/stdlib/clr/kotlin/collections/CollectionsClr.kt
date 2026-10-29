@@ -55,11 +55,7 @@ internal actual inline fun <E> buildListInternal(capacity: Int, builderAction: M
  * Returns a new list with the elements of this collection randomly shuffled.
  */
 @SinceKotlin("1.2")
-public actual fun <T> Iterable<T>.shuffled(): List<T> {
-    val list = toMutableList()
-    list.shuffle()
-    return list
-}
+public actual fun <T> Iterable<T>.shuffled(): List<T> = toMutableList().apply { shuffle() }
 
 internal actual fun collectionToArray(collection: Collection<*>): Array<Any?> = collectionToArrayCommonImpl(collection)
 

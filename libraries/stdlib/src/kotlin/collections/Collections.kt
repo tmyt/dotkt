@@ -229,13 +229,7 @@ internal expect inline fun <E> buildListInternal(capacity: Int, builderAction: M
  * Returns an [IntRange] of the valid indices for this collection.
  * @sample samples.collections.Collections.Collections.indicesOfCollection
  */
-public val <T> Collection<T>.indices: IntRange
-    // CLR: element-generic (NOT the star-projected `Collection<*>`). A `<*>` receiver lowers to the reified
-    // `IReadOnlyCollection<object>`, which a VALUE-element runtime list (ArrayList<int> : IReadOnlyCollection<int>)
-    // does NOT implement — CLR generic covariance excludes value-type args — so `size` (get_Count) throws
-    // EntryPointNotFound. Carrying the element type `T` keeps the receiver `IReadOnlyCollection<T>` and the size read
-    // covariance-safe for value elements (the same shape as `List<T>.lastIndex` below). Source-compatible: any
-    // `Collection<X>` binds T=X. (#30)
+public val Collection<*>.indices: IntRange
     get() = 0..size - 1
 
 /**
