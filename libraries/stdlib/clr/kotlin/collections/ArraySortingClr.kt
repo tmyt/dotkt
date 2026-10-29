@@ -113,6 +113,224 @@ private fun <T> mergeSort(array: Array<T>, buffer: Array<T>, start: Int, end: In
     return target
 }
 
+// ByteArray    =============================================================================
+private fun partition(
+        array: ByteArray, left: Int, right: Int): Int {
+    var i = left
+    var j = right
+    val pivot = array[left + (right - left) / 2]
+    while (i <= j) {
+        while (array[i] < pivot)
+            i++
+        while (array[j] > pivot)
+            j--
+        if (i <= j) {
+            val tmp = array[i]
+            array[i] = array[j]
+            array[j] = tmp
+            i++
+            j--
+        }
+    }
+    return i
+}
+
+private fun quickSort(
+        array: ByteArray, left: Int, right: Int) {
+    val index = partition(array, left, right)
+    if (left < index - 1)
+        quickSort(array, left, index - 1)
+    if (index < right)
+        quickSort(array, index, right)
+}
+
+// ShortArray   =============================================================================
+private fun partition(
+        array: ShortArray, left: Int, right: Int): Int {
+    var i = left
+    var j = right
+    val pivot = array[left + (right - left) / 2]
+    while (i <= j) {
+        while (array[i] < pivot)
+            i++
+        while (array[j] > pivot)
+            j--
+        if (i <= j) {
+            val tmp = array[i]
+            array[i] = array[j]
+            array[j] = tmp
+            i++
+            j--
+        }
+    }
+    return i
+}
+
+private fun quickSort(
+        array: ShortArray, left: Int, right: Int) {
+    val index = partition(array, left, right)
+    if (left < index - 1)
+        quickSort(array, left, index - 1)
+    if (index < right)
+        quickSort(array, index, right)
+}
+
+// IntArray     =============================================================================
+private fun partition(
+        array: IntArray, left: Int, right: Int): Int {
+    var i = left
+    var j = right
+    val pivot = array[left + (right - left) / 2]
+    while (i <= j) {
+        while (array[i] < pivot)
+            i++
+        while (array[j] > pivot)
+            j--
+        if (i <= j) {
+            val tmp = array[i]
+            array[i] = array[j]
+            array[j] = tmp
+            i++
+            j--
+        }
+    }
+    return i
+}
+
+private fun quickSort(
+        array: IntArray, left: Int, right: Int) {
+    val index = partition(array, left, right)
+    if (left < index - 1)
+        quickSort(array, left, index - 1)
+    if (index < right)
+        quickSort(array, index, right)
+}
+
+// LongArray    =============================================================================
+private fun partition(
+        array: LongArray, left: Int, right: Int): Int {
+    var i = left
+    var j = right
+    val pivot = array[left + (right - left) / 2]
+    while (i <= j) {
+        while (array[i] < pivot)
+            i++
+        while (array[j] > pivot)
+            j--
+        if (i <= j) {
+            val tmp = array[i]
+            array[i] = array[j]
+            array[j] = tmp
+            i++
+            j--
+        }
+    }
+    return i
+}
+
+private fun quickSort(
+        array: LongArray, left: Int, right: Int) {
+    val index = partition(array, left, right)
+    if (left < index - 1)
+        quickSort(array, left, index - 1)
+    if (index < right)
+        quickSort(array, index, right)
+}
+
+// CharArray    =============================================================================
+private fun partition(
+        array: CharArray, left: Int, right: Int): Int {
+    var i = left
+    var j = right
+    val pivot = array[left + (right - left) / 2]
+    while (i <= j) {
+        while (array[i] < pivot)
+            i++
+        while (array[j] > pivot)
+            j--
+        if (i <= j) {
+            val tmp = array[i]
+            array[i] = array[j]
+            array[j] = tmp
+            i++
+            j--
+        }
+    }
+    return i
+}
+
+private fun quickSort(
+        array: CharArray, left: Int, right: Int) {
+    val index = partition(array, left, right)
+    if (left < index - 1)
+        quickSort(array, left, index - 1)
+    if (index < right)
+        quickSort(array, index, right)
+}
+
+// FloatArray   =============================================================================
+private fun partition(
+        array: FloatArray, left: Int, right: Int): Int {
+    var i = left
+    var j = right
+    val pivot = array[left + (right - left) / 2]
+    while (i <= j) {
+        while (array[i].compareTo(pivot) < 0)
+            i++
+        while (array[j].compareTo(pivot) > 0)
+            j--
+        if (i <= j) {
+            val tmp = array[i]
+            array[i] = array[j]
+            array[j] = tmp
+            i++
+            j--
+        }
+    }
+    return i
+}
+
+private fun quickSort(
+        array: FloatArray, left: Int, right: Int) {
+    val index = partition(array, left, right)
+    if (left < index - 1)
+        quickSort(array, left, index - 1)
+    if (index < right)
+        quickSort(array, index, right)
+}
+
+// DoubleArray  =============================================================================
+private fun partition(
+        array: DoubleArray, left: Int, right: Int): Int {
+    var i = left
+    var j = right
+    val pivot = array[left + (right - left) / 2]
+    while (i <= j) {
+        while (array[i].compareTo(pivot) < 0)
+            i++
+        while (array[j].compareTo(pivot) > 0)
+            j--
+        if (i <= j) {
+            val tmp = array[i]
+            array[i] = array[j]
+            array[j] = tmp
+            i++
+            j--
+        }
+    }
+    return i
+}
+
+private fun quickSort(
+        array: DoubleArray, left: Int, right: Int) {
+    val index = partition(array, left, right)
+    if (left < index - 1)
+        quickSort(array, left, index - 1)
+    if (index < right)
+        quickSort(array, index, right)
+}
+
+// Interfaces   =============================================================================
 /**
  * Sorts the subarray specified by [fromIndex] (inclusive) and [toIndex] (exclusive) parameters
  * using the merge sort algorithm with the given [comparator].
@@ -134,3 +352,14 @@ internal fun <T: Comparable<T>> sortArray(array: Array<out T>, fromIndex: Int, t
         mergeSort(array as Array<T>, fromIndex, toIndex - 1)
     }
 }
+
+/**
+ * Sorts the given array using qsort algorithm.
+ */
+internal fun sortArray(array: ByteArray, fromIndex: Int, toIndex: Int)    = quickSort(array, fromIndex, toIndex - 1)
+internal fun sortArray(array: ShortArray, fromIndex: Int, toIndex: Int)   = quickSort(array, fromIndex, toIndex - 1)
+internal fun sortArray(array: IntArray, fromIndex: Int, toIndex: Int)     = quickSort(array, fromIndex, toIndex - 1)
+internal fun sortArray(array: LongArray, fromIndex: Int, toIndex: Int)    = quickSort(array, fromIndex, toIndex - 1)
+internal fun sortArray(array: CharArray, fromIndex: Int, toIndex: Int)    = quickSort(array, fromIndex, toIndex - 1)
+internal fun sortArray(array: FloatArray, fromIndex: Int, toIndex: Int)   = quickSort(array, fromIndex, toIndex - 1)
+internal fun sortArray(array: DoubleArray, fromIndex: Int, toIndex: Int)  = quickSort(array, fromIndex, toIndex - 1)

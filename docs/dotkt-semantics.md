@@ -751,6 +751,12 @@ largest value with `NaN == NaN` structurally and `NaN.compareTo(NaN) == 0`. On t
 - Direct, generic and erased `Double`/`Float.compareTo` calls use `clrDoubleCompare`/`clrFloatCompare` (Kotlin total-order algorithm):
   `(-0.0).compareTo(0.0)` → **`-1`**, `Double.NaN.compareTo(1.0)` → **`1`**, `Double.NaN.compareTo(Double.NaN)` → **`0`**.
 
+  Kotlin FloatArray/DoubleArray sorting uses this total order as well: negative zero precedes positive zero and NaN
+  follows all non-NaN values. Primitive sorting does not promise stability between equal elements. The arrays
+  retain their native CLR storage; explicitly invoking `System.Array.Sort` retains the native CLR order.
+  The primitive implementation uses upstream Kotlin's recursive quicksort, not the BCL's introsort:
+  adversarial inputs can require quadratic comparisons and linear recursion depth.
+
 - Kotlin `==` and `Any.equals` use the same virtual equality rule through concrete, Any, nullable, generic,
   stored, callable-reference and DLL boundaries. Calls to authored/inherited CLR Object-slot overrides run exactly
   once, including self and null arguments; null tests and `!!` do not invoke equals. Merely implementing List/Set/Map

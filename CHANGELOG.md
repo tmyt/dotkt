@@ -7,6 +7,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Changed
 
+- Restore upstream primitive array sorting and common range validation, including Kotlin NaN/signed-zero order, while preserving native array storage and explicit CLR sort behavior.
 - Restore upstream generic array and mutable-list stable sorting, including range validation, and retain Kotlin floating-point total order through generic Comparable calls. Keep runtime method representation frames aligned with their paired reference declarations.
 - Restore upstream array fill range checks and make generic and primitive array iterators throw `NoSuchElementException` consistently after exhaustion without advancing their cursors.
 - Restore upstream array `asList` live views for generic, primitive and unsigned arrays, including iterators, sublists and floating-point search equality.
