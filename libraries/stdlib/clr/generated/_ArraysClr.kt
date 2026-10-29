@@ -1012,26 +1012,33 @@ public actual operator fun CharArray.plus(elements: CharArray): CharArray {
 @kotlin.internal.InlineOnly
 public actual inline fun <T> Array<T>.plusElement(element: T): Array<T> = this + element
 
-@kotlin.clr.ClrIntrinsic("System.Array.Sort")
-public actual fun IntArray.sort(): Unit { TODO("clr binding should be implemented") }
+public actual fun IntArray.sort(): Unit {
+    if (size > 1) sortArray(this, 0, size)
+}
 
-@kotlin.clr.ClrIntrinsic("System.Array.Sort")
-public actual fun LongArray.sort(): Unit { TODO("clr binding should be implemented") }
+public actual fun LongArray.sort(): Unit {
+    if (size > 1) sortArray(this, 0, size)
+}
 
-@kotlin.clr.ClrIntrinsic("System.Array.Sort")
-public actual fun ByteArray.sort(): Unit { TODO("clr binding should be implemented") }
+public actual fun ByteArray.sort(): Unit {
+    if (size > 1) sortArray(this, 0, size)
+}
 
-@kotlin.clr.ClrIntrinsic("System.Array.Sort")
-public actual fun ShortArray.sort(): Unit { TODO("clr binding should be implemented") }
+public actual fun ShortArray.sort(): Unit {
+    if (size > 1) sortArray(this, 0, size)
+}
 
-@kotlin.clr.ClrIntrinsic("System.Array.Sort")
-public actual fun DoubleArray.sort(): Unit { TODO("clr binding should be implemented") }
+public actual fun DoubleArray.sort(): Unit {
+    if (size > 1) sortArray(this, 0, size)
+}
 
-@kotlin.clr.ClrIntrinsic("System.Array.Sort")
-public actual fun FloatArray.sort(): Unit { TODO("clr binding should be implemented") }
+public actual fun FloatArray.sort(): Unit {
+    if (size > 1) sortArray(this, 0, size)
+}
 
-@kotlin.clr.ClrIntrinsic("System.Array.Sort")
-public actual fun CharArray.sort(): Unit { TODO("clr binding should be implemented") }
+public actual fun CharArray.sort(): Unit {
+    if (size > 1) sortArray(this, 0, size)
+}
 
 public actual fun <T : Comparable<T>> Array<out T>.sort(): Unit {
     if (size > 1) sortArray(this, 0, size)
@@ -1044,67 +1051,53 @@ public actual fun <T : Comparable<T>> Array<out T>.sort(fromIndex: Int = 0, toIn
     if (fromIndex < toIndex - 1) sortArray(this, fromIndex, toIndex)
 }
 
-// Adapt exclusive toIndex -> .NET length: System.Array.Sort(Array, index, length).
-@kotlin.clr.ClrIntrinsic("System.Array.Sort")
-private fun ByteArray.nativeSort(index: Int, length: Int): Unit = TODO("@Clr System.Array.Sort(Array,int,int)")
-
+@SinceKotlin("1.4")
 @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
 public actual fun ByteArray.sort(fromIndex: Int = 0, toIndex: Int = size): Unit {
-    nativeSort(fromIndex, toIndex - fromIndex)
+    AbstractList.checkRangeIndexes(fromIndex, toIndex, size)
+    if (fromIndex < toIndex - 1) sortArray(this, fromIndex, toIndex)
 }
 
-// Adapt exclusive toIndex -> .NET length: System.Array.Sort(Array, index, length).
-@kotlin.clr.ClrIntrinsic("System.Array.Sort")
-private fun ShortArray.nativeSort(index: Int, length: Int): Unit = TODO("@Clr System.Array.Sort(Array,int,int)")
-
+@SinceKotlin("1.4")
 @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
 public actual fun ShortArray.sort(fromIndex: Int = 0, toIndex: Int = size): Unit {
-    nativeSort(fromIndex, toIndex - fromIndex)
+    AbstractList.checkRangeIndexes(fromIndex, toIndex, size)
+    if (fromIndex < toIndex - 1) sortArray(this, fromIndex, toIndex)
 }
 
-// Adapt exclusive toIndex -> .NET length: System.Array.Sort(Array, index, length).
-@kotlin.clr.ClrIntrinsic("System.Array.Sort")
-private fun IntArray.nativeSort(index: Int, length: Int): Unit = TODO("@Clr System.Array.Sort(Array,int,int)")
-
+@SinceKotlin("1.4")
 @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
 public actual fun IntArray.sort(fromIndex: Int = 0, toIndex: Int = size): Unit {
-    nativeSort(fromIndex, toIndex - fromIndex)
+    AbstractList.checkRangeIndexes(fromIndex, toIndex, size)
+    if (fromIndex < toIndex - 1) sortArray(this, fromIndex, toIndex)
 }
 
-// Adapt exclusive toIndex -> .NET length: System.Array.Sort(Array, index, length).
-@kotlin.clr.ClrIntrinsic("System.Array.Sort")
-private fun LongArray.nativeSort(index: Int, length: Int): Unit = TODO("@Clr System.Array.Sort(Array,int,int)")
-
+@SinceKotlin("1.4")
 @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
 public actual fun LongArray.sort(fromIndex: Int = 0, toIndex: Int = size): Unit {
-    nativeSort(fromIndex, toIndex - fromIndex)
+    AbstractList.checkRangeIndexes(fromIndex, toIndex, size)
+    if (fromIndex < toIndex - 1) sortArray(this, fromIndex, toIndex)
 }
 
-// Adapt exclusive toIndex -> .NET length: System.Array.Sort(Array, index, length).
-@kotlin.clr.ClrIntrinsic("System.Array.Sort")
-private fun FloatArray.nativeSort(index: Int, length: Int): Unit = TODO("@Clr System.Array.Sort(Array,int,int)")
-
+@SinceKotlin("1.4")
 @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
 public actual fun FloatArray.sort(fromIndex: Int = 0, toIndex: Int = size): Unit {
-    nativeSort(fromIndex, toIndex - fromIndex)
+    AbstractList.checkRangeIndexes(fromIndex, toIndex, size)
+    if (fromIndex < toIndex - 1) sortArray(this, fromIndex, toIndex)
 }
 
-// Adapt exclusive toIndex -> .NET length: System.Array.Sort(Array, index, length).
-@kotlin.clr.ClrIntrinsic("System.Array.Sort")
-private fun DoubleArray.nativeSort(index: Int, length: Int): Unit = TODO("@Clr System.Array.Sort(Array,int,int)")
-
+@SinceKotlin("1.4")
 @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
 public actual fun DoubleArray.sort(fromIndex: Int = 0, toIndex: Int = size): Unit {
-    nativeSort(fromIndex, toIndex - fromIndex)
+    AbstractList.checkRangeIndexes(fromIndex, toIndex, size)
+    if (fromIndex < toIndex - 1) sortArray(this, fromIndex, toIndex)
 }
 
-// Adapt exclusive toIndex -> .NET length: System.Array.Sort(Array, index, length).
-@kotlin.clr.ClrIntrinsic("System.Array.Sort")
-private fun CharArray.nativeSort(index: Int, length: Int): Unit = TODO("@Clr System.Array.Sort(Array,int,int)")
-
+@SinceKotlin("1.4")
 @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
 public actual fun CharArray.sort(fromIndex: Int = 0, toIndex: Int = size): Unit {
-    nativeSort(fromIndex, toIndex - fromIndex)
+    AbstractList.checkRangeIndexes(fromIndex, toIndex, size)
+    if (fromIndex < toIndex - 1) sortArray(this, fromIndex, toIndex)
 }
 
 public actual fun <T> Array<out T>.sortWith(comparator: Comparator<in T>): Unit {
