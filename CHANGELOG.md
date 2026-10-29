@@ -7,6 +7,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Changed
 
+- Fix `Float.fromBits` and `Double.fromBits` by separating their Kotlin companion receivers from the native CLR bit-conversion arguments, including callable references and cross-DLL calls.
 - Restore upstream floating-point extrema bodies so `maxOf`/`minOf` preserve NaN and signed-zero semantics through pair, triple and vararg overloads.
 - Restore upstream signed integer parsing actuals, reusing the common overflow, bounds and radix checks instead of duplicate CLR-side parsers.
 - Restore upstream grouping counts and mutable-list fill/shuffle bodies, retaining existing CLR collection storage and closed-view collection indices. Preserve declaration-owned generic witnesses for captured alias arguments across DLL boundaries.
