@@ -40,6 +40,10 @@ fun <T : Comparable<T>, U : ComparisonBoundBox<Int?>> keepMixedBounds(value: T, 
 
 fun <T : Comparable<T>> compareImported(left: T, right: T): Int = left.compareTo(right)
 
+fun <T : Comparable<T>> sortImported(values: Array<T>) { values.sort() }
+fun <T> sortWithImported(values: Array<T>, comparator: Comparator<in T>) { values.sortWith(comparator) }
+fun <T> sortListImported(values: MutableList<T>, comparator: Comparator<in T>) { values.sortWith(comparator) }
+
 inline fun <T : Comparable<T>> compareInlineImported(left: T, right: T): Int = left.compareTo(right)
 
 fun <T : Comparable<T>> compareReferenceImported(left: T, right: T): Int {

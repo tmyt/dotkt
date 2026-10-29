@@ -13,6 +13,28 @@ private class NativeComparisonAdapter : NativeComparisonBase() {
 
 class ComparableDispatchTests {
     @TestAttribute
+    fun floatingComparisonAndStableSortsKeepKotlinPolicyAcrossDlls() {
+        check(compareImported(Double.NaN, 1.0) > 0 && compareImported(-0.0, 0.0) < 0)
+        check(compareReferenceImported(Double.NaN, 1.0) > 0 && compareReferenceImported(-0.0, 0.0) < 0)
+        check(compareInlineImported(Float.NaN, 1f) > 0 && compareInlineImported(-0f, 0f) < 0)
+        val values = arrayOf(Double.NaN, 1.0, 0.0, -0.0)
+        sortImported(values)
+        check(System.BitConverter.DoubleToInt64Bits(values[0]) == Long.MIN_VALUE)
+        check(System.BitConverter.DoubleToInt64Bits(values[1]) == 0L)
+        check(values[2] == 1.0 && values[3].isNaN())
+        val nullable = arrayOf<Double?>(Double.NaN, null, 1.0, -0.0, 0.0)
+        sortWithImported(nullable, nullsFirst(naturalOrder<Double>()))
+        check(nullable[0] == null && nullable[4]!!.isNaN())
+        check(System.BitConverter.DoubleToInt64Bits(nullable[1]!!) == Long.MIN_VALUE)
+        check(System.BitConverter.DoubleToInt64Bits(nullable[2]!!) == 0L)
+        val list = mutableListOf(Float.NaN, 1f, 0f, -0f)
+        sortListImported(list, naturalOrder<Float>())
+        check(System.BitConverter.SingleToInt32Bits(list[0]) == Int.MIN_VALUE)
+        check(System.BitConverter.SingleToInt32Bits(list[1]) == 0)
+        check(list[2] == 1f && list[3].isNaN())
+    }
+
+    @TestAttribute
     fun foreignComparableSelectorsKeepErasedResults() {
         val selector: (Int) -> Comparable<*>? = { GenericOnlyComparable(it) as Comparable<GenericOnlyComparable> }
         assertTrue(compareValuesBy(3, 8, selector) == -5)

@@ -244,8 +244,16 @@ sealed class Pipeline
         InheritedMemberOwnerBinding.ProjectOwners(birRoots, refs);
         var genericRepresentations = new GenericRepresentationPolicy(representationAliases, refs, birRoots);
         var restoreDefaultFrames = DefaultArgSplice.PrepareInlineDefaults(birRoots, refs);
+        // The runtime implementation consumes its paired reference declaration's
+        // ABI by exact source identity, independently of body-only demand. Ordinary
+        // app declarations do not inherit a same-named referenced library's frame.
+        var declaredMethodFrames = _options.SubstituteStdlibBuild
+            ? localDeclarationIds.Select(id => (Id: id, Frame: refs.NullableMethodFrame(id)))
+                .Where(pair => pair.Frame != null)
+                .ToDictionary(pair => pair.Id, pair => pair.Frame, StringComparer.Ordinal)
+            : null;
         var representationMethodFrames = NullableRepresentationMaterialization.Apply(
-            birRoots, isValueFqn, refs, policy: genericRepresentations);
+            birRoots, isValueFqn, refs, policy: genericRepresentations, declaredMethods: declaredMethodFrames);
         restoreDefaultFrames();
         // Preserve selected local factory facts before per-file transformations. In a
         // stdlib self-build these declarations are local, not referenced MethodDefs.
