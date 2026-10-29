@@ -134,5 +134,3 @@ internal fun <T: Comparable<T>> sortArray(array: Array<out T>, fromIndex: Int, t
         mergeSort(array as Array<T>, fromIndex, toIndex - 1)
     }
 }
-
-

@@ -84,7 +84,7 @@ class StableArraySortTests {
                 val native = values as System.Array
                 if (explicit == 0) values.sort()
                 else values.sortWith(Comparator { left, right -> left.key.compareTo(right.key) })
-                check(values === native && native.Length == size)
+                check((values as Any) === native && native.Length == size)
                 for (i in 1 until size) {
                     check(values[i - 1].key <= values[i].key)
                     if (values[i - 1].key == values[i].key) check(values[i - 1].tag < values[i].tag)
