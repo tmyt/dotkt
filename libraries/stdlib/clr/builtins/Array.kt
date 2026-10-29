@@ -52,6 +52,7 @@ public actual class Array<T> {
     public actual operator fun iterator(): Iterator<T> = object : Iterator<T> {
         private var index: Int = 0
         override fun hasNext(): Boolean = index < this@Array.size
-        override fun next(): T = this@Array[index++]
+        override fun next(): T =
+            if (index < this@Array.size) this@Array[index++] else throw NoSuchElementException("$index")
     }
 }

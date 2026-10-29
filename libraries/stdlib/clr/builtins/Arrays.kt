@@ -33,7 +33,8 @@ public actual constructor(size: Int) {
     public actual operator fun iterator(): ByteIterator = object : ByteIterator() {
         private var index: Int = 0
         override fun hasNext(): Boolean = index < this@ByteArray.size
-        override fun nextByte(): Byte = this@ByteArray[index++]
+        override fun nextByte(): Byte =
+            if (index < this@ByteArray.size) this@ByteArray[index++] else throw NoSuchElementException("$index")
     }
 }
 
@@ -51,7 +52,8 @@ public actual constructor(size: Int) {
     public actual operator fun iterator(): CharIterator = object : CharIterator() {
         private var index: Int = 0
         override fun hasNext(): Boolean = index < this@CharArray.size
-        override fun nextChar(): Char = this@CharArray[index++]
+        override fun nextChar(): Char =
+            if (index < this@CharArray.size) this@CharArray[index++] else throw NoSuchElementException("$index")
     }
 }
 
@@ -69,7 +71,8 @@ public actual constructor(size: Int) {
     public actual operator fun iterator(): ShortIterator = object : ShortIterator() {
         private var index: Int = 0
         override fun hasNext(): Boolean = index < this@ShortArray.size
-        override fun nextShort(): Short = this@ShortArray[index++]
+        override fun nextShort(): Short =
+            if (index < this@ShortArray.size) this@ShortArray[index++] else throw NoSuchElementException("$index")
     }
 }
 
@@ -87,7 +90,8 @@ public actual constructor(size: Int) {
     public actual operator fun iterator(): IntIterator = object : IntIterator() {
         private var index: Int = 0
         override fun hasNext(): Boolean = index < this@IntArray.size
-        override fun nextInt(): Int = this@IntArray[index++]
+        override fun nextInt(): Int =
+            if (index < this@IntArray.size) this@IntArray[index++] else throw NoSuchElementException("$index")
     }
 }
 
@@ -105,7 +109,8 @@ public actual constructor(size: Int) {
     public actual operator fun iterator(): LongIterator = object : LongIterator() {
         private var index: Int = 0
         override fun hasNext(): Boolean = index < this@LongArray.size
-        override fun nextLong(): Long = this@LongArray[index++]
+        override fun nextLong(): Long =
+            if (index < this@LongArray.size) this@LongArray[index++] else throw NoSuchElementException("$index")
     }
 }
 
@@ -123,7 +128,8 @@ public actual constructor(size: Int) {
     public actual operator fun iterator(): FloatIterator = object : FloatIterator() {
         private var index: Int = 0
         override fun hasNext(): Boolean = index < this@FloatArray.size
-        override fun nextFloat(): Float = this@FloatArray[index++]
+        override fun nextFloat(): Float =
+            if (index < this@FloatArray.size) this@FloatArray[index++] else throw NoSuchElementException("$index")
     }
 }
 
@@ -141,7 +147,8 @@ public actual constructor(size: Int) {
     public actual operator fun iterator(): DoubleIterator = object : DoubleIterator() {
         private var index: Int = 0
         override fun hasNext(): Boolean = index < this@DoubleArray.size
-        override fun nextDouble(): Double = this@DoubleArray[index++]
+        override fun nextDouble(): Double =
+            if (index < this@DoubleArray.size) this@DoubleArray[index++] else throw NoSuchElementException("$index")
     }
 }
 
@@ -159,6 +166,7 @@ public actual constructor(size: Int) {
     public actual operator fun iterator(): BooleanIterator = object : BooleanIterator() {
         private var index: Int = 0
         override fun hasNext(): Boolean = index < this@BooleanArray.size
-        override fun nextBoolean(): Boolean = this@BooleanArray[index++]
+        override fun nextBoolean(): Boolean =
+            if (index < this@BooleanArray.size) this@BooleanArray[index++] else throw NoSuchElementException("$index")
     }
 }
