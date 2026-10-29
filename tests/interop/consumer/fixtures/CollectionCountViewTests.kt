@@ -59,6 +59,7 @@ class CollectionCountViewTests {
         check((value as Collection<Any>).size == 3)
         val collection = value as Collection<Any>
         check(collection.size == 3)
+        check(collection.indices == 0..2)
     }
 
     @TestAttribute fun independentCollectionClosureIsNotDiscardedByAList() {
@@ -100,6 +101,7 @@ class CollectionCountViewTests {
         val strings = value as Collection<String>
         check(integers.size == 2)
         check(strings.size == 3)
+        check(integers.indices == 0..1 && strings.indices == 0..2)
         val projected: Collection<*> = integers
         var caught = false
         try { projected.size } catch (_: IllegalStateException) { caught = true }

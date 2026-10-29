@@ -229,7 +229,9 @@ internal expect inline fun <E> buildListInternal(capacity: Int, builderAction: M
  * Returns an [IntRange] of the valid indices for this collection.
  * @sample samples.collections.Collections.Collections.indicesOfCollection
  */
-public val Collection<*>.indices: IntRange
+public val <T> Collection<T>.indices: IntRange
+    // Retain the closed element view when one CLR object implements independent collection interfaces.
+    // A star receiver would discard that dispatch preference and make otherwise selected counts ambiguous.
     get() = 0..size - 1
 
 /**
