@@ -1,14 +1,16 @@
-@file:Suppress("ACTUAL_WITHOUT_EXPECT", "NO_ACTUAL_FOR_EXPECT", "UNCHECKED_CAST", "NOTHING_TO_INLINE", "NO_ACTUAL_CLASS_MEMBER_FOR_EXPECTED_CLASS")
-// Step-1 CLR stub mirroring JVM actual; bodies are TODO pending @Clr/BCL binding.
-// See docs/design-stdlib-compilation.md "THE CANONICAL ROADMAP".
-
+/*
+ * Copyright 2010-2023 JetBrains s.r.o. and Kotlin Programming Language contributors.
+ * Use of this source code is governed by the Apache 2.0 license that can be found in the license/LICENSE.txt file.
+ */
+@file:kotlin.jvm.JvmName("UnsignedKt")
 package kotlin
 
 import kotlin.internal.InlineOnly
 
-// Division/remainder are pure-Kotlin ports of the JVM actual (Guava's UnsignedLongs algorithm). They only run when
-// a call goes through the emitted method (e.g. `toString(radix)` below); a direct `a / b` on UInt/ULong is lowered
-// by the frontend to a raw `bin /` whose unsigned CLR operand type selects the native `div.un`/`rem.un` in ilemit.
+// CHANGES IN THIS FILE SHOULD BE SYNCED WITH THE SAME CHANGES IN: UnsignedJs.kt and kotlin-native/Unsigned.kt
+// Division and remainder are based on Guava's UnsignedLongs implementation
+// Copyright 2011 The Guava Authors
+
 @PublishedApi
 internal actual fun uintRemainder(v1: UInt, v2: UInt): UInt = (v1.toLong() % v2.toLong()).toUInt()
 
@@ -32,6 +34,7 @@ internal actual fun ulongDivide(v1: ULong, v2: ULong): ULong {
     val quotient = ((dividend ushr 1) / divisor) shl 1
     val rem = dividend - quotient * divisor
     return ULong(quotient + if (ULong(rem) >= ULong(divisor)) 1 else 0)
+
 }
 
 @PublishedApi
@@ -58,38 +61,37 @@ internal actual fun ulongRemainder(v1: ULong, v2: ULong): ULong {
 }
 
 @PublishedApi
-internal actual fun uintCompare(v1: Int, v2: Int): Int =
-    (v1.toLong() and 0xFFFFFFFFL).compareTo(v2.toLong() and 0xFFFFFFFFL)
+internal actual fun uintCompare(v1: Int, v2: Int): Int = (v1 xor Int.MIN_VALUE).compareTo(v2 xor Int.MIN_VALUE)
 
 @PublishedApi
-internal actual fun ulongCompare(v1: Long, v2: Long): Int =
-    (v1 xor Long.MIN_VALUE).compareTo(v2 xor Long.MIN_VALUE)
-
-@PublishedApi
-@InlineOnly
-internal actual inline fun uintToULong(value: Int): ULong = (value.toLong() and 0xFFFFFFFFL).toULong()
+internal actual fun ulongCompare(v1: Long, v2: Long): Int = (v1 xor Long.MIN_VALUE).compareTo(v2 xor Long.MIN_VALUE)
 
 @PublishedApi
 @InlineOnly
-internal actual inline fun uintToLong(value: Int): Long = value.toLong() and 0xFFFFFFFFL
+internal actual inline fun uintToULong(value: Int): ULong = ULong(uintToLong(value))
 
 @PublishedApi
 @InlineOnly
-internal actual inline fun uintToFloat(value: Int): Float = (value.toLong() and 0xFFFFFFFFL).toFloat()
+internal actual inline fun uintToLong(value: Int): Long = value.toLong() and 0xFFFF_FFFF
+
+@PublishedApi
+@InlineOnly
+internal actual inline fun uintToFloat(value: Int): Float = uintToDouble(value).toFloat()
 
 @PublishedApi
 @InlineOnly
 internal actual inline fun floatToUInt(value: Float): UInt = doubleToUInt(value.toDouble())
 
 @PublishedApi
-internal actual fun uintToDouble(value: Int): Double = (value.toLong() and 0xFFFFFFFFL).toDouble()
+internal actual fun uintToDouble(value: Int): Double = (value and Int.MAX_VALUE).toDouble() + (value ushr 31 shl 30).toDouble() * 2
 
 @PublishedApi
 internal actual fun doubleToUInt(value: Double): UInt = when {
-    value.isNaN() -> UInt.MIN_VALUE
+    value.isNaN() -> 0u
     value <= UInt.MIN_VALUE.toDouble() -> UInt.MIN_VALUE
     value >= UInt.MAX_VALUE.toDouble() -> UInt.MAX_VALUE
-    else -> value.toLong().toUInt()
+    value <= Int.MAX_VALUE -> value.toInt().toUInt()
+    else -> (value - Int.MAX_VALUE).toInt().toUInt() + Int.MAX_VALUE.toUInt()      // Int.MAX_VALUE < v < UInt.MAX_VALUE
 }
 
 @PublishedApi
@@ -101,42 +103,36 @@ internal actual inline fun ulongToFloat(value: Long): Float = ulongToDouble(valu
 internal actual inline fun floatToULong(value: Float): ULong = doubleToULong(value.toDouble())
 
 @PublishedApi
-internal actual fun ulongToDouble(value: Long): Double =
-    (value ushr 11).toDouble() * 2048 + (value and 2047L)
+internal actual fun ulongToDouble(value: Long): Double = (value ushr 11).toDouble() * 2048 + (value and 2047)
 
 @PublishedApi
 internal actual fun doubleToULong(value: Double): ULong = when {
-    value.isNaN() -> ULong.MIN_VALUE
+    value.isNaN() -> 0u
     value <= ULong.MIN_VALUE.toDouble() -> ULong.MIN_VALUE
     value >= ULong.MAX_VALUE.toDouble() -> ULong.MAX_VALUE
-    value < Long.MAX_VALUE.toDouble() -> value.toLong().toULong()
-    else -> ULong((value - 9223372036854775808.0).toLong() or Long.MIN_VALUE)
+    value < Long.MAX_VALUE -> value.toLong().toULong()
+
+    // Real values from Long.MAX_VALUE to (Long.MAX_VALUE + 1) are not representable in Double, so don't handle them.
+    else -> (value - 9223372036854775808.0).toLong().toULong() + 9223372036854775808uL      // Long.MAX_VALUE + 1 < v < ULong.MAX_VALUE
 }
 
 @InlineOnly
-internal actual inline fun uintToString(value: Int): String = value.toUInt().toString()
+internal actual inline fun uintToString(value: Int): String = uintToLong(value).toString()
 
 @InlineOnly
-internal actual inline fun uintToString(value: Int, base: Int): String = ulongToString(value.toLong() and 0xFFFFFFFFL, base)
+internal actual inline fun uintToString(value: Int, base: Int): String = ulongToString(uintToLong(value), base)
 
 @InlineOnly
-internal actual inline fun ulongToString(value: Long): String = value.toULong().toString()
+internal actual inline fun ulongToString(value: Long): String = ulongToString(value, 10)
 
-// Self-contained digit loop over the unsigned bit pattern via ulongDivide/ulongRemainder. Deliberately does NOT
-// delegate to `Long.toString(radix)` (the JVM actual's shape): that call site is still lowered to
-// System.Convert.ToString, which only supports bases 2/8/10/16 (see BirEmitter's toString(radix) lowering — kept
-// until the stdlib digit-loop body is fixed, master-task-inventory bundle 1). `base` is pre-checked by checkRadix
-// in the public UInt/ULong.toString(radix) wrappers.
 internal actual fun ulongToString(value: Long, base: Int): String {
-    if (value == 0L) return "0"
-    val digits = "0123456789abcdefghijklmnopqrstuvwxyz"
-    val b = ULong(base.toLong())
-    var n = value
-    val sb = StringBuilder()
-    while (n != 0L) {
-        sb.append(digits[ulongRemainder(ULong(n), b).toLong().toInt()])
-        n = ulongDivide(ULong(n), b).toLong()
+    if (value >= 0) return value.toString(base)
+
+    var quotient = ((value ushr 1) / base) shl 1
+    var rem = value - quotient * base
+    if (rem >= base) {
+        rem -= base
+        quotient += 1
     }
-    sb.reverse()
-    return sb.toString()
+    return quotient.toString(base) + rem.toString(base)
 }

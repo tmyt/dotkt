@@ -7,6 +7,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Changed
 
+- Restore the complete upstream unsigned numeric actuals, including masks, saturation and radix formatting, while retaining native CLR unsigned types and the existing signed formatter.
 - Fix `Float.fromBits` and `Double.fromBits` by separating their Kotlin companion receivers from the native CLR bit-conversion arguments, including callable references and cross-DLL calls.
 - Restore upstream floating-point extrema bodies so `maxOf`/`minOf` preserve NaN and signed-zero semantics through pair, triple and vararg overloads.
 - Restore upstream signed integer parsing actuals, reusing the common overflow, bounds and radix checks instead of duplicate CLR-side parsers.
