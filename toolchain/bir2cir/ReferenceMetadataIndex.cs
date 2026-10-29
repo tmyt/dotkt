@@ -8126,12 +8126,15 @@ sealed partial class ReferenceMetadataIndex
             const string companionPhysical = "probe.Owner+$Named";
             aliasIndex._companionPhysicalOwnerBySemanticType[companionSource] = companionPhysical;
             aliasIndex._companionSemanticTypeByPhysicalOwner["probe.Owner.$Named"] = companionSource;
+            aliasIndex._companionPhysicalOwnerBySemanticType["probe.Other.<companion:Named>"] = "probe.Other+$Named";
+            aliasIndex._companionSemanticTypeByPhysicalOwner["probe.Other.$Named"] = "probe.Other.<companion:Named>";
             var semanticCompanion = new TypeNode.Fqn(companionSource);
             foreach (var physical in new[] { companionPhysical, "probe.Owner.$Named" })
                 if (!aliasIndex.SemanticDeclarationDescribesCall(semanticCompanion, new TypeNode.Fqn(physical))
                     || !aliasIndex.SemanticDeclarationDescribesCall(new TypeNode.Fqn(physical), semanticCompanion))
                     throw new InvalidOperationException("Companion signature lost its trusted physical identity");
             if (aliasIndex.SemanticDeclarationDescribesCall(semanticCompanion, new TypeNode.Fqn("probe.Owner+$Other"))
+                || aliasIndex.SemanticDeclarationDescribesCall(semanticCompanion, new TypeNode.Fqn("probe.Other+$Named"))
                 || aliasIndex.SemanticDeclarationDescribesCall(semanticCompanion,
                     new TypeNode.Fqn(companionPhysical, new TypeNode[] { new TypeNode.Fqn("kotlin.Int") })))
                 throw new InvalidOperationException("Companion signature admitted an unrecorded carrier or generic arguments");
