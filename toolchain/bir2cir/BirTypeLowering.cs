@@ -856,10 +856,14 @@ static class BirTypeLowering
         if (node is JsonObject obj)
         {
             var here = force || IsAttributeClass(obj);
-            // Native arrays use their ordinary element form, matching the declaration-owned ordinary generic parameter.
+            // ROOT-V DEPTH: a list-CONSTRUCTION node's element type key is a generic type-argument of the
+            // built collection (depth >= 1), so it collapses like a `typeArgs` element — the literal `listOf(listOf(…))`
+            // must build a `List<IList<..>>` so it inhabits the collapsed consumer slot (pairnest). Native arrays
+            // use their ordinary element form, matching the declaration-owned ordinary generic parameter.
             var nodeK = (obj["k"] as JsonValue)?.GetValue<string>();
             if (nodeK == "new") ValidateCurrentNew(obj);
             if (nodeK == "conv") ValidateCurrentConv(obj);
+            var collCtor = nodeK == "newList";
             var arrayStorage = nodeK is "newArray" or "newArrayInit" or "newArraySized" or "spreadConcat"
                 or "arrayGet" or "arraySet" or "forArray";
             var copy = new JsonObject();
@@ -906,7 +910,7 @@ static class BirTypeLowering
                     copy[kv.Key] = LowerOwnerValued(kv.Value, refBuild, here);   // primitive-array owner stays kotlin.IntArray
                 else if (arrayStorage && kv.Key == "elem")
                     copy[kv.Key] = LowerTypeValued(kv.Value, refBuild, here, typeArg: false);
-                else if (kv.Key == "typeArgs")
+                else if (kv.Key == "typeArgs" || (collCtor && kv.Key == "elem"))
                     copy[kv.Key] = LowerTypeValued(kv.Value, refBuild, here, typeArg: true);   // Root V: depth>=1 positions collapse
                 // `to` is intentionally shared by two node kinds. Its role belongs to the parent discriminator:
                 // a conversion names a Type, while a range loop names an expression. Do not classify the value by
@@ -1122,8 +1126,8 @@ static class BirTypeLowering
     // A usually type-bearing key's value is one Type node or an array containing Type nodes. Declaration `params`
     // contains descriptors rather than raw types, so a non-Type object is an ordinary subtree and is walked
     // structurally rather than interpreted as a type.
-    // `typeArg` = this value sits at generic-argument DEPTH (a call/ctor `typeArgs` list element),
-    // so its element HEADS collapse per the Root-V rule.
+    // `typeArg` = this value sits at generic-argument DEPTH (a call/ctor `typeArgs` list element, or a collection-
+    // construction element key on newList), so its element HEADS collapse per the Root-V rule.
     // Default false: a `type`/`ret`/`argTypes`/`sig`/`base` head is depth-0 (keeps covariant); only its NESTED Args
     // collapse via LowerType's own `typeArg:true` recursion.
     static JsonNode LowerTypeValued(JsonNode val, bool refBuild, bool force, bool typeArg = false)

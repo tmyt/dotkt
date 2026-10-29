@@ -689,7 +689,7 @@ static partial class NullableTvErasureCallRealign
     //     at. Once the element IS the bare `object` that freedom is gone — the array factory canonicalized it
     //     (#86 D2) and it is a real `Array<X?>` value like any other — so that one form is deliberately not matched.
     //     (An array node with no `elem` slot at all reads as "not the bare object" and matches, like the rest.)
-    //   * a `new` — the Kotlin OBJECT-construction kind, and only that kind. A `.NET` `newClr`,
+    //   * a `new` — the Kotlin OBJECT-construction kind, and only that kind. A `.NET` `newClr`, a `newList`,
     //     `newClosure`, `newDelegate` and the rest are separate kinds and never match here. A `new` carries no `elem`
     //     slot, so the element test cannot narrow it and every `new` matches; that is the RIGHT answer rather than
     //     merely the safe one, because the main loop retypes a `new`'s own instantiation to the slot's BEFORE

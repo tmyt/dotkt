@@ -63,7 +63,8 @@ static class MemberCallSubstitution
     static ValueTypeOracle _isValue = _ => false;
     static GenericRepresentationPolicy _representations;
 
-    internal sealed record LocalFactory(string ArrayKind, string ArrayElementHint);
+    internal sealed record LocalFactory(string CollectionKind, string ArrayKind, string ArrayElementHint, int[] VarargPositions,
+        NullableRepresentationFrame Frame);
     static IReadOnlyDictionary<string, LocalFactory> _localFactories;
     static IReadOnlySet<string> _localDeclarationIds;
 
@@ -80,11 +81,20 @@ static class MemberCallSubstitution
                         || method["attrs"] is not JsonArray attributes) continue;
                     foreach (var attribute in attributes.OfType<JsonObject>())
                     {
-                        if (TypeJson.OwnerName(attribute["attr"]) != "kotlin.clr.ClrArrayFactory") continue;
+                        var marker = TypeJson.OwnerName(attribute["attr"]);
+                        if (marker is not ("kotlin.clr.ClrCollectionFactory" or "kotlin.clr.ClrArrayFactory")) continue;
                         var kind = Str(attribute["args"]?[0]?["value"]);
+                        var parameters = (JsonArray)method["params"];
+                        var varargs = parameters.Select((parameter, index) => (parameter, index))
+                            .Where(pair => pair.parameter?["mods"]?["vararg"]?.GetValue<bool>() == true)
+                            .Select(pair => pair.index).ToArray();
+                        var frame = Str(method[NullableRepresentationTypes.MethodFrameKey]) is string encoded
+                            ? NullableRepresentationFrame.Read(JsonNode.Parse(encoded)) : null;
+                        var isArray = marker == "kotlin.clr.ClrArrayFactory";
                         var elementHint = ArrayConstructionLowering.ArrayElementOf(TypeJson.Read(method["ret"]))
                             is TypeNode.Fqn element ? element.Name : null;
-                        result.Add(id, new LocalFactory(kind, elementHint));
+                        result.Add(id, new LocalFactory(isArray ? null : kind, isArray ? kind : null,
+                            elementHint, varargs, frame));
                     }
                 }
             if (owner["types"] is JsonArray types)
@@ -660,28 +670,33 @@ static class MemberCallSubstitution
         return result;
     }
 
-    // A selected @ClrArrayFactory declaration allocates a native array. Prefer its instantiated result stamp,
-    // which states the allocation element even when a spread input is narrower. Forwarded arrays and mixed
-    // spreadConcat packs use that same exact result element.
+    // A `callStatic owner=null` to a @ClrCollectionFactory/@ClrArrayFactory top-level fun -> its construction node, or
+    // null when the selected factory retains its ordinary implementation. Collection element TYPES come from the call's
+    // `typeArgs`; an array factory additionally prefers its instantiated result stamp, which states the allocation
+    // element even when a spread input is narrower. Collection elements come from a declared literal vararg pack,
+    // a non-vararg element, or an empty argument vector; forwarded collection packs retain the ordinary call.
+    // Array factories additionally handle forwarded arrays and spreadConcat directly.
     static JsonNode TryFactorySubst(JsonObject node, ReferenceMetadataIndex refs, SubstCtx ctx)
     {
         var args = node["args"] as JsonArray ?? new JsonArray();
         var typeArgs = node["typeArgs"] as JsonArray;
         var exactFactory = (node[DeclarationIdentityBinding.ReferencedFactoryKey] as JsonValue)?
             .TryGetValue<bool>(out var selectedFactory) == true && selectedFactory;
+        string collKind;
         string arrKind;
         string arrElemHint;
         var declarationId = Str(node[DeclarationIdentityBinding.Key]);
         _localFactories.TryGetValue(declarationId ?? "", out var localFactory);
         if (localFactory != null)
         {
+            collKind = localFactory.CollectionKind;
             arrKind = localFactory.ArrayKind;
             arrElemHint = localFactory.ArrayElementHint;
         }
         else if (exactFactory)
         {
             if (Str(node[DeclarationIdentityBinding.Key]) is not string selectedId
-                || !refs.TryDeclarationArrayFactory(selectedId, out arrKind, out arrElemHint))
+                || !refs.TryDeclarationFactory(selectedId, out collKind, out arrKind, out arrElemHint))
                 throw new InvalidOperationException(
                     $"bir2cir: selected referenced declaration identity '{node[DeclarationIdentityBinding.Key]}' lost its factory binding");
         }
@@ -690,6 +705,31 @@ static class MemberCallSubstitution
             // Factory semantics belong to the selected declaration. An unrelated local or
             // referenced function can have the same name as a standard factory.
             return null;
+        }
+
+        if (collKind != null)
+        {
+            var factoryElements = FactoryElems(args,
+                localFactory?.VarargPositions ?? refs.DeclarationFactoryVarargPositions(declarationId));
+            if (factoryElements == null) return null;
+            JsonNode RepresentationArgument(int index, NullableRepresentationFrame.Role role)
+            {
+                if (typeArgs == null) return null;
+                var frame = localFactory != null ? localFactory.Frame : refs.NullableMethodFrame(declarationId);
+                // Current declarations without companions have an identity frame. Factory elements
+                // use the same ordinary argument as their native vararg wrapper.
+                return typeArgs[frame?.SourcePosition(index) ?? index];
+            }
+            var elemT = RepresentationArgument(0, NullableRepresentationFrame.Role.Ordinary);
+            if (elemT == null) return null;                                     // can't reconstruct elem -> plain call
+            var elems = new JsonArray();
+            foreach (var el in factoryElements) elems.Add(el.DeepClone());
+            return CarryFactoryStaticType(node, collKind == "set"
+                ? KotlinHashStorageLowering.SetLiteral(TypeJson.Read(elemT), elems)
+                : new JsonObject
+            {
+                ["k"] = "newList", ["elem"] = elemT.DeepClone(), ["elems"] = elems,
+            });
         }
 
         if (arrKind != null)
@@ -768,11 +808,9 @@ static class MemberCallSubstitution
         return spread;
     }
 
-    // Retype each spreadConcat input to its exact physical element without asking ilemit to infer a
-    // conversion. A spread is an enumerable boundary: Enumerable.Cast<T> consumes every CLR array through its
-    // non-generic IEnumerable face and boxes value elements. Even equal source element types can have an opaque
-    // System.Array value ABI, which does not state IEnumerable<T>. A direct part is a scalar boundary: an explicit
-    // cast makes boxing/reference conversion part of CIR.
+    // A vararg pack owns its physical element conversions, independently of its callee.
+    // A generic array's System.Array value ABI does not prove IEnumerable<T>, even for
+    // equal logical elements. Normalize that boundary explicitly; ilemit only emits it.
     static void NormalizeSpreadParts(JsonObject spread, TypeNode targetElem, SubstCtx ctx)
     {
         if (spread["parts"] is not JsonArray parts) return;
@@ -800,6 +838,16 @@ static class MemberCallSubstitution
         }
     }
 
+    // A collection factory's source call already carries the frontend's exact instantiated result type — including
+    // the distinction between List/MutableList/ArrayList and Map/MutableMap/concrete map faces. Preserve that fact on
+    // the construction which replaces the call instead of asking an early structural consumer to guess the surface
+    // from a literal's physical allocation. BirTypeLowering consumes and removes `sty` before CIR.
+    static JsonObject CarryFactoryStaticType(JsonObject source, JsonObject construction)
+    {
+        if (source["sty"] is JsonNode sty) construction["sty"] = sty.DeepClone();
+        return construction;
+    }
+
     // The physical element of an array whose Kotlin element type is `elem` (#86, owned by NullableGenericErasure): an
     // array element is a reified ARGUMENT. The factories above build arrays AFTER the declaration-axis erasure has
     // run, so they apply the rule themselves rather than inheriting it from a sweep that has already gone by.
@@ -808,6 +856,18 @@ static class MemberCallSubstitution
 
     // The i-th call type argument (a structured Type node), or null when absent. The canonical element/key/value source.
     static JsonNode TypeArgAt(JsonArray typeArgs, int i) => typeArgs != null && i < typeArgs.Count ? typeArgs[i] : null;
+
+    // A literal pack can be decomposed only because the selected declaration says it
+    // occupies the vararg slot. A non-vararg array is one element. Forwarded packs
+    // retain the selected factory call and its ordinary iteration semantics.
+    static IEnumerable<JsonNode> FactoryElems(JsonArray args, int[] varargPositions)
+    {
+        if (varargPositions.Length == 0) return args;
+        if (varargPositions.Length == 1 && varargPositions[0] == 0 && args.Count == 1
+            && args[0] is JsonObject o && Str(o["k"]) == "newArray")
+            return (o["elems"] as JsonArray ?? new JsonArray());
+        return null;
+    }
 
     // Trusted stdlib runtime vocabulary: publish the same declaration-derived storage facts used by
     // classifier lowering. The runtime consumes closed CLR interfaces; it does not reinterpret Kotlin
@@ -892,12 +952,16 @@ static class MemberCallSubstitution
             // properties bind through their exact metadata association; local properties retain the semantic role until
             // the common forward allocator runs.
             var topLevelPropertyAccess = Str(node["prop"]);
-            // A selected local or referenced @ClrArrayFactory declaration owns the native array allocation.
-            // Handle it before ordinary top-level owner attribution.
+            // Collection/array FACTORY (`listOf`/`hashSetOf`/`hashMapOf`/`arrayOf`/`intArrayOf`/`arrayOfNulls`): a
+            // @ClrCollectionFactory/@ClrArrayFactory marker on the selected local or referenced declaration -> re-emit the
+            // physical collection/array construction (the recognition kotc used to do via its
+            // LIST/SET/MAP/ARRAY_FACTORY tables). Handled first so a factory never falls through to the plain top-level
+            // owner-attribution below. A non-decomposable form (`hashMapOf(pairVariable)` — not a `to`-Pair literal) returns
+            // null here and stays a plain call to the real factory body.
             var exactFactory = (node[DeclarationIdentityBinding.ReferencedFactoryKey] as JsonValue)?
                 .TryGetValue<bool>(out var selectedFactory) == true && selectedFactory;
             if (TryFactorySubst(node, refs, ctx) is JsonNode factoryNode) return factoryNode;
-            // A selected array factory that cannot be represented as a construction must call
+            // A selected factory that cannot be represented as a construction (notably hashMapOf(pairVariable)) must call
             // that exact declaration's body. Keep its semantic node intact for the late identity binder instead of
             // falling through to any erased owner/name/signature resolver in this pass.
             if (exactFactory) return null;

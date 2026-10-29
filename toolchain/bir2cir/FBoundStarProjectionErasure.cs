@@ -598,6 +598,10 @@ static partial class FBoundStarProjectionErasure
         key is "attrs" or "retAttrs" or "assemblyAttrs"
         || key is "ctors" or "fields" or "properties" or "methods" && BirTypeLowering.IsAttributeClass(owner)
         || key == "typeArgs" && ClrBoundNode.IsAny(Str(owner["k"]))
+        // List constructions allocate a native generic container. Its
+        // element is a CLR argument witness, not an array value slot.
+        // PhysicalValueCoercion authors the conversion at each insertion edge.
+        || key == "elem" && Str(owner["k"]) == "newList"
         || key is "params" or "ret"
         && (Bool(owner[KotlinPropertyAccessors.PhysicalSlotBridgeKey])
                 && new[] { "clrInterfaceImpls", "clrBaseImpls" }

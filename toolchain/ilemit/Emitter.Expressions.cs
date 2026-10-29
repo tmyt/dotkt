@@ -326,6 +326,27 @@ sealed partial class Emitter
                 foreach (var st in e.GetProperty("stmts").EnumerateArray()) EmitStmt(st);
                 return EmitExpr(e.GetProperty("result"));
             }
+            case "newList":
+            {
+                // `listOf(...)` -> new List<elem> { ... } via repeated Add.
+                var elem = MapType(e.GetProperty("elem"));
+                // The members a collection literal builds through are stated by the pass that minted the node,
+                // so the emitter stops deriving them from the constructed type.
+                var listCtor = RequiredRef<ConstructorInfo>(e, "ctorRef", "newList");
+                var add = RequiredRef<MethodInfo>(e, "addRef", "newList");
+                // …and so is the type it constructs: the constructor's OWN declaring type, anchored on the
+                // instantiation its reference states. Naming `List`1` here would be this layer deciding which BCL
+                // type a Kotlin list literal becomes, which is the producer's decision and is already recorded.
+                var listT = listCtor.DeclaringType;
+                EmitConstructor(_il, OpCodes.Newobj, listCtor);
+                foreach (var item in e.GetProperty("elems").EnumerateArray())
+                {
+                    _il.Emit(OpCodes.Dup);
+                    EmitArg(item, elem);
+                    EmitMethod(_il, OpCodes.Callvirt, add);
+                }
+                return listT;
+            }
             case "clrGenericStatic":
             {
                 // Generic static call (LINQ): resolve the scalar memberRef, apply MethodSpec arguments, and call.

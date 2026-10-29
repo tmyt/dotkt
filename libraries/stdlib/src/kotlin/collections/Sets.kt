@@ -83,6 +83,7 @@ public fun <T> mutableSetOf(vararg elements: T): MutableSet<T> = elements.toColl
 public inline fun <T> hashSetOf(): HashSet<T> = HashSet()
 
 /** Returns a new [HashSet] with the given elements. */
+@kotlin.clr.ClrCollectionFactory("set")
 public fun <T> hashSetOf(vararg elements: T): HashSet<T> = elements.toCollection(HashSet(mapCapacity(elements.size)))
 
 /**

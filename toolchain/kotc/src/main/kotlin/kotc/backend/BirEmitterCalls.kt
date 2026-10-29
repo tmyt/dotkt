@@ -1418,8 +1418,10 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 	// callable-ref / non-lambda action (`repeat(n, ::fn)` — not an IrFunctionExpression) falls through to the plain
 	// `callStatic kotlin.repeat`, which bir2cir's RepeatInlineLowering re-emits as a delegate counter loop.
 
-	// Collection/array factories are ordinary top-level callStatic nodes here, with ordinary vararg packs.
-	// Only bir2cir interprets a selected declaration's ClrArrayFactory binding and authors its native allocation.
+	// Collection/array factories are ordinary top-level callStatic nodes here; their varargs remain newArray nodes.
+	// Only bir2cir interprets a selected declaration's ClrCollectionFactory/ClrArrayFactory binding and authors its
+	// physical allocation, including decomposition of a marked hash-map factory's inline Pair arguments. Unmarked
+	// ordered factories and non-decomposable arguments retain their ordinary Kotlin calls.
 
 	// Unsigned<->signed byte-array reinterpret (#76) — `UByteArray.toByteArray()` / `ByteArray.toUByteArray()` — is
 	// NOT lowered here: it is a CLR-representation fact ("UByteArray IS byte[]"), so kotc emits the FAITHFUL top-level
@@ -2242,7 +2244,7 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 		return """{"k":"callStatic","ownerType":$ownerType,"method":${str(name)}${overloadSigField(callee)}$ta${retHintStr(ta.isNotEmpty() || selectedOwner != null, effRet)},"args":[$args]${suspendCallTag(callee)}}"""
 	}
 	// #199 DESIGN B — TWO-AXIS top-level call encoding. `owner:null` is LOAD-BEARING BIR vocabulary meaning "this is
-	// a top-level call": ~12 bir2cir recognizers key on it (@ClrIntrinsic/@ClrArrayFactory
+	// a top-level call": ~12 bir2cir recognizers key on it (@ClrIntrinsic/@ClrCollectionFactory/@ClrArrayFactory
 	// substitution, Precondition/Repeat/Enum/ForIn/CharSeq lowerings, …). So a same-module top-level call KEEPS
 	// `owner:null` (the substitution/recognition axis — UNTOUCHED) and instead carries `calleeOwner`, the
 	// FIR-resolved callee file-class (the mandatory DISPATCH axis — the owner-null recognition machinery IGNORES it, while
@@ -2374,7 +2376,7 @@ internal fun BirEmitter.clrFlagsOperationTag(callee: org.jetbrains.kotlin.ir.dec
 
 /** #199/#204: the `,"calleeOwner":<fileClassFqn>` mandatory DISPATCH identity on a top-level `callStatic` whose `owner` stays
  *  `null`. `owner:null` is the load-bearing "top-level call" axis ~12 bir2cir owner-null recognizers key on
- *  (@ClrIntrinsic/@ClrArrayFactory substitution, Precondition/Repeat/Enum/ForIn/CharSeq
+ *  (@ClrIntrinsic/@ClrCollectionFactory/@ClrArrayFactory substitution, Precondition/Repeat/Enum/ForIn/CharSeq
  *  lowerings, …); calleeOwner is a SEPARATE axis those passes ignore (they carry it through DeepClone or
  *  legitimately drop it when replacing a recognized call). ONLY ilemit's callStatic dispatch consults it — mirroring
  *  `sty`, a frontend-resolved per-node fact consumed downstream without re-resolution. Same-module declarations use

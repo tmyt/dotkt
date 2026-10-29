@@ -200,15 +200,15 @@ static class DeclarationIdentityBinding
                     obj[ReferencedIntrinsicKey] = true;
                     return;
                 }
-                // Array factories have a native CLR representation rather than an ordinary call.
-                // Preserve the owner-less call until MemberCallSubstitution consumes the
+                // Collection/array factories also have a semantic CLR representation rather than an ordinary call in
+                // the decomposable case. Preserve the owner-less call until MemberCallSubstitution consumes the
                 // factory marker belonging to THIS selected declaration. Looking the marker up by method name after
                 // erasure would repeat the overload-selection bug this pass exists to remove.
                 // Only a call can be replaced by the factory construction representation. A direct delegate targets
                 // the real factory MethodDef, and a call whose exact substitution already declined (the marker is
                 // present at the late bind) must also fall through to that same exact physical MethodDef. Re-marking
                 // either shape would strand the authoritative identity at the final fail-closed gate.
-                if (refs.TryDeclarationArrayFactory(id, out _, out _)
+                if (refs.TryDeclarationFactory(id, out _, out _, out _)
                     && nodeKind == "callStatic"
                     && (obj[ReferencedFactoryKey] == null || deferUnknown))
                 {

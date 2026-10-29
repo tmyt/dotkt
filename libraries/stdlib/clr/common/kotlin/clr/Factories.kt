@@ -3,8 +3,23 @@
  * Use of this source code is governed by the Apache 2.0 license that can be found in the license/LICENSE.txt file.
  */
 
-// Array binding annotations must be visible to common sources such as the unsigned array factories.
+// The collection/array FACTORY binding markers. Defined in the COMMON source set (not the platform
+// clr/kotlin/clr/ClrIntrinsic.kt) because they annotate factory bodies that live in COMMON stdlib sources — `listOf`/
+// `hashSetOf` in kotlin.collections, the unsigned `ubyteArrayOf`/... array factories — and a common source cannot
+// reference a platform-only declaration under the jar's multi-platform (`-Xcommon-sources`) compile. Placed in common,
+// both common and platform (clr/builtins/Library.kt) sources can annotate their factories. The other kotlin.clr bindings
+// (@ClrIntrinsic/@ClrConv/@ClrProperty/@ClrRefArgument) stay platform-only.
 package kotlin.clr
+
+// Marks a collection FACTORY top-level function (`listOf`/`hashSetOf`/`mutableListOf`/`emptyList`/...): a call to it
+// CONSTRUCTS the backing BCL collection directly (`kind` = "list" -> `List<T>`, "set" -> `HashSet<T>`) instead of
+// calling the Kotlin body. bir2cir reads this marker off the REFERENCE assembly (NOT kotc) and authors the physical
+// allocation: lists use `newList`; sets use ordinary valueBlock/newClr/call nodes with an explicit Kotlin comparer.
+// The element type comes from the call's `typeArgs[0]`; elements come from its literal vararg pack, lone non-vararg
+// element, or empty argument vector. Forwarded packs retain the Kotlin call. Map factories and insertion-ordered
+// set factories retain their Kotlin bodies, which own their storage and ordering contracts.
+@Target(AnnotationTarget.FUNCTION, AnnotationTarget.CONSTRUCTOR)
+public annotation class ClrCollectionFactory(val kind: String)
 
 // Marks an array FACTORY top-level function (`arrayOf`/`intArrayOf`/.../`arrayOfNulls`): a call to it CONSTRUCTS a native
 // CLR array. bir2cir reads this marker off the REFERENCE assembly and emits `{k:newArray}` (from the vararg elements) for

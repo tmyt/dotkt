@@ -156,7 +156,7 @@ static partial class SuspendColdLowering
                 ? Direct(o, true, "recv", "arg")
                 : Direct(o, true, "recv"),
             "constrainedCall" => Call(o, hasReceiver: true),
-            "newArray" => List(o, "elems"),
+            "newArray" or "newList" => List(o, "elems"),
             "newArraySized" => Direct(o, false, "size"),
             "newArrayInit" => Direct(o, false, "size", "init"),
             "spreadConcat" => ListMember(o, "parts", "e"),

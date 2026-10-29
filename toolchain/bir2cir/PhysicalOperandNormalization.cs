@@ -54,6 +54,7 @@ static class PhysicalOperandNormalization
     static readonly Dictionary<string, string> ConstructionValueLists = new(StringComparer.Ordinal)
     {
         ["newArray"] = "elems",
+        ["newList"] = "elems",
     };
 
     // Node kinds whose value operands are named fields rather than `recv` + `args`. Keep the physical evaluation
