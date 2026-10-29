@@ -75,10 +75,11 @@ class PrimitiveArraySortTests {
         check(longs.contentEquals(longArrayOf(Long.MIN_VALUE, -1, 0, 1, Long.MAX_VALUE)))
         check((longs as Any) === ln)
         assertNativePrimitiveValues(ln, longs.map { it as Any? })
-        val chars = charArrayOf('\uffff', 'a', '\ud800', '\u0000', '\udfff')
+        val codes = intArrayOf(0xffff, 97, 0xd800, 0, 0xdfff)
+        val chars = CharArray(codes.size) { codes[it].toChar() }
         val cn = chars as System.Array
         chars.sort()
-        check(chars.contentEquals(charArrayOf('\u0000', 'a', '\ud800', '\udfff', '\uffff')))
+        check(chars.map { it.code } == listOf(0, 97, 0xd800, 0xdfff, 0xffff))
         check((chars as Any) === cn)
         assertNativePrimitiveValues(cn, chars.map { it as Any? })
     }
