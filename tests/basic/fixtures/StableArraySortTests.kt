@@ -5,6 +5,11 @@ private fun <T : Comparable<T>> stableGenericCompare(left: T, right: T): Int = l
 private fun stableDoubleCompare(left: Double, right: Double): Int = left.compareTo(right)
 private fun stableFloatCompare(left: Float, right: Float): Int = left.compareTo(right)
 
+private class StableFloatingComparison : Comparable<Double> {
+    var calls = 0
+    override fun compareTo(other: Double): Int { calls++; return if (other.isNaN()) 73 else -19 }
+}
+
 @Suppress("UNCHECKED_CAST")
 private fun <T : Comparable<T>> assertFloatingComparisons(values: Array<T>) {
     for (i in values.indices) for (j in values.indices) {
@@ -57,6 +62,18 @@ class StableArraySortTests {
             assertEquals(expected, stableDoubleCompare(doubles[i], doubles[j]).compareTo(0))
             assertEquals(expected, stableFloatCompare(floats[i], floats[j]).compareTo(0))
         }
+        @Suppress("UNCHECKED_CAST")
+        val erased = (1.0 as Any) as Comparable<Any?>
+        var rejected = false
+        try { erased.compareTo(1f) } catch (_: IllegalArgumentException) { rejected = true }
+        check(rejected && erased.compareTo(null) > 0)
+        val authored = StableFloatingComparison()
+        val typed: Comparable<Double> = authored
+        assertEquals(73, typed.compareTo(Double.NaN))
+        @Suppress("UNCHECKED_CAST")
+        val authoredErased = authored as Comparable<Any>
+        assertEquals(73, authoredErased.compareTo(Double.NaN))
+        assertEquals(2, authored.calls)
     }
 
     @TestAttribute fun explicitNativeFloatingComparisonRetainsClrPolicy() {
@@ -98,6 +115,13 @@ class StableArraySortTests {
         check(nullable.contentEquals(arrayOf<Int?>(null, null, 1, 2)))
         val strings = arrayOf("c", "a", "b"); strings.sort()
         check(strings.contentEquals(arrayOf("a", "b", "c")))
+        for (explicit in 0..1) {
+            val numbers = arrayOf(3, 1, 2)
+            val native = numbers as System.Array
+            if (explicit == 0) numbers.sort() else numbers.sortWith(naturalOrder())
+            check((numbers as Any) === native && native.Length == 3)
+            for (i in numbers.indices) assertEquals(i + 1, native.GetValue(i))
+        }
     }
 
     @TestAttribute fun arrayRangesValidateBeforeComparingOrWriting() {
@@ -165,6 +189,16 @@ class StableArraySortTests {
         try { values.sortWith(comparator, 1, 4) }
         catch (actual: IllegalStateException) { check(actual === failure); caught = true }
         check(caught && comparisons == 1 && values.contentEquals(arrayOf(99, 3, 2, 1, 88)))
+        comparisons = 0
+        caught = false
+        val later = arrayOf(99, 3, 2, 1, 0, 88)
+        try { later.sortWith(Comparator { a, b ->
+            comparisons++
+            if (comparisons == 4) throw failure
+            a.compareTo(b)
+        }, 1, 5) }
+        catch (actual: IllegalStateException) { check(actual === failure); caught = true }
+        check(caught && comparisons == 4 && later[0] == 99 && later[5] == 88)
     }
 
     @TestAttribute fun floatingSortsKeepSignedZerosAndStableNanPayloads() {
