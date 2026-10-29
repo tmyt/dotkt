@@ -85,6 +85,39 @@ class PrimitiveArraySortTests {
     }
 
     @TestAttribute fun allPrimitiveRangesSortOnlyTheirSelectedElements() {
+        for (pattern in 0..5) {
+            val size = 2048
+            val input = IntArray(size) { i ->
+                when (pattern) {
+                    0 -> i
+                    1 -> size - i
+                    2 -> 7
+                    3 -> if (i % 2 == 0) i else -i
+                    4 -> (i * 7919) % 4093 - 2046
+                    else -> i
+                }
+            }
+            if (pattern == 5) for (right in 1 until size) {
+                val middle = right / 2
+                val saved = input[right]
+                input[right] = input[middle]
+                input[middle] = saved
+            }
+            val b = ByteArray(size) { input[it].toByte() }
+            val be = b.toList().sorted(); b.sort(); check(b.toList() == be)
+            val s = ShortArray(size) { input[it].toShort() }
+            val se = s.toList().sorted(); s.sort(); check(s.toList() == se)
+            val n = input.copyOf()
+            val ne = n.toList().sorted(); n.sort(); check(n.toList() == ne)
+            val l = LongArray(size) { input[it].toLong() }
+            val le = l.toList().sorted(); l.sort(); check(l.toList() == le)
+            val c = CharArray(size) { input[it].toChar() }
+            val ce = c.toList().sorted(); c.sort(); check(c.toList() == ce)
+            val f = FloatArray(size) { input[it].toFloat() }
+            val fe = f.toList().sorted(); f.sort(); check(f.toList() == fe)
+            val d = DoubleArray(size) { input[it].toDouble() }
+            val de = d.toList().sorted(); d.sort(); check(d.toList() == de)
+        }
         for (size in 0..8) for (from in 0..size) for (to in from..size) {
             val input = List(size) { (size - it) % 5 }
             val b = ByteArray(size) { input[it].toByte() }; b.sort(from, to)
@@ -154,6 +187,13 @@ class PrimitiveArraySortTests {
         }
         val d = doubles.copyOf(); d.sort(); assertDoubleSort(doubles, d)
         val f = floats.copyOf(); f.sort(); assertFloatSort(floats, f)
+        val expectedD = doubleArrayOf(Double.NEGATIVE_INFINITY, -2.0, -0.0, 0.0, 2.0, Double.POSITIVE_INFINITY)
+        val expectedF = floatArrayOf(Float.NEGATIVE_INFINITY, -2f, -0f, 0f, 2f, Float.POSITIVE_INFINITY)
+        for (i in expectedD.indices) {
+            assertEquals(System.BitConverter.DoubleToInt64Bits(expectedD[i]), System.BitConverter.DoubleToInt64Bits(d[i]))
+            assertEquals(System.BitConverter.SingleToInt32Bits(expectedF[i]), System.BitConverter.SingleToInt32Bits(f[i]))
+        }
+        check(d[6].isNaN() && d[7].isNaN() && f[6].isNaN() && f[7].isNaN())
     }
 
     @TestAttribute fun floatingDerivedSortingApisKeepInputsAndKotlinOrder() {
