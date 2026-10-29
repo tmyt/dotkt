@@ -43,7 +43,8 @@ public actual fun <T> MutableList<T>.sortWith(comparator: Comparator<in T>): Uni
  */
 @SinceKotlin("1.2")
 public actual fun <T> MutableList<T>.fill(value: T): Unit {
-    for (index in 0..lastIndex) {
+    // List.lastIndex may select a different native read-only face; keep mutable bounds and writes together.
+    for (index in 0 until size) {
         this[index] = value
     }
 }
@@ -55,7 +56,7 @@ public actual fun <T> MutableList<T>.fill(value: T): Unit {
  */
 @SinceKotlin("1.2")
 public actual fun <T> MutableList<T>.shuffle(): Unit {
-    for (i in lastIndex downTo 1) {
+    for (i in size - 1 downTo 1) {
         val j = Random.nextInt(i + 1)
         val copy = this[i]
         this[i] = this[j]

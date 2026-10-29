@@ -57,13 +57,13 @@ class PortableCollectionHelperTests {
     }
 
     @TestAttribute fun groupingCountsPreserveNullKeysEqualityAndEncounterOrder() {
-        val values = listOf(2, 1, 2, 0, 1, 0)
+        val values = listOf(2, 1, 2, 0, 0, 2)
         val source = PortableHelperGrouping(values) { n: Int -> if (n == 0) null else PortableHelperKey(n) }
         val result = source.eachCount()
         check(source.starts == 1 && source.visits == values.size)
         check(result.keys.map { it?.value } == listOf(2, 1, null))
-        check(result[PortableHelperKey(2)] == 2 && result[PortableHelperKey(1)] == 2 && result[null] == 2)
-        check(result.values.toList() == listOf(2, 2, 2))
+        check(result[PortableHelperKey(2)] == 3 && result[PortableHelperKey(1)] == 1 && result[null] == 2)
+        check(result.values.toList() == listOf(3, 1, 2))
         check(source.eachCount() == result)
         check(source.starts == 2 && source.visits == 2 * values.size)
         val empty = PortableHelperGrouping(emptyList<Int>()) { it }
@@ -78,6 +78,9 @@ class PortableCollectionHelperTests {
         val fill: (String?) -> Unit = values::fill
         fill("filled")
         check(values.values == listOf("filled", "filled", "filled") && values.writes == 6)
+        val unboundFill: (MutableList<String?>, String?) -> Unit = MutableList<String?>::fill
+        unboundFill(values, "unbound")
+        check(values.values == listOf("unbound", "unbound", "unbound") && values.writes == 9)
         val empty = PortableHelperList(mutableListOf<Int>())
         empty.fill(9)
         check(empty.writes == 0 && empty.isEmpty())
@@ -97,6 +100,13 @@ class PortableCollectionHelperTests {
         check(values.values.sorted() == input.sorted())
         values.shuffle()
         check(values.writes == 4 * (input.size - 1) && values.values.sorted() == input.sorted())
+        val star: MutableList<*> = values
+        star.shuffle()
+        val projected: MutableList<out Int> = values
+        projected.shuffle()
+        val unboundShuffle: (MutableList<Int>) -> Unit = MutableList<Int>::shuffle
+        unboundShuffle(values)
+        check(values.writes == 10 * (input.size - 1) && values.values.sorted() == input.sorted())
         val empty = PortableHelperList(mutableListOf<Int>())
         empty.shuffle(); check(empty.writes == 0)
         val single = PortableHelperList(mutableListOf("only"))

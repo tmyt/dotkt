@@ -293,6 +293,9 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   `IList<T>` contract and that interface's `ICollection<T>` parent. Readonly List faces do not participate,
   even for the same element type. Raw `IList` is used only when no eligible generic mutable List view exists;
   it cannot hide mutable-view ambiguity or a native getter exception. Kotlin emptiness overrides still win.
+  Mutable-list fill and shuffle therefore obtain their loop bounds from the mutable receiver's size.
+  The upstream read-only List.lastIndex shortcut can select a different native Count even for the same element type;
+  this narrow bound adaptation keeps reads and writes on the selected mutable view.
   An existing generic Count view retains precedence; raw Count
   is used only when no eligible generic Collection face exists, not to mask an ambiguous view or a failing getter. Pinned by `RawCollectionIsEmptyTests`,
   `ProjectedIsEmptyOverrideTests`, `CollectionCountViewTests`, `MutableListFamilyTests`, and `ProjectedEmptinessTests`.

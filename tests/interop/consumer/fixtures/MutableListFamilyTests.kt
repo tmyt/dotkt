@@ -57,6 +57,24 @@ class MutableListFamilyTests {
         check(mutableFirst(source as MutableList<*>) == 7)
         check((source as List<*>).size == 3)
         check((source as List<*>)[0] == 100)
+        val fillNative = SameElementList()
+        val fillView = (fillNative as Any) as MutableList<Int>
+        fillView.fill(42)
+        check(fillView.size == 2 && fillView[0] == 42 && fillView[1] == 42)
+        check(((fillNative as Any) as List<*>).size == 3)
+        fillNative.Clear()
+        fillView.fill(42)
+        fillView.shuffle()
+        check(fillView.isEmpty())
+        val shuffleNative = SameElementList()
+        val shuffleView = (shuffleNative as Any) as MutableList<Int>
+        shuffleView.shuffle()
+        check(shuffleView.size == 2)
+        check((shuffleView[0] == 7 && shuffleView[1] == 9) || (shuffleView[0] == 9 && shuffleView[1] == 7))
+        val star: MutableList<*> = shuffleView
+        star.shuffle()
+        check((shuffleView[0] == 7 && shuffleView[1] == 9) || (shuffleView[0] == 9 && shuffleView[1] == 7))
+        check(((shuffleNative as Any) as List<*>)[0] == 100)
     }
 
     @TestAttribute fun rawIListRemainsUsable() {
