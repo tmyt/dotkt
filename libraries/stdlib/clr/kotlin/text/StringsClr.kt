@@ -65,10 +65,23 @@ internal fun String.nativeLastIndexOfString(str: String, fromIndex: Int): Int {
 }
 
 @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
-public actual fun String?.equals(other: String?, ignoreCase: Boolean = false): Boolean =
-    if (this == null || other == null) this === other
-    else if (!ignoreCase) this == other
-    else this.uppercase() == other.uppercase()
+public actual fun String?.equals(other: String?, ignoreCase: Boolean = false): Boolean {
+    if (this == null) return other == null
+    if (other == null) return false
+    if (!ignoreCase) return this == other
+
+    if (this.length != other.length) return false
+
+    for (index in 0 until this.length) {
+        val thisChar = this[index]
+        val otherChar = other[index]
+        if (!thisChar.equals(otherChar, ignoreCase)) {
+            return false
+        }
+    }
+
+    return true
+}
 
 // .NET String.Replace(char, char) is an ordinal replacement, matching Kotlin's case-sensitive replace.
 @kotlin.clr.ClrIntrinsic("Replace")
@@ -274,25 +287,16 @@ public actual fun String.substring(startIndex: Int, endIndex: Int): String =
     nativeSubstring(startIndex, endIndex - startIndex)
 
 @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
-public actual fun String.startsWith(prefix: String, ignoreCase: Boolean = false): Boolean {
-    if (this.length < prefix.length) return false
-    val region = this.substring(0, prefix.length)
-    return if (!ignoreCase) region == prefix else region.uppercase() == prefix.uppercase()
-}
+public actual fun String.startsWith(prefix: String, ignoreCase: Boolean = false): Boolean =
+    regionMatches(0, prefix, 0, prefix.length, ignoreCase)
 
 @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
-public actual fun String.startsWith(prefix: String, startIndex: Int, ignoreCase: Boolean = false): Boolean {
-    if (startIndex < 0 || startIndex + prefix.length > this.length) return false
-    val region = this.substring(startIndex, startIndex + prefix.length)
-    return if (!ignoreCase) region == prefix else region.uppercase() == prefix.uppercase()
-}
+public actual fun String.startsWith(prefix: String, startIndex: Int, ignoreCase: Boolean = false): Boolean =
+    regionMatches(startIndex, prefix, 0, prefix.length, ignoreCase)
 
 @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
-public actual fun String.endsWith(suffix: String, ignoreCase: Boolean = false): Boolean {
-    if (this.length < suffix.length) return false
-    val region = this.substring(this.length - suffix.length)
-    return if (!ignoreCase) region == suffix else region.uppercase() == suffix.uppercase()
-}
+public actual fun String.endsWith(suffix: String, ignoreCase: Boolean = false): Boolean =
+    regionMatches(length - suffix.length, suffix, 0, suffix.length, ignoreCase)
 
 @kotlin.internal.InlineOnly
 public actual inline fun String(chars: CharArray): String = chars.concatToString()
@@ -300,15 +304,37 @@ public actual inline fun String(chars: CharArray): String = chars.concatToString
 @kotlin.internal.InlineOnly
 public actual inline fun String(chars: CharArray, offset: Int, length: Int): String = chars.concatToString(offset, offset + length)
 
-// Ordinal comparison: Kotlin's String.compareTo is ordinal, while .NET's default String.CompareTo/Compare
-// is culture-sensitive; bound here to the explicitly-ordinal System.String.CompareOrdinal static method.
-@kotlin.clr.ClrIntrinsic("System.String.CompareOrdinal")
-private fun clrCompareOrdinal(strA: String, strB: String): Int = TODO("@Clr System.String.CompareOrdinal(string,string)")
-
+@SinceKotlin("1.2")
 @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
-public actual fun String.compareTo(other: String, ignoreCase: Boolean = false): Int =
-    if (!ignoreCase) clrCompareOrdinal(this, other)
-    else clrCompareOrdinal(this.uppercase(), other.uppercase())
+public actual fun String.compareTo(other: String, ignoreCase: Boolean = false): Int {
+    if (ignoreCase) {
+        val n1 = this.length
+        val n2 = other.length
+        val min = minOf(n1, n2)
+        if (min == 0) return n1 - n2
+        for (index in 0 until min) {
+            var thisChar = this[index]
+            var otherChar = other[index]
+
+            if (thisChar != otherChar) {
+                thisChar = thisChar.uppercaseChar()
+                otherChar = otherChar.uppercaseChar()
+
+                if (thisChar != otherChar) {
+                    thisChar = thisChar.lowercaseChar()
+                    otherChar = otherChar.lowercaseChar()
+
+                    if (thisChar != otherChar) {
+                        return thisChar.compareTo(otherChar)
+                    }
+                }
+            }
+        }
+        return n1 - n2
+    } else {
+        return compareTo(other)
+    }
+}
 
 @SinceKotlin("1.5")
 public actual infix fun CharSequence?.contentEquals(other: CharSequence?): Boolean = contentEqualsImpl(other)
@@ -342,8 +368,11 @@ public actual fun CharSequence.repeat(n: Int): String {
     }
 }
 
+private val STRING_CASE_INSENSITIVE_ORDER = Comparator<String> { a, b -> a.compareTo(b, ignoreCase = true) }
+
+@SinceKotlin("1.2")
 public actual val String.Companion.CASE_INSENSITIVE_ORDER: Comparator<String>
-    get() = Comparator { a, b -> a.compareTo(b, ignoreCase = true) }
+    get() = STRING_CASE_INSENSITIVE_ORDER
 
 // `String.format` — CLR PLATFORM API (like Kotlin/JVM's own `format`, which is JVM-only platform API; Native/JS
 // have none). Bound to System.String.Format: the format string is the .NET COMPOSITE format ("{0} items",
