@@ -49,9 +49,12 @@ for node, name, convention, parameters, result in (
 
 
 def is_view(node):
-    owner = node.get("calleeOwner") or node.get("ownerType") or node.get("owner") or {}
+    owner = node.get("owner") or node.get("calleeOwner") or {}
     return (node.get("k") == "callStatic" and node.get("method") == "asUByteArray"
-            and owner.get("name") == "kotlin.collections._UArraysKt" and len(node["args"]) == 1)
+            and not node.get("memberRef")
+            and owner == {"t": "fqn", "name": "kotlin.collections._UArraysKt"}
+            and node.get("sig") == [destination["type"]]
+            and node.get("calleeRet") == byte_array and len(node["args"]) == 1)
 
 
 definitions = {}
@@ -89,9 +92,11 @@ protected, = [node for node in nodes if node.get("k") == "try"]
 assert fill in list(walk(protected["body"])), "fill must execute inside the protected region"
 assert dispose in list(walk(protected["finally"])), "RNG must be disposed in finally"
 assert create not in list(walk(protected)), "factory failure must not dispose an uncreated RNG"
-assert not any(node.get("k") in ("newArray", "newArraySized", "setArray") for node in nodes)
+allowed_kinds = {"var", "setLocal", "local", "cast", "valueBlock", "cond", "throwExpr",
+                 "try", "exprStmt", "callStatic", "clrStatic", "clrInstance"}
 for node in nodes:
-    if node.get("k") in ("callStatic", "callInstance", "clrStatic", "clrInstance", "invokeFn", "callLocalFn"):
+    assert "k" not in node or node["k"] in allowed_kinds, "unexpected entropy operation"
+    if node.get("k") in ("callStatic", "clrStatic", "clrInstance"):
         assert node in (create, fill, dispose) or is_view(node), "unexpected entropy provider or copy operation"
 
 verifiers = sorted((Path.home() / ".dotnet").rglob("ILVerify.dll"))
