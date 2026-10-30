@@ -79,6 +79,7 @@ jobs:
           build/clr-stdlib-rt/dll
           build/clr-stdlib-rt/cir/Result.cir.json
           build/clr-stdlib-rt/cir/Continuation.cir.json
+          build/clr-stdlib-rt/cir/UuidClr.cir.json
 
       - uses: actions/upload-artifact@v4
         with:
