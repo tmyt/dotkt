@@ -120,17 +120,15 @@ public actual fun Char.isHighSurrogate(): Boolean = TODO("clr binding should be 
 @kotlin.clr.ClrIntrinsic("System.Char.IsLowSurrogate")
 public actual fun Char.isLowSurrogate(): Boolean = TODO("clr binding should be implemented")
 
-// ASCII digit map (0-9, A-Z/a-z for radix > 10); -1 if not a valid digit in [radix].
-// Shared by the common integer parsers; uses primitive Char comparisons and subtraction.
-internal actual fun digitOf(char: Char, radix: Int): Int {
-    val digit = when {
-        char >= '0' && char <= '9' -> char - '0'
-        char >= 'a' && char <= 'z' -> char - 'a' + 10
-        char >= 'A' && char <= 'Z' -> char - 'A' + 10
-        else -> -1
-    }
-    return if (digit >= 0 && digit < radix) digit else -1
-}
+internal actual fun digitOf(char: Char, radix: Int): Int = when {
+    char >= '0' && char <= '9' -> char - '0'
+    char >= 'A' && char <= 'Z' -> char - 'A' + 10
+    char >= 'a' && char <= 'z' -> char - 'a' + 10
+    char < '\u0080' -> -1
+    char >= '\uFF21' && char <= '\uFF3A' -> char - '\uFF21' + 10 // full-width latin capital letter
+    char >= '\uFF41' && char <= '\uFF5A' -> char - '\uFF41' + 10 // full-width latin small letter
+    else -> char.digitToIntImpl()
+}.let { if (it >= radix) -1 else it }
 
 @PublishedApi
 internal actual fun checkRadix(radix: Int): Int {
