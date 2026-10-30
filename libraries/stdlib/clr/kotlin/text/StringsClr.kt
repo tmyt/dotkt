@@ -166,6 +166,8 @@ public actual fun CharArray.concatToString(): String {
 @SinceKotlin("1.4")
 @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
 public actual fun CharArray.concatToString(startIndex: Int = 0, endIndex: Int = this.size): String {
+    AbstractList.checkBoundsIndexes(startIndex, endIndex, this.size)
+
     val sb = StringBuilder()
     for (i in startIndex until endIndex) sb.append(this[i])
     return sb.toString()
@@ -178,8 +180,10 @@ private fun String.nativeToCharArray(startIndex: Int, length: Int): CharArray = 
 
 @SinceKotlin("1.4")
 @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
-public actual fun String.toCharArray(startIndex: Int = 0, endIndex: Int = this.length): CharArray =
-    nativeToCharArray(startIndex, endIndex - startIndex)
+public actual fun String.toCharArray(startIndex: Int = 0, endIndex: Int = this.length): CharArray {
+    AbstractList.checkBoundsIndexes(startIndex, endIndex, length)
+    return nativeToCharArray(startIndex, endIndex - startIndex)
+}
 
 // UTF-8 transcoding via a constructed `System.Text.UTF8Encoding` instance (the proven Regex/StringBuilder
 // @ClrIntrinsic-class pattern). The class is `internal` (NOT private) so its constructor substitution is valid.
@@ -208,6 +212,7 @@ public actual fun ByteArray.decodeToString(
     endIndex: Int = this.size,
     throwOnInvalidSequence: Boolean = false
 ): String {
+    AbstractList.checkBoundsIndexes(startIndex, endIndex, this.size)
     val slice = if (startIndex == 0 && endIndex == this.size) this else this.copyOfRange(startIndex, endIndex)
     // throwOnInvalidSequence=true: use a throwing UTF8Encoding and surface a CharacterCodingException
     // (per the Kotlin contract) on malformed UTF-8, instead of silently substituting U+FFFD.
@@ -235,6 +240,7 @@ public actual fun String.encodeToByteArray(
     endIndex: Int = this.length,
     throwOnInvalidSequence: Boolean = false
 ): ByteArray {
+    AbstractList.checkBoundsIndexes(startIndex, endIndex, length)
     val slice = if (startIndex == 0 && endIndex == this.length) this else this.substring(startIndex, endIndex)
     // throwOnInvalidSequence=true: throw a CharacterCodingException (per the Kotlin contract) on an
     // unpaired surrogate, instead of encoding it as the U+FFFD replacement.
@@ -257,21 +263,25 @@ public actual fun String.toCharArray(): CharArray = TODO("clr binding should be 
 
 // Thin wrapper: Kotlin toCharArray(startIndex, endIndex) has an exclusive end index, while
 // .NET String.CopyTo(sourceIndex, destination, destinationIndex, count) takes a count. Adapt by subtracting.
-// @PublishedApi (not private) so the public-ABI inline `toCharArray` may reference it across module boundaries.
-@PublishedApi
 @kotlin.clr.ClrIntrinsic("CopyTo")
-internal fun String.nativeCopyTo(sourceIndex: Int, destination: CharArray, destinationIndex: Int, count: Int): Unit =
+private fun String.nativeCopyTo(sourceIndex: Int, destination: CharArray, destinationIndex: Int, count: Int): Unit =
     TODO("@Clr System.String.CopyTo(int,char[],int,int)")
 
+@SinceKotlin("2.0")
 @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
-@kotlin.internal.InlineOnly
-public actual inline fun String.toCharArray(
+@IgnorableReturnValue
+public actual fun String.toCharArray(
     destination: CharArray,
     destinationOffset: Int = 0,
     startIndex: Int = 0,
     endIndex: Int = length
 ): CharArray {
-    nativeCopyTo(startIndex, destination, destinationOffset, endIndex - startIndex)
+    AbstractList.checkBoundsIndexes(startIndex, endIndex, length)
+    val rangeSize = endIndex - startIndex
+    // Validate offset and remaining capacity without forming an overflowing offset + rangeSize.
+    AbstractList.checkPositionIndex(destinationOffset, destination.size)
+    AbstractList.checkPositionIndex(rangeSize, destination.size - destinationOffset)
+    nativeCopyTo(startIndex, destination, destinationOffset, rangeSize)
     return destination
 }
 
