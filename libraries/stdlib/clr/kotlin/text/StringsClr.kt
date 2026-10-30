@@ -83,54 +83,52 @@ public actual fun String?.equals(other: String?, ignoreCase: Boolean = false): B
     return true
 }
 
-// .NET String.Replace(char, char) is an ordinal replacement, matching Kotlin's case-sensitive replace.
-@kotlin.clr.ClrIntrinsic("Replace")
-private fun String.nativeReplace(oldChar: Char, newChar: Char): String = TODO("@Clr System.String.Replace(char,char)")
-
 @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
 public actual fun String.replace(oldChar: Char, newChar: Char, ignoreCase: Boolean = false): String {
-    if (!ignoreCase) return nativeReplace(oldChar, newChar)
-    val source = this
-    return buildString {
-        for (i in 0 until source.length) {
-            val c = source[i]
-            append(if (c.equals(oldChar, ignoreCase = true)) newChar else c)
+    return buildString(length) {
+        this@replace.forEach { c ->
+            append(if (c.equals(oldChar, ignoreCase)) newChar else c)
         }
     }
 }
 
+@kotlin.clr.ClrTypeAlias("System.OutOfMemoryException")
+private class OutOfMemoryError : Error()
+
 @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
 public actual fun String.replace(oldValue: String, newValue: String, ignoreCase: Boolean = false): String {
-    var occurrenceIndex: Int = indexOf(oldValue, 0, ignoreCase)
-    // FAST PATH: no match
-    if (occurrenceIndex < 0) return this
+    run {
+        var occurrenceIndex: Int = indexOf(oldValue, 0, ignoreCase)
+        // FAST PATH: no match
+        if (occurrenceIndex < 0) return this
 
-    val oldValueLength = oldValue.length
-    val searchStep = oldValueLength.coerceAtLeast(1)
-    val stringBuilder = StringBuilder()
-    var i = 0
-    // Append the end-exclusive String slice. Keeping the slice explicit here avoids introducing a second index/count
-    // adaptation into this replacement loop; the selected append(String) wrapper owns nullable-string semantics.
-    do {
-        stringBuilder.append(this.substring(i, occurrenceIndex)).append(newValue)
-        i = occurrenceIndex + oldValueLength
-        if (occurrenceIndex >= length) break
-        occurrenceIndex = indexOf(oldValue, occurrenceIndex + searchStep, ignoreCase)
-    } while (occurrenceIndex > 0)
+        val oldValueLength = oldValue.length
+        val searchStep = oldValueLength.coerceAtLeast(1)
+        val newLengthHint = length - oldValueLength + newValue.length
+        if (newLengthHint < 0) throw OutOfMemoryError()
+        val stringBuilder = StringBuilder(newLengthHint)
 
-    return stringBuilder.append(this.substring(i, length)).toString()
+        var i = 0
+        do {
+            stringBuilder.append(this, i, occurrenceIndex).append(newValue)
+            i = occurrenceIndex + oldValueLength
+            if (occurrenceIndex >= length) break
+            occurrenceIndex = indexOf(oldValue, occurrenceIndex + searchStep, ignoreCase)
+        } while (occurrenceIndex > 0)
+        return stringBuilder.append(this, i, length).toString()
+    }
 }
 
 @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
 public actual fun String.replaceFirst(oldChar: Char, newChar: Char, ignoreCase: Boolean = false): String {
     val index = indexOf(oldChar, ignoreCase = ignoreCase)
-    return if (index < 0) this else substring(0, index) + newChar + substring(index + 1)
+    return if (index < 0) this else this.replaceRange(index, index + 1, newChar.toString())
 }
 
 @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
 public actual fun String.replaceFirst(oldValue: String, newValue: String, ignoreCase: Boolean = false): String {
     val index = indexOf(oldValue, ignoreCase = ignoreCase)
-    return if (index < 0) this else substring(0, index) + newValue + substring(index + oldValue.length)
+    return if (index < 0) this else this.replaceRange(index, index + oldValue.length, newValue)
 }
 
 @Deprecated("Use uppercase() instead.", ReplaceWith("uppercase(Locale.getDefault())", "java.util.Locale"))
@@ -361,20 +359,28 @@ public actual fun CharSequence.regionMatches(thisOffset: Int, other: CharSequenc
 public actual fun String.regionMatches(thisOffset: Int, other: String, otherOffset: Int, length: Int, ignoreCase: Boolean = false): Boolean =
     regionMatchesImpl(thisOffset, other, otherOffset, length, ignoreCase)
 
-@Deprecated("Use replaceFirstChar instead.", ReplaceWith("replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() }", "java.util.Locale"))
+@Deprecated("Use replaceFirstChar instead.", ReplaceWith("replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }"))
 @DeprecatedSinceKotlin(warningSince = "1.5")
-public actual fun String.capitalize(): String =
-    if (isNotEmpty()) substring(0, 1).uppercase() + substring(1) else this
+public actual fun String.capitalize(): String = replaceFirstChar(Char::uppercaseChar)
 
-@Deprecated("Use replaceFirstChar instead.", ReplaceWith("replaceFirstChar { it.lowercase(Locale.getDefault()) }", "java.util.Locale"))
+@Deprecated("Use replaceFirstChar instead.", ReplaceWith("replaceFirstChar { it.lowercase() }"))
 @DeprecatedSinceKotlin(warningSince = "1.5")
-public actual fun String.decapitalize(): String =
-    if (isNotEmpty()) substring(0, 1).lowercase() + substring(1) else this
+public actual fun String.decapitalize(): String = replaceFirstChar(Char::lowercaseChar)
 
 public actual fun CharSequence.repeat(n: Int): String {
     require(n >= 0) { "Count 'n' must be non-negative, but was $n." }
-    return buildString {
-        repeat(n) { append(this@repeat) }
+    if (isEmpty()) return ""
+    return when (n) {
+        0 -> ""
+        1 -> this.toString()
+        else -> {
+            val sequence = this
+            buildString(n * length) {
+                repeat(n) {
+                    append(sequence)
+                }
+            }
+        }
     }
 }
 
