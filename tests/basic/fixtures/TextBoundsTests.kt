@@ -2,8 +2,9 @@ import NUnit.Framework.TestAttribute
 
 private fun textBoundsKind(action: () -> Unit): Int {
     try { action() }
-    catch (_: IndexOutOfBoundsException) { return 1 }
+    // Native ArgumentOutOfRangeException must not masquerade as Kotlin's bounds check.
     catch (_: IllegalArgumentException) { return 2 }
+    catch (_: IndexOutOfBoundsException) { return 1 }
     catch (_: CharacterCodingException) { return 3 }
     return 0
 }

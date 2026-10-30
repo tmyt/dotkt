@@ -5,8 +5,8 @@ import roundtrip.textbounds.*
 
 private fun importedBoundsKind(action: () -> Unit): Int {
     try { action() }
-    catch (_: IndexOutOfBoundsException) { return 1 }
     catch (_: IllegalArgumentException) { return 2 }
+    catch (_: IndexOutOfBoundsException) { return 1 }
     return 0
 }
 
