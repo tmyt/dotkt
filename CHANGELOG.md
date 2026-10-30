@@ -7,6 +7,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Changed
 
+- Use the native CLR CSPRNG for UUID entropy through the shared unsigned array view, removing the general-purpose PRNG workaround without changing common UUID generation or byte order.
 - Restore upstream string replacement, repetition, first-character casing wrappers and ISO control classification, keeping native CLR character casing and a thin allocation-failure binding.
 - Restore upstream range validation around CLR character-copy and UTF-8 primitives, including exception ordering and overflow-safe destination bounds. Restore the ordinary `String.toCharArray(destination, ...)` declaration instead of a CLR-only inline wrapper.
 - Restore upstream String comparison and prefix/suffix bodies, preserving character-wise case equivalence and offset bounds while retaining native CLR String and Char primitives. This also aligns surrogate-pair comparisons with the existing UTF-16 character-wise region helpers, without changing native string casing.
