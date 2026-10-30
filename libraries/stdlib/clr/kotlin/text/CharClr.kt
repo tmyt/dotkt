@@ -65,8 +65,10 @@ public actual fun Char.isLetterOrDigit(): Boolean = TODO("clr binding should be 
 @kotlin.clr.ClrIntrinsic("System.Char.IsDigit")
 public actual fun Char.isDigit(): Boolean = TODO("clr binding should be implemented")
 
-@kotlin.clr.ClrIntrinsic("System.Char.IsControl")
-public actual fun Char.isISOControl(): Boolean = TODO("clr binding should be implemented")
+@SinceKotlin("1.5")
+public actual fun Char.isISOControl(): Boolean {
+    return this <= '\u001F' || this in '\u007F'..'\u009F'
+}
 
 @kotlin.clr.ClrIntrinsic("System.Char.IsWhiteSpace")
 public actual fun Char.isWhitespace(): Boolean = TODO("clr binding should be implemented")
