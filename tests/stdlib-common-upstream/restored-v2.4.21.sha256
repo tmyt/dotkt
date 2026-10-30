@@ -11,3 +11,4 @@ dd550bc310c23a242e4ba50b06944e6a72e10147d8510a0556913c7a3e098939  libraries/stdl
 f39612081376f5422bdd6f3e2c96f3b0eea731395536627da13be4bbbd59aa79  libraries/stdlib/clr/kotlin/text/_DigitChars.kt
 e9b27fed9b23d10acf965dc8dd29b8988b9d105af5986df31ca1c040e8acdf8f  libraries/stdlib/src/kotlin/text/Char.kt
 f81916c3a94808ab1df9d853c1c63ef9fc9f7ca4b7d382509cc6e4b74b953a10  libraries/stdlib/src/kotlin/collections/AbstractList.kt
+dfde20ca19cd6d2ab3ae45a5975928489ae10ab2ccab2394d663a443a151cd21  libraries/stdlib/src/kotlin/uuid/Uuid.kt

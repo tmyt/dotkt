@@ -1,17 +1,29 @@
 @file:Suppress("ACTUAL_WITHOUT_EXPECT", "NO_ACTUAL_FOR_EXPECT", "UNCHECKED_CAST", "NOTHING_TO_INLINE", "NO_ACTUAL_CLASS_MEMBER_FOR_EXPECTED_CLASS")
-
-// Step-1 CLR stub mirroring the JVM actual; bodies are TODO pending the @Clr/BCL binding step
-// (see docs/design-stdlib-compilation.md "THE CANONICAL ROADMAP").
+@file:OptIn(ExperimentalUnsignedTypes::class)
 
 package kotlin.uuid
 
-// NOTE: the BCL crypto RNG (System.Security.Cryptography.RandomNumberGenerator.Fill) only accepts a
-// `Span<byte>`/`byte[]` of UNSIGNED bytes, which does not bind to Kotlin's signed `ByteArray` (System.SByte[]).
-// We therefore fill the buffer with the default `Random` (itself seeded from CLR entropy, see PlatformRandomClr),
-// which yields a valid random (v4) Uuid — functionally correct, though not cryptographically strong.
+@kotlin.clr.ClrTypeAlias("System.Security.Cryptography.RandomNumberGenerator")
+private abstract class ClrUuidRandom {
+    @kotlin.clr.ClrIntrinsic("GetBytes")
+    fun fill(destination: UByteArray): Unit = TODO("clr binding should be implemented")
+
+    @kotlin.clr.ClrIntrinsic("Dispose")
+    fun dispose(): Unit = TODO("clr binding should be implemented")
+}
+
+@kotlin.clr.ClrIntrinsic("System.Security.Cryptography.RandomNumberGenerator.Create")
+private fun createUuidRandom(): ClrUuidRandom = TODO("clr binding should be implemented")
+
 @ExperimentalUuidApi
 internal actual fun secureRandomBytes(destination: ByteArray) {
-    kotlin.random.Random.Default.nextBytes(destination)
+    val random = createUuidRandom()
+    try {
+        // The unsigned view shares the destination storage; the native fill needs no copyback.
+        random.fill(destination.asUByteArray())
+    } finally {
+        random.dispose()
+    }
 }
 
 @ExperimentalUuidApi
