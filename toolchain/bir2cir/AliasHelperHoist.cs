@@ -465,8 +465,27 @@ static class AliasHelperHoist
             || callbackSignature.Params[0] != new TypeNode.Tv("method", 1))
             throw new InvalidOperationException("Hoisted helper lost declaration identity or its signature generic frame");
         if (TypeJson.Read(construction["argTypes"][0]) != new TypeNode.Tv("method", 0)
-            || TypeJson.Read(construction["memberSignature"][0]) != new TypeNode.Tv("type", 0))
+            || TypeJson.Read(construction["memberSignature"][0]) != new TypeNode.Tv("type", 0)
+            || construction["args"][0]["k"]?.GetValue<string>() != "local"
+            || construction["args"][0]["name"]?.GetValue<string>() != "__self")
             throw new InvalidOperationException("Hoisted constructor mixed caller and selected declaration frames");
+        var capturedReceiver = new JsonObject
+        {
+            ["k"] = "newSuspendLambda", ["arity"] = 0,
+            ["captures"] = new JsonArray(new JsonObject { ["name"] = "receiver", ["outer"] = true,
+                ["type"] = TypeJson.Write(new TypeNode.Fqn("Alias")) }),
+            ["capValues"] = new JsonArray(new JsonObject { ["k"] = "this" }),
+            ["params"] = new JsonArray(),
+            ["suspendRet"] = TypeJson.Write(new TypeNode.Fqn("Alias")),
+            ["funcType"] = TypeJson.Write(new TypeNode.Fn(true, new TypeNode.Fqn("Alias"), Array.Empty<TypeNode>())),
+            ["body"] = new JsonArray(new JsonObject { ["k"] = "return",
+                ["value"] = new JsonObject { ["k"] = "this" } }),
+        };
+        var rewrittenCapture = RewriteThis(capturedReceiver);
+        if (rewrittenCapture["capValues"][0]["k"]?.GetValue<string>() != "local"
+            || rewrittenCapture["capValues"][0]["name"]?.GetValue<string>() != "__self"
+            || !JsonNode.DeepEquals(rewrittenCapture["body"], capturedReceiver["body"]))
+            throw new InvalidOperationException("Hoisted receiver crossed a suspend-lambda capture boundary");
         Console.WriteLine("[alias helper receiver] self-test OK (binding roles, permutation, scope transfer)");
     }
 
@@ -499,14 +518,21 @@ static class AliasHelperHoist
         return r;
     }
 
-    // Rewrite every dispatch-receiver node {"k":"this"} to the hoisted static's leading `__self` local. kotc lifts all
-    // lambdas/local funs to separate methods, so within a single member body every {"k":"this"} is THIS receiver.
+    // Rewrite the enclosing member's dispatch receiver to the static helper parameter.
+    // A suspend lambda owns its body: its authored outer capture is bound by cold lowering,
+    // while only its construction operands are evaluated in this enclosing member.
     static JsonNode RewriteThis(JsonNode n)
     {
         if (n is JsonObject o)
         {
             if ((o["k"] as JsonValue)?.GetValue<string>() == "this")
                 return new JsonObject { ["k"] = "local", ["name"] = "__self" };
+            if ((o["k"] as JsonValue)?.GetValue<string>() == "newSuspendLambda")
+            {
+                var lambda = (JsonObject)o.DeepClone();
+                if (o["capValues"] is JsonArray values) lambda["capValues"] = RewriteThis(values);
+                return lambda;
+            }
             var c = new JsonObject();
             foreach (var kv in o) c[kv.Key] = kv.Value == null ? null : RewriteThis(kv.Value);
             return c;
