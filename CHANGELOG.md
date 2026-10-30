@@ -7,6 +7,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Changed
 
+- Restore upstream range validation around CLR character-copy and UTF-8 primitives, including exception ordering and overflow-safe destination bounds. Restore the ordinary `String.toCharArray(destination, ...)` declaration instead of a CLR-only inline wrapper.
 - Restore upstream String comparison and prefix/suffix bodies, preserving character-wise case equivalence and offset bounds while retaining native CLR String and Char primitives. This also aligns surrogate-pair comparisons with the existing UTF-16 character-wise region helpers, without changing native string casing.
 - Restore upstream Unicode digit lookup and its generated decimal-digit tables, including fullwidth radix letters and common integer parsing, while retaining native CLR Char representation and category/case bindings.
 - Restore the complete upstream unsigned numeric actuals, including masks, saturation and radix formatting, while retaining native CLR unsigned types and the existing signed formatter.
