@@ -58,6 +58,15 @@ class PortableStringComparisonTests {
         check(!missing.equals("", true) && !"".equals(missing, true))
         check(!"ß".equals("ss", true))
         check("K".equals("k", true) && "K".compareTo("k", true) == 0)
+        val supplementaryUpper = System.Char.ConvertFromUtf32(0x10400)
+        val supplementaryLower = System.Char.ConvertFromUtf32(0x10428)
+        check(supplementaryUpper.uppercase() == supplementaryLower.uppercase())
+        check(!supplementaryUpper.equals(supplementaryLower, true))
+        check(!supplementaryUpper.contentEquals(supplementaryLower, true))
+        check(supplementaryUpper.compareTo(supplementaryLower, true) < 0)
+        check(!supplementaryUpper.startsWith(supplementaryLower, true))
+        check(!supplementaryUpper.endsWith(supplementaryLower, true))
+        check(!supplementaryUpper.regionMatches(0, supplementaryLower, 0, 2, true))
     }
 
     @TestAttribute fun prefixSuffixAndOffsetBoundsAgreeWithIndependentRegions() {
