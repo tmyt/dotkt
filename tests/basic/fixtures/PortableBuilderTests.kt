@@ -1,5 +1,12 @@
 import NUnit.Framework.TestAttribute
 
+private class BuilderRangeSequence : CharSequence {
+    override val length: Int get() = 3
+    override fun get(index: Int): Char = "abc"[index]
+    override fun subSequence(startIndex: Int, endIndex: Int): CharSequence = "abc".substring(startIndex, endIndex)
+    override fun toString(): String = "rendered"
+}
+
 private fun builderRangeFailure(block: () -> Unit) {
     var failed = false
     try { block() }
@@ -144,6 +151,9 @@ class PortableBuilderTests {
         val absent: CharSequence? = null
         check(StringBuilder().append(absent, 1, 3).toString() == "ul")
         check(StringBuilder().append(null as Any?).toString() == "null")
+        val custom: CharSequence = BuilderRangeSequence()
+        check(StringBuilder().appendRange(custom, 1, 3).toString() == "bc")
+        check(StringBuilder("!").insertRange(0, custom, 1, 3).toString() == "bc!")
         for (start in 0..4) for (end in start..4) {
             val source: CharSequence = "abcd"
             check(StringBuilder().append(source, start, end).toString() == "abcd".substring(start, end))
