@@ -48,7 +48,7 @@ class PortableCoreActualTests {
             check(failure === closeFailure && closes == 2)
         }
         val native = System.IO.MemoryStream()
-        check(native.use { it.CanRead })
+        check((native as AutoCloseable).use { native.CanRead })
         check(!native.CanRead)
     }
 
