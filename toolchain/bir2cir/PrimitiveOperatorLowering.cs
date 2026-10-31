@@ -100,6 +100,32 @@ static class PrimitiveOperatorLowering
                 throw new InvalidOperationException("Identity lowering decided a physical operand slot before value projection");
         }
         Console.WriteLine("[identity operand slots] self-test OK (same generic slot, distinct index/scope/nullability)");
+
+        foreach (var owner in new[] { "kotlin.Int", "kotlin.Long", "kotlin.UInt", "kotlin.ULong" })
+        foreach (var member in owner is "kotlin.UInt" or "kotlin.ULong"
+                     ? new[] { "shl", "shr" } : new[] { "shl", "shr", "ushr" })
+        {
+            var distance = new JsonObject { ["k"] = "callStatic", ["method"] = "distance", ["args"] = new JsonArray() };
+            var call = new JsonObject {
+                ["k"] = "callInstance", ["ownerType"] = TypeJson.Fqn(owner), ["method"] = member,
+                ["recv"] = new JsonObject { ["k"] = "local", ["name"] = "value" },
+                ["args"] = new JsonArray(distance.DeepClone()),
+            };
+            var before = call.DeepClone();
+            var lowered = Lower(call, BirScope.Empty).AsObject();
+            var mask = owner is "kotlin.Long" or "kotlin.ULong" ? 63 : 31;
+            var expectedOp = member == "shl" ? "<<"
+                : member == "ushr" || owner is "kotlin.UInt" or "kotlin.ULong" ? ">>>" : ">>";
+            if (lowered["op"]?.GetValue<string>() != expectedOp
+                || !JsonNode.DeepEquals(lowered["lhs"], call["recv"])
+                || lowered["rhs"]?["k"]?.GetValue<string>() != "binOp"
+                || lowered["rhs"]?["op"]?.GetValue<string>() != "&"
+                || !JsonNode.DeepEquals(lowered["rhs"]?["lhs"], distance)
+                || lowered["rhs"]?["rhs"]?["value"]?.GetValue<int>() != mask
+                || !JsonNode.DeepEquals(call, before))
+                throw new InvalidOperationException($"Primitive shift must mask its single-evaluated distance: {owner}.{member}");
+        }
+        Console.WriteLine("[primitive shift distances] self-test OK (signed/unsigned, both widths, single evaluation)");
     }
 
     public static void Apply(JsonNode root, ReferenceMetadataIndex refs = null)
@@ -177,7 +203,15 @@ static class PrimitiveOperatorLowering
             // signed/unsigned, and the narrow unsigned types (UByte/UShort) have no shift operator, so only UInt/ULong
             // reach here.
             if (member == "shr" && (ownerFqn == "kotlin.UInt" || ownerFqn == "kotlin.ULong")) aop = ">>>";
-            var bin = new JsonObject { ["k"] = "binOp", ["op"] = aop, ["lhs"] = o["recv"]?.DeepClone(), ["rhs"] = args[0]?.DeepClone() };
+            JsonNode right = args[0]?.DeepClone();
+            // Kotlin masks shift distances; raw CIL shifts do not guarantee that on every target.
+            if (aop is "<<" or ">>" or ">>>")
+                right = new JsonObject {
+                    ["k"] = "binOp", ["op"] = "&", ["lhs"] = right,
+                    ["rhs"] = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("kotlin.Int"),
+                        ["value"] = ownerFqn is "kotlin.Long" or "kotlin.ULong" ? 63 : 31 },
+                };
+            var bin = new JsonObject { ["k"] = "binOp", ["op"] = aop, ["lhs"] = o["recv"]?.DeepClone(), ["rhs"] = right };
             return WrapDeclaredReturn(o, ownerFqn, bin);
         }
         if (args.Count == 0 && UnaryOp.TryGetValue(member, out var uop))

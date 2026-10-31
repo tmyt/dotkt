@@ -47,6 +47,11 @@ class PortableNumericTests {
             for (distance in distances) {
                 check(value.rotateLeft(distance) == System.Numerics.BitOperations.RotateLeft(value.toUInt(), distance).toInt())
                 check(value.rotateRight(distance) == System.Numerics.BitOperations.RotateRight(value.toUInt(), distance).toInt())
+                check((value shl distance) == (value shl (distance and 31)))
+                check((value shr distance) == (value shr (distance and 31)))
+                check((value ushr distance) == (value ushr (distance and 31)))
+                check((value.toUInt() shl distance) == (value shl (distance and 31)).toUInt())
+                check((value.toUInt() shr distance) == (value ushr (distance and 31)).toUInt())
             }
         }
         val longs = longArrayOf(0L, 1L, -1L, Long.MIN_VALUE, Long.MAX_VALUE, 0x123456789abcdef0L)
@@ -59,8 +64,16 @@ class PortableNumericTests {
             for (distance in distances) {
                 check(value.rotateLeft(distance) == System.Numerics.BitOperations.RotateLeft(value.toULong(), distance).toLong())
                 check(value.rotateRight(distance) == System.Numerics.BitOperations.RotateRight(value.toULong(), distance).toLong())
+                check((value shl distance) == (value shl (distance and 63)))
+                check((value shr distance) == (value shr (distance and 63)))
+                check((value ushr distance) == (value ushr (distance and 63)))
+                check((value.toULong() shl distance) == (value shl (distance and 63)).toULong())
+                check((value.toULong() shr distance) == (value ushr (distance and 63)).toULong())
             }
         }
+        var calls = 0
+        check((1 shl run { calls++; 33 }) == 2)
+        check(calls == 1)
     }
 
     @TestAttribute fun logarithmsRejectEveryInvalidBaseAndUseTheUpstreamRatio() {
