@@ -39,7 +39,8 @@ static class EnumValueLowering
                 && TypeJson.OwnerName(propertyOwner) is string propertyEnum
                 && refs.TryKotlinRichEnumInstanceFields(propertyEnum, out var propertyNameField, out var propertyOrdinalField))
                 RewriteRichField(obj, propertyReceiver, propertyOwner,
-                    obj["method"].GetValue<string>() == "name" ? propertyNameField : propertyOrdinalField);
+                    obj["method"].GetValue<string>() == "name" ? propertyNameField : propertyOrdinalField,
+                    obj["method"].GetValue<string>() == "name" ? "kotlin.String" : "kotlin.Int");
             if (kind == "enumValue"
                 && obj["entry"]?.GetValue<string>() is string entry
                 && obj["type"] is JsonNode type
@@ -113,7 +114,8 @@ static class EnumValueLowering
                 if (refs.TryKotlinRichEnumInstanceFields(enumOwner, out var nameField, out var ordinalField))
                 {
                     var physicalField = kind == "enumName" ? nameField : ordinalField;
-                    RewriteRichField(obj, receiver, enumType, physicalField);
+                    RewriteRichField(obj, receiver, enumType, physicalField,
+                        kind == "enumName" ? "kotlin.String" : "kotlin.Int");
                 }
                 else if (kind == "enumName")
                 {
@@ -178,7 +180,7 @@ static class EnumValueLowering
                 if (item != null) Walk(item, refs, localBasicEnums, localExplicitEnums, localParseEnums, ref runtimeLookup);
     }
 
-    static void RewriteRichField(JsonObject node, JsonNode receiver, JsonNode owner, string field)
+    static void RewriteRichField(JsonObject node, JsonNode receiver, JsonNode owner, string field, string resultType)
     {
         var receiverClone = receiver.DeepClone();
         var ownerClone = owner.DeepClone();
@@ -187,6 +189,7 @@ static class EnumValueLowering
         node["ownerType"] = ownerClone;
         node["recv"] = receiverClone;
         node["name"] = field;
+        node["ret"] = TypeJson.Fqn(resultType);
     }
 
     static JsonArray Values(BasicEnumMetadata metadata) => new(metadata.Entries.Select(entry => (JsonNode)new JsonObject
