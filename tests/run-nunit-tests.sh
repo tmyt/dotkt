@@ -55,9 +55,9 @@ PROJECTS=(
 # Reviewed on the v0.9.8 main baseline at the start of #227. Updating a suite requires updating this number in
 # the same change, making otherwise-silent test proliferation or accidental deletion an explicit review event.
 declare -A EXPECTED_DISCOVERED=(
-	["tests/basic"]=991
+	["tests/basic"]=998
 	["tests/coroutines"]=270
-	["tests/roundtrip/consumer"]=723
+	["tests/roundtrip/consumer"]=725
 	["tests/roundtrip/charsequence-polymorphic-consumer"]=2
 	["tests/roundtrip/bidirectional/consumer"]=56
 	["tests/interop/consumer"]=474
@@ -168,6 +168,7 @@ for proj in "${PROJECTS[@]}"; do
 		fi
 	fi
 	if [[ "$proj" == "tests/basic" ]]; then
+		python3 "$ROOT/tests/basic/assert-data-class-array-content-cir.py" "$dir/obj/$CONFIGURATION/net10.0/cir/DataClassArrayContentTests.cir.json" || rc=1
 		python3 "$ROOT/tests/assert-protected-family-cir.py" basic "$dir/obj/$CONFIGURATION/net10.0/cir" || rc=1
 		if python3 "$ROOT/tests/basic/assert-inherited-mutable-iterator-cir.py" \
 			"$dir/obj/$CONFIGURATION/net10.0/bir/InheritedMutableIteratorSlotTests.bir.json" \

@@ -1016,6 +1016,12 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 	// by IR identity against the frontend-validated tail-call set installed by `method()`.
 	tailrecCtx?.let { ctx -> if (call in ctx.calls) return tailrecJump(call, ctx) }
 	val callee = call.symbol.owner
+	// These are compiler IR operations, not declarations in the JVM runtime. Preserve their semantic owner
+	// and each operand's source type; bir2cir chooses the corresponding Kotlin array content operation.
+	if (irBuiltIns != null && (call.symbol == irBuiltIns.dataClassArrayMemberToStringSymbol ||
+		call.symbol == irBuiltIns.dataClassArrayMemberHashCodeSymbol)) {
+		return """{"k":"callStatic","owner":${fqnJson("kotlin.internal.ir")},"method":${str(callee.name.asString())},"args":[${call.arguments.filterNotNull().joinToString(",") { expr(it) }}],"dotktFrontendDeclarationConsumed":true}"""
+	}
 	lateinitInitializationQuery(call)?.let { return it }
 	// A member/top-level delegated property is represented by a real CLR property accessor. Its frontend-generated
 	// accessor body already contains the resolved getValue/setValue call, so ordinary call emission is sufficient.
