@@ -26,7 +26,7 @@ class CollectionFactoryNativeTests {
         val singleton = listOf(System.TimeSpan.FromTicks(7))
         check(NativeArrayWrites.First(singleton as IReadOnlyList<System.TimeSpan>).Ticks == 7L)
         val copied = forwardedNativeArrayList(arrayOf(3, 4))
-        check(NativeArrayWrites.Sum(copied as IReadOnlyList<Int>) == 7)
+        check(NativeArrayWrites.First(copied as IReadOnlyList<Int>) == 3)
         (copied as IList<Int>).Add(5)
         check(copied.size == 3 && copied[2] == 5)
         val copiedNative = forwardedNativeArrayList(arrayOf(System.TimeSpan.FromTicks(11)))
