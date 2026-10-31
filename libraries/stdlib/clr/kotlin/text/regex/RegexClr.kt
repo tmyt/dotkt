@@ -5,9 +5,6 @@
 
 @file:Suppress("ACTUAL_WITHOUT_EXPECT", "NO_ACTUAL_FOR_EXPECT", "UNCHECKED_CAST", "NOTHING_TO_INLINE", "NO_ACTUAL_CLASS_MEMBER_FOR_EXPECTED_CLASS")
 
-// Step-1 CLR stub mirroring the JVM `actual`; bodies are `TODO` pending the `@Clr`/BCL
-// binding step (see docs/design-stdlib-compilation.md "THE CANONICAL ROADMAP").
-
 package kotlin.text
 
 /**
@@ -151,17 +148,12 @@ public actual class Regex {
         return if (match.success) ClrMatchResult(match) else null
     }
 
-    // All matches as a lazy sequence (Kotlin contract: every non-overlapping match, left-to-right). Realized exactly like
-    // the common stdlib — generateSequence over find()/MatchResult.next(); each next() advances via System...Match.NextMatch(),
-    // which also steps past zero-width matches. Uses ordinary Sequence machinery (no coroutine sequence{} builder needed).
     @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
     public actual fun findAll(input: CharSequence, startIndex: Int = 0): Sequence<MatchResult> {
-        // CLR: materialize once for the bounds check — a synthetic CharSequence has no dispatchable length on a String-at-runtime value.
-        val length = input.toString().length
-        if (startIndex < 0 || startIndex > length) {
-            throw IndexOutOfBoundsException("Start index out of bounds: $startIndex, input length: $length")
+        if (startIndex < 0 || startIndex > input.length) {
+            throw IndexOutOfBoundsException("Start index out of bounds: $startIndex, input length: ${input.length}")
         }
-        return generateSequence({ find(input, startIndex) }, { match -> match.next() })
+        return generateSequence({ find(input, startIndex) }, MatchResult::next)
     }
 
     // #162: a TRUE anchored full match — NOT a leftmost search filtered by span. A leftmost `Regex.Match` accepts the
@@ -172,8 +164,7 @@ public actual class Regex {
     // so the regex engine backtracks to a full-input match when one exists. On success the match spans the whole input by
     // construction, so no index/length span re-check is needed.
     public actual fun matchEntire(input: CharSequence): MatchResult? {
-        // CLR: `CharSequence` has no BCL length (System.String does NOT implement the synthetic CharSequence interface),
-        // so materialize the input to a String ONCE — `input.length` on a String-at-runtime CharSequence has no slot.
+        // The native engine consumes a String snapshot.
         val text = input.toString()
         val match = nativeAnchoredMatch(text, "\\A(?:" + pattern + ")\\z", nativeOptions)
         return if (match.success) ClrMatchResult(match) else null
@@ -192,7 +183,7 @@ public actual class Regex {
     @SinceKotlin("1.7")
     @WasExperimental(ExperimentalStdlibApi::class)
     public actual fun matchAt(input: CharSequence, index: Int): MatchResult? {
-        val text = input.toString()   // CLR: use the String length (synthetic CharSequence has no dispatchable length on String)
+        val text = input.toString()
         if (index < 0 || index > text.length) {
             throw IndexOutOfBoundsException("index out of bounds: $index, input length: ${text.length}")
         }
@@ -203,7 +194,7 @@ public actual class Regex {
     @SinceKotlin("1.7")
     @WasExperimental(ExperimentalStdlibApi::class)
     public actual fun matchesAt(input: CharSequence, index: Int): Boolean {
-        val text = input.toString()   // CLR: use the String length (synthetic CharSequence has no dispatchable length on String)
+        val text = input.toString()
         if (index < 0 || index > text.length) {
             throw IndexOutOfBoundsException("index out of bounds: $index, input length: ${text.length}")
         }
@@ -237,10 +228,7 @@ public actual class Regex {
         return sb.toString()
     }
 
-    // Replaces the first occurrence only: Regex.Replace(input, replacement, count = 1).
-    // Materialize the CharSequence to a real String at the call site so the intrinsic's first parameter is a
-    // System.String — passing a statically-CharSequence value to the `Replace(string,string,int)` overload
-    // mis-resolves/mis-marshals (AccessViolationException inside the .NET regex engine).
+    // The native count-limited Replace overload consumes a String snapshot.
     public actual fun replaceFirst(input: CharSequence, replacement: String): String =
         nativeReplaceFirst(input.toString(), replacement, 1)
 
@@ -250,44 +238,59 @@ public actual class Regex {
     private fun nativeReplaceFirst(input: String, replacement: String, count: Int): String =
         TODO("@Clr System.Text.RegularExpressions.Regex.Replace(string,string,int)")
 
-    // Instance match entry points: System.Text.RegularExpressions.Regex.Match(string) / Match(string, int).
-    @kotlin.clr.ClrIntrinsic("Match")
-    private fun nativeMatch(input: String): ClrMatch = TODO("@Clr System.Text.RegularExpressions.Regex.Match(string)")
-
+    // Native matching remains the CLR engine's responsibility.
     @kotlin.clr.ClrIntrinsic("Match")
     private fun nativeMatch(input: String, startat: Int): ClrMatch = TODO("@Clr System.Text.RegularExpressions.Regex.Match(string,int)")
 
-    // Split around matches by walking the System...Match adapter, honoring Kotlin `limit` (0 = unlimited) semantics.
     @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
     public actual fun split(input: CharSequence, limit: Int = 0): List<String> {
         requireNonNegativeLimit(limit)
 
-        var match = nativeMatch(input.toString())
-        if (limit == 1 || !match.success) return listOf(input.toString())
+        var match: MatchResult? = find(input)
+
+        if (match == null || limit == 1) return listOf(input.toString())
 
         val result = ArrayList<String>(if (limit > 0) limit.coerceAtMost(10) else 10)
         var lastStart = 0
         val lastSplit = limit - 1 // negative if there's no limit
 
         do {
-            result.add(input.substring(lastStart, match.index))
-            lastStart = match.index + match.length
+            result.add(input.substring(lastStart, match!!.range.start))
+            lastStart = match.range.endInclusive + 1
             if (lastSplit >= 0 && result.size == lastSplit) break
-            match = match.nextMatch()
-        } while (match.success)
+            match = match.next()
+        } while (match != null)
 
         result.add(input.substring(lastStart, input.length))
 
         return result
     }
 
-    // CLR realization: the eager [split] result viewed as a sequence (identical elements; deliberate CLR choice — the split
-    // walk over System...Match is already eager, so materializing once then `.asSequence()` avoids re-walking the engine and
-    // keeps `limit` semantics identical to [split]. Not lazy element-by-element unlike the common stdlib, same observable order.)
     @SinceKotlin("1.6")
     @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
-    public actual fun splitToSequence(input: CharSequence, limit: Int = 0): Sequence<String> =
-        split(input, limit).asSequence()
+    public actual fun splitToSequence(input: CharSequence, limit: Int = 0): Sequence<String> {
+        requireNonNegativeLimit(limit)
+
+        return sequence {
+            var match = find(input)
+            if (match == null || limit == 1) {
+                yield(input.toString())
+                return@sequence
+            }
+
+            var nextStart = 0
+            var splitCount = 0
+
+            do {
+                val foundMatch = match!!
+                yield(input.substring(nextStart, foundMatch.range.first))
+                nextStart = foundMatch.range.endInclusive + 1
+                match = foundMatch.next()
+            } while (++splitCount != limit - 1 && match != null)
+
+            yield(input.substring(nextStart, input.length))
+        }
+    }
 
     @kotlin.clr.ClrIntrinsic("ToString")
     public override fun toString(): String = TODO("clr binding should be implemented")
@@ -399,22 +402,24 @@ internal class ClrMatchResult(private val nativeMatch: ClrMatch) : MatchResult {
         get() = nativeMatch.index until (nativeMatch.index + nativeMatch.length)
     override val value: String
         get() = nativeMatch.value
-    // Lazy (getter, not an eager ctor field): building the group collection is only needed when `groups`/`groupValues`
-    // are actually read, and doing it eagerly forced ClrMatchGroupCollection (: AbstractCollection) to load on EVERY
-    // match — a needless dependency for the common value/range path.
-    override val groups: MatchGroupCollection
-        get() = ClrMatchGroupCollection(nativeMatch.groups)
+    override val groups: MatchGroupCollection = ClrMatchGroupCollection(nativeMatch.groups)
+
+    private var groupValues_: List<String>? = null
+
     override val groupValues: List<String>
         get() {
-            val g = nativeMatch.groups
-            // .NET reports an unmatched optional group as Value == "" (Success == false), matching Kotlin's empty-string slot.
-            return (0 until g.count).map { g[it].value }
+            if (groupValues_ == null) {
+                groupValues_ = object : AbstractList<String>() {
+                    override val size: Int get() = nativeMatch.groups.count
+                    override fun get(index: Int): String {
+                        // Unlike Java Matcher.group, the CLR indexer returns an empty group out of bounds.
+                        AbstractList.checkElementIndex(index, size)
+                        return nativeMatch.groups[index].value
+                    }
+                }
+            }
+            return groupValues_!!
         }
-
-    // Override the default-interface getter explicitly: the inherited `MatchResult.destructured` default getter
-    // (`get() = Destructured(this)`) InvalidProgram's when dispatched on the concrete adapter. A plain override on the
-    // concrete class emits a normal method and constructs the same Destructured wrapper correctly.
-    override val destructured: MatchResult.Destructured get() = MatchResult.Destructured(this)
 
     override fun next(): MatchResult? {
         // System...Match.NextMatch() advances to the next match (stepping past zero-width matches), so no manual index math.
@@ -423,39 +428,14 @@ internal class ClrMatchResult(private val nativeMatch: ClrMatch) : MatchResult {
     }
 }
 
-/** Kotlin `MatchNamedGroupCollection` over a System...GroupCollection. Real emitted class (not @ClrIntrinsic).
- *
- * Implements `MatchNamedGroupCollection` (: Collection<MatchGroup?>) DIRECTLY — the Collection members (contains/
- * containsAll/isEmpty) are spelled out here rather than inherited from `AbstractCollection`. The abstract-generic
- * base was fragile: constructing `AbstractCollection<MatchGroup?>` as ClrMatchGroupCollection's base failed to
- * type-load at runtime (`Could not load type kotlin.collections.AbstractCollection`1`) when `.groups` was first
- * read — and without `contains`, a `group in match.groups` check would have no member to dispatch. A direct
- * implementation (like ClrMatchResult/ClrSubList) gets the same @Clr-collection reverse GetEnumerator bridge with
- * no dependency on the abstract base. */
+/** Kotlin collection behavior over native CLR capture primitives. */
 internal class ClrMatchGroupCollection(
     private val nativeGroups: ClrGroupCollection
-) : MatchNamedGroupCollection {
+) : MatchNamedGroupCollection, AbstractCollection<MatchGroup?>() {
     override val size: Int get() = nativeGroups.count
-    override fun isEmpty(): Boolean = nativeGroups.count == 0
+    override fun isEmpty(): Boolean = false
 
-    // `group in match.groups` dispatches here. Linear scan (the collection is tiny — groupCount + 1).
-    override fun contains(element: MatchGroup?): Boolean {
-        val n = nativeGroups.count
-        var i = 0
-        while (i < n) { if (get(i) == element) return true; i++ }
-        return false
-    }
-
-    override fun containsAll(elements: Collection<MatchGroup?>): Boolean {
-        for (e in elements) if (!contains(e)) return false
-        return true
-    }
-
-    override fun iterator(): Iterator<MatchGroup?> = object : Iterator<MatchGroup?> {
-        private var i = 0
-        override fun hasNext(): Boolean = i < size
-        override fun next(): MatchGroup? = get(i++)
-    }
+    override fun iterator(): Iterator<MatchGroup?> = indices.asSequence().map { this[it] }.iterator()
 
     override fun get(index: Int): MatchGroup? {
         val g = nativeGroups[index]
