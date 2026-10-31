@@ -14,6 +14,7 @@ class UpstreamMutableMapTests {
         map["a"] = 1
         check(map.size == 1 && !map.isEmpty() && map["a"] == 1)
         check(map.containsKey("a") && map.containsValue(1) && !map.containsKey("missing"))
+        check(map["missing"] == null)
         check(upstreamMutableMapText(map) == "{a=1}" && (map as Any).toString() == "{a=1}")
         check(map.toString() == "{a=1}")
         check((map as Any) is AbstractMap<*, *>)

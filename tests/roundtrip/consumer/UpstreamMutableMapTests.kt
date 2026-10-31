@@ -12,6 +12,7 @@ class CrossModuleUpstreamMutableMapTests {
         check(produced.toString() == "{a=1}")
         check((produced as Any) is AbstractMap<*, *>)
         check(produced.size == 1 && produced.containsKey("a") && produced.get("a") == 1)
+        check(produced.get("missing") == null)
         check(map == mapOf("a" to 1) && map.hashCode() == mapOf("a" to 1).hashCode())
         val keys = map.keys
         val values = map.values
