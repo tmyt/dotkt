@@ -1,26 +1,23 @@
+/*
+ * Copyright 2010-2022 JetBrains s.r.o. and Kotlin Programming Language contributors.
+ * Use of this source code is governed by the Apache 2.0 license that can be found in the license/LICENSE.txt file.
+ */
+
 @file:Suppress("ACTUAL_WITHOUT_EXPECT", "NO_ACTUAL_FOR_EXPECT", "UNCHECKED_CAST", "NOTHING_TO_INLINE", "NO_ACTUAL_CLASS_MEMBER_FOR_EXPECTED_CLASS")
-// Step-1 CLR stub mirroring JVM actual; bodies are TODO pending @Clr/BCL binding.
-// See docs/design-stdlib-compilation.md "THE CANONICAL ROADMAP".
 
 package kotlin
 
-@kotlin.clr.ClrIntrinsic("System.Double.IsNaN")
-public actual fun Double.isNaN(): Boolean = TODO("clr binding should be implemented")
+public actual fun Double.isNaN(): Boolean = this != this
 
-@kotlin.clr.ClrIntrinsic("System.Single.IsNaN")
-public actual fun Float.isNaN(): Boolean = TODO("clr binding should be implemented")
+public actual fun Float.isNaN(): Boolean = this != this
 
-@kotlin.clr.ClrIntrinsic("System.Double.IsInfinity")
-public actual fun Double.isInfinite(): Boolean = TODO("clr binding should be implemented")
+public actual fun Double.isInfinite(): Boolean = (this == Double.POSITIVE_INFINITY) || (this == Double.NEGATIVE_INFINITY)
 
-@kotlin.clr.ClrIntrinsic("System.Single.IsInfinity")
-public actual fun Float.isInfinite(): Boolean = TODO("clr binding should be implemented")
+public actual fun Float.isInfinite(): Boolean = (this == Float.POSITIVE_INFINITY) || (this == Float.NEGATIVE_INFINITY)
 
-@kotlin.clr.ClrIntrinsic("System.Double.IsFinite")
-public actual fun Double.isFinite(): Boolean = TODO("clr binding should be implemented")
+public actual fun Double.isFinite(): Boolean = (toRawBits() and 0x7fffffff_ffffffffL) < 0x7ff00000_00000000L
 
-@kotlin.clr.ClrIntrinsic("System.Single.IsFinite")
-public actual fun Float.isFinite(): Boolean = TODO("clr binding should be implemented")
+public actual fun Float.isFinite(): Boolean = (toRawBits() and 0x7fffffff) < 0x7f800000
 
 @SinceKotlin("1.2")
 public actual fun Double.toBits(): Long = if (this.isNaN()) 0x7ff8000000000000L else this.toRawBits()
@@ -61,21 +58,20 @@ public actual fun Int.countLeadingZeroBits(): Int = TODO("clr binding should be 
 public actual fun Int.countTrailingZeroBits(): Int = TODO("clr binding should be implemented")
 
 @SinceKotlin("1.4")
-@kotlin.internal.InlineOnly
-public actual inline fun Int.takeHighestOneBit(): Int =
-    if (this == 0) 0 else 1 shl (31 - this.countLeadingZeroBits())
+public actual fun Int.takeHighestOneBit(): Int =
+    if (this == 0) 0 else 1.shl(32 - 1 - countLeadingZeroBits())
 
 @SinceKotlin("1.4")
-@kotlin.internal.InlineOnly
-public actual inline fun Int.takeLowestOneBit(): Int = this and -this
+public actual fun Int.takeLowestOneBit(): Int =
+    this and -this
 
 @SinceKotlin("1.6")
-@kotlin.clr.ClrIntrinsic("System.Numerics.BitOperations.RotateLeft")
-public actual fun Int.rotateLeft(bitCount: Int): Int = TODO("clr binding should be implemented")
+public actual fun Int.rotateLeft(bitCount: Int): Int =
+    shl(bitCount) or ushr(32 - bitCount)
 
 @SinceKotlin("1.6")
-@kotlin.clr.ClrIntrinsic("System.Numerics.BitOperations.RotateRight")
-public actual fun Int.rotateRight(bitCount: Int): Int = TODO("clr binding should be implemented")
+public actual fun Int.rotateRight(bitCount: Int): Int =
+    shl(32 - bitCount) or ushr(bitCount)
 
 @SinceKotlin("1.4")
 @kotlin.clr.ClrIntrinsic("System.Numerics.BitOperations.PopCount")
@@ -90,21 +86,21 @@ public actual fun Long.countLeadingZeroBits(): Int = TODO("clr binding should be
 public actual fun Long.countTrailingZeroBits(): Int = TODO("clr binding should be implemented")
 
 @SinceKotlin("1.4")
-@kotlin.internal.InlineOnly
-public actual inline fun Long.takeHighestOneBit(): Long =
-    if (this == 0L) 0L else 1L shl (63 - this.countLeadingZeroBits())
+public actual fun Long.takeHighestOneBit(): Long =
+    if (this == 0L) 0L else 1L.shl(64 - 1 - countLeadingZeroBits())
 
 @SinceKotlin("1.4")
+public actual fun Long.takeLowestOneBit(): Long =
+    this and -this
+
+@SinceKotlin("1.6")
+public actual fun Long.rotateLeft(bitCount: Int): Long =
+    shl(bitCount) or ushr(64 - bitCount)
+
+@SinceKotlin("1.6")
 @kotlin.internal.InlineOnly
-public actual inline fun Long.takeLowestOneBit(): Long = this and -this
-
-@SinceKotlin("1.6")
-@kotlin.clr.ClrIntrinsic("System.Numerics.BitOperations.RotateLeft")
-public actual fun Long.rotateLeft(bitCount: Int): Long = TODO("clr binding should be implemented")
-
-@SinceKotlin("1.6")
-@kotlin.clr.ClrIntrinsic("System.Numerics.BitOperations.RotateRight")
-public actual fun Long.rotateRight(bitCount: Int): Long = TODO("clr binding should be implemented")
+public actual inline fun Long.rotateRight(bitCount: Int): Long =
+    shl(64 - bitCount) or ushr(bitCount)
 
 // ---- Double/Float total-order equality & comparison (C14) ----
 // Kotlin contracts a TOTAL order on Double/Float that differs from IEEE (and from System.Double.Equals /
