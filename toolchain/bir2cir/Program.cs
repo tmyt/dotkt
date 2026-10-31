@@ -230,6 +230,7 @@ sealed class Pipeline
             {
                 foreach (var root in birRoots)
                 {
+                    DataClassArrayMemberLowering.Apply(root, bind);
                     EnumEntriesLowering.Apply(root, refs, bind);
                     ObjectSlotRename.Apply(root);
                     PrimitiveOperatorLowering.Apply(root, refs);
