@@ -35,8 +35,13 @@ static class DataClassArrayMemberLowering
         if (source is TypeNode.Array { Rank: 1, SzArray: true } vector)
         {
             signature = new TypeNode.Array(new TypeNode.Projection("out", new TypeNode.Tv("method", 0)));
-            var element = vector.Elem is TypeNode.Projection projection ? projection.Of : vector.Elem;
-            if (element is TypeNode.Star) element = new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"));
+            // A consuming projection guarantees no readable X: ordinary content operations infer Any? for
+            // Array<in X>, just as for Array<*>. An out projection retains its readable upper bound.
+            var element = vector.Elem switch {
+                TypeNode.Star or TypeNode.Projection { Variance: "in" } => new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any")),
+                TypeNode.Projection projection => projection.Of,
+                _ => vector.Elem,
+            };
             typeArguments = new JsonArray(TypeJson.Write(element));
         }
         else if (source is TypeNode.Fqn primitive && primitive.Name is

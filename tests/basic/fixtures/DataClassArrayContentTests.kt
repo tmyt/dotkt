@@ -8,6 +8,8 @@ private data class IntegralArrayRecord(val bytes: ByteArray, val shorts: ShortAr
 private data class OtherArrayRecord(val booleans: BooleanArray, val chars: CharArray, val floats: FloatArray, val doubles: DoubleArray)
 private data class GenericArrayRecord<T>(val values: Array<T>)
 private data class StarArrayRecord(val values: Array<*>)
+private data class InArrayRecord(val values: Array<in String>)
+private data class OutArrayRecord(val values: Array<out Number>)
 private data class NullableArrayRecord(val ints: IntArray?, val names: Array<String?>?)
 private value class ArrayValueRecord(val values: IntArray)
 
@@ -72,5 +74,21 @@ class DataClassArrayContentTests {
     fun similarlyNamedOrdinaryFunctionsRemainOrdinaryCalls() {
         check(dataClassArrayMemberToString(intArrayOf(1)) == "ordinary")
         check(dataClassArrayMemberHashCode(intArrayOf(1)) == 123)
+    }
+
+    @TestAttribute
+    fun projectedNullableAndValueElementsUseTheOrdinaryContentContract() {
+        val sink = InArrayRecord(arrayOf<Any>(1, "x"))
+        check(sink.toString() == "InArrayRecord(values=${sink.values.contentToString()})")
+        check(sink.hashCode() == sink.values.contentHashCode())
+        val source = OutArrayRecord(arrayOf<Number>(1, 2L))
+        check(source.toString() == "OutArrayRecord(values=${source.values.contentToString()})")
+        check(source.hashCode() == source.values.contentHashCode())
+        val nullable = GenericArrayRecord(arrayOf<Int?>(1, null, 2))
+        check(nullable.toString() == "GenericArrayRecord(values=[1, null, 2])")
+        check(nullable.hashCode() == nullable.values.contentHashCode())
+        val value = GenericArrayRecord(arrayOf(ArrayValueRecord(intArrayOf(3))))
+        check(value.toString() == "GenericArrayRecord(values=[ArrayValueRecord(values=[3])])")
+        check(value.hashCode() == value.values.contentHashCode())
     }
 }
