@@ -164,6 +164,7 @@ public actual class HashMap<K, V> private constructor(private val core: ClrMapCo
     actual override val keys: MutableSet<K> get() = super.keys
     actual override val values: MutableCollection<V> get() = super.values
     actual override val entries: MutableSet<MutableMap.MutableEntry<K, V>> = ClrMapEntries<K, V>(core) as MutableSet<MutableMap.MutableEntry<K, V>>
+    override fun equals(other: Any?): Boolean = DotKt.Runtime.CompilerServices.structuralEquals(this, other, 2)
     override fun toString(): String = clrMapString(this, core)
 }
 
@@ -185,5 +186,6 @@ public actual class LinkedHashMap<K, V> private constructor(private val core: Cl
     actual override val keys: MutableSet<K> get() = super.keys
     actual override val values: MutableCollection<V> get() = super.values
     actual override val entries: MutableSet<MutableMap.MutableEntry<K, V>> = ClrMapEntries<K, V>(core) as MutableSet<MutableMap.MutableEntry<K, V>>
+    override fun equals(other: Any?): Boolean = DotKt.Runtime.CompilerServices.structuralEquals(this, other, 2)
     override fun toString(): String = clrMapString(this, core)
 }
