@@ -1,6 +1,9 @@
+/*
+ * Copyright 2010-2022 JetBrains s.r.o. and Kotlin Programming Language contributors.
+ * Use of this source code is governed by the Apache 2.0 license that can be found in the license/LICENSE.txt file.
+ */
+
 @file:Suppress("ACTUAL_WITHOUT_EXPECT", "NO_ACTUAL_FOR_EXPECT", "UNCHECKED_CAST", "NOTHING_TO_INLINE", "NO_ACTUAL_CLASS_MEMBER_FOR_EXPECTED_CLASS")
-// Step-1 CLR stub mirroring JVM actual; bodies are TODO pending @Clr/BCL binding.
-// See docs/design-stdlib-compilation.md "THE CANONICAL ROADMAP".
 
 package kotlin.math
 
@@ -93,8 +96,10 @@ public actual fun exp(x: Double): Double = TODO("clr binding should be implement
 public actual fun expm1(x: Double): Double = TODO("clr binding should be implemented")
 
 @SinceKotlin("1.2")
-@kotlin.clr.ClrIntrinsic("System.Math.Log")
-public actual fun log(x: Double, base: Double): Double = TODO("clr binding should be implemented")
+public actual fun log(x: Double, base: Double): Double {
+    if (base <= 0.0 || base == 1.0) return Double.NaN
+    return ln(x) / ln(base)
+}
 
 @SinceKotlin("1.2")
 @InlineOnly
@@ -127,8 +132,11 @@ public actual fun ceil(x: Double): Double = TODO("clr binding should be implemen
 public actual fun floor(x: Double): Double = TODO("clr binding should be implemented")
 
 @SinceKotlin("1.2")
-@kotlin.clr.ClrIntrinsic("System.Math.Truncate")
-public actual fun truncate(x: Double): Double = TODO("clr binding should be implemented")
+public actual fun truncate(x: Double): Double = when {
+    x.isNaN() || x.isInfinite() -> x
+    x > 0 -> floor(x)
+    else -> ceil(x)
+}
 
 @SinceKotlin("1.2")
 @InlineOnly
@@ -141,19 +149,26 @@ public actual fun round(x: Double): Double = TODO("clr binding should be impleme
 public actual fun abs(x: Double): Double = TODO("clr binding should be implemented")
 
 @SinceKotlin("1.2")
-@InlineOnly
-public actual fun sign(x: Double): Double =
-    if (x.isNaN()) Double.NaN else if (x > 0.0) 1.0 else if (x < 0.0) -1.0 else x
+public actual fun sign(x: Double): Double = when {
+    x.isNaN() -> Double.NaN
+    x > 0 -> 1.0
+    x < 0 -> -1.0
+    else -> x
+}
 
 @SinceKotlin("1.2")
-@InlineOnly
-@kotlin.clr.ClrIntrinsic("System.Math.Min")
-public actual fun min(a: Double, b: Double): Double = TODO("clr binding should be implemented")
+public actual fun min(a: Double, b: Double): Double = when {
+    a.isNaN() || b.isNaN() -> Double.NaN
+    a == 0.0 && b == 0.0 -> if (a.signBit()) a else b   // -0.0 < +0.0
+    else -> if (a < b) a else b
+}
 
 @SinceKotlin("1.2")
-@InlineOnly
-@kotlin.clr.ClrIntrinsic("System.Math.Max")
-public actual fun max(a: Double, b: Double): Double = TODO("clr binding should be implemented")
+public actual fun max(a: Double, b: Double): Double = when {
+    a.isNaN() || b.isNaN() -> Double.NaN
+    a == 0.0 && b == 0.0 -> if (!a.signBit()) a else b  // -0.0 < +0.0
+    else -> if (a > b) a else b
+}
 
 @SinceKotlin("1.8")
 @WasExperimental(ExperimentalStdlibApi::class)
@@ -169,7 +184,7 @@ public actual fun cbrt(x: Double): Double = TODO("clr binding should be implemen
 public actual fun Double.pow(x: Double): Double = TODO("clr binding should be implemented")
 
 @SinceKotlin("1.2")
-public actual fun Double.pow(n: Int): Double = this.pow(n.toDouble())
+public actual fun Double.pow(n: Int): Double = pow(n.toDouble())
 
 @SinceKotlin("1.2")
 public actual val Double.absoluteValue: Double get() = abs(this)
@@ -183,16 +198,19 @@ public actual val Double.sign: Double get() = sign(this)
 public actual fun Double.withSign(sign: Double): Double = TODO("clr binding should be implemented")
 
 @SinceKotlin("1.2")
-public actual fun Double.withSign(sign: Int): Double = this.withSign(sign.toDouble())
+public actual fun Double.withSign(sign: Int): Double = withSign(sign.toDouble())
 
 @SinceKotlin("1.2")
-@InlineOnly
-public actual inline val Double.ulp: Double get() = when {
-    this.isNaN() -> Double.NaN
-    this.isInfinite() -> Double.POSITIVE_INFINITY
-    this.absoluteValue == Double.MAX_VALUE -> this.absoluteValue - this.absoluteValue.nextDown()
-    else -> this.absoluteValue.nextUp() - this.absoluteValue
-}
+public actual val Double.ulp: Double
+    get() = when {
+        isNaN() -> Double.NaN
+        isInfinite() -> Double.POSITIVE_INFINITY
+        this == Double.MAX_VALUE || this == -Double.MAX_VALUE -> 2.0.pow(971)
+        else -> {
+            val d = absoluteValue
+            d.nextUp() - d
+        }
+    }
 
 @SinceKotlin("1.2")
 @InlineOnly
@@ -218,17 +236,17 @@ public actual inline fun Double.nextTowards(to: Double): Double = when {
 // wrappers must NOT delegate to it (#103). NaN throws; out-of-range saturates to Int/Long MIN/MAX per contract.
 @SinceKotlin("1.2")
 public actual fun Double.roundToInt(): Int = when {
-    this.isNaN() -> throw IllegalArgumentException("Cannot round NaN value.")
-    this > Int.MAX_VALUE.toDouble() -> Int.MAX_VALUE
-    this < Int.MIN_VALUE.toDouble() -> Int.MIN_VALUE
+    isNaN() -> throw IllegalArgumentException("Cannot round NaN value.")
+    this > Int.MAX_VALUE -> Int.MAX_VALUE
+    this < Int.MIN_VALUE -> Int.MIN_VALUE
     else -> floor(this + 0.5).toInt()
 }
 
 @SinceKotlin("1.2")
 public actual fun Double.roundToLong(): Long = when {
-    this.isNaN() -> throw IllegalArgumentException("Cannot round NaN value.")
-    this > Long.MAX_VALUE.toDouble() -> Long.MAX_VALUE
-    this < Long.MIN_VALUE.toDouble() -> Long.MIN_VALUE
+    isNaN() -> throw IllegalArgumentException("Cannot round NaN value.")
+    this > Long.MAX_VALUE -> Long.MAX_VALUE
+    this < Long.MIN_VALUE -> Long.MIN_VALUE
     else -> floor(this + 0.5).toLong()
 }
 
@@ -322,8 +340,10 @@ public actual fun exp(x: Float): Float = TODO("clr binding should be implemented
 public actual fun expm1(x: Float): Float = TODO("clr binding should be implemented")
 
 @SinceKotlin("1.2")
-@kotlin.clr.ClrIntrinsic("System.MathF.Log")
-public actual fun log(x: Float, base: Float): Float = TODO("clr binding should be implemented")
+public actual fun log(x: Float, base: Float): Float {
+    if (base <= 0.0F || base == 1.0F) return Float.NaN
+    return ln(x) / ln(base)
+}
 
 @SinceKotlin("1.2")
 @InlineOnly
@@ -355,8 +375,11 @@ public actual fun ceil(x: Float): Float = TODO("clr binding should be implemente
 public actual fun floor(x: Float): Float = TODO("clr binding should be implemented")
 
 @SinceKotlin("1.2")
-@kotlin.clr.ClrIntrinsic("System.MathF.Truncate")
-public actual fun truncate(x: Float): Float = TODO("clr binding should be implemented")
+public actual fun truncate(x: Float): Float = when {
+    x.isNaN() || x.isInfinite() -> x
+    x > 0 -> floor(x)
+    else -> ceil(x)
+}
 
 @SinceKotlin("1.2")
 @InlineOnly
@@ -369,19 +392,26 @@ public actual fun round(x: Float): Float = TODO("clr binding should be implement
 public actual fun abs(x: Float): Float = TODO("clr binding should be implemented")
 
 @SinceKotlin("1.2")
-@InlineOnly
-public actual fun sign(x: Float): Float =
-    if (x.isNaN()) Float.NaN else if (x > 0.0f) 1.0f else if (x < 0.0f) -1.0f else x
+public actual fun sign(x: Float): Float = when {
+    x.isNaN() -> Float.NaN
+    x > 0 -> 1.0f
+    x < 0 -> -1.0f
+    else -> x
+}
 
 @SinceKotlin("1.2")
-@InlineOnly
-@kotlin.clr.ClrIntrinsic("System.MathF.Min")
-public actual fun min(a: Float, b: Float): Float = TODO("clr binding should be implemented")
+public actual fun min(a: Float, b: Float): Float = when {
+    a.isNaN() || b.isNaN() -> Float.NaN
+    a == 0.0f && b == 0.0f -> if (a.signBit()) a else b   // -0.0 < +0.0
+    else -> if (a < b) a else b
+}
 
 @SinceKotlin("1.2")
-@InlineOnly
-@kotlin.clr.ClrIntrinsic("System.MathF.Max")
-public actual fun max(a: Float, b: Float): Float = TODO("clr binding should be implemented")
+public actual fun max(a: Float, b: Float): Float = when {
+    a.isNaN() || b.isNaN() -> Float.NaN
+    a == 0.0f && b == 0.0f -> if (!a.signBit()) a else b   // -0.0 < +0.0
+    else -> if (a > b) a else b
+}
 
 @SinceKotlin("1.8")
 @WasExperimental(ExperimentalStdlibApi::class)
@@ -397,7 +427,7 @@ public actual fun cbrt(x: Float): Float = TODO("clr binding should be implemente
 public actual fun Float.pow(x: Float): Float = TODO("clr binding should be implemented")
 
 @SinceKotlin("1.2")
-public actual fun Float.pow(n: Int): Float = this.pow(n.toFloat())
+public actual fun Float.pow(n: Int): Float = pow(n.toFloat())
 
 @SinceKotlin("1.2")
 public actual val Float.absoluteValue: Float get() = abs(this)
@@ -411,7 +441,7 @@ public actual val Float.sign: Float get() = sign(this)
 public actual fun Float.withSign(sign: Float): Float = TODO("clr binding should be implemented")
 
 @SinceKotlin("1.2")
-public actual fun Float.withSign(sign: Int): Float = this.withSign(sign.toFloat())
+public actual fun Float.withSign(sign: Int): Float = withSign(sign.toFloat())
 
 // Float rounds through Double (#103): Float->Double is lossless, so Double.roundToInt (floor(x+0.5)) is EXACT for
 // every float input and matches Kotlin/JVM (which defines Float.roundToLong = toDouble().roundToLong()), while
@@ -435,20 +465,21 @@ public actual fun Float.roundToLong(): Long = this.toDouble().roundToLong()
 public actual inline fun abs(n: Int): Int = if (n < 0) -n else n
 
 @SinceKotlin("1.2")
-@InlineOnly
-@kotlin.clr.ClrIntrinsic("System.Math.Min")
-public actual fun min(a: Int, b: Int): Int = TODO("clr binding should be implemented")
+public actual fun min(a: Int, b: Int): Int = if (a < b) a else b
 
 @SinceKotlin("1.2")
-@InlineOnly
-@kotlin.clr.ClrIntrinsic("System.Math.Max")
-public actual fun max(a: Int, b: Int): Int = TODO("clr binding should be implemented")
+public actual fun max(a: Int, b: Int): Int = if (a > b) a else b
 
 @SinceKotlin("1.2")
 public actual val Int.absoluteValue: Int get() = abs(this)
 
 @SinceKotlin("1.2")
-public actual val Int.sign: Int get() = if (this < 0) -1 else if (this > 0) 1 else 0
+public actual val Int.sign: Int
+    get() = when {
+        this < 0 -> -1
+        this > 0 -> 1
+        else -> 0
+    }
 
 @SinceKotlin("1.2")
 @InlineOnly
@@ -459,19 +490,26 @@ public actual val Int.sign: Int get() = if (this < 0) -1 else if (this > 0) 1 el
 public actual inline fun abs(n: Long): Long = if (n < 0) -n else n
 
 @SinceKotlin("1.2")
-@InlineOnly
-@kotlin.clr.ClrIntrinsic("System.Math.Min")
-public actual fun min(a: Long, b: Long): Long = TODO("clr binding should be implemented")
+public actual fun min(a: Long, b: Long): Long = if (a < b) a else b
 
 @SinceKotlin("1.2")
-@InlineOnly
-@kotlin.clr.ClrIntrinsic("System.Math.Max")
-public actual fun max(a: Long, b: Long): Long = TODO("clr binding should be implemented")
+public actual fun max(a: Long, b: Long): Long = if (a > b) a else b
 
 @SinceKotlin("1.2")
 public actual val Long.absoluteValue: Long get() = abs(this)
 
 @SinceKotlin("1.2")
-public actual val Long.sign: Int get() = if (this < 0) -1 else if (this > 0) 1 else 0
+public actual val Long.sign: Int
+    get() = when {
+        this < 0 -> -1
+        this > 0 -> 1
+        else -> 0
+    }
+
+@kotlin.clr.ClrIntrinsic("System.Double.IsNegative")
+private fun Double.signBit(): Boolean = TODO("clr binding should be implemented")
+
+@kotlin.clr.ClrIntrinsic("System.Single.IsNegative")
+private fun Float.signBit(): Boolean = TODO("clr binding should be implemented")
 
 // endregion
