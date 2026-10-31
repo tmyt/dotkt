@@ -4,6 +4,8 @@ import System.Collections.Generic.IReadOnlyList
 import System.Collections.Generic.IList
 import System.Collections.Generic.ISet
 
+private fun <T> forwardedNativeArrayList(values: Array<T>): ArrayList<T> = arrayListOf(*values)
+
 class CollectionFactoryNativeTests {
     @TestAttribute fun factoryListsRetainTheirNativeClosedElementFaces() {
         val emptyListView = emptyList<Int>() as IReadOnlyList<Int>
@@ -23,6 +25,12 @@ class CollectionFactoryNativeTests {
         check(arrayList.size == 3 && arrayList[2] == "third")
         val singleton = listOf(System.TimeSpan.FromTicks(7))
         check(NativeArrayWrites.First(singleton as IReadOnlyList<System.TimeSpan>).Ticks == 7L)
+        val copied = forwardedNativeArrayList(arrayOf(3, 4))
+        check(NativeArrayWrites.Sum(copied as IReadOnlyList<Int>) == 7)
+        (copied as IList<Int>).Add(5)
+        check(copied.size == 3 && copied[2] == 5)
+        val copiedNative = forwardedNativeArrayList(arrayOf(System.TimeSpan.FromTicks(11)))
+        check(NativeArrayWrites.First(copiedNative as IReadOnlyList<System.TimeSpan>).Ticks == 11L)
         val primitive = intArrayOf(1, 2, 3)
         check(C1Net.Util.Sum(*primitive) == 6)
         check(System.String.Concat(*arrayOf<Any?>("a", 2, null)) == "a2")
