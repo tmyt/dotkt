@@ -201,19 +201,16 @@ public actual class HashSet<E> : MutableSet<E> {
 
     // From MutableSet
 
-    // The BCL HashSet enumerator is a struct invalidated by mutation, so snapshot the elements first; remove() then
-    // deletes the last-returned element from the live set. TODO(clr): a non-snapshot (live) mutable iterator.
+    // Native HashSet removal does not invalidate its cursor. Keep the native comparer/storage and adapt only the
+    // Kotlin hasNext/next/remove protocol; an ordinary native collection's fallback remains a separate boundary.
     actual override fun iterator(): MutableIterator<E> {
-        val snapshot = clrSetSnapshot(this)
+        val source = iteratorOverEnumerable(this as ClrEnumerable<E>)
         return object : MutableIterator<E> {
-            private var index = 0
             private var lastEl: E? = null
             private var hasLast = false
-            override fun hasNext(): Boolean = index < snapshot.size
+            override fun hasNext(): Boolean = source.hasNext()
             override fun next(): E {
-                if (index >= snapshot.size) throw NoSuchElementException()
-                val e = snapshot[index]
-                index++
+                val e = source.next()
                 lastEl = e
                 hasLast = true
                 return e
@@ -273,32 +270,7 @@ public actual class LinkedHashSet<E> : MutableSet<E> {
 
     // From MutableSet
 
-    // Insertion-ordered iterator: snapshot the backing map's values, then delete via the live set on remove().
-    // NB the snapshot is built by iterating map.values DIRECTLY (not clrSetSnapshot(this), which would re-enter this
-    // set's own GetEnumerator bridge -> infinite recursion).
-    actual override fun iterator(): MutableIterator<E> {
-        val snapshot = ArrayList<E>(map.size)
-        for (element in map.values) snapshot.add(element)
-        return object : MutableIterator<E> {
-            private var index = 0
-            private var lastEl: E? = null
-            private var hasLast = false
-            override fun hasNext(): Boolean = index < snapshot.size
-            override fun next(): E {
-                if (index >= snapshot.size) throw NoSuchElementException()
-                val e = snapshot[index]
-                index++
-                lastEl = e
-                hasLast = true
-                return e
-            }
-            override fun remove() {
-                if (!hasLast) throw IllegalStateException("next() has not been called")
-                this@LinkedHashSet.remove(lastEl as E)
-                hasLast = false
-            }
-        }
-    }
+    actual override fun iterator(): MutableIterator<E> = map.values.iterator()
     actual override fun add(element: E): Boolean {
         val key = LinkedHashSetKey(element)
         if (map.containsKey(key)) return false
@@ -316,30 +288,7 @@ public actual class LinkedHashSet<E> : MutableSet<E> {
         for (element in elements) { if (add(element)) modified = true }
         return modified
     }
-    actual override fun removeAll(elements: Collection<E>): Boolean {
-        var modified = false
-        for (element in elements) { if (remove(element)) modified = true }
-        return modified
-    }
-    actual override fun retainAll(elements: Collection<E>): Boolean {
-        val toRemove = ArrayList<E>()
-        val it = iterator()
-        while (it.hasNext()) {
-            val e = it.next()
-            if (!elements.contains(e)) toRemove.add(e)
-        }
-        var modified = false
-        for (e in toRemove) { if (remove(e)) modified = true }
-        return modified
-    }
+    actual override fun removeAll(elements: Collection<E>): Boolean = (this as MutableIterable<E>).removeAll { it in elements }
+    actual override fun retainAll(elements: Collection<E>): Boolean = (this as MutableIterable<E>).retainAll { it in elements }
     actual override fun clear() { map.clear() }
-}
-
-/** Snapshot a CLR-backed set's elements into an ArrayList by enumerating the BCL IEnumerable directly (the bridge),
- *  avoiding recursion through the set's own `iterator()`. */
-private fun <E> clrSetSnapshot(set: Collection<E>): ArrayList<E> {
-    val out = ArrayList<E>()
-    val source = iteratorOverEnumerable(set as ClrEnumerable<E>)
-    while (source.hasNext()) out.add(source.next())
-    return out
 }
