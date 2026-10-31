@@ -1,11 +1,15 @@
+/*
+ * Copyright 2010-2018 JetBrains s.r.o. and Kotlin Programming Language contributors.
+ * Use of this source code is governed by the Apache 2.0 license that can be found in the license/LICENSE.txt file.
+ */
+
 @file:Suppress("ACTUAL_WITHOUT_EXPECT", "NO_ACTUAL_FOR_EXPECT", "UNCHECKED_CAST", "NOTHING_TO_INLINE", "NO_ACTUAL_CLASS_MEMBER_FOR_EXPECTED_CLASS")
-// CLR `lazy` actuals. The default `lazy { }` is thread-safe (matching Kotlin/JVM and .NET's
-// System.Lazy default): SYNCHRONIZED/PUBLICATION/no-mode -> SynchronizedLazyImpl (Monitor lock),
-// only LazyThreadSafetyMode.NONE -> UnsafeLazyImpl.
+// Portable JVM lazy policies over CLR Monitor/Volatile/Interlocked primitives.
 
 package kotlin
 
 import kotlin.concurrent.Volatile
+import kotlin.concurrent.atomics.interlockedCompareExchangeRef
 import kotlin.concurrent.atomics.monitorEnter
 import kotlin.concurrent.atomics.monitorExit
 
@@ -68,17 +72,50 @@ internal class SynchronizedLazyImpl<out T>(initializer: () -> T, lock: Any? = nu
     override fun toString(): String = if (isInitialized()) value.toString() else "Lazy value not initialized yet."
 }
 
-// Default `lazy { }` is thread-safe (Monitor lock), matching Kotlin/JVM and System.Lazy defaults.
+// Publication follows the upstream JVM algorithm; the field updater is the existing CLR object CAS.
+private class SafePublicationLazyImpl<out T>(initializer: () -> T) : Lazy<T> {
+    @Volatile
+    private var initializer: (() -> T)? = initializer
+
+    @Volatile
+    private var _value: Any? = UNINITIALIZED_VALUE
+
+    // Final field for safe publication of the lazy instance itself.
+    @Suppress("unused")
+    private val final: Any = UNINITIALIZED_VALUE
+
+    override val value: T
+        get() {
+            val value = _value
+            if (value !== UNINITIALIZED_VALUE) {
+                @Suppress("UNCHECKED_CAST")
+                return value as T
+            }
+
+            val initializerValue = initializer
+            // A null initializer means another thread has already published the value.
+            if (initializerValue != null) {
+                val newValue = initializerValue()
+                if (interlockedCompareExchangeRef(_value, newValue, UNINITIALIZED_VALUE) === UNINITIALIZED_VALUE) {
+                    initializer = null
+                    return newValue
+                }
+            }
+            @Suppress("UNCHECKED_CAST")
+            return _value as T
+        }
+
+    override fun isInitialized(): Boolean = _value !== UNINITIALIZED_VALUE
+
+    override fun toString(): String = if (isInitialized()) value.toString() else "Lazy value not initialized yet."
+}
+
 public actual fun <T> lazy(initializer: () -> T): Lazy<T> = SynchronizedLazyImpl(initializer)
 
 public actual fun <T> lazy(mode: LazyThreadSafetyMode, initializer: () -> T): Lazy<T> =
     when (mode) {
-        // NONE is the only unsynchronized mode. SYNCHRONIZED and PUBLICATION both use the Monitor
-        // lock: SYNCHRONIZED requires single-initializer mutual exclusion (exact match), and
-        // PUBLICATION (which permits several initializer runs but a single published value) is
-        // served correctly — if more strictly than required — by the same locked single-init impl.
         LazyThreadSafetyMode.SYNCHRONIZED -> SynchronizedLazyImpl(initializer)
-        LazyThreadSafetyMode.PUBLICATION -> SynchronizedLazyImpl(initializer)
+        LazyThreadSafetyMode.PUBLICATION -> SafePublicationLazyImpl(initializer)
         LazyThreadSafetyMode.NONE -> UnsafeLazyImpl(initializer)
     }
 

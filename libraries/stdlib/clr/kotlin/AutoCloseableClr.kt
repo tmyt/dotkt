@@ -1,16 +1,15 @@
-@file:Suppress("ACTUAL_WITHOUT_EXPECT", "NO_ACTUAL_FOR_EXPECT", "UNCHECKED_CAST", "NOTHING_TO_INLINE", "NO_ACTUAL_CLASS_MEMBER_FOR_EXPECTED_CLASS")
-
-// Step-1 CLR stub mirroring the JVM actual; bodies are TODO pending the @Clr/BCL binding step
-// (see docs/design-stdlib-compilation.md "THE CANONICAL ROADMAP").
+/*
+ * Copyright 2010-2022 JetBrains s.r.o. and Kotlin Programming Language contributors.
+ * Use of this source code is governed by the Apache 2.0 license that can be found in the license/LICENSE.txt file.
+ */
 
 package kotlin
 
-// @ClrTypeAlias binds kotlin.AutoCloseable (and its jar typealias kotlin.io.Closeable, which expands to it) to
-// System.IDisposable; bir2cir reads it from the ref.dll and (a) lowers an AutoCloseable type token to System.IDisposable,
-// (b) renames a `class R : AutoCloseable`'s `close()` override to the `Dispose` slot (DeclarationRename), and (c)
-// substitutes a `close()` call to System.IDisposable.Dispose. This retires the kotc birType/clrIfaceMemberName/use{}
-// hardcodes (layer purity — the CLR type/member names live in the stdlib metadata, not kotc).
+import kotlin.contracts.InvocationKind
+import kotlin.contracts.contract
+
 @SinceKotlin("2.0")
+@WasExperimental(ExperimentalStdlibApi::class)
 @kotlin.clr.ClrTypeAlias("System.IDisposable")
 public actual interface AutoCloseable {
     @kotlin.clr.ClrIntrinsic("Dispose")
@@ -19,14 +18,18 @@ public actual interface AutoCloseable {
 
 @SinceKotlin("2.0")
 @kotlin.internal.InlineOnly
-public actual inline fun AutoCloseable(crossinline closeAction: () -> Unit): AutoCloseable =
-    object : AutoCloseable {
-        override fun close() { closeAction() }
-    }
+public actual inline fun AutoCloseable(crossinline closeAction: () -> Unit): AutoCloseable = object : AutoCloseable {
+    override fun close() = closeAction()
+}
 
-@SinceKotlin("1.2")
+@SinceKotlin("2.0")
+@WasExperimental(ExperimentalStdlibApi::class)
 @kotlin.internal.InlineOnly
+@IgnorableReturnValue
 public actual inline fun <T : AutoCloseable?, R> T.use(block: (T) -> R): R {
+    contract {
+        callsInPlace(block, InvocationKind.EXACTLY_ONCE)
+    }
     var exception: Throwable? = null
     try {
         return block(this)
@@ -38,7 +41,7 @@ public actual inline fun <T : AutoCloseable?, R> T.use(block: (T) -> R): R {
     }
 }
 
-@SinceKotlin("1.2")
+@SinceKotlin("1.8")
 @PublishedApi
 internal fun AutoCloseable?.closeFinally(cause: Throwable?): Unit = when {
     this == null -> {}
