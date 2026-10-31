@@ -208,9 +208,11 @@ public actual class HashSet<E> : MutableSet<E> {
         return object : MutableIterator<E> {
             private var lastEl: E? = null
             private var hasLast = false
-            override fun hasNext(): Boolean = source.hasNext()
+            override fun hasNext(): Boolean = try { source.hasNext() }
+                catch (error: IllegalStateException) { throw ConcurrentModificationException(error.message, error) }
             override fun next(): E {
-                val e = source.next()
+                val e = try { source.next() }
+                    catch (error: IllegalStateException) { throw ConcurrentModificationException(error.message, error) }
                 lastEl = e
                 hasLast = true
                 return e

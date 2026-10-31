@@ -96,6 +96,24 @@ class PortableSetIteratorTests {
     }
 
     @TestAttribute fun nativeConcreteIteratorRetainsTheLiveNativeCursor() {
+        val first = Token(1)
+        val second = Token(2)
+        val third = Token(3)
+        val references = HashSet<Token>()
+        references.addAll(listOf(first, second, third))
+        val live = references.iterator()
+        val returned = live.next()
+        val removed = if (returned === first) second else first
+        check(references.remove(removed))
+        var remaining = 0
+        while (live.hasNext()) {
+            val value = live.next()
+            check(value !== removed && value !== returned)
+            check(value === first || value === second || value === third)
+            remaining++
+        }
+        check(remaining == 1)
+
         val set = HashSet<String>()
         set.addAll(listOf("first", "second", "third"))
         val iterator = set.iterator()
@@ -103,7 +121,10 @@ class PortableSetIteratorTests {
         set.add("extra")
         var failed = false
         try { iterator.hasNext(); iterator.next() }
-        catch (_: System.InvalidOperationException) { failed = true }
+        catch (error: ConcurrentModificationException) {
+            check(error.cause is System.InvalidOperationException)
+            failed = true
+        }
         check(failed)
     }
 }
