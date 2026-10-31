@@ -7,6 +7,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Changed
 
+- Restore live concrete HashSet and insertion-ordered LinkedHashSet iteration, including iterator-owned bulk removals and Kotlin concurrent-modification exceptions, while retaining native HashSet storage and the general foreign-collection fallback.
 - Restore the upstream scale-bearing DurationUnit enum and conversion policies, retaining unchanged common duration sources and the existing general rich-enum representation. Resolve referenced enum property getters and generic rich-enum ordinals from their producer-owned metadata, including entry subclasses.
 - Restore upstream AutoCloseable contracts and Base64 platform hooks, and use the upstream lazy publication algorithm over existing CLR volatile/CAS primitives instead of a mutual-exclusion initializer.
 - Restore upstream StringBuilder surrogate-preserving reversal, range checks and end clamping, and scalar-to-string forwarding while retaining native CLR storage, identity and formatting.

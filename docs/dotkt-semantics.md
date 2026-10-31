@@ -1017,6 +1017,13 @@ Kotlin-owned map entry, key and value iterators are live and fail fast after str
 native key/value enumerators translate that failure to CLR `InvalidOperationException`. This does not change the
 remaining Kotlin snapshot views over native BCL maps described in §5c.
 
+`LinkedHashSet` iterators use the backing map's live values view, including through Kotlin `Set` and
+`MutableSet` views; structural changes are detected by that map's iterator. Concrete Kotlin `HashSet`
+iteration uses the native hash-set cursor: additions invalidate it and surface as Kotlin
+`ConcurrentModificationException` (with the native exception as cause), while removal does not invalidate it.
+Both support iterator-owned removal. Explicit native enumeration retains native exceptions. The general
+native-set fallback through Kotlin collection interfaces remains a snapshot adapter.
+
 The concrete CLR identity change means a Kotlin-created map can no longer be cast to BCL `Dictionary` or
 `OrderedDictionary`, and C# consumers of concrete Kotlin map return types see the Kotlin-owned class.
 Use `map.toClrDictionary()` or `map.toClrOrderedDictionary()` when a native API requires those concrete classes.
