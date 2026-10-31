@@ -25,7 +25,8 @@ class CollectionFactoryPackingTests {
         nullable[1] = 99
         check(copied.size == 2 && copied[0] == null && copied[1] == 7)
         copied.add(8)
-        check(copied[2] == 8 && nullable.size == 2)
+        copied[0] = 5
+        check(copied[2] == 8 && nullable[0] == null && nullable[1] == 99)
         val native = copyForwardedArrayList(arrayOf(System.TimeSpan.FromTicks(9)))
         check(native.single().Ticks == 9L)
     }
