@@ -7,6 +7,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Changed
 
+- Restore the upstream scale-bearing DurationUnit enum and conversion policies, retaining unchanged common duration sources and the existing general rich-enum representation. Resolve referenced enum property getters and generic rich-enum ordinals from their producer-owned metadata, including entry subclasses.
 - Restore upstream AutoCloseable contracts and Base64 platform hooks, and use the upstream lazy publication algorithm over existing CLR volatile/CAS primitives instead of a mutual-exclusion initializer.
 - Restore upstream StringBuilder surrogate-preserving reversal, range checks and end clamping, and scalar-to-string forwarding while retaining native CLR storage, identity and formatting.
 - Restore upstream floating predicates, rotations and scalar math policy over CLR primitives, including invalid logarithm-base rejection and signed-zero extrema; mask Kotlin shift distances before CIL emission, and retain CLR NaN canonicalization and corrected Float integer rounding.

@@ -29,6 +29,18 @@ static class EnumValueLowering
         if (node is JsonObject obj)
         {
             var kind = obj["k"]?.GetValue<string>();
+            // Lifted property-reference getters preserve the selected inherited Enum property as an ordinary
+            // property call. A referenced rich enum has no physical name/ordinal getter: its producer supplies the
+            // exact field identities. Consume that same authority as the semantic enumName/enumOrdinal path.
+            if (kind == "callInstance" && obj["prop"]?.GetValue<string>() == "get"
+                && obj["method"]?.GetValue<string>() is "name" or "ordinal"
+                && obj["args"] is JsonArray { Count: 0 }
+                && obj["recv"] is JsonNode propertyReceiver && obj["ownerType"] is JsonNode propertyOwner
+                && TypeJson.OwnerName(propertyOwner) is string propertyEnum
+                && refs.TryKotlinRichEnumInstanceFields(propertyEnum, out var propertyNameField, out var propertyOrdinalField))
+                RewriteRichField(obj, propertyReceiver, propertyOwner,
+                    obj["method"].GetValue<string>() == "name" ? propertyNameField : propertyOrdinalField,
+                    obj["method"].GetValue<string>() == "name" ? "kotlin.String" : "kotlin.Int");
             if (kind == "enumValue"
                 && obj["entry"]?.GetValue<string>() is string entry
                 && obj["type"] is JsonNode type
@@ -102,13 +114,8 @@ static class EnumValueLowering
                 if (refs.TryKotlinRichEnumInstanceFields(enumOwner, out var nameField, out var ordinalField))
                 {
                     var physicalField = kind == "enumName" ? nameField : ordinalField;
-                    var receiverClone = receiver.DeepClone();
-                    var typeClone = enumType.DeepClone();
-                    obj.Clear();
-                    obj["k"] = "field";
-                    obj["ownerType"] = typeClone;
-                    obj["recv"] = receiverClone;
-                    obj["name"] = physicalField;
+                    RewriteRichField(obj, receiver, enumType, physicalField,
+                        kind == "enumName" ? "kotlin.String" : "kotlin.Int");
                 }
                 else if (kind == "enumName")
                 {
@@ -171,6 +178,18 @@ static class EnumValueLowering
         else if (node is JsonArray arr)
             foreach (var item in arr)
                 if (item != null) Walk(item, refs, localBasicEnums, localExplicitEnums, localParseEnums, ref runtimeLookup);
+    }
+
+    static void RewriteRichField(JsonObject node, JsonNode receiver, JsonNode owner, string field, string resultType)
+    {
+        var receiverClone = receiver.DeepClone();
+        var ownerClone = owner.DeepClone();
+        node.Clear();
+        node["k"] = "field";
+        node["ownerType"] = ownerClone;
+        node["recv"] = receiverClone;
+        node["name"] = field;
+        node["ret"] = TypeJson.Fqn(resultType);
     }
 
     static JsonArray Values(BasicEnumMetadata metadata) => new(metadata.Entries.Select(entry => (JsonNode)new JsonObject
