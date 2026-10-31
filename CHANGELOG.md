@@ -7,6 +7,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Changed
 
+- Reuse upstream AbstractSet policy for read-only native Map key and entry snapshots, including rendering through generic and opaque values, while preserving snapshot membership and live entry values. Remove obsolete nullable-generic remap narrowing at the native object-valued setter boundary.
 - Resolve generated data-class and value-class array content operations from their original Kotlin array types, reusing the ordinary content functions instead of JVM-named runtime placeholders.
 - Reuse upstream AbstractList search, iteration, equality and rendering policy for read-only CLR list views, preserving selected native backing faces and live nested slices, and keep iterator positions unchanged after exhaustion.
 - Restore live concrete HashSet and insertion-ordered LinkedHashSet iteration, including iterator-owned bulk removals and Kotlin concurrent-modification exceptions, while retaining native HashSet storage and the general foreign-collection fallback.

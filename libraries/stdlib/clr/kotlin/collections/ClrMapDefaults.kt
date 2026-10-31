@@ -12,7 +12,7 @@ import DotKt.Runtime.CompilerServices.KotlinMutableMapSlots
 // Native access operations retain Kotlin return conventions and covariance-safe boxed values.
 internal fun <V> ClrNativeMapAccess.clrMapItem(key: Any?): V {
     @Suppress("UNCHECKED_CAST")
-    return this.rawGet(key) as V   // narrows directly into the object-erased return (no V? local)
+    return this.rawGet(key) as V
 }
 
 internal fun ClrNativeMapAccess.clrMapSetItem(key: Any?, value: Any?): Unit = this.rawSet(key, value)
@@ -56,7 +56,7 @@ public fun <K, V> clrMapGet(m: Any, key: K, preferredView: Any? = null): V? {
     if (m is KotlinMapDefaultSlots) return m.dotktMapGet(key) as V?
     val d = ClrNativeMapAccess(m, preferredView)
     @Suppress("UNCHECKED_CAST")
-    return if (d.Contains(key)) (d.rawGet(key) as V) else null   // null flows DIRECTLY into the object-erased return (V?-NOTE)
+    return if (d.Contains(key)) (d.rawGet(key) as V) else null
 }
 
 public fun <K, V> clrMapIsEmpty(m: Any, preferredView: Any? = null): Boolean =
@@ -117,11 +117,6 @@ public fun <K, V> clrMapEntries(m: Any, preferredView: Any? = null): Set<Map.Ent
 }
 
 // ---- MutableMap defaults ------------------------------------------------------------------------------------------
-
-// NOTE (all V?-returning wrappers): never hold a `V?` in a LOCAL — a nullable unconstrained-generic local erases to
-// a bare `gp:V` slot, and a null flowing into it `unbox.any`s to NRE when V is instantiated with a value type (the
-// RC2 object-erasure covers the RETURN boundary, not locals). Structure the bodies so null only ever flows directly
-// into the (object-erased) return.
 
 public fun <K, V> clrMapPut(m: Any, key: K, value: V, preferredView: Any? = null): V? {
     if (m is KotlinMutableMapSlots) return m.dotktMapPut(key, value) as V?
@@ -185,11 +180,7 @@ public fun <K, V> clrMapReplaceKVV(m: Any, key: K, oldValue: V, newValue: V, pre
     return if (d.Contains(key) && d.clrMapItem<V>(key) == oldValue) { d.clrMapSetItem(key, newValue); true } else false
 }
 
-/**
- * `MutableMap.merge(key, value, remappingFunction)` (C2 — the java.util.Map.merge equivalent): absent key -> insert
- * [value]; present -> [remappingFunction](old, value); a null result removes the entry. Structured like clrMapPutIfAbsent
- * so null only ever flows DIRECTLY into the (object-erased) return — never into a `gp:V` local (see the V?-return NOTE).
- */
+/** A missing key inserts [value]; otherwise a null remap result removes the entry. */
 public fun <K, V> clrMapMerge(m: Any, key: K, value: V, remappingFunction: (V, V) -> V?, preferredView: Any? = null): V? {
     if (m is KotlinMutableMapSlots) return m.dotktMapMerge(key, value, remappingFunction as (Any?, Any?) -> Any?) as V?
     val d = ClrNativeMapAccess(m, preferredView)
@@ -202,13 +193,8 @@ public fun <K, V> clrMapMerge(m: Any, key: K, value: V, remappingFunction: (V, V
         d.clrMapRemoveKey(key)
         return null
     }
-    // `computed` is smart-cast to V, but its CIR slot is the object-erased func return (`nullable:gp:V`). A plain store
-    // to clrMapSetItem leaves an `object` on the stack; the explicit `as V` forces the `unbox.any` narrowing ilemit
-    // needs (mirrors the `x as T` -> unbox.any path). `(computed as Any?)` defeats the smart-cast so the cast is not elided.
-    @Suppress("UNCHECKED_CAST")
-    val narrowed = (computed as Any?) as V
-    d.clrMapSetItem(key, narrowed)
-    return narrowed
+    d.clrMapSetItem(key, computed)
+    return computed
 }
 
 /**
@@ -261,16 +247,11 @@ private class ClrMutableMapEntry<K, V>(private val raw: ClrNativeMapAccess, over
     override fun toString(): String = key.toString() + "=" + value.toString()
 }
 
-/** A pure-Kotlin `Set` over a snapshot list (mirrors ClrSubList: named class, NOT an object expression — kotc cannot
- *  yet lower an object expression capturing an enclosing generic parameter). Backs Map's read views. */
-private class ClrMapSnapshotSet<E>(private val elements: List<E>) : Set<E> {
-    override fun equals(other: Any?): Boolean = DotKt.Runtime.CompilerServices.structuralEquals(this, other, 1)
-    override fun hashCode(): Int = DotKt.Runtime.CompilerServices.structuralHash(this, 1)
-
+/** Map read views retain their snapshot storage and share the upstream Kotlin Set policy. */
+private class ClrMapSnapshotSet<E>(private val elements: List<E>) : AbstractSet<E>() {
     override val size: Int get() = elements.size
-    override fun isEmpty(): Boolean = elements.size == 0
-    override fun contains(element: E): Boolean = clrCollContains(elements, element)
-    override fun containsAll(elements: Collection<E>): Boolean = clrCollContainsAll(this.elements, elements)
+    // Set equality may query unrelated element types; do not narrow them into the CLR element frame.
+    override fun containsAll(elements: Collection<E>): Boolean = clrCollContainsAll<Any?>(this.elements, elements)
     override fun iterator(): Iterator<E> = clrListListIterator(elements, 0)
 }
 
