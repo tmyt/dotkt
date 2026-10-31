@@ -13,3 +13,4 @@ e9b27fed9b23d10acf965dc8dd29b8988b9d105af5986df31ca1c040e8acdf8f  libraries/stdl
 f81916c3a94808ab1df9d853c1c63ef9fc9f7ca4b7d382509cc6e4b74b953a10  libraries/stdlib/src/kotlin/collections/AbstractList.kt
 dfde20ca19cd6d2ab3ae45a5975928489ae10ab2ccab2394d663a443a151cd21  libraries/stdlib/src/kotlin/uuid/Uuid.kt
 d544b79962fa7de28a64295dd714c0818aab7a7a134ca6ae5f04a2225abd37e6  libraries/stdlib/src/kotlin/text/regex/MatchResult.kt
+40f2b2fed7467ca44efe80cd4ae17c8640209b6f4009790fa2cee0b3e0a3adad  libraries/stdlib/src/kotlin/text/StringBuilder.kt

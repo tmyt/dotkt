@@ -7,6 +7,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Changed
 
+- Restore upstream StringBuilder surrogate-preserving reversal, range checks and end clamping, and scalar-to-string forwarding while retaining native CLR storage, identity and formatting.
 - Restore upstream floating predicates, rotations and scalar math policy over CLR primitives, including invalid logarithm-base rejection and signed-zero extrema; mask Kotlin shift distances before CIL emission, and retain CLR NaN canonicalization and corrected Float integer rounding.
 - Restore upstream lazy Regex splitting, match-sequence bounds and common match/group collection behavior while retaining native CLR regex primitives.
 - Use the native CLR CSPRNG for UUID entropy through the shared unsigned array view, removing the general-purpose PRNG workaround without changing common UUID generation or byte order.
