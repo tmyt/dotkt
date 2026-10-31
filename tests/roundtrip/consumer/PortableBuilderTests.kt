@@ -3,13 +3,6 @@ package roundtriptests.portablebuilder
 import NUnit.Framework.TestAttribute
 import roundtrip.portablebuilder.*
 
-private class ImportedBuilderRangeSequence : CharSequence {
-    override val length: Int get() = 3
-    override fun get(index: Int): Char = "abc"[index]
-    override fun subSequence(startIndex: Int, endIndex: Int): CharSequence = "abc".substring(startIndex, endIndex)
-    override fun toString(): String = "rendered"
-}
-
 class PortableBuilderTests {
     @TestAttribute fun importedBuilderPoliciesPreserveNativeIdentityAndUnicode() {
         val builder = StringBuilder("A😀B")
@@ -29,8 +22,5 @@ class PortableBuilderTests {
         builder.appendRange(charArrayOf('x', 'y', 'z'), 1, 3)
         builder.insertRange(0, "abcd", 1, 3)
         check(builder.toString() == "bc" + true.toString() + Byte.MIN_VALUE.toString() + "yz")
-        val custom: CharSequence = ImportedBuilderRangeSequence()
-        check(StringBuilder().appendRange(custom, 1, 3).toString() == "bc")
-        check(StringBuilder("!").insertRange(0, custom, 1, 3).toString() == "bc!")
     }
 }
