@@ -1,18 +1,22 @@
 import NUnit.Framework.TestAttribute
 
 private class BuilderRangeSequence : CharSequence {
+    var slices = 0
     override val length: Int get() = 3
     override fun get(index: Int): Char = "abc"[index]
-    override fun subSequence(startIndex: Int, endIndex: Int): CharSequence = "abc".substring(startIndex, endIndex)
+    override fun subSequence(startIndex: Int, endIndex: Int): CharSequence {
+        slices++
+        return "abc".substring(startIndex, endIndex)
+    }
     override fun toString(): String = "rendered"
 }
 
-private fun builderRangeFailure(block: () -> Unit) {
-    var failed = false
-    try { block() }
-    catch (_: IndexOutOfBoundsException) { failed = true }
-    catch (_: IllegalArgumentException) { failed = true }
-    check(failed)
+private fun builderRangeFailure(expected: Int, block: () -> Unit) {
+    val actual = try { block(); 0 }
+    // Catch native ArgumentOutOfRangeException before the widened Kotlin bounds catch.
+    catch (_: IllegalArgumentException) { 2 }
+    catch (_: IndexOutOfBoundsException) { 1 }
+    check(actual == expected) { "bounds kind expected=$expected actual=$actual" }
 }
 
 private fun reversedBuilderCharacters(input: CharArray): String {
@@ -80,9 +84,10 @@ class PortableBuilderTests {
         }
         for ((start, end) in listOf(-1 to 0, 3 to 2, 5 to 7, Int.MIN_VALUE to Int.MAX_VALUE, 0 to Int.MIN_VALUE)) {
             val builder = StringBuilder("abcd")
-            builderRangeFailure { builder.deleteRange(start, end) }
+            val expected = if (start < 0 || start > 4) 1 else 2
+            builderRangeFailure(expected) { builder.deleteRange(start, end) }
             check(builder.toString() == "abcd")
-            builderRangeFailure { builder.setRange(start, end, "changed") }
+            builderRangeFailure(expected) { builder.setRange(start, end, "changed") }
             check(builder.toString() == "abcd")
         }
         for (index in 0..3) {
@@ -92,7 +97,7 @@ class PortableBuilderTests {
         }
         for (index in intArrayOf(-1, 4, Int.MAX_VALUE)) {
             val builder = StringBuilder("abcd")
-            builderRangeFailure { builder.deleteAt(index) }
+            builderRangeFailure(1) { builder.deleteAt(index) }
             check(builder.toString() == "abcd")
         }
     }
@@ -110,13 +115,14 @@ class PortableBuilderTests {
         }
         for ((start, end) in listOf(-1 to -1, 0 to 5, 3 to 2, Int.MIN_VALUE to Int.MAX_VALUE)) {
             val builder = StringBuilder("unchanged")
-            builderRangeFailure { builder.appendRange(source, start, end) }
-            builderRangeFailure { builder.insertRange(1, source, start, end) }
+            val expected = if (start < 0 || end > source.size) 1 else 2
+            builderRangeFailure(expected) { builder.appendRange(source, start, end) }
+            builderRangeFailure(expected) { builder.insertRange(1, source, start, end) }
             check(builder.toString() == "unchanged")
         }
         val builder = StringBuilder("[]")
-        builderRangeFailure { builder.insertRange(-1, source, 0, 0) }
-        builderRangeFailure { builder.insertRange(3, source, 0, 0) }
+        builderRangeFailure(1) { builder.insertRange(-1, source, 0, 0) }
+        builderRangeFailure(1) { builder.insertRange(3, source, 0, 0) }
         check(builder.toString() == "[]")
     }
 
@@ -134,14 +140,15 @@ class PortableBuilderTests {
         check(whole.concatToString() == "abcd")
         for ((start, end) in listOf(-1 to 0, 0 to 5, 3 to 2, Int.MIN_VALUE to Int.MAX_VALUE)) {
             val destination = CharArray(4) { '?' }
-            builderRangeFailure { builder.toCharArray(destination, 0, start, end) }
-            builderRangeFailure { builder.substring(start, end) }
-            builderRangeFailure { builder.subSequence(start, end) }
+            val expected = if (start < 0 || end > builder.length) 1 else 2
+            builderRangeFailure(expected) { builder.toCharArray(destination, 0, start, end) }
+            builderRangeFailure(expected) { builder.substring(start, end) }
+            builderRangeFailure(expected) { builder.subSequence(start, end) }
             check(destination.concatToString() == "????")
         }
         for (offset in intArrayOf(-1, 3, Int.MAX_VALUE)) {
             val destination = CharArray(4) { '?' }
-            builderRangeFailure { builder.toCharArray(destination, offset, 0, 2) }
+            builderRangeFailure(if (offset == Int.MAX_VALUE) 2 else 1) { builder.toCharArray(destination, offset, 0, 2) }
             check(destination.concatToString() == "????")
         }
         check(builder.substring(4) == "" && builder.substring(1) == "bcd")
@@ -151,9 +158,17 @@ class PortableBuilderTests {
         val absent: CharSequence? = null
         check(StringBuilder().append(absent, 1, 3).toString() == "ul")
         check(StringBuilder().append(null as Any?).toString() == "null")
-        val custom: CharSequence = BuilderRangeSequence()
+        val custom = BuilderRangeSequence()
         check(StringBuilder().appendRange(custom, 1, 3).toString() == "bc")
         check(StringBuilder("!").insertRange(0, custom, 1, 3).toString() == "bc!")
+        for ((start, end) in listOf(-1 to -1, 0 to 4, 2 to 1, Int.MIN_VALUE to Int.MAX_VALUE)) {
+            val builder = StringBuilder("!")
+            val before = custom.slices
+            val expected = if (start < 0 || end > custom.length) 1 else 2
+            builderRangeFailure(expected) { builder.appendRange(custom, start, end) }
+            builderRangeFailure(expected) { builder.insertRange(0, custom, start, end) }
+            check(custom.slices == before && builder.toString() == "!")
+        }
         for (start in 0..4) for (end in start..4) {
             val source: CharSequence = "abcd"
             check(StringBuilder().append(source, start, end).toString() == "abcd".substring(start, end))
