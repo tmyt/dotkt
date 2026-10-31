@@ -211,6 +211,7 @@ public actual class HashSet<E> : MutableSet<E> {
             override fun hasNext(): Boolean = try { source.hasNext() }
                 catch (error: IllegalStateException) { throw ConcurrentModificationException(error.message, error) }
             override fun next(): E {
+                if (!hasNext()) throw NoSuchElementException()
                 val e = try { source.next() }
                     catch (error: IllegalStateException) { throw ConcurrentModificationException(error.message, error) }
                 lastEl = e
