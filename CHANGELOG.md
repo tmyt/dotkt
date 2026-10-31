@@ -7,7 +7,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Changed
 
-- Restore the unchanged upstream AbstractMutableMap implementation, sharing AbstractMap policy and retaining mutable entry-backed key/value views through the existing CLR map representation.
+- Restore the unchanged upstream AbstractMutableMap implementation, sharing AbstractMap policy and retaining mutable entry-backed key/value views; concrete CLR maps keep their existing native equality boundary.
 - Reuse upstream AbstractSet policy for read-only native Map key and entry snapshots, including rendering through generic and opaque values, while preserving snapshot membership and live entry values. Remove obsolete nullable-generic remap narrowing at the native object-valued setter boundary.
 - Resolve generated data-class and value-class array content operations from their original Kotlin array types, reusing the ordinary content functions instead of JVM-named runtime placeholders.
 - Reuse upstream AbstractList search, iteration, equality and rendering policy for read-only CLR list views, preserving selected native backing faces and live nested slices, and keep iterator positions unchanged after exhaustion.

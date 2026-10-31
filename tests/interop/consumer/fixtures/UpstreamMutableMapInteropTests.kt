@@ -18,6 +18,9 @@ class UpstreamMutableMapInteropTests {
         check(NativeMaps.Echo(mutable) === mutable)
         check(NativeMaps.Mutable(mutable))
         check(mutable.isEmpty())
+        val nullable: Any = hashMapOf<String?, String?>(null to null, "key" to "value")
+        val foreign = NullableMapInterop.NativeMaps.NullableKeyDictionaryView(nullable)
+        check(nullable == foreign && foreign == nullable)
     }
 
     @TestAttribute
