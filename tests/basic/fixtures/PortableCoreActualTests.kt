@@ -92,7 +92,11 @@ class PortableCoreActualTests {
             val failures = arrayOfNulls<Throwable>(4)
             val workers = (0 until 4).map { index ->
                 Thread(ThreadStart {
-                    try { results[index] = value.value }
+                    try {
+                        val observed = value.value
+                        check(observed.text == "ready" && observed.number == 42)
+                        results[index] = observed
+                    }
                     catch (failure: Throwable) { failures[index] = failure }
                 }).apply { IsBackground = true }
             }

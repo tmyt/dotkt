@@ -7,8 +7,11 @@ class PortableCoreActualTests {
     @TestAttribute fun importedResourceUsesTheStdlibContractAndNativeDisposeSlot() {
         var closes = 0
         val assigned: String
-        importedCloseable { closes++ }.use { assigned = "assigned in consumer" }
+        val resource = importedCloseable { closes++ }
+        resource.use { assigned = "assigned in consumer" }
         check(assigned == "assigned in consumer" && closes == 1)
+        (resource as System.IDisposable).Dispose()
+        check(closes == 2)
         check(importedUseAssignment() == "assigned in producer")
     }
 

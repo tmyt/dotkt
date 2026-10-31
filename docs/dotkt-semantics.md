@@ -603,11 +603,13 @@ callee the value lives across. Coverage: `tests/compile-fail/` for the refusals,
 `System.Lazy<T>` default of `LazyThreadSafetyMode.ExecutionAndPublication`). The mode → implementation
 map (stdlib `libraries/stdlib/clr/kotlin/util/LazyClr.kt`):
 
-- **default `lazy(initializer)`**, **`SYNCHRONIZED`**, **`PUBLICATION`**, and **`lazy(lock, initializer)`**
+- **default `lazy(initializer)`**, **`SYNCHRONIZED`**, and **`lazy(lock, initializer)`**
   → `SynchronizedLazyImpl` — memoization guarded by a `System.Threading.Monitor` lock (the stdlib
   `@ClrIntrinsic` `monitorEnter`/`monitorExit` in `kotlin.concurrent.atomics`; no compiler lowering).
-  `PUBLICATION` is served — if more strictly than the spec requires (it permits multiple initializer
-  runs) — by the same single-init locked impl; this is correct, only conservatively so.
+- **`PUBLICATION`** → `SafePublicationLazyImpl`, using the upstream JVM publication policy over CLR
+  volatile reads/writes and `Interlocked.CompareExchange` on the value field. Initializers may run
+  concurrently, but only one result is published; losing callers return that same result. A published
+  null is a completed value, and an initializer exception leaves initialization available for retry.
 - **`NONE`** → `UnsafeLazyImpl` (no synchronization), as on JVM.
 
 **Locking discipline — double-checked locking (DCL) with a lock-free fast-path read.**
