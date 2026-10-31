@@ -9,6 +9,7 @@ class CrossModuleUpstreamMutableMapTests {
         val map: MutableMap<String, Int> = produced
         map["a"] = 1
         check(upstreamProducedMapText(produced) == "{a=1}")
+        check(produced.toString() == "{a=1}")
         check((produced as Any) is AbstractMap<*, *>)
         check(produced.size == 1 && produced.containsKey("a") && produced.get("a") == 1)
         check(map == mapOf("a" to 1) && map.hashCode() == mapOf("a" to 1).hashCode())
