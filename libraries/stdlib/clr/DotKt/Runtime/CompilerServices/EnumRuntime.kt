@@ -104,6 +104,7 @@ private interface EnumRuntimeField {
 private enum class EnumRuntimeBindingFlags(value: Int) {
     DECLARED_STATIC_PUBLIC(26),
     DECLARED_STATIC_PUBLIC_NON_PUBLIC(58),
+    DECLARED_INSTANCE_PUBLIC_NON_PUBLIC(54),
 }
 
 @kotlin.clr.ClrTypeAlias("System.Reflection.MethodInfo")
@@ -129,6 +130,9 @@ private interface EnumRuntimeType {
 
     @property:kotlin.clr.ClrProperty(kotlin.clr.READ, "Assembly")
     val assembly: EnumRuntimeAssembly
+
+    @property:kotlin.clr.ClrProperty(kotlin.clr.READ, "BaseType")
+    val baseType: EnumRuntimeType?
 
     @kotlin.clr.ClrIntrinsic("GetFields")
     fun getFields(flags: EnumRuntimeBindingFlags): Array<EnumRuntimeField>
@@ -190,6 +194,23 @@ internal fun kotlinEnumCompareTo(receiver: Any, other: Any): Int {
 @PublishedApi
 internal fun kotlinEnumOrdinal(value: Any): Int {
     val type = value.enumRuntimeType()
+    if (value is KotlinEnumComparison) {
+        // An entry body may be a subclass. Only its declaring enum owns the exact physical field map.
+        var declaringType = type
+        while (true) {
+            val attributes = declaringType.getCustomAttributesData()
+            for (index in 0 until attributes.count) {
+                val attribute = attributes[index]
+                if (!attribute.isCompilerCarrier(RICH_ENUM, declaringType.assembly) ||
+                    !declaringType.assembly.isCompilerAssembly()) continue
+                val ordinalField = richEnumApi(attribute, "ordinal")
+                for (field in declaringType.getFields(EnumRuntimeBindingFlags.DECLARED_INSTANCE_PUBLIC_NON_PUBLIC))
+                    if (field.name == ordinalField) return field.getValue(value) as Int
+                error("Missing enum ordinal field")
+            }
+            declaringType = declaringType.baseType ?: error("Missing enum declaration metadata")
+        }
+    }
     // .NET 7+ returns fields in metadata order, matching the FieldDef sequence used by dll2klib.
     val fields = type.getFields(EnumRuntimeBindingFlags.DECLARED_STATIC_PUBLIC_NON_PUBLIC)
     val explicit = type.hasExplicitOrder()
