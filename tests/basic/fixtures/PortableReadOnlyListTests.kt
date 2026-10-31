@@ -4,6 +4,8 @@ import NUnit.Framework.TestAttribute
 
 private class Token(val label: String)
 
+private fun renderAsObject(value: Any): String = value.toString()
+
 private fun <T> failedStepKeepsPosition(iterator: ListIterator<T>, forward: Boolean) {
     val index = iterator.nextIndex()
     var failed = false
@@ -18,11 +20,18 @@ private fun <T> checkLiveSlice(source: MutableList<T>, first: T, second: T, repl
     check(view.size == 2 && !view.isEmpty())
     check(view == listOf(first, second) && view.hashCode() == listOf(first, second).hashCode())
     check(view.toString() == listOf(first, second).toString())
+    check(renderAsObject(view) == listOf(first, second).toString())
     check(view.containsAll(listOf(first, second)) && view.indexOf(first) == 0 && view.lastIndexOf(second) == 1)
     val nested = view.subList(0, 2).subList(1, 2)
     val cursor = view.listIterator(2)
     source[2] = replacement
     check(view[1] == replacement && nested[0] == replacement && cursor.previous() == replacement)
+    val plain = kotlin.collections.clrListSubList(readonly, 1, 3)
+    check(plain == view && plain.hashCode() == view.hashCode())
+    check(renderAsObject(plain) == listOf(first, replacement).toString())
+    val plainNested = plain.subList(1, 2)
+    source[2] = second
+    check(plainNested.single() == second && plain.last() == second && nested.single() == second)
 }
 
 private class CustomSearch : AbstractList<String>() {
@@ -36,13 +45,14 @@ private class CustomSearch : AbstractList<String>() {
 class PortableReadOnlyListTests {
     @TestAttribute fun nativeIteratorKeepsItsCursorAfterFailedSteps() {
         val values: List<Int> = arrayListOf(1, 2)
-        val iterator = values.listIterator()
-        repeat(2) { failedStepKeepsPosition(iterator, false) }
-        check(iterator.next() == 1 && iterator.next() == 2)
-        repeat(2) { failedStepKeepsPosition(iterator, true) }
-        check(iterator.previous() == 2 && iterator.previous() == 1)
-        failedStepKeepsPosition(iterator, false)
-        check(iterator.next() == 1)
+        for (iterator in listOf(values.listIterator(), kotlin.collections.clrListListIterator(values, 0))) {
+            repeat(2) { failedStepKeepsPosition(iterator, false) }
+            check(iterator.next() == 1 && iterator.next() == 2)
+            repeat(2) { failedStepKeepsPosition(iterator, true) }
+            check(iterator.previous() == 2 && iterator.previous() == 1)
+            failedStepKeepsPosition(iterator, false)
+            check(iterator.next() == 1)
+        }
     }
 
     @TestAttribute fun nullableValueAndReferenceSlicesStayLive() {
@@ -90,7 +100,9 @@ class PortableReadOnlyListTests {
         try { values.subList(2, 1) } catch (_: IllegalArgumentException) { reversed = true }
         var badCursor = false
         try { values.listIterator(3) } catch (_: IndexOutOfBoundsException) { badCursor = true }
-        check(badStart && badEnd && reversed && badCursor)
+        var overlapping = false
+        try { values.subList(-1, -2) } catch (_: IndexOutOfBoundsException) { overlapping = true }
+        check(badStart && badEnd && reversed && badCursor && overlapping)
     }
 
     @TestAttribute fun slicesUseTheirOwnSearchRatherThanBackingOverrides() {
