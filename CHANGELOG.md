@@ -7,6 +7,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Changed
 
+- Restore upstream array content equality, hashing, rendering and elementAt actuals instead of CLR-only inline bodies, preserving native array storage.
 - Restore upstream unsigned-array contains, containsAll and isEmpty member bodies while retaining native storage and forwarding existing CLR extension entry points to those members.
 - Restore the upstream array-to-ArrayList collection-constructor helper instead of a CLR-only element-copy loop.
 - Restore the unchanged upstream AbstractMutableMap implementation, sharing AbstractMap policy and retaining mutable entry-backed key/value views; concrete CLR maps keep their existing native equality boundary.
