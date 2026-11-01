@@ -46,10 +46,11 @@ import org.jetbrains.kotlin.name.Name
 import org.jetbrains.kotlin.psi.KtFile
 
 /** CLR class qualifiers expose inherited static declarations without creating derived storage or methods. */
-private class ClrStaticScopeProvider(private val delegate: FirScopeProvider, private val sourceView: String? = null) : FirScopeProvider() {
+private class ClrStaticScopeProvider(private val delegate: FirScopeProvider,
+	private val sourceView: (FirClass) -> String? = { null }) : FirScopeProvider() {
 	override fun getUseSiteMemberScope(klass: FirClass, useSiteSession: FirSession, scopeSession: ScopeSession,
 		memberRequiredPhase: FirResolvePhase?) = sourceInterfaceViewScope(klass, useSiteSession,
-			delegate.getUseSiteMemberScope(klass, useSiteSession, scopeSession, memberRequiredPhase), sourceView)
+			delegate.getUseSiteMemberScope(klass, useSiteSession, scopeSession, memberRequiredPhase), sourceView(klass))
 	override fun getTypealiasConstructorScope(typeAlias: FirTypeAlias, useSiteSession: FirSession, scopeSession: ScopeSession) =
 		delegate.getTypealiasConstructorScope(typeAlias, useSiteSession, scopeSession)
 	override fun getNestedClassifierScope(klass: FirClass, useSiteSession: FirSession, scopeSession: ScopeSession) =
@@ -136,7 +137,8 @@ private class InheritedStaticScope(private val scopes: List<FirContainingNamesAw
 fun installClrStaticDeserialization(session: FirSession) {
 	session.register(FirDeserializationExtension::class, object : FirDeserializationExtension(session) {
 		override fun FirRegularClassBuilder.configureDeserializedClass(classId: ClassId) {
-			scopeProvider = ClrStaticScopeProvider(scopeProvider, sourceInterfaceView(annotations))
+			// This callback precedes class-annotation loading; consume the completed declaration at scope use instead.
+			scopeProvider = ClrStaticScopeProvider(scopeProvider) { sourceInterfaceView(it.annotations) }
 			declarations.forEach { prepareClrStaticVisibility(it, symbol.toLookupTag()) }
 		}
 	})
