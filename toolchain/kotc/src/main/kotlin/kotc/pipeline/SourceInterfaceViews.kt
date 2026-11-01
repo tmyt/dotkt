@@ -5,8 +5,8 @@ package kotc.pipeline
 import org.jetbrains.kotlin.descriptors.ClassKind
 import org.jetbrains.kotlin.fir.FirSession
 import org.jetbrains.kotlin.fir.declarations.FirClass
-import org.jetbrains.kotlin.fir.declarations.getAnnotationWithResolvedArgumentsByClassId
 import org.jetbrains.kotlin.fir.declarations.getStringArgument
+import org.jetbrains.kotlin.fir.expressions.FirAnnotation
 import org.jetbrains.kotlin.fir.resolve.ScopeSession
 import org.jetbrains.kotlin.fir.resolve.lookupSuperTypes
 import org.jetbrains.kotlin.fir.resolve.toRegularClassSymbol
@@ -22,10 +22,14 @@ import org.jetbrains.kotlin.name.Name
 private val externalClassId = ClassId.topLevel(FqName("kotlin.clr.ClrExternal"))
 private val sourceViewName = Name.identifier("sourceView")
 
+internal fun sourceInterfaceView(annotations: List<FirAnnotation>): String? = annotations
+    .firstOrNull { (it.annotationTypeRef.coneType as? ConeClassLikeType)?.lookupTag?.classId == externalClassId }
+    ?.getStringArgument(sourceViewName)?.takeIf { it.isNotEmpty() }
+
 /** A projected protocol view supplies assignability, not a second set of native implementation obligations. */
-internal fun sourceInterfaceViewScope(klass: FirClass, session: FirSession, scope: FirTypeScope): FirTypeScope {
-    val sourceView = klass.symbol.getAnnotationWithResolvedArgumentsByClassId(externalClassId, session)
-        ?.getStringArgument(sourceViewName)?.takeIf { it.isNotEmpty() } ?: return scope
+internal fun sourceInterfaceViewScope(klass: FirClass, session: FirSession, scope: FirTypeScope,
+    sourceView: String?): FirTypeScope {
+    if (sourceView == null) return scope
     val view = klass.superTypeRefs.asSequence().mapNotNull { it.coneType as? ConeClassLikeType }
         .firstOrNull { it.lookupTag.classId.asSingleFqName().asString() == sourceView }
         ?.lookupTag?.toRegularClassSymbol(session) ?: return scope
