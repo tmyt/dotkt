@@ -16,8 +16,14 @@ package kotlin.collections
 @Suppress("NO_ACTUAL_CLASS_MEMBER_FOR_EXPECTED_CLASS")
 // Keep the direct CLR interface face; iterator and sublist policy follows Native/Wasm.
 public actual abstract class AbstractMutableList<E> protected actual constructor() : MutableList<E> {
-    override fun equals(other: Any?): Boolean = DotKt.Runtime.CompilerServices.structuralEquals(this, other, 0)
-    override fun hashCode(): Int = DotKt.Runtime.CompilerServices.structuralHash(this, 0)
+    override fun equals(other: Any?): Boolean {
+        if (other === this) return true
+        if (other !is List<*>) return false
+
+        return AbstractList.orderedEquals(this, other)
+    }
+
+    override fun hashCode(): Int = AbstractList.orderedHashCode(this)
 
     @SinceKotlin("2.0")
     protected actual var modCount: Int = 0
