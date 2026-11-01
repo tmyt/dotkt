@@ -7,6 +7,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Changed
 
+- Restore upstream default string rendering for mutable collection skeletons, including self-reference guards and authored iterator/element behavior, while retaining their CLR interface faces.
 - Reuse upstream AbstractList equality/hash and AbstractSet hash policy for mutable skeletal implementations, retaining their CLR interface faces and the existing heterogeneous set-query boundary.
 - Restore upstream mutable collection bulk operations and AbstractMutableList cursor/sublist policy, including best-effort concurrent-modification checks, iterator-owned changes and parent range-removal delegation, while retaining direct CLR interface faces.
 - Reuse common ordered singleton factories and upstream singleton-map copying, and use element-count capacity hints instead of JVM load-factor expansion for CLR collections.
