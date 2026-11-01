@@ -7,6 +7,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Changed
 
+- Restore upstream array copy, append and primitive boxing bodies, including Kotlin range checks and exception ordering, while retaining native components and overlap-safe copying without implicit CLR numeric widening.
 - Restore upstream array content equality, hashing, primitive rendering and elementAt actuals, preserving native array storage and erased generic rendering.
 - Restore upstream unsigned-array contains, containsAll and isEmpty member bodies while retaining native storage and forwarding existing CLR extension entry points to those members.
 - Restore the upstream array-to-ArrayList collection-constructor helper instead of a CLR-only element-copy loop.
