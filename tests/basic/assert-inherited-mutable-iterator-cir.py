@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Pin source-selected inherited slots across a local/reference carrier boundary."""
 import json
+import re
 import sys
 
 
@@ -28,8 +29,9 @@ for call in source_calls:
     assert any(edge.get("owner", {}).get("name") == "kotlin.collections.AbstractMutableCollection"
                and edge.get("declarationId") == call["declarationId"] for edge in call["overrides"])
 calls = [node for node in nodes(lowered["body"])
-         if node.get("k") == "callInstance" and node.get("method") == "$star$contains$3"]
+         if node.get("k") == "callInstance" and re.fullmatch(r"\$star\$contains\$[0-9]+", node.get("method", ""))]
 assert len(calls) == 2
+assert len({call["method"] for call in calls}) == 1
 for call in calls:
     selected = call["memberRef"]
     assert selected["assembly"] == "DotKt.Stdlib"
