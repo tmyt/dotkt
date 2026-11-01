@@ -7,6 +7,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Changed
 
+- Reuse common ordered singleton factories and upstream singleton-map copying, and use element-count capacity hints instead of JVM load-factor expansion for CLR collections.
 - Reuse upstream AbstractList cursor policy for native read-only list iterators, preserving live size changes and exact native Count/indexer faces without changing fixed-range sublists or authored iterator overrides.
 - Restore upstream array copy, append and primitive boxing bodies, including Kotlin range checks and exception ordering, while retaining native components and overlap-safe copying without implicit CLR numeric widening.
 - Restore upstream array content equality, hashing, primitive rendering and elementAt actuals, preserving native array storage and erased generic rendering.

@@ -16,11 +16,7 @@ package kotlin.collections
  *
  * @sample samples.collections.Collections.Sets.singletonReadOnlySet
  */
-public actual fun <T> setOf(element: T): Set<T> {
-    val set = LinkedHashSet<T>(mapCapacity(1))
-    set.add(element)
-    return set
-}
+public actual fun <T> setOf(element: T): Set<T> = linkedSetOf(element)
 
 @PublishedApi
 @SinceKotlin("1.3")
