@@ -237,6 +237,8 @@ internal sealed class MetadataAttributes
             return new(name, Int32Value: reader.ReadInt32());
         if (name == "System.Reflection.AssemblyMetadataAttribute")
             return new(name, StringValue: reader.ReadSerializedString(), StringValue2: reader.ReadSerializedString());
+        if (name == "kotlin.clr.ClrTypeAlias")
+            return new(name, StringValue: reader.ReadSerializedString());
         if (name == "System.Runtime.CompilerServices.ExtensionMarkerAttribute")
         {
             var marker = reader.ReadSerializedString()

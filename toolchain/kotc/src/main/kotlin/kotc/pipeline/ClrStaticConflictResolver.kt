@@ -16,7 +16,8 @@ import org.jetbrains.kotlin.fir.resolve.toRegularClassSymbol
 import org.jetbrains.kotlin.fir.scopes.impl.FirStandardOverrideChecker
 
 object ClrStaticConflictResolverFactory : ConeCallConflictResolverFactory() {
-	override fun createAdditionalResolvers(session: FirSession): List<ConeCallConflictResolver> = listOf(ClrStaticConflictResolver(session))
+	override fun createAdditionalResolvers(session: FirSession): List<ConeCallConflictResolver> =
+		listOf(ClrStaticConflictResolver(session), SourceInterfaceViewConflictResolver(session))
 }
 
 /** Among applicable, visible class statics, a nearer declaration hides the same inherited member. */
