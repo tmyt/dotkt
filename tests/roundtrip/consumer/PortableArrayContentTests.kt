@@ -13,6 +13,7 @@ private class ImportedArrayValue {
 class PortableArrayContentTests {
     @TestAttribute
     fun genericArrayContentAndInlineCallersSurviveSeparateDllCompilation() {
+        check(arrayHash(arrayOf(1, 2)) == 994)
         check(erasedNullHash<Int>() == 31 && erasedNullText<Int>() == "[null]")
         check(arrayHash<String>(null) == 0 && arrayText<String>(null) == "null")
         check(arrayHash(emptyArray<String>()) == 1 && arrayText(emptyArray<String>()) == "[]")

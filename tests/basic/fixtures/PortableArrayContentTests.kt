@@ -46,6 +46,7 @@ private fun portableElementBounds(size: Int, get: (Int) -> Any?) {
 class PortableArrayContentTests {
     @TestAttribute
     fun genericContentKeepsNullsEqualityHashCallsAndAuthoredRendering() {
+        check(portableGenericArrayHash(arrayOf(1, 2)) == 994)
         check(portableUncheckedNullContent<Int>() && portableUncheckedNullContent<String>())
         check(portableUncheckedBoundedContent<PortableArrayContentNarrow>())
         check(portableGenericArrayEquals<String>(null, null))
