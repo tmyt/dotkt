@@ -137,7 +137,9 @@ class MutableSkeletonPolicyTests {
         check(list.ranges == 1 && nested.isEmpty())
         check(view.toList() == listOf(1, 4) && list.values == listOf(0, 1, 4, 5))
         policyConcurrent { sibling.size }
+        nested.add(7)
+        check(nested.single() == 7)
         list.add(6)
-        policyConcurrent { nested.size }
+        policyConcurrent { nested[0] }
     }
 }
