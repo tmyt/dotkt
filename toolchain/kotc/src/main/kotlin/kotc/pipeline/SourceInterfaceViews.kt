@@ -4,6 +4,8 @@ package kotc.pipeline
 
 import org.jetbrains.kotlin.descriptors.ClassKind
 import org.jetbrains.kotlin.fir.FirSession
+import org.jetbrains.kotlin.fir.FirElement
+import org.jetbrains.kotlin.fir.containingClassLookupTag
 import org.jetbrains.kotlin.config.AnalysisFlags
 import org.jetbrains.kotlin.diagnostics.impl.BaseDiagnosticsCollector
 import org.jetbrains.kotlin.fir.languageVersionSettings
@@ -13,18 +15,32 @@ import org.jetbrains.kotlin.fir.declarations.FirFile
 import org.jetbrains.kotlin.fir.declarations.FirResolvePhase
 import org.jetbrains.kotlin.fir.declarations.getStringArgument
 import org.jetbrains.kotlin.fir.expressions.FirAnnotation
+import org.jetbrains.kotlin.fir.expressions.FirQualifiedAccessExpression
+import org.jetbrains.kotlin.fir.expressions.FirOperation
+import org.jetbrains.kotlin.fir.expressions.builder.buildArgumentList
+import org.jetbrains.kotlin.fir.expressions.builder.buildTypeOperatorCall
+import org.jetbrains.kotlin.fir.references.FirResolvedNamedReference
+import org.jetbrains.kotlin.fir.resolve.calls.candidate.Candidate
+import org.jetbrains.kotlin.fir.resolve.calls.overloads.ConeCallConflictResolver
 import org.jetbrains.kotlin.fir.pipeline.SingleModuleFrontendOutput
 import org.jetbrains.kotlin.fir.pipeline.runCheckers
 import org.jetbrains.kotlin.fir.pipeline.runResolution
 import org.jetbrains.kotlin.fir.resolve.ScopeSession
 import org.jetbrains.kotlin.fir.resolve.lookupSuperTypes
 import org.jetbrains.kotlin.fir.resolve.toRegularClassSymbol
+import org.jetbrains.kotlin.fir.resolve.toSymbol
 import org.jetbrains.kotlin.fir.resolve.substitution.ConeSubstitutor
 import org.jetbrains.kotlin.fir.scopes.*
+import org.jetbrains.kotlin.fir.scopes.impl.FirStandardOverrideChecker
 import org.jetbrains.kotlin.fir.symbols.impl.*
 import org.jetbrains.kotlin.fir.resolve.providers.symbolProvider
-import org.jetbrains.kotlin.fir.types.ConeClassLikeType
-import org.jetbrains.kotlin.fir.types.coneType
+import org.jetbrains.kotlin.fir.types.*
+import org.jetbrains.kotlin.fir.types.builder.buildResolvedTypeRef
+import org.jetbrains.kotlin.fir.declarations.FirCallableDeclaration
+import org.jetbrains.kotlin.fir.declarations.FirNamedFunction
+import org.jetbrains.kotlin.fir.declarations.FirProperty
+import org.jetbrains.kotlin.fir.declarations.utils.isStatic
+import org.jetbrains.kotlin.fir.visitors.FirDefaultVisitorVoid
 import org.jetbrains.kotlin.name.ClassId
 import org.jetbrains.kotlin.name.FqName
 import org.jetbrains.kotlin.name.Name
@@ -45,6 +61,7 @@ internal fun resolveAndCheckClrFir(session: FirSession, files: List<FirFile>, re
     val (scopeSession, resolved) = withSourceInterfaceViewLookup(true) { session.runResolution(files) }
     if (!session.languageVersionSettings.getFlag(AnalysisFlags.headerMode))
         session.runCheckers(scopeSession, resolved, reporter, MppCheckerKind.Common)
+    normalizeSourceInterfaceViewReceivers(session, resolved)
     return SingleModuleFrontendOutput(session, scopeSession, resolved)
 }
 
@@ -55,13 +72,79 @@ internal fun sourceInterfaceView(annotations: List<FirAnnotation>): String? = an
 internal fun sourceInterfaceLookupScope(klass: FirClass, session: FirSession, scopeSession: ScopeSession,
     nativeScope: FirTypeScope, phase: FirResolvePhase?): FirTypeScope {
     if (!sourceViewLookup.get()) return nativeScope
-    val classes = listOf(klass) + lookupSuperTypes(klass, lookupInterfaces = true, deep = true,
-        useSiteSession = session, substituteTypes = false).mapNotNull { it.lookupTag.toRegularClassSymbol(session)?.fir }
-    val views = classes.mapNotNull { sourceInterfaceView(it.annotations) }.distinct().map { name ->
-        val symbol = session.symbolProvider.getClassLikeSymbolByClassId(ClassId.topLevel(FqName(name))) as FirRegularClassSymbol
+    val views = sourceInterfaceViews(klass, session).map { symbol ->
         withSourceInterfaceViewLookup(false) { symbol.fir.unsubstitutedScope(session, scopeSession, false, phase) }
     }
     return if (views.isEmpty()) nativeScope else SourceViewLookupScope(nativeScope, views)
+}
+
+private fun sourceInterfaceViews(klass: FirClass, session: FirSession): List<FirRegularClassSymbol> {
+    val classes = listOf(klass) + lookupSuperTypes(klass, lookupInterfaces = true, deep = true,
+        useSiteSession = session, substituteTypes = false).mapNotNull { it.lookupTag.toRegularClassSymbol(session)?.fir }
+    return classes.mapNotNull { sourceInterfaceView(it.annotations) }.distinct().map { name ->
+        session.symbolProvider.getClassLikeSymbolByClassId(ClassId.topLevel(FqName(name))) as FirRegularClassSymbol
+    }
+}
+
+private fun FirRegularClassSymbol.supplies(owner: ClassId, session: FirSession) = classId == owner ||
+    lookupSuperTypes(fir, lookupInterfaces = true, deep = true, useSiteSession = session, substituteTypes = false)
+        .any { it.lookupTag.classId == owner }
+
+/** Choose among applicable, visible candidates, not merely declarations sharing a name. */
+internal class SourceInterfaceViewConflictResolver(private val session: FirSession) : ConeCallConflictResolver() {
+    private val overrideChecker = FirStandardOverrideChecker(session)
+    override fun chooseMaximallySpecificCandidates(candidates: Set<Candidate>): Set<Candidate> =
+        candidates.filterTo(linkedSetOf()) { protocol -> candidates.none { native -> prefers(native, protocol) } }
+
+    private fun prefers(native: Candidate, protocol: Candidate): Boolean {
+        if (native === protocol) return false
+        val member = native.symbol.fir as? FirCallableDeclaration ?: return false
+        val alias = protocol.symbol.fir as? FirCallableDeclaration ?: return false
+        if (member.isStatic || alias.isStatic || member.symbol.name != alias.symbol.name) return false
+        val owner = member.containingClassLookupTag()?.toSymbol(session) as? FirClassSymbol<*> ?: return false
+        val protocolOwner = alias.containingClassLookupTag()?.classId ?: return false
+        if (sourceInterfaceViews(owner.fir, session).none { it.supplies(protocolOwner, session) }) return false
+        return when {
+            member is FirNamedFunction && alias is FirNamedFunction ->
+                overrideChecker.isOverriddenFunction(member, alias, ignoreVisibility = true)
+            member is FirProperty && alias is FirProperty -> true
+            else -> false
+        }
+    }
+}
+
+/** Keep the selected Kotlin view explicit through Fir2Ir; it is not a fake override on the native class. */
+private fun normalizeSourceInterfaceViewReceivers(session: FirSession, files: List<FirFile>) {
+    fun views(type: ConeKotlinType, seen: MutableSet<Any>): List<FirRegularClassSymbol> = when (val rigid = type.lowerBoundIfFlexible()) {
+        is ConeClassLikeType -> (rigid.lookupTag.toSymbol(session) as? FirClassSymbol<*>)?.let { sourceInterfaceViews(it.fir, session) }.orEmpty()
+        is ConeTypeParameterType -> (rigid.lookupTag.toSymbol(session) as FirTypeParameterSymbol).let { parameter ->
+            if (seen.add(parameter)) parameter.resolvedBounds.flatMap { views(it.coneType, seen) } else emptyList()
+        }
+        is ConeCapturedType -> if (seen.add(rigid.constructor)) rigid.constructor.supertypes.orEmpty().flatMap { views(it, seen) } else emptyList()
+        is ConeIntersectionType -> rigid.intersectedTypes.flatMap { views(it, seen) }
+        is ConeDefinitelyNotNullType -> views(rigid.original, seen)
+        else -> emptyList()
+    }
+    for (file in files) file.accept(object : FirDefaultVisitorVoid() {
+        override fun visitElement(element: FirElement) {
+            element.acceptChildren(this)
+            val access = element as? FirQualifiedAccessExpression ?: return
+            val callable = (access.calleeReference as? FirResolvedNamedReference)?.resolvedSymbol as? FirCallableSymbol<*> ?: return
+            val owner = callable.containingClassLookupTag()?.classId ?: return
+            val receiver = access.dispatchReceiver ?: return
+            val receiverType = receiver.resolvedType
+            val view = views(receiverType, mutableSetOf()).firstOrNull { it.supplies(owner, session) } ?: return
+            val target = view.classId.constructClassLikeType(emptyArray(), isMarkedNullable = false)
+            val converted = buildTypeOperatorCall {
+                coneTypeOrNull = target
+                operation = FirOperation.AS
+                conversionTypeRef = buildResolvedTypeRef { coneType = target }
+                argumentList = buildArgumentList { arguments += receiver }
+            }
+            access.replaceDispatchReceiver(converted)
+            if (access.explicitReceiver === receiver) access.replaceExplicitReceiver(converted)
+        }
+    })
 }
 
 /** Native members keep their vocabulary; a protocol supplies lookup aliases, not inherited declarations. */
@@ -71,14 +154,16 @@ private class SourceViewLookupScope(private val native: FirTypeScope, private va
     override fun mayContainName(name: Name) = native.mayContainName(name) || views.any { it.mayContainName(name) }
     override val scopeOwnerLookupNames get() = native.scopeOwnerLookupNames
     override fun processFunctionsByName(name: Name, processor: (FirNamedFunctionSymbol) -> Unit) {
-        var found = false
-        native.processFunctionsByName(name) { found = true; processor(it) }
-        if (!found) views.forEach { it.processFunctionsByName(name, processor) }
+        val symbols = linkedSetOf<FirNamedFunctionSymbol>()
+        native.processFunctionsByName(name, symbols::add)
+        views.forEach { it.processFunctionsByName(name, symbols::add) }
+        symbols.forEach(processor)
     }
     override fun processPropertiesByName(name: Name, processor: (FirVariableSymbol<*>) -> Unit) {
-        var found = false
-        native.processPropertiesByName(name) { found = true; processor(it) }
-        if (!found) views.forEach { it.processPropertiesByName(name, processor) }
+        val symbols = linkedSetOf<FirVariableSymbol<*>>()
+        native.processPropertiesByName(name, symbols::add)
+        views.forEach { it.processPropertiesByName(name, symbols::add) }
+        symbols.forEach(processor)
     }
     override fun processClassifiersByNameWithSubstitution(name: Name, processor: (FirClassifierSymbol<*>, ConeSubstitutor) -> Unit) =
         native.processClassifiersByNameWithSubstitution(name, processor)

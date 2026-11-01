@@ -32,6 +32,17 @@ private class NativeProtocolChild(counter: Counter) : GenericBase<String>("child
     fun close(): String = "own-close"
 }
 
+private open class PrivateProtocolResource : System.IDisposable {
+    var calls = 0
+    override fun Dispose() { calls++ }
+    private fun close() { calls += 100 }
+    fun callOwnClose() { close() }
+}
+
+private fun closeCheckedPrivate(value: PrivateProtocolResource) {
+    if (value is AutoCloseable) value.close()
+}
+
 private class LogicalProtocolResource : AutoCloseable {
     var calls = 0
     override fun close() { calls++ }
@@ -105,6 +116,15 @@ class NativeProtocolViewTests {
     }
 
     @TestAttribute
+    fun privateNativeMemberDoesNotHideAnAccessibleProtocolMember() {
+        val resource = PrivateProtocolResource()
+        closeCheckedPrivate(resource)
+        check(resource.calls == 1)
+        resource.callOwnClose()
+        check(resource.calls == 101)
+    }
+
+    @TestAttribute
     fun kotlinNativeImplementationRetainsIndependentMemberVocabulary() {
         val resource = NativeVocabularyResource()
         check(resource.use { it === resource })
@@ -117,6 +137,14 @@ class NativeProtocolViewTests {
         val logical: AutoCloseable = resource
         logical.close()
         check(resource.calls == 103)
+        var anonymousCalls = 0
+        val anonymous = object : System.IDisposable {
+            override fun Dispose() { anonymousCalls++ }
+            fun close() { anonymousCalls += 100 }
+        }
+        anonymous.close()
+        anonymous.use { }
+        check(anonymousCalls == 101)
     }
 
     @TestAttribute
