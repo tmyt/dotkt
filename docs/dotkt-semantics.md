@@ -1870,6 +1870,9 @@ ordinary CLR struct boxing. Native reference objects are not wrapped or copied.
 This is a typed protocol view, not a second native member contract: raw `Dispose` remains `Dispose`, and a Kotlin
 class implementing the raw interface is not asked to implement an additional `close`. An independently authored
 `close` keeps its own meaning; accessing the Kotlin protocol view dispatches its declared native binding.
+Member lookup, including smart casts and intersected bounds, can use that protocol vocabulary when there is no
+native member with the same name. A native member with that name keeps precedence; an explicit protocol view
+selects the protocol declaration instead. These lookup aliases do not become inherited implementation obligations.
 Genuine Kotlin `AutoCloseable` implementations still implement their ordinary Kotlin `close` contract.
 Generic, ambiguous, arity-changing and reverse binding associations remain separate design work; this rule does
 not unify the two classifiers or change the CLR inheritance graph.

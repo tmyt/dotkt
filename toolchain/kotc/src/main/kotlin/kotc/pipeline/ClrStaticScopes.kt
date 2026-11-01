@@ -49,8 +49,14 @@ import org.jetbrains.kotlin.psi.KtFile
 private class ClrStaticScopeProvider(private val delegate: FirScopeProvider,
 	private val sourceView: (FirClass) -> String? = { null }) : FirScopeProvider() {
 	override fun getUseSiteMemberScope(klass: FirClass, useSiteSession: FirSession, scopeSession: ScopeSession,
-		memberRequiredPhase: FirResolvePhase?) = sourceInterfaceViewScope(klass, useSiteSession,
-			delegate.getUseSiteMemberScope(klass, useSiteSession, scopeSession, memberRequiredPhase), sourceView(klass))
+		memberRequiredPhase: FirResolvePhase?): FirTypeScope {
+		// Building a declaration scope always inherits native contracts, never use-site protocol aliases.
+		val nativeScope = withSourceInterfaceViewLookup(false) {
+			sourceInterfaceViewScope(klass, useSiteSession,
+				delegate.getUseSiteMemberScope(klass, useSiteSession, scopeSession, memberRequiredPhase), sourceView(klass))
+		}
+		return sourceInterfaceLookupScope(klass, useSiteSession, scopeSession, nativeScope, memberRequiredPhase)
+	}
 	override fun getTypealiasConstructorScope(typeAlias: FirTypeAlias, useSiteSession: FirSession, scopeSession: ScopeSession) =
 		delegate.getTypealiasConstructorScope(typeAlias, useSiteSession, scopeSession)
 	override fun getNestedClassifierScope(klass: FirClass, useSiteSession: FirSession, scopeSession: ScopeSession) =

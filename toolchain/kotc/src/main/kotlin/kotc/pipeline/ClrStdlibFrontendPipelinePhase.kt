@@ -30,7 +30,6 @@ import org.jetbrains.kotlin.config.moduleName
 import org.jetbrains.kotlin.fir.DependencyListForCliModule
 import org.jetbrains.kotlin.fir.extensions.FirExtensionRegistrar
 import org.jetbrains.kotlin.fir.pipeline.AllModulesFrontendOutput
-import org.jetbrains.kotlin.fir.pipeline.resolveAndCheckFir
 import org.jetbrains.kotlin.fir.pipeline.runPlatformCheckers
 import org.jetbrains.kotlin.name.Name
 import java.io.File
@@ -93,7 +92,7 @@ object ClrStdlibFrontendPipelinePhase : PipelinePhase<ConfigurationPipelineArtif
 		kotc.frontend.ClrProjectedMemberExtensionProperties.reset()
 		val outputs = sessionsWithSources.map { (session, files) ->
 			installKotlinJvmDefaultImport(session)
-			resolveAndCheckFir(session, session.buildClrFirFromKtFiles(files), diagnosticsReporter).also {
+			resolveAndCheckClrFir(session, session.buildClrFirFromKtFiles(files), diagnosticsReporter).also {
 				kotc.frontend.SelectedCallDeclarations.capture(it.fir)
 				normalizeClrStaticReceivers(session, it.fir)
 				kotc.frontend.ClrContextFnTypes.capture(it.fir)

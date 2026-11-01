@@ -7,6 +7,21 @@ import NativeProtocolViews.ValueResource
 
 private fun <T : AutoCloseable?, R> useProtocol(value: T, block: (T) -> R): R = value.use(block)
 
+private fun closeCheckedNative(value: System.IDisposable?) {
+    if (value is AutoCloseable) value.close()
+}
+
+private fun closeCheckedConcrete(value: AutoCloseable) {
+    if (value is System.IO.MemoryStream) value.close()
+}
+
+private fun closeCastStatement(value: System.IDisposable) {
+    value as AutoCloseable
+    value.close()
+}
+
+private fun <T> closeIntersection(value: T) where T : AutoCloseable, T : System.IDisposable = value.close()
+
 private class NativeVocabularyResource : System.IDisposable {
     var calls = 0
     override fun Dispose() { calls++ }
@@ -64,6 +79,29 @@ class NativeProtocolViewTests {
         val value = ValueResource(6, counter)
         check(useProtocol(value) { it.Value } == 6)
         check(counter.Calls == 1)
+    }
+
+    @TestAttribute
+    fun checkedProtocolViewsKeepTheirMembers() {
+        val counter = Counter()
+        closeCheckedNative(GenericDerived<String>("checked", counter))
+        closeCheckedNative(null)
+        closeCastStatement(GenericDerived<String>("cast", counter))
+        closeIntersection(GenericDerived<String>("bounds", counter))
+        check(counter.Calls == 3)
+        val stream = System.IO.MemoryStream()
+        closeCheckedConcrete(stream)
+        check(!stream.CanRead)
+    }
+
+    @TestAttribute
+    fun nativeValueBoxesAsAProtocolWithoutLosingItsDispatch() {
+        val counter = Counter()
+        val logical: AutoCloseable = ValueResource(9, counter)
+        logical.close()
+        val values = listOf<AutoCloseable>(ValueResource(10, counter))
+        values.single().use { }
+        check(counter.Calls == 2)
     }
 
     @TestAttribute

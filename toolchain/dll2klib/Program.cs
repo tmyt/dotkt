@@ -127,7 +127,7 @@ internal static class Program
         Directory.CreateDirectory(outputDirectory);
         var projectionCatalogPath = Path.Combine(outputDirectory, ".dll2klib-projection-catalog.json");
         // Every cross-assembly catalog fact originates in one resolved DLL. Persist only each DLL's identity and
-        // direct TypeRef edges, then compare the old and new graphs so a changed/removed root invalidates exactly its
+        // direct TypeRef and trusted source-view binding edges, then compare the old and new graphs so a changed/removed root invalidates its
         // reverse dependents. Arity naming is the one whole-universe rule: when its collision set changes, the DLLs
         // that define the affected source name become additional roots.
         var projectionInputs = inputMetadata
