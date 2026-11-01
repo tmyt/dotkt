@@ -125,13 +125,13 @@ public fun <T> clrProjectedViewLastIndexOf(source: Any, preferredView: Any?, fam
 public fun <T> clrProjectedViewListIterator(source: Any, preferredView: Any?, family: Int): ListIterator<T> {
     val slots = source as? KotlinListDefaultSlots
     if (slots != null) return ClrErasedListIteratorAdapter(slots.dotktListIterator())
-    return ClrProjectedListView<T>(source, 0, projectedViewCountErased(source, preferredView, family), preferredView).listIterator()
+    return ClrProjectedListIterationView<T>(source, preferredView, family).listIterator()
 }
 
 public fun <T> clrProjectedViewListIteratorAt(source: Any, preferredView: Any?, family: Int, index: Int): ListIterator<T> {
     val slots = source as? KotlinListDefaultSlots
     if (slots != null) return ClrErasedListIteratorAdapter(slots.dotktListIteratorAt(index))
-    return ClrProjectedListView<T>(source, 0, projectedViewCountErased(source, preferredView, family), preferredView).listIterator(index)
+    return ClrProjectedListIterationView<T>(source, preferredView, family).listIterator(index)
 }
 
 public fun <T> clrProjectedViewSubList(source: Any, preferredView: Any?, family: Int, fromIndex: Int, toIndex: Int): List<T> {
@@ -452,28 +452,14 @@ public fun <T> clrListIndexOf(list: List<T>, element: T): Int = list.indexOfFirs
 
 public fun <T> clrListLastIndexOf(list: List<T>, element: T): Int = list.indexOfLast { it == element }
 
-// A ListIterator over a BCL-backed List (uses only size/get). ListIterator is a pure-Kotlin type (NOT @Clr-bound), so
-// this class is emitted normally — no reverse-direction (C3b) GetEnumerator obligation.
-private class ClrListIterator<T>(private val list: List<T>, index: Int) : ListIterator<T> {
-    private var cursor = index
-    init {
-        AbstractList.checkPositionIndex(index, list.size)
-    }
-    override fun hasNext(): Boolean = cursor < list.size
-    override fun next(): T {
-        if (!hasNext()) throw NoSuchElementException()
-        return list[cursor++]
-    }
-    override fun hasPrevious(): Boolean = cursor > 0
-    override fun previous(): T {
-        if (!hasPrevious()) throw NoSuchElementException()
-        return list[--cursor]
-    }
-    override fun nextIndex(): Int = cursor
-    override fun previousIndex(): Int = cursor - 1
+// Native access stays here; the unchanged upstream AbstractList owns cursor policy.
+private class ClrListIterationView<T>(private val backing: List<T>) : AbstractList<T>() {
+    override val size: Int get() = backing.size
+    override fun get(index: Int): T = backing[index]
 }
 
-public fun <T> clrListListIterator(list: List<T>, index: Int): ListIterator<T> = ClrListIterator(list, index)
+public fun <T> clrListListIterator(list: List<T>, index: Int): ListIterator<T> =
+    ClrListIterationView(list).listIterator(index)
 
 // MutableList aliases IList<T>, whose IEnumerable<T>.GetEnumerator surface cannot represent Kotlin's
 // remove/set/add iterator contract. Keep that semantic adapter here, beside the other Kotlin<->CLR list defaults,
@@ -693,13 +679,22 @@ public fun <T> clrProjectedMutableListListIterator(list: Any, preferredView: Any
 public fun <T> clrProjectedListIterator(list: Any): ListIterator<T> {
     val slots = list as? KotlinListDefaultSlots
     if (slots != null) return ClrErasedListIteratorAdapter(slots.dotktListIterator())
-    return ClrProjectedListView<T>(list, 0, projectedListCountErased(list), null).listIterator()
+    return ClrProjectedListIterationView<T>(list, null, 3).listIterator()
 }
 
 public fun <T> clrProjectedListListIterator(list: Any, index: Int): ListIterator<T> {
     val slots = list as? KotlinListDefaultSlots
     if (slots != null) return ClrErasedListIteratorAdapter(slots.dotktListIteratorAt(index))
-    return ClrProjectedListView<T>(list, 0, projectedListCountErased(list), null).listIterator(index)
+    return ClrProjectedListIterationView<T>(list, null, 3).listIterator(index)
+}
+
+private class ClrProjectedListIterationView<T>(
+    private val backing: Any,
+    private val preferredView: Any?,
+    private val family: Int,
+) : AbstractList<T>() {
+    override val size: Int get() = projectedViewCountErased(backing, preferredView, family)
+    override fun get(index: Int): T = projectedListViewGetErased(backing, preferredView, index) as T
 }
 
 // The native boundary supplies only backing storage; the unchanged upstream skeleton supplies Kotlin policy.
