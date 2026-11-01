@@ -35,6 +35,11 @@ class CrossModulePortableMutableEqualityTests {
         portableMutableListChecks(listOf<String?>("first", null, "last"))
         portableMutableListChecks(listOf(Double.NaN, -0.0, 0.0))
         portableMutableListChecks(listOf(PortableMutableKey(2), PortableMutableKey(3)))
+        val keys = PortableMutableList(mutableListOf(PortableMutableKey(2), PortableMutableKey(3)))
+        val equalKeys = listOf(PortableMutableKey(2), PortableMutableKey(3))
+        check(keys[0] !== equalKeys[0])
+        check(keys.equals(equalKeys) && equalKeys.equals(keys))
+        check(keys.hashCode() == equalKeys.hashCode())
         val floating = PortableMutableList(mutableListOf(Double.NaN, -0.0))
         check(floating.equals(listOf(Double.NaN, -0.0)))
         check(!floating.equals(listOf(Double.NaN, 0.0)))
@@ -50,6 +55,11 @@ class CrossModulePortableMutableEqualityTests {
         val peer = System.Collections.Generic.List<Int>()
         peer.Add(1); peer.Add(2)
         check(source.equals(peer) && portableMutableEquals(source, peer))
+        val rawPeer = System.Collections.ArrayList()
+        rawPeer.Add(1); rawPeer.Add(2)
+        check(source.equals(rawPeer) && portableMutableEquals(source, rawPeer))
+        rawPeer[1] = "2"
+        check(!source.equals(rawPeer))
         val star: List<*> = source
         check(star == peer && star.hashCode() == portableOrderedHash(listOf(1, 2)))
     }
