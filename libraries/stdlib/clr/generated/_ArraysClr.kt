@@ -5,40 +5,55 @@
 
 @file:Suppress("ACTUAL_WITHOUT_EXPECT", "NO_ACTUAL_FOR_EXPECT", "UNCHECKED_CAST", "NOTHING_TO_INLINE", "NO_ACTUAL_CLASS_MEMBER_FOR_EXPECTED_CLASS", "TYPE_PARAMETER_AS_REIFIED")
 
-// Step-1 CLR stub mirroring the JVM `actual` declarations of _ArraysJvm.kt.
-// Bodies are `TODO` pending the @Clr/BCL binding step (see docs/design-stdlib-compilation.md "THE CANONICAL ROADMAP").
-// copyOf / copyOf(newSize) / copyOfRange / plus(element) / plusElement / contentEquals / contentHashCode /
-// contentToString / toTypedArray carry real Kotlin bodies: the array constructor (`<Type>Array(size) { ... }`)
-// and indexed get are compiler intrinsics, so no @Clr/BCL binding is needed for them.
+// CLR array actuals share portable Kotlin policy with the pinned upstream sources.
+// Native component allocation and overlap-safe copies remain platform bindings.
 
 package kotlin.collections
 
 @kotlin.internal.InlineOnly
-public actual inline fun <T> Array<out T>.elementAt(index: Int): T = this[index]
+public actual inline fun <T> Array<out T>.elementAt(index: Int): T {
+    return elementAtOrElse(index) { throw IndexOutOfBoundsException("index: $index, size: $size}") }
+}
 
 @kotlin.internal.InlineOnly
-public actual inline fun ByteArray.elementAt(index: Int): Byte = this[index]
+public actual inline fun ByteArray.elementAt(index: Int): Byte {
+    return elementAtOrElse(index) { throw IndexOutOfBoundsException("index: $index, size: $size}") }
+}
 
 @kotlin.internal.InlineOnly
-public actual inline fun ShortArray.elementAt(index: Int): Short = this[index]
+public actual inline fun ShortArray.elementAt(index: Int): Short {
+    return elementAtOrElse(index) { throw IndexOutOfBoundsException("index: $index, size: $size}") }
+}
 
 @kotlin.internal.InlineOnly
-public actual inline fun IntArray.elementAt(index: Int): Int = this[index]
+public actual inline fun IntArray.elementAt(index: Int): Int {
+    return elementAtOrElse(index) { throw IndexOutOfBoundsException("index: $index, size: $size}") }
+}
 
 @kotlin.internal.InlineOnly
-public actual inline fun LongArray.elementAt(index: Int): Long = this[index]
+public actual inline fun LongArray.elementAt(index: Int): Long {
+    return elementAtOrElse(index) { throw IndexOutOfBoundsException("index: $index, size: $size}") }
+}
 
 @kotlin.internal.InlineOnly
-public actual inline fun FloatArray.elementAt(index: Int): Float = this[index]
+public actual inline fun FloatArray.elementAt(index: Int): Float {
+    return elementAtOrElse(index) { throw IndexOutOfBoundsException("index: $index, size: $size}") }
+}
 
 @kotlin.internal.InlineOnly
-public actual inline fun DoubleArray.elementAt(index: Int): Double = this[index]
+public actual inline fun DoubleArray.elementAt(index: Int): Double {
+    return elementAtOrElse(index) { throw IndexOutOfBoundsException("index: $index, size: $size}") }
+}
 
 @kotlin.internal.InlineOnly
-public actual inline fun BooleanArray.elementAt(index: Int): Boolean = this[index]
+public actual inline fun BooleanArray.elementAt(index: Int): Boolean {
+    return elementAtOrElse(index) { throw IndexOutOfBoundsException("index: $index, size: $size}") }
+}
 
 @kotlin.internal.InlineOnly
-public actual inline fun CharArray.elementAt(index: Int): Char = this[index]
+public actual inline fun CharArray.elementAt(index: Int): Char {
+    return elementAtOrElse(index) { throw IndexOutOfBoundsException("index: $index, size: $size}") }
+}
 
 /**
  * Returns a [List] that wraps the original array.
@@ -222,174 +237,183 @@ public actual inline fun <T> Array<out T>?.contentDeepToString(): String {
 }
 
 @SinceKotlin("1.4")
-@kotlin.internal.InlineOnly
-public actual inline infix fun <T> Array<out T>?.contentEquals(other: Array<out T>?): Boolean {
+public actual infix fun <T> Array<out T>?.contentEquals(other: Array<out T>?): Boolean {
     if (this === other) return true
-    if (this == null || other == null) return false
-    if (this.size != other.size) return false
-    for (i in indices) if (this[i] != other[i]) return false
+    if (this === null || other === null) return false
+    if (size != other.size) return false
+    for (i in indices) {
+        if (this[i] != other[i]) return false
+    }
     return true
 }
 
 @SinceKotlin("1.4")
-@kotlin.internal.InlineOnly
-public actual inline infix fun ByteArray?.contentEquals(other: ByteArray?): Boolean {
+public actual infix fun ByteArray?.contentEquals(other: ByteArray?): Boolean {
     if (this === other) return true
-    if (this == null || other == null) return false
-    if (this.size != other.size) return false
-    for (i in indices) if (this[i] != other[i]) return false
+    if (this === null || other === null) return false
+    if (size != other.size) return false
+    for (i in indices) {
+        if (this[i] != other[i]) return false
+    }
     return true
 }
 
 @SinceKotlin("1.4")
-@kotlin.internal.InlineOnly
-public actual inline infix fun ShortArray?.contentEquals(other: ShortArray?): Boolean {
+public actual infix fun ShortArray?.contentEquals(other: ShortArray?): Boolean {
     if (this === other) return true
-    if (this == null || other == null) return false
-    if (this.size != other.size) return false
-    for (i in indices) if (this[i] != other[i]) return false
+    if (this === null || other === null) return false
+    if (size != other.size) return false
+    for (i in indices) {
+        if (this[i] != other[i]) return false
+    }
     return true
 }
 
 @SinceKotlin("1.4")
-@kotlin.internal.InlineOnly
-public actual inline infix fun IntArray?.contentEquals(other: IntArray?): Boolean {
+public actual infix fun IntArray?.contentEquals(other: IntArray?): Boolean {
     if (this === other) return true
-    if (this == null || other == null) return false
-    if (this.size != other.size) return false
-    for (i in indices) if (this[i] != other[i]) return false
+    if (this === null || other === null) return false
+    if (size != other.size) return false
+    for (i in indices) {
+        if (this[i] != other[i]) return false
+    }
     return true
 }
 
 @SinceKotlin("1.4")
-@kotlin.internal.InlineOnly
-public actual inline infix fun LongArray?.contentEquals(other: LongArray?): Boolean {
+public actual infix fun LongArray?.contentEquals(other: LongArray?): Boolean {
     if (this === other) return true
-    if (this == null || other == null) return false
-    if (this.size != other.size) return false
-    for (i in indices) if (this[i] != other[i]) return false
+    if (this === null || other === null) return false
+    if (size != other.size) return false
+    for (i in indices) {
+        if (this[i] != other[i]) return false
+    }
     return true
 }
 
 @SinceKotlin("1.4")
-@kotlin.internal.InlineOnly
-public actual inline infix fun FloatArray?.contentEquals(other: FloatArray?): Boolean {
+public actual infix fun FloatArray?.contentEquals(other: FloatArray?): Boolean {
     if (this === other) return true
-    if (this == null || other == null) return false
-    if (this.size != other.size) return false
-    for (i in indices) if (!this[i].equals(other[i])) return false
+    if (this === null || other === null) return false
+    if (size != other.size) return false
+    for (i in indices) {
+        if (!this[i].equals(other[i])) return false
+    }
     return true
 }
 
 @SinceKotlin("1.4")
-@kotlin.internal.InlineOnly
-public actual inline infix fun DoubleArray?.contentEquals(other: DoubleArray?): Boolean {
+public actual infix fun DoubleArray?.contentEquals(other: DoubleArray?): Boolean {
     if (this === other) return true
-    if (this == null || other == null) return false
-    if (this.size != other.size) return false
-    for (i in indices) if (!this[i].equals(other[i])) return false
+    if (this === null || other === null) return false
+    if (size != other.size) return false
+    for (i in indices) {
+        if (!this[i].equals(other[i])) return false
+    }
     return true
 }
 
 @SinceKotlin("1.4")
-@kotlin.internal.InlineOnly
-public actual inline infix fun BooleanArray?.contentEquals(other: BooleanArray?): Boolean {
+public actual infix fun BooleanArray?.contentEquals(other: BooleanArray?): Boolean {
     if (this === other) return true
-    if (this == null || other == null) return false
-    if (this.size != other.size) return false
-    for (i in indices) if (this[i] != other[i]) return false
+    if (this === null || other === null) return false
+    if (size != other.size) return false
+    for (i in indices) {
+        if (this[i] != other[i]) return false
+    }
     return true
 }
 
 @SinceKotlin("1.4")
-@kotlin.internal.InlineOnly
-public actual inline infix fun CharArray?.contentEquals(other: CharArray?): Boolean {
+public actual infix fun CharArray?.contentEquals(other: CharArray?): Boolean {
     if (this === other) return true
-    if (this == null || other == null) return false
-    if (this.size != other.size) return false
-    for (i in indices) if (this[i] != other[i]) return false
+    if (this === null || other === null) return false
+    if (size != other.size) return false
+    for (i in indices) {
+        if (this[i] != other[i]) return false
+    }
     return true
 }
 
 @SinceKotlin("1.4")
-@kotlin.internal.InlineOnly
-public actual inline fun <T> Array<out T>?.contentHashCode(): Int {
-    if (this == null) return 0
-    var h = 1
-    for (e in this) h = 31 * h + (e?.hashCode() ?: 0)
-    return h
+public actual fun <T> Array<out T>?.contentHashCode(): Int {
+    if (this === null) return 0
+    var result = 1
+    for (element in this)
+        result = 31 * result + element.hashCode()
+    return result
 }
 
 @SinceKotlin("1.4")
-@kotlin.internal.InlineOnly
-public actual inline fun ByteArray?.contentHashCode(): Int {
-    if (this == null) return 0
-    var h = 1
-    for (e in this) h = 31 * h + e.hashCode()
-    return h
+public actual fun ByteArray?.contentHashCode(): Int {
+    if (this === null) return 0
+    var result = 1
+    for (element in this)
+        result = 31 * result + element.hashCode()
+    return result
 }
 
 @SinceKotlin("1.4")
-@kotlin.internal.InlineOnly
-public actual inline fun ShortArray?.contentHashCode(): Int {
-    if (this == null) return 0
-    var h = 1
-    for (e in this) h = 31 * h + e.hashCode()
-    return h
+public actual fun ShortArray?.contentHashCode(): Int {
+    if (this === null) return 0
+    var result = 1
+    for (element in this)
+        result = 31 * result + element.hashCode()
+    return result
 }
 
 @SinceKotlin("1.4")
-@kotlin.internal.InlineOnly
-public actual inline fun IntArray?.contentHashCode(): Int {
-    if (this == null) return 0
-    var h = 1
-    for (e in this) h = 31 * h + e.hashCode()
-    return h
+public actual fun IntArray?.contentHashCode(): Int {
+    if (this === null) return 0
+    var result = 1
+    for (element in this)
+        result = 31 * result + element.hashCode()
+    return result
 }
 
 @SinceKotlin("1.4")
-@kotlin.internal.InlineOnly
-public actual inline fun LongArray?.contentHashCode(): Int {
-    if (this == null) return 0
-    var h = 1
-    for (e in this) h = 31 * h + e.hashCode()
-    return h
+public actual fun LongArray?.contentHashCode(): Int {
+    if (this === null) return 0
+    var result = 1
+    for (element in this)
+        result = 31 * result + element.hashCode()
+    return result
 }
 
 @SinceKotlin("1.4")
-@kotlin.internal.InlineOnly
-public actual inline fun FloatArray?.contentHashCode(): Int {
-    if (this == null) return 0
-    var h = 1
-    for (e in this) h = 31 * h + e.hashCode()
-    return h
+public actual fun FloatArray?.contentHashCode(): Int {
+    if (this === null) return 0
+    var result = 1
+    for (element in this)
+        result = 31 * result + element.hashCode()
+    return result
 }
 
 @SinceKotlin("1.4")
-@kotlin.internal.InlineOnly
-public actual inline fun DoubleArray?.contentHashCode(): Int {
-    if (this == null) return 0
-    var h = 1
-    for (e in this) h = 31 * h + e.hashCode()
-    return h
+public actual fun DoubleArray?.contentHashCode(): Int {
+    if (this === null) return 0
+    var result = 1
+    for (element in this)
+        result = 31 * result + element.hashCode()
+    return result
 }
 
 @SinceKotlin("1.4")
-@kotlin.internal.InlineOnly
-public actual inline fun BooleanArray?.contentHashCode(): Int {
-    if (this == null) return 0
-    var h = 1
-    for (e in this) h = 31 * h + e.hashCode()
-    return h
+public actual fun BooleanArray?.contentHashCode(): Int {
+    if (this === null) return 0
+    var result = 1
+    for (element in this)
+        result = 31 * result + element.hashCode()
+    return result
 }
 
 @SinceKotlin("1.4")
-@kotlin.internal.InlineOnly
-public actual inline fun CharArray?.contentHashCode(): Int {
-    if (this == null) return 0
-    var h = 1
-    for (e in this) h = 31 * h + e.hashCode()
-    return h
+public actual fun CharArray?.contentHashCode(): Int {
+    if (this === null) return 0
+    var result = 1
+    for (element in this)
+        result = 31 * result + element.hashCode()
+    return result
 }
 
 @SinceKotlin("1.4")
@@ -406,107 +430,43 @@ public actual inline fun <T> Array<out T>?.contentToString(): String {
 }
 
 @SinceKotlin("1.4")
-@kotlin.internal.InlineOnly
-public actual inline fun ByteArray?.contentToString(): String {
-    if (this == null) return "null"
-    val sb = StringBuilder("[")
-    for (i in indices) {
-        if (i > 0) sb.append(", ")
-        sb.append(this[i])
-    }
-    sb.append("]")
-    return sb.toString()
+public actual fun ByteArray?.contentToString(): String {
+    return this?.joinToString(", ", "[", "]") ?: "null"
 }
 
 @SinceKotlin("1.4")
-@kotlin.internal.InlineOnly
-public actual inline fun ShortArray?.contentToString(): String {
-    if (this == null) return "null"
-    val sb = StringBuilder("[")
-    for (i in indices) {
-        if (i > 0) sb.append(", ")
-        sb.append(this[i])
-    }
-    sb.append("]")
-    return sb.toString()
+public actual fun ShortArray?.contentToString(): String {
+    return this?.joinToString(", ", "[", "]") ?: "null"
 }
 
 @SinceKotlin("1.4")
-@kotlin.internal.InlineOnly
-public actual inline fun IntArray?.contentToString(): String {
-    if (this == null) return "null"
-    val sb = StringBuilder("[")
-    for (i in indices) {
-        if (i > 0) sb.append(", ")
-        sb.append(this[i])
-    }
-    sb.append("]")
-    return sb.toString()
+public actual fun IntArray?.contentToString(): String {
+    return this?.joinToString(", ", "[", "]") ?: "null"
 }
 
 @SinceKotlin("1.4")
-@kotlin.internal.InlineOnly
-public actual inline fun LongArray?.contentToString(): String {
-    if (this == null) return "null"
-    val sb = StringBuilder("[")
-    for (i in indices) {
-        if (i > 0) sb.append(", ")
-        sb.append(this[i])
-    }
-    sb.append("]")
-    return sb.toString()
+public actual fun LongArray?.contentToString(): String {
+    return this?.joinToString(", ", "[", "]") ?: "null"
 }
 
 @SinceKotlin("1.4")
-@kotlin.internal.InlineOnly
-public actual inline fun FloatArray?.contentToString(): String {
-    if (this == null) return "null"
-    val sb = StringBuilder("[")
-    for (i in indices) {
-        if (i > 0) sb.append(", ")
-        sb.append(this[i])
-    }
-    sb.append("]")
-    return sb.toString()
+public actual fun FloatArray?.contentToString(): String {
+    return this?.joinToString(", ", "[", "]") ?: "null"
 }
 
 @SinceKotlin("1.4")
-@kotlin.internal.InlineOnly
-public actual inline fun DoubleArray?.contentToString(): String {
-    if (this == null) return "null"
-    val sb = StringBuilder("[")
-    for (i in indices) {
-        if (i > 0) sb.append(", ")
-        sb.append(this[i])
-    }
-    sb.append("]")
-    return sb.toString()
+public actual fun DoubleArray?.contentToString(): String {
+    return this?.joinToString(", ", "[", "]") ?: "null"
 }
 
 @SinceKotlin("1.4")
-@kotlin.internal.InlineOnly
-public actual inline fun BooleanArray?.contentToString(): String {
-    if (this == null) return "null"
-    val sb = StringBuilder("[")
-    for (i in indices) {
-        if (i > 0) sb.append(", ")
-        sb.append(this[i])
-    }
-    sb.append("]")
-    return sb.toString()
+public actual fun BooleanArray?.contentToString(): String {
+    return this?.joinToString(", ", "[", "]") ?: "null"
 }
 
 @SinceKotlin("1.4")
-@kotlin.internal.InlineOnly
-public actual inline fun CharArray?.contentToString(): String {
-    if (this == null) return "null"
-    val sb = StringBuilder("[")
-    for (i in indices) {
-        if (i > 0) sb.append(", ")
-        sb.append(this[i])
-    }
-    sb.append("]")
-    return sb.toString()
+public actual fun CharArray?.contentToString(): String {
+    return this?.joinToString(", ", "[", "]") ?: "null"
 }
 
 // copyInto MUST be overlap-safe: ArrayDeque shifts in place via `elementData.copyInto(elementData, ...)`
