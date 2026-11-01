@@ -493,145 +493,178 @@ private fun BooleanArray.nativeArrayCopy(sourceIndex: Int, dest: BooleanArray, d
 private fun CharArray.nativeArrayCopy(sourceIndex: Int, dest: CharArray, destIndex: Int, length: Int): Unit = TODO("clr binding should be implemented")
 
 @SinceKotlin("1.3")
+@IgnorableReturnValue
 @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
 public actual fun <T> Array<out T>.copyInto(destination: Array<T>, destinationOffset: Int = 0, startIndex: Int = 0, endIndex: Int = size): Array<T> {
-    @Suppress("UNCHECKED_CAST")
-    (this as Array<T>).nativeArrayCopy(startIndex, destination, destinationOffset, endIndex - startIndex)
+    AbstractList.checkRangeIndexes(startIndex, endIndex, this.size)
+    val rangeSize = endIndex - startIndex
+    AbstractList.checkRangeIndexes(destinationOffset, destinationOffset + rangeSize, destination.size)
+    copyArrayRange(destination, startIndex, destinationOffset, rangeSize)
     return destination
 }
 
 @SinceKotlin("1.3")
+@IgnorableReturnValue
 @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
 public actual fun ByteArray.copyInto(destination: ByteArray, destinationOffset: Int = 0, startIndex: Int = 0, endIndex: Int = size): ByteArray {
-    this.nativeArrayCopy(startIndex, destination, destinationOffset, endIndex - startIndex)
+    AbstractList.checkRangeIndexes(startIndex, endIndex, this.size)
+    val rangeSize = endIndex - startIndex
+    AbstractList.checkRangeIndexes(destinationOffset, destinationOffset + rangeSize, destination.size)
+    nativeArrayCopy(startIndex, destination, destinationOffset, rangeSize)
     return destination
 }
 
 @SinceKotlin("1.3")
+@IgnorableReturnValue
 @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
 public actual fun ShortArray.copyInto(destination: ShortArray, destinationOffset: Int = 0, startIndex: Int = 0, endIndex: Int = size): ShortArray {
-    this.nativeArrayCopy(startIndex, destination, destinationOffset, endIndex - startIndex)
+    AbstractList.checkRangeIndexes(startIndex, endIndex, this.size)
+    val rangeSize = endIndex - startIndex
+    AbstractList.checkRangeIndexes(destinationOffset, destinationOffset + rangeSize, destination.size)
+    nativeArrayCopy(startIndex, destination, destinationOffset, rangeSize)
     return destination
 }
 
 @SinceKotlin("1.3")
+@IgnorableReturnValue
 @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
 public actual fun IntArray.copyInto(destination: IntArray, destinationOffset: Int = 0, startIndex: Int = 0, endIndex: Int = size): IntArray {
-    this.nativeArrayCopy(startIndex, destination, destinationOffset, endIndex - startIndex)
+    AbstractList.checkRangeIndexes(startIndex, endIndex, this.size)
+    val rangeSize = endIndex - startIndex
+    AbstractList.checkRangeIndexes(destinationOffset, destinationOffset + rangeSize, destination.size)
+    nativeArrayCopy(startIndex, destination, destinationOffset, rangeSize)
     return destination
 }
 
 @SinceKotlin("1.3")
+@IgnorableReturnValue
 @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
 public actual fun LongArray.copyInto(destination: LongArray, destinationOffset: Int = 0, startIndex: Int = 0, endIndex: Int = size): LongArray {
-    this.nativeArrayCopy(startIndex, destination, destinationOffset, endIndex - startIndex)
+    AbstractList.checkRangeIndexes(startIndex, endIndex, this.size)
+    val rangeSize = endIndex - startIndex
+    AbstractList.checkRangeIndexes(destinationOffset, destinationOffset + rangeSize, destination.size)
+    nativeArrayCopy(startIndex, destination, destinationOffset, rangeSize)
     return destination
 }
 
 @SinceKotlin("1.3")
+@IgnorableReturnValue
 @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
 public actual fun FloatArray.copyInto(destination: FloatArray, destinationOffset: Int = 0, startIndex: Int = 0, endIndex: Int = size): FloatArray {
-    this.nativeArrayCopy(startIndex, destination, destinationOffset, endIndex - startIndex)
+    AbstractList.checkRangeIndexes(startIndex, endIndex, this.size)
+    val rangeSize = endIndex - startIndex
+    AbstractList.checkRangeIndexes(destinationOffset, destinationOffset + rangeSize, destination.size)
+    nativeArrayCopy(startIndex, destination, destinationOffset, rangeSize)
     return destination
 }
 
 @SinceKotlin("1.3")
+@IgnorableReturnValue
 @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
 public actual fun DoubleArray.copyInto(destination: DoubleArray, destinationOffset: Int = 0, startIndex: Int = 0, endIndex: Int = size): DoubleArray {
-    this.nativeArrayCopy(startIndex, destination, destinationOffset, endIndex - startIndex)
+    AbstractList.checkRangeIndexes(startIndex, endIndex, this.size)
+    val rangeSize = endIndex - startIndex
+    AbstractList.checkRangeIndexes(destinationOffset, destinationOffset + rangeSize, destination.size)
+    nativeArrayCopy(startIndex, destination, destinationOffset, rangeSize)
     return destination
 }
 
 @SinceKotlin("1.3")
+@IgnorableReturnValue
 @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
 public actual fun BooleanArray.copyInto(destination: BooleanArray, destinationOffset: Int = 0, startIndex: Int = 0, endIndex: Int = size): BooleanArray {
-    this.nativeArrayCopy(startIndex, destination, destinationOffset, endIndex - startIndex)
+    AbstractList.checkRangeIndexes(startIndex, endIndex, this.size)
+    val rangeSize = endIndex - startIndex
+    AbstractList.checkRangeIndexes(destinationOffset, destinationOffset + rangeSize, destination.size)
+    nativeArrayCopy(startIndex, destination, destinationOffset, rangeSize)
     return destination
 }
 
 @SinceKotlin("1.3")
+@IgnorableReturnValue
 @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
 public actual fun CharArray.copyInto(destination: CharArray, destinationOffset: Int = 0, startIndex: Int = 0, endIndex: Int = size): CharArray {
-    this.nativeArrayCopy(startIndex, destination, destinationOffset, endIndex - startIndex)
+    AbstractList.checkRangeIndexes(startIndex, endIndex, this.size)
+    val rangeSize = endIndex - startIndex
+    AbstractList.checkRangeIndexes(destinationOffset, destinationOffset + rangeSize, destination.size)
+    nativeArrayCopy(startIndex, destination, destinationOffset, rangeSize)
     return destination
 }
 
-// copyOf(): System.Array.Clone() returns a shallow copy whose runtime element type matches the receiver (no reified T
-// allocation needed). The @ClrIntrinsic("Clone") receiver erases to object; ilemit resolves Array.Clone + casts the receiver.
-@kotlin.clr.ClrIntrinsic("Clone")
-private fun <T> Array<T>.nativeClone(): Any = TODO("clr binding should be implemented")
+public actual fun <T> Array<T>.copyOf(): Array<T> {
+    return this.copyOfUninitializedElements(size)
+}
 
-public actual fun <T> Array<T>.copyOf(): Array<T> = nativeClone() as Array<T>
+public actual fun ByteArray.copyOf(): ByteArray {
+    return this.copyOfUninitializedElements(size)
+}
 
-@kotlin.internal.InlineOnly
-public actual inline fun ByteArray.copyOf(): ByteArray = ByteArray(this.size) { this[it] }
+public actual fun ShortArray.copyOf(): ShortArray {
+    return this.copyOfUninitializedElements(size)
+}
 
-@kotlin.internal.InlineOnly
-public actual inline fun ShortArray.copyOf(): ShortArray = ShortArray(this.size) { this[it] }
+public actual fun IntArray.copyOf(): IntArray {
+    return this.copyOfUninitializedElements(size)
+}
 
-@kotlin.internal.InlineOnly
-public actual inline fun IntArray.copyOf(): IntArray = IntArray(this.size) { this[it] }
+public actual fun LongArray.copyOf(): LongArray {
+    return this.copyOfUninitializedElements(size)
+}
 
-@kotlin.internal.InlineOnly
-public actual inline fun LongArray.copyOf(): LongArray = LongArray(this.size) { this[it] }
+public actual fun FloatArray.copyOf(): FloatArray {
+    return this.copyOfUninitializedElements(size)
+}
 
-@kotlin.internal.InlineOnly
-public actual inline fun FloatArray.copyOf(): FloatArray = FloatArray(this.size) { this[it] }
+public actual fun DoubleArray.copyOf(): DoubleArray {
+    return this.copyOfUninitializedElements(size)
+}
 
-@kotlin.internal.InlineOnly
-public actual inline fun DoubleArray.copyOf(): DoubleArray = DoubleArray(this.size) { this[it] }
+public actual fun BooleanArray.copyOf(): BooleanArray {
+    return this.copyOfUninitializedElements(size)
+}
 
-@kotlin.internal.InlineOnly
-public actual inline fun BooleanArray.copyOf(): BooleanArray = BooleanArray(this.size) { this[it] }
+public actual fun CharArray.copyOf(): CharArray {
+    return this.copyOfUninitializedElements(size)
+}
 
-@kotlin.internal.InlineOnly
-public actual inline fun CharArray.copyOf(): CharArray = CharArray(this.size) { this[it] }
+public actual fun ByteArray.copyOf(newSize: Int): ByteArray {
+    return this.copyOfUninitializedElements(newSize)
+}
 
-@kotlin.internal.InlineOnly
-public actual inline fun ByteArray.copyOf(newSize: Int): ByteArray = ByteArray(newSize) { if (it < this.size) this[it] else 0.toByte() }
+public actual fun ShortArray.copyOf(newSize: Int): ShortArray {
+    return this.copyOfUninitializedElements(newSize)
+}
 
-@kotlin.internal.InlineOnly
-public actual inline fun ShortArray.copyOf(newSize: Int): ShortArray = ShortArray(newSize) { if (it < this.size) this[it] else 0.toShort() }
+public actual fun IntArray.copyOf(newSize: Int): IntArray {
+    return this.copyOfUninitializedElements(newSize)
+}
 
-@kotlin.internal.InlineOnly
-public actual inline fun IntArray.copyOf(newSize: Int): IntArray = IntArray(newSize) { if (it < this.size) this[it] else 0 }
+public actual fun LongArray.copyOf(newSize: Int): LongArray {
+    return this.copyOfUninitializedElements(newSize)
+}
 
-@kotlin.internal.InlineOnly
-public actual inline fun LongArray.copyOf(newSize: Int): LongArray = LongArray(newSize) { if (it < this.size) this[it] else 0L }
+public actual fun FloatArray.copyOf(newSize: Int): FloatArray {
+    return this.copyOfUninitializedElements(newSize)
+}
 
-@kotlin.internal.InlineOnly
-public actual inline fun FloatArray.copyOf(newSize: Int): FloatArray = FloatArray(newSize) { if (it < this.size) this[it] else 0.0f }
+public actual fun DoubleArray.copyOf(newSize: Int): DoubleArray {
+    return this.copyOfUninitializedElements(newSize)
+}
 
-@kotlin.internal.InlineOnly
-public actual inline fun DoubleArray.copyOf(newSize: Int): DoubleArray = DoubleArray(newSize) { if (it < this.size) this[it] else 0.0 }
+public actual fun BooleanArray.copyOf(newSize: Int): BooleanArray {
+    return this.copyOfUninitializedElements(newSize)
+}
 
-@kotlin.internal.InlineOnly
-public actual inline fun BooleanArray.copyOf(newSize: Int): BooleanArray = BooleanArray(newSize) { if (it < this.size) this[it] else false }
+public actual fun CharArray.copyOf(newSize: Int): CharArray {
+    return this.copyOfUninitializedElements(newSize)
+}
 
-// Kotlin pads a grown CharArray with the NULL char '\u0000' (matches JVM Arrays.copyOf zero-fill), not a space (#128).
-@kotlin.internal.InlineOnly
-public actual inline fun CharArray.copyOf(newSize: Int): CharArray = CharArray(newSize) { if (it < this.size) this[it] else '\u0000' }
-
-// copyOf(newSize) HONESTLY returns `Array<T?>` (extra slots are null), and `Array<X?>` is `object[]` exactly when `X`
-// may be a value type (#86 D2) — a REFERENCE element keeps its typed array, so `Array<String?>` is a `string[]`. This
-// generic body cannot spell either statically (there is no `T : struct` constraint and no reified `T`), so it decides
-// the same way at RUNTIME, off the receiver's own element type: a value element allocates `object[]`, a reference
-// element allocates `elem[]`. Both inhabit the erased `object[]` the declaration states — `string[]` by reference-array
-// covariance — while a consumer at `T = String` gets the real `string[]` its `Array<String?>` slot names.
-//
-// The prefix is copied through `System.Array.SetValue`, which BOXES a value element into an object slot; `Array.Copy`
-// would not (it refuses an `int32[]` -> `object[]` element conversion). The null tail is free — CreateInstance
-// zero-fills, and a zeroed `object` slot IS a null. Exact for Int/Long/Double/Char AND reference T, with no
-// per-element-type special-casing.
+// Native allocation preserves reference components; nullable value elements need object slots.
 @kotlin.clr.ClrTypeAlias("System.Type")
 private interface DotktType {
     @kotlin.clr.ClrIntrinsic("GetElementType") fun getElementType(): DotktType
     @kotlin.clr.ClrProperty(kotlin.clr.READ, "IsValueType") fun isValueType(): Boolean
-}
-
-@kotlin.clr.ClrTypeAlias("System.Array")
-private interface DotktArray {
-    @kotlin.clr.ClrIntrinsic("SetValue") fun setValue(value: Any?, index: Int): Unit
+    @kotlin.clr.ClrIntrinsic("IsAssignableFrom") fun isAssignableFrom(other: DotktType): Boolean
 }
 
 @kotlin.clr.ClrIntrinsic("GetType")                            // object.GetType() -> the receiver's runtime array Type (e.g. int[])
@@ -640,28 +673,14 @@ private fun Any.dotktRuntimeType(): DotktType = TODO("clr binding should be impl
 @kotlin.clr.ClrIntrinsic("System.Type.GetType")                // static Type.GetType(string) — resolves System.Object from CoreLib
 private fun dotktTypeNamed(name: String): DotktType = TODO("clr binding should be implemented")
 
-// DECLARES `Array<T?>` so the reflectively-allocated array flows to `result`/`return` with NO `as`-cast node: a cast
-// target would be rewritten to the erased `object[]`, and a `string[]` reaching it as a castclass rather than as the
-// covariant assignment it is would be an unnecessary check on the reference path.
 @kotlin.clr.ClrIntrinsic("System.Array.CreateInstance")        // static Array.CreateInstance(Type, int) -> Array
 private fun <T> dotktNewArrayOfType(elementType: DotktType, length: Int): Array<T?> = TODO("clr binding should be implemented")
 
 public actual fun <T> Array<T>.copyOf(newSize: Int): Array<T?> {
-    val elem = (this as Any).dotktRuntimeType().getElementType()
-    val outElem = if (elem.isValueType()) dotktTypeNamed("System.Object") else elem
-    val result: Array<T?> = dotktNewArrayOfType(outElem, newSize)
-    val limit = if (newSize < this.size) newSize else this.size
-    for (i in 0 until limit) (result as DotktArray).setValue(this[i], i)
-    return result
+    return this.copyOfNulls(newSize)
 }
 
-// RUNTIME-ELEMENT-TYPE-PRESERVING sub-range copy (#117). A pure-Kotlin `arrayOfNulls<T>(n) as Array<T>` allocates an
-// `Array<T?>` — `Nullable<T>[]` when inlined at a value-type call site, or an object-erased slot in a non-inline generic
-// body — then REINTERPRET-casts it to a non-null `T[]`: value-type garbage / InvalidCast. A non-null `Array<T>` whose
-// runtime element type equals the RECEIVER's cannot be produced by a `newarr !T`-style Kotlin allocation. So, like the
-// no-arg `copyOf()` (System.Array.Clone), copyOfRange reflects on the receiver's actual runtime array type:
-//   dest = System.Array.CreateInstanceFromArrayType(this.GetType(), length); System.Array.Copy(this, from, dest, 0, len)
-// This is EXACT for Int/Long/Double/Char AND reference T, with no per-element-type special-casing.
+// Non-null generic copies retain the allocation's actual component, independently of T.
 @kotlin.clr.ClrIntrinsic("GetType")                                     // object.GetType() -> the receiver's runtime array Type (e.g. int[])
 private fun Any.nativeGetType(): Any = TODO("clr binding should be implemented")
 
@@ -669,39 +688,107 @@ private fun Any.nativeGetType(): Any = TODO("clr binding should be implemented")
 private fun Any.nativeCreateArrayLike(length: Int): Any = TODO("clr binding should be implemented")
 
 @kotlin.clr.ClrIntrinsic("System.Array.Copy")                           // Copy(src, srcIndex, dst, dstIndex, length); receiver(src) -> arg0
-private fun <T> Array<T>.nativeArrayCopy(sourceIndex: Int, dest: Array<T>, destIndex: Int, length: Int): Unit = TODO("clr binding should be implemented")
+private fun <T> Array<out T>.nativeArrayCopy(sourceIndex: Int, dest: Array<T>, destIndex: Int, length: Int): Unit = TODO("clr binding should be implemented")
 
-public actual fun <T> Array<T>.copyOfRange(fromIndex: Int, toIndex: Int): Array<T> {
-    val length = toIndex - fromIndex
-    @Suppress("UNCHECKED_CAST")
-    val dest = (this as Any).nativeGetType().nativeCreateArrayLike(length) as Array<T>
-    this.nativeArrayCopy(fromIndex, dest, 0, length)
-    return dest
+private fun <T> Array<out T>.copyArrayRange(destination: Array<T>, sourceIndex: Int, destinationIndex: Int, length: Int) {
+    if (length == 0) return
+    val sourceType = (this as Any).dotktRuntimeType()
+    val destinationType = (destination as Any).dotktRuntimeType()
+    var bulkCopy = destinationType.isAssignableFrom(sourceType)
+    if (!bulkCopy) {
+        val sourceElement = sourceType.getElementType()
+        val destinationElement = destinationType.getElementType()
+        bulkCopy = sourceElement.isValueType() && !destinationElement.isValueType() &&
+            destinationElement.isAssignableFrom(sourceElement)
+    }
+    if (bulkCopy) {
+        nativeArrayCopy(sourceIndex, destination, destinationIndex, length)
+    } else {
+        // Array.Copy also performs numeric widening. Ordinary Kotlin stores own
+        // incompatible-component checks and must not acquire those conversions.
+        for (index in 0 until length) destination[destinationIndex + index] = this[sourceIndex + index]
+    }
 }
 
-@kotlin.internal.InlineOnly
-public actual inline fun ByteArray.copyOfRange(fromIndex: Int, toIndex: Int): ByteArray = ByteArray(toIndex - fromIndex) { this[fromIndex + it] }
+internal fun checkCopyOfRangeArguments(fromIndex: Int, toIndex: Int, size: Int) {
+    if (toIndex > size)
+        throw IndexOutOfBoundsException("toIndex ($toIndex) is greater than size ($size).")
+    if (fromIndex > toIndex)
+        throw IllegalArgumentException("fromIndex ($fromIndex) is greater than toIndex ($toIndex).")
+}
 
-@kotlin.internal.InlineOnly
-public actual inline fun ShortArray.copyOfRange(fromIndex: Int, toIndex: Int): ShortArray = ShortArray(toIndex - fromIndex) { this[fromIndex + it] }
+internal fun <T> Array<T>.copyOfUninitializedElements(fromIndex: Int, toIndex: Int): Array<T> {
+    val newSize = toIndex - fromIndex
+    if (newSize < 0) {
+        throw IllegalArgumentException("$fromIndex > $toIndex")
+    }
+    val result = (this as Any).nativeGetType().nativeCreateArrayLike(newSize) as Array<T>
+    this.copyInto(result, 0, fromIndex, toIndex.coerceAtMost(size))
+    return result
+}
 
-@kotlin.internal.InlineOnly
-public actual inline fun IntArray.copyOfRange(fromIndex: Int, toIndex: Int): IntArray = IntArray(toIndex - fromIndex) { this[fromIndex + it] }
+internal actual fun <T> Array<T>.copyOfUninitializedElements(newSize: Int): Array<T> {
+    return copyOfUninitializedElements(0, newSize)
+}
 
-@kotlin.internal.InlineOnly
-public actual inline fun LongArray.copyOfRange(fromIndex: Int, toIndex: Int): LongArray = LongArray(toIndex - fromIndex) { this[fromIndex + it] }
+internal fun <E> Array<E>.copyOfNulls(newSize: Int): Array<E?>  = copyOfNulls(0, newSize)
 
-@kotlin.internal.InlineOnly
-public actual inline fun FloatArray.copyOfRange(fromIndex: Int, toIndex: Int): FloatArray = FloatArray(toIndex - fromIndex) { this[fromIndex + it] }
+internal fun <E> Array<E>.copyOfNulls(fromIndex: Int, toIndex: Int): Array<E?> {
+    val newSize = toIndex - fromIndex
+    if (newSize < 0) {
+        throw IllegalArgumentException("$fromIndex > $toIndex")
+    }
+    val element = (this as Any).dotktRuntimeType().getElementType()
+    val nullableElement = if (element.isValueType()) dotktTypeNamed("System.Object") else element
+    val result: Array<E?> = dotktNewArrayOfType(nullableElement, newSize)
+    this.copyInto(result, 0, fromIndex, toIndex.coerceAtMost(size))
+    return result
+}
 
-@kotlin.internal.InlineOnly
-public actual inline fun DoubleArray.copyOfRange(fromIndex: Int, toIndex: Int): DoubleArray = DoubleArray(toIndex - fromIndex) { this[fromIndex + it] }
+public actual fun <T> Array<T>.copyOfRange(fromIndex: Int, toIndex: Int): Array<T> {
+    checkCopyOfRangeArguments(fromIndex, toIndex, size)
+    return copyOfUninitializedElements(fromIndex, toIndex)
+}
 
-@kotlin.internal.InlineOnly
-public actual inline fun BooleanArray.copyOfRange(fromIndex: Int, toIndex: Int): BooleanArray = BooleanArray(toIndex - fromIndex) { this[fromIndex + it] }
+public actual fun ByteArray.copyOfRange(fromIndex: Int, toIndex: Int): ByteArray {
+    checkCopyOfRangeArguments(fromIndex, toIndex, size)
+    return copyOfUninitializedElements(fromIndex, toIndex)
+}
 
-@kotlin.internal.InlineOnly
-public actual inline fun CharArray.copyOfRange(fromIndex: Int, toIndex: Int): CharArray = CharArray(toIndex - fromIndex) { this[fromIndex + it] }
+public actual fun ShortArray.copyOfRange(fromIndex: Int, toIndex: Int): ShortArray {
+    checkCopyOfRangeArguments(fromIndex, toIndex, size)
+    return copyOfUninitializedElements(fromIndex, toIndex)
+}
+
+public actual fun IntArray.copyOfRange(fromIndex: Int, toIndex: Int): IntArray {
+    checkCopyOfRangeArguments(fromIndex, toIndex, size)
+    return copyOfUninitializedElements(fromIndex, toIndex)
+}
+
+public actual fun LongArray.copyOfRange(fromIndex: Int, toIndex: Int): LongArray {
+    checkCopyOfRangeArguments(fromIndex, toIndex, size)
+    return copyOfUninitializedElements(fromIndex, toIndex)
+}
+
+public actual fun FloatArray.copyOfRange(fromIndex: Int, toIndex: Int): FloatArray {
+    checkCopyOfRangeArguments(fromIndex, toIndex, size)
+    return copyOfUninitializedElements(fromIndex, toIndex)
+}
+
+public actual fun DoubleArray.copyOfRange(fromIndex: Int, toIndex: Int): DoubleArray {
+    checkCopyOfRangeArguments(fromIndex, toIndex, size)
+    return copyOfUninitializedElements(fromIndex, toIndex)
+}
+
+public actual fun BooleanArray.copyOfRange(fromIndex: Int, toIndex: Int): BooleanArray {
+    checkCopyOfRangeArguments(fromIndex, toIndex, size)
+    return copyOfUninitializedElements(fromIndex, toIndex)
+}
+
+public actual fun CharArray.copyOfRange(fromIndex: Int, toIndex: Int): CharArray {
+    checkCopyOfRangeArguments(fromIndex, toIndex, size)
+    return copyOfUninitializedElements(fromIndex, toIndex)
+}
 
 @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
 public actual fun <T> Array<T>.fill(element: T, fromIndex: Int = 0, toIndex: Int = size): Unit {
@@ -775,202 +862,210 @@ public actual fun CharArray.fill(element: Char, fromIndex: Int = 0, toIndex: Int
     }
 }
 
-// `plus` returns a NON-null `Array<T>`, a genuine `!T[]`, so it allocates the way `copyOfRange` does: from the
-// RECEIVER's own runtime array type, which preserves the exact element type at every instantiation. The
-// `arrayOfNulls<T>(n) … as Array<T>` shape these bodies used to carry cannot serve any more — `arrayOfNulls` honestly
-// returns `Array<T?>` = `object[]` (#86 D2) and `object[]` is not castable to `int32[]`. This non-reified body also
-// cannot use `Array<T>(n) { … }`: the frontend rejects `T` as a reified type argument. Allocating from the receiver's
-// runtime type preserves the exact element type. The same reasoning applies to every generic `plus` overload below.
 public actual operator fun <T> Array<T>.plus(element: T): Array<T> {
-    @Suppress("UNCHECKED_CAST")
-    val result = (this as Any).nativeGetType().nativeCreateArrayLike(this.size + 1) as Array<T>
-    this.nativeArrayCopy(0, result, 0, this.size)
-    result[this.size] = element
+    val index = size
+    val result = copyOfUninitializedElements(index + 1)
+    result[index] = element
     return result
 }
 
-public actual operator fun ByteArray.plus(element: Byte): ByteArray = ByteArray(this.size + 1) { if (it < this.size) this[it] else element }
+public actual operator fun ByteArray.plus(element: Byte): ByteArray {
+    val index = size
+    val result = copyOfUninitializedElements(index + 1)
+    result[index] = element
+    return result
+}
 
-public actual operator fun ShortArray.plus(element: Short): ShortArray = ShortArray(this.size + 1) { if (it < this.size) this[it] else element }
+public actual operator fun ShortArray.plus(element: Short): ShortArray {
+    val index = size
+    val result = copyOfUninitializedElements(index + 1)
+    result[index] = element
+    return result
+}
 
-public actual operator fun IntArray.plus(element: Int): IntArray = IntArray(this.size + 1) { if (it < this.size) this[it] else element }
+public actual operator fun IntArray.plus(element: Int): IntArray {
+    val index = size
+    val result = copyOfUninitializedElements(index + 1)
+    result[index] = element
+    return result
+}
 
-public actual operator fun LongArray.plus(element: Long): LongArray = LongArray(this.size + 1) { if (it < this.size) this[it] else element }
+public actual operator fun LongArray.plus(element: Long): LongArray {
+    val index = size
+    val result = copyOfUninitializedElements(index + 1)
+    result[index] = element
+    return result
+}
 
-public actual operator fun FloatArray.plus(element: Float): FloatArray = FloatArray(this.size + 1) { if (it < this.size) this[it] else element }
+public actual operator fun FloatArray.plus(element: Float): FloatArray {
+    val index = size
+    val result = copyOfUninitializedElements(index + 1)
+    result[index] = element
+    return result
+}
 
-public actual operator fun DoubleArray.plus(element: Double): DoubleArray = DoubleArray(this.size + 1) { if (it < this.size) this[it] else element }
+public actual operator fun DoubleArray.plus(element: Double): DoubleArray {
+    val index = size
+    val result = copyOfUninitializedElements(index + 1)
+    result[index] = element
+    return result
+}
 
-public actual operator fun BooleanArray.plus(element: Boolean): BooleanArray = BooleanArray(this.size + 1) { if (it < this.size) this[it] else element }
+public actual operator fun BooleanArray.plus(element: Boolean): BooleanArray {
+    val index = size
+    val result = copyOfUninitializedElements(index + 1)
+    result[index] = element
+    return result
+}
 
-public actual operator fun CharArray.plus(element: Char): CharArray = CharArray(this.size + 1) { if (it < this.size) this[it] else element }
+public actual operator fun CharArray.plus(element: Char): CharArray {
+    val index = size
+    val result = copyOfUninitializedElements(index + 1)
+    result[index] = element
+    return result
+}
 
 @Suppress("UNCHECKED_CAST")
 public actual operator fun <T> Array<T>.plus(elements: Collection<T>): Array<T> {
-    val result = (this as Any).nativeGetType().nativeCreateArrayLike(this.size + elements.size) as Array<T>
-    this.nativeArrayCopy(0, result, 0, this.size)
-    var index = this.size
-    for (e in elements) {
-        result[index] = e
-        index++
-    }
+    var index = size
+    val result = copyOfUninitializedElements(index + elements.size)
+    for (element in elements) result[index++] = element
     return result
 }
 
 public actual operator fun ByteArray.plus(elements: Collection<Byte>): ByteArray {
-    val result = ByteArray(this.size + elements.size)
-    for (i in this.indices) result[i] = this[i]
-    var index = this.size
-    for (e in elements) {
-        result[index] = e
-        index++
-    }
+    var index = size
+    val result = copyOfUninitializedElements(index + elements.size)
+    for (element in elements) result[index++] = element
     return result
 }
 
 public actual operator fun ShortArray.plus(elements: Collection<Short>): ShortArray {
-    val result = ShortArray(this.size + elements.size)
-    for (i in this.indices) result[i] = this[i]
-    var index = this.size
-    for (e in elements) {
-        result[index] = e
-        index++
-    }
+    var index = size
+    val result = copyOfUninitializedElements(index + elements.size)
+    for (element in elements) result[index++] = element
     return result
 }
 
 public actual operator fun IntArray.plus(elements: Collection<Int>): IntArray {
-    val result = IntArray(this.size + elements.size)
-    for (i in this.indices) result[i] = this[i]
-    var index = this.size
-    for (e in elements) {
-        result[index] = e
-        index++
-    }
+    var index = size
+    val result = copyOfUninitializedElements(index + elements.size)
+    for (element in elements) result[index++] = element
     return result
 }
 
 public actual operator fun LongArray.plus(elements: Collection<Long>): LongArray {
-    val result = LongArray(this.size + elements.size)
-    for (i in this.indices) result[i] = this[i]
-    var index = this.size
-    for (e in elements) {
-        result[index] = e
-        index++
-    }
+    var index = size
+    val result = copyOfUninitializedElements(index + elements.size)
+    for (element in elements) result[index++] = element
     return result
 }
 
 public actual operator fun FloatArray.plus(elements: Collection<Float>): FloatArray {
-    val result = FloatArray(this.size + elements.size)
-    for (i in this.indices) result[i] = this[i]
-    var index = this.size
-    for (e in elements) {
-        result[index] = e
-        index++
-    }
+    var index = size
+    val result = copyOfUninitializedElements(index + elements.size)
+    for (element in elements) result[index++] = element
     return result
 }
 
 public actual operator fun DoubleArray.plus(elements: Collection<Double>): DoubleArray {
-    val result = DoubleArray(this.size + elements.size)
-    for (i in this.indices) result[i] = this[i]
-    var index = this.size
-    for (e in elements) {
-        result[index] = e
-        index++
-    }
+    var index = size
+    val result = copyOfUninitializedElements(index + elements.size)
+    for (element in elements) result[index++] = element
     return result
 }
 
 public actual operator fun BooleanArray.plus(elements: Collection<Boolean>): BooleanArray {
-    val result = BooleanArray(this.size + elements.size)
-    for (i in this.indices) result[i] = this[i]
-    var index = this.size
-    for (e in elements) {
-        result[index] = e
-        index++
-    }
+    var index = size
+    val result = copyOfUninitializedElements(index + elements.size)
+    for (element in elements) result[index++] = element
     return result
 }
 
 public actual operator fun CharArray.plus(elements: Collection<Char>): CharArray {
-    val result = CharArray(this.size + elements.size)
-    for (i in this.indices) result[i] = this[i]
-    var index = this.size
-    for (e in elements) {
-        result[index] = e
-        index++
-    }
+    var index = size
+    val result = copyOfUninitializedElements(index + elements.size)
+    for (element in elements) result[index++] = element
     return result
 }
 
 @Suppress("UNCHECKED_CAST")
 public actual operator fun <T> Array<T>.plus(elements: Array<out T>): Array<T> {
-    val result = (this as Any).nativeGetType().nativeCreateArrayLike(this.size + elements.size) as Array<T>
-    this.nativeArrayCopy(0, result, 0, this.size)
-    for (i in elements.indices) result[this.size + i] = elements[i]
+    val thisSize = size
+    val arraySize = elements.size
+    val result = copyOfUninitializedElements(thisSize + arraySize)
+    elements.copyInto(result, thisSize)
     return result
 }
 
 public actual operator fun ByteArray.plus(elements: ByteArray): ByteArray {
-    val result = ByteArray(this.size + elements.size)
-    for (i in this.indices) result[i] = this[i]
-    for (i in elements.indices) result[this.size + i] = elements[i]
+    val thisSize = size
+    val arraySize = elements.size
+    val result = copyOfUninitializedElements(thisSize + arraySize)
+    elements.copyInto(result, thisSize)
     return result
 }
 
 public actual operator fun ShortArray.plus(elements: ShortArray): ShortArray {
-    val result = ShortArray(this.size + elements.size)
-    for (i in this.indices) result[i] = this[i]
-    for (i in elements.indices) result[this.size + i] = elements[i]
+    val thisSize = size
+    val arraySize = elements.size
+    val result = copyOfUninitializedElements(thisSize + arraySize)
+    elements.copyInto(result, thisSize)
     return result
 }
 
 public actual operator fun IntArray.plus(elements: IntArray): IntArray {
-    val result = IntArray(this.size + elements.size)
-    for (i in this.indices) result[i] = this[i]
-    for (i in elements.indices) result[this.size + i] = elements[i]
+    val thisSize = size
+    val arraySize = elements.size
+    val result = copyOfUninitializedElements(thisSize + arraySize)
+    elements.copyInto(result, thisSize)
     return result
 }
 
 public actual operator fun LongArray.plus(elements: LongArray): LongArray {
-    val result = LongArray(this.size + elements.size)
-    for (i in this.indices) result[i] = this[i]
-    for (i in elements.indices) result[this.size + i] = elements[i]
+    val thisSize = size
+    val arraySize = elements.size
+    val result = copyOfUninitializedElements(thisSize + arraySize)
+    elements.copyInto(result, thisSize)
     return result
 }
 
 public actual operator fun FloatArray.plus(elements: FloatArray): FloatArray {
-    val result = FloatArray(this.size + elements.size)
-    for (i in this.indices) result[i] = this[i]
-    for (i in elements.indices) result[this.size + i] = elements[i]
+    val thisSize = size
+    val arraySize = elements.size
+    val result = copyOfUninitializedElements(thisSize + arraySize)
+    elements.copyInto(result, thisSize)
     return result
 }
 
 public actual operator fun DoubleArray.plus(elements: DoubleArray): DoubleArray {
-    val result = DoubleArray(this.size + elements.size)
-    for (i in this.indices) result[i] = this[i]
-    for (i in elements.indices) result[this.size + i] = elements[i]
+    val thisSize = size
+    val arraySize = elements.size
+    val result = copyOfUninitializedElements(thisSize + arraySize)
+    elements.copyInto(result, thisSize)
     return result
 }
 
 public actual operator fun BooleanArray.plus(elements: BooleanArray): BooleanArray {
-    val result = BooleanArray(this.size + elements.size)
-    for (i in this.indices) result[i] = this[i]
-    for (i in elements.indices) result[this.size + i] = elements[i]
+    val thisSize = size
+    val arraySize = elements.size
+    val result = copyOfUninitializedElements(thisSize + arraySize)
+    elements.copyInto(result, thisSize)
     return result
 }
 
 public actual operator fun CharArray.plus(elements: CharArray): CharArray {
-    val result = CharArray(this.size + elements.size)
-    for (i in this.indices) result[i] = this[i]
-    for (i in elements.indices) result[this.size + i] = elements[i]
+    val thisSize = size
+    val arraySize = elements.size
+    val result = copyOfUninitializedElements(thisSize + arraySize)
+    elements.copyInto(result, thisSize)
     return result
 }
 
 @kotlin.internal.InlineOnly
-public actual inline fun <T> Array<T>.plusElement(element: T): Array<T> = this + element
+public actual inline fun <T> Array<T>.plusElement(element: T): Array<T> {
+    return plus(element)
+}
 
 public actual fun IntArray.sort(): Unit {
     if (size > 1) sortArray(this, 0, size)
@@ -1070,18 +1165,147 @@ public actual fun <T> Array<out T>.sortWith(comparator: Comparator<in T>, fromIn
     sortArrayWith(this, fromIndex, toIndex, comparator)
 }
 
-public actual fun ByteArray.toTypedArray(): Array<Byte> = Array(size) { this[it] }
+public actual fun ByteArray.toTypedArray(): Array<Byte> {
+    return Array(size) { index -> this[index] }
+}
 
-public actual fun ShortArray.toTypedArray(): Array<Short> = Array(size) { this[it] }
+public actual fun ShortArray.toTypedArray(): Array<Short> {
+    return Array(size) { index -> this[index] }
+}
 
-public actual fun IntArray.toTypedArray(): Array<Int> = Array(size) { this[it] }
+public actual fun IntArray.toTypedArray(): Array<Int> {
+    return Array(size) { index -> this[index] }
+}
 
-public actual fun LongArray.toTypedArray(): Array<Long> = Array(size) { this[it] }
+public actual fun LongArray.toTypedArray(): Array<Long> {
+    return Array(size) { index -> this[index] }
+}
 
-public actual fun FloatArray.toTypedArray(): Array<Float> = Array(size) { this[it] }
+public actual fun FloatArray.toTypedArray(): Array<Float> {
+    return Array(size) { index -> this[index] }
+}
 
-public actual fun DoubleArray.toTypedArray(): Array<Double> = Array(size) { this[it] }
+public actual fun DoubleArray.toTypedArray(): Array<Double> {
+    return Array(size) { index -> this[index] }
+}
 
-public actual fun BooleanArray.toTypedArray(): Array<Boolean> = Array(size) { this[it] }
+public actual fun BooleanArray.toTypedArray(): Array<Boolean> {
+    return Array(size) { index -> this[index] }
+}
 
-public actual fun CharArray.toTypedArray(): Array<Char> = Array(size) { this[it] }
+public actual fun CharArray.toTypedArray(): Array<Char> {
+    return Array(size) { index -> this[index] }
+}
+
+
+internal fun ByteArray.copyOfUninitializedElements(fromIndex: Int, toIndex: Int): ByteArray {
+    val newSize = toIndex - fromIndex
+    if (newSize < 0) {
+        throw IllegalArgumentException("$fromIndex > $toIndex")
+    }
+    val result = ByteArray(newSize)
+    this.copyInto(result, 0, fromIndex, toIndex.coerceAtMost(size))
+    return result
+}
+
+internal fun ShortArray.copyOfUninitializedElements(fromIndex: Int, toIndex: Int): ShortArray {
+    val newSize = toIndex - fromIndex
+    if (newSize < 0) {
+        throw IllegalArgumentException("$fromIndex > $toIndex")
+    }
+    val result = ShortArray(newSize)
+    this.copyInto(result, 0, fromIndex, toIndex.coerceAtMost(size))
+    return result
+}
+
+internal fun IntArray.copyOfUninitializedElements(fromIndex: Int, toIndex: Int): IntArray {
+    val newSize = toIndex - fromIndex
+    if (newSize < 0) {
+        throw IllegalArgumentException("$fromIndex > $toIndex")
+    }
+    val result = IntArray(newSize)
+    this.copyInto(result, 0, fromIndex, toIndex.coerceAtMost(size))
+    return result
+}
+
+internal fun LongArray.copyOfUninitializedElements(fromIndex: Int, toIndex: Int): LongArray {
+    val newSize = toIndex - fromIndex
+    if (newSize < 0) {
+        throw IllegalArgumentException("$fromIndex > $toIndex")
+    }
+    val result = LongArray(newSize)
+    this.copyInto(result, 0, fromIndex, toIndex.coerceAtMost(size))
+    return result
+}
+
+internal fun FloatArray.copyOfUninitializedElements(fromIndex: Int, toIndex: Int): FloatArray {
+    val newSize = toIndex - fromIndex
+    if (newSize < 0) {
+        throw IllegalArgumentException("$fromIndex > $toIndex")
+    }
+    val result = FloatArray(newSize)
+    this.copyInto(result, 0, fromIndex, toIndex.coerceAtMost(size))
+    return result
+}
+
+internal fun DoubleArray.copyOfUninitializedElements(fromIndex: Int, toIndex: Int): DoubleArray {
+    val newSize = toIndex - fromIndex
+    if (newSize < 0) {
+        throw IllegalArgumentException("$fromIndex > $toIndex")
+    }
+    val result = DoubleArray(newSize)
+    this.copyInto(result, 0, fromIndex, toIndex.coerceAtMost(size))
+    return result
+}
+
+internal fun BooleanArray.copyOfUninitializedElements(fromIndex: Int, toIndex: Int): BooleanArray {
+    val newSize = toIndex - fromIndex
+    if (newSize < 0) {
+        throw IllegalArgumentException("$fromIndex > $toIndex")
+    }
+    val result = BooleanArray(newSize)
+    this.copyInto(result, 0, fromIndex, toIndex.coerceAtMost(size))
+    return result
+}
+
+internal fun CharArray.copyOfUninitializedElements(fromIndex: Int, toIndex: Int): CharArray {
+    val newSize = toIndex - fromIndex
+    if (newSize < 0) {
+        throw IllegalArgumentException("$fromIndex > $toIndex")
+    }
+    val result = CharArray(newSize)
+    this.copyInto(result, 0, fromIndex, toIndex.coerceAtMost(size))
+    return result
+}
+
+internal fun ByteArray.copyOfUninitializedElements(newSize: Int): ByteArray {
+    return copyOfUninitializedElements(0, newSize)
+}
+
+internal fun ShortArray.copyOfUninitializedElements(newSize: Int): ShortArray {
+    return copyOfUninitializedElements(0, newSize)
+}
+
+internal fun IntArray.copyOfUninitializedElements(newSize: Int): IntArray {
+    return copyOfUninitializedElements(0, newSize)
+}
+
+internal fun LongArray.copyOfUninitializedElements(newSize: Int): LongArray {
+    return copyOfUninitializedElements(0, newSize)
+}
+
+internal fun FloatArray.copyOfUninitializedElements(newSize: Int): FloatArray {
+    return copyOfUninitializedElements(0, newSize)
+}
+
+internal fun DoubleArray.copyOfUninitializedElements(newSize: Int): DoubleArray {
+    return copyOfUninitializedElements(0, newSize)
+}
+
+internal fun BooleanArray.copyOfUninitializedElements(newSize: Int): BooleanArray {
+    return copyOfUninitializedElements(0, newSize)
+}
+
+internal fun CharArray.copyOfUninitializedElements(newSize: Int): CharArray {
+    return copyOfUninitializedElements(0, newSize)
+}
