@@ -48,7 +48,8 @@ import org.jetbrains.kotlin.psi.KtFile
 /** CLR class qualifiers expose inherited static declarations without creating derived storage or methods. */
 private class ClrStaticScopeProvider(private val delegate: FirScopeProvider) : FirScopeProvider() {
 	override fun getUseSiteMemberScope(klass: FirClass, useSiteSession: FirSession, scopeSession: ScopeSession,
-		memberRequiredPhase: FirResolvePhase?) = delegate.getUseSiteMemberScope(klass, useSiteSession, scopeSession, memberRequiredPhase)
+		memberRequiredPhase: FirResolvePhase?) = sourceInterfaceViewScope(klass, useSiteSession,
+			delegate.getUseSiteMemberScope(klass, useSiteSession, scopeSession, memberRequiredPhase))
 	override fun getTypealiasConstructorScope(typeAlias: FirTypeAlias, useSiteSession: FirSession, scopeSession: ScopeSession) =
 		delegate.getTypealiasConstructorScope(typeAlias, useSiteSession, scopeSession)
 	override fun getNestedClassifierScope(klass: FirClass, useSiteSession: FirSession, scopeSession: ScopeSession) =
