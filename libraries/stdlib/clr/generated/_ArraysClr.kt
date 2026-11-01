@@ -417,8 +417,16 @@ public actual fun CharArray?.contentHashCode(): Int {
 }
 
 @SinceKotlin("1.4")
-public actual fun <T> Array<out T>?.contentToString(): String {
-    return this?.joinToString(", ", "[", "]") ?: "null"
+@kotlin.internal.InlineOnly
+public actual inline fun <T> Array<out T>?.contentToString(): String {
+    if (this == null) return "null"
+    val sb = StringBuilder("[")
+    for (i in indices) {
+        if (i > 0) sb.append(", ")
+        sb.append(this[i])
+    }
+    sb.append("]")
+    return sb.toString()
 }
 
 @SinceKotlin("1.4")
