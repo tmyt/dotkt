@@ -111,6 +111,9 @@ class PortableArrayCopyTests {
         check((a + listOf(1.toByte())).contentEquals(a + 1.toByte()))
         check((a + byteArrayOf(1)).contentEquals(a + 1.toByte()))
         check(a.toTypedArray().contentEquals(arrayOf(Byte.MIN_VALUE, 0.toByte(), Byte.MAX_VALUE)))
+        val copy: (ByteArray) -> ByteArray = ByteArray::copyOf
+        val append: (ByteArray, Byte) -> ByteArray = ByteArray::plus
+        check(copy(a).contentEquals(a) && append(a, 1).contentEquals(a + 1.toByte()))
     }
 
     @TestAttribute fun shortCopiesAndAppendsUsePortableBodies() {
@@ -123,6 +126,8 @@ class PortableArrayCopyTests {
         check((a + listOf(1.toShort())).contentEquals(a + 1.toShort()))
         check((a + shortArrayOf(1)).contentEquals(a + 1.toShort()))
         check(a.toTypedArray().contentEquals(arrayOf(Short.MIN_VALUE, 0.toShort(), Short.MAX_VALUE)))
+        val copy: (ShortArray) -> ShortArray = ShortArray::copyOf
+        check(copy(a).contentEquals(a))
     }
 
     @TestAttribute fun intCopiesAndAppendsUsePortableBodies() {
@@ -135,6 +140,19 @@ class PortableArrayCopyTests {
         check((a + listOf(1)).contentEquals(a + 1))
         check((a + intArrayOf(1)).contentEquals(a + 1))
         check(a.toTypedArray().contentEquals(arrayOf(Int.MIN_VALUE, 0, Int.MAX_VALUE)))
+        val copy: (IntArray) -> IntArray = IntArray::copyOf
+        val resize: (IntArray, Int) -> IntArray = IntArray::copyOf
+        val range: (IntArray, Int, Int) -> IntArray = IntArray::copyOfRange
+        val append: (IntArray, Int) -> IntArray = IntArray::plus
+        val concat: (IntArray, IntArray) -> IntArray = IntArray::plus
+        val appendAll: (IntArray, Collection<Int>) -> IntArray = IntArray::plus
+        val box: (IntArray) -> Array<Int> = IntArray::toTypedArray
+        check(copy(a).contentEquals(a) && resize(a, 4).contentEquals(a.copyOf(4)))
+        check(range(a, 1, 3).contentEquals(a.copyOfRange(1, 3)))
+        check(append(a, 1).contentEquals(a + 1))
+        check(concat(a, intArrayOf(1)).contentEquals(a + 1))
+        check(appendAll(a, listOf(1)).contentEquals(a + 1))
+        check(box(a).contentEquals(a.toTypedArray()))
     }
 
     @TestAttribute fun longCopiesAndAppendsUsePortableBodies() {
@@ -147,6 +165,8 @@ class PortableArrayCopyTests {
         check((a + listOf(1L)).contentEquals(a + 1L))
         check((a + longArrayOf(1L)).contentEquals(a + 1L))
         check(a.toTypedArray().contentEquals(arrayOf(Long.MIN_VALUE, 0L, Long.MAX_VALUE)))
+        val copy: (LongArray) -> LongArray = LongArray::copyOf
+        check(copy(a).contentEquals(a))
     }
 
     @TestAttribute fun floatCopiesPreserveNanAndSignedZero() {
@@ -160,6 +180,8 @@ class PortableArrayCopyTests {
         check((a + floatArrayOf(1.0f)).contentEquals(a + 1.0f))
         val boxed = a.toTypedArray()
         check(boxed[0].isNaN() && boxed[1].toBits() == (-0.0f).toBits() && boxed[2].toBits() == 0.0f.toBits())
+        val copy: (FloatArray) -> FloatArray = FloatArray::copyOf
+        check(copy(a).contentEquals(a))
     }
 
     @TestAttribute fun doubleCopiesPreserveNanAndSignedZero() {
@@ -173,6 +195,8 @@ class PortableArrayCopyTests {
         check((a + doubleArrayOf(1.0)).contentEquals(a + 1.0))
         val boxed = a.toTypedArray()
         check(boxed[0].isNaN() && boxed[1].toBits() == (-0.0).toBits() && boxed[2].toBits() == 0.0.toBits())
+        val copy: (DoubleArray) -> DoubleArray = DoubleArray::copyOf
+        check(copy(a).contentEquals(a))
     }
 
     @TestAttribute fun booleanCopiesAndAppendsUsePortableBodies() {
@@ -185,6 +209,8 @@ class PortableArrayCopyTests {
         check((a + listOf(true)).contentEquals(a + true))
         check((a + booleanArrayOf(true)).contentEquals(a + true))
         check(a.toTypedArray().contentEquals(arrayOf(true, false)))
+        val copy: (BooleanArray) -> BooleanArray = BooleanArray::copyOf
+        check(copy(a).contentEquals(a))
     }
 
     @TestAttribute fun charCopiesKeepNullCharactersAndZeroFill() {
@@ -197,5 +223,7 @@ class PortableArrayCopyTests {
         check((a + listOf('y')).contentEquals(a + 'y'))
         check((a + charArrayOf('y')).contentEquals(a + 'y'))
         check(a.toTypedArray().contentEquals(arrayOf('\u0000', 'x', '\uffff')))
+        val copy: (CharArray) -> CharArray = CharArray::copyOf
+        check(copy(a).contentEquals(a))
     }
 }

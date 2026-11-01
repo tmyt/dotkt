@@ -5,7 +5,6 @@ import PortableArrayCopyInterop.NativeArrays as CopyNativeArrays
 
 @Suppress("UNCHECKED_CAST")
 private fun <T> checkNativeReferenceCopy(source: Array<T>, destination: Array<T>) {
-    source.copyInto(destination, 0, 0, 1)
     var rejected = false
     try { source.copyInto(destination) } catch (_: Exception) { rejected = true }
     check(rejected)

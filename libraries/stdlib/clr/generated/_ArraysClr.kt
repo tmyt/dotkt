@@ -727,7 +727,7 @@ internal fun <T> Array<T>.copyOfUninitializedElements(fromIndex: Int, toIndex: I
     return result
 }
 
-internal actual fun <T> Array<T>.copyOfUninitializedElements(newSize: Int): Array<T> {
+internal fun <T> Array<T>.copyOfUninitializedElements(newSize: Int): Array<T> {
     return copyOfUninitializedElements(0, newSize)
 }
 
@@ -925,7 +925,6 @@ public actual operator fun CharArray.plus(element: Char): CharArray {
     return result
 }
 
-@Suppress("UNCHECKED_CAST")
 public actual operator fun <T> Array<T>.plus(elements: Collection<T>): Array<T> {
     var index = size
     val result = copyOfUninitializedElements(index + elements.size)
@@ -989,7 +988,6 @@ public actual operator fun CharArray.plus(elements: Collection<Char>): CharArray
     return result
 }
 
-@Suppress("UNCHECKED_CAST")
 public actual operator fun <T> Array<T>.plus(elements: Array<out T>): Array<T> {
     val thisSize = size
     val arraySize = elements.size
