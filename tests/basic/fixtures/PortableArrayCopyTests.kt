@@ -108,7 +108,8 @@ class PortableArrayCopyTests {
         check(a.copyOf(1).contentEquals(byteArrayOf(Byte.MIN_VALUE)))
         check(a.copyOfRange(1, 3).contentEquals(byteArrayOf(0, Byte.MAX_VALUE)))
         check((a + 1.toByte()).contentEquals(byteArrayOf(Byte.MIN_VALUE, 0, Byte.MAX_VALUE, 1)))
-        check((a + listOf(1.toByte())).contentEquals(a + byteArrayOf(1)))
+        check((a + listOf(1.toByte())).contentEquals(a + 1.toByte()))
+        check((a + byteArrayOf(1)).contentEquals(a + 1.toByte()))
         check(a.toTypedArray().contentEquals(arrayOf(Byte.MIN_VALUE, 0.toByte(), Byte.MAX_VALUE)))
     }
 
@@ -119,7 +120,8 @@ class PortableArrayCopyTests {
         check(a.copyOf(1).contentEquals(shortArrayOf(Short.MIN_VALUE)))
         check(a.copyOfRange(1, 3).contentEquals(shortArrayOf(0, Short.MAX_VALUE)))
         check((a + 1.toShort()).contentEquals(shortArrayOf(Short.MIN_VALUE, 0, Short.MAX_VALUE, 1)))
-        check((a + listOf(1.toShort())).contentEquals(a + shortArrayOf(1)))
+        check((a + listOf(1.toShort())).contentEquals(a + 1.toShort()))
+        check((a + shortArrayOf(1)).contentEquals(a + 1.toShort()))
         check(a.toTypedArray().contentEquals(arrayOf(Short.MIN_VALUE, 0.toShort(), Short.MAX_VALUE)))
     }
 
@@ -130,7 +132,8 @@ class PortableArrayCopyTests {
         check(a.copyOf(1).contentEquals(intArrayOf(Int.MIN_VALUE)))
         check(a.copyOfRange(1, 3).contentEquals(intArrayOf(0, Int.MAX_VALUE)))
         check((a + 1).contentEquals(intArrayOf(Int.MIN_VALUE, 0, Int.MAX_VALUE, 1)))
-        check((a + listOf(1)).contentEquals(a + intArrayOf(1)))
+        check((a + listOf(1)).contentEquals(a + 1))
+        check((a + intArrayOf(1)).contentEquals(a + 1))
         check(a.toTypedArray().contentEquals(arrayOf(Int.MIN_VALUE, 0, Int.MAX_VALUE)))
     }
 
@@ -141,7 +144,8 @@ class PortableArrayCopyTests {
         check(a.copyOf(1).contentEquals(longArrayOf(Long.MIN_VALUE)))
         check(a.copyOfRange(1, 3).contentEquals(longArrayOf(0L, Long.MAX_VALUE)))
         check((a + 1L).contentEquals(longArrayOf(Long.MIN_VALUE, 0L, Long.MAX_VALUE, 1L)))
-        check((a + listOf(1L)).contentEquals(a + longArrayOf(1L)))
+        check((a + listOf(1L)).contentEquals(a + 1L))
+        check((a + longArrayOf(1L)).contentEquals(a + 1L))
         check(a.toTypedArray().contentEquals(arrayOf(Long.MIN_VALUE, 0L, Long.MAX_VALUE)))
     }
 
@@ -152,7 +156,8 @@ class PortableArrayCopyTests {
         check(a.copyOf(1).contentEquals(floatArrayOf(Float.NaN)))
         check(a.copyOfRange(1, 3).contentEquals(floatArrayOf(-0.0f, 0.0f)))
         check((a + 1.0f).contentEquals(floatArrayOf(Float.NaN, -0.0f, 0.0f, 1.0f)))
-        check((a + listOf(1.0f)).contentEquals(a + floatArrayOf(1.0f)))
+        check((a + listOf(1.0f)).contentEquals(a + 1.0f))
+        check((a + floatArrayOf(1.0f)).contentEquals(a + 1.0f))
         val boxed = a.toTypedArray()
         check(boxed[0].isNaN() && boxed[1].toBits() == (-0.0f).toBits() && boxed[2].toBits() == 0.0f.toBits())
     }
@@ -164,7 +169,8 @@ class PortableArrayCopyTests {
         check(a.copyOf(1).contentEquals(doubleArrayOf(Double.NaN)))
         check(a.copyOfRange(1, 3).contentEquals(doubleArrayOf(-0.0, 0.0)))
         check((a + 1.0).contentEquals(doubleArrayOf(Double.NaN, -0.0, 0.0, 1.0)))
-        check((a + listOf(1.0)).contentEquals(a + doubleArrayOf(1.0)))
+        check((a + listOf(1.0)).contentEquals(a + 1.0))
+        check((a + doubleArrayOf(1.0)).contentEquals(a + 1.0))
         val boxed = a.toTypedArray()
         check(boxed[0].isNaN() && boxed[1].toBits() == (-0.0).toBits() && boxed[2].toBits() == 0.0.toBits())
     }
@@ -176,7 +182,8 @@ class PortableArrayCopyTests {
         check(a.copyOf(1).contentEquals(booleanArrayOf(true)))
         check(a.copyOfRange(1, 2).contentEquals(booleanArrayOf(false)))
         check((a + true).contentEquals(booleanArrayOf(true, false, true)))
-        check((a + listOf(true)).contentEquals(a + booleanArrayOf(true)))
+        check((a + listOf(true)).contentEquals(a + true))
+        check((a + booleanArrayOf(true)).contentEquals(a + true))
         check(a.toTypedArray().contentEquals(arrayOf(true, false)))
     }
 
@@ -187,7 +194,8 @@ class PortableArrayCopyTests {
         check(a.copyOf(1).contentEquals(charArrayOf('\u0000')))
         check(a.copyOfRange(1, 3).contentEquals(charArrayOf('x', '\uffff')))
         check((a + 'y').contentEquals(charArrayOf('\u0000', 'x', '\uffff', 'y')))
-        check((a + listOf('y')).contentEquals(a + charArrayOf('y')))
+        check((a + listOf('y')).contentEquals(a + 'y'))
+        check((a + charArrayOf('y')).contentEquals(a + 'y'))
         check(a.toTypedArray().contentEquals(arrayOf('\u0000', 'x', '\uffff')))
     }
 }
