@@ -25,6 +25,10 @@ public actual abstract class AbstractMutableList<E> protected actual constructor
 
     override fun hashCode(): Int = AbstractList.orderedHashCode(this)
 
+    override fun toString(): String = joinToString(", ", "[", "]") {
+        if (it === this) "(this Collection)" else it.toString()
+    }
+
     @SinceKotlin("2.0")
     protected actual var modCount: Int = 0
 
