@@ -4,6 +4,16 @@ import NUnit.Framework.TestAttribute
 import ReadOnlyCursorInterop.GrowingReadOnlyFaces
 import CollectionStorageInterop.RawAndGenericList
 
+private fun expectNativeIndexerFailure(action: () -> Unit) {
+    var rejected = false
+    try { action() }
+    catch (failure: IllegalStateException) {
+        check(failure.message == "native indexer failure")
+        rejected = true
+    }
+    check(rejected)
+}
+
 class PortableReadOnlyCursorInteropTests {
     @TestAttribute fun liveCursorsKeepExactClosedFacesInsteadOfRawStorage() {
         val source = GrowingReadOnlyFaces()
@@ -25,6 +35,15 @@ class PortableReadOnlyCursorInteropTests {
         source.ClearTexts()
         check(!emptyNumbers.hasNext() && !emptyTexts.hasNext())
         check(source.Count == 3)
+        source.AddNumber(4)
+        val failing = numbers.listIterator()
+        source.FailNextNumberRead()
+        expectNativeIndexerFailure { failing.next() }
+        check(failing.nextIndex() == 1)
+        source.FailNextNumberRead()
+        expectNativeIndexerFailure { failing.previous() }
+        check(failing.nextIndex() == 0)
+        check(failing.next() == 4 && !failing.hasNext())
     }
 
     @TestAttribute fun genericReadonlyFaceDoesNotEnumerateOrUseRawCount() {

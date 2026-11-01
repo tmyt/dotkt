@@ -7,15 +7,28 @@ public sealed class GrowingReadOnlyFaces : ArrayList, IReadOnlyList<int>, IReadO
 {
     private readonly List<int> numbers = [1];
     private readonly List<string?> texts = ["first"];
+    private bool failNumberRead;
 
     public GrowingReadOnlyFaces() { Add("raw-a"); Add("raw-b"); Add("raw-c"); }
     public void AddNumber(int value) => numbers.Add(value);
     public void AddText(string? value) => texts.Add(value);
     public void ClearNumbers() => numbers.Clear();
     public void ClearTexts() => texts.Clear();
+    public void FailNextNumberRead() => failNumberRead = true;
     int IReadOnlyCollection<int>.Count => numbers.Count;
     int IReadOnlyCollection<string?>.Count => texts.Count;
-    int IReadOnlyList<int>.this[int index] => numbers[index];
+    int IReadOnlyList<int>.this[int index]
+    {
+        get
+        {
+            if (failNumberRead)
+            {
+                failNumberRead = false;
+                throw new System.InvalidOperationException("native indexer failure");
+            }
+            return numbers[index];
+        }
+    }
     string? IReadOnlyList<string?>.this[int index] => texts[index];
     IEnumerator<int> IEnumerable<int>.GetEnumerator() => throw new System.InvalidOperationException("must use the selected indexer");
     IEnumerator<string?> IEnumerable<string?>.GetEnumerator() => throw new System.InvalidOperationException("must use the selected indexer");

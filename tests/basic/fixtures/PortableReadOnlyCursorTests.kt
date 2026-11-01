@@ -25,10 +25,13 @@ class PortableReadOnlyCursorTests {
         source.Add(1)
         val native: Any = source
         val readonly = native as List<Int>
+        val noIndex = kotlin.collections.clrProjectedListIterator<Int>(native)
+        check(noIndex.next() == 1)
         val cursors = listOf(
             readonly.listIterator(1),
             kotlin.collections.clrListListIterator(readonly, 1),
             kotlin.collections.clrProjectedListListIterator<Int>(native, 1),
+            noIndex,
         )
         for (cursor in cursors) exhaustWithoutMoving(cursor, true)
         source.Add(2)
