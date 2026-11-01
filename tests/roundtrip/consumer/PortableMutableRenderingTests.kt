@@ -12,6 +12,10 @@ private fun checkPortableMutableRendering(value: Any, expected: String) {
     check(actual == expected) { "Expected $expected; actual $actual" }
 }
 
+private fun renderAbstractMutableList(value: AbstractMutableList<Any?>): String = value.toString()
+private fun renderAbstractMutableSet(value: AbstractMutableSet<Any?>): String = value.toString()
+private fun renderAbstractMutableCollection(value: AbstractMutableCollection<Any?>): String = value.toString()
+
 class CrossModulePortableMutableRenderingTests {
     @TestAttribute fun opaqueDefaultsRenderEmptyNullableAndValueElements() {
         checkPortableMutableRendering(PortableMutableCollection(mutableListOf<Int>()), "[]")
@@ -31,6 +35,14 @@ class CrossModulePortableMutableRenderingTests {
         check(element.calls == 2)
         checkPortableMutableRendering(PortableMutableSet(mutableListOf(element)), "[value:7]")
         check(element.calls == 3)
+        element.failRendering = true
+        try {
+            renderMutableThroughAny(PortableMutableList(mutableListOf(element)))
+            error("must throw")
+        } catch (failure: IllegalArgumentException) {
+            check(failure.message == "element")
+        }
+        check(element.calls == 4)
         val authored = PortableAuthoredRenderList(mutableListOf(1, 2))
         checkPortableMutableRendering(authored, "authored")
         check(renderMutableThroughAny(authored) == "authored")
@@ -79,6 +91,9 @@ class CrossModulePortableMutableRenderingTests {
         check(collection.toString() == "[[1, 2]]") { collection.toString() }
         val set: Set<*> = PortableMutableSet(values)
         check(set.toString() == "[[1, 2]]") { set.toString() }
+        check(renderAbstractMutableList(PortableMutableList(values)) == "[[1, 2]]")
+        check(renderAbstractMutableCollection(PortableMutableCollection(values)) == "[[1, 2]]")
+        check(renderAbstractMutableSet(PortableMutableSet(values)) == "[[1, 2]]")
     }
 
     @TestAttribute fun callableAndProducerGenericCallsUseDefaultPolicy() {

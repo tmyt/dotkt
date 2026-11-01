@@ -17,7 +17,7 @@ package kotlin.collections
 @SinceKotlin("1.1")
 public actual abstract class AbstractMutableCollection<E> protected actual constructor() : MutableCollection<E> {
     override fun toString(): String = joinToString(", ", "[", "]") {
-        if (it === this) "(this Collection)" else it.toString()
+        if (it === this) "(this Collection)" else clrElemToString(it)
     }
 
     actual abstract override val size: Int

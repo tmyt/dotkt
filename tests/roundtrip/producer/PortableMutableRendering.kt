@@ -14,7 +14,12 @@ class PortableMutableCollection<T>(private val values: MutableList<T>) : Abstrac
 
 class PortableRenderingElement(val value: Int) {
     var calls: Int = 0
-    override fun toString(): String { calls++; return "value:$value" }
+    var failRendering: Boolean = false
+    override fun toString(): String {
+        calls++
+        if (failRendering) throw IllegalArgumentException("element")
+        return "value:$value"
+    }
 }
 
 class PortableAuthoredRenderList<T>(private val values: MutableList<T>) : AbstractMutableList<T>() {

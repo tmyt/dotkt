@@ -19,7 +19,7 @@ public actual abstract class AbstractMutableSet<E> protected actual constructor(
     override fun hashCode(): Int = AbstractSet.unorderedHashCode(this)
 
     override fun toString(): String = joinToString(", ", "[", "]") {
-        if (it === this) "(this Collection)" else it.toString()
+        if (it === this) "(this Collection)" else clrElemToString(it)
     }
 
     actual override fun isEmpty(): Boolean = size == 0
